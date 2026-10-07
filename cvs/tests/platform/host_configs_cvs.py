@@ -5,15 +5,15 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import pytest
-
-import re
 import json
 
+import pytest
+
+from cvs.lib import globals, host_configs_rundeck, linux_utils
+from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
+from cvs.lib.rocm_plib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
-from cvs.lib.rocm_plib import *
-from cvs.lib import globals, linux_utils
 
 log = globals.log
 
@@ -87,13 +87,44 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
+@pytest.fixture(scope="module")
+def lifecycle():
+    """Wall-clock of each host check, bound as the deck lifecycle source."""
+    return HealthLifecycle()
+
+
+@pytest.fixture(scope="module")
+def host_res_dict():
+    """
+    Module-scoped structured host-check results for the Run Deck status matrix.
+
+    Each check merges its per-node verdict into this dict. The host_configs_cvs
+    profile names this fixture in sources.results, so session binding captures
+    it at module teardown.
+    """
+    return {}
+
+
+def _capture_host_rundeck(host_res_dict, cluster_dict, group, records, version=None):
+    """Best-effort: a reporting problem must not change the host-check pass/fail."""
+    if host_res_dict is None:
+        return
+    try:
+        meta = host_configs_rundeck.make_meta(cluster_dict, 'host_configs_cvs', version)
+        host_configs_rundeck.record_group(host_res_dict, group, records, meta=meta)
+    except Exception as exc:
+        log.warning("Host configs '%s': could not capture Run Deck results: %s", group, exc)
+
+
+def _fail_messages(messages):
+    for message in messages:
+        fail_test(message)
+
+
 # Main Test cases start from here ..
 
 
-def test_check_os_release(
-    orch,
-    config_dict,
-):
+def test_check_os_release(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Validate that each node's OS release matches the expected version.
 
@@ -117,18 +148,15 @@ def test_check_os_release(
     globals.error_list = []  # Reset error accumulator before running this test
     log.info('Testcase check OS Version')
     os_version = config_dict['os_version']  # Expected version substring/pattern
-    out_dict = orch.all.exec('cat /etc/os-release')
-    for node in out_dict.keys():
-        # If expected version is not present, extract the actual version and fail
-        if not re.search(f'{os_version}', out_dict[node], re.I):
-            match = re.search('VERSION="(([0-9\.\-\_A-Z]+)\s+)', out_dict[node], re.I)
-            actual_ver = match.group(1)
-            fail_test(f'Installed OS Version {actual_ver} not matching expected version {os_version} on node {node}')
-    # Consolidate and record the test result
+    with timed_stage(lifecycle, host_configs_rundeck.OS_RELEASE):
+        out_dict = orch.all.exec('cat /etc/os-release')
+    records, messages = host_configs_rundeck.eval_os_release(out_dict, os_version)
+    _fail_messages(messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.OS_RELEASE, records)
     update_test_result()
 
 
-def test_check_kernel_version(orch, config_dict):
+def test_check_kernel_version(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Validate that each node's kernel version matches the expected version.
 
@@ -152,20 +180,15 @@ def test_check_kernel_version(orch, config_dict):
     globals.error_list = []
     log.info('Testcase check Kernel Version')
     kernel_version = config_dict['kernel_version']
-    out_dict = orch.all.exec('uname -a')
-    for node in out_dict.keys():
-        # If expected version is not present, extract the actual version and fail
-        if not re.search(f'{kernel_version}', out_dict[node], re.I):
-            match = re.search('([0-9\.\-\_]+generic)', out_dict[node], re.I)
-            actual_ver = match.group(1)
-            fail_test(
-                f'Installed Kernel Version {actual_ver} not matching expected version {kernel_version} on node {node}'
-            )
-    # Consolidate and record the test result
+    with timed_stage(lifecycle, host_configs_rundeck.KERNEL_VERSION):
+        out_dict = orch.all.exec('uname -a')
+    records, messages = host_configs_rundeck.eval_kernel_version(out_dict, kernel_version)
+    _fail_messages(messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.KERNEL_VERSION, records)
     update_test_result()
 
 
-def test_check_bios_version(orch, config_dict):
+def test_check_bios_version(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Verify that each node's BIOS/firmware version matches the expected value.
 
@@ -187,18 +210,15 @@ def test_check_bios_version(orch, config_dict):
     globals.error_list = []
     log.info('Testcase check BIOS Version')
     bios_version = config_dict['bios_version']
-    out_dict = orch.all.exec('sudo dmidecode -s bios-version')
-    for node in out_dict.keys():
-        if not re.search(f'{bios_version}', out_dict[node], re.I):
-            match = re.search('([a-z0-9\_\.\-]+)', out_dict[node], re.I)
-            act_bios_ver = match.group(1)
-            fail_test(
-                f'Installed BIOS Version {act_bios_ver} not matching expected version {bios_version} on node {node}'
-            )
+    with timed_stage(lifecycle, host_configs_rundeck.BIOS_VERSION):
+        out_dict = orch.all.exec('sudo dmidecode -s bios-version')
+    records, messages = host_configs_rundeck.eval_bios_version(out_dict, bios_version)
+    _fail_messages(messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.BIOS_VERSION, records)
     update_test_result()
 
 
-def test_check_rocm_version(orch, config_dict):
+def test_check_rocm_version(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Verify that each node's ROCm version matches the expected value.
 
@@ -223,18 +243,15 @@ def test_check_rocm_version(orch, config_dict):
     globals.error_list = []
     log.info('Testcase check rocm version')
     rocm_version = config_dict['rocm_version']
-    out_dict = orch.all.exec('amd-smi version')
-    for node in out_dict.keys():
-        if not re.search(f'{rocm_version}', out_dict[node], re.I):
-            match = re.search('ROCm version:\s+([0-9\.]+)', out_dict[node], re.I)
-            actual_rocm_version = match.group(1)
-            fail_test(
-                f'Installed rocm version {actual_rocm_version} not matching expected version {rocm_version} on node {node}'
-            )
+    with timed_stage(lifecycle, host_configs_rundeck.ROCM_VERSION):
+        out_dict = orch.all.exec('amd-smi version')
+    records, messages, detected = host_configs_rundeck.eval_rocm_version(out_dict, rocm_version)
+    _fail_messages(messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.ROCM_VERSION, records, version=detected)
     update_test_result()
 
 
-def test_check_gpu_fw_version(orch, config_dict):
+def test_check_gpu_fw_version(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Validate GPU firmware versions on each node against expected versions.
 
@@ -271,20 +288,15 @@ def test_check_gpu_fw_version(orch, config_dict):
     globals.error_list = []
     log.info('Testcase check GPU Firmware versions')
     fw_dict = config_dict['fw_dict']
-    out_dict = get_amd_smi_fw_dict(orch.all)
-    for node in out_dict.keys():
-        for gpu_dict in out_dict[node]:
-            gpu_no = gpu_dict['gpu']
-            for fw_list_dict in gpu_dict['fw_list']:
-                fw_key = fw_list_dict['fw_id']
-                if fw_list_dict['fw_version'] != fw_dict[fw_key]:
-                    fail_test(
-                        f"For Firmware {fw_key} actual FW version {fw_list_dict['fw_version']} for gpu {gpu_no} on node {node} is not matching expected FW version {fw_dict[fw_key]}"
-                    )
+    with timed_stage(lifecycle, host_configs_rundeck.GPU_FW):
+        out_dict = get_amd_smi_fw_dict(orch.all)
+    records, messages = host_configs_rundeck.eval_firmware(out_dict, fw_dict)
+    _fail_messages(messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.GPU_FW, records)
     update_test_result()
 
 
-def test_check_pci_realloc(orch, config_dict):
+def test_check_pci_realloc(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Verify that the kernel command line contains the expected PCI realloc flag.
 
@@ -305,14 +317,15 @@ def test_check_pci_realloc(orch, config_dict):
     globals.error_list = []
     log.info('Testcase check pci realloc')
     pci_realloc = config_dict['pci_realloc']
-    out_dict = orch.all.exec('cat /proc/cmdline')
-    for node in out_dict.keys():
-        if not re.search(f'pci=realloc={pci_realloc}', out_dict[node], re.I):
-            fail_test(f'PCI realloc flag not set to {pci_realloc} on node {node}')
+    with timed_stage(lifecycle, host_configs_rundeck.PCI_REALLOC):
+        out_dict = orch.all.exec('cat /proc/cmdline')
+    records, messages = host_configs_rundeck.eval_pci_realloc(out_dict, pci_realloc)
+    _fail_messages(messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.PCI_REALLOC, records)
     update_test_result()
 
 
-def test_check_iommu_pt(orch, config_dict):
+def test_check_iommu_pt(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Verify that IOMMU is configured in pass-through mode (iommu=pt) on all nodes.
 
@@ -331,14 +344,15 @@ def test_check_iommu_pt(orch, config_dict):
 
     globals.error_list = []
     log.info('Testcase check IOMMU PT')
-    out_dict = orch.all.exec('cat /proc/cmdline')
-    for node in out_dict.keys():
-        if not re.search('iommu=pt', out_dict[node], re.I):
-            fail_test(f'IOMMU not set to pt on node {node}')
+    with timed_stage(lifecycle, host_configs_rundeck.IOMMU_PT):
+        out_dict = orch.all.exec('cat /proc/cmdline')
+    records, messages = host_configs_rundeck.eval_iommu_pt(out_dict)
+    _fail_messages(messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.IOMMU_PT, records)
     update_test_result()
 
 
-def test_check_numa_balancing(orch, config_dict):
+def test_check_numa_balancing(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Verify that automatic NUMA balancing is disabled across all nodes.
 
@@ -358,14 +372,15 @@ def test_check_numa_balancing(orch, config_dict):
     """
     globals.error_list = []
     log.info('Testcase check NUMA balancing')
-    out_dict = orch.all.exec('sudo sysctl kernel.numa_balancing')
-    for node in out_dict.keys():
-        if not re.search('=0|= 0', out_dict[node], re.I):
-            fail_test(f'NUMA balancing not disabled on node {node}')
+    with timed_stage(lifecycle, host_configs_rundeck.NUMA_BALANCING):
+        out_dict = orch.all.exec('sudo sysctl kernel.numa_balancing')
+    records, messages = host_configs_rundeck.eval_numa_balancing(out_dict)
+    _fail_messages(messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.NUMA_BALANCING, records)
     update_test_result()
 
 
-def test_check_online_memory(orch, config_dict):
+def test_check_online_memory(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Validate that the total online memory matches the expected value on each node.
 
@@ -388,16 +403,15 @@ def test_check_online_memory(orch, config_dict):
     globals.error_list = []
     log.info('Testcase check online memory')
     online_mem = config_dict['online_memory']
-    out_dict = orch.all.exec('lsmem')
-    for node in out_dict.keys():
-        if not re.search(f'Total online memory:\s+{online_mem}', out_dict[node], re.I):
-            match = re.search('Total online memory:\s+([0-9\.A-Za-z]+)', out_dict[node])
-            actual_mem = match.group(1)
-            fail_test(f'Total online memory {actual_mem} not matching expected online mem {online_mem} on node {node}')
+    with timed_stage(lifecycle, host_configs_rundeck.ONLINE_MEMORY):
+        out_dict = orch.all.exec('lsmem')
+    records, messages = host_configs_rundeck.eval_online_memory(out_dict, online_mem)
+    _fail_messages(messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.ONLINE_MEMORY, records)
     update_test_result()
 
 
-def test_check_pci_accelerators(orch, config_dict):
+def test_check_pci_accelerators(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Confirm that the expected number of GPUs (accelerators) are enumerated on PCIe.
 
@@ -421,18 +435,15 @@ def test_check_pci_accelerators(orch, config_dict):
     globals.error_list = []
     log.info('Testcase check online GPUs in pcie')
     gpu_count = config_dict['gpu_count']
-    out_dict = orch.all.exec('lspci | grep "accelerators" --color=never')
-    for node in out_dict.keys():
-        match_list = re.findall('accelerators:\s+Advanced', out_dict[node], re.I)
-        actual_gpu_count = len(match_list)
-        if int(gpu_count) != actual_gpu_count:
-            fail_test(
-                f'Expected GPU count in PCI {gpu_count} not matching actual GPU count {actual_gpu_count} on node {node}'
-            )
+    with timed_stage(lifecycle, host_configs_rundeck.PCI_ACCELERATORS):
+        out_dict = orch.all.exec('lspci | grep "accelerators" --color=never')
+    records, messages = host_configs_rundeck.eval_pci_accelerators(out_dict, gpu_count)
+    _fail_messages(messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.PCI_ACCELERATORS, records)
     update_test_result()
 
 
-def test_check_gpu_pcie_speed_width(orch, config_dict):
+def test_check_gpu_pcie_speed_width(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Verify PCIe link speed and width for each GPU on all nodes.
 
@@ -469,35 +480,30 @@ def test_check_gpu_pcie_speed_width(orch, config_dict):
     log.info('Testcase check online GPUs in pcie')
     gpu_pcie_speed = config_dict['gpu_pcie_speed']
     gpu_pcie_width = config_dict['gpu_pcie_width']
-    out_dict = get_gpu_pcie_bus_dict(orch.all)
-    cmd_list = []
-    node_0 = list(out_dict.keys())[0]
-    card_list = list(out_dict[node_0].keys())
+    records = {}
 
     # We are making an assumption that it is a homogenous cluster
     # and all nodes have same PCI Bus number
-    for card_no in card_list:
-        cmd_list = []
-        for node in out_dict.keys():
-            bus_no = out_dict[node][card_no]['PCI Bus']
-            cmd_list.append(f'sudo lspci -vvv -s {bus_no} | grep "LnkSta:" --color=never')
-        pci_dict = orch.all.exec_cmd_list(cmd_list)
-        for p_node in pci_dict.keys():
-            bus_no = out_dict[p_node][card_no]['PCI Bus']
-            if not re.search(f'Speed {gpu_pcie_speed}GT', pci_dict[p_node]):
-                fail_test(
-                    f'PCIe speed not matching for bus {bus_no} on node {p_node}, expected {gpu_pcie_speed}GT/s but got {pci_dict[p_node]}'
+    with timed_stage(lifecycle, host_configs_rundeck.GPU_PCIE):
+        out_dict = get_gpu_pcie_bus_dict(orch.all)
+        node_0 = list(out_dict.keys())[0]
+        card_list = list(out_dict[node_0].keys())
+        for card_no in card_list:
+            cmd_list = []
+            for node in out_dict.keys():
+                bus_no = out_dict[node][card_no]['PCI Bus']
+                cmd_list.append(f'sudo lspci -vvv -s {bus_no} | grep "LnkSta:" --color=never')
+            pci_dict = orch.all.exec_cmd_list(cmd_list)
+            _fail_messages(
+                host_configs_rundeck.absorb_gpu_pcie(
+                    records, pci_dict, out_dict, card_no, gpu_pcie_speed, gpu_pcie_width
                 )
-            if not re.search(f'Width x{gpu_pcie_width}', pci_dict[p_node]):
-                fail_test(
-                    f'PCIe width not matching for bus {bus_no} on node {p_node}, expected {gpu_pcie_width} but got {pci_dict[p_node]}'
-                )
-            if re.search('downgrade', pci_dict[p_node]):
-                fail_test(f'PCIe in downgraded state for bus {bus_no} on node {p_node}')
+            )
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.GPU_PCIE, records)
     update_test_result()
 
 
-def test_check_be_nic_pcie_speed_width(orch, config_dict):
+def test_check_be_nic_pcie_speed_width(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Verify PCIe link speed and width for each Backend NIC on all nodes.
 
@@ -517,35 +523,28 @@ def test_check_be_nic_pcie_speed_width(orch, config_dict):
 
     nic_pcie_speed = config_dict['nic_pcie_speed']
     nic_pcie_width = config_dict['nic_pcie_width']
+    records = {}
 
-    out_dict = linux_utils.get_gpu_nic_mapping_dict(orch.all)
-    node_0 = list(out_dict.keys())[0]
-    card_list = list(out_dict[node_0].keys())
-
-    for card_no in card_list:
-        cmd_list = []
-        for node in out_dict:
-            nic_bdf = out_dict[node][card_no]['nic_bdf']
-            cmd_list.append(f'sudo lspci -vvv -s {nic_bdf} | grep "LnkSta:" --color=never')
-        pci_dict = orch.all.exec_cmd_list(cmd_list)
-        for p_node in pci_dict:
-            output = pci_dict[p_node]
-            nic_bdf = out_dict[p_node][card_no]['nic_bdf']
-            if not re.search(f'Speed {nic_pcie_speed}GT', output):
-                fail_test(
-                    f'NIC PCIe speed mismatch for {nic_bdf} on {p_node}: expected {nic_pcie_speed}GT/s, got {output}'
+    with timed_stage(lifecycle, host_configs_rundeck.NIC_PCIE):
+        out_dict = linux_utils.get_gpu_nic_mapping_dict(orch.all)
+        node_0 = list(out_dict.keys())[0]
+        card_list = list(out_dict[node_0].keys())
+        for card_no in card_list:
+            cmd_list = []
+            for node in out_dict:
+                nic_bdf = out_dict[node][card_no]['nic_bdf']
+                cmd_list.append(f'sudo lspci -vvv -s {nic_bdf} | grep "LnkSta:" --color=never')
+            pci_dict = orch.all.exec_cmd_list(cmd_list)
+            _fail_messages(
+                host_configs_rundeck.absorb_nic_pcie(
+                    records, pci_dict, out_dict, card_no, nic_pcie_speed, nic_pcie_width
                 )
-            if not re.search(f'Width x{nic_pcie_width}', output):
-                fail_test(
-                    f'NIC PCIe width mismatch for {nic_bdf} on {p_node}: expected x{nic_pcie_width}, got {output}'
-                )
-            if re.search('downgrade', output):
-                fail_test(f'NIC PCIe in downgraded state for {nic_bdf} on {p_node}')
-
+            )
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.NIC_PCIE, records)
     update_test_result()
 
 
-def test_check_pci_acs(orch, config_dict):
+def test_check_pci_acs(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Verify PCIe ACS is disabled on all nodes.
 
@@ -564,14 +563,15 @@ def test_check_pci_acs(orch, config_dict):
     """
 
     globals.error_list = []
-    out_dict = orch.all.exec('sudo lspci -vv | grep ACSCtl | grep SrcValid+ --color=never')
-    for node in out_dict.keys():
-        if re.search('ACSCtl:', out_dict[node], re.I):
-            fail_test(f'PCIe ACS not disabled on node {node}')
+    with timed_stage(lifecycle, host_configs_rundeck.PCI_ACS):
+        out_dict = orch.all.exec('sudo lspci -vv | grep ACSCtl | grep SrcValid+ --color=never')
+    records, messages = host_configs_rundeck.eval_pci_acs(out_dict)
+    _fail_messages(messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.PCI_ACS, records)
     update_test_result()
 
 
-def test_check_dmesg_driver_errors(orch, config_dict):
+def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Check dmesg for AMDGPU driver errors on each node.
 
@@ -591,13 +591,15 @@ def test_check_dmesg_driver_errors(orch, config_dict):
     """
 
     globals.error_list = []
-    out_dict = orch.all.exec("sudo dmesg -T | grep -i amdgpu  | egrep -i 'fail|error' --color=never")
-    for node in out_dict.keys():
-        if re.search('fail|error', out_dict[node], re.I):
-            fail_test(f'Dmesg has amdgpu driver errors on node {node}')
+    with timed_stage(lifecycle, host_configs_rundeck.DMESG_DRIVER):
+        out_dict = orch.all.exec("sudo dmesg -T | grep -i amdgpu  | egrep -i 'fail|error' --color=never")
+    records, messages = host_configs_rundeck.eval_dmesg_driver(out_dict)
+    _fail_messages(messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_DRIVER, records)
     update_test_result()
-    out_dict = orch.all.exec("sudo dmesg -T | grep -i amdgpu  | egrep -i 'reset|hang|traceback' --color=never")
-    for node in out_dict.keys():
-        if re.search('reset|hang', out_dict[node], re.I):
-            fail_test(f'Dmesg has amdgpu reset/hang errors on node {node}')
+    with timed_stage(lifecycle, host_configs_rundeck.DMESG_RESET):
+        out_dict = orch.all.exec("sudo dmesg -T | grep -i amdgpu  | egrep -i 'reset|hang|traceback' --color=never")
+    records, messages = host_configs_rundeck.eval_dmesg_reset(out_dict)
+    _fail_messages(messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_RESET, records)
     update_test_result()

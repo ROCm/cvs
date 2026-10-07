@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "extends": "health_status_base",
+  "profile_id": "host_configs_cvs_rundeck",
+  "suite_id": "host_configs_cvs",
+  "report_basename": "host_configs_run_deck",
+  "title": "Host Config Run Deck",
+  "subtitle": "Platform host configuration · checks across the cluster",
+  "footer": "CVS host configs · render-only · per-node verdict from the collected host checks (pass / fail)",
+  "link_name": "Host Config Run Deck",
+  "sources": {
+    "results": "host_res_dict"
+  },
+  "lifecycle": {
+    "session_labels": [
+      "os_release",
+      "kernel_version",
+      "bios_version",
+      "rocm_version",
+      "gpu_fw",
+      "pci_realloc",
+      "iommu_pt",
+      "numa_balancing",
+      "online_memory",
+      "pci_accelerators",
+      "gpu_pcie",
+      "nic_pcie",
+      "pci_acs",
+      "dmesg_driver",
+      "dmesg_reset"
+    ]
+  },
+  "cards": [
+    {
+      "id": "results",
+      "hint": "Columns are host configuration checks. Open a cell for the expected value and what the node reported."
+    }
+  ]
+}
