@@ -1,5 +1,6 @@
 '''Unit tests for cvs/lib/inference/sglang/sglang_common.py.'''
 
+import json
 import unittest
 from unittest import mock
 
@@ -729,6 +730,29 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertTrue(hung)
         fail.assert_called_once()
         self.assertIn('completion_endpoint', fail.call_args.args[0])
+
+
+class TestSglangGpuTopology(unittest.TestCase):
+    def test_metric_command_requests_only_mem_usage(self):
+        """A bare `amd-smi metric` also reads --xgmi-err, and that read resets the xGMI error counters."""
+        tokens = sglang_common.AMD_SMI_METRIC_CMD.split()
+        self.assertEqual(tokens[:3], ['sudo', 'amd-smi', 'metric'])
+        self.assertCountEqual(tokens[3:], ['--mem-usage', '--json'])
+
+    def test_topology_counts_occupied_gpus_from_mem_usage_only_output(self):
+        """amd-smi returns only the mem_usage section for this command."""
+        payload = json.dumps(
+            [
+                {'gpu': 0, 'mem_usage': {'used_vram': {'value': 9000, 'unit': 'MB'}}},
+                {'gpu': 1, 'mem_usage': {'used_vram': {'value': 6000, 'unit': 'MB'}}},
+                {'gpu': 2, 'mem_usage': {'used_vram': {'value': 100, 'unit': 'MB'}}},
+            ]
+        )
+        host_exec = mock.Mock(return_value={'n0': payload})
+        topo = sglang_common.collect_sglang_gpu_topology(host_exec, {'server': ['n0']}, timeout=30)
+        host_exec.assert_called_once_with(sglang_common.AMD_SMI_METRIC_CMD, hosts=['n0'], timeout=30)
+        self.assertEqual(topo['groups']['server'], {'per_node': {'n0': 2}, 'total': 2})
+        self.assertEqual(topo['total_occupied_gpus'], 2)
 
 
 if __name__ == '__main__':

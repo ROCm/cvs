@@ -16,6 +16,11 @@ from dataclasses import dataclass
 # output file (raw amd-smi --json output is multi-line/pretty-printed, not NDJSON).
 _RECORD_SEP = "===GPU_POLL_RECORD_SEP==="
 
+# A bare `amd-smi metric` reads every section, including --xgmi-err, and that read
+# resets the xGMI error counters. --energy is left out because amd-smi accepts it
+# only on bare-metal Linux, so an SR-IOV guest would reject the whole command.
+_AMD_SMI_METRIC_CMD = "amd-smi metric --usage --mem-usage --json"
+
 # Human-readable derived metrics exposed as HTML rows (one row per entry per cell).
 # These are computed by the calling suite from the raw amd-smi snapshots and stored
 # under "gpu.<short>" keys in inf_res_dict.
@@ -201,13 +206,13 @@ def capture_gpu_metrics(orch, nodes=None, timeout_s=None) -> dict:
     all_entries = []
     if nodes is None:
         kwargs = {"timeout": timeout_s} if timeout_s is not None else {}
-        out = orch.exec_on_head("amd-smi metric --json", print_console=False, **kwargs)
+        out = orch.exec_on_head(_AMD_SMI_METRIC_CMD, print_console=False, **kwargs)
         for _host, text in out.items():
             all_entries.extend(_try_parse(text))
     else:
         kwargs = {"timeout": timeout_s} if timeout_s is not None else {}
         for _label, hosts in nodes:
-            out = orch.exec("amd-smi metric --json", hosts=hosts, print_console=False, **kwargs)
+            out = orch.exec(_AMD_SMI_METRIC_CMD, hosts=hosts, print_console=False, **kwargs)
             for _host, text in out.items():
                 all_entries.extend(_try_parse(text))
     return parse_gpu_metrics(all_entries)
@@ -258,7 +263,7 @@ def _capture_multi_node(orch, nodes, timeout_s=None) -> "tuple[dict, dict[str, i
     kwargs = {"timeout": timeout_s} if timeout_s is not None else {}
     for label, hosts in nodes:
         try:
-            out = orch.exec("amd-smi metric --json", hosts=hosts, print_console=False, **kwargs)
+            out = orch.exec(_AMD_SMI_METRIC_CMD, hosts=hosts, print_console=False, **kwargs)
             node_entries = []
             for _host, text in out.items():
                 node_entries.extend(_try_parse(text))
@@ -290,7 +295,7 @@ def _poller_script(marker: str, poll_interval_s: float, max_iterations: int) -> 
     return (
         "#!/bin/bash\n"
         f"for i in $(seq 1 {max_iterations}); do\n"
-        f"  amd-smi metric --json >> {shlex.quote(log_path)} 2>/dev/null\n"
+        f"  {_AMD_SMI_METRIC_CMD} >> {shlex.quote(log_path)} 2>/dev/null\n"
         f"  echo {shlex.quote(_RECORD_SEP)} >> {shlex.quote(log_path)}\n"
         f"  sleep {poll_interval_s}\n"
         "done\n"

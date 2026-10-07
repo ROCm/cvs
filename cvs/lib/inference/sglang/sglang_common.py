@@ -24,7 +24,8 @@ DEFAULT_SGLANG_PREFILL_SERV_PORT = "30001"
 DEFAULT_SGLANG_DECODE_SERV_PORT = "30002"
 DEFAULT_SGLANG_PREFILL_COORD_PORT = "40001"
 DEFAULT_SGLANG_DECODE_COORD_PORT = "40002"
-AMD_SMI_METRIC_CMD = "sudo amd-smi metric --json"
+# A bare `amd-smi metric` also reads --xgmi-err, and that read resets the xGMI error counters.
+AMD_SMI_METRIC_CMD = "sudo amd-smi metric --mem-usage --json"
 
 _DISAGG_PINNED_ROLE_KEYS = (
     "prefill_node_list",

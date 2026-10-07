@@ -108,8 +108,8 @@ See `docs/threshold-kinds.md` for the full threshold kind reference.
 ### `gpu.py`
 
 GPU metrics polling library. No side-effects at import time; safe to import in any suite —
-inference or training. Shells out to `amd-smi metric --json` via an `Orchestrator`; no
-suite-specific logic. See `docs/gpu-metrics.md` for the integration guide.
+inference or training. Shells out to `amd-smi metric --usage --mem-usage --json` via an
+`Orchestrator`; no suite-specific logic. See `docs/gpu-metrics.md` for the integration guide.
 
 **When to use**: add GPU utilisation rows to any suite's HTML report.
 Do not copy-paste this logic — import it.
@@ -120,7 +120,7 @@ Do not copy-paste this logic — import it.
 |---|---|---|
 | `GPU_METRICS` | `list[tuple[str, str]]` | 5 derived metric keys + units, in display order. Iterate to register `test_gpu_metric` parametrize IDs and threshold keys. |
 | `GPU_METRIC_UNITS` | `dict[str, str]` | `{key: unit}` convenience dict built from `GPU_METRICS`. |
-| `capture_gpu_metrics(orch, nodes=None)` | function | One `amd-smi metric --json` exec round. Returns `{gpu.*: value_or_None}` merged snapshot. |
+| `capture_gpu_metrics(orch, nodes=None)` | function | One `amd-smi metric --usage --mem-usage --json` exec round. Returns `{gpu.*: value_or_None}` merged snapshot. |
 | `agg_readings(readings)` | function | Aggregates a list of raw snapshots → `{peak_gpu_memory_mb, gpu_compute_util_pct, gpu_bandwidth_util_pct}`. |
 | `poll_gpu_metrics(orch, is_done_fn, ...)` | function | Polling loop. Returns list of raw snapshots. Never raises. |
 
@@ -174,6 +174,10 @@ Store as `inf_res_dict[f"gpu.{key}"]` so a `test_gpu_metric`-style test can retr
 
 #### Gotchas
 
+- **Never run a bare `amd-smi metric`.** It reads every section, including `--xgmi-err`, and
+  that read resets the xGMI error counters. Use `_AMD_SMI_METRIC_CMD`, which requests only
+  `--usage` and `--mem-usage`. `--energy` is left out because SR-IOV guests reject it, so
+  `gpu.energy_j` stays `None`.
 - **`amd-smi` runs on the host, not in the container.** Single-node: use `orch.exec_on_head(...)`,
   never `orch.exec_in_container(...)`. Multi-node: use `orch.exec(cmd, hosts=[...])` — same
   host-side constraint, just targeted at a specific host subset.
