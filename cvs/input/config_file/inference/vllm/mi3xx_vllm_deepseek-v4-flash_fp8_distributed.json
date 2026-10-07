@@ -16,6 +16,7 @@
     "image": "<changeme>",
     "_comment_socket_interfaces": "NCCL_SOCKET_IFNAME should be the Linux netdev associated with the selected RNICs; GLOO_SOCKET_IFNAME and TP_SOCKET_IFNAME generally use the frontend or control-plane NIC.",
     "_comment_gid_index": "Set NCCL_IB_GID_INDEX to the RoCE/IB GID index available on every selected HCA and node; inspect show_gids or ibv_devinfo -v inside the container and choose the matching fabric entry.",
+    "_comment_hf_offline": "Add HF_HUB_OFFLINE=1 and TRANSFORMERS_OFFLINE=1 to env only on clusters without Hugging Face Hub access. lm-eval inherits env too, so accuracy tasks then need their datasets pre-cached, for example in an HF_DATASETS_CACHE directory on a mount.",
     "env": {
       "NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
       "NCCL_SOCKET_IFNAME": "<changeme>",
@@ -23,7 +24,6 @@
       "TP_SOCKET_IFNAME": "<changeme>",
       "NCCL_IB_GID_INDEX": "<changeme>",
       "NCCL_DEBUG": "ERROR",
-      "HF_HUB_OFFLINE": "1",
       "VLLM_ROCM_USE_AITER": "1",
       "VLLM_ROCM_USE_AITER_MHA": "0",
       "GPU_ARCHS": "gfx942",

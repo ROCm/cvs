@@ -1012,6 +1012,17 @@ accuracy schema also exposes that release's evaluation controls, including
 ``gen_kwargs``. CVS owns the endpoint, model path, output path, and sample
 logging. Results land under ``<log_dir>/accuracy``.
 
+.. note::
+
+  Most lm-eval tasks download their dataset from the Hugging Face Hub, and
+  lm-eval inherits ``container.env``. If ``HF_HUB_OFFLINE=1`` or
+  ``TRANSFORMERS_OFFLINE=1`` is set there, a dataset that is not already cached
+  fails to load with ``OfflineModeIsEnabled``, and ``test_accuracy_eval`` fails
+  after the whole performance sweep. Set these flags only on clusters without
+  Hub access, and pre-cache every task's dataset first, for example by mounting
+  a populated datasets cache and pointing ``HF_DATASETS_CACHE`` at it. The
+  server needs no Hub access, because ``server_params.model`` is a local path.
+
 Accuracy metric keys
 --------------------
 
