@@ -163,6 +163,11 @@ class TestHostFlags(unittest.TestCase):
             ['Expected GPU count in PCI 8 not matching actual GPU count 2 on node n1'],
         )
 
+    def test_pci_acs_records_sudo_denial(self):
+        records, messages = host_configs_rundeck.eval_pci_acs({'n1': 'CVS_CMD_DENIED a password is required\n'})
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['PCIe ACS check could not run lspci on node n1'])
+
     def test_pci_acs_fails_only_when_acsctl_is_present(self):
         clean, clean_messages = host_configs_rundeck.eval_pci_acs({'n1': ''})
         dirty, dirty_messages = host_configs_rundeck.eval_pci_acs({'n1': 'ACSCtl: SrcValid+\n'})
@@ -170,6 +175,15 @@ class TestHostFlags(unittest.TestCase):
         self.assertEqual(clean_messages, [])
         self.assertEqual(dirty['n1']['status'], 'fail')
         self.assertEqual(dirty_messages, ['PCIe ACS not disabled on node n1'])
+
+    def test_dmesg_records_sudo_denial_before_error_patterns(self):
+        denied = 'CVS_CMD_DENIED sudo: a password is required\n'
+        driver, driver_messages = host_configs_rundeck.eval_dmesg_driver({'n1': denied})
+        reset, reset_messages = host_configs_rundeck.eval_dmesg_reset({'n1': denied})
+        self.assertEqual(driver['n1']['status'], 'fail')
+        self.assertEqual(driver_messages, ['Dmesg check could not run on node n1'])
+        self.assertEqual(reset['n1']['status'], 'fail')
+        self.assertEqual(reset_messages, ['Dmesg check could not run on node n1'])
 
     def test_dmesg_driver_and_reset_use_different_patterns(self):
         driver, driver_messages = host_configs_rundeck.eval_dmesg_driver({'n1': 'amdgpu: ring timeout error\n'})

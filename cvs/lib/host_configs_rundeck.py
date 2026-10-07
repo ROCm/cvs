@@ -149,6 +149,21 @@ def _must_match(out_dict, pattern, item_name, message_for, pass_summary):
     return records, messages
 
 
+def _take_denied(out_dict, token, item_name, message_for):
+    '''Split nodes whose output contains ``token`` into failures. Return (records, messages, rest).'''
+    records = {}
+    messages = []
+    rest = {}
+    for node, output in out_dict.items():
+        if token in str(output):
+            message = message_for(node)
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'denied')
+        else:
+            rest[node] = output
+    return records, messages, rest
+
+
 def _must_not_match(out_dict, pattern, item_name, message_for, pass_summary):
     '''Fail a node when ``pattern`` is present.'''
     records = {}
@@ -403,32 +418,59 @@ def absorb_nic_pcie(records, pci_dict, bus_dict, card_no, speed, width):
 
 def eval_pci_acs(out_dict):
     '''Return (node_records, fail_messages) for PCIe ACS. ACSCtl means ACS is enabled.'''
-    return _must_not_match(
+    denied_records, denied_messages, rest = _take_denied(
         out_dict,
+        'CVS_CMD_DENIED',
+        'acs',
+        lambda node: f'PCIe ACS check could not run lspci on node {node}',
+    )
+    records, messages = _must_not_match(
+        rest,
         'ACSCtl:',
         'acs',
         lambda node: f'PCIe ACS not disabled on node {node}',
         'ACS disabled',
     )
+    records.update(denied_records)
+    messages.extend(denied_messages)
+    return records, messages
 
 
 def eval_dmesg_driver(out_dict):
     '''Return (node_records, fail_messages) for amdgpu fail/error lines.'''
-    return _must_not_match(
+    denied_records, denied_messages, rest = _take_denied(
         out_dict,
+        'CVS_CMD_DENIED',
+        'amdgpu',
+        lambda node: f'Dmesg check could not run on node {node}',
+    )
+    records, messages = _must_not_match(
+        rest,
         'fail|error',
         'amdgpu',
         lambda node: f'Dmesg has amdgpu driver errors on node {node}',
         'clean',
     )
+    records.update(denied_records)
+    messages.extend(denied_messages)
+    return records, messages
 
 
 def eval_dmesg_reset(out_dict):
     '''Return (node_records, fail_messages) for amdgpu reset/hang lines.'''
-    return _must_not_match(
+    denied_records, denied_messages, rest = _take_denied(
         out_dict,
+        'CVS_CMD_DENIED',
+        'amdgpu',
+        lambda node: f'Dmesg check could not run on node {node}',
+    )
+    records, messages = _must_not_match(
+        rest,
         'reset|hang',
         'amdgpu',
         lambda node: f'Dmesg has amdgpu reset/hang errors on node {node}',
         'clean',
     )
+    records.update(denied_records)
+    messages.extend(denied_messages)
+    return records, messages
