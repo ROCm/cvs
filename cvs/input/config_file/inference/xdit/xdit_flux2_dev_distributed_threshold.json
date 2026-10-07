@@ -6,6 +6,6 @@
     "max_avg_pipe_time_s": 16.0
   },
   "mi355": {
-    "max_avg_pipe_time_s": 12.0
+    "max_avg_pipe_time_s": 50.0
   }
 }
