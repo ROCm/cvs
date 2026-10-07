@@ -9,8 +9,7 @@
   },
   "model": {
     "id": "deepseek-ai/DeepSeek-V4-Flash-Base",
-    "remote": 0,
-    "precision": "fp8"
+    "remote": 0
   },
   "enforce_thresholds": false,
   "container": {
@@ -45,9 +44,7 @@
         "--trust-remote-code"
       ],
       "env": {
-        "ATOM_DISABLE_MMAP": "true",
-        "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
-        "HF_HOME": "{paths.shared_fs}/.cache/huggingface"
+        "ATOM_DISABLE_MMAP": "true"
       }
     }
   },

@@ -532,6 +532,17 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertNotIn("HF_HUB_CACHE", pro.roles.server.env)
         self.assertNotIn("HF_HOME", pro.roles.server.env)
 
+    def test_load_v4_flash_does_not_override_model_cache(self):
+        root = Path(__file__).resolve().parents[3]
+        name = "mi3xx_atom_deepseek-v4-flash_single.json"
+        variant = _atom_config(root, name)
+        self.assertEqual(variant.gpu_arch, "mi3xx")
+        self.assertNotIn("HF_HUB_CACHE", variant.roles.server.env)
+        self.assertNotIn("HF_HOME", variant.roles.server.env)
+        self.assertTrue(variant.expected_cells())
+        for cell in variant.expected_cells():
+            self.assertIn(cell, variant.thresholds, f"{name} missing {cell}")
+
     def test_atom_threshold_files_use_aligned_keys_and_bare_metrics(self):
         root = Path(__file__).resolve().parents[3]
         atom_dir = root / "input/config_file/inference/atom"
