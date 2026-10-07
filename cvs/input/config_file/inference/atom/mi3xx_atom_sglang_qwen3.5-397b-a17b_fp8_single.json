@@ -64,9 +64,7 @@
     "env": {
       "SGLANG_USE_AITER": "1",
       "SGLANG_ROCM_ARCH": "gfx942",
-      "GPU_ARCHS": "gfx942",
-      "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
-      "HF_HOME": "{paths.shared_fs}/.cache/huggingface"
+      "GPU_ARCHS": "gfx942"
     }
   },
   "benchmark_params": {

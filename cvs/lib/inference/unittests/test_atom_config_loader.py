@@ -402,6 +402,8 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
                 self.assertEqual(variant.params.nnodes, nnodes)
                 self.assertEqual(variant.params.pipeline_parallel_size, pp)
                 self.assertTrue(variant.platform.gpu_metrics_poll)
+                self.assertNotIn("HF_HUB_CACHE", variant.roles.server.env)
+                self.assertNotIn("HF_HOME", variant.roles.server.env)
                 self.assertTrue(all(task.id for task in variant.accuracy.tasks))
                 self.assertTrue(all(f"PP={pp}" in cell for cell in variant.expected_cells()))
                 self.assertIn("accuracy", variant.thresholds)
