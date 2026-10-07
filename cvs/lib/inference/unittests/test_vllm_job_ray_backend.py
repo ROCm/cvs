@@ -142,8 +142,8 @@ def _responder_bootstrap_fail(fail_map):
 
 def _responder_serve_fail(bad_serve_hosts):
     """Ray/mp bootstrap detailed calls all succeed (exit 0, clean output); the
-    NON-detailed `vllm serve` launch returns EARLY_FAILURE_RE-matching output for
-    hosts in `bad_serve_hosts`, clean otherwise.
+    detailed `vllm serve` launch exits 0 but returns EARLY_FAILURE_RE-matching
+    output for hosts in `bad_serve_hosts`, clean otherwise.
 
     Exercises the post-bootstrap serve-launch EARLY_FAILURE check (the
     "vllm server failed to launch on ... (rank N)" RuntimeError site), which is
@@ -152,12 +152,12 @@ def _responder_serve_fail(bad_serve_hosts):
 
     def r(cmd, hosts, detailed):
         host = hosts[0] if hosts else HEAD
+        if "vllm serve" in cmd and host in bad_serve_hosts:
+            return {host: {"exit_code": 0, "output": _BAD, "stdout": _BAD}}
         if detailed:
             # No grep is issued by start_server; bootstrap detailed calls succeed.
             exit_code = 1 if "grep" in cmd else 0
             return {host: {"exit_code": exit_code, "output": _CLEAN, "stdout": ""}}
-        if "vllm serve" in cmd and host in bad_serve_hosts:
-            return {host: _BAD}
         return {host: ""}
 
     return r
@@ -653,7 +653,7 @@ class TestStartServerRayBootstrap(unittest.TestCase):
     # ---- Coverage-gap (finding 4): the post-bootstrap `vllm serve` launch has its
     # own EARLY_FAILURE_RE check (RuntimeError "vllm server failed to launch on ...
     # (rank N)"), distinct from the bootstrap checks above. No existing test returns
-    # EARLY_FAILURE output for the non-detailed serve launch, so these two sites --
+    # EARLY_FAILURE output for the serve launch, so these two sites --
     # the ray head launch and the mp non-head-rank launch -- were never exercised.
     def test_ray_head_serve_launch_failure_raises_rank0(self):
         # ray path: bootstrap (head + worker) succeeds, but the head's post-bootstrap
