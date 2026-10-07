@@ -315,6 +315,7 @@ BENIGN_DMESG_LINES = [
     "ast 0000:54:00.0: Using default configuration",
     "mpt3sas_cm0: CurrentHostPageSize is 0: Setting default host page size to 4k",
     "RAS: Correctable Errors collector initialized.",
+    "RAS: Uncorrectable Errors collector initialized.",
 ]
 
 REAL_FAULT_DMESG_LINES = [
@@ -326,6 +327,8 @@ REAL_FAULT_DMESG_LINES = [
     "amdgpu 0000:05:00.0: GPU fault detected: 146 0x0c680401",
     "BUG: unable to handle page fault for address: ffffc90000a3f000",
     "pcieport 0000:00:01.1: AER: Correctable error message received from 0000:01:00.0",
+    "pcieport 0000:00:01.1: AER: Uncorrectable (Non-Fatal) error message received from 0000:01:00.0",
+    "amdgpu 0000:05:00.0: amdgpu: Uncorrectable error detected in UMC inst: 0, chan_idx: 3",
 ]
 
 
