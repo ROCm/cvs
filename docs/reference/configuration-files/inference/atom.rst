@@ -64,8 +64,8 @@ still runs with ``cvs run atom``.
      - Config files
      - Notes
    * - ``mi3xx_atom_deepseek-r1_fp8``
-     - ``_single`` (``perf`` + ``mtp3`` profiles), ``_distributed`` (``vllm_atom`` PP=2)
-     - Native ATOM + multinode PP
+     - ``_single`` (``perf`` + ``mtp3`` profiles)
+     - Native ATOM perf + MTP-3
    * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8``
      - ``_single`` (``perf`` + ``mtp3`` profiles)
      - Native ATOM perf + MTP-3; lab pending for ``mtp3``
@@ -80,8 +80,8 @@ still runs with ``cvs run atom``.
      - ``_single`` (``perf`` + ``mtp3`` profiles)
      - Native ATOM MI355X copy; ``gpu_arch`` mi355x; bring-up thresholds; ``mtp3`` benchmark cells lab-run, GSM8K pending
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
-     - ``_single``
-     - vLLM parity (serving schema)
+     - ``_single``, ``_distributed``
+     - vLLM parity; ``_single`` uses serving schema; ``_distributed`` uses PP=2
    * - ``mi3xx_atom_vllm_gpt-oss-120b_mxfp4``
      - ``_single``
      - GPT-OSS MXFP4 vLLM parity (serving schema)
