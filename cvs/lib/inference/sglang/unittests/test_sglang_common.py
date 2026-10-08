@@ -3,6 +3,8 @@
 import unittest
 from unittest import mock
 
+import pytest
+
 from cvs.lib.inference.sglang import sglang_common
 
 
@@ -31,6 +33,7 @@ Serving Benchmark Result
 """
 
 
+# Records only pytest.fail(); an AssertionError escapes, since bare asserts are stripped under python -O.
 class _FakeSubtests:
     def __init__(self):
         self.failures = []
@@ -43,7 +46,7 @@ class _FakeSubtests:
             return self
 
         def __exit__(self, exc_type, exc, tb):
-            if exc_type is not None:
+            if exc_type is not None and issubclass(exc_type, pytest.fail.Exception):
                 self._outer.failures.append(exc)
                 return True
             return False
@@ -433,7 +436,7 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertFalse(passed)
         rows = {r['metric']: r['status'] for r in lifecycle.perf_metric_rows['nid']}
         self.assertEqual(rows, {'mean_ttft_ms': 'fail', 'p99_ttft_ms': 'pass'})
-        self.assertEqual(len(subtests.failures), 1)
+        self.assertEqual([str(exc) for exc in subtests.failures], ['mean_ttft_ms: actual 500.0 ms > max 100.0 ms'])
 
     def test_verify_inference_results_subtests_record_only_passes_on_violation(self):
         host_exec = mock.Mock(return_value={'head': 'time'})

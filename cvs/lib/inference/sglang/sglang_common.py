@@ -10,6 +10,8 @@ import shlex
 import time
 from typing import Any, Callable, Mapping
 
+import pytest
+
 from cvs.lib import globals
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
 from cvs.lib.utils_lib import fail_test
@@ -597,8 +599,8 @@ def verify_inference_results_subtests(
             if violation is not None:
                 all_passed = False
             with subtests.test(test_name=test_name, node=node, metric=metric):
-                if enforce_thresholds:
-                    assert violation is None, violation
+                if enforce_thresholds and violation is not None:
+                    pytest.fail(violation)
 
     return all_passed, finalize_inference_verification(host_exec)
 
