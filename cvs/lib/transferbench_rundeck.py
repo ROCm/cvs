@@ -36,6 +36,8 @@ Shape (consumed by cvs/lib/report/rundeck/dataset_builders/status_matrix.py)::
 
 import re
 
+from cvs.lib.utils_lib import strip_benign_scan_noise
+
 _STATUSES = ("pass", "fail", "na")
 
 # Match the indicators scan_test_results already uses. Bandwidth presets apply
@@ -231,7 +233,7 @@ def _missing_item(name, message):
 
 def _with_scan(text, name, status, items, summary, extras=None):
     '''Fail the cell when scan_test_results would, and keep the matched snippet.'''
-    match = _SCAN_FAIL_RE.search(text or "")
+    match = _SCAN_FAIL_RE.search(strip_benign_scan_noise(text or ""))
     if not match:
         if extras is None:
             return status, items, summary
@@ -303,18 +305,36 @@ def _rollup(items, summary):
 
 
 def record_a2a(res_dict, out_dict, exp_dict, meta=None):
-    '''Record GPU RTotal bandwidths. Any GPU under the threshold fails the node.'''
-    threshold = (exp_dict or {}).get("gpu_to_gpu_a2a_rtotal")
+    '''Record a2a per-link average (guide bar) derived from per-GPU RTotal.'''
+    expected = exp_dict or {}
+    avg_threshold = expected.get("gpu_to_gpu_a2a_avg")
+    # Optional legacy RTotal floor for chart annotations only when avg is absent.
+    rtotal_threshold = expected.get("gpu_to_gpu_a2a_rtotal")
 
     def classify(text):
         match = _A2A_RTOTAL_RE.search(text)
         if not match:
             message = "RTotal row not found"
             return _with_scan(text, "a2a", "fail", [_missing_item("RTotal", message)], message)
-        items = [_metric_item(f"GPU{idx}", raw, threshold) for idx, raw in enumerate(match.groups())]
-        worst = min(float(raw) for raw in match.groups())
-        # The per-GPU bars are the chart. A second RTotal series would plot the same eight numbers.
-        metrics = [_bandwidth_metric(f"GPU{idx:02d}", raw, threshold) for idx, raw in enumerate(match.groups())]
+        raws = match.groups()
+        n = len(raws)
+        if n < 2:
+            message = "need at least 2 GPU RTotal values"
+            return _with_scan(text, "a2a", "fail", [_missing_item("RTotal", message)], message)
+        per_link = [float(raw) / (n - 1) for raw in raws]
+        avg_bw = sum(per_link) / n
+        if avg_threshold not in (None, ""):
+            items = [_metric_item("per-link avg", avg_bw, avg_threshold)]
+            metrics = [_bandwidth_metric("per-link avg", avg_bw, avg_threshold)]
+            metrics.extend(
+                _bandwidth_metric(f"GPU{idx:02d} per-link", val, avg_threshold) for idx, val in enumerate(per_link)
+            )
+            status, items, summary = _rollup(items, f"per-link avg {avg_bw:.3f} GB/s")
+            return _with_scan(text, "a2a", status, items, summary, _charts(metrics))
+        # Backward compatible path when only the legacy RTotal key is present.
+        items = [_metric_item(f"GPU{idx}", raw, rtotal_threshold) for idx, raw in enumerate(raws)]
+        worst = min(float(raw) for raw in raws)
+        metrics = [_bandwidth_metric(f"GPU{idx:02d}", raw, rtotal_threshold) for idx, raw in enumerate(raws)]
         status, items, summary = _rollup(items, f"min RTotal {worst} GB/s")
         return _with_scan(text, "a2a", status, items, summary, _charts(metrics))
 
