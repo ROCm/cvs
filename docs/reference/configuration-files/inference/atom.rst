@@ -131,7 +131,7 @@ List the directory with ``cvs config list inference/atom``. Each config's ``thre
      - ``vllm_atom``
    * - ``mi3xx_atom_vllm_glm-5.1_fp8``
      - ``_single``, ``_distributed``
-     - vLLM recipe only; bring-up thresholds
+     - vLLM recipe only; MI325X single-node passed smoke, health, short cells, and GSM8K; distributed bring-up thresholds
    * - ``mi3xx_atom_vllm_deepseek-v4-flash_fp8``
      - ``_single``
      - ``vllm_atom``

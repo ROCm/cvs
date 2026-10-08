@@ -1,5 +1,5 @@
 {
-  "_comment": "GLM-5.1-FP8 vLLM recipe. ATOM has no native openai_server or SGLang serve recipe for this checkpoint. Bring-up thresholds.",
+  "_comment": "GLM-5.1-FP8 vLLM recipe. ATOM has no native openai_server or SGLang serve recipe for this checkpoint. The MI325X single-node run passed smoke, server health, the short cells, and GSM8K. Thresholds stay bring-up.",
   "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_vllm_glm-5.1_fp8_single_threshold.json",
