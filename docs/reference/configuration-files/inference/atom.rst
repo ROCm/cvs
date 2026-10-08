@@ -87,7 +87,7 @@ still runs with ``cvs run atom``.
      - vLLM parity (serving schema)
    * - ``mi355x_atom_vllm_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
-     - vLLM parity on MI355X; ``gpu_arch`` mi355x; bring-up thresholds
+     - vLLM parity on MI355X; ``gpu_arch`` mi355x; bring-up thresholds; single-node lab-run, PP=2 pending
    * - ``mi3xx_atom_vllm_gpt-oss-120b_mxfp4``
      - ``_single``
      - GPT-OSS MXFP4 vLLM parity (serving schema)
