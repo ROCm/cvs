@@ -223,7 +223,7 @@ CVS copies ``NCCL_IB_HCA``, ``NCCL_IB_GID_INDEX``, ``NCCL_SOCKET_IFNAME``,
    * - ``mi3xx_*_distributed``
      - Broadcom bnxt library mounts, ``NCCL_IB_HCA`` ``rdma0``–``rdma7``, socket ``eno0``, GID index ``3``, ``NCCL_DEBUG`` ``ERROR``.
    * - ``mi35x_*_distributed``
-     - Ionic userspace library mounts, ``NCCL_IB_HCA`` ``ionic_0``–``ionic_7``, socket ``ens3``, GID index ``1``, ``NCCL_DMABUF_ENABLE`` ``0``, ``NCCL_DEBUG`` ``INFO``.
+     - Ionic userspace library mounts, ``NCCL_IB_HCA`` ``ionic_0``–``ionic_7``, socket ``ens3``, GID index ``1``, ``NCCL_DMABUF_ENABLE`` ``0``, ``NCCL_DEBUG`` ``ERROR``. The versioned ``libionic.so`` mount contains ``<changeme>``.
 
 Replace every ``<changeme>`` value, and edit the Ionic or bnxt library paths when the host
 build differs. ``master_addr`` is optional; an empty value probes the first address on

@@ -318,6 +318,7 @@ class TestStageRemoteBenchmarkOutputs(unittest.TestCase):
         self.assertAlmostEqual(result.avg_pipe_time_s, 0.97)
         self.assertEqual(result.repetition_count, 1)
         self.assertTrue(result.image_paths)
+        self.assertNotIn(base64.b64encode(b"png").decode("ascii"), text)
 
     def test_each_node_keeps_its_own_timing(self):
         def payload(pipe_time):

@@ -29,8 +29,9 @@ _ARTIFACT_END = "XDIT_ARTIFACTS_END"
 _ARTIFACT_COLLECT_TIMEOUT_S = 300
 _STAGED_ARTIFACT_DIRS = []
 
-# Controller parse has no view of node-local storage. The writer node prints the
-# benchmark files; the controller rebuilds just enough of the tree to parse.
+# Controller parse has no view of node-local storage. JSON is copied in full.
+# Image and video bodies are omitted so stdout stays under the agent inline cap;
+# parse only checks that those files exist.
 _REMOTE_COLLECT_SCRIPT = """
 import base64, json, os, sys
 root = sys.argv[1]
@@ -47,9 +48,10 @@ if os.path.isdir(root):
             if not keep:
                 continue
             path = os.path.join(dirpath, name)
+            media = name.endswith(".png") or name.endswith(".mp4")
             try:
                 with open(path, "rb") as handle:
-                    blob = handle.read()
+                    blob = b"" if media else handle.read()
             except OSError:
                 continue
             items.append({"rel": os.path.relpath(path, root), "b64": base64.b64encode(blob).decode("ascii")})
