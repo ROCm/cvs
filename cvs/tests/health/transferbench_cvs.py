@@ -291,6 +291,15 @@ def detect_rocm_path(orch, config_rocm_path):
     return '/opt/rocm'
 
 
+def a2a_per_link_average(rtotal_values):
+    """Mean per-link GB/s from per-GPU RTotal values (each GPU has N-1 peers)."""
+    values = [float(v) for v in rtotal_values]
+    n = len(values)
+    if n < 2:
+        raise ValueError(f'need at least 2 GPU RTotal values, got {n}')
+    return sum(v / (n - 1) for v in values) / n
+
+
 def parse_tb_a2a_bw(out_dict, exp_dict):
     for node in out_dict.keys():
         log.info("%s", exp_dict)
@@ -301,11 +310,20 @@ def parse_tb_a2a_bw(out_dict, exp_dict):
         if not rtotal_list:
             fail_test(f"RTotal row not found in TransferBench a2a output on node {node}")
             continue
-        for gpu_bw in list(rtotal_list[0]):
-            if float(gpu_bw) < float(exp_dict['gpu_to_gpu_a2a_rtotal']):
-                fail_test(
-                    f"Actual GPU a2a bandwidth {gpu_bw} in transferbench a2a test lower than expected {exp_dict['gpu_to_gpu_a2a_rtotal']} on node {node}"
-                )
+        # Guide bar is per-link average (≥32.9), not aggregate RTotal (AIMVT-449 / PB-1).
+        avg_key = 'gpu_to_gpu_a2a_avg'
+        if avg_key not in exp_dict:
+            fail_test(f"Missing {avg_key} in transferbench.results for a2a gate on node {node}")
+            continue
+        try:
+            avg_bw = a2a_per_link_average(rtotal_list[0])
+        except ValueError as exc:
+            fail_test(f"Cannot derive a2a per-link average on node {node}: {exc}")
+            continue
+        if avg_bw < float(exp_dict[avg_key]):
+            fail_test(
+                f"Actual a2a per-link average {avg_bw:.3f} GB/s lower than expected {exp_dict[avg_key]} on node {node}"
+            )
 
 
 def parse_tb_p2p_bw(out_dict, exp_dict):
