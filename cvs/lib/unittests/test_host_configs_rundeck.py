@@ -1,5 +1,6 @@
 '''Unit tests for cvs.lib.host_configs_rundeck (Run Deck capture for host config checks).'''
 
+import shlex
 import unittest
 
 from cvs.lib import host_configs_rundeck
@@ -224,6 +225,124 @@ class TestPcieLinks(unittest.TestCase):
         )
         self.assertIn('expected x16', messages[1])
         self.assertEqual(messages[2], 'NIC PCIe in downgraded state for 0000:41:00.0 on n1')
+
+
+class TestNicLinkSpeed(unittest.TestCase):
+    def test_setting_defaults_and_parses(self):
+        self.assertEqual(host_configs_rundeck.parse_nic_link_speed_setting(None), 400000)
+        for value, expected in [('400000', 400000), (400000, 400000), (' 200000 ', 200000)]:
+            with self.subTest(value=value):
+                self.assertEqual(host_configs_rundeck.parse_nic_link_speed_setting(value), expected)
+
+    def test_setting_rejects_invalid(self):
+        for value in ('400G', '0', '-1', ''):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'nic_link_speed'):
+                host_configs_rundeck.parse_nic_link_speed_setting(value)
+
+    def test_cmd_dedups_sorts_and_quotes(self):
+        self.assertEqual(
+            host_configs_rundeck.nic_link_speed_cmd(['eth1', 'eth0', 'eth1']),
+            'for i in eth0 eth1; do echo "$i $(cat "/sys/class/net/$i/speed" 2>/dev/null)"; done',
+        )
+        name = 'eth0;touch /tmp/unwanted'
+        self.assertIn(shlex.quote(name), host_configs_rundeck.nic_link_speed_cmd([name]))
+
+    def test_cmd_empty_is_noop(self):
+        self.assertEqual(host_configs_rundeck.nic_link_speed_cmd([]), 'true')
+
+    def test_parse_skips_unreadable_lines(self):
+        self.assertEqual(
+            host_configs_rundeck.parse_nic_link_speeds('eth0 400000\neth1 \neth2 -1\n'),
+            {'eth0': 400000, 'eth2': -1},
+        )
+
+    def test_pass(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': 'eth0 400000\neth1 400000\n'}, {'n1': ['eth0', 'eth1']}, 400000
+        )
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n1']['items_summary'], '2 x 400000 Mb/s')
+        self.assertEqual(records['n1']['items'], [])
+        self.assertEqual(messages, [])
+
+    def test_lower_speed_fails_with_node_iface_actual(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': 'eth0 400000\neth1 200000\n'}, {'n1': ['eth0', 'eth1']}, 400000
+        )
+        message = 'Backend NIC eth1 link speed 200000 Mb/s not matching expected 400000 Mb/s on node n1'
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], '1 of 2 NIC(s) not at 400000 Mb/s')
+        self.assertEqual(records['n1']['items'], [{'name': 'eth1 speed', 'status': 'fail', 'message': message}])
+        self.assertEqual(messages, [message])
+
+    def test_unreadable_speed_fails(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': 'eth0 \n', 'n2': 'SSH connection failed'},
+            {'n1': ['eth0', 'eth1'], 'n2': ['eth0', 'eth1']},
+            400000,
+        )
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n2']['status'], 'fail')
+        self.assertEqual(len(messages), 4)
+        for node in ('n1', 'n2'):
+            for iface in ('eth0', 'eth1'):
+                self.assertIn(
+                    f'Backend NIC {iface} link speed unreadable from /sys/class/net/{iface}/speed, '
+                    f'expected 400000 Mb/s on node {node}',
+                    messages,
+                )
+
+    def test_unknown_speed_reports_link_down(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': 'eth0 -1\neth1 4294967295\n'}, {'n1': ['eth0', 'eth1']}, 400000
+        )
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(
+            messages,
+            [
+                'Backend NIC eth0 link speed unknown (-1), link may be down, expected 400000 Mb/s on node n1',
+                'Backend NIC eth1 link speed unknown (4294967295), link may be down, expected 400000 Mb/s on node n1',
+            ],
+        )
+
+    def test_per_node_lists_ignore_other_nodes_interfaces(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': 'ethA 400000\nethB 200000\n', 'n2': 'ethA 200000\nethB 400000\n'},
+            {'n1': ['ethA'], 'n2': ['ethB']},
+            400000,
+        )
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n2']['status'], 'pass')
+        self.assertEqual(messages, [])
+
+    def test_node_without_nics_fails(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed({'n1': ''}, {'n1': [], 'n2': ['eth0']}, 400000)
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'no NICs')
+        self.assertEqual(records['n2']['status'], 'fail')
+        self.assertEqual(
+            messages,
+            [
+                'No backend NICs found on node n1 to check link speed',
+                'Backend NIC eth0 link speed unreadable from /sys/class/net/eth0/speed, '
+                'expected 400000 Mb/s on node n2',
+            ],
+        )
+
+    def test_custom_expected_speed(self):
+        slow, slow_messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': 'eth0 400000\n'}, {'n1': ['eth0']}, 800000
+        )
+        matching, matching_messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': 'eth0 200000\n'}, {'n1': ['eth0']}, 200000
+        )
+        self.assertEqual(slow['n1']['status'], 'fail')
+        self.assertEqual(
+            slow_messages,
+            ['Backend NIC eth0 link speed 400000 Mb/s not matching expected 800000 Mb/s on node n1'],
+        )
+        self.assertEqual(matching['n1']['status'], 'pass')
+        self.assertEqual(matching_messages, [])
 
 
 class TestRecordGroup(unittest.TestCase):
