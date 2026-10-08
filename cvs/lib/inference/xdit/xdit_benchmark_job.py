@@ -113,6 +113,7 @@ def stage_remote_benchmark_outputs(s_phdl, output_dirs_by_node):
     Returns a node -> local directory map for nodes whose files were readable.
     Nodes that share one remote directory reuse the copy from the node that had it.
     """
+    # xdit_flux_job imports this module at the bottom; a top-level import here cycles.
     from cvs.lib.inference.xdit.xdit_flux_job import _exec_cmd_list_on_nodes, _exec_result_output
 
     nodes = [node for node, path in output_dirs_by_node.items() if path]
