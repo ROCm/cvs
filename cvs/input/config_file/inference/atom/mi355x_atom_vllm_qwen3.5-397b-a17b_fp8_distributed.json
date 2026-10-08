@@ -1,6 +1,5 @@
 {
   "_comment": "Qwen3.5-397B-A17B FP8 distributed vLLM PP=2 across two nodes. MI355X bring-up copy of the gfx942 recipe; thresholds are not a gate.",
-  "gpu_arch": "mi355x",
   "enforce_thresholds": false,
   "threshold_json": "mi355x_atom_vllm_qwen3.5-397b-a17b_fp8_distributed_threshold.json",
   "paths": {
@@ -11,8 +10,7 @@
   },
   "model": {
     "id": "amd/Qwen3.5-397B-A17B-FP8",
-    "remote": 0,
-    "precision": "fp8"
+    "remote": 0
   },
   "container": {
     "lifetime": "per_run",
@@ -61,9 +59,7 @@
       "VLLM_ROCM_USE_AITER": "1",
       "AMDGCN_USE_BUFFER_OPS": "0",
       "NCCL_IB_GID_INDEX": "3",
-      "NCCL_DEBUG": "ERROR",
-      "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
-      "HF_HOME": "{paths.shared_fs}/.cache/huggingface"
+      "NCCL_DEBUG": "ERROR"
     }
   },
   "benchmark_params": {
