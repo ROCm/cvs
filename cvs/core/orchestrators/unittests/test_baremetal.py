@@ -298,10 +298,10 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
         return [os.path.join(self.tmpdir, name) for name in os.listdir(self.tmpdir)]
 
     @staticmethod
-    def _run(cmd, mpirun_status=0, mpirun_signal="", shell="bash"):
+    def _run(cmd, mpirun_status=0, mpirun_signal="", interpreter="bash"):
         # sh as well as bash: managed-compute agents run commands through /bin/sh.
         return subprocess.run(
-            [shell, "-c", cmd],
+            [interpreter, "-c", cmd],
             capture_output=True,
             text=True,
             env=dict(os.environ, FAKE_MPIRUN_STATUS=str(mpirun_status), FAKE_MPIRUN_SIGNAL=mpirun_signal),
@@ -328,13 +328,13 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
         self.assertEqual(self._hostfile_given_to_mpirun(cmd), created)
 
     def test_build_mpi_cmd_result_removes_hostfile_and_keeps_mpirun_status(self):
-        for shell in ("bash", "sh"):
+        for interpreter in ("bash", "sh"):
             for status in (0, 7):
-                with self.subTest(shell=shell, mpirun_status=status):
+                with self.subTest(interpreter=interpreter, mpirun_status=status):
                     cmd = self._build()
                     # Composed the way a caller might: `&&` must see mpirun's
                     # status, not that of the cleanup that runs after it.
-                    proc = self._run(f"{cmd} && echo after-mpirun", mpirun_status=status, shell=shell)
+                    proc = self._run(f"{cmd} && echo after-mpirun", mpirun_status=status, interpreter=interpreter)
                     self.assertEqual(proc.returncode, status, proc.stderr)
                     self.assertEqual("after-mpirun" in proc.stdout, status == 0)
                     self.assertIn("10.0.0.2 slots=1\n", proc.stdout)
@@ -343,11 +343,11 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
     def test_build_mpi_cmd_result_removes_hostfile_when_its_shell_is_signalled(self):
         # A scheduler cancelling the job (SIGTERM), a dropped terminal (SIGHUP),
         # or Ctrl-C (SIGINT) must not leave the hostfile behind.
-        for shell in ("bash", "sh"):
+        for interpreter in ("bash", "sh"):
             for signal_name, status in (("HUP", 129), ("INT", 130), ("TERM", 143)):
-                with self.subTest(shell=shell, signal=signal_name):
+                with self.subTest(interpreter=interpreter, signal=signal_name):
                     cmd = self._build()
-                    proc = self._run(f"{cmd} && echo after-mpirun", mpirun_signal=signal_name, shell=shell)
+                    proc = self._run(f"{cmd} && echo after-mpirun", mpirun_signal=signal_name, interpreter=interpreter)
                     self.assertEqual(proc.returncode, status, proc.stderr)
                     self.assertNotIn("after-mpirun", proc.stdout)
                     self.assertEqual(self._created_files(), [])
@@ -357,14 +357,14 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
         # comment must not swallow the cleanup, and a stray `)` must not close
         # the subshell early: the command fails as a syntax error, as it would
         # on its own, rather than report the status of whatever follows.
-        for shell in ("bash", "sh"):
-            with self.subTest(shell=shell, rank_cmd="trailing comment"):
-                proc = self._run(self._build(rank_cmd="echo hi # note"), mpirun_status=7, shell=shell)
+        for interpreter in ("bash", "sh"):
+            with self.subTest(interpreter=interpreter, rank_cmd="trailing comment"):
+                proc = self._run(self._build(rank_cmd="echo hi # note"), mpirun_status=7, interpreter=interpreter)
                 self.assertEqual(proc.returncode, 7, proc.stderr)
                 self.assertIn("hostfile=", proc.stdout)
                 self.assertEqual(self._created_files(), [])
-            with self.subTest(shell=shell, rank_cmd="stray paren"):
-                proc = self._run(self._build(rank_cmd="echo hi ) ; ( true"), mpirun_status=7, shell=shell)
+            with self.subTest(interpreter=interpreter, rank_cmd="stray paren"):
+                proc = self._run(self._build(rank_cmd="echo hi ) ; ( true"), mpirun_status=7, interpreter=interpreter)
                 self.assertNotEqual(proc.returncode, 0, proc.stdout)
                 self.assertNotIn("hostfile=", proc.stdout)
                 self.assertEqual(self._created_files(), [])
