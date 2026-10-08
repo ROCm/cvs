@@ -18,9 +18,7 @@ from cvs.lib import node_scraper_adapter
 
 err_patterns_dict = {
     'gpu_reset': 'GPU reset begin|GPU hang|cp might be in an unrecoverable state|fence wait loop timeout expired',
-    # `(?<!Firmware )Bug:` still matches a kernel BUG:. `[Firmware Bug]:` is the
-    # benign hypervisor warning VMware guests emit for APIC/TSC quirks.
-    'crash': 'crashed|Traceback|cut here|(?<!Firmware )Bug:|Call Trace|RIP:|end trace|amdgpu: Fatal error|segfault|show_stack|dump_stack|fault ',
+    'crash': 'crashed|Traceback|cut here|Bug:|Call Trace|RIP:|end trace|amdgpu: Fatal error|segfault|show_stack|dump_stack|fault ',
     'test_fail': 'Test failure',
     # A zero PROTECTION_FAULT_STATUS is a cleared register, not a fault.
     'fault': r'no-retry page fault|Illegal register access|PROTECTION_FAULT_STATUS(?!\s*:\s*0x0+\b)',
@@ -159,10 +157,6 @@ def _node_scraper_scan(output_dict, analysis_args=None, source_label='Dmesg'):
             lines = node_scraper_adapter.event_match_lines([event])
             line = lines[0] if lines else ''
             if dmesg_noise.dmesg_line_is_benign(line):
-                continue
-            priority = str(event.get('priority') or 'ERROR').upper()
-            if priority == 'WARNING':
-                log.warning('WARN - non-fatal %s on node %s: %s', source_label, node, line)
                 continue
             if not line:
                 continue
@@ -791,19 +785,10 @@ def verify_driver_errors(phdl):
             )
             for event in events:
                 lines = node_scraper_adapter.event_match_lines([event])
-                line = lines[0] if lines else (event.get('description') or '')
+                line = lines[0] if lines else ''
                 if dmesg_noise.dmesg_line_is_benign(line):
                     continue
-                priority = str(event.get('priority') or 'ERROR').upper()
-                if priority == 'WARNING':
-                    log.warning('WARN - non-fatal amdgpu dmesg on node %s: %s', node, line)
-                    continue
-                match = event.get('match_content')
-                if isinstance(match, (list, tuple)):
-                    text = ' '.join(str(part) for part in match if part)
-                else:
-                    text = str(match or '')
-                if 'amdgpu' in text.lower() or event.get('category') == 'SW_DRIVER':
+                if 'amdgpu' in line.lower() or event.get('category') == 'SW_DRIVER':
                     msg = f'ERROR !! amdgpu driver errors detected in dmesg on node {node}: {line}'
                     fail_test(msg)
                     err_dict[node].append(line)

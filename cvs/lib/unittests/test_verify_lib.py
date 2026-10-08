@@ -183,7 +183,7 @@ class TestFullDmesgScan(unittest.TestCase):
 
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
-    def test_node_scraper_warning_does_not_fail(self, mock_parse, mock_fail_test):
+    def test_node_scraper_warning_still_fails(self, mock_parse, mock_fail_test):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [
             {
@@ -201,15 +201,18 @@ class TestFullDmesgScan(unittest.TestCase):
 
         result = verify_lib.full_dmesg_scan(phdl)
 
-        self.assertEqual(result["node1"], [])
-        mock_fail_test.assert_not_called()
+        self.assertTrue(result["node1"])
+        mock_fail_test.assert_called()
 
     def test_firmware_bug_is_not_a_crash_pattern(self):
         firmware = (
             "[Firmware Bug]: cpu 0, try to use APIC520 (LVT offset 2) for vector 0xf4, "
             "but the register is already in use for vector 0x0 on this cpu"
         )
+        # "[Firmware Bug]:" is "Bug]:" so the crash pattern's "Bug:" never matched it.
+        # Suppression is dmesg_line_is_benign, not this regex.
         self.assertIsNone(re.search(verify_lib.err_patterns_dict["crash"], firmware, re.I))
+        self.assertTrue(verify_lib.dmesg_noise.dmesg_line_is_benign(firmware))
         self.assertIsNotNone(re.search(verify_lib.err_patterns_dict["crash"], "kernel BUG: unable to handle", re.I))
         zero_status = "VM_L2_PROTECTION_FAULT_STATUS:0x00000000"
         self.assertIsNone(re.search(verify_lib.err_patterns_dict["fault"], zero_status, re.I))

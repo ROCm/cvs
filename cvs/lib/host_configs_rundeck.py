@@ -414,26 +414,20 @@ def eval_pci_acs(out_dict):
     )
 
 
-def _event_blob(event):
-    match = event.get('match_content')
-    if isinstance(match, (list, tuple)):
-        text = ' '.join(str(part) for part in match if part)
-    elif match is None:
-        text = ''
-    else:
-        text = str(match)
-    description = event.get('description') or ''
-    return f'{description}: {text}'.strip().rstrip(':').strip()
-
-
 def _actionable_amdgpu_blob(event):
-    '''Return the event text when it should count toward a host dmesg check.'''
-    if str(event.get('priority') or 'ERROR').upper() == 'WARNING':
-        return ''
-    blob = _event_blob(event)
+    '''Return event text for an amdgpu line or an SW_DRIVER event.
+
+    Same acceptance rule as ``verify_driver_errors``: the event line names
+    amdgpu, or node-scraper tagged the event ``SW_DRIVER``.
+    '''
+    # Imported here so the rest of this module does not load the analyzer.
+    from cvs.lib.node_scraper_adapter import event_match_lines
+
+    lines = event_match_lines([event])
+    blob = lines[0] if lines else ''
     if dmesg_noise.dmesg_line_is_benign(blob):
         return ''
-    if 'amdgpu' not in blob.lower():
+    if 'amdgpu' not in blob.lower() and event.get('category') != 'SW_DRIVER':
         return ''
     return blob
 
@@ -457,22 +451,50 @@ def eval_dmesg_driver(out_dict):
     )
 
 
-def eval_dmesg_driver_events(events_by_node):
-    '''Return (node_records, fail_messages) from node-scraper dmesg events.'''
-    records = {}
-    messages = []
+def _hit_record(hits, message):
+    if not hits:
+        return _pass_record('clean'), None
+    return _fail_record('amdgpu', message, 'seen'), message
+
+
+def eval_dmesg_node_events(events_by_node):
+    '''Return driver and reset verdicts from one pass over node-scraper events.
+
+    Returns ``(driver_records, driver_messages, reset_records, reset_messages)``.
+    Each event's line is built and benign-checked once, then used for both checks.
+    '''
+    driver_records = {}
+    driver_messages = []
+    reset_records = {}
+    reset_messages = []
     for node, events in events_by_node.items():
-        hits = []
+        driver_hits = []
+        reset_hits = []
         for event in events or []:
             blob = _actionable_amdgpu_blob(event)
-            if blob and dmesg_noise.line_indicates_driver_error(blob):
-                hits.append(blob)
-        if not hits:
-            records[str(node)] = _pass_record('clean')
-            continue
-        message = f'Dmesg has amdgpu driver errors on node {node}'
-        messages.append(message)
-        records[str(node)] = _fail_record('amdgpu', message, 'seen')
+            if not blob:
+                continue
+            # SW_DRIVER is already a driver fault; it does not have to say "error".
+            if event.get('category') == 'SW_DRIVER' or dmesg_noise.line_indicates_driver_error(blob):
+                driver_hits.append(blob)
+            if re.search(r'reset|hang', blob, re.I):
+                reset_hits.append(blob)
+        driver_message = f'Dmesg has amdgpu driver errors on node {node}'
+        reset_message = f'Dmesg has amdgpu reset/hang errors on node {node}'
+        driver_record, driver_fail = _hit_record(driver_hits, driver_message)
+        reset_record, reset_fail = _hit_record(reset_hits, reset_message)
+        driver_records[str(node)] = driver_record
+        reset_records[str(node)] = reset_record
+        if driver_fail:
+            driver_messages.append(driver_fail)
+        if reset_fail:
+            reset_messages.append(reset_fail)
+    return driver_records, driver_messages, reset_records, reset_messages
+
+
+def eval_dmesg_driver_events(events_by_node):
+    '''Return (node_records, fail_messages) from node-scraper dmesg events.'''
+    records, messages, _, _ = eval_dmesg_node_events(events_by_node)
     return records, messages
 
 
@@ -489,18 +511,5 @@ def eval_dmesg_reset(out_dict):
 
 def eval_dmesg_reset_events(events_by_node):
     '''Return (node_records, fail_messages) for reset/hang node-scraper events.'''
-    records = {}
-    messages = []
-    for node, events in events_by_node.items():
-        hits = []
-        for event in events or []:
-            blob = _actionable_amdgpu_blob(event)
-            if blob and re.search(r'reset|hang', blob, re.I):
-                hits.append(blob)
-        if not hits:
-            records[str(node)] = _pass_record('clean')
-            continue
-        message = f'Dmesg has amdgpu reset/hang errors on node {node}'
-        messages.append(message)
-        records[str(node)] = _fail_record('amdgpu', message, 'seen')
+    _, _, records, messages = eval_dmesg_node_events(events_by_node)
     return records, messages

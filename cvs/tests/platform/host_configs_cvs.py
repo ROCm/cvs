@@ -6,6 +6,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 import json
+import time
 
 import pytest
 
@@ -119,6 +120,16 @@ def _capture_host_rundeck(host_res_dict, cluster_dict, group, records, version=N
 def _fail_messages(messages):
     for message in messages:
         fail_test(message)
+
+
+def _record_stage(lifecycle, label, seconds):
+    '''Record a stage time. A reporting problem must not change the verdict.'''
+    if lifecycle is None:
+        return
+    try:
+        lifecycle.record(label, seconds)
+    except (AttributeError, TypeError, ValueError):
+        return
 
 
 # Main Test cases start from here ..
@@ -591,17 +602,22 @@ def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dic
 
     globals.error_list = []
     if use_node_scraper_dmesg():
-        with timed_stage(lifecycle, host_configs_rundeck.DMESG_DRIVER):
-            out_dict = orch.all.exec("sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
-            events_by_node = parse_dmesg_nodes(out_dict)
-            records, messages = host_configs_rundeck.eval_dmesg_driver_events(events_by_node)
-        _fail_messages(messages)
-        _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_DRIVER, records)
+        # One dmesg read feeds both checks. Split that shared time evenly so
+        # neither stage clock owns the whole command.
+        started = time.perf_counter()
+        out_dict = orch.all.exec("sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
+        events_by_node = parse_dmesg_nodes(out_dict)
+        driver_records, driver_messages, reset_records, reset_messages = host_configs_rundeck.eval_dmesg_node_events(
+            events_by_node
+        )
+        each_stage = (time.perf_counter() - started) / 2.0
+        _record_stage(lifecycle, host_configs_rundeck.DMESG_DRIVER, each_stage)
+        _fail_messages(driver_messages)
+        _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_DRIVER, driver_records)
         update_test_result()
-        with timed_stage(lifecycle, host_configs_rundeck.DMESG_RESET):
-            records, messages = host_configs_rundeck.eval_dmesg_reset_events(events_by_node)
-        _fail_messages(messages)
-        _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_RESET, records)
+        _record_stage(lifecycle, host_configs_rundeck.DMESG_RESET, each_stage)
+        _fail_messages(reset_messages)
+        _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_RESET, reset_records)
         update_test_result()
         return
 
