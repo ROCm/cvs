@@ -64,6 +64,20 @@ class TestRecordA2a(unittest.TestCase):
         self.assertEqual(node["items"][0]["status"], "pass")
         self.assertIn("Traceback", node["items"][-1]["message"])
 
+    def test_per_link_avg_gate_passes(self):
+        results = {}
+        transferbench_rundeck.record_a2a(results, {"n1": A2A_BOX}, {"gpu_to_gpu_a2a_avg": "32.9"})
+        node = _node(results, "a2a")
+        self.assertEqual(node["status"], "pass")
+        self.assertEqual(node["items"][0]["name"], "per-link avg")
+        self.assertIn("per-link avg", node["items_summary"])
+
+    def test_benign_vmware_warning_does_not_fail_passing_metrics(self):
+        results = {}
+        text = A2A_BOX + "Failed to open VMware provider: No such file or directory\n"
+        transferbench_rundeck.record_a2a(results, {"n1": text}, {"gpu_to_gpu_a2a_avg": "32.9"})
+        self.assertEqual(_node(results, "a2a")["status"], "pass")
+
 
 class TestRecordP2p(unittest.TestCase):
     def test_averages_above_threshold_pass(self):
