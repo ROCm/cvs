@@ -344,6 +344,35 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertIn("kv-cache-dtype", variant.roles.server.serve_args)
 
+    def test_load_v4_flash_vllm_serving_schema(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-v4-flash_fp8_single.json")
+        self.assertEqual(variant.gpu_arch, "mi3xx")
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.max_model_length, "12288")
+        cells = [
+            "ISL=5000,OSL=1024,TP=8,PP=1,CONC=16",
+            "ISL=5000,OSL=1024,TP=8,PP=1,CONC=32",
+        ]
+        self.assertEqual(variant.expected_cells(), cells)
+        self.assertEqual(list(variant.thresholds), cells)
+        serve = variant.roles.server.serve_args
+        self.assertEqual(serve["kv-cache-dtype"], "fp8_e4m3")
+        self.assertEqual(serve["tokenizer-mode"], "deepseek_v4")
+        self.assertEqual(serve["moe-backend"], "triton_unfused")
+        self.assertNotIn("HF_HUB_CACHE", variant.roles.server.env)
+        self.assertNotIn("HF_HOME", variant.roles.server.env)
+        raw = json.loads(
+            (root / "input/config_file/inference/atom/mi3xx_atom_vllm_deepseek-v4-flash_fp8_single.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIn("<changeme>", raw["container"]["image"])
+        self.assertIn("<changeme>", raw["model"]["id"])
+        self.assertTrue(
+            any("<changeme-models-mount>" in volume for volume in raw["container"]["runtime"]["args"]["volumes"])
+        )
+
     def test_load_atom_vllm_gpt_oss_serving_schema(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_vllm_gpt-oss-120b_mxfp4_single.json")
