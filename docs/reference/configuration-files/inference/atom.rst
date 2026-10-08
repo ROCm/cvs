@@ -79,6 +79,9 @@ still runs with ``cvs run atom``.
    * - ``mi355x_atom_qwen3.5-397b-a17b_fp8``
      - ``_single`` (``perf`` + ``mtp3`` profiles)
      - Native ATOM MI355X copy; ``gpu_arch`` mi355x; bring-up thresholds; ``mtp3`` benchmark cells lab-run, GSM8K pending
+   * - ``mi355x_atom_vllm_deepseek-v4-pro``
+     - ``_single``
+     - vLLM parity for V4-Pro FP4 TP8; same 1K/1K and 128/32 cells; bring-up
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
      - ``_single``
      - vLLM parity (serving schema)
