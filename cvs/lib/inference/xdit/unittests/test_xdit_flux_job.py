@@ -14,7 +14,6 @@ from cvs.lib.inference.xdit.xdit_flux_job import (
     build_flux2_example_host_check_cmd,
     build_flux2_example_image_probe_cmd,
     build_nccl_env,
-    build_output_cleanup_cmd,
     build_run_usp_args,
     build_torchrun_cmd,
     default_flux2_example_host_path,
@@ -912,14 +911,6 @@ class TestPhdlConnectionKwargs(unittest.TestCase):
         self.assertEqual(kwargs["user"], "ubuntu")
         self.assertEqual(kwargs["pkey"], "/home/ubuntu/.ssh/id_rsa")
         self.assertEqual(kwargs["env_vars"], {"FOO": "bar"})
-
-
-class TestFluxOutputCleanupCmd(unittest.TestCase):
-    def test_targets_flux_output_glob(self):
-        cmd = build_output_cleanup_cmd("/home/user/cvs_flux_output")
-        self.assertIn("flux_*_outputs", cmd)
-        self.assertIn("sudo -n rm -rf", cmd)
-        self.assertNotIn("wan_22_", cmd)
 
 
 if __name__ == "__main__":

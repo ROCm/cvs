@@ -26,7 +26,6 @@ from cvs.lib.inference.xdit.xdit_wan_job import (
     build_torchrun_cmd,
     build_wan_xfuser_auto_input_image_cmd,
     build_wan_distributed_container_cleanup_cmds,
-    build_wan_output_cleanup_cmd,
     build_wan_output_verify_cmd,
     build_wan_xfuser_output_verify_cmd,
     detect_wan_model_format_from_model_index,
@@ -725,14 +724,6 @@ class TestLogBenchmarkFailureExcerpt(unittest.TestCase):
         joined = "\n".join(rendered)
         self.assertIn("Benchmark failure excerpt (10.0.0.1", joined)
         self.assertNotIn("hf_secret", joined)
-
-
-class TestWanOutputCleanupCmd(unittest.TestCase):
-    def test_targets_wan_output_glob(self):
-        cmd = build_wan_output_cleanup_cmd("/home/user/cvs_outputs")
-        self.assertIn("wan_22_*_outputs", cmd)
-        self.assertIn("sudo -n rm -rf", cmd)
-        self.assertNotIn("flux_", cmd)
 
 
 if __name__ == "__main__":
