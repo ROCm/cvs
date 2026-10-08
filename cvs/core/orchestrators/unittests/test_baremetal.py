@@ -8,7 +8,8 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # Unit tests for cvs/core/orchestrators/baremetal.py: BaremetalOrchestrator construction
 # and command-dispatch surface (exec, exec_on_head, cleanup, sudo_prefix, build_mpi_cmd)
 # used by the migrated rvs_cvs.py orch fixture. Mocks Pssh so tests run with no SSH; the
-# build_mpi_cmd tests run its head-node commands in a local bash instead.
+# build_mpi_cmd tests run its head-node commands, and the command it returns, in a local
+# shell instead.
 
 import os
 import shlex
@@ -200,12 +201,14 @@ class TestBaremetalOrchestrator(unittest.TestCase):
 
 
 # Stands in for mpirun: prints the --hostfile path it was given and that file's
-# contents, then exits with FAKE_MPIRUN_STATUS.
+# contents, sends FAKE_MPIRUN_SIGNAL (if set) to the shell that started it, then
+# exits with FAKE_MPIRUN_STATUS.
 _FAKE_MPIRUN = """#!/bin/sh
 while [ "$#" -gt 0 ]; do
     if [ "$1" = --hostfile ]; then printf 'hostfile=%s\\n' "$2"; cat "$2"; fi
     shift
 done
+[ -z "$FAKE_MPIRUN_SIGNAL" ] || kill -"$FAKE_MPIRUN_SIGNAL" "$PPID"
 exit "${FAKE_MPIRUN_STATUS:-0}"
 """
 
@@ -255,7 +258,7 @@ class _LocalHead:
 class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
     """build_mpi_cmd's hostfile: a private mktemp file written by one head-node
     command as the SSH user, quoted wherever it is used, and removed by the
-    returned command once mpirun exits."""
+    returned command however its shell exits."""
 
     def setUp(self):
         pssh_patcher = patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
@@ -295,12 +298,13 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
         return [os.path.join(self.tmpdir, name) for name in os.listdir(self.tmpdir)]
 
     @staticmethod
-    def _run(cmd, mpirun_status=0):
+    def _run(cmd, mpirun_status=0, mpirun_signal="", shell="bash"):
+        # sh as well as bash: managed-compute agents run commands through /bin/sh.
         return subprocess.run(
-            ["bash", "-c", cmd],
+            [shell, "-c", cmd],
             capture_output=True,
             text=True,
-            env=dict(os.environ, FAKE_MPIRUN_STATUS=str(mpirun_status)),
+            env=dict(os.environ, FAKE_MPIRUN_STATUS=str(mpirun_status), FAKE_MPIRUN_SIGNAL=mpirun_signal),
             check=False,
         )
 
@@ -324,15 +328,45 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
         self.assertEqual(self._hostfile_given_to_mpirun(cmd), created)
 
     def test_build_mpi_cmd_result_removes_hostfile_and_keeps_mpirun_status(self):
-        for status in (0, 7):
-            with self.subTest(mpirun_status=status):
-                cmd = self._build()
-                # Composed the way a caller might: `&&` must see mpirun's status,
-                # not that of the cleanup that runs after it.
-                proc = self._run(f"{cmd} && echo after-mpirun", mpirun_status=status)
-                self.assertEqual(proc.returncode, status, proc.stderr)
-                self.assertEqual("after-mpirun" in proc.stdout, status == 0)
-                self.assertIn("10.0.0.2 slots=1\n", proc.stdout)
+        for shell in ("bash", "sh"):
+            for status in (0, 7):
+                with self.subTest(shell=shell, mpirun_status=status):
+                    cmd = self._build()
+                    # Composed the way a caller might: `&&` must see mpirun's
+                    # status, not that of the cleanup that runs after it.
+                    proc = self._run(f"{cmd} && echo after-mpirun", mpirun_status=status, shell=shell)
+                    self.assertEqual(proc.returncode, status, proc.stderr)
+                    self.assertEqual("after-mpirun" in proc.stdout, status == 0)
+                    self.assertIn("10.0.0.2 slots=1\n", proc.stdout)
+                    self.assertEqual(self._created_files(), [])
+
+    def test_build_mpi_cmd_result_removes_hostfile_when_its_shell_is_signalled(self):
+        # A scheduler cancelling the job (SIGTERM), a dropped terminal (SIGHUP),
+        # or Ctrl-C (SIGINT) must not leave the hostfile behind.
+        for shell in ("bash", "sh"):
+            for signal_name, status in (("HUP", 129), ("INT", 130), ("TERM", 143)):
+                with self.subTest(shell=shell, signal=signal_name):
+                    cmd = self._build()
+                    proc = self._run(f"{cmd} && echo after-mpirun", mpirun_signal=signal_name, shell=shell)
+                    self.assertEqual(proc.returncode, status, proc.stderr)
+                    self.assertNotIn("after-mpirun", proc.stdout)
+                    self.assertEqual(self._created_files(), [])
+
+    def test_build_mpi_cmd_result_survives_shell_syntax_in_rank_cmd(self):
+        # rank_cmd is spliced into the mpirun command unquoted. A trailing
+        # comment must not swallow the cleanup, and a stray `)` must not close
+        # the subshell early: the command fails as a syntax error, as it would
+        # on its own, rather than report the status of whatever follows.
+        for shell in ("bash", "sh"):
+            with self.subTest(shell=shell, rank_cmd="trailing comment"):
+                proc = self._run(self._build(rank_cmd="echo hi # note"), mpirun_status=7, shell=shell)
+                self.assertEqual(proc.returncode, 7, proc.stderr)
+                self.assertIn("hostfile=", proc.stdout)
+                self.assertEqual(self._created_files(), [])
+            with self.subTest(shell=shell, rank_cmd="stray paren"):
+                proc = self._run(self._build(rank_cmd="echo hi ) ; ( true"), mpirun_status=7, shell=shell)
+                self.assertNotEqual(proc.returncode, 0, proc.stdout)
+                self.assertNotIn("hostfile=", proc.stdout)
                 self.assertEqual(self._created_files(), [])
 
     def test_build_mpi_cmd_hostfile_commands_do_not_use_sudo(self):

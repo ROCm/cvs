@@ -244,7 +244,8 @@ class BaremetalOrchestrator(Orchestrator):
         Build MPI command string for distributed execution.
 
         Writes the hostfile to a new private temp file on the head node. The
-        returned command removes that file after mpirun exits, so run it once.
+        returned command removes that file when its shell exits, including on a
+        hangup, interrupt, or termination, so run it once.
 
         Args:
             rank_cmd: The command to execute on each MPI rank
@@ -309,11 +310,19 @@ class BaremetalOrchestrator(Orchestrator):
 
         full_mpi_cmd = self.get_mpi_command(rank_cmd, mpi_runner_args, env_vars, mpi_install_dir)
 
-        # The cleanup travels in the returned string so it also runs inside the
-        # container when ContainerOrchestrator executes it. The subshell keeps the
-        # string a single command with mpirun's status, so a caller can still
-        # append a pipe or `&&`.
-        return f'({full_mpi_cmd}; rc=$?; rm -f {quoted_host_file}; exit $rc)'
+        # One subshell, so a caller can still append a pipe or `&&`, and the
+        # cleanup also runs inside the container when ContainerOrchestrator
+        # executes the string. eval gets the mpirun command as one quoted word,
+        # so a stray `)` or a trailing comment in rank_cmd cannot end the
+        # subshell early or drop the cleanup. The EXIT trap removes the file
+        # however the subshell exits; the signal traps turn a hangup, interrupt,
+        # or termination into such an exit.
+        remove_host_file = shlex.quote(f'rm -f {quoted_host_file}')
+        return (
+            f'(trap {remove_host_file} EXIT; '
+            "trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; "
+            f'eval {shlex.quote(full_mpi_cmd)})'
+        )
 
     def distribute_using_mpi(
         self,
