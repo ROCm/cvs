@@ -1,8 +1,8 @@
 import base64
+import io
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -270,13 +270,17 @@ class _RecordingExec:
 
 
 def _collect_tree(root):
-    proc = subprocess.run(
-        [sys.executable, "-c", _REMOTE_COLLECT_SCRIPT, root],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return proc.stdout
+    saved_argv = sys.argv
+    saved_stdout = sys.stdout
+    buffer = io.StringIO()
+    try:
+        sys.argv = ["collect", root]
+        sys.stdout = buffer
+        exec(_REMOTE_COLLECT_SCRIPT, {"__name__": "__collect__"})
+    finally:
+        sys.argv = saved_argv
+        sys.stdout = saved_stdout
+    return buffer.getvalue()
 
 
 class TestStageRemoteBenchmarkOutputs(unittest.TestCase):
