@@ -358,6 +358,24 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertIn("kv-cache-dtype", variant.roles.server.serve_args)
 
+    def test_load_mi355x_r1_engine_stems_cover_thresholds(self):
+        root = Path(__file__).resolve().parents[3]
+        names = (
+            "mi355x_atom_vllm_deepseek-r1_fp8_single.json",
+            "mi355x_atom_vllm_deepseek-r1_fp8_distributed.json",
+            "mi355x_atom_sglang_deepseek-r1_fp8_single.json",
+            "mi355x_atom_sglang_deepseek-r1_fp8_distributed.json",
+        )
+        for name in names:
+            with self.subTest(name=name):
+                variant = _atom_config(root, name)
+                self.assertEqual(variant.gpu_arch, "mi355x")
+                self.assertNotIn("HF_HUB_CACHE", variant.roles.server.env)
+                self.assertNotIn("HF_HOME", variant.roles.server.env)
+                self.assertTrue(variant.expected_cells())
+                for cell in variant.expected_cells():
+                    self.assertIn(cell, variant.thresholds, f"{name} missing {cell}")
+
     def test_load_atom_vllm_gpt_oss_serving_schema(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_vllm_gpt-oss-120b_mxfp4_single.json")
