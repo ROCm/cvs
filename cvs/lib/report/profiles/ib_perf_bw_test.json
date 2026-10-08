@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "profile_id": "ib_perf_bw_test_rundeck",
+  "suite_id": "ib_perf_bw_test",
+  "report_basename": "ib_perf_bw_test_run_deck",
+  "title": "ibperf Run Deck",
+  "subtitle": "perftest bandwidth and latency across message sizes, aggregated over every node and NIC instance",
+  "footer": "CVS ibperf · render-only · does not affect gates",
+  "link_name": "ibperf Run Deck",
+  "dataset_builder": "series",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "cvs_results_dict",
+    "variant": "variant_config"
+  },
+  "hooks": {
+    "run_card_display": "cvs.lib.report.profiles.hooks.ibperf_run_card:ibperf_run_card_display"
+  },
+  "series": {
+    "x_field": "Message size (bytes)",
+    "y_fields": ["bw_mean", "bw_min", "t_avg", "t_99_pct"],
+    "table_columns": [
+      {"label": "Series", "field": "$series"},
+      {"label": "Test", "field": "test"},
+      {"label": "QP count", "field": "qp_count"},
+      {"label": "Message size (bytes)", "field": "$x"},
+      {"label": "Avg BW (Gb/s)", "field": "bw_mean"},
+      {"label": "Min BW (Gb/s)", "field": "bw_min"},
+      {"label": "Avg msg rate (Mpps)", "field": "pps_mean"},
+      {"label": "Avg latency (us)", "field": "t_avg"},
+      {"label": "Worst p99 latency (us)", "field": "t_99_pct"},
+      {"label": "Max latency (us)", "field": "t_max"},
+      {"label": "NIC instances", "field": "nics"},
+      {"label": "Nodes", "field": "nodes"}
+    ]
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {
+      "type": "line_chart",
+      "id": "bw-mean",
+      "title": "Average bandwidth by message size",
+      "bind": "datasets.series",
+      "series": {"y_field": "bw_mean", "unit": "Gb/s"}
+    },
+    {
+      "type": "line_chart",
+      "id": "bw-min",
+      "title": "Slowest NIC instance bandwidth by message size",
+      "bind": "datasets.series",
+      "series": {"y_field": "bw_min", "unit": "Gb/s"}
+    },
+    {
+      "type": "line_chart",
+      "id": "lat-avg",
+      "title": "Average latency by message size",
+      "bind": "datasets.series",
+      "series": {"y_field": "t_avg", "unit": "us"}
+    },
+    {
+      "type": "line_chart",
+      "id": "lat-p99",
+      "title": "Worst p99 latency by message size",
+      "bind": "datasets.series",
+      "series": {"y_field": "t_99_pct", "unit": "us"}
+    },
+    {"type": "table", "id": "results", "title": "Full ibperf results", "bind": "results_table"}
+  ]
+}
