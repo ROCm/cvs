@@ -27,7 +27,7 @@ Configs are lab-validated unless a row is marked pending or bring-up.
 | `mi355x_atom_kimi-k27-code_mxfp4` | `_single` | native `atom` (MI355X; bring-up thresholds) |
 | `mi355x_atom_deepseek-v4-pro` | `_single` | native `atom` (MI355X; bring-up thresholds) |
 | `mi355x_atom_qwen3.5-397b-a17b_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` (MI355X; bring-up thresholds; `mtp3` benchmark cells lab-run, GSM8K pending) |
-| `mi3xx_atom_vllm_deepseek-v4-pro` | `_single` | `vllm_atom` (MI355X; bring-up thresholds) |
+| `mi355x_atom_vllm_deepseek-v4-pro` | `_single` | `vllm_atom` (MI355X; bring-up thresholds) |
 | `mi3xx_atom_vllm_deepseek-r1_fp8` | `_single` | `vllm_atom` (serving schema) |
 | `mi3xx_atom_vllm_gpt-oss-120b_mxfp4` | `_single` | `vllm_atom` (serving schema) |
 | `mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `vllm_atom` (serving schema; `_single` lab-validated; `_distributed` pending) |
