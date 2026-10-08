@@ -1,9 +1,12 @@
 # bandit configuration for CVS
 # Reference: https://bandit.readthedocs.io/en/latest/config.html
 #
-# Passed as `bandit_config_path` by the security-scan workflows, so it
-# replaces the rocm-security-gh default wholesale rather than layering
-# onto it.
+# Copied from the ROCm/rocm-repo-template baseline. The security-scan
+# workflows pass it as `bandit_config_path`, so it replaces the shared
+# default wholesale rather than layering onto it. Treat every change
+# here as a deliberate exception to that baseline: keep CVS-specific
+# entries to a minimum, give each one its reason below, and raise
+# changes that would suit every repository with the template owners.
 #
 # Bandit skips a file when an entry glob-matches its path or is a plain
 # substring of it, so every entry is a whole path segment with both
@@ -18,4 +21,6 @@ exclude_dirs:
   - /dist/
   - /node_modules/
   - /__pycache__/
+  # CVS-specific: the per-package unit tests only exercise mocks, and
+  # their fixture strings trip Bandit's lexical rules.
   - /unittests/
