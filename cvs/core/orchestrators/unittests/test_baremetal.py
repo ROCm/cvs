@@ -12,6 +12,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import os
 import shlex
+import shutil
 import stat
 import subprocess
 import unittest
@@ -198,11 +199,11 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         self.assertTrue(orch.cleanup(orch.hosts))
 
 
-# Stands in for mpirun: prints the --hostfile it was given, then exits with
-# FAKE_MPIRUN_STATUS.
+# Stands in for mpirun: prints the --hostfile path it was given and that file's
+# contents, then exits with FAKE_MPIRUN_STATUS.
 _FAKE_MPIRUN = """#!/bin/sh
 while [ "$#" -gt 0 ]; do
-    if [ "$1" = --hostfile ]; then cat "$2"; fi
+    if [ "$1" = --hostfile ]; then printf 'hostfile=%s\\n' "$2"; cat "$2"; fi
     shift
 done
 exit "${FAKE_MPIRUN_STATUS:-0}"
@@ -219,18 +220,21 @@ class _LocalHead:
     """Head-node handle stand-in that runs each command in a local bash.
 
     TMPDIR points at the test's scratch directory, so mktemp never writes
-    outside it. banner and warning are wrapped around the real output the way
-    a login banner (stdout) and a sudo or docker warning (stderr) reach the
+    outside it, and LC_ALL=C keeps error messages in English. prelude runs
+    first in the same shell, to give the head node a condition such as a full
+    disk. banner and warning are wrapped around the real output the way a
+    login banner (stdout) and a sudo or docker warning (stderr) reach the
     output of a real handle. exit_code, when set, replaces the real status, as
     a handle does when it gives up on a command (e.g. on a read timeout).
     """
 
-    def __init__(self, test, host, tmpdir, path_dir=None, banner="", warning="", exit_code=None):
+    def __init__(self, test, host, tmpdir, path_dir=None, prelude="", banner="", warning="", exit_code=None):
         self.test = test
         self.host = host
-        self.env = dict(os.environ, TMPDIR=tmpdir)
+        self.env = dict(os.environ, TMPDIR=tmpdir, LC_ALL="C")
         if path_dir:
             self.env["PATH"] = path_dir + os.pathsep + self.env["PATH"]
+        self.prelude = prelude
         self.banner = banner
         self.warning = warning
         self.exit_code = exit_code
@@ -241,7 +245,8 @@ class _LocalHead:
         # Checked before running, so neither can execute on the machine running the tests.
         self.test.assertNotIn("sudo", cmd)
         self.test.assertNotIn("mpi_hosts.txt", cmd)
-        proc = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, env=self.env, check=False)
+        script = f"{self.prelude}\n{cmd}" if self.prelude else cmd
+        proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=self.env, check=False)
         output = self.banner + proc.stdout + proc.stderr + self.warning
         exit_code = proc.returncode if self.exit_code is None else self.exit_code
         return {self.host: {"output": output, "exit_code": exit_code}}
@@ -262,6 +267,11 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
         # The space and the quote break any unquoted use of the hostfile path.
         self.tmpdir = os.path.join(self.scratch, "run's tmp")
         os.mkdir(self.tmpdir)
+        self.mpi_dir = os.path.join(self.scratch, "mpi")
+        os.mkdir(self.mpi_dir)
+        _write_executable(os.path.join(self.mpi_dir, "mpirun"), _FAKE_MPIRUN)
+        self.fake_bin = os.path.join(self.scratch, "bin")
+        os.mkdir(self.fake_bin)
         self.orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         self.head = self._use_local_head()
 
@@ -276,7 +286,7 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
             "mpi_hosts": ["10.0.0.1", "10.0.0.2"],
             "ranks_per_host": 1,
             "env_vars": {},
-            "mpi_install_dir": "/opt/mpi",
+            "mpi_install_dir": self.mpi_dir,
         }
         kwargs.update(overrides)
         return self.orch.build_mpi_cmd(**kwargs)
@@ -285,9 +295,19 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
         return [os.path.join(self.tmpdir, name) for name in os.listdir(self.tmpdir)]
 
     @staticmethod
-    def _hostfile_arg(cmd):
-        tokens = shlex.split(cmd)
-        return tokens[tokens.index("--hostfile") + 1]
+    def _run(cmd, mpirun_status=0):
+        return subprocess.run(
+            ["bash", "-c", cmd],
+            capture_output=True,
+            text=True,
+            env=dict(os.environ, FAKE_MPIRUN_STATUS=str(mpirun_status)),
+            check=False,
+        )
+
+    def _hostfile_given_to_mpirun(self, cmd):
+        proc = self._run(cmd)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return [line[len("hostfile=") :] for line in proc.stdout.splitlines() if line.startswith("hostfile=")]
 
     def test_build_mpi_cmd_writes_private_hostfile_named_by_hostfile_arg(self):
         # Quotes in a host name must land in the file verbatim instead of
@@ -299,27 +319,17 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
         with open(created[0], encoding="utf-8") as stream:
             self.assertEqual(stream.read(), "10.0.0.1 slots=4\nnode'2 slots=4\nnode\"3 slots=4\n")
         self.assertEqual(stat.S_IMODE(os.stat(created[0]).st_mode), 0o600)
-        self.assertEqual(self._hostfile_arg(cmd), created[0])
         # A single exec_on_head(detailed=True) call creates and fills the file.
         self.assertEqual([detailed for _, detailed in self.head.calls], [True])
+        self.assertEqual(self._hostfile_given_to_mpirun(cmd), created)
 
     def test_build_mpi_cmd_result_removes_hostfile_and_keeps_mpirun_status(self):
-        mpi_dir = os.path.join(self.scratch, "mpi")
-        os.mkdir(mpi_dir)
-        _write_executable(os.path.join(mpi_dir, "mpirun"), _FAKE_MPIRUN)
-
         for status in (0, 7):
             with self.subTest(mpirun_status=status):
-                cmd = self._build(mpi_install_dir=mpi_dir)
+                cmd = self._build()
                 # Composed the way a caller might: `&&` must see mpirun's status,
                 # not that of the cleanup that runs after it.
-                proc = subprocess.run(
-                    ["bash", "-c", f"{cmd} && echo after-mpirun"],
-                    capture_output=True,
-                    text=True,
-                    env=dict(os.environ, FAKE_MPIRUN_STATUS=str(status)),
-                    check=False,
-                )
+                proc = self._run(f"{cmd} && echo after-mpirun", mpirun_status=status)
                 self.assertEqual(proc.returncode, status, proc.stderr)
                 self.assertEqual("after-mpirun" in proc.stdout, status == 0)
                 self.assertIn("10.0.0.2 slots=1\n", proc.stdout)
@@ -335,49 +345,63 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
         for sent, _ in self.head.calls:
             self.assertNotIn("sudo", sent)
 
-    def test_build_mpi_cmd_raises_when_hostfile_cannot_be_created(self):
-        fake_bin = os.path.join(self.scratch, "bin")
-        os.mkdir(fake_bin)
-        # Prints the file it was asked for (its last argument), but under a
-        # directory that does not exist: mktemp "succeeds", the write fails.
-        _write_executable(
-            os.path.join(fake_bin, "mktemp"),
-            '#!/bin/sh\nfor template; do :; done\necho "$TMPDIR/missing/${template##*/}"\n',
-        )
+    def test_build_mpi_cmd_raises_with_head_output_when_hostfile_cannot_be_created(self):
+        # The error carries what the head node printed, so a log shows whether
+        # mktemp or the write failed, and why.
         cases = {
-            "mktemp_fails": {"tmpdir": os.path.join(self.scratch, "missing")},
-            "write_fails": {"path_dir": fake_bin},
+            "mktemp_fails": ({"tmpdir": os.path.join(self.scratch, "missing")}, "mktemp:"),
+            # mktemp succeeds, then the write hits the file size limit like a full disk.
+            "write_fails": ({"prelude": "trap '' XFSZ; ulimit -f 0"}, "File too large"),
             # The path is printed, but the handle reports the command as failed.
-            "head_reports_failure": {"exit_code": -1},
+            "head_reports_failure": ({"exit_code": -1}, "exit -1"),
         }
-        for label, head_kwargs in cases.items():
+        for label, (head_kwargs, expected) in cases.items():
             with self.subTest(label):
                 self._use_local_head(**head_kwargs)
-                with self.assertRaises(RuntimeError):
+                with self.assertRaises(RuntimeError) as raised:
                     self._build()
+                self.assertIn(expected, str(raised.exception))
+                if label == "write_fails":
+                    self.assertEqual(self._created_files(), [])
 
     def test_build_mpi_cmd_finds_hostfile_path_among_other_head_output(self):
+        # A banner may even name another cvs_mpi_hosts.* file, such as one left
+        # by an earlier run; only the line this call marked is the hostfile.
         self._use_local_head(
-            banner="Welcome to node0\n",
+            banner=f"Welcome to node0\nstale: {os.path.join(self.tmpdir, 'cvs_mpi_hosts.leftover')}\n",
             warning="sudo: unable to resolve host node0: Name or service not known\n",
         )
 
         cmd = self._build()
 
-        self.assertEqual([self._hostfile_arg(cmd)], self._created_files())
+        created = self._created_files()
+        self.assertEqual(len(created), 1, created)
+        self.assertEqual(self._hostfile_given_to_mpirun(cmd), created)
 
-    def test_build_mpi_cmd_raises_unless_head_reports_exactly_one_hostfile_path(self):
-        # Without exactly one path in the output, the hostfile is unknown; mpirun
-        # must not be pointed at a guess, such as a file another run created.
-        with self.subTest("no_path"):
-            self.orch.head = MagicMock()
-            self.orch.head.exec.return_value = {"10.0.0.1": {"output": "Welcome to node0\n", "exit_code": 0}}
-            with self.assertRaises(RuntimeError):
-                self._build()
-        with self.subTest("two_paths"):
-            self._use_local_head(banner=os.path.join(self.tmpdir, "cvs_mpi_hosts.other") + "\n")
-            with self.assertRaises(RuntimeError):
-                self._build()
+    def test_build_mpi_cmd_raises_when_head_reports_no_hostfile_path(self):
+        # A zero exit without the path must not launch mpirun against a guess.
+        self.orch.head = MagicMock()
+        self.orch.head.exec.return_value = {"10.0.0.1": {"output": "Welcome to node0\n", "exit_code": 0}}
+
+        with self.assertRaises(RuntimeError):
+            self._build()
+
+    def test_build_mpi_cmd_needs_only_a_mktemp_template(self):
+        # mktemp options differ between GNU, BusyBox, and BSD; a TEMPLATE
+        # argument means the same to all of them.
+        real_mktemp = shlex.quote(shutil.which("mktemp"))
+        _write_executable(
+            os.path.join(self.fake_bin, "mktemp"),
+            '#!/bin/sh\ncase "$1" in -*) echo "mktemp: unsupported option $1" >&2; exit 1;; esac\n'
+            f'[ "$#" -eq 1 ] || exit 1\nexec {real_mktemp} "$1"\n',
+        )
+        self._use_local_head(path_dir=self.fake_bin)
+
+        cmd = self._build()
+
+        created = self._created_files()
+        self.assertEqual(len(created), 1, created)
+        self.assertEqual(self._hostfile_given_to_mpirun(cmd), created)
 
 
 class TestBaremetalOrchestratorSudoPrefix(unittest.TestCase):

@@ -5,17 +5,14 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import os
 import shlex
+import uuid
 
 from cvs.core.orchestrators.base import Orchestrator
 from cvs.core.scheduler import is_managed_compute
 from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
 from cvs.lib.utils_lib import get_passwordless_sudo_status
-
-# build_mpi_cmd finds the mktemp-created hostfile in the head node's output by this prefix.
-_MPI_HOSTFILE_PREFIX = 'cvs_mpi_hosts.'
 
 
 class BaremetalOrchestrator(Orchestrator):
@@ -267,22 +264,33 @@ class BaremetalOrchestrator(Orchestrator):
             host_file_params += f'{host} slots={ranks_per_host}\n'
 
         # mktemp creates a new mode-0600 file owned by the same user that runs
-        # mpirun, without sudo, so concurrent runs never share a hostfile and
-        # mpirun can always read it.
+        # mpirun, without sudo, so concurrent runs never share a hostfile. The
+        # template is a plain path because mktemp's options differ between GNU,
+        # BusyBox, and BSD. The path is printed after a marker unique to this
+        # call, so no other line of the head node's output can be taken for it.
+        marker = f'cvs-mpi-hostfile-{uuid.uuid4().hex}:'
         cmd = (
-            f'hf=$(mktemp -t {_MPI_HOSTFILE_PREFIX}XXXXXXXX) && '
-            f'printf %s {shlex.quote(host_file_params)} > "$hf" && echo "$hf"'
+            'hf=$(mktemp "${TMPDIR:-/tmp}/cvs_mpi_hosts.XXXXXXXX") || exit 1; '
+            f'printf %s {shlex.quote(host_file_params)} > "$hf" || {{ rm -f "$hf"; exit 1; }}; '
+            f'printf "%s%s\\n" {marker} "$hf"'
         )
         result = self.exec_on_head(cmd, detailed=True)
-        failed = [host for host, res in result.items() if res.get('exit_code') != 0]
+        failed = [
+            f"{host} (exit {res.get('exit_code')}): {res.get('output', '').strip()}"
+            for host, res in result.items()
+            if res.get('exit_code') != 0
+        ]
         if failed:
-            raise RuntimeError(f"Failed to create MPI hostfile on hosts: {failed}")
+            raise RuntimeError(f"Failed to create MPI hostfile: {'; '.join(failed)}")
 
-        # Login banners and sudo/docker warnings can share the output with the path.
-        lines = [line.strip() for res in result.values() for line in res.get('output', '').splitlines()]
-        host_files = [line for line in lines if os.path.basename(line).startswith(_MPI_HOSTFILE_PREFIX)]
-        if len(host_files) != 1:
-            raise RuntimeError(f"Could not find the MPI hostfile path in head node output: {lines}")
+        host_files = [
+            line[len(marker) :]
+            for res in result.values()
+            for line in res.get('output', '').splitlines()
+            if line.startswith(marker)
+        ]
+        if not host_files:
+            raise RuntimeError(f"Head node did not report the MPI hostfile path: {result}")
         quoted_host_file = shlex.quote(host_files[0])
 
         # Build MPI runner arguments
