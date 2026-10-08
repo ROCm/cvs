@@ -6,6 +6,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 import logging
+import math
 import re
 import time
 import xlsxwriter
@@ -263,32 +264,212 @@ def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None):
 
 
 def verify_expected_bw(bw_test, msg_size, qp_count, res_dict, expected_res):
-    log.info('Verifying expected BW: %s msg_size=%s qp=%s', bw_test, msg_size, qp_count)
-    log.debug('Expected results keys: %s', list(expected_res.keys()))
-    log.debug('Result dict: %s', res_dict)
-    if bw_test in expected_res.keys():
-        log.debug('Expected %s keys: %s', bw_test, list(expected_res[bw_test].keys()))
-        if msg_size in expected_res[bw_test].keys():
-            if qp_count in expected_res[bw_test][msg_size].keys():
-                for node in res_dict.keys():
-                    if float(res_dict[node]['bw']) <= float(expected_res[bw_test][msg_size]):
-                        fail_test(
-                            f"Actual BW {res_dict[node]['bw']} less than the expected BW {expected_res[bw_test][msg_size]} for test {bw_test} on node {node}"
-                        )
+    """Fail the test for every GPU instance whose bandwidth is below the configured threshold.
+
+    Args:
+        bw_test (str): Perftest binary name, such as 'ib_write_bw'.
+        msg_size (int | str): Message size from msg_size_list.
+        qp_count (int | str): QP count from qp_count_list.
+        res_dict (dict): Results keyed by node, then GPU instance, with 'bw' values.
+        expected_res (dict): Configured thresholds keyed by test, message size, and QP count.
+
+    Returns:
+        None if no threshold applies, True if every instance meets it, False otherwise.
+    """
+    test_thresholds = (expected_res or {}).get(bw_test)
+    if test_thresholds is None:
+        _log_not_gated(bw_test, msg_size, qp_count)
+        return None
+    if not isinstance(test_thresholds, dict):
+        fail_test(f'expected_results.{bw_test} must map message size to QP thresholds, got {test_thresholds!r}')
+        return False
+
+    # JSON keys are strings, while sweep lists may contain integers.
+    msg_thresholds = test_thresholds.get(str(msg_size))
+    if msg_thresholds is None:
+        _log_not_gated(bw_test, msg_size, qp_count)
+        return None
+    if not isinstance(msg_thresholds, dict):
+        fail_test(f'expected_results.{bw_test}.{msg_size} must map QP count to Gbps, got {msg_thresholds!r}')
+        return False
+
+    raw = msg_thresholds.get(str(qp_count))
+    if raw is None:
+        _log_not_gated(bw_test, msg_size, qp_count)
+        return None
+    try:
+        threshold = float(raw)
+    except (TypeError, ValueError):
+        threshold = math.nan
+    # NaN compares false against everything, so it would silently pass every GPU.
+    if not math.isfinite(threshold):
+        fail_test(f'Invalid expected BW {raw!r} for {bw_test} msg_size={msg_size} qp={qp_count}')
+        return False
+
+    log.info('Verifying expected BW: %s msg_size=%s qp=%s threshold=%.2f Gbps', bw_test, msg_size, qp_count, threshold)
+    if not res_dict:
+        fail_test(
+            f'No BW results for {bw_test} msg_size={msg_size} qp={qp_count}; cannot verify expected BW {threshold} Gbps'
+        )
+        return False
+    passed = True
+    count = 0
+    for node in sorted(res_dict):
+        if not res_dict[node]:
+            fail_test(
+                f'No BW results for {bw_test} msg_size={msg_size} qp={qp_count} on node {node}; '
+                f'cannot verify expected BW {threshold} Gbps'
+            )
+            passed = False
+            continue
+        for inst in sorted(res_dict[node]):
+            bw = res_dict[node][inst].get('bw')
+            if bw is None:
+                fail_test(f'No BW result for {bw_test} msg_size={msg_size} qp={qp_count} on node {node} gpu={inst}')
+                passed = False
+                continue
+            try:
+                actual_bw = float(bw)
+            except (TypeError, ValueError):
+                fail_test(
+                    f'Invalid actual BW {bw!r} for {bw_test} msg_size={msg_size} qp={qp_count} on node {node} gpu={inst}'
+                )
+                passed = False
+                continue
+            count += 1
+            if actual_bw < threshold:
+                fail_test(
+                    f'Actual BW {bw} Gbps less than the expected BW {threshold} Gbps for test '
+                    f'{bw_test} msg_size={msg_size} qp={qp_count} on node {node} gpu={inst}'
+                )
+                passed = False
+    if passed:
+        log.info(
+            'Expected BW met: %s msg_size=%s qp=%s, all %d GPU instances >= %.2f Gbps',
+            bw_test,
+            msg_size,
+            qp_count,
+            count,
+            threshold,
+        )
+    return passed
 
 
 def verify_expected_lat(lat_test, msg_size, res_dict, expected_res):
-    log.info('Verifying expected latency: %s msg_size=%s', lat_test, msg_size)
-    log.debug('Expected results keys: %s', list(expected_res.keys()))
-    log.debug('Result dict: %s', res_dict)
-    if lat_test in expected_res.keys():
-        log.debug('Expected %s keys: %s', lat_test, list(expected_res[lat_test].keys()))
-        if msg_size in expected_res[lat_test].keys():
-            for node in res_dict.keys():
-                if float(res_dict[node]['lat']) >= float(expected_res[lat_test][msg_size]):
-                    fail_test(
-                        f"Actual BW {res_dict[node]['lat']} greater than the expected BW {expected_res[lat_test][msg_size]} for test {lat_test} on node {node}"
-                    )
+    """Fail the test for every GPU instance whose average latency exceeds the configured threshold.
+
+    Args:
+        lat_test (str): Perftest binary name, such as 'ib_write_lat'.
+        msg_size (int | str): Message size from msg_size_list.
+        res_dict (dict): Results keyed by node, then GPU instance, with 't_avg' values.
+        expected_res (dict): Configured thresholds keyed by test and message size.
+
+    Returns:
+        None if no threshold applies, True if every instance meets it, False otherwise.
+    """
+    test_thresholds = (expected_res or {}).get(lat_test)
+    if test_thresholds is None:
+        _log_not_gated(lat_test, msg_size)
+        return None
+    if not isinstance(test_thresholds, dict):
+        fail_test(f'expected_results.{lat_test} must map message size to latency, got {test_thresholds!r}')
+        return False
+
+    # JSON keys are strings, while sweep lists may contain integers.
+    raw = test_thresholds.get(str(msg_size))
+    if raw is None:
+        _log_not_gated(lat_test, msg_size)
+        return None
+    if isinstance(raw, dict):
+        fail_test(f'expected_results.{lat_test}.{msg_size} must be a latency in usec, got {raw!r}')
+        return False
+    try:
+        threshold = float(raw)
+    except (TypeError, ValueError):
+        threshold = math.nan
+    if not math.isfinite(threshold):
+        fail_test(f'Invalid expected latency {raw!r} for {lat_test} msg_size={msg_size}')
+        return False
+
+    log.info('Verifying expected latency: %s msg_size=%s threshold=%.2f us', lat_test, msg_size, threshold)
+    if not res_dict:
+        fail_test(
+            f'No latency results for {lat_test} msg_size={msg_size}; cannot verify expected latency {threshold} us'
+        )
+        return False
+    passed = True
+    count = 0
+    for node in sorted(res_dict):
+        if not res_dict[node]:
+            fail_test(
+                f'No latency results for {lat_test} msg_size={msg_size} on node {node}; '
+                f'cannot verify expected latency {threshold} us'
+            )
+            passed = False
+            continue
+        for inst in sorted(res_dict[node]):
+            t_avg = res_dict[node][inst].get('t_avg')
+            if t_avg is None:
+                fail_test(f'No latency result for {lat_test} msg_size={msg_size} on node {node} gpu={inst}')
+                passed = False
+                continue
+            try:
+                actual_lat = float(t_avg)
+            except (TypeError, ValueError):
+                fail_test(
+                    f'Invalid actual latency {t_avg!r} for {lat_test} msg_size={msg_size} on node {node} gpu={inst}'
+                )
+                passed = False
+                continue
+            count += 1
+            if actual_lat > threshold:
+                fail_test(
+                    f'Actual latency {t_avg} us greater than the expected latency {threshold} us for test '
+                    f'{lat_test} msg_size={msg_size} on node {node} gpu={inst}'
+                )
+                passed = False
+    if passed:
+        log.info(
+            'Expected latency met: %s msg_size=%s, all %d GPU instances <= %.2f us',
+            lat_test,
+            msg_size,
+            count,
+            threshold,
+        )
+    return passed
+
+
+def _log_not_gated(test_name, msg_size, qp_count=None):
+    """Log a skipped threshold separately from a passing threshold."""
+    qp_label = f' qp={qp_count}' if qp_count is not None else ''
+    log.info('No expected result configured for %s msg_size=%s%s; not gated', test_name, msg_size, qp_label)
+
+
+def find_unmatched_thresholds(expected_res, msg_size_list, qp_count_list):
+    """Return dotted paths of thresholds the configured sweep cannot evaluate.
+
+    Bandwidth entries map message size to QP counts. Latency entries map message
+    size directly to a threshold. Entries outside the message size sweep report
+    the test and size; QP entries outside the QP sweep also report the QP count.
+
+    Returns:
+        list of str: Unmatched paths in config iteration order, or an empty list.
+    """
+    msg_keys = {str(msg_size) for msg_size in msg_size_list}
+    qp_keys = {str(qp_count) for qp_count in qp_count_list}
+    unmatched = []
+    for test, by_msg in (expected_res or {}).items():
+        if not isinstance(by_msg, dict):
+            continue
+        for msg_key, value in by_msg.items():
+            if msg_key not in msg_keys:
+                unmatched.append(f'{test}.{msg_key}')
+                continue
+            if isinstance(value, dict):
+                for qp_key in value:
+                    if qp_key not in qp_keys:
+                        unmatched.append(f'{test}.{msg_key}.{qp_key}')
+    return unmatched
 
 
 def run_ib_perf_bw_test(
