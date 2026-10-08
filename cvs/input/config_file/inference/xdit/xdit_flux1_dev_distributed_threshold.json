@@ -5,6 +5,9 @@
   "mi300x": {
     "max_avg_pipe_time_s": 10.0
   },
+  "mi350": {
+    "max_avg_pipe_time_s": 20.0
+  },
   "mi355": {
     "max_avg_pipe_time_s": 22.0
   }
