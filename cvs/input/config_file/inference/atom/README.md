@@ -17,7 +17,7 @@ Configs are lab-validated unless a row is marked pending.
 | `mi3xx_atom_qwen3.5-397b-a17b_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` |
 | `mi3xx_atom_vllm_deepseek-r1_fp8` | `_single` | `vllm_atom` (serving schema) |
 | `mi3xx_atom_vllm_gpt-oss-120b_mxfp4` | `_single` | `vllm_atom` (serving schema) |
-| `mi3xx_atom_vllm_deepseek-v4-flash_fp8` | `_single` | `vllm_atom` (serving schema; gfx942 TP8; bring-up thresholds) |
+| `mi3xx_atom_vllm_deepseek-v4-flash_fp8` | `_single` | `vllm_atom` (serving schema; bring-up thresholds) |
 | `mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `vllm_atom` (serving schema; lab pending) |
 | `mi3xx_atom_sglang_deepseek-r1_fp8` | `_single`, `_distributed` | `sglang` (serving schema) |
 | `mi3xx_atom_sglang_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `sglang` (serving schema; lab pending) |

@@ -77,7 +77,7 @@ still runs with ``cvs run atom``.
      - GPT-OSS MXFP4 vLLM parity (serving schema)
    * - ``mi3xx_atom_vllm_deepseek-v4-flash_fp8``
      - ``_single``
-     - DeepSeek-V4-Flash FP8 vLLM parity; gfx942 TP8; bring-up thresholds
+     - vLLM parity for V4-Flash FP8 TP8; fp8_e4m3 KV cache and block size 256; bring-up thresholds
    * - ``mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8``
      - ``_single``, ``_distributed``
      - Qwen FP8 vLLM parity; distributed uses PP=2; lab pending
