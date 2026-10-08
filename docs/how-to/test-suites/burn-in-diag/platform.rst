@@ -25,6 +25,7 @@ Set up config
    - ``kernel_version``
    - ``rocm_version``
    - ``bios_version``
+   - ``nic_link_interfaces``
 
 For the complete field reference and expected-value format, see :doc:`/reference/configuration-files/burn-in-diag/platform`.
 
@@ -56,6 +57,7 @@ You can list all available host check test cases using the CLI:
     - test_check_pci_accelerators
     - test_check_gpu_pcie_speed_width
     - test_check_be_nic_pcie_speed_width
+    - test_check_be_nic_link_speed
     - test_check_pci_acs
     - test_check_dmesg_driver_errors
 
