@@ -789,6 +789,21 @@ def get_lshw_backend_nic_dict(phdl, use_sudo=True):
 _PCI_BDF_RE = re.compile(r'^(?:[0-9a-f]{4,}:)?[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$')
 
 
+def _read_or_denied(reader):
+    """Run a reader and print its stdout, or CVS_CMD_DENIED when it fails.
+
+    Same token as ``_sudo_n_or_denied``. Used for unprivileged reads such as
+    sysfs, where a missing file must be a recorded failure rather than empty
+    output that the version parser cannot match.
+    """
+    return (
+        f'if ! _cvs_out=$({reader} 2>&1); then '
+        "printf 'CVS_CMD_DENIED %s\\n' \"$_cvs_out\"; "
+        "else printf '%s\\n' \"$_cvs_out\"; "
+        'fi'
+    )
+
+
 def _sudo_n_or_denied(reader, filter_cmd):
     """Run a privileged reader with sudo -n and filter its stdout.
 

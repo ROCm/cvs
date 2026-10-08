@@ -28,7 +28,19 @@ class TestAmdSmiJsonCommand(unittest.TestCase):
         cmd = rocm_plib._rocm_smi_showbus_cmd(use_sudo=False)
         self.assertNotIn('sudo', cmd)
         self.assertIn('/opt/rocm/bin/rocm-smi', cmd)
-        self.assertIn('exit 127', cmd)
+        self.assertIn('echo "[]"', cmd)
+        self.assertIn('exit 0', cmd)
+        self.assertNotIn('exit 127', cmd)
+
+    def test_showbus_empty_list_becomes_empty_card_map(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            'n1': '[]',
+            'n2': '{"card0": {"PCI Bus": "0000:03:00.0"}}',
+        }
+        result = rocm_plib.get_gpu_pcie_bus_dict(phdl, use_sudo=False)
+        self.assertEqual(result['n1'], {})
+        self.assertEqual(result['n2']['card0']['PCI Bus'], '0000:03:00.0')
 
     def test_firmware_reader_forwards_use_sudo(self):
         phdl = MagicMock()

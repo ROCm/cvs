@@ -176,6 +176,23 @@ class TestGetNicEthtoolStatsDict(unittest.TestCase):
         self.assertEqual(second_batch_cmds[1], 'true')
 
 
+class TestReadOrDenied(unittest.TestCase):
+    def _run(self, reader):
+        cmd = linux_utils._read_or_denied(reader)
+        return subprocess.run(['bash', '-c', cmd], capture_output=True, text=True)
+
+    def test_missing_file_emits_denial_token(self):
+        result = self._run('cat /no/such/cvs-bios-version')
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(result.stdout.startswith('CVS_CMD_DENIED '))
+        self.assertIn('cvs-bios-version', result.stdout)
+
+    def test_success_prints_reader_output(self):
+        result = self._run("printf '20171212\\n'")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, '20171212\n')
+
+
 class TestSudoNOrDenied(unittest.TestCase):
     def _run(self, reader, filter_cmd):
         cmd = linux_utils._sudo_n_or_denied(reader, filter_cmd)
