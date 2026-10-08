@@ -318,8 +318,8 @@ def run_ib_perf_bw_test(
     result_dict = {}
     i = 0
     cmd_dict = {}
-    phdl.exec('sudo rm -rf /tmp/ib_cmds_file.txt', print_console=False)
-    phdl.exec('sudo rm -rf /tmp/ib_perf*', print_console=False)
+    phdl.exec('rm -rf /tmp/ib_cmds_file.txt', print_console=False)
+    phdl.exec('rm -rf /tmp/ib_perf*', print_console=False)
     phdl.exec('touch /tmp/ib_cmds_file.txt', print_console=False)
     if rocm_path:
         log.debug('Setting LD_LIBRARY_PATH to %s/lib for perftest binaries', rocm_path)
@@ -466,8 +466,8 @@ def run_ib_perf_lat_test(
     result_dict = {}
     i = 0
     cmd_dict = {}
-    phdl.exec('sudo rm -rf /tmp/ib_cmds_file.txt', print_console=False)
-    phdl.exec('sudo rm -rf /tmp/ib_perf*', print_console=False)
+    phdl.exec('rm -rf /tmp/ib_cmds_file.txt', print_console=False)
+    phdl.exec('rm -rf /tmp/ib_perf*', print_console=False)
     phdl.exec('touch /tmp/ib_cmds_file.txt', print_console=False)
     if rocm_path:
         log.debug('Setting LD_LIBRARY_PATH to %s/lib for perftest binaries', rocm_path)
