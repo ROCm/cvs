@@ -76,6 +76,9 @@ still runs with ``cvs run atom``.
    * - ``mi355x_atom_deepseek-v4-pro``
      - ``_single``
      - Native ATOM MI355X Pro TP8; Spur 355 job-step proven; bring-up thresholds
+   * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8-gfx950``
+     - ``_single``
+     - Native ATOM MI355X copy; ``gpu_arch`` mi355x; bring-up thresholds
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
      - ``_single``
      - vLLM parity (serving schema)
