@@ -1,6 +1,5 @@
 {
   "_comment": "DeepSeek-R1-0528 FP8 single-node vLLM parity (MI3xx/MI325X).",
-  "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_vllm_deepseek-r1_fp8_single_threshold.json",
   "paths": {
@@ -11,8 +10,7 @@
   },
   "model": {
     "id": "deepseek-ai/DeepSeek-R1-0528",
-    "remote": 0,
-    "precision": "fp8"
+    "remote": 0
   },
   "container": {
     "lifetime": "per_run",

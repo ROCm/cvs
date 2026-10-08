@@ -1,6 +1,5 @@
 {
   "_comment": "DeepSeek-R1-0528 FP8 distributed SGLang PP=2 across two nodes.",
-  "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_sglang_deepseek-r1_fp8_distributed_threshold.json",
   "paths": {

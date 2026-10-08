@@ -32,9 +32,9 @@ Shipped files live under ``cvs/input/config_file/inference/atom/``:
   {gpu}_atom_{model}_{precision}_distributed.json   # when multinode PP is supported
   {platform}_atom_{model}_{precision}_threshold.json
 
-Config stems use the **family** prefix ``mi3xx``. Threshold files use a
-**platform** prefix (shipped: ``mi325x``, lab-validated on MI325X / gfx942).
-Each config's ``threshold_json`` points at the matching ``mi325x_*_threshold.json``.
+Config stems use ``mi3xx_*`` (gfx942) or ``mi355x_*`` (gfx950). Threshold
+files use ``mi325x_*`` or ``mi355x_*``. Each config's ``threshold_json``
+points at the matching threshold file.
 
 Multi-profile configs (``schema_version: 2``) embed job shapes under ``profiles``.
 Select one at runtime with ``--config_profile NAME`` (or ``CVS_CONFIG_PROFILE``).
@@ -69,6 +69,13 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8``
      - ``_single`` (``perf`` + ``mtp3`` profiles)
      - Native ATOM perf + MTP-3; lab pending for ``mtp3``
+   * - ``mi355x_atom_kimi-k27-code_mxfp4``
+     - ``_single``
+     - Native ATOM MI355X, TP4 MXFP4; same Spur/Slurm job-step as V4-Pro;
+       bring-up thresholds
+   * - ``mi355x_atom_deepseek-v4-pro``
+     - ``_single``
+     - Native ATOM MI355X Pro TP8; Spur 355 job-step proven; bring-up thresholds
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
      - ``_single``
      - vLLM parity (serving schema)

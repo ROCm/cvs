@@ -18,6 +18,7 @@ from cvs.lib.inference.atom.atom_config_loader import (
     expand_sweep_parametrize,
     gpu_arch_from_config_path,
     load_variant,
+    merge_mxfp4_triton_env,
     orchestrator_container_from_variant,
     placeholder_gated_threshold_cell,
     resolve_atom_profile,
@@ -486,30 +487,60 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertIn(cell, variant.expected_cells())
         self.assertIn("scaling.efficiency_pct", variant.thresholds[cell])
 
+    def test_merge_mxfp4_triton_env_skips_mi355x(self):
+        gfx942 = merge_mxfp4_triton_env("mxfp4", {}, gpu_arch="mi3xx")
+        self.assertEqual(gfx942["ATOM_USE_TRITON_MOE"], "1")
+        self.assertEqual(gfx942["ATOM_USE_TRITON_GEMM"], "1")
+        gfx950 = merge_mxfp4_triton_env("mxfp4", {}, gpu_arch="mi355x")
+        self.assertNotIn("ATOM_USE_TRITON_MOE", gfx950)
+        self.assertNotIn("ATOM_USE_TRITON_GEMM", gfx950)
+        opted_in = merge_mxfp4_triton_env(
+            "mxfp4",
+            {"ATOM_USE_TRITON_MOE": "true", "ATOM_USE_TRITON_GEMM": "true"},
+            gpu_arch="mi355x",
+        )
+        self.assertEqual(opted_in["ATOM_USE_TRITON_MOE"], "1")
+        self.assertEqual(opted_in["ATOM_USE_TRITON_GEMM"], "1")
+
+    def test_gpu_arch_from_config_path_reads_family_stem(self):
+        self.assertEqual(gpu_arch_from_config_path("mi3xx_atom_example.json"), "mi3xx")
+        self.assertEqual(gpu_arch_from_config_path("mi355x_atom_example.json"), "mi355x")
+
+    def test_load_mi355x_mxfp4_does_not_inject_triton_env(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi355x_atom_kimi-k27-code_mxfp4_single.json")
+        self.assertEqual(variant.gpu_arch, "mi355x")
+        self.assertNotIn("ATOM_USE_TRITON_MOE", variant.roles.server.env)
+        self.assertNotIn("ATOM_USE_TRITON_GEMM", variant.roles.server.env)
+        self.assertNotIn("HF_HUB_CACHE", variant.roles.server.env)
+        self.assertNotIn("HF_HOME", variant.roles.server.env)
+        pro = _atom_config(root, "mi355x_atom_deepseek-v4-pro_single.json")
+        self.assertEqual(pro.gpu_arch, "mi355x")
+        self.assertNotIn("HF_HUB_CACHE", pro.roles.server.env)
+        self.assertNotIn("HF_HOME", pro.roles.server.env)
+
     def test_atom_threshold_files_use_aligned_keys_and_bare_metrics(self):
         root = Path(__file__).resolve().parents[3]
         atom_dir = root / "input/config_file/inference/atom"
         cell_no_pp = re.compile(r"^ISL=.*,TP=\d+,CONC=")
-        config_platform_stem = re.compile(r"^mi325x_|^mi35x_|^mi300x_|^mi355x_")
-        threshold_family_stem = re.compile(r"^mi3xx_|^mi35x_|^mi300x_|^mi355x_")
         for path in sorted(atom_dir.glob("*.json")):
             if "threshold" in path.name:
-                self.assertFalse(
-                    threshold_family_stem.match(path.name),
-                    f"threshold must use platform stem, not family: {path.name}",
-                )
                 self.assertTrue(
-                    path.name.startswith("mi325x_"),
-                    f"shipped thresholds are mi325x-only: {path.name}",
+                    path.name.startswith(("mi325x_", "mi355x_", "mi300x_")),
+                    f"threshold must use a platform prefix: {path.name}",
+                )
+                self.assertFalse(
+                    path.name.startswith("mi3xx_"),
+                    f"threshold must not use the mi3xx family prefix: {path.name}",
                 )
             else:
-                self.assertFalse(
-                    config_platform_stem.match(path.name),
-                    f"config must use family stem mi3xx, not platform: {path.name}",
-                )
                 self.assertTrue(
-                    path.name.startswith("mi3xx_"),
-                    f"shipped configs use mi3xx family stem: {path.name}",
+                    path.name.startswith(("mi3xx_", "mi355x_")),
+                    f"config must use mi3xx or mi355x: {path.name}",
+                )
+                self.assertFalse(
+                    path.name.startswith(("mi325x_", "mi300x_")),
+                    f"config must not use an mi325x or mi300x prefix: {path.name}",
                 )
         for path in sorted(atom_dir.glob("*threshold*.json")):
             text = path.read_text(encoding="utf-8")
