@@ -475,5 +475,22 @@ class TestOutputParserRequirements(unittest.TestCase):
         self.assertFalse(hasattr(parser, "expected_steps"))
 
 
+class TestGpuTypeFromDeviceProbe(unittest.TestCase):
+    def test_mi325_device_id_is_not_scored_as_mi300x(self):
+        output = "Device ID: 0x74a5\nDevice ID: 0x74a5\n"
+        self.assertEqual(conftest.gpu_type_from_device_probe(output), "mi325")
+
+    def test_mi355_device_id_still_selects_mi355(self):
+        output = "Device ID: 0x75a3\n"
+        self.assertEqual(conftest.gpu_type_from_device_probe(output), "mi355")
+
+    def test_mi350_and_mi300x_device_ids(self):
+        self.assertEqual(conftest.gpu_type_from_device_probe("Device ID: 0x75a0\n"), "mi350")
+        self.assertEqual(conftest.gpu_type_from_device_probe("Device ID: 0x74a1\n"), "mi300x")
+
+    def test_unrecognized_device_id_stays_mi300x(self):
+        self.assertEqual(conftest.gpu_type_from_device_probe("Device ID: 0x1234\n"), "mi300x")
+
+
 if __name__ == "__main__":
     unittest.main()

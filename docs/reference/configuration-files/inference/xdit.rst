@@ -389,9 +389,9 @@ are comments and are ignored. Allowed specific keys are ``mi300x``, ``mi325``, `
 and ``mi355``. ``auto`` is the fallback when the detected key is absent.
 
 GPU type comes from the PCI device ID under ``/sys/class/drm/card*/device/device``.
-``0x75a0`` selects ``mi350`` and ``0x75a3`` selects ``mi355``. Any other ID, including
-MI300X and MI325X, selects ``mi300x``. The ``mi325`` keys in a threshold file apply only
-when that string is the detected type.
+``0x74a5`` selects ``mi325``, ``0x75a0`` selects ``mi350``, and ``0x75a3`` selects
+``mi355``. Any other ID, including MI300X, selects ``mi300x``. A threshold key applies
+only when detection reports that same string.
 
 .. list-table::
    :widths: 4 2 6
@@ -424,8 +424,9 @@ when that string is the detected type.
 
 A detected GPU with no key of its own uses ``auto``. MI350X on
 ``xdit_flux1_dev_distributed_threshold.json`` has no ``mi350`` entry, so it uses the
-``auto`` limit of 12 seconds. MI325X is reported as ``mi300x`` by the device-ID probe, so
-it uses the ``mi300x`` limit when that key exists.
+``auto`` limit of 12 seconds. MI325X (``0x74a5``) uses the ``mi325`` limit when that key
+exists, and ``auto`` otherwise.
+
 Comments in the FLUX.1 single and native WAN files mark which keys were measured and
 which remain placeholders. Tune the file for your stack before production gating.
 Set ``enforce_thresholds`` to ``false`` to record latency without failing the parse stage.
@@ -459,4 +460,4 @@ Troubleshooting
   The benchmark docker exit code was non-zero or artifacts were written elsewhere; inspect the log tail on the failing node.
 
 **MI355X threshold uses ``auto`` or ``mi300x``**
-  Confirm the node exposes device ID ``0x75a3``. A missing ``mi355`` key in the threshold file selects ``auto``. An unrecognized device ID selects ``mi300x``. MI325X also selects ``mi300x`` with this probe, so its ``mi325`` threshold entry is unused unless detection reports ``mi325``.
+  Confirm the node exposes device ID ``0x75a3``. A missing ``mi355`` key in the threshold file selects ``auto``. An unrecognized device ID selects ``mi300x``. MI325X is ``0x74a5`` and selects ``mi325``.

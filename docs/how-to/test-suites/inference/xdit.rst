@@ -234,10 +234,10 @@ Read the results
 ``cvs run`` writes a pytest HTML report under the run directory by default. Benchmark pass/fail uses the docker
 exit code plus parsed artifacts and the GPU key in the sibling threshold file.
 
-The suite reads PCI device IDs from ``/sys/class/drm/card*/device/device``. ``0x75a0``
-selects ``mi350`` and ``0x75a3`` selects ``mi355``. Any other ID, including MI300X and
-MI325X, selects ``mi300x``. Lookup then uses that key, or ``auto`` when the threshold
-file has no entry for it. ``test_print_results`` prints PASS or FAIL for each host. With
+The suite reads PCI device IDs from ``/sys/class/drm/card*/device/device``. ``0x74a5``
+selects ``mi325``, ``0x75a0`` selects ``mi350``, and ``0x75a3`` selects ``mi355``. Any
+other ID, including MI300X, selects ``mi300x``. Lookup then uses that key, or ``auto``
+when the threshold file has no entry for it. ``test_print_results`` prints PASS or FAIL for each host. With
 ``enforce_thresholds`` set to ``false``, the same row is RECORDED and does not fail the stage.
 
 Key stages to watch:

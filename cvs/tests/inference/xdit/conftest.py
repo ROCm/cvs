@@ -6,6 +6,7 @@ All rights reserved.
 """
 
 import json
+import re
 
 import pytest
 
@@ -31,6 +32,13 @@ _GPU_DEVICE_ID_PROBE = (
     'printf "Device ID: %s\\n" "$(cat "$f")"; '
     'done'
 )
+
+
+def gpu_type_from_device_probe(output):
+    # get_model_from_rocm_smi_output has no MI325X id, so 0x74a5 would be scored as mi300x.
+    if re.search(r"Device ID:\s*0x74a5(?![0-9a-fA-F])", output or "", re.I):
+        return "mi325"
+    return get_model_from_rocm_smi_output(output)
 
 
 def _deep_merge(base, override):
@@ -140,7 +148,7 @@ def orch(cluster_dict, variant_config, xdit_spec, lifecycle):
 def gpu_type(orch):
     output_by_host = orch.all.exec(_GPU_DEVICE_ID_PROBE)
     output = next(iter(output_by_host.values()), "")
-    return get_model_from_rocm_smi_output(output)
+    return gpu_type_from_device_probe(output)
 
 
 def pytest_collection_modifyitems(items):
