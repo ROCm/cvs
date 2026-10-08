@@ -18,7 +18,7 @@
        "gid_type": "RoCE v2",
        "_comment_gid_type": "Expected sysfs GID type for gid_index; 'any' disables the type check. Not enforced on InfiniBand link layers.",
        "port_no": "1516",
-       "duration": "30",
+       "duration": "10",
        "verify_bw": "True",
        "expected_results": {
            "ib_write_bw": {

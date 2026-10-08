@@ -66,7 +66,7 @@ make ut          # sdist -> .test_venv -> run_all_unittests.py
   verify_dmesg_for_errors(handle, start_time, end_time, till_end_flag=False)
   ```
   `handle` is `phdl` today in most suites; `orch` works if it exposes `.exec()`. Use `till_end_flag=False` to bound scans to the test window.
-- Dmesg parsing: `full_dmesg_scan` honors `CVS_DMESG_PARSER` (default `node-scraper`; set `legacy` for the regex path). Note that `verify_dmesg_for_errors` — the time-bounded scan shown above — always uses the `err_patterns_dict` regex path and ignores this variable.
+- Dmesg parsing: `full_dmesg_scan` and `verify_dmesg_for_errors` both honor `CVS_DMESG_PARSER` (default `node-scraper`; set `legacy` for the `err_patterns_dict` regex path).
 - Use `err_patterns_dict` in `cvs/lib/verify_lib.py` for failure patterns
 
 ### Custom HTML Reports

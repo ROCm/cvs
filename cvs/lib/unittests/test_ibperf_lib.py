@@ -5,7 +5,6 @@ import tempfile
 import zipfile
 from pathlib import Path
 from unittest.mock import ANY, MagicMock, patch
-
 import cvs.lib.ibperf_lib as ibperf_lib
 from cvs.lib import globals
 
@@ -182,6 +181,12 @@ class TestGetHipDeviceDict(unittest.TestCase):
         result = ibperf_lib.get_hip_device_dict(phdl, _TICKET_GPU_NIC)
         self.assertEqual(result, {node: {f'card{card}': card for card in range(8)} for node in _TICKET_GPU_NIC})
         self.assertEqual(mock_fail_test.call_count, 16)
+
+
+SAMPLE_CONFIG = Path(ibperf_lib.__file__).parents[1] / 'input/config_file/ibperf/ibperf_config.json'
+
+# perftest connection setup and ROCm buffer allocation happen before -D starts counting.
+PERFTEST_SETUP_HEADROOM_S = 5
 
 
 class TestIbperfLib(unittest.TestCase):
@@ -1026,6 +1031,40 @@ class TestFindUnmatchedThresholds(unittest.TestCase):
             ),
             [],
         )
+
+
+class TestSampleConfigDuration(unittest.TestCase):
+    @patch.object(ibperf_lib.time, 'sleep')
+    @patch.object(ibperf_lib, 'get_ib_bw_pps', return_value={})
+    def test_sample_duration_finishes_before_results_are_read(self, _bw_pps, mock_sleep):
+        config = json.loads(SAMPLE_CONFIG.read_text())['ibperf']
+        duration = int(config['duration'])
+        nodes = ('node1', 'node2')
+        gpu_nic_dict = {n: {f'card{g}': {'rdma_dev': f'rdma{g}'} for g in range(8)} for n in nodes}
+        gpu_numa_dict = {n: {f'card{g}': {'local_cpulist': '0-63'} for g in range(8)} for n in nodes}
+        hip_dev_dict = {n: {f'card{g}': g for g in range(8)} for n in nodes}
+        phdl = MagicMock()
+
+        ibperf_lib.run_ib_perf_bw_test(
+            phdl,
+            'ib_write_bw',
+            gpu_numa_dict,
+            gpu_nic_dict,
+            {n: {} for n in nodes},
+            '/opt/perftest/bin',
+            config['msg_size_list'][0],
+            config['gid_index'],
+            config['qp_count_list'][0],
+            int(config['port_no']),
+            duration,
+            use_dmabuf=False,
+            hip_dev_dict=hip_dev_dict,
+        )
+
+        _, client_cmd = phdl.exec_cmd_list.call_args_list[1].args[0]
+        self.assertIn(f' -D {duration} ', client_cmd)
+        results_read_after = max(c.args[0] for c in mock_sleep.call_args_list)
+        self.assertLess(duration + PERFTEST_SETUP_HEADROOM_S, results_read_after)
 
 
 if __name__ == '__main__':
