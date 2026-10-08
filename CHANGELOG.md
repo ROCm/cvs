@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- ibperf `verify_bw` now enforces `expected_results`. Previously the bandwidth and latency
+  thresholds were never evaluated, so `ib_perf_bw_test` passed regardless of measured performance.
+  Every GPU instance is checked against the threshold for its message size and QP count, and
+  thresholds outside `msg_size_list`/`qp_count_list` are logged as warnings. The unreachable
+  `ib_write_bw` 8388608-byte sample threshold is removed. Existing configs with `verify_bw` set to
+  `"True"` may now report failures; re-baseline thresholds for your cluster.
 - Platform `host_configs_cvs` now checks the network link speed of every backend NIC (`test_check_be_nic_link_speed`) against `nic_link_speed` (default `400000` Mb/s) and reports node, interface and actual speed on mismatch. Set `nic_link_interfaces` to the backend netdev names; without it the backend NICs are auto-detected, and a node with fewer backend NICs than another node fails. Existing configs without `nic_link_speed` gate at 400000 and will fail on NICs running at another speed.
 - Pytest sub-test reports no longer write their own per-test log file or Full Log link, which could replace the parent test's Full Log link.
 
