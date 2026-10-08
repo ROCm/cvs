@@ -1,5 +1,7 @@
+import base64
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -10,6 +12,8 @@ from cvs.lib.inference.xdit.xdit_benchmark_job import (
     BenchmarkLaunchPlan,
     PytorchXditBenchmarkJob,
     _REMOTE_COLLECT_SCRIPT,
+    _materialize_artifacts,
+    cleanup_staged_artifacts,
     stage_remote_benchmark_outputs,
 )
 from cvs.lib.inference.xdit.xdit_flux import FluxOutputParser
@@ -274,6 +278,22 @@ def _collect_tree(root):
 
 
 class TestStageRemoteBenchmarkOutputs(unittest.TestCase):
+    def tearDown(self):
+        cleanup_staged_artifacts()
+
+    def test_cleanup_staged_artifacts_removes_materialized_dirs(self):
+        local = _materialize_artifacts([{"rel": "results/timing.json", "b64": base64.b64encode(b"[]").decode("ascii")}])
+        self.assertTrue(os.path.isdir(local))
+        untouched = tempfile.mkdtemp(prefix="xdit-results-keep-")
+        try:
+            cleanup_staged_artifacts()
+            self.assertFalse(os.path.exists(local))
+            self.assertTrue(os.path.isdir(untouched))
+            cleanup_staged_artifacts()
+            self.assertTrue(os.path.isdir(untouched))
+        finally:
+            shutil.rmtree(untouched, ignore_errors=True)
+
     def test_collect_script_reads_flux_and_wan_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             flux = os.path.join(tmp, "results")

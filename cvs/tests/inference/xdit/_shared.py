@@ -15,6 +15,7 @@ import pytest
 from tabulate import tabulate
 
 from cvs.lib import globals
+from cvs.lib.inference.xdit.xdit_benchmark_job import cleanup_staged_artifacts
 from cvs.lib.inference.xdit.xdit_flux import FluxOutputParser
 from cvs.lib.inference.xdit.xdit_flux_job import (
     build_output_cleanup_cmd,
@@ -717,5 +718,6 @@ def print_results_stage(lifecycle):
 def teardown_stage(orch, lifecycle, request):
     started = time.monotonic()
     orch.teardown_containers()
+    cleanup_staged_artifacts()
     lifecycle.record(request, "teardown", started)
     lifecycle.torn_down = True

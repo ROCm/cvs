@@ -26,6 +26,7 @@ CONTAINER_OUTPUT_MOUNT = "/outputs"
 CONTAINER_HF_TOKEN_PATH = "/run/secrets/hf_token"
 _ARTIFACT_BEGIN = "XDIT_ARTIFACTS_BEGIN"
 _ARTIFACT_END = "XDIT_ARTIFACTS_END"
+_STAGED_ARTIFACT_DIRS = []
 
 # Controller parse has no view of node-local storage. The writer node prints the
 # benchmark files; the controller rebuilds just enough of the tree to parse.
@@ -93,7 +94,16 @@ def _materialize_artifacts(items):
     if not wrote:
         shutil.rmtree(root, ignore_errors=True)
         return None
-    return str(root)
+    staged = str(root)
+    _STAGED_ARTIFACT_DIRS.append(staged)
+    return staged
+
+
+def cleanup_staged_artifacts():
+    while _STAGED_ARTIFACT_DIRS:
+        path = _STAGED_ARTIFACT_DIRS.pop()
+        shutil.rmtree(path, ignore_errors=True)
+        log.info("Removed staged xDiT artifacts at %s", path)
 
 
 def stage_remote_benchmark_outputs(s_phdl, output_dirs_by_node):

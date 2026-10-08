@@ -11,6 +11,7 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
+from cvs.lib.inference.xdit.xdit_benchmark_job import cleanup_staged_artifacts
 from cvs.lib.utils_lib import get_model_from_rocm_smi_output, resolve_cluster_config_placeholders
 from cvs.tests.inference.xdit._shared import (
     Lifecycle,
@@ -131,6 +132,7 @@ def orch(cluster_dict, variant_config, xdit_spec, lifecycle):
             log.info("xDiT orchestrator leak-guard: tearing down containers")
             orchestrator.teardown_containers()
     finally:
+        cleanup_staged_artifacts()
         orchestrator.close()
 
 
