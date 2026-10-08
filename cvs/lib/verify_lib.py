@@ -11,15 +11,19 @@ import re
 
 from cvs.lib.utils_lib import *
 from cvs.lib.rocm_plib import *
+from cvs.lib import dmesg_noise
 from cvs.lib import linux_utils
 from cvs.lib import node_scraper_adapter
 
 
 err_patterns_dict = {
     'gpu_reset': 'GPU reset begin|GPU hang|cp might be in an unrecoverable state|fence wait loop timeout expired',
-    'crash': 'crashed|Traceback|cut here|Bug:|Call Trace|RIP:|end trace|amdgpu: Fatal error|segfault|show_stack|dump_stack|fault ',
+    # `(?<!Firmware )Bug:` still matches a kernel BUG:. `[Firmware Bug]:` is the
+    # benign hypervisor warning VMware guests emit for APIC/TSC quirks.
+    'crash': 'crashed|Traceback|cut here|(?<!Firmware )Bug:|Call Trace|RIP:|end trace|amdgpu: Fatal error|segfault|show_stack|dump_stack|fault ',
     'test_fail': 'Test failure',
-    'fault': 'no-retry page fault|Illegal register access|PROTECTION_FAULT_STATUS',
+    # A zero PROTECTION_FAULT_STATUS is a cleared register, not a fault.
+    'fault': r'no-retry page fault|Illegal register access|PROTECTION_FAULT_STATUS(?!\s*:\s*0x0+\b)',
     # Note: amdgpu oversubscription messages ('Runlist is getting oversubscribed',
     # 'Expect reduced ROCm performance') are perf-degrading but not test failures —
     # they're matched as warnings via warn_patterns_dict below. See AMD docs:
@@ -151,11 +155,35 @@ def _node_scraper_scan(output_dict, analysis_args=None, source_label='Dmesg'):
     for node in output_dict.keys():
         err_dict[node] = []
         events = node_scraper_adapter.parse_dmesg(output_dict[node], node_name=node, analysis_args=analysis_args)
-        for line in node_scraper_adapter.event_match_lines(events):
+        for event in events:
+            lines = node_scraper_adapter.event_match_lines([event])
+            line = lines[0] if lines else ''
+            if dmesg_noise.dmesg_line_is_benign(line):
+                continue
+            priority = str(event.get('priority') or 'ERROR').upper()
+            if priority == 'WARNING':
+                log.warning('WARN - non-fatal %s on node %s: %s', source_label, node, line)
+                continue
+            if not line:
+                continue
             msg = f'ERROR - Failure pattern *** {line} *** seen in {source_label} on node {node}'
             fail_test(msg)
             err_dict[node].append(line)
     return err_dict
+
+
+def parse_dmesg_nodes(output_dict, analysis_args=None):
+    '''Parse per-node dmesg text with node-scraper. Does not call fail_test.'''
+    if analysis_args is None:
+        analysis_args = {'error_regex': cvs_dmesg_error_regex()}
+    parsed = {}
+    for node, text in output_dict.items():
+        parsed[node] = node_scraper_adapter.parse_dmesg(
+            text or '',
+            node_name=str(node),
+            analysis_args=analysis_args,
+        )
+    return parsed
 
 
 def verify_gpu_pcie_bus_width(phdl, expected_cards=None, gpu_pcie_speed=32, gpu_pcie_width=16):
@@ -395,6 +423,8 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
     # any perf numbers from this run should not be trusted blindly.
     for node in output_dict.keys():
         for line in output_dict[node].split("\n"):
+            if dmesg_noise.dmesg_line_is_benign(line):
+                continue
             for err_key in err_patterns_dict.keys():
                 if re.search(f'{err_patterns_dict[err_key]}', line, re.I):
                     fail_test(f'ERROR - Failue pattern ** {line} ** seen in Dmesg')
@@ -622,6 +652,8 @@ def full_journalctl_scan(phdl, start_time_dict=None):
     # For each node, scan each line against known error regex patterns
     for node in out_dict.keys():
         for line in out_dict[node].split("\n"):
+            if dmesg_noise.dmesg_line_is_benign(line):
+                continue
             for err_key in err_patterns_dict.keys():
                 # Case-insensitive match against the configured error patterns
                 if re.search(f'{err_patterns_dict[err_key]}', line, re.I):
@@ -699,6 +731,8 @@ def full_dmesg_scan(
     for node in output_dict.keys():
         # Examine each line for any known failure pattern
         for line in output_dict[node].split("\n"):
+            if dmesg_noise.dmesg_line_is_benign(line):
+                continue
             for err_key in err_patterns_dict.keys():
                 # Case-insensitive match against configured error regexes
                 if re.search(f'{err_patterns_dict[err_key]}', line, re.I):
@@ -756,14 +790,20 @@ def verify_driver_errors(phdl):
                 analysis_args={'error_regex': cvs_dmesg_error_regex()},
             )
             for event in events:
+                lines = node_scraper_adapter.event_match_lines([event])
+                line = lines[0] if lines else (event.get('description') or '')
+                if dmesg_noise.dmesg_line_is_benign(line):
+                    continue
+                priority = str(event.get('priority') or 'ERROR').upper()
+                if priority == 'WARNING':
+                    log.warning('WARN - non-fatal amdgpu dmesg on node %s: %s', node, line)
+                    continue
                 match = event.get('match_content')
                 if isinstance(match, (list, tuple)):
                     text = ' '.join(str(part) for part in match if part)
                 else:
                     text = str(match or '')
                 if 'amdgpu' in text.lower() or event.get('category') == 'SW_DRIVER':
-                    lines = node_scraper_adapter.event_match_lines([event])
-                    line = lines[0] if lines else (event.get('description') or '')
                     msg = f'ERROR !! amdgpu driver errors detected in dmesg on node {node}: {line}'
                     fail_test(msg)
                     err_dict[node].append(line)
@@ -778,7 +818,7 @@ def verify_driver_errors(phdl):
     # For each node, if the filtered output contains 'fail' or 'error', mark test as failed.
     for node in out_dict.keys():
         for line in out_dict[node].split("\n"):
-            if re.search('fail|error', line, re.I):
+            if dmesg_noise.line_indicates_driver_error(line):
                 msg = f'ERROR !! amdgpu driver errors detected in dmesg on node {node}: {line}'
                 fail_test(msg)
                 err_dict[node].append(line)

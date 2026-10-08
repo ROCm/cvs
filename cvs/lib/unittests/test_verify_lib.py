@@ -1,5 +1,6 @@
 import datetime
 import os
+import re
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -159,6 +160,62 @@ class TestFullDmesgScan(unittest.TestCase):
         self.assertEqual(len(result["node1"]), 1)
         self.assertIn("Out of memory error", result["node1"][0])
         mock_fail_test.assert_called()
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    def test_legacy_path_ignores_firmware_bug_and_zero_status(self, mock_fail_test):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            "node1": "\n".join(
+                [
+                    "[Firmware Bug]: cpu 0, try to use APIC520 for vector 0xf4, register already in use",
+                    "amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x0",
+                    "amdgpu 0000:03:00.0: amdgpu: MAPPING_ERROR: 0x0",
+                    "amdgpu 0000:03:00.0: amdgpu: VM_L2_PROTECTION_FAULT_STATUS:0x00000000",
+                ]
+            )
+        }
+
+        result = verify_lib.full_dmesg_scan(phdl)
+
+        self.assertEqual(result["node1"], [])
+        mock_fail_test.assert_not_called()
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    def test_node_scraper_warning_does_not_fail(self, mock_parse, mock_fail_test):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = [
+            {
+                "priority": "WARNING",
+                "category": "BIOS",
+                "description": "ACPI Error",
+                "match_content": "ACPI Error: Method parse/execution failed",
+                "count": 1,
+                "timestamps": [],
+                "source": "dmesg",
+            }
+        ]
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "raw dmesg text"}
+
+        result = verify_lib.full_dmesg_scan(phdl)
+
+        self.assertEqual(result["node1"], [])
+        mock_fail_test.assert_not_called()
+
+    def test_firmware_bug_is_not_a_crash_pattern(self):
+        firmware = (
+            "[Firmware Bug]: cpu 0, try to use APIC520 (LVT offset 2) for vector 0xf4, "
+            "but the register is already in use for vector 0x0 on this cpu"
+        )
+        self.assertIsNone(re.search(verify_lib.err_patterns_dict["crash"], firmware, re.I))
+        self.assertIsNotNone(re.search(verify_lib.err_patterns_dict["crash"], "kernel BUG: unable to handle", re.I))
+        zero_status = "VM_L2_PROTECTION_FAULT_STATUS:0x00000000"
+        self.assertIsNone(re.search(verify_lib.err_patterns_dict["fault"], zero_status, re.I))
+        self.assertIsNotNone(
+            re.search(verify_lib.err_patterns_dict["fault"], "VM_L2_PROTECTION_FAULT_STATUS:0x00301030", re.I)
+        )
 
 
 class TestDmesgMigrations(unittest.TestCase):

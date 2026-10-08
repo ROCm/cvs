@@ -573,12 +573,12 @@ def test_check_pci_acs(orch, config_dict, host_res_dict, cluster_dict, lifecycle
 
 def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
-    Check dmesg for AMDGPU driver errors on each node.
+    Check dmesg for AMDGPU driver errors and reset/hang lines on each node.
 
-    This test:
-      - Runs 'sudo dmesg -T | grep -i amdgpu | egrep -i "fail|error"' on each node.
-      - Flags a failure if any 'fail' or 'error' appears in the filtered output.
-      - Calls update_test_result() to record pass/fail.
+    The default parser is node-scraper (CVS_DMESG_PARSER). Healthy zero-valued
+    status fields (WALKER_ERROR: 0x0, MAPPING_ERROR: 0x0) and hypervisor
+    ``[Firmware Bug]:`` warnings are not failures. CVS_DMESG_PARSER=legacy
+    keeps the historical amdgpu grep, with those same status fields ignored.
 
     Args:
       phdl: Remote execution handle with exec(cmd: str) -> dict[node, str].
@@ -586,11 +586,25 @@ def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dic
 
     Notes:
       - globals.error_list is reset at test start; fail_test() accumulates failures.
-      - dmesg -T requires a relatively recent kernel; content depends on ring buffer.
-      - Grep may miss issues if log levels or formats differ; adjust patterns as needed.
+      - dmesg content depends on the kernel ring buffer.
     """
 
     globals.error_list = []
+    if use_node_scraper_dmesg():
+        with timed_stage(lifecycle, host_configs_rundeck.DMESG_DRIVER):
+            out_dict = orch.all.exec("sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
+            events_by_node = parse_dmesg_nodes(out_dict)
+            records, messages = host_configs_rundeck.eval_dmesg_driver_events(events_by_node)
+        _fail_messages(messages)
+        _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_DRIVER, records)
+        update_test_result()
+        with timed_stage(lifecycle, host_configs_rundeck.DMESG_RESET):
+            records, messages = host_configs_rundeck.eval_dmesg_reset_events(events_by_node)
+        _fail_messages(messages)
+        _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_RESET, records)
+        update_test_result()
+        return
+
     with timed_stage(lifecycle, host_configs_rundeck.DMESG_DRIVER):
         out_dict = orch.all.exec("sudo dmesg -T | grep -i amdgpu  | egrep -i 'fail|error' --color=never")
     records, messages = host_configs_rundeck.eval_dmesg_driver(out_dict)

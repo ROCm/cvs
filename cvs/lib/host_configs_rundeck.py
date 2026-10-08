@@ -18,6 +18,8 @@ Shape (consumed by cvs/lib/report/rundeck/dataset_builders/status_matrix.py)::
 
 import re
 
+from cvs.lib import dmesg_noise
+
 _STATUSES = ('pass', 'fail', 'na')
 
 # Timed-stage labels in host_configs_cvs. The deck profile lists the same ids.
@@ -412,15 +414,66 @@ def eval_pci_acs(out_dict):
     )
 
 
+def _event_blob(event):
+    match = event.get('match_content')
+    if isinstance(match, (list, tuple)):
+        text = ' '.join(str(part) for part in match if part)
+    elif match is None:
+        text = ''
+    else:
+        text = str(match)
+    description = event.get('description') or ''
+    return f'{description}: {text}'.strip().rstrip(':').strip()
+
+
+def _actionable_amdgpu_blob(event):
+    '''Return the event text when it should count toward a host dmesg check.'''
+    if str(event.get('priority') or 'ERROR').upper() == 'WARNING':
+        return ''
+    blob = _event_blob(event)
+    if dmesg_noise.dmesg_line_is_benign(blob):
+        return ''
+    if 'amdgpu' not in blob.lower():
+        return ''
+    return blob
+
+
 def eval_dmesg_driver(out_dict):
-    '''Return (node_records, fail_messages) for amdgpu fail/error lines.'''
+    '''Return (node_records, fail_messages) for amdgpu fail/error lines.
+
+    Zero-valued status fields such as ``WALKER_ERROR: 0x0`` and
+    ``MAPPING_ERROR: 0x0`` are not driver errors.
+    '''
+    filtered = {}
+    for node, output in out_dict.items():
+        kept = [line for line in (output or '').splitlines() if dmesg_noise.line_indicates_driver_error(line)]
+        filtered[node] = '\n'.join(kept)
     return _must_not_match(
-        out_dict,
+        filtered,
         'fail|error',
         'amdgpu',
         lambda node: f'Dmesg has amdgpu driver errors on node {node}',
         'clean',
     )
+
+
+def eval_dmesg_driver_events(events_by_node):
+    '''Return (node_records, fail_messages) from node-scraper dmesg events.'''
+    records = {}
+    messages = []
+    for node, events in events_by_node.items():
+        hits = []
+        for event in events or []:
+            blob = _actionable_amdgpu_blob(event)
+            if blob and dmesg_noise.line_indicates_driver_error(blob):
+                hits.append(blob)
+        if not hits:
+            records[str(node)] = _pass_record('clean')
+            continue
+        message = f'Dmesg has amdgpu driver errors on node {node}'
+        messages.append(message)
+        records[str(node)] = _fail_record('amdgpu', message, 'seen')
+    return records, messages
 
 
 def eval_dmesg_reset(out_dict):
@@ -432,3 +485,22 @@ def eval_dmesg_reset(out_dict):
         lambda node: f'Dmesg has amdgpu reset/hang errors on node {node}',
         'clean',
     )
+
+
+def eval_dmesg_reset_events(events_by_node):
+    '''Return (node_records, fail_messages) for reset/hang node-scraper events.'''
+    records = {}
+    messages = []
+    for node, events in events_by_node.items():
+        hits = []
+        for event in events or []:
+            blob = _actionable_amdgpu_blob(event)
+            if blob and re.search(r'reset|hang', blob, re.I):
+                hits.append(blob)
+        if not hits:
+            records[str(node)] = _pass_record('clean')
+            continue
+        message = f'Dmesg has amdgpu reset/hang errors on node {node}'
+        messages.append(message)
+        records[str(node)] = _fail_record('amdgpu', message, 'seen')
+    return records, messages
