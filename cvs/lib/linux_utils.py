@@ -775,62 +775,75 @@ def get_lshw_backend_nic_dict(phdl):
     return lshw_bck_nic_dict
 
 
-def get_nearest_bus_no(target_hex: str, candidates: list[str]) -> str:
-    """
-    Return the nearest matching hex value (as one of the candidate strings).
-    - Inputs are hex strings like '0x1f', '1F', '-0x10' (case-insensitive).
-    - Tie-breaker: picks the smaller numeric value.
-    """
-    if not candidates:
-        raise ValueError("candidates must be non-empty")
-    t = int(target_hex, 16)
-    return min(candidates, key=lambda s: (abs(int(s, 16) - t), int(s, 16)))
+def _parse_pci_bdf(bdf):
+    """Return (domain, bus, device, function) as ints from an address like '0000:05:00.0'."""
+    match = re.search(r'([0-9a-f]+):([0-9a-f]+):([0-9a-f]+)\.([0-9a-f])', bdf, re.I)
+    return tuple(int(field, 16) for field in match.groups())
 
 
-def get_gpu_nic_mapping_dict(
-    phdl,
-):
+def pair_gpus_with_nics(gpu_bdf_list, nic_bdf_list):
+    """
+    Pick a backend NIC for each GPU from their PCI addresses.
+
+    A NIC in the GPU's PCI domain always beats one outside it; then the nearest
+    bus wins, then the nearest device. Pairs are taken closest bus first across
+    all GPUs, earlier GPUs winning ties, and each NIC goes to one GPU. A GPU
+    shares a NIC only when every NIC is already taken, and that is logged.
+
+    Returns:
+        list: index into nic_bdf_list for each GPU, in GPU order.
+    """
+    if not nic_bdf_list:
+        raise ValueError('no backend NICs to pair with GPUs')
+    gpus = [_parse_pci_bdf(bdf) for bdf in gpu_bdf_list]
+    nics = [_parse_pci_bdf(bdf) for bdf in nic_bdf_list]
+
+    def rank(gpu_idx, nic_idx):
+        gpu, nic = gpus[gpu_idx], nics[nic_idx]
+        return (gpu[0] != nic[0], abs(gpu[1] - nic[1]), gpu_idx, nic[1], abs(gpu[2] - nic[2]), nic)
+
+    candidates = sorted(
+        ((gpu_idx, nic_idx) for gpu_idx in range(len(gpus)) for nic_idx in range(len(nics))),
+        key=lambda pair: rank(*pair),
+    )
+    nic_for_gpu = {}
+    for gpu_idx, nic_idx in candidates:
+        if gpu_idx not in nic_for_gpu and nic_idx not in nic_for_gpu.values():
+            nic_for_gpu[gpu_idx] = nic_idx
+
+    for gpu_idx in range(len(gpus)):
+        if gpu_idx not in nic_for_gpu:
+            nic_idx = min(range(len(nics)), key=lambda idx: rank(gpu_idx, idx))
+            log.warning(
+                'GPU %s shares NIC %s: more GPUs than backend NICs',
+                gpu_bdf_list[gpu_idx],
+                nic_bdf_list[nic_idx],
+            )
+            nic_for_gpu[gpu_idx] = nic_idx
+    return [nic_for_gpu[gpu_idx] for gpu_idx in range(len(gpus))]
+
+
+def get_gpu_nic_mapping_dict(phdl):
     gpu_nic_dict = {}
     gpu_pcie_dict = rocm_plib.get_gpu_pcie_bus_dict(phdl)
     lshw_dict = get_lshw_backend_nic_dict(phdl)
 
-    nic_bus_dict = {}
-    for node in lshw_dict.keys():
-        nic_bus_dict[node] = []
-        for eth_dev in lshw_dict[node].keys():
-            nic_pci = lshw_dict[node][eth_dev]['pci_bus']
-            match = re.search('[0-9a-f]+\:([0-9a-f]+)\:[0-9a-f]+\.[0-9a-f]', nic_pci, re.I)
-            nic_bus_no = match.group(1)
-            nic_bus_dict[node].append(nic_bus_no)
-
     for node in gpu_pcie_dict.keys():
+        cards = list(gpu_pcie_dict[node].keys())
+        eth_devs = list(lshw_dict[node].keys())
+        gpu_bdf_list = [gpu_pcie_dict[node][card]['PCI Bus'] for card in cards]
+        nic_bdf_list = [lshw_dict[node][eth_dev]['pci_bus'] for eth_dev in eth_devs]
+        nic_idx_list = pair_gpus_with_nics(gpu_bdf_list, nic_bdf_list)
+
         gpu_nic_dict[node] = {}
-        for card in gpu_pcie_dict[node].keys():
-            gpu_nic_dict[node][card] = {}
-            gpu_bdf = gpu_pcie_dict[node][card]['PCI Bus']
-            gpu_nic_dict[node][card]['gpu_bdf'] = gpu_bdf
-            match = re.search('[0-9a-f]+\:([0-9a-f]+)\:[0-9a-f]+\.[0-9a-f]', gpu_bdf, re.I)
-            bus_no = match.group(1)
-
-            # find nearest nic bus no.
-            nic_bus_list = nic_bus_dict[node]
-            log.info(f'nic_bus_list = {nic_bus_list}')
-            log.info(f'bus_no = {bus_no}')
-
-            nearest_nic_bus_no = get_nearest_bus_no(bus_no, nic_bus_list)
-
-            log.info(f'nic_bus_list = {nic_bus_list}')
-            log.info(f'nearest_nic_bus_no = {nearest_nic_bus_no}')
-            for eth_dev in lshw_dict[node].keys():
-                match = re.search(
-                    '[0-9a-f]+\:([0-9a-f]+)\:[0-9a-f]+\.[0-9a-f]', lshw_dict[node][eth_dev]['pci_bus'], re.I
-                )
-                lshw_bus_no = match.group(1)
-                if hex(int(nearest_nic_bus_no, 16)) == hex(int(lshw_bus_no, 16)):
-                    gpu_nic_dict[node][card]['eth_dev'] = eth_dev
-                    gpu_nic_dict[node][card]['rdma_dev'] = lshw_dict[node][eth_dev]['rdma_dev']
-                    gpu_nic_dict[node][card]['nic_bdf'] = lshw_dict[node][eth_dev]['pci_bus']
-                    continue
+        for card, gpu_bdf, nic_idx in zip(cards, gpu_bdf_list, nic_idx_list):
+            eth_dev = eth_devs[nic_idx]
+            gpu_nic_dict[node][card] = {
+                'gpu_bdf': gpu_bdf,
+                'eth_dev': eth_dev,
+                'rdma_dev': lshw_dict[node][eth_dev]['rdma_dev'],
+                'nic_bdf': nic_bdf_list[nic_idx],
+            }
     log.info("%s", gpu_nic_dict)
     return gpu_nic_dict
 

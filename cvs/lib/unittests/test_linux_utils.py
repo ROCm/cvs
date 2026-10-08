@@ -173,5 +173,47 @@ class TestGetNicEthtoolStatsDict(unittest.TestCase):
         self.assertEqual(second_batch_cmds[1], 'true')
 
 
+class TestGetGpuNicMappingDict(unittest.TestCase):
+    SINGLE_DOMAIN_BUSES = ['05', '15', '65', '75', '85', '95', 'e5', 'f5']
+
+    def _map(self, gpu_bdfs, nics):
+        gpu_dict = {'node1': {f'card{i}': {'PCI Bus': bdf} for i, bdf in enumerate(gpu_bdfs)}}
+        nic_dict = {'node1': {eth: {'pci_bus': bdf, 'rdma_dev': rdma} for eth, bdf, rdma in nics}}
+        with (
+            patch.object(linux_utils.rocm_plib, 'get_gpu_pcie_bus_dict', return_value=gpu_dict),
+            patch.object(linux_utils, 'get_lshw_backend_nic_dict', return_value=nic_dict),
+        ):
+            result = linux_utils.get_gpu_nic_mapping_dict(MagicMock())
+        return [result['node1'][f'card{i}']['rdma_dev'] for i in range(len(gpu_bdfs))]
+
+    def _single_domain_gpus(self):
+        return [f'0000:{bus.upper()}:00.0' for bus in self.SINGLE_DOMAIN_BUSES]
+
+    def _single_domain_nics(self):
+        return [(f'eth{i}', f'0000:{bus[0]}6:00.0', f'rdma{i}') for i, bus in enumerate(self.SINGLE_DOMAIN_BUSES)]
+
+    def test_single_domain_pairs_each_gpu_with_next_bus_nic(self):
+        self.assertEqual(
+            self._map(self._single_domain_gpus(), self._single_domain_nics()),
+            [f'rdma{i}' for i in range(8)],
+        )
+
+    def test_two_domains_on_bus_zero_pair_within_domain_in_device_order(self):
+        gpus = [f'{domain}:00:0{dev}.0' for domain in ('0002', '0003') for dev in range(1, 5)]
+        nics = [
+            (f'enP{domain}p0s{dev}', f'000{domain}:00:{dev:02x}.0', f'ionic_{i}')
+            for i, (domain, dev) in enumerate((d, v) for d in (2, 3) for v in range(9, 13))
+        ]
+        self.assertEqual(self._map(gpus, nics), [f'ionic_{i}' for i in range(8)])
+
+    def test_gpu_shares_nic_only_when_none_is_free(self):
+        nics = [nic for nic in self._single_domain_nics() if nic[2] != 'rdma3']
+        with self.assertLogs(level='WARNING') as logs:
+            rdma_devs = self._map(self._single_domain_gpus(), nics)
+        self.assertEqual(rdma_devs, ['rdma0', 'rdma1', 'rdma2', 'rdma2', 'rdma4', 'rdma5', 'rdma6', 'rdma7'])
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn('0000:75:00.0', logs.output[0])
+
+
 if __name__ == '__main__':
     unittest.main()
