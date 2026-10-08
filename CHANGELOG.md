@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - vLLM suites accept the `spec_decode_*` statistics that `vllm bench serve` reports for speculative decoding, instead of failing the first cell and skipping the rest of the sweep.
 - vLLM and ATOM GPU metric snapshots and polls no longer reset the xGMI error counters. They ran a bare `amd-smi metric --json`, which also reads `--xgmi-err` and so clears the counters on every call; they now request only the `--usage` and `--mem-usage` sections they read. The raw `gpu.energy_j` snapshot field, which no suite reads, is now always `None`.
 - SGLang: the GPU occupancy check runs `amd-smi metric --mem-usage --json` instead of a bare `amd-smi metric --json`, so it reads only the VRAM section it uses and no longer reads the xGMI error section, which resets the xGMI error counters on MI200 and older GPUs.
+- vLLM: `vllm_single` accepts `pipeline_parallel_size` greater than 1 and passes `--pipeline-parallel-size` to `vllm serve`; it previously rejected the config. `vllm_distributed` on a one-host cluster now runs the same single-host path with the configured pipeline width. It previously served with a pipeline width of 1 while cell keys still showed the configured value, so those configs now run a different server layout.
 
 ## [0.2.0] - 2026-09-23
 

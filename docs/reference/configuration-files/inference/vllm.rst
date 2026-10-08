@@ -6,7 +6,7 @@
 vLLM inference benchmark configuration file for Cluster Validation Suite (CVS)
 ****************************************************************************
 
-The vLLM suites benchmark LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file, with one-host fallback when only a single host is present. Packaged distributed recipes and thresholds are calibrated for two hosts; retune them before treating other sizes as pass/fail.
+The vLLM suites benchmark LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file; when only one host is present, it runs the same single-host path as ``vllm_single``. Packaged distributed recipes and thresholds are calibrated for two hosts; retune them before treating other sizes as pass/fail.
 
 For a mapping-style ``node_dict``, "first cluster host" means the first JSON key
 in insertion order. ``vllm_single`` scopes execution to that host and rewrites
@@ -229,8 +229,8 @@ These rules are enforced when the configuration file loads, before anything star
      - ``pipeline_parallel_size`` **must** be greater than 1
    * - two or more cluster hosts, backend is ray
      - ``pipeline_parallel_size`` of 1 is valid
-   * - ``pipeline_parallel_size`` > 1
-     - The distributed suite requires more than one cluster host
+   * - one cluster host (``vllm_single``, or ``vllm_distributed`` on a one-host cluster)
+     - Any ``pipeline_parallel_size`` is valid. Values above 1 add ``--pipeline-parallel-size``; no distributed flags are emitted
    * - two or more cluster hosts, either backend
      - ``container.env.NCCL_SOCKET_IFNAME`` is **required**
 
@@ -239,7 +239,6 @@ The corresponding error messages are:
 .. code:: text
 
   multi-host distributed execution requires pipeline_parallel_size > 1 unless using ray
-  pipeline_parallel_size > 1 requires a multi-host distributed suite
   vllm_distributed requires container.env.NCCL_SOCKET_IFNAME on multi-host clusters
 
 Multinode prerequisites
@@ -1068,8 +1067,6 @@ Troubleshooting
      - Cause and fix
    * - Distributed execution requires ``pipeline_parallel_size > 1``
      - Multi-host ``vllm_distributed`` on the mp backend needs pipeline parallelism. Either raise ``pipeline_parallel_size``, or set ``distributed-executor-backend`` to ``"ray"``.
-   * - ``vllm_single requires pipeline_parallel_size=1``
-     - Use ``vllm_distributed`` when the config requires pipeline parallelism.
    * - ``vllm_distributed requires container.env.NCCL_SOCKET_IFNAME``
      - Set all three socket-interface variables under ``container.env``.
    * - ``Container image not specified in config``

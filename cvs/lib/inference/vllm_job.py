@@ -18,8 +18,9 @@ Routing contract:
 Distributed vs single-node branching is localised to _server_argv only. The
 target host group, rather than the variant config, determines node count:
 distributed flags (--node-rank, --master-addr, --master-port, --nnodes,
---pipeline-parallel-size, --distributed-executor-backend) are added iff
-int(nnodes) > 1. Everything else is topology-blind.
+--distributed-executor-backend) are added iff int(nnodes) > 1.
+--pipeline-parallel-size is added on multi-node mp, and otherwise whenever
+pp > 1, including on one host. Everything else is topology-blind.
 
 IB device config (distributed only):
   NCCL_IB_HCA: inherited from container.env when configured there. Otherwise,
@@ -150,11 +151,7 @@ class VllmJob:
             b = variant.benchmark_params.model_dump()
             b.update(variant.benchmark_params.extra_options())
         self.tp = str(p.tensor_parallel_size)
-        self.pp = (
-            str(topology.pipeline_parallel_size)
-            if topology is not None
-            else (str(p.pipeline_parallel_size) if len(self.hosts) > 1 else "1")
-        )
+        self.pp = str(topology.pipeline_parallel_size) if topology is not None else str(p.pipeline_parallel_size)
         self.master_addr = self.hosts[0]
         self.master_port = str(p.dist_init_port)
         self.nnodes = str(topology.nnodes) if topology is not None else str(len(self.hosts))
@@ -218,7 +215,8 @@ class VllmJob:
         """vllm serve arg list for a specific node rank.
 
         Distributed flags added iff nnodes > 1. On single-node (nnodes=1)
-        this yields a plain single-node vllm serve command.
+        this yields a plain single-node vllm serve command, plus
+        --pipeline-parallel-size when pp > 1.
         """
         argv = [
             "vllm",
@@ -251,7 +249,7 @@ class VllmJob:
             ]
             if rank > 0:
                 argv.append("--headless")
-        if int(self.nnodes) > 1 and self._is_ray_backend and int(self.pp) > 1:
+        elif int(self.pp) > 1:
             argv += ["--pipeline-parallel-size", str(self.pp)]
         if int(self.nnodes) > 1 and self._is_ray_backend:
             argv += ["--distributed-executor-backend", "ray"]
