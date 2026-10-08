@@ -1,5 +1,4 @@
 {
-  "gpu_arch": "mi355x",
   "framework": "atom",
   "default_profile": "perf",
   "threshold_json": "mi355x_atom_deepseek-r1_fp8_single_threshold.json",
@@ -48,9 +47,7 @@
             "--trust-remote-code"
           ],
           "env": {
-            "ATOM_DISABLE_MMAP": "true",
-            "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
-            "HF_HOME": "{paths.shared_fs}/.cache/huggingface"
+            "ATOM_DISABLE_MMAP": "true"
           }
         }
       },
@@ -187,9 +184,7 @@
             "3"
           ],
           "env": {
-            "ATOM_DISABLE_MMAP": "true",
-            "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
-            "HF_HOME": "{paths.shared_fs}/.cache/huggingface"
+            "ATOM_DISABLE_MMAP": "true"
           }
         }
       },
