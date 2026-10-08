@@ -405,6 +405,10 @@ class TestStageRemoteBenchmarkOutputs(unittest.TestCase):
         job.store_output_dir_hint(plan)
         local = job.inference_dict["_test_output_dir"]
         self.assertNotIn("/home/user/stub_output", local)
+        self.assertEqual(
+            job.inference_dict["_test_node_output_dir"],
+            "/home/user/stub_output/stub_host-0_outputs",
+        )
         result, errors = FluxOutputParser(local, expected_repetitions=25).parse()
         self.assertIsNotNone(result, errors)
         self.assertEqual(result.repetition_count, 25)

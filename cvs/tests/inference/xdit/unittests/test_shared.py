@@ -6,6 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from cvs.lib import globals
 from cvs.tests.inference.xdit import conftest
 from cvs.tests.inference.xdit._shared import (
     Lifecycle,
@@ -21,6 +22,7 @@ from cvs.tests.inference.xdit._shared import (
     hf_token_from_variant,
     inference_from_variant,
     log_topology,
+    parse_thresholds_stage,
     resolve_execution_hosts,
     scoped_cluster_dict,
     suite_spec,
@@ -216,6 +218,82 @@ class TestAttachBenchmarkArtifacts(unittest.TestCase):
     def test_skips_when_html_reporting_is_disabled(self):
         request = SimpleNamespace(config=SimpleNamespace())
         self.assertEqual(_attach_benchmark_artifacts(request, "10.0.0.1", "/missing"), [])
+
+
+class TestParseThresholdsStage(unittest.TestCase):
+    def test_reports_node_path_when_parser_reads_staged_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            results = os.path.join(tmp, "results")
+            os.makedirs(results)
+            with open(os.path.join(results, "timing.json"), "w", encoding="utf-8") as handle:
+                handle.write('[{"pipe_time": 1.25}]')
+            with open(os.path.join(results, "flux_0.png"), "wb") as handle:
+                handle.write(b"x")
+            node_dir = "/home/user/flux_host_outputs"
+            variant = SimpleNamespace(
+                inference={
+                    "_test_output_dirs_by_node": {"10.0.0.1": tmp},
+                    "_test_node_output_dirs_by_node": {"10.0.0.1": node_dir},
+                },
+                benchmark_params={
+                    "flux1_dev_t2i": {
+                    "num_repetitions": 1,
+                    "ulysses_degree": 1,
+                    "ring_degree": 1,
+                    "height": 1024,
+                        "width": 1024,
+                        "num_inference_steps": 4,
+                        "expected_results": {"auto": {"max_avg_pipe_time_s": 10}},
+                    }
+                },
+                thresholds={},
+            )
+            lifecycle = Lifecycle()
+            request = SimpleNamespace(node=SimpleNamespace(nodeid="test_parse"), config=SimpleNamespace())
+
+            parse_thresholds_stage(
+                variant,
+                "auto",
+                {"family": "flux", "distributed": False, "diffusers": False},
+                lifecycle,
+                request,
+            )
+
+        self.assertEqual(lifecycle.results[0][5], node_dir)
+        self.assertEqual(next(iter(lifecycle.report_results.values()))["10.0.0.1"]["output_dir"], node_dir)
+        self.assertNotIn(tmp, lifecycle.results[0][5])
+
+    def test_parse_failure_names_node_output_path(self):
+        variant = SimpleNamespace(
+            inference={
+                "_test_output_dirs_by_node": {"10.0.0.1": "/tmp/xdit-results-gone"},
+                "_test_node_output_dirs_by_node": {"10.0.0.1": "/home/user/flux_host_outputs"},
+            },
+            benchmark_params={
+                "flux1_dev_t2i": {
+                    "num_repetitions": 1,
+                    "ulysses_degree": 1,
+                    "ring_degree": 1,
+                    "expected_results": {},
+                }
+            },
+            thresholds={},
+        )
+        lifecycle = Lifecycle()
+        request = SimpleNamespace(node=SimpleNamespace(nodeid="test_parse"), config=SimpleNamespace())
+
+        with patch("cvs.tests.inference.xdit._shared.update_test_result"):
+            parse_thresholds_stage(
+                variant,
+                "auto",
+                {"family": "flux", "distributed": False, "diffusers": False},
+                lifecycle,
+                request,
+            )
+
+        message = globals.error_list[-1]
+        self.assertIn("/home/user/flux_host_outputs", message)
+        self.assertNotIn("xdit-results-gone", message)
 
 
 class TestOutputDirsByHost(unittest.TestCase):

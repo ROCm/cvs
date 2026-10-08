@@ -591,9 +591,12 @@ class PytorchXditBenchmarkJob(ABC):
         }
         if by_node:
             self.inference_dict["_test_output_dirs_by_node"] = by_node
+        if host_by_node:
+            self.inference_dict["_test_node_output_dirs_by_node"] = host_by_node
 
         if plan.primary_output_dir:
             host_primary = self._host_output_path(plan.primary_output_dir)
+            self.inference_dict["_test_node_output_dir"] = host_primary
             writer = next(
                 (node for node, path in remote_by_node.items() if path == plan.primary_output_dir and node in staged),
                 None,
@@ -605,4 +608,6 @@ class PytorchXditBenchmarkJob(ABC):
             return
 
         if not self.distributed and len(plan.node_order) == 1 and plan.node_order[0] in by_node:
-            self.inference_dict["_test_output_dir"] = by_node[plan.node_order[0]]
+            node = plan.node_order[0]
+            self.inference_dict["_test_output_dir"] = by_node[node]
+            self.inference_dict["_test_node_output_dir"] = host_by_node[node]

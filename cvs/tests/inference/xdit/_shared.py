@@ -630,8 +630,16 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
     if report_spec is not None:
         variant.thresholds[cell_id] = {metric: report_spec}
 
+    reported_by_host = _output_dirs_by_host(
+        {
+            "_test_output_dirs_by_node": inference.get("_test_node_output_dirs_by_node"),
+            "_test_output_dir": inference.get("_test_node_output_dir"),
+        },
+        lifecycle,
+    )
     failures = []
     for host, output_dir in outputs.items():
+        reported_dir = reported_by_host.get(host) or output_dir
         _attach_benchmark_artifacts(request, host, output_dir)
         parser = _output_parser(spec, params, output_dir, variant)
         if spec["family"] == "flux" and not _is_flux2_workload(variant, params) and parser.expected_repetitions is None:
@@ -642,7 +650,14 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
             continue
         result, errors = parser.parse()
         if result is None:
-            failures.append(f"Failed to parse xDiT output on {host} from {output_dir}: {errors}")
+            staged_names = {str(output_dir), str(Path(output_dir))}
+            detail = []
+            for err in errors:
+                text = str(err)
+                for staged_name in staged_names:
+                    text = text.replace(staged_name, reported_dir)
+                detail.append(text)
+            failures.append(f"Failed to parse xDiT output on {host} from {reported_dir}: {detail}")
             continue
         passed, message = parser.validate_threshold(result, thresholds, gpu_type)
         value = getattr(result, metric)
@@ -653,7 +668,7 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
             "ulysses_degree": ulysses_degree,
             "ring_degree": ring_degree,
             "sample_count": getattr(result, "repetition_count", getattr(result, "step_count", 0)),
-            "output_dir": output_dir,
+            "output_dir": reported_dir,
         }
         lifecycle.results.append(
             (
@@ -662,7 +677,7 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
                 topology,
                 ulysses_degree,
                 ring_degree,
-                output_dir,
+                reported_dir,
                 metric,
                 value,
                 passed if enforce_thresholds else None,
