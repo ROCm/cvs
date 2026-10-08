@@ -6,7 +6,7 @@ MI300X and MI325X share `mi3xx_megatron_<model>_{single,distributed}.json`. Set 
 
 Llama 3.1 8B, Llama 3.3 70B, and DeepSeek V2 Lite support both Megatron-LM and Primus (same JSON; backend is `container.image`). Llama 3.1 405B (`*_llama-3.1-405b_distributed.json`) is distributed-only and Primus-only.
 
-`container.env` NIC fields ship with example values plus `<changeme>`. Do not set `NNODES` in JSON. On `*_distributed.json`, `paths.data_cache_dir` must be a shared filesystem.
+`container.env` NIC fields ship with example values plus `<changeme>`. Do not set `NNODES` in JSON. `gpus_per_node` defaults to `8`; set it when a node has a different GPU count. On `*_distributed.json`, `paths.data_cache_dir` must be a shared filesystem.
 
 Sweep combination keys (and matching `sweep.runs` entries and threshold cells) are `MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>`. Pytest parametrizes `sweep_name` from `sweep.runs`. Packaged combination bodies set `"training_iterations": "20"`; other `train_params` overlays (`tensor_parallelism`, `pipeline_parallelism`) are optional. An empty `sweep.runs` list with declared combinations fails at load. Omitting `sweep` runs one implicit `default` cell from `train_params`, which must then set `micro_batch_size`, `global_batch_size`, and `precision`; the threshold file then needs a `"default"` cell when `enforce_thresholds` is true (optional when it is false).
 

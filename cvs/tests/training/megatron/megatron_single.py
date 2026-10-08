@@ -41,6 +41,12 @@ from cvs.lib.training.megatron.utils.iteration_metrics import (
 )
 from cvs.lib.training.megatron.utils.loss_curve import evaluate_loss_decreasing
 from cvs.lib.training.megatron.utils.loss_curve_plot import render_loss_curve_png
+from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
+from cvs.lib.training.megatron.utils.results_table import (
+    build_benchmark_metric_row,
+    build_metric_row,
+    render_metric_results_html,
+)
 from cvs.lib.training.megatron.utils.scaling import compute_scaling_efficiency
 from cvs.lib.utils.verdict import _check_one, ThresholdViolation
 from cvs.lib.utils_lib import update_test_result
@@ -412,6 +418,12 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
     finally:
         mt_obj.stop_training_processes()
 
+    # fail_test only records messages; the pytest failure is raised here.
+    # An empty sweep makes the matching test_metric and test_loss_curve skip.
+    if globals.error_list:
+        train_res_dict[sweep_name] = None
+        update_test_result()
+
     lifecycle.record(nodeid, "training", elapsed)
     request.node.user_properties.append(("metric_value", elapsed))
     request.node.user_properties.append(("metric_unit", "s"))
@@ -421,7 +433,7 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
 
     tput_per_gpu = train_res_dict[sweep_name].get("throughput_per_gpu", [])
     if tput_per_gpu:
-        gpus_per_node = 8
+        gpus_per_node = int(variant_config.gpus_per_node)
         tokens_per_sec_total = float(tput_per_gpu[-1]) * int(mt_obj.nnodes) * gpus_per_node
         baseline = variant_config.scaling_baseline
         efficiency = compute_scaling_efficiency(
@@ -456,11 +468,33 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
     except Exception:
         pass
 
+    # Derive p50/p95 step times here so they are available to test_metric, which
+    # runs before test_loss_curve (where the curve itself is rendered).
+    try:
+        dialect = dialect_from_image(orch.container_config.get("image", ""))
+        tp = getattr(variant_config, "train_params", None) or {}
+        seq = tp.get("sequence_length") if isinstance(tp, dict) else getattr(tp, "sequence_length", None)
+        world_size = int(mt_obj.nnodes) * int(variant_config.gpus_per_node)
+        iter_metrics = parse_iteration_metrics(
+            mt_obj._read_last_node_log(), dialect, seq_length=seq, world_size=world_size
+        )
+        train_res_dict[sweep_name].update(derive_step_time_stats(iter_metrics))
+    except Exception:
+        pass
+
     update_test_result()
 
 
 def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
-    """Stage 4 (parametrized): compare each combo's metrics against thresholds."""
+    """Stage 4 (parametrized): compare each combo's metrics against thresholds.
+
+    Every metric is evaluated and recorded as its own pass/fail verdict row so the
+    report renders them as an expandable per-metric panel under this test (the same
+    collapsible view the inference benchmark suites use): expand ``test_metric`` to
+    see tflops_per_sec_per_gpu, tokens_s_gpu, step_time_p50_ms, step_time_p95_ms,
+    ... each as Passed/Failed. All metrics are checked even when one fails, and the
+    parent test fails as a whole if any gated metric violated its threshold.
+    """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     if not train_res_dict.get(sweep_name):
@@ -471,47 +505,60 @@ def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
     request.node.user_properties.append(("training_log_tail", actuals_raw.get("_log_tail", "")))
     actuals = {f"training.{k}": float(v[-1]) for k, v in actuals_raw.items() if v and not k.startswith("_")}
 
+    rows = train_res_dict.setdefault("metric_rows", [])
+    sweep_row_start = len(rows)
+    verdicts = []
     try:
-        if not variant_config.enforce_thresholds:
-            log.info("enforce_thresholds=false; record-only for combo '%s'", sweep_name)
-            for metric, value in actuals.items():
-                log.info("  RECORD  %s: actual=%s", metric, value)
-            return
-
         cell = variant_config.cell_key(sweep_name)
-        thresholds = variant_config.thresholds.get(cell)
-        if not thresholds:
-            log.warning("no thresholds defined for cell '%s'; skipping threshold checks", cell)
+        thresholds = variant_config.thresholds.get(cell) or {}
+        enforce = variant_config.enforce_thresholds
+
+        if not enforce or not thresholds:
+            reason = "enforce_thresholds=false" if not enforce else f"no thresholds for cell '{cell}'"
+            log.info("thresholds not enforced for combo '%s' (%s)", sweep_name, reason)
+            for metric, value in actuals.items():
+                spec = thresholds.get(metric)
+                rows.append(build_metric_row(sweep_name, metric, spec, value, "PASS"))
+                verdicts.append(build_benchmark_metric_row(metric, spec, value, "pass", enforced=False))
             return
 
         log.info("--- Threshold check for combo '%s' ---", sweep_name)
         violations = []
         for metric, spec in thresholds.items():
-            if metric not in actuals:
+            value = actuals.get(metric)
+            if metric not in actuals or value is None:
+                msg = (
+                    f"{metric}: missing from actuals"
+                    if metric not in actuals
+                    else f"{metric}: value is None (metric unavailable for this run)"
+                )
                 if spec.get("optional"):
-                    log.info("  SKIPPED  %s: missing from actuals", metric)
+                    log.info("  SKIPPED  %s: no value produced this run", metric)
+                    rows.append(build_metric_row(sweep_name, metric, spec, value, "N/A"))
+                    verdicts.append(
+                        build_benchmark_metric_row(metric, spec, value, "skip", reason="no value produced this run")
+                    )
                     continue
-                msg = f"{metric}: missing from actuals"
-                log.error("  FAILED  %s", msg)
-                violations.append(msg)
-                continue
-            if actuals[metric] is None:
-                if spec.get("optional"):
-                    log.info("  SKIPPED  %s: value is None (metric unavailable for this run)", metric)
-                    continue
-                msg = f"{metric}: value is None (metric unavailable for this run)"
-                log.error("  FAILED  %s", msg)
-                violations.append(msg)
-                continue
-            spec_with_actuals = dict(spec)
-            if spec.get("kind") == "min_ratio":
-                spec_with_actuals["_actuals"] = actuals
-            v = _check_one(metric, actuals[metric], spec_with_actuals)
-            if v:
-                log.error("  FAILED  %s", v)
-                violations.append(v)
             else:
-                log.info("  PASSED  %s: actual=%s  threshold=%s", metric, actuals[metric], spec)
+                spec_with_actuals = dict(spec)
+                if spec.get("kind") == "min_ratio":
+                    spec_with_actuals["_actuals"] = actuals
+                msg = _check_one(metric, value, spec_with_actuals)
+
+            if spec.get("kind") == "info":
+                row_status, verdict_status = "PASS", "pass"
+            elif msg:
+                row_status, verdict_status = "FAIL", "fail"
+                violations.append(msg)
+            else:
+                row_status, verdict_status = "PASS", "pass"
+            rows.append(build_metric_row(sweep_name, metric, spec, value, row_status))
+            verdicts.append(
+                build_benchmark_metric_row(
+                    metric, spec, value, verdict_status, reason=msg or "", enforced=spec.get("kind") != "info"
+                )
+            )
+            log.info("  %s  %s: actual=%s  threshold=%s", row_status, metric, value, spec)
 
         if violations:
             summary = "FAILED\n" + "\n".join(violations)
@@ -522,7 +569,29 @@ def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
         log.info("--- All threshold checks PASSED for combo '%s' ---", sweep_name)
         request.node.user_properties.append(("threshold_comparison", "PASSED"))
     finally:
+        if verdicts:
+            record_benchmark_metric_rows(request.node, verdicts)
         lifecycle.record(request.node.nodeid, "metrics", time.monotonic() - t)
+        _attach_metric_artifacts(request, lifecycle, sweep_name, rows[sweep_row_start:], "single")
+
+
+def _attach_metric_artifacts(request, lifecycle, sweep_name, sweep_rows, mode):
+    """Attach this combo's metric-results table as a report link on the test_metric row."""
+    mgr = getattr(request.config, "_html_report_manager", None)
+    if mgr is None or not getattr(mgr, "is_enabled", False) or not sweep_rows:
+        return
+
+    from pathlib import Path as _Path
+    import uuid as _uuid
+
+    out_dir = mgr.log_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    uid = str(_uuid.uuid4()).split("-")[-1]
+    table_path = _Path(out_dir) / f"metric_results_{sweep_name}_{uid}.html"
+    title = f"Training Metric Results ({mode}) [{sweep_name}]"
+    table_path.write_text(render_metric_results_html(sweep_rows, title), encoding="utf-8")
+    rel = str(table_path.relative_to(mgr.htmlpath.parent))
+    lifecycle.add_artifact(request.node.nodeid, "metric_results", rel, str(table_path))
 
 
 def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle, request):
@@ -547,7 +616,7 @@ def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle,
     tp = getattr(variant_config, "train_params", None) or {}
     seq = tp.get("sequence_length") if isinstance(tp, dict) else getattr(tp, "sequence_length", None)
     nnodes = len(getattr(orch, "hosts", None) or [])
-    world_size = nnodes * 8 if nnodes else None
+    world_size = nnodes * int(variant_config.gpus_per_node) if nnodes else None
     step_metrics = parse_iteration_metrics(log_text, dialect, seq_length=seq, world_size=world_size)
     points = sample_loss_curve(step_metrics, lc.sample_every, lc.milestone_steps)
     train_res_dict[sweep_name].update(sample_training_curves(step_metrics, lc.sample_every, lc.milestone_steps))
@@ -586,6 +655,29 @@ def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle,
 
     if lc.enforce and not decreasing:
         pytest.fail(f"training loss is not decreasing for combo '{sweep_name}': {detail}")
+
+
+def test_print_results_table(train_res_dict, request):
+    """Render all sweep verdicts as one Sweep/Metric/Expected/Actual/Unit/Status
+    HTML table linked from the report bundle."""
+    metric_rows = train_res_dict.get("metric_rows") or []
+    if not metric_rows:
+        pytest.skip("no metric rows recorded; nothing to summarize")
+
+    mgr = getattr(request.config, "_html_report_manager", None)
+    if mgr is None or not getattr(mgr, "is_enabled", False):
+        log.info("HTML report not enabled; skipping metric results table")
+        return
+
+    from pathlib import Path as _Path
+    import uuid as _uuid
+
+    out_dir = mgr.log_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = _Path(out_dir) / f"metric_results_{str(_uuid.uuid4()).split('-')[-1]}.html"
+    path.write_text(render_metric_results_html(metric_rows, "Training Metric Results (single)"), encoding="utf-8")
+    copied = mgr.add_html_to_report(str(path), link_name="Training Metric Results", request=request)
+    log.info("wrote metric results table: %s", copied or path)
 
 
 def test_teardown(orch, lifecycle, request):
