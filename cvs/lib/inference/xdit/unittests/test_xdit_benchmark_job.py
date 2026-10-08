@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 from cvs.lib.inference.xdit.xdit_benchmark_job import (
     BenchmarkLaunchPlan,
     PytorchXditBenchmarkJob,
+    _ARTIFACT_COLLECT_TIMEOUT_S,
     _REMOTE_COLLECT_SCRIPT,
     _materialize_artifacts,
     cleanup_staged_artifacts,
@@ -264,6 +265,7 @@ class _RecordingExec:
 
     def exec_cmd_list(self, commands, timeout=None, print_console=False):
         self.commands = list(commands)
+        self.timeout = timeout
         return {host: self.outputs[host] for host in self.host_list}
 
 
@@ -360,8 +362,10 @@ class TestStageRemoteBenchmarkOutputs(unittest.TestCase):
         self.assertAlmostEqual(result.avg_total_time_s, 12.5)
 
     def test_missing_remote_files_leave_no_local_copy(self):
-        staged = stage_remote_benchmark_outputs(_RecordingExec({"n0": ""}), {"n0": "/node/only"})
+        executor = _RecordingExec({"n0": ""})
+        staged = stage_remote_benchmark_outputs(executor, {"n0": "/node/only"})
         self.assertEqual(staged, {})
+        self.assertEqual(executor.timeout, _ARTIFACT_COLLECT_TIMEOUT_S)
 
     def test_store_output_dir_hint_points_parser_at_staged_timing(self):
         with tempfile.TemporaryDirectory() as tmp:

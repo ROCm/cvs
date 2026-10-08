@@ -26,6 +26,7 @@ CONTAINER_OUTPUT_MOUNT = "/outputs"
 CONTAINER_HF_TOKEN_PATH = "/run/secrets/hf_token"
 _ARTIFACT_BEGIN = "XDIT_ARTIFACTS_BEGIN"
 _ARTIFACT_END = "XDIT_ARTIFACTS_END"
+_ARTIFACT_COLLECT_TIMEOUT_S = 300
 _STAGED_ARTIFACT_DIRS = []
 
 # Controller parse has no view of node-local storage. The writer node prints the
@@ -119,7 +120,7 @@ def stage_remote_benchmark_outputs(s_phdl, output_dirs_by_node):
         return {}
     commands = [remote_benchmark_collect_cmd(output_dirs_by_node[node]) for node in nodes]
     try:
-        raw = _exec_cmd_list_on_nodes(s_phdl, nodes, commands, print_console=False)
+        raw = _exec_cmd_list_on_nodes(s_phdl, nodes, commands, timeout=_ARTIFACT_COLLECT_TIMEOUT_S, print_console=False)
     except Exception as exc:
         log.warning("Could not read xDiT benchmark output from nodes: %s", exc)
         return {}
