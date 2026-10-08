@@ -173,5 +173,23 @@ class TestGetNicEthtoolStatsDict(unittest.TestCase):
         self.assertEqual(second_batch_cmds[1], 'true')
 
 
+class TestGetGpuNicMappingDict(unittest.TestCase):
+    def test_discovers_mapping_without_sudo(self):
+        outputs = {
+            'rocm-smi --loglevel error --showbus --json': '{"card0": {"PCI Bus": "0000:03:00.0"}}',
+            'lshw -class network -businfo': 'pci@0000:05:00.0  eth0  network  DSC Ethernet Controller VF',
+            'ls /sys/class/infiniband/': 'rdma0',
+            'ls /sys/class/infiniband/rdma0/device/net/': 'eth0',
+            'rdma link': 'link rdma0/1 state ACTIVE physical_state LINK_UP netdev eth0',
+        }
+        mock_phdl = MagicMock()
+        mock_phdl.exec.side_effect = lambda cmd, **_kwargs: {'node1': outputs[cmd]}
+
+        result = linux_utils.get_gpu_nic_mapping_dict(mock_phdl)
+
+        self.assertEqual(result['node1']['card0']['rdma_dev'], 'rdma0')
+        self.assertEqual(result['node1']['card0']['nic_bdf'], '0000:05:00.0')
+
+
 if __name__ == '__main__':
     unittest.main()

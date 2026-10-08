@@ -14,7 +14,7 @@ def get_lshw_network_dict(phdl):
     """
     Parse `lshw -class network -businfo` output (per node) into a nested dictionary.
 
-    This function executes `sudo lshw -class network -businfo` via the provided phdl
+    This function executes `lshw -class network -businfo` via the provided phdl
     handle (which is expected to run the command on one or more nodes and return a
     mapping of node -> command output). It then parses each line of output to extract:
       - The PCI bus identifier (e.g., 0000:03:00.0)
@@ -56,7 +56,7 @@ def get_lshw_network_dict(phdl):
     # Execute lshw on all nodes via the provided handle. The expectation is that
     # out_dict is like: { node_name: "command stdout as string", ... }
 
-    out_dict = phdl.exec('sudo lshw -class network -businfo')
+    out_dict = phdl.exec('lshw -class network -businfo')
     for node in out_dict.keys():
         lshw_dict[node] = {}
         # Process the output line-by-line. split("\n") assumes LF newlines from lshw.

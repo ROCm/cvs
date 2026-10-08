@@ -100,7 +100,7 @@ def get_gpu_fw_dict(phdl):
 
 
 def get_gpu_pcie_bus_dict(phdl):
-    d_dict = convert_phdl_json_to_dict(phdl.exec('sudo rocm-smi --loglevel error --showbus --json'))
+    d_dict = convert_phdl_json_to_dict(phdl.exec('rocm-smi --loglevel error --showbus --json'))
     return d_dict
 
 
