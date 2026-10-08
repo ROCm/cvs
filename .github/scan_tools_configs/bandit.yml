@@ -12,6 +12,9 @@
 # substring of it, so every entry is a whole path segment with both
 # slashes. A bare `build` or `tests` would also skip production code,
 # such as `cell_build.py` or the customer-facing `cvs/tests/` suites.
+# The leading slash means an entry only matches below the scan root, so
+# scan from the repository root as both workflows do: `bandit -r build`
+# would scan everything under `build/`.
 
 exclude_dirs:
   - /.git/
