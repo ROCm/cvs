@@ -13,6 +13,7 @@ from cvs.lib.inference.xdit.xdit_benchmark_job import (
     PytorchXditBenchmarkJob,
     _ARTIFACT_COLLECT_TIMEOUT_S,
     _REMOTE_COLLECT_SCRIPT,
+    _build_output_cleanup_cmd,
     _materialize_artifacts,
     cleanup_staged_artifacts,
     stage_remote_benchmark_outputs,
@@ -122,6 +123,20 @@ class _FakeContainerOrchestrator:
                 value = ""
             output[host] = {"output": value, "exit_code": 0} if detailed else value
         return output
+
+
+class TestBuildOutputCleanupCmd(unittest.TestCase):
+    def test_sudo_fallback_and_plain_rm(self):
+        cmd = _build_output_cleanup_cmd("/out", "flux_*_outputs")
+        self.assertEqual(
+            cmd,
+            "bash -c 'if sudo -n true >/dev/null 2>&1; then "
+            "sudo rm -rf /out/flux_*_outputs; else rm -rf /out/flux_*_outputs; fi'",
+        )
+        self.assertEqual(
+            _build_output_cleanup_cmd("/out", "wan_22_*_outputs", use_sudo=False),
+            "bash -c 'rm -rf /out/wan_22_*_outputs'",
+        )
 
 
 class TestBenchmarkLaunchPlan(unittest.TestCase):

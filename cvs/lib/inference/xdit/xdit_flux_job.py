@@ -1079,6 +1079,7 @@ def verify_distributed_logs(output: str, *, world_size: int) -> Tuple[bool, str]
 from cvs.lib.inference.xdit.xdit_benchmark_job import (  # noqa: E402
     BenchmarkLaunchPlan,
     PytorchXditBenchmarkJob,
+    _build_output_cleanup_cmd,
 )
 
 FluxLaunchPlan = BenchmarkLaunchPlan
@@ -1269,9 +1270,4 @@ def validate_flux_parallelism_config(
 
 
 def build_output_cleanup_cmd(output_base_dir: str, *, use_sudo: bool = True) -> str:
-    # Glob must expand in shell — do not quote the *
-    rm_cmd = f"rm -rf {output_base_dir}/flux_*_outputs"
-    if not use_sudo:
-        return f"bash -c {shlex.quote(rm_cmd)}"
-    script = f"if sudo -n true >/dev/null 2>&1; then sudo {rm_cmd}; else {rm_cmd}; fi"
-    return f"bash -c {shlex.quote(script)}"
+    return _build_output_cleanup_cmd(output_base_dir, "flux_*_outputs", use_sudo=use_sudo)

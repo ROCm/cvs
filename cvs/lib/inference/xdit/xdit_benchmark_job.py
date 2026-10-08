@@ -109,6 +109,15 @@ def cleanup_staged_artifacts():
         log.info("Removed staged xDiT artifacts at %s", path)
 
 
+def _build_output_cleanup_cmd(output_base_dir, glob_pattern, *, use_sudo=True):
+    # Glob must expand in shell — do not quote the *
+    rm_cmd = f"rm -rf {output_base_dir}/{glob_pattern}"
+    if not use_sudo:
+        return f"bash -c {shlex.quote(rm_cmd)}"
+    script = f"if sudo -n true >/dev/null 2>&1; then sudo {rm_cmd}; else {rm_cmd}; fi"
+    return f"bash -c {shlex.quote(script)}"
+
+
 def stage_remote_benchmark_outputs(s_phdl, output_dirs_by_node):
     """Read benchmark JSON and media on each writer node and stage them locally.
 
