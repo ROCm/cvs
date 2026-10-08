@@ -30,6 +30,23 @@ class TestUtilsLib(unittest.TestCase):
         utils_lib.scan_test_results(out_dict)
         mock_fail_test.assert_called()
 
+    @patch('cvs.lib.utils_lib.fail_test')
+    def test_scan_test_results_ignores_benign_vmware_provider_warning(self, mock_fail_test):
+        out_dict = {
+            'host1': (
+                'RTotal 326.1 325.0 326.4 324.7 324.8 326.3 324.6 326.7\n'
+                'Failed to open VMware provider: No such file or directory\n'
+            )
+        }
+        utils_lib.scan_test_results(out_dict)
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.utils_lib.fail_test')
+    def test_scan_test_results_still_fails_real_no_such_file(self, mock_fail_test):
+        out_dict = {'host1': 'bash: /opt/missing/TransferBench: No such file or directory'}
+        utils_lib.scan_test_results(out_dict)
+        mock_fail_test.assert_called()
+
     def test_cluster_target_output_label_strips_and_sanitizes(self):
         self.assertEqual(utils_lib.cluster_target_output_label("  node1.example.com  "), "node1.example.com")
         self.assertEqual(utils_lib.cluster_target_output_label("a/b"), "a_b")

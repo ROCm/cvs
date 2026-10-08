@@ -64,6 +64,27 @@ def print_test_output(log, out_dict):
         log.info("%s", out_dict[node])
 
 
+# Unselected provider probes (e.g. VMware on an ionic fabric) emit "No such file"
+# noise that must not fail TransferBench/RCCL when native metrics pass (AIMVT-449).
+_BENIGN_PROVIDER_SCAN_RE = re.compile(
+    r'(?:vmware|provider).{0,120}(?:no such file|not found|unavailable)|'
+    r'(?:no such file|not found|unavailable).{0,120}(?:vmware|provider)',
+    re.I,
+)
+
+
+def strip_benign_scan_noise(text):
+    """Drop known-benign provider-probe lines before failure-indicator scanning."""
+    if not text:
+        return text
+    kept = []
+    for line in text.splitlines(keepends=True):
+        if _BENIGN_PROVIDER_SCAN_RE.search(line):
+            continue
+        kept.append(line)
+    return ''.join(kept)
+
+
 def scan_test_results(out_dict):
     """
     Scan test outputs from multiple hosts for failure indicators and report context.
@@ -72,7 +93,8 @@ def scan_test_results(out_dict):
       out_dict (dict): Mapping of host -> output string (e.g., test logs or stdout/stderr).
 
     Behavior:
-      - For each host, searches the output for common failure patterns:
+      - Strips known-benign unselected-provider probe lines (e.g. VMware "No such file").
+      - For each host, searches the remaining output for common failure patterns:
           'test FAIL', 'test ERROR', 'ABORT', 'Traceback', 'No such file', 'FATAL' (case-insensitive).
       - When a match is found, splits the full output into words and locates the first token
         containing any of: 'FAIL', 'ERR', 'ABORT', 'Traceback'.
@@ -82,29 +104,23 @@ def scan_test_results(out_dict):
     Notes:
       - Assumes `re` is imported, and `fail_test` is available in scope.
       - word_count controls the number of contextual words (currently set to 5).
-      - Potential issue: `fail_test` is called unconditionally at the end of the loop iteration,
-        which will raise even when no match is found, and before_words/actual_word/after_words
-        might be undefined if no target word was located. Consider moving the fail_test call
-        inside the `if target_word_index != -1:` block and guarding for no match cases.
     """
 
     word_count = 5  # Number of words to include before/after the matched token for context
 
     # Iterate over each host's output
     for host in out_dict.keys():
-        # Search for any high-level failure pattern in the raw output
+        scanned = strip_benign_scan_noise(out_dict[host])
+        # Search for any high-level failure pattern in the filtered output
         match = re.search(
             r'test FAIL |test ERROR |ABORT|Traceback|No such file|FATAL|'
             r'cannot allocate memory due to process memory policy',
-            out_dict[host],
+            scanned,
             re.I,
         )
         if match:
-            # Record the span of the first match (currently unused; could help with slicing)
-            # start_index = match.start()
-            # end_index = match.end()
-            # Tokenize the entire output into words for contextual extraction
-            words = out_dict[host].split()
+            # Tokenize the filtered output into words for contextual extraction
+            words = scanned.split()
             # Find the index of the target word in the list of words
             target_word_index = -1
             actual_word = match.group(0)
