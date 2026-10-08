@@ -121,21 +121,6 @@ def _fail_messages(messages):
         fail_test(message)
 
 
-def _sudo_n_or_denied(reader, filter_cmd):
-    """Run a privileged reader with sudo -n and filter its stdout.
-
-    Bare sudo blocks the SPUR HTTP agent when a password is required. sudo -n
-    fails immediately; the denial token is what the host-check evals record.
-    A filter miss is not a denial, so the pipeline ends with ``|| true``.
-    """
-    return (
-        f'if ! _cvs_out=$({reader} 2>&1); then '
-        "printf 'CVS_CMD_DENIED %s\\n' \"$_cvs_out\"; "
-        f"else printf '%s\\n' \"$_cvs_out\" | {filter_cmd} || true; "
-        'fi'
-    )
-
-
 # Main Test cases start from here ..
 
 
@@ -372,8 +357,8 @@ def test_check_numa_balancing(orch, config_dict, host_res_dict, cluster_dict, li
     Verify that automatic NUMA balancing is disabled across all nodes.
 
     This test:
-      - Runs 'sysctl kernel.numa_balancing' on each node via orch.all.
-      - Checks that the reported value is 0 (disabled). Accepts either '=0' or '= 0'.
+      - Reads /proc/sys/kernel/numa_balancing on each node via orch.all.
+      - Prints it as 'kernel.numa_balancing = <value>' so the existing '=0' / '= 0' check applies.
       - Records a failure if any node does not report a disabled state.
       - Calls update_test_result() at the end to record pass/fail.
 
@@ -383,12 +368,12 @@ def test_check_numa_balancing(orch, config_dict, host_res_dict, cluster_dict, li
 
     Notes:
         - globals.error_list is reset at test start; fail_test() should append errors.
-        - This test relies on sysctl output format; if localized/altered, the regex may need adjustment.
+        - /usr/sbin/sysctl is not on the agent PATH once sudo (and its secure_path) is gone.
     """
     globals.error_list = []
     log.info('Testcase check NUMA balancing')
     with timed_stage(lifecycle, host_configs_rundeck.NUMA_BALANCING):
-        out_dict = orch.all.exec('sysctl kernel.numa_balancing')
+        out_dict = orch.all.exec("printf 'kernel.numa_balancing = %s\\n' \"$(cat /proc/sys/kernel/numa_balancing)\"")
     records, messages = host_configs_rundeck.eval_numa_balancing(out_dict)
     _fail_messages(messages)
     _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.NUMA_BALANCING, records)
@@ -580,7 +565,9 @@ def test_check_pci_acs(orch, config_dict, host_res_dict, cluster_dict, lifecycle
 
     globals.error_list = []
     with timed_stage(lifecycle, host_configs_rundeck.PCI_ACS):
-        out_dict = orch.all.exec(_sudo_n_or_denied('sudo -n lspci -vv', "grep ACSCtl | grep SrcValid+ --color=never"))
+        out_dict = orch.all.exec(
+            linux_utils._sudo_n_or_denied('sudo -n lspci -vv', "grep ACSCtl | grep SrcValid+ --color=never")
+        )
     records, messages = host_configs_rundeck.eval_pci_acs(out_dict)
     _fail_messages(messages)
     _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.PCI_ACS, records)
@@ -609,7 +596,9 @@ def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dic
     globals.error_list = []
     with timed_stage(lifecycle, host_configs_rundeck.DMESG_DRIVER):
         out_dict = orch.all.exec(
-            _sudo_n_or_denied('sudo -n /usr/bin/dmesg -T', "grep -i amdgpu | egrep -i 'fail|error' --color=never")
+            linux_utils._sudo_n_or_denied(
+                'sudo -n /usr/bin/dmesg -T', "grep -i amdgpu | egrep -i 'fail|error' --color=never"
+            )
         )
     records, messages = host_configs_rundeck.eval_dmesg_driver(out_dict)
     _fail_messages(messages)
@@ -617,7 +606,7 @@ def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dic
     update_test_result()
     with timed_stage(lifecycle, host_configs_rundeck.DMESG_RESET):
         out_dict = orch.all.exec(
-            _sudo_n_or_denied(
+            linux_utils._sudo_n_or_denied(
                 'sudo -n /usr/bin/dmesg -T', "grep -i amdgpu | egrep -i 'reset|hang|traceback' --color=never"
             )
         )

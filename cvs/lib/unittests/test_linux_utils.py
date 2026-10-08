@@ -176,7 +176,33 @@ class TestGetNicEthtoolStatsDict(unittest.TestCase):
         self.assertEqual(second_batch_cmds[1], 'true')
 
 
+class TestSudoNOrDenied(unittest.TestCase):
+    def _run(self, reader, filter_cmd):
+        cmd = linux_utils._sudo_n_or_denied(reader, filter_cmd)
+        return subprocess.run(['bash', '-c', cmd], capture_output=True, text=True)
+
+    def test_failing_reader_emits_denial_token(self):
+        result = self._run('ls /no/such/cvs-sudo-reader', 'grep ACSCtl')
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(result.stdout.startswith('CVS_CMD_DENIED '))
+        self.assertIn('cvs-sudo-reader', result.stdout)
+
+    def test_filter_miss_is_empty_and_exits_zero(self):
+        result = self._run("printf 'nothing to see\\n'", 'grep ACSCtl')
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, '')
+
+    def test_filter_hit_passes_matching_lines(self):
+        result = self._run("printf 'ACSCtl: SrcValid+\\nnoise\\n'", 'grep ACSCtl')
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, 'ACSCtl: SrcValid+\n')
+
+
 class TestPcieLinkStatusCmd(unittest.TestCase):
+    def test_wide_domain_is_kept(self):
+        cmd = linux_utils.pcie_link_status_cmd('10000:e1:00.0')
+        self.assertIn('dev=/sys/bus/pci/devices/10000:e1:00.0;', cmd)
+
     def test_short_bdf_is_prefixed_and_command_is_unprivileged(self):
         cmd = linux_utils.pcie_link_status_cmd('03:00.0')
         self.assertIn('dev=/sys/bus/pci/devices/0000:03:00.0;', cmd)

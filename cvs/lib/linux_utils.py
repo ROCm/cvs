@@ -785,7 +785,23 @@ def get_lshw_backend_nic_dict(phdl, use_sudo=True):
     return lshw_bck_nic_dict
 
 
-_PCI_BDF_RE = re.compile(r'^(?:[0-9a-f]{4}:)?[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$')
+# VMD domains are wider than four hex digits (for example 10000:e1:00.0).
+_PCI_BDF_RE = re.compile(r'^(?:[0-9a-f]{4,}:)?[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$')
+
+
+def _sudo_n_or_denied(reader, filter_cmd):
+    """Run a privileged reader with sudo -n and filter its stdout.
+
+    Bare sudo blocks the SPUR HTTP agent when a password is required. sudo -n
+    fails immediately; the denial token is what the host-check evals record.
+    A filter miss is not a denial, so the pipeline ends with ``|| true``.
+    """
+    return (
+        f'if ! _cvs_out=$({reader} 2>&1); then '
+        "printf 'CVS_CMD_DENIED %s\\n' \"$_cvs_out\"; "
+        f"else printf '%s\\n' \"$_cvs_out\" | {filter_cmd} || true; "
+        'fi'
+    )
 
 
 def pcie_link_status_cmd(bdf):
