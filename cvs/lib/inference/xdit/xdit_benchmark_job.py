@@ -581,20 +581,27 @@ class PytorchXditBenchmarkJob(ABC):
 
     def store_output_dir_hint(self, plan: BenchmarkLaunchPlan) -> None:
         remote_by_node = {node: path for node, path in plan.output_dirs_by_node.items() if path}
-        staged = stage_remote_benchmark_outputs(self.s_phdl, remote_by_node)
-        by_node = {node: staged.get(node) or self._host_output_path(path) for node, path in remote_by_node.items()}
+        host_by_node = {node: self._host_output_path(path) for node, path in remote_by_node.items()}
+        # Staged copies omit PNG/MP4 bodies. Use them only when this host cannot see the real directory.
+        needs_fetch = {node: path for node, path in remote_by_node.items() if not Path(host_by_node[node]).is_dir()}
+        staged = stage_remote_benchmark_outputs(self.s_phdl, needs_fetch) if needs_fetch else {}
+        by_node = {
+            node: host_by_node[node] if Path(host_by_node[node]).is_dir() else staged.get(node) or host_by_node[node]
+            for node in remote_by_node
+        }
         if by_node:
             self.inference_dict["_test_output_dirs_by_node"] = by_node
 
         if plan.primary_output_dir:
+            host_primary = self._host_output_path(plan.primary_output_dir)
             writer = next(
                 (node for node, path in remote_by_node.items() if path == plan.primary_output_dir and node in staged),
                 None,
             )
-            if writer:
-                self.inference_dict["_test_output_dir"] = staged[writer]
+            if Path(host_primary).is_dir() or not writer:
+                self.inference_dict["_test_output_dir"] = host_primary
             else:
-                self.inference_dict["_test_output_dir"] = self._host_output_path(plan.primary_output_dir)
+                self.inference_dict["_test_output_dir"] = staged[writer]
             return
 
         if not self.distributed and len(plan.node_order) == 1 and plan.node_order[0] in by_node:

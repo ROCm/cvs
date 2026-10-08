@@ -372,6 +372,24 @@ class TestStageRemoteBenchmarkOutputs(unittest.TestCase):
         self.assertEqual(staged, {})
         self.assertEqual(executor.timeout, _ARTIFACT_COLLECT_TIMEOUT_S)
 
+    def test_store_output_dir_hint_keeps_visible_output_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = _make_job(["10.0.0.1"])
+            job.inference_dict["output_base_dir"] = tmp
+            plan = job.build_launch_plan()
+            host_dir = plan.output_dirs_by_node["10.0.0.1"]
+            os.makedirs(os.path.join(host_dir, "results"))
+            png = os.path.join(host_dir, "results", "flux_0.png")
+            with open(png, "wb") as handle:
+                handle.write(b"png-bytes")
+            job.s_phdl.exec_cmd_list.return_value = {"10.0.0.1": "unused"}
+
+            job.store_output_dir_hint(plan)
+
+        self.assertEqual(job.inference_dict["_test_output_dir"], host_dir)
+        self.assertEqual(job.inference_dict["_test_output_dirs_by_node"], {"10.0.0.1": host_dir})
+        job.s_phdl.exec_cmd_list.assert_not_called()
+
     def test_store_output_dir_hint_points_parser_at_staged_timing(self):
         with tempfile.TemporaryDirectory() as tmp:
             results = os.path.join(tmp, "results")

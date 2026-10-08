@@ -527,6 +527,8 @@ def _attach_benchmark_artifacts(request, host, output_dir):
     safe_host = str(host).replace("/", "_").replace(" ", "_")
     root = Path(output_dir)
     for path in _iter_report_artifacts(output_dir):
+        if path.suffix in {".png", ".mp4"} and path.is_file() and path.stat().st_size == 0:
+            continue
         try:
             rel = path.relative_to(root)
         except ValueError:

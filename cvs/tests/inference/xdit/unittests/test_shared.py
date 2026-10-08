@@ -200,6 +200,19 @@ class TestAttachBenchmarkArtifacts(unittest.TestCase):
             self.assertIsNone(link_name)
             self.assertFalse(tracked)
 
+    def test_skips_empty_media_placeholders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "results"))
+            with open(os.path.join(tmp, "results", "timing.json"), "w", encoding="utf-8") as handle:
+                handle.write("[]")
+            with open(os.path.join(tmp, "results", "flux_0.png"), "wb") as handle:
+                handle.write(b"")
+            request = SimpleNamespace(config=SimpleNamespace(_html_report_manager=_RecordingReportManager()))
+
+            copied = _attach_benchmark_artifacts(request, "10.0.0.1", tmp)
+
+        self.assertEqual(copied, ["10.0.0.1_results_timing.json"])
+
     def test_skips_when_html_reporting_is_disabled(self):
         request = SimpleNamespace(config=SimpleNamespace())
         self.assertEqual(_attach_benchmark_artifacts(request, "10.0.0.1", "/missing"), [])
