@@ -6,7 +6,7 @@ import shutil
 import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from cvs.lib.inference.xdit.xdit_benchmark_job import (
     BenchmarkLaunchPlan,
@@ -365,6 +365,31 @@ class TestStageRemoteBenchmarkOutputs(unittest.TestCase):
         result, errors = WanOutputParser(staged["rank1"]).parse()
         self.assertIsNotNone(result, errors)
         self.assertAlmostEqual(result.avg_total_time_s, 12.5)
+
+    def test_collect_failures_are_logged(self):
+        begin = "XDIT_ARTIFACTS_BEGIN"
+        end = "XDIT_ARTIFACTS_END"
+        executor = _RecordingExec(
+            {
+                "bad-json": f"{begin}\nnot-json\n{end}\n",
+                "empty-list": f"{begin}\n[]\n{end}\n",
+                "no-output": "",
+            }
+        )
+        with patch("cvs.lib.inference.xdit.xdit_benchmark_job.log") as mock_log:
+            staged = stage_remote_benchmark_outputs(
+                executor,
+                {
+                    "bad-json": "/node/bad",
+                    "empty-list": "/node/empty",
+                    "no-output": "/node/none",
+                },
+            )
+        self.assertEqual(staged, {})
+        warned = {call.args[1]: call.args[2] for call in mock_log.warning.call_args_list}
+        self.assertEqual(warned["bad-json"], end)
+        self.assertEqual(warned["empty-list"], end)
+        self.assertEqual(warned["no-output"], "no output")
 
     def test_missing_remote_files_leave_no_local_copy(self):
         executor = _RecordingExec({"n0": ""})

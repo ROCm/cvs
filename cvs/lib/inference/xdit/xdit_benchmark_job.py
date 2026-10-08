@@ -134,8 +134,9 @@ def stage_remote_benchmark_outputs(s_phdl, output_dirs_by_node):
         items = _parse_artifact_payload(text)
         if items:
             payloads[node] = items
-        elif text.strip() and _ARTIFACT_BEGIN not in text:
-            log.warning("xDiT benchmark read on %s did not return artifacts: %s", node, text.strip().splitlines()[-1])
+            continue
+        detail = text.strip().splitlines()[-1] if text.strip() else "no output"
+        log.warning("xDiT benchmark read on %s did not return artifacts: %s", node, detail)
 
     local_by_remote = {}
     local_by_node = {}
