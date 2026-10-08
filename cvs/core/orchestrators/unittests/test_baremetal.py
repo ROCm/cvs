@@ -369,6 +369,15 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
                 self.assertNotIn("hostfile=", proc.stdout)
                 self.assertEqual(self._created_files(), [])
 
+    def test_build_mpi_cmd_rejects_empty_host_list(self):
+        # With no hosts there is nothing to launch: fail before touching the
+        # head node instead of handing mpirun an empty hostfile.
+        with self.assertRaises(ValueError):
+            self._build(mpi_hosts=[])
+
+        self.assertEqual(self.head.calls, [])
+        self.assertEqual(self._created_files(), [])
+
     def test_build_mpi_cmd_hostfile_commands_do_not_use_sudo(self):
         # mpirun runs as the SSH user, so a sudo-created 0600 file would be
         # unreadable to it, and container images often have no sudo at all.

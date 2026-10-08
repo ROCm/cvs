@@ -258,7 +258,14 @@ class BaremetalOrchestrator(Orchestrator):
 
         Returns:
             Full MPI command string, exiting with mpirun's status
+
+        Raises:
+            ValueError: If mpi_hosts is empty
+            RuntimeError: If the head node cannot create the hostfile
         """
+        if not mpi_hosts:
+            raise ValueError("build_mpi_cmd needs at least one host in mpi_hosts")
+
         # Create MPI hostfile
         host_file_params = ''
         for host in mpi_hosts:
