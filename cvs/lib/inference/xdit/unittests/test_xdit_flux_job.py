@@ -14,6 +14,7 @@ from cvs.lib.inference.xdit.xdit_flux_job import (
     build_flux2_example_host_check_cmd,
     build_flux2_example_image_probe_cmd,
     build_nccl_env,
+    build_output_cleanup_cmd,
     build_run_usp_args,
     build_torchrun_cmd,
     default_flux2_example_host_path,
@@ -911,6 +912,21 @@ class TestPhdlConnectionKwargs(unittest.TestCase):
         self.assertEqual(kwargs["user"], "ubuntu")
         self.assertEqual(kwargs["pkey"], "/home/ubuntu/.ssh/id_rsa")
         self.assertEqual(kwargs["env_vars"], {"FOO": "bar"})
+
+
+class TestFluxOutputCleanupCmd(unittest.TestCase):
+    def test_uses_sudo_rm_only_when_passwordless_sudo_works(self):
+        cmd = build_output_cleanup_cmd("/home/user/cvs_flux_output")
+        self.assertEqual(
+            cmd,
+            "bash -c 'if sudo -n true >/dev/null 2>&1; then "
+            "sudo rm -rf /home/user/cvs_flux_output/flux_*_outputs; else "
+            "rm -rf /home/user/cvs_flux_output/flux_*_outputs; fi'",
+        )
+
+    def test_sudo_disabled_is_plain_rm(self):
+        cmd = build_output_cleanup_cmd("/home/user/cvs_flux_output", use_sudo=False)
+        self.assertEqual(cmd, "bash -c 'rm -rf /home/user/cvs_flux_output/flux_*_outputs'")
 
 
 if __name__ == "__main__":
