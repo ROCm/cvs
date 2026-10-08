@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RCCL: accept single-node results without a topology block, reject mixed result shapes regardless of row order, and report malformed JSON result structures without crashing row processing.
 - RCCL: return cleanly when a run produces no result rows instead of raising `IndexError` from the bandwidth-dip check. Log scanning still fails these runs for missing bandwidth numbers.
 - IB topology discovery recognizes AMD Pollara (Ionic) HCA names such as `ionic_0`. Previously they were filtered out, so callers found no HCAs on Ionic clusters.
+- IB Perf sample config: `duration` is now `10` (was `30`). The bandwidth test reads perftest results about 20 seconds after launch, so 30-second runs were reported as failures; configs copied from the old sample must lower `duration` as well. The sample `ib_bw_test_list` and `ib_lat_test_list` now name the tests the suite actually runs; the suite does not read either field.
 
 ## [0.2.0] - 2026-09-23
 
