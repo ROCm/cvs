@@ -237,10 +237,10 @@ class TestParseThresholdsStage(unittest.TestCase):
                 },
                 benchmark_params={
                     "flux1_dev_t2i": {
-                    "num_repetitions": 1,
-                    "ulysses_degree": 1,
-                    "ring_degree": 1,
-                    "height": 1024,
+                        "num_repetitions": 1,
+                        "ulysses_degree": 1,
+                        "ring_degree": 1,
+                        "height": 1024,
                         "width": 1024,
                         "num_inference_steps": 4,
                         "expected_results": {"auto": {"max_avg_pipe_time_s": 10}},
@@ -581,6 +581,10 @@ class TestGpuTypeFromDeviceProbe(unittest.TestCase):
 
     def test_unrecognized_device_id_stays_mi300x(self):
         self.assertEqual(conftest.gpu_type_from_device_probe("Device ID: 0x1234\n"), "mi300x")
+
+    def test_probe_skips_non_amd_drm_cards(self):
+        self.assertIn("${f%/*}/vendor", conftest._GPU_DEVICE_ID_PROBE)
+        self.assertIn("0x1002", conftest._GPU_DEVICE_ID_PROBE)
 
 
 if __name__ == "__main__":

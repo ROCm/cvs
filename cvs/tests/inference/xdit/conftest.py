@@ -29,6 +29,7 @@ log = globals.log
 _GPU_DEVICE_ID_PROBE = (
     'for f in /sys/class/drm/card*/device/device; do '
     '[ -e "$f" ] || continue; '
+    '[ "$(cat "${f%/*}/vendor" 2>/dev/null)" = 0x1002 ] || continue; '
     'printf "Device ID: %s\\n" "$(cat "$f")"; '
     'done'
 )
