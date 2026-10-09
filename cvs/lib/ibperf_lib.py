@@ -18,6 +18,45 @@ log = logging.getLogger(__name__)
 _dmabuf_support_cache = {}
 _rocm_path_cache = {}
 
+DEFAULT_BW_TESTS = ['ib_write_bw', 'ib_read_bw', 'ib_send_bw']
+DEFAULT_LAT_TESTS = ['ib_write_lat', 'ib_send_lat']
+SUPPORTED_BW_TESTS = ('ib_write_bw', 'ib_read_bw', 'ib_send_bw')
+SUPPORTED_LAT_TESTS = ('ib_write_lat', 'ib_read_lat', 'ib_send_lat')
+
+
+def _configured_tests(config, key, defaults, supported):
+    """Return configured perftest binaries, or defaults when the key is absent.
+
+    Raise ValueError for a non-list value, unsupported test, or duplicate.
+    """
+    if key not in config:
+        log.info('%s not set in ibperf config; using defaults %s', key, defaults)
+        return list(defaults)
+
+    value = config[key]
+    if not isinstance(value, list):
+        raise ValueError(f'{key} must be a list of test names, got {value!r}')
+
+    unknown = [test for test in value if not isinstance(test, str) or test not in supported]
+    if unknown:
+        raise ValueError(f'{key} has unsupported tests {unknown}; supported: {list(supported)}')
+
+    duplicates = sorted({test for test in value if value.count(test) > 1})
+    if duplicates:
+        raise ValueError(f'{key} lists tests more than once: {duplicates}; supported: {list(supported)}')
+
+    return list(value)
+
+
+def configured_bw_tests(config):
+    """Return the bandwidth tests requested by the ibperf config dictionary."""
+    return _configured_tests(config, 'ib_bw_test_list', DEFAULT_BW_TESTS, SUPPORTED_BW_TESTS)
+
+
+def configured_lat_tests(config):
+    """Return the latency tests requested by the ibperf config dictionary."""
+    return _configured_tests(config, 'ib_lat_test_list', DEFAULT_LAT_TESTS, SUPPORTED_LAT_TESTS)
+
 
 def _log_bw_summary(msg_size, res_dict, instance_no=None):
     if not res_dict:
@@ -217,47 +256,44 @@ def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None):
     return res_dict
 
 
-def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None):
+def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None, result_nodes=None):
     res_dict = {}
 
-    # Run some of the standard verifications
     out_dict = phdl.exec(cmd, print_console=False)
     err_pattern = (
         "Couldn't initialize ROCm device|Failed to init|Unable to open file descriptor|ERROR|FAIL|Segmentation fault"
     )
-    for node in out_dict.keys():
-        res_dict[node] = {}
+    required_nodes = list(result_nodes) if result_nodes is not None else list(out_dict)
+    for node in out_dict:
         if not re.search('bytes of GPU buffer', out_dict[node], re.I):
             fail_test(f'GPU Buffer allocation failed or Connection not setup for IB Test on node {node}')
-
         if re.search(err_pattern, out_dict[node], re.I):
             fail_test(f'IB Test failed - Error patterns seen on node {node}')
 
-    # Collect the latency numbers
+    pattern = r"{}\s+\d+\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)".format(
+        msg_size
+    )
     for i in range(1, 4):
         log.debug('Latency collection iteration %d for msg_size %s', i, msg_size)
         out_dict = phdl.exec(cmd, print_console=False)
-        for node in out_dict.keys():
-            pattern = "{}[\t\s]+[0-9]+[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)".format(
-                msg_size
-            )
-            if re.search(pattern, out_dict[node]):
-                match = re.search(pattern, out_dict[node])
-                res_dict[node]['t_min'] = match.group(1)
-                res_dict[node]['t_max'] = match.group(2)
-                res_dict[node]['t_typical'] = match.group(3)
-                res_dict[node]['t_avg'] = match.group(4)
-                res_dict[node]['t_stdev'] = match.group(5)
-                res_dict[node]['t_99_pct'] = match.group(6)
-                res_dict[node]['t_99_9_pct'] = match.group(7)
-                continue
+        for node in required_nodes:
+            match = re.search(pattern, out_dict.get(node, ''))
+            if match:
+                res_dict[node] = {
+                    't_min': match.group(1),
+                    't_max': match.group(2),
+                    't_typical': match.group(3),
+                    't_avg': match.group(4),
+                    't_stdev': match.group(5),
+                    't_99_pct': match.group(6),
+                    't_99_9_pct': match.group(7),
+                }
             else:
                 log.debug('Node %s: latency results not ready, sleeping 10s (iteration %d)', node, i)
                 time.sleep(10)
-            fail_test(
-                f'ERROR !!! on node {node} Client did not complete even after max iterations for msg size {msg_size}'
-            )
-            fail_test(f'ERROR !!! pls check log file for errors on node {node}')
+    for node in required_nodes:
+        if node not in res_dict:
+            fail_test(f'ERROR !!! on node {node} Client did not complete for msg size {msg_size}')
     _log_lat_summary(msg_size, res_dict, instance_no)
     return res_dict
 
@@ -565,18 +601,18 @@ def run_ib_perf_lat_test(
     # wait for the duration of test
     time.sleep(20)
 
+    result_nodes = list(bck_nic_dict)[1::2] if lat_test == 'ib_read_lat' else None
     for instance_no in range(0, inst_count):
         try:
-            lat_dict = get_ib_lat_numb(phdl, msg_size, f'cat /tmp/ib_perf_{instance_no}_logs', instance_no=instance_no)
-            for node in bck_nic_dict.keys():
-                result_dict[node][instance_no] = {}
-                result_dict[node][instance_no]['t_min'] = lat_dict[node]['t_min']
-                result_dict[node][instance_no]['t_max'] = lat_dict[node]['t_max']
-                result_dict[node][instance_no]['t_typical'] = lat_dict[node]['t_typical']
-                result_dict[node][instance_no]['t_avg'] = lat_dict[node]['t_avg']
-                result_dict[node][instance_no]['t_stdev'] = lat_dict[node]['t_stdev']
-                result_dict[node][instance_no]['t_99_pct'] = lat_dict[node]['t_99_pct']
-                result_dict[node][instance_no]['t_99_9_pct'] = lat_dict[node]['t_99_9_pct']
+            lat_dict = get_ib_lat_numb(
+                phdl,
+                msg_size,
+                f'cat /tmp/ib_perf_{instance_no}_logs',
+                instance_no=instance_no,
+                result_nodes=result_nodes,
+            )
+            for node, latency in lat_dict.items():
+                result_dict[node][instance_no] = latency
         except Exception:
             log.error(
                 'Failed to collect latency for msg_size=%s instance=%d',
@@ -917,434 +953,92 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
 
 
 def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx'):
+    """Write latency measurements for nodes and GPU instances with available rows."""
+    metrics = ('t_min', 't_max', 't_avg', 't_stdev', 't_99_pct')
+    for app_name, sizes in res_dict.items():
+        if not any(instances for nodes in sizes.values() for instances in nodes.values()):
+            raise ValueError(f'No latency results for {app_name}')
+
     workbook = xlsxwriter.Workbook(excel_file)
-
-    app_list = list(res_dict.keys())
-
     merge_format = workbook.add_format(
-        {
-            "bold": 1,
-            "border": 1,
-            "align": "center",
-            "valign": "vcenter",
-            "bg_color": "yellow",
-        }
+        {'bold': 1, 'border': 1, 'align': 'center', 'valign': 'vcenter', 'bg_color': 'yellow'}
     )
-    node_merge_format = workbook.add_format(
-        {
-            "bold": 1,
-            "border": 1,
-            "align": "center",
-            "valign": "vcenter",
-        }
-    )
+    node_merge_format = workbook.add_format({'bold': 1, 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+    bold = workbook.add_format({'bold': 1})
 
-    node_list = []
-    msg_size_list = []
-    gpu_no_list = [0, 1, 2, 3, 4, 5, 6, 7]
-
-    for app_name in app_list:
-        for msg_size in res_dict[app_name].keys():
-            if msg_size not in msg_size_list:
-                msg_size_list.append(msg_size)
-
-                for node in res_dict[app_name][msg_size].keys():
-                    if node not in node_list:
-                        node_list.append(node)
-
-    for app_name in app_list:
-        sheet_name = app_name + "_lat"
+    for app_name, sizes in res_dict.items():
+        sheet_name = app_name + '_lat'
         worksheet = workbook.add_worksheet(sheet_name)
-        bold = workbook.add_format({"bold": 1})
+        worksheet.merge_range('A1:Z1', f'Test {app_name} - latency results', merge_format)
+        worksheet.merge_range('A2:A3', 'Node IP', bold)
+        worksheet.merge_range('B2:B3', 'Msg Size', bold)
+        worksheet.merge_range('C2:G2', 'Node Avg ', bold)
+        for gpu_no in range(8):
+            first_col = 7 + gpu_no * len(metrics)
+            worksheet.merge_range(1, first_col, 1, first_col + len(metrics) - 1, f'GPU{gpu_no}', bold)
+        worksheet.write_row(2, 2, ['Tmin', 'Tmax', 'TAvg', 'TStdev', 'T99pct'] * 9, bold)
 
-        heading = "Test {} - latency results".format(app_name)
-        worksheet.merge_range("A1:Z1", heading, merge_format)
+        nodes = list(dict.fromkeys(node for size_nodes in sizes.values() for node in size_nodes))
+        msg_sizes = [size for size, size_nodes in sizes.items() if any(size_nodes.values())]
+        row = 3
+        for node in nodes:
+            node_rows = [(size, sizes[size].get(node, {})) for size in msg_sizes if sizes[size].get(node)]
+            if not node_rows:
+                continue
+            if len(node_rows) > 1:
+                worksheet.merge_range(row, 0, row + len(node_rows) - 1, 0, node, node_merge_format)
+            else:
+                worksheet.write(row, 0, node, node_merge_format)
+            for size, instances in node_rows:
+                worksheet.write(row, 1, size)
+                for col, metric in enumerate(metrics, 2):
+                    worksheet.write_number(
+                        row, col, round(sum(float(data[metric]) for data in instances.values()) / len(instances), 2)
+                    )
+                for gpu_no, data in instances.items():
+                    for col, metric in enumerate(metrics):
+                        worksheet.write_number(row, 7 + gpu_no * len(metrics) + col, round(float(data[metric]), 2))
+                row += 1
 
-        # Init data lists
-        d_msg_size_list = []
-        d_tmin_gpu_0_list = []
-        d_tmin_gpu_1_list = []
-        d_tmin_gpu_2_list = []
-        d_tmin_gpu_3_list = []
-        d_tmin_gpu_4_list = []
-        d_tmin_gpu_5_list = []
-        d_tmin_gpu_6_list = []
-        d_tmin_gpu_7_list = []
-        d_tmax_gpu_0_list = []
-        d_tmax_gpu_1_list = []
-        d_tmax_gpu_2_list = []
-        d_tmax_gpu_3_list = []
-        d_tmax_gpu_4_list = []
-        d_tmax_gpu_5_list = []
-        d_tmax_gpu_6_list = []
-        d_tmax_gpu_7_list = []
-        d_tavg_gpu_0_list = []
-        d_tavg_gpu_1_list = []
-        d_tavg_gpu_2_list = []
-        d_tavg_gpu_3_list = []
-        d_tavg_gpu_4_list = []
-        d_tavg_gpu_5_list = []
-        d_tavg_gpu_6_list = []
-        d_tavg_gpu_7_list = []
-        d_tstdev_gpu_0_list = []
-        d_tstdev_gpu_1_list = []
-        d_tstdev_gpu_2_list = []
-        d_tstdev_gpu_3_list = []
-        d_tstdev_gpu_4_list = []
-        d_tstdev_gpu_5_list = []
-        d_tstdev_gpu_6_list = []
-        d_tstdev_gpu_7_list = []
-        d_t99pct_gpu_0_list = []
-        d_t99pct_gpu_1_list = []
-        d_t99pct_gpu_2_list = []
-        d_t99pct_gpu_3_list = []
-        d_t99pct_gpu_4_list = []
-        d_t99pct_gpu_5_list = []
-        d_t99pct_gpu_6_list = []
-        d_t99pct_gpu_7_list = []
+        cluster_row = row + 1
+        if len(msg_sizes) > 1:
+            worksheet.merge_range(cluster_row, 0, cluster_row + len(msg_sizes) - 1, 0, 'Cluster Avg')
+        else:
+            worksheet.write(cluster_row, 0, 'Cluster Avg')
+        for offset, size in enumerate(msg_sizes):
+            instances = [data for node_instances in sizes[size].values() for data in node_instances.values()]
+            worksheet.write(cluster_row + offset, 1, size)
+            for col, metric in enumerate(metrics, 2):
+                worksheet.write_number(
+                    cluster_row + offset, col, round(sum(float(data[metric]) for data in instances) / len(instances), 2)
+                )
+            for gpu_no in range(8):
+                gpu_rows = [
+                    node_instances[gpu_no] for node_instances in sizes[size].values() if gpu_no in node_instances
+                ]
+                if gpu_rows:
+                    for col, metric in enumerate(metrics):
+                        worksheet.write_number(
+                            cluster_row + offset,
+                            7 + gpu_no * len(metrics) + col,
+                            round(sum(float(data[metric]) for data in gpu_rows) / len(gpu_rows), 2),
+                        )
 
-        d_avg_tmin_list = []
-        d_avg_tmax_list = []
-        d_avg_tavg_list = []
-        d_avg_tstdev_list = []
-        d_avg_t99pct_list = []
-
-        for node in node_list:
-            d_msg_size_list.extend(msg_size_list)
-            for msg_size in msg_size_list:
-                tot_tmin = 0.0
-                tot_tmax = 0.0
-                tot_tavg = 0.0
-                tot_tstdev = 0.0
-                tot_t99pct = 0.0
-                for gpu_no in gpu_no_list:
-                    if gpu_no == 0:
-                        d_tmin_gpu_0_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_min'])
-                        d_tmax_gpu_0_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_max'])
-                        d_tavg_gpu_0_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_avg'])
-                        d_tstdev_gpu_0_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_stdev'])
-                        d_t99pct_gpu_0_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_99_pct'])
-                    elif gpu_no == 1:
-                        d_tmin_gpu_1_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_min'])
-                        d_tmax_gpu_1_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_max'])
-                        d_tavg_gpu_1_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_avg'])
-                        d_tstdev_gpu_1_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_stdev'])
-                        d_t99pct_gpu_1_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_99_pct'])
-                    elif gpu_no == 2:
-                        d_tmin_gpu_2_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_min'])
-                        d_tmax_gpu_2_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_max'])
-                        d_tavg_gpu_2_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_avg'])
-                        d_tstdev_gpu_2_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_stdev'])
-                        d_t99pct_gpu_2_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_99_pct'])
-                    elif gpu_no == 3:
-                        d_tmin_gpu_3_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_min'])
-                        d_tmax_gpu_3_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_max'])
-                        d_tavg_gpu_3_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_avg'])
-                        d_tstdev_gpu_3_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_stdev'])
-                        d_t99pct_gpu_3_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_99_pct'])
-                    elif gpu_no == 4:
-                        d_tmin_gpu_4_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_min'])
-                        d_tmax_gpu_4_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_max'])
-                        d_tavg_gpu_4_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_avg'])
-                        d_tstdev_gpu_4_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_stdev'])
-                        d_t99pct_gpu_4_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_99_pct'])
-                    elif gpu_no == 5:
-                        d_tmin_gpu_5_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_min'])
-                        d_tmax_gpu_5_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_max'])
-                        d_tavg_gpu_5_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_avg'])
-                        d_tstdev_gpu_5_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_stdev'])
-                        d_t99pct_gpu_5_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_99_pct'])
-                    elif gpu_no == 6:
-                        d_tmin_gpu_6_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_min'])
-                        d_tmax_gpu_6_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_max'])
-                        d_tavg_gpu_6_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_avg'])
-                        d_tstdev_gpu_6_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_stdev'])
-                        d_t99pct_gpu_6_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_99_pct'])
-                    elif gpu_no == 7:
-                        d_tmin_gpu_7_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_min'])
-                        d_tmax_gpu_7_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_max'])
-                        d_tavg_gpu_7_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_avg'])
-                        d_tstdev_gpu_7_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_stdev'])
-                        d_t99pct_gpu_7_list.append(res_dict[app_name][msg_size][node][gpu_no]['t_99_pct'])
-                    tot_tmin = tot_tmin + float(res_dict[app_name][msg_size][node][gpu_no]['t_min'])
-                    tot_tmax = tot_tmax + float(res_dict[app_name][msg_size][node][gpu_no]['t_max'])
-                    tot_tavg = tot_tavg + float(res_dict[app_name][msg_size][node][gpu_no]['t_avg'])
-                    tot_tstdev = tot_tstdev + float(res_dict[app_name][msg_size][node][gpu_no]['t_stdev'])
-                    tot_t99pct = tot_t99pct + float(res_dict[app_name][msg_size][node][gpu_no]['t_99_pct'])
-                d_avg_tmin_list.append(tot_tmin / 8)
-                d_avg_tmax_list.append(tot_tmax / 8)
-                d_avg_tavg_list.append(tot_tavg / 8)
-                d_avg_tstdev_list.append(tot_tstdev / 8)
-                d_avg_t99pct_list.append(tot_t99pct / 8)
-
-        split_tmin_list = split_list_into_n_chunks(d_avg_tmin_list, len(node_list))
-        split_tmax_list = split_list_into_n_chunks(d_avg_tmax_list, len(node_list))
-        split_tavg_list = split_list_into_n_chunks(d_avg_tavg_list, len(node_list))
-        split_tstdev_list = split_list_into_n_chunks(d_avg_tstdev_list, len(node_list))
-        split_t99pct_list = split_list_into_n_chunks(d_avg_t99pct_list, len(node_list))
-
-        split_tmin_gpu0_list = split_list_into_n_chunks(d_tmin_gpu_0_list, len(node_list))
-        split_tmin_gpu1_list = split_list_into_n_chunks(d_tmin_gpu_1_list, len(node_list))
-        split_tmin_gpu2_list = split_list_into_n_chunks(d_tmin_gpu_2_list, len(node_list))
-        split_tmin_gpu3_list = split_list_into_n_chunks(d_tmin_gpu_3_list, len(node_list))
-        split_tmin_gpu4_list = split_list_into_n_chunks(d_tmin_gpu_4_list, len(node_list))
-        split_tmin_gpu5_list = split_list_into_n_chunks(d_tmin_gpu_5_list, len(node_list))
-        split_tmin_gpu6_list = split_list_into_n_chunks(d_tmin_gpu_6_list, len(node_list))
-        split_tmin_gpu7_list = split_list_into_n_chunks(d_tmin_gpu_7_list, len(node_list))
-
-        split_tmax_gpu0_list = split_list_into_n_chunks(d_tmax_gpu_0_list, len(node_list))
-        split_tmax_gpu1_list = split_list_into_n_chunks(d_tmax_gpu_1_list, len(node_list))
-        split_tmax_gpu2_list = split_list_into_n_chunks(d_tmax_gpu_2_list, len(node_list))
-        split_tmax_gpu3_list = split_list_into_n_chunks(d_tmax_gpu_3_list, len(node_list))
-        split_tmax_gpu4_list = split_list_into_n_chunks(d_tmax_gpu_4_list, len(node_list))
-        split_tmax_gpu5_list = split_list_into_n_chunks(d_tmax_gpu_5_list, len(node_list))
-        split_tmax_gpu6_list = split_list_into_n_chunks(d_tmax_gpu_6_list, len(node_list))
-        split_tmax_gpu7_list = split_list_into_n_chunks(d_tmax_gpu_7_list, len(node_list))
-
-        split_tavg_gpu0_list = split_list_into_n_chunks(d_tavg_gpu_0_list, len(node_list))
-        split_tavg_gpu1_list = split_list_into_n_chunks(d_tavg_gpu_1_list, len(node_list))
-        split_tavg_gpu2_list = split_list_into_n_chunks(d_tavg_gpu_2_list, len(node_list))
-        split_tavg_gpu3_list = split_list_into_n_chunks(d_tavg_gpu_3_list, len(node_list))
-        split_tavg_gpu4_list = split_list_into_n_chunks(d_tavg_gpu_4_list, len(node_list))
-        split_tavg_gpu5_list = split_list_into_n_chunks(d_tavg_gpu_5_list, len(node_list))
-        split_tavg_gpu6_list = split_list_into_n_chunks(d_tavg_gpu_6_list, len(node_list))
-        split_tavg_gpu7_list = split_list_into_n_chunks(d_tavg_gpu_7_list, len(node_list))
-
-        split_tstdev_gpu0_list = split_list_into_n_chunks(d_tstdev_gpu_0_list, len(node_list))
-        split_tstdev_gpu1_list = split_list_into_n_chunks(d_tstdev_gpu_1_list, len(node_list))
-        split_tstdev_gpu2_list = split_list_into_n_chunks(d_tstdev_gpu_2_list, len(node_list))
-        split_tstdev_gpu3_list = split_list_into_n_chunks(d_tstdev_gpu_3_list, len(node_list))
-        split_tstdev_gpu4_list = split_list_into_n_chunks(d_tstdev_gpu_4_list, len(node_list))
-        split_tstdev_gpu5_list = split_list_into_n_chunks(d_tstdev_gpu_5_list, len(node_list))
-        split_tstdev_gpu6_list = split_list_into_n_chunks(d_tstdev_gpu_6_list, len(node_list))
-        split_tstdev_gpu7_list = split_list_into_n_chunks(d_tstdev_gpu_7_list, len(node_list))
-
-        split_t99pct_gpu0_list = split_list_into_n_chunks(d_t99pct_gpu_0_list, len(node_list))
-        split_t99pct_gpu1_list = split_list_into_n_chunks(d_t99pct_gpu_1_list, len(node_list))
-        split_t99pct_gpu2_list = split_list_into_n_chunks(d_t99pct_gpu_2_list, len(node_list))
-        split_t99pct_gpu3_list = split_list_into_n_chunks(d_t99pct_gpu_3_list, len(node_list))
-        split_t99pct_gpu4_list = split_list_into_n_chunks(d_t99pct_gpu_4_list, len(node_list))
-        split_t99pct_gpu5_list = split_list_into_n_chunks(d_t99pct_gpu_5_list, len(node_list))
-        split_t99pct_gpu6_list = split_list_into_n_chunks(d_t99pct_gpu_6_list, len(node_list))
-        split_t99pct_gpu7_list = split_list_into_n_chunks(d_t99pct_gpu_7_list, len(node_list))
-
-        avg_tmin_data = average_of_lists(split_tmin_list)
-        avg_tmax_data = average_of_lists(split_tmax_list)
-        avg_tavg_data = average_of_lists(split_tavg_list)
-        avg_tstdev_data = average_of_lists(split_tstdev_list)
-        avg_t99pct_data = average_of_lists(split_t99pct_list)
-
-        avg_tmin_gpu0_data = average_of_lists(split_tmin_gpu0_list)
-        avg_tmin_gpu1_data = average_of_lists(split_tmin_gpu1_list)
-        avg_tmin_gpu2_data = average_of_lists(split_tmin_gpu2_list)
-        avg_tmin_gpu3_data = average_of_lists(split_tmin_gpu3_list)
-        avg_tmin_gpu4_data = average_of_lists(split_tmin_gpu4_list)
-        avg_tmin_gpu5_data = average_of_lists(split_tmin_gpu5_list)
-        avg_tmin_gpu6_data = average_of_lists(split_tmin_gpu6_list)
-        avg_tmin_gpu7_data = average_of_lists(split_tmin_gpu7_list)
-
-        avg_tmax_gpu0_data = average_of_lists(split_tmax_gpu0_list)
-        avg_tmax_gpu1_data = average_of_lists(split_tmax_gpu1_list)
-        avg_tmax_gpu2_data = average_of_lists(split_tmax_gpu2_list)
-        avg_tmax_gpu3_data = average_of_lists(split_tmax_gpu3_list)
-        avg_tmax_gpu4_data = average_of_lists(split_tmax_gpu4_list)
-        avg_tmax_gpu5_data = average_of_lists(split_tmax_gpu5_list)
-        avg_tmax_gpu6_data = average_of_lists(split_tmax_gpu6_list)
-        avg_tmax_gpu7_data = average_of_lists(split_tmax_gpu7_list)
-
-        avg_tavg_gpu0_data = average_of_lists(split_tavg_gpu0_list)
-        avg_tavg_gpu1_data = average_of_lists(split_tavg_gpu1_list)
-        avg_tavg_gpu2_data = average_of_lists(split_tavg_gpu2_list)
-        avg_tavg_gpu3_data = average_of_lists(split_tavg_gpu3_list)
-        avg_tavg_gpu4_data = average_of_lists(split_tavg_gpu4_list)
-        avg_tavg_gpu5_data = average_of_lists(split_tavg_gpu5_list)
-        avg_tavg_gpu6_data = average_of_lists(split_tavg_gpu6_list)
-        avg_tavg_gpu7_data = average_of_lists(split_tavg_gpu7_list)
-
-        avg_tstdev_gpu0_data = average_of_lists(split_tstdev_gpu0_list)
-        avg_tstdev_gpu1_data = average_of_lists(split_tstdev_gpu1_list)
-        avg_tstdev_gpu2_data = average_of_lists(split_tstdev_gpu2_list)
-        avg_tstdev_gpu3_data = average_of_lists(split_tstdev_gpu3_list)
-        avg_tstdev_gpu4_data = average_of_lists(split_tstdev_gpu4_list)
-        avg_tstdev_gpu5_data = average_of_lists(split_tstdev_gpu5_list)
-        avg_tstdev_gpu6_data = average_of_lists(split_tstdev_gpu6_list)
-        avg_tstdev_gpu7_data = average_of_lists(split_tstdev_gpu7_list)
-
-        avg_t99pct_gpu0_data = average_of_lists(split_t99pct_gpu0_list)
-        avg_t99pct_gpu1_data = average_of_lists(split_t99pct_gpu1_list)
-        avg_t99pct_gpu2_data = average_of_lists(split_t99pct_gpu2_list)
-        avg_t99pct_gpu3_data = average_of_lists(split_t99pct_gpu3_list)
-        avg_t99pct_gpu4_data = average_of_lists(split_t99pct_gpu4_list)
-        avg_t99pct_gpu5_data = average_of_lists(split_t99pct_gpu5_list)
-        avg_t99pct_gpu6_data = average_of_lists(split_t99pct_gpu6_list)
-        avg_t99pct_gpu7_data = average_of_lists(split_t99pct_gpu7_list)
-
-        # data = [ node_list, d_msg_size_list, d_bw_gpu_0_list, d_bw_gpu_1_list, d_bw_gpu_2_list, d_bw_gpu_3_list, \
-        #         d_bw_gpu_4_list, d_bw_gpu_5_list, d_bw_gpu_6_list ]
-        # Merge cols for Node IP
-        worksheet.merge_range("A2:A3", "Node IP", bold)
-        worksheet.merge_range("B2:B3", "Msg Size", bold)
-        # Merge 2 cols for every GPU and Total
-        worksheet.merge_range("C2:G2", "Node Avg ", bold)
-        worksheet.merge_range("H2:L2", "GPU0", bold)
-        worksheet.merge_range("M2:Q2", "GPU1", bold)
-        worksheet.merge_range("R2:V2", "GPU2", bold)
-        worksheet.merge_range("W2:AA2", "GPU3", bold)
-        worksheet.merge_range("AB2:AF2", "GPU4", bold)
-        worksheet.merge_range("AG2:AK2", "GPU5", bold)
-        worksheet.merge_range("AL2:AP2", "GPU6", bold)
-        worksheet.merge_range("AQ2:AU2", "GPU7", bold)
-
-        headings = []
-        for i in range(0, 9):
-            headings.append("Tmin")
-            headings.append("Tmax")
-            headings.append("TAvg")
-            headings.append("TStdev")
-            headings.append("T99pct")
-        # Write headings for BW, PPS for total and every GPU
-        worksheet.write_row("C3", headings, bold)
-
-        cur_row = 4
-        msg_list_len = len(msg_size_list)
-        for node_ip in node_list:
-            worksheet.merge_range(f"A{cur_row}:A{cur_row + msg_list_len - 1}", node_ip, node_merge_format)
-            cur_row = cur_row + msg_list_len
-
-        # For the cluster Avg
-        worksheet.merge_range(f"A{cur_row}:A{cur_row + msg_list_len - 1}", "Cluster Avg")
-
-        worksheet.write_column("B4", round_vals(d_msg_size_list))
-        worksheet.write_column("C4", round_vals(d_avg_tmin_list))
-        worksheet.write_column("D4", round_vals(d_avg_tmax_list))
-        worksheet.write_column("E4", round_vals(d_avg_tavg_list))
-        worksheet.write_column("F4", round_vals(d_avg_tstdev_list))
-        worksheet.write_column("G4", round_vals(d_avg_t99pct_list))
-
-        worksheet.write_column("H4", round_vals(d_tmin_gpu_0_list))
-        worksheet.write_column("I4", round_vals(d_tmax_gpu_0_list))
-        worksheet.write_column("J4", round_vals(d_tavg_gpu_0_list))
-        worksheet.write_column("K4", round_vals(d_tstdev_gpu_0_list))
-        worksheet.write_column("L4", round_vals(d_t99pct_gpu_0_list))
-
-        worksheet.write_column("M4", round_vals(d_tmin_gpu_1_list))
-        worksheet.write_column("N4", round_vals(d_tmax_gpu_1_list))
-        worksheet.write_column("O4", round_vals(d_tavg_gpu_1_list))
-        worksheet.write_column("P4", round_vals(d_tstdev_gpu_1_list))
-        worksheet.write_column("Q4", round_vals(d_t99pct_gpu_1_list))
-
-        worksheet.write_column("R4", round_vals(d_tmin_gpu_2_list))
-        worksheet.write_column("S4", round_vals(d_tmax_gpu_2_list))
-        worksheet.write_column("T4", round_vals(d_tavg_gpu_2_list))
-        worksheet.write_column("U4", round_vals(d_tstdev_gpu_2_list))
-        worksheet.write_column("V4", round_vals(d_t99pct_gpu_2_list))
-
-        worksheet.write_column("W4", round_vals(d_tmin_gpu_3_list))
-        worksheet.write_column("X4", round_vals(d_tmax_gpu_3_list))
-        worksheet.write_column("Y4", round_vals(d_tavg_gpu_3_list))
-        worksheet.write_column("Z4", round_vals(d_tstdev_gpu_3_list))
-        worksheet.write_column("AA4", round_vals(d_t99pct_gpu_3_list))
-
-        worksheet.write_column("AB4", round_vals(d_tmin_gpu_4_list))
-        worksheet.write_column("AC4", round_vals(d_tmax_gpu_4_list))
-        worksheet.write_column("AD4", round_vals(d_tavg_gpu_4_list))
-        worksheet.write_column("AE4", round_vals(d_tstdev_gpu_4_list))
-        worksheet.write_column("AF4", round_vals(d_t99pct_gpu_4_list))
-
-        worksheet.write_column("AG4", round_vals(d_tmin_gpu_5_list))
-        worksheet.write_column("AH4", round_vals(d_tmax_gpu_5_list))
-        worksheet.write_column("AI4", round_vals(d_tavg_gpu_5_list))
-        worksheet.write_column("AJ4", round_vals(d_tstdev_gpu_5_list))
-        worksheet.write_column("AK4", round_vals(d_t99pct_gpu_5_list))
-
-        worksheet.write_column("AL4", round_vals(d_tmin_gpu_6_list))
-        worksheet.write_column("AM4", round_vals(d_tmax_gpu_6_list))
-        worksheet.write_column("AN4", round_vals(d_tavg_gpu_6_list))
-        worksheet.write_column("AO4", round_vals(d_tstdev_gpu_6_list))
-        worksheet.write_column("AP4", round_vals(d_t99pct_gpu_6_list))
-
-        worksheet.write_column("AQ4", round_vals(d_tmin_gpu_7_list))
-        worksheet.write_column("AR4", round_vals(d_tmax_gpu_7_list))
-        worksheet.write_column("AS4", round_vals(d_tavg_gpu_7_list))
-        worksheet.write_column("AT4", round_vals(d_tstdev_gpu_7_list))
-        worksheet.write_column("AU4", round_vals(d_t99pct_gpu_7_list))
-
-        x_chart_index = len(d_msg_size_list) + 4
-
-        worksheet.write_column(f"B{x_chart_index}", msg_size_list)
-        worksheet.write_column(f"C{x_chart_index}", round_vals(avg_tmin_data))
-        worksheet.write_column(f"D{x_chart_index}", round_vals(avg_tmax_data))
-        worksheet.write_column(f"E{x_chart_index}", round_vals(avg_tavg_data))
-        worksheet.write_column(f"F{x_chart_index}", round_vals(avg_tstdev_data))
-        worksheet.write_column(f"G{x_chart_index}", round_vals(avg_t99pct_data))
-
-        worksheet.write_column(f"H{x_chart_index}", round_vals(avg_tmin_gpu0_data))
-        worksheet.write_column(f"I{x_chart_index}", round_vals(avg_tmax_gpu0_data))
-        worksheet.write_column(f"J{x_chart_index}", round_vals(avg_tavg_gpu0_data))
-        worksheet.write_column(f"K{x_chart_index}", round_vals(avg_tstdev_gpu0_data))
-        worksheet.write_column(f"L{x_chart_index}", round_vals(avg_t99pct_gpu0_data))
-        worksheet.write_column(f"M{x_chart_index}", round_vals(avg_tmin_gpu1_data))
-        worksheet.write_column(f"N{x_chart_index}", round_vals(avg_tmax_gpu1_data))
-        worksheet.write_column(f"O{x_chart_index}", round_vals(avg_tavg_gpu1_data))
-        worksheet.write_column(f"P{x_chart_index}", round_vals(avg_tstdev_gpu1_data))
-        worksheet.write_column(f"Q{x_chart_index}", round_vals(avg_t99pct_gpu1_data))
-        worksheet.write_column(f"R{x_chart_index}", round_vals(avg_tmin_gpu2_data))
-        worksheet.write_column(f"S{x_chart_index}", round_vals(avg_tmax_gpu2_data))
-        worksheet.write_column(f"T{x_chart_index}", round_vals(avg_tavg_gpu2_data))
-        worksheet.write_column(f"U{x_chart_index}", round_vals(avg_tstdev_gpu2_data))
-        worksheet.write_column(f"V{x_chart_index}", round_vals(avg_t99pct_gpu2_data))
-        worksheet.write_column(f"W{x_chart_index}", round_vals(avg_tmin_gpu3_data))
-        worksheet.write_column(f"X{x_chart_index}", round_vals(avg_tmax_gpu3_data))
-        worksheet.write_column(f"Y{x_chart_index}", round_vals(avg_tavg_gpu3_data))
-        worksheet.write_column(f"Z{x_chart_index}", round_vals(avg_tstdev_gpu3_data))
-        worksheet.write_column(f"AA{x_chart_index}", round_vals(avg_t99pct_gpu3_data))
-        worksheet.write_column(f"AB{x_chart_index}", round_vals(avg_tmin_gpu4_data))
-        worksheet.write_column(f"AC{x_chart_index}", round_vals(avg_tmax_gpu4_data))
-        worksheet.write_column(f"AD{x_chart_index}", round_vals(avg_tavg_gpu4_data))
-        worksheet.write_column(f"AE{x_chart_index}", round_vals(avg_tstdev_gpu4_data))
-        worksheet.write_column(f"AF{x_chart_index}", round_vals(avg_t99pct_gpu4_data))
-        worksheet.write_column(f"AG{x_chart_index}", round_vals(avg_tmin_gpu5_data))
-        worksheet.write_column(f"AH{x_chart_index}", round_vals(avg_tmax_gpu5_data))
-        worksheet.write_column(f"AI{x_chart_index}", round_vals(avg_tavg_gpu5_data))
-        worksheet.write_column(f"AJ{x_chart_index}", round_vals(avg_tstdev_gpu5_data))
-        worksheet.write_column(f"AK{x_chart_index}", round_vals(avg_t99pct_gpu5_data))
-        worksheet.write_column(f"AL{x_chart_index}", round_vals(avg_tmin_gpu6_data))
-        worksheet.write_column(f"AM{x_chart_index}", round_vals(avg_tmax_gpu6_data))
-        worksheet.write_column(f"AN{x_chart_index}", round_vals(avg_tavg_gpu6_data))
-        worksheet.write_column(f"AO{x_chart_index}", round_vals(avg_tstdev_gpu6_data))
-        worksheet.write_column(f"AP{x_chart_index}", round_vals(avg_t99pct_gpu6_data))
-        worksheet.write_column(f"AQ{x_chart_index}", round_vals(avg_tmin_gpu7_data))
-        worksheet.write_column(f"AR{x_chart_index}", round_vals(avg_tmax_gpu7_data))
-        worksheet.write_column(f"AS{x_chart_index}", round_vals(avg_tavg_gpu7_data))
-        worksheet.write_column(f"AT{x_chart_index}", round_vals(avg_tstdev_gpu7_data))
-        worksheet.write_column(f"AU{x_chart_index}", round_vals(avg_t99pct_gpu7_data))
-
-        x_chart_index = len(d_msg_size_list) + len(msg_size_list) + 7
-        y_chart_index = 2
-        chart = workbook.add_chart({"type": "column"})
-
-        row_end = 4 + len(d_msg_size_list)
-
+        chart = workbook.add_chart({'type': 'column'})
         chart.add_series(
             {
-                "name": "={}!$B$2".format(sheet_name),
-                "categories": "={}!$B${}:$B${}".format(sheet_name, row_end, row_end + len(msg_size_list)),
-                "values": "={}!$E${}:$E${}".format(sheet_name, row_end, row_end + len(msg_size_list)),
-                "data_labels": {
-                    "value": True,
-                    "font": {
-                        "rotation": -45,
-                    },
-                },
+                'name': f'={sheet_name}!$B$2',
+                'categories': [sheet_name, cluster_row, 1, cluster_row + len(msg_sizes) - 1, 1],
+                'values': [sheet_name, cluster_row, 4, cluster_row + len(msg_sizes) - 1, 4],
+                'data_labels': {'value': True, 'font': {'rotation': -45}},
             }
         )
-
         chart.set_size({'width': 1200, 'height': 720})
-        chart.set_title({"name": "Latency in us"})
-        chart.set_x_axis({"name": "Msg Size"})
-        chart.set_y_axis({"name": "Latency in us"})
+        chart.set_title({'name': 'Latency in us'})
+        chart.set_x_axis({'name': 'Msg Size'})
+        chart.set_y_axis({'name': 'Latency in us'})
         chart.set_style(11)
-        worksheet.insert_chart(x_chart_index, y_chart_index, chart)
+        worksheet.insert_chart(cluster_row + len(msg_sizes) + 3, 2, chart)
 
     workbook.close()
     log.info('Latency performance chart saved: %s', excel_file)

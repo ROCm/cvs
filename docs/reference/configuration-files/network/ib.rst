@@ -83,13 +83,13 @@ Here's an exhaustive list of the available parameters in the IB Perf configurati
      - Values:
         - ``ib_write_bw`` 
         - ``ib_send_bw``
-     - IB bandwidth tests
+     - IB bandwidth tests to run, one test case each. Supported values: ``ib_write_bw``, ``ib_read_bw``, ``ib_send_bw``. If omitted, all three run. An empty list skips bandwidth tests. Unsupported or duplicate names fail test collection.
    * - ``ib_lat_test_list``
      - Values:
         - ``ib_write_lat`` 
         - ``ib_send_lat`` 
         - ``ib_read_lat``
-     - IB latency tests
+     - IB latency tests to run, one test case each. Supported values: ``ib_write_lat``, ``ib_read_lat``, ``ib_send_lat``. If omitted, ``ib_write_lat`` and ``ib_send_lat`` run. An empty list skips latency tests. Unsupported or duplicate names fail test collection.
    * - ``msg_size_list``
      - Values:
         - 2 
