@@ -37,6 +37,8 @@
 
         "_comment_cvs_params": "Perf writes per-data-type files (for example rccl_result_file_float.json), combined results and an aggregated JSON on the head node. Managed runs require writable shared storage; containers must bind-mount the result directory at the same path.",
         "cvs_params": {
+            "dmesg_during_test": "False",
+            "_comment_dmesg_during_test": "When True, slice dmesg between kmsg Start/End Test markers per RCCL test instead of using verify_dmesg_for_errors clock window.",
             "cluster_snapshot_debug": "False",
             "_comment_nic_model": "Selects NIC-keyed results.<nic> thresholds (thor, ainic, connectx). The shipped flat results table is used when no matching NIC/rank key exists.",
             "nic_model": "thor",

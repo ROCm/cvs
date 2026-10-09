@@ -121,11 +121,11 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective)
       - rccl_collective: which RCCL collective test to run (e.g., "all_reduce_perf").
 
     Flow:
-      1) Capture start time to bound dmesg checks later.
+      1) Optionally capture start time to bound clock-window dmesg checks later.
       2) Optionally snapshot cluster metrics before the test (for debugging/compare).
       3) Optionally source environment script if provided in config.
       4) Invoke RcclJob.from_config(...).run_perf() with parameters built from config and fixtures.
-      5) Capture end time and verify dmesg for errors between start/end.
+      5) Verify dmesg via kmsg markers or a start/end clock window.
       6) Optionally snapshot metrics again and compare before/after.
       7) Call update_test_result() to finalize test status.
 
@@ -144,11 +144,19 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective)
             no_sudo_nodes,
         )
 
+    cvs_params = config_dict.get('cvs_params', {})
+    dmesg_during_test = str(cvs_params.get('dmesg_during_test', 'False')).strip().lower() == 'true'
+    use_clock_window_dmesg = can_use_sudo and not dmesg_during_test
+
     if can_use_sudo:
         orch.all.exec(f'sudo echo "Starting Test {rccl_collective}" | sudo tee /dev/kmsg')
 
-    # Minute precision can drop kernel events from the end of the test window.
-    start_time = orch.all.exec('date +"%a %b %e %H:%M:%S"')
+    # Seconds precision matters: verify_dmesg_for_errors' node-scraper path
+    # treats analysis_range_end as an exclusive cutoff, so a minute-truncated
+    # end time silently drops the final minute of this test's dmesg window.
+    start_time = None
+    if use_clock_window_dmesg:
+        start_time = orch.all.exec('date +"%a %b %e %H:%M:%S"')
 
     # Get cluster snapshot ..
     if can_use_sudo and re.search(
@@ -162,17 +170,19 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective)
     key_name = f'{rccl_collective}'
     rccl_res_dict[key_name] = result_dict
 
-    # Scan dmesg between start and end times cluster wide ..
     if can_use_sudo:
         orch.all.exec(f'sudo echo "End of Test {rccl_collective}" | sudo tee /dev/kmsg')
-
-    end_time = orch.all.exec('date +"%a %b %e %H:%M:%S"')
-    if can_use_sudo:
-        # Bound dmesg scan to this test's own start..end window (per-test).
-        # till_end_flag=True scans from start_time to the end of the dmesg
-        # buffer, which causes earlier-test kernel events (e.g. a scatter_perf
-        # segfault) to repeatedly fail every subsequent parametrized test.
-        verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=False)
+        if dmesg_during_test:
+            start_marker = f'Starting Test {rccl_collective}'
+            end_marker = f'End of Test {rccl_collective}'
+            verify_dmesg_during_test(orch.all, start_marker, end_marker)
+        else:
+            # Bound dmesg scan to this test's own start..end window (per-test).
+            # till_end_flag=True scans from start_time to the end of the dmesg
+            # buffer, which causes earlier-test kernel events (e.g. a scatter_perf
+            # segfault) to repeatedly fail every subsequent parametrized test.
+            end_time = orch.all.exec('date +"%a %b %e %H:%M:%S"')
+            verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=False)
 
     # Get new cluster snapshot and compare ..
     if can_use_sudo and re.search(
