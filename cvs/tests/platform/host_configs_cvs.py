@@ -6,6 +6,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 import json
+import time
 
 import pytest
 
@@ -119,6 +120,16 @@ def _capture_host_rundeck(host_res_dict, cluster_dict, group, records, version=N
 def _fail_messages(messages):
     for message in messages:
         fail_test(message)
+
+
+def _record_stage(lifecycle, label, seconds):
+    '''Record a stage time. A reporting problem must not change the verdict.'''
+    if lifecycle is None:
+        return
+    try:
+        lifecycle.record(label, seconds)
+    except (AttributeError, TypeError, ValueError):
+        return
 
 
 # Main Test cases start from here ..
@@ -573,12 +584,12 @@ def test_check_pci_acs(orch, config_dict, host_res_dict, cluster_dict, lifecycle
 
 def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
-    Check dmesg for AMDGPU driver errors on each node.
+    Check dmesg for AMDGPU driver errors and reset/hang lines on each node.
 
-    This test:
-      - Runs 'sudo dmesg -T | grep -i amdgpu | egrep -i "fail|error"' on each node.
-      - Flags a failure if any 'fail' or 'error' appears in the filtered output.
-      - Calls update_test_result() to record pass/fail.
+    The default parser is node-scraper (CVS_DMESG_PARSER). Healthy zero-valued
+    status fields (WALKER_ERROR: 0x0, MAPPING_ERROR: 0x0) and hypervisor
+    ``[Firmware Bug]:`` warnings are not failures. CVS_DMESG_PARSER=legacy
+    keeps the historical amdgpu grep, with those same status fields ignored.
 
     Args:
       phdl: Remote execution handle with exec(cmd: str) -> dict[node, str].
@@ -586,11 +597,30 @@ def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dic
 
     Notes:
       - globals.error_list is reset at test start; fail_test() accumulates failures.
-      - dmesg -T requires a relatively recent kernel; content depends on ring buffer.
-      - Grep may miss issues if log levels or formats differ; adjust patterns as needed.
+      - dmesg content depends on the kernel ring buffer.
     """
 
     globals.error_list = []
+    if use_node_scraper_dmesg():
+        # One dmesg read feeds both checks. Split that shared time evenly so
+        # neither stage clock owns the whole command.
+        started = time.perf_counter()
+        out_dict = orch.all.exec("sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
+        events_by_node = parse_dmesg_nodes(out_dict)
+        driver_records, driver_messages, reset_records, reset_messages = host_configs_rundeck.eval_dmesg_node_events(
+            events_by_node
+        )
+        each_stage = (time.perf_counter() - started) / 2.0
+        _record_stage(lifecycle, host_configs_rundeck.DMESG_DRIVER, each_stage)
+        _fail_messages(driver_messages)
+        _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_DRIVER, driver_records)
+        update_test_result()
+        _record_stage(lifecycle, host_configs_rundeck.DMESG_RESET, each_stage)
+        _fail_messages(reset_messages)
+        _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_RESET, reset_records)
+        update_test_result()
+        return
+
     with timed_stage(lifecycle, host_configs_rundeck.DMESG_DRIVER):
         out_dict = orch.all.exec("sudo dmesg -T | grep -i amdgpu  | egrep -i 'fail|error' --color=never")
     records, messages = host_configs_rundeck.eval_dmesg_driver(out_dict)
