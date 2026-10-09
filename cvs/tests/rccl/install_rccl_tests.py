@@ -9,72 +9,28 @@ import pytest
 import json
 import re
 
-from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import globals
+from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 
 log = globals.log
 
 
-# Importing additional cmd line args to script ..
 @pytest.fixture(scope="module")
 def cluster_file(pytestconfig):
-    """
-    Return the path to the cluster configuration JSON file passed via pytest CLI.
-
-    Expects:
-      - pytest to be invoked with: --cluster_file <path>
-
-    Args:
-      pytestconfig: Built-in pytest config object used to access CLI options.
-
-    Returns:
-      str: Filesystem path to the cluster configuration file.
-    """
     return pytestconfig.getoption("cluster_file")
 
 
 @pytest.fixture(scope="module")
 def config_file(pytestconfig):
-    """
-    Return the path to the test configuration JSON file passed via pytest CLI.
-
-    Expects:
-      - pytest to be invoked with: --config_file <path>
-
-    Args:
-      pytestconfig: Built-in pytest config object used to access CLI options.
-
-    Returns:
-      str: Filesystem path to the test configuration file.
-    """
     return pytestconfig.getoption("config_file")
 
 
 @pytest.fixture(scope="module")
 def cluster_dict(cluster_file):
-    """
-    Load and expose full cluster configuration for the test module.
-
-    Behavior:
-      - Opens the JSON at cluster_file and parses it into a Python dict.
-      - Logs the parsed dictionary for visibility and debugging.
-      - Returns the entire cluster configuration (node list, credentials, etc.).
-
-    Args:
-      cluster_file (str): Path to the cluster configuration JSON.
-
-    Returns:
-      dict: Parsed cluster configuration. Expected keys include:
-            - 'node_dict': Map of node name -> node metadata
-            - 'username': SSH username
-            - 'priv_key_file': Path to SSH private key
-    """
     with open(cluster_file) as json_file:
         cluster_dict = json.load(json_file)
-
-    # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
     log.info("%s", cluster_dict)
     return cluster_dict
@@ -100,6 +56,7 @@ def config_dict(config_file, cluster_dict):
             "rccl_tests_sparse_path": "projects/rccl-tests",
             "ompi_install_dir":       "/opt/ompi/build",
             "rocm_path":              "/opt/rocm"          (or "<changeme>"),
+            "gpu_arch":               ""                   (or e.g. "gfx942"; empty = auto-detect),
             "rccl_tests_use_amdclang": "True" | "False"    (optional, default True),
             "rccl_lib_build_timeout": "10800"              (optional, default 14400)
         }
@@ -110,7 +67,6 @@ def config_dict(config_file, cluster_dict):
 
     rccl_install_cfg = config_dict_t['rccl_install']
 
-    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     rccl_install_cfg = resolve_test_config_placeholders(rccl_install_cfg, cluster_dict)
     if not rccl_install_cfg.get("rccl_tests_repository"):
         rccl_install_cfg["rccl_tests_repository"] = rccl_install_cfg["rccl_repository"]
@@ -119,91 +75,120 @@ def config_dict(config_file, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def phdl(cluster_dict):
+def orch(cluster_file, config_file):
+    if not cluster_file or not config_file:
+        pytest.fail("orch fixture requires --cluster_file and --config_file")
+    cfg = OrchestratorConfig.from_configs(cluster_file, config_file)
+    orchestrator = OrchestratorFactory.create_orchestrator(log, cfg)
+    yield orchestrator
+    orchestrator.close()
+
+
+_UBUNTU_BUILD_DEPS = [
+    "pkg-config",
+    "libdrm-dev",
+    "libdrm-amdgpu1",
+    "libnuma-dev",
+    "libpci-dev",
+    "build-essential",
+    "cmake",
+    "git",
+]
+
+
+def _check_install_build_deps(hdl):
     """
-    Build and return a parallel SSH handle (Pssh) for all cluster nodes.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture containing:
-        - node_dict: dict of node_name -> node_details
-        - username: SSH username
-        - priv_key_file: path to SSH private key
-
-    Returns:
-      Pssh: Handle configured for all nodes (for broadcast/parallel operations).
-
-    Notes:
-      - Prints the cluster_dict for quick debugging; consider replacing with log.debug.
-      - Module-scoped so a single shared handle is used across all tests in the module.
-      - nhdl_dict is currently unused; it can be removed unless used elsewhere.
-      - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
+    On Ubuntu nodes: detect missing build dependencies and install them with apt.
+    Non-Ubuntu distros: no-op. Any failure logs a warning but does not abort the build.
     """
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    if len(node_list) < 2:
-        raise ValueError('At least 2 nodes are required to run this test')
-    if len(node_list) % 2 != 0:
-        log.info(
-            f'Odd number of nodes ({len(node_list)}) detected; popping last node from the cluster to make the count even'
+    out_dict = hdl.exec("grep -i ubuntu /etc/os-release 2>/dev/null && echo IS_UBUNTU || echo NOT_UBUNTU", timeout=30)
+    is_ubuntu = any("IS_UBUNTU" in str(v) for v in out_dict.values())
+    if not is_ubuntu:
+        log.info("Non-Ubuntu distro detected; skipping build dependency check")
+        return
+
+    query_cmd = "dpkg-query -W -f='${Package} ${Status}\\n' " + " ".join(_UBUNTU_BUILD_DEPS) + " 2>/dev/null || true"
+    out_dict = hdl.exec(query_cmd, timeout=30)
+
+    missing_per_node = {}
+    for node, output in out_dict.items():
+        missing = []
+        installed_pkgs = set()
+        for line in output.strip().splitlines():
+            parts = line.split()
+            if len(parts) >= 4 and parts[3] == "installed":
+                installed_pkgs.add(parts[0])
+        for pkg in _UBUNTU_BUILD_DEPS:
+            if pkg not in installed_pkgs:
+                missing.append(pkg)
+        if missing:
+            missing_per_node[node] = missing
+
+    if not missing_per_node:
+        log.info("All build dependencies already installed")
+        return
+
+    for node, pkgs in missing_per_node.items():
+        log.info("Node %s: missing build deps: %s", node, pkgs)
+
+    # Collect the union of all missing packages across nodes
+    all_missing = sorted({p for pkgs in missing_per_node.values() for p in pkgs})
+    install_cmd = f"sudo -n apt-get install -y {' '.join(all_missing)}"
+    log.info("Installing missing build deps: %s", all_missing)
+    try:
+        out_dict = hdl.exec(install_cmd, timeout=300)
+        for node, output in out_dict.items():
+            if re.search(r'\berror\b', output, re.I):
+                log.warning("Build dep install may have issues on node %s: %s", node, output.strip()[:300])
+    except Exception as exc:
+        log.warning("Could not install build dependencies (non-fatal): %s", exc)
+
+
+def _detect_gpu_arch(hdl, config_dict):
+    """
+    Return the GPU architecture string (e.g. 'gfx942') for RCCL/rccl-tests builds.
+
+    Uses config gpu_arch when set. Otherwise runs rocminfo on every node reached
+    by hdl, warns if architectures differ across nodes, and returns the detected arch.
+    Returns empty string on failure so callers can skip the flag gracefully.
+    """
+    config_arch = str(config_dict.get("gpu_arch") or "").strip()
+    if config_arch:
+        log.info("Using configured gpu_arch: %s", config_arch)
+        return config_arch
+
+    rocm_path = config_dict.get("rocm_path", "/opt/rocm").rstrip("/")
+    rocminfo_cmd = f"{rocm_path}/bin/rocminfo 2>/dev/null | grep -oP 'gfx[0-9a-f]+' | sort -u"
+    log.info("Auto-detecting GPU architecture via rocminfo")
+    try:
+        out_dict = hdl.exec(rocminfo_cmd, timeout=60, print_console=False)
+    except Exception as exc:
+        log.warning("rocminfo failed (gpu_arch will not be set): %s", exc)
+        return ""
+
+    arch_per_node = {}
+    for node, output in out_dict.items():
+        archs = [a.strip() for a in output.strip().splitlines() if a.strip()]
+        if archs:
+            arch_per_node[node] = archs[0]
+        else:
+            log.warning("No GPU arch detected on node %s via rocminfo", node)
+
+    if not arch_per_node:
+        log.warning("Could not detect GPU arch on any node; AMDGPU_TARGETS will not be set")
+        return ""
+
+    unique_archs = set(arch_per_node.values())
+    if len(unique_archs) > 1:
+        log.warning(
+            "Heterogeneous GPU architectures detected across nodes: %s; using %s",
+            arch_per_node,
+            sorted(unique_archs)[0],
         )
-        node_list.pop()
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
 
-
-@pytest.fixture(scope="module")
-def shdl(cluster_dict):
-    """
-    Build and return a parallel SSH handle (Pssh) for the head node only.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
-
-    Returns:
-      Pssh: Handle configured for the first node (head node) in node_dict.
-
-    Notes:
-      - Useful when commands should be executed only from a designated head node.
-      - Module scope ensures a single connection context for the duration of the module.
-      - nhdl_dict is currently unused; it can be removed unless used elsewhere.
-    """
-    node_list = list(cluster_dict['node_dict'].keys())
-    env_vars = cluster_dict.get("env_vars")
-    head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return shdl
-
-
-@pytest.fixture(scope="module")
-def vpc_node_list(cluster_dict):
-    """
-    Collect and return a list of VPC IPs for all nodes in the cluster.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture containing node_dict with vpc_ip per node.
-
-    Returns:
-      list[str]: List of VPC IP addresses in the cluster, ordered by node_dict iteration.
-
-    Notes:
-      - Iteration order depends on the insertion order of node_dict.
-      - Consider validating that each node entry contains a 'vpc_ip' key.
-    """
-    vpc_node_list = []
-    node_list = list(cluster_dict['node_dict'].keys())
-
-    if len(node_list) < 2:
-        raise ValueError('At least 2 nodes are required to run this test')
-
-    if len(node_list) % 2 != 0:
-        log.info(
-            f'Odd number of nodes ({len(node_list)}) detected; popping last node from the cluster to make the count even'
-        )
-        node_list.pop()
-    for node in node_list:
-        vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
-    return vpc_node_list
+    detected = sorted(unique_archs)[0]
+    log.info("Detected GPU arch: %s", detected)
+    return detected
 
 
 def detect_rocm_path(phdl, config_rocm_path):
@@ -242,12 +227,6 @@ def detect_rocm_path(phdl, config_rocm_path):
 
     log.warning('Could not detect ROCm path with required libraries, defaulting to /opt/rocm')
     return '/opt/rocm'
-
-
-# ---------------------------------------------------------------------------
-# Private helpers
-# ---------------------------------------------------------------------------
-
 
 def _sparse_checkout_path(config_dict, for_tests=False):
     """
@@ -522,8 +501,14 @@ def _install_rccl_lib(hdl, config_dict):
     )
 
     rccl_build_dir = f"{rccl_project_dir}/build"
+    gpu_arch = _detect_gpu_arch(hdl, config_dict)
+    log.info("  gpu_arch   : %s", gpu_arch or "<auto/not set>")
+    hipcc = f"{rocm_path.rstrip('/')}/bin/hipcc"
+    cmake_flags = f"-DCMAKE_PREFIX_PATH={rocm_path} -DCMAKE_CXX_COMPILER={hipcc}"
+    if gpu_arch:
+        cmake_flags += f" -DGPU_TARGETS={gpu_arch} -DAMDGPU_TARGETS={gpu_arch}"
     hdl.exec(
-        f"bash -c '{build_env}cd {rccl_project_dir} && mkdir -p build && cd build && cmake .. && make -j $(nproc)'",
+        f"bash -c '{build_env}cd {rccl_project_dir} && mkdir -p build && cd build && cmake {cmake_flags} .. && make -j $(nproc)'",
         timeout=rccl_lib_build_timeout,
     )
     nccl_home = rccl_build_dir
@@ -588,7 +573,12 @@ def _install_rccl_tests(hdl, config_dict, rccl_lib_prefix, use_custom_rccl_lib, 
         git_tag=rccl_tests_git_tag,
     )
 
+    gpu_arch = _detect_gpu_arch(hdl, config_dict)
+    log.info("  gpu_arch            : %s", gpu_arch or "<auto/not set>")
+
     make_cmd = f"make -j $(nproc) MPI=1 MPI_HOME={ompi_install_dir} ROCM_PATH={rocm_path} HIPCC={hip_compiler} "
+    if gpu_arch:
+        make_cmd += f"AMDGPU_TARGETS={gpu_arch} GPU_TARGETS={gpu_arch} "
     if use_custom_rccl_lib:
         make_cmd += f"CUSTOM_RCCL_LIB={custom_rccl_lib_path} NCCL_HOME={rccl_lib_prefix} "
     else:
@@ -608,26 +598,26 @@ def _install_rccl_tests(hdl, config_dict, rccl_lib_prefix, use_custom_rccl_lib, 
     return build_dir
 
 
-# ---------------------------------------------------------------------------
-# Test entry point
-# ---------------------------------------------------------------------------
-
-
-def test_install_rccl_tests(phdl, shdl, config_dict):
+def test_install_rccl_tests(orch, config_dict):
     """
     Build and install rccl-tests (and optionally the RCCL library) according
     to rccl_tests_install_config.json.
 
     Steps:
-      1. Resolve the orchestrator handle: shdl (head node only) when
-         nfs_install=True, phdl (every node) otherwise.
-      2. Verify the user-supplied OMPI installation is present and functional.
+      1. Resolve the build handle: orch.head (head node only) when
+         nfs_install=True (NFS propagates to all nodes), orch.all (every node)
+         otherwise. Works with a single-node cluster either way.
+      2. Check and install Ubuntu build prerequisites (non-fatal on failure or
+         non-Ubuntu distros).
+      3. Verify the user-supplied OMPI installation is present and functional.
          Bail out immediately if the check fails.
-      3. If rccl_lib_install=True, clone and build the RCCL library from
+      4. If rccl_lib_install=True, clone and build the RCCL library from
          source for rccl-tests. If rccl_lib_install=False, use bundled ROCm
          RCCL from rocm_path/lib (rccl_lib_install_dir is ignored).
-      4. Clone and build rccl-tests against the resolved RCCL and OMPI paths.
-      5. Verify the build artifacts exist on every node reached by the handle.
+      5. Clone and build rccl-tests against the resolved RCCL and OMPI paths.
+         GPU architecture is passed explicitly (AMDGPU_TARGETS / GPU_TARGETS)
+         either from config gpu_arch or auto-detected via rocminfo.
+      6. Verify the build artifacts exist on every node reached by the handle.
     """
     globals.error_list = []
 
@@ -641,11 +631,12 @@ def test_install_rccl_tests(phdl, shdl, config_dict):
     rccl_repository = config_dict["rccl_repository"]
     ompi_install_dir = config_dict["ompi_install_dir"].rstrip('/')
 
-    # Resolve the orchestrator handle
+    # orch.head = single head-node handle (Pssh); orch.all = all-nodes handle (Pssh).
+    # Both share the same .exec(cmd, timeout=...) interface used by all helpers below.
     if nfs_install == "True":
-        hdl = shdl
+        hdl = orch.head
     else:
-        hdl = phdl
+        hdl = orch.all
 
     log.info("NFS install        : %s", nfs_install)
     log.info("RCCL lib install   : %s", rccl_lib_install)
@@ -659,6 +650,9 @@ def test_install_rccl_tests(phdl, shdl, config_dict):
             "RCCL lib dir       : bundled ROCm under %s/lib (rccl_lib_install_dir ignored)",
             config_dict.get("rocm_path", "<changeme>"),
         )
+
+    # Check and install Ubuntu build prerequisites (non-fatal)
+    _check_install_build_deps(hdl)
 
     # Verify OMPI is present and functional before doing any work
     ompi_installed = _check_ompi_installed(hdl, config_dict)
