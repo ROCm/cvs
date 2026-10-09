@@ -11,7 +11,6 @@ import re
 import time
 import json
 
-from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -21,9 +20,19 @@ from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 log = globals.log
 
 
+def _payload_sudo_prefix(orch):
+    """Sudo for a command passed to orch.exec().
+
+    sudo_prefix() is host passwordless sudo. Container exec already applies
+    that to `docker exec`, and the payload runs inside the container.
+    """
+    if getattr(orch, 'orchestrator_type', None) == 'container':
+        return ''
+    return orch.sudo_prefix()
+
+
 # NOTE: This module assumes the following symbols are available in scope:
 # - log: a configured logger
-# - Pssh: parallel SSH helper class
 # - fail_test: helper that records/logs a failure (and may raise)
 # - update_test_result: helper to finalize a test's pass/fail status
 # - print_test_output: helper to pretty-print per-node command output
@@ -124,16 +133,19 @@ def _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, group, out_dict, record
         log.warning("AGFHC '%s': could not capture Run Deck results: %s", group, exc)
 
 
-def _run_agfhc_recipe(phdl, config_dict, args, timeout, stage, out_name, agfhc_res_dict, cluster_dict, lifecycle):
+def _build_agfhc_cmd(orch, path, args):
+    """Build an AGFHC CLI invocation with Spur/container-safe sudo."""
+    return f'{_payload_sudo_prefix(orch)}{path}/agfhc {args}'
+
+
+def _run_agfhc_recipe(orch, config_dict, args, timeout, stage, out_name, agfhc_res_dict, cluster_dict, lifecycle):
     path = config_dict['path']
     log_dir = config_dict['log_dir']
+    cmd = _build_agfhc_cmd(orch, path, f'{args} --simple-output -o {log_dir}/{out_name}')
     with timed_stage(lifecycle, stage):
-        out_dict = phdl.exec(
-            f'sudo {path}/agfhc {args} --simple-output -o {log_dir}/{out_name}',
-            timeout=timeout,
-        )
+        out_dict = orch.exec(cmd, timeout=timeout)
     scan_agfc_results(out_dict)
-    results_json = get_log_results(phdl, out_dict)
+    results_json = get_log_results(orch, out_dict)
     print_test_output(log, out_dict)
     _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, stage, out_dict, results_json=results_json)
     update_test_result()
@@ -159,63 +171,76 @@ def scan_agfc_results(out_dict):
             fail_test(f'Test failed on node {host} - FAIL or ERROR or ABORT patterns seen')
 
 
-def get_log_results(phdl, out_dict):
-    res_cmd_list = []
-    jrl_cmd_list = []
-    err_cmd_list = []
-    # Check results.json
+def _exec_cmds_by_host(orch, commands_by_host):
+    """Run one command per host via orch.all.exec_cmd_list when available."""
+    handle = getattr(orch, 'all', None)
+    hosts = list(
+        getattr(handle, 'reachable_hosts', None) or getattr(handle, 'host_list', None) or commands_by_host.keys()
+    )
+    hosts = [host for host in hosts if host in commands_by_host]
+    executor = getattr(handle, 'exec_cmd_list', None) if handle is not None else None
+    if callable(executor):
+        try:
+            output = executor([commands_by_host[host] for host in hosts], timeout=90, print_console=False)
+            if isinstance(output, dict):
+                normalized = {}
+                for host in hosts:
+                    value = output.get(host, '')
+                    if isinstance(value, dict):
+                        value = value.get('output', '')
+                    normalized[host] = str(value)
+                return normalized
+        except TypeError:
+            pass
+    result = {}
+    for host in hosts:
+        out = orch.exec(commands_by_host[host], hosts=[host])
+        result[host] = str(out.get(host, ''))
+    return result
+
+
+def get_log_results(orch, out_dict):
+    sudo_prefix = _payload_sudo_prefix(orch)
+    res_cmds = {}
+    jrl_cmds = {}
+    err_cmds = {}
     for node in out_dict.keys():
         match = re.search(r'Log directory:\s+([a-z0-9\/\-\_]+)', out_dict[node], re.I)
         log_dir = match.group(1)
-        res_cmd_list.append(f'sudo cat {log_dir}/results.json')
-        jrl_cmd_list.append(f'sudo cat {log_dir}/journal.log')
-        err_cmd_list.append(f'sudo cat {log_dir}/error.json')
-    res_dict = phdl.exec_cmd_list(res_cmd_list)
+        res_cmds[node] = f'{sudo_prefix}cat {log_dir}/results.json'
+        jrl_cmds[node] = f'{sudo_prefix}cat {log_dir}/journal.log'
+        err_cmds[node] = f'{sudo_prefix}cat {log_dir}/error.json'
+    res_dict = _exec_cmds_by_host(orch, res_cmds)
     for node in res_dict.keys():
         pattern = r'"total_failed":\s+0,'
         if not re.search(pattern, res_dict[node], re.I):
             fail_test(f'Total failed tests in results.json is not zero on node {node}')
             log.info('Dumping journal log from all nodes for reference')
-            phdl.exec_cmd_list(jrl_cmd_list)
-            phdl.exec_cmd_list(err_cmd_list)
+            _exec_cmds_by_host(orch, jrl_cmds)
+            _exec_cmds_by_host(orch, err_cmds)
     return res_dict
-
-
-# Create connection to DUTs and export for later use ..
-@pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    """
-    Build a parallel SSH handle to all nodes in the cluster.
-
-    Returns:
-    Pssh: A handle to execute commands across all nodes.
-    """
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
 
 
 # Get the version of AGFHC
 @pytest.mark.dependency()
-def test_version_check(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
+def test_version_check(orch, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
     globals.error_list = []
     path = config_dict['path']
     log_dir = config_dict['log_dir']
+    sudo_prefix = _payload_sudo_prefix(orch)
     with timed_stage(lifecycle, 'version_check'):
-        out_dict = phdl.exec(f'sudo {path}/agfhc -v')
+        out_dict = orch.exec(_build_agfhc_cmd(orch, path, '-v'))
     for node in out_dict.keys():
         if not re.search('agfhc version:', out_dict[node], re.I):
             fail_test(f'Failed to print the AGFHC version on node {node}, installation not proper')
     # create the log directory to capture test logs
     try:
-        phdl.exec(f'sudo rm -rf {log_dir}')
+        orch.exec(f'{sudo_prefix}rm -rf {log_dir}')
         time.sleep(2)
-        phdl.exec(f'sudo mkdir {log_dir}')
+        orch.exec(f'{sudo_prefix}mkdir {log_dir}')
     except Exception:
         log.error(f'Error creating log directory {log_dir}')
-    ls_dict = phdl.exec(f'sudo ls -ld {log_dir}')
+    ls_dict = orch.exec(f'{sudo_prefix}ls -ld {log_dir}')
     for node in ls_dict.keys():
         if re.search('no such', ls_dict[node], re.I):
             fail_test(f'Error creating the log directory {log_dir} on node {node}')
@@ -231,11 +256,11 @@ def test_version_check(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycl
 
 # 2 hrs test
 @pytest.mark.dependency(depends=["test_version_check"])
-def test_all_lvl5(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
+def test_all_lvl5(orch, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
     globals.error_list = []
     log.info('Testcase Run all_lvl5 Test')
     _run_agfhc_recipe(
-        phdl,
+        orch,
         config_dict,
         '-r all_lvl5',
         (60 * 60 * 3) + 30,
@@ -249,7 +274,7 @@ def test_all_lvl5(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
 
 # 1 iteration = 2 hrs with i=2
 @pytest.mark.dependency(depends=["test_version_check"])
-def test_agfhc_hbm_lvl5(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
+def test_agfhc_hbm_lvl5(orch, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
     """
     Run AGFHC HBM1 level 5 recipe for 4 iterations
 
@@ -260,7 +285,7 @@ def test_agfhc_hbm_lvl5(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecyc
     globals.error_list = []
     log.info('Testcase Run HBM Test - hbm_lvl5')
     _run_agfhc_recipe(
-        phdl,
+        orch,
         config_dict,
         '-r hbm_lvl5:i=2',
         (60 * 60 * 10) + 60,
@@ -274,7 +299,7 @@ def test_agfhc_hbm_lvl5(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecyc
 
 # 4 hrs
 @pytest.mark.dependency(depends=["test_version_check"])
-def test_agfhc_minihpl(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
+def test_agfhc_minihpl(orch, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
     """
     Run AGFHC miniHPL:
     Validates output and updates test status.
@@ -282,7 +307,7 @@ def test_agfhc_minihpl(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycl
     globals.error_list = []
     log.info('Testcase Run AGFHC miniHPL')
     _run_agfhc_recipe(
-        phdl,
+        orch,
         config_dict,
         '-t minihpl:d=4h',
         (60 * 60 * 5) + 60,
@@ -296,7 +321,7 @@ def test_agfhc_minihpl(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycl
 
 # 5 min
 @pytest.mark.dependency(depends=["test_version_check"])
-def test_agfhc_xgmi_lvl1(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
+def test_agfhc_xgmi_lvl1(orch, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
     """
     Run AGFHC XGMI lvl1 recipe:
     Shorter test; validates output and records results.
@@ -304,7 +329,7 @@ def test_agfhc_xgmi_lvl1(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecy
     globals.error_list = []
     log.info('Testcase Run XGMI lvl1')
     _run_agfhc_recipe(
-        phdl,
+        orch,
         config_dict,
         '-r xgmi_lvl1',
         (60 * 20) + 30,
@@ -319,7 +344,7 @@ def test_agfhc_xgmi_lvl1(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecy
 # 10 min
 # adding some additional time for buffer
 @pytest.mark.dependency(depends=["test_version_check"])
-def test_agfhc_pcie_lvl2(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
+def test_agfhc_pcie_lvl2(orch, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
     """
     Run AGFHC pcie lvl2:
     Validates output and updates test result.
@@ -327,7 +352,7 @@ def test_agfhc_pcie_lvl2(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecy
     globals.error_list = []
     log.info('Testcase Run PCIe lvl2')
     _run_agfhc_recipe(
-        phdl,
+        orch,
         config_dict,
         '-r pcie_lvl2',
         (60 * 50) + 30,
@@ -340,24 +365,24 @@ def test_agfhc_pcie_lvl2(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecy
 
 
 @pytest.mark.dependency(depends=["test_version_check"])
-def test_agfhc_all_perf(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
+def test_agfhc_all_perf(orch, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
     """
     Pytest: Run the AGFHC 'all_perf' performance recipe across nodes.
 
     Args:
-      phdl: Parallel SSH handle.
+      orch: Shared orchestrator fixture (baremetal SSH, Spur HTTP, or container).
       config_dict (dict): Must include 'path'.
 
     Behavior:
       - Resets error accumulator.
-      - Runs: sudo <path>/agfhc -r all_perf (90-minute timeout).
+      - Runs: <path>/agfhc -r all_perf with Spur/container-safe sudo (90-minute timeout).
       - Scans outputs to ensure success and no fatal patterns.
       - Prints outputs and updates the aggregated test result.
     """
     globals.error_list = []
     log.info('Testcase Run all_perf')
     _run_agfhc_recipe(
-        phdl,
+        orch,
         config_dict,
         '-r all_perf',
         60 * 120,
