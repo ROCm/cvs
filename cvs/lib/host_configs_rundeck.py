@@ -66,7 +66,8 @@ _ACCEL_RE = re.compile(r'accelerators:\s+Advanced', re.I)
 DEFAULT_NIC_LINK_SPEED = 400000
 # The kernel reports SPEED_UNKNOWN as -1 or unsigned 0xFFFFFFFF when it cannot determine link speed.
 _SPEED_UNKNOWN = (-1, 4294967295)
-_NIC_SPEED_RE = re.compile(r'^\s*(\S+)[ \t]+(-?\d+)\s*$')
+_NIC_LINK_RE = re.compile(r'^\s*(\S+)[ \t]+speed=(\S*)[ \t]+operstate=(\S*)[ \t]+flags=(\S*)\s*$')
+_IFF_UP = 0x1
 
 
 def make_meta(cluster_dict, suite_name, version=None):
@@ -422,21 +423,52 @@ def parse_nic_link_speed_setting(value):
 
 
 def nic_link_speed_cmd(interfaces):
-    '''Build a command printing each interface and its sysfs link speed.'''
+    '''Build a command printing each interface's sysfs link speed, operstate and flags.'''
     names = ' '.join(shlex.quote(name) for name in sorted(set(interfaces)))
     if not names:
         return 'true'
-    return f'for i in {names}; do echo "$i $(cat "/sys/class/net/$i/speed" 2>/dev/null)"; done'
+    return (
+        f'for i in {names}; do d="/sys/class/net/$i"; '
+        'echo "$i speed=$(cat "$d/speed" 2>/dev/null) operstate=$(cat "$d/operstate" 2>/dev/null) '
+        'flags=$(cat "$d/flags" 2>/dev/null)"; done'
+    )
 
 
-def parse_nic_link_speeds(output):
-    '''Map interface names to numeric speeds, omitting unreadable lines.'''
-    speeds = {}
+def parse_nic_links(output):
+    '''Map interface names to their sysfs speed, operstate and flags. Unreadable fields are None.'''
+    links = {}
     for line in str(output).splitlines():
-        match = _NIC_SPEED_RE.match(line)
-        if match:
-            speeds[match.group(1)] = int(match.group(2))
-    return speeds
+        match = _NIC_LINK_RE.match(line)
+        if not match:
+            continue
+        speed, operstate, flags = match.group(2, 3, 4)
+        links[match.group(1)] = {
+            'speed': int(speed) if re.fullmatch(r'-?\d+', speed) else None,
+            'operstate': operstate or None,
+            'flags': int(flags, 16) if re.fullmatch(r'0x[0-9a-f]+', flags, re.I) else None,
+        }
+    return links
+
+
+def _nic_link_problem(iface, link, expected, node):
+    '''Return the failure message for one interface, or None when it is at the expected speed.'''
+    want = f'expected {expected} Mb/s on node {node}'
+    if link is None:
+        return f'Backend NIC {iface} link speed unreadable from /sys/class/net/{iface}/speed, {want}'
+    speed, operstate, flags = link['speed'], link['operstate'], link['flags']
+    state = f' (operstate {operstate})' if operstate else ''
+    if speed is None:
+        if operstate is None and flags is None:
+            return f'Backend NIC {iface} not found in /sys/class/net, {want}'
+        # operstate reads "down" both when admin-down and when up without carrier; only IFF_UP tells them apart.
+        if flags is not None and not flags & _IFF_UP:
+            return f'Backend NIC {iface} is administratively down, link speed unavailable, {want}'
+        return f'Backend NIC {iface} link speed unreadable from /sys/class/net/{iface}/speed{state}, {want}'
+    if speed in _SPEED_UNKNOWN:
+        return f'Backend NIC {iface} link speed unknown ({speed}), link may be down{state}, {want}'
+    if speed != expected:
+        return f'Backend NIC {iface} link speed {speed} Mb/s not matching expected {expected} Mb/s on node {node}'
+    return None
 
 
 def eval_nic_link_speed(out_dict, nics_by_node, expected):
@@ -452,25 +484,11 @@ def eval_nic_link_speed(out_dict, nics_by_node, expected):
             messages.append(message)
             continue
 
-        speeds = parse_nic_link_speeds(out_dict.get(node, ''))
+        links = parse_nic_links(out_dict.get(node, ''))
         items = []
         for iface in interfaces:
-            actual = speeds.get(iface)
-            if actual is None:
-                message = (
-                    f'Backend NIC {iface} link speed unreadable from /sys/class/net/{iface}/speed, '
-                    f'expected {expected} Mb/s on node {node}'
-                )
-            elif actual in _SPEED_UNKNOWN:
-                message = (
-                    f'Backend NIC {iface} link speed unknown ({actual}), link may be down, '
-                    f'expected {expected} Mb/s on node {node}'
-                )
-            elif actual != expected:
-                message = (
-                    f'Backend NIC {iface} link speed {actual} Mb/s not matching expected {expected} Mb/s on node {node}'
-                )
-            else:
+            message = _nic_link_problem(iface, links.get(iface), expected, node)
+            if message is None:
                 continue
             items.append(_fail_item(f'{iface} speed', message))
             messages.append(message)
