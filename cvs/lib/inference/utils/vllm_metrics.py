@@ -32,12 +32,6 @@ _METADATA_FIELDS = frozenset(
         'tokenizer_id',
         'burstiness',
         'request_rate',
-    }
-)
-# `vllm bench serve` adds these when the server drafts tokens (MTP, EAGLE, ...).
-# They describe the drafter rather than the serving contract, so they are not gated.
-_SPEC_DECODE_FIELDS = frozenset(
-    {
         'spec_decode_acceptance_rate',
         'spec_decode_acceptance_length',
         'spec_decode_num_drafts',
@@ -350,7 +344,7 @@ def project_vllm_metrics(raw, *, tp, isl, pp='1', artifact_path='results'):
             if is_finite_number(value):
                 metrics[metric_name] = value
             continue
-        if raw_name in _METADATA_FIELDS or raw_name in _SPEC_DECODE_FIELDS or not is_finite_number(value):
+        if raw_name in _METADATA_FIELDS or not is_finite_number(value):
             continue
         raise UnknownMetricContractError(f'unknown finite numeric vLLM result field {raw_name!r}: {artifact_path}')
 
