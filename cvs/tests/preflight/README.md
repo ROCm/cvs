@@ -8,7 +8,7 @@ The preflight checks system validates essential cluster health and configuration
 
 1. **Node Health** - Validates AMDGPU/KFD, GPU visibility, and kernel health, with optional MI4XX fabric admission
 2. **GID Consistency** - Ensures RDMA interfaces have valid Global Identifier entries
-3. **RDMA MTU (Jumbo Frames)** - Checks netdev and RoCE active MTUs on configured RDMA interfaces
+3. **RDMA MTU** - Checks the active MTU on configured RDMA interfaces, and the netdev MTU (jumbo frames) on RoCE ports
 4. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
 5. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
 6. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(opt-in)*
@@ -333,7 +333,7 @@ sortable tables.
 ```
 ✅ Node Health: PASS (2/2 nodes healthy)
 ✅ GID Consistency: PASS (64/64 interfaces have GID index 3)
-✅ RDMA MTU (Jumbo Frames): PASS (64/64 interfaces meet MTU minimums; netdev MTU(s) 9000, active MTU(s) 4096)
+✅ RDMA MTU: PASS (64/64 interfaces meet MTU minimums (64 RoCE); netdev MTU(s) 9000, active MTU(s) 4096)
 ⚪ RDMA Connectivity: SKIPPED (Test skipped by configuration)
 ✅ ROCm Versions: PASS (All nodes running 6.2.0)
 ✅ Node Smoke Tier 1: PASS - 2/2 nodes passed Node Smoke Tier 1; 15 tests run per node
@@ -401,7 +401,7 @@ cvs run pytorch_xdit_wan \
 8. Run RDMA checks:
    - Interface naming and presence
    - GID consistency
-   - RDMA MTU (jumbo frames), without pruning nodes on failure
+   - RDMA MTU (active MTU; netdev jumbo frames on RoCE ports), without pruning nodes on failure
    - RDMA connectivity using `ibv_rc_pingpong` (mode-dependent)
 9. Generate the comprehensive summary and HTML report
 10. Return overall PASS/FAIL status
@@ -431,15 +431,19 @@ cat /sys/class/infiniband/*/ports/1/gids/3
 
 #### MTU Check Failures
 
-Check which Ethernet netdev backs the RDMA port, then compare its MTU with the RoCE active MTU:
+Check the port's link layer and MTUs, and on RoCE which Ethernet netdev backs the port:
 
 ```bash
+ibv_devinfo -d <dev> -i 1 | grep -E 'link_layer|active_mtu|max_mtu'
 rdma link show <dev>/1
 cat /sys/class/net/<netdev>/mtu
-ibv_devinfo -d <dev> | grep -E 'active_mtu|max_mtu'
 ```
 
-Enable jumbo frames on the netdev and every switch along the path if the netdev MTU is below the configured minimum. A 1500-byte netdev MTU commonly yields a 1024-byte RoCE active MTU and reduces GPU-Direct RDMA bandwidth. MTU failures do not remove nodes from RDMA connectivity testing.
+On RoCE (`link_layer: Ethernet`), enable jumbo frames on the netdev and every switch along the path if the netdev MTU is below the configured minimum. A 1500-byte netdev MTU commonly yields a 1024-byte RoCE active MTU and reduces GPU-Direct RDMA bandwidth.
+
+On InfiniBand (`link_layer: InfiniBand`), only `active_mtu` is checked. The port may have no netdev, and an IPoIB netdev such as `ib0` (often MTU 2044) does not limit the verbs MTU. A low `active_mtu` there comes from the subnet manager's partition MTU or the switch port MTU.
+
+The check reads port 1 of each device, as the GID and connectivity checks do. MTU failures do not remove nodes from RDMA connectivity testing.
 
 #### RDMA Connectivity Failures
 ```bash

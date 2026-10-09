@@ -14,7 +14,7 @@ The preflight checks system validates essential cluster health before running pe
 6. **Node Smoke Tier 2** - Per-node perf sanity while `node_smoke_tier1.tier2_perf` is enabled (GEMM TFLOPS, HBM bandwidth, local RCCL)
 7. **Node Smoke Tier 3** - Cluster-wide Host / GPU / Network inventory via `primus-cli direct -- preflight --host --gpu --network`
 8. **GID and Interface Consistency** - Ensures configured RDMA interfaces and GID entries are present and consistent
-9. **RDMA MTU (Jumbo Frames)** - Verifies netdev and RoCE active MTUs on configured RDMA interfaces
+9. **RDMA MTU** - Verifies the active MTU on configured RDMA interfaces, and the netdev MTU (jumbo frames) on RoCE ports
 10. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
 ## Configuration File Structure
@@ -220,16 +220,18 @@ All parameters below are optional and have sensible defaults. The sample configu
     - `["mlx5_0", "mlx5_1"]` - Mellanox 2-interface setup
 
 - **`mtu_check`** (default: `true`)
-  - Check jumbo-frame netdev MTU and RoCE active MTU when RDMA mode is enabled
+  - Check the active MTU of each configured RDMA port, and the jumbo-frame netdev MTU on RoCE ports, when RDMA mode is enabled
+  - The link layer comes from `ibv_devinfo` (falling back to sysfs). InfiniBand ports are checked on active MTU only: they have no Ethernet netdev, and an IPoIB netdev such as `ib0` (often MTU 2044) does not limit the verbs MTU
+  - Port 1 of each device is checked, as in the GID and connectivity checks
   - MTU failures are reported without pruning nodes from connectivity testing
 
 - **`min_netdev_mtu`** (default: `4200`)
-  - Minimum Ethernet netdev MTU; 4200 permits a 4096-byte RoCE active MTU
+  - Minimum Ethernet netdev MTU on RoCE ports; 4200 permits a 4096-byte RoCE active MTU. Not applied to InfiniBand ports
   - Switches along the path must support the same jumbo-frame MTU; use `9000` for sites that require it
   - Set to `0` to disable this threshold
 
 - **`min_active_mtu`** (default: `4096`)
-  - Minimum `active_mtu` reported by `ibv_devinfo`; 1024 usually indicates a 1500-byte netdev MTU
+  - Minimum `active_mtu` reported by `ibv_devinfo`, on RoCE and InfiniBand ports; on RoCE, 1024 usually indicates a 1500-byte netdev MTU
   - Valid values are `0`, `256`, `512`, `1024`, `2048`, and `4096`; `0` disables this threshold
 
 - **`ibv_test_timeout`** (default: 90)

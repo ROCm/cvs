@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from cvs.lib.preflight.base import PreflightCheck
+from cvs.lib.preflight.mtu_check import INFINIBAND, transport_label
 from cvs.lib.preflight.node_smoke import (
     DEFAULT_ARTIFACTS_ROOT_DIR,
     NODE_SMOKE_TIER1_LABEL,
@@ -37,7 +38,7 @@ from cvs.lib import globals
 log = globals.log
 
 PREFLIGHT_CHECK_DISPLAY_NAMES = {
-    'rdma_mtu': 'RDMA MTU (Jumbo Frames)',
+    'rdma_mtu': 'RDMA MTU',
     'node_smoke_tier1': NODE_SMOKE_TIER1_LABEL,
     'node_smoke_tier2': NODE_SMOKE_TIER2_LABEL,
     'node_smoke_tier3': NODE_SMOKE_TIER3_LABEL,
@@ -146,10 +147,17 @@ class PreflightReportGenerator(PreflightCheck):
             )
 
         if summary['checks']['rdma_mtu']['status'] == 'FAIL':
-            summary['recommendations'].append(
-                "Enable jumbo frames on RDMA netdevs (MTU >= min_netdev_mtu end-to-end, including switches) "
-                "so RoCE negotiates a 4096-byte active MTU; low MTU reduces GPU-Direct RDMA bandwidth"
-            )
+            failed_transports = summary['checks']['rdma_mtu'].get('failed_transports') or ['']
+            if any(transport != INFINIBAND for transport in failed_transports):
+                summary['recommendations'].append(
+                    "Enable jumbo frames on RDMA netdevs (MTU >= min_netdev_mtu end-to-end, including switches) "
+                    "so RoCE negotiates a 4096-byte active MTU; low MTU reduces GPU-Direct RDMA bandwidth"
+                )
+            if INFINIBAND in failed_transports:
+                summary['recommendations'].append(
+                    "Raise the InfiniBand port MTU (subnet manager partition MTU and switch ports) "
+                    "so active_mtu reaches 4096; low MTU reduces GPU-Direct RDMA bandwidth"
+                )
 
         if summary['checks']['node_health']['status'] == 'FAIL':
             summary['recommendations'].append(
@@ -296,14 +304,21 @@ class PreflightReportGenerator(PreflightCheck):
         failed_nodes = []
         netdev_mtus = set()
         active_mtus = set()
+        transports = {}
+        failed_transports = set()
         for node, result in mtu_results.items():
             if not isinstance(result, dict):
                 continue
             for iface in (result.get('interfaces') or {}).values():
                 total_interfaces += 1
+                transport = transport_label(iface.get('link_layer'))
+                if transport:
+                    transports[transport] = transports.get(transport, 0) + 1
                 if iface.get('status') == 'OK':
                     ok_interfaces += 1
-                if iface.get('netdev_mtu') is not None:
+                elif iface.get('status') == 'FAIL':
+                    failed_transports.add(transport)
+                if iface.get('netdev_mtu') is not None and transport != INFINIBAND:
                     netdev_mtus.add(iface['netdev_mtu'])
                 if iface.get('active_mtu') is not None:
                     active_mtus.add(iface['active_mtu'])
@@ -312,6 +327,8 @@ class PreflightReportGenerator(PreflightCheck):
         netdev_mtus = sorted(netdev_mtus)
         active_mtus = sorted(active_mtus)
         summary = f"{ok_interfaces}/{total_interfaces} interfaces meet MTU minimums"
+        if transports:
+            summary += ' (' + ', '.join(f"{count} {name}" for name, count in sorted(transports.items())) + ')'
         measured = []
         if netdev_mtus:
             measured.append(f"netdev MTU(s) {', '.join(map(str, netdev_mtus))}")
@@ -326,6 +343,8 @@ class PreflightReportGenerator(PreflightCheck):
             'failed_nodes': failed_nodes,
             'netdev_mtus': netdev_mtus,
             'active_mtus': active_mtus,
+            'transports': transports,
+            'failed_transports': sorted(failed_transports),
             'summary': summary,
         }
 
@@ -1302,6 +1321,7 @@ class PreflightReportGenerator(PreflightCheck):
                 values = (
                     node,
                     dev,
+                    transport_label(iface.get('link_layer')) or iface.get('link_layer') or 'unknown',
                     iface.get('netdev', ''),
                     iface.get('netdev_mtu'),
                     iface.get('active_mtu'),
@@ -1313,9 +1333,9 @@ class PreflightReportGenerator(PreflightCheck):
             return ''
         section = '''
         <section>
-            <h2>RDMA MTU (Jumbo Frames) Issues</h2>
+            <h2>RDMA MTU Issues</h2>
             <table>
-                <thead><tr><th>Node</th><th>Interface</th><th>Netdev</th><th>Netdev MTU</th><th>Active MTU</th><th>Max MTU</th><th>Issues</th></tr></thead>
+                <thead><tr><th>Node</th><th>Interface</th><th>Transport</th><th>Netdev</th><th>Netdev MTU</th><th>Active MTU</th><th>Max MTU</th><th>Issues</th></tr></thead>
                 <tbody>
         '''
         section += '\n'.join(rows)

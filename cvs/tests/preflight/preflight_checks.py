@@ -802,7 +802,7 @@ def test_gid_consistency(orch, config_dict, lifecycle=None):
 
 @_timed_stage(RDMA_MTU)
 def test_rdma_mtu(orch, config_dict, lifecycle=None):
-    """Check jumbo-frame netdev and RoCE active MTUs without pruning nodes.
+    """Check RDMA active MTUs, and netdev MTUs on RoCE ports, without pruning nodes.
 
     Low MTU reduces bandwidth but does not prevent RDMA connectivity.
     """
@@ -849,8 +849,8 @@ def test_rdma_mtu(orch, config_dict, lifecycle=None):
             if interface_result.get('status') == 'OK':
                 ok += 1
     log.info(
-        f"RDMA MTU results: {ok}/{total} interfaces meet netdev MTU >= {min_netdev_mtu} "
-        f"and active MTU >= {min_active_mtu}"
+        f"RDMA MTU results: {ok}/{total} interfaces meet active MTU >= {min_active_mtu} "
+        f"and, on RoCE ports, netdev MTU >= {min_netdev_mtu}"
     )
     preflight_update_test_result(results)
 

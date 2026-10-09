@@ -1,7 +1,7 @@
 """
 RDMA MTU Checking Module
 
-This module checks jumbo-frame netdev and RoCE active MTUs on RDMA interfaces.
+This module checks RDMA port active MTUs and, on RoCE ports, the Ethernet netdev MTU.
 """
 
 import shlex
@@ -14,8 +14,25 @@ DEFAULT_MIN_ACTIVE_MTU = 4096
 VALID_ACTIVE_MTUS = (0, 256, 512, 1024, 2048, 4096)
 
 
+INFINIBAND = 'InfiniBand'
+ETHERNET = 'Ethernet'
+
+
+def transport_label(link_layer):
+    """Name the RDMA transport for a port's link layer: InfiniBand, RoCE, or '' when unknown."""
+    if link_layer == INFINIBAND:
+        return INFINIBAND
+    if link_layer == ETHERNET:
+        return 'RoCE'
+    return ''
+
+
 class RdmaMtuCheck(PreflightCheck):
-    """Check jumbo-frame netdev MTU and RoCE active MTU on configured RDMA interfaces."""
+    """Check RDMA active MTU on configured interfaces, plus the netdev MTU on RoCE ports.
+
+    An InfiniBand port has no Ethernet netdev to size. Its IPoIB netdev, when present,
+    has its own MTU (often 2044) that does not limit the verbs MTU, so only active_mtu applies.
+    """
 
     def __init__(
         self,
@@ -53,6 +70,9 @@ for dev in {interfaces}; do
         echo "NETDEV_MTU:"
     fi
     info=$(ibv_devinfo -d "$dev" -i 1 2>/dev/null)
+    ll=$(echo "$info" | awk '/link_layer:/ {{print $2; exit}}')
+    [ -z "$ll" ] && ll=$(cat "/sys/class/infiniband/$dev/ports/1/link_layer" 2>/dev/null)
+    echo "LINK_LAYER:$ll"
     echo "ACTIVE_MTU:$(echo "$info" | awk '/active_mtu:/ {{print $2; exit}}')"
     echo "MAX_MTU:$(echo "$info" | awk '/max_mtu:/ {{print $2; exit}}')"
 done
@@ -70,6 +90,7 @@ done
             if marker == 'DEVICE':
                 current = value
                 interfaces[current] = {
+                    'link_layer': '',
                     'netdev': '',
                     'netdev_mtu': None,
                     'active_mtu': None,
@@ -84,6 +105,8 @@ done
                 entry['missing'] = True
             elif marker == 'NETDEV':
                 entry['netdev'] = value
+            elif marker == 'LINK_LAYER':
+                entry['link_layer'] = value
             elif marker in ('NETDEV_MTU', 'ACTIVE_MTU', 'MAX_MTU'):
                 field = marker.lower()
                 try:
@@ -110,6 +133,7 @@ done
             entry = dict(
                 parsed.get(dev)
                 or {
+                    'link_layer': '',
                     'netdev': '',
                     'netdev_mtu': None,
                     'active_mtu': None,
@@ -121,12 +145,13 @@ done
             netdev = entry['netdev']
             netdev_mtu = entry['netdev_mtu']
             active_mtu = entry['active_mtu']
+            transport = transport_label(entry['link_layer'])
             if dev not in parsed:
                 errors.append(f"No MTU data returned for {dev}")
             elif entry['missing']:
                 errors.append(f"Interface {dev} not found")
             else:
-                if self.min_netdev_mtu > 0:
+                if self.min_netdev_mtu > 0 and transport != INFINIBAND:
                     if netdev_mtu is None:
                         errors.append(f"Could not determine netdev MTU for {dev} (netdev '{netdev}')")
                     elif netdev_mtu < self.min_netdev_mtu:
@@ -137,9 +162,11 @@ done
                     if active_mtu is None:
                         errors.append(f"Could not read active_mtu for {dev} (is ibv_devinfo installed?)")
                     elif active_mtu < self.min_active_mtu:
+                        detail = f"(max_mtu {entry['max_mtu']})"
+                        if transport != INFINIBAND:
+                            detail += f"; netdev {netdev} MTU {netdev_mtu}"
                         errors.append(
-                            f"{dev} RoCE active_mtu {active_mtu} < {self.min_active_mtu} "
-                            f"(max_mtu {entry['max_mtu']}); netdev {netdev} MTU {netdev_mtu}"
+                            f"{dev} {transport or 'RDMA'} active_mtu {active_mtu} < {self.min_active_mtu} {detail}"
                         )
             entry.update({'status': 'FAIL' if errors else 'OK', 'errors': errors})
             result['interfaces'][dev] = entry
