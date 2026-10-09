@@ -1,5 +1,6 @@
 import datetime
 import os
+import re
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -306,6 +307,141 @@ class TestNodeScraperTimeRangeFiltering(unittest.TestCase):
             "minute-truncated analysis_range_end reproduces the historical bug "
             "(demonstrates why _parse_cvs_time must preserve seconds)",
         )
+
+
+EDAC_BENIGN_DMESG_LINES = [
+    "EDAC MC: Ver: 3.0.0",
+    "EDAC MC0: Giving out device to module amd64_edac controller F19h: DEV 0000:00:18.3 (INTERRUPT)",
+    "EDAC amd64: F19h detected (node 0).",
+    "EDAC amd64: MC: 0:     0MB 1: 16384MB",
+    "EDAC amd64: using x16 syndromes.",
+    "EDAC MC: Removed device 0 for amd64_edac F19h: DEV 0000:00:18.3",
+    "EDAC DEVICE0: Giving out device to module altera_edac controller l2: DEV l2 (POLLED)",
+    "EDAC PCI0: Giving out device to module amd64_edac controller EDAC PCI controller: DEV 0000:00:18.2 (POLLED)",
+    "ghes_edac: This system has 32 DIMM sockets.",
+    "EDAC amd64: Warning: Forcing ECC on is not recommended on newer systems. Please enable ECC in BIOS.",
+    "EDAC sbridge: Seeking for: PCI ID 8086:2fa0",
+]
+
+EDAC_REAL_DMESG_LINES = [
+    "EDAC MC0: 1 CE on mc#0csrow#2channel#0 (csrow:2 channel:0 page:0x1234 offset:0x0 grain:64 syndrome:0x5a)",
+    "EDAC MC0: 1 UE on mc#0csrow#2channel#0 (csrow:2 channel:0 page:0x1234 offset:0x0 grain:64)",
+    "EDAC MC3: 2 CE Single-bit ECC on unknown memory (node:0 card:0 module:0 page:0x0 offset:0x0 grain:1 "
+    "syndrome:0x0 - APEI location: node:0 card:0 module:0)",
+    "EDAC MC0: 1 UE Failed to map error addr to a csrow on unknown label (page:0x0 offset:0x0 grain:64)",
+    "EDAC DEVICE0: CE: l2 instance: 0 block: 0 count: 1 'L2 single-bit error'",
+    "EDAC DEVICE0: UE: l2 instance: 0 block: 0 count: 1 'L2 double-bit error'",
+]
+
+BENIGN_DMESG_LINES = [
+    "infiniband rdma0: Changing to default roce traffic class DSCP 26 and SL 3",
+    "PCI: CLS 64 bytes, default 64",
+    "ast 0000:54:00.0: Using default configuration",
+    "mpt3sas_cm0: CurrentHostPageSize is 0: Setting default host page size to 4k",
+    "RAS: Correctable Errors collector initialized.",
+    "RAS: Uncorrectable Errors collector initialized.",
+] + EDAC_BENIGN_DMESG_LINES
+
+REAL_FAULT_DMESG_LINES = [
+    "python[3215696]: segfault at 75b800000034 ip 000075b86b22d5aa sp 00007ffef62526f0 error 4 "
+    "in libmori_application.so[75b86b200000+c7000] likely on CPU 124 (core 84, socket 1)",
+    "traps: python[4021] general protection fault ip:7f3a5c0b12e4 sp:7ffd2a8c1e50 error:0 in libc.so.6",
+    "amdgpu 0000:05:00.0: amdgpu: [gfxhub] page fault (src_id:0 ring:153 vmid:8 pasid:32770)",
+    "amdgpu 0000:05:00.0: amdgpu: [mmhub0] retry page fault (src_id:0 ring:0 vmid:0 pasid:0)",
+    "amdgpu 0000:05:00.0: GPU fault detected: 146 0x0c680401",
+    "BUG: unable to handle page fault for address: ffffc90000a3f000",
+    "Oops: general protection fault, probably for non-canonical address 0xdead000000000100: 0000 [#1] SMP NOPTI",
+    "pcieport 0000:00:01.1: AER: Correctable error message received from 0000:01:00.0",
+    "pcieport 0000:00:01.1: AER: Uncorrectable (Non-Fatal) error message received from 0000:01:00.0",
+    "amdgpu 0000:05:00.0: amdgpu: Uncorrectable error detected in UMC inst: 0, chan_idx: 3",
+] + EDAC_REAL_DMESG_LINES
+
+
+class TestErrPatterns(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
+
+    def _matching_keys(self, line):
+        return [key for key, pattern in verify_lib.err_patterns_dict.items() if re.search(pattern, line, re.I)]
+
+    def test_benign_lines_match_no_error_pattern(self):
+        for line in BENIGN_DMESG_LINES:
+            with self.subTest(line=line):
+                self.assertEqual(self._matching_keys(line), [])
+
+    def test_real_fault_lines_match_an_error_pattern(self):
+        for line in REAL_FAULT_DMESG_LINES:
+            with self.subTest(line=line):
+                self.assertTrue(self._matching_keys(line))
+
+    def test_standalone_fault_word_still_flags_crash(self):
+        for line in (
+            "traps: python[4021] general protection fault ip:7f3a5c0b12e4 sp:7ffd2a8c1e50 error:0 in libc.so.6",
+            "amdgpu 0000:05:00.0: GPU fault detected: 146 0x0c680401",
+            "Oops: general protection fault, probably for non-canonical address 0xdead000000000100: 0000 [#1] SMP NOPTI",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self._matching_keys(line), ["crash"])
+
+    def test_segfault_flags_crash(self):
+        self.assertIn("crash", self._matching_keys(REAL_FAULT_DMESG_LINES[0]))
+
+    def test_correctable_error_report_still_flags_hardware(self):
+        self.assertEqual(
+            self._matching_keys("pcieport 0000:00:01.1: AER: Correctable error message received from 0000:01:00.0"),
+            ["hardware"],
+        )
+
+    def test_edac_reports_flag_hardware(self):
+        for line in EDAC_REAL_DMESG_LINES:
+            with self.subTest(line=line):
+                self.assertEqual(self._matching_keys(line), ["hardware"])
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    def test_legacy_verify_dmesg_ignores_benign_lines(self, mock_fail_test):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "\n".join(BENIGN_DMESG_LINES)}
+
+        result = verify_lib.verify_dmesg_for_errors(
+            phdl, {"node1": "Wed Sep 30 18:05:22"}, {"node1": "Wed Sep 30 18:26:07"}, till_end_flag=False
+        )
+
+        self.assertEqual(result, {"node1": []})
+        mock_fail_test.assert_not_called()
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    def test_legacy_verify_dmesg_flags_real_faults(self, mock_fail_test):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "\n".join(BENIGN_DMESG_LINES + REAL_FAULT_DMESG_LINES)}
+
+        result = verify_lib.verify_dmesg_for_errors(
+            phdl, {"node1": "Wed Sep 30 18:05:22"}, {"node1": "Wed Sep 30 18:26:07"}, till_end_flag=False
+        )
+
+        self.assertEqual(set(result["node1"]), set(REAL_FAULT_DMESG_LINES))
+        mock_fail_test.assert_called()
+
+    def _cvs_events(self, lines, level):
+        dmesg = "".join(
+            f"2026-09-30T16:38:51,{i:06d}+00:00 kern  :{level:<6}: {line}\n" for i, line in enumerate(lines)
+        )
+        events = verify_lib.node_scraper_adapter.parse_dmesg(
+            dmesg, analysis_args={"error_regex": verify_lib.cvs_dmesg_error_regex()}
+        )
+        return [e for e in events if (e["description"] or "").startswith("CVS ")]
+
+    def test_node_scraper_cvs_patterns_ignore_benign_lines(self):
+        self.assertEqual(self._cvs_events(BENIGN_DMESG_LINES, "warn"), [])
+
+    def test_node_scraper_cvs_patterns_flag_bare_fault(self):
+        events = self._cvs_events(["amdgpu 0000:05:00.0: GPU fault detected: 146 0x0c680401"], "err")
+        self.assertEqual([e["description"] for e in events], ["CVS crash pattern"])
+
+    def test_node_scraper_cvs_patterns_flag_edac_ce_at_warn_level(self):
+        events = self._cvs_events([EDAC_REAL_DMESG_LINES[0]], "warn")
+        self.assertEqual([e["description"] for e in events], ["CVS hardware pattern"])
 
 
 class TestVerifyHostLspci(unittest.TestCase):

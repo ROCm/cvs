@@ -17,7 +17,7 @@ from cvs.lib import node_scraper_adapter
 
 err_patterns_dict = {
     'gpu_reset': 'GPU reset begin|GPU hang|cp might be in an unrecoverable state|fence wait loop timeout expired',
-    'crash': 'crashed|Traceback|cut here|Bug:|Call Trace|RIP:|end trace|amdgpu: Fatal error|segfault|show_stack|dump_stack|fault ',
+    'crash': r'crashed|Traceback|cut here|Bug:|Call Trace|RIP:|end trace|amdgpu: Fatal error|segfault|show_stack|dump_stack|\bfault\b',
     'test_fail': 'Test failure',
     'fault': 'no-retry page fault|Illegal register access|PROTECTION_FAULT_STATUS',
     # Note: amdgpu oversubscription messages ('Runlist is getting oversubscribed',
@@ -25,7 +25,8 @@ err_patterns_dict = {
     # they're matched as warnings via warn_patterns_dict below. See AMD docs:
     # https://instinct.docs.amd.com/projects/amdgpu-docs/en/latest/conceptual/oversubscription.html
     'driver': 'Queue preemption failed for queue|Failed to evict process queues|No more SDMA queue to allocate|amdgpu: process pid',
-    'hardware': 'hardware error|hardware fail|ras error|uncorrectable|correctable err',
+    'hardware': r'hardware error|hardware fail|ras error|(?:uncorrectable|correctable err)(?!.*initialized)'
+    r'|EDAC (?:MC\d+: \d+ [CU]E |DEVICE\d+: [CU]E: )',
     'network': 'NIC Link is Down|link is down|ib_uverb|CQE|queue catastrophic|CQ error',
 }
 
