@@ -101,6 +101,22 @@ class TestPreflightDeck(unittest.TestCase):
         self.assertIn('9000', nodes['n1']['items_summary'])
         self.assertEqual(nodes['n2']['items'][0]['name'], 'rdma0')
 
+        self.assertEqual(nodes['n1']['items_summary'], 'netdev MTU 9000, active MTU 4096')
+
+        partial = build_preflight_deck(
+            {
+                'rdma_mtu': {
+                    'n1': {
+                        'status': 'FAIL',
+                        'interfaces': {'rdma0': {'status': 'FAIL', 'netdev_mtu': None, 'active_mtu': 4096}},
+                        'errors': ['Could not determine netdev MTU'],
+                    },
+                }
+            },
+            {'node_dict': {'n1': {}}},
+        )
+        self.assertEqual(partial['groups']['rdma_mtu']['nodes']['n1']['items_summary'], 'active MTU 4096')
+
         skipped = build_preflight_deck(
             {'rdma_mtu': {'status': 'SKIPPED', 'skipped': True, 'message': 'disabled'}},
             {'node_dict': {'n1': {}, 'n2': {}}},
