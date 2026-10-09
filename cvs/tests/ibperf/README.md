@@ -12,6 +12,8 @@ This Pytest script can be run in the following fashion (for the details on argum
 
 In the config file, cvs/input/config_file/ibperf/ibperf_config.json, change the value of parameter "install_dir": "/home/{user-id}/" to the desired location. Else {user-id} will be resolved as the current username at runtime.
 
+Each NIC uses its PCIe-local GPU. The tests find the HIP ordinal for `--use_rocm` by matching the GPU BDF against KFD topology. Setting `HIP_VISIBLE_DEVICES`, `ROCR_VISIBLE_DEVICES`, `CUDA_VISIBLE_DEVICES`, or `GPU_DEVICE_ORDINAL` in cluster `env_vars` makes the ibperf tests fail.
+
 
 ```
 (myenv) [user@host]~/cvs:(main)$
