@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 from cvs.lib.inference.atom.atom_orch import AtomJob
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
+from cvs.lib.inference.utils.vllm_benchmark_scripts import clamped_bench_random_range_ratio_str
 
 _HERE = Path(__file__).parent
 _FIXTURES = _HERE / "fixtures"
@@ -381,6 +382,39 @@ class TestATOMAtomOrchParse(unittest.TestCase):
             num_prompts=100,
         )
         self.assertIn("--disable-tqdm", job._vllm_client_argv())
+
+    def test_vllm_client_argv_clamps_range_ratio_that_exceeds_model_length(self):
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="8192",
+            concurrency=32,
+            num_prompts=1000,
+        )
+        job.max_model_length = "12288"
+        job.random_range_ratio = "0.8"
+        expected, was_clamped = clamped_bench_random_range_ratio_str("0.8", "1024", "8192", "12288")
+        self.assertTrue(was_clamped)
+        argv = job._vllm_client_argv()
+        self.assertEqual(argv[argv.index("--random-range-ratio") + 1], expected)
+        self.assertLessEqual((1024 + 8192) * (1.0 + float(expected)), 12288 + 1e-6)
+
+    def test_vllm_client_argv_keeps_range_ratio_when_it_fits(self):
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="128",
+            osl="32",
+            concurrency=1,
+            num_prompts=8,
+        )
+        job.max_model_length = "12288"
+        job.random_range_ratio = "0.8"
+        argv = job._vllm_client_argv()
+        self.assertEqual(argv[argv.index("--random-range-ratio") + 1], "0.8")
 
     def test_vllm_argv_uses_python_module_cli(self):
         job = AtomJob(

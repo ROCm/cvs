@@ -33,6 +33,7 @@ import time
 from cvs.lib import globals
 from cvs.lib.inference.atom.atom_config_loader import merge_mxfp4_triton_env
 from cvs.lib.inference.atom.atom_parsing import sglang_bench_jsonl_to_raw, to_client_metrics
+from cvs.lib.inference.utils.vllm_benchmark_scripts import clamped_bench_random_range_ratio_str
 from cvs.lib.utils.model_query_lib import OpenAIProbe
 
 log = globals.log
@@ -766,6 +767,25 @@ class AtomJob:
             )
         time.sleep(5)
 
+    def _bench_random_range_ratio(self):
+        ratio, clamped = clamped_bench_random_range_ratio_str(
+            self.random_range_ratio,
+            self.isl,
+            self.osl,
+            self.max_model_length,
+        )
+        if clamped:
+            log.info(
+                "CVS: clamped --random-range-ratio from %s to %s so peak random (ISL+OSL)*(1+r) "
+                "fits max_model_length=%s (ISL=%s OSL=%s)",
+                self.random_range_ratio,
+                ratio,
+                self.max_model_length,
+                self.isl,
+                self.osl,
+            )
+        return ratio
+
     def _atom_client_argv(self):
         warmups = int(self.concurrency) * 2
         argv = [
@@ -785,7 +805,7 @@ class AtomJob:
             "--random-output-len",
             self.osl,
             "--random-range-ratio",
-            self.random_range_ratio,
+            self._bench_random_range_ratio(),
             "--max-concurrency",
             self.concurrency,
             "--num-prompts",
@@ -830,7 +850,7 @@ class AtomJob:
             "--random-output-len",
             self.osl,
             "--random-range-ratio",
-            self.random_range_ratio,
+            self._bench_random_range_ratio(),
             "--max-concurrency",
             self.concurrency,
             "--request-rate",
@@ -879,7 +899,7 @@ class AtomJob:
             "--seed",
             self.seed,
             "--random-range-ratio",
-            self.random_range_ratio,
+            self._bench_random_range_ratio(),
             "--random-prefix-len",
             self.random_prefix_len,
             "--percentile-metrics",
