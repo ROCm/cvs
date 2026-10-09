@@ -243,6 +243,33 @@ class TestRdmaMtuReport(unittest.TestCase):
         self.assertTrue(any('jumbo' in recommendation for recommendation in summary['recommendations']))
         self.assertFalse(any('InfiniBand' in recommendation for recommendation in summary['recommendations']))
 
+    def test_recommendation_uses_configured_minimums(self):
+        checker = RdmaMtuCheck(MagicMock(), ['rdma0'], min_netdev_mtu=9000, min_active_mtu=2048)
+        bad = checker._evaluate_node('n1', _probe('rdma0', netdev_mtu='4200', active='1024'))
+        self.report.results = {'rdma_mtu': {'n1': bad}}
+        recommendations = [r for r in self.report._generate_preflight_summary()['recommendations'] if 'MTU' in r]
+        self.assertEqual(
+            recommendations,
+            [
+                "Enable jumbo frames on RoCE netdevs (MTU >= 9000 end-to-end, including switches) so RoCE "
+                "negotiates an active MTU of at least 2048; low MTU reduces GPU-Direct RDMA bandwidth"
+            ],
+        )
+
+    def test_recommendation_omits_disabled_minimums(self):
+        netdev_only = RdmaMtuCheck(MagicMock(), ['rdma0'], min_netdev_mtu=4201, min_active_mtu=0)
+        bad = netdev_only._evaluate_node('n1', _probe('rdma0', netdev_mtu='4200'))
+        [recommendation] = self.report._rdma_mtu_recommendations(self.report._summarize_rdma_mtu_results({'n1': bad}))
+        self.assertIn('MTU >= 4201 end-to-end', recommendation)
+        self.assertNotIn('active MTU', recommendation)
+
+        active_only = RdmaMtuCheck(MagicMock(), ['rdma0'], min_netdev_mtu=0, min_active_mtu=4096)
+        bad = active_only._evaluate_node('n1', _probe('rdma0', netdev_mtu='1500', active='1024'))
+        [recommendation] = self.report._rdma_mtu_recommendations(self.report._summarize_rdma_mtu_results({'n1': bad}))
+        self.assertIn(
+            '(end-to-end, including switches) so RoCE negotiates an active MTU of at least 4096', recommendation
+        )
+
     def test_infiniband_summary_names_transport_and_skips_ipoib_mtu(self):
         checker = RdmaMtuCheck(MagicMock(), ['mlx5_0', 'mlx5_1'])
         node = checker._evaluate_node(
@@ -270,6 +297,7 @@ class TestRdmaMtuReport(unittest.TestCase):
         recommendations = [r for r in summary['recommendations'] if 'MTU' in r]
         self.assertEqual(len(recommendations), 1)
         self.assertIn('InfiniBand', recommendations[0])
+        self.assertIn('at least 4096', recommendations[0])
         self.assertNotIn('jumbo', recommendations[0])
         self.assertIn('<td>InfiniBand</td>', self.report._generate_rdma_mtu_html({'n1': bad_ib}))
 
