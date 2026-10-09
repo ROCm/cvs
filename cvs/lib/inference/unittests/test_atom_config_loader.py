@@ -109,6 +109,19 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertIn("--method", variant.roles.server.atom_args)
         self.assertEqual(variant.params.bench_extra_args, "--use-chat-template")
 
+    def test_load_mi355x_r1_profiles_cover_thresholds(self):
+        root = Path(__file__).resolve().parents[3]
+        name = "mi355x_atom_deepseek-r1_fp8_single.json"
+        for profile in ("perf", "mtp3"):
+            with self.subTest(profile=profile):
+                variant = _atom_config(root, name, profile=profile)
+                self.assertEqual(variant.gpu_arch, "mi355x")
+                self.assertNotIn("HF_HUB_CACHE", variant.roles.server.env)
+                self.assertNotIn("HF_HOME", variant.roles.server.env)
+                self.assertTrue(variant.expected_cells())
+                for cell in variant.expected_cells():
+                    self.assertIn(cell, variant.thresholds, f"{profile} missing {cell}")
+
     def test_orchestrator_container_includes_server_env(self):
         sweep = Sweep(
             sequence_combinations=[SeqCombo(name="legacy_profile", isl="7168", osl="1024")],

@@ -66,6 +66,9 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_deepseek-r1_fp8``
      - ``_single`` (``perf`` + ``mtp3`` profiles), ``_distributed`` (``vllm_atom`` PP=2)
      - Native ATOM + multinode PP
+   * - ``mi355x_atom_deepseek-r1_fp8``
+     - ``_single`` (``perf`` + ``mtp3`` profiles)
+     - Native ATOM MI355X copy; ``gpu_arch`` mi355x; bring-up thresholds
    * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8``
      - ``_single`` (``perf`` + ``mtp3`` profiles)
      - Native ATOM perf + MTP-3; lab pending for ``mtp3``
@@ -78,7 +81,7 @@ still runs with ``cvs run atom``.
      - Native ATOM MI355X Pro TP8; Spur 355 job-step proven; bring-up thresholds
    * - ``mi355x_atom_qwen3.5-397b-a17b_fp8``
      - ``_single`` (``perf`` + ``mtp3`` profiles)
-     - Native ATOM MI355X copy; ``gpu_arch`` mi355x; bring-up thresholds; ``mtp3`` benchmark cells lab-run, GSM8K pending
+     - Native ATOM MI355X copy; ``gpu_arch`` mi355x; bring-up thresholds; ``mtp3`` benchmark cells and GSM8K lab-run
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
      - ``_single``
      - vLLM parity (serving schema)
