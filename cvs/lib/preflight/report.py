@@ -10,7 +10,12 @@ import json
 from pathlib import Path
 
 from cvs.lib.preflight.base import PreflightCheck
-from cvs.lib.preflight.mtu_check import INFINIBAND, transport_label
+from cvs.lib.preflight.mtu_check import (
+    DEFAULT_MIN_ACTIVE_MTU,
+    DEFAULT_MIN_NETDEV_MTU,
+    INFINIBAND,
+    transport_label,
+)
 from cvs.lib.preflight.node_smoke import (
     DEFAULT_ARTIFACTS_ROOT_DIR,
     NODE_SMOKE_TIER1_LABEL,
@@ -147,17 +152,7 @@ class PreflightReportGenerator(PreflightCheck):
             )
 
         if summary['checks']['rdma_mtu']['status'] == 'FAIL':
-            failed_transports = summary['checks']['rdma_mtu'].get('failed_transports') or ['']
-            if any(transport != INFINIBAND for transport in failed_transports):
-                summary['recommendations'].append(
-                    "Enable jumbo frames on RDMA netdevs (MTU >= min_netdev_mtu end-to-end, including switches) "
-                    "so RoCE negotiates a 4096-byte active MTU; low MTU reduces GPU-Direct RDMA bandwidth"
-                )
-            if INFINIBAND in failed_transports:
-                summary['recommendations'].append(
-                    "Raise the InfiniBand port MTU (subnet manager partition MTU and switch ports) "
-                    "so active_mtu reaches 4096; low MTU reduces GPU-Direct RDMA bandwidth"
-                )
+            summary['recommendations'].extend(self._rdma_mtu_recommendations(summary['checks']['rdma_mtu']))
 
         if summary['checks']['node_health']['status'] == 'FAIL':
             summary['recommendations'].append(
@@ -306,9 +301,13 @@ class PreflightReportGenerator(PreflightCheck):
         active_mtus = set()
         transports = {}
         failed_transports = set()
+        min_netdev_mtu = DEFAULT_MIN_NETDEV_MTU
+        min_active_mtu = DEFAULT_MIN_ACTIVE_MTU
         for node, result in mtu_results.items():
             if not isinstance(result, dict):
                 continue
+            min_netdev_mtu = result.get('min_netdev_mtu', min_netdev_mtu)
+            min_active_mtu = result.get('min_active_mtu', min_active_mtu)
             for iface in (result.get('interfaces') or {}).values():
                 total_interfaces += 1
                 transport = transport_label(iface.get('link_layer'))
@@ -345,8 +344,31 @@ class PreflightReportGenerator(PreflightCheck):
             'active_mtus': active_mtus,
             'transports': transports,
             'failed_transports': sorted(failed_transports),
+            'min_netdev_mtu': min_netdev_mtu,
+            'min_active_mtu': min_active_mtu,
             'summary': summary,
         }
+
+    def _rdma_mtu_recommendations(self, mtu_summary):
+        """Name the configured MTU minimums in the fix for each failing transport."""
+        failed_transports = mtu_summary.get('failed_transports') or ['']
+        min_netdev_mtu = mtu_summary.get('min_netdev_mtu', DEFAULT_MIN_NETDEV_MTU)
+        min_active_mtu = mtu_summary.get('min_active_mtu', DEFAULT_MIN_ACTIVE_MTU)
+        recommendations = []
+        if any(transport != INFINIBAND for transport in failed_transports):
+            netdev_target = f"MTU >= {min_netdev_mtu} " if min_netdev_mtu else ''
+            active_target = f" so RoCE negotiates an active MTU of at least {min_active_mtu}" if min_active_mtu else ''
+            recommendations.append(
+                f"Enable jumbo frames on RoCE netdevs ({netdev_target}end-to-end, including switches)"
+                f"{active_target}; low MTU reduces GPU-Direct RDMA bandwidth"
+            )
+        if INFINIBAND in failed_transports:
+            active_target = f" so active_mtu reaches at least {min_active_mtu}" if min_active_mtu else ''
+            recommendations.append(
+                "Raise the InfiniBand port MTU (subnet manager partition MTU and switch ports)"
+                f"{active_target}; low MTU reduces GPU-Direct RDMA bandwidth"
+            )
+        return recommendations
 
     def _summarize_node_health_results(self, health_results):
         """Summarize mandatory GPU and optional MI4XX fabric admission."""
