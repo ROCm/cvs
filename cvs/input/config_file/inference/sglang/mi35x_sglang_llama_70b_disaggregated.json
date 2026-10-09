@@ -1,7 +1,7 @@
 {
     "_comment": "SGLang disaggregated Llama 3.1 70B workload with cache-aware prefill and decode routing.",
     "enforce_thresholds": false,
-    "gpu_name" : "mi355",
+    "gpu_name" : "<changeme> mi355",
     "threshold_json": "mi35x_sglang_llama_70b_threshold.json",
     "paths": {
       "shared_fs": "/home/{user-id}",
@@ -13,7 +13,7 @@
       "lifetime": "per_run",
       "name": "sglang_container",
       "_image_example": "rocm/sgl-dev:v0.5.20-rocm720-mi35x-20260924",
-      "image": "rocm/sgl-dev:v0.5.20-rocm720-mi35x-20260924",
+      "image": "<changeme>",
       "runtime": {
         "name": "docker",
         "args": {
@@ -33,19 +33,17 @@
           ],  
           "devices": ["/dev/dri", "/dev/kfd", "/dev/infiniband"],
           "env": {
-            "NCCL_IB_HCA": "ionic_0,ionic_1,ionic_2,ionic_3,ionic_4,ionic_5,ionic_6,ionic_7",
-            "NCCL_SOCKET_IFNAME": "ens3",
-            "GLOO_SOCKET_IFNAME": "ens3",
-            "GLOO_TCP_IFNAME": "ens3",
-            "NCCL_IB_GID_INDEX": "1",
-            "MC_GID_INDEX": "1",
-            "NCCL_MAX_NCHANNELS": "32",
-            "NCCL_MIN_NCHANNELS": "32",
+            "NCCL_IB_HCA": "<changeme> ionic_0,ionic_1,ionic_2,ionic_3,ionic_4,ionic_5,ionic_6,ionic_7",
+            "NCCL_SOCKET_IFNAME": "<changeme> ens3",
+            "GLOO_SOCKET_IFNAME": "<changeme> ens3",
+            "GLOO_TCP_IFNAME": "<changeme> ens3",
+            "NCCL_IB_GID_INDEX": "<changeme> 1",
+            "MC_GID_INDEX": "<changeme> 1",
+            "NCCL_MAX_NCHANNELS": "<changeme> 32",
+            "NCCL_MIN_NCHANNELS": "<changeme> 32",
             "NCCL_DMABUF_ENABLE": "1",
             "NCCL_DEBUG": "INFO",
             "NCCL_IB_PCI_RELAXED_ORDERING": "0",
-            "HIP_VISIBLE_DEVICES": "0,1,2,3",
-            "CUDA_VISIBLE_DEVICES": "0,1,2,3",
             "NCCL_DEBUG_SUBSYS": "INIT,NET",
             "SGLANG_USE_AITER": "1"
           }
@@ -57,7 +55,7 @@
       "backend": "sglang",
       "nnodes": "2",
       "log_level": "info",
-      "model": "meta-llama/Llama-3.1-70B-Instruct",
+      "model": "<changeme> meta-llama/Llama-3.1-70B-Instruct",
       "max_concurrency": "256",
       "prefill_policy": "cache_aware",
       "decode_policy": "cache_aware",
@@ -70,7 +68,7 @@
       "context_length": "163840",
       "chunked_prefill_size": "8192",
       "max_prefill_tokens": "8192",
-      "add_flags": ["--attention-backend aiter"]
+      "add_flags": ["--attention-backend aiter", "--disable-custom-all-reduce"]
     },
     "benchmark_params": {
       "backend": "sglang",

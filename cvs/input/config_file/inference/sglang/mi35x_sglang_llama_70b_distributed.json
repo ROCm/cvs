@@ -1,8 +1,8 @@
 {
     "_comment": "SGLang distributed Llama 3.1 70B workload, TP=8 and PP=2 across two nodes.",
     "enforce_thresholds": false,
-    "gpu_name" : "mi355",
-    "threshold_json": "mi325_sglang_llama_70b_threshold.json",
+    "gpu_name" : "<changeme> mi355",
+    "threshold_json": "mi35x_sglang_llama_70b_threshold.json",
     "paths": {
       "shared_fs": "/home/{user-id}",
       "models_dir": "/root/models",
@@ -13,7 +13,7 @@
       "lifetime": "per_run",
       "name": "sglang_container",
       "_image_example": "rocm/sgl-dev:v0.5.20-rocm720-mi35x-20260924",
-      "image": "rocm/sgl-dev:v0.5.20-rocm720-mi35x-20260924",
+      "image": "<changeme>",
       "runtime": {
         "name": "docker",
         "args": {
@@ -33,19 +33,17 @@
           ],
           "devices": ["/dev/dri", "/dev/kfd", "/dev/infiniband"],
           "env": {
-            "NCCL_IB_HCA": "ionic_0",
-            "NCCL_SOCKET_IFNAME": "ens3",
-            "GLOO_SOCKET_IFNAME": "ens3",
-            "GLOO_TCP_IFNAME": "ens3",
-            "NCCL_IB_GID_INDEX": "1",
-            "NCCL_MAX_NCHANNELS": "32",
-            "NCCL_MIN_NCHANNELS": "32",
+            "NCCL_IB_HCA": "<changeme> ionic_0,ionic_1,ionic_2,ionic_3,ionic_4,ionic_5,ionic_6,ionic_7",
+            "NCCL_SOCKET_IFNAME": "<changeme> ens3",
+            "GLOO_SOCKET_IFNAME": "<changeme> ens3",
+            "GLOO_TCP_IFNAME": "<changeme> ens3",
+            "NCCL_IB_GID_INDEX": "<changeme> 1",
+            "NCCL_MAX_NCHANNELS": "<changeme> 32",
+            "NCCL_MIN_NCHANNELS": "<changeme> 32",
             "NCCL_DMABUF_ENABLE": "1",
             "NCCL_DEBUG": "INFO",
             "SGLANG_USE_AITER": "1",
             "NCCL_IB_PCI_RELAXED_ORDERING": "0",
-            "HIP_VISIBLE_DEVICES": "0,1,2,3",
-            "CUDA_VISIBLE_DEVICES": "0,1,2,3",
             "NCCL_DEBUG_SUBSYS": "INIT,NET"
           }
         }
@@ -56,7 +54,7 @@
       "backend": "sglang",
       "nnodes": "2",
       "log_level": "info",
-      "model": "meta-llama/Llama-3.1-70B-Instruct",
+      "model": "<changeme> meta-llama/Llama-3.1-70B-Instruct",
       "max_concurrency": "256",
       "tensor_parallelism": "4",
       "pipeline_parallelism": "2",

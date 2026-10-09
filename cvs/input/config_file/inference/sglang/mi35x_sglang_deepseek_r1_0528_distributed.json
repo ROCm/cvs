@@ -33,13 +33,13 @@
           ],
           "devices": ["/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm"],
           "env": {
-            "NCCL_IB_HCA": "ionic_0,ionic_1,ionic_2,ionic_3,ionic_4,ionic_5,ionic_6,ionic_7",
-            "NCCL_SOCKET_IFNAME": "ens3",
-            "GLOO_SOCKET_IFNAME": "ens3",
-            "GLOO_TCP_IFNAME": "ens3",
-            "NCCL_IB_GID_INDEX": "1",
-            "NCCL_MAX_NCHANNELS": "32",
-            "NCCL_MIN_NCHANNELS": "32",
+            "NCCL_IB_HCA": "<changeme> ionic_0,ionic_1,ionic_2,ionic_3,ionic_4,ionic_5,ionic_6,ionic_7",
+            "NCCL_SOCKET_IFNAME": "<changeme> ens3",
+            "GLOO_SOCKET_IFNAME": "<changeme> ens3",
+            "GLOO_TCP_IFNAME": "<changeme> ens3",
+            "NCCL_IB_GID_INDEX": "<changeme> 1",
+            "NCCL_MAX_NCHANNELS": "<changeme> 32",
+            "NCCL_MIN_NCHANNELS": "<changeme> 32",
             "NCCL_DMABUF_ENABLE": "1",
             "NCCL_DEBUG": "INFO",
             "SGLANG_USE_AITER": "1",
@@ -54,7 +54,7 @@
       "backend": "sglang",
       "nnodes": "2",
       "log_level": "info",
-      "model": "/root/models/DeepSeek-R1-0528",
+      "model": "<changeme> /root/models/DeepSeek-R1-0528",
       "max_concurrency": "256",
       "tensor_parallelism": "8",
       "pipeline_parallelism": "2",
@@ -62,7 +62,7 @@
       "tokenizer_mode": "auto",
       "inference_poll_iterations": "16",
       "context_length": "205000",
-      "add_flags": ["--attention-backend aiter"]
+      "add_flags":  ["--attention-backend aiter", "--disable-custom-all-reduce"]
     },
     "benchmark_params": {
           "backend": "sglang",

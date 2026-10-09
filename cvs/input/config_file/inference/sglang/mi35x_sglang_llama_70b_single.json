@@ -38,7 +38,7 @@
       "backend": "sglang",
       "nnodes": "1",
       "log_level": "info",
-      "model": "meta-llama/Llama-3.1-70B-Instruct",
+      "model": "<changeme> meta-llama/Llama-3.1-70B-Instruct",
       "max_concurrency": "256",
       "tensor_parallelism": "8",
       "pipeline_parallelism": "1",
