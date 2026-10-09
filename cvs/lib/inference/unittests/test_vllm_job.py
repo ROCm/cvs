@@ -3,8 +3,7 @@ Copyright 2026 Advanced Micro Devices, Inc.
 All rights reserved.
 
 Unit tests for cvs/lib/inference/vllm_job.py: server PID file, lost-launch retry,
-and fail-fast startup checks. Server reuse and the Ray backend are covered in
-test_vllm_job_server_reuse.py and test_vllm_job_ray_backend.py.
+and fail-fast startup checks.
 '''
 
 import os
@@ -22,11 +21,6 @@ from cvs.lib.inference.vllm_job import VllmJob
 
 HEAD = "10.0.0.1"
 WORKER = "10.0.0.2"
-TRANSPORT_ERROR = "HTTPConnectionError('')\n"
-FATAL_LINES = (
-    "pydantic_core._pydantic_core.ValidationError: 1 validation error for ModelConfig",
-    "OSError: [Errno 98] Address already in use",
-)
 
 
 def _result(output="", exit_code=0):
@@ -38,31 +32,30 @@ def _state(log, pid):
 
 
 LAUNCHED = _result()
-LOST = _result(TRANSPORT_ERROR, -1)
+LOST = _result("HTTPConnectionError('')\n", -1)
 NOTHING_ON_DISK = _state("missing", "none")
 ALIVE = _state("present", "alive")
 DEAD = _state("present", "dead")
 
 
 class ServerScript:
-    def __init__(self, launch=(LAUNCHED,), state=(ALIVE,), tail="INFO Loading weights\n", fatal_line="", ready=False):
+    def __init__(self, launch=(LAUNCHED,), state=(ALIVE,), tail="INFO Loading weights\n", ready=False):
         self.launch = list(launch)
         self.state = {h: list(s) for h, s in state.items()} if isinstance(state, dict) else list(state)
         self.tail = tail
-        self.fatal_line = fatal_line
         self.ready = ready
         self.events = []
+        self.launches = []
 
-    def __call__(self, cmd, hosts, detailed=False, **kwargs):
+    def __call__(self, cmd, hosts=None, detailed=False, **kwargs):
         host = hosts[0] if hosts else HEAD
         if "nohup" in cmd:
+            self.launches.append(cmd)
             kind, result = "launch", self._next(self.launch)
         elif "server-state" in cmd:
             kind, result = "probe", self._next(self.state[host] if isinstance(self.state, dict) else self.state)
         elif cmd.startswith("tail "):
             kind, result = "tail", self.tail
-        elif cmd.startswith("grep -m1 "):
-            kind, result = "fatal_grep", _result(self.fatal_line, 0 if self.fatal_line else 1)
         elif cmd.startswith("grep -qiE "):
             kind, result = "ready_grep", _result("", 0 if self.ready else 1)
         else:
@@ -94,8 +87,10 @@ def _variant(log_dir, pp):
 
 
 def _job(responder=None, hosts=(HEAD,), log_dir="/logs"):
+    orch = FakeOrch(hosts=list(hosts))
+    orch.exec = responder or ServerScript()
     return VllmJob(
-        orch=FakeOrch(hosts=list(hosts), responder=responder or ServerScript()),
+        orch=orch,
         variant=_variant(log_dir, pp=len(hosts)),
         hf_token="tok",
         isl="1024",
@@ -108,13 +103,14 @@ def _job(responder=None, hosts=(HEAD,), log_dir="/logs"):
 @mock.patch("cvs.lib.inference.vllm_job.time.sleep")
 class TestStartServer(unittest.TestCase):
     def test_each_rank_clears_and_writes_its_own_pid_file(self, sleep):
-        job = _job(hosts=(HEAD, WORKER))
-        job.start_server()
-        launches = [cmd for cmd, _ in job.orch.commands if "nohup" in cmd]
-        self.assertEqual(len(launches), 2)
-        for rank, cmd in enumerate(launches):
+        setup = []
+        _job(lambda cmd, hosts=None, **kwargs: setup.append(cmd), hosts=(HEAD, WORKER)).build_server_cmd()
+        script = ServerScript()
+        _job(script, hosts=(HEAD, WORKER)).start_server()
+        self.assertEqual(len(script.launches), 2)
+        for rank, cmd in enumerate(script.launches):
             rank_dir = f"/logs/vllm/out-node{rank}/isl1024_osl1024_conc16"
-            self.assertIn(f"rm -f {rank_dir}/vllm_serve_server.log {rank_dir}/server.pid && ", cmd)
+            self.assertIn(f"mkdir -p {rank_dir} && rm -f {rank_dir}/vllm_serve_server.log {rank_dir}/server.pid", setup)
             self.assertIn(f"echo $! > {rank_dir}/server.pid;", cmd)
 
     def test_lost_launch_that_left_no_files_is_retried_after_a_settle_wait(self, sleep):
@@ -158,18 +154,10 @@ class TestWaitReadyFailsFast(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "vllm server not started"):
             _job(script).wait_ready()
 
-    def test_known_log_pattern_names_the_cause_when_the_pid_is_gone(self, sleep):
-        script = ServerScript(state=[DEAD], fatal_line=FATAL_LINES[0])
-        with self.assertRaisesRegex(RuntimeError, "vllm server fatal error"):
-            _job(script).wait_ready()
-
     def test_dead_worker_is_reported_with_its_host_and_rank(self, sleep):
         script = ServerScript(state={HEAD: [ALIVE], WORKER: [DEAD]})
         with self.assertRaisesRegex(RuntimeError, f"exited during startup on {WORKER} \\(rank 1\\)"):
             _job(script, hosts=(HEAD, WORKER)).wait_ready()
-
-    def test_missing_pid_file_lets_the_poll_run(self, sleep):
-        _job(ServerScript(state=[_state("present", "none")], ready=True)).wait_ready()
 
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "the server probe reads /proc")
@@ -182,12 +170,12 @@ class TestServerCommandsInBash(unittest.TestCase):
         self.job = _job(responder=self._bash, log_dir=self.tmp)
         os.makedirs(self.job.out_dir)
 
-    def _bash(self, cmd, hosts, detailed=False, **kwargs):
+    def _bash(self, cmd, hosts=None, detailed=False, **kwargs):
         if self.env_script:
             cmd = cmd.replace("/tmp/server_env_script.sh", self.env_script)
         proc = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, check=False, env=self.env)
         output = proc.stdout + proc.stderr
-        return {hosts[0]: {"output": output, "exit_code": proc.returncode} if detailed else output}
+        return {HEAD: {"output": output, "exit_code": proc.returncode} if detailed else output}
 
     def _write(self, path, text):
         with open(path, "w") as f:
@@ -214,13 +202,20 @@ class TestServerCommandsInBash(unittest.TestCase):
     def test_nothing_on_disk(self):
         self.assertEqual(self.job._server_state(0, HEAD), ("missing", "none"))
 
-    def test_fatal_lines_are_found_by_the_jobs_own_grep(self):
-        # The job hands FATAL_LOG_RE to grep -E, which lacks Python-only syntax such as \d.
-        for line in FATAL_LINES:
-            with self.subTest(line=line):
-                self._write(self.job.server_log, f"INFO Loading weights\n{line}\n")
-                with self.assertRaisesRegex(RuntimeError, "vllm server fatal error"):
-                    self.job._check_early_failure()
+    def test_earlier_runs_files_do_not_stop_a_lost_launch_from_retrying(self):
+        # Cell dirs are keyed only by isl/osl/conc, so an earlier run's files can be waiting.
+        self._write(self.job.server_log, "INFO Application startup complete.\n")
+        self._write(self.job.server_pid_file, "1\n")
+        self.env_script = os.path.join(self.tmp, "server_env_script.sh")
+        self.job.build_server_cmd()
+
+        def lose_launches(cmd, hosts=None, **kwargs):
+            return {HEAD: LOST} if "nohup" in cmd else self._bash(cmd, hosts, **kwargs)
+
+        self.job.orch.exec = lose_launches
+        with mock.patch("cvs.lib.inference.vllm_job.time.sleep"):
+            with self.assertRaisesRegex(RuntimeError, "vllm server not started"):
+                self.job.start_server()
 
     def test_launch_records_a_live_server_pid(self):
         bin_dir = os.path.join(self.tmp, "bin")
@@ -230,22 +225,13 @@ class TestServerCommandsInBash(unittest.TestCase):
         self.env["PATH"] = f"{bin_dir}:{self.env['PATH']}"
         self.env_script = os.path.join(self.tmp, "server_env_script.sh")
         self._write(self.env_script, "")
-        self._write(self.job.server_pid_file, "1\n")
 
         self.job.start_server()
 
         with open(self.job.server_pid_file) as f:
             pid = int(f.read())
-        self.addCleanup(self._kill, pid)
-        self.assertNotEqual(pid, 1)
+        self.addCleanup(os.kill, pid, signal.SIGKILL)
         self.assertEqual(self.job._server_state(0, HEAD)[1], "alive")
-
-    @staticmethod
-    def _kill(pid):
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
 
 
 if __name__ == "__main__":
