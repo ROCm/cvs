@@ -105,62 +105,57 @@ class RcclVerifier:
                     )
 
     def check_bw_dip(self):
-        test_name = self.test_name
-        expected = self.expected
-        tolerance = 0.95
-        if not expected:
-            log.warning(f"No reference data provided for BW dip check, skipping validation for {test_name}")
-            return
-        if not self.results:
-            log.warning(f"No RCCL results available for BW dip check, skipping validation for {test_name}")
-            return
-        ref_msg_sizes = set(str(size) for size in expected.keys())
-        log.info(f"Validating BW dip only for reference message sizes: {ref_msg_sizes}")
-        in_place = 0 if re.search('alltoall|all_to_all', test_name, re.I) else 1
-        last_bw = 0.0
-        last_msg_size = self.results[0]['size']
-        for act_dict in self.results:
-            if act_dict['inPlace'] != in_place:
-                continue
-            if str(act_dict['size']) not in ref_msg_sizes:
-                continue
-            current_bw = float(act_dict['busBw'])
-            threshold = last_bw * tolerance
-            if last_bw > 0 and current_bw < threshold:
-                fail_test(
-                    f"The BusBW for msg size {act_dict['size']} = {current_bw} is less than the earlier msg size {last_msg_size} = BW {last_bw} (threshold with 5% tolerance: {threshold:.2f})"
-                )
-            last_bw = current_bw
-            last_msg_size = act_dict['size']
+        self._check_dip('BW dip', 'busBw', 'BusBW', 'BW')
 
     def check_lat_dip(self):
-        test_name = self.test_name
-        expected = self.expected
+        self._check_dip('latency dip', 'time', 'latency', 'latency')
+
+    def _dip_series(self):
+        """Map (type, numCycle) to reference-size rows sorted by size; each key is one rccl-tests sweep."""
+        ref_msg_sizes = set(str(size) for size in self.expected.keys())
+        in_place = 0 if re.search('alltoall|all_to_all', self.test_name, re.I) else 1
+        series = {}
+        for row in self.results:
+            if row['inPlace'] != in_place or str(row['size']) not in ref_msg_sizes:
+                continue
+            series.setdefault((row.get('type'), row.get('numCycle')), []).append(row)
+        for rows in series.values():
+            rows.sort(key=lambda row: int(row['size']))
+        return series
+
+    @staticmethod
+    def _series_label(dtype, cycle):
+        parts = []
+        if dtype is not None:
+            parts.append(f'type={dtype}')
+        if cycle is not None:
+            parts.append(f'cycle={cycle}')
+        return f" [{', '.join(parts)}]" if parts else ''
+
+    def _check_dip(self, check_name, field, metric, value_name):
         tolerance = 0.95
-        if not expected:
-            log.warning(f"No reference data provided for latency dip check, skipping validation for {test_name}")
+        if not self.expected:
+            log.warning(f"No reference data provided for {check_name} check, skipping validation for {self.test_name}")
             return
         if not self.results:
-            log.warning(f"No RCCL results available for latency dip check, skipping validation for {test_name}")
+            log.warning(f"No RCCL results available for {check_name} check, skipping validation for {self.test_name}")
             return
-        ref_msg_sizes = set(str(size) for size in expected.keys())
-        log.info(f"Validating latency dip only for reference message sizes: {ref_msg_sizes}")
-        in_place = 0 if re.search('alltoall|all_to_all', test_name, re.I) else 1
-        last_time = 0.0
-        last_msg_size = self.results[0]['size']
-        for act_dict in self.results:
-            if act_dict['inPlace'] != in_place:
-                continue
-            if str(act_dict['size']) not in ref_msg_sizes:
-                continue
-            current_time = float(act_dict['time'])
-            threshold = last_time * tolerance
-            if last_time > 0 and current_time < threshold:
-                fail_test(
-                    f"The latency for msg size {act_dict['size']} = {current_time} is less than the earlier msg size {last_msg_size} = latency {last_time} (threshold with 5% tolerance: {threshold:.2f})"
-                )
-            last_time = current_time
-            last_msg_size = act_dict['size']
+        ref_msg_sizes = set(str(size) for size in self.expected.keys())
+        log.info(f"Validating {check_name} only for reference message sizes: {ref_msg_sizes}")
+        for (dtype, cycle), rows in self._dip_series().items():
+            scope = self._series_label(dtype, cycle)
+            last_value = 0.0
+            last_msg_size = None
+            for row in rows:
+                current = float(row[field])
+                threshold = last_value * tolerance
+                if last_value > 0 and current < threshold:
+                    fail_test(
+                        f"The {metric} for msg size {row['size']} = {current} is less than the earlier msg size "
+                        f"{last_msg_size} = {value_name} {last_value} (threshold with 5% tolerance: {threshold:.2f}){scope}"
+                    )
+                last_value = current
+                last_msg_size = row['size']
 
     def check(self):
         if not self.results:
