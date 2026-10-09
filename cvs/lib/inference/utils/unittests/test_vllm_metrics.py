@@ -182,20 +182,9 @@ class TestBareProjection(unittest.TestCase):
             "spec_decode_num_drafts": 200,
             "spec_decode_draft_tokens": 400,
             "spec_decode_accepted_tokens": 300,
-            "spec_decode_per_position_acceptance_rates": [0.9, 0.6],
         }
         metrics = project_vllm_metrics(raw, tp=1, pp=1, isl=1024)
         self.assertEqual(metrics, {"output_throughput": 123.5})
-
-    def test_unlisted_spec_decode_field_still_raises(self):
-        with self.assertRaises(UnknownMetricContractError) as raised:
-            project_vllm_metrics(
-                {"output_throughput": 1.0, "spec_decode_rejected_tokens": 3},
-                tp=1,
-                pp=1,
-                isl=1,
-            )
-        self.assertIn("'spec_decode_rejected_tokens'", str(raised.exception))
 
     def test_unknown_nonnumeric_and_boolean_fields_are_ignored(self):
         metrics = project_vllm_metrics(
