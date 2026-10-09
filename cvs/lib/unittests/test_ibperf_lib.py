@@ -5,28 +5,15 @@ import cvs.lib.ibperf_lib as ibperf_lib
 
 
 class TestPerRunCleanup(unittest.TestCase):
-    @patch.object(ibperf_lib.time, 'sleep')
-    @patch.object(ibperf_lib, 'get_ib_lat_numb')
-    @patch.object(ibperf_lib, 'get_ib_bw_pps')
-    @patch.object(ibperf_lib, 'check_perftest_dmabuf_support', return_value=False)
-    def test_clears_stale_files_without_sudo_before_writing_commands(self, _dmabuf, mock_bw, mock_lat, _sleep):
-        nodes = ('node1', 'node2')
-        mock_bw.return_value = {n: {'pps': '1.0', 'bw': '1.0'} for n in nodes}
-        lat = dict.fromkeys(('t_min', 't_max', 't_typical', 't_avg', 't_stdev', 't_99_pct', 't_99_9_pct'), '1.0')
-        mock_lat.return_value = {n: lat for n in nodes}
-        gpu_nic_dict = {n: {f'card{g}': {'rdma_dev': f'rdma{g}'} for g in range(8)} for n in nodes}
-        gpu_numa_dict = {n: {f'card{g}': {'local_cpulist': '0-63'} for g in range(8)} for n in nodes}
-
-        for run, test in (
-            (ibperf_lib.run_ib_perf_bw_test, 'ib_write_bw'),
-            (ibperf_lib.run_ib_perf_lat_test, 'ib_write_lat'),
-        ):
-            with self.subTest(test=test):
+    def test_clears_stale_files_without_sudo_before_writing_commands(self):
+        for run in (ibperf_lib.run_ib_perf_bw_test, ibperf_lib.run_ib_perf_lat_test):
+            with self.subTest(run=run.__name__):
                 phdl = MagicMock()
-                run(MagicMock(), phdl, test, gpu_numa_dict, gpu_nic_dict, {n: {} for n in nodes}, '/opt/pt/bin', 64, 3)
-                cmds = [c.args[0] for c in phdl.exec.call_args_list]
+                phdl.exec.side_effect = [None, None, RuntimeError('stop after cleanup')]
+                with self.assertRaises(RuntimeError):
+                    run(MagicMock(), phdl, 'ib_write_bw', {}, {}, {}, '/opt/pt/bin', 64, 3)
                 self.assertEqual(
-                    cmds[:3],
+                    [c.args[0] for c in phdl.exec.call_args_list[:3]],
                     ['rm -rf /tmp/ib_cmds_file.txt', 'rm -rf /tmp/ib_perf*', 'touch /tmp/ib_cmds_file.txt'],
                 )
 
