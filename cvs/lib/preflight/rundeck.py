@@ -465,8 +465,13 @@ def _mtu_records(results, nodes):
         active_mtus = sorted(
             {iface['active_mtu'] for iface in interfaces.values() if iface.get('active_mtu') is not None}
         )
-        if netdev_mtus or active_mtus:
-            return f"netdev MTU {', '.join(map(str, netdev_mtus))}, active MTU {', '.join(map(str, active_mtus))}"
+        measured = []
+        if netdev_mtus:
+            measured.append(f"netdev MTU {', '.join(map(str, netdev_mtus))}")
+        if active_mtus:
+            measured.append(f"active MTU {', '.join(map(str, active_mtus))}")
+        if measured:
+            return ', '.join(measured)
         errors = entry.get('errors') or []
         return errors[0] if errors else ''
 

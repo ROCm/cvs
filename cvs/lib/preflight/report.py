@@ -311,6 +311,14 @@ class PreflightReportGenerator(PreflightCheck):
                 failed_nodes.append(node)
         netdev_mtus = sorted(netdev_mtus)
         active_mtus = sorted(active_mtus)
+        summary = f"{ok_interfaces}/{total_interfaces} interfaces meet MTU minimums"
+        measured = []
+        if netdev_mtus:
+            measured.append(f"netdev MTU(s) {', '.join(map(str, netdev_mtus))}")
+        if active_mtus:
+            measured.append(f"active MTU(s) {', '.join(map(str, active_mtus))}")
+        if measured:
+            summary += '; ' + ', '.join(measured)
         return {
             'status': 'FAIL' if failed_nodes else 'PASS',
             'total_interfaces': total_interfaces,
@@ -318,11 +326,7 @@ class PreflightReportGenerator(PreflightCheck):
             'failed_nodes': failed_nodes,
             'netdev_mtus': netdev_mtus,
             'active_mtus': active_mtus,
-            'summary': (
-                f"{ok_interfaces}/{total_interfaces} interfaces meet MTU minimums; "
-                f"netdev MTU(s) {', '.join(map(str, netdev_mtus))}, "
-                f"active MTU(s) {', '.join(map(str, active_mtus))}"
-            ),
+            'summary': summary,
         }
 
     def _summarize_node_health_results(self, health_results):

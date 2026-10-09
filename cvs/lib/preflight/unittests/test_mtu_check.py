@@ -157,6 +157,22 @@ class TestRdmaMtuReport(unittest.TestCase):
         self.assertEqual(failing['netdev_mtus'], [1500, 9000])
         self.assertEqual(skipped['status'], 'SKIPPED')
 
+    def test_summary_omits_empty_mtu_lists(self):
+        checker = RdmaMtuCheck(MagicMock(), ['rdma0'])
+        nothing = checker._evaluate_node('n1', 'DEVICE:rdma0\nDEVICE_MISSING:Interface not found')
+        no_netdev = checker._evaluate_node('n1', _probe('rdma0', netdev='', netdev_mtu=''))
+        self.assertEqual(
+            self.report._summarize_rdma_mtu_results({'n1': nothing})['summary'], '0/1 interfaces meet MTU minimums'
+        )
+        self.assertEqual(
+            self.report._summarize_rdma_mtu_results({'n1': no_netdev})['summary'],
+            '0/1 interfaces meet MTU minimums; active MTU(s) 4096',
+        )
+        self.assertEqual(
+            self.report._summarize_rdma_mtu_results({'n1': self.good})['summary'],
+            '1/1 interfaces meet MTU minimums; netdev MTU(s) 9000, active MTU(s) 4096',
+        )
+
     def test_failure_html_escapes_values(self):
         self.assertEqual(self.report._generate_rdma_mtu_html({'n1': self.good}), '')
         self.assertEqual(self.report._generate_rdma_mtu_html({'status': 'SKIPPED', 'skipped': True}), '')
