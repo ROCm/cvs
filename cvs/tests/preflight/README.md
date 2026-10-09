@@ -4,18 +4,18 @@ A comprehensive validation system for GPU clusters before running performance te
 
 ## Overview
 
-The preflight checks system validates essential cluster health and configuration consistency across all nodes. It performs the following validations:
+The preflight checks system validates essential cluster health and configuration consistency across all nodes. It performs the following validations, in the order they run:
 
 1. **Node Health** - Validates AMDGPU/KFD, GPU visibility, and kernel health, with optional MI4XX fabric admission
-2. **GID Consistency** - Ensures RDMA interfaces have valid Global Identifier entries
-3. **RDMA MTU** - Checks the active MTU on configured RDMA interfaces, and the netdev MTU (jumbo frames) on RoCE ports
-4. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
-5. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
-6. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(opt-in)*
-7. **IFoE TransferBench Smoketest** - Runs the TransferBench candidate-branch `smoketest`
+2. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
+3. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(opt-in)*
+4. **IFoE TransferBench Smoketest** - Runs the TransferBench candidate-branch `smoketest`
    preset to validate the IFoE scale-up data path (using MI4XX AFM admission or,
    for generic profiles, an `amd-smi fabric --json` single-vPod precondition)
    *(AIMVT-181; opt-in)*
+5. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
+6. **GID Consistency** - Ensures RDMA interfaces have valid Global Identifier entries
+7. **RDMA MTU** - Checks the active MTU on configured RDMA interfaces, and the netdev MTU (jumbo frames) on RoCE ports
 8. **Node Smoke Tier 1** - Per-node GPU/RDMA operational roll-call via Primus `node_smoke`
 9. **Node Smoke Tier 2** - Per-node perf sanity (GEMM, HBM, local RCCL). Runs by default; set `tier2_perf` to `false` to disable it
 10. **Node Smoke Tier 3** - Cluster-wide Host/GPU/Network inventory via Primus `preflight --host --gpu --network`
@@ -396,15 +396,15 @@ cvs run pytorch_xdit_wan \
 5. Run IFoE checks before RDMA-specific eligibility pruning:
    - L2 connectivity using `afmctl test ping` (opt-in)
    - TransferBench scale-up data-path smoketest (opt-in)
-6. Run Node Smoke Tier 1 (and Tier 2 while tier2_perf is enabled) per node
-7. Run Node Smoke Tier 3 cluster inventory (runs by default)
-8. Run RDMA checks:
+6. Run RDMA eligibility checks:
    - Interface naming and presence
    - GID consistency
    - RDMA MTU (active MTU; netdev jumbo frames on RoCE ports), without pruning nodes on failure
-   - RDMA connectivity using `ibv_rc_pingpong` (mode-dependent)
-9. Generate the comprehensive summary and HTML report
-10. Return overall PASS/FAIL status
+7. Run Node Smoke Tier 1 (and Tier 2 while tier2_perf is enabled) per node
+8. Run Node Smoke Tier 3 cluster inventory (runs by default)
+9. Run RDMA connectivity using `ibv_rc_pingpong` (mode-dependent)
+10. Generate the comprehensive summary and HTML report
+11. Return overall PASS/FAIL status
 ```
 
 ### Parallel Execution
