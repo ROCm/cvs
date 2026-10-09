@@ -119,12 +119,11 @@ def _prune_stale(subdir, keep_filenames):
             print(f"pruned {os.path.relpath(path, REPO_ROOT)}")
 
 
-# One spec per generated suite. ``subdir`` is the folder under tests/anc/ (the
-# suite name / file stem is always ``anc_test_<subdir>``); ``names`` is the
-# source-of-truth list from anc_lib; ``unit`` is the selection vocabulary
-# ("group" / "item", which also fixes the anc_lib entrypoint ``run_anc_<unit>s``);
-# ``title`` is the human label used in the module docstrings. Only ``title`` is
-# not derivable, so it is the only free-text key.
+# Specs carry only the non-derivable fields: the suite name (``anc_test_<subdir>``)
+# and run entrypoint (``run_anc_<unit>s``) are computed in generate() rather than
+# stored, so a spec cannot drift into naming a file/entrypoint that disagrees with
+# its folder/unit. ``title`` is the lone free-text key because the CPU/GPU vs
+# "individual item" wording is not mechanically derivable from ``unit``.
 _SUITE_SPECS = (
     {"subdir": "cpu", "names": CPU_GROUPS, "unit": "group", "title": "CPU group"},
     {"subdir": "gpu", "names": GPU_GROUPS, "unit": "group", "title": "GPU group"},

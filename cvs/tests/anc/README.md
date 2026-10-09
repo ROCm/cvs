@@ -176,8 +176,8 @@ HTML/log reports all land under this run's `run_dir`
 (`<workspace>/cvs_runs/<run_id>/`, resolved by `RunLayout` — the same directory
 `cvs run` writes `--html`/`--log-file` into). The collected log tree is laid down
 at `<run_dir>/anc_logs/<node>/<test_name>/<timestamp>` (`<node>` → the node's
-`<ip>_<hostname>` label, `<test_name>` → the group's test name, `<timestamp>` →
-per-run stamp). To send the HTML report or log file elsewhere, pass `--html` /
+`<ip>_<hostname>` label, `<test_name>` → the group's or item's test name,
+`<timestamp>` → per-run stamp). To send the HTML report or log file elsewhere, pass `--html` /
 `--log-file` on the command line; use `--no-html` / `--no-log-file` to suppress
 them.
 
@@ -372,8 +372,8 @@ this fixed layout:
   local timestamp.
 - `anc_logs/<ip>_<hostname>/<test_name>/<timestamp>` is the fixed structure CVS
   lays down under `run_dir`: `<ip>_<hostname>` is the per-node label,
-  `<test_name>` is the group's test name (e.g. `test_cpu_mfg_l10`), and `<timestamp>`
-  keeps repeated runs separate.
+  `<test_name>` is the group's or item's test name (e.g. `test_cpu_mfg_l10` or
+  `test_gemm_fp8_trig`), and `<timestamp>` keeps repeated runs separate.
 
 Collected files:
 

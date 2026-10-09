@@ -805,8 +805,8 @@ class TestEvaluateNodeNotFoundScoping(unittest.TestCase):
 
     def test_group_run_with_missing_leaf_item_is_failure_not_na(self):
         # A group run whose leaf item is absent: ANC prints "FATAL: Item ..." and
-        # exits ANC_PROG_NOT_FOUND. That must be a real FAILURE for the group, not
-        # "not available" (the regression Copilot flagged).
+        # exits ANC_PROG_NOT_FOUND. The group selection itself IS present, so this
+        # must be a real FAILURE for the group, not "not available".
         console = "FATAL: Item 'gemm_fp8_trig' not found\nProgram exiting with return code ANC_PROG_NOT_FOUND [13]\n"
         result = self._evaluate(console, unit="group")
         self.assertIsNotNone(result.reason)
