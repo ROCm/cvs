@@ -108,27 +108,15 @@ class TestRunIbPerfBwTest(unittest.TestCase):
     @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
     @patch.object(ibperf_lib, 'get_ib_bw_pps', return_value={})
     @patch.object(ibperf_lib, 'check_perftest_dmabuf_support', return_value=False)
-    def test_waits_for_perftest_exit_bounded_by_duration(self, _dmabuf, _bw_pps, mock_wait, _sleep):
+    def test_launches_then_waits_for_perftest_exit_bounded_by_duration(self, _dmabuf, _bw_pps, mock_wait, _sleep):
         phdl = MagicMock()
 
         ibperf_lib.run_ib_perf_bw_test(
             MagicMock(), phdl, 'ib_write_bw', GPU_NUMA, GPU_NIC, BCK_NIC, '/opt/perftest/bin', 8192, 3, duration=30
         )
 
-        mock_wait.assert_called_once_with(phdl, 'ib_write_bw', 30 + ibperf_lib.PERFTEST_EXIT_SLACK_S)
-
-    @patch.object(ibperf_lib.time, 'sleep')
-    @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
-    @patch.object(ibperf_lib, 'get_ib_bw_pps', return_value={})
-    @patch.object(ibperf_lib, 'check_perftest_dmabuf_support', return_value=False)
-    def test_launches_command_file_with_bash_and_no_rocr_visible_devices(self, *_mocks):
-        phdl = MagicMock()
-
-        ibperf_lib.run_ib_perf_bw_test(
-            MagicMock(), phdl, 'ib_write_bw', GPU_NUMA, GPU_NIC, BCK_NIC, '/opt/perftest/bin', 8192, 3
-        )
-
         phdl.exec.assert_any_call(LAUNCH, print_console=False)
+        mock_wait.assert_called_once_with(phdl, 'ib_write_bw', 30 + ibperf_lib.PERFTEST_EXIT_SLACK_S)
 
 
 class TestRunIbPerfLatTest(unittest.TestCase):
@@ -136,7 +124,7 @@ class TestRunIbPerfLatTest(unittest.TestCase):
     @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
     @patch.object(ibperf_lib, 'get_ib_lat_numb')
     @patch.object(ibperf_lib, 'check_perftest_dmabuf_support', return_value=False)
-    def test_builds_latency_commands(self, _dmabuf, mock_lat_numb, mock_wait, _sleep):
+    def test_builds_and_launches_latency_commands(self, _dmabuf, mock_lat_numb, mock_wait, _sleep):
         mock_lat_numb.return_value = {n: LAT for n in NODES}
         phdl = MagicMock()
 
@@ -155,20 +143,8 @@ class TestRunIbPerfLatTest(unittest.TestCase):
             'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=0'
             ' -x 3 -F -p 1516 -s 64 node1 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
-        mock_wait.assert_called_once_with(phdl, 'ib_write_lat', ibperf_lib.PERFTEST_LAT_EXIT_TIMEOUT_S)
-
-    @patch.object(ibperf_lib.time, 'sleep')
-    @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
-    @patch.object(ibperf_lib, 'get_ib_lat_numb', return_value={})
-    @patch.object(ibperf_lib, 'check_perftest_dmabuf_support', return_value=False)
-    def test_launches_command_file_with_bash_and_no_rocr_visible_devices(self, *_mocks):
-        phdl = MagicMock()
-
-        ibperf_lib.run_ib_perf_lat_test(
-            MagicMock(), phdl, 'ib_write_lat', GPU_NUMA, GPU_NIC, BCK_NIC, '/opt/perftest/bin', 64, 3
-        )
-
         phdl.exec.assert_any_call(LAUNCH, print_console=False)
+        mock_wait.assert_called_once_with(phdl, 'ib_write_lat', ibperf_lib.PERFTEST_LAT_EXIT_TIMEOUT_S)
 
     @patch.object(ibperf_lib.time, 'sleep')
     @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
