@@ -384,6 +384,47 @@ class TestNicLinkSpeed(unittest.TestCase):
             ],
         )
 
+    def test_compare_counts_fails_node_short_of_peers(self):
+        nics_by_node = {'n1': ['eth0', 'eth1'], 'n2': ['eth0']}
+        out_dict = {'n1': _link('eth0') + _link('eth1'), 'n2': _link('eth0')}
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            out_dict, nics_by_node, 400000, compare_counts=True
+        )
+        message = (
+            'Only 1 backend NIC(s) detected on node n2, fewer than the 2 detected on another node; '
+            'a backend NIC may be missing its netdev or RDMA device'
+        )
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n2']['status'], 'fail')
+        self.assertEqual(records['n2']['items_summary'], '1 of 2 NIC(s) detected')
+        self.assertEqual(records['n2']['items'], [{'name': 'backend_nics', 'status': 'fail', 'message': message}])
+        self.assertEqual(messages, [message])
+
+        records, messages = host_configs_rundeck.eval_nic_link_speed(out_dict, nics_by_node, 400000)
+        self.assertEqual(records['n2']['status'], 'pass')
+        self.assertEqual(messages, [])
+
+    def test_compare_counts_combines_short_count_and_slow_nic(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': _link('eth0') + _link('eth1') + _link('eth2'), 'n2': _link('eth0', '200000') + _link('eth1')},
+            {'n1': ['eth0', 'eth1', 'eth2'], 'n2': ['eth0', 'eth1']},
+            400000,
+            compare_counts=True,
+        )
+        self.assertEqual(records['n2']['status'], 'fail')
+        self.assertEqual(records['n2']['items_summary'], '2 of 3 NIC(s) detected; 1 of 2 NIC(s) not at 400000 Mb/s')
+        self.assertEqual(len(messages), 2)
+
+    def test_compare_counts_passes_uniform_and_single_node(self):
+        uniform, uniform_messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': _link('eth0'), 'n2': _link('eth0')}, {'n1': ['eth0'], 'n2': ['eth0']}, 400000, compare_counts=True
+        )
+        single, single_messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': _link('eth0')}, {'n1': ['eth0']}, 400000, compare_counts=True
+        )
+        self.assertEqual([uniform['n1']['status'], uniform['n2']['status'], single['n1']['status']], ['pass'] * 3)
+        self.assertEqual(uniform_messages + single_messages, [])
+
     def test_custom_expected_speed(self):
         slow, slow_messages = host_configs_rundeck.eval_nic_link_speed({'n1': _link('eth0')}, {'n1': ['eth0']}, 800000)
         matching, matching_messages = host_configs_rundeck.eval_nic_link_speed(

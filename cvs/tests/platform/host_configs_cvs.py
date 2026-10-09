@@ -550,8 +550,9 @@ def test_check_be_nic_link_speed(orch, config_dict, host_res_dict, cluster_dict,
 
     Reads 'nic_link_speed' (Mb/s, default 400000) and 'nic_link_interfaces'
     (backend netdev names) from config_dict. Without 'nic_link_interfaces' the
-    backend NICs are auto-detected per node. Reads /sys/class/net/<iface>/speed
-    and fails for any interface that is unreadable or not at the expected speed.
+    backend NICs are auto-detected per node, and a node with fewer NICs than
+    another node fails. Reads /sys/class/net/<iface>/speed and fails for any
+    interface that is unreadable, down or not at the expected speed.
     """
     globals.error_list = []
     log.info('Testcase check backend NIC link speed')
@@ -576,7 +577,9 @@ def test_check_be_nic_link_speed(orch, config_dict, host_res_dict, cluster_dict,
                 nics_by_node.setdefault(node, [])
             union = [nic for nics in nics_by_node.values() for nic in nics]
             out_dict = orch.all.exec(host_configs_rundeck.nic_link_speed_cmd(union))
-    records, messages = host_configs_rundeck.eval_nic_link_speed(out_dict, nics_by_node, expected)
+    records, messages = host_configs_rundeck.eval_nic_link_speed(
+        out_dict, nics_by_node, expected, compare_counts=not configured
+    )
     _fail_messages(messages)
     _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.NIC_LINK, records)
     update_test_result()

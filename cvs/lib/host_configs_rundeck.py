@@ -471,11 +471,18 @@ def _nic_link_problem(iface, link, expected, node):
     return None
 
 
-def eval_nic_link_speed(out_dict, nics_by_node, expected):
-    '''Return (node_records, fail_messages) for backend NIC network link speed.'''
+def eval_nic_link_speed(out_dict, nics_by_node, expected, compare_counts=False):
+    '''
+    Return (node_records, fail_messages) for backend NIC network link speed.
+
+    With compare_counts, a node with fewer NICs than the most found on any node
+    fails. Auto-detection only sees NICs that have a netdev and an RDMA device,
+    so a NIC whose driver failed to bind would otherwise go unchecked.
+    '''
     records = {}
     messages = []
     nodes = list(out_dict) + [node for node in nics_by_node if node not in out_dict]
+    peak = max((len(set(nics or [])) for nics in nics_by_node.values()), default=0) if compare_counts else 0
     for node in nodes:
         interfaces = list(dict.fromkeys(nics_by_node.get(node) or []))
         if not interfaces:
@@ -484,18 +491,32 @@ def eval_nic_link_speed(out_dict, nics_by_node, expected):
             messages.append(message)
             continue
 
-        links = parse_nic_links(out_dict.get(node, ''))
+        count = len(interfaces)
         items = []
+        summary = []
+        if count < peak:
+            message = (
+                f'Only {count} backend NIC(s) detected on node {node}, fewer than the {peak} detected on '
+                'another node; a backend NIC may be missing its netdev or RDMA device'
+            )
+            items.append(_fail_item('backend_nics', message))
+            messages.append(message)
+            summary.append(f'{count} of {peak} NIC(s) detected')
+
+        links = parse_nic_links(out_dict.get(node, ''))
+        slow = 0
         for iface in interfaces:
             message = _nic_link_problem(iface, links.get(iface), expected, node)
             if message is None:
                 continue
+            slow += 1
             items.append(_fail_item(f'{iface} speed', message))
             messages.append(message)
+        if slow:
+            summary.append(f'{slow} of {count} NIC(s) not at {expected} Mb/s')
 
-        count = len(interfaces)
         records[str(node)] = (
-            build_node_record('fail', items, f'{len(items)} of {count} NIC(s) not at {expected} Mb/s')
+            build_node_record('fail', items, '; '.join(summary))
             if items
             else _pass_record(f'{count} x {expected} Mb/s')
         )
