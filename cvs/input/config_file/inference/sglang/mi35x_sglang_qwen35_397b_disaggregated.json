@@ -38,13 +38,13 @@
             "GLOO_SOCKET_IFNAME": "ens3",
             "GLOO_TCP_IFNAME": "ens3",
             "NCCL_IB_GID_INDEX": "1",
+            "MC_GID_INDEX": "1",
             "NCCL_MAX_NCHANNELS": "32",
             "NCCL_MIN_NCHANNELS": "32",
             "NCCL_DMABUF_ENABLE": "1",
             "NCCL_DEBUG": "INFO",
             "NCCL_IB_PCI_RELAXED_ORDERING": "0",
             "NCCL_DEBUG_SUBSYS": "INIT,NET",
-            "MC_GID_INDEX": "1",
             "SGLANG_USE_AITER": "1"
           }
         }
