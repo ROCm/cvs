@@ -306,28 +306,21 @@ def get_rdma_capable_devices_dict(phdl):
     """
     Get RDMA-capable Ethernet devices per node by checking /sys/class/infiniband/.
     Returns a dict of node -> list of NIC names (e.g., ['eth0', 'eth1']).
+
+    The netdevs under /sys/class/infiniband/<dev>/device/net/ are listed for all
+    RDMA devices in one exec, so the cost is one fan-out however many nodes and
+    devices there are.
     """
     rdma_cap_dict = {}
-
-    # Get list of RDMA devices per node
-    out_dict = phdl.exec('ls /sys/class/infiniband/')
-    for node in out_dict.keys():
+    out_dict = phdl.exec(
+        'for p in /sys/class/infiniband/*/device/net/*; do if [ -e "$p" ]; then echo "${p##*/}"; fi; done'
+    )
+    for node, output in out_dict.items():
         rdma_cap_dict[node] = []
-        devices = out_dict[node].strip().split('\n')
-        if devices == ['']:  # Empty if no devices
-            continue
-        for dev in devices:
-            dev = dev.strip()
-            if not dev:
-                continue
-            # Get the associated netdev (NIC name) by listing /sys/class/infiniband/{dev}/device/net/
-            netdev_out = phdl.exec(f'ls /sys/class/infiniband/{dev}/device/net/')
-            if node in netdev_out and netdev_out[node].strip():
-                nic_names = netdev_out[node].strip().split('\n')
-                for nic_name in nic_names:
-                    nic_name = nic_name.strip()
-                    if nic_name and nic_name not in rdma_cap_dict[node]:
-                        rdma_cap_dict[node].append(nic_name)
+        for nic_name in str(output).split('\n'):
+            nic_name = nic_name.strip()
+            if nic_name and nic_name not in rdma_cap_dict[node]:
+                rdma_cap_dict[node].append(nic_name)
     return rdma_cap_dict
 
 
