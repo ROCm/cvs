@@ -215,9 +215,17 @@ If you do not want to run `anc_installation`, install ANC directly on the target
 node. The examples below use `/opt/amdtools` as the prefix; substitute your
 `ANC_INSTALL_PATH` for a relocated tar install.
 
-**Legacy (≤1.4.x) tar** — the outer archive holds two inner `anc-tool` and
-`anc-content` tarballs; extract both into the prefix so the layout matches the
-deb/rpm packages:
+> **Install a version that satisfies the configured `anc_version` minimum**
+> (shipped default `1.7.3`). The two blocks below illustrate the two packaging
+> **layouts** — the legacy `≤1.4.x` two-tarball form and the direct `1.5.0+`
+> single-tree form; the legacy `1.4.9` URL is format-only (it is below the
+> default minimum, so a suite run would reinstall over it). Use the direct
+> `1.7.3` command for a current manual install, or point the URL at any release
+> `≥ anc_version`.
+
+**Legacy (≤1.4.x) tar — packaging-format example only** — the outer archive
+holds two inner `anc-tool` and `anc-content` tarballs; extract both into the
+prefix so the layout matches the deb/rpm packages:
 
 ```bash
 STAGE=$(mktemp -d)              # private staging dir, only for the download/unpack
@@ -236,15 +244,16 @@ sudo tar -xzf anc-tool*.tar.gz    -C /opt/amdtools
 sudo tar -xzf anc-content*.tar.gz -C /opt/amdtools
 ```
 
-**Direct (1.5.0+) tar** — the `.tar.gz` *is* the tree (no inner archives); a
-single untar into the prefix lays down `anc/` and the tool folders:
+**Direct (1.5.0+) tar — current install** — the `.tar.gz` *is* the tree (no
+inner archives); a single untar into the prefix lays down `anc/` and the tool
+folders. This `1.7.3` command satisfies the shipped `anc_version` default:
 
 ```bash
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 cd "$STAGE"
 
-wget -q "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.5.5/anc-release-helios-nda-1.5.5-x86_64.tar.gz" \
+wget -q "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.7.3/anc-release-helios-nda-1.7.3-x86_64.tar.gz" \
   -O anc.tar.gz
 sudo mkdir -p /opt/amdtools
 sudo tar -xzf anc.tar.gz -C /opt/amdtools
