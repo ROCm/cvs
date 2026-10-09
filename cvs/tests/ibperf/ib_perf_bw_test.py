@@ -13,6 +13,7 @@ import json
 
 
 from cvs.lib import ibperf_lib
+from cvs.lib.rdma_gid_lib import DEFAULT_GID_TYPE
 
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
@@ -233,6 +234,13 @@ def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
             if rdma_nic_dict[node][rdma_dev]['eth_device'] in bck_nic_dict_lshw[node]:
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
+    gid_index = ibperf_lib.resolve_gid_index(
+        phdl,
+        ibperf_lib.get_ibperf_rdma_devices(gpu_nic_dict, bck_nic_dict),
+        config_dict.get('gid_index'),
+        config_dict.get('gid_type', DEFAULT_GID_TYPE),
+    )
+    update_test_result()
     rocm_path = ibperf_lib.detect_rocm_path(phdl, config_dict.get('rocm_dir', ''))
     for msg_size in config_dict['msg_size_list']:
         ib_bw_dict[bw_test][msg_size] = {}
@@ -251,7 +259,7 @@ def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
                 bck_nic_dict,
                 f'{config_dict["install_dir"]}/perftest/bin',
                 msg_size,
-                config_dict['gid_index'],
+                gid_index,
                 qp_count,
                 int(config_dict['port_no']),
                 int(config_dict['duration']),
@@ -290,6 +298,13 @@ def test_ib_lat_perf(shdl, phdl, lat_test, config_dict):
             if rdma_nic_dict[node][rdma_dev]['eth_device'] in bck_nic_dict_lshw[node]:
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
+    gid_index = ibperf_lib.resolve_gid_index(
+        phdl,
+        ibperf_lib.get_ibperf_rdma_devices(gpu_nic_dict, bck_nic_dict),
+        config_dict.get('gid_index'),
+        config_dict.get('gid_type', DEFAULT_GID_TYPE),
+    )
+    update_test_result()
     rocm_path = ibperf_lib.detect_rocm_path(phdl, config_dict.get('rocm_dir', ''))
     for msg_size in config_dict['msg_size_list']:
         ib_lat_dict[lat_test][msg_size] = {}
@@ -307,7 +322,7 @@ def test_ib_lat_perf(shdl, phdl, lat_test, config_dict):
             bck_nic_dict,
             f'{config_dict["install_dir"]}/perftest/bin',
             msg_size,
-            config_dict['gid_index'],
+            gid_index,
             int(config_dict['port_no']),
             rocm_path=rocm_path,
         )

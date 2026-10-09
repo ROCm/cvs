@@ -1364,6 +1364,10 @@ class PreflightRdmaConfig(BaseModel):
 
     connectivity_mode: str = Field(default="basic", description="RDMA connectivity testing: basic, full_mesh, or skip")
     gid_index: str = Field(default="3", description="GID index to check on all RDMA interfaces (typically 3 for RoCE)")
+    gid_type: str = Field(
+        default="RoCE v2",
+        description="Expected sysfs GID type (gid_attrs/types/<idx>) on every RDMA interface; 'any' disables the type check. Not enforced on InfiniBand link layers.",
+    )
     interfaces: List[str] = Field(
         default_factory=lambda: ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
         min_length=1,
