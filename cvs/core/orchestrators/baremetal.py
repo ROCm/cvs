@@ -103,7 +103,7 @@ class BaremetalOrchestrator(Orchestrator):
             except Exception as exc:
                 self.log.debug("Error destroying parallel handle: %s", exc)
 
-    def exec(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
+    def exec(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True, inactivity_timeout=None):
         """
         Execute command across hosts via SSH (baremetal execution).
 
@@ -115,6 +115,9 @@ class BaremetalOrchestrator(Orchestrator):
                 exit_code (mirrors ContainerOrchestrator.exec).
             print_console: If False, the command's output is returned but not
                 logged. Use for bulk data the caller parses itself.
+            inactivity_timeout: Abort a host only after this many seconds with no
+                new output (no total wall-clock cap). None keeps the plain
+                ``timeout`` budget.
 
         Returns:
             Dictionary mapping hosts to execution results
@@ -124,12 +127,24 @@ class BaremetalOrchestrator(Orchestrator):
 
         # Use appropriate handle based on target hosts
         if set(hosts) == set(self.hosts):
-            return self.all.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+            return self.all.exec(
+                cmd,
+                timeout=timeout,
+                detailed=detailed,
+                print_console=print_console,
+                inactivity_timeout=inactivity_timeout,
+            )
         else:
             # For arbitrary subset (including head node), create temporary handle
             phandle = self._phandle(hosts)
             try:
-                return phandle.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+                return phandle.exec(
+                    cmd,
+                    timeout=timeout,
+                    detailed=detailed,
+                    print_console=print_console,
+                    inactivity_timeout=inactivity_timeout,
+                )
             finally:
                 phandle.destroy_clients()
 

@@ -782,10 +782,10 @@ class TestEvaluateNodeNotFoundScoping(unittest.TestCase):
 
     def setUp(self):
         self.cluster = {"node_dict": {"n1": {}}, "username": "u", "priv_key_file": "k"}
-        # _evaluate_node opens a per-node Pssh and pulls the log dir; stub both so
-        # no SSH happens and console_text is whatever the test supplies.
+        self.orch = MagicMock()
+        # _evaluate_node pulls the log dir via orch; stub that so no SSH happens
+        # and console_text is whatever the test supplies.
         patchers = [
-            patch.object(anc_lib, "Pssh", return_value=MagicMock()),
             patch.object(anc_lib, "_node_label", return_value="n1"),
             patch.object(anc_lib, "resolve_anc_log_folder", return_value="/tmp/dest"),
             patch.object(anc_lib.os, "makedirs"),
@@ -801,7 +801,7 @@ class TestEvaluateNodeNotFoundScoping(unittest.TestCase):
         # verdict comes from the collected console.log, which we supply here.
         output = "Log directory: /root/logs/run1"
         with patch("builtins.open", mock_open(read_data=console_text)):
-            return anc_lib._evaluate_node(self.cluster, "n1", output, "test_x", "ts", unit=unit)
+            return anc_lib._evaluate_node(self.orch, self.cluster, "n1", output, "test_x", "ts", unit=unit)
 
     def test_group_run_with_missing_leaf_item_is_failure_not_na(self):
         # A group run whose leaf item is absent: ANC prints "FATAL: Item ..." and
@@ -1038,16 +1038,20 @@ class TestPerUserTmpNamespacing(unittest.TestCase):
         cluster = {"node_dict": {"node1": {}}, "username": "alice", "priv_key_file": "k"}
         cmds = []
 
-        class FakePhdl:
+        class FakeAll:
+            def upload_file(self, local, remote):
+                cmds.append(f"UPLOAD {remote}")
+
+        class FakeOrch:
+            # ANC broadcasts the validator script via orch.all.upload_file(...).
+            all = FakeAll()
+
             def exec(self, cmd, timeout=None):  # noqa: ARG002
                 cmds.append(cmd)
                 return {"node1": "VALIDATION_SUCCESS"}
 
-            def upload_file(self, local, remote):
-                cmds.append(f"UPLOAD {remote}")
-
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib.globals, "error_list", []):
-            anc_lib._validate_exe_paths(FakePhdl(), cluster, "/opt/amdtools/anc/content")
+            anc_lib._validate_exe_paths(FakeOrch(), cluster, "/opt/amdtools/anc/content")
 
         joined = "\n".join(cmds)
         self.assertIn("mkdir -p '/tmp/alice'", joined)
@@ -1167,18 +1171,21 @@ class TestChownArgumentQuoted(unittest.TestCase):
     def test_chown_user_single_quoted(self):
         captured = {}
 
-        class FakeSingle:
-            def exec(self, cmd, timeout=None):  # noqa: ARG002
+        class FakeOrch:
+            def exec(self, cmd, hosts=None, timeout=None):  # noqa: ARG002
                 captured.setdefault("first", cmd)
+                captured.setdefault("hosts", hosts)
                 return {}
 
-            def download_file(self, remote, local):  # noqa: ARG002
+            def download_file(self, remote, local, hosts=None):  # noqa: ARG002
                 return {}
 
         # download_file returns {} so _pull_log_dir bails after the archive_cmd;
-        # we only care that the archive command quotes the user.
-        anc_lib._pull_log_dir(FakeSingle(), "node1", "alice", "/root/logs/run1", "/tmp/dest")
+        # we only care that the archive command quotes the user and is scoped to
+        # the single host.
+        anc_lib._pull_log_dir(FakeOrch(), "node1", "alice", "/root/logs/run1", "/tmp/dest")
         self.assertIn("sudo chown 'alice'", captured["first"])
+        self.assertEqual(captured["hosts"], ["node1"])
 
 
 class TestInstallAncVersionGating(unittest.TestCase):

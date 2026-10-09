@@ -23,11 +23,11 @@ List the items:    cvs list anc_test_oblex
 from cvs.lib import anc_lib
 
 
-def test_oblex_ds(phdl, cluster_dict, config_dict, request):
+def test_oblex_ds(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "oblex_ds".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["oblex_ds"],
@@ -36,11 +36,11 @@ def test_oblex_ds(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_oblex_ds_ntd(phdl, cluster_dict, config_dict, request):
+def test_oblex_ds_ntd(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "oblex_ds_ntd".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["oblex_ds_ntd"],
@@ -49,11 +49,11 @@ def test_oblex_ds_ntd(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_oblex_metronome(phdl, cluster_dict, config_dict, request):
+def test_oblex_metronome(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "oblex_metronome".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["oblex_metronome"],
@@ -62,11 +62,11 @@ def test_oblex_metronome(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_oblex_opt(phdl, cluster_dict, config_dict, request):
+def test_oblex_opt(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "oblex_opt".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["oblex_opt"],
@@ -75,11 +75,11 @@ def test_oblex_opt(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_oblex_remix2(phdl, cluster_dict, config_dict, request):
+def test_oblex_remix2(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "oblex_remix2".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["oblex_remix2"],
@@ -88,11 +88,11 @@ def test_oblex_remix2(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_oblex_s16(phdl, cluster_dict, config_dict, request):
+def test_oblex_s16(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "oblex_s16".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["oblex_s16"],
@@ -101,11 +101,11 @@ def test_oblex_s16(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_oblex_s16_ds(phdl, cluster_dict, config_dict, request):
+def test_oblex_s16_ds(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "oblex_s16_ds".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["oblex_s16_ds"],
@@ -114,11 +114,11 @@ def test_oblex_s16_ds(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_oblex_trad(phdl, cluster_dict, config_dict, request):
+def test_oblex_trad(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "oblex_trad".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["oblex_trad"],

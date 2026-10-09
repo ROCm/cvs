@@ -74,7 +74,12 @@ shared `run_anc_selection` core), and artifact collection — lives in
 DIMM/UMC groups part of `CPU_GROUPS`; individual items are in the per-family
 lists above).
 Shared pytest fixtures live in this directory's `conftest.py` and apply to the
-`cpu/`, `gpu/` and all per-family item subfolders too. ANC is invoked
+`cpu/`, `gpu/` and all per-family item subfolders too; the `orch` execution
+handle itself comes from the repo-root `tests/conftest.py`. ANC runs on
+**baremetal only** — the autouse `_skip_anc_on_container` fixture in this
+directory's `conftest.py` resolves the orchestrator type from config and
+`pytest.skip`s every ANC test before `orch` is built, so a container run omits
+ANC (without launching a container) rather than failing. ANC is invoked
 from its installed location `<prefix>/anc/anc.py` — `<prefix>` is `/opt/amdtools`
 by default, or, for **tar** installs only, the relocated `ANC_INSTALL_PATH`
 (deb/rpm always use `/opt/amdtools`).

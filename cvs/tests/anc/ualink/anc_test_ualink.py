@@ -23,11 +23,11 @@ List the items:    cvs list anc_test_ualink
 from cvs.lib import anc_lib
 
 
-def test_ualink_gpu_rx_margin(phdl, cluster_dict, config_dict, request):
+def test_ualink_gpu_rx_margin(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "ualink_gpu_rx_margin".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["ualink_gpu_rx_margin"],
@@ -36,11 +36,11 @@ def test_ualink_gpu_rx_margin(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_ualink_nic_rx_margin(phdl, cluster_dict, config_dict, request):
+def test_ualink_nic_rx_margin(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "ualink_nic_rx_margin".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["ualink_nic_rx_margin"],
@@ -49,11 +49,11 @@ def test_ualink_nic_rx_margin(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_ualink_status(phdl, cluster_dict, config_dict, request):
+def test_ualink_status(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "ualink_status".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["ualink_status"],

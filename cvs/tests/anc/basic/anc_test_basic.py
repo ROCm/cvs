@@ -23,11 +23,11 @@ List the items:    cvs list anc_test_basic
 from cvs.lib import anc_lib
 
 
-def test_ampttk(phdl, cluster_dict, config_dict, request):
+def test_ampttk(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "ampttk".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["ampttk"],
@@ -36,11 +36,11 @@ def test_ampttk(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_cachewalker(phdl, cluster_dict, config_dict, request):
+def test_cachewalker(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "cachewalker".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["cachewalker"],
@@ -49,11 +49,11 @@ def test_cachewalker(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_cpu_bidi_peak(phdl, cluster_dict, config_dict, request):
+def test_cpu_bidi_peak(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "cpu_bidi_peak".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["cpu_bidi_peak"],
@@ -62,11 +62,11 @@ def test_cpu_bidi_peak(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_difect(phdl, cluster_dict, config_dict, request):
+def test_difect(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "difect".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["difect"],
@@ -75,11 +75,11 @@ def test_difect(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_fpdeluge(phdl, cluster_dict, config_dict, request):
+def test_fpdeluge(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "fpdeluge".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["fpdeluge"],
@@ -88,11 +88,11 @@ def test_fpdeluge(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_gfx_bidi_peak(phdl, cluster_dict, config_dict, request):
+def test_gfx_bidi_peak(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "gfx_bidi_peak".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["gfx_bidi_peak"],
@@ -101,11 +101,11 @@ def test_gfx_bidi_peak(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_hdrt(phdl, cluster_dict, config_dict, request):
+def test_hdrt(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "hdrt".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["hdrt"],
@@ -114,11 +114,11 @@ def test_hdrt(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_maxcorestim(phdl, cluster_dict, config_dict, request):
+def test_maxcorestim(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "maxcorestim".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["maxcorestim"],
@@ -127,11 +127,11 @@ def test_maxcorestim(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_maxiostim(phdl, cluster_dict, config_dict, request):
+def test_maxiostim(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "maxiostim".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["maxiostim"],
@@ -140,11 +140,11 @@ def test_maxiostim(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_memblock(phdl, cluster_dict, config_dict, request):
+def test_memblock(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "memblock".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["memblock"],
@@ -153,11 +153,11 @@ def test_memblock(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_memripper(phdl, cluster_dict, config_dict, request):
+def test_memripper(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "memripper".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["memripper"],
@@ -166,11 +166,11 @@ def test_memripper(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_memtest(phdl, cluster_dict, config_dict, request):
+def test_memtest(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "memtest".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["memtest"],
@@ -179,11 +179,11 @@ def test_memtest(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_miidct(phdl, cluster_dict, config_dict, request):
+def test_miidct(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "miidct".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["miidct"],
@@ -192,11 +192,11 @@ def test_miidct(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_mithac(phdl, cluster_dict, config_dict, request):
+def test_mithac(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "mithac".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["mithac"],
@@ -205,11 +205,11 @@ def test_mithac(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_no_op(phdl, cluster_dict, config_dict, request):
+def test_no_op(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "no_op".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["no_op"],
@@ -218,11 +218,11 @@ def test_no_op(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_sdma_bidi_peak(phdl, cluster_dict, config_dict, request):
+def test_sdma_bidi_peak(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "sdma_bidi_peak".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["sdma_bidi_peak"],
@@ -231,11 +231,11 @@ def test_sdma_bidi_peak(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_sprites(phdl, cluster_dict, config_dict, request):
+def test_sprites(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "sprites".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["sprites"],
@@ -244,11 +244,11 @@ def test_sprites(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_umcinfo(phdl, cluster_dict, config_dict, request):
+def test_umcinfo(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "umcinfo".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["umcinfo"],

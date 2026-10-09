@@ -23,11 +23,11 @@ List the items:    cvs list anc_test_xgmi
 from cvs.lib import anc_lib
 
 
-def test_xgmi_cpu_rx_margin(phdl, cluster_dict, config_dict, request):
+def test_xgmi_cpu_rx_margin(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "xgmi_cpu_rx_margin".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["xgmi_cpu_rx_margin"],
@@ -36,11 +36,11 @@ def test_xgmi_cpu_rx_margin(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_xgmi_gpu_rx_margin(phdl, cluster_dict, config_dict, request):
+def test_xgmi_gpu_rx_margin(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "xgmi_gpu_rx_margin".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["xgmi_gpu_rx_margin"],
@@ -49,11 +49,11 @@ def test_xgmi_gpu_rx_margin(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_xgmi_link_status(phdl, cluster_dict, config_dict, request):
+def test_xgmi_link_status(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "xgmi_link_status".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["xgmi_link_status"],

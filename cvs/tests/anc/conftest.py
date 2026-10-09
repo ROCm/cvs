@@ -6,10 +6,12 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 
 Shared pytest fixtures for the ANC CVS suites (anc_installation, the per-group
-suites under cpu/ and gpu/, the per-family individual-item suites under
+suites under cpu/ and gpu/, and the per-family individual-item suites under
 computerocker/, memrocker/, oblex/, gemm/, xgmi/, ualink/, pcie/, babel/,
-basic/, and the exec-all suites). Each suite loads the same cluster/config JSON
-and opens one parallel-SSH handle across all nodes.
+basic/). Each suite loads the same cluster/config JSON; the ``orch`` execution
+handle itself comes from the repo-root tests/conftest.py.
+ANC runs on baremetal only -- the autouse ``_skip_anc_on_container`` fixture
+below skips every ANC test cleanly when the orchestrator is a container.
 
 This conftest lives at tests/anc/ so its fixtures also apply to the generated
 per-group/per-item suites in all those subfolders.
@@ -19,7 +21,7 @@ import json
 
 import pytest
 
-from cvs.lib.parallel_ssh_lib import Pssh
+from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.lib.utils_lib import (
     resolve_cluster_config_placeholders,
     resolve_test_config_placeholders,
@@ -30,11 +32,38 @@ from cvs.lib import anc_lib
 log = globals.log
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _skip_anc_on_container(pytestconfig):
+    '''
+    Skip every ANC test on a container orchestrator, BEFORE the orch fixture runs.
+
+    ANC installs packages, runs ``sudo ./anc.py`` and tars root-owned log trees
+    directly on the host OS -- none of which is modelled for the container
+    backend, so ANC is baremetal-only. This autouse fixture resolves the
+    orchestrator type from config WITHOUT building ``orch`` (reading it off the
+    live handle would be too late: the repo-root ``orch`` fixture launches the
+    container during its own setup). Being autouse and module-scoped, it is
+    instantiated before the non-autouse ``orch`` fixture of the same scope, so a
+    container run is skipped cleanly instead of paying -- or failing -- container
+    setup for tests that would never run.
+    '''
+    cluster_file = pytestconfig.getoption("cluster_file")
+    config_file = pytestconfig.getoption("config_file")
+    if not cluster_file or not config_file:
+        return
+    cfg = OrchestratorConfig.from_configs(cluster_file, config_file)
+    # Match OrchestratorFactory's case-insensitive normalization so a "Container"
+    # / "CONTAINER" config is skipped here rather than slipping through to build a
+    # container backend ANC cannot use.
+    if (cfg.orchestrator or "").lower() == "container":
+        pytest.skip("ANC is not supported under container orchestration (baremetal only)")
+
+
 # Merge any extra report links stashed on the test item during the run (e.g. ANC
 # log archives attached by anc_lib._attach_anc_logs_to_html). pytest-html 4.x
 # renders links from report.extras; the core makereport hook sets report.extras
 # first, so this wrapper appends afterwards on the "call" phase. Applies to the
-# per-group cpu/ and gpu/ suites and the exec-all suites under this directory.
+# per-group cpu/ and gpu/ suites and the per-family item suites under this directory.
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):  # noqa: ARG001
     outcome = yield
@@ -108,19 +137,6 @@ def config_dict(config_file, cluster_dict, pytestconfig):
             )
 
     return config_dict
-
-
-@pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    '''Parallel SSH handle targeting every node in cluster_dict["node_dict"].'''
-    node_list = list(cluster_dict["node_dict"].keys())
-
-    return Pssh(
-        log,
-        node_list,
-        user=cluster_dict["username"],
-        pkey=cluster_dict["priv_key_file"],
-    )
 
 
 @pytest.fixture(scope="module")
