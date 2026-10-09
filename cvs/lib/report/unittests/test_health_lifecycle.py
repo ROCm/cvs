@@ -2,6 +2,8 @@
 
 import unittest
 
+import pytest
+
 from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 
 
@@ -37,3 +39,59 @@ class TestHealthLifecycle(unittest.TestCase):
     def test_timed_stage_without_lifecycle_is_a_no_op(self):
         with timed_stage(None, "a2a"):
             pass
+
+    def test_timed_stage_propagates_pytest_fail_without_lifecycle(self):
+        with self.assertRaises(pytest.fail.Exception):
+            with timed_stage(None, "a2a"):
+                pytest.fail("boom")
+
+    def test_timed_stage_propagates_pytest_skip_without_lifecycle(self):
+        with self.assertRaises(pytest.skip.Exception):
+            with timed_stage(None, "a2a"):
+                pytest.skip("off")
+
+    def test_timed_stage_propagates_outcomes_when_record_raises(self):
+        class RecordRaises:
+            def __init__(self, error):
+                self.error = error
+
+            def record(self, label, seconds):
+                raise self.error
+
+        lifecycles = [object(), *(RecordRaises(error()) for error in (AttributeError, TypeError, ValueError))]
+        for lifecycle in lifecycles:
+            for outcome, expected in ((pytest.fail, pytest.fail.Exception), (pytest.skip, pytest.skip.Exception)):
+                with self.subTest(lifecycle=lifecycle, outcome=outcome):
+                    with self.assertRaises(expected):
+                        with timed_stage(lifecycle, "a2a"):
+                            outcome("verdict")
+
+    def test_timed_stage_swallows_record_failure_on_success(self):
+        class RecordRaises:
+            def record(self, label, seconds):
+                raise ValueError("reporting failed")
+
+        with timed_stage(RecordRaises(), "a2a"):
+            pass
+
+    def test_timed_stage_records_elapsed_when_block_fails(self):
+        lifecycle = HealthLifecycle()
+        with self.assertRaises(pytest.fail.Exception):
+            with timed_stage(lifecycle, "a2a"):
+                pytest.fail("boom")
+
+        self.assertEqual(lifecycle.report["health"][0][0], "a2a")
+        self.assertGreaterEqual(lifecycle.report["health"][0][1], 0)
+
+    def test_timed_stage_preserves_block_return_value(self):
+        def returns_from_block():
+            with timed_stage(None, "a2a"):
+                return 42
+
+        def raises_from_block():
+            with timed_stage(None, "a2a"):
+                raise RuntimeError("boom")
+
+        self.assertEqual(returns_from_block(), 42)
+        with self.assertRaisesRegex(RuntimeError, "boom"):
+            raises_from_block()
