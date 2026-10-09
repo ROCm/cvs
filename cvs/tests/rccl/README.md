@@ -133,7 +133,7 @@ Heatmap config requires:
 
 ## Configuration
 
-Start from [`rccl_config.json`](../../input/config_file/rccl/rccl_config.json). Replace any `<changeme>` values and configure paths, interfaces, node counts, and reference bandwidths for your cluster.
+Start from [`rccl_config.json`](../../input/config_file/rccl/rccl_config.json). Replace any `<changeme>` values and configure paths, interfaces, node counts, and reference bandwidths for your cluster. For the single-node 8-GPU `all_reduce` guide bar, start from `mi300x_rccl_single_node_config.json` or `mi350x_rccl_single_node_config.json` instead (`cvs config copy rccl/<file>`), and replace only the `<changeme>` site paths.
 
 - `mpi_params.no_of_nodes` and `no_of_local_ranks` set the MPI topology explicitly. For a single-node run, set `no_of_nodes` to `1` and provide a one-node cluster or allocation.
 - `mpi_params.mpi_dir` names the Open MPI installation prefix; a trailing `/bin` is accepted. `mpi_pml`, `mpi_oob_port`, `net_dev_list`, and `ucx_tls` control Open MPI/UCX discovery and initialization.
@@ -162,6 +162,12 @@ For thresholds that depend on NIC, data types, and MPI rank count, use this form
 
 NIC keys are `ainic`, `thor`, and `connectx`, selected from `cvs_params.nic_model`. The result key is `<collective>-<data_types joined with underscores>-<total MPI ranks>`. Perf uses its configured data types in order; regression uses `float`, the rccl-tests default for its command. Pairwise uses the rank count of the current subset. A NIC/rank reference is used only when its full key matches.
 
+`cvs_params.fabric` selects `scale_out` (the default when omitted) or `scale_up`. Matching is case-insensitive; hyphens, underscores, and spaces are ignored. `scale_out` looks up the NIC key from `nic_model`, then the flat table. `scale_up` reads only `results.scale_up.<collective>-<data_types>-<total ranks>`; NIC-keyed and flat references are never used. A missing scale-up key logs a warning with the exact path and fails the test when `verify_bus_bw` is `"True"`. Unknown fabric values warn and fall back to `scale_out`.
+
+```json
+"scale_up": {"all_reduce_perf-float-8": {"8589934592": {"bus_bw": "350"}}}
+```
+
 Both suites also accept the shipped legacy flat format:
 
 ```json
@@ -174,7 +180,20 @@ Both suites also accept the shipped legacy flat format:
 
 A matching NIC/rank reference takes precedence over a flat reference. Flat references apply regardless of data type or rank count, so calibrate them for every topology you test. The sample numbers are examples for two nodes, not qualification targets for other clusters. Pairwise/incremental sub-runs drop flat references entirely, since a threshold calibrated for the full cluster does not apply at pairwise node counts; only NIC/rank-keyed references, already scoped by rank count, are honored there.
 
-Set `cvs_params.verify_bus_bw` to `"True"` to enforce bandwidth thresholds. Measurements below 95% of the configured reference fail, and a missing threshold for a requested collective also fails. Dip checks stay off unless `verify_bw_dip` or `verify_lat_dip` is `"True"`; either flag uses the resolved reference message sizes. With no matching reference, these checks have no reference data to validate.
+Set `cvs_params.verify_bus_bw` to `"True"` to enforce bandwidth thresholds. Measurements below `cvs_params.bus_bw_tolerance` times the configured reference fail. The tolerance defaults to `0.95`, must be a fraction in `(0, 1]`, and an invalid value fails the test. A missing threshold for a requested collective also fails. Dip checks stay off unless `verify_bw_dip` or `verify_lat_dip` is `"True"`; either flag uses the resolved reference message sizes. An enabled dip check with no resolved reference fails.
+
+### Single-node guide bars
+
+| Config | Platform | Bar | Tolerance |
+|---|---|---|---|
+| `mi300x_rccl_single_node_config.json` | MI300X | 304 GB/s | `1.0` |
+| `mi350x_rccl_single_node_config.json` | MI350X | 350 GB/s | `1.0` |
+
+Both bars are for `all_reduce_perf`, 8 GiB, in-place, float, on 1 node with 8 ranks. These configs are for `rccl_perf` only.
+
+**Open item:** The guide gives both 304 and 350 GB/s as the MI355X bar at 8 GiB in-place. CVS ships no MI355X bar until this is resolved; do not use the MI350X config as an MI355X gate.
+
+**Follow-up:** Helios/MI455X scale-up references need a measured baseline on Helios hardware; none is shipped.
 
 ### Regression combinations
 

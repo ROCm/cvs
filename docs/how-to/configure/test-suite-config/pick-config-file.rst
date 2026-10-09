@@ -57,6 +57,8 @@ The following suites are available for network testing:
      - ``cvs config list ibperf``
    * - RCCL
      - ``input/config_file/rccl/rccl_config.json``
+       ``input/config_file/rccl/mi300x_rccl_single_node_config.json`` and
+       ``input/config_file/rccl/mi350x_rccl_single_node_config.json`` (single-node guide bars)
      - ``cvs config list rccl``
    * - MORI
      - ``input/config_file/mori/mi35x_mori_config.json``

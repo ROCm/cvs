@@ -9,8 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- RCCL: `cvs_params.fabric` (`scale_out` default, `scale_up`) selects the bandwidth reference namespace. `scale_up` reads only `rccl.results.scale_up.<collective>-<data_types>-<ranks>` and fails closed when the key is missing and `verify_bus_bw` is enabled.
+- RCCL: `cvs_params.bus_bw_tolerance` (default `0.95`) sets the fraction of the reference bus bandwidth a measurement must reach. Values outside (0, 1] fail the test.
+- RCCL: single-node 8-GPU guide configs. `mi300x_rccl_single_node_config.json` requires `all_reduce_perf` ≥ 304 GB/s and `mi350x_rccl_single_node_config.json` requires ≥ 350 GB/s, at 8 GiB in-place, enforced with tolerance `1.0`. No MI355X bar ships while the guide's 304-vs-350 GB/s values conflict.
+
 ### Changed
 
+- RCCL: `verify_bw_dip` or `verify_lat_dip` set to `"True"` with no resolved reference now fails the test instead of logging a warning and skipping. Configs that enabled them without matching `results` will start failing.
 - RCCL perf, regression, and pairwise suites use the orchestrator for workload execution, including container-aware launches and cleanup. `RcclJob` and `RcclJob.from_config` now take one `orch` argument in place of the previous two execution handles; `OpenMPI.prepare`, `MpiRun`, and `Srun` callers must also migrate.
 - RCCL result files default to the run directory. Every run verifies shared result-path access via a sentinel round-trip through `download_from_head` before launching, and result-save failures fail the test. Container runs require the result directory mounted at the same host/container path.
 - `Orchestrator` now declares `exec_on_host`, `upload_to_head`, `download_from_head`, and `download_file` as required methods. RCCL uses the first three for host diagnostics and result transfers instead of reaching through internal handles; Aorta uses `download_file` for per-host artifact pickup. Custom orchestrator subclasses must implement all four methods.
