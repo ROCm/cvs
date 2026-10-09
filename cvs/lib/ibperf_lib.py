@@ -27,6 +27,9 @@ PERFTEST_EXIT_POLL_S = 5
 PERFTEST_RESULT_POLL_S = 10
 PERFTEST_BW_RESULT_TIMEOUT_S = 80
 PERFTEST_LAT_RESULT_TIMEOUT_S = 20
+# The command file needs bash because a node's agent can run commands under dash, which has no ``source``.
+# Some job schedulers set ROCR_VISIBLE_DEVICES to values ROCm can't parse, which hides every GPU from perftest.
+PERFTEST_LAUNCH_CMD = 'env -u ROCR_VISIBLE_DEVICES bash /tmp/ib_cmds_file.txt'
 
 
 def _log_bw_summary(msg_size, res_dict, instance_no=None):
@@ -447,7 +450,7 @@ def run_ib_perf_bw_test(
     log.debug('Killing stale %s processes before starting test', bw_test)
     phdl.exec(f'killall {bw_test} 2>/dev/null || true', print_console=False)
     time.sleep(2)
-    phdl.exec('source /tmp/ib_cmds_file.txt', print_console=False)
+    phdl.exec(PERFTEST_LAUNCH_CMD, print_console=False)
 
     exit_timeout = duration + PERFTEST_EXIT_SLACK_S
     unconfirmed = wait_for_perftest_exit(phdl, bw_test, exit_timeout)
@@ -586,7 +589,7 @@ def run_ib_perf_lat_test(
     log.debug('Killing stale %s processes before starting test', lat_test)
     phdl.exec(f'killall {lat_test} 2>/dev/null || true', print_console=False)
     time.sleep(2)
-    phdl.exec('source /tmp/ib_cmds_file.txt', print_console=False)
+    phdl.exec(PERFTEST_LAUNCH_CMD, print_console=False)
 
     unconfirmed = wait_for_perftest_exit(phdl, lat_test, PERFTEST_LAT_EXIT_TIMEOUT_S)
     if unconfirmed:
