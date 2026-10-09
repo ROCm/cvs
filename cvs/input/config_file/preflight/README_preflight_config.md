@@ -13,7 +13,7 @@ The preflight checks system validates essential cluster health before running pe
 5. **Node Smoke Tier 1** - Per-node host / GPU / RDMA roll-call via `primus-cli direct -- node_smoke`
 6. **Node Smoke Tier 2** - Per-node perf sanity while `node_smoke_tier1.tier2_perf` is enabled (GEMM TFLOPS, HBM bandwidth, local RCCL)
 7. **Node Smoke Tier 3** - Cluster-wide Host / GPU / Network inventory via `primus-cli direct -- preflight --host --gpu --network`
-8. **GID and Interface Consistency** - Ensures configured RDMA interfaces and GID entries are present and consistent
+8. **GID and Interface Consistency** - Ensures configured RDMA interfaces have populated GIDs of the expected type
 9. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
 ## Configuration File Structure
@@ -208,9 +208,11 @@ All parameters below are optional and have sensible defaults. The sample configu
   - **"skip"**: Skip RDMA interface presence, GID validation, and pairwise connectivity
 
 - **`gid_index`** (default: "3")
-  - GID index to check on all configured RDMA interfaces
-  - Typically "3" for RoCE (RDMA over Converged Ethernet)
-  - Must be a valid GID index for your InfiniBand/RoCE setup
+  - GID index to check on all configured RDMA interfaces; on RoCE, choose a RoCE v2 GID, preferably IPv4-mapped
+
+- **`gid_type`** (default: "RoCE v2")
+  - Expected sysfs type at `gid_attrs/types/<gid_index>` on each interface; use `"any"` to disable type validation
+  - Type validation is skipped for InfiniBand link layers
 
 - **`interfaces`** (default: `["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]`)
   - List of RDMA device names that should be present on all cluster nodes
@@ -638,6 +640,7 @@ cvs run preflight_checks \
    - Ensure RDMA drivers are loaded: `lsmod | grep rdma`
    - Check interface status: `rdma link show`
    - Verify GID entries: `cat /sys/class/infiniband/*/ports/1/gids/3`
+   - Verify GID types: `cat /sys/class/infiniband/*/ports/1/gid_attrs/types/3`
 
 2. **RDMA Connectivity Failures**
    - Check firewall settings: `sudo ufw status`

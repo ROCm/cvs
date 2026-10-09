@@ -150,6 +150,7 @@ RDMA connectivity (``connectivity_check.rdma``)
 - ``connectivity_mode`` — ``"basic"``, ``"full_mesh"``, or ``"skip"``
 - ``interfaces`` — Expected RDMA device names on all nodes
 - ``gid_index`` — GID index validated on those interfaces
+- ``gid_type`` — Expected sysfs GID type (default ``"RoCE v2"``); ``"any"`` disables type checking, and InfiniBand link layers are exempt
 - ``ibv_test_timeout`` / ``ibv_test_port_range`` — ``ibv_rc_pingpong`` test tuning
 
 Node Smoke Tier 1 (``node_smoke_tier1``)

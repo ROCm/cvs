@@ -45,6 +45,30 @@ def _make_checker(
 
 
 class TestPreflightRdmaConfigContract(unittest.TestCase):
+    def test_gid_type_any_is_passed_to_checker(self):
+        from cvs.tests.preflight import preflight_checks
+
+        config = {
+            'connectivity_check': {
+                'rdma': {'connectivity_mode': 'basic', 'gid_index': '7', 'interfaces': ['enp4s0np0'], 'gid_type': 'any'}
+            }
+        }
+        previous_results = dict(preflight_checks.preflight_results)
+        try:
+            with (
+                patch.object(preflight_checks, 'GidConsistencyCheck') as gid_checker,
+                patch.object(preflight_checks, 'preflight_update_test_result'),
+            ):
+                gid_checker.return_value.run.return_value = {
+                    'nodeA': {'status': 'PASS', 'errors': [], 'interfaces': {}}
+                }
+                orch = MagicMock()
+                preflight_checks.test_gid_consistency(orch, config)
+                gid_checker.assert_called_once_with(orch, '7', ['enp4s0np0'], config, expected_gid_type='any')
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
+
     def test_legacy_rdma_inventory_is_normalized_with_one_warning(self):
         legacy = {
             'node_check': {
@@ -164,7 +188,7 @@ class TestPreflightRdmaConfigContract(unittest.TestCase):
                 )
 
             interface_checker.assert_called_once_with(orch, ['enp4s0np0'], config)
-            gid_checker.assert_called_once_with(orch, '7', ['enp4s0np0'], config)
+            gid_checker.assert_called_once_with(orch, '7', ['enp4s0np0'], config, expected_gid_type='RoCE v2')
             rdma_args = rdma_checker.call_args.args
             self.assertEqual(rdma_args[5], ['enp4s0np0'])
             self.assertEqual(rdma_args[6], '7')
@@ -269,7 +293,7 @@ class TestPreflightRdmaConfigContract(unittest.TestCase):
                 preflight_checks.test_gid_consistency(phdl, config)
 
             interface_checker.assert_called_once_with(phdl, ['enp4s0np0'], config)
-            gid_checker.assert_called_once_with(phdl, '7', ['enp4s0np0'], config)
+            gid_checker.assert_called_once_with(phdl, '7', ['enp4s0np0'], config, expected_gid_type='RoCE v2')
         finally:
             preflight_checks.preflight_results.clear()
             preflight_checks.preflight_results.update(previous_results)
