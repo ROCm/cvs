@@ -10,6 +10,7 @@ import pytest
 import logging
 import re
 import json
+import os
 
 
 from cvs.lib import ibperf_lib
@@ -27,6 +28,25 @@ ib_lat_dict = {}
 ib_dmabuf_dict = {}
 
 rccl_res_dict = {}
+
+
+def pytest_generate_tests(metafunc):
+    """Parametrize bandwidth and latency test names from the ibperf config."""
+    wants_bw = 'bw_test' in metafunc.fixturenames
+    wants_lat = 'lat_test' in metafunc.fixturenames
+    if not (wants_bw or wants_lat):
+        return
+
+    ibperf_config = {}
+    config_file = metafunc.config.getoption('config_file')
+    if config_file and os.path.exists(config_file):
+        with open(config_file) as fp:
+            ibperf_config = json.load(fp).get('ibperf', {})
+
+    if wants_bw:
+        metafunc.parametrize('bw_test', ibperf_lib.configured_bw_tests(ibperf_config))
+    if wants_lat:
+        metafunc.parametrize('lat_test', ibperf_lib.configured_lat_tests(ibperf_config))
 
 
 # Importing additional cmd line args to script ..
@@ -116,10 +136,12 @@ def config_dict(config_file, cluster_dict):
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
     log.info(
-        'Loaded ibperf config: install_dir=%s, msg_sizes=%s, qp_counts=%s',
+        'Loaded ibperf config: install_dir=%s, msg_sizes=%s, qp_counts=%s, bw_tests=%s, lat_tests=%s',
         config_dict.get('install_dir'),
         config_dict.get('msg_size_list'),
         config_dict.get('qp_count_list'),
+        config_dict.get('ib_bw_test_list'),
+        config_dict.get('ib_lat_test_list'),
     )
     log.debug('Ibperf config: %s', config_dict)
     return config_dict
@@ -193,7 +215,6 @@ def vpc_node_list(cluster_dict):
 # Start of test cases.
 
 
-@pytest.mark.parametrize("bw_test", ["ib_write_bw", "ib_read_bw", "ib_send_bw"])
 def test_ib_bw_perf(phdl, bw_test, config_dict, request):
     globals.error_list = []
     ib_bw_dict[bw_test] = {}
@@ -257,7 +278,6 @@ def test_ib_bw_perf(phdl, bw_test, config_dict, request):
     update_test_result()
 
 
-@pytest.mark.parametrize("lat_test", ["ib_write_lat", "ib_send_lat"])
 def test_ib_lat_perf(phdl, lat_test, config_dict, request):
     globals.error_list = []
     ib_lat_dict[lat_test] = {}
@@ -326,5 +346,8 @@ def test_build_ib_lat_perf_chart(
     phdl,
 ):
     globals.error_list = []
-    ibperf_lib.generate_ibperf_lat_chart(ib_lat_dict, excel_file='ib_lat_perf.xlsx', dmabuf_dict=ib_dmabuf_dict)
+    try:
+        ibperf_lib.generate_ibperf_lat_chart(ib_lat_dict, excel_file='ib_lat_perf.xlsx', dmabuf_dict=ib_dmabuf_dict)
+    except ValueError as exc:
+        fail_test(str(exc))
     update_test_result()
