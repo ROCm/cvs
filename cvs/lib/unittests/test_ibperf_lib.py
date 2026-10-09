@@ -5,6 +5,66 @@ import cvs.lib.ibperf_lib as ibperf_lib
 
 
 class TestIbperfLib(unittest.TestCase):
+    def test_get_ibperf_rdma_devices(self):
+        mapping = {
+            'nodeA': {
+                'card0': {'rdma_dev': 'nic2'},
+                'card1': {'rdma_dev': 'nic1'},
+                'card2': {'rdma_dev': 'nic2'},
+                'card3': {},
+            },
+            'other': {'card0': {'rdma_dev': 'nic9'}},
+        }
+        self.assertEqual(
+            ibperf_lib.get_ibperf_rdma_devices(mapping, {'nodeA': {}}, gpu_count=4), {'nodeA': ['nic1', 'nic2']}
+        )
+
+    def test_resolve_explicit_gid(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            'nodeA': 'DEVICE:nic0\nLINK_LAYER:Ethernet\nGID:0000:0000:0000:0000:0000:ffff:c000:0201\nGID_TYPE:RoCE v2\n'
+        }
+        with patch.object(ibperf_lib, 'fail_test') as fail:
+            self.assertEqual(ibperf_lib.resolve_gid_index(phdl, {'nodeA': ['nic0']}, '3'), '3')
+            fail.assert_not_called()
+        self.assertIn('gids/3', phdl.exec.call_args.args[0])
+
+    def test_resolve_wrong_type_reports_node_nic_and_index(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            'nodeA': 'DEVICE:nic0\nLINK_LAYER:Ethernet\nGID:0000:0000:0000:0000:0000:ffff:c000:0201\nGID_TYPE:IB/RoCE v1\n'
+        }
+        with patch.object(ibperf_lib, 'fail_test') as fail:
+            self.assertIsNone(ibperf_lib.resolve_gid_index(phdl, {'nodeA': ['nic0']}, '3'))
+            fail.assert_called_once()
+            for fragment in ('nodeA', 'nic0', 'index 3', 'IB/RoCE v1'):
+                self.assertIn(fragment, fail.call_args.args[0])
+
+    def test_resolve_auto_and_missing_index(self):
+        table = 'GIDENT|nic0|1|fe80:0000:0000:0000:0000:0000:0000:0001|RoCE v2\nGIDENT|nic0|3|0000:0000:0000:0000:0000:ffff:c000:0201|RoCE v2\n'
+        probe = 'DEVICE:nic0\nLINK_LAYER:Ethernet\nGID:0000:0000:0000:0000:0000:ffff:c000:0201\nGID_TYPE:RoCE v2\n'
+        for requested in ('auto', None):
+            phdl = MagicMock()
+            phdl.exec.side_effect = [{'nodeA': table}, {'nodeA': probe}]
+            with self.subTest(requested=requested), patch.object(ibperf_lib, 'fail_test') as fail:
+                self.assertEqual(ibperf_lib.resolve_gid_index(phdl, {'nodeA': ['nic0']}, requested), '3')
+                fail.assert_not_called()
+            self.assertIn('gids/3', phdl.exec.call_args_list[1].args[0])
+
+    def test_resolve_auto_without_candidates(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'nodeA': 'GIDENT|nic0|1|fe80:0000:0000:0000:0000:0000:0000:0001|RoCE v2\n'}
+        with patch.object(ibperf_lib, 'fail_test') as fail:
+            self.assertIsNone(ibperf_lib.resolve_gid_index(phdl, {'nodeA': ['nic0']}, 'auto'))
+            fail.assert_called()
+
+    def test_resolve_invalid_index_before_exec(self):
+        phdl = MagicMock()
+        with patch.object(ibperf_lib, 'fail_test') as fail:
+            self.assertIsNone(ibperf_lib.resolve_gid_index(phdl, {'nodeA': ['nic0']}, 'abc'))
+            fail.assert_called_once()
+        phdl.exec.assert_not_called()
+
     @patch('xlsxwriter.Workbook')
     def test_generate_ibperf_bw_chart(self, mock_workbook_class):
         mock_workbook = MagicMock()

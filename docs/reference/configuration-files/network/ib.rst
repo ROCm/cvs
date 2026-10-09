@@ -111,7 +111,10 @@ Here's an exhaustive list of the available parameters in the IB Perf configurati
      - Test message sizes in bytes
    * - ``gid_index``
      - 3
-     - Global Identifier index for InfiniBand
+     - GID index validated on every NIC before perftest; ``auto`` selects the lowest common RoCE v2 IPv4-mapped index
+   * - ``gid_type``
+     - RoCE v2
+     - Expected sysfs GID type; ``any`` disables type checking, and InfiniBand link layers are exempt
    * - ``port_no``
      - 1516
      - Port number for test communication
@@ -138,7 +141,6 @@ The ``expected_results`` section also contains the ``ib_write_bw`` parameter. It
             "8": "280.0",
             "16": "300.0"
                     }
-
 
 
 

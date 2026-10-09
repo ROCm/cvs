@@ -26,7 +26,10 @@
 
         "_example_gid_index": "3",
         "gid_index": "<changeme>",
-        "_comment_gid_index": "GID index to check on all RDMA interfaces. Typically '3' for RoCE (RDMA over Converged Ethernet). Must be a valid GID index for your InfiniBand/RoCE setup.",
+        "_comment_gid_index": "GID index to check on all RDMA interfaces. On RoCE, choose a RoCE v2 GID, preferably with an IPv4-mapped address.",
+        "_example_gid_type": "RoCE v2",
+        "gid_type": "RoCE v2",
+        "_comment_gid_type": "Expected GID type at gid_index (sysfs gid_attrs/types/<idx>) on every interface. Default 'RoCE v2'. Use 'any' to disable. Not enforced on InfiniBand link layers.",
 
         "_example_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"],
         "interfaces": ["<changeme>"],

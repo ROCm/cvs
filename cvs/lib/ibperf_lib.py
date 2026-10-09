@@ -11,6 +11,18 @@ import time
 import xlsxwriter
 
 from cvs.lib.utils_lib import *
+from cvs.lib.rdma_gid_lib import (
+    DEFAULT_GID_TYPE,
+    GID_OK,
+    build_gid_probe_cmd,
+    build_gid_table_cmd,
+    check_gid_entry,
+    is_auto_gid_index,
+    normalize_gid_index,
+    parse_gid_probe_output,
+    parse_gid_table_output,
+    select_common_gid_index,
+)
 
 log = logging.getLogger(__name__)
 
@@ -177,6 +189,62 @@ def check_perftest_dmabuf_support(shdl, binary_path):
         dmabuf_available = int(dmabuf_check_out[node].strip()) > 0
     log.info("dmabuf available in ibperf build" if dmabuf_available else "dmabuf not available in ibperf build")
     return dmabuf_available
+
+
+def get_ibperf_rdma_devices(gpu_nic_dict, bck_nic_dict, gpu_count=8):
+    """Mirror the NIC selection in the bandwidth and latency perftest runners."""
+    return {
+        node: sorted(
+            {
+                device
+                for gpu in range(gpu_count)
+                if (device := gpu_nic_dict.get(node, {}).get(f'card{gpu}', {}).get('rdma_dev')) is not None
+            }
+        )
+        for node in bck_nic_dict
+    }
+
+
+def resolve_gid_index(phdl, node_dev_dict, gid_index, expected_gid_type=DEFAULT_GID_TYPE):
+    """Select or validate a GID index before launching perftest."""
+    devices = sorted({device for devs in node_dev_dict.values() for device in devs})
+    if is_auto_gid_index(gid_index):
+        output = phdl.exec(build_gid_table_cmd(devices), print_console=False)
+        tables = {node: parse_gid_table_output(output.get(node, '')) for node in node_dev_dict}
+        index, errors = select_common_gid_index(tables, node_dev_dict, expected_gid_type)
+        if errors:
+            for error in errors:
+                fail_test(error)
+            return None
+        log.info(
+            'Auto-selected GID index %s (%s, IPv4-mapped) for %d nodes', index, expected_gid_type, len(node_dev_dict)
+        )
+    else:
+        try:
+            index = normalize_gid_index(gid_index)
+        except ValueError as exc:
+            fail_test(f'ibperf gid_index is invalid: {exc}')
+            return None
+
+    output = phdl.exec(build_gid_probe_cmd(index, devices), print_console=False)
+    failed = False
+    for node, node_devices in node_dev_dict.items():
+        entries = parse_gid_probe_output(output.get(node, ''))
+        for device in node_devices:
+            status, message = check_gid_entry(device, entries.get(device), index, expected_gid_type)
+            if status != GID_OK:
+                fail_test(f'Node {node} NIC {device}: {message}')
+                failed = True
+    if failed:
+        return None
+    log.info(
+        'GID index %s validated as %s on %d NICs across %d nodes',
+        index,
+        expected_gid_type,
+        sum(map(len, node_dev_dict.values())),
+        len(node_dev_dict),
+    )
+    return index
 
 
 def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None):

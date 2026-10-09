@@ -13,6 +13,7 @@ import json
 
 # Import new modular preflight classes
 from cvs.lib.preflight.gid_consistency import GidConsistencyCheck
+from cvs.lib.rdma_gid_lib import DEFAULT_GID_TYPE
 from cvs.lib.preflight.version_check import RocmVersionCheck
 from cvs.lib.preflight.interface_consistency import InterfaceConsistencyCheck
 from cvs.lib.preflight.ifoe_l2_connectivity import IfoeL2ConnectivityCheck
@@ -745,7 +746,7 @@ def test_gid_consistency(orch, config_dict, lifecycle=None):
     """
     Test GID consistency across specified RDMA interfaces in the cluster.
 
-    Verifies that the specified GID index exists and is valid on the
+    Verifies that the specified GID index exists and has the expected type on the
     specified RDMA interfaces across all cluster nodes.
 
     Nodes that fail are removed from ``phdl`` before RDMA connectivity testing.
@@ -762,12 +763,13 @@ def test_gid_consistency(orch, config_dict, lifecycle=None):
         return
 
     gid_index = get_nested_config(config_dict, 'connectivity_check.rdma', 'gid_index', '3')
+    gid_type = get_nested_config(config_dict, 'connectivity_check.rdma', 'gid_type', DEFAULT_GID_TYPE)
     expected_interfaces = get_nested_config(
         config_dict, 'connectivity_check.rdma', 'interfaces', ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
     )
-    log.info(f"Testing GID consistency for index {gid_index} on interfaces: {expected_interfaces}")
+    log.info(f"Testing GID consistency for index {gid_index} (type {gid_type}) on interfaces: {expected_interfaces}")
 
-    gid_checker = GidConsistencyCheck(orch, gid_index, expected_interfaces, config_dict)
+    gid_checker = GidConsistencyCheck(orch, gid_index, expected_interfaces, config_dict, expected_gid_type=gid_type)
     results = gid_checker.run()
     preflight_results['gid_consistency'] = results
 
@@ -792,7 +794,9 @@ def test_gid_consistency(orch, config_dict, lifecycle=None):
     else:
         log.info("GID consistency check: All nodes passed")
 
-    log.info(f"GID consistency results: {ok_interfaces}/{total_interfaces} interfaces have valid GID index {gid_index}")
+    log.info(
+        f"GID consistency results: {ok_interfaces}/{total_interfaces} interfaces have a valid {gid_type} GID at index {gid_index}"
+    )
 
     _prune_nodes_from_phdl(orch.all, failed_nodes, "GID consistency:")
     preflight_update_test_result(results)
