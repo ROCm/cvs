@@ -51,7 +51,12 @@ rccl_err_dict = {
 
 
 class RcclVerifier:
-    """Pass/fail checks on one RCCL result set. Log scan is separate (stdout)."""
+    """Pass/fail checks on one RCCL result set. Log scan is separate (stdout).
+
+    expected is None when nothing is configured and {} when the collective has no published threshold.
+    """
+
+    DEFAULT_BUS_BW_TOLERANCE = 0.95
 
     def __init__(self, test_name, results, expected=None, cvs_params=None, resolver_failed=False):
         self.test_name = test_name
@@ -80,28 +85,49 @@ class RcclVerifier:
         if not re.search(r'#\sAvg bus bandwidth', output):
             fail_test('RCCL test did not complete successfully, no bandwidth numbers printed - pls check')
 
+    def bus_bw_tolerance(self):
+        """Fraction of the reference bus BW a measurement must reach (cvs_params.bus_bw_tolerance, default 0.95)."""
+        value = self.cvs_params.get('bus_bw_tolerance', self.DEFAULT_BUS_BW_TOLERANCE)
+        try:
+            tolerance = float(value)
+        except (TypeError, ValueError):
+            tolerance = None
+        # NaN fails both comparisons, so it is rejected here as well.
+        if tolerance is None or not 0 < tolerance <= 1:
+            fail_test(f'Invalid rccl.cvs_params.bus_bw_tolerance {value!r}; expected a fraction in (0, 1], e.g. "0.95"')
+            return None
+        return tolerance
+
     def check_bus_bw(self):
+        tolerance = self.bus_bw_tolerance()
+        if tolerance is None:
+            return
         test_name = self.test_name
         expected = self.expected
         log.info(f'exp_res_dict = {expected}')
-        tolerance = 0.95
-        msg_size_list = list(expected.keys())
         log.info("%s", test_name)
         in_place = 0 if re.search('alltoall|all_to_all', test_name, re.I) else 1
         place_label = 'out-of-place' if in_place == 0 else 'in-place'
-        for act_dict in self.results:
-            if act_dict['inPlace'] != in_place:
+        for msg_size, reference in expected.items():
+            rows = [
+                act_dict
+                for act_dict in self.results
+                if act_dict['inPlace'] == in_place and str(act_dict['size']) == str(msg_size)
+            ]
+            if not rows:
+                fail_test(
+                    f'No {place_label} result for {test_name} at configured msg size {msg_size}; '
+                    'check that start_msg_size/end_msg_size cover every size in rccl.results'
+                )
                 continue
-            for msg_size in msg_size_list:
-                if str(msg_size) != str(act_dict['size']):
-                    continue
-                expected_bw = float(expected[msg_size]['bus_bw'])
+            expected_bw = float(reference['bus_bw'])
+            threshold = expected_bw * tolerance
+            for act_dict in rows:
                 actual_bw = float(act_dict['busBw'])
-                threshold = expected_bw * tolerance
                 log.info(f"Comparing: actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}")
                 if actual_bw < threshold:
                     fail_test(
-                        f"The actual {place_label} bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})"
+                        f"The actual {place_label} bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with {(1 - tolerance) * 100:g}% tolerance: {threshold:.2f})"
                     )
 
     def check_bw_dip(self):
@@ -169,6 +195,8 @@ class RcclVerifier:
         if re.search('True', self.cvs_params.get('verify_bus_bw', 'False'), re.I):
             if self.expected:
                 self.check_bus_bw()
+            elif self.expected is not None:
+                log.warning(f'No published threshold for {self.test_name}; bus_bw not gated')
             elif not self.resolver_failed:
                 fail_test(f'No bus bandwidth thresholds for {self.test_name} in rccl.results.{self.test_name}')
         if re.search('True', self.cvs_params.get('verify_bw_dip', 'False'), re.I):
@@ -1093,7 +1121,7 @@ class RcclJob:
         return results
 
     def _expected_results(self, data_types):
-        """Resolve NIC/rank references or normalize legacy collective thresholds."""
+        """Resolve NIC/rank references, falling back to flat thresholds; {} means no published threshold, None means none configured."""
         if not isinstance(self.expected_results, dict):
             fail_test('Invalid rccl.results; expected a dictionary of collectives')
             return None
@@ -1113,16 +1141,24 @@ class RcclJob:
         nic_results = self.expected_results.get(nic_type, {})
         if isinstance(nic_results, dict) and result_key in nic_results:
             log.info(f'Found expected results: {nic_type}/{result_key}')
-            return nic_results[result_key]
-        test_results = self.expected_results.get(self.test_name)
-        if not test_results:
+            return self._normalize_thresholds(nic_results[result_key], f'rccl.results.{nic_type}.{result_key}')
+        if self.test_name not in self.expected_results:
             return None
-        if not isinstance(test_results, dict):
-            fail_test(f'Invalid rccl.results.{self.test_name}; expected a dictionary of message sizes')
+        return self._normalize_thresholds(self.expected_results[self.test_name], f'rccl.results.{self.test_name}')
+
+    @staticmethod
+    def _normalize_thresholds(entry, path):
+        """Return {str(size): {'bus_bw': float}}, {} for a null entry, or None."""
+        if entry is None:
+            return {}
+        if not entry:
             return None
-        thresholds = test_results.get('bus_bw', test_results)
+        if not isinstance(entry, dict):
+            fail_test(f'Invalid {path}; expected a dictionary of message sizes')
+            return None
+        thresholds = entry.get('bus_bw', entry)
         if not isinstance(thresholds, dict):
-            fail_test(f'Invalid rccl.results.{self.test_name}.bus_bw; expected a dictionary of message sizes')
+            fail_test(f'Invalid {path}.bus_bw; expected a dictionary of message sizes')
             return None
         expected = {}
         for size, value in thresholds.items():
@@ -1130,8 +1166,7 @@ class RcclJob:
                 bandwidth = value['bus_bw'] if isinstance(value, dict) else value
                 expected[str(size)] = {'bus_bw': float(bandwidth)}
             except (KeyError, TypeError, ValueError) as error:
-                fail_test(f'Invalid bus bandwidth threshold in rccl.results.{self.test_name}.{size}: {error}')
-                continue
+                fail_test(f'Invalid bus bandwidth threshold in {path}.{size}: {error}')
         return expected or None
 
     def _verify_results(self, results, expected, resolver_failed=False):

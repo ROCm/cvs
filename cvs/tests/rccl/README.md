@@ -153,9 +153,9 @@ For thresholds that depend on NIC, data types, and MPI rank count, use this form
 "results": {
   "thor": {
     "all_reduce_perf-float-16": {
-      "8589934592": {"bus_bw": "<changeme>"},
-      "17179869184": {"bus_bw": "<changeme>"}
-    }
+      "8589934592": {"bus_bw": "<changeme>"}
+    },
+    "all_gather_perf-float-16": null
   }
 }
 ```
@@ -172,9 +172,9 @@ Both suites also accept the shipped legacy flat format:
 }
 ```
 
-A matching NIC/rank reference takes precedence over a flat reference. Flat references apply regardless of data type or rank count, so calibrate them for every topology you test. The sample numbers are examples for two nodes, not qualification targets for other clusters. Pairwise/incremental sub-runs drop flat references entirely, since a threshold calibrated for the full cluster does not apply at pairwise node counts; only NIC/rank-keyed references, already scoped by rank count, are honored there.
+A matching NIC/rank reference takes precedence over a flat reference. Flat references apply regardless of data type or rank count, so calibrate them for every topology you test. The shipped `results.thor.all_reduce_perf-float-16` is the published scale-out bar for MI350X/MI355X (2–16 nodes): at least 350 GB/s at 8589934592 bytes. The sample sets `bus_bw_tolerance` to `"1.0"`, enforcing this bar exactly. MI300X clusters must change the entry to 304. The guide lists both 304 and 350 for MI355X; the correct bar is still open. Its "8 GB" size is interpreted here as 8 GiB (8589934592 bytes), which is also open. The other eight collectives have no published bar, so their entries are `null`. The flat table contains generic two-node examples, which are also compared without slack at the sample tolerance of 1.0. For other node counts or NICs, copy the entry to `results.<nic>.all_reduce_perf-float-<ranks>`. Other thor platforms running 16 ranks, such as 4 nodes × 4 GPUs, pick up the shipped entry and must override it. Pairwise/incremental sub-runs drop flat references entirely, since a threshold calibrated for the full cluster does not apply at pairwise node counts; only NIC/rank-keyed references, already scoped by rank count, are honored there. With `verify_bus_bw` on, 2-node pairs at 8 ranks per node are gated by the `-16` entry.
 
-Set `cvs_params.verify_bus_bw` to `"True"` to enforce bandwidth thresholds. Measurements below 95% of the configured reference fail, and a missing threshold for a requested collective also fails. Dip checks stay off unless `verify_bw_dip` or `verify_lat_dip` is `"True"`; either flag uses the resolved reference message sizes. With no matching reference, these checks have no reference data to validate.
+Set `cvs_params.verify_bus_bw` to `"True"` to enforce bandwidth thresholds. A measurement fails below `bus_bw × cvs_params.bus_bw_tolerance`. The tolerance defaults to 0.95 when absent, must be a fraction in (0, 1], and an invalid value fails the test. The guide-backed sample config uses 1.0. A configured size with no matching in-place row (out-of-place for alltoall/alltoallv) fails, so `start_msg_size` and `end_msg_size` must cover every configured size. A collective with no entry fails. A `null` entry logs `No published threshold for <collective>; bus_bw not gated` and is not gated. Invalid entries fail with the full `rccl.results.<nic>.<key>.<size>` path. `verify_bus_bw` is off in the sample because other NICs and rank counts fall back to flat examples, MI300X needs 304, and regression and pairwise reuse these entries. Enable it after checking the results for your GPU, NIC, and rank count. Dip checks stay off unless `verify_bw_dip` or `verify_lat_dip` is `"True"`; either flag uses the resolved reference message sizes. With no matching reference, these checks have no reference data to validate.
 
 ### Regression combinations
 
