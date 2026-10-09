@@ -1196,6 +1196,8 @@ LEGACY_PREFLIGHT_RDMA_PATHS = {
 }
 
 PREFLIGHT_METADATA_PREFIXES = ("_comment", "_example")
+# IB verbs MTU enum values (ibv_mtu), plus 0 to disable the active MTU threshold.
+VALID_RDMA_ACTIVE_MTUS = (0, 256, 512, 1024, 2048, 4096)
 
 
 def strip_preflight_metadata(value):
@@ -1458,8 +1460,8 @@ class PreflightRdmaConfig(BaseModel):
     @field_validator('min_active_mtu')
     @classmethod
     def validate_min_active_mtu(cls, v: int) -> int:
-        if v not in (0, 256, 512, 1024, 2048, 4096):
-            raise ValueError("min_active_mtu must be one of 0, 256, 512, 1024, 2048, 4096")
+        if v not in VALID_RDMA_ACTIVE_MTUS:
+            raise ValueError(f"min_active_mtu must be one of {', '.join(map(str, VALID_RDMA_ACTIVE_MTUS))}")
         return v
 
     @field_validator('ibv_test_port_range')
