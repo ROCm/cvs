@@ -30,8 +30,8 @@ def scope_vllm_cluster(mode, cluster):
 
     ``vllm_single`` is intentionally first-host-only. For mapping-style
     ``node_dict``, "first" means JSON insertion order; the scoped head is
-    rewritten to that host. Distributed runs retain the complete cluster; a
-    one-host cluster then resolves to the ``vllm_single`` topology.
+    rewritten to that host. Distributed runs retain the complete cluster and
+    use their normal single-host fallback when needed.
     """
     if mode != "single":
         return cluster
@@ -58,14 +58,14 @@ def resolve_vllm_topology(mode, variant, hosts) -> EffectiveVllmTopology:
     if not hosts:
         raise ValueError("vLLM requires at least one orchestrator host")
 
-    if mode == "distributed" and len(hosts) == 1:
-        mode = "single"
     if mode == "single":
         if len(hosts) != 1:
             raise ValueError("vllm_single orchestrator must be scoped to its first host")
         return EffectiveVllmTopology("single", hosts, variant.server_params.pipeline_parallel_size)
     if mode != "distributed":
         raise ValueError(f"unknown vLLM mode: {mode!r}")
+    if len(hosts) == 1:
+        return EffectiveVllmTopology("single", hosts, variant.server_params.pipeline_parallel_size)
 
     is_ray = variant.server_params.distributed_executor_backend == "ray"
     effective_pp = variant.server_params.pipeline_parallel_size

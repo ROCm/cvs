@@ -52,9 +52,6 @@ Round-4 coverage-gap additions (impl-blind against the same spec):
   R4.2 ray server_signature invariant to nnodes (2 vs 3) .... TestServerSignatureRay
   R4.3 cell_key pp>1 branch (PP= segment) + pp==1, subTest ... TestCellKeyRayMultiNode
   R4.4 generic option list serialization .................... TestServeOptionListSerialization
-
-One-host pipeline parallelism:
-  single-node pp>1 passes --pipeline-parallel-size ......... TestServerArgvRayVsMp
 '''
 
 import unittest

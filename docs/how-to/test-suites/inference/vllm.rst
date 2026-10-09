@@ -6,7 +6,7 @@
 Run vLLM LLM inference tests with CVS
 ***************************************
 
-The vLLM suites measure LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file; when only one host is present, it runs the same single-host path as ``vllm_single``. Packaged distributed recipes and thresholds are calibrated for two hosts; retune them before treating other sizes as pass/fail.
+The vLLM suites measure LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file, with one-host fallback when only a single host is present. Packaged distributed recipes and thresholds are calibrated for two hosts; retune them before treating other sizes as pass/fail.
 
 For a mapping-style ``node_dict``, "first cluster host" is the first JSON key
 in insertion order. ``vllm_single`` rewrites ``head_node_dict.mgmt_ip`` to that
@@ -146,7 +146,7 @@ A skipped ``test_setup_sshd`` row is expected. vLLM communicates over the host n
 Going multinode
 ===============
 
-The cluster file determines the host count: ``vllm_distributed`` forms one service from every listed host, or runs the ``vllm_single`` path when only one host is present. For distributed runs, configure ``server_params.pipeline_parallel_size`` to match the intended layout and set the HCA, socket-interface, and GID settings under ``container.env``. CVS derives the rendezvous address from the cluster head. Packaged configs use two hosts and ``pipeline_parallel_size`` of 2.
+The cluster file determines the host count: ``vllm_distributed`` forms one service from every listed host, or falls back to a single-node run when only one host is present. For distributed runs, configure ``server_params.pipeline_parallel_size`` to match the intended layout and set the HCA, socket-interface, and GID settings under ``container.env``. CVS derives the rendezvous address from the cluster head. Packaged configs use two hosts and ``pipeline_parallel_size`` of 2.
 
 Using the default backend (mp)
 ------------------------------
