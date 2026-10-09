@@ -25,12 +25,12 @@ The following sample shows the ``ibperf_config.json`` structure:
           "install_dir": "/home/{user-id}/",
           "rocm_dir": "<changeme>",
           "qp_count_list": [ "8", "16" ],
-          "ib_bw_test_list": [ "ib_write_bw", "ib_send_bw"],
-          "ib_lat_test_list": [ "ib_write_lat", "ib_send_lat", "ib_read_lat" ],
+          "ib_bw_test_list": [ "ib_write_bw", "ib_read_bw", "ib_send_bw" ],
+          "ib_lat_test_list": [ "ib_write_lat", "ib_send_lat" ],
           "msg_size_list": [ 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536 ],
           "gid_index": "3",
           "port_no": "1516",
-          "duration": "30",
+          "duration": "10",
           "verify_bw": "True",
           "expected_results":
           {
@@ -81,15 +81,15 @@ Here's an exhaustive list of the available parameters in the IB Perf configurati
      - Queue Pair counts to test
    * - ``ib_bw_test_list``
      - Values:
-        - ``ib_write_bw`` 
+        - ``ib_write_bw``
+        - ``ib_read_bw``
         - ``ib_send_bw``
-     - IB bandwidth tests
+     - Not read by the suite. ``test_ib_bw_perf`` always runs ``ib_write_bw``, ``ib_read_bw``, and ``ib_send_bw``; editing this list has no effect.
    * - ``ib_lat_test_list``
      - Values:
-        - ``ib_write_lat`` 
-        - ``ib_send_lat`` 
-        - ``ib_read_lat``
-     - IB latency tests
+        - ``ib_write_lat``
+        - ``ib_send_lat``
+     - Not read by the suite. ``test_ib_lat_perf`` always runs ``ib_write_lat`` and ``ib_send_lat``; editing this list has no effect.
    * - ``msg_size_list``
      - Values:
         - 2 
@@ -116,8 +116,8 @@ Here's an exhaustive list of the available parameters in the IB Perf configurati
      - 1516
      - Port number for test communication
    * - ``duration``
-     - 30
-     - Test duration in seconds
+     - 10
+     - Run time in seconds of each bandwidth test (perftest ``-D``). Latency tests ignore it. Keep it at 10 or less: the suite reads bandwidth results about 20 seconds after starting perftest, so longer runs are reported as failures.
    * - ``verify_bw``
      - True
      - Bandwidth verification 
