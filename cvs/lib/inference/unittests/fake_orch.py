@@ -9,7 +9,7 @@ copying the class into each test module.
 
 ``exec`` returns ``exec_return`` unless a ``responder(cmd, hosts, **kwargs)`` is
 given, which then answers every ``exec`` call; use it for jobs whose commands
-need different answers. Each call's keyword arguments are kept in ``exec_kwargs``.
+need different answers.
 '''
 
 
@@ -20,12 +20,10 @@ class FakeOrch:
         self.exec_on_head_return = exec_on_head_return if exec_on_head_return is not None else self.exec_return
         self.responder = responder
         self.commands = []
-        self.exec_kwargs = []
         self.exec_on_head_commands = []
 
     def exec(self, cmd, hosts=None, **kwargs):
         self.commands.append((cmd, hosts))
-        self.exec_kwargs.append(kwargs)
         if self.responder is not None:
             return self.responder(cmd, hosts, **kwargs)
         return self.exec_return
