@@ -179,6 +179,68 @@ def check_perftest_dmabuf_support(shdl, binary_path):
     return dmabuf_available
 
 
+def get_perftest_configure_cmd(install_dir, rocm_path, rocm_dmabuf=True):
+    """
+    Build the shell command that configures a perftest source checkout for ROCm.
+
+    Args:
+        install_dir (str): Directory containing the perftest checkout; also used as
+                           the base of the --prefix.
+        rocm_path (str): ROCm installation path passed to --with-rocm.
+        rocm_dmabuf (bool): Append --enable-rocm-dmabuf so perftest builds the
+                            --use_rocm_dmabuf option.
+
+    Returns:
+        str: Command to run on the build node.
+    """
+    cmd = (
+        f'cd {install_dir}/perftest; ./configure --prefix={install_dir}/perftest --with-rocm={rocm_path} --enable-rocm'
+    )
+    if rocm_dmabuf:
+        cmd += ' --enable-rocm-dmabuf'
+    return cmd
+
+
+def configure_perftest(shdl, install_dir, rocm_path):
+    """
+    Configure perftest with ROCm DMA-BUF support, falling back to a ROCm-only
+    configure when the DMA-BUF configure fails (e.g. a ROCm without
+    hsa_amd_portable_export_dmabuf).
+
+    Args:
+        shdl: Pssh handle for the build (head) node.
+        install_dir (str): Directory containing the perftest checkout.
+        rocm_path (str): ROCm installation path.
+
+    Returns:
+        bool: True if the DMA-BUF configure succeeded, False if it fell back.
+    """
+    cmd = get_perftest_configure_cmd(install_dir, rocm_path, rocm_dmabuf=True)
+    log.info('Configuring perftest: %s', cmd)
+    out_dict = shdl.exec(cmd, timeout=200, print_console=False, detailed=True)
+    failed = [node for node, res in out_dict.items() if res.get('exit_code') != 0]
+    if not failed:
+        log.info('perftest configured with ROCm DMA-BUF support')
+        return True
+
+    log.warning(
+        'perftest configure with --enable-rocm-dmabuf failed on %s; retrying without ROCm DMA-BUF',
+        ', '.join(failed),
+    )
+    for node in failed:
+        tail = ' | '.join(out_dict[node].get('output', '').splitlines()[-5:])
+        log.debug('%s configure output: %s', node, tail)
+
+    cmd = get_perftest_configure_cmd(install_dir, rocm_path, rocm_dmabuf=False)
+    log.info('Configuring perftest: %s', cmd)
+    out_dict = shdl.exec(cmd, timeout=200, print_console=False, detailed=True)
+    for node, res in out_dict.items():
+        if res.get('exit_code') != 0:
+            tail = ' | '.join(res.get('output', '').splitlines()[-5:])
+            fail_test(f'perftest configure failed on node {node}: {tail}')
+    return False
+
+
 def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None):
     res_dict = {}
 

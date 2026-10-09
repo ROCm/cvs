@@ -2,6 +2,7 @@
 import unittest
 from unittest.mock import patch, MagicMock
 import cvs.lib.ibperf_lib as ibperf_lib
+from cvs.lib import globals
 
 
 class TestIbperfLib(unittest.TestCase):
@@ -47,6 +48,90 @@ class TestIbperfLib(unittest.TestCase):
         ibperf_lib.generate_ibperf_lat_chart(res_dict, 'test.xlsx')
         self.assertTrue(mock_workbook.add_worksheet.called)
         self.assertTrue(mock_workbook.close.called)
+
+
+class TestGetPerftestConfigureCmd(unittest.TestCase):
+    def test_includes_rocm_dmabuf_by_default(self):
+        self.assertEqual(
+            ibperf_lib.get_perftest_configure_cmd('/opt/ibperf', '/opt/rocm'),
+            'cd /opt/ibperf/perftest; ./configure --prefix=/opt/ibperf/perftest '
+            '--with-rocm=/opt/rocm --enable-rocm --enable-rocm-dmabuf',
+        )
+
+    def test_omits_rocm_dmabuf_when_disabled(self):
+        cmd = ibperf_lib.get_perftest_configure_cmd('/opt/ibperf', '/opt/rocm', rocm_dmabuf=False)
+        self.assertEqual(
+            cmd,
+            'cd /opt/ibperf/perftest; ./configure --prefix=/opt/ibperf/perftest --with-rocm=/opt/rocm --enable-rocm',
+        )
+        self.assertNotIn('dmabuf', cmd)
+
+
+class TestConfigurePerftest(unittest.TestCase):
+    def setUp(self):
+        globals.error_list = []
+
+    def test_dmabuf_configure_succeeds(self):
+        shdl = MagicMock()
+        shdl.exec.return_value = {'node1': {'output': 'ok', 'exit_code': 0}}
+
+        result = ibperf_lib.configure_perftest(shdl, '/opt/ibperf', '/opt/rocm')
+
+        self.assertTrue(result)
+        shdl.exec.assert_called_once()
+        self.assertEqual(
+            shdl.exec.call_args.args[0],
+            ibperf_lib.get_perftest_configure_cmd('/opt/ibperf', '/opt/rocm', rocm_dmabuf=True),
+        )
+        self.assertEqual(shdl.exec.call_args.kwargs['timeout'], 200)
+        self.assertTrue(shdl.exec.call_args.kwargs['detailed'])
+        self.assertEqual(globals.error_list, [])
+
+    def test_falls_back_when_dmabuf_configure_fails(self):
+        shdl = MagicMock()
+        shdl.exec.side_effect = [
+            {'node1': {'output': 'configure: error: hsa_amd_portable_export_dmabuf not found', 'exit_code': 1}},
+            {'node1': {'output': 'ok', 'exit_code': 0}},
+        ]
+
+        with self.assertLogs(ibperf_lib.log, level='WARNING'):
+            result = ibperf_lib.configure_perftest(shdl, '/opt/ibperf', '/opt/rocm')
+
+        self.assertFalse(result)
+        self.assertEqual(shdl.exec.call_count, 2)
+        fallback_cmd = shdl.exec.call_args_list[1].args[0]
+        self.assertNotIn('--enable-rocm-dmabuf', fallback_cmd)
+        self.assertEqual(
+            fallback_cmd,
+            ibperf_lib.get_perftest_configure_cmd('/opt/ibperf', '/opt/rocm', rocm_dmabuf=False),
+        )
+        self.assertEqual(globals.error_list, [])
+
+    def test_records_failure_when_fallback_also_fails(self):
+        shdl = MagicMock()
+        failure = {
+            'node1': {'output': 'line1\nline2\nconfigure: error: cannot include hip/hip_runtime_api.h', 'exit_code': 1}
+        }
+        shdl.exec.side_effect = [failure, failure]
+
+        result = ibperf_lib.configure_perftest(shdl, '/opt/ibperf', '/opt/rocm')
+
+        self.assertFalse(result)
+        self.assertEqual(len(globals.error_list), 1)
+        self.assertIn('node1', globals.error_list[0])
+        self.assertIn('hip_runtime_api.h', globals.error_list[0])
+
+    def test_aborted_exec_treated_as_failure(self):
+        shdl = MagicMock()
+        shdl.exec.side_effect = [
+            {'node1': {'output': '', 'exit_code': -1}},
+            {'node1': {'output': 'ok', 'exit_code': 0}},
+        ]
+
+        result = ibperf_lib.configure_perftest(shdl, '/opt/ibperf', '/opt/rocm')
+
+        self.assertFalse(result)
+        self.assertNotIn('--enable-rocm-dmabuf', shdl.exec.call_args_list[1].args[0])
 
 
 class TestRunIbPerfLatTest(unittest.TestCase):
