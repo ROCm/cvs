@@ -15,6 +15,7 @@ attached when the payload carries them, including values stored on the Tier 1
 per-GPU details rather than under tier2.
 '''
 
+from cvs.lib.preflight.mtu_check import INFINIBAND, transport_label
 from cvs.lib.preflight.node_smoke_rows import (
     build_tier1_metric_rows,
     build_tier2_metric_rows,
@@ -459,8 +460,13 @@ def _mtu_records(results, nodes):
 
     def _summary(entry):
         interfaces = entry.get('interfaces') or {}
+        transports = sorted({transport_label(iface.get('link_layer')) for iface in interfaces.values()} - {''})
         netdev_mtus = sorted(
-            {iface['netdev_mtu'] for iface in interfaces.values() if iface.get('netdev_mtu') is not None}
+            {
+                iface['netdev_mtu']
+                for iface in interfaces.values()
+                if iface.get('netdev_mtu') is not None and transport_label(iface.get('link_layer')) != INFINIBAND
+            }
         )
         active_mtus = sorted(
             {iface['active_mtu'] for iface in interfaces.values() if iface.get('active_mtu') is not None}
@@ -471,7 +477,8 @@ def _mtu_records(results, nodes):
         if active_mtus:
             measured.append(f"active MTU {', '.join(map(str, active_mtus))}")
         if measured:
-            return ', '.join(measured)
+            prefix = f"{'/'.join(transports)}: " if transports else ''
+            return prefix + ', '.join(measured)
         errors = entry.get('errors') or []
         return errors[0] if errors else ''
 

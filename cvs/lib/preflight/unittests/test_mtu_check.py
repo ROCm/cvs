@@ -11,16 +11,21 @@ from cvs.parsers.schemas import PreflightConfigFile
 from cvs.tests.preflight import preflight_checks
 
 
-def _probe(dev, netdev='eth0', netdev_mtu='9000', active='4096', max_mtu='4096'):
+def _probe(dev, netdev='eth0', netdev_mtu='9000', active='4096', max_mtu='4096', link_layer='Ethernet'):
     return '\n'.join(
         (
             f'DEVICE:{dev}',
             f'NETDEV:{netdev}',
             f'NETDEV_MTU:{netdev_mtu}',
+            f'LINK_LAYER:{link_layer}',
             f'ACTIVE_MTU:{active}',
             f'MAX_MTU:{max_mtu}',
         )
     )
+
+
+def _ib_probe(dev, netdev='', netdev_mtu='', active='4096'):
+    return _probe(dev, netdev=netdev, netdev_mtu=netdev_mtu, active=active, link_layer='InfiniBand')
 
 
 class TestBuildProbeCommand(unittest.TestCase):
@@ -33,6 +38,8 @@ class TestBuildProbeCommand(unittest.TestCase):
         self.assertIn('rdma link show "$dev/1"', command)
         self.assertIn('gid_attrs/ndevs/7', command)
         self.assertIn('{print $2; exit}', command)
+        self.assertIn('/link_layer:/', command)
+        self.assertIn('/sys/class/infiniband/$dev/ports/1/link_layer', command)
 
         quoted = RdmaMtuCheck(MagicMock(), ['rdma0'], gid_index='$(unsafe)')._build_mtu_probe_command()
         self.assertIn("gid_attrs/ndevs/\"'$(unsafe)'", quoted)
@@ -95,6 +102,51 @@ class TestEvaluateNode(unittest.TestCase):
         netdev_disabled = RdmaMtuCheck(MagicMock(), ['rdma0'], min_netdev_mtu=0)
         self.assertEqual(active_disabled._evaluate_node('n1', _probe('rdma0', active='1024'))['status'], 'PASS')
         self.assertEqual(netdev_disabled._evaluate_node('n1', _probe('rdma0', netdev_mtu='1500'))['status'], 'PASS')
+
+    def test_link_layer_is_recorded(self):
+        result = self.checker._evaluate_node('n1', _probe('rdma0'))
+        self.assertEqual(result['interfaces']['rdma0']['link_layer'], 'Ethernet')
+
+    def test_roce_low_netdev_mtu_still_fails_as_jumbo(self):
+        result = self.checker._evaluate_node('n1', _probe('rdma0', netdev_mtu='1500', active='1024'))
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertIn('jumbo frames not enabled', result['errors'][0])
+        self.assertIn('RoCE active_mtu 1024 < 4096', result['errors'][1])
+
+    def test_roce_missing_netdev_still_fails(self):
+        result = self.checker._evaluate_node('n1', _probe('rdma0', netdev='', netdev_mtu=''))
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertIn('Could not determine netdev MTU', result['errors'][0])
+
+    def test_unknown_link_layer_keeps_netdev_threshold(self):
+        result = self.checker._evaluate_node('n1', _probe('rdma0', netdev_mtu='1500', link_layer=''))
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertIn('jumbo frames not enabled', result['errors'][0])
+
+    def test_infiniband_without_netdev_passes_on_active_mtu(self):
+        result = self.checker._evaluate_node('n1', _ib_probe('rdma0'))
+        self.assertEqual(result['status'], 'PASS')
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['interfaces']['rdma0']['link_layer'], 'InfiniBand')
+        self.assertIsNone(result['interfaces']['rdma0']['netdev_mtu'])
+
+    def test_infiniband_ipoib_mtu_is_not_a_jumbo_frame_failure(self):
+        result = self.checker._evaluate_node('n1', _ib_probe('rdma0', netdev='ib0', netdev_mtu='2044'))
+        self.assertEqual(result['status'], 'PASS')
+        self.assertEqual(result['interfaces']['rdma0']['netdev_mtu'], 2044)
+
+    def test_infiniband_low_active_mtu_fails_without_netdev_detail(self):
+        result = self.checker._evaluate_node('n1', _ib_probe('rdma0', netdev='ib0', netdev_mtu='2044', active='2048'))
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertEqual(len(result['errors']), 1)
+        self.assertIn('InfiniBand active_mtu 2048 < 4096', result['errors'][0])
+        self.assertNotIn('jumbo', result['errors'][0])
+        self.assertNotIn('netdev', result['errors'][0])
+
+    def test_infiniband_missing_active_mtu_still_fails(self):
+        result = self.checker._evaluate_node('n1', _ib_probe('rdma0', active=''))
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertIn('ibv_devinfo', result['errors'][0])
 
     def test_absent_expected_interface_fails(self):
         result = self.checker._evaluate_node('n1', _probe('other'))
@@ -166,18 +218,19 @@ class TestRdmaMtuReport(unittest.TestCase):
         )
         self.assertEqual(
             self.report._summarize_rdma_mtu_results({'n1': no_netdev})['summary'],
-            '0/1 interfaces meet MTU minimums; active MTU(s) 4096',
+            '0/1 interfaces meet MTU minimums (1 RoCE); active MTU(s) 4096',
         )
         self.assertEqual(
             self.report._summarize_rdma_mtu_results({'n1': self.good})['summary'],
-            '1/1 interfaces meet MTU minimums; netdev MTU(s) 9000, active MTU(s) 4096',
+            '1/1 interfaces meet MTU minimums (1 RoCE); netdev MTU(s) 9000, active MTU(s) 4096',
         )
 
     def test_failure_html_escapes_values(self):
         self.assertEqual(self.report._generate_rdma_mtu_html({'n1': self.good}), '')
         self.assertEqual(self.report._generate_rdma_mtu_html({'status': 'SKIPPED', 'skipped': True}), '')
         section = self.report._generate_rdma_mtu_html({'n<2': self.bad})
-        self.assertIn('RDMA MTU (Jumbo Frames) Issues', section)
+        self.assertIn('RDMA MTU Issues', section)
+        self.assertIn('<td>RoCE</td>', section)
         self.assertIn('n&lt;2', section)
         self.assertIn('1500', section)
         self.assertNotIn('n<2', section)
@@ -188,6 +241,37 @@ class TestRdmaMtuReport(unittest.TestCase):
         self.assertEqual(summary['checks']['rdma_mtu']['status'], 'FAIL')
         self.assertEqual(summary['overall_status'], 'FAIL')
         self.assertTrue(any('jumbo' in recommendation for recommendation in summary['recommendations']))
+        self.assertFalse(any('InfiniBand' in recommendation for recommendation in summary['recommendations']))
+
+    def test_infiniband_summary_names_transport_and_skips_ipoib_mtu(self):
+        checker = RdmaMtuCheck(MagicMock(), ['mlx5_0', 'mlx5_1'])
+        node = checker._evaluate_node(
+            'n1', _ib_probe('mlx5_0') + '\n' + _ib_probe('mlx5_1', netdev='ib0', netdev_mtu='2044')
+        )
+        summary = self.report._summarize_rdma_mtu_results({'n1': node})
+        self.assertEqual(summary['status'], 'PASS')
+        self.assertEqual(summary['summary'], '2/2 interfaces meet MTU minimums (2 InfiniBand); active MTU(s) 4096')
+        self.assertEqual(summary['netdev_mtus'], [])
+
+    def test_mixed_summary_counts_each_transport(self):
+        checker = RdmaMtuCheck(MagicMock(), ['mlx5_0', 'rdma0'])
+        node = checker._evaluate_node('n1', _ib_probe('mlx5_0') + '\n' + _probe('rdma0'))
+        summary = self.report._summarize_rdma_mtu_results({'n1': node})
+        self.assertEqual(
+            summary['summary'],
+            '2/2 interfaces meet MTU minimums (1 InfiniBand, 1 RoCE); netdev MTU(s) 9000, active MTU(s) 4096',
+        )
+
+    def test_infiniband_failure_recommends_port_mtu_not_jumbo_frames(self):
+        bad_ib = RdmaMtuCheck(MagicMock(), ['mlx5_0'])._evaluate_node('n1', _ib_probe('mlx5_0', active='2048'))
+        self.report.results = {'rdma_mtu': {'n1': bad_ib}}
+        summary = self.report._generate_preflight_summary()
+        self.assertEqual(summary['checks']['rdma_mtu']['status'], 'FAIL')
+        recommendations = [r for r in summary['recommendations'] if 'MTU' in r]
+        self.assertEqual(len(recommendations), 1)
+        self.assertIn('InfiniBand', recommendations[0])
+        self.assertNotIn('jumbo', recommendations[0])
+        self.assertIn('<td>InfiniBand</td>', self.report._generate_rdma_mtu_html({'n1': bad_ib}))
 
 
 class TestRdmaMtuPreflightStep(unittest.TestCase):
