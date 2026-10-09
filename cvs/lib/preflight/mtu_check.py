@@ -11,7 +11,6 @@ from cvs.lib.preflight.base import PreflightCheck
 
 DEFAULT_MIN_NETDEV_MTU = 4200
 DEFAULT_MIN_ACTIVE_MTU = 4096
-VALID_ACTIVE_MTUS = (0, 256, 512, 1024, 2048, 4096)
 
 
 INFINIBAND = 'InfiniBand'
