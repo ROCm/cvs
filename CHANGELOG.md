@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ibperf bandwidth/latency tests support vPOD-aware node pairing: `ibperf.pairing_mode` = `sequential` (default, unchanged), `inter_vpod`, or `intra_vpod`, with vPODs read from AFM (`afmctl show device --json`) or from `node_dict[<node>].vpod_id` (`ibperf.vpod_source`).
+
 ### Changed
 
 - RCCL perf, regression, and pairwise suites use the orchestrator for workload execution, including container-aware launches and cleanup. `RcclJob` and `RcclJob.from_config` now take one `orch` argument in place of the previous two execution handles; `OpenMPI.prepare`, `MpiRun`, and `Srun` callers must also migrate.

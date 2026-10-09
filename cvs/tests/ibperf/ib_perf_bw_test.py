@@ -125,9 +125,21 @@ def config_dict(config_file, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def phdl(cluster_dict):
+def node_pairing(cluster_dict, config_dict):
+    """Resolve server/client pairs before creating the benchmark handle."""
+    node_list = list(cluster_dict['node_dict'].keys())
+    env_vars = cluster_dict.get('env_vars')
+
+    def make_phdl(nodes):
+        return Pssh(log, nodes, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
+
+    return ibperf_lib.resolve_ibperf_node_pairing(node_list, config_dict, cluster_dict, phdl_factory=make_phdl)
+
+
+@pytest.fixture(scope="module")
+def phdl(cluster_dict, node_pairing):
     """
-    Build and return a parallel SSH handle (Pssh) for all cluster nodes.
+    Build and return a parallel SSH handle (Pssh) for paired cluster nodes.
 
     Args:
       cluster_dict (dict): Cluster metadata fixture containing:
@@ -136,7 +148,7 @@ def phdl(cluster_dict):
         - priv_key_file: path to SSH private key
 
     Returns:
-      Pssh: Handle configured for all nodes (for broadcast/parallel operations).
+      Pssh: Handle configured for paired nodes (for broadcast/parallel operations).
 
     Notes:
       - Prints the cluster_dict for quick debugging; consider replacing with log.debug.
@@ -145,20 +157,10 @@ def phdl(cluster_dict):
       - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
     """
     env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
+    node_list = [node for pair in node_pairing['pairs'] for node in pair]
     log.info('Connecting to %d cluster nodes via parallel SSH', len(node_list))
     log.debug('Cluster nodes: %s', node_list)
 
-    if len(node_list) < 2:
-        raise ValueError("At least 2 nodes are required to run this test")
-
-    if len(node_list) % 2 != 0:
-        log.info(
-            'Odd number of nodes (%d); excluding last node %s to form server/client pairs',
-            len(node_list),
-            node_list[-1],
-        )
-        node_list.pop()
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
     return phdl
 
@@ -216,8 +218,10 @@ def vpc_node_list(cluster_dict):
 
 
 @pytest.mark.parametrize("bw_test", ["ib_write_bw", "ib_read_bw", "ib_send_bw"])
-def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
+def test_ib_bw_perf(shdl, phdl, bw_test, config_dict, node_pairing):
     globals.error_list = []
+    for err in node_pairing['errors']:
+        fail_test(err)
     ib_bw_dict[bw_test] = {}
 
     gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
@@ -256,6 +260,7 @@ def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
                 int(config_dict['port_no']),
                 int(config_dict['duration']),
                 rocm_path=rocm_path,
+                node_pairs=node_pairing['pairs'],
             )
             end_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
             verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
@@ -273,8 +278,10 @@ def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
 
 
 @pytest.mark.parametrize("lat_test", ["ib_write_lat", "ib_send_lat"])
-def test_ib_lat_perf(shdl, phdl, lat_test, config_dict):
+def test_ib_lat_perf(shdl, phdl, lat_test, config_dict, node_pairing):
     globals.error_list = []
+    for err in node_pairing['errors']:
+        fail_test(err)
     ib_lat_dict[lat_test] = {}
 
     gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
@@ -310,6 +317,7 @@ def test_ib_lat_perf(shdl, phdl, lat_test, config_dict):
             config_dict['gid_index'],
             int(config_dict['port_no']),
             rocm_path=rocm_path,
+            node_pairs=node_pairing['pairs'],
         )
         end_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
         verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)

@@ -7,16 +7,178 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import logging
 import re
+import shlex
 import time
 import xlsxwriter
 
+from cvs.lib.preflight.scaleup_fabric import parse_afmctl_device_json
 from cvs.lib.utils_lib import *
 
 log = logging.getLogger(__name__)
 
+IBPERF_PAIRING_MODES = ('sequential', 'intra_vpod', 'inter_vpod')
+IBPERF_VPOD_SOURCES = ('afm', 'cluster_file')
+
 # Cached one-time probe results for the current process (per binary / ROCm config key).
 _dmabuf_support_cache = {}
 _rocm_path_cache = {}
+
+
+def build_ibperf_node_pairs(node_list, pairing_mode='sequential', vpod_map=None):
+    """Return ordered (server, client) pairs and unpaired nodes in input order."""
+    if pairing_mode not in IBPERF_PAIRING_MODES:
+        raise ValueError(f'Invalid ibperf pairing_mode {pairing_mode!r}; allowed values: {IBPERF_PAIRING_MODES}')
+    if pairing_mode == 'sequential':
+        return (
+            [(node_list[i], node_list[i + 1]) for i in range(0, len(node_list) - 1, 2)],
+            list(node_list[len(node_list) // 2 * 2 :]),
+        )
+    if vpod_map is None:
+        raise ValueError(f'vpod_map is required for ibperf pairing_mode {pairing_mode}')
+
+    groups = {}
+    for node in node_list:
+        key = vpod_map.get(node)
+        if key is not None:
+            groups.setdefault(key, []).append(node)
+
+    pairs = []
+    if pairing_mode == 'intra_vpod':
+        for group in groups.values():
+            pairs.extend((group[i], group[i + 1]) for i in range(0, len(group) - 1, 2))
+    else:
+        remaining = [list(group) for group in groups.values()]
+        while sum(bool(group) for group in remaining) >= 2:
+            first, second = sorted(
+                (index for index, group in enumerate(remaining) if group),
+                key=lambda index: (-len(remaining[index]), index),
+            )[:2]
+            server_group, client_group = sorted((first, second))
+            pairs.append((remaining[server_group].pop(0), remaining[client_group].pop(0)))
+
+    paired_nodes = {node for pair in pairs for node in pair}
+    return pairs, [node for node in node_list if node not in paired_nodes]
+
+
+def get_cluster_file_vpod_map(cluster_dict):
+    """Read node vPOD labels from a cluster configuration."""
+    vpod_map = {}
+    errors = []
+    for node, details in cluster_dict['node_dict'].items():
+        value = details.get('vpod_id')
+        label = str(value).strip() if value is not None else ''
+        if label:
+            vpod_map[node] = label
+        else:
+            errors.append(f'{node}: node_dict entry has no vpod_id (required when ibperf.vpod_source is cluster_file)')
+    return vpod_map, errors
+
+
+def parse_afm_vpod_membership(out_dict):
+    """Parse per-node AFM output into vPOD keys and discovery errors."""
+    vpod_map = {}
+    errors = []
+    accels = {}
+    for node, output in out_dict.items():
+        devices, parse_errors = parse_afmctl_device_json(output)
+        if parse_errors or not devices:
+            errors.append(f'{node}: AFM vPOD discovery failed: {"; ".join(parse_errors) or "no devices"}')
+            continue
+        sets = {tuple(sorted(device.get('vpod_accelerators') or [])) for device in devices} - {()}
+        if not sets:
+            errors.append(f'{node}: AFM reports no vPOD membership')
+            continue
+        if len(sets) > 1:
+            errors.append(f'{node}: AFM devices report multiple vPOD memberships: {sorted(sets)}')
+            continue
+        vpod_map[node] = next(iter(sets))
+        accels[node] = {device['accelerator_id'] for device in devices if device.get('accelerator_id') is not None}
+
+    members_by_key = {}
+    for node, key in vpod_map.items():
+        for other in members_by_key.get(key, []):
+            if accels[node] & accels[other]:
+                raise ValueError(
+                    f'AFM vPOD {list(key)} is reported by nodes with overlapping accelerator IDs ({other}, {node}); '
+                    'AFM accelerator IDs are only unique within one scale-up domain. Set ibperf.vpod_source to '
+                    '"cluster_file" and label each node_dict entry with vpod_id.'
+                )
+        members_by_key.setdefault(key, []).append(node)
+    return vpod_map, errors
+
+
+def discover_afm_vpod_map(phdl, afmctl_path='afmctl'):
+    """Query AFM on every node in a parallel handle and parse vPOD membership."""
+    cmd = f'sudo -n {shlex.quote(afmctl_path)} show device --json 2>&1'
+    return parse_afm_vpod_membership(phdl.exec(cmd, print_console=False))
+
+
+def resolve_ibperf_node_pairing(node_list, config_dict, cluster_dict, phdl_factory=None):
+    """Resolve pairing configuration and return pairs, leftovers, and discovery errors."""
+    mode = str(config_dict.get('pairing_mode', 'sequential')).strip().lower()
+    source = str(config_dict.get('vpod_source', 'afm')).strip().lower()
+    if mode not in IBPERF_PAIRING_MODES:
+        raise ValueError(f'Invalid ibperf pairing_mode {mode!r}; allowed values: {IBPERF_PAIRING_MODES}')
+    if source not in IBPERF_VPOD_SOURCES:
+        raise ValueError(f'Invalid ibperf vpod_source {source!r}; allowed values: {IBPERF_VPOD_SOURCES}')
+
+    vpod_map = None
+    errors = []
+    if mode != 'sequential':
+        if source == 'cluster_file':
+            vpod_map, errors = get_cluster_file_vpod_map(cluster_dict)
+        else:
+            if phdl_factory is None:
+                raise ValueError('phdl_factory is required for ibperf.vpod_source afm')
+            hdl = phdl_factory(node_list)
+            try:
+                vpod_map, errors = discover_afm_vpod_map(hdl, config_dict.get('afmctl_path', 'afmctl'))
+            finally:
+                hdl.destroy_clients()
+
+    pairs, unpaired = build_ibperf_node_pairs(node_list, mode, vpod_map)
+    if not pairs:
+        raise ValueError(
+            f'No ibperf node pairs could be formed (pairing_mode={mode}, nodes={len(node_list)}); '
+            + '; '.join(
+                errors
+                or [
+                    'inter_vpod needs nodes in at least two vPODs'
+                    if mode == 'inter_vpod'
+                    else 'at least 2 eligible nodes are required'
+                ]
+            )
+        )
+    log.info('ibperf pairing_mode=%s: %d pair(s): %s', mode, len(pairs), pairs)
+    if unpaired:
+        if mode == 'sequential':
+            log.info(
+                'Odd number of nodes (%d); excluding last node %s to form server/client pairs',
+                len(node_list),
+                unpaired[-1],
+            )
+        else:
+            log.warning('Nodes left unpaired by %s pairing: %s', mode, unpaired)
+    for err in errors:
+        log.error('%s', err)
+    return {'pairing_mode': mode, 'vpod_source': source, 'pairs': pairs, 'unpaired': unpaired, 'errors': errors}
+
+
+def _assign_pair_roles(node_pairs, nodes):
+    """Return active node roles in handle order and nodes lacking a partner."""
+    assignments = {}
+    for server, client in node_pairs:
+        if server in assignments or client in assignments or server == client:
+            raise ValueError(f'A node appears in more than one ibperf pair: {(server, client)}')
+        assignments[server] = None
+        assignments[client] = server
+    present = set(nodes)
+    active = {
+        node for server, client in node_pairs if server in present and client in present for node in (server, client)
+    }
+    roles = {node: assignments[node] for node in nodes if node in active}
+    orphans = [node for node in nodes if node not in active]
+    return roles, orphans
 
 
 def _log_bw_summary(msg_size, res_dict, instance_no=None):
@@ -305,6 +467,7 @@ def run_ib_perf_bw_test(
     port_no=1516,
     duration=60,
     rocm_path='',
+    node_pairs=None,
 ):
     log.info(
         '%s: msg_size=%s qp=%s start (%ss, %d nodes)',
@@ -316,7 +479,6 @@ def run_ib_perf_bw_test(
     )
     app_port = port_no
     result_dict = {}
-    i = 0
     cmd_dict = {}
     phdl.exec('sudo rm -rf /tmp/ib_cmds_file.txt', print_console=False)
     phdl.exec('sudo rm -rf /tmp/ib_perf*', print_console=False)
@@ -328,14 +490,20 @@ def run_ib_perf_bw_test(
             print_console=False,
         )
     dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{bw_test}')
-    server_addr = None
-    for node in bck_nic_dict.keys():
+    nodes = list(bck_nic_dict.keys())
+    if node_pairs is None:
+        node_pairs = build_ibperf_node_pairs(nodes)[0]
+    roles, orphans = _assign_pair_roles(node_pairs, nodes)
+    if orphans:
+        fail_test(f'ibperf partner node unreachable or unpaired for {orphans}; excluding them from {bw_test}')
+        phdl.prune_nodes(orphans)
+    if not roles:
+        return result_dict
+    for node, server_addr in roles.items():
         result_dict[node] = {}
         cmd_dict[node] = []
-        # even nodes make it server and odd as clients
-        if i % 2 == 0:
+        if server_addr is None:
             # server
-            server_addr = node
             cmd = 'echo "sleep 1" >> /tmp/ib_cmds_file.txt'
             cmd_dict[node].append(cmd)
             inst_count = 0
@@ -407,7 +575,6 @@ def run_ib_perf_bw_test(
                 cmd_dict[node].append(f'echo "{cmd}" >> /tmp/ib_cmds_file.txt')
                 inst_count = inst_count + 1
                 port_no = port_no + 1
-        i = i + 1
 
     # Get number of commands in cmd_dict - should be same for all nodes
     node_list = list(cmd_dict.keys())
@@ -460,11 +627,11 @@ def run_ib_perf_lat_test(
     gid_index,
     port_no=1516,
     rocm_path='',
+    node_pairs=None,
 ):
     log.info('%s: msg_size=%s start (%d nodes)', lat_test, msg_size, len(bck_nic_dict))
     app_port = port_no
     result_dict = {}
-    i = 0
     cmd_dict = {}
     phdl.exec('sudo rm -rf /tmp/ib_cmds_file.txt', print_console=False)
     phdl.exec('sudo rm -rf /tmp/ib_perf*', print_console=False)
@@ -475,15 +642,21 @@ def run_ib_perf_lat_test(
             f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt',
             print_console=False,
         )
-    server_addr = None
     dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{lat_test}')
-    for node in bck_nic_dict.keys():
+    nodes = list(bck_nic_dict.keys())
+    if node_pairs is None:
+        node_pairs = build_ibperf_node_pairs(nodes)[0]
+    roles, orphans = _assign_pair_roles(node_pairs, nodes)
+    if orphans:
+        fail_test(f'ibperf partner node unreachable or unpaired for {orphans}; excluding them from {lat_test}')
+        phdl.prune_nodes(orphans)
+    if not roles:
+        return result_dict
+    for node, server_addr in roles.items():
         result_dict[node] = {}
         cmd_dict[node] = []
-        # even nodes make it server and odd as clients
-        if i % 2 == 0:
+        if server_addr is None:
             # server
-            server_addr = node
             cmd = 'echo "sleep 1" >> /tmp/ib_cmds_file.txt'
             cmd_dict[node].append(cmd)
             inst_count = 0
@@ -543,7 +716,6 @@ def run_ib_perf_lat_test(
                 cmd_dict[node].append(f'echo "{cmd}" >> /tmp/ib_cmds_file.txt')
                 inst_count = inst_count + 1
                 port_no = port_no + 1
-        i = i + 1
 
     # Get number of commands in cmd_dict - should be same for all nodes
     node_list = list(cmd_dict.keys())
@@ -568,7 +740,7 @@ def run_ib_perf_lat_test(
     for instance_no in range(0, inst_count):
         try:
             lat_dict = get_ib_lat_numb(phdl, msg_size, f'cat /tmp/ib_perf_{instance_no}_logs', instance_no=instance_no)
-            for node in bck_nic_dict.keys():
+            for node in result_dict.keys():
                 result_dict[node][instance_no] = {}
                 result_dict[node][instance_no]['t_min'] = lat_dict[node]['t_min']
                 result_dict[node][instance_no]['t_max'] = lat_dict[node]['t_max']
