@@ -12,7 +12,7 @@ from typing import Any, Callable, Mapping
 
 from cvs.lib import globals
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
-from cvs.lib.utils_lib import fail_test
+from cvs.lib.utils_lib import fail_test, get_passwordless_sudo_status
 from cvs.lib.utils.verdict import ThresholdViolation, _check_one, evaluate_all
 
 log = globals.log
@@ -24,7 +24,7 @@ DEFAULT_SGLANG_PREFILL_SERV_PORT = "30001"
 DEFAULT_SGLANG_DECODE_SERV_PORT = "30002"
 DEFAULT_SGLANG_PREFILL_COORD_PORT = "40001"
 DEFAULT_SGLANG_DECODE_COORD_PORT = "40002"
-AMD_SMI_METRIC_CMD = "sudo amd-smi metric --json"
+AMD_SMI_METRIC_CMD = "amd-smi metric --json"
 
 _DISAGG_PINNED_ROLE_KEYS = (
     "prefill_node_list",
@@ -885,14 +885,18 @@ def run_lm_eval_benchmark_test(
     return summary
 
 
-def build_log_dir_cleanup_cmd(log_dir: str, user: str) -> str:
-    """Shell command: rm -rf, recreate, chown (host namespace, not in-container)."""
+def build_log_dir_cleanup_cmd(log_dir: str, use_sudo=False) -> str:
+    """Build the host-side log directory reset command.
+
+    Root-owned logs left by the container are removed with passwordless sudo
+    only when ``use_sudo`` is set. Otherwise the command stays unprivileged so
+    a sudo that needs a password is never attempted.
+    """
     if not log_dir or not str(log_dir).strip():
         raise ValueError("log_dir must be a non-empty path")
-    log_dir = str(log_dir).strip()
-    quser = shlex.quote(str(user))
-    qdir = shlex.quote(log_dir)
-    return f"sudo rm -rf {qdir} && sudo mkdir -p {qdir} && sudo chown -R {quser}:{quser} {qdir}"
+    qdir = shlex.quote(str(log_dir).strip())
+    remove = f"sudo -n rm -rf {qdir}" if use_sudo else f"rm -rf {qdir}"
+    return f"{remove} && mkdir -p {qdir}"
 
 
 def cleanup_sglang_log_dir(
@@ -905,11 +909,25 @@ def cleanup_sglang_log_dir(
     """Reset log root on cluster hosts via baremetal SSH (``orch.head`` / ``orch.all``)."""
     if all_nodes is None:
         all_nodes = len(orch.hosts) > 1
-    cmd = build_log_dir_cleanup_cmd(log_dir, orch.user)
-    if all_nodes:
-        orch.all.exec(cmd, timeout=timeout)
+    handle = orch.all if all_nodes else orch.head
+    sudo_status = get_passwordless_sudo_status(handle)
+    host_list = getattr(handle, "host_list", None)
+    if isinstance(host_list, (list, tuple)) and host_list:
+        hosts = list(host_list)
     else:
-        orch.head.exec(cmd, timeout=timeout)
+        hosts = list(sudo_status.keys())
+    without_sudo = [host for host in hosts if not sudo_status.get(host, False)]
+    if without_sudo:
+        log.info(
+            "Passwordless sudo unavailable on %s; log cleanup will not use sudo",
+            ", ".join(without_sudo),
+        )
+    if len({sudo_status.get(host, False) for host in hosts}) <= 1:
+        use_sudo = bool(hosts) and sudo_status.get(hosts[0], False)
+        handle.exec(build_log_dir_cleanup_cmd(log_dir, use_sudo=use_sudo), timeout=timeout)
+        return
+    cmd_list = [build_log_dir_cleanup_cmd(log_dir, use_sudo=sudo_status.get(host, False)) for host in hosts]
+    handle.exec_cmd_list(cmd_list, timeout=timeout)
 
 
 LM_EVAL_SPECS = {
@@ -991,7 +1009,7 @@ def collect_sglang_gpu_topology(
             group_stats[name] = {"per_node": {}, "total": 0}
             continue
         per_node = count_occupied_gpus_per_node(
-            host_exec(amd_smi_cmd, hosts=hosts, timeout=timeout),
+            host_exec(amd_smi_cmd, hosts=hosts, timeout=timeout, print_console=False),
             mem_threshold_mb=mem_threshold_mb,
         )
         group_total = sum(per_node.values())

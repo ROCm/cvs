@@ -172,12 +172,13 @@ class SglangDistributed:
     ) -> str:
         return first_output(self._container_exec(cmd, hosts=hosts, timeout=timeout))
 
-    def _host_exec(self, cmd, *, hosts=None, timeout=None):
+    def _host_exec(self, cmd, *, hosts=None, timeout=None, print_console=None):
         """Run ``cmd`` on the host OS (not inside the container), e.g. amd-smi / dmesg."""
         target = [self.benchmark_serv_node] if hosts is None else as_node_list(hosts)
         if not target:
             return {}
-        return self.orch.exec_on_host(cmd, hosts=target, timeout=timeout)
+        extra = {} if print_console is None else {'print_console': print_console}
+        return self.orch.exec_on_host(cmd, hosts=target, timeout=timeout, **extra)
 
     def _host_exec_text(
         self,
@@ -294,7 +295,7 @@ class SglangDistributed:
         log_path = self.server_log_path(0)
         for iteration in range(1, no_of_iterations):
             log.info('Starting rank-0 server readiness poll iteration %d', iteration)
-            grep_cmd = f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} {shlex.quote(log_path)} || true"
+            grep_cmd = f"grep -a -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} {shlex.quote(log_path)} || true"
             text = self._container_exec_text(grep_cmd, hosts=[self.rank0_node])
             if _SERVER_READY_RE.search(text):
                 log.info('Wait 60 secs before serving traffic')
