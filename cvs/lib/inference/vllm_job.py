@@ -8,7 +8,6 @@ Routing contract:
   - build_server_cmd: writes the environment script to every target host.
   - start_server: one targeted orch.exec(..., hosts=[host]) per host, with
     per-rank --node-rank. On single-node this yields one (0, head) iteration.
-    Each rank records its server PID in server.pid beside its server log.
   - run_client / wait_client_complete / parse_results: HEAD-ONLY via
     orch.exec_on_head. Semantically correct for both topologies: the client
     always connects to http://head:port. Using broadcast exec here would
@@ -111,9 +110,7 @@ class VllmJob:
     FATAL_LOG_RE = re.compile(
         r"Free memory on device.{0,80}less than desired"
         r"|Engine core initialization failed"
-        r"|RuntimeError:.*[Ee]ngine"
-        r"|ValidationError: [0-9]+ validation error"
-        r"|Address already in use",
+        r"|RuntimeError:.*[Ee]ngine",
         re.I,
     )
     SERVER_STATE_RE = re.compile(r"^server-state log=(present|missing) pid=(alive|dead|none)$", re.M)
@@ -311,7 +308,10 @@ class VllmJob:
         self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/server_env_script.sh"))
         for rank in range(int(self.nnodes)):
             rank_dir = self.out_dir.replace("out-node0", f"out-node{rank}")
-            self.orch.exec(f"mkdir -p {shlex.quote(rank_dir)}")
+            # Cleared before the launch, so a launch exec that never ran leaves
+            # no earlier run's log or PID file for _server_state to find.
+            stale = f"{shlex.quote(self._rank_log(rank))} {shlex.quote(self._rank_pid_file(rank))}"
+            self.orch.exec(f"mkdir -p {shlex.quote(rank_dir)} && rm -f {stale}")
 
     def _bootstrap_ray_cluster(self):
         """Bootstrap a Ray cluster across all hosts before launching vllm serve.
@@ -358,65 +358,39 @@ class VllmJob:
     def _launch_server(self, rank, host):
         """Start vllm serve for one rank in the background and record its PID.
 
-        Stale rank logs and PID files from an earlier run are removed first, so
-        whatever _server_state finds afterwards belongs to this launch. A launch
-        whose exec returns no exit status (-1) is retried up to _launch_retries
-        times, but only while it has left neither file behind.
+        A launch whose exec returns no exit status (-1) is retried, but only
+        while it has left neither a log nor a PID file behind.
         """
         rank_log = shlex.quote(self._rank_log(rank))
         pid_file = shlex.quote(self._rank_pid_file(rank))
         serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv(rank))
-        inner = (
-            f"rm -f {rank_log} {pid_file} && source /tmp/server_env_script.sh && "
-            f"{{ nohup {serve_cmd} > {rank_log} 2>&1 & echo $! > {pid_file}; }}"
-        )
-        attempts = self._launch_retries + 1
-        for attempt in range(1, attempts + 1):
+        inner = f"source /tmp/server_env_script.sh && {{ nohup {serve_cmd} > {rank_log} 2>&1 & echo $! > {pid_file}; }}"
+        for attempt in range(1, self._launch_retries + 2):
             out = self.orch.exec("bash -c " + shlex.quote(inner), hosts=[host], detailed=True)
             lost = None
             for h, result in (out or {}).items():
                 output = result.get("output", "") or ""
                 exit_code = result.get("exit_code", 0)
                 if self.EARLY_FAILURE_RE.search(output) or exit_code not in (0, -1):
-                    raise RuntimeError(
-                        f"vllm server failed to launch on {h} (rank {rank}), exit code {exit_code}: {output[-500:]}"
-                    )
+                    raise RuntimeError(f"vllm server failed to launch on {h} (rank {rank}): {output[-500:]}")
                 if exit_code == -1:
                     lost = output
             if lost is None:
                 return
             # -1 means the transport failed, which says nothing about the command.
-            # Give a launch that got through time to write its files: relaunching
-            # over it would start a second server racing the first for the port.
+            # Relaunching over a launch that got through would race it for the port.
             time.sleep(self._launch_retry_wait)
             state = self._server_state(rank, host)
+            log.warning("vllm serve launch on %s (rank %d) lost, attempt %d, probe %s", host, rank, attempt, state)
             if state != ("missing", "none"):
-                log.warning(
-                    "vllm serve launch on %s (rank %d) returned no exit status; not relaunching, as it may have run "
-                    "(probe: %s)",
-                    host,
-                    rank,
-                    state,
-                )
                 return
-            log.warning(
-                "vllm serve launch on %s (rank %d) was lost and left no log or PID file (attempt %d of %d): %s",
-                host,
-                rank,
-                attempt,
-                attempts,
-                lost[-200:],
-            )
-        raise RuntimeError(
-            f"vllm server not started on {host} (rank {rank}): launch exec lost {attempts} times: {lost[-500:]}"
-        )
+        raise RuntimeError(f"vllm server not started on {host} (rank {rank}): launch exec lost: {lost[-500:]}")
 
     def _server_state(self, rank, host):
         """Probe one rank's server log and PID file.
 
-        Returns ``(log_state, pid_state)``: log_state is "present" or "missing",
-        and pid_state is "alive", "dead", or "none" when there is no PID file.
-        Both are "unknown" when the probe gets no answer.
+        Returns (log_state, pid_state): "present"/"missing" and "alive"/"dead"/"none",
+        or ("unknown", "unknown") when the probe gets no answer.
         """
         log_path = shlex.quote(self._rank_log(rank))
         pid_path = shlex.quote(self._rank_pid_file(rank))
@@ -460,12 +434,10 @@ class VllmJob:
         return True
 
     def _check_early_failure(self, emit_tail: bool = False):
-        """Check each rank's server for a failed start.
+        """Check per-rank logs on each host for early failure / fatal patterns.
 
-        Raises when the rank log is missing (the server never started), when the
-        log matches a known failure pattern, or when the server's PID is gone.
-        The PID check catches exits that print no known pattern, such as an OOM
-        kill.
+        Also raises when the rank log is missing (the server never started) or
+        the server's PID is dead, which catches exits that log no known pattern.
 
         Ray worker nodes (rank > 0 under ray multi-node) do not produce a
         per-rank server log because vllm serve only runs on the head under ray.
