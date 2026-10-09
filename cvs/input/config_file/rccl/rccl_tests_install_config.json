@@ -22,6 +22,8 @@
         "_comment_rccl_tests_git_tag": "Git tag or branch for projects/rccl-tests sparse checkout. Recommended: therock-7.11 for ROCm 7.2.0 (validated in CVS testing).",
         "rocm_path": "/opt/rocm",
         "_comment_rocm_path": "ROCm install root for HIP/ROCm builds. When rccl_lib_install is False, bundled librccl under <rocm_path>/lib is used.",
+        "gpu_arch": "",
+        "_comment_gpu_arch": "Target GPU architecture for RCCL library cmake (-DAMDGPU_TARGETS) and rccl-tests make (AMDGPU_TARGETS/GPU_TARGETS). Leave empty for auto-detection via rocminfo on each node. Example: 'gfx942' for MI300X, 'gfx1250' for MI455X.",
         "rccl_tests_use_amdclang": "False",
         "_comment_rccl_tests_use_amdclang": "If True, rccl-tests builds with HIPCC/CXX set to $ROCM_PATH/llvm/bin/amdclang++. If False, uses $ROCM_PATH/bin/hipcc.",
         "ompi_install_dir": "<changeme>",
