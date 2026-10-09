@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Platform `host_configs_cvs` now checks the network link speed of every backend NIC (`test_check_be_nic_link_speed`) against `nic_link_speed` (default `400000` Mb/s) and reports node, interface and actual speed on mismatch. Set `nic_link_interfaces` to the backend netdev names; without it the backend NICs are auto-detected. Existing configs without `nic_link_speed` gate at 400000 and will fail on NICs running at another speed.
+- Platform `host_configs_cvs` now checks the network link speed of every backend NIC (`test_check_be_nic_link_speed`) against `nic_link_speed` (default `400000` Mb/s) and reports node, interface and actual speed on mismatch. Set `nic_link_interfaces` to the backend netdev names; without it the backend NICs are auto-detected, and a node with fewer backend NICs than another node fails. Existing configs without `nic_link_speed` gate at 400000 and will fail on NICs running at another speed.
 - Pytest sub-test reports no longer write their own per-test log file or Full Log link, which could replace the parent test's Full Log link.
 
 - RCCL bandwidth thresholds and dip checks now read the configured `rccl.results` table.
