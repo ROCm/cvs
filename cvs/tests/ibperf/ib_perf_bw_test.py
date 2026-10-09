@@ -222,6 +222,7 @@ def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
 
     gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
     gpu_numa_dict = linux_utils.get_gpu_numa_dict(phdl)
+    hip_dev_dict = ibperf_lib.get_hip_device_dict(phdl, gpu_nic_dict)
 
     bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(phdl)
     rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(phdl)
@@ -256,6 +257,7 @@ def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
                 int(config_dict['port_no']),
                 int(config_dict['duration']),
                 rocm_path=rocm_path,
+                hip_dev_dict=hip_dev_dict,
             )
             end_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
             verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
@@ -279,6 +281,7 @@ def test_ib_lat_perf(shdl, phdl, lat_test, config_dict):
 
     gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
     gpu_numa_dict = linux_utils.get_gpu_numa_dict(phdl)
+    hip_dev_dict = ibperf_lib.get_hip_device_dict(phdl, gpu_nic_dict)
 
     bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(phdl)
     rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(phdl)
@@ -310,6 +313,7 @@ def test_ib_lat_perf(shdl, phdl, lat_test, config_dict):
             config_dict['gid_index'],
             int(config_dict['port_no']),
             rocm_path=rocm_path,
+            hip_dev_dict=hip_dev_dict,
         )
         end_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
         verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
