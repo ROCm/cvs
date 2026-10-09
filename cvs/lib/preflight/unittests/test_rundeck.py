@@ -70,6 +70,83 @@ class TestPreflightDeck(unittest.TestCase):
         self.assertTrue(all(record['status'] == 'na' for record in nodes.values()))
         self.assertIn('skipped by configuration', nodes['n1']['items_summary'])
 
+    def test_mtu_group_pass_fail_and_skip(self):
+        deck = build_preflight_deck(
+            {
+                'rdma_mtu': {
+                    'n1': {
+                        'status': 'PASS',
+                        'interfaces': {'rdma0': {'status': 'OK', 'netdev_mtu': 9000, 'active_mtu': 4096, 'errors': []}},
+                        'errors': [],
+                    },
+                    'n2': {
+                        'status': 'FAIL',
+                        'interfaces': {
+                            'rdma0': {
+                                'status': 'FAIL',
+                                'netdev_mtu': 1500,
+                                'active_mtu': 1024,
+                                'errors': ['jumbo frames not enabled'],
+                            }
+                        },
+                        'errors': ['jumbo frames not enabled'],
+                    },
+                }
+            },
+            {'node_dict': {'n1': {}, 'n2': {}}},
+        )
+        nodes = deck['groups']['rdma_mtu']['nodes']
+        self.assertEqual(nodes['n1']['status'], 'pass')
+        self.assertEqual(nodes['n2']['status'], 'fail')
+        self.assertIn('9000', nodes['n1']['items_summary'])
+        self.assertEqual(nodes['n2']['items'][0]['name'], 'rdma0')
+
+        self.assertEqual(nodes['n1']['items_summary'], 'netdev MTU 9000, active MTU 4096')
+
+        partial = build_preflight_deck(
+            {
+                'rdma_mtu': {
+                    'n1': {
+                        'status': 'FAIL',
+                        'interfaces': {'rdma0': {'status': 'FAIL', 'netdev_mtu': None, 'active_mtu': 4096}},
+                        'errors': ['Could not determine netdev MTU'],
+                    },
+                }
+            },
+            {'node_dict': {'n1': {}}},
+        )
+        self.assertEqual(partial['groups']['rdma_mtu']['nodes']['n1']['items_summary'], 'active MTU 4096')
+
+        infiniband = build_preflight_deck(
+            {
+                'rdma_mtu': {
+                    'n1': {
+                        'status': 'PASS',
+                        'interfaces': {
+                            'mlx5_0': {
+                                'status': 'OK',
+                                'link_layer': 'InfiniBand',
+                                'netdev': 'ib0',
+                                'netdev_mtu': 2044,
+                                'active_mtu': 4096,
+                            }
+                        },
+                        'errors': [],
+                    },
+                }
+            },
+            {'node_dict': {'n1': {}}},
+        )
+        self.assertEqual(
+            infiniband['groups']['rdma_mtu']['nodes']['n1']['items_summary'], 'InfiniBand: active MTU 4096'
+        )
+
+        skipped = build_preflight_deck(
+            {'rdma_mtu': {'status': 'SKIPPED', 'skipped': True, 'message': 'disabled'}},
+            {'node_dict': {'n1': {}, 'n2': {}}},
+        )
+        self.assertTrue(all(node['status'] == 'na' for node in skipped['groups']['rdma_mtu']['nodes'].values()))
+
     def test_reachability_marks_unreachable_nodes(self):
         deck = build_preflight_deck(
             {

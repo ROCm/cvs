@@ -13,6 +13,7 @@ import json
 
 # Import new modular preflight classes
 from cvs.lib.preflight.gid_consistency import GidConsistencyCheck
+from cvs.lib.preflight.mtu_check import RdmaMtuCheck, DEFAULT_MIN_NETDEV_MTU, DEFAULT_MIN_ACTIVE_MTU
 from cvs.lib.preflight.version_check import RocmVersionCheck
 from cvs.lib.preflight.interface_consistency import InterfaceConsistencyCheck
 from cvs.lib.preflight.ifoe_l2_connectivity import IfoeL2ConnectivityCheck
@@ -39,6 +40,7 @@ from cvs.lib.preflight.node_smoke_rows import (
 from cvs.lib.preflight.report import PreflightReportGenerator, preflight_check_display_name
 from cvs.lib.preflight.rundeck import (
     GID_CONSISTENCY,
+    RDMA_MTU,
     IFOE_L2,
     INTERFACE_NAMES,
     NODE_HEALTH,
@@ -798,6 +800,61 @@ def test_gid_consistency(orch, config_dict, lifecycle=None):
     preflight_update_test_result(results)
 
 
+@_timed_stage(RDMA_MTU)
+def test_rdma_mtu(orch, config_dict, lifecycle=None):
+    """Check RDMA active MTUs, and netdev MTUs on RoCE ports, without pruning nodes.
+
+    Low MTU reduces bandwidth but does not prevent RDMA connectivity.
+    """
+    global preflight_results
+
+    if not _rdma_enabled(config_dict):
+        preflight_results['rdma_mtu'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': 'RDMA MTU validation skipped because RDMA connectivity mode is skip',
+        }
+        preflight_update_test_result(preflight_results['rdma_mtu'])
+        return
+    if not _config_flag_enabled(get_nested_config(config_dict, 'connectivity_check.rdma', 'mtu_check', True)):
+        preflight_results['rdma_mtu'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': 'RDMA MTU validation disabled by connectivity_check.rdma.mtu_check',
+        }
+        preflight_update_test_result(preflight_results['rdma_mtu'])
+        return
+
+    min_netdev_mtu = int(
+        get_nested_config(config_dict, 'connectivity_check.rdma', 'min_netdev_mtu', DEFAULT_MIN_NETDEV_MTU)
+    )
+    min_active_mtu = int(
+        get_nested_config(config_dict, 'connectivity_check.rdma', 'min_active_mtu', DEFAULT_MIN_ACTIVE_MTU)
+    )
+    gid_index = get_nested_config(config_dict, 'connectivity_check.rdma', 'gid_index', '3')
+    expected_interfaces = get_nested_config(
+        config_dict, 'connectivity_check.rdma', 'interfaces', ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+    )
+    results = RdmaMtuCheck(orch, expected_interfaces, min_netdev_mtu, min_active_mtu, gid_index, config_dict).run()
+    preflight_results['rdma_mtu'] = results
+
+    total = 0
+    ok = 0
+    for node, result in results.items():
+        if result['status'] == 'FAIL':
+            for error in result['errors']:
+                log.error(f"Node {node}: {error}")
+        for interface_result in result['interfaces'].values():
+            total += 1
+            if interface_result.get('status') == 'OK':
+                ok += 1
+    log.info(
+        f"RDMA MTU results: {ok}/{total} interfaces meet active MTU >= {min_active_mtu} "
+        f"and, on RoCE ports, netdev MTU >= {min_netdev_mtu}"
+    )
+    preflight_update_test_result(results)
+
+
 # Each tier publishes one pytest row per catalog check. The runner test above the checks
 # executes Primus once; the check rows only read the payload it stored.
 _NODE_SMOKE_TIERS = {
@@ -1473,6 +1530,7 @@ def test_rdma_connectivity(orch, cluster_dict, config_dict, lifecycle=None):
     consistency; those steps prune before the next. ROCm version mismatches are reported
     but **not** pruned. Results may include ``excluded_nodes_interface_check`` and
     ``excluded_nodes_gid`` for the report (hosts already removed from ``phdl``).
+    MTU failures are reported but not pruned because they do not affect connectivity.
     """
     global preflight_results
 
@@ -1633,6 +1691,7 @@ def test_generate_preflight_report(orch, config_dict, request):
     required_checks = [
         'node_health',
         'gid_consistency',
+        'rdma_mtu',
         'rocm_versions',
         'interface_names',
         'node_smoke_tier1',
