@@ -84,11 +84,11 @@ from cvs.lib import anc_lib
 _FUNC_TEMPLATE = '''\
 
 
-def test_{name}(phdl, cluster_dict, config_dict, request):
+def test_{name}(orch, cluster_dict, config_dict, request):
     \'\'\'Run the ANC {unit} "{name}".\'\'\'
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.{run_func}(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["{name}"],

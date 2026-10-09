@@ -23,11 +23,11 @@ List the items:    cvs list anc_test_babel
 from cvs.lib import anc_lib
 
 
-def test_babel_modinit_read(phdl, cluster_dict, config_dict, request):
+def test_babel_modinit_read(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "babel_modinit_read".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["babel_modinit_read"],
@@ -36,11 +36,11 @@ def test_babel_modinit_read(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_babel_modinit_triad(phdl, cluster_dict, config_dict, request):
+def test_babel_modinit_triad(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "babel_modinit_triad".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["babel_modinit_triad"],

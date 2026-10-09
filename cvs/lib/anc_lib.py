@@ -42,7 +42,6 @@ import tarfile
 from collections import namedtuple
 from datetime import datetime
 
-from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
     fail_test,
     update_test_result,
@@ -533,7 +532,7 @@ def _fail_unreachable_nodes(cluster_dict, out_dict, action):
     '''
     fail_test every expected node absent from an exec result (unreachable).
 
-    ``phdl.exec`` only returns REACHABLE hosts, so a node that is down / did not
+    ``orch.exec`` only returns REACHABLE hosts, so a node that is down / did not
     respond simply drops out of ``out_dict``. Callers that judge pass/fail from
     ``out_dict`` alone would silently treat such a node as a success. This flags
     every expected host missing from ``out_dict`` as a failed ``action`` (e.g.
@@ -966,7 +965,7 @@ def parse_release_version_from_content_list(output):
     return match.group(1) if match else None
 
 
-def node_release_versions(phdl, anc_bin=ANC_BIN):
+def node_release_versions(orch, anc_bin=ANC_BIN):
     '''
     Query ``<anc_bin> --content-list`` on every node and return the parsed
     release version per host (DIRECT 1.5.0+ packaging).
@@ -976,7 +975,7 @@ def node_release_versions(phdl, anc_bin=ANC_BIN):
       ``anc-release-*`` plugin line, or None when ANC is absent, the node is
       unreachable to the parse, or the output carries no such line.
     '''
-    out_dict = phdl.exec(f"{anc_bin} --content-list 2>&1 || true", timeout=120)
+    out_dict = orch.exec(f"{anc_bin} --content-list 2>&1 || true", timeout=120)
     print_test_output(log, out_dict)
     return {host: parse_release_version_from_content_list(output) for host, output in out_dict.items()}
 
@@ -1007,7 +1006,7 @@ def _parse_version_from_version_output(output):
     return match.group(1) if match else None
 
 
-def node_installed_versions(phdl, anc_bin=ANC_BIN):
+def node_installed_versions(orch, anc_bin=ANC_BIN):
     '''
     Return the installed ANC release version per host, detecting the packaging
     GENERATION from what each node actually reports -- never from the requested
@@ -1028,13 +1027,13 @@ def node_installed_versions(phdl, anc_bin=ANC_BIN):
       dict[str, str | None]: host -> installed release version, or None when ANC
       is absent / unreachable / reports no parseable version.
     '''
-    direct = node_release_versions(phdl, anc_bin=anc_bin)
+    direct = node_release_versions(orch, anc_bin=anc_bin)
     legacy_hosts = [host for host, version in direct.items() if version is None]
     if not legacy_hosts:
         return direct
 
     # Only the hosts with no anc-release-* line need the legacy --version probe.
-    out_dict = phdl.exec(f"{anc_bin} --version 2>&1 || true", timeout=60)
+    out_dict = orch.exec(f"{anc_bin} --version 2>&1 || true", timeout=60)
     print_test_output(log, out_dict)
     resolved = dict(direct)
     for host in legacy_hosts:
@@ -1042,7 +1041,7 @@ def node_installed_versions(phdl, anc_bin=ANC_BIN):
     return resolved
 
 
-def node_version_matches(phdl, expected_version, anc_bin=ANC_BIN):
+def node_version_matches(orch, expected_version, anc_bin=ANC_BIN):
     '''
     Query ANC on every node and report which nodes SATISFY ``expected_version``.
 
@@ -1066,13 +1065,13 @@ def node_version_matches(phdl, expected_version, anc_bin=ANC_BIN):
       dict[str, bool]: host -> True when the node's installed version satisfies
       ``expected_version`` (False if ANC is absent or reports a lower version).
     '''
-    parsed = node_installed_versions(phdl, anc_bin=anc_bin)
+    parsed = node_installed_versions(orch, anc_bin=anc_bin)
     return {
         host: bool(version) and anc_version_satisfies(version, expected_version) for host, version in parsed.items()
     }
 
 
-def install_anc(phdl, cluster_dict, config_dict):
+def install_anc(orch, cluster_dict, config_dict):
     '''
     Install ANC on all nodes, dispatching by release-archive flavour.
 
@@ -1088,7 +1087,7 @@ def install_anc(phdl, cluster_dict, config_dict):
     --content-list`` for DIRECT 1.5.0+, falling back to ``anc.py --version`` for
     legacy <=1.4.x) -- see node_version_matches.
 
-    Node coverage: ``phdl.exec`` returns only reachable hosts, so any expected
+    Node coverage: ``orch.exec`` returns only reachable hosts, so any expected
     node (from ``cluster_dict["node_dict"]``) that is unreachable is treated as
     a failed install rather than silently passing.
 
@@ -1127,7 +1126,7 @@ def install_anc(phdl, cluster_dict, config_dict):
     # coverage.
     if anc_version:
         log.info("ANC precheck: expecting version >= %s", anc_version)
-        matches = node_version_matches(phdl, anc_version, anc_bin=paths.anc_bin)
+        matches = node_version_matches(orch, anc_version, anc_bin=paths.anc_bin)
         if expected and all(matches.get(host) for host in expected):
             log.info(
                 "All nodes already satisfy ANC %s (installed >= requested); skipping install",
@@ -1142,19 +1141,19 @@ def install_anc(phdl, cluster_dict, config_dict):
     # sub-installer also flags any expected node missing from its output.
     if pkg_type == "deb":
         if flavour.is_direct:
-            _install_anc_deb_direct(phdl, cluster_dict, config_dict)
+            _install_anc_deb_direct(orch, cluster_dict, config_dict)
         else:
-            _install_anc_deb(phdl, cluster_dict, config_dict)
+            _install_anc_deb(orch, cluster_dict, config_dict)
     elif pkg_type == "rpm":
         if flavour.is_direct:
-            _install_anc_rpm_direct(phdl, cluster_dict, config_dict)
+            _install_anc_rpm_direct(orch, cluster_dict, config_dict)
         else:
-            _install_anc_rpm(phdl, cluster_dict, config_dict)
+            _install_anc_rpm(orch, cluster_dict, config_dict)
     elif pkg_type == "tar":
         if flavour.is_direct:
-            _install_anc_tar_direct(phdl, cluster_dict, config_dict)
+            _install_anc_tar_direct(orch, cluster_dict, config_dict)
         else:
-            _install_anc_tar(phdl, cluster_dict, config_dict)
+            _install_anc_tar(orch, cluster_dict, config_dict)
     else:
         fail_test(f"ANC '{pkg_type}' package installation is not yet supported")
         update_test_result()
@@ -1166,7 +1165,7 @@ def install_anc(phdl, cluster_dict, config_dict):
     # detail focused).
     if anc_version and not globals.error_list:
         log.info("ANC final verification: expecting version >= %s", anc_version)
-        matches = node_version_matches(phdl, anc_version, anc_bin=paths.anc_bin)
+        matches = node_version_matches(orch, anc_version, anc_bin=paths.anc_bin)
         for host in expected:
             if host not in matches:
                 fail_test(
@@ -1180,7 +1179,7 @@ def install_anc(phdl, cluster_dict, config_dict):
     update_test_result()
 
 
-def _install_anc_rpm(phdl, cluster_dict, config_dict):
+def _install_anc_rpm(orch, cluster_dict, config_dict):
     '''
     Install ANC from .rpm package(s) on remote nodes (fresh install each run).
 
@@ -1218,7 +1217,7 @@ def _install_anc_rpm(phdl, cluster_dict, config_dict):
         f"{ANC_BIN} --help && echo 'ANC_INSTALL_SUCCESS'"
     )
 
-    out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
+    out_dict = orch.exec(install_cmd, timeout=_install_timeout(anc_cfg))
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -1232,7 +1231,7 @@ def _install_anc_rpm(phdl, cluster_dict, config_dict):
     _fail_unreachable_nodes(cluster_dict, out_dict, ".rpm install")
 
 
-def _install_anc_deb(phdl, cluster_dict, config_dict):
+def _install_anc_deb(orch, cluster_dict, config_dict):
     '''
     Install ANC from .deb package(s) on remote nodes (fresh install each run).
 
@@ -1288,7 +1287,7 @@ def _install_anc_deb(phdl, cluster_dict, config_dict):
         f"{ANC_BIN} --help && echo 'ANC_INSTALL_SUCCESS'"
     )
 
-    out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
+    out_dict = orch.exec(install_cmd, timeout=_install_timeout(anc_cfg))
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -1302,7 +1301,7 @@ def _install_anc_deb(phdl, cluster_dict, config_dict):
     _fail_unreachable_nodes(cluster_dict, out_dict, ".deb install")
 
 
-def _install_anc_rpm_direct(phdl, cluster_dict, config_dict):
+def _install_anc_rpm_direct(orch, cluster_dict, config_dict):
     '''
     Install ANC from a DIRECT .rpm URL (1.5.0+ packaging) on remote nodes.
 
@@ -1332,7 +1331,7 @@ def _install_anc_rpm_direct(phdl, cluster_dict, config_dict):
         f"{ANC_BIN} --help && echo 'ANC_INSTALL_SUCCESS'"
     )
 
-    out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
+    out_dict = orch.exec(install_cmd, timeout=_install_timeout(anc_cfg))
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -1344,7 +1343,7 @@ def _install_anc_rpm_direct(phdl, cluster_dict, config_dict):
     _fail_unreachable_nodes(cluster_dict, out_dict, ".rpm install")
 
 
-def _install_anc_deb_direct(phdl, cluster_dict, config_dict):
+def _install_anc_deb_direct(orch, cluster_dict, config_dict):
     '''
     Install ANC from a DIRECT .deb URL (1.5.0+ packaging) on remote nodes.
 
@@ -1384,7 +1383,7 @@ def _install_anc_deb_direct(phdl, cluster_dict, config_dict):
         f"{ANC_BIN} --help && echo 'ANC_INSTALL_SUCCESS'"
     )
 
-    out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
+    out_dict = orch.exec(install_cmd, timeout=_install_timeout(anc_cfg))
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -1416,7 +1415,7 @@ def _sudo_prefix_snippet(prefix):
     )
 
 
-def _install_anc_tar(phdl, cluster_dict, config_dict):
+def _install_anc_tar(orch, cluster_dict, config_dict):
     '''
     Install ANC from the tar release on remote nodes (fresh install each run).
 
@@ -1517,7 +1516,7 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
         f"test -f '{anc_bin}' && echo 'ANC_INSTALL_SUCCESS'"
     )
 
-    out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
+    out_dict = orch.exec(install_cmd, timeout=_install_timeout(anc_cfg))
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -1528,10 +1527,10 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
 
     _fail_unreachable_nodes(cluster_dict, out_dict, "tar install")
 
-    _validate_exe_paths(phdl, cluster_dict, content_dir)
+    _validate_exe_paths(orch, cluster_dict, content_dir)
 
 
-def _validate_exe_paths(phdl, cluster_dict, content_dir):
+def _validate_exe_paths(orch, cluster_dict, content_dir):
     '''
     Validate the exe_path entries under a tar install's content dir with the
     bundled validate_exe_paths.py script (shared by legacy and direct tar).
@@ -1553,15 +1552,15 @@ def _validate_exe_paths(phdl, cluster_dict, content_dir):
     remote_script = f"{user_tmp}/validate_exe_paths.py"
 
     log.info("Uploading validation script to remote nodes...")
-    phdl.exec(f"mkdir -p '{user_tmp}'", timeout=30)
-    phdl.upload_file(local_script, remote_script)
+    orch.exec(f"mkdir -p '{user_tmp}'", timeout=30)
+    orch.all.upload_file(local_script, remote_script)
 
     log.info("Validating exe_path entries from %s", content_dir)
-    validate_dict = phdl.exec(f"python3 '{remote_script}' '{content_dir}'", timeout=60)
+    validate_dict = orch.exec(f"python3 '{remote_script}' '{content_dir}'", timeout=60)
     print_test_output(log, validate_dict)
 
     log.info("Removing validation script from remote nodes...")
-    phdl.exec(f"rm -f '{remote_script}'", timeout=10)
+    orch.exec(f"rm -f '{remote_script}'", timeout=10)
 
     for host, output in validate_dict.items():
         if "VALIDATION_FAILED" in output:
@@ -1576,7 +1575,7 @@ def _validate_exe_paths(phdl, cluster_dict, content_dir):
     _fail_unreachable_nodes(cluster_dict, validate_dict, "exe_path validation")
 
 
-def _install_anc_tar_direct(phdl, cluster_dict, config_dict):
+def _install_anc_tar_direct(orch, cluster_dict, config_dict):
     '''
     Install ANC from a DIRECT tar release (1.5.0+ packaging) on remote nodes.
 
@@ -1657,7 +1656,7 @@ def _install_anc_tar_direct(phdl, cluster_dict, config_dict):
         f"test -f '{anc_bin}' && echo 'ANC_INSTALL_SUCCESS'"
     )
 
-    out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
+    out_dict = orch.exec(install_cmd, timeout=_install_timeout(anc_cfg))
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -1668,13 +1667,13 @@ def _install_anc_tar_direct(phdl, cluster_dict, config_dict):
 
     _fail_unreachable_nodes(cluster_dict, out_dict, "tar install")
 
-    _validate_exe_paths(phdl, cluster_dict, content_dir)
+    _validate_exe_paths(orch, cluster_dict, content_dir)
 
 
 # =========================================================================
 # ROCm shared-library resolution (ldconfig)
 # =========================================================================
-def ensure_rocm_ldconfig(phdl, cluster_dict):
+def ensure_rocm_ldconfig(orch, cluster_dict):
     '''
     Make ROCm shared libraries resolvable on every node before ANC runs.
 
@@ -1729,7 +1728,7 @@ def ensure_rocm_ldconfig(phdl, cluster_dict):
         f"fi"
     )
 
-    out_dict = phdl.exec(check, timeout=120)
+    out_dict = orch.exec(check, timeout=120)
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -1770,7 +1769,7 @@ _ANC_READY = False
 _ANC_INSTALL_PATHS = None
 
 
-def resolve_anc_install_location(phdl, cluster_dict, config_dict):
+def resolve_anc_install_location(orch, cluster_dict, config_dict):
     '''
     Resolve the on-node ANC install location group commands run from, verifying
     it actually exists on every node, and cache it for the session.
@@ -1795,7 +1794,7 @@ def resolve_anc_install_location(phdl, cluster_dict, config_dict):
     paths = resolve_anc_paths_from_config(config_dict)
     expected = _expected_nodes(cluster_dict)
 
-    out_dict = phdl.exec(f"test -f '{paths.anc_bin}' && echo ANC_PRESENT || true", timeout=60)
+    out_dict = orch.exec(f"test -f '{paths.anc_bin}' && echo ANC_PRESENT || true", timeout=60)
     print_test_output(log, out_dict)
 
     all_present = True
@@ -1815,7 +1814,7 @@ def resolve_anc_install_location(phdl, cluster_dict, config_dict):
     return paths
 
 
-def _anc_installed(phdl, cluster_dict, config_dict):
+def _anc_installed(orch, cluster_dict, config_dict):
     '''
     Report whether ANC is already installed on every expected node.
 
@@ -1835,14 +1834,14 @@ def _anc_installed(phdl, cluster_dict, config_dict):
 
     anc_version = config_dict.get("anc", {}).get("anc_version")
     if anc_version:
-        matches = node_version_matches(phdl, anc_version, anc_bin=paths.anc_bin)
+        matches = node_version_matches(orch, anc_version, anc_bin=paths.anc_bin)
         return all(matches.get(host) for host in expected)
 
-    out_dict = phdl.exec(f"test -f '{paths.anc_bin}' && echo ANC_PRESENT || true", timeout=60)
+    out_dict = orch.exec(f"test -f '{paths.anc_bin}' && echo ANC_PRESENT || true", timeout=60)
     return all("ANC_PRESENT" in (out_dict.get(host) or "") for host in expected)
 
 
-def ensure_anc_ready(phdl, cluster_dict, config_dict):
+def ensure_anc_ready(orch, cluster_dict, config_dict):
     '''
     Ensure ANC is installed and ROCm libs are resolvable before a group runs.
 
@@ -1864,20 +1863,20 @@ def ensure_anc_ready(phdl, cluster_dict, config_dict):
         log.info("ANC already ensured this session; skipping install/ldconfig")
         return
 
-    if _anc_installed(phdl, cluster_dict, config_dict):
+    if _anc_installed(orch, cluster_dict, config_dict):
         log.info("ANC already installed on all nodes; skipping install")
     else:
         log.info("ANC not present on all nodes; installing")
-        install_anc(phdl, cluster_dict, config_dict)
+        install_anc(orch, cluster_dict, config_dict)
 
-    ensure_rocm_ldconfig(phdl, cluster_dict)
+    ensure_rocm_ldconfig(orch, cluster_dict)
 
     # Resolve + verify the on-node install location now that ANC is present, and
     # cache it for the session's group runs. A missing location records a failure
     # here; surface it as a pytest failure so we never proceed to run groups
     # against a path that does not exist.
     globals.error_list = []
-    if resolve_anc_install_location(phdl, cluster_dict, config_dict) is None:
+    if resolve_anc_install_location(orch, cluster_dict, config_dict) is None:
         update_test_result()
         return
 
@@ -1972,7 +1971,7 @@ def _safe_tar_extract(tf, dest_dir):
         tf.extract(member, dest_dir)
 
 
-def _pull_log_dir(single, host, user, log_dir, dest_dir):
+def _pull_log_dir(orch, host, user, log_dir, dest_dir):
     '''
     Copy the ENTIRE ANC log directory from the node into dest_dir.
 
@@ -1980,6 +1979,10 @@ def _pull_log_dir(single, host, user, log_dir, dest_dir):
     summaries, ...) under its "Log directory". Rather than cherry-picking
     files, tar the whole directory on the node, download the tarball, and
     extract it locally so the full ANC log tree is preserved.
+
+    Every orch call is scoped to the single ``host`` (``hosts=[host]``) so each
+    node's log tree is pulled independently -- the per-node capture the suite
+    relies on.
 
     Returns:
       tuple[str | None, str | None]: (console_log_path, failure_reason).
@@ -2003,7 +2006,7 @@ def _pull_log_dir(single, host, user, log_dir, dest_dir):
         f"&& sudo chown '{user}' '{remote_tar}'"
     )
     try:
-        single.exec(archive_cmd, timeout=600)
+        orch.exec(archive_cmd, hosts=[host], timeout=600)
     except Exception as exc:
         return None, f"could not archive log dir {log_dir}: {exc}"
 
@@ -2011,18 +2014,18 @@ def _pull_log_dir(single, host, user, log_dir, dest_dir):
     # download_file suffixes the local path with '_<host>' (per-host collision
     # avoidance) and returns {host: actual_path}; use that, not local_tar.
     try:
-        downloaded = single.download_file(remote_tar, local_tar)
+        downloaded = orch.download_file(remote_tar, local_tar, hosts=[host])
     except Exception as exc:
         return None, f"could not download log archive from {log_dir}: {exc}"
     finally:
         try:
-            single.exec(f"rm -f '{remote_tar}'", timeout=30)
+            orch.exec(f"rm -f '{remote_tar}'", hosts=[host], timeout=30)
         except Exception as exc:  # best-effort cleanup
             log.warning("Node %s: could not remove remote tar %s: %s", host, remote_tar, exc)
 
     local_tar = None
     if isinstance(downloaded, dict) and downloaded:
-        # single-node handle: prefer the host key, else the only entry.
+        # host-scoped download: prefer the host key, else the only entry.
         local_tar = downloaded.get(host) or next(iter(downloaded.values()))
     if not local_tar or not os.path.isfile(local_tar):
         return None, (
@@ -2094,7 +2097,7 @@ def _find_errors_json(console_path):
     return candidate if os.path.isfile(candidate) else None
 
 
-def _evaluate_node(cluster_dict, host, output, test_name, timestamp, unit="group"):
+def _evaluate_node(orch, cluster_dict, host, output, test_name, timestamp, unit="group"):
     '''
     Collect the ANC log directory for one node and decide whether it passed.
 
@@ -2108,6 +2111,10 @@ def _evaluate_node(cluster_dict, host, output, test_name, timestamp, unit="group
     exiting with return code ANC_SUCCESS [0]" line. On failure, the item summary
     and FAILED rows are surfaced.
 
+    All artifact collection is scoped to this single ``host`` via the shared
+    ``orch`` handle (``hosts=[host]``), so each node's log tree is pulled
+    independently into its own per-node destination.
+
     ``unit`` ("group" / "item") scopes the not-found detection and log messages
     to the selection kind actually run, so a group run is not misclassified by an
     item's FATAL line (and vice versa).
@@ -2118,16 +2125,6 @@ def _evaluate_node(cluster_dict, host, output, test_name, timestamp, unit="group
       got (errors_json is the copied-out errors.json path, or None if absent).
     '''
     not_found_re = anc_not_found_re(unit)
-    try:
-        single = Pssh(
-            log,
-            [host],
-            user=cluster_dict["username"],
-            pkey=cluster_dict["priv_key_file"],
-        )
-    except Exception as exc:  # infra failure must fail the test
-        return NodeResult(f"could not open SSH handle for artifact collection: {exc}", None, None, None)
-
     label = _node_label(host, cluster_dict)
 
     # ANC prints "FATAL: <Group|Item> '<x>' not found" (and exits
@@ -2148,7 +2145,7 @@ def _evaluate_node(cluster_dict, host, output, test_name, timestamp, unit="group
     dest_dir = resolve_anc_log_folder(test_name, timestamp, node=label)
     os.makedirs(dest_dir, exist_ok=True)
 
-    console_path, infra_reason = _pull_log_dir(single, host, cluster_dict["username"], log_dir, dest_dir)
+    console_path, infra_reason = _pull_log_dir(orch, host, cluster_dict["username"], log_dir, dest_dir)
     if infra_reason:
         return NodeResult(infra_reason, dest_dir, label, None)
 
@@ -2359,27 +2356,27 @@ def _attach_anc_logs_to_html(request, config_dict, test_name, results, timestamp
     return errors_hrefs or {}, tarball_hrefs or {}
 
 
-def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=None):
+def run_anc_groups(orch, cluster_dict, config_dict, groups, test_name, request=None):
     '''
     Run one or more ANC groups in a single invocation on all nodes.
 
     Thin wrapper over run_anc_selection with the group selector (``-g``). See
     run_anc_selection for the full behaviour.
     '''
-    run_anc_selection(phdl, cluster_dict, config_dict, groups, test_name, selector="-g", unit="group", request=request)
+    run_anc_selection(orch, cluster_dict, config_dict, groups, test_name, selector="-g", unit="group", request=request)
 
 
-def run_anc_items(phdl, cluster_dict, config_dict, items, test_name, request=None):
+def run_anc_items(orch, cluster_dict, config_dict, items, test_name, request=None):
     '''
     Run one or more individual ANC items in a single invocation on all nodes.
 
     Thin wrapper over run_anc_selection with the item selector (``-i``). See
     run_anc_selection for the full behaviour.
     '''
-    run_anc_selection(phdl, cluster_dict, config_dict, items, test_name, selector="-i", unit="item", request=request)
+    run_anc_selection(orch, cluster_dict, config_dict, items, test_name, selector="-i", unit="item", request=request)
 
 
-def run_anc_selection(phdl, cluster_dict, config_dict, selection, test_name, selector="-g", unit="group", request=None):
+def run_anc_selection(orch, cluster_dict, config_dict, selection, test_name, selector="-g", unit="group", request=None):
     '''
     Run one or more ANC groups OR items in a single invocation on all nodes.
 
@@ -2482,7 +2479,7 @@ def run_anc_selection(phdl, cluster_dict, config_dict, selection, test_name, sel
     log.info("ANC '%s': %ss=%s", test_name, unit, selection_arg)
 
     try:
-        out_dict = phdl.exec(cmd, inactivity_timeout=inactivity_timeout)
+        out_dict = orch.exec(cmd, inactivity_timeout=inactivity_timeout)
     except Exception as exc:  # infra failure must fail the test
         fail_test(f"ANC {test_name}: execution failed (SSH/exec error): {exc}")
         update_test_result()
@@ -2509,6 +2506,7 @@ def run_anc_selection(phdl, cluster_dict, config_dict, selection, test_name, sel
             results.append(NodeResult(reason, None, _node_label(host, cluster_dict), None))
             continue
         result = _evaluate_node(
+            orch,
             cluster_dict,
             host,
             out_dict[host] or "",

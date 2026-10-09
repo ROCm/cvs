@@ -23,11 +23,11 @@ List the items:    cvs list anc_test_pcie
 from cvs.lib import anc_lib
 
 
-def test_pcie_gpu_rx_margin(phdl, cluster_dict, config_dict, request):
+def test_pcie_gpu_rx_margin(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "pcie_gpu_rx_margin".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["pcie_gpu_rx_margin"],
@@ -36,11 +36,11 @@ def test_pcie_gpu_rx_margin(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_pcie_link_status(phdl, cluster_dict, config_dict, request):
+def test_pcie_link_status(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "pcie_link_status".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["pcie_link_status"],
@@ -49,11 +49,11 @@ def test_pcie_link_status(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_pcie_nic_rx_margin(phdl, cluster_dict, config_dict, request):
+def test_pcie_nic_rx_margin(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "pcie_nic_rx_margin".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["pcie_nic_rx_margin"],

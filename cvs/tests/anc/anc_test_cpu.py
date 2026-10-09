@@ -23,11 +23,11 @@ List the groups:    cvs list anc_test_cpu
 from cvs.lib import anc_lib
 
 
-def test_cpu_content_check(phdl, cluster_dict, config_dict, request):
+def test_cpu_content_check(orch, cluster_dict, config_dict, request):
     '''Run the ANC group "cpu_content_check".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_groups(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["cpu_content_check"],
@@ -36,11 +36,11 @@ def test_cpu_content_check(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_cpu_mfg_l10(phdl, cluster_dict, config_dict, request):
+def test_cpu_mfg_l10(orch, cluster_dict, config_dict, request):
     '''Run the ANC group "cpu_mfg_l10".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_groups(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["cpu_mfg_l10"],
@@ -49,11 +49,11 @@ def test_cpu_mfg_l10(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_weighted_sanity(phdl, cluster_dict, config_dict, request):
+def test_weighted_sanity(orch, cluster_dict, config_dict, request):
     '''Run the ANC group "weighted_sanity".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_groups(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["weighted_sanity"],
@@ -62,11 +62,11 @@ def test_weighted_sanity(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_dimm_content_check(phdl, cluster_dict, config_dict, request):
+def test_dimm_content_check(orch, cluster_dict, config_dict, request):
     '''Run the ANC group "dimm_content_check".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_groups(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["dimm_content_check"],
@@ -75,11 +75,11 @@ def test_dimm_content_check(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_dimm_mfg_l10(phdl, cluster_dict, config_dict, request):
+def test_dimm_mfg_l10(orch, cluster_dict, config_dict, request):
     '''Run the ANC group "dimm_mfg_l10".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_groups(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["dimm_mfg_l10"],
@@ -88,11 +88,11 @@ def test_dimm_mfg_l10(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_dimm_weighted_sanity(phdl, cluster_dict, config_dict, request):
+def test_dimm_weighted_sanity(orch, cluster_dict, config_dict, request):
     '''Run the ANC group "dimm_weighted_sanity".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_groups(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["dimm_weighted_sanity"],

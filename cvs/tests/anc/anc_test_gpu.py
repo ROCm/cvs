@@ -23,11 +23,11 @@ List the groups:    cvs list anc_test_gpu
 from cvs.lib import anc_lib
 
 
-def test_gpu_content_check(phdl, cluster_dict, config_dict, request):
+def test_gpu_content_check(orch, cluster_dict, config_dict, request):
     '''Run the ANC group "gpu_content_check".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_groups(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["gpu_content_check"],
@@ -36,11 +36,11 @@ def test_gpu_content_check(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_gpu_mfg_l10(phdl, cluster_dict, config_dict, request):
+def test_gpu_mfg_l10(orch, cluster_dict, config_dict, request):
     '''Run the ANC group "gpu_mfg_l10".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_groups(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["gpu_mfg_l10"],
@@ -49,11 +49,11 @@ def test_gpu_mfg_l10(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_hbm_lvl1(phdl, cluster_dict, config_dict, request):
+def test_hbm_lvl1(orch, cluster_dict, config_dict, request):
     '''Run the ANC group "hbm_lvl1".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_groups(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["hbm_lvl1"],
@@ -62,11 +62,11 @@ def test_hbm_lvl1(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_hbm_lvl2(phdl, cluster_dict, config_dict, request):
+def test_hbm_lvl2(orch, cluster_dict, config_dict, request):
     '''Run the ANC group "hbm_lvl2".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_groups(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["hbm_lvl2"],
@@ -75,11 +75,11 @@ def test_hbm_lvl2(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_hbm_lvl3(phdl, cluster_dict, config_dict, request):
+def test_hbm_lvl3(orch, cluster_dict, config_dict, request):
     '''Run the ANC group "hbm_lvl3".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_groups(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["hbm_lvl3"],
@@ -88,11 +88,11 @@ def test_hbm_lvl3(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_hbm_lvl4(phdl, cluster_dict, config_dict, request):
+def test_hbm_lvl4(orch, cluster_dict, config_dict, request):
     '''Run the ANC group "hbm_lvl4".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_groups(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["hbm_lvl4"],
@@ -101,11 +101,11 @@ def test_hbm_lvl4(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_hbm_lvl5(phdl, cluster_dict, config_dict, request):
+def test_hbm_lvl5(orch, cluster_dict, config_dict, request):
     '''Run the ANC group "hbm_lvl5".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_groups(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["hbm_lvl5"],

@@ -121,7 +121,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
     def test_custom_anc_bin_in_command(self):
         # Legacy node (no anc-release-* line): content-list probe yields nothing,
         # so it falls back to --version, read from the labelled Release line.
-        class FakePhdl:
+        class FakeOrch:
             def __init__(self):
                 self.cmd = None
 
@@ -129,10 +129,10 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
                 self.cmd = cmd
                 return {"node1": "Release Version: 1.4.9\n"}
 
-        phdl = FakePhdl()
+        orch = FakeOrch()
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(phdl, "1.4.9", anc_bin="/home/u/my/anc/anc/anc.py")
-        self.assertIn("/home/u/my/anc/anc/anc.py --version", phdl.cmd)
+            result = anc_lib.node_version_matches(orch, "1.4.9", anc_bin="/home/u/my/anc/anc/anc.py")
+        self.assertIn("/home/u/my/anc/anc/anc.py --version", orch.cmd)
         self.assertTrue(result["node1"])
 
     def test_direct_uses_content_list(self):
@@ -143,7 +143,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
             "  base                      1.0.0   Base ANC items\n"
         )
 
-        class FakePhdl:
+        class FakeOrch:
             def __init__(self):
                 self.cmd = None
 
@@ -151,58 +151,58 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
                 self.cmd = cmd
                 return {"node1": content_out}
 
-        phdl = FakePhdl()
+        orch = FakeOrch()
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(phdl, "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
-        self.assertIn("/opt/amdtools/anc/anc.py --content-list", phdl.cmd)
+            result = anc_lib.node_version_matches(orch, "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
+        self.assertIn("/opt/amdtools/anc/anc.py --content-list", orch.cmd)
         self.assertTrue(result["node1"])
 
     def test_direct_mismatch_is_false(self):
         # Installed 1.5.4 does NOT satisfy a request for 1.5.5 (installed < required).
         content_out = "  anc-release-helios-nda    1.5.4   Helios NDA Release\n"
 
-        class FakePhdl:
+        class FakeOrch:
             def exec(self, cmd, timeout=None):
                 return {"node1": content_out}
 
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(FakePhdl(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
+            result = anc_lib.node_version_matches(FakeOrch(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertFalse(result["node1"])
 
     def test_direct_higher_installed_satisfies(self):
         # Installed 1.6.0 satisfies a request for 1.5.5 (installed >= required).
         content_out = "  anc-release-helios-nda    1.6.0   Helios NDA Release\n"
 
-        class FakePhdl:
+        class FakeOrch:
             def exec(self, cmd, timeout=None):
                 return {"node1": content_out}
 
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(FakePhdl(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
+            result = anc_lib.node_version_matches(FakeOrch(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertTrue(result["node1"])
 
     def test_direct_installed_rc_satisfies_base_request(self):
         # Installed 1.7.0-rc.1 satisfies a request for base 1.7.0 (rc == base).
         content_out = "  anc-release-helios-nda    1.7.0-rc.1 Helios NDA Release\n"
 
-        class FakePhdl:
+        class FakeOrch:
             def exec(self, cmd, timeout=None):
                 return {"node1": content_out}
 
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(FakePhdl(), "1.7.0", anc_bin="/opt/amdtools/anc/anc.py")
+            result = anc_lib.node_version_matches(FakeOrch(), "1.7.0", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertTrue(result["node1"])
 
     def test_direct_installed_rc1_does_not_satisfy_rc2(self):
         # Installed 1.7.0-rc.1 does NOT satisfy a request for 1.7.0-rc.2.
         content_out = "  anc-release-helios-nda    1.7.0-rc.1 Helios NDA Release\n"
 
-        class FakePhdl:
+        class FakeOrch:
             def exec(self, cmd, timeout=None):
                 return {"node1": content_out}
 
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(FakePhdl(), "1.7.0-rc.2", anc_bin="/opt/amdtools/anc/anc.py")
+            result = anc_lib.node_version_matches(FakeOrch(), "1.7.0-rc.2", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertFalse(result["node1"])
 
     def test_legacy_reads_release_version_label(self):
@@ -213,12 +213,12 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
                 return {"node1": "Available content plugins (2):\n  base - Base items\n"}
             return {"node1": "Release Name: helios-nda\nRelease Version: 1.4.10\n"}
 
-        class FakePhdl:
+        class FakeOrch:
             def exec(self, cmd, timeout=None):
                 return exec_impl(cmd, timeout)
 
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(FakePhdl(), "1.4.9", anc_bin="/opt/amdtools/anc/anc.py")
+            result = anc_lib.node_version_matches(FakeOrch(), "1.4.9", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertTrue(result["node1"])  # legacy 1.4.10 >= 1.4.9
 
     def test_generation_detected_from_node_not_url(self):
@@ -233,23 +233,23 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
                 return {"node1": "  anc-release-helios-nda    1.6.0   Helios NDA Release\n"}
             return {"node1": "Framework Version: 0.9.9"}
 
-        class FakePhdl:
+        class FakeOrch:
             def exec(self, cmd, timeout=None):
                 return exec_impl(cmd, timeout)
 
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(FakePhdl(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
+            result = anc_lib.node_version_matches(FakeOrch(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertTrue(result["node1"])  # 1.6.0 (content-list) >= 1.5.5, not 0.9.9
         self.assertFalse(any("--version" in c for c in cmds))  # no fallback probe needed
 
     def test_absent_anc_does_not_satisfy(self):
         # No content-list line AND no Release Version line -> node does not satisfy.
-        class FakePhdl:
+        class FakeOrch:
             def exec(self, cmd, timeout=None):
                 return {"node1": "anc.py: command not found"}
 
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(FakePhdl(), "1.4.9", anc_bin="/opt/amdtools/anc/anc.py")
+            result = anc_lib.node_version_matches(FakeOrch(), "1.4.9", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertFalse(result["node1"])
 
 
@@ -571,8 +571,8 @@ class TestCheckVersionMatchesUrl(unittest.TestCase):
             self.assertIsNone(anc_lib.check_version_matches_url(cfg), repr(omitted))
 
 
-class _RecordingPhdl:
-    '''Minimal phdl stand-in: records the install command, returns a success line.'''
+class _RecordingOrch:
+    '''Minimal orch stand-in: records the install command, returns a success line.'''
 
     def __init__(self, response):
         self.cmd = None
@@ -593,46 +593,46 @@ class TestDirectInstallers(unittest.TestCase):
 
     def test_deb_direct_command_shape(self):
         cfg = self._cfg("http://x/anc-release-helios-nda_1.5.5_amd64.deb")
-        phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
+        orch = _RecordingOrch({"node1": "ANC_INSTALL_SUCCESS"})
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
-            anc_lib._install_anc_deb_direct(phdl, self.CLUSTER, cfg)
-        self.assertIn("dpkg -i --force-depends ./anc.deb", phdl.cmd)
-        self.assertIn("anc-release-helios-nda_1.5.5_amd64.deb", phdl.cmd)
+            anc_lib._install_anc_deb_direct(orch, self.CLUSTER, cfg)
+        self.assertIn("dpkg -i --force-depends ./anc.deb", orch.cmd)
+        self.assertIn("anc-release-helios-nda_1.5.5_amd64.deb", orch.cmd)
         # No outer-tarball extraction for a direct package.
-        self.assertNotIn("outer.tar.gz", phdl.cmd)
+        self.assertNotIn("outer.tar.gz", orch.cmd)
 
     def test_rpm_direct_command_shape(self):
         cfg = self._cfg("http://x/anc-release-helios-nda-1.5.5-1.x86_64.rpm")
-        phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
+        orch = _RecordingOrch({"node1": "ANC_INSTALL_SUCCESS"})
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
-            anc_lib._install_anc_rpm_direct(phdl, self.CLUSTER, cfg)
-        self.assertIn("dnf install -y ./anc.rpm", phdl.cmd)
-        self.assertNotIn("outer.tar.gz", phdl.cmd)
+            anc_lib._install_anc_rpm_direct(orch, self.CLUSTER, cfg)
+        self.assertIn("dnf install -y ./anc.rpm", orch.cmd)
+        self.assertNotIn("outer.tar.gz", orch.cmd)
 
     def test_tar_direct_default_prefix_no_rewrite(self):
         cfg = self._cfg("http://x/anc-release-helios-nda-1.5.5-x86_64.tar.gz")
-        phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
+        orch = _RecordingOrch({"node1": "ANC_INSTALL_SUCCESS"})
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "_validate_exe_paths"):
-            anc_lib._install_anc_tar_direct(phdl, self.CLUSTER, cfg)
-        self.assertIn(f"tar -xzf anc.tar.gz -C '{anc_lib.ANC_TOOLS_PREFIX}'", phdl.cmd)
+            anc_lib._install_anc_tar_direct(orch, self.CLUSTER, cfg)
+        self.assertIn(f"tar -xzf anc.tar.gz -C '{anc_lib.ANC_TOOLS_PREFIX}'", orch.cmd)
         # Single archive, no inner anc-tool/anc-content tarballs.
-        self.assertNotIn("anc-tool", phdl.cmd)
-        self.assertNotIn("anc-content", phdl.cmd)
+        self.assertNotIn("anc-tool", orch.cmd)
+        self.assertNotIn("anc-content", orch.cmd)
         # Default prefix -> no exe_path rewrite.
-        self.assertNotIn("Rewriting exe_path", phdl.cmd)
+        self.assertNotIn("Rewriting exe_path", orch.cmd)
 
     def test_tar_direct_relocated_rewrites_exe_path(self):
         cfg = self._cfg("http://x/anc-release-helios-nda-1.5.5-x86_64.tar.gz", install_path="/home/u/anc")
-        phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
+        orch = _RecordingOrch({"node1": "ANC_INSTALL_SUCCESS"})
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "_validate_exe_paths"):
-            anc_lib._install_anc_tar_direct(phdl, self.CLUSTER, cfg)
-        self.assertIn("tar -xzf anc.tar.gz -C '/home/u/anc'", phdl.cmd)
-        self.assertIn("Rewriting exe_path", phdl.cmd)
-        self.assertIn(f"s#{anc_lib.ANC_TOOLS_PREFIX}#/home/u/anc#g", phdl.cmd)
+            anc_lib._install_anc_tar_direct(orch, self.CLUSTER, cfg)
+        self.assertIn("tar -xzf anc.tar.gz -C '/home/u/anc'", orch.cmd)
+        self.assertIn("Rewriting exe_path", orch.cmd)
+        self.assertIn(f"s#{anc_lib.ANC_TOOLS_PREFIX}#/home/u/anc#g", orch.cmd)
 
 
-class _ProbePhdl:
-    '''phdl stand-in for resolve_anc_install_location: records the probe command
+class _ProbeOrch:
+    '''orch stand-in for resolve_anc_install_location: records the probe command
     and returns a canned per-host response.'''
 
     def __init__(self, response):
@@ -659,26 +659,26 @@ class TestResolveAncInstallLocation(unittest.TestCase):
 
     def test_deb_probes_default_prefix(self):
         cfg = {"anc": {"anc_release_url": "http://x/anc_1.5.5_amd64.deb", "ANC_INSTALL_PATH": "/home/u/anc"}}
-        phdl = _ProbePhdl({"node1": "ANC_PRESENT"})
+        orch = _ProbeOrch({"node1": "ANC_PRESENT"})
         with patch.object(anc_lib, "print_test_output"):
-            paths = anc_lib.resolve_anc_install_location(phdl, self._cluster(), cfg)
+            paths = anc_lib.resolve_anc_install_location(orch, self._cluster(), cfg)
         self.assertEqual(paths.anc_bin, anc_lib.ANC_BIN)
-        self.assertIn(anc_lib.ANC_BIN, phdl.cmd)
+        self.assertIn(anc_lib.ANC_BIN, orch.cmd)
         self.assertIs(anc_lib._ANC_INSTALL_PATHS, paths)
 
     def test_tar_probes_relocated_prefix(self):
         cfg = {"anc": {"anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz", "ANC_INSTALL_PATH": "/home/u/anc"}}
-        phdl = _ProbePhdl({"node1": "ANC_PRESENT"})
+        orch = _ProbeOrch({"node1": "ANC_PRESENT"})
         with patch.object(anc_lib, "print_test_output"):
-            paths = anc_lib.resolve_anc_install_location(phdl, self._cluster(), cfg)
+            paths = anc_lib.resolve_anc_install_location(orch, self._cluster(), cfg)
         self.assertEqual(paths.anc_bin, "/home/u/anc/anc/anc.py")
-        self.assertIn("/home/u/anc/anc/anc.py", phdl.cmd)
+        self.assertIn("/home/u/anc/anc/anc.py", orch.cmd)
 
     def test_missing_fails_and_clears_cache(self):
         cfg = {"anc": {"anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz", "ANC_INSTALL_PATH": "/home/u/anc"}}
-        phdl = _ProbePhdl({"node1": ""})
+        orch = _ProbeOrch({"node1": ""})
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "fail_test") as ft:
-            result = anc_lib.resolve_anc_install_location(phdl, self._cluster(), cfg)
+            result = anc_lib.resolve_anc_install_location(orch, self._cluster(), cfg)
         self.assertIsNone(result)
         self.assertIsNone(anc_lib._ANC_INSTALL_PATHS)
         ft.assert_called_once()
@@ -687,9 +687,9 @@ class TestResolveAncInstallLocation(unittest.TestCase):
     def test_partial_coverage_fails(self):
         cluster = {"node_dict": {"node1": {}, "node2": {}}, "username": "u", "priv_key_file": "k"}
         cfg = {"anc": {"anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz", "ANC_INSTALL_PATH": "/home/u/anc"}}
-        phdl = _ProbePhdl({"node1": "ANC_PRESENT"})  # node2 unreachable / absent
+        orch = _ProbeOrch({"node1": "ANC_PRESENT"})  # node2 unreachable / absent
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "fail_test") as ft:
-            result = anc_lib.resolve_anc_install_location(phdl, cluster, cfg)
+            result = anc_lib.resolve_anc_install_location(orch, cluster, cfg)
         self.assertIsNone(result)
         ft.assert_called_once()
         self.assertIn("node2", ft.call_args[0][0])
@@ -709,14 +709,14 @@ class TestRunAncGroupsUsesCachedPath(unittest.TestCase):
 
         captured = {}
 
-        class FakePhdl:
+        class FakeOrch:
             def exec(self, cmd, inactivity_timeout=None):  # noqa: ARG002
                 captured["cmd"] = cmd
                 return {}
 
         with _patch_run_dir("/ws/cvs_runs/1"):
             with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
-                anc_lib.run_anc_groups(FakePhdl(), cluster, cfg, ["cpu_content_check"], "test_cpu_content_check")
+                anc_lib.run_anc_groups(FakeOrch(), cluster, cfg, ["cpu_content_check"], "test_cpu_content_check")
 
         self.assertIn("cd '/home/u/anc/anc' && sudo ./anc.py -g cpu_content_check", captured["cmd"])
 
@@ -732,14 +732,14 @@ class TestRunAncItems(unittest.TestCase):
         cluster = {"node_dict": {"node1": {}}, "username": "bob", "priv_key_file": "k"}
         captured = {}
 
-        class FakePhdl:
+        class FakeOrch:
             def exec(self, cmd, inactivity_timeout=None):  # noqa: ARG002
                 captured["cmd"] = cmd
                 return {}
 
         with _patch_run_dir("/ws/cvs_runs/1"):
             with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
-                anc_lib.run_anc_items(FakePhdl(), cluster, cfg, [item], f"test_{item}")
+                anc_lib.run_anc_items(FakeOrch(), cluster, cfg, [item], f"test_{item}")
         return captured["cmd"]
 
     def test_item_selector_print_all(self):
@@ -782,10 +782,10 @@ class TestEvaluateNodeNotFoundScoping(unittest.TestCase):
 
     def setUp(self):
         self.cluster = {"node_dict": {"n1": {}}, "username": "u", "priv_key_file": "k"}
-        # _evaluate_node opens a per-node Pssh and pulls the log dir; stub both so
-        # no SSH happens and console_text is whatever the test supplies.
+        self.orch = MagicMock()
+        # _evaluate_node pulls the log dir via orch; stub that so no SSH happens
+        # and console_text is whatever the test supplies.
         patchers = [
-            patch.object(anc_lib, "Pssh", return_value=MagicMock()),
             patch.object(anc_lib, "_node_label", return_value="n1"),
             patch.object(anc_lib, "resolve_anc_log_folder", return_value="/tmp/dest"),
             patch.object(anc_lib.os, "makedirs"),
@@ -801,7 +801,7 @@ class TestEvaluateNodeNotFoundScoping(unittest.TestCase):
         # verdict comes from the collected console.log, which we supply here.
         output = "Log directory: /root/logs/run1"
         with patch("builtins.open", mock_open(read_data=console_text)):
-            return anc_lib._evaluate_node(self.cluster, "n1", output, "test_x", "ts", unit=unit)
+            return anc_lib._evaluate_node(self.orch, self.cluster, "n1", output, "test_x", "ts", unit=unit)
 
     def test_group_run_with_missing_leaf_item_is_failure_not_na(self):
         # A group run whose leaf item is absent: ANC prints "FATAL: Item ..." and
@@ -1010,10 +1010,10 @@ class TestRmRfSinkIsSingleQuoted(unittest.TestCase):
 
     def _run_direct_tar(self, install_path):
         cfg = {"anc": {"anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz", "ANC_INSTALL_PATH": install_path}}
-        phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
+        orch = _RecordingOrch({"node1": "ANC_INSTALL_SUCCESS"})
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "_validate_exe_paths"):
-            anc_lib._install_anc_tar_direct(phdl, self.CLUSTER, cfg)
-        return phdl.cmd
+            anc_lib._install_anc_tar_direct(orch, self.CLUSTER, cfg)
+        return orch.cmd
 
     def test_prefix_single_quoted_name_double_quoted(self):
         cmd = self._run_direct_tar("/home/u/anc")
@@ -1038,16 +1038,20 @@ class TestPerUserTmpNamespacing(unittest.TestCase):
         cluster = {"node_dict": {"node1": {}}, "username": "alice", "priv_key_file": "k"}
         cmds = []
 
-        class FakePhdl:
+        class FakeAll:
+            def upload_file(self, local, remote):
+                cmds.append(f"UPLOAD {remote}")
+
+        class FakeOrch:
+            # ANC broadcasts the validator script via orch.all.upload_file(...).
+            all = FakeAll()
+
             def exec(self, cmd, timeout=None):  # noqa: ARG002
                 cmds.append(cmd)
                 return {"node1": "VALIDATION_SUCCESS"}
 
-            def upload_file(self, local, remote):
-                cmds.append(f"UPLOAD {remote}")
-
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib.globals, "error_list", []):
-            anc_lib._validate_exe_paths(FakePhdl(), cluster, "/opt/amdtools/anc/content")
+            anc_lib._validate_exe_paths(FakeOrch(), cluster, "/opt/amdtools/anc/content")
 
         joined = "\n".join(cmds)
         self.assertIn("mkdir -p '/tmp/alice'", joined)
@@ -1060,14 +1064,14 @@ class TestPerUserTmpNamespacing(unittest.TestCase):
         cfg = {"anc": {"print_all_to_console": "False"}}
         captured = {}
 
-        class FakePhdl:
+        class FakeOrch:
             def exec(self, cmd, inactivity_timeout=None):  # noqa: ARG002
                 captured["cmd"] = cmd
                 return {}
 
         with _patch_run_dir("/ws/cvs_runs/1"):
             with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
-                anc_lib.run_anc_groups(FakePhdl(), cluster, cfg, ["cpu_content_check"], "test_cpu_content_check")
+                anc_lib.run_anc_groups(FakeOrch(), cluster, cfg, ["cpu_content_check"], "test_cpu_content_check")
 
         self.assertIn("/tmp/bob/anc_run_$$.out", captured["cmd"])
         self.assertIn("mkdir -p '/tmp/bob'", captured["cmd"])
@@ -1143,10 +1147,10 @@ class TestTarCleanupFiltersDotDot(unittest.TestCase):
 
     def _cmd(self, installer, url):
         cfg = {"anc": {"anc_release_url": url, "ANC_INSTALL_PATH": ""}}
-        phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
+        orch = _RecordingOrch({"node1": "ANC_INSTALL_SUCCESS"})
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "_validate_exe_paths"):
-            installer(phdl, self.CLUSTER, cfg)
-        return phdl.cmd
+            installer(orch, self.CLUSTER, cfg)
+        return orch.cmd
 
     def test_direct_tar_filters_and_guards(self):
         cmd = self._cmd(anc_lib._install_anc_tar_direct, "http://x/anc-1.5.5-x86_64.tar.gz")
@@ -1167,18 +1171,21 @@ class TestChownArgumentQuoted(unittest.TestCase):
     def test_chown_user_single_quoted(self):
         captured = {}
 
-        class FakeSingle:
-            def exec(self, cmd, timeout=None):  # noqa: ARG002
+        class FakeOrch:
+            def exec(self, cmd, hosts=None, timeout=None):  # noqa: ARG002
                 captured.setdefault("first", cmd)
+                captured.setdefault("hosts", hosts)
                 return {}
 
-            def download_file(self, remote, local):  # noqa: ARG002
+            def download_file(self, remote, local, hosts=None):  # noqa: ARG002
                 return {}
 
         # download_file returns {} so _pull_log_dir bails after the archive_cmd;
-        # we only care that the archive command quotes the user.
-        anc_lib._pull_log_dir(FakeSingle(), "node1", "alice", "/root/logs/run1", "/tmp/dest")
+        # we only care that the archive command quotes the user and is scoped to
+        # the single host.
+        anc_lib._pull_log_dir(FakeOrch(), "node1", "alice", "/root/logs/run1", "/tmp/dest")
         self.assertIn("sudo chown 'alice'", captured["first"])
+        self.assertEqual(captured["hosts"], ["node1"])
 
 
 class TestInstallAncVersionGating(unittest.TestCase):
@@ -1204,14 +1211,14 @@ class TestInstallAncVersionGating(unittest.TestCase):
     def _content(version):
         return f"  anc-release-helios-nda    {version}   Helios NDA Release\n" if version else ""
 
-    def _phdl(self, state):
+    def _orch(self, state):
         content = self._content
 
-        class FakePhdl:
+        class FakeOrch:
             def exec(self, cmd, timeout=None):
                 return {host: content(ver) for host, ver in state.items()}
 
-        return FakePhdl()
+        return FakeOrch()
 
     def test_precheck_skip_when_installed_satisfies(self):
         # node already runs 1.6.0 (>= requested 1.5.5): skip, no installer call.
@@ -1221,7 +1228,7 @@ class TestInstallAncVersionGating(unittest.TestCase):
             patch.object(anc_lib, "_install_anc_tar_direct") as installer,
             patch.object(anc_lib, "fail_test") as ft,
         ):
-            anc_lib.install_anc(self._phdl({"node1": "1.6.0"}), self.CLUSTER, self._cfg("1.5.5"))
+            anc_lib.install_anc(self._orch({"node1": "1.6.0"}), self.CLUSTER, self._cfg("1.5.5"))
         installer.assert_not_called()
         ft.assert_not_called()
         upd.assert_called_once()
@@ -1241,7 +1248,7 @@ class TestInstallAncVersionGating(unittest.TestCase):
             patch.object(anc_lib, "_install_anc_tar_direct", side_effect=do_install) as installer,
             patch.object(anc_lib, "fail_test") as ft,
         ):
-            anc_lib.install_anc(self._phdl(state), cluster, self._cfg("1.5.5"))
+            anc_lib.install_anc(self._orch(state), cluster, self._cfg("1.5.5"))
         installer.assert_called_once()
         ft.assert_not_called()
         upd.assert_called_once()
@@ -1258,7 +1265,7 @@ class TestInstallAncVersionGating(unittest.TestCase):
             patch.object(anc_lib, "_install_anc_tar_direct", side_effect=do_install),
             patch.object(anc_lib, "fail_test") as ft,
         ):
-            anc_lib.install_anc(self._phdl(state), self.CLUSTER, self._cfg("1.5.5"))
+            anc_lib.install_anc(self._orch(state), self.CLUSTER, self._cfg("1.5.5"))
         ft.assert_called_once()
         self.assertIn("node1", ft.call_args[0][0])
 
