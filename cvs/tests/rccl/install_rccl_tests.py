@@ -228,6 +228,7 @@ def detect_rocm_path(phdl, config_rocm_path):
     log.warning('Could not detect ROCm path with required libraries, defaulting to /opt/rocm')
     return '/opt/rocm'
 
+
 def _sparse_checkout_path(config_dict, for_tests=False):
     """
     Return the git sparse-checkout path for rocm-systems, or None for a full clone.
