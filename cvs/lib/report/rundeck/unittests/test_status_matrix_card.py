@@ -9,10 +9,10 @@ from cvs.lib.report.rundeck.runtime.theme import report_css
 def _dataset():
     return {
         "nodes": ["n1", "n2"],
-        "groups": ["cpu_sanity", "hbm_lvl3"],
+        "groups": ["cpu_content_check", "hbm_lvl3"],
         "grid": {
             "n1": {
-                "cpu_sanity": {
+                "cpu_content_check": {
                     "status": "pass",
                     "items_summary": "Items: 1",
                     "items": [{"name": "a", "status": "pass"}],
@@ -20,7 +20,7 @@ def _dataset():
                 "hbm_lvl3": {"status": "na", "items": []},
             },
             "n2": {
-                "cpu_sanity": {"status": "pass", "items": []},
+                "cpu_content_check": {"status": "pass", "items": []},
                 "hbm_lvl3": {
                     "status": "fail",
                     "items_summary": "Items: 2 Total | 0 PASSED, 2 FAILED",
@@ -40,7 +40,7 @@ class TestStatusMatrixCard(unittest.TestCase):
     def test_renders_table_with_group_headers(self):
         html = self.renderer.render_status_matrix({}, {}, _dataset())
         self.assertIn("status-matrix", html)
-        self.assertIn("cpu_sanity", html)
+        self.assertIn("cpu_content_check", html)
         self.assertIn("hbm_lvl3", html)
 
     def test_fail_cell_has_details_and_items(self):

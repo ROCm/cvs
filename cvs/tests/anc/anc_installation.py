@@ -9,8 +9,8 @@ ANC installation suite: download + install ANC on every node.
 
 Fixtures (cluster_dict / config_dict / phdl) are provided by the dir-local
 conftest.py. All install logic lives in cvs.lib.anc_lib so it can be
-reused by the anc_test_cpu / anc_test_gpu suites (which install ANC as a
-pre-task before running their group sets).
+reused by the anc_test_cpu / anc_test_gpu / anc_test_individual_items suites
+(which install ANC as a pre-task before running their group/item sets).
 '''
 
 from cvs.lib.utils_lib import fail_test, update_test_result, print_test_output

@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "extends": "anc_base",
+  "profile_id": "anc_test_individual_items_rundeck",
+  "suite_id": "anc_test_individual_items",
+  "report_basename": "anc_test_individual_items_run_deck",
+  "title": "ANC Run Deck · Individual Items",
+  "subtitle": "AMD Node Check · per-item results across the cluster",
+  "link_name": "ANC Individual Items Run Deck"
+}

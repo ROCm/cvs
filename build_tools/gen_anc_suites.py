@@ -6,21 +6,24 @@ publication and does not imply publication or any waiver of confidentiality.
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 
-Generate the two ANC group suite files from the single source of truth
-(cvs.lib.anc_lib.CPU_GROUPS / GPU_GROUPS).
+Generate the ANC suite files from the single source of truth
+(cvs.lib.anc_lib.CPU_GROUPS / GPU_GROUPS / INDIVIDUAL_ITEMS).
 
-There is one committed suite file per kind — ``cpu/anc_test_cpu.py`` and
-``gpu/anc_test_gpu.py`` — each holding one ``test_<group>`` function per ANC
-group. So each kind is a single suite in ``cvs list`` (``anc_test_cpu`` /
-``anc_test_gpu``); running the whole suite runs every group, and a single group
-is runnable via ``cvs run anc_test_cpu test_<group>``. The files must NOT be
-hand-edited — edit the group lists in anc_lib.py and re-run this generator:
+There is one committed suite file per kind — ``cpu/anc_test_cpu.py``,
+``gpu/anc_test_gpu.py`` and ``individual_items/anc_test_individual_items.py`` —
+each holding one ``test_<name>`` function per ANC group (cpu/gpu) or individual
+item. So each kind is a single suite in ``cvs list`` (``anc_test_cpu`` /
+``anc_test_gpu`` / ``anc_test_individual_items``); running the whole suite runs
+every group/item, and a single one is runnable via
+``cvs run anc_test_cpu test_<group>`` /
+``cvs run anc_test_individual_items test_<item>``. The files must NOT be
+hand-edited — edit the lists in anc_lib.py and re-run this generator:
 
     make gen-anc-suites        # or: python build_tools/gen_anc_suites.py
 
-The generator is idempotent: it (re)writes exactly the two suite files for the
-current group lists and prunes stale generated files (e.g. the old per-group
-files) that it no longer produces.
+The generator is idempotent: it (re)writes exactly the suite files for the
+current lists and prunes stale generated files (e.g. the old per-group files)
+that it no longer produces.
 '''
 
 import os
@@ -34,6 +37,7 @@ if REPO_ROOT not in sys.path:
 from cvs.lib.anc_lib import (  # noqa: E402
     CPU_GROUPS,
     GPU_GROUPS,
+    INDIVIDUAL_ITEMS,
 )
 
 ANC_TESTS_DIR = os.path.join(REPO_ROOT, "cvs", "tests", "anc")
@@ -50,18 +54,18 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 
 {marker}
-Do NOT edit by hand. ANC {kind_upper} group suite: one ``test_<group>``
-function per ANC {kind} group.
+Do NOT edit by hand. ANC {title} suite: one ``test_<{unit}>``
+function per ANC {unit}.
 
-Edit CPU_GROUPS / GPU_GROUPS in cvs/lib/anc_lib.py and re-run
+Edit CPU_GROUPS / GPU_GROUPS / INDIVIDUAL_ITEMS in cvs/lib/anc_lib.py and re-run
 ``make gen-anc-suites`` to regenerate. Each function ensures ANC is installed
 and ROCm ldconfig is fixed (session-cached via anc_lib.ensure_anc_ready), then
-runs its one group; logs go to
-{{runner_log_folder}}/anc_logs/<node>/test_<group>/<timestamp>.
+runs its one {unit}; logs go to
+{{runner_log_folder}}/anc_logs/<node>/test_<{unit}>/<timestamp>.
 
-Run every {kind} group:  cvs run anc_test_{kind} ...
-Run a single group:      cvs run anc_test_{kind} test_<group> ...
-List the groups:         cvs list anc_test_{kind}
+Run every {unit}:    cvs run {suite} ...
+Run a single {unit}: cvs run {suite} test_<{unit}> ...
+List the {unit}s:    cvs list {suite}
 \'\'\'
 
 from cvs.lib import anc_lib
@@ -70,15 +74,15 @@ from cvs.lib import anc_lib
 _FUNC_TEMPLATE = '''\
 
 
-def test_{group}(phdl, cluster_dict, config_dict, request):
-    \'\'\'Run the ANC group "{group}".\'\'\'
+def test_{name}(phdl, cluster_dict, config_dict, request):
+    \'\'\'Run the ANC {unit} "{name}".\'\'\'
     anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
-    anc_lib.run_anc_groups(
+    anc_lib.{run_func}(
         phdl,
         cluster_dict,
         config_dict,
-        ["{group}"],
-        "test_{group}",
+        ["{name}"],
+        "test_{name}",
         request=request,
     )
 '''
@@ -86,7 +90,7 @@ def test_{group}(phdl, cluster_dict, config_dict, request):
 _INIT_TEMPLATE = '''\
 \'\'\'
 {marker}
-Package marker for the generated ANC {kind} group suite.
+Package marker for the generated ANC {title} suite.
 \'\'\'
 '''
 
@@ -115,20 +119,41 @@ def _prune_stale(subdir, keep_filenames):
             print(f"pruned {os.path.relpath(path, REPO_ROOT)}")
 
 
+# One spec per generated suite. ``subdir`` is the folder under tests/anc/ (the
+# suite name / file stem is always ``anc_test_<subdir>``); ``names`` is the
+# source-of-truth list from anc_lib; ``unit`` is the selection vocabulary
+# ("group" / "item", which also fixes the anc_lib entrypoint ``run_anc_<unit>s``);
+# ``title`` is the human label used in the module docstrings. Only ``title`` is
+# not derivable, so it is the only free-text key.
+_SUITE_SPECS = (
+    {"subdir": "cpu", "names": CPU_GROUPS, "unit": "group", "title": "CPU group"},
+    {"subdir": "gpu", "names": GPU_GROUPS, "unit": "group", "title": "GPU group"},
+    {"subdir": "individual_items", "names": INDIVIDUAL_ITEMS, "unit": "item", "title": "individual item"},
+)
+
+
 def generate():
-    for kind, groups in (("cpu", CPU_GROUPS), ("gpu", GPU_GROUPS)):
-        subdir = os.path.join(ANC_TESTS_DIR, kind)
+    for spec in _SUITE_SPECS:
+        unit = spec["unit"]
+        suite = f"anc_test_{spec['subdir']}"
+        run_func = f"run_anc_{unit}s"
+        subdir = os.path.join(ANC_TESTS_DIR, spec["subdir"])
         os.makedirs(subdir, exist_ok=True)
 
         _write(
             os.path.join(subdir, "__init__.py"),
-            _INIT_TEMPLATE.format(marker=GENERATED_MARKER, kind=kind),
+            _INIT_TEMPLATE.format(marker=GENERATED_MARKER, title=spec["title"]),
         )
 
-        suite_filename = f"anc_test_{kind}.py"
-        content = _FILE_HEADER.format(marker=GENERATED_MARKER, kind=kind, kind_upper=kind.upper())
-        for group in groups:
-            content += _FUNC_TEMPLATE.format(group=group)
+        suite_filename = f"{suite}.py"
+        content = _FILE_HEADER.format(
+            marker=GENERATED_MARKER,
+            title=spec["title"],
+            unit=unit,
+            suite=suite,
+        )
+        for name in spec["names"]:
+            content += _FUNC_TEMPLATE.format(name=name, unit=unit, run_func=run_func)
         _write(os.path.join(subdir, suite_filename), content)
 
         _prune_stale(subdir, {"__init__.py", suite_filename})
@@ -136,4 +161,4 @@ def generate():
 
 if __name__ == "__main__":
     generate()
-    print("ANC per-group suites generated.")
+    print("ANC suites generated.")
