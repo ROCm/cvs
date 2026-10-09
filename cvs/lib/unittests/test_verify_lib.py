@@ -162,6 +162,52 @@ class TestFullDmesgScan(unittest.TestCase):
         mock_fail_test.assert_called()
 
 
+class TestBenignUnknownDmesgRules(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
+
+    def _scan(self, scan, *lines):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            "node1": "".join(f"kern  :{level:<6}: 2026-09-28T19:27:21,000000+00:00 {msg}\n" for level, msg in lines)
+        }
+        with patch("cvs.lib.verify_lib.fail_test") as mock_fail:
+            result = scan(phdl)
+        return result["node1"], mock_fail
+
+    def test_ipvs_noise_is_ignored(self):
+        for scan in (verify_lib.full_dmesg_scan, verify_lib.verify_driver_errors):
+            result, mock_fail = self._scan(scan, ("err", "IPVS: rr: TCP 192.0.2.10:8989 - no destination available"))
+            self.assertEqual(result, [])
+            mock_fail.assert_not_called()
+
+    def test_other_unclassified_kernel_errors_still_fail(self):
+        for level, msg in (
+            ("emerg", "NMI watchdog: Watchdog detected hard LOCKUP on cpu 3"),
+            ("err", "blk_update_request: I/O error, dev sda"),
+            ("err", "nvme nvme0: I/O 123 QID 4 timeout, aborting"),
+        ):
+            result, mock_fail = self._scan(verify_lib.full_dmesg_scan, (level, msg))
+            self.assertEqual(len(result), 1, msg)
+            mock_fail.assert_called_once()
+
+    def test_unclassified_amdgpu_error_still_fails_driver_check(self):
+        result, mock_fail = self._scan(
+            verify_lib.verify_driver_errors,
+            ("err", "amdgpu 0000:05:00.0: amdgpu: [drm] *ERROR* ring gfx_0.0.0 timeout"),
+        )
+        self.assertEqual(len(result), 1)
+        mock_fail.assert_called_once()
+
+    def test_ipvs_line_matching_a_cvs_pattern_still_fails(self):
+        result, mock_fail = self._scan(
+            verify_lib.full_dmesg_scan, ("err", "IPVS: rr: TCP 192.0.2.10:8989 - no destination available crashed")
+        )
+        self.assertEqual(len(result), 1)
+        mock_fail.assert_called_once()
+
+
 class TestDmesgMigrations(unittest.TestCase):
     def tearDown(self):
         os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)

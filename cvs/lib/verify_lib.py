@@ -102,6 +102,23 @@ def cvs_dmesg_error_regex():
     ]
 
 
+# node-scraper reports every kernel err/crit/alert/emerg line it cannot classify as
+# an "Unknown dmesg error", so this list is a deliberate allowlist of known-harmless
+# messages. Keep each rule anchored to one specific message; never widen it to a
+# whole category or priority, which would hide real lockups and I/O errors.
+_BENIGN_UNKNOWN_DMESG_RULES = [
+    {'message': 'Unknown dmesg error', 'match_regex': r'IPVS: .*no destination available'},
+]
+
+
+def cvs_dmesg_analysis_args():
+    """Return the node-scraper analyzer args shared by every CVS dmesg scan."""
+    return {
+        'error_regex': cvs_dmesg_error_regex(),
+        'ignore_match_rules': list(_BENIGN_UNKNOWN_DMESG_RULES),
+    }
+
+
 def _parse_cvs_time(time_str):
     """Convert a `date +"%a %b %e %H:%M"` or `date +"%a %b %e %H:%M:%S"` string
     to a tz-aware datetime.
@@ -347,7 +364,7 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
         # analyzer filter by time range, instead of sed/awk slicing on the
         # human-readable timestamps. CVS's historical patterns are added too.
         node0 = list(start_time_dict.keys())[0]
-        analysis_args = {'error_regex': cvs_dmesg_error_regex()}
+        analysis_args = cvs_dmesg_analysis_args()
         start_dt = _parse_cvs_time(start_time_dict[node0])
         if start_dt:
             analysis_args['analysis_range_start'] = start_dt
@@ -610,7 +627,7 @@ def full_journalctl_scan(phdl, start_time_dict=None):
         output_dict = phdl.exec(f'sudo journalctl -k -o short-iso{since_clause}')
         return _node_scraper_scan(
             output_dict,
-            analysis_args={'error_regex': cvs_dmesg_error_regex()},
+            analysis_args=cvs_dmesg_analysis_args(),
             source_label='journalctl',
         )
 
@@ -684,7 +701,7 @@ def full_dmesg_scan(
         )
         return _node_scraper_scan(
             output_dict,
-            analysis_args={'error_regex': cvs_dmesg_error_regex()},
+            analysis_args=cvs_dmesg_analysis_args(),
             source_label='Dmesg',
         )
 
@@ -754,7 +771,7 @@ def verify_driver_errors(phdl):
             events = node_scraper_adapter.parse_dmesg(
                 output_dict[node],
                 node_name=node,
-                analysis_args={'error_regex': cvs_dmesg_error_regex()},
+                analysis_args=cvs_dmesg_analysis_args(),
             )
             for event in events:
                 match = event.get('match_content')
