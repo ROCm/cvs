@@ -1,8 +1,8 @@
 {
-  "_comment": "WAN 2.2 I2V native single-node xDiT workload.",
+  "_comment": "WAN 2.2 I2V native single-node xDiT workload. Download model before run.",
   "gpu_name" : "<changeme> mi325",
   "enforce_thresholds": true,
-  "threshold_json": "mi325_xdit_wan22_14b_single_threshold.json",
+  "threshold_json": "xdit_wan22_14b_single_threshold.json",
   "paths": {
     "shared_fs": "{home}",
     "models_dir": "{home}/.cache/huggingface",

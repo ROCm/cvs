@@ -140,6 +140,33 @@ class TestWanOutputParserParse(unittest.TestCase):
             self.assertIsNone(result.artifact_path)
             self.assertAlmostEqual(result.avg_total_time_s, 50.0)
 
+    def test_expected_steps_mismatch_fails_before_threshold(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_rank0_json(root, "rank0_step0.json", 10.0)
+            (root / "video.mp4").write_bytes(b"fake-video")
+
+            parser = WanOutputParser(tmpdir, expected_steps=5)
+            result, errors = parser.parse()
+
+            self.assertIsNone(result)
+            self.assertTrue(any("found 1 rank0 benchmark steps, expected 5" in err for err in errors))
+            self.assertFalse(any("threshold" in err.lower() for err in errors))
+
+    def test_expected_steps_match(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_rank0_json(root, "rank0_step0.json", 10.0)
+            _write_rank0_json(root, "rank0_step1.json", 30.0)
+            (root / "video.mp4").write_bytes(b"fake-video")
+
+            result, errors = WanOutputParser(tmpdir, expected_steps=2).parse()
+
+            self.assertEqual(errors, [])
+            self.assertIsNotNone(result)
+            self.assertEqual(result.step_count, 2)
+            self.assertAlmostEqual(result.avg_total_time_s, 20.0)
+
     def test_parse_missing_json_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             parser = WanOutputParser(tmpdir)
