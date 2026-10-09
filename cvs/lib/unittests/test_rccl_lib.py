@@ -63,6 +63,13 @@ class TestRcclLib(unittest.TestCase):
             {'size': 17179869184, 'inPlace': 1, 'busBw': 300.0, 'time': 10.0},
         ]
 
+    @staticmethod
+    def _dtype_row(size, dtype, bus_bw, time, cycle=None):
+        row = {'size': size, 'type': dtype, 'inPlace': 1, 'busBw': bus_bw, 'time': time}
+        if cycle is not None:
+            row['numCycle'] = cycle
+        return row
+
     def test_expected_results_transposes_shipped_shape(self):
         config = self._shipped_config()
         job = self._configured_job(config)
@@ -501,6 +508,174 @@ class TestRcclLib(unittest.TestCase):
             verifier.check_lat_dip()
         self.assertIn('No RCCL results available for latency dip check', captured.output[0])
         mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_bw_dip_ignores_interleaved_aggregated_dtypes(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        rows = [
+            self._dtype_row(1024, 'float', 100, 20),
+            self._dtype_row(1024, 'half', 60, 10),
+            self._dtype_row(2048, 'float', 110, 25),
+            self._dtype_row(2048, 'half', 65, 12),
+            self._dtype_row(4096, 'float', 120, 30),
+            self._dtype_row(4096, 'half', 70, 14),
+        ]
+
+        rccl_lib.RcclVerifier('all_reduce_perf', rows, expected).check_bw_dip()
+
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_bw_dip_detects_dip_within_one_dtype_when_interleaved(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        rows = [
+            self._dtype_row(1024, 'float', 100, 20),
+            self._dtype_row(1024, 'half', 70, 10),
+            self._dtype_row(2048, 'float', 80, 25),
+            self._dtype_row(2048, 'half', 75, 12),
+        ]
+
+        rccl_lib.RcclVerifier('all_reduce_perf', rows, expected).check_bw_dip()
+
+        mock_fail_test.assert_called_once()
+        message = mock_fail_test.call_args.args[0]
+        for detail in ('msg size 2048', 'earlier msg size 1024', 'BW 100.0', '[type=float]'):
+            self.assertIn(detail, message)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_bw_dip_ignores_concatenated_raw_dtype_sweeps(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        rows = [
+            self._dtype_row(1024, 'float', 50, 20),
+            self._dtype_row(2048, 'float', 100, 25),
+            self._dtype_row(4096, 'float', 150, 30),
+            self._dtype_row(1024, 'half', 30, 10),
+            self._dtype_row(2048, 'half', 60, 12),
+            self._dtype_row(4096, 'half', 90, 14),
+        ]
+
+        rccl_lib.RcclVerifier('all_reduce_perf', rows, expected).check_bw_dip()
+
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_lat_dip_ignores_interleaved_dtypes(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        rows = [
+            self._dtype_row(1024, 'float', 100, 20),
+            self._dtype_row(1024, 'half', 60, 10),
+            self._dtype_row(2048, 'float', 110, 25),
+            self._dtype_row(2048, 'half', 65, 12),
+        ]
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected)
+
+        verifier.check_lat_dip()
+        mock_fail_test.assert_not_called()
+
+        rows.append(self._dtype_row(4096, 'float', 120, 15))
+        verifier.check_lat_dip()
+        mock_fail_test.assert_called_once()
+        message = mock_fail_test.call_args.args[0]
+        self.assertIn('latency', message)
+        self.assertIn('[type=float]', message)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_series_sorts_rows_by_size(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        row_2048 = self._dtype_row(2048, 'float', 100, 25)
+        row_1024 = self._dtype_row(1024, 'float', 90, 20)
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', [row_2048, row_1024], expected)
+
+        verifier.check_bw_dip()
+
+        mock_fail_test.assert_not_called()
+        self.assertEqual(verifier._dip_series(), {('float', None): [row_1024, row_2048]})
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_series_separates_raw_cycles(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        rows = [
+            self._dtype_row(1024, 'float', 90, 20, cycle=0),
+            self._dtype_row(2048, 'float', 100, 25, cycle=0),
+            self._dtype_row(1024, 'float', 90, 20, cycle=1),
+            self._dtype_row(2048, 'float', 100, 25, cycle=1),
+        ]
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected)
+
+        verifier.check_bw_dip()
+        mock_fail_test.assert_not_called()
+
+        rows[-1]['busBw'] = 80
+        verifier.check_bw_dip()
+        mock_fail_test.assert_called_once()
+        self.assertIn('[type=float, cycle=1]', mock_fail_test.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_series_filters_in_place_and_reference_sizes(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        in_place_rows = [self._dtype_row(1024, 'float', 100, 20), self._dtype_row(2048, 'float', 110, 25)]
+        out_of_place_row = {**self._dtype_row(2048, 'float', 1, 1), 'inPlace': 0}
+        non_reference_row = self._dtype_row(8192, 'float', 1, 1)
+        verifier = rccl_lib.RcclVerifier(
+            'all_reduce_perf', in_place_rows + [out_of_place_row, non_reference_row], expected
+        )
+
+        verifier.check_bw_dip()
+        self.assertEqual(verifier._dip_series(), {('float', None): in_place_rows})
+        mock_fail_test.assert_not_called()
+
+        out_of_place_rows = [
+            {**self._dtype_row(1024, 'float', 100, 20), 'inPlace': 0},
+            {**self._dtype_row(2048, 'float', 110, 25), 'inPlace': 0},
+        ]
+        verifier = rccl_lib.RcclVerifier(
+            'alltoall_perf', out_of_place_rows + [in_place_rows[-1], {**non_reference_row, 'inPlace': 0}], expected
+        )
+
+        verifier.check_bw_dip()
+        self.assertEqual(verifier._dip_series(), {('float', None): out_of_place_rows})
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_check_on_real_multi_dtype_aggregation(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        measurements = (
+            (1024, 'float', 100, 20),
+            (1024, 'half', 60, 10),
+            (2048, 'float', 110, 25),
+            (2048, 'half', 65, 12),
+        )
+        raw_rows = [
+            rccl_lib.RcclTests.model_validate(
+                {
+                    'numCycle': 0,
+                    'name': 'AllReduce',
+                    'size': size,
+                    'type': dtype,
+                    'redop': 'sum',
+                    'inPlace': 1,
+                    'algBw': bus_bw,
+                    'busBw': bus_bw,
+                    'time': time,
+                    'wrong': 0,
+                }
+            )
+            for size, dtype, bus_bw, time in measurements
+        ]
+
+        aggregated = rccl_lib.RcclJob.aggregate_results(raw_rows)
+        rows = rccl_lib.RcclJob._verification_results(aggregated, [])
+        rccl_lib.RcclVerifier(
+            'all_reduce_perf', rows, expected, {'verify_bw_dip': 'True', 'verify_lat_dip': 'True'}
+        ).check()
+
+        self.assertEqual(len(aggregated), 4)
+        mock_fail_test.assert_not_called()
+
+    def test_dip_label_omits_missing_series_keys(self):
+        self.assertEqual(rccl_lib.RcclVerifier._series_label(None, None), '')
+        self.assertEqual(rccl_lib.RcclVerifier._series_label('float', None), ' [type=float]')
+        self.assertEqual(rccl_lib.RcclVerifier._series_label('half', 0), ' [type=half, cycle=0]')
 
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_verifier_records_empty_results_without_running_checks(self, mock_fail_test):
