@@ -20,6 +20,17 @@ from cvs.lib import globals
 log = globals.log
 
 
+def _payload_sudo_prefix(orch):
+    """Sudo for a command passed to orch.exec().
+
+    sudo_prefix() is host passwordless sudo. Container exec already applies
+    that to `docker exec`, and the payload runs inside the container.
+    """
+    if getattr(orch, 'orchestrator_type', None) == 'container':
+        return ''
+    return orch.sudo_prefix()
+
+
 # NOTE: This module assumes the following symbols are available in scope:
 # - log: a configured logger
 # - fail_test: helper that records/logs a failure (and may raise)
@@ -137,8 +148,9 @@ def test_install_agfhc(
     # lib32gcc-s1 not installable"). Safe on apt-rocm systems too: dpkg-deb
     # just extracts the bundled debs into /, which is correct either way.
     try:
+        sudo_prefix = _payload_sudo_prefix(orch)
         out_dict = orch.exec(
-            f"sudo bash -c 'cd {install_dir} && ./install --rocm-tar'",
+            f"{sudo_prefix}bash -c 'cd {install_dir} && ./install --rocm-tar'",
             timeout=90,
         )
         for node in out_dict.keys():
