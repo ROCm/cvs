@@ -1,7 +1,7 @@
 # cvs/lib/unittests/test_anc_lib.py
 import os
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import cvs.lib.anc_lib as anc_lib
 
@@ -773,6 +773,55 @@ class TestNotFoundRegexScopedToUnit(unittest.TestCase):
 
     def test_unrelated_line_does_not_match(self):
         self.assertIsNone(anc_lib.anc_not_found_re("item").search("All items passed"))
+
+
+class TestEvaluateNodeNotFoundScoping(unittest.TestCase):
+    '''_evaluate_node keys "not available" off the unit-scoped FATAL line, not the
+    ANC_PROG_NOT_FOUND return code (which ALSO fires for a missing leaf item in an
+    otherwise-present group).'''
+
+    def setUp(self):
+        self.cluster = {"node_dict": {"n1": {}}, "username": "u", "priv_key_file": "k"}
+        # _evaluate_node opens a per-node Pssh and pulls the log dir; stub both so
+        # no SSH happens and console_text is whatever the test supplies.
+        patchers = [
+            patch.object(anc_lib, "Pssh", return_value=MagicMock()),
+            patch.object(anc_lib, "_node_label", return_value="n1"),
+            patch.object(anc_lib, "resolve_anc_log_folder", return_value="/tmp/dest"),
+            patch.object(anc_lib.os, "makedirs"),
+            patch.object(anc_lib, "_pull_log_dir", return_value=("/tmp/dest/console.log", None)),
+            patch.object(anc_lib, "_find_errors_json", return_value=None),
+        ]
+        for p in patchers:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _evaluate(self, console_text, unit):
+        # Only the Log directory line is read from the streamed `output`; the
+        # verdict comes from the collected console.log, which we supply here.
+        output = "Log directory: /root/logs/run1"
+        with patch("builtins.open", mock_open(read_data=console_text)):
+            return anc_lib._evaluate_node(self.cluster, "n1", output, "test_x", "ts", unit=unit)
+
+    def test_group_run_with_missing_leaf_item_is_failure_not_na(self):
+        # A group run whose leaf item is absent: ANC prints "FATAL: Item ..." and
+        # exits ANC_PROG_NOT_FOUND. That must be a real FAILURE for the group, not
+        # "not available" (the regression Copilot flagged).
+        console = "FATAL: Item 'gemm_fp8_trig' not found\nProgram exiting with return code ANC_PROG_NOT_FOUND [13]\n"
+        result = self._evaluate(console, unit="group")
+        self.assertIsNotNone(result.reason)
+        self.assertNotIn("not available on the remote system", result.reason)
+        self.assertIn("ANC_PROG_NOT_FOUND", result.reason)
+
+    def test_group_run_with_missing_group_is_na(self):
+        console = "FATAL: Group 'cpu_mfg_l10' not found\nProgram exiting with return code ANC_PROG_NOT_FOUND [13]\n"
+        result = self._evaluate(console, unit="group")
+        self.assertIn("not available on the remote system", result.reason)
+
+    def test_item_run_with_missing_item_is_na(self):
+        console = "FATAL: Item 'gemm_fp8_trig' not found\nProgram exiting with return code ANC_PROG_NOT_FOUND [13]\n"
+        result = self._evaluate(console, unit="item")
+        self.assertIn("not available on the remote system", result.reason)
 
 
 class TestResolveAncLogFolder(unittest.TestCase):

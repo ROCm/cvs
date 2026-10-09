@@ -6,5 +6,6 @@
   "report_basename": "anc_test_individual_items_run_deck",
   "title": "ANC Run Deck · Individual Items",
   "subtitle": "AMD Node Check · per-item results across the cluster",
+  "footer": "CVS ANC · render-only · per-node verdict from the collected ANC run (pass / fail / n-a when the item is not on the node)",
   "link_name": "ANC Individual Items Run Deck"
 }

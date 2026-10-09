@@ -194,17 +194,16 @@ ANC_RETURN_CODE_RE = re.compile(r"return code\s+(\S+)\s*\[(-?\d+)\]")
 # run summary; surfaced verbatim so the CVS result shows the pass/fail counts.
 ANC_ITEMS_SUMMARY_RE = re.compile(r"^\s*Items:\s*\d+\s*Total\b.*$", re.MULTILINE)
 
-# ANC reports an unknown group/item both as a FATAL line and a dedicated return
-# code:
+# ANC reports an unknown group/item as a FATAL line naming the SELECTION KIND:
 #   "FATAL: Group 'foo' not found"   (a -g run)
 #   "FATAL: Item 'foo' not found"    (a -i run)
-#   "Program exiting with return code ANC_PROG_NOT_FOUND [13]"
-# The FATAL line names the SELECTION KIND (Group vs Item), so the match is scoped
-# to the unit actually being run (see anc_not_found_re): a group run must not be
-# downgraded to "not available" by an item's FATAL line, nor vice versa. The
-# unit-agnostic ANC_PROG_NOT_FOUND return code stays the authoritative fallback
-# when only console.log is collected (print_all_to_console off).
-ANC_PROG_NOT_FOUND_NAME = "ANC_PROG_NOT_FOUND"
+# and exits ANC_PROG_NOT_FOUND [13]. The not-available verdict is keyed off the
+# kind-scoped FATAL line (see anc_not_found_re) rather than that return code,
+# because ANC ALSO exits ANC_PROG_NOT_FOUND when a leaf item inside an
+# otherwise-present group is missing -- keying off the code would mislabel that
+# genuine group failure as "not available". The FATAL line is written to
+# console.log, which is always collected, so the scoped matcher is reliable even
+# when print_all_to_console is off.
 
 
 def anc_not_found_re(unit):
@@ -2139,11 +2138,16 @@ def _evaluate_node(cluster_dict, host, output, test_name, timestamp, unit="group
     rc_name, rc_value = rc_matches[-1][0], int(rc_matches[-1][1])
     log.info("Node %s: ANC %s program return code is %s [%s]", host, test_name, rc_name, rc_value)
     if rc_value != 0:
-        # Fallback path: ANC still writes a Log directory on a missing
-        # group/item, so if the FATAL line was not surfaced in the streamed
-        # output it is caught here via the dedicated return code, with the same
-        # friendly message.
-        if rc_name == ANC_PROG_NOT_FOUND_NAME or not_found_re.search(console_text):
+        # "Not available" is decided ONLY by the unit-scoped FATAL matcher in the
+        # collected console.log, never by the ANC_PROG_NOT_FOUND return code
+        # alone. ANC exits ANC_PROG_NOT_FOUND both when the requested selection is
+        # absent AND when a leaf item inside an otherwise-present group is missing
+        # (it prints "FATAL: Item ..." and exits the same code); keying off the
+        # return code would mislabel that genuine group failure as "not
+        # available". The scoped matcher distinguishes them by the FATAL line's
+        # kind (Group vs Item), so a missing leaf item in a group falls through to
+        # the real-failure path below.
+        if not_found_re.search(console_text):
             log.error("Node %s: ANC %s '%s' not found on remote system", host, unit, test_name)
             return NodeResult(
                 f"This test is not available on the remote system [{label}]", dest_dir, label, errors_json

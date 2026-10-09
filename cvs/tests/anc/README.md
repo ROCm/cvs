@@ -145,7 +145,7 @@ The ANC config lives at `cvs/input/config_file/anc/anc_config.json`:
         "description": "AMD Node Check",
         "inactivity_timeout": 900,
         "install_timeout": 1800,
-        "anc_version": "1.4.9",
+        "anc_version": "1.7.3",
         "anc_release_url": "<changeme>",
         "ANC_INSTALL_PATH": "",
         "print_all_to_console": "True",
