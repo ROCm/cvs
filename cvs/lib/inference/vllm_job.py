@@ -18,9 +18,9 @@ Routing contract:
 Distributed vs single-node branching is localised to _server_argv only. The
 target host group, rather than the variant config, determines node count:
 distributed flags (--node-rank, --master-addr, --master-port, --nnodes,
---distributed-executor-backend) are added iff int(nnodes) > 1.
---pipeline-parallel-size is added on multi-node mp, and otherwise whenever
-pp > 1, including on one host. Everything else is topology-blind.
+--pipeline-parallel-size, --distributed-executor-backend) are added iff
+int(nnodes) > 1, except that --pipeline-parallel-size is also added on one
+host when pp > 1. Everything else is topology-blind.
 
 IB device config (distributed only):
   NCCL_IB_HCA: inherited from container.env when configured there. Otherwise,
@@ -215,8 +215,7 @@ class VllmJob:
         """vllm serve arg list for a specific node rank.
 
         Distributed flags added iff nnodes > 1. On single-node (nnodes=1)
-        this yields a plain single-node vllm serve command, plus
-        --pipeline-parallel-size when pp > 1.
+        this yields a plain single-node vllm serve command.
         """
         argv = [
             "vllm",

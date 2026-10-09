@@ -1,4 +1,4 @@
-'''Distributed vLLM benchmark suite; a one-host cluster runs the vllm_single path.
+'''Distributed vLLM benchmark suite with single-host fallback.
 
 Tests performed (in order):
 1. test_launch_container          - Launch the vLLM container on every node

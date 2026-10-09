@@ -6,7 +6,7 @@
 vLLM inference benchmark configuration file for Cluster Validation Suite (CVS)
 ****************************************************************************
 
-The vLLM suites benchmark LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file; when only one host is present, it runs the same single-host path as ``vllm_single``. Packaged distributed recipes and thresholds are calibrated for two hosts; retune them before treating other sizes as pass/fail.
+The vLLM suites benchmark LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file, with one-host fallback when only a single host is present. Packaged distributed recipes and thresholds are calibrated for two hosts; retune them before treating other sizes as pass/fail.
 
 For a mapping-style ``node_dict``, "first cluster host" means the first JSON key
 in insertion order. ``vllm_single`` scopes execution to that host and rewrites
@@ -229,8 +229,6 @@ These rules are enforced when the configuration file loads, before anything star
      - ``pipeline_parallel_size`` **must** be greater than 1
    * - two or more cluster hosts, backend is ray
      - ``pipeline_parallel_size`` of 1 is valid
-   * - one cluster host (``vllm_single``, or ``vllm_distributed`` on a one-host cluster)
-     - Any ``pipeline_parallel_size`` is valid. Values above 1 add ``--pipeline-parallel-size``; no distributed flags are emitted
    * - two or more cluster hosts, either backend
      - ``container.env.NCCL_SOCKET_IFNAME`` is **required**
 
