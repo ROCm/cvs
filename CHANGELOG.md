@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- ibperf now probes every test node's perftest binary for ROCm DMA-BUF support before launching. It fails with the node, the binary path and the build flag when support is missing, unless `ibperf.require_dmabuf` is `"False"`. Whether DMA-BUF was used is recorded as a `dmabuf` user property and in the Excel sheet headings. `run_ib_perf_bw_test` / `run_ib_perf_lat_test` no longer take `shdl` and accept `use_dmabuf`. `check_perftest_dmabuf_support` is replaced by `check_perftest_dmabuf`.
 - RCCL perf, regression, and pairwise suites use the orchestrator for workload execution, including container-aware launches and cleanup. `RcclJob` and `RcclJob.from_config` now take one `orch` argument in place of the previous two execution handles; `OpenMPI.prepare`, `MpiRun`, and `Srun` callers must also migrate.
 - RCCL result files default to the run directory. Every run verifies shared result-path access via a sentinel round-trip through `download_from_head` before launching, and result-save failures fail the test. Container runs require the result directory mounted at the same host/container path.
 - `Orchestrator` now declares `exec_on_host`, `upload_to_head`, `download_from_head`, and `download_file` as required methods. RCCL uses the first three for host diagnostics and result transfers instead of reaching through internal handles; Aorta uses `download_file` for per-host artifact pickup. Custom orchestrator subclasses must implement all four methods.

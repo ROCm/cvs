@@ -12,6 +12,8 @@ This Pytest script can be run in the following fashion (for the details on argum
 
 In the config file, cvs/input/config_file/ibperf/ibperf_config.json, change the value of parameter "install_dir": "/home/{user-id}/" to the desired location. Else {user-id} will be resolved as the current username at runtime.
 
+Perftest must be built with ROCm DMA-BUF support. The tests probe the perftest binary on every node before launching. The `require_dmabuf` config setting defaults to `True` and fails the test if any node lacks support; set it to `False` to run without DMA-BUF on all nodes.
+
 
 ```
 (myenv) [user@host]~/cvs:(main)$

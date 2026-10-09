@@ -14,8 +14,12 @@ from cvs.lib.utils_lib import *
 
 log = logging.getLogger(__name__)
 
-# Cached one-time probe results for the current process (per binary / ROCm config key).
-_dmabuf_support_cache = {}
+DMABUF_SUPPORTED = 'supported'
+DMABUF_UNSUPPORTED = 'unsupported'
+DMABUF_PROBE_FAILED = 'probe_failed'
+PERFTEST_DMABUF_BUILD_HINT = 'rebuild perftest with ROCm DMA-BUF support (configure --enable-rocm --enable-rocm-dmabuf)'
+
+# Cached one-time ROCm path probe results for the current process.
 _rocm_path_cache = {}
 
 
@@ -155,28 +159,75 @@ def detect_rocm_path(phdl, config_rocm_path):
     return '/opt/rocm'
 
 
-def check_perftest_dmabuf_support(shdl, binary_path):
-    """
-    Check if the given perftest binary on the cluster node supports the
-    --use_rocm_dmabuf flag by executing the binary's help output and
-    grepping for the flag.
+def is_dmabuf_required(config_dict):
+    """Require DMA-BUF by default, including for unrecognized config values."""
+    value = config_dict.get('require_dmabuf', True)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ('true', '1', 'yes', 'on'):
+            return True
+        if normalized in ('false', '0', 'no', 'off'):
+            return False
+    log.warning('Unrecognized require_dmabuf value %r; treating as True', value)
+    return True
 
-    Args:
-        shdl: Pssh handle used to execute commands on one head node.
-        binary_path (str): Full path to the perftest binary on the node.
 
-    Returns:
-        bool: True if the binary supports --use_rocm_dmabuf on any host,
-              False otherwise.
-    """
-    cmd = f'{binary_path} --help 2>&1 | grep use_rocm_dmabuf | wc -l'
-    log.info("Checking dmabuf support: %s", cmd)
-    dmabuf_check_out = shdl.exec(cmd)
-    dmabuf_available = False
-    for node in dmabuf_check_out.keys():
-        dmabuf_available = int(dmabuf_check_out[node].strip()) > 0
-    log.info("dmabuf available in ibperf build" if dmabuf_available else "dmabuf not available in ibperf build")
-    return dmabuf_available
+def probe_perftest_dmabuf_support(phdl, binary_path, rocm_path=''):
+    """Probe each node's binary, using the launch ROCm lib path to distinguish load failures from missing DMA-BUF."""
+    ld_prefix = f'LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH ' if rocm_path else ''
+    cmd = (
+        f'help_out=$({ld_prefix}{binary_path} --help 2>&1); '
+        'case "$help_out" in '
+        '*use_rocm_dmabuf*) echo "dmabuf=supported" ;; '
+        '*use_rocm*) echo "dmabuf=unsupported" ;; '
+        '*) echo "dmabuf=probe_failed" ;; '
+        'esac'
+    )
+    out_dict = phdl.exec(cmd, print_console=False)
+    status_dict = {}
+    for node, output in out_dict.items():
+        match = re.search(r'dmabuf=(supported|unsupported|probe_failed)', output)
+        status_dict[node] = match.group(1) if match else DMABUF_PROBE_FAILED
+        log.debug('Perftest DMA-BUF probe on %s: %s', node, status_dict[node])
+    return status_dict
+
+
+def check_perftest_dmabuf(phdl, binary_path, rocm_path='', require_dmabuf=True):
+    """Return whether DMA-BUF can be used on every node and report per-node failures."""
+    status_dict = probe_perftest_dmabuf_support(phdl, binary_path, rocm_path)
+    if not status_dict:
+        fail_test(f'Could not probe perftest binary {binary_path} on any test node: no probe output')
+    broken = sorted(node for node, status in status_dict.items() if status == DMABUF_PROBE_FAILED)
+    missing = sorted(node for node, status in status_dict.items() if status == DMABUF_UNSUPPORTED)
+    for node in broken:
+        fail_test(
+            f'Could not probe perftest binary {binary_path} on node {node}: '
+            'binary missing, not loadable (check rocm_dir), or built without --enable-rocm'
+        )
+    if missing and require_dmabuf:
+        for node in missing:
+            fail_test(
+                f'perftest binary {binary_path} on node {node} lacks ROCm DMA-BUF support '
+                f'(--use_rocm_dmabuf not in --help); {PERFTEST_DMABUF_BUILD_HINT}, '
+                'or set "require_dmabuf": "False" in the ibperf config to run without DMA-BUF'
+            )
+    elif missing:
+        log.warning(
+            '%s lacks DMA-BUF support on %d node(s) %s; running without --use_rocm_dmabuf on all nodes',
+            binary_path,
+            len(missing),
+            ', '.join(missing),
+        )
+    use_dmabuf = bool(status_dict) and not missing and not broken
+    log.info(
+        '%s: DMA-BUF %s (%d nodes checked)',
+        binary_path,
+        'enabled' if use_dmabuf else 'disabled',
+        len(status_dict),
+    )
+    return use_dmabuf
 
 
 def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None):
@@ -292,7 +343,6 @@ def verify_expected_lat(lat_test, msg_size, res_dict, expected_res):
 
 
 def run_ib_perf_bw_test(
-    shdl,
     phdl,
     bw_test,
     gpu_numa_dict,
@@ -305,6 +355,7 @@ def run_ib_perf_bw_test(
     port_no=1516,
     duration=60,
     rocm_path='',
+    use_dmabuf=True,
 ):
     log.info(
         '%s: msg_size=%s qp=%s start (%ss, %d nodes)',
@@ -327,7 +378,6 @@ def run_ib_perf_bw_test(
             f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt',
             print_console=False,
         )
-    dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{bw_test}')
     server_addr = None
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
@@ -351,7 +401,7 @@ def run_ib_perf_bw_test(
                     "-d",
                     rdma_dev,
                     f"--use_rocm={gpu_no}",
-                    *(["--use_rocm_dmabuf"] if dmabuf_supported else []),
+                    *(["--use_rocm_dmabuf"] if use_dmabuf else []),
                     "-x",
                     str(gid_index),
                     "--report_gbits",
@@ -387,7 +437,7 @@ def run_ib_perf_bw_test(
                     "-d",
                     rdma_dev,
                     f"--use_rocm={gpu_no}",
-                    *(["--use_rocm_dmabuf"] if dmabuf_supported else []),
+                    *(["--use_rocm_dmabuf"] if use_dmabuf else []),
                     "-x",
                     str(gid_index),
                     "--report_gbits",
@@ -449,7 +499,6 @@ def run_ib_perf_bw_test(
 
 
 def run_ib_perf_lat_test(
-    shdl,
     phdl,
     lat_test,
     gpu_numa_dict,
@@ -460,6 +509,7 @@ def run_ib_perf_lat_test(
     gid_index,
     port_no=1516,
     rocm_path='',
+    use_dmabuf=True,
 ):
     log.info('%s: msg_size=%s start (%d nodes)', lat_test, msg_size, len(bck_nic_dict))
     app_port = port_no
@@ -476,7 +526,6 @@ def run_ib_perf_lat_test(
             print_console=False,
         )
     server_addr = None
-    dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{lat_test}')
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
         cmd_dict[node] = []
@@ -499,7 +548,7 @@ def run_ib_perf_lat_test(
                     "-d",
                     rdma_dev,
                     f"--use_rocm={gpu_no}",
-                    *(["--use_rocm_dmabuf"] if dmabuf_supported else []),
+                    *(["--use_rocm_dmabuf"] if use_dmabuf else []),
                     "-x",
                     str(gid_index),
                     "-F",
@@ -529,7 +578,7 @@ def run_ib_perf_lat_test(
                     "-d",
                     rdma_dev,
                     f"--use_rocm={gpu_no}",
-                    *(["--use_rocm_dmabuf"] if dmabuf_supported else []),
+                    *(["--use_rocm_dmabuf"] if use_dmabuf else []),
                     "-x",
                     str(gid_index),
                     "-F",
@@ -654,7 +703,13 @@ def round_vals(list_a):
 # BW - Bandwidth in Gbps
 
 
-def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
+def _dmabuf_heading_suffix(dmabuf_dict, app_name):
+    if not dmabuf_dict or app_name not in dmabuf_dict:
+        return ''
+    return ' (DMA-BUF on)' if dmabuf_dict[app_name] else ' (DMA-BUF off)'
+
+
+def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx', dmabuf_dict=None):
     workbook = xlsxwriter.Workbook(excel_file)
 
     app_list = list(res_dict.keys())
@@ -701,7 +756,9 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
             worksheet = workbook.add_worksheet(sheet_name)
             bold = workbook.add_format({"bold": 1})
 
-            heading = "Test {} - BW, MPPS Numbers for {} QPs".format(app_name, qp_count)
+            heading = "Test {} - BW, MPPS Numbers for {} QPs{}".format(
+                app_name, qp_count, _dmabuf_heading_suffix(dmabuf_dict, app_name)
+            )
             worksheet.merge_range("A1:T1", heading, merge_format)
 
             # Init data lists
@@ -916,7 +973,7 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
     log.info('BW performance chart saved: %s', excel_file)
 
 
-def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx'):
+def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx', dmabuf_dict=None):
     workbook = xlsxwriter.Workbook(excel_file)
 
     app_list = list(res_dict.keys())
@@ -957,7 +1014,7 @@ def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx'):
         worksheet = workbook.add_worksheet(sheet_name)
         bold = workbook.add_format({"bold": 1})
 
-        heading = "Test {} - latency results".format(app_name)
+        heading = "Test {} - latency results{}".format(app_name, _dmabuf_heading_suffix(dmabuf_dict, app_name))
         worksheet.merge_range("A1:Z1", heading, merge_format)
 
         # Init data lists
