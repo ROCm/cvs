@@ -3,11 +3,13 @@
 import os
 import sys
 import unittest
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
+from cvs.lib.report.health_lifecycle import HealthLifecycle
 from cvs.tests.preflight import preflight_checks
 
 
@@ -93,6 +95,66 @@ class TestPreflightUpdateTestResult(unittest.TestCase):
         preflight_checks.globals.error_list.extend(['boom'])
         preflight_checks.preflight_update_test_result({'status': 'PASS'})
         self.assertEqual(preflight_checks.globals.error_list, [])
+
+
+class TestTimedPreflightChecksSurfaceOutcomes(unittest.TestCase):
+    def setUp(self):
+        preflight_checks.globals.error_list.clear()
+        self.previous_results = dict(preflight_checks.preflight_results)
+        preflight_checks.preflight_results.clear()
+        self.assertIsNone(preflight_checks._rundeck_slot['target'])
+
+    def tearDown(self):
+        preflight_checks.preflight_results.clear()
+        preflight_checks.preflight_results.update(self.previous_results)
+
+    def test_decorated_check_fail_reaches_pytest_without_lifecycle(self):
+        @preflight_checks._timed_stage(preflight_checks.GID_CONSISTENCY)
+        def check(lifecycle=None):
+            preflight_checks.preflight_update_test_result({'status': 'FAIL', 'message': 'GID index invalid'})
+
+        with self.assertRaises(pytest.fail.Exception) as ctx:
+            check()
+        self.assertIn('GID index invalid', str(ctx.exception))
+
+    def test_decorated_check_skip_reaches_pytest_without_lifecycle(self):
+        @preflight_checks._timed_stage(preflight_checks.GID_CONSISTENCY)
+        def check(lifecycle=None):
+            preflight_checks.preflight_update_test_result({'status': 'SKIPPED', 'skipped': True, 'message': 'disabled'})
+
+        with self.assertRaises(pytest.skip.Exception) as ctx:
+            check()
+        self.assertIn('disabled', str(ctx.exception))
+
+    def test_decorated_check_records_stage_when_failing(self):
+        @preflight_checks._timed_stage(preflight_checks.GID_CONSISTENCY)
+        def check(lifecycle=None):
+            preflight_checks.preflight_update_test_result({'status': 'FAIL', 'message': 'GID index invalid'})
+
+        lifecycle = HealthLifecycle()
+        with self.assertRaises(pytest.fail.Exception):
+            check(lifecycle=lifecycle)
+        self.assertEqual(lifecycle.report['health'][0][0], preflight_checks.GID_CONSISTENCY)
+
+    def test_interface_check_skip_mode_skips_row(self):
+        config = {'connectivity_check': {'rdma': {'connectivity_mode': 'skip'}}}
+        with self.assertRaises(pytest.skip.Exception):
+            preflight_checks.test_interface_name_consistency(MagicMock(), config)
+
+    def test_gid_check_node_failure_fails_row(self):
+        orch = MagicMock()
+        orch.all.reachable_hosts = ['nodeA']
+        config = {
+            'connectivity_check': {'rdma': {'connectivity_mode': 'basic', 'gid_index': '3', 'interfaces': ['eth0']}}
+        }
+        with patch.object(preflight_checks, 'GidConsistencyCheck') as gid_checker:
+            gid_checker.return_value.run.return_value = {
+                'nodeA': {'status': 'FAIL', 'errors': ['GID index 3 missing'], 'interfaces': {}}
+            }
+            with self.assertRaises(pytest.fail.Exception) as ctx:
+                preflight_checks.test_gid_consistency(orch, config)
+
+        self.assertIn('nodeA', str(ctx.exception))
 
 
 if __name__ == "__main__":
