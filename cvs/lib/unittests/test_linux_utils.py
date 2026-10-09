@@ -174,7 +174,9 @@ class TestGetNicEthtoolStatsDict(unittest.TestCase):
 
 
 class TestGetGpuNicMappingDict(unittest.TestCase):
-    SINGLE_DOMAIN_BUSES = ['05', '15', '65', '75', '85', '95', 'e5', 'f5']
+    GPU_BUSES = (0x05, 0x15, 0x65, 0x75, 0x85, 0x95, 0xE5, 0xF5)
+    SINGLE_DOMAIN_GPUS = [f'0000:{bus:02x}:00.0' for bus in GPU_BUSES]
+    SINGLE_DOMAIN_NICS = [(f'eth{i}', f'0000:{bus + 1:02x}:00.0', f'rdma{i}') for i, bus in enumerate(GPU_BUSES)]
 
     def _map(self, gpu_bdfs, nics):
         gpu_dict = {'node1': {f'card{i}': {'PCI Bus': bdf} for i, bdf in enumerate(gpu_bdfs)}}
@@ -183,33 +185,35 @@ class TestGetGpuNicMappingDict(unittest.TestCase):
             patch.object(linux_utils.rocm_plib, 'get_gpu_pcie_bus_dict', return_value=gpu_dict),
             patch.object(linux_utils, 'get_lshw_backend_nic_dict', return_value=nic_dict),
         ):
-            result = linux_utils.get_gpu_nic_mapping_dict(MagicMock())
-        return [result['node1'][f'card{i}']['rdma_dev'] for i in range(len(gpu_bdfs))]
+            return linux_utils.get_gpu_nic_mapping_dict(MagicMock())['node1']
 
-    def _single_domain_gpus(self):
-        return [f'0000:{bus.upper()}:00.0' for bus in self.SINGLE_DOMAIN_BUSES]
-
-    def _single_domain_nics(self):
-        return [(f'eth{i}', f'0000:{bus[0]}6:00.0', f'rdma{i}') for i, bus in enumerate(self.SINGLE_DOMAIN_BUSES)]
+    def _rdma_devs(self, gpu_bdfs, nics):
+        result = self._map(gpu_bdfs, nics)
+        return [result[f'card{i}']['rdma_dev'] for i in range(len(gpu_bdfs))]
 
     def test_single_domain_pairs_each_gpu_with_next_bus_nic(self):
+        result = self._map(self.SINGLE_DOMAIN_GPUS, self.SINGLE_DOMAIN_NICS)
+        self.assertEqual([result[f'card{i}']['rdma_dev'] for i in range(8)], [f'rdma{i}' for i in range(8)])
         self.assertEqual(
-            self._map(self._single_domain_gpus(), self._single_domain_nics()),
-            [f'rdma{i}' for i in range(8)],
+            result['card3'],
+            {'gpu_bdf': '0000:75:00.0', 'eth_dev': 'eth3', 'rdma_dev': 'rdma3', 'nic_bdf': '0000:76:00.0'},
         )
 
     def test_two_domains_on_bus_zero_pair_within_domain_in_device_order(self):
-        gpus = [f'{domain}:00:0{dev}.0' for domain in ('0002', '0003') for dev in range(1, 5)]
-        nics = [
-            (f'enP{domain}p0s{dev}', f'000{domain}:00:{dev:02x}.0', f'ionic_{i}')
-            for i, (domain, dev) in enumerate((d, v) for d in (2, 3) for v in range(9, 13))
-        ]
-        self.assertEqual(self._map(gpus, nics), [f'ionic_{i}' for i in range(8)])
+        domains = ('0002', '0003')
+        gpus = [f'{domain}:00:{dev:02x}.0' for domain in domains for dev in range(1, 5)]
+        nic_slots = [(domain, dev) for domain in domains for dev in range(9, 13)]
+        nics = [(f'eth{i}', f'{domain}:00:{dev:02x}.0', f'ionic_{i}') for i, (domain, dev) in enumerate(nic_slots)]
+        self.assertEqual(self._rdma_devs(gpus, nics), [f'ionic_{i}' for i in range(8)])
+
+    def test_same_domain_nic_beats_nearer_bus_in_other_domain(self):
+        nics = [('eth0', '0002:10:00.0', 'rdma0'), ('eth1', '0001:40:00.0', 'rdma1')]
+        self.assertEqual(self._rdma_devs(['0001:10:00.0'], nics), ['rdma1'])
 
     def test_gpu_shares_nic_only_when_none_is_free(self):
-        nics = [nic for nic in self._single_domain_nics() if nic[2] != 'rdma3']
+        nics = [nic for nic in self.SINGLE_DOMAIN_NICS if nic[2] != 'rdma3']
         with self.assertLogs(level='WARNING') as logs:
-            rdma_devs = self._map(self._single_domain_gpus(), nics)
+            rdma_devs = self._rdma_devs(self.SINGLE_DOMAIN_GPUS, nics)
         self.assertEqual(rdma_devs, ['rdma0', 'rdma1', 'rdma2', 'rdma2', 'rdma4', 'rdma5', 'rdma6', 'rdma7'])
         self.assertEqual(len(logs.records), 1)
         self.assertIn('0000:75:00.0', logs.output[0])

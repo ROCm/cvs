@@ -775,6 +775,18 @@ def get_lshw_backend_nic_dict(phdl):
     return lshw_bck_nic_dict
 
 
+def get_nearest_bus_no(target_hex: str, candidates: list[str]) -> str:
+    """
+    Return the nearest matching hex value (as one of the candidate strings).
+    - Inputs are hex strings like '0x1f', '1F', '-0x10' (case-insensitive).
+    - Tie-breaker: picks the smaller numeric value.
+    """
+    if not candidates:
+        raise ValueError("candidates must be non-empty")
+    t = int(target_hex, 16)
+    return min(candidates, key=lambda s: (abs(int(s, 16) - t), int(s, 16)))
+
+
 def _parse_pci_bdf(bdf):
     """Return (domain, bus, device, function) as ints from an address like '0000:05:00.0'."""
     match = re.search(r'([0-9a-f]+):([0-9a-f]+):([0-9a-f]+)\.([0-9a-f])', bdf, re.I)
@@ -823,7 +835,9 @@ def pair_gpus_with_nics(gpu_bdf_list, nic_bdf_list):
     return [nic_for_gpu[gpu_idx] for gpu_idx in range(len(gpus))]
 
 
-def get_gpu_nic_mapping_dict(phdl):
+def get_gpu_nic_mapping_dict(
+    phdl,
+):
     gpu_nic_dict = {}
     gpu_pcie_dict = rocm_plib.get_gpu_pcie_bus_dict(phdl)
     lshw_dict = get_lshw_backend_nic_dict(phdl)
