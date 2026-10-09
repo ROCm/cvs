@@ -1369,6 +1369,13 @@ class PreflightRdmaConfig(BaseModel):
         min_length=1,
         description="RDMA device names checked for presence, GID consistency, and connectivity",
     )
+    mtu_check: bool = Field(
+        default=True, description="Verify jumbo-frame netdev MTU and RoCE active MTU on configured interfaces"
+    )
+    min_netdev_mtu: int = Field(
+        default=4200, ge=0, le=65535, description="Minimum netdev MTU per RDMA interface (0 disables)"
+    )
+    min_active_mtu: int = Field(default=4096, description="Minimum RoCE active_mtu from ibv_devinfo (0 disables)")
     nodes_per_full_mesh_group: int = Field(
         default=128,
         ge=2,
@@ -1441,6 +1448,13 @@ class PreflightRdmaConfig(BaseModel):
         valid_modes = ['basic', 'full_mesh', 'skip']
         if v not in valid_modes:
             raise ValueError(f"connectivity_mode must be one of: {', '.join(valid_modes)}")
+        return v
+
+    @field_validator('min_active_mtu')
+    @classmethod
+    def validate_min_active_mtu(cls, v: int) -> int:
+        if v not in (0, 256, 512, 1024, 2048, 4096):
+            raise ValueError("min_active_mtu must be one of 0, 256, 512, 1024, 2048, 4096")
         return v
 
     @field_validator('ibv_test_port_range')

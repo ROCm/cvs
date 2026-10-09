@@ -32,6 +32,14 @@
         "interfaces": ["<changeme>"],
         "_comment_interfaces": "List of specific RDMA interface names that should be present on all cluster nodes. Examples: ['rocep28s0', 'rocep62s0'] for standard setup, ['mlx5_0', 'mlx5_1'] for Mellanox, ['ib0', 'ib1'] for generic InfiniBand.",
 
+        "mtu_check": true,
+        "_comment_mtu_check": "Verify jumbo frames on RDMA netdevs and RoCE active MTU. Runs only when connectivity_mode is not 'skip'. MTU failures are reported but never prune nodes.",
+        "min_netdev_mtu": 4200,
+        "_example_min_netdev_mtu": 9000,
+        "_comment_min_netdev_mtu": "Minimum Ethernet netdev MTU. At least 4200 allows a 4096-byte RoCE active MTU; switches along the path must match. Set to 0 to disable this threshold.",
+        "min_active_mtu": 4096,
+        "_comment_min_active_mtu": "Minimum active_mtu reported by ibv_devinfo. A value of 1024 usually means the netdev is still at 1500. Set to 0 to disable this threshold.",
+
         "nodes_per_full_mesh_group": 32,
         "_comment_nodes_per_full_mesh_group": "Number of nodes in each full-mesh partition group for parallel RDMA testing (2-128). Smaller groups use fewer resources per node but require more rounds. Adjust based on cluster size and resource constraints.",
 

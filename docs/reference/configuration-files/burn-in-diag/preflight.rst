@@ -150,6 +150,8 @@ RDMA connectivity (``connectivity_check.rdma``)
 - ``connectivity_mode`` — ``"basic"``, ``"full_mesh"``, or ``"skip"``
 - ``interfaces`` — Expected RDMA device names on all nodes
 - ``gid_index`` — GID index validated on those interfaces
+- ``mtu_check`` — Enable jumbo-frame netdev and RoCE active MTU validation (default ``true``)
+- ``min_netdev_mtu`` / ``min_active_mtu`` — Minimum netdev MTU (default ``4200``) and RoCE active MTU (default ``4096``); ``0`` disables either threshold
 - ``ibv_test_timeout`` / ``ibv_test_port_range`` — ``ibv_rc_pingpong`` test tuning
 
 Node Smoke Tier 1 (``node_smoke_tier1``)

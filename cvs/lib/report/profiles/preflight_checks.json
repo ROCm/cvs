@@ -20,6 +20,7 @@
       "transferbench_smoke",
       "interface_names",
       "gid_consistency",
+      "rdma_mtu",
       "node_smoke_tier1",
       "node_smoke_tier2",
       "node_smoke_tier3",
