@@ -18,6 +18,17 @@ from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 log = globals.log
 
 
+def _payload_sudo_prefix(orch):
+    """Sudo for a command passed to orch.exec().
+
+    sudo_prefix() is host passwordless sudo. Container exec already applies
+    that to `docker exec`, and the payload runs inside the container.
+    """
+    if getattr(orch, 'orchestrator_type', None) == 'container':
+        return ''
+    return orch.sudo_prefix()
+
+
 # NOTE: This module assumes the following symbols are available in scope:
 # - log: a configured logger
 # - fail_test: helper that records/logs a failure (and may raise)
@@ -117,10 +128,16 @@ def _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, group, out_dict):
         log.warning("AGFHC '%s': could not capture Run Deck results: %s", group, exc)
 
 
+def _build_agfhc_cmd(orch, path, args):
+    """Build an AGFHC CLI invocation with Spur/container-safe sudo."""
+    return f'{_payload_sudo_prefix(orch)}{path}/agfhc {args}'
+
+
 def _run_agfhc(orch, config_dict, args, timeout, stage, agfhc_res_dict, cluster_dict, lifecycle):
     path = config_dict['path']
+    cmd = _build_agfhc_cmd(orch, path, args)
     with timed_stage(lifecycle, stage):
-        out_dict = orch.exec(f'sudo {path}/agfhc {args}', timeout=timeout)
+        out_dict = orch.exec(cmd, timeout=timeout)
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, stage, out_dict)
@@ -509,7 +526,10 @@ def test_agfhc_all_lvl5(
     """
     log.info('Testcase all lvl5')
     path = config_dict['path']
-    out_dict = orch.exec(f'sudo {path}/agfhc --recipe-info all_lvl5', timeout=(60 * 260))
+    out_dict = orch.exec(
+        _build_agfhc_cmd(orch, path, '--recipe-info all_lvl5'),
+        timeout=(60 * 260),
+    )
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
