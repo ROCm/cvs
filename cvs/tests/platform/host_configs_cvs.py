@@ -560,6 +560,8 @@ def test_check_be_nic_link_speed(orch, config_dict, host_res_dict, cluster_dict,
         expected = host_configs_rundeck.parse_nic_link_speed_setting(config_dict.get('nic_link_speed'))
     except ValueError as exc:
         fail_test(str(exc))
+        records = host_configs_rundeck.config_error_records(orch.hosts, 'nic_link_speed', str(exc))
+        _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.NIC_LINK, records)
         update_test_result()
         return
 

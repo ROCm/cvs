@@ -128,6 +128,11 @@ def _fail_record(name, message, summary):
     return build_node_record('fail', [_fail_item(name, message)], summary)
 
 
+def config_error_records(nodes, item_name, message):
+    '''Fail every node with the same config error, so the deck shows why the check did not run.'''
+    return {str(node): _fail_record(item_name, message, 'config error') for node in nodes}
+
+
 def _version_mismatch(out_dict, expected, actual_re, item_name, message_for):
     '''Fail a node when ``expected`` is absent. ``actual_re`` must match on that path.'''
     records = {}

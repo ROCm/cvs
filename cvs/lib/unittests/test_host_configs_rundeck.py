@@ -438,6 +438,21 @@ class TestNicLinkSpeed(unittest.TestCase):
         self.assertEqual(matching['n1']['status'], 'pass')
         self.assertEqual(matching_messages, [])
 
+    def test_invalid_setting_fails_every_node_in_deck(self):
+        with self.assertRaises(ValueError) as ctx:
+            host_configs_rundeck.parse_nic_link_speed_setting('400G')
+        message = str(ctx.exception)
+        records = host_configs_rundeck.config_error_records(['n1', 'n2'], 'nic_link_speed', message)
+        self.assertEqual(set(records), {'n1', 'n2'})
+        for record in records.values():
+            self.assertEqual(record['status'], 'fail')
+            self.assertEqual(record['items_summary'], 'config error')
+            self.assertEqual(record['items'], [{'name': 'nic_link_speed', 'status': 'fail', 'message': message}])
+
+        results = {}
+        host_configs_rundeck.record_group(results, host_configs_rundeck.NIC_LINK, records)
+        self.assertEqual(set(results['groups']['nic_link']['nodes']), {'n1', 'n2'})
+
 
 class TestRecordGroup(unittest.TestCase):
     def test_version_placeholder_is_replaced_by_later_real_version(self):
