@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 
 ib_bw_dict = {}
 ib_lat_dict = {}
+ib_dmabuf_dict = {}
 
 rccl_res_dict = {}
 
@@ -164,29 +165,6 @@ def phdl(cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def shdl(cluster_dict):
-    """
-    Build and return a parallel SSH handle (Pssh) for the head node only.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
-
-    Returns:
-      Pssh: Handle configured for the first node (head node) in node_dict.
-
-    Notes:
-      - Useful when commands should be executed only from a designated head node.
-      - Module scope ensures a single connection context for the duration of the module.
-      - nhdl_dict is currently unused; it can be removed unless used elsewhere.
-    """
-    node_list = list(cluster_dict['node_dict'].keys())
-    env_vars = cluster_dict.get("env_vars")
-    head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return shdl
-
-
-@pytest.fixture(scope="module")
 def vpc_node_list(cluster_dict):
     """
     Collect and return a list of VPC IPs for all nodes in the cluster.
@@ -216,9 +194,17 @@ def vpc_node_list(cluster_dict):
 
 
 @pytest.mark.parametrize("bw_test", ["ib_write_bw", "ib_read_bw", "ib_send_bw"])
-def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
+def test_ib_bw_perf(phdl, bw_test, config_dict, request):
     globals.error_list = []
     ib_bw_dict[bw_test] = {}
+    rocm_path = ibperf_lib.detect_rocm_path(phdl, config_dict.get('rocm_dir', ''))
+    app_path = f'{config_dict["install_dir"]}/perftest/bin'
+    use_dmabuf = ibperf_lib.check_perftest_dmabuf(
+        phdl, f'{app_path}/{bw_test}', rocm_path=rocm_path, require_dmabuf=ibperf_lib.is_dmabuf_required(config_dict)
+    )
+    ib_dmabuf_dict[bw_test] = use_dmabuf
+    request.node.user_properties.append(("dmabuf", "on" if use_dmabuf else "off"))
+    update_test_result()
 
     gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
     gpu_numa_dict = linux_utils.get_gpu_numa_dict(phdl)
@@ -233,7 +219,6 @@ def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
             if rdma_nic_dict[node][rdma_dev]['eth_device'] in bck_nic_dict_lshw[node]:
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
-    rocm_path = ibperf_lib.detect_rocm_path(phdl, config_dict.get('rocm_dir', ''))
     for msg_size in config_dict['msg_size_list']:
         ib_bw_dict[bw_test][msg_size] = {}
         for qp_count in config_dict['qp_count_list']:
@@ -243,19 +228,19 @@ def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
                 print_console=False,
             )
             ib_bw_dict[bw_test][msg_size][qp_count] = ibperf_lib.run_ib_perf_bw_test(
-                shdl,
                 phdl,
                 bw_test,
                 gpu_numa_dict,
                 gpu_nic_dict,
                 bck_nic_dict,
-                f'{config_dict["install_dir"]}/perftest/bin',
+                app_path,
                 msg_size,
                 config_dict['gid_index'],
                 qp_count,
                 int(config_dict['port_no']),
                 int(config_dict['duration']),
                 rocm_path=rocm_path,
+                use_dmabuf=use_dmabuf,
             )
             end_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
             verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
@@ -273,9 +258,17 @@ def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
 
 
 @pytest.mark.parametrize("lat_test", ["ib_write_lat", "ib_send_lat"])
-def test_ib_lat_perf(shdl, phdl, lat_test, config_dict):
+def test_ib_lat_perf(phdl, lat_test, config_dict, request):
     globals.error_list = []
     ib_lat_dict[lat_test] = {}
+    rocm_path = ibperf_lib.detect_rocm_path(phdl, config_dict.get('rocm_dir', ''))
+    app_path = f'{config_dict["install_dir"]}/perftest/bin'
+    use_dmabuf = ibperf_lib.check_perftest_dmabuf(
+        phdl, f'{app_path}/{lat_test}', rocm_path=rocm_path, require_dmabuf=ibperf_lib.is_dmabuf_required(config_dict)
+    )
+    ib_dmabuf_dict[lat_test] = use_dmabuf
+    request.node.user_properties.append(("dmabuf", "on" if use_dmabuf else "off"))
+    update_test_result()
 
     gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
     gpu_numa_dict = linux_utils.get_gpu_numa_dict(phdl)
@@ -290,7 +283,6 @@ def test_ib_lat_perf(shdl, phdl, lat_test, config_dict):
             if rdma_nic_dict[node][rdma_dev]['eth_device'] in bck_nic_dict_lshw[node]:
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
-    rocm_path = ibperf_lib.detect_rocm_path(phdl, config_dict.get('rocm_dir', ''))
     for msg_size in config_dict['msg_size_list']:
         ib_lat_dict[lat_test][msg_size] = {}
         start_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
@@ -299,17 +291,17 @@ def test_ib_lat_perf(shdl, phdl, lat_test, config_dict):
             print_console=False,
         )
         ib_lat_dict[lat_test][msg_size] = ibperf_lib.run_ib_perf_lat_test(
-            shdl,
             phdl,
             lat_test,
             gpu_numa_dict,
             gpu_nic_dict,
             bck_nic_dict,
-            f'{config_dict["install_dir"]}/perftest/bin',
+            app_path,
             msg_size,
             config_dict['gid_index'],
             int(config_dict['port_no']),
             rocm_path=rocm_path,
+            use_dmabuf=use_dmabuf,
         )
         end_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
         verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
@@ -326,7 +318,7 @@ def test_build_ib_bw_perf_chart(
     phdl,
 ):
     globals.error_list = []
-    ibperf_lib.generate_ibperf_bw_chart(ib_bw_dict, excel_file='ib_bw_pps_perf.xlsx')
+    ibperf_lib.generate_ibperf_bw_chart(ib_bw_dict, excel_file='ib_bw_pps_perf.xlsx', dmabuf_dict=ib_dmabuf_dict)
     update_test_result()
 
 
@@ -334,5 +326,5 @@ def test_build_ib_lat_perf_chart(
     phdl,
 ):
     globals.error_list = []
-    ibperf_lib.generate_ibperf_lat_chart(ib_lat_dict, excel_file='ib_lat_perf.xlsx')
+    ibperf_lib.generate_ibperf_lat_chart(ib_lat_dict, excel_file='ib_lat_perf.xlsx', dmabuf_dict=ib_dmabuf_dict)
     update_test_result()

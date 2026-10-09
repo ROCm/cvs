@@ -24,6 +24,7 @@ The following sample shows the ``ibperf_config.json`` structure:
           "install_perf_package": "True",
           "install_dir": "/home/{user-id}/",
           "rocm_dir": "<changeme>",
+          "require_dmabuf": "True",
           "qp_count_list": [ "8", "16" ],
           "ib_bw_test_list": [ "ib_write_bw", "ib_send_bw"],
           "ib_lat_test_list": [ "ib_write_lat", "ib_send_lat", "ib_read_lat" ],
@@ -74,6 +75,9 @@ Here's an exhaustive list of the available parameters in the IB Perf configurati
    * - ``rocm_dir``
      - ``<changeme>``
      - 	Set the path of rocm
+   * - ``require_dmabuf``
+     - True
+     - Fail before launching if the perftest binary on any test node was built without ROCm DMA-BUF support (``--use_rocm_dmabuf``). Set to False to run without DMA-BUF; the run records ``dmabuf=off``.
    * - ``qp_count_list``
      - Values:
         - 8 
@@ -138,7 +142,6 @@ The ``expected_results`` section also contains the ``ib_write_bw`` parameter. It
             "8": "280.0",
             "16": "300.0"
                     }
-
 
 
 
