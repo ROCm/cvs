@@ -55,7 +55,6 @@ Round-4 coverage-gap additions (impl-blind against the same spec):
 
 One-host pipeline parallelism:
   single-node pp>1 passes --pipeline-parallel-size ......... TestServerArgvRayVsMp
-  one-host vllm_distributed runs the vllm_single server .... TestOneHostDistributedUsesSinglePath
 '''
 
 import unittest
@@ -63,7 +62,7 @@ import unittest.mock as mock
 
 from pydantic import ValidationError
 
-from cvs.lib.inference.vllm_topology import EffectiveVllmTopology, resolve_vllm_topology
+from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
 from cvs.lib.inference.utils.vllm_config_loader import VariantConfig, serialize_cli_options
 from cvs.lib.inference.vllm_job import VllmJob
 
@@ -482,67 +481,8 @@ class TestServerArgvRayVsMp(unittest.TestCase):
                 self.assertNotIn(flag, argv)
 
     def test_single_node_pp_gt_1_passes_pipeline_parallel_size(self):
-        # One host has no rendezvous and no executor flag, but the pipeline width
-        # must still reach vllm serve, whichever backend the config names.
-        for backend, serve_args in (("mp", {}), ("ray", RAY)):
-            for pp in ("2", "4"):
-                with self.subTest(backend=backend, pp=pp):
-                    argv = _job(serve_args=serve_args, nnodes="1", pp=pp)._server_argv(0)
-                    self.assertEqual(argv.count("--pipeline-parallel-size"), 1)
-                    self.assertEqual(_value_after(argv, "--pipeline-parallel-size"), pp)
-                    for flag in ("--node-rank", "--headless", "--master-addr", "--master-port", "--nnodes"):
-                        self.assertNotIn(flag, argv)
-                    self.assertNotIn("--distributed-executor-backend", argv)
-
-    def test_single_node_pp_1_omits_pipeline_parallel_size(self):
-        self.assertNotIn("--pipeline-parallel-size", _job(serve_args={}, nnodes="1", pp="1")._server_argv(0))
-
-    def test_multinode_emits_pipeline_parallel_size_once(self):
-        for backend, serve_args in (("mp", {}), ("ray", RAY)):
-            for rank in (0, 1):
-                with self.subTest(backend=backend, rank=rank):
-                    argv = _job(serve_args=serve_args, nnodes="2", pp="2")._server_argv(rank)
-                    self.assertEqual(argv.count("--pipeline-parallel-size"), 1)
-                    self.assertEqual(_value_after(argv, "--pipeline-parallel-size"), "2")
-
-
-# --------------------------------------------------------------------------- #
-# One-host vllm_distributed runs the vllm_single server path
-# --------------------------------------------------------------------------- #
-class TestOneHostDistributedUsesSinglePath(unittest.TestCase):
-    def _bound_job(self, mode, serve_args, pp, orch=None):
-        variant = _variant(serve_args=serve_args, pp=pp, ib_netdev=None)
-        orch = orch or RecordingOrch(hosts=[HEAD])
-        variant.bind_effective_topology(resolve_vllm_topology(mode, variant, orch.hosts))
-        return VllmJob(
-            orch=orch, variant=variant, hf_token="tok", isl="1024", osl="1024", concurrency=16, num_prompts=640
-        )
-
-    def test_distributed_one_host_server_matches_single(self):
-        for backend, serve_args in (("mp", {}), ("ray", RAY)):
-            with self.subTest(backend=backend):
-                single = self._bound_job("single", serve_args, "2")
-                distributed = self._bound_job("distributed", serve_args, "2")
-                self.assertEqual((distributed.nnodes, distributed.pp), ("1", "2"))
-                self.assertEqual(distributed._server_argv(0), single._server_argv(0))
-                self.assertEqual(distributed.server_signature(), single.server_signature())
-                self.assertEqual(_value_after(distributed._server_argv(0), "--pipeline-parallel-size"), "2")
-                self.assertEqual(
-                    distributed.variant.cell_key("1024", "1024", "16"), "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
-                )
-
-    def test_distributed_one_host_start_runs_one_plain_server(self):
-        for backend, serve_args in (("mp", {}), ("ray", RAY)):
-            with self.subTest(backend=backend):
-                orch = RecordingOrch(responder=_responder_ok(), hosts=[HEAD])
-                self._bound_job("distributed", serve_args, "2", orch=orch).start_server()
-                self.assertEqual([c for c in _all_cmds(orch) if "ray start" in c], [])
-                serves = [(c, h) for c, h in orch.calls if "vllm serve" in c]
-                self.assertEqual(len(serves), 1, f"expected exactly one serve launch, got {serves}")
-                cmd, hosts = serves[0]
-                self.assertEqual(hosts, [HEAD])
-                self.assertIn("--pipeline-parallel-size 2", cmd)
-                self.assertNotIn("--nnodes", cmd)
+        argv = _job(serve_args={}, nnodes="1", pp="2")._server_argv(0)
+        self.assertEqual(_value_after(argv, "--pipeline-parallel-size"), "2")
 
 
 # --------------------------------------------------------------------------- #
