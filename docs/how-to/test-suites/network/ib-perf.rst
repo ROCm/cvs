@@ -26,6 +26,19 @@ Follow these steps to set up the IB performance configuration.
 
 For the complete field reference, see :doc:`/reference/configuration-files/network/ib`.
 
+To test traffic between vPODs, assign each node a ``vpod_id`` in the cluster file and select explicit labels in the ibperf config:
+
+.. code:: json
+
+  {
+    "ibperf": {
+      "pairing_mode": "inter_vpod",
+      "vpod_source": "cluster_file"
+    }
+  }
+
+The default ``sequential`` mode retains cluster-file order. ``intra_vpod`` pairs nodes within each vPOD. AFM is the default vPOD source for one scale-up domain; use ``cluster_file`` labels when AFM IDs may repeat across domains. The suite currently assumes 8 GPUs per node.
+
 .. _ib-perf-run-tests:
 
 Run tests

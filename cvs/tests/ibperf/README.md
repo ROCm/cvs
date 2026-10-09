@@ -12,6 +12,8 @@ This Pytest script can be run in the following fashion (for the details on argum
 
 In the config file, cvs/input/config_file/ibperf/ibperf_config.json, change the value of parameter "install_dir": "/home/{user-id}/" to the desired location. Else {user-id} will be resolved as the current username at runtime.
 
+Node pairing defaults to `sequential`, using consecutive nodes in cluster-file order. Set `ibperf.pairing_mode` to `inter_vpod` for pairs across vPODs, or `intra_vpod` for pairs within a vPOD. For explicit membership, set `ibperf.vpod_source` to `cluster_file` and add `vpod_id` to every `node_dict` entry. For example, labels A for n1/n2 and B for n3/n4 produce inter-vPOD pairs (n1,n3) and (n2,n4). The default AFM source uses `afmctl show device --json` and applies only within one scale-up domain; use cluster-file labels if accelerator IDs can repeat across domains. The suite still assumes 8 GPUs per node.
+
 
 ```
 (myenv) [user@host]~/cvs:(main)$

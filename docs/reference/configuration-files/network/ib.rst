@@ -24,6 +24,9 @@ The following sample shows the ``ibperf_config.json`` structure:
           "install_perf_package": "True",
           "install_dir": "/home/{user-id}/",
           "rocm_dir": "<changeme>",
+          "pairing_mode": "sequential",
+          "vpod_source": "afm",
+          "afmctl_path": "afmctl",
           "qp_count_list": [ "8", "16" ],
           "ib_bw_test_list": [ "ib_write_bw", "ib_send_bw"],
           "ib_lat_test_list": [ "ib_write_lat", "ib_send_lat", "ib_read_lat" ],
@@ -74,6 +77,15 @@ Here's an exhaustive list of the available parameters in the IB Perf configurati
    * - ``rocm_dir``
      - ``<changeme>``
      - 	Set the path of rocm
+   * - ``pairing_mode``
+     - ``sequential``
+     - Pair consecutive nodes in cluster-file order, across vPODs with ``inter_vpod``, or within vPODs with ``intra_vpod``.
+   * - ``vpod_source``
+     - ``afm``
+     - For vPOD modes, read membership from AFM or use ``cluster_file`` to read each node's ``vpod_id``.
+   * - ``afmctl_path``
+     - ``afmctl``
+     - Path to the AFM command when ``vpod_source`` is ``afm``.
    * - ``qp_count_list``
      - Values:
         - 8 
@@ -140,5 +152,11 @@ The ``expected_results`` section also contains the ``ib_write_bw`` parameter. It
                     }
 
 
+vPOD-aware pairing
+==================
 
+``sequential`` keeps the existing consecutive server/client pairs. ``inter_vpod`` pairs nodes in different vPODs to test the scale-out path; ``intra_vpod`` pairs nodes within the same vPOD. Nodes without a partner are excluded.
 
+For explicit membership, set ``vpod_source`` to ``cluster_file`` and add ``vpod_id`` to each ``node_dict`` entry in the cluster file. For example, label ``n1`` and ``n2`` with ``"A"``, and ``n3`` and ``n4`` with ``"B"``. With ``inter_vpod``, the pairs are ``(n1, n3)`` and ``(n2, n4)``.
+
+The default AFM source uses ``afmctl show device --json``. AFM accelerator IDs are only unique within one scale-up domain; on multi-rack clusters with ambiguous AFM membership, use ``cluster_file`` labels. The ibperf suite still assumes 8 GPUs per node.
