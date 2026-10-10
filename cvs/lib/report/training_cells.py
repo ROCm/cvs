@@ -350,6 +350,9 @@ def build_training_cells(config, variant_config, train_res_dict, lifecycle_repor
             cell["extra_curves"] = {
                 str(tag): series for tag, series in extra.items() if isinstance(series, list) and series
             }
+        charts = raw.get("_metric_charts")
+        if isinstance(charts, dict) and any(charts.get(key) for key in ("metrics", "series", "heatmaps")):
+            cell["metric_charts"] = charts
         tb_note = raw.get("_tb_note")
         if tb_note:
             cell["tb_note"] = str(tb_note)
@@ -358,6 +361,24 @@ def build_training_cells(config, variant_config, train_res_dict, lifecycle_repor
             cell["planned_steps"] = int(planned_steps)
         cells.append(cell)
     return cells
+
+
+def build_training_metric_charts(cells):
+    """Suite-supplied ``_metric_charts`` feed the ``metric_charts`` card."""
+    charts = {"metrics": [], "series": [], "heatmaps": []}
+    chart_cells = [cell for cell in cells if cell.get("metric_charts")]
+    for cell in chart_cells:
+        source = cell["metric_charts"]
+        for key in charts:
+            for item in source.get(key) or []:
+                if not isinstance(item, dict):
+                    continue
+                copied = dict(item)
+                if len(chart_cells) > 1:
+                    group = copied.get("group") or ""
+                    copied["group"] = f"{cell['label']} · {group}" if group else cell["label"]
+                charts[key].append(copied)
+    return charts
 
 
 def _fmt_results_value(value):

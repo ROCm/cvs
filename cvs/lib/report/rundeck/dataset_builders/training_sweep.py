@@ -12,6 +12,7 @@ from cvs.lib.report.rundeck.dataset_builders.registry import register_dataset_bu
 from cvs.lib.report.training_cells import (
     build_training_cells,
     build_training_chart_series,
+    build_training_metric_charts,
     build_training_results_table,
     build_training_summaries,
     hide_training_scaling_efficiency,
@@ -63,6 +64,7 @@ def build_training_sweep_datasets(sources, profile):
         "all_cells": cells,
         "chart_series": chart_series,
         "chart_config": chart_config,
+        "metric_charts": build_training_metric_charts(cells),
         "sweep_summaries": build_training_summaries(config, cells),
         "gate_matrix": build_gate_matrix_rows(cells),
         "results_table": build_training_results_table(config, cells),

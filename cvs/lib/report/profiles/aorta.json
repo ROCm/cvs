@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "profile_id": "aorta_rundeck",
+  "suite_id": "aorta",
+  "report_basename": "aorta_run_deck",
+  "title": "Aorta Run Deck",
+  "subtitle": "Aorta · {mode} benchmark summary",
+  "footer": "CVS aorta · render-only · does not affect gates",
+  "link_name": "Aorta Run Deck",
+  "dataset_builder": "training_sweep",
+  "interactive_viewer": false,
+  "sources": {"results": "cvs_results_dict", "variant": "aorta_deck_variant", "lifecycle": "lifecycle"},
+  "hooks": {
+    "tier_metric_specs": "cvs.lib.benchmark.aorta.aorta_rundeck:tier_metric_specs",
+    "metric_units": "cvs.lib.benchmark.aorta.aorta_rundeck:METRIC_UNITS",
+    "metric_verdict": "cvs.lib.benchmark.aorta.aorta_rundeck:aorta_metric_verdict",
+    "cell_dimensions": "cvs.lib.benchmark.aorta.aorta_rundeck:aorta_cell_dimensions",
+    "run_card_display": "cvs.lib.report.profiles.hooks.aorta_run_card:aorta_run_card_display"
+  },
+  "sweep": {
+    "metric_prefix": "training.",
+    "headline_metric": "training.avg_iteration_time_ms",
+    "series_label": "Aorta",
+    "tier_order": ["iteration_time", "compute_ratio", "overlap_ratio", "rank_balance", "record"],
+    "dimension_fields": [
+      ["nodes", "Nodes", "nodes="],
+      ["gpus_per_node", "GPUs/node", "gpn="],
+      ["nccl_channels", "NCCL channels", "ch="],
+      ["rccl_branch", "RCCL branch", ""]
+    ],
+    "results_table_columns": [
+      ["Model", null], ["Nodes", null], ["GPUs/node", null], ["NCCL channels", null], ["RCCL branch", null],
+      ["Ranks", "training.ranks"],
+      ["Avg iter (ms)", "training.avg_iteration_time_ms"],
+      ["Iter std across ranks (ms)", "training.std_iteration_time_ms"],
+      ["Min rank iter (ms)", "training.min_iteration_time_ms"],
+      ["Max rank iter (ms)", "training.max_iteration_time_ms"],
+      ["Time variance", "training.time_variance_ratio"],
+      ["Compute (ms)", "training.avg_compute_time_ms"],
+      ["Comm time (ms)", "training.avg_comm_time_ms"],
+      ["Compute ratio", "training.avg_compute_ratio"],
+      ["Comm ratio", "training.avg_comm_ratio"],
+      ["Overlap ratio", "training.avg_overlap_ratio"]
+    ],
+    "cell_highlights": [
+      ["avg_iteration_time_ms", "Avg iteration"],
+      ["avg_compute_ratio", "Compute ratio"],
+      ["avg_overlap_ratio", "Overlap ratio"],
+      ["time_variance_ratio", "Time variance"],
+      ["avg_comm_time_ms", "Comm time"]
+    ]
+  },
+  "lifecycle": {
+    "session_labels": ["container_launch", "clone", "rdma_setup", "rccl_build", "benchmark", "collect_traces",
+                       "analysis", "parse", "thresholds", "report", "teardown"]
+  },
+  "behavior": {"inference_test_substring": "test_run_benchmark", "row_card_extras": false},
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {"type": "lifecycle_timeline", "id": "lifecycle", "title": "Lifecycle timeline", "bind": "lifecycle"},
+    {"type": "gate_matrix", "id": "gates", "title": "Threshold gates", "bind": "gate_matrix"},
+    {"type": "sweep_cell_cards", "id": "cells", "title": "Benchmark result", "bind": "cells"},
+    {"type": "metric_charts", "id": "ranks", "title": "Per-rank breakdown", "bind": "datasets.training_sweep.metric_charts", "when_empty": "hide"},
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}
