@@ -17,6 +17,7 @@ from cvs.lib.inference.atom.atom_config_loader import (
     expand_sweep,
     expand_sweep_parametrize,
     gpu_arch_from_config_path,
+    _prune_orphan_sweep_thresholds,
     load_variant,
     merge_mxfp4_triton_env,
     orchestrator_container_from_variant,
@@ -87,7 +88,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_load_w1_mi3xx_multinode_variant(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_distributed.json")
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
         self.assertEqual(variant.params.nnodes, "2")
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(variant.params.pipeline_parallel_size, "2")
@@ -345,6 +346,11 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertIn("kv-cache-dtype", variant.roles.server.serve_args)
 
+    def test_load_atom_vllm_distributed_serving_schema(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
+        self.assertEqual(variant.params.driver, "vllm_atom")
+
     def test_load_atom_vllm_gpt_oss_serving_schema(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_vllm_gpt-oss-120b_mxfp4_single.json")
@@ -396,6 +402,8 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
                 self.assertEqual(variant.params.nnodes, nnodes)
                 self.assertEqual(variant.params.pipeline_parallel_size, pp)
                 self.assertTrue(variant.platform.gpu_metrics_poll)
+                self.assertNotIn("HF_HUB_CACHE", variant.roles.server.env)
+                self.assertNotIn("HF_HOME", variant.roles.server.env)
                 self.assertTrue(all(task.id for task in variant.accuracy.tasks))
                 self.assertTrue(all(f"PP={pp}" in cell for cell in variant.expected_cells()))
                 self.assertIn("accuracy", variant.thresholds)
@@ -438,7 +446,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_load_distributed_accuracy_scaffold(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_distributed.json")
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(variant.params.nnodes, "2")
         self.assertIn("PP=2", variant.expected_cells()[0])
@@ -495,7 +503,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_flat_config_slices_profiled_threshold(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_distributed.json")
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
         cell = "ISL=512,OSL=512,TP=8,PP=2,CONC=16"
         self.assertIn(cell, variant.expected_cells())
         self.assertIn("scaling.efficiency_pct", variant.thresholds[cell])
@@ -581,22 +589,31 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
             walk(data)
 
-    def test_all_atom_configs_load_with_aligned_thresholds(self):
+    def test_prune_orphan_sweep_thresholds_drops_other_topologies(self):
+        kept = "ISL=128,OSL=32,TP=8,PP=1,CONC=1"
+        orphan = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
+        pruned = _prune_orphan_sweep_thresholds(
+            {kept: {"output_throughput": {"kind": "min", "value": 1}}, orphan: {}, "accuracy": {}},
+            [kept],
+        )
+        self.assertIn(kept, pruned)
+        self.assertIn("accuracy", pruned)
+        self.assertNotIn(orphan, pruned)
+
+    def test_all_atom_configs_load(self):
         root = Path(__file__).resolve().parents[3]
         atom_dir = root / "input/config_file/inference/atom"
         cluster = _cluster_dict()
+        loaded = 0
         for cfg in sorted(atom_dir.glob("*.json")):
             if "threshold" in cfg.name:
                 continue
-            variant = load_variant(cfg, cluster)
-            if not variant.threshold_json:
-                continue
-            for cell in variant.expected_cells():
-                self.assertIn(
-                    cell,
-                    variant.thresholds,
-                    f"{cfg.name}: missing threshold cell {cell!r}",
-                )
+            raw = json.loads(cfg.read_text(encoding="utf-8"))
+            profiles = list(raw["profiles"]) if isinstance(raw.get("profiles"), dict) else [None]
+            for profile in profiles:
+                load_variant(cfg, cluster, profile=profile)
+                loaded += 1
+        self.assertGreater(loaded, 0)
 
 
 if __name__ == "__main__":

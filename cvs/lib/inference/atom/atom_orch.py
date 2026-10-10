@@ -65,7 +65,7 @@ class AtomJob:
         r"|Failed to initialize all EngineCores"
         r"|unexpected SHUTDOWN signal"
         r"|ModuleNotFoundError"
-        r"|No module named",
+        r"|AssertionError",
         re.I,
     )
     FATAL_LOG_RE = re.compile(
@@ -79,7 +79,7 @@ class AtomJob:
         r"|Failed to initialize all EngineCores"
         r"|unexpected SHUTDOWN signal"
         r"|ModuleNotFoundError"
-        r"|No module named",
+        r"|AssertionError",
         re.I,
     )
 

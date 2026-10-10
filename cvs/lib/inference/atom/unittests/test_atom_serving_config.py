@@ -2,9 +2,10 @@ import json
 import unittest
 from pathlib import Path
 
-from cvs.lib.inference.atom.atom_config_loader import AtomVariantConfig
+from cvs.lib.inference.atom.atom_config_loader import AtomVariantConfig, placeholder_gated_threshold_cell
 from cvs.lib.inference.atom.atom_serving_config import (
     atom_sweep_to_serving,
+    filter_thresholds_by_runs,
     is_serving_config,
     materialize_atom_sweep,
     parse_perf_cell_key,
@@ -114,6 +115,18 @@ class TestAtomServingConfig(unittest.TestCase):
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(len(variant.expected_cells()), 3)
 
+    def test_load_atom_vllm_distributed_serving_config(self):
+        root = Path(__file__).resolve().parents[4]
+        cfg = root / "input/config_file/inference/atom/mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json"
+        raw = json.loads(cfg.read_text(encoding="utf-8"))
+        self.assertTrue(is_serving_config(raw))
+        th_path = cfg.parent / raw["threshold_json"]
+        thresholds = json.loads(th_path.read_text(encoding="utf-8"))
+        variant_raw = serving_to_atom_variant_raw(raw, thresholds)
+        variant = AtomVariantConfig(**variant_raw)
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertNotIn("env", variant.container.runtime.args)
+
     def test_load_atom_vllm_gpt_oss_serving_config(self):
         root = Path(__file__).resolve().parents[4]
         cfg = root / "input/config_file/inference/atom/mi3xx_atom_vllm_gpt-oss-120b_mxfp4_single.json"
@@ -151,6 +164,91 @@ class TestAtomServingConfig(unittest.TestCase):
         self.assertNotIn("NCCL_IB_HCA", variant.roles.server.env)
         self.assertNotIn("NCCL_SOCKET_IFNAME", variant.roles.server.env)
         self.assertEqual(len(variant.expected_cells()), 16)
+
+    def test_serving_converter_maps_launch_fields_and_drops_runtime_env(self):
+        cell = "ISL=512,OSL=512,TP=8,PP=2,CONC=16"
+        orphan = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=1"
+        raw = {
+            "gpu_arch": "mi3xx",
+            "server_params": {
+                "backend": "vllm",
+                "nnodes": 2,
+                "pipeline_parallelism": 2,
+                "context_length": 8192,
+                "server_poll_count": 120,
+                "serve_args": {"kv-cache-dtype": "fp8"},
+            },
+            "benchmark_params": {
+                "data_set_name": "random",
+                "client_poll_count": 150,
+                "scaling_baseline_output_throughput": 1500,
+            },
+            "sweeps": {cell: {}, orphan: {}},
+            "sweep": {"runs": [cell]},
+            "container": {
+                "name": "atom",
+                "image": "example:latest",
+                "runtime": {"name": "docker", "args": {"env": {"HF_TOKEN": "secret"}}},
+            },
+            "model": {"id": "example/model"},
+            "paths": {
+                "shared_fs": "/shared",
+                "models_dir": "/models",
+                "log_dir": "/logs",
+                "hf_token_file": "/token",
+            },
+        }
+        cell_thresholds = placeholder_gated_threshold_cell()
+        cell_thresholds["scaling.efficiency_pct"] = {"kind": "min", "value": 11}
+        thresholds = {
+            cell: cell_thresholds,
+            orphan: {"scaling.efficiency_pct": {"kind": "min", "value": 1}},
+            "accuracy": {"score": {"kind": "min", "value": 0}},
+        }
+        variant = AtomVariantConfig(**serving_to_atom_variant_raw(raw, thresholds))
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertEqual(variant.params.max_model_length, "8192")
+        self.assertEqual(variant.params.server_poll_count, "120")
+        self.assertEqual(variant.params.client_poll_count, "150")
+        self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
+        self.assertEqual(variant.expected_cells(), [cell])
+        self.assertNotIn("env", variant.container.runtime.args)
+        self.assertEqual(variant.roles.server.env.get("HF_TOKEN"), "secret")
+        self.assertIn(cell, variant.thresholds)
+        self.assertNotIn(orphan, variant.thresholds)
+        self.assertIn("accuracy", variant.thresholds)
+
+    def test_sglang_backend_maps_add_flags(self):
+        cell = "ISL=128,OSL=32,TP=8,PP=1,CONC=1"
+        raw = {
+            "gpu_arch": "mi3xx",
+            "server_params": {"backend": "sglang", "add_flags": ["--disable-overlap-schedule"]},
+            "benchmark_params": {"data_set_name": "random"},
+            "sweeps": {cell: {}},
+            "runs": [cell],
+            "container": {"name": "atom", "image": "example:latest", "runtime": {"name": "docker"}},
+            "model": {"id": "example/model"},
+            "paths": {
+                "shared_fs": "/shared",
+                "models_dir": "/models",
+                "log_dir": "/logs",
+                "hf_token_file": "/token",
+            },
+        }
+        variant = AtomVariantConfig(**serving_to_atom_variant_raw(raw, {cell: placeholder_gated_threshold_cell()}))
+        self.assertEqual(variant.params.driver, "sglang")
+        self.assertEqual(variant.roles.server.sglang_args, ["--disable-overlap-schedule"])
+
+    def test_filter_thresholds_by_runs_drops_unselected_cells(self):
+        kept = "ISL=128,OSL=32,TP=8,PP=1,CONC=1"
+        dropped = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128"
+        filtered = filter_thresholds_by_runs(
+            {kept: {"a": 1}, dropped: {"a": 2}, "accuracy": {"b": 3}},
+            [kept],
+        )
+        self.assertEqual(set(filtered), {kept, "accuracy"})
 
     def test_parse_perf_cell_key(self):
         parts = parse_perf_cell_key("ISL=1024,OSL=2048,TP=8,PP=2,CONC=32")
