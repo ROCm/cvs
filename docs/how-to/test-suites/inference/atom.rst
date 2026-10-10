@@ -44,7 +44,8 @@ On **Spur or Slurm managed compute**:
   ATOM still uses the ``orch`` fixture and the config ``container`` block;
   do not add nested ``spur run`` inside ``AtomJob``.
 - Prove an existing single-node stem first, then run the ``mi355x_atom_*``
-  stems (Kimi TP4, V4-Pro TP8).
+  stems (Kimi TP4, V4-Pro TP8). V4-Flash-Base (``mi3xx_atom_deepseek-v4-flash``)
+  is the gfx942 stem.
 
 Spur example:
 
