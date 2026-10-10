@@ -335,7 +335,8 @@ def _verify_cell_metrics(host_dict, run, variant_config, lifecycle, request, sub
     started = time.monotonic()
     for verdict in asserted_verdicts:
         with subtests.test(node=verdict["node"], metric=verdict["metric"]):
-            assert verdict["status"] == "pass", verdict["reason"]
+            if verdict["status"] != "pass":
+                pytest.fail(verdict["reason"])
     lifecycle.record(request.node.nodeid, "metric_verification", time.monotonic() - started)
 
 
