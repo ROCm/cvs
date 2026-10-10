@@ -1,72 +1,36 @@
-# Multi-stage build for CVS Cluster Monitor
-# Stage 1: Build Go SSH daemon
-FROM golang:1.22-alpine AS go-builder
+# Multi-stage build for CVS Cluster Monitor (Go backend + React UI)
+FROM golang:1.25-alpine AS go-builder
 
 WORKDIR /src
-COPY go-collector/go.mod go-collector/go.sum ./
+COPY go.mod go.sum ./
 RUN go mod download
-COPY go-collector/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -o /gpu-collector ./cmd/gpu-collector
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+RUN CGO_ENABLED=0 GOOS=linux go build -o /cluster-mon ./cmd/cluster-mon
 
-# Stage 2: Build React frontend
 FROM node:18-slim AS frontend-builder
 
 WORKDIR /app/frontend
-
-# Copy frontend package files
 COPY frontend/package*.json ./
-
-# Install dependencies
 RUN npm ci
-
-# Copy frontend source
 COPY frontend/ ./
-
-# Build frontend for production
 RUN npm run build
 
+FROM alpine:3.20
 
-# Stage 3: Main application image
-FROM python:3.10-slim
+RUN apk add --no-cache ca-certificates tzdata \
+    && mkdir -p /app/config /root/.ssh \
+    && chmod 700 /root/.ssh
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    openssh-client \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set working directory
 WORKDIR /app
-
-# Set environment variables
 ENV CLUSTER_MONITOR_HOME=/app
-ENV PYTHONUNBUFFERED=1
 ENV HOME=/root
+ENV LISTEN_ADDR=:8001
+ENV STATIC_DIR=/app/static
 
-# Copy backend requirements and install Python dependencies
-COPY backend/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=go-builder /cluster-mon /usr/local/bin/cluster-mon
+COPY --from=frontend-builder /app/frontend/dist /app/static
 
-# Copy backend code
-COPY backend/app/ ./app/
-
-# Copy Go daemon binary from builder stage
-COPY --from=go-builder /gpu-collector /usr/local/bin/gpu-collector
-
-# Raise open-file limit for persistent SSH connections (1 fd per host)
-RUN ulimit -n 65535 2>/dev/null || true
-
-# Copy frontend build from builder stage
-COPY --from=frontend-builder /app/frontend/dist ./static
-
-# Create config directory
-RUN mkdir -p /app/config
-
-# Expose port
 EXPOSE 8001
 
-# Health check - disabled temporarily for debugging
-# HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-#     CMD python -c "import requests; requests.get('http://localhost:8001/health', timeout=5)" || exit 1
-
-# Run FastAPI (serves both API and static frontend)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["/usr/local/bin/cluster-mon", "-listen", ":8001", "-config-dir", "/app/config", "-static", "/app/static"]
