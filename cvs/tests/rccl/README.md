@@ -12,9 +12,11 @@ Host and network diagnostics use the host OS. Perf and regression retain their t
 
 With `--html`, `rccl_perf`, `rccl_regression`, and `rccl_pairwise` generate
 `rccl_run_deck.html` and `rccl_run_deck.json` in the `<suite>_html` directory
-beside the pytest report. Both artifacts are linked from the pytest report
-and included in its zip bundle. Perf and regression also retain their
-existing amCharts reports.
+beside the pytest report. The HTML deck is linked as "RCCL Run Deck" in the
+pytest report's Reports section; the JSON sits beside it, and both are included
+in the zip bundle. The deck is built from results collected by `test_gen_graph`,
+so include that test when selecting individual tests. Perf and regression also
+retain their existing amCharts reports.
 
 The deck includes bus bandwidth, algorithm bandwidth, and time curves by
 message size, a results table, and a run card. Collectives and message sizes
@@ -243,7 +245,7 @@ srun --mpi=none -N 2 --ntasks-per-node 1 -- \
 
 Use paths and node counts appropriate to your allocation. Repeat for `rccl_regression` and `rccl_pairwise`, with distinct HTML/log names. Configure `SPUR_CONTROLLER_ADDR` as required by your cluster's Spur setup.
 
-- `--workspace` or `CVS_WORKSPACE` must name writable shared storage on all participating nodes. Specify it explicitly inside the CVS container image, where the default venv parent is not shared. Mount both the workspace and result path consistently.
+- `--workspace` or `CVS_WORKSPACE` must name writable shared storage on all participating nodes. Every managed run must set it explicitly; CVS exits before starting otherwise, because the default venv parent can be node-local. Mount both the workspace and result path consistently.
 - `--cluster_file` is optional for a managed run: CVS synthesizes a job-owned cluster file with each node's hostname as its `vpc_ip`. Supply an appropriate cluster config when selecting the container orchestrator.
 - Scheduler detection checks SPUR before Slurm. Override it with `CVS_SCHEDULER=spur` or `CVS_SCHEDULER=slurm` if needed; an override does not replace the job-step requirement.
 - Nested launches use `spur run --overlap --mpi=pmix` or `srun --overlap --mpi=pmix`. Managed container setup skips sshd because the scheduler uses PMIx.
