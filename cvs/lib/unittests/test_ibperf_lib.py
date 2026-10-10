@@ -4,6 +4,20 @@ from unittest.mock import patch, MagicMock
 import cvs.lib.ibperf_lib as ibperf_lib
 
 
+class TestPerRunCleanup(unittest.TestCase):
+    def test_clears_stale_files_without_sudo_before_writing_commands(self):
+        for run in (ibperf_lib.run_ib_perf_bw_test, ibperf_lib.run_ib_perf_lat_test):
+            with self.subTest(run=run.__name__):
+                phdl = MagicMock()
+                phdl.exec.side_effect = [None, None, RuntimeError('stop after cleanup')]
+                with self.assertRaises(RuntimeError):
+                    run(MagicMock(), phdl, 'ib_write_bw', {}, {}, {}, '/opt/pt/bin', 64, 3)
+                self.assertEqual(
+                    [c.args[0] for c in phdl.exec.call_args_list[:3]],
+                    ['rm -rf /tmp/ib_cmds_file.txt', 'rm -rf /tmp/ib_perf*', 'touch /tmp/ib_cmds_file.txt'],
+                )
+
+
 class TestIbperfLib(unittest.TestCase):
     @patch('xlsxwriter.Workbook')
     def test_generate_ibperf_bw_chart(self, mock_workbook_class):
@@ -55,6 +69,7 @@ GPU_NIC = {n: {f'card{g}': {'rdma_dev': f'rdma{g}'} for g in range(8)} for n in 
 GPU_NUMA = {n: {f'card{g}': {'local_cpulist': '0-63'} for g in range(8)} for n in NODES}
 BCK_NIC = {n: {} for n in NODES}
 LAT = dict.fromkeys(('t_min', 't_max', 't_typical', 't_avg', 't_stdev', 't_99_pct', 't_99_9_pct'), '1.0')
+LAUNCH = 'env -u ROCR_VISIBLE_DEVICES bash /tmp/ib_cmds_file.txt'
 
 
 class TestWaitForPerftestExit(unittest.TestCase):
@@ -107,13 +122,14 @@ class TestRunIbPerfBwTest(unittest.TestCase):
     @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
     @patch.object(ibperf_lib, 'get_ib_bw_pps', return_value={})
     @patch.object(ibperf_lib, 'check_perftest_dmabuf_support', return_value=False)
-    def test_waits_for_perftest_exit_bounded_by_duration(self, _dmabuf, _bw_pps, mock_wait, _sleep):
+    def test_launches_then_waits_for_perftest_exit_bounded_by_duration(self, _dmabuf, _bw_pps, mock_wait, _sleep):
         phdl = MagicMock()
 
         ibperf_lib.run_ib_perf_bw_test(
             MagicMock(), phdl, 'ib_write_bw', GPU_NUMA, GPU_NIC, BCK_NIC, '/opt/perftest/bin', 8192, 3, duration=30
         )
 
+        phdl.exec.assert_any_call(LAUNCH, print_console=False)
         mock_wait.assert_called_once_with(phdl, 'ib_write_bw', 30 + ibperf_lib.PERFTEST_EXIT_SLACK_S)
 
 
@@ -122,7 +138,7 @@ class TestRunIbPerfLatTest(unittest.TestCase):
     @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
     @patch.object(ibperf_lib, 'get_ib_lat_numb')
     @patch.object(ibperf_lib, 'check_perftest_dmabuf_support', return_value=False)
-    def test_builds_latency_commands(self, _dmabuf, mock_lat_numb, mock_wait, _sleep):
+    def test_builds_and_launches_latency_commands(self, _dmabuf, mock_lat_numb, mock_wait, _sleep):
         mock_lat_numb.return_value = {n: LAT for n in NODES}
         phdl = MagicMock()
 
@@ -141,6 +157,7 @@ class TestRunIbPerfLatTest(unittest.TestCase):
             'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=0'
             ' -x 3 -F -p 1516 -s 64 node1 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
+        phdl.exec.assert_any_call(LAUNCH, print_console=False)
         mock_wait.assert_called_once_with(phdl, 'ib_write_lat', ibperf_lib.PERFTEST_LAT_EXIT_TIMEOUT_S)
 
     @patch.object(ibperf_lib.time, 'sleep')
