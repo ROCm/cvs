@@ -22,7 +22,7 @@ jobs:
     steps:
       - name: Check out triggering revision
         id: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Each run's report directory is identified by an exact before/after set
       # difference of /tmp/cvs_*, not a timestamp: a whole-second-resolution
@@ -135,7 +135,7 @@ jobs:
 
       - name: Upload pytest HTML reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: aorta-benchmark-pytest-report
           path: |
