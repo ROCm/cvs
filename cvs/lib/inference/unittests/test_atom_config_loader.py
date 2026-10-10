@@ -345,6 +345,27 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertIn("kv-cache-dtype", variant.roles.server.serve_args)
 
+    def test_load_v4_flash_vllm_covers_thresholds(self):
+        root = Path(__file__).resolve().parents[3]
+        name = "mi3xx_atom_vllm_deepseek-v4-flash_fp8_single.json"
+        variant = _atom_config(root, name)
+        self.assertEqual(variant.gpu_arch, "mi3xx")
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.model.id, "deepseek-ai/DeepSeek-V4-Flash")
+        self.assertEqual(variant.params.max_model_length, "12288")
+        self.assertEqual(variant.roles.server.env["VLLM_ROCM_USE_AITER"], "1")
+        self.assertNotIn("HF_HUB_CACHE", variant.roles.server.env)
+        self.assertNotIn("HF_HOME", variant.roles.server.env)
+        self.assertTrue(variant.functional.api_smoke)
+        self.assertTrue(variant.platform.gpu_metrics_poll)
+        serve = variant.roles.server.serve_args
+        self.assertEqual(serve["kv-cache-dtype"], "fp8_e4m3")
+        self.assertEqual(serve["tokenizer-mode"], "deepseek_v4")
+        self.assertEqual(serve["moe-backend"], "triton_unfused")
+        self.assertTrue(variant.expected_cells())
+        for cell in variant.expected_cells():
+            self.assertIn(cell, variant.thresholds, f"{name} missing {cell}")
+
     def test_load_atom_vllm_gpt_oss_serving_schema(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_vllm_gpt-oss-120b_mxfp4_single.json")
