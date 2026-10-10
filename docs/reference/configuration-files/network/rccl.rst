@@ -193,6 +193,15 @@ Configuration parameters for RCCL suites:
    * - ``verify_bus_bw``
      - ``"False"``
      - Enable bus-bandwidth threshold validation.
+   * - ``nic_model``
+     - ``"thor"``
+     - Selects NIC-keyed ``results.<nic>`` references for scale-out runs.
+   * - ``fabric``
+     - ``"scale_out"``
+     - ``scale_out`` or ``scale_up``; selects the ``results`` namespace.
+   * - ``bus_bw_tolerance``
+     - ``"0.95"``
+     - Fraction in (0, 1] of the reference that a measurement must reach. The guide configs use ``"1.0"``.
    * - ``verify_bw_dip``
      - ``"False"``
      - Enable bandwidth-dip validation.
@@ -208,7 +217,7 @@ Expected results format
 
 The ``results`` section is a sibling of ``cvs_params`` under ``rccl``. Values are keyed by collective and message size (bytes), with expected bus bandwidth in GB/s. Re-baseline the shipped values for your cluster before enabling checks. The shipped values assume two nodes with eight ranks per node.
 
-Set ``verify_bus_bw`` to ``"True"`` to require actual bandwidth to reach at least 95% of the configured value. A missing collective threshold fails the test when this check is enabled. Set ``verify_bw_dip`` or ``verify_lat_dip`` to ``"True"`` to check for bandwidth or latency dips at the configured message sizes; either check can fail the test.
+Set ``verify_bus_bw`` to ``"True"`` to require actual bandwidth to reach at least ``bus_bw_tolerance`` (default 0.95) times the configured value. A missing collective threshold fails the test when this check is enabled. Set ``verify_bw_dip`` or ``verify_lat_dip`` to ``"True"`` to check for bandwidth or latency dips at the configured message sizes; either check can fail the test. An enabled dip check with no resolved reference fails.
 
 .. dropdown:: ``results`` snippet
 
@@ -222,6 +231,25 @@ Set ``verify_bus_bw`` to ``"True"`` to require actual bandwidth to reach at leas
         }
       }
     }
+
+Single-node guide configs
+-------------------------
+
+``mi300x_rccl_single_node_config.json`` enforces the MI300X 304 GB/s bar; ``mi350x_rccl_single_node_config.json`` enforces the MI350X 350 GB/s bar. Both are for ``rccl_perf`` only, with ``all_reduce_perf``, 8 GiB, in-place, float, and one node with eight ranks. They set ``fabric`` to ``scale_up``, ``verify_bus_bw`` to ``"True"``, and ``bus_bw_tolerance`` to ``"1.0"``.
+
+.. code:: json
+
+  "results": {
+    "scale_up": {
+      "all_reduce_perf-float-8": {
+        "8589934592": {"bus_bw": "350"}
+      }
+    }
+  }
+
+.. note::
+
+   The guide gives both 304 and 350 GB/s as the MI355X bar at 8 GiB in-place. CVS ships no MI355X bar until this is resolved; do not use the MI350X config as an MI355X gate. Helios/MI455X scale-up references need a measured baseline on Helios hardware; none is shipped.
 
 Collective meanings
 -------------------

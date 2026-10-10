@@ -53,6 +53,8 @@ rccl_err_dict = {
 class RcclVerifier:
     """Pass/fail checks on one RCCL result set. Log scan is separate (stdout)."""
 
+    DEFAULT_BUS_BW_TOLERANCE = 0.95
+
     def __init__(self, test_name, results, expected=None, cvs_params=None, resolver_failed=False):
         self.test_name = test_name
         self.results = results
@@ -80,11 +82,26 @@ class RcclVerifier:
         if not re.search(r'#\sAvg bus bandwidth', output):
             fail_test('RCCL test did not complete successfully, no bandwidth numbers printed - pls check')
 
+    def bus_bw_tolerance(self):
+        """Fraction of reference bus BW required by cvs_params.bus_bw_tolerance (default 0.95)."""
+        value = self.cvs_params.get('bus_bw_tolerance', self.DEFAULT_BUS_BW_TOLERANCE)
+        try:
+            tolerance = float(value)
+        except (TypeError, ValueError):
+            tolerance = None
+        # NaN fails both comparisons, so reject it before checking measurements.
+        if tolerance is None or not 0 < tolerance <= 1:
+            fail_test(f'Invalid rccl.cvs_params.bus_bw_tolerance {value!r}; expected a fraction in (0, 1], e.g. "0.95"')
+            return None
+        return tolerance
+
     def check_bus_bw(self):
         test_name = self.test_name
         expected = self.expected
         log.info(f'exp_res_dict = {expected}')
-        tolerance = 0.95
+        tolerance = self.bus_bw_tolerance()
+        if tolerance is None:
+            return
         msg_size_list = list(expected.keys())
         log.info("%s", test_name)
         in_place = 0 if re.search('alltoall|all_to_all', test_name, re.I) else 1
@@ -101,7 +118,7 @@ class RcclVerifier:
                 log.info(f"Comparing: actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}")
                 if actual_bw < threshold:
                     fail_test(
-                        f"The actual {place_label} bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})"
+                        f"The actual {place_label} bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with {(1 - tolerance) * 100:g}% tolerance: {threshold:.2f})"
                     )
 
     def check_bw_dip(self):
@@ -172,9 +189,19 @@ class RcclVerifier:
             elif not self.resolver_failed:
                 fail_test(f'No bus bandwidth thresholds for {self.test_name} in rccl.results.{self.test_name}')
         if re.search('True', self.cvs_params.get('verify_bw_dip', 'False'), re.I):
-            self.check_bw_dip()
+            if self.expected:
+                self.check_bw_dip()
+            elif not self.resolver_failed:
+                fail_test(
+                    f'No reference message sizes for BW dip check of {self.test_name} in rccl.results.{self.test_name}'
+                )
         if re.search('True', self.cvs_params.get('verify_lat_dip', 'False'), re.I):
-            self.check_lat_dip()
+            if self.expected:
+                self.check_lat_dip()
+            elif not self.resolver_failed:
+                fail_test(
+                    f'No reference message sizes for latency dip check of {self.test_name} in rccl.results.{self.test_name}'
+                )
 
     @staticmethod
     def is_severe_wrong_corruption_error(err: ValidationError) -> bool:
@@ -226,6 +253,18 @@ DEFAULT_COLLECTIVES = [
 
 
 NIC_TYPES = ('ainic', 'thor', 'connectx')
+SCALE_OUT = 'scale_out'
+SCALE_UP = 'scale_up'
+
+
+def fabric_type(fabric):
+    """Normalise cvs_params.fabric; missing means scale_out, unknown values warn and fall back."""
+    value = re.sub(r'[\s_-]', '', str(fabric or SCALE_OUT)).lower()
+    fabric_key = {'scaleout': SCALE_OUT, 'scaleup': SCALE_UP}.get(value)
+    if fabric_key is None:
+        log.warning('Unrecognised fabric %r; falling back to %s', fabric, SCALE_OUT)
+        return SCALE_OUT
+    return fabric_key
 
 
 def configured_collectives(config):
@@ -580,6 +619,7 @@ class RcclJob:
         if self.topology_check_mode not in ('off', 'warn', 'strict'):
             log.warning('Unrecognised topology_check mode %r; falling back to warn', self.topology_check_mode)
             self.topology_check_mode = 'warn'
+        self.fabric = fabric_type(cvs_params.get('fabric'))
 
     @classmethod
     def from_config(
@@ -1107,6 +1147,10 @@ class RcclJob:
         else:
             nic_type = 'ainic'
         log.info(f'Detected NIC type: {nic_type} from nic_model: {nic_model}')
+        if self.fabric == SCALE_UP:
+            # Scale-up traffic never reaches the NIC, so NIC-keyed references do not describe it.
+            log.info(f'fabric is {SCALE_UP}; looking in rccl.results.{SCALE_UP} instead of rccl.results.{nic_type}')
+            nic_type = SCALE_UP
 
         result_key = f'{self.test_name}-{"_".join(data_types)}-{self.no_of_global_ranks}'
         log.info(f'Looking up results with key: {result_key} in nic_type: {nic_type}')
@@ -1114,6 +1158,12 @@ class RcclJob:
         if isinstance(nic_results, dict) and result_key in nic_results:
             log.info(f'Found expected results: {nic_type}/{result_key}')
             return nic_results[result_key]
+        if self.fabric == SCALE_UP:
+            log.warning(
+                f'No scale-up reference at rccl.results.{SCALE_UP}.{result_key}; '
+                'NIC-keyed and flat references describe scale-out runs and are not used'
+            )
+            return None
         test_results = self.expected_results.get(self.test_name)
         if not test_results:
             return None
