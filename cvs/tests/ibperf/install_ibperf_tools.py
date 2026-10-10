@@ -5,15 +5,11 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import pytest
-
 import logging
 import re
-import json
 
 
 from cvs.lib import ibperf_lib
-from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -27,221 +23,39 @@ ib_lat_dict = {}
 rccl_res_dict = {}
 
 
-# Importing additional cmd line args to script ..
-@pytest.fixture(scope="module")
-def cluster_file(pytestconfig):
-    """
-    Return the path to the cluster configuration JSON file passed via pytest CLI.
-
-    Expects:
-      - pytest to be invoked with: --cluster_file <path>
-
-    Args:
-      pytestconfig: Built-in pytest config object used to access CLI options.
-
-    Returns:
-      str: Filesystem path to the cluster configuration file.
-    """
-    return pytestconfig.getoption("cluster_file")
-
-
-@pytest.fixture(scope="module")
-def config_file(pytestconfig):
-    """
-    Return the path to the test configuration JSON file passed via pytest CLI.
-
-    Expects:
-      - pytest to be invoked with: --config_file <path>
-
-    Args:
-      pytestconfig: Built-in pytest config object used to access CLI options.
-
-    Returns:
-      str: Filesystem path to the test configuration file.
-    """
-    return pytestconfig.getoption("config_file")
-
-
-@pytest.fixture(scope="module")
-def cluster_dict(cluster_file):
-    """
-    Load and expose full cluster configuration for the test module.
-
-    Behavior:
-      - Opens the JSON at cluster_file and parses it into a Python dict.
-      - Logs the parsed dictionary for visibility and debugging.
-      - Returns the entire cluster configuration (node list, credentials, etc.).
-
-    Args:
-      cluster_file (str): Path to the cluster configuration JSON.
-
-    Returns:
-      dict: Parsed cluster configuration. Expected keys include:
-            - 'node_dict': Map of node name -> node metadata
-            - 'username': SSH username
-            - 'priv_key_file': Path to SSH private key
-    """
-    with open(cluster_file) as json_file:
-        cluster_dict = json.load(json_file)
-
-    # Resolve path placeholders like {user-id} in cluster config
-    cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info(
-        'Loaded cluster config: %d nodes, user=%s',
-        len(cluster_dict.get('node_dict', {})),
-        cluster_dict.get('username'),
-    )
-    log.debug('Cluster config: %s', cluster_dict)
-    return cluster_dict
-
-
-@pytest.fixture(scope="module")
-def config_dict(config_file, cluster_dict):
-    """
-    Load and return the RCCL-specific configuration dictionary for the test module.
-
-    Args:
-      config_file (str): Path to a JSON config file provided by another fixture.
-
-    Notes:
-      - Expects the JSON file to contain a top-level key "ibperf".
-      - Uses module scope so the config is parsed once per test module.
-    """
-    with open(config_file) as json_file:
-        config_dict_t = json.load(json_file)
-    config_dict = config_dict_t['ibperf']
-
-    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
-    config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
-    log.info(
-        'Loaded ibperf config: install_dir=%s, install_perf_package=%s',
-        config_dict.get('install_dir'),
-        config_dict.get('install_perf_package'),
-    )
-    log.debug('Ibperf config: %s', config_dict)
-    return config_dict
-
-
-@pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    """
-    Build and return a parallel SSH handle (Pssh) for all cluster nodes.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture containing:
-        - node_dict: dict of node_name -> node_details
-        - username: SSH username
-        - priv_key_file: path to SSH private key
-
-    Returns:
-      Pssh: Handle configured for all nodes (for broadcast/parallel operations).
-
-    Notes:
-      - Prints the cluster_dict for quick debugging; consider replacing with log.debug.
-      - Module-scoped so a single shared handle is used across all tests in the module.
-      - nhdl_dict is currently unused; it can be removed unless used elsewhere.
-      - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
-    """
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    log.info('Connecting to %d cluster nodes via parallel SSH', len(node_list))
-    log.debug('Cluster nodes: %s', node_list)
-    if len(node_list) < 2:
-        raise ValueError('At least 2 nodes are required to run this test')
-    if len(node_list) % 2 != 0:
-        log.info(
-            'Odd number of nodes (%d); excluding last node to form server/client pairs',
-            len(node_list),
-        )
-        node_list.pop()
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
-
-
-@pytest.fixture(scope="module")
-def shdl(cluster_dict):
-    """
-    Build and return a parallel SSH handle (Pssh) for the head node only.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
-
-    Returns:
-      Pssh: Handle configured for the first node (head node) in node_dict.
-
-    Notes:
-      - Useful when commands should be executed only from a designated head node.
-      - Module scope ensures a single connection context for the duration of the module.
-      - nhdl_dict is currently unused; it can be removed unless used elsewhere.
-    """
-    node_list = list(cluster_dict['node_dict'].keys())
-    env_vars = cluster_dict.get("env_vars")
-    head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return shdl
-
-
-@pytest.fixture(scope="module")
-def vpc_node_list(cluster_dict):
-    """
-    Collect and return a list of VPC IPs for all nodes in the cluster.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture containing node_dict with vpc_ip per node.
-
-    Returns:
-      list[str]: List of VPC IP addresses in the cluster, ordered by node_dict iteration.
-
-    Notes:
-      - Iteration order depends on the insertion order of node_dict.
-      - Consider validating that each node entry contains a 'vpc_ip' key.
-    """
-    vpc_node_list = []
-    node_list = list(cluster_dict['node_dict'].keys())
-
-    if len(node_list) < 2:
-        raise ValueError('At least 2 nodes are required to run this test')
-
-    if len(node_list) % 2 != 0:
-        node_list.pop()
-    for node in node_list:
-        vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
-    return vpc_node_list
-
-
-def test_install_ib_perf(phdl, shdl, config_dict):
+def test_install_ib_perf(orch, config_dict):
     globals.error_list = []
 
     if re.search('true', config_dict['install_perf_package'], re.I):
         install_dir = config_dict['install_dir']
         log.info('Installing perftest to %s', install_dir)
-        shdl.exec(f'mkdir -p {install_dir}', print_console=False)
-        phdl.exec('sudo apt update -y', timeout=200, print_console=False)
-        phdl.exec(
+        orch.head.exec(f'mkdir -p {install_dir}', print_console=False)
+        orch.all.exec('sudo apt update -y', timeout=200, print_console=False)
+        orch.all.exec(
             'sudo apt install -y git build-essential autoconf automake libtool pkg-config',
             timeout=200,
             print_console=False,
         )
-        phdl.exec(
+        orch.all.exec(
             'sudo apt install -y libibverbs-dev librdmacm-dev ibverbs-providers rdma-core',
             timeout=200,
             print_console=False,
         )
-        phdl.exec('sudo apt install -y libibumad-dev', print_console=False)
-        phdl.exec('sudo apt install -y libpci-dev', print_console=False)
-        phdl.exec('sudo apt install -y numactl', print_console=False)
-        shdl.exec(f'cd {install_dir}; git clone https://github.com/linux-rdma/perftest', print_console=False)
-        shdl.exec(f'cd {install_dir}/perftest; ./autogen.sh', timeout=100, print_console=False)
-        rocm_path = ibperf_lib.detect_rocm_path(shdl, config_dict.get('rocm_dir', '<changeme>'))
-        shdl.exec(
+        orch.all.exec('sudo apt install -y libibumad-dev', print_console=False)
+        orch.all.exec('sudo apt install -y libpci-dev', print_console=False)
+        orch.all.exec('sudo apt install -y numactl', print_console=False)
+        orch.head.exec(f'cd {install_dir}; git clone https://github.com/linux-rdma/perftest', print_console=False)
+        orch.head.exec(f'cd {install_dir}/perftest; ./autogen.sh', timeout=100, print_console=False)
+        rocm_path = ibperf_lib.detect_rocm_path(orch.head, config_dict.get('rocm_dir', '<changeme>'))
+        orch.head.exec(
             f'cd {install_dir}/perftest; ./configure --prefix={install_dir}/perftest --with-rocm={rocm_path} --enable-rocm',
             timeout=200,
             print_console=False,
         )
-        shdl.exec(f'cd {install_dir}/perftest; make', timeout=100, print_console=False)
-        shdl.exec(f'cd {install_dir}/perftest; make install', timeout=100, print_console=False)
+        orch.head.exec(f'cd {install_dir}/perftest; make', timeout=100, print_console=False)
+        orch.head.exec(f'cd {install_dir}/perftest; make install', timeout=100, print_console=False)
 
-        out_dict = phdl.exec(
+        out_dict = orch.all.exec(
             f'{install_dir}/perftest/ib_write_bw -h | grep -i rocm --color=never',
             print_console=False,
         )
