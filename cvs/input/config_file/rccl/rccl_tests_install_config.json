@@ -1,0 +1,32 @@
+{
+    "rccl_install": {
+        "nfs_install": "True",
+        "_comment_nfs_install": "If nfs_install is True, rccl-tests and rccl library (optional) will be installed in NFS. Otherwise, all nodes will have local installation",
+        "rccl_lib_install": "True",
+        "_comment_rccl_lib_install": "Set True to sparse-clone projects/rccl from rocm-systems and build RCCL for rccl-tests (e.g. when bundled ROCm RCCL mismatches rccl-tests). rccl-tests then builds with CUSTOM_RCCL_LIB.",
+        "rccl_lib_build_timeout": "10800",
+        "_comment_rccl_lib_build_timeout": "SSH exec timeout in seconds for RCCL library source build. Some rccl lib tags take long time to build, thus the high timeout value, this upper bound doesn't have effect on actual build time",
+        "rccl_lib_install_dir": "<changeme>",
+        "_comment_rccl_lib_install_dir": "Install/build root for RCCL source when rccl_lib_install is True. Ignored when rccl_lib_install is False (bundled ROCm lib under rocm_path/lib is used instead).",
+        "rccl_tests_install_dir": "<changeme>",
+        "_comment_rccl_tests_install_dir": "Directory for sparse/full clone of rccl-tests (rocm-systems root). Binaries: <this-dir>/projects/rccl-tests/build when using rocm-systems sparse checkout.",
+        "rccl_repository": "https://github.com/ROCm/rocm-systems.git",
+        "_comment_rccl_repository": "Monorepo URL; install_rccl_tests sparse-checkouts projects/rccl and projects/rccl-tests automatically.",
+        "rccl_sparse_path": "projects/rccl",
+        "_comment_rccl_sparse_path": "Optional overrides for git sparse-checkout paths. Omit or leave as-is for rocm-systems defaults.",
+        "rccl_tests_sparse_path": "projects/rccl-tests",
+        "_comment_rccl_tests_sparse_path": "Optional overrides for git sparse-checkout paths. Omit or leave as-is for rocm-systems defaults.",
+        "rccl_git_tag": "<changeme>",
+        "_comment_rccl_git_tag": "Git tag or branch for projects/rccl sparse checkout from rccl_repository. Recommended: therock-7.11 for ROCm 7.2.0 (validated in CVS testing). See https://github.com/ROCm/rocm-systems/blob/therock-7.11/projects/rccl/CHANGELOG.md for release notes.",
+        "rccl_tests_git_tag": "<changeme>",
+        "_comment_rccl_tests_git_tag": "Git tag or branch for projects/rccl-tests sparse checkout. Recommended: therock-7.11 for ROCm 7.2.0 (validated in CVS testing).",
+        "rocm_path": "/opt/rocm",
+        "_comment_rocm_path": "ROCm install root for HIP/ROCm builds. When rccl_lib_install is False, bundled librccl under <rocm_path>/lib is used.",
+        "gpu_arch": "",
+        "_comment_gpu_arch": "Target GPU architecture for RCCL library cmake (-DAMDGPU_TARGETS) and rccl-tests make (AMDGPU_TARGETS/GPU_TARGETS). Leave empty for auto-detection via rocminfo on each node. Example: 'gfx942' for MI300X, 'gfx1250' for MI455X.",
+        "rccl_tests_use_amdclang": "False",
+        "_comment_rccl_tests_use_amdclang": "If True, rccl-tests builds with HIPCC/CXX set to $ROCM_PATH/llvm/bin/amdclang++. If False, uses $ROCM_PATH/bin/hipcc.",
+        "ompi_install_dir": "<changeme>",
+        "_comment_ompi_install_dir": "Open MPI install prefix (OMPI_PREFIX / MPI_HOME). Required for rccl-tests MPI build."
+    }
+}
