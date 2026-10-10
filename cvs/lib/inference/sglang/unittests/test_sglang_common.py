@@ -4,6 +4,9 @@ import unittest
 from unittest import mock
 
 from cvs.lib.inference.sglang import sglang_common
+from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
+from cvs.lib.inference.sglang.sglang_distributed_lib import SglangDistributed
+from cvs.lib.inference.sglang.sglang_single_lib import SglangSingle
 
 
 _SAMPLE_BENCH_LOG = """
@@ -53,6 +56,94 @@ class _FakeSubtests:
 
 
 class TestSglangCommonHelpers(unittest.TestCase):
+    def test_hsa_force_fine_grain_pcie_uses_config_or_defaults_to_one(self):
+        self.assertEqual(sglang_common.hsa_force_fine_grain_pcie(None), '1')
+        self.assertEqual(sglang_common.hsa_force_fine_grain_pcie({}), '1')
+        self.assertEqual(
+            sglang_common.hsa_force_fine_grain_pcie({'hsa_force_fine_grain_pcie': '  '}),
+            '1',
+        )
+        self.assertEqual(
+            sglang_common.hsa_force_fine_grain_pcie({'hsa_force_fine_grain_pcie': '0'}),
+            '0',
+        )
+        self.assertEqual(
+            sglang_common.hsa_force_fine_grain_pcie(
+                {'container_config': {'env_dict': {'HSA_FORCE_FINE_GRAIN_PCIE': '0'}}}
+            ),
+            '0',
+        )
+        self.assertEqual(
+            sglang_common.hsa_force_fine_grain_pcie(
+                {
+                    'hsa_force_fine_grain_pcie': '1',
+                    'container_config': {'env_dict': {'HSA_FORCE_FINE_GRAIN_PCIE': '0'}},
+                }
+            ),
+            '1',
+        )
+
+    def test_env_scripts_export_configured_hsa_force_fine_grain_pcie(self):
+        inf_dict = {
+            'nccl_debug': 'ERROR',
+            'nccl_ib_hca': 'rdma0',
+            'nccl_ib_gid_index': '1',
+            'nccl_socket_ifname': 'eno0',
+            'gloo_socket_ifname': 'eno0',
+            'hsa_force_fine_grain_pcie': '0',
+            'prefill_coordinator_addr': '10.0.0.1',
+            'prefill_coordinator_port': '40001',
+            'decode_coordinator_addr': '10.0.0.2',
+            'decode_coordinator_port': '40002',
+        }
+        bp_dict = {
+            'model': 'org/model',
+            'tensor_parallelism': '8',
+            'pipeline_parallelism': '1',
+        }
+
+        distributed = SglangDistributed.__new__(SglangDistributed)
+        distributed.inf_dict = dict(inf_dict)
+        distributed.bp_dict = dict(bp_dict)
+        distributed.hf_token = 'token'
+        self.assertIn('export HSA_FORCE_FINE_GRAIN_PCIE=0\n', distributed._server_env_body())
+        distributed.inf_dict.pop('hsa_force_fine_grain_pcie')
+        self.assertIn('export HSA_FORCE_FINE_GRAIN_PCIE=1\n', distributed._server_env_body())
+
+        single = SglangSingle.__new__(SglangSingle)
+        single.inf_dict = dict(inf_dict)
+        single.bp_dict = dict(bp_dict)
+        single.hf_token = 'token'
+        single.execution_hosts = ['n0']
+        single_cmds = []
+        single._container_exec = lambda cmd, **kwargs: single_cmds.append(cmd) or {}
+
+        disagg = SglangDisaggPD.__new__(SglangDisaggPD)
+        disagg.inf_dict = dict(inf_dict)
+        disagg.bp_dict = dict(bp_dict)
+        disagg.hf_token = 'token'
+        disagg.prefill_node_list = ['prefill0']
+        disagg.decode_node_list = ['decode0']
+        disagg.proxy_node = ['proxy0']
+        disagg.benchmark_serv_node = ['bench0']
+        disagg_cmds = []
+        disagg._container_exec = lambda cmd, **kwargs: disagg_cmds.append(cmd) or {}
+
+        single_sleep = 'cvs.lib.inference.sglang.sglang_single_lib.time.sleep'
+        disagg_sleep = 'cvs.lib.inference.sglang.sglang_disagg_lib.time.sleep'
+        with mock.patch(single_sleep), mock.patch(disagg_sleep):
+            single.setup_server_container_env()
+            disagg.setup_prefill_container_env()
+            disagg.setup_decode_container_env()
+            disagg.setup_proxy_router_container_env()
+            disagg.setup_benchmark_serv_container_env()
+
+        self.assertEqual(len(single_cmds), 1)
+        self.assertIn('export HSA_FORCE_FINE_GRAIN_PCIE=0\n', single_cmds[0])
+        self.assertEqual(len(disagg_cmds), 4)
+        for cmd in disagg_cmds:
+            self.assertIn('export HSA_FORCE_FINE_GRAIN_PCIE=0\n', cmd)
+
     def test_first_output(self):
         self.assertEqual(sglang_common.first_output({'a': 'x'}), 'x')
         self.assertEqual(sglang_common.first_output({}), '')

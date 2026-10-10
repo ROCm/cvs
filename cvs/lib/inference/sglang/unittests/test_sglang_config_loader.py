@@ -321,9 +321,43 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
         self.assertEqual(params['add_export_env'], ['SGLANG_USE_AITER=1'])
         self.assertEqual(server['env']['NCCL_IB_HCA'], 'rdma0')
         self.assertEqual(server['env']['SGLANG_USE_AITER'], '1')
+        self.assertEqual(inference['hsa_force_fine_grain_pcie'], '1')
+        self.assertEqual(server['env']['HSA_FORCE_FINE_GRAIN_PCIE'], '1')
         self.assertNotIn('ADD_EXPORT_ENV', server['env'])
         for key, value in server['env'].items():
             self.assertNotIn(' ', value, f'{key} carries an unquotable space: {value!r}')
+
+    def test_hsa_force_fine_grain_pcie_comes_from_runtime_env(self):
+        raw = {
+            'threshold_json': 'threshold.json',
+            'paths': {
+                'log_dir': '/logs',
+                'hf_token_file': '/home/user/.hf_token',
+            },
+            'container': {
+                'name': 'sglang',
+                'image': 'image',
+                'runtime': {
+                    'args': {
+                        'env': {
+                            'NCCL_DEBUG': 'ERROR',
+                            'HSA_FORCE_FINE_GRAIN_PCIE': '0',
+                        },
+                    },
+                },
+            },
+            'server_params': {
+                'model': '/models/model',
+                'tensor_parallelism': '8',
+            },
+            'benchmark_params': {'num_prompts': '25'},
+        }
+
+        inference, params, server = loader._unified_runtime_views(raw, self.thresholds)
+
+        self.assertEqual(inference['hsa_force_fine_grain_pcie'], '0')
+        self.assertEqual(server['env']['HSA_FORCE_FINE_GRAIN_PCIE'], '0')
+        self.assertNotIn('HSA_FORCE_FINE_GRAIN_PCIE=0', params.get('add_export_env') or [])
 
 
 class TestAddExportEnvFromRuntime(unittest.TestCase):
@@ -334,6 +368,7 @@ class TestAddExportEnvFromRuntime(unittest.TestCase):
                     'NCCL_DEBUG': 'ERROR',
                     'SGLANG_USE_AITER': '1',
                     'GPU_ARCHS': 'gfx942',
+                    'HSA_FORCE_FINE_GRAIN_PCIE': '0',
                 }
             ),
             ['SGLANG_USE_AITER=1', 'GPU_ARCHS=gfx942'],
