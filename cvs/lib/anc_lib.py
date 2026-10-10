@@ -27,11 +27,13 @@ stays thin:
 
 The CPU/GPU group sets consumed by the ``anc_test_cpu`` / ``anc_test_gpu``
 suites live here (``CPU_GROUPS`` / ``GPU_GROUPS``; the DIMM/UMC groups are part
-of ``CPU_GROUPS`` because ANC reports them under the CPU device), as does the
-``INDIVIDUAL_ITEMS`` list consumed by ``anc_test_individual_items``. The
-per-group/per-item test functions in those suite files are GENERATED from these
-lists by build_tools/gen_anc_suites.py (``make gen-anc-suites``); do not
-hand-edit them.
+of ``CPU_GROUPS`` because ANC reports them under the CPU device), as do the
+per-family individual-item lists (``COMPUTEROCKER_ITEMS``, ``MEMROCKER_ITEMS``,
+``OBLEX_ITEMS``, ``GEMM_ITEMS``, ``XGMI_ITEMS``, ``UALINK_ITEMS``,
+``PCIE_ITEMS``, ``BABEL_ITEMS``, ``BASIC_ITEMS``) consumed by the
+``anc_test_<family>`` suites. The per-group/per-item test functions in those
+suite files are GENERATED from these lists by build_tools/gen_anc_suites.py
+(``make gen-anc-suites``); do not hand-edit them.
 '''
 
 import os
@@ -98,16 +100,14 @@ GPU_GROUPS = [
     "hbm_lvl5",
 ]
 
-# Individual ANC items, each run on its own with a single anc.py -i invocation
-# (consumed by the anc_test_individual_items suite). Unlike the group sets above
-# -- which bundle many items under one named group -- these are the leaf items
-# ANC exposes via ``anc.py --item-list``, each wired as its own CVS test so a
-# user can run them one at a time or all together.
-INDIVIDUAL_ITEMS = [
-    "ampttk",
-    "babel_modinit_read",
-    "babel_modinit_triad",
-    "cachewalker",
+# Individual ANC items, each run on its own with a single anc.py -i invocation.
+# Unlike the group sets above -- which bundle many items under one named group --
+# these are the leaf items ANC exposes via ``anc.py --item-list``, each wired as
+# its own CVS test. They are split into per-family suites (anc_test_computerocker,
+# anc_test_memrocker, ...) so a user can run a whole tool/subsystem family at
+# once, with a single one still runnable by its ``test_<item>`` function name.
+# BASIC_ITEMS is the catch-all for one-off items that do not belong to a family.
+COMPUTEROCKER_ITEMS = [
     "computerocker_dist001_000",
     "computerocker_dist001_001",
     "computerocker_dist001_002",
@@ -132,18 +132,9 @@ INDIVIDUAL_ITEMS = [
     "computerocker_msa001_001",
     "computerocker_msa001_002",
     "computerocker_msa001_003",
-    "cpu_bidi_peak",
-    "difect",
-    "fpdeluge",
-    "gemm_bf16_trig",
-    "gemm_fp16_trig",
-    "gemm_fp8_trig",
-    "gfx_bidi_peak",
-    "hdrt",
-    "maxcorestim",
-    "maxiostim",
-    "memblock",
-    "memripper",
+]
+
+MEMROCKER_ITEMS = [
     "memrocker_1002_6",
     "memrocker_2_2",
     "memrocker_3_1",
@@ -154,10 +145,9 @@ INDIVIDUAL_ITEMS = [
     "memrocker_407_2",
     "memrocker_700_1",
     "memrocker_700_2",
-    "memtest",
-    "miidct",
-    "mithac",
-    "no_op",
+]
+
+OBLEX_ITEMS = [
     "oblex_ds",
     "oblex_ds_ntd",
     "oblex_metronome",
@@ -166,18 +156,58 @@ INDIVIDUAL_ITEMS = [
     "oblex_s16",
     "oblex_s16_ds",
     "oblex_trad",
-    "pcie_gpu_rx_margin",
-    "pcie_link_status",
-    "pcie_nic_rx_margin",
-    "sdma_bidi_peak",
-    "sprites",
-    "ualink_gpu_rx_margin",
-    "ualink_nic_rx_margin",
-    "ualink_status",
-    "umcinfo",
+]
+
+GEMM_ITEMS = [
+    "gemm_bf16_trig",
+    "gemm_fp16_trig",
+    "gemm_fp8_trig",
+]
+
+XGMI_ITEMS = [
     "xgmi_cpu_rx_margin",
     "xgmi_gpu_rx_margin",
     "xgmi_link_status",
+]
+
+UALINK_ITEMS = [
+    "ualink_gpu_rx_margin",
+    "ualink_nic_rx_margin",
+    "ualink_status",
+]
+
+PCIE_ITEMS = [
+    "pcie_gpu_rx_margin",
+    "pcie_link_status",
+    "pcie_nic_rx_margin",
+]
+
+BABEL_ITEMS = [
+    "babel_modinit_read",
+    "babel_modinit_triad",
+]
+
+# Catch-all for one-off items that do not belong to a dedicated family above
+# (includes sdma_bidi_peak alongside the other standalone transfer/stress items).
+BASIC_ITEMS = [
+    "ampttk",
+    "cachewalker",
+    "cpu_bidi_peak",
+    "difect",
+    "fpdeluge",
+    "gfx_bidi_peak",
+    "hdrt",
+    "maxcorestim",
+    "maxiostim",
+    "memblock",
+    "memripper",
+    "memtest",
+    "miidct",
+    "mithac",
+    "no_op",
+    "sdma_bidi_peak",
+    "sprites",
+    "umcinfo",
 ]
 
 # --- Artifact / return-code parsing --------------------------------------

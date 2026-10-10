@@ -42,7 +42,7 @@ List the install suite and the CPU / GPU group suites:
   cvs list anc_installation
   cvs list anc_test_cpu
   cvs list anc_test_gpu
-  cvs list anc_test_individual_items
+  cvs list anc_test_gemm          # and the other per-family item suites
 
 Install ANC
 ~~~~~~~~~~~
@@ -126,13 +126,13 @@ Run a single GPU group:
 Individual items
 ~~~~~~~~~~~~~~~~
 
-``anc_test_individual_items`` exposes every ANC item as its own ``test_<item>`` function, each run as ``sudo ./anc.py -i <item>``. ``cvs list anc_test_individual_items`` reports them all (74 items — e.g. ``test_ampttk``, ``test_gemm_fp8_trig``, ``test_gfx_bidi_peak``, ``test_hdrt``, ``test_maxcorestim``, ``test_no_op``, ``test_xgmi_link_status``); the full list is ``INDIVIDUAL_ITEMS`` in ``cvs/lib/anc_lib.py``.
+Individual ANC items are exposed as per-family suites, each item its own ``test_<item>`` function run as ``sudo ./anc.py -i <item>``: ``anc_test_computerocker`` (24), ``anc_test_memrocker`` (10), ``anc_test_oblex`` (8), ``anc_test_gemm`` (3), ``anc_test_xgmi`` (3), ``anc_test_ualink`` (3), ``anc_test_pcie`` (3), ``anc_test_babel`` (2), and ``anc_test_basic`` (18 one-off items such as ``test_ampttk``, ``test_hdrt``, ``test_no_op``, ``test_sdma_bidi_peak``). ``cvs list anc_test_<family>`` reports a suite's items; the per-family lists live in ``cvs/lib/anc_lib.py``.
 
-Run every item:
+Run a whole item family:
 
 .. code:: bash
 
-  cvs run anc_test_individual_items \
+  cvs run anc_test_gemm \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/anc/anc_config.json \
     --capture=tee-sys -vvv -s
@@ -141,7 +141,7 @@ Run a single item:
 
 .. code:: bash
 
-  cvs run anc_test_individual_items test_gemm_fp8_trig \
+  cvs run anc_test_gemm test_gemm_fp8_trig \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/anc/anc_config.json
 
