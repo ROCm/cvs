@@ -59,6 +59,24 @@ class RcclVerifier:
         self.expected = expected
         self.cvs_params = cvs_params or {}
         self.resolver_failed = resolver_failed
+        self.verdicts = []
+
+    def _record(self, check, row, passed, message, actual=None, threshold=None, unit=None):
+        """Keep each comparison while preserving fail_test side effects."""
+        self.verdicts.append(
+            {
+                'check': check,
+                'size': None if row is None else row.get('size'),
+                'dtype': None if row is None else row.get('type'),
+                'actual': actual,
+                'threshold': threshold,
+                'unit': unit,
+                'status': 'pass' if passed else 'fail',
+                'message': '' if passed else message,
+            }
+        )
+        if not passed:
+            fail_test(message)
 
     @staticmethod
     def scan_logs(output):
@@ -99,10 +117,15 @@ class RcclVerifier:
                 actual_bw = float(act_dict['busBw'])
                 threshold = expected_bw * tolerance
                 log.info(f"Comparing: actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}")
-                if actual_bw < threshold:
-                    fail_test(
-                        f"The actual {place_label} bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})"
-                    )
+                self._record(
+                    'bus_bw',
+                    act_dict,
+                    actual_bw >= threshold,
+                    f"The actual {place_label} bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})",
+                    actual=actual_bw,
+                    threshold=threshold,
+                    unit='GB/s',
+                )
 
     def check_bw_dip(self):
         test_name = self.test_name
@@ -126,9 +149,15 @@ class RcclVerifier:
                 continue
             current_bw = float(act_dict['busBw'])
             threshold = last_bw * tolerance
-            if last_bw > 0 and current_bw < threshold:
-                fail_test(
-                    f"The BusBW for msg size {act_dict['size']} = {current_bw} is less than the earlier msg size {last_msg_size} = BW {last_bw} (threshold with 5% tolerance: {threshold:.2f})"
+            if last_bw > 0:
+                self._record(
+                    'bw_dip',
+                    act_dict,
+                    current_bw >= threshold,
+                    f"The BusBW for msg size {act_dict['size']} = {current_bw} is less than the earlier msg size {last_msg_size} = BW {last_bw} (threshold with 5% tolerance: {threshold:.2f})",
+                    actual=current_bw,
+                    threshold=threshold,
+                    unit='GB/s',
                 )
             last_bw = current_bw
             last_msg_size = act_dict['size']
@@ -155,22 +184,33 @@ class RcclVerifier:
                 continue
             current_time = float(act_dict['time'])
             threshold = last_time * tolerance
-            if last_time > 0 and current_time < threshold:
-                fail_test(
-                    f"The latency for msg size {act_dict['size']} = {current_time} is less than the earlier msg size {last_msg_size} = latency {last_time} (threshold with 5% tolerance: {threshold:.2f})"
+            if last_time > 0:
+                self._record(
+                    'lat_dip',
+                    act_dict,
+                    current_time >= threshold,
+                    f"The latency for msg size {act_dict['size']} = {current_time} is less than the earlier msg size {last_msg_size} = latency {last_time} (threshold with 5% tolerance: {threshold:.2f})",
+                    actual=current_time,
+                    threshold=threshold,
+                    unit='us',
                 )
             last_time = current_time
             last_msg_size = act_dict['size']
 
     def check(self):
         if not self.results:
-            fail_test(f'RCCL test {self.test_name} produced no result rows')
+            self._record('results', None, False, f'RCCL test {self.test_name} produced no result rows')
             return
         if re.search('True', self.cvs_params.get('verify_bus_bw', 'False'), re.I):
             if self.expected:
                 self.check_bus_bw()
             elif not self.resolver_failed:
-                fail_test(f'No bus bandwidth thresholds for {self.test_name} in rccl.results.{self.test_name}')
+                self._record(
+                    'bus_bw',
+                    None,
+                    False,
+                    f'No bus bandwidth thresholds for {self.test_name} in rccl.results.{self.test_name}',
+                )
         if re.search('True', self.cvs_params.get('verify_bw_dip', 'False'), re.I):
             self.check_bw_dip()
         if re.search('True', self.cvs_params.get('verify_lat_dip', 'False'), re.I):
@@ -518,7 +558,8 @@ class RcclJob:
 
     OpenMPI owns the settings consumed by MPI_Init. MpiRun or Srun owns rank
     creation. RcclJob owns the rccl-tests binary, NCCL environment, execution,
-    and result collection. RcclVerifier owns pass/fail checks.
+    and result collection. RcclVerifier owns pass/fail checks and records one
+    verdict per comparison (`verdicts`).
     """
 
     def __init__(
@@ -576,6 +617,7 @@ class RcclJob:
         self.output_flag = ''
         self.prepared = False
         self.topology_checks = []
+        self.verdicts = []
         self.topology_check_mode = str(cvs_params.get('topology_check', 'warn')).strip().lower()
         if self.topology_check_mode not in ('off', 'warn', 'strict'):
             log.warning('Unrecognised topology_check mode %r; falling back to warn', self.topology_check_mode)
@@ -934,6 +976,7 @@ class RcclJob:
             log.error('Failed to save topology checks to %s on head node %s', path, self.head_node)
 
     def run_regression(self):
+        self.verdicts = []
         self.prepare()
         self.topology_checks = []
         params = self.rccl_test_params
@@ -968,6 +1011,7 @@ class RcclJob:
         return result_out
 
     def run_perf(self):
+        self.verdicts = []
         self.prepare()
         self.topology_checks = []
         params = self.rccl_test_params
@@ -1135,7 +1179,9 @@ class RcclJob:
         return expected or None
 
     def _verify_results(self, results, expected, resolver_failed=False):
-        RcclVerifier(self.test_name, results, expected, self.cvs_params, resolver_failed).check()
+        verifier = RcclVerifier(self.test_name, results, expected, self.cvs_params, resolver_failed)
+        verifier.check()
+        self.verdicts = verifier.verdicts
 
     @staticmethod
     def aggregate_results(validated_results):

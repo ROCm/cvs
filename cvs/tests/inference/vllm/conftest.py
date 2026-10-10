@@ -3,21 +3,11 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 '''
 
-import inspect
 import json
 import os
 from pathlib import Path
 
 import pytest
-
-try:
-    from _pytest.subtests import SubtestReport as _BuiltinSubtestReport
-except ImportError:
-    _BuiltinSubtestReport = None
-try:
-    from pytest_subtests.plugin import SubTestReport as _PluginSubtestReport
-except ImportError:
-    _PluginSubtestReport = None
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
@@ -36,6 +26,7 @@ from cvs.lib.report.render.perf_metric_table import (
     is_benchmark_metrics_extra,
     render_benchmark_metrics_html,
 )
+from cvs.lib.report.subtest_reports import called_from_subtest_context, is_subtest_report
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 from cvs.tests.inference.vllm._shared import validate_vllm_execution_mode
 
@@ -43,34 +34,9 @@ log = globals.log
 VLLM_INFERENCE_TEST = 'test_vllm_inference'
 
 
-def _is_subtest_report(report) -> bool:
-    if _BuiltinSubtestReport is not None and isinstance(report, _BuiltinSubtestReport):
-        return True
-    if _PluginSubtestReport is not None and isinstance(report, _PluginSubtestReport):
-        return True
-    return False
-
-
-def _called_from_subtest_context():
-    """The inner makereport is not a SubtestReport yet, so skip the metric panel.
-
-    Attaching it here copies the full table onto every subtest, and pytest-html
-    then lists each metric twice.
-    """
-    frame = inspect.currentframe()
-    while frame is not None:
-        filename = frame.f_code.co_filename.replace("\\", "/")
-        if frame.f_code.co_name == "__exit__" and (
-            filename.endswith("/_pytest/subtests.py") or filename.endswith("/pytest_subtests/plugin.py")
-        ):
-            return True
-        frame = frame.f_back
-    return False
-
-
 def _is_inference_report(report) -> bool:
     test_name = report.nodeid.rsplit('::', 1)[-1].split('[', 1)[0]
-    return report.when == 'call' and test_name == VLLM_INFERENCE_TEST and not _is_subtest_report(report)
+    return report.when == 'call' and test_name == VLLM_INFERENCE_TEST and not is_subtest_report(report)
 
 
 def _is_full_log_extra(extra: object) -> bool:
@@ -272,7 +238,7 @@ def pytest_runtest_makereport(item, call):
     """Attach metric rows before pytest-html consumes the parent call report."""
     outcome = yield
     report = outcome.get_result()
-    if _called_from_subtest_context() or not _is_inference_report(report):
+    if called_from_subtest_context() or not _is_inference_report(report):
         return
     _attach_metric_panel(report, benchmark_metric_rows_from_item(item))
 

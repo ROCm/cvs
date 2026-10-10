@@ -15,6 +15,7 @@ from cvs.lib.report.pytest_hooks import (
     cvs_rundeck_bind_module_fixture,
     cvs_rundeck_session_fixture,
 )
+from cvs.lib.report.subtest_reports import called_from_subtest_context
 from cvs.lib.report_plugins import HtmlReportManager, cli_option_value
 
 
@@ -147,7 +148,9 @@ def pytest_sessionstart(session):
 def pytest_runtest_makereport(item, call):  # noqa: ARG001
     outcome = yield
     report = outcome.get_result()
-    report.extras = _ensure_html_report_manager(item.config).write_test_log(report, item.originalname)
+    # Sub-test reports inherit setup capture; their log links would shadow the parent's.
+    if not called_from_subtest_context():
+        report.extras = _ensure_html_report_manager(item.config).write_test_log(report, item.originalname)
     attach_rundeck_row_extras(item, report)
 
 
