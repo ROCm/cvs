@@ -253,6 +253,8 @@ Use paths and node counts appropriate to your allocation. Repeat for `rccl_regre
 
 Perf and regression add their charts to the pytest HTML report. CVS writes a timestamped suite ZIP beside the HTML report. Pairwise also records phase membership in `cvs_params.pairwise_results_file`; choose a persistent path if needed.
 
+When `verify_bus_bw`, `verify_bw_dip`, or `verify_lat_dip` is enabled, perf and regression report each comparison as a pytest sub-test labelled with the collective, check (`bus_bw`, `bw_dip`, `lat_dip`, or `results`), data type, and message size when known. Pairwise reports each Phase 0/1/2 candidate with phase and node labels. Each parent row in the HTML report expands into pass/fail case rows showing measurements and thresholds, and the filter bar shows sub-test totals. Failing cases appear as `SUBFAILED(...)` in the terminal and add a message-only `<failure>` to JUnit. Parent failure counts stay the same. With all verification flags off, perf and regression emit no sub-tests.
+
 For cluster validation, retain before/after bare-metal result JSONs and HTML bundles, record each managed suite's pass/fail/skip outcome, and check that results can be read from shared storage. SPUR pairwise validation must record the observed version and subset behavior. Upload report bundles outside CVS, for example:
 
 ```bash

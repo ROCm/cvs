@@ -3,13 +3,29 @@
 import json
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from cvs.lib import globals, rccl_lib
+from cvs.lib.report import benchmark_metric_registry as registry
 from cvs.lib.report.profiles.hooks.rccl_run_card import rccl_run_card_display
 from cvs.tests.rccl import conftest, rccl_pairwise, rccl_perf, rccl_regression
+
+
+class _CapturingSubtests:
+    def __init__(self):
+        self.calls = []
+        self.failures = []
+
+    @contextmanager
+    def test(self, **kwargs):
+        self.calls.append(kwargs)
+        try:
+            yield
+        except AssertionError as exc:
+            self.failures.append(str(exc))
 
 
 class TestRundeckWiring(unittest.TestCase):
@@ -20,6 +36,11 @@ class TestRundeckWiring(unittest.TestCase):
         patcher = patch.object(globals, "error_list", [])
         patcher.start()
         self.addCleanup(patcher.stop)
+        registry._ROWS_BY_NODEID.clear()
+        registry._COLUMNS_BY_NODEID.clear()
+        registry._SUBTEST_SUMMARY_COUNTED.clear()
+        registry._SUBTEST_SUMMARY.update({'failed': 0, 'passed': 0, 'skipped': 0, 'recorded': 0})
+        self.addCleanup(registry._ROWS_BY_NODEID.clear)
 
     def test_perf_and_regression_publish_the_same_graph_as_amcharts(self):
         for module in (rccl_perf, rccl_regression):
@@ -79,8 +100,15 @@ class TestRundeckWiring(unittest.TestCase):
             job.return_value.run_perf.return_value = self.raw
             variant = conftest.variant_config.__wrapped__(request)
             node_list = list(cluster["node_dict"])
-            rccl_pairwise.test_rccl_pairwise(None, node_list, config, ["v0", "v1", "v2"])
-            rccl_pairwise.test_rccl_incremental(None, node_list, config, ["v0", "v1", "v2"])
+            case_request = SimpleNamespace(
+                node=SimpleNamespace(nodeid='cvs/tests/rccl/rccl_pairwise.py::test_rccl_pairwise', stash={})
+            )
+            rccl_pairwise.test_rccl_pairwise(
+                None, node_list, config, ["v0", "v1", "v2"], case_request, _CapturingSubtests()
+            )
+            rccl_pairwise.test_rccl_incremental(
+                None, node_list, config, ["v0", "v1", "v2"], case_request, _CapturingSubtests()
+            )
             store = {}
             rccl_pairwise.test_gen_graph(store)
             self.assertEqual(job.call_count, 5)

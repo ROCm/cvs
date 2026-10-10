@@ -241,6 +241,98 @@ class TestRcclLib(unittest.TestCase):
                     self.assertTrue(size.isdigit())
                     self.assertIsInstance(values['bus_bw'], float)
 
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_bus_bw_records_one_verdict_per_matched_size(self, mock_fail_test):
+        rows = [
+            {'size': 1024, 'type': 'float', 'inPlace': 1, 'busBw': 90.0},
+            {'size': 2048, 'type': 'float', 'inPlace': 1, 'busBw': 10.0},
+        ]
+        expected = {'1024': {'bus_bw': 80}, '2048': {'bus_bw': 80}}
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, {'verify_bus_bw': 'True'})
+        verifier.check()
+        self.assertEqual([v['status'] for v in verifier.verdicts], ['pass', 'fail'])
+        self.assertEqual([v['actual'] for v in verifier.verdicts], [90.0, 10.0])
+        self.assertEqual([v['dtype'] for v in verifier.verdicts], ['float', 'float'])
+        self.assertEqual([v['unit'] for v in verifier.verdicts], ['GB/s', 'GB/s'])
+        for verdict in verifier.verdicts:
+            self.assertEqual(verdict['check'], 'bus_bw')
+            self.assertAlmostEqual(verdict['threshold'], 76.0)
+        self.assertEqual(verifier.verdicts[0]['message'], '')
+        mock_fail_test.assert_called_once_with(verifier.verdicts[1]['message'])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_alltoall_bus_bw_verdicts_use_out_of_place_rows(self, mock_fail_test):
+        rows = [
+            {'size': 1024, 'type': 'float', 'inPlace': 1, 'busBw': 10.0},
+            {'size': 1024, 'type': 'float', 'inPlace': 0, 'busBw': 90.0},
+        ]
+        verifier = rccl_lib.RcclVerifier('alltoall_perf', rows, {'1024': {'bus_bw': 80}}, {'verify_bus_bw': 'True'})
+        verifier.check()
+        self.assertEqual([(v['size'], v['actual']) for v in verifier.verdicts], [(1024, 90.0)])
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_checks_record_verdicts_after_first_size(self, mock_fail_test):
+        expected = {'8589934592': {'bus_bw': 330.0}, '17179869184': {'bus_bw': 350.0}}
+        params = {'verify_bw_dip': 'True', 'verify_lat_dip': 'True'}
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', self._taper_results(), expected, params)
+        verifier.check()
+        self.assertEqual(
+            [(v['check'], v['status'], v['size'], v['actual'], v['unit']) for v in verifier.verdicts],
+            [('bw_dip', 'fail', 17179869184, 300.0, 'GB/s'), ('lat_dip', 'fail', 17179869184, 10.0, 'us')],
+        )
+        self.assertEqual(mock_fail_test.call_count, 2)
+        mock_fail_test.reset_mock()
+        rows = [
+            {'size': 8589934592, 'inPlace': 1, 'busBw': 300.0, 'time': 10.0},
+            {'size': 17179869184, 'inPlace': 1, 'busBw': 340.0, 'time': 20.0},
+        ]
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, params)
+        verifier.check()
+        self.assertEqual([v['status'] for v in verifier.verdicts], ['pass', 'pass'])
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_missing_thresholds_and_empty_results_record_failing_verdicts(self, mock_fail_test):
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', self._taper_results(), None, {'verify_bus_bw': 'True'})
+        verifier.check()
+        self.assertEqual(len(verifier.verdicts), 1)
+        self.assertEqual(
+            {key: verifier.verdicts[0][key] for key in ('check', 'size', 'dtype', 'actual', 'status')},
+            {'check': 'bus_bw', 'size': None, 'dtype': None, 'actual': None, 'status': 'fail'},
+        )
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', [], None)
+        verifier.check()
+        self.assertEqual([(v['check'], v['status']) for v in verifier.verdicts], [('results', 'fail')])
+        self.assertEqual(mock_fail_test.call_count, 2)
+
+    def test_disabled_checks_record_no_verdicts(self):
+        job = self._configured_job(self._shipped_config())
+        verifier = rccl_lib.RcclVerifier(
+            job.test_name, self._taper_results(), job._expected_results(['float']), job.cvs_params
+        )
+        verifier.check()
+        self.assertEqual(verifier.verdicts, [])
+
+    def test_job_verdicts_reset_each_run(self):
+        config = self._shipped_config()
+        config['results'] = {'all_reduce_perf': {'2048': {'bus_bw': 80}}}
+        config['cvs_params']['verify_bus_bw'] = 'True'
+        job = self._configured_job(config)
+        rows = [{'size': 2048, 'type': 'float', 'inPlace': 1, 'busBw': 10.0}]
+        with (
+            patch.object(job, 'prepare'),
+            patch.object(job, 'execute', return_value='RCCL output') as execute,
+            patch.object(job, 'read_results', return_value=rows),
+            patch.object(job, 'collect_gpu_info'),
+            patch.object(job, '_save_topology_checks'),
+        ):
+            job.run_regression()
+            self.assertTrue(job.verdicts)
+            execute.return_value = None
+            job.run_regression()
+            self.assertEqual(job.verdicts, [])
+
     def test_convert_to_graph_dict(self):
         # Test with sample data
         result_dict = {
