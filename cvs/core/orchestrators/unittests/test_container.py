@@ -470,7 +470,7 @@ class TestContainerVolumes(unittest.TestCase):
     """
 
     def setUp(self):
-        p_pssh = patch("cvs.core.orchestrators.baremetal.Pssh")
+        p_pssh = patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
         p_rf = patch("cvs.core.orchestrators.container.RuntimeFactory")
         p_pssh.start()
         self.mock_rf = p_rf.start()
