@@ -121,14 +121,20 @@ def _fail_record(name, message, summary):
 
 
 def _version_mismatch(out_dict, expected, actual_re, item_name, message_for):
-    '''Fail a node when ``expected`` is absent. ``actual_re`` must match on that path.'''
+    '''Fail a node when ``expected`` is absent. A regex miss is a read failure, not an exception.'''
     records = {}
     messages = []
     for node, output in out_dict.items():
         if re.search(f'{expected}', output, re.I):
             records[str(node)] = _pass_record(str(expected))
             continue
-        actual = actual_re.search(output).group(1)
+        match = actual_re.search(output or '')
+        if match is None:
+            message = f'{item_name} could not be read on node {node}'
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'unavailable')
+            continue
+        actual = match.group(1)
         message = message_for(node, actual)
         messages.append(message)
         records[str(node)] = _fail_record(item_name, message, actual.strip())
@@ -149,6 +155,21 @@ def _must_match(out_dict, pattern, item_name, message_for, pass_summary):
     return records, messages
 
 
+def _take_denied(out_dict, token, item_name, message_for):
+    '''Split nodes whose output contains ``token`` into failures. Return (records, messages, rest).'''
+    records = {}
+    messages = []
+    rest = {}
+    for node, output in out_dict.items():
+        if token in str(output):
+            message = message_for(node)
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'denied')
+        else:
+            rest[node] = output
+    return records, messages, rest
+
+
 def _must_not_match(out_dict, pattern, item_name, message_for, pass_summary):
     '''Fail a node when ``pattern`` is present.'''
     records = {}
@@ -160,6 +181,19 @@ def _must_not_match(out_dict, pattern, item_name, message_for, pass_summary):
         message = message_for(node)
         messages.append(message)
         records[str(node)] = _fail_record(item_name, message, 'seen')
+    return records, messages
+
+
+def _must_not_match_with_denial(out_dict, token, pattern, item_name, denied_message_for, message_for, pass_summary):
+    '''Apply _must_not_match, and fail nodes whose output contains ``token`` first.
+
+    Denial is recorded after the pattern results so a later change to merge order
+    lives in this one helper.
+    '''
+    denied_records, denied_messages, rest = _take_denied(out_dict, token, item_name, denied_message_for)
+    records, messages = _must_not_match(rest, pattern, item_name, message_for, pass_summary)
+    records.update(denied_records)
+    messages.extend(denied_messages)
     return records, messages
 
 
@@ -182,12 +216,21 @@ def eval_kernel_version(out_dict, expected):
 
 
 def eval_bios_version(out_dict, expected):
-    '''Return (node_records, fail_messages) for dmidecode bios-version.'''
+    '''Return (node_records, fail_messages) for the BIOS version read.'''
 
     def _message(node, actual):
         return f'Installed BIOS Version {actual} not matching expected version {expected} on node {node}'
 
-    return _version_mismatch(out_dict, expected, _BIOS_ACTUAL_RE, 'bios_version', _message)
+    denied_records, denied_messages, rest = _take_denied(
+        out_dict,
+        'CVS_CMD_DENIED',
+        'bios_version',
+        lambda node: f'BIOS version could not be read on node {node}',
+    )
+    records, messages = _version_mismatch(rest, expected, _BIOS_ACTUAL_RE, 'bios_version', _message)
+    records.update(denied_records)
+    messages.extend(denied_messages)
+    return records, messages
 
 
 def eval_rocm_version(out_dict, expected):
@@ -377,6 +420,49 @@ def _absorb_links(records, pci_dict, bus_for, speed, width, failures_for):
     return messages
 
 
+def pcie_card_list(out_dict):
+    '''Card ids from the first node that actually reported a bus map.'''
+    for node_map in out_dict.values():
+        if isinstance(node_map, dict) and node_map:
+            return list(node_map.keys())
+    return []
+
+
+def partition_pcie_cards(out_dict, card_no, field):
+    '''Split nodes into those with ``field`` for ``card_no`` and those without.
+
+    A node whose rocm-smi payload is missing or not a card dict must not be indexed
+    with another node's card id. Callers still emit one command per node so
+    exec_cmd_list stays aligned with the host list.
+    '''
+    present = {}
+    missing = []
+    for node, node_map in out_dict.items():
+        card = node_map.get(card_no) if isinstance(node_map, dict) else None
+        bus = card.get(field) if isinstance(card, dict) else None
+        if bus:
+            present[node] = bus
+        else:
+            missing.append(node)
+    return present, missing
+
+
+def note_missing_link(records, node, message):
+    '''Record one missing-bus failure. Return False when this message is already stored.'''
+    label = str(node)
+    item = {'name': 'bus', 'status': 'fail', 'message': message}
+    record = records.get(label)
+    if record is None:
+        records[label] = build_node_record('fail', [item], 'missing')
+        return True
+    if any(existing.get('message') == message for existing in record.get('items') or []):
+        return False
+    record['status'] = 'fail'
+    record.setdefault('items', []).append(item)
+    record['items_summary'] = 'missing'
+    return True
+
+
 def absorb_gpu_pcie(records, pci_dict, bus_dict, card_no, speed, width):
     '''Merge one GPU's LnkSta results. Return the fail messages for this card.'''
     return _absorb_links(
@@ -403,10 +489,12 @@ def absorb_nic_pcie(records, pci_dict, bus_dict, card_no, speed, width):
 
 def eval_pci_acs(out_dict):
     '''Return (node_records, fail_messages) for PCIe ACS. ACSCtl means ACS is enabled.'''
-    return _must_not_match(
+    return _must_not_match_with_denial(
         out_dict,
+        'CVS_CMD_DENIED',
         'ACSCtl:',
         'acs',
+        lambda node: f'PCIe ACS check could not run lspci on node {node}',
         lambda node: f'PCIe ACS not disabled on node {node}',
         'ACS disabled',
     )
@@ -414,10 +502,12 @@ def eval_pci_acs(out_dict):
 
 def eval_dmesg_driver(out_dict):
     '''Return (node_records, fail_messages) for amdgpu fail/error lines.'''
-    return _must_not_match(
+    return _must_not_match_with_denial(
         out_dict,
+        'CVS_CMD_DENIED',
         'fail|error',
         'amdgpu',
+        lambda node: f'Dmesg check could not run on node {node}',
         lambda node: f'Dmesg has amdgpu driver errors on node {node}',
         'clean',
     )
@@ -425,10 +515,12 @@ def eval_dmesg_driver(out_dict):
 
 def eval_dmesg_reset(out_dict):
     '''Return (node_records, fail_messages) for amdgpu reset/hang lines.'''
-    return _must_not_match(
+    return _must_not_match_with_denial(
         out_dict,
+        'CVS_CMD_DENIED',
         'reset|hang',
         'amdgpu',
+        lambda node: f'Dmesg check could not run on node {node}',
         lambda node: f'Dmesg has amdgpu reset/hang errors on node {node}',
         'clean',
     )

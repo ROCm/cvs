@@ -121,6 +121,25 @@ def _fail_messages(messages):
         fail_test(message)
 
 
+def _link_cmds_for_card(out_dict, card_no, field, records):
+    '''One shell command per node, aligned with out_dict order.
+
+    Nodes without this card's bus id run ``true`` and are failed on their own.
+    Their empty output is not parsed as LnkSta.
+    '''
+    present, missing = host_configs_rundeck.partition_pcie_cards(out_dict, card_no, field)
+    cmd_list = []
+    for node in out_dict:
+        if node in present:
+            cmd_list.append(linux_utils.pcie_link_status_cmd(present[node]))
+        else:
+            cmd_list.append('true')
+            message = f'PCIe bus map missing for card {card_no} on node {node}'
+            if host_configs_rundeck.note_missing_link(records, node, message):
+                fail_test(message)
+    return cmd_list, present
+
+
 # Main Test cases start from here ..
 
 
@@ -194,7 +213,8 @@ def test_check_bios_version(orch, config_dict, host_res_dict, cluster_dict, life
 
     This test:
       - Reads the expected BIOS version from config_dict['bios_version'].
-      - Executes 'sudo dmidecode -s bios-version' on all nodes via orch.all.
+      - Reads /sys/class/dmi/id/bios_version on all nodes via orch.all.
+        A missing or unreadable file is CVS_CMD_DENIED, not an empty version.
       - Fails the test for any node whose output does not contain the expected version.
       - Attempts to extract and report the actual BIOS version when a mismatch is found.
       - Calls update_test_result() at the end to record pass/fail.
@@ -211,7 +231,7 @@ def test_check_bios_version(orch, config_dict, host_res_dict, cluster_dict, life
     log.info('Testcase check BIOS Version')
     bios_version = config_dict['bios_version']
     with timed_stage(lifecycle, host_configs_rundeck.BIOS_VERSION):
-        out_dict = orch.all.exec('sudo dmidecode -s bios-version')
+        out_dict = orch.all.exec(linux_utils._read_or_denied('cat /sys/class/dmi/id/bios_version'))
     records, messages = host_configs_rundeck.eval_bios_version(out_dict, bios_version)
     _fail_messages(messages)
     _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.BIOS_VERSION, records)
@@ -258,7 +278,7 @@ def test_check_gpu_fw_version(orch, config_dict, host_res_dict, cluster_dict, li
     This test:
       - Reads expected firmware versions from config_dict['fw_dict'] as a mapping of
         {<fw_id>: <expected_version>}.
-      - Uses get_amd_smi_fw_dict(phdl) to collect per-node GPU firmware data with the
+      - Uses get_amd_smi_fw_dict(orch.all, use_sudo=False) to collect per-node GPU firmware data with the
         following assumed structure:
           {
             "<node>": [
@@ -289,7 +309,7 @@ def test_check_gpu_fw_version(orch, config_dict, host_res_dict, cluster_dict, li
     log.info('Testcase check GPU Firmware versions')
     fw_dict = config_dict['fw_dict']
     with timed_stage(lifecycle, host_configs_rundeck.GPU_FW):
-        out_dict = get_amd_smi_fw_dict(orch.all)
+        out_dict = get_amd_smi_fw_dict(orch.all, use_sudo=False)
     records, messages = host_configs_rundeck.eval_firmware(out_dict, fw_dict)
     _fail_messages(messages)
     _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.GPU_FW, records)
@@ -357,8 +377,8 @@ def test_check_numa_balancing(orch, config_dict, host_res_dict, cluster_dict, li
     Verify that automatic NUMA balancing is disabled across all nodes.
 
     This test:
-      - Runs 'sudo sysctl kernel.numa_balancing' on each node via orch.all.
-      - Checks that the reported value is 0 (disabled). Accepts either '=0' or '= 0'.
+      - Reads /proc/sys/kernel/numa_balancing on each node via orch.all.
+      - Prints it as 'kernel.numa_balancing = <value>' so the existing '=0' / '= 0' check applies.
       - Records a failure if any node does not report a disabled state.
       - Calls update_test_result() at the end to record pass/fail.
 
@@ -368,12 +388,12 @@ def test_check_numa_balancing(orch, config_dict, host_res_dict, cluster_dict, li
 
     Notes:
         - globals.error_list is reset at test start; fail_test() should append errors.
-        - This test relies on sysctl output format; if localized/altered, the regex may need adjustment.
+        - /usr/sbin/sysctl is not on the agent PATH once sudo (and its secure_path) is gone.
     """
     globals.error_list = []
     log.info('Testcase check NUMA balancing')
     with timed_stage(lifecycle, host_configs_rundeck.NUMA_BALANCING):
-        out_dict = orch.all.exec('sudo sysctl kernel.numa_balancing')
+        out_dict = orch.all.exec("printf 'kernel.numa_balancing = %s\\n' \"$(cat /proc/sys/kernel/numa_balancing)\"")
     records, messages = host_configs_rundeck.eval_numa_balancing(out_dict)
     _fail_messages(messages)
     _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.NUMA_BALANCING, records)
@@ -451,10 +471,11 @@ def test_check_gpu_pcie_speed_width(orch, config_dict, host_res_dict, cluster_di
       - Reads expected PCIe speed and width from config_dict:
           - gpu_pcie_speed (e.g., "32" for 32 GT/s)
           - gpu_pcie_width (e.g., "16" for x16)
-      - Uses get_gpu_pcie_bus_dict(phdl) to collect GPU PCI bus IDs per node.
+      - Uses get_gpu_pcie_bus_dict(orch.all, use_sudo=False) to collect GPU PCI bus IDs per node.
       - Assumes a homogeneous cluster (same set/order of GPUs on every node) and
-        builds a command list per card index to run in parallel across nodes:
-          sudo lspci -vvv -s <bus> | grep "LnkSta:"
+        builds a command list per card index to run in parallel across nodes.
+        Link speed and width come from sysfs current_link_speed/current_link_width,
+        printed as an LnkSta line, because unprivileged lspci -vvv hides LnkSta.
       - Checks each node's LnkSta line for:
           - Speed <gpu_pcie_speed>GT
           - Width x<gpu_pcie_width>
@@ -485,15 +506,11 @@ def test_check_gpu_pcie_speed_width(orch, config_dict, host_res_dict, cluster_di
     # We are making an assumption that it is a homogenous cluster
     # and all nodes have same PCI Bus number
     with timed_stage(lifecycle, host_configs_rundeck.GPU_PCIE):
-        out_dict = get_gpu_pcie_bus_dict(orch.all)
-        node_0 = list(out_dict.keys())[0]
-        card_list = list(out_dict[node_0].keys())
-        for card_no in card_list:
-            cmd_list = []
-            for node in out_dict.keys():
-                bus_no = out_dict[node][card_no]['PCI Bus']
-                cmd_list.append(f'sudo lspci -vvv -s {bus_no} | grep "LnkSta:" --color=never')
+        out_dict = get_gpu_pcie_bus_dict(orch.all, use_sudo=False)
+        for card_no in host_configs_rundeck.pcie_card_list(out_dict):
+            cmd_list, present = _link_cmds_for_card(out_dict, card_no, 'PCI Bus', records)
             pci_dict = orch.all.exec_cmd_list(cmd_list)
+            pci_dict = {node: pci_dict[node] for node in present}
             _fail_messages(
                 host_configs_rundeck.absorb_gpu_pcie(
                     records, pci_dict, out_dict, card_no, gpu_pcie_speed, gpu_pcie_width
@@ -508,8 +525,8 @@ def test_check_be_nic_pcie_speed_width(orch, config_dict, host_res_dict, cluster
     Verify PCIe link speed and width for each Backend NIC on all nodes.
 
     Reads 'nic_pcie_speed' and 'nic_pcie_width' from config_dict.
-    Uses get_gpu_nic_mapping_dict(phdl) to get NIC BDF per card per node.
-    Runs 'sudo lspci -vvv -s <nic_bdf> | grep LnkSta:' across nodes in parallel.
+    Uses get_gpu_nic_mapping_dict(orch.all, use_sudo=False) to get NIC BDF per card per node.
+    Reads each NIC's sysfs link speed and width and prints an LnkSta line.
     Checks Speed, Width, and absence of 'downgrade' in the output.
     """
     globals.error_list = []
@@ -526,15 +543,11 @@ def test_check_be_nic_pcie_speed_width(orch, config_dict, host_res_dict, cluster
     records = {}
 
     with timed_stage(lifecycle, host_configs_rundeck.NIC_PCIE):
-        out_dict = linux_utils.get_gpu_nic_mapping_dict(orch.all)
-        node_0 = list(out_dict.keys())[0]
-        card_list = list(out_dict[node_0].keys())
-        for card_no in card_list:
-            cmd_list = []
-            for node in out_dict:
-                nic_bdf = out_dict[node][card_no]['nic_bdf']
-                cmd_list.append(f'sudo lspci -vvv -s {nic_bdf} | grep "LnkSta:" --color=never')
+        out_dict = linux_utils.get_gpu_nic_mapping_dict(orch.all, use_sudo=False)
+        for card_no in host_configs_rundeck.pcie_card_list(out_dict):
+            cmd_list, present = _link_cmds_for_card(out_dict, card_no, 'nic_bdf', records)
             pci_dict = orch.all.exec_cmd_list(cmd_list)
+            pci_dict = {node: pci_dict[node] for node in present}
             _fail_messages(
                 host_configs_rundeck.absorb_nic_pcie(
                     records, pci_dict, out_dict, card_no, nic_pcie_speed, nic_pcie_width
@@ -549,7 +562,7 @@ def test_check_pci_acs(orch, config_dict, host_res_dict, cluster_dict, lifecycle
     Verify PCIe ACS is disabled on all nodes.
 
     This test:
-      - Runs 'sudo lspci -vv | grep ACSCtl | grep SrcValid+ --color=never' on each node.
+      - Runs 'sudo -n lspci -vv | grep ACSCtl | grep SrcValid+' on each node.
       - If 'ACSCtl:' appears in output, flags a failure (indicates ACS is enabled).
       - Calls update_test_result() to record pass/fail.
 
@@ -564,7 +577,9 @@ def test_check_pci_acs(orch, config_dict, host_res_dict, cluster_dict, lifecycle
 
     globals.error_list = []
     with timed_stage(lifecycle, host_configs_rundeck.PCI_ACS):
-        out_dict = orch.all.exec('sudo lspci -vv | grep ACSCtl | grep SrcValid+ --color=never')
+        out_dict = orch.all.exec(
+            linux_utils._sudo_n_or_denied('sudo -n lspci -vv', "grep ACSCtl | grep SrcValid+ --color=never")
+        )
     records, messages = host_configs_rundeck.eval_pci_acs(out_dict)
     _fail_messages(messages)
     _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.PCI_ACS, records)
@@ -576,7 +591,7 @@ def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dic
     Check dmesg for AMDGPU driver errors on each node.
 
     This test:
-      - Runs 'sudo dmesg -T | grep -i amdgpu | egrep -i "fail|error"' on each node.
+      - Runs 'sudo -n /usr/bin/dmesg -T | grep -i amdgpu | egrep -i "fail|error"' on each node.
       - Flags a failure if any 'fail' or 'error' appears in the filtered output.
       - Calls update_test_result() to record pass/fail.
 
@@ -592,13 +607,21 @@ def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dic
 
     globals.error_list = []
     with timed_stage(lifecycle, host_configs_rundeck.DMESG_DRIVER):
-        out_dict = orch.all.exec("sudo dmesg -T | grep -i amdgpu  | egrep -i 'fail|error' --color=never")
+        out_dict = orch.all.exec(
+            linux_utils._sudo_n_or_denied(
+                'sudo -n /usr/bin/dmesg -T', "grep -i amdgpu | egrep -i 'fail|error' --color=never"
+            )
+        )
     records, messages = host_configs_rundeck.eval_dmesg_driver(out_dict)
     _fail_messages(messages)
     _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_DRIVER, records)
     update_test_result()
     with timed_stage(lifecycle, host_configs_rundeck.DMESG_RESET):
-        out_dict = orch.all.exec("sudo dmesg -T | grep -i amdgpu  | egrep -i 'reset|hang|traceback' --color=never")
+        out_dict = orch.all.exec(
+            linux_utils._sudo_n_or_denied(
+                'sudo -n /usr/bin/dmesg -T', "grep -i amdgpu | egrep -i 'reset|hang|traceback' --color=never"
+            )
+        )
     records, messages = host_configs_rundeck.eval_dmesg_reset(out_dict)
     _fail_messages(messages)
     _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_RESET, records)

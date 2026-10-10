@@ -79,6 +79,19 @@ class TestVersionChecks(unittest.TestCase):
             ['Installed BIOS Version ABC-99 not matching expected version 20171212 on node n2'],
         )
 
+    def test_bios_version_empty_output_fails_without_raising(self):
+        records, messages = host_configs_rundeck.eval_bios_version({'n1': ''}, '20171212')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['bios_version could not be read on node n1'])
+
+    def test_bios_version_denial_is_not_parsed_as_a_version(self):
+        records, messages = host_configs_rundeck.eval_bios_version(
+            {'n1': 'CVS_CMD_DENIED No such file or directory\n'},
+            '20171212',
+        )
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['BIOS version could not be read on node n1'])
+
     def test_rocm_version_detects_banner_and_fails_mismatch(self):
         text = 'ROCm version: 6.3.1\n'
         records, messages, detected = host_configs_rundeck.eval_rocm_version({'node-a': text}, '7.0.2')
@@ -163,6 +176,11 @@ class TestHostFlags(unittest.TestCase):
             ['Expected GPU count in PCI 8 not matching actual GPU count 2 on node n1'],
         )
 
+    def test_pci_acs_records_sudo_denial(self):
+        records, messages = host_configs_rundeck.eval_pci_acs({'n1': 'CVS_CMD_DENIED a password is required\n'})
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['PCIe ACS check could not run lspci on node n1'])
+
     def test_pci_acs_fails_only_when_acsctl_is_present(self):
         clean, clean_messages = host_configs_rundeck.eval_pci_acs({'n1': ''})
         dirty, dirty_messages = host_configs_rundeck.eval_pci_acs({'n1': 'ACSCtl: SrcValid+\n'})
@@ -170,6 +188,15 @@ class TestHostFlags(unittest.TestCase):
         self.assertEqual(clean_messages, [])
         self.assertEqual(dirty['n1']['status'], 'fail')
         self.assertEqual(dirty_messages, ['PCIe ACS not disabled on node n1'])
+
+    def test_dmesg_records_sudo_denial_before_error_patterns(self):
+        denied = 'CVS_CMD_DENIED sudo: a password is required\n'
+        driver, driver_messages = host_configs_rundeck.eval_dmesg_driver({'n1': denied})
+        reset, reset_messages = host_configs_rundeck.eval_dmesg_reset({'n1': denied})
+        self.assertEqual(driver['n1']['status'], 'fail')
+        self.assertEqual(driver_messages, ['Dmesg check could not run on node n1'])
+        self.assertEqual(reset['n1']['status'], 'fail')
+        self.assertEqual(reset_messages, ['Dmesg check could not run on node n1'])
 
     def test_dmesg_driver_and_reset_use_different_patterns(self):
         driver, driver_messages = host_configs_rundeck.eval_dmesg_driver({'n1': 'amdgpu: ring timeout error\n'})
@@ -181,6 +208,31 @@ class TestHostFlags(unittest.TestCase):
         self.assertEqual(reset_messages, [])
         self.assertEqual(hung['n1']['status'], 'fail')
         self.assertEqual(hung_messages, ['Dmesg has amdgpu reset/hang errors on node n1'])
+
+
+class TestPcieCardPartition(unittest.TestCase):
+    def test_card_list_skips_nodes_with_no_map(self):
+        out = {'n1': {}, 'n2': {'card0': {'PCI Bus': '0000:03:00.0'}}}
+        self.assertEqual(host_configs_rundeck.pcie_card_list(out), ['card0'])
+        self.assertEqual(host_configs_rundeck.pcie_card_list({'n1': {}}), [])
+
+    def test_missing_node_is_split_out_of_the_card_lookup(self):
+        out = {
+            'n1': {'card0': {'PCI Bus': '0000:03:00.0'}},
+            'n2': {},
+            'n3': {'card0': {}},
+        }
+        present, missing = host_configs_rundeck.partition_pcie_cards(out, 'card0', 'PCI Bus')
+        self.assertEqual(present, {'n1': '0000:03:00.0'})
+        self.assertEqual(missing, ['n2', 'n3'])
+
+    def test_note_missing_link_records_once(self):
+        records = {}
+        message = 'PCIe bus map missing for card card0 on node n2'
+        self.assertTrue(host_configs_rundeck.note_missing_link(records, 'n2', message))
+        self.assertFalse(host_configs_rundeck.note_missing_link(records, 'n2', message))
+        self.assertEqual(records['n2']['status'], 'fail')
+        self.assertEqual(records['n2']['items'][0]['message'], message)
 
 
 class TestPcieLinks(unittest.TestCase):
