@@ -78,5 +78,32 @@ class TestCollectionOrder(unittest.TestCase):
         self.assertEqual([it.name for it in items], cases + ['test_teardown'])
 
 
+class TestRunDeckFixtures(unittest.TestCase):
+    def _variant(self, mori_dict, orchestrator_type, image='img:1'):
+        orch = SimpleNamespace(
+            orchestrator_type=orchestrator_type, hosts=['n0', 'n1'], container_config={'image': image}
+        )
+        return mori_conftest.mori_variant_config.__wrapped__(mori_dict, orch)
+
+    def test_container_variant_reads_config_and_orch(self):
+        mori_dict = {'gpu_name': 'mi325x', 'env': {'MORI_RDMA_DEVICES': 'rdma0,rdma1'}}
+        self.assertEqual(
+            self._variant(mori_dict, 'container'),
+            {'gpu_name': 'mi325x', 'node_count': 2, 'mori_device_list': 'rdma0,rdma1', 'container_image': 'img:1'},
+        )
+
+    def test_baremetal_variant_reports_no_image(self):
+        # The merged container block may still carry an image, but nothing is launched under baremetal.
+        variant = self._variant({'env': {}}, 'baremetal')
+        self.assertIsNone(variant['container_image'])
+        self.assertIsNone(variant['gpu_name'])
+        self.assertIsNone(variant['mori_device_list'])
+
+    def test_results_dict_is_fresh_per_module(self):
+        first = mori_conftest.cvs_results_dict.__wrapped__()
+        first['x'] = {}
+        self.assertEqual(mori_conftest.cvs_results_dict.__wrapped__(), {})
+
+
 if __name__ == '__main__':
     unittest.main()
