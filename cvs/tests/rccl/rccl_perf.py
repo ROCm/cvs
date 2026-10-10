@@ -123,14 +123,17 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective)
     Flow:
       1) Capture start time to bound dmesg checks later.
       2) Optionally snapshot cluster metrics before the test (for debugging/compare).
-      3) Optionally source environment script if provided in config.
+      3) Optionally capture ECC_BLOCKS counters before the test.
       4) Invoke RcclJob.from_config(...).run_perf() with parameters built from config and fixtures.
-      5) Capture end time and verify dmesg for errors between start/end.
-      6) Optionally snapshot metrics again and compare before/after.
-      7) Call update_test_result() to finalize test status.
+      5) Optionally capture ECC_BLOCKS after the test, log deltas, and warn on increases.
+      6) Capture end time and verify dmesg for errors between start/end.
+      7) Optionally snapshot metrics again and compare before/after.
+      8) Call update_test_result() to finalize test status.
 
     Notes:
-      - cluster_snapshot_debug controls whether before/after snapshots are taken.
+      - cluster_snapshot_debug controls whether before/after cluster snapshots are taken.
+      - verify_ecc_delta (default False) logs a post-test ECC_BLOCKS table (CE/UE/DE before, after, Delta).
+      - verify_ecc_blocks (optional list) limits capture/compare to named blocks when verify_ecc_delta is True.
     """
 
     globals.error_list = []
@@ -139,8 +142,8 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective)
     if not can_use_sudo:
         no_sudo_nodes = [node for node, ok in sudo_status.items() if not ok]
         log.warning(
-            "Skipping dmesg markers/verification and sudo-only snapshots because passwordless sudo is unavailable "
-            "on nodes: %s",
+            "Skipping dmesg markers/verification, ECC_BLOCKS capture, and sudo-only snapshots because "
+            "passwordless sudo is unavailable on nodes: %s",
             no_sudo_nodes,
         )
 
@@ -156,11 +159,21 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective)
     ):
         cluster_dict_before = create_cluster_metrics_snapshot(orch.all)
 
+    verify_ecc_delta = ecc_delta_check_enabled(config_dict)
+    ecc_blocks = resolve_ecc_blocks(config_dict) if verify_ecc_delta else None
+    ecc_before = {}
+    if can_use_sudo and verify_ecc_delta:
+        ecc_before = capture_ecc_blocks_snapshot(orch.all, 'before', blocks=ecc_blocks)
+
     result_dict = rccl_lib.RcclJob.from_config(orch, rccl_collective, config_dict, node_list, vpc_node_list).run_perf()
 
     log.info("%s", result_dict)
     key_name = f'{rccl_collective}'
     rccl_res_dict[key_name] = result_dict
+
+    if can_use_sudo and verify_ecc_delta:
+        ecc_after = capture_ecc_blocks_snapshot(orch.all, 'after', blocks=ecc_blocks)
+        compare_ecc_blocks_snapshots(ecc_before, ecc_after, collective=rccl_collective, blocks=ecc_blocks)
 
     # Scan dmesg between start and end times cluster wide ..
     if can_use_sudo:
