@@ -8,6 +8,7 @@ from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import globals
 from cvs.lib.report.profiles.hooks.rccl_session import publish_graph
+from cvs.tests.rccl._case_report import RcclCaseReporter
 
 log = globals.log
 
@@ -243,7 +244,7 @@ def test_collect_networkinfo(orch):
     update_test_result()
 
 
-def test_rccl_pairwise(orch, node_list, config_dict, vpc_node_list):
+def test_rccl_pairwise(orch, node_list, config_dict, vpc_node_list, request, subtests):
     """
     Phase 0 + Phase 1: reference-node sanity check then pairwise validation.
 
@@ -257,12 +258,14 @@ def test_rccl_pairwise(orch, node_list, config_dict, vpc_node_list):
 
     Failures are accumulated and reported at the end so that all pairs are
     always tested regardless of individual failures.
+    Each phase/candidate is reported as a pytest sub-test and HTML case row.
 
     Config knobs consumed from config_dict['cvs_params']:
       - pairwise_min_bw   (float, GB/s, default 0 → no BW check)
     """
     _skip_if_spur_cannot_select_nodes()
     globals.error_list = []
+    reporter = RcclCaseReporter(request, subtests)
 
     min_bw = float(config_dict.get('cvs_params', {}).get('pairwise_min_bw', 0))
 
@@ -279,19 +282,25 @@ def test_rccl_pairwise(orch, node_list, config_dict, vpc_node_list):
     log.info('PHASE 0 — Single-node sanity check on reference node: %s', ref_mgmt)
     log.info('=' * 60)
 
+    sanity_label = f'Phase0 sanity {ref_mgmt}'
     sanity_result, sanity_clean = run_pairwise_rccl(
         orch,
         node_pair_vpc=[ref_vpc],
         node_pair_mgmt=[ref_mgmt],
         config_dict=config_dict,
-        phase_label=f'Phase0 sanity {ref_mgmt}',
+        phase_label=sanity_label,
     )
 
-    if not (sanity_clean and sanity_result):
-        fail_test(
-            f'PHASE 0 FAILED: Reference node {ref_mgmt} did not pass the '
-            f'single-node sanity check.  Aborting pairwise phase.'
-        )
+    sanity_ok = bool(sanity_clean and sanity_result)
+    sanity_failure = (
+        f'PHASE 0 FAILED: Reference node {ref_mgmt} did not pass the '
+        f'single-node sanity check.  Aborting pairwise phase.'
+    )
+    reporter.report_phase(
+        '0', ref_mgmt, sanity_label, sanity_ok, sanity_failure, best_bw=_extract_best_bw(sanity_result)
+    )
+    if not sanity_ok:
+        fail_test(sanity_failure)
         update_test_result()
         return
 
@@ -319,13 +328,16 @@ def test_rccl_pairwise(orch, node_list, config_dict, vpc_node_list):
         )
 
         # Phase 1 pass criterion matches bash: clean exit only, no bandwidth gate.
-        if _is_pairwise_pass(result, clean_run, min_bw, require_bw_check=False):
+        passed = _is_pairwise_pass(result, clean_run, min_bw, require_bw_check=False)
+        failure = f'Pairwise test failed: {label}'
+        if passed:
             log.info('PHASE 1 PASS: %s', label)
             phase1_pass.append(cand_mgmt)
         else:
             log.error('PHASE 1 FAIL: %s', label)
             phase1_fail.append(cand_mgmt)
-            fail_test(f'Pairwise test failed: {label}')
+            fail_test(failure)
+        reporter.report_phase('1', cand_mgmt, label, passed, failure, best_bw=_extract_best_bw(result))
 
     # ── Summary ───────────────────────────────────────────────────────────────
     log.info('=' * 60)
@@ -346,7 +358,7 @@ def test_rccl_pairwise(orch, node_list, config_dict, vpc_node_list):
     update_test_result()
 
 
-def test_rccl_incremental(orch, node_list, config_dict, vpc_node_list):
+def test_rccl_incremental(orch, node_list, config_dict, vpc_node_list, request, subtests):
     """
     Phase 2: incremental cluster build.
 
@@ -359,9 +371,11 @@ def test_rccl_incremental(orch, node_list, config_dict, vpc_node_list):
 
     Config knobs consumed from config_dict['cvs_params']:
       - pairwise_min_bw   (float, GB/s, default 0 → no BW check for Phase 2)
+    Each phase/candidate is reported as a pytest sub-test and HTML case row.
     """
     _skip_if_spur_cannot_select_nodes()
     globals.error_list = []
+    reporter = RcclCaseReporter(request, subtests)
 
     min_bw = float(config_dict.get('cvs_params', {}).get('pairwise_min_bw', 0))
 
@@ -415,7 +429,9 @@ def test_rccl_incremental(orch, node_list, config_dict, vpc_node_list):
         )
 
         # Phase 2 pass criterion matches bash: clean exit AND BusBW >= pairwise_min_bw.
-        if _is_pairwise_pass(result, clean_run, min_bw, require_bw_check=True):
+        passed = _is_pairwise_pass(result, clean_run, min_bw, require_bw_check=True)
+        failure = f'Incremental test failed when adding {cand_mgmt}: {label}'
+        if passed:
             log.info('PHASE 2 PASS: %s', label)
             valid_mgmt.append(cand_mgmt)
             valid_vpc.append(cand_vpc)
@@ -423,7 +439,16 @@ def test_rccl_incremental(orch, node_list, config_dict, vpc_node_list):
         else:
             log.error('PHASE 2 FAIL: Node %s degraded cluster — excluding.', cand_mgmt)
             phase2_fail.append(cand_mgmt)
-            fail_test(f'Incremental test failed when adding {cand_mgmt}: {label}')
+            fail_test(failure)
+        reporter.report_phase(
+            '2',
+            cand_mgmt,
+            label,
+            passed,
+            failure,
+            best_bw=_extract_best_bw(result),
+            min_bw=min_bw if min_bw > 0 else None,
+        )
 
     # ── Summary ───────────────────────────────────────────────────────────────
     log.info('=' * 60)

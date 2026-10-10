@@ -31,15 +31,6 @@ from typing import Any
 
 import pytest
 
-try:
-    from _pytest.subtests import SubtestReport as _BuiltinSubtestReport
-except ImportError:
-    _BuiltinSubtestReport = None
-try:
-    from pytest_subtests.plugin import SubTestReport as _PluginSubtestReport
-except ImportError:
-    _PluginSubtestReport = None
-
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
 from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir
@@ -63,6 +54,7 @@ from cvs.lib.report.benchmark_metric_registry import (
     stamp_benchmark_metric_rows_on_report,
 )
 from cvs.lib.report.render.perf_metric_table import render_benchmark_metrics_html
+from cvs.lib.report.subtest_reports import is_subtest_report
 from cvs.lib.utils_lib import (
     get_model_from_rocm_smi_output,
     resolve_cluster_config_placeholders,
@@ -478,12 +470,6 @@ def _is_full_log_extra(extra: object) -> bool:
     return isinstance(extra, dict) and extra.get('format_type') == 'url' and extra.get('name') == 'Full Log'
 
 
-def _is_subtest_report(report) -> bool:
-    if _BuiltinSubtestReport is not None and isinstance(report, _BuiltinSubtestReport):
-        return True
-    return _PluginSubtestReport is not None and isinstance(report, _PluginSubtestReport)
-
-
 def _benchmark_rows_for_report(report) -> list[dict[str, Any]]:
     return benchmark_metric_rows_from_report(report)
 
@@ -540,7 +526,7 @@ def pytest_runtest_makereport(item, call):
     """Run last: lifecycle stage tables or benchmark metric extras."""
     outcome = yield
     report = outcome.get_result()
-    if report.when != 'call' or _is_subtest_report(report):
+    if report.when != 'call' or is_subtest_report(report):
         return
 
     test_name = item.originalname or item.name.split('[')[0]
@@ -555,7 +541,7 @@ def pytest_runtest_makereport(item, call):
 def pytest_runtest_logreport(report):
     """Attach benchmark extras after pytest-html stores the call report."""
     yield
-    if report.when != 'call' or _is_subtest_report(report):
+    if report.when != 'call' or is_subtest_report(report):
         return
     if SGLANG_PERF_BENCHMARK_TEST not in report.nodeid:
         return
@@ -568,7 +554,7 @@ def pytest_runtest_logreport(report):
 @pytest.hookimpl(trylast=True)
 def pytest_html_results_table_html(report, data):
     """Run after root log placeholder hook; keep inline log empty for benchmark rows."""
-    if _is_subtest_report(report):
+    if is_subtest_report(report):
         return
     if SGLANG_PERF_BENCHMARK_TEST not in report.nodeid:
         return
@@ -580,7 +566,7 @@ def pytest_html_results_table_html(report, data):
 @pytest.hookimpl(trylast=True)
 def pytest_html_results_table_row(report, cells):
     """Mark benchmark rows so pytest-html CSS can show the + / − expand control."""
-    if _is_subtest_report(report):
+    if is_subtest_report(report):
         return
     if report.when != 'call':
         return
