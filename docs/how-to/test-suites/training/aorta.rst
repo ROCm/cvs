@@ -72,3 +72,52 @@ RCCL logs are also downloaded. No shared filesystem with the CVS machine is requ
 
 Calibrate the sample thresholds for your hardware, node count and workload. Set
 ``enforce_thresholds: false`` to record metrics without threshold assertions.
+
+.. _aorta-run-deck:
+
+Run Deck
+========
+
+``cvs run`` writes ``<suite>_html/aorta_run_deck.html`` and
+``aorta_run_deck.json`` beside the pytest HTML under
+``<workspace>/cvs_runs/<run_id>/``. The pytest report links the deck as
+"Aorta Run Deck", and the files are included in the zip bundle. The deck is
+render-only: it does not change pass/fail. A run has one result, so there is no
+interactive viewer.
+
+The run card shows workload, framework, image, cluster dimensions, metrics
+source, threshold state, one verdict with actual and limit per configured
+threshold, pytest stage outcome, and links to the pytest report and log. The
+lifecycle timeline shows each stage's call duration. Threshold gates shows
+``iteration_time``, ``compute_ratio``, ``overlap_ratio``, and ``rank_balance``.
+The benchmark result card summarizes the run, and the full results table lists
+all reported metrics. Per-rank breakdown graphs time, share of iteration, and
+communication overlap when there are at least two ranks; graph ratios are
+percentages.
+
+Deck JSON metric keys use the ``training.`` prefix, such as
+``training.avg_iteration_time_ms``. Table and JSON ratios remain fractions in
+the range 0..1, matching the threshold file. Iteration time is the parser's
+per-rank ``total_time_us`` averaged across ranks, and matches
+``avg_iteration_time_ms`` in ``aorta_benchmark_report.json``. The reported
+standard deviation, minimum, and maximum are across ranks. Time variance is
+standard deviation divided by mean iteration time; it is absent when the mean
+is zero. Compute and communication ratios are their respective times divided
+by total time. Overlap is
+``max(0, compute + comm - total) / comm``, or zero when comm is zero.
+
+The metrics source depends on the parser path. Aorta TraceLens Excel reports
+and TraceLens parsing of raw traces use the GPU timeline; "comm" then means
+exposed communication time. The basic raw-trace scan, used when TraceLens is
+unavailable or fails for a rank, reports total communication-kernel time as
+"comm" and the sum of trace-event durations as "total". The run card names
+the parser. Because per-rank fallback is not recorded, the deck uses the
+neutral label "Comm time".
+
+Each threshold verdict comes from the parser's per-threshold validation call.
+Null thresholds are omitted and appear as n/a in the gate matrix. With
+``enforce_thresholds: false``, the deck shows *record-only* and overall status
+``record``. When an earlier stage prevents threshold validation, it shows
+*not evaluated* and overall status ``record``. With no parsed metrics, overall
+status is ``na``. Overall status reflects threshold evaluation; the "Pytest
+stages" row shows whether another stage failed.

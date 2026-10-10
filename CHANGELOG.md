@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Aorta `aorta_single` and `aorta_distributed` write an Aorta Run Deck (`<suite>_html/aorta_run_deck.html` and `.json`) beside the pytest HTML report, with a run card showing each configured threshold's verdict from the threshold gate, a lifecycle timeline, a threshold gate matrix, per-rank time and ratio charts, and a full results table. Pass/fail gating is unchanged.
+
 ### Changed
 
 - RCCL perf, regression, and pairwise suites use the orchestrator for workload execution, including container-aware launches and cleanup. `RcclJob` and `RcclJob.from_config` now take one `orch` argument in place of the previous two execution handles; `OpenMPI.prepare`, `MpiRun`, and `Srun` callers must also migrate.

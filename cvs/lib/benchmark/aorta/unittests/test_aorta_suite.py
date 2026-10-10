@@ -17,6 +17,15 @@ from cvs.tests.benchmark.aorta import _common
 
 
 class TestAortaStages(unittest.TestCase):
+    def test_parse_results_fills_deck_results_in_place(self):
+        holder = self.lifecycle.deck_results
+        _common.parse_results(self.job, self.lifecycle)
+        _common.generate_report(self.job, self.lifecycle)
+        report = json.loads(self.job.get_artifact("report").read_text())
+        self.assertIs(self.lifecycle.deck_results, holder)
+        self.assertIn("test", holder)
+        self.assertEqual(holder["test"]["avg_iteration_time_ms"][0], report["performance"]["avg_iteration_time_ms"])
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -27,7 +36,12 @@ class TestAortaStages(unittest.TestCase):
         self.job = AortaJob(orch, AortaVariantConfig.model_validate(raw))
         self.job.status = "completed"
         self.lifecycle = SimpleNamespace(
-            failed=False, torn_down=False, container_started=False, benchmark_result=None, parser=None
+            failed=False,
+            torn_down=False,
+            container_started=False,
+            benchmark_result=None,
+            parser=None,
+            deck_results={},
         )
         trace_dir = Path(self.tmp.name) / "torch_profiler"
         (trace_dir / "rank0").mkdir(parents=True)

@@ -9,6 +9,7 @@ import pytest
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib.benchmark.aorta.aorta_config_loader import load_training_variant
 from cvs.lib.benchmark.aorta.aorta_job import AortaJob
+from cvs.lib.benchmark.aorta.aorta_rundeck import AortaDeckVariant, record_stage_report
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 from cvs.parsers.schemas import ClusterConfigFile
 
@@ -36,7 +37,26 @@ def variant_config(pytestconfig, cluster_dict):
 
 @pytest.fixture(scope="module")
 def lifecycle():
-    return SimpleNamespace(failed=False, torn_down=False, container_started=False, benchmark_result=None, parser=None)
+    return SimpleNamespace(
+        failed=False,
+        torn_down=False,
+        container_started=False,
+        benchmark_result=None,
+        parser=None,
+        report={},
+        deck_results={},
+        thresholds_checked=False,
+    )
+
+
+@pytest.fixture(scope="module")
+def cvs_results_dict(lifecycle):
+    return lifecycle.deck_results
+
+
+@pytest.fixture(scope="module")
+def aorta_deck_variant(variant_config, lifecycle):
+    return AortaDeckVariant(variant_config, lifecycle)
 
 
 @pytest.fixture(scope="module")
@@ -80,5 +100,7 @@ def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
     state = item.funcargs.get("lifecycle")
+    if state is not None:
+        record_stage_report(state, item.name, item.nodeid, report, call)
     if state is not None and report.failed:
         state.failed = True

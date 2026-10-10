@@ -82,6 +82,11 @@ handles container teardown. `container.lifetime` retains the shared `per_run`, `
 and `no_launch` semantics. Remote working scripts and logs remain under
 `aorta_path/.cvs-aorta/<run-id>/` for diagnostics.
 
+The pytest report also links an Aorta Run Deck: `<suite>_html/aorta_run_deck.html`
+and `aorta_run_deck.json` beside the pytest HTML. See the
+[Run Deck guide](../../../../docs/how-to/test-suites/training/aorta.rst#aorta-run-deck)
+for its metrics, charts, and threshold verdicts.
+
 ## Migration from the YAML runner
 
 Replace the old Aorta YAML with a JSON variant and sibling threshold file. Move Docker
