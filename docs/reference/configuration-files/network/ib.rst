@@ -32,25 +32,15 @@ The following sample shows the ``ibperf_config.json`` structure:
           "port_no": "1516",
           "duration": "30",
           "verify_bw": "True",
-          "expected_results":
-          {
-          "ib_write_bw":
-          {
-              "8192":
-                    {
-            "8": "180.0",
-            "16": "200.0"
-                    },
-              "8388608":
-                    {
-            "8": "280.0",
-            "16": "300.0"
-                    }
-    
-                }
+          "expected_results": {
+            "ib_write_bw": {
+              "8192": {
+                "8": "180.0",
+                "16": "200.0"
+              }
+            }
           }
         }
-    
     }
 
 Parameters
@@ -120,25 +110,26 @@ Here's an exhaustive list of the available parameters in the IB Perf configurati
      - Test duration in seconds
    * - ``verify_bw``
      - True
-     - Bandwidth verification 
+     - Enforce ``expected_results`` thresholds (bandwidth and latency). Every GPU instance
+       on every node must meet the threshold.
 
-The ``expected_results`` section also contains the ``ib_write_bw`` parameter. It describes the bandwith expectation, and it has these default values in the JSON file:
+``expected_results.<bw_test>.<msg_size>.<qp_count>`` sets the minimum bandwidth in Gbps
+for each GPU instance. The test fails if any instance falls below it.
+``expected_results.<lat_test>.<msg_size>`` sets the maximum average latency in microseconds
+for each GPU instance.
+
+Message sizes and QP counts must appear in ``msg_size_list`` and ``qp_count_list``.
+Entries outside the configured sweep produce a warning and are not checked.
+The sample enables ``verify_bw``. Re-baseline its thresholds for your cluster before running it.
+
+The sample ``ib_write_bw`` thresholds are:
 
 .. dropdown:: ib_write_bw
 
   .. code:: json
 
-    "8192":
-                    {
-            "8": "180.0",
-            "16": "200.0"
-                    },
-              "8388608":
-                    {
-            "8": "280.0",
-            "16": "300.0"
-                    }
-
-
-
+    "8192": {
+      "8": "180.0",
+      "16": "200.0"
+    }
 

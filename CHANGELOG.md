@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- ibperf `verify_bw` now enforces `expected_results`. Previously the bandwidth and latency
+  thresholds were never evaluated, so `ib_perf_bw_test` passed regardless of measured performance.
+  Every GPU instance is checked against the threshold for its message size and QP count, and
+  thresholds outside `msg_size_list`/`qp_count_list` are logged as warnings. The unreachable
+  `ib_write_bw` 8388608-byte sample threshold is removed. Existing configs with `verify_bw` set to
+  `"True"` may now report failures; re-baseline thresholds for your cluster.
 - RCCL bandwidth thresholds and dip checks now read the configured `rccl.results` table.
   The shipped dip-check defaults are now `"False"`. Existing configs with
   `verify_bw_dip` or `verify_lat_dip` set to `"True"`, including copies of the

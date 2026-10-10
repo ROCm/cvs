@@ -120,6 +120,15 @@ def config_dict(config_file, cluster_dict):
         config_dict.get('msg_size_list'),
         config_dict.get('qp_count_list'),
     )
+    if re.search('True', config_dict.get('verify_bw', ''), re.I):
+        for path in ibperf_lib.find_unmatched_thresholds(
+            config_dict.get('expected_results', {}),
+            config_dict.get('msg_size_list', []),
+            config_dict.get('qp_count_list', []),
+        ):
+            log.warning(
+                'expected_results.%s is not covered by msg_size_list/qp_count_list and will not be checked', path
+            )
     log.debug('Ibperf config: %s', config_dict)
     return config_dict
 
@@ -259,13 +268,13 @@ def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
             )
             end_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
             verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
-            if re.search('True', config_dict['verify_bw'], re.I):
+            if re.search('True', config_dict.get('verify_bw', ''), re.I):
                 ibperf_lib.verify_expected_bw(
                     bw_test,
                     msg_size,
                     qp_count,
                     ib_bw_dict[bw_test][msg_size][qp_count],
-                    config_dict['expected_results'],
+                    config_dict.get('expected_results', {}),
                 )
 
     log.debug('ib_bw_dict: %s', ib_bw_dict)
@@ -313,9 +322,9 @@ def test_ib_lat_perf(shdl, phdl, lat_test, config_dict):
         )
         end_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
         verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
-        if re.search('True', config_dict['verify_bw'], re.I):
+        if re.search('True', config_dict.get('verify_bw', ''), re.I):
             ibperf_lib.verify_expected_lat(
-                lat_test, msg_size, ib_lat_dict[lat_test][msg_size], config_dict['expected_results']
+                lat_test, msg_size, ib_lat_dict[lat_test][msg_size], config_dict.get('expected_results', {})
             )
 
     log.debug('ib_lat_dict: %s', ib_lat_dict)
