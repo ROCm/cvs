@@ -36,6 +36,30 @@ _TB_NUMA_ABORT_HINT = (
     "populated CPU NUMA count (Helios-R / Venice: 2)."
 )
 
+# Default a2asweep orch budget: 24 combos × ~50s + 300s buffer (AIMVT-450 / F-12).
+_A2ASWEEP_DEFAULT_COMBOS = 24
+_A2ASWEEP_DEFAULT_SEC_PER_COMBO = 50
+_A2ASWEEP_DEFAULT_TIMEOUT_BUFFER = 300
+_A2ASWEEP_MIN_TIMEOUT = 600
+
+
+def resolve_a2asweep_timeout(config_dict):
+    """Return orch.exec timeout seconds for the default a2asweep preset.
+
+    Explicit ``a2asweep_timeout`` wins. Otherwise derive from
+    ``a2asweep_combos`` × ``a2asweep_sec_per_combo`` + ``a2asweep_timeout_buffer``.
+    Never returns below ``_A2ASWEEP_MIN_TIMEOUT`` (the former hard-coded 10 min).
+    """
+    explicit = config_dict.get('a2asweep_timeout')
+    if explicit is not None and str(explicit).strip() != '':
+        timeout = int(explicit)
+    else:
+        combos = int(config_dict.get('a2asweep_combos', _A2ASWEEP_DEFAULT_COMBOS))
+        sec_per = int(config_dict.get('a2asweep_sec_per_combo', _A2ASWEEP_DEFAULT_SEC_PER_COMBO))
+        buffer = int(config_dict.get('a2asweep_timeout_buffer', _A2ASWEEP_DEFAULT_TIMEOUT_BUFFER))
+        timeout = combos * sec_per + buffer
+    return max(timeout, _A2ASWEEP_MIN_TIMEOUT)
+
 
 def count_linux_id_list(spec):
     """Count IDs in a Linux cpuset-style list such as ``0-1,4,6-8``."""
@@ -503,7 +527,9 @@ def test_transfer_bench_a2asweep(
     globals.error_list = []
     log.info('Testcase Run TransferBench a2asweep')
     preset = config_dict.get('a2asweep_preset') or 'a2asweep'
-    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 10), lifecycle=lifecycle, stage='a2asweep')
+    timeout = resolve_a2asweep_timeout(config_dict)
+    log.info('TransferBench a2asweep orch timeout: %ss', timeout)
+    out_dict = run_transferbench(orch, config_dict, preset, timeout=timeout, lifecycle=lifecycle, stage='a2asweep')
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     _capture_tb_rundeck(
