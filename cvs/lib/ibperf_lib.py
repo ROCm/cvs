@@ -331,6 +331,7 @@ def run_ib_perf_bw_test(
     port_no=1516,
     duration=60,
     rocm_path='',
+    use_rocm_dmabuf=False,
 ):
     log.info(
         '%s: msg_size=%s qp=%s start (%ss, %d nodes)',
@@ -353,7 +354,7 @@ def run_ib_perf_bw_test(
             f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt',
             print_console=False,
         )
-    dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{bw_test}')
+    dmabuf_supported = use_rocm_dmabuf and check_perftest_dmabuf_support(shdl, f'{app_path}/{bw_test}')
     server_addr = None
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
@@ -489,6 +490,7 @@ def run_ib_perf_lat_test(
     gid_index,
     port_no=1516,
     rocm_path='',
+    use_rocm_dmabuf=False,
 ):
     log.info('%s: msg_size=%s start (%d nodes)', lat_test, msg_size, len(bck_nic_dict))
     app_port = port_no
@@ -505,7 +507,7 @@ def run_ib_perf_lat_test(
             print_console=False,
         )
     server_addr = None
-    dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{lat_test}')
+    dmabuf_supported = use_rocm_dmabuf and check_perftest_dmabuf_support(shdl, f'{app_path}/{lat_test}')
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
         cmd_dict[node] = []

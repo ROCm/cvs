@@ -75,6 +75,7 @@ def test_ib_bw_perf(orch, bw_test, config_dict):
                 int(config_dict['port_no']),
                 int(config_dict['duration']),
                 rocm_path=rocm_path,
+                use_rocm_dmabuf=bool(re.search('True', config_dict.get('use_rocm_dmabuf', 'False'), re.I)),
             )
             end_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
             if scan_dmesg:
@@ -131,6 +132,7 @@ def test_ib_lat_perf(orch, lat_test, config_dict):
             config_dict['gid_index'],
             int(config_dict['port_no']),
             rocm_path=rocm_path,
+            use_rocm_dmabuf=bool(re.search('True', config_dict.get('use_rocm_dmabuf', 'False'), re.I)),
         )
         end_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
         if scan_dmesg:

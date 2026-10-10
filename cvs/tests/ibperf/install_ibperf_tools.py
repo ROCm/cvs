@@ -48,7 +48,7 @@ def test_install_ib_perf(orch, config_dict):
         orch.head.exec(f'cd {install_dir}/perftest; ./autogen.sh', timeout=100, print_console=False)
         rocm_path = ibperf_lib.detect_rocm_path(orch.head, config_dict.get('rocm_dir', '<changeme>'))
         orch.head.exec(
-            f'cd {install_dir}/perftest; ./configure --prefix={install_dir}/perftest --with-rocm={rocm_path} --enable-rocm',
+            f'cd {install_dir}/perftest; ./configure --prefix={install_dir}/perftest --with-rocm={rocm_path} --enable-rocm --enable-rocm-dmabuf',
             timeout=200,
             print_console=False,
         )

@@ -173,5 +173,38 @@ class TestRunIbPerfLatTest(unittest.TestCase):
         self.assertEqual(res['node2'], {})
 
 
+class TestRocmDmabufOption(unittest.TestCase):
+    @patch.object(ibperf_lib.time, 'sleep')
+    @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
+    @patch.object(ibperf_lib, 'get_ib_lat_numb', return_value={})
+    @patch.object(ibperf_lib, 'get_ib_bw_pps', return_value={})
+    @patch.object(ibperf_lib, 'check_perftest_dmabuf_support', return_value=True)
+    def test_passes_use_rocm_dmabuf_only_when_enabled(self, mock_dmabuf, *_mocks):
+        for run, test in (
+            (ibperf_lib.run_ib_perf_bw_test, 'ib_write_bw'),
+            (ibperf_lib.run_ib_perf_lat_test, 'ib_write_lat'),
+        ):
+            for enabled in (True, False):
+                with self.subTest(test=test, enabled=enabled):
+                    mock_dmabuf.reset_mock()
+                    phdl = MagicMock()
+                    run(
+                        MagicMock(),
+                        phdl,
+                        test,
+                        GPU_NUMA,
+                        GPU_NIC,
+                        BCK_NIC,
+                        '/opt/perftest/bin',
+                        64,
+                        3,
+                        use_rocm_dmabuf=enabled,
+                    )
+                    cmds = [cmd for c in phdl.exec_cmd_list.call_args_list for cmd in c.args[0] if test in cmd]
+                    self.assertEqual(len(cmds), 16)
+                    self.assertEqual([' --use_rocm_dmabuf ' in cmd for cmd in cmds], [enabled] * 16)
+                    self.assertEqual(mock_dmabuf.called, enabled)
+
+
 if __name__ == '__main__':
     unittest.main()

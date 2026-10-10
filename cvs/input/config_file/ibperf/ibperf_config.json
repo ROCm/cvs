@@ -13,6 +13,7 @@
        "port_no": "1516",
        "duration": "30",
        "verify_bw": "True",
+       "use_rocm_dmabuf": "True",
        "expected_results":
        {
 	    "ib_write_bw":
