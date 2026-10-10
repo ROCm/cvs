@@ -40,8 +40,10 @@
             "cluster_snapshot_debug": "False",
             "_comment_nic_model": "Selects NIC-keyed results.<nic> thresholds (thor, ainic, connectx). The shipped flat results table is used when no matching NIC/rank key exists.",
             "nic_model": "thor",
-            "_comment_verification": "Setting any verify_* flag to True enables that check and can fail the test; set results thresholds for this cluster first.",
+            "_comment_verification": "Setting any verify_* flag to True enables that check and can fail the test. verify_bus_bw is False in this sample because only results.thor.all_reduce_perf-float-16 (MI350X-class bar) is guide-backed: other NICs and rank counts fall back to the flat examples (compared without slack at bus_bw_tolerance 1.0), MI300X needs 304, and regression/pairwise reuse the same entries. Set it to True for qualification after checking results for your GPU, NIC and rank count.",
             "verify_bus_bw": "False",
+            "_comment_bus_bw_tolerance": "Fraction in (0, 1] of the reference a measurement must reach; default 0.95. 1.0 enforces the published all_reduce bar exactly. With 1.0 the flat example table is also compared without slack; those values are examples, and verify_bus_bw is off by default.",
+            "bus_bw_tolerance": "1.0",
             "verify_bw_dip": "False",
             "verify_lat_dip": "False",
             "_comment_topology_check": "How CVS reacts when rccl-tests' reported nodes/ranks/ranksPerNode/gpusPerRank disagree with the topology CVS launched. 'warn' (default) logs and records the mismatch; 'strict' fails the test; 'off' disables only the requested-vs-reported comparison. Checks are skipped when all rows omit topology. Use 'strict' once your rccl-tests build reports per-node rank counts correctly (see AIMVT-334).",
@@ -65,8 +67,22 @@
             "NCCL_MAX_NCHANNELS": [ "8", "16" ]
         },
 
-        "_comments_results": "Both perf and regression read results here. These legacy flat examples assume 2 nodes; calibrate for your hardware before setting verify_bus_bw=True. For references tied to NIC, data types and rank count, use results.<nic>.<collective>-<types>-<ranks>.<bytes>.bus_bw (see the RCCL README).",
+        "_comments_results": "Both perf and regression read results here. NIC/rank entries (results.<nic>.<collective>-<data_types>-<total ranks>) take precedence over the legacy flat per-collective table, whose values are generic 2-node examples, not acceptance criteria. Each size entry is {\"bus_bw\": GB/s}; a measurement must reach bus_bw x cvs_params.bus_bw_tolerance. A null entry means no published threshold: with verify_bus_bw=True the collective is logged as not gated. A missing entry, or a configured message size with no result row, fails when verify_bus_bw=True.",
+        "_comments_results_thor": "results.thor.all_reduce_perf-float-16 is the published scale-out all_reduce acceptance bar for MI350X/MI355X (2-16 nodes): busBw >= 350 GB/s at 8589934592 bytes, enforced exactly because cvs_params.bus_bw_tolerance is 1.0. It applies only when nic_model resolves to thor, the run uses 16 MPI ranks and data_types is [\"float\"]. MI300X clusters must set bus_bw to 304. OPEN: the guide lists both 304 and 350 for MI355X; 350 is shipped pending confirmation. OPEN: the guide's \"8 GB\" is read as 8 GiB = 8589934592 bytes, the size rccl-tests emits with step factor 2. No other collective has a published bar, so its entry is null. No MI455X/Helios bar is published; other thor platforms running 16 ranks must override this entry.",
         "results": {
+            "thor": {
+                "all_reduce_perf-float-16": {
+                    "8589934592": {"bus_bw": "350.00"}
+                },
+                "all_gather_perf-float-16": null,
+                "scatter_perf-float-16": null,
+                "gather_perf-float-16": null,
+                "reduce_scatter_perf-float-16": null,
+                "sendrecv_perf-float-16": null,
+                "alltoall_perf-float-16": null,
+                "alltoallv_perf-float-16": null,
+                "broadcast_perf-float-16": null
+            },
             "all_reduce_perf": {
                 "bus_bw": {
                     "8589934592": "330.00",

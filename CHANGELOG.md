@@ -9,8 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- RCCL sample config gates scale-out `all_reduce_perf` at the published MI350X/MI355X acceptance bar: `results.thor.all_reduce_perf-float-16` requires busBw ≥ 350 GB/s at 8589934592 bytes. MI300X clusters must override to 304. Collectives without a published bar are `null` and are not gated. `verify_bus_bw` remains `"False"` by default.
+- RCCL `cvs_params.bus_bw_tolerance` (default 0.95): fraction in (0, 1] of the reference bus bandwidth a measurement must reach; an invalid value fails the test. The sample `rccl_config.json` sets 1.0.
+
 ### Changed
 
+- A `null` RCCL `results` entry now means 'no published threshold': with `verify_bus_bw` on it logs and skips the bandwidth gate instead of failing. Absent or empty entries still fail.
 - RCCL perf, regression, and pairwise suites use the orchestrator for workload execution, including container-aware launches and cleanup. `RcclJob` and `RcclJob.from_config` now take one `orch` argument in place of the previous two execution handles; `OpenMPI.prepare`, `MpiRun`, and `Srun` callers must also migrate.
 - RCCL result files default to the run directory. Every run verifies shared result-path access via a sentinel round-trip through `download_from_head` before launching, and result-save failures fail the test. Container runs require the result directory mounted at the same host/container path.
 - `Orchestrator` now declares `exec_on_host`, `upload_to_head`, `download_from_head`, and `download_file` as required methods. RCCL uses the first three for host diagnostics and result transfers instead of reaching through internal handles; Aorta uses `download_file` for per-host artifact pickup. Custom orchestrator subclasses must implement all four methods.
@@ -21,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- RCCL bus-bandwidth verification fails when a configured message size has no matching result row, instead of silently skipping it. Configs whose `end_msg_size` does not reach a configured size now fail with `verify_bus_bw` on.
+- NIC/rank-keyed `results` entries are validated and normalized like flat entries. A `bus_bw`-wrapped entry is now checked instead of silently matching no size, and invalid values fail with their config path instead of raising inside the verifier.
 - RCCL bandwidth thresholds and dip checks now read the configured `rccl.results` table.
   The shipped dip-check defaults are now `"False"`. Existing configs with
   `verify_bw_dip` or `verify_lat_dip` set to `"True"`, including copies of the

@@ -192,7 +192,10 @@ Configuration parameters for RCCL suites:
      - Description
    * - ``verify_bus_bw``
      - ``"False"``
-     - Enable bus-bandwidth threshold validation.
+     - Enable bus-bandwidth threshold validation. Off by default; enable for qualification after confirming the ``results`` entry for your GPU, NIC and rank count.
+   * - ``bus_bw_tolerance``
+     - ``"0.95"`` (sample: ``"1.0"``)
+     - Fraction in (0, 1] of the reference bus bandwidth a measurement must reach. Default 0.95 when absent; an invalid value fails the test. The guide configs use 1.0.
    * - ``verify_bw_dip``
      - ``"False"``
      - Enable bandwidth-dip validation.
@@ -206,9 +209,9 @@ Configuration parameters for RCCL suites:
 Expected results format
 -----------------------
 
-The ``results`` section is a sibling of ``cvs_params`` under ``rccl``. Values are keyed by collective and message size (bytes), with expected bus bandwidth in GB/s. Re-baseline the shipped values for your cluster before enabling checks. The shipped values assume two nodes with eight ranks per node.
+The ``results`` section is a sibling of ``cvs_params`` under ``rccl``. Values are keyed by collective and message size (bytes), with expected bus bandwidth in GB/s. NIC/rank keys have the form ``<nic>.<collective>-<data_types>-<total ranks>``; ``cvs_params.nic_model`` selects ``ainic``, ``thor`` or ``connectx``. A matching NIC/rank entry takes precedence over the flat entry. The shipped ``thor`` all_reduce entry is the MI350X/MI355X scale-out guide bar: 350 GB/s at 8589934592 bytes, enforced exactly with the sample tolerance of 1.0. MI300X clusters must set it to 304. The guide lists both 304 and 350 for MI355X, an open question; its "8 GB" is interpreted as 8 GiB (8589934592 bytes), also open. Other thor platforms running 16 ranks must override the entry. Flat values are generic two-node examples, compared without slack at tolerance 1.0. Other NICs and rank counts fall back to these examples.
 
-Set ``verify_bus_bw`` to ``"True"`` to require actual bandwidth to reach at least 95% of the configured value. A missing collective threshold fails the test when this check is enabled. Set ``verify_bw_dip`` or ``verify_lat_dip`` to ``"True"`` to check for bandwidth or latency dips at the configured message sizes; either check can fail the test.
+Set ``verify_bus_bw`` to ``"True"`` to require actual bandwidth to reach ``bus_bw × cvs_params.bus_bw_tolerance``. The tolerance defaults to 0.95 when absent, must be a fraction in (0, 1], and an invalid value fails the test. The sample uses 1.0. A missing collective threshold or a configured size without a matching in-place result row (out-of-place for alltoall/alltoallv) fails; ensure ``start_msg_size`` and ``end_msg_size`` cover every configured size. A ``null`` entry marks a collective with no published threshold, logs ``No published threshold for <collective>; bus_bw not gated``, and skips its bus-bandwidth gate. Invalid entries fail with their full ``rccl.results.<nic>.<key>.<size>`` path. Verification is off in the sample because other NICs and rank counts use flat examples, MI300X needs 304, and regression and pairwise reuse the same entries. Enable it after checking the results for your GPU, NIC and rank count. Set ``verify_bw_dip`` or ``verify_lat_dip`` to ``"True"`` to check for bandwidth or latency dips at the configured message sizes; either check can fail the test.
 
 .. dropdown:: ``results`` snippet
 
@@ -220,6 +223,19 @@ Set ``verify_bus_bw`` to ``"True"`` to require actual bandwidth to reach at leas
           "8589934592": "330.00",
           "17179869184": "350.00"
         }
+      }
+    }
+
+.. dropdown:: NIC/rank-keyed results snippet
+
+  .. code:: json
+
+    "results": {
+      "thor": {
+        "all_reduce_perf-float-16": {
+          "8589934592": {"bus_bw": "350.00"}
+        },
+        "all_gather_perf-float-16": null
       }
     }
 
