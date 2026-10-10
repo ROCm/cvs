@@ -344,6 +344,7 @@ def _legacy_server_env(inference: Mapping[str, Any], bp: Mapping[str, Any]) -> d
     _put("NCCL_SOCKET_IFNAME", "nccl_socket_ifname")
     _put("GLOO_SOCKET_IFNAME", "gloo_socket_ifname")
     _put("GLOO_TCP_IFNAME", "gloo_tcp_ifname")
+    _put("HSA_FORCE_FINE_GRAIN_PCIE", "hsa_force_fine_grain_pcie")
 
     cc_env = (inference.get("container_config") or {}).get("env_dict") or {}
     for k, v in cc_env.items():
@@ -364,6 +365,8 @@ def _legacy_server_env(inference: Mapping[str, Any], bp: Mapping[str, Any]) -> d
             k, v = line.split("=", 1)
             env[k.strip()] = v.strip()
 
+    hsa = str(env.get("HSA_FORCE_FINE_GRAIN_PCIE") or "").strip()
+    env["HSA_FORCE_FINE_GRAIN_PCIE"] = hsa or "1"
     return env
 
 
@@ -553,6 +556,7 @@ _RUNTIME_ENV_TO_INFERENCE = {
     "GLOO_TCP_IFNAME": "gloo_tcp_ifname",
     "NCCL_IB_GID_INDEX": "nccl_ib_gid_index",
     "NCCL_DEBUG": "nccl_debug",
+    "HSA_FORCE_FINE_GRAIN_PCIE": "hsa_force_fine_grain_pcie",
 }
 
 
@@ -643,6 +647,9 @@ def _unified_runtime_views(raw: Mapping[str, Any], thresholds: Mapping[str, Any]
     for env_key, inference_key in _RUNTIME_ENV_TO_INFERENCE.items():
         if env_key in runtime_env:
             inference[inference_key] = runtime_env[env_key]
+    hsa_force = inference.get("hsa_force_fine_grain_pcie")
+    hsa_force = "" if hsa_force is None else str(hsa_force).strip()
+    inference["hsa_force_fine_grain_pcie"] = hsa_force or "1"
     inference["proxy_router_serv_port"] = str(
         inference.get("proxy_router_serv_port") or server.get("serve_port") or DEFAULT_SGLANG_SERVE_PORT
     )

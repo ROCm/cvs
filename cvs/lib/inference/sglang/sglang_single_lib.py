@@ -21,6 +21,7 @@ from cvs.lib.inference.sglang.sglang_common import (
     DEFAULT_SGLANG_SERVE_PORT,
     add_cli_flags_block,
     add_export_env_block,
+    hsa_force_fine_grain_pcie,
     as_node_list,
     log_sglang_log_matches,
     parse_inference_bench_results,
@@ -162,7 +163,7 @@ class SglangSingle:
         env_body = (
             "export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH\n"
             f"export NCCL_DEBUG={self.inf_dict['nccl_debug']}\n"
-            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE={hsa_force_fine_grain_pcie(self.inf_dict)}\n"
             f"export MODEL={self.bp_dict['model']}\n"
             f"export TP={self.bp_dict['tensor_parallelism']}\n"
             f"export HF_TOKEN={self.hf_token}\n"

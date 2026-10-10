@@ -21,6 +21,7 @@ from cvs.lib import globals
 from cvs.lib.inference.sglang.sglang_common import (
     add_cli_flags_block,
     add_export_env_block,
+    hsa_force_fine_grain_pcie,
     as_node_list,
     collect_sglang_gpu_topology,
     DEFAULT_SGLANG_DIST_INIT_PORT,
@@ -222,7 +223,7 @@ class SglangDistributed:
             f"export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}\n"
             f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
-            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE={hsa_force_fine_grain_pcie(self.inf_dict)}\n"
             f"export MODEL={self.bp_dict['model']}\n"
             f"export TP={self.bp_dict['tensor_parallelism']}\n"
             f"export PP={self.bp_dict.get('pipeline_parallelism', '1')}\n"

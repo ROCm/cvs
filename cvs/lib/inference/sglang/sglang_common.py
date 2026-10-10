@@ -409,6 +409,24 @@ def _long_context_cli_flags(bp_dict, *, include_chunked_prefill=True):
     return flags
 
 
+def hsa_force_fine_grain_pcie(inf_dict):
+    """``HSA_FORCE_FINE_GRAIN_PCIE`` from config, otherwise ``1``.
+
+    Container ``runtime.args.env`` is copied onto ``hsa_force_fine_grain_pcie``
+    and ``container_config.env_dict``. A blank value is treated as unset so the
+    in-container export still has a concrete flag.
+    """
+    raw = None
+    if inf_dict:
+        raw = inf_dict.get('hsa_force_fine_grain_pcie')
+        if raw is None or str(raw).strip() == '':
+            env = (inf_dict.get('container_config') or {}).get('env_dict') or {}
+            raw = env.get('HSA_FORCE_FINE_GRAIN_PCIE')
+    if raw is None or str(raw).strip() == '':
+        return '1'
+    return str(raw).strip()
+
+
 def add_export_env_block(bp_dict: Mapping[str, Any], indent: str = '                      ') -> str:
     """Shell ``export`` lines from ``bp_dict['add_export_env']``."""
     env = _normalize_key_value_list(bp_dict.get('add_export_env'), 'add_export_env')

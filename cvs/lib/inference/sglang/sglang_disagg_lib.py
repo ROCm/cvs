@@ -24,6 +24,7 @@ from cvs.lib import globals
 from cvs.lib.inference.sglang.sglang_common import (
     add_cli_flags_block,
     add_export_env_block,
+    hsa_force_fine_grain_pcie,
     collect_sglang_gpu_topology,
     DEFAULT_SGLANG_DECODE_COORD_PORT,
     DEFAULT_SGLANG_DECODE_SERV_PORT,
@@ -291,7 +292,7 @@ class SglangDisaggPD:
             f"export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}\n"
             f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
-            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE={hsa_force_fine_grain_pcie(self.inf_dict)}\n"
             f"export MASTER_PREFILL_ADDR={self.inf_dict['prefill_coordinator_addr']}\n"
             f"export MASTER_PREFILL_PORT={self.inf_dict['prefill_coordinator_port']}\n"
             f"export MODEL={self.bp_dict['model']}\n"
@@ -319,7 +320,7 @@ class SglangDisaggPD:
             f"export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}\n"
             f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
-            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE={hsa_force_fine_grain_pcie(self.inf_dict)}\n"
             f"export MASTER_DECODE_ADDR={self.inf_dict['decode_coordinator_addr']}\n"
             f"export MASTER_DECODE_PORT={self.inf_dict['decode_coordinator_port']}\n"
             f"export MODEL={self.bp_dict['model']}\n"
@@ -347,7 +348,7 @@ class SglangDisaggPD:
             f"export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}\n"
             f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
-            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE={hsa_force_fine_grain_pcie(self.inf_dict)}\n"
             f"export HF_TOKEN={self.hf_token}\n"
         )
         write_cmd = "bash -c " + shlex.quote(
@@ -369,7 +370,7 @@ class SglangDisaggPD:
             f"export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}\n"
             f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
-            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE={hsa_force_fine_grain_pcie(self.inf_dict)}\n"
             f"export HF_TOKEN={self.hf_token}\n"
         )
         write_cmd = "bash -c " + shlex.quote(
