@@ -70,5 +70,12 @@ traces use ``combined_traces/node_<rank>/<original-output>/torch_profiler/``. Th
 per-rank summaries, execution status, validation status and collection errors. Benchmark and
 RCCL logs are also downloaded. No shared filesystem with the CVS machine is required.
 
+Threshold validation reports each configured threshold as a pytest sub-test
+(``[threshold] (metric=<key>)``), and trace collection reports each node it collected
+from (``[trace collection] (host=<node>)``). In the HTML report, expand the
+``test_validate_thresholds`` or ``test_collect_traces`` row to see one row per sub-test.
+A failed sub-test also fails its parent test, so dependent stages are gated and
+``validation_passed`` is false.
+
 Calibrate the sample thresholds for your hardware, node count and workload. Set
 ``enforce_thresholds: false`` to record metrics without threshold assertions.

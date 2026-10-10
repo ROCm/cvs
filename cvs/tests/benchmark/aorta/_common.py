@@ -8,6 +8,7 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.report.artifacts import export_payload
+from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
 from cvs.lib.utils_lib import fail_test, update_test_result
 from cvs.parsers.aorta_report import AortaReportParser
 from cvs.parsers.schemas import ParseStatus
@@ -28,6 +29,40 @@ def _stage(lifecycle, recover=False):
     except (Exception, pytest.fail.Exception):
         lifecycle.failed = True
         raise
+
+
+def _case_label(msg, context):
+    return f"[{msg}] (" + ", ".join(f"{key}={value}" for key, value in context.items()) + ")"
+
+
+def _report_cases(request, subtests, cases):
+    """Report cases as sub-tests and preserve their results in HTML and JUnit."""
+    if not cases:
+        return
+    record_benchmark_metric_rows(
+        request.node,
+        [
+            {
+                "node": context.get("host", ""),
+                "metric": context.get("metric", msg),
+                "label": _case_label(msg, context),
+                "status": "fail" if failure else "pass",
+                "actual": None,
+                "spec": spec,
+                "reason": failure,
+            }
+            for msg, context, failure, spec in cases
+        ],
+    )
+    for msg, context, failure, _spec in cases:
+        outcome = "failed" if failure else "passed"
+        request.node.user_properties.append(("cvs_aorta_subtest", f"{_case_label(msg, context)}: {outcome}"))
+        with subtests.test(msg=msg, **context):
+            if failure:
+                pytest.fail(failure)
+        # Older pytest leaves a failed sub-test's parent passed, breaking lifecycle gating.
+        if failure:
+            fail_test(failure)
 
 
 def launch_container(aorta_job, lifecycle):
@@ -80,15 +115,23 @@ def run_benchmark(aorta_job, lifecycle):
                     fail_test(str(exc))
 
 
-def collect_traces(aorta_job, lifecycle):
+def collect_traces(aorta_job, lifecycle, request, subtests):
     # Surviving ranks' artifacts remain useful after a distributed job fails.
     with _stage(lifecycle, recover=aorta_job.started):
         try:
             aorta_job.collect_traces()
         finally:
             aorta_job.collect_logs()
-        for host, error in aorta_job.collection_errors.items():
-            fail_test(f"Trace collection on {host}: {error}")
+        cases = []
+        for host in aorta_job.hosts:
+            if host in aorta_job.collection_errors:
+                failure = f"Trace collection on {host}: {aorta_job.collection_errors[host]}"
+            elif host in aorta_job.trace_trees:
+                failure = ""
+            else:
+                continue
+            cases.append(("trace collection", {"host": host}, failure, None))
+        _report_cases(request, subtests, cases)
         if not aorta_job.get_artifact("torch_traces"):
             fail_test("No fresh torch_traces artifact was collected")
 
@@ -140,7 +183,7 @@ def parse_results(aorta_job, lifecycle):
         lifecycle.parser = parser
 
 
-def validate_thresholds(aorta_job, lifecycle):
+def validate_thresholds(aorta_job, lifecycle, request, subtests):
     with _stage(lifecycle):
         if not aorta_job.config.enforce_thresholds:
             pytest.skip("enforce_thresholds=false; metrics are recorded without threshold assertions")
@@ -149,8 +192,12 @@ def validate_thresholds(aorta_job, lifecycle):
         expected = {
             key: value for key, value in aorta_job.config.thresholds["expected_results"].items() if value is not None
         }
-        for failure in lifecycle.parser.validate_thresholds(lifecycle.benchmark_result, expected):
-            fail_test(failure)
+        cases = []
+        for key, value in expected.items():
+            failures = lifecycle.parser.validate_thresholds(lifecycle.benchmark_result, {key: value})
+            spec = {"kind": "max" if key.startswith("max_") else "min", "value": value}
+            cases.append(("threshold", {"metric": key}, "; ".join(failures), spec))
+        _report_cases(request, subtests, cases)
 
 
 def generate_report(aorta_job, lifecycle):

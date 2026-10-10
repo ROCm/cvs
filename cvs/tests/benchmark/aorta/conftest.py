@@ -2,6 +2,7 @@
 
 import json
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib.benchmark.aorta.aorta_config_loader import load_training_variant
 from cvs.lib.benchmark.aorta.aorta_job import AortaJob
+from cvs.lib.report.benchmark_metric_registry import patch_benchmark_metrics_into_html
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 from cvs.parsers.schemas import ClusterConfigFile
 
@@ -82,3 +84,16 @@ def pytest_runtest_makereport(item, call):
     state = item.funcargs.get("lifecycle")
     if state is not None and report.failed:
         state.failed = True
+
+
+SUBTEST_STAGE_TESTS = ("test_collect_traces", "test_validate_thresholds")
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    # pytest-html collapses sub-tests into unlabelled duplicate rows of their parent.
+    yield
+    htmlpath = getattr(session.config.option, "htmlpath", None)
+    if htmlpath:
+        for name in SUBTEST_STAGE_TESTS:
+            patch_benchmark_metrics_into_html(Path(htmlpath), benchmark_test_name=name)

@@ -26,8 +26,8 @@ def test_run_benchmark(aorta_job, lifecycle):
     return _common.run_benchmark(aorta_job, lifecycle)
 
 
-def test_collect_traces(aorta_job, lifecycle):
-    return _common.collect_traces(aorta_job, lifecycle)
+def test_collect_traces(aorta_job, lifecycle, request, subtests):
+    return _common.collect_traces(aorta_job, lifecycle, request, subtests)
 
 
 def test_analyze(aorta_job, lifecycle):
@@ -38,8 +38,8 @@ def test_parse_results(aorta_job, lifecycle):
     return _common.parse_results(aorta_job, lifecycle)
 
 
-def test_validate_thresholds(aorta_job, lifecycle):
-    return _common.validate_thresholds(aorta_job, lifecycle)
+def test_validate_thresholds(aorta_job, lifecycle, request, subtests):
+    return _common.validate_thresholds(aorta_job, lifecycle, request, subtests)
 
 
 def test_generate_report(aorta_job, lifecycle):
