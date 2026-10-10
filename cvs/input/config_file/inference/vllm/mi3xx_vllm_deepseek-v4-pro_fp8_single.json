@@ -14,9 +14,8 @@
     "lifetime": "per_run",
     "name": "vllm_deepseek-v4-pro_fp8_single_mi325x",
     "image": "<changeme>",
+    "_comment_hf_offline": "Add HF_HUB_OFFLINE=1 and TRANSFORMERS_OFFLINE=1 to env only on clusters without Hugging Face Hub access. lm-eval inherits env too, so accuracy tasks then need their datasets pre-cached, for example in an HF_DATASETS_CACHE directory on a mount.",
     "env": {
-      "HF_HUB_OFFLINE": "1",
-      "TRANSFORMERS_OFFLINE": "1",
       "VLLM_ROCM_USE_AITER": "1",
       "VLLM_ROCM_USE_AITER_MHA": "0",
       "GPU_ARCHS": "gfx942"
