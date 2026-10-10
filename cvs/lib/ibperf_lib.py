@@ -11,12 +11,22 @@ import time
 import xlsxwriter
 
 from cvs.lib.utils_lib import *
+from cvs.lib.utils.polling import poll_until
 
 log = logging.getLogger(__name__)
 
 # Cached one-time probe results for the current process (per binary / ROCm config key).
 _dmabuf_support_cache = {}
 _rocm_path_cache = {}
+
+# Added to the BW ``duration``: covers connection setup, the client's launch delay, and perftest's warm-up margins.
+PERFTEST_EXIT_SLACK_S = 60
+# Latency tests have no ``-D`` duration, so this bounds the whole run.
+PERFTEST_LAT_EXIT_TIMEOUT_S = 60
+PERFTEST_EXIT_POLL_S = 5
+PERFTEST_RESULT_POLL_S = 10
+PERFTEST_BW_RESULT_TIMEOUT_S = 80
+PERFTEST_LAT_RESULT_TIMEOUT_S = 20
 
 
 def _log_bw_summary(msg_size, res_dict, instance_no=None):
@@ -179,6 +189,23 @@ def check_perftest_dmabuf_support(shdl, binary_path):
     return dmabuf_available
 
 
+def wait_for_perftest_exit(phdl, app_name, timeout):
+    """Poll every node until ``pgrep`` confirms no ``app_name`` process is left or ``timeout`` seconds pass.
+
+    Only a ``pgrep`` no-match counts as exited, so a node whose poll errored keeps the wait going.
+    ``pgrep -x`` matches the kernel's 15-character process name, so ``app_name`` is truncated to it.
+    Returns the nodes not confirmed exited when the wait ended; empty when all exited.
+    """
+    cmd = f'pgrep -x {app_name[:15]} > /dev/null; echo "pgrep_rc=$?"'
+
+    def unconfirmed():
+        out_dict = phdl.exec(cmd, print_console=False)
+        return [node for node, out in out_dict.items() if not re.search(r'\bpgrep_rc=1\b', out)]
+
+    nodes, _ = poll_until(unconfirmed, lambda pending: not pending, timeout, PERFTEST_EXIT_POLL_S)
+    return nodes
+
+
 def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None):
     res_dict = {}
 
@@ -195,24 +222,24 @@ def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None):
             fail_test(f'IB Test failed - Error patterns seen on node {node}')
 
     # Collect the BW, PPS numbers
-    for i in range(1, 10):
-        log.debug('BW collection iteration %d for msg_size %s', i, msg_size)
+    pattern = r"{}\s+\d+\s+[0-9\.]+\s+([0-9\.]+)\s+([0-9\.]+)".format(msg_size)
+    pending = list(out_dict.keys())
+
+    def collect():
         out_dict = phdl.exec(cmd, print_console=False)
-        for node in out_dict.keys():
-            res_dict[node] = {}
-            pattern = r"{}\s+\d+\s+[0-9\.]+\s+([0-9\.]+)\s+([0-9\.]+)".format(msg_size)
-            if re.search(pattern, out_dict[node]):
-                match = re.search(pattern, out_dict[node])
-                res_dict[node]['bw'] = match.group(1)
-                res_dict[node]['pps'] = match.group(2)
-                continue
-            else:
-                log.debug('Node %s: results not ready, sleeping 10s (iteration %d)', node, i)
-                time.sleep(10)
-            fail_test(
-                f'ERROR !!! on node {node} Client did not complete even after max iterations for msg size {msg_size}'
-            )
-            fail_test(f'ERROR !!! pls check log file for errors on node {node}')
+        for node in list(pending):
+            match = re.search(pattern, out_dict.get(node, ''))
+            if match:
+                res_dict[node] = {'bw': match.group(1), 'pps': match.group(2)}
+                pending.remove(node)
+        if pending:
+            log.debug('BW results for msg_size %s not ready on %s', msg_size, pending)
+        return pending
+
+    poll_until(collect, lambda nodes: not nodes, PERFTEST_BW_RESULT_TIMEOUT_S, PERFTEST_RESULT_POLL_S)
+    for node in pending:
+        fail_test(f'ERROR !!! on node {node} Client did not complete even after max iterations for msg size {msg_size}')
+        fail_test(f'ERROR !!! pls check log file for errors on node {node}')
     _log_bw_summary(msg_size, res_dict, instance_no)
     return res_dict
 
@@ -226,7 +253,6 @@ def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None):
         "Couldn't initialize ROCm device|Failed to init|Unable to open file descriptor|ERROR|FAIL|Segmentation fault"
     )
     for node in out_dict.keys():
-        res_dict[node] = {}
         if not re.search('bytes of GPU buffer', out_dict[node], re.I):
             fail_test(f'GPU Buffer allocation failed or Connection not setup for IB Test on node {node}')
 
@@ -234,30 +260,27 @@ def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None):
             fail_test(f'IB Test failed - Error patterns seen on node {node}')
 
     # Collect the latency numbers
-    for i in range(1, 4):
-        log.debug('Latency collection iteration %d for msg_size %s', i, msg_size)
+    pattern = r"{}[\t\s]+[0-9]+[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)".format(
+        msg_size
+    )
+    keys = ('t_min', 't_max', 't_typical', 't_avg', 't_stdev', 't_99_pct', 't_99_9_pct')
+    pending = list(out_dict.keys())
+
+    def collect():
         out_dict = phdl.exec(cmd, print_console=False)
-        for node in out_dict.keys():
-            pattern = "{}[\t\s]+[0-9]+[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)".format(
-                msg_size
-            )
-            if re.search(pattern, out_dict[node]):
-                match = re.search(pattern, out_dict[node])
-                res_dict[node]['t_min'] = match.group(1)
-                res_dict[node]['t_max'] = match.group(2)
-                res_dict[node]['t_typical'] = match.group(3)
-                res_dict[node]['t_avg'] = match.group(4)
-                res_dict[node]['t_stdev'] = match.group(5)
-                res_dict[node]['t_99_pct'] = match.group(6)
-                res_dict[node]['t_99_9_pct'] = match.group(7)
-                continue
-            else:
-                log.debug('Node %s: latency results not ready, sleeping 10s (iteration %d)', node, i)
-                time.sleep(10)
-            fail_test(
-                f'ERROR !!! on node {node} Client did not complete even after max iterations for msg size {msg_size}'
-            )
-            fail_test(f'ERROR !!! pls check log file for errors on node {node}')
+        for node in list(pending):
+            match = re.search(pattern, out_dict.get(node, ''))
+            if match:
+                res_dict[node] = dict(zip(keys, match.groups()))
+                pending.remove(node)
+        if pending:
+            log.debug('Latency results for msg_size %s not ready on %s', msg_size, pending)
+        return pending
+
+    poll_until(collect, lambda nodes: not nodes, PERFTEST_LAT_RESULT_TIMEOUT_S, PERFTEST_RESULT_POLL_S)
+    for node in pending:
+        fail_test(f'ERROR !!! on node {node} Client did not complete even after max iterations for msg size {msg_size}')
+        fail_test(f'ERROR !!! pls check log file for errors on node {node}')
     _log_lat_summary(msg_size, res_dict, instance_no)
     return res_dict
 
@@ -426,7 +449,10 @@ def run_ib_perf_bw_test(
     time.sleep(2)
     phdl.exec('source /tmp/ib_cmds_file.txt', print_console=False)
 
-    time.sleep(20)
+    exit_timeout = duration + PERFTEST_EXIT_SLACK_S
+    unconfirmed = wait_for_perftest_exit(phdl, bw_test, exit_timeout)
+    if unconfirmed:
+        log.warning('%s exit not confirmed on %s after %ss; reading logs anyway', bw_test, unconfirmed, exit_timeout)
 
     for instance_no in range(0, inst_count):
         try:
@@ -562,13 +588,19 @@ def run_ib_perf_lat_test(
     time.sleep(2)
     phdl.exec('source /tmp/ib_cmds_file.txt', print_console=False)
 
-    # wait for the duration of test
-    time.sleep(20)
+    unconfirmed = wait_for_perftest_exit(phdl, lat_test, PERFTEST_LAT_EXIT_TIMEOUT_S)
+    if unconfirmed:
+        log.warning(
+            '%s exit not confirmed on %s after %ss; reading logs anyway',
+            lat_test,
+            unconfirmed,
+            PERFTEST_LAT_EXIT_TIMEOUT_S,
+        )
 
     for instance_no in range(0, inst_count):
         try:
             lat_dict = get_ib_lat_numb(phdl, msg_size, f'cat /tmp/ib_perf_{instance_no}_logs', instance_no=instance_no)
-            for node in bck_nic_dict.keys():
+            for node in lat_dict.keys():
                 result_dict[node][instance_no] = {}
                 result_dict[node][instance_no]['t_min'] = lat_dict[node]['t_min']
                 result_dict[node][instance_no]['t_max'] = lat_dict[node]['t_max']
