@@ -13,11 +13,36 @@ import time
 import json
 
 from cvs.lib.utils_lib import *
-from cvs.lib.verify_lib import *
 
 from cvs.lib import globals
 
 log = globals.log
+
+
+def _payload_sudo_prefix(orch):
+    """Sudo for a command passed to orch.exec().
+
+    sudo_prefix() is host passwordless sudo. Container exec already applies
+    that to `docker exec`, and the payload runs inside the container.
+    """
+    if getattr(orch, 'orchestrator_type', None) == 'container':
+        return ''
+    return orch.sudo_prefix()
+
+
+def _build_agfhc_install_cmd(install_dir, sudo_prefix=''):
+    """Run AGFHC ./install with cwd set to the unpacked tree.
+
+    The installer reads sibling files via relative paths, so cwd must be
+    install_dir. sudo_prefix is _payload_sudo_prefix(): empty inside a
+    container, and 'sudo -n ' on bare metal when passwordless sudo exists.
+    Spur job steps often have no sudo; the prefix is then empty and ./install
+    runs as the job user.
+    """
+    inner = f"bash -c 'cd {install_dir} && ./install --rocm-tar'"
+    if sudo_prefix:
+        return f'{sudo_prefix}{inner}'
+    return inner
 
 
 # NOTE: This module assumes the following symbols are available in scope:
@@ -125,28 +150,22 @@ def test_install_agfhc(
 
     time.sleep(10)
 
-    # install the untarred file. AGFHC's `./install` is a relative-cwd
-    # script (reads sibling files via relative paths) so cwd MUST be
-    # install_dir; we wrap that single call in `bash -c` explicitly to make
-    # the cwd dependency visible at the call site rather than smuggling it
-    # in via a `cd X; cmd` shell chain.
-    #
     # --rocm-tar uses dpkg-deb direct extraction instead of apt-based dep
     # resolution. Required when /opt/rocm came from a TheRock tarball
     # (libs not tracked by dpkg, apt fails with "rocm-device-libs / hipcc /
     # lib32gcc-s1 not installable"). Safe on apt-rocm systems too: dpkg-deb
     # just extracts the bundled debs into /, which is correct either way.
+    sudo_prefix = _payload_sudo_prefix(orch)
+    install_cmd = _build_agfhc_install_cmd(install_dir, sudo_prefix)
+    log.info('AGFHC install command: %s', install_cmd)
     try:
-        out_dict = orch.exec(
-            f"sudo bash -c 'cd {install_dir} && ./install --rocm-tar'",
-            timeout=90,
-        )
+        out_dict = orch.exec(install_cmd, timeout=90)
         for node in out_dict.keys():
             log.info("%s", out_dict[node])
             if re.search('Error|No such file', out_dict[node], re.I):
                 fail_test(f'Installation of AGFHC failed on node {node}')
-    except Exception as e:
-        log.error(f'Install of AGFHC failed, hit exception {e}')
+    except Exception as exc:
+        fail_test(f'Install of AGFHC failed: {exc}')
 
     # verify agfhc path exists after installation ..
     out_dict = orch.exec(f'ls -l {config_dict["path"]}/agfhc')
