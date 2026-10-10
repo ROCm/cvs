@@ -143,6 +143,7 @@ class TestGetHipDeviceDict(unittest.TestCase):
 
     @patch.object(ibperf_lib, 'fail_test')
     def test_probe_cmd_reports_all_visibility_vars(self, _mock_fail_test):
+        self.assertTrue(ibperf_lib._HIP_DEVICE_PROBE_CMD.startswith(f'{GPU_ENV_UNSET} sh -c '))
         self.assertIn('grep -HE', ibperf_lib._HIP_DEVICE_PROBE_CMD)
         for var in ibperf_lib._GPU_VISIBILITY_ENV_VARS:
             self.assertIn(f'"${{{var}-}}"', ibperf_lib._HIP_DEVICE_PROBE_CMD)
@@ -359,6 +360,22 @@ class TestIbperfLib(unittest.TestCase):
 
 
 BW_LOG = '8192 bytes of GPU buffer\n 8192       5000           512.00             517.14             7.89\n'
+GPU_ENV_UNSET = 'env -u HIP_VISIBLE_DEVICES -u ROCR_VISIBLE_DEVICES -u CUDA_VISIBLE_DEVICES -u GPU_DEVICE_ORDINAL'
+LAUNCH = f'{GPU_ENV_UNSET} bash /tmp/ib_cmds_file.txt'
+
+
+class TestPerRunCleanup(unittest.TestCase):
+    def test_clears_stale_files_without_sudo_before_writing_commands(self):
+        for run in (ibperf_lib.run_ib_perf_bw_test, ibperf_lib.run_ib_perf_lat_test):
+            with self.subTest(run=run.__name__):
+                phdl = MagicMock()
+                phdl.exec.side_effect = [None, None, RuntimeError('stop after cleanup')]
+                with self.assertRaises(RuntimeError):
+                    run(phdl, 'ib_write_bw', {}, {}, {}, '/opt/pt/bin', 64, 3, hip_dev_dict={})
+                self.assertEqual(
+                    [c.args[0] for c in phdl.exec.call_args_list[:3]],
+                    ['rm -rf /tmp/ib_cmds_file.txt', 'rm -rf /tmp/ib_perf*', 'touch /tmp/ib_cmds_file.txt'],
+                )
 
 
 class TestWaitForPerftestExit(unittest.TestCase):
@@ -636,15 +653,17 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
         self.assertFalse(any('--help' in call.args[0] for call in self.phdl.exec.call_args_list))
 
     @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
-    def test_waits_for_perftest_exit(self, mock_wait):
+    def test_launches_then_waits_for_perftest_exit(self, mock_wait):
         self.run_latency()
+        self.phdl.exec.assert_any_call(LAUNCH, print_console=False)
         mock_wait.assert_called_once_with(self.phdl, 'ib_write_lat', ibperf_lib.PERFTEST_LAT_EXIT_TIMEOUT_S)
 
 
 class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
     @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
-    def test_waits_for_perftest_exit_bounded_by_duration(self, mock_wait):
+    def test_launches_then_waits_for_perftest_exit_bounded_by_duration(self, mock_wait):
         self.run_bandwidth(duration=30)
+        self.phdl.exec.assert_any_call(LAUNCH, print_console=False)
         mock_wait.assert_called_once_with(self.phdl, 'ib_write_bw', 30 + ibperf_lib.PERFTEST_EXIT_SLACK_S)
 
     def test_builds_bw_commands_without_dmabuf(self):

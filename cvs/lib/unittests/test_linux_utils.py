@@ -272,6 +272,12 @@ class TestPcieLinkStatusCmd(unittest.TestCase):
         lshw.assert_called_once()
         self.assertFalse(lshw.call_args.kwargs['use_sudo'])
 
+    def test_gpu_numa_forwards_use_sudo(self):
+        with patch.object(linux_utils.rocm_plib, 'get_gpu_pcie_bus_dict', return_value={'node1': {}}) as bus:
+            linux_utils.get_gpu_numa_dict(MagicMock(), use_sudo=False)
+        bus.assert_called_once()
+        self.assertFalse(bus.call_args.kwargs['use_sudo'])
+
 
 class TestGetRdmaCapableDevicesDict(unittest.TestCase):
     def test_lists_all_netdevs_in_one_exec(self):

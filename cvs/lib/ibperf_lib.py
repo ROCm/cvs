@@ -8,6 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import logging
 import math
 import re
+import shlex
 import time
 import xlsxwriter
 
@@ -37,10 +38,14 @@ PERFTEST_DMABUF_BUILD_HINT = 'rebuild perftest with ROCm DMA-BUF support (config
 _rocm_path_cache = {}
 _GPU_VISIBILITY_ENV_VARS = ('HIP_VISIBLE_DEVICES', 'ROCR_VISIBLE_DEVICES', 'CUDA_VISIBLE_DEVICES', 'GPU_DEVICE_ORDINAL')
 _GPU_ENV_TAG = '__CVS_GPU_ENV__'
-_HIP_DEVICE_PROBE_CMD = (
+# Job schedulers set these to a subset or to values ROCm can't parse. perftest runs with them cleared,
+# and the HIP-ordinal probe clears them too so KFD order matches the ordinals perftest sees.
+_GPU_ENV_UNSET = 'env ' + ' '.join(f'-u {var}' for var in _GPU_VISIBILITY_ENV_VARS)
+_HIP_DEVICE_PROBE_SCRIPT = (
     'grep -HE "^(simd_count|location_id|domain) " /sys/class/kfd/kfd/topology/nodes/*/properties 2>/dev/null; '
     f"printf '{_GPU_ENV_TAG} %s=%s\\n' " + ' '.join(f'{var} "${{{var}-}}"' for var in _GPU_VISIBILITY_ENV_VARS)
 )
+_HIP_DEVICE_PROBE_CMD = f'{_GPU_ENV_UNSET} sh -c {shlex.quote(_HIP_DEVICE_PROBE_SCRIPT)}'
 
 DEFAULT_BW_TESTS = ['ib_write_bw', 'ib_read_bw', 'ib_send_bw']
 DEFAULT_LAT_TESTS = ['ib_write_lat', 'ib_send_lat']
@@ -55,6 +60,8 @@ PERFTEST_EXIT_POLL_S = 5
 PERFTEST_RESULT_POLL_S = 10
 PERFTEST_BW_RESULT_TIMEOUT_S = 80
 PERFTEST_LAT_RESULT_TIMEOUT_S = 20
+# The command file needs bash because a node's agent can run commands under dash, which has no ``source``.
+PERFTEST_LAUNCH_CMD = f'{_GPU_ENV_UNSET} bash /tmp/ib_cmds_file.txt'
 
 
 def _configured_tests(config, key, defaults, supported):
@@ -849,8 +856,8 @@ def run_ib_perf_bw_test(
     result_dict = {}
     i = 0
     cmd_dict = {}
-    phdl.exec('sudo rm -rf /tmp/ib_cmds_file.txt', print_console=False)
-    phdl.exec('sudo rm -rf /tmp/ib_perf*', print_console=False)
+    phdl.exec('rm -rf /tmp/ib_cmds_file.txt', print_console=False)
+    phdl.exec('rm -rf /tmp/ib_perf*', print_console=False)
     phdl.exec('touch /tmp/ib_cmds_file.txt', print_console=False)
     if rocm_path:
         log.debug('Setting LD_LIBRARY_PATH to %s/lib for perftest binaries', rocm_path)
@@ -954,7 +961,7 @@ def run_ib_perf_bw_test(
     log.debug('Killing stale %s processes before starting test', bw_test)
     phdl.exec(f'killall {bw_test} 2>/dev/null || true', print_console=False)
     time.sleep(2)
-    phdl.exec('source /tmp/ib_cmds_file.txt', print_console=False)
+    phdl.exec(PERFTEST_LAUNCH_CMD, print_console=False)
 
     exit_timeout = duration + PERFTEST_EXIT_SLACK_S
     unconfirmed = wait_for_perftest_exit(phdl, bw_test, exit_timeout)
@@ -1004,8 +1011,8 @@ def run_ib_perf_lat_test(
     result_dict = {}
     i = 0
     cmd_dict = {}
-    phdl.exec('sudo rm -rf /tmp/ib_cmds_file.txt', print_console=False)
-    phdl.exec('sudo rm -rf /tmp/ib_perf*', print_console=False)
+    phdl.exec('rm -rf /tmp/ib_cmds_file.txt', print_console=False)
+    phdl.exec('rm -rf /tmp/ib_perf*', print_console=False)
     phdl.exec('touch /tmp/ib_cmds_file.txt', print_console=False)
     if rocm_path:
         log.debug('Setting LD_LIBRARY_PATH to %s/lib for perftest binaries', rocm_path)
@@ -1097,7 +1104,7 @@ def run_ib_perf_lat_test(
     log.debug('Killing stale %s processes before starting test', lat_test)
     phdl.exec(f'killall {lat_test} 2>/dev/null || true', print_console=False)
     time.sleep(2)
-    phdl.exec('source /tmp/ib_cmds_file.txt', print_console=False)
+    phdl.exec(PERFTEST_LAUNCH_CMD, print_console=False)
 
     unconfirmed = wait_for_perftest_exit(phdl, lat_test, PERFTEST_LAT_EXIT_TIMEOUT_S)
     if unconfirmed:
