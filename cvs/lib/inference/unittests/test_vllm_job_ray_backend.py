@@ -477,6 +477,10 @@ class TestServerArgvRayVsMp(unittest.TestCase):
             with self.subTest(flag=flag):
                 self.assertNotIn(flag, argv)
 
+    def test_single_node_pp_gt_1_passes_pipeline_parallel_size(self):
+        argv = _job(serve_args={}, nnodes="1", pp="2")._server_argv(0)
+        self.assertEqual(_value_after(argv, "--pipeline-parallel-size"), "2")
+
 
 # --------------------------------------------------------------------------- #
 # Generic option serialization

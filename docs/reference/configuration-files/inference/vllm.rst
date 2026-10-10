@@ -229,8 +229,6 @@ These rules are enforced when the configuration file loads, before anything star
      - ``pipeline_parallel_size`` **must** be greater than 1
    * - two or more cluster hosts, backend is ray
      - ``pipeline_parallel_size`` of 1 is valid
-   * - ``pipeline_parallel_size`` > 1
-     - The distributed suite requires more than one cluster host
    * - two or more cluster hosts, either backend
      - ``container.env.NCCL_SOCKET_IFNAME`` is **required**
 
@@ -239,7 +237,6 @@ The corresponding error messages are:
 .. code:: text
 
   multi-host distributed execution requires pipeline_parallel_size > 1 unless using ray
-  pipeline_parallel_size > 1 requires a multi-host distributed suite
   vllm_distributed requires container.env.NCCL_SOCKET_IFNAME on multi-host clusters
 
 Multinode prerequisites
@@ -1068,8 +1065,6 @@ Troubleshooting
      - Cause and fix
    * - Distributed execution requires ``pipeline_parallel_size > 1``
      - Multi-host ``vllm_distributed`` on the mp backend needs pipeline parallelism. Either raise ``pipeline_parallel_size``, or set ``distributed-executor-backend`` to ``"ray"``.
-   * - ``vllm_single requires pipeline_parallel_size=1``
-     - Use ``vllm_distributed`` when the config requires pipeline parallelism.
    * - ``vllm_distributed requires container.env.NCCL_SOCKET_IFNAME``
      - Set all three socket-interface variables under ``container.env``.
    * - ``Container image not specified in config``
