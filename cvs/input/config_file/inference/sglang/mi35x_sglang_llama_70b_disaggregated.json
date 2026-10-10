@@ -46,7 +46,8 @@
             "HSA_FORCE_FINE_GRAIN_PCIE": "0",
             "NCCL_IB_PCI_RELAXED_ORDERING": "0",
             "NCCL_DEBUG_SUBSYS": "INIT,NET",
-            "SGLANG_USE_AITER": "1"
+            "SGLANG_USE_AITER": "1",
+            "MC_DISABLE_HIP": "1"
           }
         }
       }
