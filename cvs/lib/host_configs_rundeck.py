@@ -17,6 +17,7 @@ Shape (consumed by cvs/lib/report/rundeck/dataset_builders/status_matrix.py)::
 '''
 
 import re
+import shlex
 
 _STATUSES = ('pass', 'fail', 'na')
 
@@ -33,6 +34,7 @@ ONLINE_MEMORY = 'online_memory'
 PCI_ACCELERATORS = 'pci_accelerators'
 GPU_PCIE = 'gpu_pcie'
 NIC_PCIE = 'nic_pcie'
+NIC_LINK = 'nic_link'
 PCI_ACS = 'pci_acs'
 DMESG_DRIVER = 'dmesg_driver'
 DMESG_RESET = 'dmesg_reset'
@@ -49,6 +51,7 @@ CHECK_IDS = (
     PCI_ACCELERATORS,
     GPU_PCIE,
     NIC_PCIE,
+    NIC_LINK,
     PCI_ACS,
     DMESG_DRIVER,
     DMESG_RESET,
@@ -60,6 +63,11 @@ _BIOS_ACTUAL_RE = re.compile(r'([a-z0-9_.\-]+)', re.I)
 _ROCM_ACTUAL_RE = re.compile(r'ROCm version:\s+([0-9.]+)', re.I)
 _MEMORY_ACTUAL_RE = re.compile(r'Total online memory:\s+([0-9.A-Za-z]+)')
 _ACCEL_RE = re.compile(r'accelerators:\s+Advanced', re.I)
+DEFAULT_NIC_LINK_SPEED = 400000
+# The kernel reports SPEED_UNKNOWN as -1 or unsigned 0xFFFFFFFF when it cannot determine link speed.
+_SPEED_UNKNOWN = (-1, 4294967295)
+_NIC_LINK_RE = re.compile(r'^\s*(\S+)[ \t]+speed=(\S*)[ \t]+operstate=(\S*)[ \t]+flags=(\S*)\s*$')
+_IFF_UP = 0x1
 
 
 def make_meta(cluster_dict, suite_name, version=None):
@@ -118,6 +126,11 @@ def _pass_record(summary):
 
 def _fail_record(name, message, summary):
     return build_node_record('fail', [_fail_item(name, message)], summary)
+
+
+def config_error_records(nodes, item_name, message):
+    '''Fail every node with the same config error, so the deck shows why the check did not run.'''
+    return {str(node): _fail_record(item_name, message, 'config error') for node in nodes}
 
 
 def _version_mismatch(out_dict, expected, actual_re, item_name, message_for):
@@ -399,6 +412,120 @@ def absorb_nic_pcie(records, pci_dict, bus_dict, card_no, speed, width):
         width,
         lambda output, bus, node: _nic_link_failures(output, speed, width, bus, node),
     )
+
+
+def parse_nic_link_speed_setting(value):
+    '''Return the configured expected link speed in Mb/s as a positive integer.'''
+    if value is None:
+        return DEFAULT_NIC_LINK_SPEED
+    try:
+        speed = int(str(value).strip())
+    except ValueError as exc:
+        raise ValueError(f'nic_link_speed must be a positive integer in Mb/s (e.g. 400000), got {value!r}') from exc
+    if speed <= 0:
+        raise ValueError(f'nic_link_speed must be a positive integer in Mb/s (e.g. 400000), got {value!r}')
+    return speed
+
+
+def nic_link_speed_cmd(interfaces):
+    '''Build a command printing each interface's sysfs link speed, operstate and flags.'''
+    names = ' '.join(shlex.quote(name) for name in sorted(set(interfaces)))
+    if not names:
+        return 'true'
+    return (
+        f'for i in {names}; do d="/sys/class/net/$i"; '
+        'echo "$i speed=$(cat "$d/speed" 2>/dev/null) operstate=$(cat "$d/operstate" 2>/dev/null) '
+        'flags=$(cat "$d/flags" 2>/dev/null)"; done'
+    )
+
+
+def parse_nic_links(output):
+    '''Map interface names to their sysfs speed, operstate and flags. Unreadable fields are None.'''
+    links = {}
+    for line in str(output).splitlines():
+        match = _NIC_LINK_RE.match(line)
+        if not match:
+            continue
+        speed, operstate, flags = match.group(2, 3, 4)
+        links[match.group(1)] = {
+            'speed': int(speed) if re.fullmatch(r'-?\d+', speed) else None,
+            'operstate': operstate or None,
+            'flags': int(flags, 16) if re.fullmatch(r'0x[0-9a-f]+', flags, re.I) else None,
+        }
+    return links
+
+
+def _nic_link_problem(iface, link, expected, node):
+    '''Return the failure message for one interface, or None when it is at the expected speed.'''
+    want = f'expected {expected} Mb/s on node {node}'
+    if link is None:
+        return f'Backend NIC {iface} link speed unreadable from /sys/class/net/{iface}/speed, {want}'
+    speed, operstate, flags = link['speed'], link['operstate'], link['flags']
+    state = f' (operstate {operstate})' if operstate else ''
+    if speed is None:
+        if operstate is None and flags is None:
+            return f'Backend NIC {iface} not found in /sys/class/net, {want}'
+        # operstate reads "down" both when admin-down and when up without carrier; only IFF_UP tells them apart.
+        if flags is not None and not flags & _IFF_UP:
+            return f'Backend NIC {iface} is administratively down, link speed unavailable, {want}'
+        return f'Backend NIC {iface} link speed unreadable from /sys/class/net/{iface}/speed{state}, {want}'
+    if speed in _SPEED_UNKNOWN:
+        return f'Backend NIC {iface} link speed unknown ({speed}), link may be down{state}, {want}'
+    if speed != expected:
+        return f'Backend NIC {iface} link speed {speed} Mb/s not matching expected {expected} Mb/s on node {node}'
+    return None
+
+
+def eval_nic_link_speed(out_dict, nics_by_node, expected, compare_counts=False):
+    '''
+    Return (node_records, fail_messages) for backend NIC network link speed.
+
+    With compare_counts, a node with fewer NICs than the most found on any node
+    fails. Auto-detection only sees NICs that have a netdev and an RDMA device,
+    so a NIC whose driver failed to bind would otherwise go unchecked.
+    '''
+    records = {}
+    messages = []
+    nodes = list(out_dict) + [node for node in nics_by_node if node not in out_dict]
+    peak = max((len(set(nics or [])) for nics in nics_by_node.values()), default=0) if compare_counts else 0
+    for node in nodes:
+        interfaces = list(dict.fromkeys(nics_by_node.get(node) or []))
+        if not interfaces:
+            message = f'No backend NICs found on node {node} to check link speed'
+            records[str(node)] = _fail_record('backend_nics', message, 'no NICs')
+            messages.append(message)
+            continue
+
+        count = len(interfaces)
+        items = []
+        summary = []
+        if count < peak:
+            message = (
+                f'Only {count} backend NIC(s) detected on node {node}, fewer than the {peak} detected on '
+                'another node; a backend NIC may be missing its netdev or RDMA device'
+            )
+            items.append(_fail_item('backend_nics', message))
+            messages.append(message)
+            summary.append(f'{count} of {peak} NIC(s) detected')
+
+        links = parse_nic_links(out_dict.get(node, ''))
+        slow = 0
+        for iface in interfaces:
+            message = _nic_link_problem(iface, links.get(iface), expected, node)
+            if message is None:
+                continue
+            slow += 1
+            items.append(_fail_item(f'{iface} speed', message))
+            messages.append(message)
+        if slow:
+            summary.append(f'{slow} of {count} NIC(s) not at {expected} Mb/s')
+
+        records[str(node)] = (
+            build_node_record('fail', items, '; '.join(summary))
+            if items
+            else _pass_record(f'{count} x {expected} Mb/s')
+        )
+    return records, messages
 
 
 def eval_pci_acs(out_dict):

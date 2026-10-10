@@ -173,5 +173,36 @@ class TestGetNicEthtoolStatsDict(unittest.TestCase):
         self.assertEqual(second_batch_cmds[1], 'true')
 
 
+class TestGetRdmaCapableDevicesDict(unittest.TestCase):
+    def test_lists_all_netdevs_in_one_exec(self):
+        mock_phdl = MagicMock()
+        mock_phdl.exec.return_value = {
+            'node1': 'enp1s0np0\nenp2s0np0\nenp1s0np0\n',
+            'node2': '',
+        }
+
+        result = linux_utils.get_rdma_capable_devices_dict(mock_phdl)
+
+        mock_phdl.exec.assert_called_once()
+        self.assertIn('/sys/class/infiniband/*/device/net/*', mock_phdl.exec.call_args.args[0])
+        self.assertEqual(result, {'node1': ['enp1s0np0', 'enp2s0np0'], 'node2': []})
+
+    def test_backend_nic_detection_uses_two_execs_for_any_cluster_size(self):
+        nodes = [f'node{i}' for i in range(16)]
+        lshw = '\n'.join(f'pci@0000:{i:02x}:00.0  eth{i}  network  BCM57608 Ethernet' for i in range(8))
+        netdevs = '\n'.join(f'eth{i}' for i in range(8))
+
+        def fake_exec(cmd):
+            return {node: lshw if 'lshw' in cmd else netdevs for node in nodes}
+
+        mock_phdl = MagicMock()
+        mock_phdl.exec.side_effect = fake_exec
+
+        result = linux_utils.get_backend_nic_dict(mock_phdl)
+
+        self.assertEqual(mock_phdl.exec.call_count, 2)
+        self.assertEqual(result['node15'], [f'eth{i}' for i in range(8)])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -25,6 +25,7 @@
       "pci_accelerators",
       "gpu_pcie",
       "nic_pcie",
+      "nic_link",
       "pci_acs",
       "dmesg_driver",
       "dmesg_reset"

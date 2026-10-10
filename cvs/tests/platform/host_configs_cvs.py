@@ -544,6 +544,49 @@ def test_check_be_nic_pcie_speed_width(orch, config_dict, host_res_dict, cluster
     update_test_result()
 
 
+def test_check_be_nic_link_speed(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
+    """
+    Verify the network link speed of every backend NIC on all nodes.
+
+    Reads 'nic_link_speed' (Mb/s, default 400000) and 'nic_link_interfaces'
+    (backend netdev names) from config_dict. Without 'nic_link_interfaces' the
+    backend NICs are auto-detected per node, and a node with fewer NICs than
+    another node fails. Reads /sys/class/net/<iface>/speed and fails for any
+    interface that is unreadable, down or not at the expected speed.
+    """
+    globals.error_list = []
+    log.info('Testcase check backend NIC link speed')
+    try:
+        expected = host_configs_rundeck.parse_nic_link_speed_setting(config_dict.get('nic_link_speed'))
+    except ValueError as exc:
+        fail_test(str(exc))
+        records = host_configs_rundeck.config_error_records(orch.hosts, 'nic_link_speed', str(exc))
+        _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.NIC_LINK, records)
+        update_test_result()
+        return
+
+    configured = config_dict.get('nic_link_interfaces')
+    configured = [configured] if isinstance(configured, str) else configured
+    configured = configured or []
+    with timed_stage(lifecycle, host_configs_rundeck.NIC_LINK):
+        if configured:
+            out_dict = orch.all.exec(host_configs_rundeck.nic_link_speed_cmd(configured))
+            nics_by_node = {node: list(configured) for node in orch.hosts}
+        else:
+            log.info('nic_link_interfaces not set, auto-detecting backend NICs')
+            nics_by_node = linux_utils.get_backend_nic_dict(orch.all)
+            for node in orch.hosts:
+                nics_by_node.setdefault(node, [])
+            union = [nic for nics in nics_by_node.values() for nic in nics]
+            out_dict = orch.all.exec(host_configs_rundeck.nic_link_speed_cmd(union))
+    records, messages = host_configs_rundeck.eval_nic_link_speed(
+        out_dict, nics_by_node, expected, compare_counts=not configured
+    )
+    _fail_messages(messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.NIC_LINK, records)
+    update_test_result()
+
+
 def test_check_pci_acs(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Verify PCIe ACS is disabled on all nodes.
