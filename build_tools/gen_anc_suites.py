@@ -135,14 +135,15 @@ def _prune_stale(subdir, keep_filenames):
 
 def _prune_stale_suite_dirs(keep_subdirs):
     '''
-    Remove orphaned generated suite directories under tests/anc/.
+    Remove orphaned generated suite files left by a renamed/removed suite.
 
     A renamed/removed suite (e.g. the old ``individual_items/``) leaves a whole
     directory behind that per-subdir _prune_stale never visits, because the loop
     only looks inside the subdirs it is currently generating. Sweep the ANC tests
-    root for any OTHER subdir whose suite file carries the generator marker and
-    delete the directory. Only marker-bearing dirs are removed, so hand-written
-    siblings (e.g. ``resources/``) and the install suite are never touched.
+    root for any OTHER subdir containing generator-marked .py files and remove
+    ONLY those files (plus the Python bytecode cache). The directory itself is
+    removed only once it is empty, so any hand-added sibling (a README, fixture,
+    or helper placed beside a generated suite) is preserved rather than erased.
     '''
     for name in sorted(os.listdir(ANC_TESTS_DIR)):
         if name in keep_subdirs:
@@ -153,15 +154,23 @@ def _prune_stale_suite_dirs(keep_subdirs):
         generated = [f for f in os.listdir(subdir) if f.endswith(".py") and _is_generated(os.path.join(subdir, f))]
         if not generated:
             continue
-        for f in os.listdir(subdir):
-            os.remove(os.path.join(subdir, f)) if os.path.isfile(os.path.join(subdir, f)) else None
+        for f in generated:
+            os.remove(os.path.join(subdir, f))
+        # Drop the bytecode cache for the files we just removed; it is never
+        # hand-maintained, so clearing it cannot destroy anything of value.
         pycache = os.path.join(subdir, "__pycache__")
         if os.path.isdir(pycache):
             for f in os.listdir(pycache):
                 os.remove(os.path.join(pycache, f))
             os.rmdir(pycache)
-        os.rmdir(subdir)
-        print(f"pruned stale suite dir {os.path.relpath(subdir, REPO_ROOT)}")
+        # Remove the directory only if nothing else remains; a leftover
+        # hand-added file keeps the dir (and is preserved) instead of crashing
+        # an unconditional rmdir.
+        if not os.listdir(subdir):
+            os.rmdir(subdir)
+            print(f"pruned stale suite dir {os.path.relpath(subdir, REPO_ROOT)}")
+        else:
+            print(f"pruned stale generated files in {os.path.relpath(subdir, REPO_ROOT)} (kept non-generated files)")
 
 
 # Specs carry only the non-derivable fields: the suite name (``anc_test_<subdir>``)
