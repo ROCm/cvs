@@ -13,7 +13,7 @@ def _sources(results):
 _RESULTS = {
     "_meta": {"cluster": "c1", "version": "1.4.9", "suite": "anc_test_cpu", "generated_at": "t0"},
     "groups": {
-        "cpu_sanity": {
+        "cpu_content_check": {
             "nodes": {
                 "n1": {"status": "pass", "items": [{"name": "a", "status": "pass"}]},
                 "n2": {"status": "pass", "items": []},
@@ -45,7 +45,7 @@ class TestStatusMatrixBuilder(unittest.TestCase):
 
     def test_groups_preserve_insertion_order(self):
         out = build_status_matrix_datasets(_sources(_RESULTS), {})
-        self.assertEqual(out["groups"], ["cpu_sanity", "hbm_lvl3", "gpu_content_check"])
+        self.assertEqual(out["groups"], ["cpu_content_check", "hbm_lvl3", "gpu_content_check"])
 
     def test_overall_status_fail_when_any_cell_fails(self):
         out = build_status_matrix_datasets(_sources(_RESULTS), {})
@@ -65,7 +65,7 @@ class TestStatusMatrixBuilder(unittest.TestCase):
         out = build_status_matrix_datasets(_sources(_RESULTS), {})
         grid = out["grid"]
         self.assertEqual(grid["n2"]["hbm_lvl3"]["status"], "fail")
-        self.assertEqual(grid["n1"]["cpu_sanity"]["status"], "pass")
+        self.assertEqual(grid["n1"]["cpu_content_check"]["status"], "pass")
         self.assertEqual(grid["n1"]["gpu_content_check"]["status"], "na")
 
     def test_missing_node_group_cell_defaults_na(self):
@@ -109,7 +109,7 @@ class TestStatusMatrixBuilder(unittest.TestCase):
 
     def test_verdict_only_cells_have_empty_performance_fields(self):
         out = build_status_matrix_datasets(_sources(_RESULTS), {})
-        cell = out["grid"]["n1"]["cpu_sanity"]
+        cell = out["grid"]["n1"]["cpu_content_check"]
         self.assertEqual(cell["metrics"], [])
         self.assertEqual(cell["series"], [])
         self.assertEqual(cell["heatmaps"], [])

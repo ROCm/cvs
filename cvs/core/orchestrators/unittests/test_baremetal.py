@@ -96,7 +96,9 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch.all = MagicMock()
         orch.all.exec.return_value = {"10.0.0.1": "ok", "10.0.0.2": "ok"}
         result = orch.exec("ls", timeout=5)
-        orch.all.exec.assert_called_once_with("ls", timeout=5, detailed=False, print_console=True)
+        orch.all.exec.assert_called_once_with(
+            "ls", timeout=5, detailed=False, print_console=True, inactivity_timeout=None
+        )
         self.assertEqual(result, {"10.0.0.1": "ok", "10.0.0.2": "ok"})
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
@@ -179,6 +181,26 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         # ...and the kwarg reached the subset handle.
         subset_handle = mock_pssh.return_value
         self.assertIs(subset_handle.exec.call_args.kwargs["print_console"], False)
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_exec_forwards_inactivity_timeout_to_all(self, _mock_pssh):
+        """inactivity_timeout must reach the pssh handle (ANC relies on it: abort a
+        group only after N seconds with no new output, no total wall-clock cap)."""
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        orch.exec("sudo ./anc.py -g hbm_lvl1", inactivity_timeout=900)
+        self.assertEqual(orch.all.exec.call_args.kwargs["inactivity_timeout"], 900)
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_exec_forwards_inactivity_timeout_to_host_subset(self, mock_pssh):
+        """The subset branch builds its own Pssh; inactivity_timeout must forward too."""
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        mock_pssh.reset_mock()
+        orch.exec("sudo ./anc.py -g hbm_lvl1", hosts=["10.0.0.2"], inactivity_timeout=900)
+        orch.all.exec.assert_not_called()
+        subset_handle = mock_pssh.return_value
+        self.assertEqual(subset_handle.exec.call_args.kwargs["inactivity_timeout"], 900)
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_on_head_forwards_print_console_false(self, _mock_pssh):

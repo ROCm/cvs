@@ -14,43 +14,72 @@ This directory packages the ANC validation suite as CVS tests.
 | --- | --- | --- |
 | `anc_installation.py` | `cvs run anc_installation` | Download and install the ANC tool on every node. |
 
-**Group suites** — there are exactly two group suites, `anc_test_cpu` and
-`anc_test_gpu` (in the `cpu/` and `gpu/` subfolders). Each holds one
-`test_<group>` **function** per ANC group. Running the whole suite runs every
-group in that set; naming a function runs just that group. Each function ensures
-ANC is installed and ROCm ldconfig is fixed first (session-cached via
-`anc_lib.ensure_anc_ready`, so a full-suite run pays the setup cost once). The
-two files are **generated** from the single source `anc_lib.CPU_GROUPS` /
-`GPU_GROUPS`.
+**Group / item suites** — there are two group suites, `anc_test_cpu` and
+`anc_test_gpu` (in the `cpu/` and `gpu/` subfolders), plus per-family
+individual-item suites — `anc_test_computerocker`, `anc_test_memrocker`,
+`anc_test_oblex`, `anc_test_gemm`, `anc_test_xgmi`, `anc_test_ualink`,
+`anc_test_pcie`, `anc_test_babel`, and `anc_test_basic` (a catch-all for one-off
+items) — each in its own subfolder. Each holds one `test_<name>` **function**
+per ANC group (cpu/gpu) or individual item (the family suites). Running the
+whole suite runs every function in that set; naming a function runs just that
+one. Each function ensures ANC is installed and ROCm ldconfig is fixed first
+(session-cached via `anc_lib.ensure_anc_ready`, so a full-suite run pays the
+setup cost once). The suite files are **generated** from the single source in
+`anc_lib` — `CPU_GROUPS` / `GPU_GROUPS` and the per-family item lists
+(`COMPUTEROCKER_ITEMS`, `MEMROCKER_ITEMS`, `OBLEX_ITEMS`, `GEMM_ITEMS`,
+`XGMI_ITEMS`, `UALINK_ITEMS`, `PCIE_ITEMS`, `BABEL_ITEMS`, `BASIC_ITEMS`). The
+DIMM/UMC groups live in `anc_test_cpu` because ANC reports them under the CPU
+device. Groups run as `anc.py -g <group>`; individual items run as
+`anc.py -i <item>`.
 
-> Generated files — do NOT hand-edit. To add/remove a group, edit the lists in
-> `cvs/lib/anc_lib.py` and run `make gen-anc-suites` (wraps
-> `build_tools/gen_anc_suites.py`), which rewrites the two suite files and
-> prunes stale ones. Then reinstall (`make install` / `pip install .`).
+> Generated files — do NOT hand-edit. To add/remove a group or item, edit the
+> lists in `cvs/lib/anc_lib.py` and run `make gen-anc-suites` (wraps
+> `build_tools/gen_anc_suites.py`), which rewrites the suite files and prunes
+> stale ones. Then reinstall (`make install` / `pip install .`).
 
 ```bash
 # run every CPU group (each group its own test + log dir)
 cvs run anc_test_cpu                  --cluster_file <c.json> --config_file <cfg.json>
 # run a single group by its function name
-cvs run anc_test_cpu test_cpu_all     --cluster_file <c.json> --config_file <cfg.json>
+cvs run anc_test_cpu test_cpu_mfg_l10 --cluster_file <c.json> --config_file <cfg.json>
+cvs run anc_test_cpu test_dimm_content_check --cluster_file <c.json> --config_file <cfg.json>
 cvs run anc_test_gpu test_hbm_lvl1    --cluster_file <c.json> --config_file <cfg.json>
-# list the per-group functions in a suite
+# run a whole item family, or just one item from it
+cvs run anc_test_gemm                 --cluster_file <c.json> --config_file <cfg.json>
+cvs run anc_test_gemm test_gemm_fp8_trig --cluster_file <c.json> --config_file <cfg.json>
+cvs run anc_test_basic test_no_op     --cluster_file <c.json> --config_file <cfg.json>
+# list the per-group/per-item functions in a suite
 cvs list anc_test_cpu
+cvs list anc_test_computerocker
 ```
 
-- CPU (`anc_test_cpu`): `test_ampttk_full`, `test_cachewalker_full`,
-  `test_cpu_all`, `test_cpu_content_check`, `test_cpu_mfg_l10`,
-  `test_cpu_sanity`, `test_difect_full`, `test_fpdeluge_full`,
-  `test_hdrt_full`, `test_maxcorestim_full`, `test_memtest_full`,
-  `test_miidct_full`, `test_mithac_full`, `test_weighted_sanity`
+- CPU (`anc_test_cpu`): `test_cpu_content_check`, `test_cpu_mfg_l10`,
+  `test_weighted_sanity`, `test_dimm_content_check`, `test_dimm_mfg_l10`,
+  `test_dimm_weighted_sanity`
 - GPU (`anc_test_gpu`): `test_gpu_content_check`, `test_gpu_mfg_l10`,
   `test_hbm_lvl1` … `test_hbm_lvl5`
+- Item families — one `test_<item>` per ANC item, grouped by tool/subsystem:
+  `anc_test_computerocker` (24), `anc_test_memrocker` (10), `anc_test_oblex`
+  (8), `anc_test_gemm` (3), `anc_test_xgmi` (3), `anc_test_ualink` (3),
+  `anc_test_pcie` (3), `anc_test_babel` (2), and `anc_test_basic` (18 one-off
+  items, e.g. `test_ampttk`, `test_hdrt`, `test_no_op`, `test_sdma_bidi_peak`).
+  See the per-family lists in `cvs/lib/anc_lib.py`, or run
+  `cvs list anc_test_<family>`.
 
 Shared logic — package install by archive flavour (deb/rpm/tar), version check,
-the session-cached setup guard `ensure_anc_ready`, ldconfig fix, group
-execution, and artifact collection — lives in `cvs/lib/anc_lib.py` (group sets
-are `CPU_GROUPS` / `GPU_GROUPS`). Shared pytest fixtures live in this directory's
-`conftest.py` and apply to the `cpu/` and `gpu/` subfolders too. ANC is invoked
+the session-cached setup guard `ensure_anc_ready`, ldconfig fix, group/item
+execution (`run_anc_groups` / `run_anc_items`, both thin wrappers over the
+shared `run_anc_selection` core), and artifact collection — lives in
+`cvs/lib/anc_lib.py` (group sets are `CPU_GROUPS` / `GPU_GROUPS` with the
+DIMM/UMC groups part of `CPU_GROUPS`; individual items are in the per-family
+lists above).
+Shared pytest fixtures live in this directory's `conftest.py` and apply to the
+`cpu/`, `gpu/` and all per-family item subfolders too; the `orch` execution
+handle itself comes from the repo-root `tests/conftest.py`. ANC runs on
+**baremetal only** — the autouse `_skip_anc_on_container` fixture in this
+directory's `conftest.py` resolves the orchestrator type from config and
+`pytest.skip`s every ANC test before `orch` is built, so a container run omits
+ANC (without launching a container) rather than failing. ANC is invoked
 from its installed location `<prefix>/anc/anc.py` — `<prefix>` is `/opt/amdtools`
 by default, or, for **tar** installs only, the relocated `ANC_INSTALL_PATH`
 (deb/rpm always use `/opt/amdtools`).
@@ -74,7 +103,7 @@ or fail is read from each run's `console.log` final `ANC_SUCCESS [0]`.
   make install
   source .cvs_venv/bin/activate
   cvs --version          # sanity check
-  cvs list               # anc_installation, anc_test_cpu, anc_test_gpu
+  cvs list               # anc_installation, anc_test_cpu, anc_test_gpu, anc_test_<family> (gemm, xgmi, basic, ...)
   ```
 
   See the repository root `README.md` for full build/setup details.
@@ -131,7 +160,7 @@ The ANC config lives at `cvs/input/config_file/anc/anc_config.json`:
         "description": "AMD Node Check",
         "inactivity_timeout": 900,
         "install_timeout": 1800,
-        "anc_version": "1.4.9",
+        "anc_version": "1.7.3",
         "anc_release_url": "<changeme>",
         "ANC_INSTALL_PATH": "",
         "print_all_to_console": "True",
@@ -162,8 +191,8 @@ HTML/log reports all land under this run's `run_dir`
 (`<workspace>/cvs_runs/<run_id>/`, resolved by `RunLayout` — the same directory
 `cvs run` writes `--html`/`--log-file` into). The collected log tree is laid down
 at `<run_dir>/anc_logs/<node>/<test_name>/<timestamp>` (`<node>` → the node's
-`<ip>_<hostname>` label, `<test_name>` → the group's test name, `<timestamp>` →
-per-run stamp). To send the HTML report or log file elsewhere, pass `--html` /
+`<ip>_<hostname>` label, `<test_name>` → the group's or item's test name,
+`<timestamp>` → per-run stamp). To send the HTML report or log file elsewhere, pass `--html` /
 `--log-file` on the command line; use `--no-html` / `--no-log-file` to suppress
 them.
 
@@ -201,9 +230,17 @@ If you do not want to run `anc_installation`, install ANC directly on the target
 node. The examples below use `/opt/amdtools` as the prefix; substitute your
 `ANC_INSTALL_PATH` for a relocated tar install.
 
-**Legacy (≤1.4.x) tar** — the outer archive holds two inner `anc-tool` and
-`anc-content` tarballs; extract both into the prefix so the layout matches the
-deb/rpm packages:
+> **Install a version that satisfies the configured `anc_version` minimum**
+> (shipped default `1.7.3`). The two blocks below illustrate the two packaging
+> **layouts** — the legacy `≤1.4.x` two-tarball form and the direct `1.5.0+`
+> single-tree form; the legacy `1.4.9` URL is format-only (it is below the
+> default minimum, so a suite run would reinstall over it). Use the direct
+> `1.7.3` command for a current manual install, or point the URL at any release
+> `≥ anc_version`.
+
+**Legacy (≤1.4.x) tar — packaging-format example only** — the outer archive
+holds two inner `anc-tool` and `anc-content` tarballs; extract both into the
+prefix so the layout matches the deb/rpm packages:
 
 ```bash
 STAGE=$(mktemp -d)              # private staging dir, only for the download/unpack
@@ -222,15 +259,16 @@ sudo tar -xzf anc-tool*.tar.gz    -C /opt/amdtools
 sudo tar -xzf anc-content*.tar.gz -C /opt/amdtools
 ```
 
-**Direct (1.5.0+) tar** — the `.tar.gz` *is* the tree (no inner archives); a
-single untar into the prefix lays down `anc/` and the tool folders:
+**Direct (1.5.0+) tar — current install** — the `.tar.gz` *is* the tree (no
+inner archives); a single untar into the prefix lays down `anc/` and the tool
+folders. This `1.7.3` command satisfies the shipped `anc_version` default:
 
 ```bash
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 cd "$STAGE"
 
-wget -q "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.5.5/anc-release-helios-nda-1.5.5-x86_64.tar.gz" \
+wget -q "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.7.3/anc-release-helios-nda-1.7.3-x86_64.tar.gz" \
   -O anc.tar.gz
 sudo mkdir -p /opt/amdtools
 sudo tar -xzf anc.tar.gz -C /opt/amdtools
@@ -250,25 +288,36 @@ delegates to `cvs/lib/anc_lib.py`).
 
 ## 4. Run the ANC validation tests
 
-Each group function first ensures ANC is installed and ROCm ldconfig is fixed
-(session-cached, so it happens once per run), then runs its group on **all**
-nodes in parallel with a single `anc.py -g <group>` invocation.
+Each group/item function first ensures ANC is installed and ROCm ldconfig is
+fixed (session-cached, so it happens once per run), then runs its group on
+**all** nodes in parallel with a single `anc.py -g <group>` invocation (the
+`anc_test_<family>` item functions run `anc.py -i <item>` instead).
 
-**Single group** — name the group's `test_<group>` function on its suite:
+**Single group / item** — name the `test_<group>` (or `test_<item>`) function on
+its suite:
 
 ```bash
-cvs run anc_test_cpu test_cpu_all \
+cvs run anc_test_cpu test_cpu_mfg_l10 \
+  --cluster_file cvs/input/cluster_file/cluster.json \
+  --config_file cvs/input/config_file/anc/anc_config.json
+
+cvs run anc_test_cpu test_dimm_content_check \
   --cluster_file cvs/input/cluster_file/cluster.json \
   --config_file cvs/input/config_file/anc/anc_config.json
 
 cvs run anc_test_gpu test_hbm_lvl1 \
   --cluster_file cvs/input/cluster_file/cluster.json \
   --config_file cvs/input/config_file/anc/anc_config.json
+
+cvs run anc_test_gemm test_gemm_fp8_trig \
+  --cluster_file cvs/input/cluster_file/cluster.json \
+  --config_file cvs/input/config_file/anc/anc_config.json
 ```
 
-**All groups in a set** — run the whole suite. ANC install + ldconfig happen
-once (session-cached), then every group in the CPU (or GPU) set runs as its own
-test with its own log dir:
+**All groups / items in a set** — run the whole suite. ANC install + ldconfig
+happen once (session-cached), then every group/item in that suite (CPU, GPU, or
+an item family) runs as its own test with its own log dir (the CPU suite covers
+the DIMM/UMC groups too):
 
 ```bash
 cvs run anc_test_cpu \
@@ -278,14 +327,22 @@ cvs run anc_test_cpu \
 cvs run anc_test_gpu \
   --cluster_file cvs/input/cluster_file/cluster.json \
   --config_file cvs/input/config_file/anc/anc_config.json
+
+cvs run anc_test_computerocker \
+  --cluster_file cvs/input/cluster_file/cluster.json \
+  --config_file cvs/input/config_file/anc/anc_config.json
 ```
 
-The exact group lists are defined by `CPU_GROUPS` / `GPU_GROUPS` in
-`cvs/lib/anc_lib.py` (see the full list in the "Group suites" section above). To
-run a subset, name several functions:
+The exact lists are defined by `CPU_GROUPS` / `GPU_GROUPS` and the per-family
+item lists in `cvs/lib/anc_lib.py` (see the "Group / item suites" section
+above). To run a subset, name several functions:
 
 ```bash
-cvs run anc_test_cpu test_cpu_sanity test_memtest_full \
+cvs run anc_test_cpu test_cpu_content_check test_dimm_content_check \
+  --cluster_file cvs/input/cluster_file/cluster.json \
+  --config_file cvs/input/config_file/anc/anc_config.json
+
+cvs run anc_test_basic test_ampttk test_hdrt test_no_op \
   --cluster_file cvs/input/cluster_file/cluster.json \
   --config_file cvs/input/config_file/anc/anc_config.json
 ```
@@ -330,8 +387,8 @@ this fixed layout:
   local timestamp.
 - `anc_logs/<ip>_<hostname>/<test_name>/<timestamp>` is the fixed structure CVS
   lays down under `run_dir`: `<ip>_<hostname>` is the per-node label,
-  `<test_name>` is the group's test name (e.g. `test_cpu_all`), and `<timestamp>`
-  keeps repeated runs separate.
+  `<test_name>` is the group's or item's test name (e.g. `test_cpu_mfg_l10` or
+  `test_gemm_fp8_trig`), and `<timestamp>` keeps repeated runs separate.
 
 Collected files:
 

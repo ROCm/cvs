@@ -6,21 +6,26 @@ publication and does not imply publication or any waiver of confidentiality.
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 
-Generate the two ANC group suite files from the single source of truth
-(cvs.lib.anc_lib.CPU_GROUPS / GPU_GROUPS).
+Generate the ANC suite files from the single source of truth in
+cvs.lib.anc_lib: the group sets (CPU_GROUPS / GPU_GROUPS) and the per-family
+individual-item lists (COMPUTEROCKER_ITEMS, MEMROCKER_ITEMS, OBLEX_ITEMS,
+GEMM_ITEMS, XGMI_ITEMS, UALINK_ITEMS, PCIE_ITEMS, BABEL_ITEMS, BASIC_ITEMS).
 
-There is one committed suite file per kind — ``cpu/anc_test_cpu.py`` and
-``gpu/anc_test_gpu.py`` — each holding one ``test_<group>`` function per ANC
-group. So each kind is a single suite in ``cvs list`` (``anc_test_cpu`` /
-``anc_test_gpu``); running the whole suite runs every group, and a single group
-is runnable via ``cvs run anc_test_cpu test_<group>``. The files must NOT be
-hand-edited — edit the group lists in anc_lib.py and re-run this generator:
+There is one committed suite file per kind — e.g. ``cpu/anc_test_cpu.py``,
+``gpu/anc_test_gpu.py``, ``computerocker/anc_test_computerocker.py``,
+``basic/anc_test_basic.py`` — each holding one ``test_<name>`` function per ANC
+group (cpu/gpu) or individual item (the family suites). So each kind is a single
+suite in ``cvs list`` (``anc_test_cpu`` / ``anc_test_gpu`` /
+``anc_test_computerocker`` / ...); running the whole suite runs every group/item
+in it, and a single one is runnable via ``cvs run anc_test_cpu test_<group>`` /
+``cvs run anc_test_gemm test_<item>``. The files must NOT be hand-edited — edit
+the lists in anc_lib.py and re-run this generator:
 
     make gen-anc-suites        # or: python build_tools/gen_anc_suites.py
 
-The generator is idempotent: it (re)writes exactly the two suite files for the
-current group lists and prunes stale generated files (e.g. the old per-group
-files) that it no longer produces.
+The generator is idempotent: it (re)writes exactly the suite files for the
+current lists and prunes stale generated files (e.g. the old per-group files)
+that it no longer produces.
 '''
 
 import os
@@ -32,8 +37,17 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from cvs.lib.anc_lib import (  # noqa: E402
+    BABEL_ITEMS,
+    BASIC_ITEMS,
+    COMPUTEROCKER_ITEMS,
     CPU_GROUPS,
+    GEMM_ITEMS,
     GPU_GROUPS,
+    MEMROCKER_ITEMS,
+    OBLEX_ITEMS,
+    PCIE_ITEMS,
+    UALINK_ITEMS,
+    XGMI_ITEMS,
 )
 
 ANC_TESTS_DIR = os.path.join(REPO_ROOT, "cvs", "tests", "anc")
@@ -50,18 +64,18 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 
 {marker}
-Do NOT edit by hand. ANC {kind_upper} group suite: one ``test_<group>``
-function per ANC {kind} group.
+Do NOT edit by hand. ANC {title} suite: one ``test_<{unit}>``
+function per ANC {unit}.
 
-Edit CPU_GROUPS / GPU_GROUPS in cvs/lib/anc_lib.py and re-run
+Edit the group/item lists in cvs/lib/anc_lib.py and re-run
 ``make gen-anc-suites`` to regenerate. Each function ensures ANC is installed
 and ROCm ldconfig is fixed (session-cached via anc_lib.ensure_anc_ready), then
-runs its one group; logs go to
-{{runner_log_folder}}/anc_logs/<node>/test_<group>/<timestamp>.
+runs its one {unit}; logs go to
+{{runner_log_folder}}/anc_logs/<node>/test_<{unit}>/<timestamp>.
 
-Run every {kind} group:  cvs run anc_test_{kind} ...
-Run a single group:      cvs run anc_test_{kind} test_<group> ...
-List the groups:         cvs list anc_test_{kind}
+Run every {unit}:    cvs run {suite} ...
+Run a single {unit}: cvs run {suite} test_<{unit}> ...
+List the {unit}s:    cvs list {suite}
 \'\'\'
 
 from cvs.lib import anc_lib
@@ -70,15 +84,15 @@ from cvs.lib import anc_lib
 _FUNC_TEMPLATE = '''\
 
 
-def test_{group}(phdl, cluster_dict, config_dict, request):
-    \'\'\'Run the ANC group "{group}".\'\'\'
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
-    anc_lib.run_anc_groups(
-        phdl,
+def test_{name}(orch, cluster_dict, config_dict, request):
+    \'\'\'Run the ANC {unit} "{name}".\'\'\'
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
+    anc_lib.{run_func}(
+        orch,
         cluster_dict,
         config_dict,
-        ["{group}"],
-        "test_{group}",
+        ["{name}"],
+        "test_{name}",
         request=request,
     )
 '''
@@ -86,7 +100,7 @@ def test_{group}(phdl, cluster_dict, config_dict, request):
 _INIT_TEMPLATE = '''\
 \'\'\'
 {marker}
-Package marker for the generated ANC {kind} group suite.
+Package marker for the generated ANC {title} suite.
 \'\'\'
 '''
 
@@ -97,43 +111,119 @@ def _write(path, content):
     print(f"wrote {os.path.relpath(path, REPO_ROOT)}")
 
 
+def _is_generated(path):
+    '''True when ``path`` is a .py file carrying this generator's marker.'''
+    try:
+        # Read the whole (tiny) file: the marker sits in the module docstring,
+        # past byte 360, so a small fixed read would miss it.
+        with open(path) as fh:
+            return GENERATED_MARKER in fh.read()
+    except OSError:
+        return False
+
+
 def _prune_stale(subdir, keep_filenames):
     '''Remove generated .py files in subdir not in keep_filenames.'''
     for name in os.listdir(subdir):
         if not name.endswith(".py") or name in keep_filenames:
             continue
         path = os.path.join(subdir, name)
-        try:
-            # Read the whole (tiny) file: the marker sits in the module
-            # docstring, past byte 360, so a small fixed read would miss it.
-            with open(path) as fh:
-                content = fh.read()
-        except OSError:
-            continue
-        if GENERATED_MARKER in content:
+        if _is_generated(path):
             os.remove(path)
             print(f"pruned {os.path.relpath(path, REPO_ROOT)}")
 
 
+def _prune_stale_suite_dirs(keep_subdirs):
+    '''
+    Remove orphaned generated suite files left by a renamed/removed suite.
+
+    A renamed/removed suite (e.g. the old ``individual_items/``) leaves a whole
+    directory behind that per-subdir _prune_stale never visits, because the loop
+    only looks inside the subdirs it is currently generating. Sweep the ANC tests
+    root for any OTHER subdir containing generator-marked .py files and remove
+    ONLY those files (plus the Python bytecode cache). The directory itself is
+    removed only once it is empty, so any hand-added sibling (a README, fixture,
+    or helper placed beside a generated suite) is preserved rather than erased.
+    '''
+    for name in sorted(os.listdir(ANC_TESTS_DIR)):
+        if name in keep_subdirs:
+            continue
+        subdir = os.path.join(ANC_TESTS_DIR, name)
+        if not os.path.isdir(subdir):
+            continue
+        generated = [f for f in os.listdir(subdir) if f.endswith(".py") and _is_generated(os.path.join(subdir, f))]
+        if not generated:
+            continue
+        for f in generated:
+            os.remove(os.path.join(subdir, f))
+        # Drop the bytecode cache for the files we just removed; it is never
+        # hand-maintained, so clearing it cannot destroy anything of value.
+        pycache = os.path.join(subdir, "__pycache__")
+        if os.path.isdir(pycache):
+            for f in os.listdir(pycache):
+                os.remove(os.path.join(pycache, f))
+            os.rmdir(pycache)
+        # Remove the directory only if nothing else remains; a leftover
+        # hand-added file keeps the dir (and is preserved) instead of crashing
+        # an unconditional rmdir.
+        if not os.listdir(subdir):
+            os.rmdir(subdir)
+            print(f"pruned stale suite dir {os.path.relpath(subdir, REPO_ROOT)}")
+        else:
+            print(f"pruned stale generated files in {os.path.relpath(subdir, REPO_ROOT)} (kept non-generated files)")
+
+
+# Specs carry only the non-derivable fields: the suite name (``anc_test_<subdir>``)
+# and run entrypoint (``run_anc_<unit>s``) are computed in generate() rather than
+# stored, so a spec cannot drift into naming a file/entrypoint that disagrees with
+# its folder/unit. ``title`` is the lone free-text key because the CPU/GPU vs
+# "individual item" wording is not mechanically derivable from ``unit``.
+_SUITE_SPECS = (
+    {"subdir": "cpu", "names": CPU_GROUPS, "unit": "group", "title": "CPU group"},
+    {"subdir": "gpu", "names": GPU_GROUPS, "unit": "group", "title": "GPU group"},
+    {"subdir": "computerocker", "names": COMPUTEROCKER_ITEMS, "unit": "item", "title": "ComputeRocker item"},
+    {"subdir": "memrocker", "names": MEMROCKER_ITEMS, "unit": "item", "title": "MemRocker item"},
+    {"subdir": "oblex", "names": OBLEX_ITEMS, "unit": "item", "title": "Oblex item"},
+    {"subdir": "gemm", "names": GEMM_ITEMS, "unit": "item", "title": "GEMM item"},
+    {"subdir": "xgmi", "names": XGMI_ITEMS, "unit": "item", "title": "XGMI item"},
+    {"subdir": "ualink", "names": UALINK_ITEMS, "unit": "item", "title": "UALink item"},
+    {"subdir": "pcie", "names": PCIE_ITEMS, "unit": "item", "title": "PCIe item"},
+    {"subdir": "babel", "names": BABEL_ITEMS, "unit": "item", "title": "Babel item"},
+    {"subdir": "basic", "names": BASIC_ITEMS, "unit": "item", "title": "basic item"},
+)
+
+
 def generate():
-    for kind, groups in (("cpu", CPU_GROUPS), ("gpu", GPU_GROUPS)):
-        subdir = os.path.join(ANC_TESTS_DIR, kind)
+    for spec in _SUITE_SPECS:
+        unit = spec["unit"]
+        suite = f"anc_test_{spec['subdir']}"
+        run_func = f"run_anc_{unit}s"
+        subdir = os.path.join(ANC_TESTS_DIR, spec["subdir"])
         os.makedirs(subdir, exist_ok=True)
 
         _write(
             os.path.join(subdir, "__init__.py"),
-            _INIT_TEMPLATE.format(marker=GENERATED_MARKER, kind=kind),
+            _INIT_TEMPLATE.format(marker=GENERATED_MARKER, title=spec["title"]),
         )
 
-        suite_filename = f"anc_test_{kind}.py"
-        content = _FILE_HEADER.format(marker=GENERATED_MARKER, kind=kind, kind_upper=kind.upper())
-        for group in groups:
-            content += _FUNC_TEMPLATE.format(group=group)
+        suite_filename = f"{suite}.py"
+        content = _FILE_HEADER.format(
+            marker=GENERATED_MARKER,
+            title=spec["title"],
+            unit=unit,
+            suite=suite,
+        )
+        for name in spec["names"]:
+            content += _FUNC_TEMPLATE.format(name=name, unit=unit, run_func=run_func)
         _write(os.path.join(subdir, suite_filename), content)
 
         _prune_stale(subdir, {"__init__.py", suite_filename})
 
+    # Drop whole directories left behind by a renamed/removed suite (e.g. the old
+    # individual_items/), which the per-subdir prune above never visits.
+    _prune_stale_suite_dirs({spec["subdir"] for spec in _SUITE_SPECS})
+
 
 if __name__ == "__main__":
     generate()
-    print("ANC per-group suites generated.")
+    print("ANC suites generated.")
