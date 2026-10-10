@@ -7,6 +7,7 @@ from contextlib import contextmanager
 import pytest
 
 from cvs.lib import globals
+from cvs.lib.benchmark.aorta.aorta_rundeck import deck_cell_id, deck_results
 from cvs.lib.benchmark.aorta.aorta_thresholds import active_thresholds, threshold_verdicts
 from cvs.lib.report.artifacts import export_payload
 from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
@@ -221,6 +222,8 @@ def parse_results(aorta_job, lifecycle):
         )
         if lifecycle.benchmark_result is None:
             pytest.fail("Aorta aggregation produced no benchmark result")
+        lifecycle.deck_results.clear()
+        lifecycle.deck_results.update(deck_results(lifecycle.benchmark_result, deck_cell_id(config)))
         lifecycle.parser = parser
 
 

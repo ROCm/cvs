@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - RCCL perf, regression and pairwise report each bandwidth or dip check per collective, data type and message size, or pairwise phase and node, as a pytest sub-test. The HTML report expands each parent row into per-case pass/fail rows.
+- Aorta `aorta_single` and `aorta_distributed` write an Aorta Run Deck (`<suite>_html/aorta_run_deck.html` and `.json`) beside the pytest HTML report, with a run card showing each configured threshold's verdict from the threshold gate, a lifecycle timeline, a threshold gate matrix, per-rank time and ratio charts, and a full results table. Pass/fail gating is unchanged.
 
 ### Changed
 

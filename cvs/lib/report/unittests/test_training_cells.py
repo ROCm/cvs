@@ -8,6 +8,7 @@ from cvs.lib.report.training_cells import (
     _dimension_fields,
     build_training_cells,
     build_training_chart_series,
+    build_training_metric_charts,
     build_training_results_table,
     build_training_summaries,
     chart_x_labels,
@@ -87,6 +88,27 @@ def _jax_res():
 
 
 class TestGenericTrainingCells(unittest.TestCase):
+    def test_metric_charts_pass_through_and_merge(self):
+        raw = _jax_res()
+        first = next(iter(raw))
+        raw[first]["_metric_charts"] = {
+            "metrics": [],
+            "series": [{"group": "Per rank", "name": "Time"}],
+            "heatmaps": [],
+        }
+        cells = build_training_cells(_jax_config(), _jax_variant(), raw, {})
+        chart_cells = [cell for cell in cells if "metric_charts" in cell]
+        self.assertEqual(len(chart_cells), 1)
+        self.assertEqual(build_training_metric_charts(chart_cells)["series"][0]["group"], "Per rank")
+        self.assertTrue(any("metric_charts" not in cell for cell in cells))
+        self.assertEqual(
+            build_training_metric_charts([{"label": "other"}]), {"metrics": [], "series": [], "heatmaps": []}
+        )
+        second = dict(chart_cells[0], label="second")
+        merged = build_training_metric_charts([chart_cells[0], second])
+        self.assertEqual(merged["series"][0]["group"], f"{chart_cells[0]['label']} · Per rank")
+        self.assertEqual(merged["series"][1]["group"], "second · Per rank")
+
     def test_generic_dimensions_drive_cell_fields_and_subtitle(self):
         cells = build_training_cells(_jax_config(), _jax_variant(), _jax_res(), {})
         self.assertEqual(len(cells), 2)

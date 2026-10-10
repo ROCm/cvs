@@ -80,6 +80,12 @@ def _profile():
 
 
 class TestFlattenTrainingComboActuals(unittest.TestCase):
+    def test_existing_megatron_dataset_has_empty_metric_charts(self):
+        datasets = build_datasets(
+            "training_sweep", {"results": _train_res(), "variant": _variant(), "lifecycle_report": {}}, _profile()
+        )
+        self.assertEqual(datasets["metric_charts"], {"metrics": [], "series": [], "heatmaps": []})
+
     def test_last_list_value_and_skips_private_keys(self):
         actuals = flatten_training_combo_actuals(
             {
