@@ -32,6 +32,11 @@ _METADATA_FIELDS = frozenset(
         'tokenizer_id',
         'burstiness',
         'request_rate',
+        'spec_decode_acceptance_rate',
+        'spec_decode_acceptance_length',
+        'spec_decode_num_drafts',
+        'spec_decode_draft_tokens',
+        'spec_decode_accepted_tokens',
     }
 )
 
