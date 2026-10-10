@@ -3,6 +3,7 @@
 import json
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -12,8 +13,23 @@ import pytest
 from cvs.lib.benchmark.aorta.aorta_config_loader import AortaVariantConfig
 from cvs.lib.benchmark.aorta.aorta_job import AortaJob
 from cvs.lib.benchmark.aorta.unittests.fixtures import variant_dict
+from cvs.lib.report.benchmark_metric_registry import benchmark_metric_rows_for_nodeid
 from cvs.parsers.schemas import ParseResult, ParseStatus
 from cvs.tests.benchmark.aorta import _common
+
+
+class _RecordingSubtests:
+    def __init__(self):
+        self.outcomes = []
+
+    @contextmanager
+    def test(self, msg=None, **kwargs):
+        try:
+            yield
+        except pytest.fail.Exception as exc:
+            self.outcomes.append((msg, kwargs, str(exc)))
+        else:
+            self.outcomes.append((msg, kwargs, None))
 
 
 class TestAortaStages(unittest.TestCase):
@@ -29,6 +45,7 @@ class TestAortaStages(unittest.TestCase):
         self.lifecycle = SimpleNamespace(
             failed=False, torn_down=False, container_started=False, benchmark_result=None, parser=None
         )
+        self.subtests = _RecordingSubtests()
         trace_dir = Path(self.tmp.name) / "torch_profiler"
         (trace_dir / "rank0").mkdir(parents=True)
         (trace_dir / "rank0/trace.json").write_text(
@@ -39,9 +56,28 @@ class TestAortaStages(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+    def _request(self, test_name):
+        node = SimpleNamespace(nodeid=f"{self.id()}::{test_name}", stash={}, user_properties=[])
+        return SimpleNamespace(node=node)
+
     def test_real_parsers_accept_job_and_report_preserves_metrics(self):
+        request = self._request("test_validate_thresholds")
         _common.parse_results(self.job, self.lifecycle)
-        _common.validate_thresholds(self.job, self.lifecycle)
+        _common.validate_thresholds(self.job, self.lifecycle, request, self.subtests)
+        self.assertEqual(
+            self.subtests.outcomes,
+            [
+                ("threshold", {"metric": "max_avg_iteration_ms"}, None),
+                ("threshold", {"metric": "min_compute_ratio"}, None),
+            ],
+        )
+        self.assertEqual(
+            request.node.user_properties,
+            [
+                ("cvs_aorta_subtest", "[threshold] (metric=max_avg_iteration_ms): passed"),
+                ("cvs_aorta_subtest", "[threshold] (metric=min_compute_ratio): passed"),
+            ],
+        )
         _common.generate_report(self.job, self.lifecycle)
         report = json.loads(self.job.get_artifact("report").read_text())
         self.assertEqual(report["status"], "completed")
@@ -50,14 +86,112 @@ class TestAortaStages(unittest.TestCase):
         self.assertGreater(report["performance"]["avg_compute_ratio"], 0)
 
     def test_threshold_failure_still_generates_report(self):
+        request = self._request("test_validate_thresholds")
         _common.parse_results(self.job, self.lifecycle)
         self.job.config.thresholds = {"expected_results": {"max_avg_iteration_ms": 0}}
         with self.assertRaises(pytest.fail.Exception):
-            _common.validate_thresholds(self.job, self.lifecycle)
+            _common.validate_thresholds(self.job, self.lifecycle, request, self.subtests)
+        self.assertEqual(len(self.subtests.outcomes), 1)
+        self.assertEqual(self.subtests.outcomes[0][:2], ("threshold", {"metric": "max_avg_iteration_ms"}))
+        self.assertIn("Average iteration time", self.subtests.outcomes[0][2])
         self.assertTrue(self.lifecycle.failed)
         _common.generate_report(self.job, self.lifecycle)
         report = json.loads(self.job.get_artifact("report").read_text())
         self.assertFalse(report["validation_passed"])
+
+    def test_each_threshold_reports_its_own_subtest(self):
+        request = self._request("test_validate_thresholds")
+        self.job.config.thresholds = {
+            "expected_results": {"max_avg_iteration_ms": 0, "min_compute_ratio": 0.01, "min_overlap_ratio": None}
+        }
+        _common.parse_results(self.job, self.lifecycle)
+        with self.assertRaisesRegex(pytest.fail.Exception, "Average iteration time"):
+            _common.validate_thresholds(self.job, self.lifecycle, request, self.subtests)
+        self.assertEqual(len(self.subtests.outcomes), 2)
+        self.assertEqual(
+            [item[1]["metric"] for item in self.subtests.outcomes], ["max_avg_iteration_ms", "min_compute_ratio"]
+        )
+        self.assertIn("Average iteration time", self.subtests.outcomes[0][2])
+        self.assertIsNone(self.subtests.outcomes[1][2])
+        self.assertTrue(self.lifecycle.failed)
+        rows = benchmark_metric_rows_for_nodeid(request.node.nodeid)
+        self.assertEqual(
+            [row["label"] for row in rows],
+            ["[threshold] (metric=max_avg_iteration_ms)", "[threshold] (metric=min_compute_ratio)"],
+        )
+        self.assertEqual([row["status"] for row in rows], ["fail", "pass"])
+        self.assertEqual(rows[0]["spec"], {"kind": "max", "value": 0})
+        self.assertTrue(request.node.user_properties[0][1].endswith(": failed"))
+        self.assertTrue(request.node.user_properties[1][1].endswith(": passed"))
+
+    def test_parser_exception_escapes_before_any_subtest(self):
+        request = self._request("test_validate_thresholds")
+        _common.parse_results(self.job, self.lifecycle)
+        with patch.object(self.lifecycle.parser, "validate_thresholds", side_effect=RuntimeError("parser broke")):
+            with self.assertRaisesRegex(RuntimeError, "parser broke"):
+                _common.validate_thresholds(self.job, self.lifecycle, request, self.subtests)
+        self.assertEqual(self.subtests.outcomes, [])
+        self.assertTrue(self.lifecycle.failed)
+        self.assertEqual(benchmark_metric_rows_for_nodeid(request.node.nodeid), [])
+
+    def test_disabled_thresholds_emit_no_subtests(self):
+        request = self._request("test_validate_thresholds")
+        self.job.config.enforce_thresholds = False
+        with self.assertRaises(pytest.skip.Exception):
+            _common.validate_thresholds(self.job, self.lifecycle, request, self.subtests)
+        self.assertEqual(self.subtests.outcomes, [])
+        self.assertEqual(benchmark_metric_rows_for_nodeid(request.node.nodeid), [])
+        self.assertEqual(request.node.user_properties, [])
+        self.assertFalse(self.lifecycle.failed)
+
+    def test_trace_collection_reports_each_attempted_host(self):
+        request = self._request("test_collect_traces")
+        self.job.hosts = ["node-a", "node-b", "node-c"]
+        self.job.started = True
+
+        def collect():
+            self.job.trace_trees = {"node-a": ["t"]}
+            self.job.collection_errors = {"node-b": "download failed"}
+
+        with patch.object(self.job, "collect_traces", side_effect=collect), patch.object(self.job, "collect_logs"):
+            with self.assertRaisesRegex(pytest.fail.Exception, "Trace collection on node-b: download failed"):
+                _common.collect_traces(self.job, self.lifecycle, request, self.subtests)
+        self.assertEqual([item[1]["host"] for item in self.subtests.outcomes], ["node-a", "node-b"])
+        self.assertIsNone(self.subtests.outcomes[0][2])
+        self.assertIn("Trace collection on node-b: download failed", self.subtests.outcomes[1][2])
+        rows = benchmark_metric_rows_for_nodeid(request.node.nodeid)
+        self.assertEqual([row["node"] for row in rows], ["node-a", "node-b"])
+        self.assertEqual(
+            [row["label"] for row in rows],
+            ["[trace collection] (host=node-a)", "[trace collection] (host=node-b)"],
+        )
+        self.assertTrue(self.lifecycle.failed)
+
+    def test_single_host_trace_collection_passes_one_subtest(self):
+        request = self._request("test_collect_traces")
+        self.job.started = True
+
+        def collect():
+            self.job.trace_trees = {"node-a": ["t"]}
+
+        with patch.object(self.job, "collect_traces", side_effect=collect), patch.object(self.job, "collect_logs"):
+            _common.collect_traces(self.job, self.lifecycle, request, self.subtests)
+        self.assertEqual(self.subtests.outcomes, [("trace collection", {"host": "node-a"}, None)])
+        self.assertFalse(self.lifecycle.failed)
+
+    def test_missing_trace_artifact_fails_without_host_subtest_failure(self):
+        request = self._request("test_collect_traces")
+        self.job.started = True
+        self.job.artifacts.pop("torch_traces")
+
+        def collect():
+            self.job.trace_trees = {"node-a": ["t"]}
+
+        with patch.object(self.job, "collect_traces", side_effect=collect), patch.object(self.job, "collect_logs"):
+            with self.assertRaisesRegex(pytest.fail.Exception, "No fresh torch_traces artifact"):
+                _common.collect_traces(self.job, self.lifecycle, request, self.subtests)
+        self.assertEqual(self.subtests.outcomes, [("trace collection", {"host": "node-a"}, None)])
+        self.assertTrue(self.lifecycle.failed)
 
     def test_failed_distributed_run_uses_raw_traces_even_with_excel_reports(self):
         self.job.hosts = ["node-a", "node-b"]

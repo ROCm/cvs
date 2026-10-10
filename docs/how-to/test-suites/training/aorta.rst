@@ -196,5 +196,12 @@ RCCL logs are also downloaded. On bare metal over SSH, CVS copies these files fr
 node, so no shared filesystem with the CVS machine is required. Under SPUR or Slurm, CVS
 reads them from ``aorta_path`` on shared storage; see :ref:`aorta-spur-slurm`.
 
+Threshold validation reports each configured threshold as a pytest sub-test
+(``[threshold] (metric=<key>)``), and trace collection reports each node it collected
+from (``[trace collection] (host=<node>)``). In the HTML report, expand the
+``test_validate_thresholds`` or ``test_collect_traces`` row to see one row per sub-test.
+A failed sub-test also fails its parent test, so dependent stages are gated and
+``validation_passed`` is false.
+
 Calibrate the sample thresholds for your hardware, node count and workload. Set
 ``enforce_thresholds: false`` to record metrics without threshold assertions.

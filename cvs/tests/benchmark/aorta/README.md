@@ -69,6 +69,13 @@ the previous gfx942 starting values; calibrate them for your hardware and worklo
 `enforce_thresholds: false` for measurement without threshold assertions. A run with no usable
 metrics fails parsing.
 
+`test_validate_thresholds` reports each configured threshold as its own pytest sub-test
+(`[threshold] (metric=<key>)`), and `test_collect_traces` reports each node it collected
+from (`[trace collection] (host=<node>)`). In the HTML report, expand the parent row to
+see one row per sub-test; the JUnit XML lists them as `cvs_aorta_subtest` properties of
+the parent test case. A failed sub-test also fails its parent stage, so later stages
+are gated and `validation_passed` is false as before.
+
 `aorta_benchmark_report.json` retains cluster, configuration, performance, and per-rank
 summary fields. It also records execution status, validation status and trace-collection
 errors. Benchmark and RCCL logs are downloaded alongside the report. Surviving nodes' traces
