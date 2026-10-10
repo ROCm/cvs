@@ -5,6 +5,9 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import shlex
+import uuid
+
 from cvs.core.orchestrators.base import Orchestrator
 from cvs.core.scheduler import is_managed_compute
 from cvs.lib.parallel.config import ParallelConfig
@@ -240,6 +243,10 @@ class BaremetalOrchestrator(Orchestrator):
         """
         Build MPI command string for distributed execution.
 
+        Writes the hostfile to a new private temp file on the head node. The
+        returned command removes that file when its shell exits, including on a
+        hangup, interrupt, or termination, so run it once.
+
         Args:
             rank_cmd: The command to execute on each MPI rank
             mpi_hosts: List of host IPs/names for MPI hostfile
@@ -250,32 +257,49 @@ class BaremetalOrchestrator(Orchestrator):
             no_of_global_ranks: Total number of MPI ranks (optional, defaults to len(mpi_hosts) * ranks_per_host)
 
         Returns:
-            Full MPI command string
+            Full MPI command string, exiting with mpirun's status
+
+        Raises:
+            ValueError: If mpi_hosts is empty
+            RuntimeError: If the head node cannot create the hostfile
         """
+        if not mpi_hosts:
+            raise ValueError("build_mpi_cmd needs at least one host in mpi_hosts")
+
         # Create MPI hostfile
         host_file_params = ''
         for host in mpi_hosts:
             host_file_params += f'{host} slots={ranks_per_host}\n'
 
-        # Create hostfile on head node. Both the removal and the write use the
-        # same sudo_prefix() so a hostfile left root-owned by a prior run (when
-        # sudo was needed) can't cause an unprivileged write here to fail
-        # silently against a stale file -- the exit codes are also checked so a
-        # write failure surfaces immediately instead of launching MPI against a
-        # leftover hostfile.
-        sudo_prefix = self.sudo_prefix()
-
-        cmd = f'{sudo_prefix}rm -f /tmp/mpi_hosts.txt'
+        # mktemp creates a new mode-0600 file owned by the same user that runs
+        # mpirun, without sudo, so concurrent runs never share a hostfile. The
+        # template is a plain path because mktemp's options differ between GNU,
+        # BusyBox, and BSD. The path is printed after a marker unique to this
+        # call, so no other line of the head node's output can be taken for it.
+        marker = f'cvs-mpi-hostfile-{uuid.uuid4().hex}:'
+        cmd = (
+            'hf=$(mktemp "${TMPDIR:-/tmp}/cvs_mpi_hosts.XXXXXXXX") || exit 1; '
+            f'printf %s {shlex.quote(host_file_params)} > "$hf" || {{ rm -f "$hf"; exit 1; }}; '
+            f'printf "%s%s\\n" {marker} "$hf"'
+        )
         result = self.exec_on_head(cmd, detailed=True)
-        failed = [host for host, res in result.items() if res.get('exit_code') != 0]
+        failed = [
+            f"{host} (exit {res.get('exit_code')}): {res.get('output', '').strip()}"
+            for host, res in result.items()
+            if res.get('exit_code') != 0
+        ]
         if failed:
-            raise RuntimeError(f"Failed to remove stale MPI hostfile on hosts: {failed}")
+            raise RuntimeError(f"Failed to create MPI hostfile: {'; '.join(failed)}")
 
-        cmd = f'{sudo_prefix}bash -c \'echo "{host_file_params}" > /tmp/mpi_hosts.txt\''
-        result = self.exec_on_head(cmd, detailed=True)
-        failed = [host for host, res in result.items() if res.get('exit_code') != 0]
-        if failed:
-            raise RuntimeError(f"Failed to write MPI hostfile on hosts: {failed}")
+        host_files = [
+            line[len(marker) :]
+            for res in result.values()
+            for line in res.get('output', '').splitlines()
+            if line.startswith(marker)
+        ]
+        if not host_files:
+            raise RuntimeError(f"Head node did not report the MPI hostfile path: {result}")
+        quoted_host_file = shlex.quote(host_files[0])
 
         # Build MPI runner arguments
         if no_of_global_ranks is None:
@@ -285,7 +309,7 @@ class BaremetalOrchestrator(Orchestrator):
             str(no_of_global_ranks),
             '--allow-run-as-root',
             '--hostfile',
-            '/tmp/mpi_hosts.txt',
+            quoted_host_file,
         ]
 
         if mpi_extra_args:
@@ -293,7 +317,19 @@ class BaremetalOrchestrator(Orchestrator):
 
         full_mpi_cmd = self.get_mpi_command(rank_cmd, mpi_runner_args, env_vars, mpi_install_dir)
 
-        return full_mpi_cmd
+        # One subshell, so a caller can still append a pipe or `&&`, and the
+        # cleanup also runs inside the container when ContainerOrchestrator
+        # executes the string. eval gets the mpirun command as one quoted word,
+        # so a stray `)` or a trailing comment in rank_cmd cannot end the
+        # subshell early or drop the cleanup. The EXIT trap removes the file
+        # however the subshell exits; the signal traps turn a hangup, interrupt,
+        # or termination into such an exit.
+        remove_host_file = shlex.quote(f'rm -f {quoted_host_file}')
+        return (
+            f'(trap {remove_host_file} EXIT; '
+            "trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; "
+            f'eval {shlex.quote(full_mpi_cmd)})'
+        )
 
     def distribute_using_mpi(
         self,

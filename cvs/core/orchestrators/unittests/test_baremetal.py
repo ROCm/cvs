@@ -6,9 +6,16 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 # Unit tests for cvs/core/orchestrators/baremetal.py: BaremetalOrchestrator construction
-# and command-dispatch surface (exec, exec_on_head, cleanup, sudo_prefix) used by the
-# migrated rvs_cvs.py orch fixture. Mocks Pssh so tests run with no SSH.
+# and command-dispatch surface (exec, exec_on_head, cleanup, sudo_prefix, build_mpi_cmd)
+# used by the migrated rvs_cvs.py orch fixture. Mocks Pssh so tests run with no SSH; the
+# build_mpi_cmd tests run its head-node commands, and the command it returns, in a local
+# shell instead.
 
+import os
+import shlex
+import shutil
+import stat
+import subprocess
 import unittest
 import tempfile
 from unittest.mock import MagicMock, patch
@@ -192,96 +199,252 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         self.assertTrue(orch.cleanup(orch.hosts))
 
-    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
-    def test_build_mpi_cmd_hostfile_cleanup_uses_sudo_prefix(self, _mock_pssh):
-        # The stale-hostfile `rm -f` on the head node must be built from a single
-        # deterministic prefix (via sudo_prefix()), never the old `cmd || sudo -n
-        # cmd` retry form -- which double-runs the command whenever it fails for
-        # any reason, not just permission-denied.
-        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
-        orch.head = MagicMock()
-        orch.head.exec.return_value = {"10.0.0.1": {"output": "", "exit_code": 0}}
 
-        for label, sudo_prefix in [("no_sudo", ""), ("passwordless_sudo", "sudo -n ")]:
-            with self.subTest(scenario=label):
-                orch.head.exec.reset_mock()
-                with patch.object(orch, "sudo_prefix", return_value=sudo_prefix):
-                    orch.build_mpi_cmd(
-                        rank_cmd="echo hi",
-                        mpi_hosts=["10.0.0.1", "10.0.0.2"],
-                        ranks_per_host=1,
-                        env_vars={},
-                        mpi_install_dir="/opt/mpi",
-                    )
+# Stands in for mpirun: prints the --hostfile path it was given and that file's
+# contents, sends FAKE_MPIRUN_SIGNAL (if set) to the shell that started it, then
+# exits with FAKE_MPIRUN_STATUS.
+_FAKE_MPIRUN = """#!/bin/sh
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = --hostfile ]; then printf 'hostfile=%s\\n' "$2"; cat "$2"; fi
+    shift
+done
+[ -z "$FAKE_MPIRUN_SIGNAL" ] || kill -"$FAKE_MPIRUN_SIGNAL" "$PPID"
+exit "${FAKE_MPIRUN_STATUS:-0}"
+"""
 
-                first_call_cmd = orch.head.exec.call_args_list[0][0][0]
-                self.assertNotIn(
-                    "||", first_call_cmd, f"[{label}] must not use the old fallback form: {first_call_cmd!r}"
-                )
-                self.assertEqual(first_call_cmd, f"{sudo_prefix}rm -f /tmp/mpi_hosts.txt")
 
-    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
-    def test_build_mpi_cmd_hostfile_write_uses_same_sudo_prefix_as_removal(self, _mock_pssh):
-        # Regression test: the hostfile write must use the SAME sudo_prefix() as
-        # the removal. If a prior run left /tmp/mpi_hosts.txt root-owned (sudo
-        # was needed then) and this run's probe resolves no-sudo, an unprefixed
-        # write would silently fail against the sticky-bit-protected /tmp entry
-        # left by a DIFFERENT owner, launching MPI against a stale hostfile.
-        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
-        orch.head = MagicMock()
-        orch.head.exec.return_value = {"10.0.0.1": {"output": "", "exit_code": 0}}
+def _write_executable(path, body):
+    with open(path, "w", encoding="utf-8") as stream:
+        stream.write(body)
+    os.chmod(path, 0o700)
 
-        with patch.object(orch, "sudo_prefix", return_value="sudo -n "):
-            orch.build_mpi_cmd(
-                rank_cmd="echo hi",
-                mpi_hosts=["10.0.0.1"],
-                ranks_per_host=1,
-                env_vars={},
-                mpi_install_dir="/opt/mpi",
-            )
 
-        remove_cmd, write_cmd = (call[0][0] for call in orch.head.exec.call_args_list[:2])
-        self.assertTrue(remove_cmd.startswith("sudo -n "))
-        self.assertTrue(write_cmd.startswith("sudo -n "))
+class _LocalHead:
+    """Head-node handle stand-in that runs each command in a local bash.
 
-    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
-    def test_build_mpi_cmd_raises_on_hostfile_removal_failure(self, _mock_pssh):
-        # A failed removal (e.g. permission denied against a stale, differently
-        # -owned file) must abort loudly instead of silently proceeding to launch
-        # MPI against whatever hostfile is left on disk.
-        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
-        orch.head = MagicMock()
-        orch.head.exec.return_value = {"10.0.0.1": {"output": "", "exit_code": 1}}
+    TMPDIR points at the test's scratch directory, so mktemp never writes
+    outside it, and LC_ALL=C keeps error messages in English. prelude runs
+    first in the same shell, to give the head node a condition such as a full
+    disk. banner and warning are wrapped around the real output the way a
+    login banner (stdout) and a sudo or docker warning (stderr) reach the
+    output of a real handle. exit_code, when set, replaces the real status, as
+    a handle does when it gives up on a command (e.g. on a read timeout).
+    """
 
-        with patch.object(orch, "sudo_prefix", return_value=""):
-            with self.assertRaises(RuntimeError):
-                orch.build_mpi_cmd(
-                    rank_cmd="echo hi",
-                    mpi_hosts=["10.0.0.1"],
-                    ranks_per_host=1,
-                    env_vars={},
-                    mpi_install_dir="/opt/mpi",
-                )
+    def __init__(self, test, host, tmpdir, path_dir=None, prelude="", banner="", warning="", exit_code=None):
+        self.test = test
+        self.host = host
+        self.env = dict(os.environ, TMPDIR=tmpdir, LC_ALL="C")
+        if path_dir:
+            self.env["PATH"] = path_dir + os.pathsep + self.env["PATH"]
+        self.prelude = prelude
+        self.banner = banner
+        self.warning = warning
+        self.exit_code = exit_code
+        self.calls = []
 
-    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
-    def test_build_mpi_cmd_raises_on_hostfile_write_failure(self, _mock_pssh):
-        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
-        orch.head = MagicMock()
-        # First call (rm) succeeds, second call (write) fails.
-        orch.head.exec.side_effect = [
-            {"10.0.0.1": {"output": "", "exit_code": 0}},
-            {"10.0.0.1": {"output": "", "exit_code": 1}},
-        ]
+    def exec(self, cmd, timeout=None, detailed=False, print_console=True):
+        self.calls.append((cmd, detailed))
+        # Checked before running, so neither can execute on the machine running the tests.
+        self.test.assertNotIn("sudo", cmd)
+        self.test.assertNotIn("mpi_hosts.txt", cmd)
+        script = f"{self.prelude}\n{cmd}" if self.prelude else cmd
+        proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=self.env, check=False)
+        output = self.banner + proc.stdout + proc.stderr + self.warning
+        exit_code = proc.returncode if self.exit_code is None else self.exit_code
+        return {self.host: {"output": output, "exit_code": exit_code}}
 
-        with patch.object(orch, "sudo_prefix", return_value=""):
-            with self.assertRaises(RuntimeError):
-                orch.build_mpi_cmd(
-                    rank_cmd="echo hi",
-                    mpi_hosts=["10.0.0.1"],
-                    ranks_per_host=1,
-                    env_vars={},
-                    mpi_install_dir="/opt/mpi",
-                )
+
+class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
+    """build_mpi_cmd's hostfile: a private mktemp file written by one head-node
+    command as the SSH user, quoted wherever it is used, and removed by the
+    returned command however its shell exits."""
+
+    def setUp(self):
+        pssh_patcher = patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+        pssh_patcher.start()
+        self.addCleanup(pssh_patcher.stop)
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.scratch = scratch.name
+        # The space and the quote break any unquoted use of the hostfile path.
+        self.tmpdir = os.path.join(self.scratch, "run's tmp")
+        os.mkdir(self.tmpdir)
+        self.mpi_dir = os.path.join(self.scratch, "mpi")
+        os.mkdir(self.mpi_dir)
+        _write_executable(os.path.join(self.mpi_dir, "mpirun"), _FAKE_MPIRUN)
+        self.fake_bin = os.path.join(self.scratch, "bin")
+        os.mkdir(self.fake_bin)
+        self.orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        self.head = self._use_local_head()
+
+    def _use_local_head(self, **kwargs):
+        kwargs.setdefault("tmpdir", self.tmpdir)
+        self.orch.head = _LocalHead(self, self.orch.head_node, **kwargs)
+        return self.orch.head
+
+    def _build(self, **overrides):
+        kwargs = {
+            "rank_cmd": "echo hi",
+            "mpi_hosts": ["10.0.0.1", "10.0.0.2"],
+            "ranks_per_host": 1,
+            "env_vars": {},
+            "mpi_install_dir": self.mpi_dir,
+        }
+        kwargs.update(overrides)
+        return self.orch.build_mpi_cmd(**kwargs)
+
+    def _created_files(self):
+        return [os.path.join(self.tmpdir, name) for name in os.listdir(self.tmpdir)]
+
+    @staticmethod
+    def _run(cmd, mpirun_status=0, mpirun_signal="", interpreter="bash"):
+        # sh as well as bash: managed-compute agents run commands through /bin/sh.
+        return subprocess.run(
+            [interpreter, "-c", cmd],
+            capture_output=True,
+            text=True,
+            env=dict(os.environ, FAKE_MPIRUN_STATUS=str(mpirun_status), FAKE_MPIRUN_SIGNAL=mpirun_signal),
+            check=False,
+        )
+
+    def _hostfile_given_to_mpirun(self, cmd):
+        proc = self._run(cmd)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return [line[len("hostfile=") :] for line in proc.stdout.splitlines() if line.startswith("hostfile=")]
+
+    def test_build_mpi_cmd_writes_private_hostfile_named_by_hostfile_arg(self):
+        # Quotes in a host name must land in the file verbatim instead of
+        # ending the quoting of the command that writes it.
+        cmd = self._build(mpi_hosts=["10.0.0.1", "node'2", 'node"3'], ranks_per_host=4)
+
+        created = self._created_files()
+        self.assertEqual(len(created), 1, created)
+        with open(created[0], encoding="utf-8") as stream:
+            self.assertEqual(stream.read(), "10.0.0.1 slots=4\nnode'2 slots=4\nnode\"3 slots=4\n")
+        self.assertEqual(stat.S_IMODE(os.stat(created[0]).st_mode), 0o600)
+        # A single exec_on_head(detailed=True) call creates and fills the file.
+        self.assertEqual([detailed for _, detailed in self.head.calls], [True])
+        self.assertEqual(self._hostfile_given_to_mpirun(cmd), created)
+
+    def test_build_mpi_cmd_result_removes_hostfile_and_keeps_mpirun_status(self):
+        for interpreter in ("bash", "sh"):
+            for status in (0, 7):
+                with self.subTest(interpreter=interpreter, mpirun_status=status):
+                    cmd = self._build()
+                    # Composed the way a caller might: `&&` must see mpirun's
+                    # status, not that of the cleanup that runs after it.
+                    proc = self._run(f"{cmd} && echo after-mpirun", mpirun_status=status, interpreter=interpreter)
+                    self.assertEqual(proc.returncode, status, proc.stderr)
+                    self.assertEqual("after-mpirun" in proc.stdout, status == 0)
+                    self.assertIn("10.0.0.2 slots=1\n", proc.stdout)
+                    self.assertEqual(self._created_files(), [])
+
+    def test_build_mpi_cmd_result_removes_hostfile_when_its_shell_is_signalled(self):
+        # A scheduler cancelling the job (SIGTERM), a dropped terminal (SIGHUP),
+        # or Ctrl-C (SIGINT) must not leave the hostfile behind.
+        for interpreter in ("bash", "sh"):
+            for signal_name, status in (("HUP", 129), ("INT", 130), ("TERM", 143)):
+                with self.subTest(interpreter=interpreter, signal=signal_name):
+                    cmd = self._build()
+                    proc = self._run(f"{cmd} && echo after-mpirun", mpirun_signal=signal_name, interpreter=interpreter)
+                    self.assertEqual(proc.returncode, status, proc.stderr)
+                    self.assertNotIn("after-mpirun", proc.stdout)
+                    self.assertEqual(self._created_files(), [])
+
+    def test_build_mpi_cmd_result_survives_shell_syntax_in_rank_cmd(self):
+        # rank_cmd is spliced into the mpirun command unquoted. A trailing
+        # comment must not swallow the cleanup, and a stray `)` must not close
+        # the subshell early: the command fails as a syntax error, as it would
+        # on its own, rather than report the status of whatever follows.
+        for interpreter in ("bash", "sh"):
+            with self.subTest(interpreter=interpreter, rank_cmd="trailing comment"):
+                proc = self._run(self._build(rank_cmd="echo hi # note"), mpirun_status=7, interpreter=interpreter)
+                self.assertEqual(proc.returncode, 7, proc.stderr)
+                self.assertIn("hostfile=", proc.stdout)
+                self.assertEqual(self._created_files(), [])
+            with self.subTest(interpreter=interpreter, rank_cmd="stray paren"):
+                proc = self._run(self._build(rank_cmd="echo hi ) ; ( true"), mpirun_status=7, interpreter=interpreter)
+                self.assertNotEqual(proc.returncode, 0, proc.stdout)
+                self.assertNotIn("hostfile=", proc.stdout)
+                self.assertEqual(self._created_files(), [])
+
+    def test_build_mpi_cmd_rejects_empty_host_list(self):
+        # With no hosts there is nothing to launch: fail before touching the
+        # head node instead of handing mpirun an empty hostfile.
+        with self.assertRaises(ValueError):
+            self._build(mpi_hosts=[])
+
+        self.assertEqual(self.head.calls, [])
+        self.assertEqual(self._created_files(), [])
+
+    def test_build_mpi_cmd_hostfile_commands_do_not_use_sudo(self):
+        # mpirun runs as the SSH user, so a sudo-created 0600 file would be
+        # unreadable to it, and container images often have no sudo at all.
+        with patch.object(self.orch, "sudo_prefix", return_value="sudo -n "):
+            cmd = self._build()
+
+        self.assertNotIn("sudo", cmd)
+        for sent, _ in self.head.calls:
+            self.assertNotIn("sudo", sent)
+
+    def test_build_mpi_cmd_raises_with_head_output_when_hostfile_cannot_be_created(self):
+        # The error carries what the head node printed, so a log shows whether
+        # mktemp or the write failed, and why.
+        cases = {
+            "mktemp_fails": ({"tmpdir": os.path.join(self.scratch, "missing")}, "mktemp:"),
+            # mktemp succeeds, then the write hits the file size limit like a full disk.
+            "write_fails": ({"prelude": "trap '' XFSZ; ulimit -f 0"}, "File too large"),
+            # The path is printed, but the handle reports the command as failed.
+            "head_reports_failure": ({"exit_code": -1}, "exit -1"),
+        }
+        for label, (head_kwargs, expected) in cases.items():
+            with self.subTest(label):
+                self._use_local_head(**head_kwargs)
+                with self.assertRaises(RuntimeError) as raised:
+                    self._build()
+                self.assertIn(expected, str(raised.exception))
+                if label == "write_fails":
+                    self.assertEqual(self._created_files(), [])
+
+    def test_build_mpi_cmd_finds_hostfile_path_among_other_head_output(self):
+        # A banner may even name another cvs_mpi_hosts.* file, such as one left
+        # by an earlier run; only the line this call marked is the hostfile.
+        self._use_local_head(
+            banner=f"Welcome to node0\nstale: {os.path.join(self.tmpdir, 'cvs_mpi_hosts.leftover')}\n",
+            warning="sudo: unable to resolve host node0: Name or service not known\n",
+        )
+
+        cmd = self._build()
+
+        created = self._created_files()
+        self.assertEqual(len(created), 1, created)
+        self.assertEqual(self._hostfile_given_to_mpirun(cmd), created)
+
+    def test_build_mpi_cmd_raises_when_head_reports_no_hostfile_path(self):
+        # A zero exit without the path must not launch mpirun against a guess.
+        self.orch.head = MagicMock()
+        self.orch.head.exec.return_value = {"10.0.0.1": {"output": "Welcome to node0\n", "exit_code": 0}}
+
+        with self.assertRaises(RuntimeError):
+            self._build()
+
+    def test_build_mpi_cmd_needs_only_a_mktemp_template(self):
+        # mktemp options differ between GNU, BusyBox, and BSD; a TEMPLATE
+        # argument means the same to all of them.
+        real_mktemp = shlex.quote(shutil.which("mktemp"))
+        _write_executable(
+            os.path.join(self.fake_bin, "mktemp"),
+            '#!/bin/sh\ncase "$1" in -*) echo "mktemp: unsupported option $1" >&2; exit 1;; esac\n'
+            f'[ "$#" -eq 1 ] || exit 1\nexec {real_mktemp} "$1"\n',
+        )
+        self._use_local_head(path_dir=self.fake_bin)
+
+        cmd = self._build()
+
+        created = self._created_files()
+        self.assertEqual(len(created), 1, created)
+        self.assertEqual(self._hostfile_given_to_mpirun(cmd), created)
 
 
 class TestBaremetalOrchestratorSudoPrefix(unittest.TestCase):
@@ -330,9 +493,9 @@ class TestBaremetalOrchestratorSudoPrefix(unittest.TestCase):
         # iterate first. Here the head node (10.0.0.1) says sudo is NOT
         # needed while a non-head worker says it IS -- if this incorrectly
         # picked "first in dict order" or "any True wins", the result would
-        # flip to 'sudo -n ' and privileged commands on the head node (e.g.
-        # exec_on_head, used by build_mpi_cmd) would run under an
-        # unnecessary and potentially unavailable sudo.
+        # flip to 'sudo -n ' and privileged commands sent to the head node
+        # through exec_on_head would run under an unnecessary and potentially
+        # unavailable sudo.
         pssh_instance = MagicMock()
         pssh_instance.exec.return_value = {"10.0.0.1": "1", "10.0.0.2": "0"}
         mock_pssh.return_value = pssh_instance

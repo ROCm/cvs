@@ -127,7 +127,7 @@ The following table describes every key accepted at the top level of the cluster
      - ``{}``
      - Container backend configuration. Required when ``orchestrator`` is ``container``. See the next section.
 
-CVS's own internal commands -- the Docker CLI calls made by ``DockerRuntime`` (``docker run``/``exec``/``rm``/``ps``/``load``) and the MPI hostfile cleanup in ``BaremetalOrchestrator`` -- automatically detect whether ``sudo`` is needed. Once per run, CVS probes each host with ``sudo -n true`` and caches whether passwordless sudo is available; every subsequent privileged command is then prefixed with ``sudo -n `` or left unprefixed accordingly, for the lifetime of that run. No cluster-file configuration is required.
+CVS's own internal commands -- the Docker CLI calls made by ``DockerRuntime`` (``docker run``/``exec``/``rm``/``ps``/``load``) -- automatically detect whether ``sudo`` is needed. Once per run, CVS probes each host with ``sudo -n true`` and caches whether passwordless sudo is available; every subsequent privileged command is then prefixed with ``sudo -n `` or left unprefixed accordingly, for the lifetime of that run. No cluster-file configuration is required.
 
 Container block
 ===============

@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RCCL: return cleanly when a run produces no result rows instead of raising `IndexError` from the bandwidth-dip check. Log scanning still fails these runs for missing bandwidth numbers.
 - IB topology discovery recognizes AMD Pollara (Ionic) HCA names such as `ionic_0`. Previously they were filtered out, so callers found no HCAs on Ionic clusters.
 - vLLM: the DeepSeek V4 sample configs no longer set `HF_HUB_OFFLINE` or `TRANSFORMERS_OFFLINE`. With those flags, an accuracy task added to a copy of a sample failed at the end of the sweep because lm-eval could not load its dataset. The vLLM configuration reference now says to set them only on clusters without Hub access, with accuracy datasets pre-cached, and that `distributed_executor_backend` and `dist_init_port` are ignored on one host.
+- Orchestrator MPI launches (`distribute_using_mpi`) write the hostfile to a private per-run temporary file on the head node, created without `sudo` and removed when the job's shell exits, including when it is hung up, interrupted, or terminated. The host list is passed to the remote shell as one quoted argument, so host names are written verbatim, and an empty host list raises `ValueError`. Previously all runs shared one fixed path, so concurrent runs on a head node could overwrite each other's host list, and container runs on hosts with passwordless `sudo` failed when the image did not include `sudo`.
 
 ## [0.2.0] - 2026-09-23
 
