@@ -900,9 +900,9 @@ def get_gpu_nic_mapping_dict(
     return gpu_nic_dict
 
 
-def get_gpu_numa_dict(phdl):
+def get_gpu_numa_dict(phdl, use_sudo=True):
     gpu_numa_dict = {}
-    gpu_pcie_dict = rocm_plib.get_gpu_pcie_bus_dict(phdl)
+    gpu_pcie_dict = rocm_plib.get_gpu_pcie_bus_dict(phdl, use_sudo=use_sudo)
 
     first_node = list(gpu_pcie_dict.keys())[0]
     card_list = list(gpu_pcie_dict[first_node].keys())
