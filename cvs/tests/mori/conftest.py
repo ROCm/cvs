@@ -97,6 +97,22 @@ def orch(cluster_dict, mori_dict, lifecycle):
         o.close()
 
 
+@pytest.fixture(scope="module")
+def cvs_results_dict():
+    return {}
+
+
+@pytest.fixture(scope="module")
+def mori_variant_config(mori_dict, orch):
+    """Run-card fields for the mori Run Deck."""
+    return {
+        "gpu_name": mori_dict.get("gpu_name"),
+        "node_count": len(orch.hosts),
+        "mori_device_list": (mori_dict.get("env") or {}).get("MORI_RDMA_DEVICES"),
+        "container_image": orch.container_config.get("image") if orch.orchestrator_type == "container" else None,
+    }
+
+
 def pytest_collection_modifyitems(items):
     """Pin lifecycle order: cleanup → launch → setup → single-node → I/O → dmesg → teardown."""
     rank = {

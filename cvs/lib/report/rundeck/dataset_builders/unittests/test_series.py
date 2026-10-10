@@ -42,6 +42,36 @@ class TestSeries(unittest.TestCase):
         self.assertEqual([row[1] for row in rows], [1024, 1536, 1048576])
         self.assertTrue(all(isinstance(row[1], int) for row in rows))
 
+    def test_default_table_keeps_rccl_columns(self):
+        graph = {"all_reduce_perf": {"1024": {"bus_bw": 1.0, "alg_bw": 2.0, "time": 3.0}}}
+        for series_cfg in ({}, {"table_columns": []}, {"table_columns": [{"label": "No field"}, ["one"], "bad"]}):
+            with self.subTest(series_cfg=series_cfg):
+                table = build_series_datasets({"results": graph}, {"series": series_cfg})["results_table"]
+                self.assertEqual(
+                    table["headers"], ["Collective", "Message size", "Bus BW (GB/s)", "Alg BW (GB/s)", "Time (us)"]
+                )
+                self.assertEqual(table["rows"], [["all_reduce_perf", "1024", 1.0, 2.0, 3.0]])
+
+    def test_profile_table_columns_select_entry_fields(self):
+        graph = {"io_read · rank 0": {"524288": {"Avg_BW_GBps": 47.5, "status": "pass"}}}
+        profile = {
+            "series": {
+                "y_fields": ["Avg_BW_GBps"],
+                "table_columns": [
+                    {"label": "Series", "field": "$series"},
+                    ["Message size (bytes)", "$x"],
+                    {"label": "Avg BW (GB/s)", "field": "Avg_BW_GBps"},
+                    {"label": "IBGDA rate (Mpps)", "field": "rate_mpps"},
+                    {"label": "Status", "field": "status"},
+                ],
+            }
+        }
+        table = build_series_datasets({"results": graph}, profile)["results_table"]
+        self.assertEqual(
+            table["headers"], ["Series", "Message size (bytes)", "Avg BW (GB/s)", "IBGDA rate (Mpps)", "Status"]
+        )
+        self.assertEqual(table["rows"], [["io_read · rank 0", "524288", 47.5, "—", "pass"]])
+
 
 if __name__ == "__main__":
     unittest.main()
