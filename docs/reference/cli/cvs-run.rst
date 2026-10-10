@@ -275,8 +275,8 @@ Optional options:
      - Per-node SSH connect timeout (default: ``15``).
    * - ``--json``
      - Emit structured JSON on stdout.
-   * - ``--verbose``, ``-v``
-     - Show SSH connection diagnostics.
+   * - ``-v``, ``--verbose``
+     - Global verbosity. Level 1+ shows SSH connection diagnostics.
 
 See :doc:`/how-to/execute-cluster-commands`.
 

@@ -6,13 +6,18 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 import asyncio
+import logging
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 
+from cvs.lib.globals import verbose_log
+
 from . import messages
+
+log = logging.getLogger(__name__)
 
 # /v1/exec returns only after the process finishes. A timed-out process then spends
 # TERMINATE_GRACE_PERIOD_SECONDS in SIGTERM-then-SIGKILL before ExecResponse can be sent;
@@ -127,6 +132,7 @@ class ParallelHTTPClient:
         self._connect_timeout = connect_timeout
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
+        verbose_log(log, f"HTTP client hosts={list(self._agent_urls)} connect_timeout={connect_timeout}", 2)
 
     async def __aenter__(self) -> "ParallelHTTPClient":
         return self
@@ -167,10 +173,12 @@ class ParallelHTTPClient:
         '''Replace the host map, e.g. to drop hosts pruned after a failed health check. The shared
         client's connection pool needs no action either way: idle connections to removed hosts age
         out, and the pool is unbounded so an added host opens a connection without evicting anyone.'''
+        verbose_log(log, f"HTTP client rebuild hosts={list(agent_urls)}", 2)
         self._agent_urls = dict(agent_urls)
 
     async def destroy(self) -> None:
         if self._client is not None:
+            verbose_log(log, "HTTP client close connection pool", 3)
             await self._client.aclose()
             self._client = None
 
@@ -200,6 +208,13 @@ class ParallelHTTPClient:
         if output_mode == messages.ExecOutputMode.FILE:
             out_dir = run_dir / "exec_output"
             out_dir.mkdir(parents=True, exist_ok=True)
+        verbose_log(
+            log,
+            f"exec fan-out hosts={len(hosts)} mode={output_mode.value} "
+            f"read_timeout={read_timeout} inactivity={inactivity_timeout}",
+            1,
+        )
+        verbose_log(log, f"exec cmd={cmd}", 3)
         return {
             host: messages.ExecRequest(
                 cmd=command,
@@ -253,7 +268,15 @@ class ParallelHTTPClient:
             exec_response = messages.parse_message(messages.ExecResponse, response.text)
             stdout, stderr = await self._collect_output(request, exec_response)
         except Exception as exc:  # noqa: BLE001 - captured per-host so one bad host doesn't sink the others
-            return HostOutput(host=host, stdout=[], stderr=[], exit_code=None, exception=_classify_exception(exc))
+            classified = _classify_exception(exc)
+            verbose_log(log, f"exec host={host} failed: {classified}", 1)
+            return HostOutput(host=host, stdout=[], stderr=[], exit_code=None, exception=classified)
+        verbose_log(
+            log,
+            f"exec host={host} exit={exec_response.exit_code} timed_out={exec_response.timed_out} "
+            f"truncated={exec_response.truncated}",
+            3,
+        )
         return HostOutput(
             host=host,
             stdout=stdout,
@@ -295,7 +318,10 @@ class ParallelHTTPClient:
                 response = await client.request(method, f"{url}{path}", timeout=timeout)
                 response.raise_for_status()
             except Exception as exc:  # noqa: BLE001 - captured per-host, reported rather than raised
-                return host, _classify_exception(exc)
+                classified = _classify_exception(exc)
+                verbose_log(log, f"{method} {path} host={host} failed: {classified}", 2)
+                return host, classified
+            verbose_log(log, f"{method} {path} host={host} ok", 3)
             return host, True
 
         results = await asyncio.gather(*(call(host, url) for host, url in self._agent_urls.items()))
@@ -308,14 +334,19 @@ class ParallelHTTPClient:
     async def health(self) -> dict[str, bool]:
         '''Liveness probe per host; never raises regardless of failures - an unreachable host is the
         answer this call exists to produce (feeds rebuild()'s pruning decision), not an error.'''
-        return await self._fan_out(
+        verbose_log(log, f"health probe {len(self._agent_urls)} host(s)", 2)
+        result = await self._fan_out(
             "GET", messages.HEALTH_PATH, stop_on_errors=False, read_timeout=_DEFAULT_READ_TIMEOUT_SECONDS
         )
+        ok = sum(1 for alive in result.values() if alive)
+        verbose_log(log, f"health probe {ok}/{len(result)} reachable", 1)
+        return result
 
     async def shutdown(self, stop_on_errors: bool = False) -> dict[str, bool]:
         '''Ask every host's agent to terminate its spawned processes and exit. Defaults to best-effort
         (stop_on_errors=False), unlike run_command: one already-dead straggler during cleanup shouldn't
         stop the rest from being told to shut down.'''
+        verbose_log(log, f"shutdown {len(self._agent_urls)} host(s) stop_on_errors={stop_on_errors}", 1)
         return await self._fan_out(
             "POST", messages.SHUTDOWN_PATH, stop_on_errors, read_timeout=_SHUTDOWN_READ_TIMEOUT_SECONDS
         )

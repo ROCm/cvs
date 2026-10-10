@@ -5,10 +5,16 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import logging
 import shutil
 import subprocess
 from enum import Enum
 import os
+
+from cvs.core.agent.logger import rank_log_enabled
+from cvs.lib.globals import get_verbosity, verbose_log
+
+log = logging.getLogger(__name__)
 
 CHECK_TIMEOUT = 5
 SCHEDULER_ENV_VAR = "CVS_SCHEDULER"
@@ -51,6 +57,20 @@ def _scheduler_from_job_env():
     return None
 
 
+def _emit_scheduler_trace(message):
+    """Scheduler detection runs while the rank log file is still being created.
+
+    Until that file is open the line goes to stdout. Later calls in the same
+    process write rankN.log through verbose_log.
+    """
+    if get_verbosity() < 2:
+        return
+    if rank_log_enabled():
+        verbose_log(log, message, 2)
+        return
+    print(message)
+
+
 def detect_scheduler():
     """Detect which scheduler, if any, manages this cluster's compute nodes.
 
@@ -61,18 +81,23 @@ def detect_scheduler():
     if scheduler is not None:
         normalized = scheduler.strip().lower()
         try:
-            return Scheduler(normalized)
+            detected = Scheduler(normalized)
         except ValueError as exc:
             valid = [s.value for s in Scheduler]
             raise ValueError(
                 f"Unknown scheduler type {scheduler!r} in {SCHEDULER_ENV_VAR}, expected one of: {valid}"
             ) from exc
+        _emit_scheduler_trace(f"detect_scheduler={detected.value} ({SCHEDULER_ENV_VAR})")
+        return detected
     from_job = _scheduler_from_job_env()
     if from_job is not None:
+        _emit_scheduler_trace(f"detect_scheduler={from_job.value} (job env)")
         return from_job
     for scheduler, cmds in SCHEDULER_CHECK_COMMANDS.items():
         if all(_command_succeeds(cmd) for cmd in cmds):
+            _emit_scheduler_trace(f"detect_scheduler={scheduler.value} (binary probe)")
             return scheduler
+    _emit_scheduler_trace("detect_scheduler=bare_metal")
     return Scheduler.BARE_METAL
 
 
@@ -210,6 +235,7 @@ def scheduler_hosts():
         raise RuntimeError(f"could not expand scheduler node list {node_list!r}: {exc}") from exc
     if not hosts:
         raise RuntimeError(f"scheduler node list {node_list!r} expanded to no hosts")
+    verbose_log(log, f"scheduler hosts ({len(hosts)}): {hosts}", 2)
     return hosts
 
 
@@ -222,4 +248,5 @@ def scheduler_rank():
         raise RuntimeError("managed CVS run requires SLURM_PROCID and SLURM_NTASKS") from exc
     if not 0 <= rank < world_size:
         raise RuntimeError(f"invalid managed rank {rank} for world size {world_size}")
+    verbose_log(log, f"scheduler rank={rank} world_size={world_size}", 2)
     return rank, world_size
