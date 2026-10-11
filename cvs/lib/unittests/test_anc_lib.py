@@ -1,7 +1,7 @@
 # cvs/lib/unittests/test_anc_lib.py
 import os
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import cvs.lib.anc_lib as anc_lib
 
@@ -716,9 +716,112 @@ class TestRunAncGroupsUsesCachedPath(unittest.TestCase):
 
         with _patch_run_dir("/ws/cvs_runs/1"):
             with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
-                anc_lib.run_anc_groups(FakePhdl(), cluster, cfg, ["cpu_sanity"], "test_cpu_sanity")
+                anc_lib.run_anc_groups(FakePhdl(), cluster, cfg, ["cpu_content_check"], "test_cpu_content_check")
 
-        self.assertIn("cd '/home/u/anc/anc' && sudo ./anc.py -g cpu_sanity", captured["cmd"])
+        self.assertIn("cd '/home/u/anc/anc' && sudo ./anc.py -g cpu_content_check", captured["cmd"])
+
+
+class TestRunAncItems(unittest.TestCase):
+    '''run_anc_items runs ``anc.py -i <item>`` (the item selector, not -g).'''
+
+    def setUp(self):
+        self.addCleanup(setattr, anc_lib, "_ANC_INSTALL_PATHS", None)
+        anc_lib._ANC_INSTALL_PATHS = anc_lib.AncPaths("/opt/amdtools", "/opt/amdtools/anc", "/opt/amdtools/anc/anc.py")
+
+    def _run(self, cfg, item="gemm_fp8_trig"):
+        cluster = {"node_dict": {"node1": {}}, "username": "bob", "priv_key_file": "k"}
+        captured = {}
+
+        class FakePhdl:
+            def exec(self, cmd, inactivity_timeout=None):  # noqa: ARG002
+                captured["cmd"] = cmd
+                return {}
+
+        with _patch_run_dir("/ws/cvs_runs/1"):
+            with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
+                anc_lib.run_anc_items(FakePhdl(), cluster, cfg, [item], f"test_{item}")
+        return captured["cmd"]
+
+    def test_item_selector_print_all(self):
+        cmd = self._run({"anc": {"print_all_to_console": "True"}})
+        self.assertIn("sudo ./anc.py -i gemm_fp8_trig", cmd)
+        self.assertNotIn("-g gemm_fp8_trig", cmd)
+
+    def test_item_selector_quiet_mode(self):
+        cmd = self._run({"anc": {"print_all_to_console": "False"}})
+        self.assertIn("sudo ./anc.py -i gemm_fp8_trig", cmd)
+        # Quiet mode greps for a missing group OR item FATAL line.
+        self.assertIn("FATAL: (Group|Item)", cmd)
+
+
+class TestNotFoundRegexScopedToUnit(unittest.TestCase):
+    '''anc_not_found_re matches ONLY its own unit's FATAL line (group vs item).'''
+
+    def test_group_matcher_matches_group_line(self):
+        self.assertTrue(anc_lib.anc_not_found_re("group").search("FATAL: Group 'cpu_mfg_l10' not found"))
+
+    def test_group_matcher_ignores_item_line(self):
+        # A group run must NOT be downgraded to "not available" by an item's
+        # FATAL line (e.g. a missing leaf item inside an installed group).
+        self.assertIsNone(anc_lib.anc_not_found_re("group").search("FATAL: Item 'gemm_fp8_trig' not found"))
+
+    def test_item_matcher_matches_item_line(self):
+        self.assertTrue(anc_lib.anc_not_found_re("item").search("FATAL: Item 'gemm_fp8_trig' not found"))
+
+    def test_item_matcher_ignores_group_line(self):
+        self.assertIsNone(anc_lib.anc_not_found_re("item").search("FATAL: Group 'cpu_mfg_l10' not found"))
+
+    def test_unrelated_line_does_not_match(self):
+        self.assertIsNone(anc_lib.anc_not_found_re("item").search("All items passed"))
+
+
+class TestEvaluateNodeNotFoundScoping(unittest.TestCase):
+    '''_evaluate_node keys "not available" off the unit-scoped FATAL line, not the
+    ANC_PROG_NOT_FOUND return code (which ALSO fires for a missing leaf item in an
+    otherwise-present group).'''
+
+    def setUp(self):
+        self.cluster = {"node_dict": {"n1": {}}, "username": "u", "priv_key_file": "k"}
+        # _evaluate_node opens a per-node Pssh and pulls the log dir; stub both so
+        # no SSH happens and console_text is whatever the test supplies.
+        patchers = [
+            patch.object(anc_lib, "Pssh", return_value=MagicMock()),
+            patch.object(anc_lib, "_node_label", return_value="n1"),
+            patch.object(anc_lib, "resolve_anc_log_folder", return_value="/tmp/dest"),
+            patch.object(anc_lib.os, "makedirs"),
+            patch.object(anc_lib, "_pull_log_dir", return_value=("/tmp/dest/console.log", None)),
+            patch.object(anc_lib, "_find_errors_json", return_value=None),
+        ]
+        for p in patchers:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _evaluate(self, console_text, unit):
+        # Only the Log directory line is read from the streamed `output`; the
+        # verdict comes from the collected console.log, which we supply here.
+        output = "Log directory: /root/logs/run1"
+        with patch("builtins.open", mock_open(read_data=console_text)):
+            return anc_lib._evaluate_node(self.cluster, "n1", output, "test_x", "ts", unit=unit)
+
+    def test_group_run_with_missing_leaf_item_is_failure_not_na(self):
+        # A group run whose leaf item is absent: ANC prints "FATAL: Item ..." and
+        # exits ANC_PROG_NOT_FOUND. The group selection itself IS present, so this
+        # must be a real FAILURE for the group, not "not available".
+        console = "FATAL: Item 'gemm_fp8_trig' not found\nProgram exiting with return code ANC_PROG_NOT_FOUND [13]\n"
+        result = self._evaluate(console, unit="group")
+        self.assertIsNotNone(result.reason)
+        self.assertNotIn("not available on the remote system", result.reason)
+        self.assertIn("ANC_PROG_NOT_FOUND", result.reason)
+
+    def test_group_run_with_missing_group_is_na(self):
+        console = "FATAL: Group 'cpu_mfg_l10' not found\nProgram exiting with return code ANC_PROG_NOT_FOUND [13]\n"
+        result = self._evaluate(console, unit="group")
+        self.assertIn("not available on the remote system", result.reason)
+
+    def test_item_run_with_missing_item_is_na(self):
+        console = "FATAL: Item 'gemm_fp8_trig' not found\nProgram exiting with return code ANC_PROG_NOT_FOUND [13]\n"
+        result = self._evaluate(console, unit="item")
+        self.assertIn("not available on the remote system", result.reason)
 
 
 class TestResolveAncLogFolder(unittest.TestCase):
@@ -794,7 +897,9 @@ class TestCaptureRundeckResultsWithoutFixture(unittest.TestCase):
                 raise pytest.FixtureLookupError.__new__(pytest.FixtureLookupError)
 
         # Must not raise; simply returns without touching any store.
-        anc_lib._capture_rundeck_results(FakeRequest(), {}, {}, ["cpu_sanity"], "test_cpu_sanity", "ts", [], {}, {})
+        anc_lib._capture_rundeck_results(
+            FakeRequest(), {}, {}, ["cpu_content_check"], "test_cpu_content_check", "ts", [], {}, {}
+        )
 
 
 class TestAttachErrorsJsonReturnsRenamedHref(unittest.TestCase):
@@ -962,7 +1067,7 @@ class TestPerUserTmpNamespacing(unittest.TestCase):
 
         with _patch_run_dir("/ws/cvs_runs/1"):
             with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
-                anc_lib.run_anc_groups(FakePhdl(), cluster, cfg, ["cpu_sanity"], "test_cpu_sanity")
+                anc_lib.run_anc_groups(FakePhdl(), cluster, cfg, ["cpu_content_check"], "test_cpu_content_check")
 
         self.assertIn("/tmp/bob/anc_run_$$.out", captured["cmd"])
         self.assertIn("mkdir -p '/tmp/bob'", captured["cmd"])

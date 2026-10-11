@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "extends": "anc_base",
+  "profile_id": "anc_test_pcie_rundeck",
+  "suite_id": "anc_test_pcie",
+  "report_basename": "anc_test_pcie_run_deck",
+  "title": "ANC Run Deck \u00b7 PCIe",
+  "subtitle": "AMD Node Check \u00b7 anc_test_pcie per-item results across the cluster",
+  "footer": "CVS ANC \u00b7 render-only \u00b7 per-node verdict from the collected ANC run (pass / fail / n-a when the item is not on the node)",
+  "link_name": "ANC PCIe Run Deck"
+}
