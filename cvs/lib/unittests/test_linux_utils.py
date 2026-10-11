@@ -56,6 +56,18 @@ link bnxt_re1/1 state ACTIVE physical_state LINK_UP netdev ens27np1"""
         self.assertEqual(result['node2']['bnxt_re0']['eth_device'], 'ens26np0')
         self.assertEqual(result['node2']['bnxt_re1']['eth_device'], 'ens27np1')
 
+    def test_get_rdma_nic_dict_skips_ports_with_no_netdev(self):
+        """InfiniBand ports report subnet_prefix/lid and no netdev, so they do not parse."""
+        mock_phdl = MagicMock()
+        mock_phdl.exec.return_value = {
+            'node1': """link mlx5_0/1 subnet_prefix fe80:0000:0000:0000 lid 95 sm_lid 138 lmc 0 state ACTIVE physical_state LINK_UP
+link mlx5_8/1 state ACTIVE physical_state LINK_UP netdev ens14np0"""
+        }
+
+        result = linux_utils.get_rdma_nic_dict(mock_phdl)
+
+        self.assertEqual(set(result['node1']), {'mlx5_8'})
+
 
 class TestGetActiveRdmaNicDict(unittest.TestCase):
     def test_get_active_rdma_nic_dict_with_hyphenated_devices(self):
