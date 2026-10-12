@@ -42,20 +42,24 @@ def render_benchmark_metrics_html(
     *,
     columns: Sequence[MetricColumn] = (),
 ) -> str:
-    """Render a collapsible pass/fail/skip/record metric-verdict table."""
+    """Render a collapsible pass/fail/skip/record metric-verdict table.
 
-    def _display_value(value: Any, unit: Any) -> str:
+    A row may set ``digits`` to show its Actual and gate values with more than
+    the default one decimal place, for example for ratios well below 1.
+    """
+
+    def _display_value(value: Any, unit: Any, digits: int) -> str:
         if value is None:
             return '—'
         suffix = f' {unit}' if unit and unit != '-' else ''
-        return f'{fmt_num(value)}{suffix}'
+        return f'{fmt_num(value, digits)}{suffix}'
 
-    def _display_gate(spec: Any, *, enforced: bool) -> str:
+    def _display_gate(spec: Any, *, enforced: bool, digits: int) -> str:
         if not isinstance(spec, Mapping):
             return '—'
         kind = spec.get('kind', '')
         value = spec.get('value')
-        rendered = str(kind) if value is None else f'{kind} {fmt_num(value)}'
+        rendered = str(kind) if value is None else f'{kind} {fmt_num(value, digits)}'
         return rendered if enforced else f'reference: {rendered}'
 
     deduped = list(dedupe_metric_rows(rows))
@@ -71,8 +75,11 @@ def render_benchmark_metrics_html(
             'record': ('Recorded', 'record'),
         }.get(status, ('Failed', 'failed'))
         label = html.escape(str(row.get('label') or metric_display_label(str(row.get('metric') or ''), columns)))
-        actual = html.escape(_display_value(row.get('actual'), row.get('unit')))
-        gate = html.escape(_display_gate(row.get('spec'), enforced=bool(row.get('enforced', status != 'record'))))
+        digits = 1 if row.get('digits') is None else int(row['digits'])
+        actual = html.escape(_display_value(row.get('actual'), row.get('unit'), digits))
+        gate = html.escape(
+            _display_gate(row.get('spec'), enforced=bool(row.get('enforced', status != 'record')), digits=digits)
+        )
         reason = html.escape(str(row.get('reason') or ''))
         node_cell = f"<td class='col-node'>{html.escape(str(row.get('node') or ''))}</td>" if show_node else ''
         body_rows.append(
