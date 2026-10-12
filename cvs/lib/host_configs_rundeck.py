@@ -18,6 +18,8 @@ Shape (consumed by cvs/lib/report/rundeck/dataset_builders/status_matrix.py)::
 
 import re
 
+from cvs.lib import dmesg_noise
+
 _STATUSES = ('pass', 'fail', 'na')
 
 # Timed-stage labels in host_configs_cvs. The deck profile lists the same ids.
@@ -412,15 +414,88 @@ def eval_pci_acs(out_dict):
     )
 
 
+def _actionable_amdgpu_blob(event):
+    '''Return event text for an amdgpu line or an SW_DRIVER event.
+
+    Same acceptance rule as ``verify_driver_errors``: the event line names
+    amdgpu, or node-scraper tagged the event ``SW_DRIVER``.
+    '''
+    # Imported here so the rest of this module does not load the analyzer.
+    from cvs.lib.node_scraper_adapter import event_match_lines
+
+    lines = event_match_lines([event])
+    blob = lines[0] if lines else ''
+    if dmesg_noise.dmesg_line_is_benign(blob):
+        return ''
+    if 'amdgpu' not in blob.lower() and event.get('category') != 'SW_DRIVER':
+        return ''
+    return blob
+
+
 def eval_dmesg_driver(out_dict):
-    '''Return (node_records, fail_messages) for amdgpu fail/error lines.'''
+    '''Return (node_records, fail_messages) for amdgpu fail/error lines.
+
+    Zero-valued status fields such as ``WALKER_ERROR: 0x0`` and
+    ``MAPPING_ERROR: 0x0`` are not driver errors.
+    '''
+    filtered = {}
+    for node, output in out_dict.items():
+        kept = [line for line in (output or '').splitlines() if dmesg_noise.line_indicates_driver_error(line)]
+        filtered[node] = '\n'.join(kept)
     return _must_not_match(
-        out_dict,
+        filtered,
         'fail|error',
         'amdgpu',
         lambda node: f'Dmesg has amdgpu driver errors on node {node}',
         'clean',
     )
+
+
+def _hit_record(hits, message):
+    if not hits:
+        return _pass_record('clean'), None
+    return _fail_record('amdgpu', message, 'seen'), message
+
+
+def eval_dmesg_node_events(events_by_node):
+    '''Return driver and reset verdicts from one pass over node-scraper events.
+
+    Returns ``(driver_records, driver_messages, reset_records, reset_messages)``.
+    Each event's line is built and benign-checked once, then used for both checks.
+    '''
+    driver_records = {}
+    driver_messages = []
+    reset_records = {}
+    reset_messages = []
+    for node, events in events_by_node.items():
+        driver_hits = []
+        reset_hits = []
+        for event in events or []:
+            blob = _actionable_amdgpu_blob(event)
+            if not blob:
+                continue
+            # SW_DRIVER is already a driver fault; it does not have to say "error".
+            if event.get('category') == 'SW_DRIVER' or dmesg_noise.line_indicates_driver_error(blob):
+                driver_hits.append(blob)
+            if re.search(r'reset|hang', blob, re.I):
+                reset_hits.append(blob)
+        driver_message = f'Dmesg has amdgpu driver errors on node {node}'
+        reset_message = f'Dmesg has amdgpu reset/hang errors on node {node}'
+        driver_record, driver_fail = _hit_record(driver_hits, driver_message)
+        reset_record, reset_fail = _hit_record(reset_hits, reset_message)
+        driver_records[str(node)] = driver_record
+        reset_records[str(node)] = reset_record
+        if driver_fail:
+            driver_messages.append(driver_fail)
+        if reset_fail:
+            reset_messages.append(reset_fail)
+    return driver_records, driver_messages, reset_records, reset_messages
+
+
+def eval_dmesg_driver_events(events_by_node):
+    '''Return (node_records, fail_messages) from node-scraper dmesg events.'''
+    records, messages, _, _ = eval_dmesg_node_events(events_by_node)
+    return records, messages
 
 
 def eval_dmesg_reset(out_dict):
@@ -432,3 +507,9 @@ def eval_dmesg_reset(out_dict):
         lambda node: f'Dmesg has amdgpu reset/hang errors on node {node}',
         'clean',
     )
+
+
+def eval_dmesg_reset_events(events_by_node):
+    '''Return (node_records, fail_messages) for reset/hang node-scraper events.'''
+    _, _, records, messages = eval_dmesg_node_events(events_by_node)
+    return records, messages
