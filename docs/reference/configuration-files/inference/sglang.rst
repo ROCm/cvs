@@ -6,9 +6,10 @@
 SGLang inference benchmark configuration for Cluster Validation Suite (CVS)
 *************************************************************************
 
-CVS ships three SGLang inference suites for AMD MI30X clusters. Each suite reads a JSON
+CVS ships three SGLang inference suites for AMD MI30x and MI35x clusters. Each suite reads a JSON
 configuration file from ``cvs/input/config_file/inference/sglang/`` and a matching
-threshold file referenced by top-level ``threshold_json``.
+threshold file referenced by top-level ``threshold_json``. Hosts come from ``cluster.json``
+``node_dict`` order. Role lists in the workload JSON are ignored.
 
 .. list-table::
    :widths: 2 3 5
@@ -19,13 +20,13 @@ threshold file referenced by top-level ``threshold_json``.
      - Topology
    * - ``sglang_single``
      - ``cvs/tests/inference/sglang/sglang_single.py``
-     - One unified ``sglang.launch_server`` on a single ``benchmark_serv_node`` (TP across local GPUs).
+     - One unified ``sglang.launch_server`` on the first ``cluster.json`` host (TP across local GPUs). Extra hosts are ignored.
    * - ``sglang_distributed``
      - ``cvs/tests/inference/sglang/sglang_distributed.py``
-     - One unified multi-node server (TP/PP + ``nnodes``); all ``server_node_list`` ranks participate.
+     - One unified multi-node server. The first ``server_params.nnodes`` hosts are the ranks. Rank 0 is the benchmark node.
    * - ``sglang_disagg_distributed``
      - ``cvs/tests/inference/sglang/sglang_disagg_distributed.py``
-     - Disaggregated prefill/decode with a proxy router; separate prefill and decode node groups.
+     - Disaggregated prefill/decode. The first even ``nnodes`` hosts split into equal prefill and decode groups. Rank 0 is prefill coordinator, proxy, and benchmark. Rank 1 is decode coordinator.
 
 See :doc:`/how-to/test-suites/inference/sglang`  for more information on running these tests.
 
@@ -60,30 +61,35 @@ All SGLang templates live under ``cvs/input/config_file/inference/sglang/``.
 Model and topology templates
 ----------------------------
 
+Templates are named ``<gpu>_sglang_<model>_<topology>.json``. ``<model>`` is
+``llama_70b``, ``deepseek_r1_0528``, or ``qwen35_397b``. ``<topology>`` is ``single``,
+``distributed``, or ``disaggregated``.
+
 .. list-table::
-   :widths: 3 3 2
+   :widths: 2 3 3
    :header-rows: 1
 
-   * - Config file
-     - Threshold JSON
-     - Use with suite
-   * - ``mi3xx_sglang_llama_70b_single.json``
-     - ``mi325_sglang_llama_70b_threshold.json``
+   * - Config prefix
+     - Threshold prefix
+     - GPU family
+   * - ``mi3xx_sglang_``
+     - ``mi325_sglang_``
+     - MI30x
+   * - ``mi35x_sglang_``
+     - ``mi355_sglang_``
+     - MI35x
+
+.. list-table::
+   :widths: 2 3
+   :header-rows: 1
+
+   * - Topology suffix
+     - Suite
+   * - ``single``
      - ``sglang_single``
-   * - ``mi3xx_sglang_deepseek_r1_0528_single.json``
-     - ``mi325_sglang_deepseek_r1_0528_threshold.json``
-     - ``sglang_single``
-   * - ``mi3xx_sglang_llama_70b_distributed.json``
-     - ``mi325_sglang_llama_70b_threshold.json``
+   * - ``distributed``
      - ``sglang_distributed``
-   * - ``mi3xx_sglang_deepseek_r1_0528_distributed.json``
-     - ``mi325_sglang_deepseek_r1_0528_threshold.json``
-     - ``sglang_distributed``
-   * - ``mi3xx_sglang_llama_70b_disaggregated.json``
-     - ``mi325_sglang_llama_70b_threshold.json``
-     - ``sglang_disagg_distributed``
-   * - ``mi3xx_sglang_deepseek_r1_0528_disaggregated.json``
-     - ``mi325_sglang_deepseek_r1_0528_threshold.json``
+   * - ``disaggregated``
      - ``sglang_disagg_distributed``
 
 Threshold files
@@ -99,9 +105,17 @@ threshold file via top-level ``threshold_json`` (a filename beside the config).
    * - Threshold file
      - Referenced by
    * - ``mi325_sglang_llama_70b_threshold.json``
-     - Llama 3.1 70B configs (single, distributed, disaggregated)
+     - MI30x Llama 3.1 70B configs (single, distributed, disaggregated)
    * - ``mi325_sglang_deepseek_r1_0528_threshold.json``
-     - DeepSeek-R1-0528 configs (single, distributed, disaggregated)
+     - MI30x DeepSeek-R1-0528 configs (single, distributed, disaggregated)
+   * - ``mi325_sglang_qwen35_397b_threshold.json``
+     - MI30x Qwen3.5-397B configs (single, distributed, disaggregated)
+   * - ``mi355_sglang_llama_70b_threshold.json``
+     - MI35x Llama 3.1 70B configs (single, distributed, disaggregated)
+   * - ``mi355_sglang_deepseek_r1_0528_threshold.json``
+     - MI35x DeepSeek-R1-0528 configs (single, distributed, disaggregated)
+   * - ``mi355_sglang_qwen35_397b_threshold.json``
+     - MI35x Qwen3.5-397B configs (single, distributed, disaggregated)
 
 Threshold keys use the form ``ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>``. Each value is a
 metric map (for example ``output_throughput_per_sec``, ``mean_ttft_ms``, ``mean_tpot_ms``,
@@ -130,10 +144,15 @@ The following table describes each top-level key in a SGLang configuration file.
      - ``shared_fs``, ``models_dir``, ``log_dir``, ``hf_token_file``.
    * - ``container``
      - Image, name, lifetime, and ``runtime.args`` (volumes, devices, env).
+   * - ``gpu_name``
+     - Cluster GPU label. Shipped values contain ``<changeme>`` and must be replaced.
    * - ``server_params``
-     - Model, TP/PP, node lists, ports, and launch flags.
+     - Model, TP/PP, ``nnodes``, optional ``serve_port``, and launch flags. Do not set node lists.
    * - ``benchmark_params``
      - ``bench_serving`` workload (``num_prompts``, ``data_set_name``, MFU inputs).
+   * - ``long_ctx_niah``
+     - Disaggregated only. Needle-in-a-haystack probe settings. The stage runs only when
+       ``server_params.lng_ctx_activate`` is true.
    * - ``accuracy``
      - ``tasks`` list (``lm_eval_hellaswag``, ``lm_eval_gsm8k``).
    * - ``sweeps``
@@ -189,8 +208,6 @@ Example: single-node template
             "model": "meta-llama/Llama-3.1-70B-Instruct",
             "tensor_parallelism": "8",
             "pipeline_parallelism": "1",
-            "benchmark_serv_node": "<changeme>",
-            "proxy_router_serv_port": "8000",
             "add_flags": [ "--attention-backend aiter" ]
         },
         "benchmark_params": {
@@ -220,14 +237,16 @@ General ``config`` parameters
      - Description
    * - ``container.image``
      - ``rocm/sgl-dev:…``
-     - Docker image with SGLang and ROCm for MI30X.
+     - Docker image with SGLang and ROCm. Use an MI30x image for ``mi3xx`` configs and an MI35x image for ``mi35x`` configs.
    * - ``container.name``
      - ``sglang_container``
      - Container instance name on each participating node.
    * - ``server_params.nnodes``
      - ``1``, ``2``, ``4``, …
-     - Server rank count. For ``sglang_distributed``, must match ``server_node_list`` length.
-       Disaggregated launch uses the lengths of ``prefill_node_list`` and ``decode_node_list``.
+     - How many hosts to take from ``cluster.json``, in ``node_dict`` order. Single-node configs use ``1``. Distributed configs need at least ``2``. Disaggregated configs need an even count of at least ``2``.
+   * - ``server_params.serve_port``
+     - ``8010``
+     - Client HTTP port. Omitted configs use ``8000``. On disaggregated runs this is the proxy port. Prefill and decode stay on ``30001`` and ``30002``.
    * - ``paths.hf_token_file``
      - ``/home/{user-id}/.hf_token``
      - HuggingFace token file for model download.
@@ -236,22 +255,19 @@ General ``config`` parameters
      - Docker shared memory size.
    * - ``paths.log_dir``
      - ``/home/{user-id}/LOGS/sglang``
-     - Shared log root (must be visible from benchmark nodes).
+     - Shared log root. ``test_launch_container`` deletes and recreates this directory. Passwordless sudo uses ``sudo -n rm``; otherwise the suite runs a plain ``rm``.
    * - ``server_params.log_level``
      - ``info``
      - SGLang server log level.
+   * - ``container.runtime.args.env.HSA_FORCE_FINE_GRAIN_PCIE``
+     - ``0`` or ``1``
+     - Exported into every server, proxy, and benchmark script. Blank or omitted values become ``1``.
    * - ``container.runtime.args.env.NCCL_DEBUG``
      - ``ERROR``
      - NCCL log level (multi-node).
-   * - ``server_params.benchmark_serv_node``
-     - node hostname/IP
-     - Node that runs smoke tests, lm-eval, and ``bench_serving`` (required for all suites).
-   * - ``server_params.proxy_router_serv_port``
-     - ``8000``
-     - HTTP port for the unified server (single/distributed) or proxy router client port (disaggregated).
    * - ``container.runtime.args.devices``
      - ``[ "/dev/dri", "/dev/kfd" ]`` (single)
-     - GPU devices passed into the container. Multi-node configs also include ``/dev/infiniband/rdma_cm``.
+     - GPU devices passed into the container. MI30x multi-node configs also include ``/dev/infiniband/rdma_cm``. MI35x multi-node configs include ``/dev/infiniband``.
    * - ``container.runtime.args.volumes``
      - list of ``host:container[:opts]`` strings
      - Bind mounts for home, models, and (multi-node) RDMA libraries. See :ref:`sglang-volume-mounts`.
@@ -259,21 +275,12 @@ General ``config`` parameters
 Single-node only (``sglang_single``)
 ------------------------------------
 
-.. list-table::
-   :widths: 3 5
-   :header-rows: 1
-
-   * - Parameter
-     - Description
-   * - ``server_params.benchmark_serv_node``
-     - Exactly one host; only this node receives a container. Other cluster nodes are ignored.
-   * - ``server_params.nnodes``
-     - Must be ``1``.
+The suite uses the first host in ``cluster.json`` and ignores the rest. Leave ``benchmark_serv_node`` unset. ``server_params.nnodes`` must be ``1``.
 
 Unified multi-node (``sglang_distributed``)
 -------------------------------------------
 
-Additional ``server_params`` / ``container`` env fields beyond the single-node set:
+The suite takes the first ``nnodes`` hosts from ``cluster.json``. Rank 0 is the dist-init master and the benchmark node. Leave ``server_node_list`` and ``benchmark_serv_node`` unset. If ``nnodes`` is larger than the cluster, the suite fails at load time.
 
 .. list-table::
    :widths: 3 5
@@ -281,23 +288,25 @@ Additional ``server_params`` / ``container`` env fields beyond the single-node s
 
    * - Parameter
      - Description
-   * - ``server_params.server_node_list``
-     - All ranks of the unified ``sglang.launch_server`` (length must equal ``nnodes``).
    * - ``server_params.dist_init_port``
-     - Distributed init port on rank-0 (default ``40001``).
+     - Distributed init port on rank 0. Omitted configs use ``40001``.
    * - ``NCCL_IB_HCA``, ``NCCL_IB_GID_INDEX``
      - NCCL InfiniBand/RoCE device list and GID index (``container.runtime.args.env``).
    * - ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, ``GLOO_TCP_IFNAME``
      - Ethernet interfaces for socket/Gloo fallback.
-   * - ``HCA_ID_PREFIX``
-     - Single ``ibv_devinfo`` ``hca_id`` prefix used by ``test_setup_ibv_devices``.
-       Replace ``<changeme>`` with ``rdma``, ``bnxt_``, or ``mlx5_``. Keep ``rdma0,...``
-       on ``NCCL_IB_HCA`` only.
+   * - Other scalar ``env`` entries
+     - Copied into the in-container ``export`` block. The NCCL, Gloo, and ``HSA_FORCE_FINE_GRAIN_PCIE`` keys above are applied on their own and are not duplicated in that block.
 
 Disaggregated prefill-decode (``sglang_disagg_distributed``)
 ------------------------------------------------------------
 
-Uses the multi-node network env fields above, plus:
+Uses the multi-node network env fields above. The loader drops any configured role lists and assigns them from the first ``nnodes`` hosts:
+
+1. Rank 0 is the prefill coordinator, the proxy router, and the benchmark node.
+2. Rank 1 is the decode coordinator.
+3. The remaining hosts split in half: the first half joins prefill, the second half joins decode.
+
+``nnodes`` must be even and at least 2, and the cluster must contain at least that many hosts.
 
 .. list-table::
    :widths: 3 5
@@ -305,16 +314,18 @@ Uses the multi-node network env fields above, plus:
 
    * - Parameter
      - Description
-   * - ``server_params.prefill_node_list``, ``decode_node_list``
-     - Node groups for prefill and decode servers. ``--nnodes`` / ``--node-rank`` follow these list lengths.
-   * - ``server_params.proxy_router_node``
-     - Host running the PD proxy router.
-   * - ``prefill_serv_port``, ``decode_serv_port``, ``proxy_router_port``
-     - Internal service ports (defaults ``30001``, ``30002``, ``8000``).
-   * - ``prefill_coordinator_addr``, ``decode_coordinator_addr``
-     - Rank-0 addresses for each role group.
+   * - ``server_params.serve_port``
+     - Proxy client port. Omitted configs use ``8000``. MI35x templates set ``8010``.
+   * - ``prefill_serv_port``, ``decode_serv_port``
+     - Internal service ports. Omitted configs use ``30001`` and ``30002``.
    * - ``prefill_coordinator_port``, ``decode_coordinator_port``
-     - Coordinator ports (defaults ``40001``, ``40002``).
+     - Coordinator ports. Omitted configs use ``40001`` and ``40002``.
+   * - ``server_params.prefill_policy``, ``decode_policy``
+     - PD routing policy. Shipped templates use ``cache_aware``.
+   * - ``MC_GID_INDEX``, ``MC_DISABLE_HIP``
+     - Mooncake Transfer Engine settings on MI35x disaggregated templates (``container.runtime.args.env``). ``MC_GID_INDEX`` is the RoCEv2 GID index shared by the configured HCAs. ``MC_DISABLE_HIP=1`` keeps cross-node KV transfer on RDMA. SGLang selects Mooncake when ``--disaggregation-transfer-backend`` is omitted.
+   * - ``server_params.lng_ctx_activate``
+     - When true, ``test_run_long_context_accuracy`` runs the ``long_ctx_niah`` probe. Shipped templates set this to false, so the stage skips.
 
 ``benchmark_params`` / model settings
 =====================================
@@ -337,8 +348,8 @@ Uses the multi-node network env fields above, plus:
      - TP size per node; PP across nodes for distributed/disaggregated runs. Sweep combo TP/PP
        labels the cell; they do not relaunch the server.
    * - ``server_params.memory_fraction``
-     - ``0.85`` (Llama) / ``0.7`` (DeepSeek)
-     - Static KV-cache memory fraction passed to ``launch_server``.
+     - ``0.85`` or ``0.7``
+     - Static KV-cache memory fraction passed to ``launch_server``. Llama templates use ``0.85``. DeepSeek templates use ``0.7``. Qwen single-node uses ``0.85``; Qwen multi-node uses ``0.7``.
    * - ``server_params.max_concurrency``
      - ``256``
      - ``bench_serving`` concurrency sweep upper bound.
@@ -347,15 +358,12 @@ Uses the multi-node network env fields above, plus:
      - Tokenizer mode passed to ``launch_server``.
    * - ``server_params.inference_poll_iterations``
      - ``16``
-     - Server-ready poll attempts.
+     - Server-ready poll attempts. The poll looks for ``server is fired up and ready to roll`` in the server log.
    * - ``container.runtime.args.env``, ``server_params.add_flags``
-     - ROCm/SGLang tuning as scalar env (for example ``SGLANG_USE_AITER``, ``AMDGCN_USE_BUFFER_OPS``, ``ROCM_QUICK_REDUCE_QUANTIZATION``) plus ``--attention-backend aiter``. DeepSeek templates also set ``GPU_ARCHS=gfx942``.
+     - Scalar env such as ``SGLANG_USE_AITER``, ``AMDGCN_USE_BUFFER_OPS``, and ``ROCM_QUICK_REDUCE_QUANTIZATION``, plus ``--attention-backend aiter``. MI30x DeepSeek templates and MI30x multi-node Qwen templates set ``GPU_ARCHS=gfx942``. MI35x disaggregated templates use SGLang's default Mooncake transfer backend and set ``MC_GID_INDEX`` and ``MC_DISABLE_HIP``.
    * - ``server_params.context_length``
-     - ``205000``
-     - Long-context cap (distributed / disaggregated Llama and DeepSeek templates).
-   * - ``server_params.prefill_policy``, ``decode_policy``
-     - ``cache_aware``
-     - Disaggregated templates only; PD routing policy.
+     - ``205000`` or ``163840``
+     - Long-context cap on distributed (``205000``) and disaggregated (``163840``) templates.
 
 Inference tests
 ===============
@@ -365,9 +373,7 @@ Inference tests
   ``sweep.runs`` (or every performance cell in the threshold file if ``runs`` is empty).
   ``input_length`` and ``output_length`` are injected at collection time.
 
-  Combo keys are matched exactly, then by unique ``ISL,OSL,CONC`` if TP/PP in the combo
-  differs from the threshold-file key. ``sweeps`` supplies per-combo overrides such as
-  ``num_prompts``.
+  Combo keys match a threshold cell by the full ``ISL,OSL,TP,PP,CONC`` key. If that key is missing and exactly one threshold cell has the same ``ISL,OSL,CONC``, that cell is used. TP and PP on the combo then only label the run; they do not relaunch the server. If several threshold cells share that shape, collection fails and the combo must use the exact key. ``sweeps`` supplies per-combo overrides such as ``num_prompts``. Empty ``runs`` selects each performance cell in the threshold JSON once.
 
   - ``enforce_thresholds`` (top-level): when ``false``, measured throughput/latency is recorded
     and reported but does not fail the run. When ``true``, results are compared against the
@@ -384,9 +390,9 @@ Inference tests
 Volume mounts
 =============
 
-**Single-node** configs mount only user home and model storage—no InfiniBand or RDMA verb libraries.
+**Single-node** configs mount only user home and model storage.
 
-**Distributed and disaggregated** configs add RDMA-related mounts for Thor/Broadcom NICs:
+**MI30x distributed and disaggregated** configs add Thor/Broadcom RDMA mounts:
 
 .. code:: json
 
@@ -399,8 +405,21 @@ Volume mounts
         ]
     }
 
-``test_setup_ibv_devices`` (distributed and disaggregated suites only) validates IB visibility inside
-the container after these mounts are applied.
+**MI35x distributed and disaggregated** configs mount the Ionic RDMA libraries instead:
+
+.. code:: json
+
+    {
+        "volumes": [
+            "/dev/infiniband:/dev/infiniband",
+            "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
+            "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
+            "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
+            "/etc/libibverbs.d/ionic.driver:/etc/libibverbs.d/ionic.driver:ro"
+        ]
+    }
+
+Those host paths must exist on every participating node. Change the mount source if the library lives somewhere else.
 
 Disaggregated architecture overview
 ====================================
@@ -411,8 +430,9 @@ SGLang disaggregated prefill-decode separates inference into:
 2. **Decode nodes** — autoregressive token generation from cached KV states.
 3. **Proxy router** — routes requests between prefill and decode clusters.
 
-Use ``sglang_disagg_distributed`` with ``mi3xx_sglang_*_disaggregated.json`` templates. Unified
-multi-node serving (no PD split) uses ``sglang_distributed`` instead.
+Use ``sglang_disagg_distributed`` with a ``*_disaggregated.json`` template. Unified
+multi-node serving (no PD split) uses ``sglang_distributed``. The node split follows
+``cluster.json`` order and ``server_params.nnodes``, as described above.
 
 Performance metrics
 ===================
@@ -432,16 +452,26 @@ Troubleshooting
 **Container launch**
   Verify ``container.image`` on all nodes, ``devices`` GPU paths, and ``shm_size``. Single-node
   runs need only ``/dev/dri`` and ``/dev/kfd``. Put ROCm/SGLang knobs as scalar ``env``
-  keys (``SGLANG_USE_AITER``, ``GPU_ARCHS``, ...), not as an ``ADD_EXPORT_ENV`` list.
+  keys (``SGLANG_USE_AITER``, ``GPU_ARCHS``, ``HSA_FORCE_FINE_GRAIN_PCIE``, ...).
+  If ``paths.log_dir`` is owned by root and passwordless sudo is unavailable, the cleanup
+  ``rm`` fails.
 
 **Multi-node networking**
-  Confirm RDMA devices with ``ibv_devinfo`` inside the container after ``test_setup_ibv_devices``.
-  Match ``NCCL_IB_HCA`` to your cluster. For Thor NICs, ensure ``libbnxt_re-rdmav34.so`` mounts
-  are present.
+  Match ``NCCL_IB_HCA`` to the fabric. MI30x templates expect Broadcom ``bnxt`` mounts and
+  ``rdma*`` devices. MI35x templates expect Ionic library mounts and ``ionic_*`` devices.
+  Confirm the mounted ``.so`` files exist on the host before the container starts.
+
+**Host selection**
+  Put hosts in ``cluster.json`` in rank order. The config does not choose nodes.
+  ``sglang_single`` uses the first host. ``sglang_distributed`` uses the first ``nnodes``
+  hosts. ``sglang_disagg_distributed`` needs an even ``nnodes`` and splits that prefix
+  into equal prefill and decode groups.
 
 **Sweep collection**
-  Each listed ``sweep.runs`` combo must match a threshold cell exactly or uniquely by
-  ``ISL,OSL,CONC``. Empty ``runs`` selects every performance cell in the threshold JSON.
+  Each listed ``sweep.runs`` combo must match a threshold cell by the full key, or be the
+  only cell with that ``ISL,OSL,CONC``. Empty ``runs`` selects every performance cell in
+  the threshold JSON once. A sweep TP/PP that differs from the server TP/PP does not
+  relaunch the server.
 
 **Model access**
   Set ``paths.hf_token_file`` for HuggingFace models or mount local weights under ``/root/models`` via

@@ -24,6 +24,8 @@ from cvs.lib import globals
 from cvs.lib.inference.sglang.sglang_common import (
     add_cli_flags_block,
     add_export_env_block,
+    hf_token_export_line,
+    hsa_force_fine_grain_pcie,
     collect_sglang_gpu_topology,
     DEFAULT_SGLANG_DECODE_COORD_PORT,
     DEFAULT_SGLANG_DECODE_SERV_PORT,
@@ -171,12 +173,13 @@ class SglangDisaggPD:
     ) -> str:
         return first_output(self._container_exec(cmd, hosts=hosts, timeout=timeout))
 
-    def _host_exec(self, cmd, *, hosts=None, timeout=None):
+    def _host_exec(self, cmd, *, hosts=None, timeout=None, print_console=None):
         """Run ``cmd`` on the host OS (not inside the container), e.g. amd-smi / dmesg."""
         target = [self._head_host] if hosts is None else normalize_hosts(hosts)
         if not target:
             return {}
-        return self.orch.exec_on_host(cmd, hosts=target, timeout=timeout)
+        extra = {} if print_console is None else {'print_console': print_console}
+        return self.orch.exec_on_host(cmd, hosts=target, timeout=timeout, **extra)
 
     def _host_exec_text(
         self,
@@ -290,13 +293,13 @@ class SglangDisaggPD:
             f"export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}\n"
             f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
-            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE={hsa_force_fine_grain_pcie(self.inf_dict)}\n"
             f"export MASTER_PREFILL_ADDR={self.inf_dict['prefill_coordinator_addr']}\n"
             f"export MASTER_PREFILL_PORT={self.inf_dict['prefill_coordinator_port']}\n"
             f"export MODEL={self.bp_dict['model']}\n"
             f"export TP={self.bp_dict['tensor_parallelism']}\n"
             f"export PP={self.bp_dict['pipeline_parallelism']}\n"
-            f"export HF_TOKEN={self.hf_token}\n"
+            f"{hf_token_export_line(self.inf_dict.get('hf_token_file'))}"
             f"{add_export_env_block(self.bp_dict, indent='')}\n"
         )
         write_cmd = "bash -c " + shlex.quote(
@@ -318,13 +321,13 @@ class SglangDisaggPD:
             f"export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}\n"
             f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
-            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE={hsa_force_fine_grain_pcie(self.inf_dict)}\n"
             f"export MASTER_DECODE_ADDR={self.inf_dict['decode_coordinator_addr']}\n"
             f"export MASTER_DECODE_PORT={self.inf_dict['decode_coordinator_port']}\n"
             f"export MODEL={self.bp_dict['model']}\n"
             f"export TP={self.bp_dict['tensor_parallelism']}\n"
             f"export PP={self.bp_dict['pipeline_parallelism']}\n"
-            f"export HF_TOKEN={self.hf_token}\n"
+            f"{hf_token_export_line(self.inf_dict.get('hf_token_file'))}"
             f"{add_export_env_block(self.bp_dict, indent='')}\n"
         )
         write_cmd = "bash -c " + shlex.quote(
@@ -346,8 +349,8 @@ class SglangDisaggPD:
             f"export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}\n"
             f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
-            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
-            f"export HF_TOKEN={self.hf_token}\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE={hsa_force_fine_grain_pcie(self.inf_dict)}\n"
+            f"{hf_token_export_line(self.inf_dict.get('hf_token_file'))}"
         )
         write_cmd = "bash -c " + shlex.quote(
             f"cat > /tmp/router_env_script.sh <<'EOF'\n{env_body}EOF\n"
@@ -368,8 +371,8 @@ class SglangDisaggPD:
             f"export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}\n"
             f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
-            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
-            f"export HF_TOKEN={self.hf_token}\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE={hsa_force_fine_grain_pcie(self.inf_dict)}\n"
+            f"{hf_token_export_line(self.inf_dict.get('hf_token_file'))}"
         )
         write_cmd = "bash -c " + shlex.quote(
             f"cat > /tmp/benchmark_env_script.sh <<'EOF'\n{env_body}EOF\n"
@@ -735,7 +738,7 @@ class SglangDisaggPD:
     ) -> None:
         for iteration in range(1, no_of_iterations):
             log.info('Starting %s readiness poll iteration %d', label, iteration)
-            grep_cmd = f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} {shlex.quote(log_path)} || true"
+            grep_cmd = f"grep -a -o -m 1 -E {_SERVER_READY_RE.pattern!r} {shlex.quote(log_path)} || true"
             text = self._container_exec_text(grep_cmd, hosts=hosts)
             if _SERVER_READY_RE.search(text):
                 log.info('Wait 60 secs before serving traffic')
