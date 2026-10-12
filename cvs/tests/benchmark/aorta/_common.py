@@ -131,9 +131,13 @@ def collect_traces(aorta_job, lifecycle, request, subtests):
             else:
                 continue
             cases.append(("trace collection", {"host": host}, failure, None))
-        _report_cases(request, subtests, cases)
+        # The HTML panel replaces the parent row's log, so every failure of this
+        # stage must be a sub-test row or its message is lost from the report.
         if not aorta_job.get_artifact("torch_traces"):
-            fail_test("No fresh torch_traces artifact was collected")
+            cases.append(
+                ("trace collection", {"artifact": "torch_traces"}, "No fresh torch_traces artifact was collected", None)
+            )
+        _report_cases(request, subtests, cases)
 
 
 def analyze(aorta_job, lifecycle):

@@ -71,7 +71,8 @@ metrics fails parsing.
 
 `test_validate_thresholds` reports each configured threshold as its own pytest sub-test
 (`[threshold] (metric=<key>)`), and `test_collect_traces` reports each node it collected
-from (`[trace collection] (host=<node>)`). In the HTML report, expand the parent row to
+from (`[trace collection] (host=<node>)`), plus a failed `[trace collection]
+(artifact=torch_traces)` sub-test when no node produced usable traces. In the HTML report, expand the parent row to
 see one row per sub-test; the JUnit XML lists them as `cvs_aorta_subtest` properties of
 the parent test case. A failed sub-test also fails its parent stage, so later stages
 are gated and `validation_passed` is false as before.

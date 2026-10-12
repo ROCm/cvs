@@ -179,7 +179,7 @@ class TestAortaStages(unittest.TestCase):
         self.assertEqual(self.subtests.outcomes, [("trace collection", {"host": "node-a"}, None)])
         self.assertFalse(self.lifecycle.failed)
 
-    def test_missing_trace_artifact_fails_without_host_subtest_failure(self):
+    def test_missing_trace_artifact_is_a_failed_subtest(self):
         request = self._request("test_collect_traces")
         self.job.started = True
         self.job.artifacts.pop("torch_traces")
@@ -190,7 +190,25 @@ class TestAortaStages(unittest.TestCase):
         with patch.object(self.job, "collect_traces", side_effect=collect), patch.object(self.job, "collect_logs"):
             with self.assertRaisesRegex(pytest.fail.Exception, "No fresh torch_traces artifact"):
                 _common.collect_traces(self.job, self.lifecycle, request, self.subtests)
-        self.assertEqual(self.subtests.outcomes, [("trace collection", {"host": "node-a"}, None)])
+        self.assertEqual(
+            self.subtests.outcomes,
+            [
+                ("trace collection", {"host": "node-a"}, None),
+                ("trace collection", {"artifact": "torch_traces"}, "No fresh torch_traces artifact was collected"),
+            ],
+        )
+        rows = benchmark_metric_rows_for_nodeid(request.node.nodeid)
+        self.assertEqual(
+            [(row["label"], row["status"], row["reason"]) for row in rows],
+            [
+                ("[trace collection] (host=node-a)", "pass", ""),
+                (
+                    "[trace collection] (artifact=torch_traces)",
+                    "fail",
+                    "No fresh torch_traces artifact was collected",
+                ),
+            ],
+        )
         self.assertTrue(self.lifecycle.failed)
 
     def test_failed_distributed_run_uses_raw_traces_even_with_excel_reports(self):
