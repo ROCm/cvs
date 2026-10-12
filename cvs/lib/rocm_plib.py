@@ -8,10 +8,18 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from cvs.lib.utils_lib import *
 
 
-def _amd_smi_json_command(args: str) -> str:
-    """Build a portable amd-smi JSON command for nodes with different install paths."""
+def _amd_smi_json_command(args: str, use_sudo=True) -> str:
+    """Build a portable amd-smi JSON command for nodes with different install paths.
+
+    use_sudo defaults to True so existing callers keep ``sudo bash -lc``. Host checks
+    on a scheduler job pass False: bare ``sudo`` waits for a password on the HTTP
+    agent, and firmware JSON is readable without root. A missing binary prints
+    ``[]`` and exits 0, the same fallback as ``_rocm_smi_showbus_cmd``, so the
+    JSON parser gets an empty payload instead of a failed command.
+    """
+    privilege = "sudo " if use_sudo else ""
     return (
-        "sudo bash -lc '"
+        f"{privilege}bash -lc '"
         "if command -v amd-smi >/dev/null 2>&1; then AMD_SMI=$(command -v amd-smi); "
         "elif [ -x /opt/rocm/bin/amd-smi ]; then AMD_SMI=/opt/rocm/bin/amd-smi; "
         "else echo \"[]\"; exit 0; fi; "
@@ -40,8 +48,8 @@ def get_amd_smi_metric_dict(phdl):
     return amd_metric_dict
 
 
-def get_amd_smi_fw_dict(phdl):
-    firmware_dict = convert_phdl_json_to_dict(phdl.exec(_amd_smi_json_command('firmware')))
+def get_amd_smi_fw_dict(phdl, use_sudo=True):
+    firmware_dict = convert_phdl_json_to_dict(phdl.exec(_amd_smi_json_command('firmware', use_sudo=use_sudo)))
     return firmware_dict
 
 
@@ -99,8 +107,28 @@ def get_gpu_fw_dict(phdl):
     return d_dict
 
 
-def get_gpu_pcie_bus_dict(phdl):
-    d_dict = convert_phdl_json_to_dict(phdl.exec('sudo rocm-smi --loglevel error --showbus --json'))
+def _rocm_smi_showbus_cmd(use_sudo=True):
+    """rocm-smi bus map. Unprivileged form resolves the binary without a login sudo.
+
+    A missing binary prints ``[]`` and exits 0, matching ``_amd_smi_json_command``.
+    Exit 127 would make ``convert_phdl_json_to_dict`` store ``{}`` and the GPU PCIe
+    check would then KeyError that node while walking every card.
+    """
+    if use_sudo:
+        return 'sudo rocm-smi --loglevel error --showbus --json'
+    return (
+        "bash -lc '"
+        "if command -v rocm-smi >/dev/null 2>&1; then rocm-smi --loglevel error --showbus --json; "
+        "elif [ -x /opt/rocm/bin/rocm-smi ]; then /opt/rocm/bin/rocm-smi --loglevel error --showbus --json; "
+        "else echo \"[]\"; exit 0; fi'"
+    )
+
+
+def get_gpu_pcie_bus_dict(phdl, use_sudo=True):
+    d_dict = convert_phdl_json_to_dict(phdl.exec(_rocm_smi_showbus_cmd(use_sudo)))
+    for node, cards in d_dict.items():
+        if not isinstance(cards, dict):
+            d_dict[node] = {}
     return d_dict
 
 

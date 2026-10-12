@@ -10,13 +10,23 @@ from cvs.lib import rocm_plib
 from cvs.lib.utils_lib import *
 
 
-def get_lshw_network_dict(phdl):
+def _lshw_network_cmd(use_sudo=True):
+    """lshw businfo. The unprivileged form calls /usr/sbin/lshw, which is off the default PATH."""
+    if use_sudo:
+        return 'sudo lshw -class network -businfo'
+    return (
+        'if [ -x /usr/sbin/lshw ]; then /usr/sbin/lshw -class network -businfo; else lshw -class network -businfo; fi'
+    )
+
+
+def get_lshw_network_dict(phdl, use_sudo=True):
     """
     Parse `lshw -class network -businfo` output (per node) into a nested dictionary.
 
-    This function executes `sudo lshw -class network -businfo` via the provided phdl
-    handle (which is expected to run the command on one or more nodes and return a
-    mapping of node -> command output). It then parses each line of output to extract:
+    This function executes lshw via the provided phdl handle (sudo unless
+    use_sudo is False). The handle is expected to run the command on one or
+    more nodes and return a
+    mapping of node -> command output. It then parses each line of output to extract:
       - The PCI bus identifier (e.g., 0000:03:00.0)
       - The OS device name (e.g., enp3s0), when present
       - The device description (e.g., RTL8111/8168/8411 PCI Express Gigabit Ethernet Controller)
@@ -56,7 +66,7 @@ def get_lshw_network_dict(phdl):
     # Execute lshw on all nodes via the provided handle. The expectation is that
     # out_dict is like: { node_name: "command stdout as string", ... }
 
-    out_dict = phdl.exec('sudo lshw -class network -businfo')
+    out_dict = phdl.exec(_lshw_network_cmd(use_sudo))
     for node in out_dict.keys():
         lshw_dict[node] = {}
         # Process the output line-by-line. split("\n") assumes LF newlines from lshw.
@@ -331,8 +341,8 @@ def get_rdma_capable_devices_dict(phdl):
     return rdma_cap_dict
 
 
-def get_backend_nic_dict(phdl):
-    lshw_dict = get_lshw_network_dict(phdl)
+def get_backend_nic_dict(phdl, use_sudo=True):
+    lshw_dict = get_lshw_network_dict(phdl, use_sudo=use_sudo)
     rdma_cap_devs = get_rdma_capable_devices_dict(phdl)
     bck_net_dict = {}
     for node in lshw_dict.keys():
@@ -369,7 +379,7 @@ def get_backend_nic_dict(phdl):
     return bck_net_dict
 
 
-def get_backend_rdma_nic_dict(phdl):
+def get_backend_rdma_nic_dict(phdl, use_sudo=True):
     """
     Build a per-node dictionary of RDMA devices that map to backend NICs.
 
@@ -399,7 +409,7 @@ def get_backend_rdma_nic_dict(phdl):
     bck_rdma_nic_dict = {}
 
     # Gather backend NICs per node (e.g., NICs designated for backend traffic)
-    bck_nic_dict = get_backend_nic_dict(phdl)
+    bck_nic_dict = get_backend_nic_dict(phdl, use_sudo=use_sudo)
 
     # Gather active RDMA NIC information per node
     rdma_nic_dict = get_active_rdma_nic_dict(phdl)
@@ -760,10 +770,10 @@ def get_linux_perf_tuning_dict(phdl):
     out_dict['cpu_power_profile'] = phdl.exec('sudo cpupower info')
 
 
-def get_lshw_backend_nic_dict(phdl):
+def get_lshw_backend_nic_dict(phdl, use_sudo=True):
     lshw_bck_nic_dict = {}
-    lshw_dict = get_lshw_network_dict(phdl)
-    rdma_nic_dict = get_backend_rdma_nic_dict(phdl)
+    lshw_dict = get_lshw_network_dict(phdl, use_sudo=use_sudo)
+    rdma_nic_dict = get_backend_rdma_nic_dict(phdl, use_sudo=use_sudo)
     for node in rdma_nic_dict.keys():
         lshw_bck_nic_dict[node] = {}
         for rdma_dev in rdma_nic_dict[node].keys():
@@ -773,6 +783,67 @@ def get_lshw_backend_nic_dict(phdl):
             lshw_bck_nic_dict[node][eth_dev]['description'] = lshw_dict[node][eth_dev]['description']
             lshw_bck_nic_dict[node][eth_dev]['rdma_dev'] = rdma_dev
     return lshw_bck_nic_dict
+
+
+# VMD domains are wider than four hex digits (for example 10000:e1:00.0).
+_PCI_BDF_RE = re.compile(r'^(?:[0-9a-f]{4,}:)?[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$')
+
+
+def _read_or_denied(reader):
+    """Run a reader and print its stdout, or CVS_CMD_DENIED when it fails.
+
+    Same token as ``_sudo_n_or_denied``. Used for unprivileged reads such as
+    sysfs, where a missing file must be a recorded failure rather than empty
+    output that the version parser cannot match.
+    """
+    return (
+        f'if ! _cvs_out=$({reader} 2>&1); then '
+        "printf 'CVS_CMD_DENIED %s\\n' \"$_cvs_out\"; "
+        "else printf '%s\\n' \"$_cvs_out\"; "
+        'fi'
+    )
+
+
+def _sudo_n_or_denied(reader, filter_cmd):
+    """Run a privileged reader with sudo -n and filter its stdout.
+
+    Bare sudo blocks the SPUR HTTP agent when a password is required. sudo -n
+    fails immediately; the denial token is what the host-check evals record.
+    A filter miss is not a denial, so the pipeline ends with ``|| true``.
+    """
+    return (
+        f'if ! _cvs_out=$({reader} 2>&1); then '
+        "printf 'CVS_CMD_DENIED %s\\n' \"$_cvs_out\"; "
+        f"else printf '%s\\n' \"$_cvs_out\" | {filter_cmd} || true; "
+        'fi'
+    )
+
+
+def pcie_link_status_cmd(bdf):
+    """Shell command that prints an lspci-style LnkSta line from sysfs.
+
+    Unprivileged ``lspci -vvv`` hides LnkSta behind ``Capabilities: <access denied>``,
+    so a SPUR job cannot see speed or width that way. current_link_speed and
+    current_link_width are world-readable. The printed line matches the host-check
+    parsers (``Speed <n>GT``, ``Width x<n>``, and ``downgraded`` when current != max).
+    """
+    device = str(bdf).strip().lower()
+    if not _PCI_BDF_RE.match(device):
+        raise ValueError(f'invalid PCI BDF {bdf!r}')
+    if device.count(':') == 1:
+        device = '0000:' + device
+    return (
+        f'dev=/sys/bus/pci/devices/{device}; '
+        'speed=$(cat "$dev/current_link_speed"); '
+        'width=$(cat "$dev/current_link_width"); '
+        'maxs=$(cat "$dev/max_link_speed"); '
+        'maxw=$(cat "$dev/max_link_width"); '
+        'spd=$(printf "%s" "$speed" | sed -E "s/([0-9]+).*/\\1/"); '
+        'line="LnkSta: Speed ${spd}GT/s, Width x${width}"; '
+        'if [ "$speed" != "$maxs" ] || [ "$width" != "$maxw" ]; then '
+        'printf "%s (downgraded)\\n" "$line"; '
+        'else printf "%s\\n" "$line"; fi'
+    )
 
 
 def get_nearest_bus_no(target_hex: str, candidates: list[str]) -> str:
@@ -789,10 +860,11 @@ def get_nearest_bus_no(target_hex: str, candidates: list[str]) -> str:
 
 def get_gpu_nic_mapping_dict(
     phdl,
+    use_sudo=True,
 ):
     gpu_nic_dict = {}
-    gpu_pcie_dict = rocm_plib.get_gpu_pcie_bus_dict(phdl)
-    lshw_dict = get_lshw_backend_nic_dict(phdl)
+    gpu_pcie_dict = rocm_plib.get_gpu_pcie_bus_dict(phdl, use_sudo=use_sudo)
+    lshw_dict = get_lshw_backend_nic_dict(phdl, use_sudo=use_sudo)
 
     nic_bus_dict = {}
     for node in lshw_dict.keys():

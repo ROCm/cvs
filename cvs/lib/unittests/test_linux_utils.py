@@ -1,4 +1,7 @@
 # cvs/lib/unittests/test_linux_utils.py
+import os
+import subprocess
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 import cvs.lib.linux_utils as linux_utils
@@ -171,6 +174,103 @@ class TestGetNicEthtoolStatsDict(unittest.TestCase):
 
         second_batch_cmds = mock_phdl.exec_cmd_list.call_args_list[1].args[0]
         self.assertEqual(second_batch_cmds[1], 'true')
+
+
+class TestReadOrDenied(unittest.TestCase):
+    def _run(self, reader):
+        cmd = linux_utils._read_or_denied(reader)
+        return subprocess.run(['bash', '-c', cmd], capture_output=True, text=True)
+
+    def test_missing_file_emits_denial_token(self):
+        result = self._run('cat /no/such/cvs-bios-version')
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(result.stdout.startswith('CVS_CMD_DENIED '))
+        self.assertIn('cvs-bios-version', result.stdout)
+
+    def test_success_prints_reader_output(self):
+        result = self._run("printf '20171212\\n'")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, '20171212\n')
+
+
+class TestSudoNOrDenied(unittest.TestCase):
+    def _run(self, reader, filter_cmd):
+        cmd = linux_utils._sudo_n_or_denied(reader, filter_cmd)
+        return subprocess.run(['bash', '-c', cmd], capture_output=True, text=True)
+
+    def test_failing_reader_emits_denial_token(self):
+        result = self._run('ls /no/such/cvs-sudo-reader', 'grep ACSCtl')
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(result.stdout.startswith('CVS_CMD_DENIED '))
+        self.assertIn('cvs-sudo-reader', result.stdout)
+
+    def test_filter_miss_is_empty_and_exits_zero(self):
+        result = self._run("printf 'nothing to see\\n'", 'grep ACSCtl')
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, '')
+
+    def test_filter_hit_passes_matching_lines(self):
+        result = self._run("printf 'ACSCtl: SrcValid+\\nnoise\\n'", 'grep ACSCtl')
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, 'ACSCtl: SrcValid+\n')
+
+
+class TestPcieLinkStatusCmd(unittest.TestCase):
+    def test_wide_domain_is_kept(self):
+        cmd = linux_utils.pcie_link_status_cmd('10000:e1:00.0')
+        self.assertIn('dev=/sys/bus/pci/devices/10000:e1:00.0;', cmd)
+
+    def test_short_bdf_is_prefixed_and_command_is_unprivileged(self):
+        cmd = linux_utils.pcie_link_status_cmd('03:00.0')
+        self.assertIn('dev=/sys/bus/pci/devices/0000:03:00.0;', cmd)
+        self.assertIn('current_link_speed', cmd)
+        self.assertIn('current_link_width', cmd)
+        self.assertNotIn('sudo', cmd)
+        self.assertNotIn('lspci', cmd)
+
+    def test_prints_lnksta_and_downgrade(self):
+        cmd = linux_utils.pcie_link_status_cmd('0000:03:00.0')
+        with tempfile.TemporaryDirectory() as device:
+            for name, text in (
+                ('current_link_speed', '16.0 GT/s\n'),
+                ('current_link_width', '8\n'),
+                ('max_link_speed', '32.0 GT/s\n'),
+                ('max_link_width', '16\n'),
+            ):
+                with open(os.path.join(device, name), 'w', encoding='utf-8') as handle:
+                    handle.write(text)
+            rendered = cmd.replace('/sys/bus/pci/devices/0000:03:00.0', device)
+            result = subprocess.run(['bash', '-c', rendered], capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout, 'LnkSta: Speed 16GT/s, Width x8 (downgraded)\n')
+
+    def test_rejects_unsafe_bdf(self):
+        with self.assertRaises(ValueError):
+            linux_utils.pcie_link_status_cmd('0000:03:00.0; rm -rf /')
+
+    def test_lshw_default_still_uses_sudo(self):
+        mock_phdl = MagicMock()
+        mock_phdl.exec.return_value = {'node1': ''}
+        linux_utils.get_lshw_network_dict(mock_phdl)
+        self.assertEqual(mock_phdl.exec.call_args.args[0], 'sudo lshw -class network -businfo')
+
+    def test_unprivileged_lshw_skips_sudo(self):
+        mock_phdl = MagicMock()
+        mock_phdl.exec.return_value = {'node1': ''}
+        linux_utils.get_lshw_network_dict(mock_phdl, use_sudo=False)
+        cmd = mock_phdl.exec.call_args.args[0]
+        self.assertNotIn('sudo', cmd)
+        self.assertIn('/usr/sbin/lshw', cmd)
+
+    def test_gpu_nic_mapping_forwards_use_sudo(self):
+        with (
+            patch.object(linux_utils.rocm_plib, 'get_gpu_pcie_bus_dict', return_value={}) as bus,
+            patch.object(linux_utils, 'get_lshw_backend_nic_dict', return_value={}) as lshw,
+        ):
+            linux_utils.get_gpu_nic_mapping_dict(MagicMock(), use_sudo=False)
+        bus.assert_called_once()
+        self.assertFalse(bus.call_args.kwargs['use_sudo'])
+        lshw.assert_called_once()
+        self.assertFalse(lshw.call_args.kwargs['use_sudo'])
 
 
 if __name__ == '__main__':
