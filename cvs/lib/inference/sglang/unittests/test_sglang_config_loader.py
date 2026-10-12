@@ -260,6 +260,18 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
         self.assertIn('SGLANG_USE_AITER=1', params['add_export_env'])
         self.assertIn('FROM_RUNTIME=1', params['add_export_env'])
 
+    def test_hf_token_is_not_copied_into_logged_env(self):
+        self.raw['container']['runtime']['args']['env']['HF_TOKEN'] = 'hf_secret_value'
+        self.raw['params']['add_export_env'].append('HF_TOKEN=hf_secret_value')
+
+        inference, params, server = loader._unified_runtime_views(self.raw, self.thresholds)
+
+        self.assertNotIn('HF_TOKEN', server['env'])
+        self.assertNotIn('HF_TOKEN', inference['container_config']['env_dict'])
+        self.assertFalse(any(str(entry).startswith('HF_TOKEN=') for entry in params['add_export_env']))
+        self.assertNotIn('hf_secret_value', str(server['env']))
+        self.assertNotIn('hf_secret_value', str(params['add_export_env']))
+
     def test_duplicate_accuracy_task_ids_raise(self):
         self.raw['accuracy']['tasks'].append(
             {
@@ -321,9 +333,43 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
         self.assertEqual(params['add_export_env'], ['SGLANG_USE_AITER=1'])
         self.assertEqual(server['env']['NCCL_IB_HCA'], 'rdma0')
         self.assertEqual(server['env']['SGLANG_USE_AITER'], '1')
+        self.assertEqual(inference['hsa_force_fine_grain_pcie'], '1')
+        self.assertEqual(server['env']['HSA_FORCE_FINE_GRAIN_PCIE'], '1')
         self.assertNotIn('ADD_EXPORT_ENV', server['env'])
         for key, value in server['env'].items():
             self.assertNotIn(' ', value, f'{key} carries an unquotable space: {value!r}')
+
+    def test_hsa_force_fine_grain_pcie_comes_from_runtime_env(self):
+        raw = {
+            'threshold_json': 'threshold.json',
+            'paths': {
+                'log_dir': '/logs',
+                'hf_token_file': '/home/user/.hf_token',
+            },
+            'container': {
+                'name': 'sglang',
+                'image': 'image',
+                'runtime': {
+                    'args': {
+                        'env': {
+                            'NCCL_DEBUG': 'ERROR',
+                            'HSA_FORCE_FINE_GRAIN_PCIE': '0',
+                        },
+                    },
+                },
+            },
+            'server_params': {
+                'model': '/models/model',
+                'tensor_parallelism': '8',
+            },
+            'benchmark_params': {'num_prompts': '25'},
+        }
+
+        inference, params, server = loader._unified_runtime_views(raw, self.thresholds)
+
+        self.assertEqual(inference['hsa_force_fine_grain_pcie'], '0')
+        self.assertEqual(server['env']['HSA_FORCE_FINE_GRAIN_PCIE'], '0')
+        self.assertNotIn('HSA_FORCE_FINE_GRAIN_PCIE=0', params.get('add_export_env') or [])
 
 
 class TestAddExportEnvFromRuntime(unittest.TestCase):
@@ -334,6 +380,7 @@ class TestAddExportEnvFromRuntime(unittest.TestCase):
                     'NCCL_DEBUG': 'ERROR',
                     'SGLANG_USE_AITER': '1',
                     'GPU_ARCHS': 'gfx942',
+                    'HSA_FORCE_FINE_GRAIN_PCIE': '0',
                 }
             ),
             ['SGLANG_USE_AITER=1', 'GPU_ARCHS=gfx942'],
@@ -365,12 +412,23 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
 
     def test_all_sglang_workload_configs_load(self):
         config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
-        config_paths = sorted(config_dir.glob('mi3xx_sglang_*_single.json'))
-        config_paths += sorted(config_dir.glob('mi3xx_sglang_*_distributed.json'))
-        config_paths += sorted(config_dir.glob('mi3xx_sglang_*_disaggregated.json'))
+        config_paths = []
+        for prefix in ('mi3xx', 'mi35x'):
+            config_paths += sorted(config_dir.glob(f'{prefix}_sglang_*_single.json'))
+            config_paths += sorted(config_dir.glob(f'{prefix}_sglang_*_distributed.json'))
+            config_paths += sorted(config_dir.glob(f'{prefix}_sglang_*_disaggregated.json'))
         self.assertEqual(
             {path.name for path in config_paths},
             {
+                'mi35x_sglang_deepseek_r1_0528_disaggregated.json',
+                'mi35x_sglang_deepseek_r1_0528_distributed.json',
+                'mi35x_sglang_deepseek_r1_0528_single.json',
+                'mi35x_sglang_llama_70b_disaggregated.json',
+                'mi35x_sglang_llama_70b_distributed.json',
+                'mi35x_sglang_llama_70b_single.json',
+                'mi35x_sglang_qwen35_397b_disaggregated.json',
+                'mi35x_sglang_qwen35_397b_distributed.json',
+                'mi35x_sglang_qwen35_397b_single.json',
                 'mi3xx_sglang_deepseek_r1_0528_disaggregated.json',
                 'mi3xx_sglang_deepseek_r1_0528_distributed.json',
                 'mi3xx_sglang_deepseek_r1_0528_single.json',
@@ -405,7 +463,7 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                     set(variant.params.inference_tests),
                     expected_tests,
                 )
-                self.assertEqual(variant.params.add_flags, ['--attention-backend aiter'])
+                self.assertEqual(variant.params.add_flags, raw['server_params'].get('add_flags') or [])
                 self.assertFalse(variant.enforce_thresholds)
                 self.assertEqual(variant.model.id, raw['server_params']['model'])
                 self.assertEqual(
@@ -426,7 +484,10 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                     self.assertNotIn('benchmark_serv_node', raw['server_params'])
                     self.assertNotIn('dist_init_port', raw['server_params'])
                     self.assertNotIn('proxy_router_serv_port', raw['server_params'])
-                    self.assertEqual(variant.inference['proxy_router_serv_port'], '8000')
+                    self.assertEqual(
+                        variant.inference['proxy_router_serv_port'],
+                        str(raw['server_params'].get('serve_port') or '8000'),
+                    )
                     self.assertEqual(variant.inference['dist_init_port'], '40001')
                     self.assertEqual(str(variant.inference['nnodes']), '2')
                     self.assertNotIn('benchmark_serv_node', variant.inference)
@@ -448,8 +509,14 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                     ):
                         self.assertNotIn(key, raw['server_params'])
                     self.assertEqual(str(variant.inference['nnodes']), '2')
-                    self.assertEqual(variant.inference['proxy_router_serv_port'], '8000')
-                    self.assertEqual(variant.inference['proxy_router_port'], '8000')
+                    self.assertEqual(
+                        variant.inference['proxy_router_serv_port'],
+                        str(raw['server_params'].get('serve_port') or '8000'),
+                    )
+                    self.assertEqual(
+                        variant.inference['proxy_router_port'],
+                        str(raw['server_params'].get('serve_port') or '8000'),
+                    )
                     self.assertEqual(variant.inference['prefill_serv_port'], '30001')
                     self.assertEqual(variant.inference['decode_serv_port'], '30002')
                     self.assertEqual(variant.inference['prefill_coordinator_port'], '40001')
@@ -462,11 +529,13 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                     variant.inference['nccl_debug'],
                     raw['container']['runtime']['args']['env']['NCCL_DEBUG'],
                 )
+                runtime_env = raw['container']['runtime']['args']['env']
                 container = loader.orchestrator_container_from_variant(variant)
                 self.assertEqual(container['env']['NCCL_DEBUG'], variant.inference['nccl_debug'])
                 self.assertEqual(container['env']['SGLANG_USE_AITER'], '1')
-                self.assertEqual(container['env']['AMDGCN_USE_BUFFER_OPS'], '1')
-                self.assertEqual(container['env']['ROCM_QUICK_REDUCE_QUANTIZATION'], 'INT8')
+                for env_key in ('AMDGCN_USE_BUFFER_OPS', 'ROCM_QUICK_REDUCE_QUANTIZATION', 'GPU_ARCHS'):
+                    if env_key in runtime_env:
+                        self.assertEqual(container['env'][env_key], runtime_env[env_key])
                 self.assertNotIn('env', container['runtime']['args'])
                 self.assertIn('volumes', container['runtime']['args'])
                 self.assertNotIn('ADD_EXPORT_ENV', container['env'])
@@ -482,9 +551,8 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                         variant.params.inference_tests['bench_serv_random']['num_prompts'],
                         '100',
                     )
-                if 'deepseek' in config_path.name:
-                    self.assertEqual(container['env']['GPU_ARCHS'], 'gfx942')
-                    self.assertIn('GPU_ARCHS=gfx942', variant.params.add_export_env)
+                if 'GPU_ARCHS' in runtime_env:
+                    self.assertIn(f"GPU_ARCHS={runtime_env['GPU_ARCHS']}", variant.params.add_export_env)
                 if raw.get('long_ctx_niah'):
                     self.assertEqual(variant.params.inference_tests['long_ctx_niah']['num_prompts'], '6')
                     self.assertIs(variant.params.inference_tests['long_ctx_niah']['enable_thinking'], False)

@@ -3,7 +3,22 @@
 import unittest
 from unittest import mock
 
+from cvs.lib import globals as cvs_globals
 from cvs.lib.inference.sglang import sglang_common
+from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
+from cvs.lib.inference.sglang.sglang_distributed_lib import SglangDistributed
+from cvs.lib.inference.sglang.sglang_single_lib import SglangSingle
+
+
+def _orch_with_token_file():
+    orch = mock.Mock()
+
+    def _exec(cmd, **kwargs):
+        hosts = kwargs.get('hosts') or ['n0']
+        return {host: {'exit_code': 0, 'output': ''} for host in hosts}
+
+    orch.exec.side_effect = _exec
+    return orch
 
 
 _SAMPLE_BENCH_LOG = """
@@ -53,6 +68,248 @@ class _FakeSubtests:
 
 
 class TestSglangCommonHelpers(unittest.TestCase):
+    def test_hsa_force_fine_grain_pcie_uses_config_or_defaults_to_one(self):
+        self.assertEqual(sglang_common.hsa_force_fine_grain_pcie(None), '1')
+        self.assertEqual(sglang_common.hsa_force_fine_grain_pcie({}), '1')
+        self.assertEqual(
+            sglang_common.hsa_force_fine_grain_pcie({'hsa_force_fine_grain_pcie': '  '}),
+            '1',
+        )
+        self.assertEqual(
+            sglang_common.hsa_force_fine_grain_pcie({'hsa_force_fine_grain_pcie': '0'}),
+            '0',
+        )
+        self.assertEqual(
+            sglang_common.hsa_force_fine_grain_pcie(
+                {'container_config': {'env_dict': {'HSA_FORCE_FINE_GRAIN_PCIE': '0'}}}
+            ),
+            '0',
+        )
+        self.assertEqual(
+            sglang_common.hsa_force_fine_grain_pcie(
+                {
+                    'hsa_force_fine_grain_pcie': '1',
+                    'container_config': {'env_dict': {'HSA_FORCE_FINE_GRAIN_PCIE': '0'}},
+                }
+            ),
+            '1',
+        )
+
+    def test_env_scripts_export_configured_hsa_force_fine_grain_pcie(self):
+        inf_dict = {
+            'nccl_debug': 'ERROR',
+            'nccl_ib_hca': 'rdma0',
+            'nccl_ib_gid_index': '1',
+            'nccl_socket_ifname': 'eno0',
+            'gloo_socket_ifname': 'eno0',
+            'hsa_force_fine_grain_pcie': '0',
+            'prefill_coordinator_addr': '10.0.0.1',
+            'prefill_coordinator_port': '40001',
+            'decode_coordinator_addr': '10.0.0.2',
+            'decode_coordinator_port': '40002',
+        }
+        bp_dict = {
+            'model': '/root/models/m',
+            'tensor_parallelism': '8',
+            'pipeline_parallelism': '1',
+        }
+
+        distributed = SglangDistributed.__new__(SglangDistributed)
+        distributed.inf_dict = dict(inf_dict)
+        distributed.bp_dict = dict(bp_dict)
+        self.assertIn('export HSA_FORCE_FINE_GRAIN_PCIE=0\n', distributed._server_env_body())
+        distributed.inf_dict.pop('hsa_force_fine_grain_pcie')
+        self.assertIn('export HSA_FORCE_FINE_GRAIN_PCIE=1\n', distributed._server_env_body())
+
+        single = SglangSingle.__new__(SglangSingle)
+        single.inf_dict = dict(inf_dict)
+        single.bp_dict = dict(bp_dict)
+        single.execution_hosts = ['n0']
+        single.orch = mock.Mock()
+        single_cmds = []
+        single._container_exec = lambda cmd, **kwargs: single_cmds.append(cmd) or {}
+
+        disagg = SglangDisaggPD.__new__(SglangDisaggPD)
+        disagg.inf_dict = dict(inf_dict)
+        disagg.bp_dict = dict(bp_dict)
+        disagg.orch = mock.Mock()
+        disagg.prefill_node_list = ['prefill0']
+        disagg.decode_node_list = ['decode0']
+        disagg.proxy_node = ['proxy0']
+        disagg.benchmark_serv_node = ['bench0']
+        disagg_cmds = []
+        disagg._container_exec = lambda cmd, **kwargs: disagg_cmds.append(cmd) or {}
+
+        single_sleep = 'cvs.lib.inference.sglang.sglang_single_lib.time.sleep'
+        disagg_sleep = 'cvs.lib.inference.sglang.sglang_disagg_lib.time.sleep'
+        with mock.patch(single_sleep), mock.patch(disagg_sleep):
+            single.setup_server_container_env()
+            disagg.setup_prefill_container_env()
+            disagg.setup_decode_container_env()
+            disagg.setup_proxy_router_container_env()
+            disagg.setup_benchmark_serv_container_env()
+
+        self.assertEqual(len(single_cmds), 1)
+        self.assertIn('export HSA_FORCE_FINE_GRAIN_PCIE=0\n', single_cmds[0])
+        self.assertEqual(len(disagg_cmds), 4)
+        for cmd in disagg_cmds:
+            self.assertIn('export HSA_FORCE_FINE_GRAIN_PCIE=0\n', cmd)
+
+    def test_env_scripts_read_hf_token_from_file(self):
+        secret = 'hf_secret_value'
+        token_file = '/home/user/.hf_token'
+        inf_dict = {
+            'nccl_debug': 'ERROR',
+            'nccl_ib_hca': 'rdma0',
+            'nccl_ib_gid_index': '1',
+            'nccl_socket_ifname': 'eno0',
+            'gloo_socket_ifname': 'eno0',
+            'hsa_force_fine_grain_pcie': '1',
+            'hf_token_file': token_file,
+            'prefill_coordinator_addr': '10.0.0.1',
+            'prefill_coordinator_port': '40001',
+            'decode_coordinator_addr': '10.0.0.2',
+            'decode_coordinator_port': '40002',
+        }
+        bp_dict = {
+            'model': 'org/model',
+            'tensor_parallelism': '8',
+            'pipeline_parallelism': '1',
+            'add_export_env': [f'HF_TOKEN={secret}', 'FOO=bar'],
+        }
+
+        distributed = SglangDistributed.__new__(SglangDistributed)
+        distributed.inf_dict = dict(inf_dict)
+        distributed.bp_dict = dict(bp_dict)
+        body = distributed._server_env_body()
+        self.assertNotIn(secret, body)
+        self.assertIn('if [ ! -s /home/user/.hf_token ]; then ', body)
+        self.assertIn('exit 1', body)
+        self.assertIn("export HF_TOKEN=\"$(tr -d '[:space:]' < /home/user/.hf_token)\"", body)
+        self.assertNotIn('else export HF_TOKEN=', body)
+        self.assertIn('export FOO=bar', body)
+        self.assertNotIn('export HF_TOKEN=hf_', body)
+
+        single = SglangSingle.__new__(SglangSingle)
+        single.inf_dict = dict(inf_dict)
+        single.bp_dict = dict(bp_dict)
+        single.orch = _orch_with_token_file()
+        single.execution_hosts = ['n0']
+        single_cmds = []
+        single._container_exec = lambda cmd, **kwargs: single_cmds.append(cmd) or {}
+
+        disagg = SglangDisaggPD.__new__(SglangDisaggPD)
+        disagg.inf_dict = dict(inf_dict)
+        disagg.bp_dict = dict(bp_dict)
+        disagg.orch = _orch_with_token_file()
+        disagg.prefill_node_list = ['prefill0']
+        disagg.decode_node_list = ['decode0']
+        disagg.proxy_node = ['proxy0']
+        disagg.benchmark_serv_node = ['bench0']
+        disagg_cmds = []
+        disagg._container_exec = lambda cmd, **kwargs: disagg_cmds.append(cmd) or {}
+
+        single_sleep = 'cvs.lib.inference.sglang.sglang_single_lib.time.sleep'
+        disagg_sleep = 'cvs.lib.inference.sglang.sglang_disagg_lib.time.sleep'
+        with mock.patch(single_sleep), mock.patch(disagg_sleep):
+            single.setup_server_container_env()
+            disagg.setup_prefill_container_env()
+            disagg.setup_decode_container_env()
+            disagg.setup_proxy_router_container_env()
+            disagg.setup_benchmark_serv_container_env()
+
+        for cmd in single_cmds + disagg_cmds:
+            self.assertNotIn(secret, cmd)
+            self.assertNotIn('export HF_TOKEN=hf_', cmd)
+            self.assertIn('/home/user/.hf_token', cmd)
+            self.assertIn('tr -d', cmd)
+
+    def test_local_model_keeps_optional_token_export(self):
+        line = sglang_common.hf_token_export_line('/home/user/.hf_token', '/root/models/DeepSeek-R1')
+        self.assertIn('else export HF_TOKEN=; fi\n', line)
+        self.assertNotIn('exit 1', line)
+
+    def test_downloaded_model_fails_when_token_file_is_not_configured(self):
+        line = sglang_common.hf_token_export_line('', 'meta-llama/Llama-3.1-70B-Instruct')
+        self.assertIn('exit 1', line)
+        self.assertNotIn('export HF_TOKEN=', line)
+
+    def test_require_hf_token_skips_local_models(self):
+        orch = mock.Mock()
+        sglang_common.require_hf_token_on_nodes(orch, '/home/user/.hf_token', '/root/models/m', hosts=['n0'])
+        orch.exec.assert_not_called()
+
+    def test_require_hf_token_fails_when_the_file_is_missing_on_a_node(self):
+        orch = mock.Mock()
+        orch.exec.return_value = {
+            'n0': {'exit_code': 0, 'output': ''},
+            'n1': {'exit_code': 1, 'output': ''},
+        }
+        cvs_globals.error_list = []
+        sglang_common.require_hf_token_on_nodes(
+            orch,
+            '/home/user/.hf_token',
+            'meta-llama/Llama-3.1-70B-Instruct',
+            hosts=['n0', 'n1'],
+        )
+        self.assertTrue(any('n1' in msg and 'missing or empty' in msg for msg in cvs_globals.error_list))
+        orch.exec.assert_called_once()
+        args, kwargs = orch.exec.call_args
+        self.assertIn('test -s', args[0])
+        self.assertEqual(kwargs.get('hosts'), ['n0', 'n1'])
+        self.assertTrue(kwargs.get('detailed'))
+
+    def test_require_hf_token_passes_when_the_file_is_on_the_nodes(self):
+        orch = mock.Mock()
+        orch.exec.return_value = {'n0': {'exit_code': 0, 'output': ''}}
+        cvs_globals.error_list = []
+        sglang_common.require_hf_token_on_nodes(orch, '/home/user/.hf_token', 'org/model', hosts=['n0'])
+        self.assertEqual(cvs_globals.error_list, [])
+
+    def _cleanup_orch(self, hosts):
+        handle = mock.Mock()
+        handle.host_list = list(hosts)
+        orch = mock.Mock()
+        orch.hosts = list(hosts)
+        orch.head = handle
+        orch.all = handle
+        return orch, handle
+
+    def test_log_cleanup_uses_passwordless_sudo_when_available(self):
+        orch, handle = self._cleanup_orch(['n0'])
+        with mock.patch(
+            'cvs.lib.inference.sglang.sglang_common.get_passwordless_sudo_status',
+            return_value={'n0': True},
+        ):
+            sglang_common.cleanup_sglang_log_dir(orch, '/logs/sglang')
+
+        handle.exec.assert_called_once_with(
+            'sudo -n rm -rf /logs/sglang && mkdir -p /logs/sglang',
+            timeout=60,
+        )
+        handle.exec_cmd_list.assert_not_called()
+
+    def test_log_cleanup_skips_sudo_when_passwordless_sudo_is_unavailable(self):
+        orch, handle = self._cleanup_orch(['n0', 'n1'])
+        with (
+            mock.patch(
+                'cvs.lib.inference.sglang.sglang_common.get_passwordless_sudo_status',
+                return_value={'n0': False, 'n1': False},
+            ),
+            self.assertLogs(level='INFO') as logs,
+        ):
+            sglang_common.cleanup_sglang_log_dir(orch, '/logs/sglang')
+
+        handle.exec.assert_called_once_with(
+            'rm -rf /logs/sglang && mkdir -p /logs/sglang',
+            timeout=60,
+        )
+        handle.exec_cmd_list.assert_not_called()
+        self.assertIn(
+            'Passwordless sudo unavailable on 2 host(s); log cleanup will not use sudo',
+            '\n'.join(logs.output),
+        )
+
     def test_first_output(self):
         self.assertEqual(sglang_common.first_output({'a': 'x'}), 'x')
         self.assertEqual(sglang_common.first_output({}), '')

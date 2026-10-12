@@ -21,6 +21,9 @@ from cvs.lib.inference.sglang.sglang_common import (
     DEFAULT_SGLANG_SERVE_PORT,
     add_cli_flags_block,
     add_export_env_block,
+    hf_token_export_line,
+    require_hf_token_on_nodes,
+    hsa_force_fine_grain_pcie,
     as_node_list,
     log_sglang_log_matches,
     parse_inference_bench_results,
@@ -49,7 +52,6 @@ class SglangSingle:
         model_name,
         inference_config_dict,
         benchmark_params_dict,
-        hf_token,
         orch=None,
         gpu_type='mi300',
         user_name=None,
@@ -62,7 +64,6 @@ class SglangSingle:
         self.user_name = user_name
         self.priv_key_file = priv_key_file
         self.model_name = model_name
-        self.hf_token = hf_token
         self.gpu_type = gpu_type
 
         self.inf_dict = inference_config_dict
@@ -159,13 +160,19 @@ class SglangSingle:
 
     def setup_server_container_env(self) -> None:
         """Write and source ``/tmp/server_env_script.sh`` inside the container."""
+        require_hf_token_on_nodes(
+            self.orch,
+            self.inf_dict.get('hf_token_file'),
+            self.bp_dict.get('model'),
+            hosts=self.execution_hosts,
+        )
         env_body = (
             "export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH\n"
             f"export NCCL_DEBUG={self.inf_dict['nccl_debug']}\n"
-            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE={hsa_force_fine_grain_pcie(self.inf_dict)}\n"
             f"export MODEL={self.bp_dict['model']}\n"
             f"export TP={self.bp_dict['tensor_parallelism']}\n"
-            f"export HF_TOKEN={self.hf_token}\n"
+            f"{hf_token_export_line(self.inf_dict.get('hf_token_file'), self.bp_dict.get('model'))}"
             f"{add_export_env_block(self.bp_dict, indent='')}\n"
         )
         write_cmd = "bash -c " + shlex.quote(
@@ -216,7 +223,7 @@ class SglangSingle:
 
             def grep_cmd(host):
                 return (
-                    f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} "
+                    f"grep -a -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} "
                     f"{shlex.quote(self._server_log_path(host))} || true"
                 )
 
