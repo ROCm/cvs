@@ -13,6 +13,7 @@
       "lifetime": "per_run",
       "name": "flux2-benchmark_distributed",
       "_image_example": "rocm/ufb-private:xdit-gfx950-py3.12-prereleases-rocm10.1.0rc3-6b5b35c",
+      "_image_comment": "The image needs to support the FLUX.2-dev model.",
       "image": "<changeme>",
       "runtime": {
         "name": "docker",
