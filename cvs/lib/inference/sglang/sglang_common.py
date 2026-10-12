@@ -448,8 +448,7 @@ def hf_token_export_line(token_file, model=''):
             return 'export HF_TOKEN=\n'
         quoted = shlex.quote(path)
         return (
-            f"if [ -f {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; "
-            f"else export HF_TOKEN=; fi\n"
+            f"if [ -f {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; else export HF_TOKEN=; fi\n"
         )
     if not path:
         return (
