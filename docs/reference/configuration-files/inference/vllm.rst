@@ -528,6 +528,15 @@ Every other snake-case key is passed through to ``vllm serve``.
    * - ``port``
      - ``8888``
      - OpenAI-compatible server port.
+   * - ``dist_init_port``
+     - ``29501``
+     - Head-node port for multi-host startup: ``--master-port`` on mp, the Ray
+       head port on ray. Ignored on one host.
+   * - ``distributed_executor_backend``
+     - ``"mp"``
+     - Multi-host executor, ``"mp"`` or ``"ray"``; see :ref:`vllm-backends`.
+       Ignored on one host: CVS passes no ``--distributed-executor-backend``,
+       and vLLM picks its own executor.
 
 How server_params are flattened
 -------------------------------
@@ -1011,6 +1020,17 @@ accuracy schema also exposes that release's evaluation controls, including
 ``trust_remote_code``, ``confirm_run_unsafe_code``, ``metadata``, and
 ``gen_kwargs``. CVS owns the endpoint, model path, output path, and sample
 logging. Results land under ``<log_dir>/accuracy``.
+
+.. note::
+
+  Most lm-eval tasks download their dataset from the Hugging Face Hub, and
+  lm-eval inherits ``container.env``. If ``HF_HUB_OFFLINE=1`` or
+  ``TRANSFORMERS_OFFLINE=1`` is set there, a dataset that is not already cached
+  fails to load with ``OfflineModeIsEnabled``, and ``test_accuracy_eval`` fails
+  after the whole performance sweep. Set these flags only on clusters without
+  Hub access, and pre-cache every task's dataset first, for example by mounting
+  a populated datasets cache and pointing ``HF_DATASETS_CACHE`` at it. The
+  server needs no Hub access, because ``server_params.model`` is a local path.
 
 Accuracy metric keys
 --------------------

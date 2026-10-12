@@ -125,6 +125,9 @@ Top-level fields
    * - ``gpu_arch``
      - ``MI355X``
      - GPU architecture label (informational).
+   * - ``gpus_per_node``
+     - ``8``
+     - GPUs on each node. World size and tokens/s totals use this count (``nnodes * gpus_per_node`` when distributed). Defaults to ``8`` when omitted. Must be at least 1.
    * - ``enforce_thresholds``
      - ``true``
      - If ``false``, ``test_metric`` logs results but does not fail.

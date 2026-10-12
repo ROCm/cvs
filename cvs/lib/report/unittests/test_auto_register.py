@@ -85,6 +85,14 @@ class TestAutoRegister(unittest.TestCase):
         self.assertEqual(config._suite_report_config["sources"]["results"], "host_res_dict")
         self.assertEqual(config._suite_report_config["lifecycle"]["session_labels"][0], "os_release")
 
+    def test_auto_register_loads_preflight_checks_profile(self):
+        config = SimpleNamespace(_suite_name="preflight_checks", _suite_report_config=None)
+        self.assertTrue(try_auto_register_suite_report(config))
+        self.assertEqual(config._suite_report_config["suite_id"], "preflight_checks")
+        self.assertEqual(config._suite_report_config["dataset_builder"], "status_matrix")
+        self.assertEqual(config._suite_report_config["sources"]["results"], "preflight_res_dict")
+        self.assertEqual(config._suite_report_config["lifecycle"]["session_labels"][0], "node_reachability")
+
     def test_auto_register_loads_csp_qual_agfhc_profile(self):
         config = SimpleNamespace(_suite_name="csp_qual_agfhc", _suite_report_config=None)
         self.assertTrue(try_auto_register_suite_report(config))

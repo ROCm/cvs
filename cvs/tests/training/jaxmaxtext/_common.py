@@ -40,6 +40,7 @@ from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
 )
 from cvs.lib.training.jaxmaxtext.utils.loss_curve import render_loss_curve_png
 from cvs.lib.training.jaxmaxtext.utils.rundeck_adapter import flat_train_res_from_nested
+from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
 from cvs.lib.utils.verdict import evaluate_all, ThresholdViolation
 from cvs.lib.utils_lib import fail_test, update_test_result
 
@@ -680,10 +681,43 @@ def checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecyc
     log.info("checkpoint_resume PASSED")
 
 
-def metric(sweep_name, metric, training_res_dict, variant_config, lifecycle, request):
-    """One test (row) per (sweep, metric). Threshold-driven PASS/FAIL; logs
-    `sweep | metric | expected | actual | status` and collects rows for the
-    single metric-results HTML file (linked from every metric row)."""
+def _benchmark_metric_row(short, spec, value, status, reason="", enforced=True):
+    """Registry-format row for the collapsible per-metric panel rendered by
+    ``cvs.lib.report.render.perf_metric_table.render_benchmark_metrics_html``.
+
+    ``status`` is one of pass/fail/skip (lower-case), matching the inference
+    (sglang) subtest verdicts -- there is no separate ``record`` status. ``node``
+    is empty because a jax sweep verdict is cluster-wide, so the renderer drops
+    the node column. ``enforced`` is False for non-gating rows (record-only /
+    not enforced) so the gate column reads as a reference, not a gate.
+    """
+    return {
+        "node": "",
+        "metric": short,
+        "label": short,
+        "status": status,
+        "actual": value,
+        "unit": TRAINING_METRIC_UNITS.get(short, "-"),
+        "spec": spec,
+        "reason": reason,
+        "enforced": enforced,
+    }
+
+
+def metric(sweep_name, training_res_dict, variant_config, lifecycle, request):
+    """One test (row) per sweep. Every TRAINING_METRIC is evaluated and recorded as
+    its own pass/fail/skip verdict (matching the inference sglang subtests), so the
+    pytest report renders them as a collapsible per-metric panel under
+    ``test_metric``. A metric with a value passes unless it is actually gated and
+    violates its threshold; a metric with no value is skipped. When
+    enforce_thresholds is false (or a metric has no / an info-only threshold) a
+    present value passes as a non-gating verdict. All metrics are checked even when
+    one fails; the test fails as a whole only if a gated metric is violated.
+
+    ``metric_rows`` (console tables + the shared metric-results HTML) keeps its
+    richer N/A / RECORD / PASS / FAIL vocabulary, so ``print_results_table`` is
+    unchanged.
+    """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     rec = training_res_dict.get("sweeps", {}).get(sweep_name)
@@ -692,54 +726,72 @@ def metric(sweep_name, metric, training_res_dict, variant_config, lifecycle, req
         pytest.skip(f"no results for sweep '{sweep_name}' (training did not complete)")
 
     label = _sweep_label(sweep_name)
-    full = "training." + metric
-    value = results.get(full)
-    unit = TRAINING_METRIC_UNITS.get(metric, "-")
     # The sweep name IS the threshold cell key.
-    spec = (variant_config.thresholds.get(sweep_name) or {}).get(full)
-    expected = _format_expected(spec)
-    actual = _format_value(value)
-
+    thresholds_cell = variant_config.thresholds.get(sweep_name) or {}
+    enforce = bool(variant_config.enforce_thresholds)
     rows = training_res_dict.setdefault("metric_rows", [])
+    verdicts = []
+    failures = []
 
-    def _record(status):
-        rows.append(
-            {
-                "sweep": label,
-                "metric": metric,
-                "expected": expected,
-                "actual": actual,
-                "unit": unit,
-                "status": status,
-            }
-        )
+    for short, _declared_unit in TRAINING_METRICS:
+        full = "training." + short
+        value = results.get(full)
+        unit = TRAINING_METRIC_UNITS.get(short, "-")
+        spec = thresholds_cell.get(full)
+        expected = _format_expected(spec)
+        actual = _format_value(value)
 
-    if value is None:
-        log.info("[metric] %-6s %-24s | expected %-14s | actual None | %s -> N/A", label, metric, expected, unit)
-        _record("N/A")
-        pytest.skip(f"{metric}: no value produced this run")
+        def _record(row_status):
+            rows.append(
+                {
+                    "sweep": label,
+                    "metric": short,
+                    "expected": expected,
+                    "actual": actual,
+                    "unit": unit,
+                    "status": row_status,
+                }
+            )
 
-    if spec is None or not variant_config.enforce_thresholds:
-        log.info(
-            "[metric] %-6s %-24s | expected %-14s | actual %s | %s -> RECORD", label, metric, expected, actual, unit
-        )
-        _record("RECORD")
-        return
+        if value is None:
+            _record("N/A")
+            verdicts.append(
+                _benchmark_metric_row(short, spec, value, "skip", reason="no value produced this run", enforced=False)
+            )
+            log.info("[metric] %-6s %-26s | expected %-14s | actual None | %s -> N/A", label, short, expected, unit)
+            continue
 
-    try:
-        evaluate_all(results, {full: spec})
-    except ThresholdViolation as e:
-        log.error(
-            "[metric] %-6s %-24s | expected %-14s | actual %s | %s -> FAIL", label, metric, expected, actual, unit
-        )
-        _record("FAIL")
-        training_res_dict.setdefault("metric_failures", []).append(
-            f"[{label}] {metric}: expected {expected}, actual {actual}"
-        )
-        pytest.fail(str(e))
-    else:
-        log.info("[metric] %-6s %-24s | expected %-14s | actual %s | %s -> PASS", label, metric, expected, actual, unit)
-        _record("PASS")
+        # Not gated (no threshold / info-only / enforce_thresholds=false): a present
+        # value passes as a non-gating verdict (sglang has no separate "record").
+        if spec is None or not enforce or (isinstance(spec, dict) and spec.get("kind") == "info"):
+            _record("RECORD")
+            verdicts.append(_benchmark_metric_row(short, spec, value, "pass", enforced=False))
+            log.info(
+                "[metric] %-6s %-26s | expected %-14s | actual %s | %s -> RECORD", label, short, expected, actual, unit
+            )
+            continue
+
+        try:
+            evaluate_all(results, {full: spec})
+        except ThresholdViolation as e:
+            _record("FAIL")
+            verdicts.append(_benchmark_metric_row(short, spec, value, "fail", reason=str(e)))
+            failures.append(f"[{label}] {short}: expected {expected}, actual {actual}")
+            log.error(
+                "[metric] %-6s %-26s | expected %-14s | actual %s | %s -> FAIL", label, short, expected, actual, unit
+            )
+        else:
+            _record("PASS")
+            verdicts.append(_benchmark_metric_row(short, spec, value, "pass"))
+            log.info(
+                "[metric] %-6s %-26s | expected %-14s | actual %s | %s -> PASS", label, short, expected, actual, unit
+            )
+
+    if verdicts:
+        record_benchmark_metric_rows(request.node, verdicts)
+    if failures:
+        training_res_dict.setdefault("metric_failures", []).extend(failures)
+        pytest.fail("; ".join(failures))
 
 
 def loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request):

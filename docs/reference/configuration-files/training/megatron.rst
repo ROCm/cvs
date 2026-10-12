@@ -104,6 +104,9 @@ These fields appear at the root of every config file.
    * - ``gpu_name``
      - ``MI300X`` / ``<changeme>``
      - GPU architecture string used for logging and Primus YAML path resolution (``examples/megatron/configs/{gpu_name}/``). Loaded as uppercase (``mi300x`` becomes ``MI300X``). Allowed values: ``MI300X``, ``MI325X``, ``MI355X``. Extra tokens fail at load. On ``mi3xx_`` templates this is ``<changeme>`` until you set ``MI300X`` or ``MI325X``.
+   * - ``gpus_per_node``
+     - ``8``
+     - GPUs on each node. World size and tokens/s totals are ``nnodes * gpus_per_node``. Defaults to ``8`` when omitted. Must be at least 1.
    * - ``paths``
      - see `Common parameters`_
      - Host paths: ``hf_token_file``, ``log_dir``, ``scripts_dir``, ``data_cache_dir``.

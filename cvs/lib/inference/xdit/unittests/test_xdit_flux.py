@@ -1,7 +1,10 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from cvs.lib.inference.xdit.xdit_flux import log_results_summary
+from cvs.lib.inference.xdit.xdit_flux import FluxOutputParser, log_results_summary
 
 
 class TestLogResultsSummary(unittest.TestCase):
@@ -58,6 +61,49 @@ class TestLogResultsSummary(unittest.TestCase):
         joined = "\n".join(rendered)
         self.assertIn("Distributed results summary:", joined)
         self.assertIn("Nodes passed: 1/2", joined)
+
+
+def _write_flux_output(root, pipe_times, with_image=True):
+    results = Path(root) / "results"
+    results.mkdir()
+    (results / "timing.json").write_text(
+        json.dumps([{"pipe_time": value} for value in pipe_times]),
+        encoding="utf-8",
+    )
+    if with_image:
+        (results / "flux_0.png").write_bytes(b"png")
+
+
+class TestFluxOutputParserRequirements(unittest.TestCase):
+    def test_requires_configured_repetitions_and_image(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_flux_output(tmp, [1.0] * 25)
+            result, errors = FluxOutputParser(tmp, expected_repetitions=25).parse()
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(result)
+        self.assertEqual(result.repetition_count, 25)
+
+    def test_repetition_mismatch_is_not_a_threshold_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_flux_output(tmp, [0.5])
+            result, errors = FluxOutputParser(tmp, expected_repetitions=25).parse()
+        self.assertIsNone(result)
+        self.assertTrue(any("has 1 repetitions, expected 25" in err for err in errors))
+        self.assertFalse(any("threshold" in err.lower() for err in errors))
+
+    def test_missing_image_fails_parse(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_flux_output(tmp, [1.0, 1.2], with_image=False)
+            result, errors = FluxOutputParser(tmp, expected_repetitions=2).parse()
+        self.assertIsNone(result)
+        self.assertTrue(any("No images matching" in err for err in errors))
+
+    def test_unset_repetition_count_still_requires_image(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_flux_output(tmp, [1.0], with_image=False)
+            result, errors = FluxOutputParser(tmp).parse()
+        self.assertIsNone(result)
+        self.assertTrue(any("No images matching" in err for err in errors))
 
 
 if __name__ == "__main__":

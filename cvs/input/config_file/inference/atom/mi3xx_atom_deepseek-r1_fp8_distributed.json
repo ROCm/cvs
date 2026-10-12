@@ -8,8 +8,7 @@
   },
   "model": {
     "id": "deepseek-ai/DeepSeek-R1-0528",
-    "remote": 0,
-    "precision": "fp8"
+    "remote": 0
   },
   "enforce_thresholds": false,
   "container": {

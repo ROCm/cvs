@@ -26,6 +26,7 @@ from cvs.lib.inference.xdit.xdit_wan_job import (
     build_torchrun_cmd,
     build_wan_xfuser_auto_input_image_cmd,
     build_wan_distributed_container_cleanup_cmds,
+    build_wan_output_cleanup_cmd,
     build_wan_output_verify_cmd,
     build_wan_xfuser_output_verify_cmd,
     detect_wan_model_format_from_model_index,
@@ -724,6 +725,21 @@ class TestLogBenchmarkFailureExcerpt(unittest.TestCase):
         joined = "\n".join(rendered)
         self.assertIn("Benchmark failure excerpt (10.0.0.1", joined)
         self.assertNotIn("hf_secret", joined)
+
+
+class TestWanOutputCleanupCmd(unittest.TestCase):
+    def test_uses_sudo_rm_only_when_passwordless_sudo_works(self):
+        cmd = build_wan_output_cleanup_cmd("/home/user/cvs_outputs")
+        self.assertEqual(
+            cmd,
+            "bash -c 'if sudo -n true >/dev/null 2>&1; then "
+            "sudo rm -rf /home/user/cvs_outputs/wan_22_*_outputs; else "
+            "rm -rf /home/user/cvs_outputs/wan_22_*_outputs; fi'",
+        )
+
+    def test_sudo_disabled_is_plain_rm(self):
+        cmd = build_wan_output_cleanup_cmd("/home/user/cvs_outputs", use_sudo=False)
+        self.assertEqual(cmd, "bash -c 'rm -rf /home/user/cvs_outputs/wan_22_*_outputs'")
 
 
 if __name__ == "__main__":

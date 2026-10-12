@@ -305,11 +305,12 @@ class TorchTitanTrainingJob:
 
         # Adjust batch size for distributed if needed
         if self.tune_model_params and self.distributed_training:
-            total_gpus = self.world_size
-            if int(self.global_batch_size) > 32:
-                if int(self.global_batch_size) % 32 == 0:
-                    per_gpu_batch_size = int(self.global_batch_size) / 32
-                    self.global_batch_size = str(int(per_gpu_batch_size * total_gpus))
+            # Packaged global batch sizes were built for a 4-node cluster.
+            baseline_gpus = 4 * self.gpus_per_node
+            if int(self.global_batch_size) > baseline_gpus:
+                if int(self.global_batch_size) % baseline_gpus == 0:
+                    per_gpu_batch_size = int(self.global_batch_size) / baseline_gpus
+                    self.global_batch_size = str(int(per_gpu_batch_size * self.world_size))
 
     def run_pretraining_tasks(self):
         """Snapshot network stats before training (distributed only)."""

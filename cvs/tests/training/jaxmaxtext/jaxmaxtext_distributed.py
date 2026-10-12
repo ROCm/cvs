@@ -77,11 +77,11 @@ def test_training_run(orch, variant_config, hf_token, sweep_name, training_res_d
     return _common.training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, lifecycle, request)
 
 
-def test_metric(sweep_name, metric, training_res_dict, variant_config, lifecycle, request):
-    """One row per (sweep, metric): assert the parsed value against the sweep's
-    threshold cell and record PASS / FAIL / N/A / RECORD."""
-    log.info('Starting Testcase: metric [%s - %s]', sweep_name, metric)
-    return _common.metric(sweep_name, metric, training_res_dict, variant_config, lifecycle, request)
+def test_metric(sweep_name, training_res_dict, variant_config, lifecycle, request):
+    """One row per sweep: evaluate every metric against the sweep's threshold cell
+    and record each as a collapsible pass / fail / skip verdict panel."""
+    log.info('Starting Testcase: metric [%s]', sweep_name)
+    return _common.metric(sweep_name, training_res_dict, variant_config, lifecycle, request)
 
 
 def test_loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request):

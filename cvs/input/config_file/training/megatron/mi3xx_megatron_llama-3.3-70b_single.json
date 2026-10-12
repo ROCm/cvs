@@ -3,6 +3,7 @@
   "_threshold_json_comment": "Set to the sibling mi300x_*_threshold.json or mi325x_*_threshold.json for this SKU.",
   "gpu_name": "<changeme>",
   "enforce_thresholds": true,
+  "gpus_per_node": 8,
   "threshold_json": "<changeme>",
   "paths": {
     "hf_token_file": "/home/{user-id}/.hf_token",

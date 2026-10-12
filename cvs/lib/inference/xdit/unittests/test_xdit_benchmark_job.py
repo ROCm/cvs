@@ -1,10 +1,26 @@
+import base64
+import io
+import json
+import os
+import shutil
+import sys
+import tempfile
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from cvs.lib.inference.xdit.xdit_benchmark_job import (
     BenchmarkLaunchPlan,
     PytorchXditBenchmarkJob,
+    _ARTIFACT_COLLECT_TIMEOUT_S,
+    _REMOTE_COLLECT_SCRIPT,
+    _build_output_cleanup_cmd,
+    _materialize_artifacts,
+    cleanup_staged_artifacts,
+    stage_remote_benchmark_outputs,
 )
+from cvs.lib.inference.xdit.xdit_flux import FluxOutputParser
+from cvs.lib.inference.xdit.xdit_wan import WanOutputParser
+from cvs.lib.inference.xdit.xdit_wan_i2v import WanI2vOutputParser
 
 
 class _StubBenchmarkJob(PytorchXditBenchmarkJob):
@@ -107,6 +123,20 @@ class _FakeContainerOrchestrator:
                 value = ""
             output[host] = {"output": value, "exit_code": 0} if detailed else value
         return output
+
+
+class TestBuildOutputCleanupCmd(unittest.TestCase):
+    def test_sudo_fallback_and_plain_rm(self):
+        cmd = _build_output_cleanup_cmd("/out", "flux_*_outputs")
+        self.assertEqual(
+            cmd,
+            "bash -c 'if sudo -n true >/dev/null 2>&1; then "
+            "sudo rm -rf /out/flux_*_outputs; else rm -rf /out/flux_*_outputs; fi'",
+        )
+        self.assertEqual(
+            _build_output_cleanup_cmd("/out", "wan_22_*_outputs", use_sudo=False),
+            "bash -c 'rm -rf /out/wan_22_*_outputs'",
+        )
 
 
 class TestBenchmarkLaunchPlan(unittest.TestCase):
@@ -240,6 +270,189 @@ class TestPytorchXditBenchmarkJob(unittest.TestCase):
             inference_dict["_test_output_dir"],
             "/host/results/stub_container-10.0.0.1_outputs",
         )
+
+
+class _RecordingExec:
+    def __init__(self, outputs):
+        self.host_list = list(outputs)
+        self.outputs = outputs
+        self.commands = None
+
+    def exec_cmd_list(self, commands, timeout=None, print_console=False):
+        self.commands = list(commands)
+        self.timeout = timeout
+        return {host: self.outputs[host] for host in self.host_list}
+
+
+def _collect_tree(root):
+    saved_argv = sys.argv
+    saved_stdout = sys.stdout
+    buffer = io.StringIO()
+    try:
+        sys.argv = ["collect", root]
+        sys.stdout = buffer
+        exec(_REMOTE_COLLECT_SCRIPT, {"__name__": "__collect__"})
+    finally:
+        sys.argv = saved_argv
+        sys.stdout = saved_stdout
+    return buffer.getvalue()
+
+
+class TestStageRemoteBenchmarkOutputs(unittest.TestCase):
+    def tearDown(self):
+        cleanup_staged_artifacts()
+
+    def test_cleanup_staged_artifacts_removes_materialized_dirs(self):
+        local = _materialize_artifacts([{"rel": "results/timing.json", "b64": base64.b64encode(b"[]").decode("ascii")}])
+        self.assertTrue(os.path.isdir(local))
+        untouched = tempfile.mkdtemp(prefix="xdit-results-keep-")
+        try:
+            cleanup_staged_artifacts()
+            self.assertFalse(os.path.exists(local))
+            self.assertTrue(os.path.isdir(untouched))
+            cleanup_staged_artifacts()
+            self.assertTrue(os.path.isdir(untouched))
+        finally:
+            shutil.rmtree(untouched, ignore_errors=True)
+
+    def test_collect_script_reads_flux_and_wan_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            flux = os.path.join(tmp, "results")
+            os.makedirs(flux)
+            with open(os.path.join(flux, "timing.json"), "w", encoding="utf-8") as handle:
+                handle.write(json.dumps([{"pipe_time": 0.97}]))
+            with open(os.path.join(flux, "flux_0.png"), "wb") as handle:
+                handle.write(b"png")
+            with open(os.path.join(tmp, "noise.log"), "w", encoding="utf-8") as handle:
+                handle.write("ignore")
+            text = _collect_tree(tmp)
+
+        staged = stage_remote_benchmark_outputs(_RecordingExec({"n0": text}), {"n0": "/node/flux_outputs"})
+        result, errors = FluxOutputParser(staged["n0"]).parse()
+        self.assertIsNotNone(result, errors)
+        self.assertAlmostEqual(result.avg_pipe_time_s, 0.97)
+        self.assertEqual(result.repetition_count, 1)
+        self.assertTrue(result.image_paths)
+        self.assertNotIn(base64.b64encode(b"png").decode("ascii"), text)
+
+    def test_each_node_keeps_its_own_timing(self):
+        def payload(pipe_time):
+            with tempfile.TemporaryDirectory() as tmp:
+                results = os.path.join(tmp, "results")
+                os.makedirs(results)
+                with open(os.path.join(results, "timing.json"), "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps([{"pipe_time": pipe_time}, {"pipe_time": pipe_time}]))
+                with open(os.path.join(results, "video_i2v.mp4"), "wb") as handle:
+                    handle.write(b"mp4")
+                return _collect_tree(tmp)
+
+        executor = _RecordingExec({"10.0.0.1": payload(0.9674), "10.0.0.2": payload(0.9735)})
+        staged = stage_remote_benchmark_outputs(
+            executor,
+            {
+                "10.0.0.1": "/local/flux_host-a_outputs",
+                "10.0.0.2": "/local/flux_host-b_outputs",
+            },
+        )
+        first, _ = WanI2vOutputParser(staged["10.0.0.1"]).parse()
+        second, _ = WanI2vOutputParser(staged["10.0.0.2"]).parse()
+        self.assertAlmostEqual(first.avg_pipe_time_s, 0.9674)
+        self.assertAlmostEqual(second.avg_pipe_time_s, 0.9735)
+        self.assertNotEqual(staged["10.0.0.1"], staged["10.0.0.2"])
+        self.assertTrue(all("/local/flux_" in cmd for cmd in executor.commands))
+
+    def test_shared_directory_uses_the_node_that_has_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outputs = os.path.join(tmp, "outputs")
+            os.makedirs(outputs)
+            with open(os.path.join(outputs, "rank0_step0.json"), "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"total_time": 12.5}))
+            with open(os.path.join(outputs, "video.mp4"), "wb") as handle:
+                handle.write(b"mp4")
+            present = _collect_tree(tmp)
+        with tempfile.TemporaryDirectory() as empty_dir:
+            empty = _collect_tree(empty_dir)
+        staged = stage_remote_benchmark_outputs(
+            _RecordingExec({"rank0": empty, "rank1": present}),
+            {"rank0": "/shared/wan_outputs", "rank1": "/shared/wan_outputs"},
+        )
+        self.assertEqual(staged["rank0"], staged["rank1"])
+        result, errors = WanOutputParser(staged["rank1"]).parse()
+        self.assertIsNotNone(result, errors)
+        self.assertAlmostEqual(result.avg_total_time_s, 12.5)
+
+    def test_collect_failures_are_logged(self):
+        begin = "XDIT_ARTIFACTS_BEGIN"
+        end = "XDIT_ARTIFACTS_END"
+        executor = _RecordingExec(
+            {
+                "bad-json": f"{begin}\nnot-json\n{end}\n",
+                "empty-list": f"{begin}\n[]\n{end}\n",
+                "no-output": "",
+            }
+        )
+        with patch("cvs.lib.inference.xdit.xdit_benchmark_job.log") as mock_log:
+            staged = stage_remote_benchmark_outputs(
+                executor,
+                {
+                    "bad-json": "/node/bad",
+                    "empty-list": "/node/empty",
+                    "no-output": "/node/none",
+                },
+            )
+        self.assertEqual(staged, {})
+        warned = {call.args[1]: call.args[2] for call in mock_log.warning.call_args_list}
+        self.assertEqual(warned["bad-json"], end)
+        self.assertEqual(warned["empty-list"], end)
+        self.assertEqual(warned["no-output"], "no output")
+
+    def test_missing_remote_files_leave_no_local_copy(self):
+        executor = _RecordingExec({"n0": ""})
+        staged = stage_remote_benchmark_outputs(executor, {"n0": "/node/only"})
+        self.assertEqual(staged, {})
+        self.assertEqual(executor.timeout, _ARTIFACT_COLLECT_TIMEOUT_S)
+
+    def test_store_output_dir_hint_keeps_visible_output_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = _make_job(["10.0.0.1"])
+            job.inference_dict["output_base_dir"] = tmp
+            plan = job.build_launch_plan()
+            host_dir = plan.output_dirs_by_node["10.0.0.1"]
+            os.makedirs(os.path.join(host_dir, "results"))
+            png = os.path.join(host_dir, "results", "flux_0.png")
+            with open(png, "wb") as handle:
+                handle.write(b"png-bytes")
+            job.s_phdl.exec_cmd_list.return_value = {"10.0.0.1": "unused"}
+
+            job.store_output_dir_hint(plan)
+
+        self.assertEqual(job.inference_dict["_test_output_dir"], host_dir)
+        self.assertEqual(job.inference_dict["_test_output_dirs_by_node"], {"10.0.0.1": host_dir})
+        job.s_phdl.exec_cmd_list.assert_not_called()
+
+    def test_store_output_dir_hint_points_parser_at_staged_timing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            results = os.path.join(tmp, "results")
+            os.makedirs(results)
+            with open(os.path.join(results, "timing.json"), "w", encoding="utf-8") as handle:
+                handle.write(json.dumps([{"pipe_time": 0.9674}] * 25))
+            with open(os.path.join(results, "flux_0.png"), "wb") as handle:
+                handle.write(b"png")
+            payload = _collect_tree(tmp)
+        job = _make_job(["10.0.0.1"])
+        job.s_phdl.exec_cmd_list.return_value = {"10.0.0.1": payload}
+        plan = job.build_launch_plan()
+        job.store_output_dir_hint(plan)
+        local = job.inference_dict["_test_output_dir"]
+        self.assertNotIn("/home/user/stub_output", local)
+        self.assertEqual(
+            job.inference_dict["_test_node_output_dir"],
+            "/home/user/stub_output/stub_host-0_outputs",
+        )
+        result, errors = FluxOutputParser(local, expected_repetitions=25).parse()
+        self.assertIsNotNone(result, errors)
+        self.assertEqual(result.repetition_count, 25)
+        self.assertAlmostEqual(result.avg_pipe_time_s, 0.9674)
 
 
 if __name__ == "__main__":

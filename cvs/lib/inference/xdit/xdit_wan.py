@@ -68,16 +68,18 @@ class WanOutputParser:
     - Validating against GPU-specific thresholds
     """
 
-    def __init__(self, output_dir: str, expected_artifact: str = "video.mp4"):
+    def __init__(self, output_dir: str, expected_artifact: str = "video.mp4", expected_steps=None):
         """
         Initialize parser.
 
         Args:
             output_dir: Base output directory containing benchmark results
             expected_artifact: Artifact filename to locate (default: video.mp4)
+            expected_steps: Required rank0 JSON count for native WAN. Unset skips the count check.
         """
         self.output_dir = Path(output_dir)
         self.expected_artifact = expected_artifact
+        self.expected_steps = expected_steps
 
     @staticmethod
     def _select_bench_dir(run_dir: Path) -> Path:
@@ -326,13 +328,20 @@ class WanOutputParser:
             all_errors.append("No valid total_time values extracted from JSON files")
             return None, all_errors
 
+        step_mismatch = self.expected_steps is not None and len(step_times) != int(self.expected_steps)
+        if step_mismatch:
+            all_errors.append(f"found {len(step_times)} rank0 benchmark steps, expected {int(self.expected_steps)}")
+
         # Compute average
         avg_total_time_s = sum(step_times) / len(step_times)
         log.info(f"Average total_time: {avg_total_time_s:.2f}s (from {len(step_times)} steps)")
 
         artifact_path = self.find_artifact() if self.expected_artifact else None
-        if self.expected_artifact and artifact_path is None:
+        artifact_missing = bool(self.expected_artifact) and artifact_path is None
+        if artifact_missing:
             all_errors.append(f"Artifact '{self.expected_artifact}' not found under {self.output_dir}")
+
+        if step_mismatch or artifact_missing:
             return None, all_errors
 
         result = WanBenchmarkResult(

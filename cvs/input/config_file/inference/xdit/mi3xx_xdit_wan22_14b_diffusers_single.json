@@ -1,8 +1,8 @@
 {
-  "_comment": "WAN 2.2 Diffusers xFuser single-node workload. server_params.model is a Hugging Face repo id or an absolute host path.",
+  "_comment": "WAN 2.2 Diffusers xFuser single-node workload. server_params.model is a Hugging Face repo id or an absolute host path. Download model before run.",
   "gpu_name" : "<changeme> mi325",
   "enforce_thresholds": true,
-  "threshold_json": "mi325_xdit_wan22_14b_diffusers_single_threshold.json",
+  "threshold_json": "xdit_wan22_14b_diffusers_single_threshold.json",
   "paths": {
     "shared_fs": "{home}",
     "models_dir": "{home}",

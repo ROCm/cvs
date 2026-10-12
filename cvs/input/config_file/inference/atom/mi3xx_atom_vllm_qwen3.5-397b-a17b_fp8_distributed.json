@@ -1,6 +1,5 @@
 {
   "_comment": "Qwen3.5-397B-A17B FP8 distributed vLLM PP=2 across two nodes.",
-  "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_vllm_qwen3.5-397b-a17b_fp8_distributed_threshold.json",
   "paths": {
@@ -11,8 +10,7 @@
   },
   "model": {
     "id": "amd/Qwen3.5-397B-A17B-FP8",
-    "remote": 0,
-    "precision": "fp8"
+    "remote": 0
   },
   "container": {
     "lifetime": "per_run",

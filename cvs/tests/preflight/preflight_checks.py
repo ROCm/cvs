@@ -5,6 +5,9 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import functools
+import inspect
+
 import pytest
 import json
 
@@ -34,6 +37,21 @@ from cvs.lib.preflight.node_smoke_rows import (
 
 # RdmaConnectivityCheck not used - using legacy function temporarily
 from cvs.lib.preflight.report import PreflightReportGenerator, preflight_check_display_name
+from cvs.lib.preflight.rundeck import (
+    GID_CONSISTENCY,
+    IFOE_L2,
+    INTERFACE_NAMES,
+    NODE_HEALTH,
+    NODE_REACHABILITY,
+    NODE_SMOKE_TIER1,
+    NODE_SMOKE_TIER2,
+    NODE_SMOKE_TIER3,
+    RDMA_CONNECTIVITY,
+    ROCM_VERSIONS,
+    TRANSFERBENCH,
+    build_preflight_deck,
+)
+from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.parsers.schemas import (
@@ -45,6 +63,38 @@ from cvs.parsers.schemas import (
 from cvs.lib import globals
 
 log = globals.log
+
+# Filled by the module fixture while a pytest session is running. Library unit
+# tests call the check functions directly and leave this empty.
+_rundeck_slot = {'target': None, 'cluster': None}
+
+
+def _publish_preflight_rundeck():
+    """Refresh the Run Deck fixture from preflight_results. Never changes the verdict."""
+    target = _rundeck_slot.get('target')
+    if not isinstance(target, dict):
+        return
+    try:
+        built = build_preflight_deck(preflight_results, _rundeck_slot.get('cluster'))
+        target.clear()
+        target.update(built)
+    except Exception as exc:
+        log.warning("Preflight: could not capture Run Deck results: %s", exc)
+
+
+def _timed_stage(label):
+    """Record wall-clock for one preflight check. Missing lifecycle is a no-op."""
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapped(*args, **kwargs):
+            lifecycle = inspect.signature(fn).bind_partial(*args, **kwargs).arguments.get('lifecycle')
+            with timed_stage(lifecycle, label):
+                return fn(*args, **kwargs)
+
+        return wrapped
+
+    return deco
 
 
 def get_nested_config(config_dict, section, key, default):
@@ -296,6 +346,8 @@ def preflight_update_test_result(result=None):
         # Clear the error list so the generic handler cannot fail the test for us.
         globals.error_list.clear()
 
+    _publish_preflight_rundeck()
+
     if not isinstance(result, dict):
         return
 
@@ -400,7 +452,30 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
-def test_node_reachability(orch):
+@pytest.fixture(scope="module")
+def lifecycle():
+    """Wall-clock of each preflight check, bound as the deck lifecycle source."""
+    return HealthLifecycle()
+
+
+@pytest.fixture(scope="module")
+def preflight_res_dict():
+    """Status-matrix results for the preflight Run Deck. The profile names this fixture."""
+    return {}
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _bind_preflight_rundeck(preflight_res_dict, cluster_dict):
+    _rundeck_slot['target'] = preflight_res_dict
+    _rundeck_slot['cluster'] = cluster_dict
+    yield
+    _publish_preflight_rundeck()
+    _rundeck_slot['target'] = None
+    _rundeck_slot['cluster'] = None
+
+
+@_timed_stage(NODE_REACHABILITY)
+def test_node_reachability(orch, lifecycle=None):
     """
     Test basic SSH connectivity to all cluster nodes.
 
@@ -443,6 +518,7 @@ def test_node_reachability(orch):
         'total_nodes': len(out_dict),
         'reachable_nodes': len(reachable_nodes),
         'unreachable_nodes': failed_nodes,
+        'nodes': {node: {'status': 'PASS' if node in reachable_nodes else 'FAIL'} for node in out_dict},
         'status': 'PASS' if len(failed_nodes) == 0 else 'WARNING',
     }
 
@@ -452,7 +528,8 @@ def test_node_reachability(orch):
     preflight_update_test_result(preflight_results['node_reachability'])
 
 
-def test_node_health(orch, config_dict, cluster_dict):
+@_timed_stage(NODE_HEALTH)
+def test_node_health(orch, config_dict, cluster_dict, lifecycle=None):
     """Perform mandatory GPU health and optional MI4XX fabric admission.
 
     The gate is intentionally read-only.  It records diagnostics and lets the
@@ -525,7 +602,8 @@ def test_node_health(orch, config_dict, cluster_dict):
     preflight_update_test_result(results)
 
 
-def test_rocm_version_consistency(orch, config_dict):
+@_timed_stage(ROCM_VERSIONS)
+def test_rocm_version_consistency(orch, config_dict, lifecycle=None):
     """
     Test ROCm version consistency across all cluster nodes.
 
@@ -581,7 +659,8 @@ def test_rocm_version_consistency(orch, config_dict):
     preflight_update_test_result(results)
 
 
-def test_ifoe_l2_connectivity(orch, config_dict, cluster_dict):
+@_timed_stage(IFOE_L2)
+def test_ifoe_l2_connectivity(orch, config_dict, cluster_dict, lifecycle=None):
     """Run IFoE L2 before RDMA-specific interface and GID pruning.
 
     IFoE uses AFM/vPOD topology rather than conventional RDMA interfaces.
@@ -591,7 +670,8 @@ def test_ifoe_l2_connectivity(orch, config_dict, cluster_dict):
     _run_ifoe_l2_connectivity(orch, config_dict, cluster_dict)
 
 
-def test_ifoe_transferbench_smoke(orch, config_dict):
+@_timed_stage(TRANSFERBENCH)
+def test_ifoe_transferbench_smoke(orch, config_dict, lifecycle=None):
     """Run TransferBench after IFoE L2 and before RDMA eligibility pruning.
 
     TransferBench validates the IFoE data path and must see the same
@@ -601,7 +681,8 @@ def test_ifoe_transferbench_smoke(orch, config_dict):
     _run_ifoe_transferbench_smoke(orch, config_dict)
 
 
-def test_interface_name_consistency(orch, config_dict):
+@_timed_stage(INTERFACE_NAMES)
+def test_interface_name_consistency(orch, config_dict, lifecycle=None):
     """
     Test RDMA interface presence and consistency across all cluster nodes.
 
@@ -659,7 +740,8 @@ def test_interface_name_consistency(orch, config_dict):
     preflight_update_test_result(results)
 
 
-def test_gid_consistency(orch, config_dict):
+@_timed_stage(GID_CONSISTENCY)
+def test_gid_consistency(orch, config_dict, lifecycle=None):
     """
     Test GID consistency across specified RDMA interfaces in the cluster.
 
@@ -831,7 +913,8 @@ def _report_tier_node_verdict(label, results):
         pytest.fail(f"{label} failed on {len(not_passing)}/{total} node(s): {', '.join(not_passing)}")
 
 
-def test_node_smoke_tier1(orch, config_dict):
+@_timed_stage(NODE_SMOKE_TIER1)
+def test_node_smoke_tier1(orch, config_dict, lifecycle=None):
     """
     Run Node Smoke Tier 1 (Primus ``node_smoke``) on each reachable node via primus-cli.
 
@@ -881,7 +964,8 @@ def test_node_smoke_tier1_check(tier1_check):
     _report_node_smoke_check('tier1', tier1_check)
 
 
-def test_node_smoke_tier2(orch, config_dict):
+@_timed_stage(NODE_SMOKE_TIER2)
+def test_node_smoke_tier2(orch, config_dict, lifecycle=None):
     """Summarize Node Smoke Tier 2 perf sanity, which rides along with the Tier 1 run.
 
     Does not re-run Primus. Disable with ``node_smoke_tier1.tier2_perf=false``.
@@ -925,7 +1009,8 @@ def test_node_smoke_tier2_check(tier2_check):
     _report_node_smoke_check('tier2', tier2_check)
 
 
-def test_node_smoke_tier3(orch, config_dict):
+@_timed_stage(NODE_SMOKE_TIER3)
+def test_node_smoke_tier3(orch, config_dict, lifecycle=None):
     """
     Run Node Smoke Tier 3 (Primus ``preflight --host --gpu --network``) across the cluster.
 
@@ -1373,7 +1458,8 @@ def _run_ifoe_transferbench_smoke(orch, config_dict):
     preflight_update_test_result(preflight_results['transferbench_smoke'])
 
 
-def test_rdma_connectivity(orch, cluster_dict, config_dict):
+@_timed_stage(RDMA_CONNECTIVITY)
+def test_rdma_connectivity(orch, cluster_dict, config_dict, lifecycle=None):
     """
     Test RDMA connectivity between cluster nodes using ibv_rc_pingpong.
 

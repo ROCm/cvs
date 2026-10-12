@@ -1,8 +1,8 @@
 {
-  "_comment": "FLUX.2-dev distributed xDiT workload. Replace every <changeme> NCCL/network field before running.",
+  "_comment": "FLUX.2-dev distributed xDiT workload. Replace every <changeme> NCCL/network field before running. Download model before run.",
   "gpu_name" : "<changeme> mi325",
   "enforce_thresholds": true,
-  "threshold_json": "mi325_xdit_flux2_dev_distributed_threshold.json",
+  "threshold_json": "xdit_flux2_dev_distributed_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/home/{user-id}/.cache/huggingface",

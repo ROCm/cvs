@@ -6,12 +6,15 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from cvs.lib import globals
 from cvs.tests.inference.xdit import conftest
 from cvs.tests.inference.xdit._shared import (
     Lifecycle,
     _SecretValue,
     _attach_benchmark_artifacts,
+    _is_flux2_workload,
     _output_dirs_by_host,
+    _output_parser,
     _report_dimensions,
     _report_threshold,
     benchmark_params_from_variant,
@@ -19,6 +22,7 @@ from cvs.tests.inference.xdit._shared import (
     hf_token_from_variant,
     inference_from_variant,
     log_topology,
+    parse_thresholds_stage,
     resolve_execution_hosts,
     scoped_cluster_dict,
     suite_spec,
@@ -198,9 +202,98 @@ class TestAttachBenchmarkArtifacts(unittest.TestCase):
             self.assertIsNone(link_name)
             self.assertFalse(tracked)
 
+    def test_skips_empty_media_placeholders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "results"))
+            with open(os.path.join(tmp, "results", "timing.json"), "w", encoding="utf-8") as handle:
+                handle.write("[]")
+            with open(os.path.join(tmp, "results", "flux_0.png"), "wb") as handle:
+                handle.write(b"")
+            request = SimpleNamespace(config=SimpleNamespace(_html_report_manager=_RecordingReportManager()))
+
+            copied = _attach_benchmark_artifacts(request, "10.0.0.1", tmp)
+
+        self.assertEqual(copied, ["10.0.0.1_results_timing.json"])
+
     def test_skips_when_html_reporting_is_disabled(self):
         request = SimpleNamespace(config=SimpleNamespace())
         self.assertEqual(_attach_benchmark_artifacts(request, "10.0.0.1", "/missing"), [])
+
+
+class TestParseThresholdsStage(unittest.TestCase):
+    def test_reports_node_path_when_parser_reads_staged_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            results = os.path.join(tmp, "results")
+            os.makedirs(results)
+            with open(os.path.join(results, "timing.json"), "w", encoding="utf-8") as handle:
+                handle.write('[{"pipe_time": 1.25}]')
+            with open(os.path.join(results, "flux_0.png"), "wb") as handle:
+                handle.write(b"x")
+            node_dir = "/home/user/flux_host_outputs"
+            variant = SimpleNamespace(
+                inference={
+                    "_test_output_dirs_by_node": {"10.0.0.1": tmp},
+                    "_test_node_output_dirs_by_node": {"10.0.0.1": node_dir},
+                },
+                benchmark_params={
+                    "flux1_dev_t2i": {
+                        "num_repetitions": 1,
+                        "ulysses_degree": 1,
+                        "ring_degree": 1,
+                        "height": 1024,
+                        "width": 1024,
+                        "num_inference_steps": 4,
+                        "expected_results": {"auto": {"max_avg_pipe_time_s": 10}},
+                    }
+                },
+                thresholds={},
+            )
+            lifecycle = Lifecycle()
+            request = SimpleNamespace(node=SimpleNamespace(nodeid="test_parse"), config=SimpleNamespace())
+
+            parse_thresholds_stage(
+                variant,
+                "auto",
+                {"family": "flux", "distributed": False, "diffusers": False},
+                lifecycle,
+                request,
+            )
+
+        self.assertEqual(lifecycle.results[0][5], node_dir)
+        self.assertEqual(next(iter(lifecycle.report_results.values()))["10.0.0.1"]["output_dir"], node_dir)
+        self.assertNotIn(tmp, lifecycle.results[0][5])
+
+    def test_parse_failure_names_node_output_path(self):
+        variant = SimpleNamespace(
+            inference={
+                "_test_output_dirs_by_node": {"10.0.0.1": "/tmp/xdit-results-gone"},
+                "_test_node_output_dirs_by_node": {"10.0.0.1": "/home/user/flux_host_outputs"},
+            },
+            benchmark_params={
+                "flux1_dev_t2i": {
+                    "num_repetitions": 1,
+                    "ulysses_degree": 1,
+                    "ring_degree": 1,
+                    "expected_results": {},
+                }
+            },
+            thresholds={},
+        )
+        lifecycle = Lifecycle()
+        request = SimpleNamespace(node=SimpleNamespace(nodeid="test_parse"), config=SimpleNamespace())
+
+        with patch("cvs.tests.inference.xdit._shared.update_test_result"):
+            parse_thresholds_stage(
+                variant,
+                "auto",
+                {"family": "flux", "distributed": False, "diffusers": False},
+                lifecycle,
+                request,
+            )
+
+        message = globals.error_list[-1]
+        self.assertIn("/home/user/flux_host_outputs", message)
+        self.assertNotIn("xdit-results-gone", message)
 
 
 class TestOutputDirsByHost(unittest.TestCase):
@@ -425,6 +518,73 @@ class TestVerifyModelStage(unittest.TestCase):
             verify_model_stage(orch, variant, {"family": "wan", "diffusers": False}, MagicMock(), MagicMock())
         download.assert_called_once()
         fail.assert_not_called()
+
+
+class TestOutputParserRequirements(unittest.TestCase):
+    def test_flux1_requires_num_repetitions(self):
+        variant = SimpleNamespace(model=SimpleNamespace(id="black-forest-labs/FLUX.1-dev"), inference={})
+        params = {"num_repetitions": 25}
+        parser = _output_parser(
+            {"family": "flux", "distributed": False, "diffusers": False},
+            params,
+            "/out",
+            variant,
+        )
+        self.assertFalse(_is_flux2_workload(variant, params))
+        self.assertEqual(parser.expected_repetitions, 25)
+
+    def test_flux2_does_not_require_flux1_repetition_count(self):
+        variant = SimpleNamespace(model=SimpleNamespace(id="black-forest-labs/FLUX.2-dev"), inference={})
+        params = {"model_type": "flux2", "num_repetitions": 25}
+        parser = _output_parser(
+            {"family": "flux", "distributed": False, "diffusers": False},
+            params,
+            "/out",
+            variant,
+        )
+        self.assertTrue(_is_flux2_workload(variant, params))
+        self.assertIsNone(parser.expected_repetitions)
+
+    def test_native_wan_requires_num_benchmark_steps(self):
+        variant = SimpleNamespace(inference={})
+        parser = _output_parser(
+            {"family": "wan", "distributed": False, "diffusers": False},
+            {"num_benchmark_steps": 5, "require_video_artifact": True},
+            "/out",
+            variant,
+        )
+        self.assertEqual(parser.expected_steps, 5)
+
+    def test_wan_diffusers_does_not_use_native_step_count(self):
+        variant = SimpleNamespace(inference={})
+        parser = _output_parser(
+            {"family": "wan", "distributed": False, "diffusers": True},
+            {"num_benchmark_steps": 5, "num_repetitions": 3},
+            "/out",
+            variant,
+        )
+        self.assertFalse(hasattr(parser, "expected_steps"))
+
+
+class TestGpuTypeFromDeviceProbe(unittest.TestCase):
+    def test_mi325_device_id_is_not_scored_as_mi300x(self):
+        output = "Device ID: 0x74a5\nDevice ID: 0x74a5\n"
+        self.assertEqual(conftest.gpu_type_from_device_probe(output), "mi325")
+
+    def test_mi355_device_id_still_selects_mi355(self):
+        output = "Device ID: 0x75a3\n"
+        self.assertEqual(conftest.gpu_type_from_device_probe(output), "mi355")
+
+    def test_mi350_and_mi300x_device_ids(self):
+        self.assertEqual(conftest.gpu_type_from_device_probe("Device ID: 0x75a0\n"), "mi350")
+        self.assertEqual(conftest.gpu_type_from_device_probe("Device ID: 0x74a1\n"), "mi300x")
+
+    def test_unrecognized_device_id_stays_mi300x(self):
+        self.assertEqual(conftest.gpu_type_from_device_probe("Device ID: 0x1234\n"), "mi300x")
+
+    def test_probe_skips_non_amd_drm_cards(self):
+        self.assertIn("${f%/*}/vendor", conftest._GPU_DEVICE_ID_PROBE)
+        self.assertIn("0x1002", conftest._GPU_DEVICE_ID_PROBE)
 
 
 if __name__ == "__main__":

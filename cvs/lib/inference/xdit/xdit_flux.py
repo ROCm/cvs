@@ -74,16 +74,18 @@ class FluxOutputParser:
     - Validating against GPU-specific thresholds
     """
 
-    def __init__(self, output_dir: str, expected_image_pattern: str = "flux_*.png"):
+    def __init__(self, output_dir: str, expected_image_pattern: str = "flux_*.png", expected_repetitions=None):
         """
         Initialize parser.
 
         Args:
             output_dir: Base output directory containing benchmark results
             expected_image_pattern: Glob pattern for generated images (default: flux_*.png)
+            expected_repetitions: Required pipe_time count for FLUX.1. Unset skips the count check.
         """
         self.output_dir = Path(output_dir)
         self.expected_image_pattern = expected_image_pattern
+        self.expected_repetitions = expected_repetitions
 
     def find_timing_json(self) -> Optional[Path]:
         """
@@ -220,6 +222,14 @@ class FluxOutputParser:
             all_errors.append("No valid pipe_time values extracted from timing.json")
             return None, all_errors
 
+        repetition_mismatch = self.expected_repetitions is not None and len(pipe_times) != int(
+            self.expected_repetitions
+        )
+        if repetition_mismatch:
+            all_errors.append(
+                f"timing.json has {len(pipe_times)} repetitions, expected {int(self.expected_repetitions)}"
+            )
+
         # Compute average
         avg_pipe_time_s = sum(pipe_times) / len(pipe_times)
         log.info(f"Average pipe_time: {avg_pipe_time_s:.2f}s (from {len(pipe_times)} repetitions)")
@@ -228,6 +238,9 @@ class FluxOutputParser:
         image_paths = self.find_images()
         if not image_paths:
             all_errors.append(f"No images matching '{self.expected_image_pattern}' found under {self.output_dir}")
+
+        if repetition_mismatch or not image_paths:
+            return None, all_errors
 
         result = FluxBenchmarkResult(
             avg_pipe_time_s=avg_pipe_time_s,

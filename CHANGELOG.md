@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RCCL: accept single-node results without a topology block, reject mixed result shapes regardless of row order, and report malformed JSON result structures without crashing row processing.
 - RCCL: return cleanly when a run produces no result rows instead of raising `IndexError` from the bandwidth-dip check. Log scanning still fails these runs for missing bandwidth numbers.
 - IB topology discovery recognizes AMD Pollara (Ionic) HCA names such as `ionic_0`. Previously they were filtered out, so callers found no HCAs on Ionic clusters.
+- vLLM: the DeepSeek V4 sample configs no longer set `HF_HUB_OFFLINE` or `TRANSFORMERS_OFFLINE`. With those flags, an accuracy task added to a copy of a sample failed at the end of the sweep because lm-eval could not load its dataset. The vLLM configuration reference now says to set them only on clusters without Hub access, with accuracy datasets pre-cached, and that `distributed_executor_backend` and `dist_init_port` are ignored on one host.
 
 ## [0.2.0] - 2026-09-23
 

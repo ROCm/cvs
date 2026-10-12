@@ -204,10 +204,114 @@ class TestHostFlags(unittest.TestCase):
         hung, hung_messages = host_configs_rundeck.eval_dmesg_reset({'n1': 'amdgpu: GPU reset\n'})
         self.assertEqual(driver['n1']['status'], 'fail')
         self.assertEqual(driver_messages, ['Dmesg has amdgpu driver errors on node n1'])
-        self.assertEqual(reset['n1']['status'], 'pass')
-        self.assertEqual(reset_messages, [])
+        self.assertEqual(reset['n1']['status'], 'fail')
+        self.assertEqual(reset_messages, ['Dmesg has amdgpu reset/hang errors on node n1'])
         self.assertEqual(hung['n1']['status'], 'fail')
         self.assertEqual(hung_messages, ['Dmesg has amdgpu reset/hang errors on node n1'])
+
+    def test_dmesg_node_events_record_denied_nodes(self):
+        driver, driver_messages, reset, reset_messages = host_configs_rundeck.eval_dmesg_node_events(
+            {'n1': []},
+            denied_nodes=['n2'],
+        )
+        self.assertEqual(driver['n1']['status'], 'pass')
+        self.assertEqual(reset['n1']['status'], 'pass')
+        self.assertEqual(driver['n2']['status'], 'fail')
+        self.assertEqual(reset['n2']['status'], 'fail')
+        self.assertEqual(driver_messages, ['Dmesg check could not run on node n2'])
+        self.assertEqual(reset_messages, ['Dmesg check could not run on node n2'])
+
+    def test_dmesg_driver_ignores_zero_status_fields(self):
+        text = 'amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x0\namdgpu 0000:03:00.0: amdgpu: MAPPING_ERROR: 0x0\n'
+        records, messages = host_configs_rundeck.eval_dmesg_driver({'n236': text})
+        self.assertEqual(records['n236']['status'], 'pass')
+        self.assertEqual(messages, [])
+        dirty, dirty_messages = host_configs_rundeck.eval_dmesg_driver(
+            {'n236': 'amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x1\n'}
+        )
+        self.assertEqual(dirty['n236']['status'], 'fail')
+        self.assertEqual(dirty_messages, ['Dmesg has amdgpu driver errors on node n236'])
+
+    def test_dmesg_events_ignore_only_whitelisted_benign_lines(self):
+        events = {
+            'n1': [
+                {
+                    'priority': 'ERROR',
+                    'description': 'CVS driver pattern',
+                    'match_content': 'amdgpu: WALKER_ERROR: 0x0',
+                    'category': 'SW_DRIVER',
+                },
+                {
+                    'priority': 'ERROR',
+                    'description': 'Firmware warning',
+                    'match_content': 'amdgpu: [Firmware Bug]: APIC register already in use',
+                    'category': 'BIOS',
+                },
+            ]
+        }
+        driver, driver_messages = host_configs_rundeck.eval_dmesg_driver_events(events)
+        reset, reset_messages = host_configs_rundeck.eval_dmesg_reset_events(events)
+        self.assertEqual(driver['n1']['status'], 'pass')
+        self.assertEqual(driver_messages, [])
+        self.assertEqual(reset['n1']['status'], 'pass')
+        self.assertEqual(reset_messages, [])
+
+        acpi = {
+            'n1': [
+                {
+                    'priority': 'WARNING',
+                    'description': 'ACPI Error',
+                    'match_content': 'amdgpu: ACPI Error: Method parse/execution failed',
+                    'category': 'BIOS',
+                }
+            ]
+        }
+        acpi_records, acpi_messages = host_configs_rundeck.eval_dmesg_driver_events(acpi)
+        self.assertEqual(acpi_records['n1']['status'], 'fail')
+        self.assertEqual(acpi_messages, ['Dmesg has amdgpu driver errors on node n1'])
+
+        fatal = {
+            'n1': [
+                {
+                    'priority': 'ERROR',
+                    'description': 'Fatal error during GPU init',
+                    'match_content': 'amdgpu: Fatal error during GPU init',
+                    'category': 'SW_DRIVER',
+                }
+            ]
+        }
+        failed, failed_messages = host_configs_rundeck.eval_dmesg_driver_events(fatal)
+        self.assertEqual(failed['n1']['status'], 'fail')
+        self.assertEqual(failed_messages, ['Dmesg has amdgpu driver errors on node n1'])
+
+    def test_dmesg_driver_events_keep_sw_driver_without_amdgpu_text(self):
+        crash = {
+            'n1': [
+                {
+                    'priority': 'ERROR',
+                    'description': 'Segmentation fault',
+                    'match_content': 'segfault at 0 ip 00007f0000000000',
+                    'category': 'SW_DRIVER',
+                }
+            ]
+        }
+        records, messages = host_configs_rundeck.eval_dmesg_driver_events(crash)
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['Dmesg has amdgpu driver errors on node n1'])
+
+        other = {
+            'n1': [
+                {
+                    'priority': 'ERROR',
+                    'description': 'Filesystem corrupted!',
+                    'match_content': 'EXT4-fs error (device sda1):',
+                    'category': 'OS',
+                }
+            ]
+        }
+        clean, clean_messages = host_configs_rundeck.eval_dmesg_driver_events(other)
+        self.assertEqual(clean['n1']['status'], 'pass')
+        self.assertEqual(clean_messages, [])
 
 
 class TestPcieCardPartition(unittest.TestCase):

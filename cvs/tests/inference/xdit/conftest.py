@@ -6,11 +6,13 @@ All rights reserved.
 """
 
 import json
+import re
 
 import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
+from cvs.lib.inference.xdit.xdit_benchmark_job import cleanup_staged_artifacts
 from cvs.lib.utils_lib import get_model_from_rocm_smi_output, resolve_cluster_config_placeholders
 from cvs.tests.inference.xdit._shared import (
     Lifecycle,
@@ -22,6 +24,22 @@ from cvs.tests.inference.xdit._shared import (
 )
 
 log = globals.log
+
+# rocm-smi -a asks libdrm for the marketing name, which fails amdgpu_get_auth on MI355X.
+_GPU_DEVICE_ID_PROBE = (
+    'for f in /sys/class/drm/card*/device/device; do '
+    '[ -e "$f" ] || continue; '
+    '[ "$(cat "${f%/*}/vendor" 2>/dev/null)" = 0x1002 ] || continue; '
+    'printf "Device ID: %s\\n" "$(cat "$f")"; '
+    'done'
+)
+
+
+def gpu_type_from_device_probe(output):
+    # get_model_from_rocm_smi_output has no MI325X id, so 0x74a5 would be scored as mi300x.
+    if re.search(r"Device ID:\s*0x74a5(?![0-9a-fA-F])", output or "", re.I):
+        return "mi325"
+    return get_model_from_rocm_smi_output(output)
 
 
 def _deep_merge(base, override):
@@ -123,14 +141,15 @@ def orch(cluster_dict, variant_config, xdit_spec, lifecycle):
             log.info("xDiT orchestrator leak-guard: tearing down containers")
             orchestrator.teardown_containers()
     finally:
+        cleanup_staged_artifacts()
         orchestrator.close()
 
 
 @pytest.fixture(scope="module")
 def gpu_type(orch):
-    output_by_host = orch.all.exec("rocm-smi -a | head -30")
+    output_by_host = orch.all.exec(_GPU_DEVICE_ID_PROBE)
     output = next(iter(output_by_host.values()), "")
-    return get_model_from_rocm_smi_output(output)
+    return gpu_type_from_device_probe(output)
 
 
 def pytest_collection_modifyitems(items):

@@ -166,6 +166,7 @@ class AtomJob:
         self.server_env = merge_mxfp4_triton_env(
             getattr(variant.model, "precision", ""),
             variant.roles.server.env,
+            gpu_arch=getattr(variant, "gpu_arch", "") or "",
         )
         configured_netdev = (getattr(variant.roles.server, "ib_netdev", None) or "").strip()
         if ib_netdev:
