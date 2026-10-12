@@ -8,6 +8,7 @@ Unified Megatron training suite for distributed (multi-node) runs (distributed_t
 
 Lifecycle (each stage is a separate test):
   test_launch_container  — launch the container once for all sweep combos
+  test_backend_nic_speed — verify backend NICs are linked at 400 Gbps
   test_download_tokenizer — download HF tokenizer when the model needs a local file
   test_smoke             — fixed small cell: model loads and runs N steps without error
   test_checkpoint        — Primus-only: checkpoint save + resume correctness check
@@ -42,6 +43,7 @@ from cvs.lib.training.megatron.utils.iteration_metrics import (
 from cvs.lib.training.megatron.utils.loss_curve import evaluate_loss_decreasing
 from cvs.lib.training.megatron.utils.loss_curve_plot import render_loss_curve_png
 from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
+from cvs.lib.training.megatron.utils.network_checks import backend_nic_link_speed_violations
 from cvs.lib.training.megatron.utils.results_table import (
     build_benchmark_metric_row,
     build_metric_row,
@@ -49,7 +51,7 @@ from cvs.lib.training.megatron.utils.results_table import (
 )
 from cvs.lib.training.megatron.utils.scaling import compute_scaling_efficiency
 from cvs.lib.utils.verdict import _check_one, ThresholdViolation
-from cvs.lib.utils_lib import update_test_result
+from cvs.lib.utils_lib import fail_test, update_test_result
 
 log = globals.log
 
@@ -85,8 +87,25 @@ def test_launch_container(orch, variant_config, lifecycle, request):
         pytest.fail(f"container {name} not running after setup_containers()")
 
 
+def test_backend_nic_speed(orch, lifecycle, request):
+    """Stage 1: verify every backend NIC is linked at 400 Gbps before training starts."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+
+    t = time.monotonic()
+    globals.error_list = []
+    violations = backend_nic_link_speed_violations(orch)
+    for violation in violations:
+        fail_test(violation)
+    if violations:
+        lifecycle.failed = True
+    lifecycle.record(request.node.nodeid, "backend_nic_speed", time.monotonic() - t)
+    update_test_result()
+    log.info("backend NIC link speed check PASSED")
+
+
 def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 1: download the tokenizer model once if the model family requires it."""
+    """Stage 2: download the tokenizer model once if the model family requires it."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
@@ -123,7 +142,7 @@ def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
 
 
 def test_smoke(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 2: smoke-test — model loads and runs smoke.iters steps without error.
+    """Stage 3: smoke-test — model loads and runs smoke.iters steps without error.
 
     Knobs come from the top-level ``smoke`` block. Empty ``global_batch_size``
     keeps the distributed default of 16. Set ``smoke.enabled`` false to skip.
@@ -174,7 +193,7 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
 
 
 def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 2.5: checkpoint save + resume — verify step counter and loss continuity.
+    """Stage 4: checkpoint save + resume — verify step counter and loss continuity.
 
     Two phases:
       Phase 1 — Save : train checkpoint.save_iters steps, saving every checkpoint.save_interval.
@@ -383,7 +402,7 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
 
 
 def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, lifecycle, request):
-    """Stage 3 (parametrized): run one sweep combo inside the shared container.
+    """Stage 5 (parametrized): run one sweep combo inside the shared container.
 
     stop_training_processes() runs in a finally block after every combo so GPU
     memory is released before the next combo starts.
@@ -491,7 +510,7 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
 
 
 def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
-    """Stage 4 (parametrized): compare each combo's metrics against thresholds.
+    """Stage 6 (parametrized): compare each combo's metrics against thresholds.
 
     Every metric is evaluated and recorded as its own pass/fail verdict row so the
     report renders them as an expandable per-metric panel under this test (the same
@@ -688,7 +707,7 @@ def test_print_results_table(train_res_dict, request):
 
 
 def test_teardown(orch, lifecycle, request):
-    """Stage 5: tear down the container once after all combos have run."""
+    """Stage 9: tear down the container once after all combos have run."""
     name = orch.get_container_name(orch.container_config, orch.container_config["image"])
     t = time.monotonic()
     orch.teardown_containers()
