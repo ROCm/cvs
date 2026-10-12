@@ -7,6 +7,7 @@ from contextlib import contextmanager
 import pytest
 
 from cvs.lib import globals
+from cvs.lib.benchmark.aorta.aorta_thresholds import active_thresholds, threshold_verdicts
 from cvs.lib.report.artifacts import export_payload
 from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
 from cvs.lib.utils_lib import fail_test, update_test_result
@@ -193,14 +194,11 @@ def validate_thresholds(aorta_job, lifecycle, request, subtests):
             pytest.skip("enforce_thresholds=false; metrics are recorded without threshold assertions")
         if lifecycle.benchmark_result is None:
             pytest.fail("No benchmark result to validate")
-        expected = {
-            key: value for key, value in aorta_job.config.thresholds["expected_results"].items() if value is not None
-        }
-        cases = []
-        for key, value in expected.items():
-            failures = lifecycle.parser.validate_thresholds(lifecycle.benchmark_result, {key: value})
-            spec = {"kind": "max" if key.startswith("max_") else "min", "value": value}
-            cases.append(("threshold", {"metric": key}, "; ".join(failures), spec))
+        expected = active_thresholds(aorta_job.config.thresholds)
+        cases = [
+            ("threshold", {"metric": v["threshold"]}, v["message"], {"kind": v["kind"], "value": v["limit"]})
+            for v in threshold_verdicts(lifecycle.parser, lifecycle.benchmark_result, expected)
+        ]
         _report_cases(request, subtests, cases)
 
 
