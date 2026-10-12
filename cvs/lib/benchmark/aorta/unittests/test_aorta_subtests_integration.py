@@ -38,6 +38,16 @@ def _panel_rows(entry):
     return [(result, label) for result, label, *_rest in _panel_cells(entry)]
 
 
+def _junit_counts(xml_root):
+    """Return the testsuite's (tests, failures, errors) and each testcase's <failure> messages."""
+    suite = xml_root if xml_root.tag == "testsuite" else xml_root.find("testsuite")
+    totals = tuple(int(suite.get(key)) for key in ("tests", "failures", "errors"))
+    failures = {
+        case.get("name"): [item.get("message") for item in case.findall("failure")] for case in suite.iter("testcase")
+    }
+    return totals, failures
+
+
 _HEADER = '''
 from types import SimpleNamespace
 
@@ -170,8 +180,25 @@ class TestAortaSubtestsIntegration(unittest.TestCase):
         self.assertIn('cvs-subtests-count">4 subtests,', html_text, details)
         testcases = {case.get("name"): case for case in xml_root.iter("testcase")}
         self.assertEqual(set(testcases), {"test_validate_thresholds", "test_collect_traces"}, details)
-        for case in testcases.values():
-            self.assertTrue(case.findall("failure"), details)
+        # JUnit counts every sub-test report: 2 parents + 4 sub-tests. One failed
+        # threshold and one failed node each give a sub-test <failure> and a parent
+        # <failure>, both under the parent's single <testcase>.
+        totals, failures = _junit_counts(xml_root)
+        self.assertEqual(totals, (6, 4, 0), details)
+        self.assertEqual(
+            failures,
+            {
+                "test_validate_thresholds": [
+                    "Failed: Average iteration time 20.00ms exceeds threshold 10ms",
+                    "Failed: Following FAILURES seen - ['Average iteration time 20.00ms exceeds threshold 10ms']",
+                ],
+                "test_collect_traces": [
+                    "Failed: Trace collection on node-b: download failed",
+                    "Failed: Following FAILURES seen - ['Trace collection on node-b: download failed']",
+                ],
+            },
+            details,
+        )
         properties = {
             name: [prop.get("value") for prop in case.iter("property") if prop.get("name") == "cvs_aorta_subtest"]
             for name, case in testcases.items()
@@ -230,12 +257,51 @@ class TestAortaSubtestsIntegration(unittest.TestCase):
             ],
             details,
         )
+        totals, failures = _junit_counts(xml_root)
+        self.assertEqual(totals, (3, 2, 0), details)
+        self.assertEqual(
+            failures["test_collect_traces"],
+            [
+                "Failed: No fresh torch_traces artifact was collected",
+                "Failed: Following FAILURES seen - ['No fresh torch_traces artifact was collected']",
+            ],
+            details,
+        )
         (case,) = xml_root.iter("testcase")
         self.assertEqual(
             [prop.get("value") for prop in case.iter("property") if prop.get("name") == "cvs_aorta_subtest"],
             [
                 "[trace collection] (host=node-a): passed",
                 "[trace collection] (artifact=torch_traces): failed; No fresh torch_traces artifact was collected",
+            ],
+            details,
+        )
+
+    def test_passing_subtests_add_tests_but_no_failures(self):
+        source = """
+            @pytest.fixture
+            def aorta_job():
+                config = SimpleNamespace(
+                    enforce_thresholds=True,
+                    thresholds={"expected_results": {"max_avg_iteration_ms": 100, "min_compute_ratio": 0.01}},
+                )
+                return SimpleNamespace(config=config)
+
+            def test_validate_thresholds(aorta_job, lifecycle, request, subtests):
+                _common.validate_thresholds(aorta_job, lifecycle, request, subtests)
+            """
+        completed, details, html_text, xml_root = _run_pytest(source)
+        self.assertEqual(completed.returncode, 0, details)
+        totals, failures = _junit_counts(xml_root)
+        self.assertEqual(totals, (3, 0, 0), details)
+        self.assertEqual(failures, {"test_validate_thresholds": []}, details)
+        (entry,) = next(iter(_html_tests(html_text).values()))
+        self.assertIn("Passed", entry["resultsTableRow"][0], details)
+        self.assertEqual(
+            _panel_cells(entry),
+            [
+                ("Passed", "[threshold] (metric=max_avg_iteration_ms)", "20.00 ms", "max 100.00", ""),
+                ("Passed", "[threshold] (metric=min_compute_ratio)", "0.5000", "min 0.0100", ""),
             ],
             details,
         )

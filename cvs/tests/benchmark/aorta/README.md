@@ -79,7 +79,11 @@ reason. The JUnit XML lists each sub-test as a `cvs_aorta_subtest` property of t
 parent test case, for example `[threshold] (metric=max_avg_iteration_ms): failed; actual
 6829.69 ms; gate max 1.00 ms; Average iteration time 6829.69ms exceeds threshold 1ms`.
 A failed sub-test also fails its parent stage, so later stages are gated and
-`validation_passed` is false as before.
+`validation_passed` is false as before. JUnit keeps one `<testcase>` per stage, but each
+sub-test adds one to the `testsuite` `tests` total, and a failed sub-test adds its own
+`<failure>` to the parent `<testcase>` next to the parent's failure. For example, a
+single-node run with four thresholds has 10 stages and 5 sub-tests, so it reports
+`tests="15"`, and one failed threshold gives `failures="2"`.
 
 `aorta_benchmark_report.json` retains cluster, configuration, performance, and per-rank
 summary fields. It also records execution status, validation status and trace-collection

@@ -94,7 +94,10 @@ def _report_cases(request, subtests, cases):
         with subtests.test(msg=case["msg"], **case["context"]):
             if case["failure"]:
                 pytest.fail(case["failure"])
-        # Older pytest leaves a failed sub-test's parent passed, breaking lifecycle gating.
+        # With pytest < 9 and the pytest-subtests plugin, a failed sub-test leaves
+        # its parent passed. fail_test fails the parent stage on every pytest. On
+        # pytest >= 9 the parent fails either way, and this gives its <failure> the
+        # reason instead of "contains N failed subtests"; JUnit counts are the same.
         if case["failure"]:
             fail_test(case["failure"])
 

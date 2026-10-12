@@ -206,7 +206,9 @@ measured value (Actual) next to the gate, and a failed row gives the reason. In 
 JUnit XML, each sub-test is a ``cvs_aorta_subtest`` property of the parent test case
 whose value gives the outcome, the measured value and gate for thresholds, and any
 failure message. A failed sub-test also fails its parent test, so dependent stages are
-gated and ``validation_passed`` is false.
+gated and ``validation_passed`` is false. JUnit keeps one ``<testcase>`` per stage, but
+each sub-test adds one to the ``testsuite`` ``tests`` total, and a failed sub-test adds
+its own ``<failure>`` to the parent ``<testcase>`` next to the parent's failure.
 
 Calibrate the sample thresholds for your hardware, node count and workload. Set
 ``enforce_thresholds: false`` to record metrics without threshold assertions.
