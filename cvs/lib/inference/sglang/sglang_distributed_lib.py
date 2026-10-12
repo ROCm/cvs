@@ -22,6 +22,7 @@ from cvs.lib.inference.sglang.sglang_common import (
     add_cli_flags_block,
     add_export_env_block,
     hf_token_export_line,
+    require_hf_token_on_nodes,
     hsa_force_fine_grain_pcie,
     as_node_list,
     collect_sglang_gpu_topology,
@@ -56,7 +57,6 @@ class SglangDistributed:
         model_name,
         inference_config_dict,
         benchmark_params_dict,
-        hf_token,
         orch=None,
         gpu_type='mi325',
         user_name=None,
@@ -69,7 +69,6 @@ class SglangDistributed:
         self.user_name = user_name
         self.priv_key_file = priv_key_file
         self.model_name = model_name
-        self.hf_token = hf_token
         self.gpu_type = gpu_type
 
         self.inf_dict = inference_config_dict
@@ -228,11 +227,17 @@ class SglangDistributed:
             f"export MODEL={self.bp_dict['model']}\n"
             f"export TP={self.bp_dict['tensor_parallelism']}\n"
             f"export PP={self.bp_dict.get('pipeline_parallelism', '1')}\n"
-            f"{hf_token_export_line(self.inf_dict.get('hf_token_file'))}"
+            f"{hf_token_export_line(self.inf_dict.get('hf_token_file'), self.bp_dict.get('model'))}"
             f"{add_export_env_block(self.bp_dict, indent='')}\n"
         )
 
     def _write_server_env_on_hosts(self, hosts: list[str]) -> None:
+        require_hf_token_on_nodes(
+            self.orch,
+            self.inf_dict.get('hf_token_file'),
+            self.bp_dict.get('model'),
+            hosts=hosts,
+        )
         env_body = self._server_env_body()
         write_cmd = "bash -c " + shlex.quote(
             f"cat > /tmp/server_env_script.sh <<'EOF'\n{env_body}EOF\n"

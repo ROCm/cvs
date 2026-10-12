@@ -3,10 +3,22 @@
 import unittest
 from unittest import mock
 
+from cvs.lib import globals as cvs_globals
 from cvs.lib.inference.sglang import sglang_common
 from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
 from cvs.lib.inference.sglang.sglang_distributed_lib import SglangDistributed
 from cvs.lib.inference.sglang.sglang_single_lib import SglangSingle
+
+
+def _orch_with_token_file():
+    orch = mock.Mock()
+
+    def _exec(cmd, **kwargs):
+        hosts = kwargs.get('hosts') or ['n0']
+        return {host: {'exit_code': 0, 'output': ''} for host in hosts}
+
+    orch.exec.side_effect = _exec
+    return orch
 
 
 _SAMPLE_BENCH_LOG = """
@@ -97,7 +109,7 @@ class TestSglangCommonHelpers(unittest.TestCase):
             'decode_coordinator_port': '40002',
         }
         bp_dict = {
-            'model': 'org/model',
+            'model': '/root/models/m',
             'tensor_parallelism': '8',
             'pipeline_parallelism': '1',
         }
@@ -105,7 +117,6 @@ class TestSglangCommonHelpers(unittest.TestCase):
         distributed = SglangDistributed.__new__(SglangDistributed)
         distributed.inf_dict = dict(inf_dict)
         distributed.bp_dict = dict(bp_dict)
-        distributed.hf_token = 'token'
         self.assertIn('export HSA_FORCE_FINE_GRAIN_PCIE=0\n', distributed._server_env_body())
         distributed.inf_dict.pop('hsa_force_fine_grain_pcie')
         self.assertIn('export HSA_FORCE_FINE_GRAIN_PCIE=1\n', distributed._server_env_body())
@@ -113,15 +124,15 @@ class TestSglangCommonHelpers(unittest.TestCase):
         single = SglangSingle.__new__(SglangSingle)
         single.inf_dict = dict(inf_dict)
         single.bp_dict = dict(bp_dict)
-        single.hf_token = 'token'
         single.execution_hosts = ['n0']
+        single.orch = mock.Mock()
         single_cmds = []
         single._container_exec = lambda cmd, **kwargs: single_cmds.append(cmd) or {}
 
         disagg = SglangDisaggPD.__new__(SglangDisaggPD)
         disagg.inf_dict = dict(inf_dict)
         disagg.bp_dict = dict(bp_dict)
-        disagg.hf_token = 'token'
+        disagg.orch = mock.Mock()
         disagg.prefill_node_list = ['prefill0']
         disagg.decode_node_list = ['decode0']
         disagg.proxy_node = ['proxy0']
@@ -170,29 +181,27 @@ class TestSglangCommonHelpers(unittest.TestCase):
         distributed = SglangDistributed.__new__(SglangDistributed)
         distributed.inf_dict = dict(inf_dict)
         distributed.bp_dict = dict(bp_dict)
-        distributed.hf_token = secret
         body = distributed._server_env_body()
         self.assertNotIn(secret, body)
-        self.assertIn(
-            'if [ -f /home/user/.hf_token ]; then '
-            "export HF_TOKEN=\"$(tr -d '[:space:]' < /home/user/.hf_token)\"; "
-            'else export HF_TOKEN=; fi\n',
-            body,
-        )
+        self.assertIn('if [ ! -s /home/user/.hf_token ]; then ', body)
+        self.assertIn('exit 1', body)
+        self.assertIn("export HF_TOKEN=\"$(tr -d '[:space:]' < /home/user/.hf_token)\"", body)
+        self.assertNotIn('else export HF_TOKEN=', body)
         self.assertIn('export FOO=bar', body)
         self.assertNotIn('export HF_TOKEN=hf_', body)
 
         single = SglangSingle.__new__(SglangSingle)
         single.inf_dict = dict(inf_dict)
         single.bp_dict = dict(bp_dict)
-        single.hf_token = secret
+        single.orch = _orch_with_token_file()
+        single.execution_hosts = ['n0']
         single_cmds = []
         single._container_exec = lambda cmd, **kwargs: single_cmds.append(cmd) or {}
 
         disagg = SglangDisaggPD.__new__(SglangDisaggPD)
         disagg.inf_dict = dict(inf_dict)
         disagg.bp_dict = dict(bp_dict)
-        disagg.hf_token = secret
+        disagg.orch = _orch_with_token_file()
         disagg.prefill_node_list = ['prefill0']
         disagg.decode_node_list = ['decode0']
         disagg.proxy_node = ['proxy0']
@@ -214,6 +223,48 @@ class TestSglangCommonHelpers(unittest.TestCase):
             self.assertNotIn('export HF_TOKEN=hf_', cmd)
             self.assertIn('/home/user/.hf_token', cmd)
             self.assertIn('tr -d', cmd)
+
+    def test_local_model_keeps_optional_token_export(self):
+        line = sglang_common.hf_token_export_line('/home/user/.hf_token', '/root/models/DeepSeek-R1')
+        self.assertIn('else export HF_TOKEN=; fi\n', line)
+        self.assertNotIn('exit 1', line)
+
+    def test_downloaded_model_fails_when_token_file_is_not_configured(self):
+        line = sglang_common.hf_token_export_line('', 'meta-llama/Llama-3.1-70B-Instruct')
+        self.assertIn('exit 1', line)
+        self.assertNotIn('export HF_TOKEN=', line)
+
+    def test_require_hf_token_skips_local_models(self):
+        orch = mock.Mock()
+        sglang_common.require_hf_token_on_nodes(orch, '/home/user/.hf_token', '/root/models/m', hosts=['n0'])
+        orch.exec.assert_not_called()
+
+    def test_require_hf_token_fails_when_the_file_is_missing_on_a_node(self):
+        orch = mock.Mock()
+        orch.exec.return_value = {
+            'n0': {'exit_code': 0, 'output': ''},
+            'n1': {'exit_code': 1, 'output': ''},
+        }
+        cvs_globals.error_list = []
+        sglang_common.require_hf_token_on_nodes(
+            orch,
+            '/home/user/.hf_token',
+            'meta-llama/Llama-3.1-70B-Instruct',
+            hosts=['n0', 'n1'],
+        )
+        self.assertTrue(any('n1' in msg and 'missing or empty' in msg for msg in cvs_globals.error_list))
+        orch.exec.assert_called_once()
+        args, kwargs = orch.exec.call_args
+        self.assertIn('test -s', args[0])
+        self.assertEqual(kwargs.get('hosts'), ['n0', 'n1'])
+        self.assertTrue(kwargs.get('detailed'))
+
+    def test_require_hf_token_passes_when_the_file_is_on_the_nodes(self):
+        orch = mock.Mock()
+        orch.exec.return_value = {'n0': {'exit_code': 0, 'output': ''}}
+        cvs_globals.error_list = []
+        sglang_common.require_hf_token_on_nodes(orch, '/home/user/.hf_token', 'org/model', hosts=['n0'])
+        self.assertEqual(cvs_globals.error_list, [])
 
     def _cleanup_orch(self, hosts):
         handle = mock.Mock()

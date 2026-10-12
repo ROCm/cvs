@@ -336,17 +336,6 @@ def thresholds_dict(variant_config):
 
 
 @pytest.fixture(scope="module")
-def hf_token(variant_config):
-    path = variant_config.paths.hf_token_file
-    if not os.path.isfile(path):
-        if variant_config.model.remote == 0:
-            return ""
-        pytest.skip(f"hf_token file missing: {path}")
-    with open(path, encoding="utf-8") as fp:
-        return fp.read().strip()
-
-
-@pytest.fixture(scope="module")
 def orch(request, cluster_dict, variant_config, lifecycle):
     """``ContainerOrchestrator`` for single-node, distributed, and disagg SGLang suites."""
     cluster = cluster_dict
@@ -425,7 +414,6 @@ def im_obj(
     orch,
     gpu_type,
     variant_config,
-    hf_token,
 ):
     model_name = variant_config.benchmark_params["model"]
 
@@ -434,7 +422,6 @@ def im_obj(
             model_name,
             variant_config.inference,
             variant_config.benchmark_params,
-            hf_token,
             orch=orch,
             gpu_type=gpu_type,
         )
@@ -443,7 +430,6 @@ def im_obj(
             model_name,
             variant_config.inference,
             variant_config.benchmark_params,
-            hf_token,
             orch=orch,
             gpu_type=gpu_type,
         )
@@ -451,7 +437,6 @@ def im_obj(
         model_name,
         variant_config.inference,
         variant_config.benchmark_params,
-        hf_token,
         orch=orch,
         gpu_type=gpu_type,
     )

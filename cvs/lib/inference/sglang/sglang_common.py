@@ -427,17 +427,88 @@ def hsa_force_fine_grain_pcie(inf_dict):
     return str(raw).strip()
 
 
-def hf_token_export_line(token_file):
+def model_requires_hf_download(model):
+    """Hub ids are fetched inside the container; an absolute path is already local."""
+    text = str(model or '').strip()
+    return bool(text) and not text.startswith('/')
+
+
+def hf_token_export_line(token_file, model=''):
     """Export ``HF_TOKEN`` by reading ``token_file`` inside the container.
 
     The secret stays in that file. Embedding it in the shell command would
     print it, because the orchestrator logs the full command.
+
+    A downloaded model exits when the file is missing or empty, so a gated
+    download does not continue with a blank token.
     """
     path = str(token_file or '').strip()
+    if not model_requires_hf_download(model):
+        if not path:
+            return 'export HF_TOKEN=\n'
+        quoted = shlex.quote(path)
+        return (
+            f"if [ -f {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; "
+            f"else export HF_TOKEN=; fi\n"
+        )
     if not path:
-        return 'export HF_TOKEN=\n'
+        return (
+            'echo "HF token file is not configured. Set paths.hf_token_file. '
+            'This model is downloaded from Hugging Face inside the container, '
+            'and the token is read on this node." >&2\n'
+            'exit 1\n'
+        )
     quoted = shlex.quote(path)
-    return f"if [ -f {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; else export HF_TOKEN=; fi\n"
+    return (
+        f"if [ ! -s {quoted} ]; then "
+        f"echo \"HF token file missing or empty inside the container: {quoted}. "
+        f"The token is read on this node, not on the machine running CVS.\" >&2; "
+        f"exit 1; "
+        f"fi\n"
+        f"export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"\n"
+    )
+
+
+def require_hf_token_on_nodes(orch, token_file, model, hosts=None):
+    """Fail when a downloaded model has no token file inside the container.
+
+    The launch script reads the file on the server nodes, so the check runs there.
+    """
+    if not model_requires_hf_download(model):
+        return
+    path = str(token_file or '').strip()
+    model_text = str(model or '').strip()
+    if not path:
+        fail_test(
+            "HF token file is not configured. Set paths.hf_token_file. "
+            f"Model {model_text} is downloaded from Hugging Face inside the container, "
+            "and the token is read on each server node."
+        )
+        return
+    quoted = shlex.quote(path)
+    node_hosts = as_node_list(hosts) if hosts is not None else None
+    kwargs = {"detailed": True, "timeout": 30}
+    if node_hosts is not None:
+        kwargs["hosts"] = node_hosts
+    result = orch.exec(f"test -s {quoted}", **kwargs) or {}
+    missing = []
+    seen = set()
+    for host, info in result.items():
+        seen.add(str(host))
+        code = info.get("exit_code") if isinstance(info, dict) else None
+        if code != 0:
+            missing.append(str(host))
+    if node_hosts is not None:
+        for host in node_hosts:
+            if str(host) not in seen:
+                missing.append(str(host))
+    if not result or missing:
+        where = ", ".join(missing) if missing else "no node returned a result"
+        fail_test(
+            f"HF token file {path} is missing or empty inside the container on {where}. "
+            f"Model {model_text} is downloaded from Hugging Face, and the token is read "
+            "on each server node, not on the machine running CVS."
+        )
 
 
 def _without_hf_token_assignments(entries):
