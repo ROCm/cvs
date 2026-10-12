@@ -15,6 +15,7 @@ from cvs.lib.benchmark.aorta.aorta_job import AortaJob
 from cvs.lib.benchmark.aorta.unittests.fixtures import variant_dict
 from cvs.lib.report.benchmark_metric_registry import benchmark_metric_rows_for_nodeid
 from cvs.parsers.schemas import ParseResult, ParseStatus
+from cvs.parsers.tracelens import TraceLensParser
 from cvs.tests.benchmark.aorta import _common
 
 
@@ -71,11 +72,20 @@ class TestAortaStages(unittest.TestCase):
                 ("threshold", {"metric": "min_compute_ratio"}, None),
             ],
         )
+        result = self.lifecycle.benchmark_result
         self.assertEqual(
             request.node.user_properties,
             [
-                ("cvs_aorta_subtest", "[threshold] (metric=max_avg_iteration_ms): passed"),
-                ("cvs_aorta_subtest", "[threshold] (metric=min_compute_ratio): passed"),
+                (
+                    "cvs_aorta_subtest",
+                    "[threshold] (metric=max_avg_iteration_ms): passed; "
+                    f"actual {result.avg_iteration_time_ms:.2f} ms; gate max 12000.00 ms",
+                ),
+                (
+                    "cvs_aorta_subtest",
+                    "[threshold] (metric=min_compute_ratio): passed; "
+                    f"actual {result.avg_compute_ratio:.4f}; gate min 0.0100",
+                ),
             ],
         )
         _common.generate_report(self.job, self.lifecycle)
@@ -121,8 +131,48 @@ class TestAortaStages(unittest.TestCase):
         )
         self.assertEqual([row["status"] for row in rows], ["fail", "pass"])
         self.assertEqual(rows[0]["spec"], {"kind": "max", "value": 0})
-        self.assertTrue(request.node.user_properties[0][1].endswith(": failed"))
-        self.assertTrue(request.node.user_properties[1][1].endswith(": passed"))
+        result = self.lifecycle.benchmark_result
+        # The measured value is the one the parser gated, with the gate's precision.
+        self.assertEqual(
+            [(row["actual"], row["unit"], row["digits"]) for row in rows],
+            [(result.avg_iteration_time_ms, "ms", 2), (result.avg_compute_ratio, None, 4)],
+        )
+        self.assertIn("Average iteration time", rows[0]["reason"])
+        self.assertEqual(rows[1]["reason"], "")
+        failed, passed = (value for _name, value in request.node.user_properties)
+        self.assertEqual(
+            failed,
+            "[threshold] (metric=max_avg_iteration_ms): failed; "
+            f"actual {result.avg_iteration_time_ms:.2f} ms; gate max 0.00 ms; {rows[0]['reason']}",
+        )
+        self.assertEqual(
+            passed,
+            f"[threshold] (metric=min_compute_ratio): passed; actual {result.avg_compute_ratio:.4f}; gate min 0.0100",
+        )
+
+    def test_threshold_without_a_measurement_reports_na(self):
+        request = self._request("test_validate_thresholds")
+        self.job.config.thresholds = {"expected_results": {"max_time_variance_ratio": 0.5}}
+        self.lifecycle.parser = TraceLensParser(use_tracelens=False)
+        self.lifecycle.benchmark_result = SimpleNamespace(
+            avg_iteration_time_ms=0,
+            avg_iteration_time_us=0,
+            std_iteration_time_us=0,
+            avg_compute_ratio=0,
+            avg_overlap_ratio=0,
+        )
+        _common.validate_thresholds(self.job, self.lifecycle, request, self.subtests)
+        (row,) = benchmark_metric_rows_for_nodeid(request.node.nodeid)
+        self.assertEqual((row["status"], row["actual"], row["digits"]), ("pass", None, 4))
+        self.assertEqual(
+            request.node.user_properties,
+            [
+                (
+                    "cvs_aorta_subtest",
+                    "[threshold] (metric=max_time_variance_ratio): passed; actual n/a; gate max 0.5000",
+                )
+            ],
+        )
 
     def test_parser_exception_escapes_before_any_subtest(self):
         request = self._request("test_validate_thresholds")

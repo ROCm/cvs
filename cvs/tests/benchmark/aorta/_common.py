@@ -32,8 +32,40 @@ def _stage(lifecycle, recover=False):
         raise
 
 
-def _case_label(msg, context):
-    return f"[{msg}] (" + ", ".join(f"{key}={value}" for key, value in context.items()) + ")"
+def _case(msg, context, failure="", *, spec=None, actual=None, unit=None, digits=None):
+    """Describe one sub-test: its label parts, failure message and optional measurement."""
+    return {
+        "msg": msg,
+        "context": context,
+        "failure": failure,
+        "spec": spec,
+        "actual": actual,
+        "unit": unit,
+        "digits": digits,
+    }
+
+
+def _case_label(case):
+    context = case["context"]
+    return f"[{case['msg']}] (" + ", ".join(f"{key}={value}" for key, value in context.items()) + ")"
+
+
+def _number(value, case):
+    if value is None:
+        return "n/a"
+    digits = 1 if case["digits"] is None else case["digits"]
+    return f"{float(value):.{digits}f}" + (f" {case['unit']}" if case["unit"] else "")
+
+
+def _case_summary(case):
+    """One-line JUnit value: label, outcome, measured value and gate, then the failure message."""
+    parts = [f"{_case_label(case)}: {'failed' if case['failure'] else 'passed'}"]
+    if case["spec"] is not None:
+        parts.append(f"actual {_number(case['actual'], case)}")
+        parts.append(f"gate {case['spec']['kind']} {_number(case['spec']['value'], case)}")
+    if case["failure"]:
+        parts.append(case["failure"])
+    return "; ".join(parts)
 
 
 def _report_cases(request, subtests, cases):
@@ -44,26 +76,27 @@ def _report_cases(request, subtests, cases):
         request.node,
         [
             {
-                "node": context.get("host", ""),
-                "metric": context.get("metric", msg),
-                "label": _case_label(msg, context),
-                "status": "fail" if failure else "pass",
-                "actual": None,
-                "spec": spec,
-                "reason": failure,
+                "node": case["context"].get("host", ""),
+                "metric": case["context"].get("metric", case["msg"]),
+                "label": _case_label(case),
+                "status": "fail" if case["failure"] else "pass",
+                "actual": case["actual"],
+                "unit": case["unit"],
+                "digits": case["digits"],
+                "spec": case["spec"],
+                "reason": case["failure"],
             }
-            for msg, context, failure, spec in cases
+            for case in cases
         ],
     )
-    for msg, context, failure, _spec in cases:
-        outcome = "failed" if failure else "passed"
-        request.node.user_properties.append(("cvs_aorta_subtest", f"{_case_label(msg, context)}: {outcome}"))
-        with subtests.test(msg=msg, **context):
-            if failure:
-                pytest.fail(failure)
+    for case in cases:
+        request.node.user_properties.append(("cvs_aorta_subtest", _case_summary(case)))
+        with subtests.test(msg=case["msg"], **case["context"]):
+            if case["failure"]:
+                pytest.fail(case["failure"])
         # Older pytest leaves a failed sub-test's parent passed, breaking lifecycle gating.
-        if failure:
-            fail_test(failure)
+        if case["failure"]:
+            fail_test(case["failure"])
 
 
 def launch_container(aorta_job, lifecycle):
@@ -131,12 +164,12 @@ def collect_traces(aorta_job, lifecycle, request, subtests):
                 failure = ""
             else:
                 continue
-            cases.append(("trace collection", {"host": host}, failure, None))
+            cases.append(_case("trace collection", {"host": host}, failure))
         # The HTML panel replaces the parent row's log, so every failure of this
         # stage must be a sub-test row or its message is lost from the report.
         if not aorta_job.get_artifact("torch_traces"):
             cases.append(
-                ("trace collection", {"artifact": "torch_traces"}, "No fresh torch_traces artifact was collected", None)
+                _case("trace collection", {"artifact": "torch_traces"}, "No fresh torch_traces artifact was collected")
             )
         _report_cases(request, subtests, cases)
 
@@ -195,10 +228,21 @@ def validate_thresholds(aorta_job, lifecycle, request, subtests):
         if lifecycle.benchmark_result is None:
             pytest.fail("No benchmark result to validate")
         expected = active_thresholds(aorta_job.config.thresholds)
-        cases = [
-            ("threshold", {"metric": v["threshold"]}, v["message"], {"kind": v["kind"], "value": v["limit"]})
-            for v in threshold_verdicts(lifecycle.parser, lifecycle.benchmark_result, expected)
-        ]
+        cases = []
+        for verdict in threshold_verdicts(lifecycle.parser, lifecycle.benchmark_result, expected):
+            # Same precision as the gate's own messages: milliseconds, or a ratio.
+            in_ms = verdict["threshold"] == "max_avg_iteration_ms"
+            cases.append(
+                _case(
+                    "threshold",
+                    {"metric": verdict["threshold"]},
+                    verdict["message"],
+                    spec={"kind": verdict["kind"], "value": verdict["limit"]},
+                    actual=verdict["actual"],
+                    unit="ms" if in_ms else None,
+                    digits=2 if in_ms else 4,
+                )
+            )
         _report_cases(request, subtests, cases)
 
 

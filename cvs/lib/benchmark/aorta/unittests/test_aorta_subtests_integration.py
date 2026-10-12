@@ -145,10 +145,16 @@ class TestAortaSubtestsIntegration(unittest.TestCase):
             self.assertEqual(len(rows), 1, details)
             self.assertIn("Failed", rows[0]["resultsTableRow"][0], details)
         self.assertEqual(
-            _panel_rows(entries["test_validate_thresholds"][0]),
+            _panel_cells(entries["test_validate_thresholds"][0]),
             [
-                ("Failed", "[threshold] (metric=max_avg_iteration_ms)"),
-                ("Passed", "[threshold] (metric=min_compute_ratio)"),
+                (
+                    "Failed",
+                    "[threshold] (metric=max_avg_iteration_ms)",
+                    "20.00 ms",
+                    "max 10.00",
+                    "Average iteration time 20.00ms exceeds threshold 10ms",
+                ),
+                ("Passed", "[threshold] (metric=min_compute_ratio)", "0.5000", "min 0.0100", ""),
             ],
             details,
         )
@@ -172,12 +178,19 @@ class TestAortaSubtestsIntegration(unittest.TestCase):
         }
         self.assertEqual(
             properties["test_validate_thresholds"],
-            ["[threshold] (metric=max_avg_iteration_ms): failed", "[threshold] (metric=min_compute_ratio): passed"],
+            [
+                "[threshold] (metric=max_avg_iteration_ms): failed; actual 20.00 ms; gate max 10.00 ms; "
+                "Average iteration time 20.00ms exceeds threshold 10ms",
+                "[threshold] (metric=min_compute_ratio): passed; actual 0.5000; gate min 0.0100",
+            ],
             details,
         )
         self.assertEqual(
             properties["test_collect_traces"],
-            ["[trace collection] (host=node-a): passed", "[trace collection] (host=node-b): failed"],
+            [
+                "[trace collection] (host=node-a): passed",
+                "[trace collection] (host=node-b): failed; Trace collection on node-b: download failed",
+            ],
             details,
         )
 
@@ -220,6 +233,9 @@ class TestAortaSubtestsIntegration(unittest.TestCase):
         (case,) = xml_root.iter("testcase")
         self.assertEqual(
             [prop.get("value") for prop in case.iter("property") if prop.get("name") == "cvs_aorta_subtest"],
-            ["[trace collection] (host=node-a): passed", "[trace collection] (artifact=torch_traces): failed"],
+            [
+                "[trace collection] (host=node-a): passed",
+                "[trace collection] (artifact=torch_traces): failed; No fresh torch_traces artifact was collected",
+            ],
             details,
         )

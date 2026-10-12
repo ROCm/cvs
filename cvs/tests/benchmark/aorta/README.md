@@ -71,11 +71,15 @@ metrics fails parsing.
 
 `test_validate_thresholds` reports each configured threshold as its own pytest sub-test
 (`[threshold] (metric=<key>)`), and `test_collect_traces` reports each node it collected
-from (`[trace collection] (host=<node>)`), plus a failed `[trace collection]
-(artifact=torch_traces)` sub-test when no node produced usable traces. In the HTML report, expand the parent row to
-see one row per sub-test; the JUnit XML lists them as `cvs_aorta_subtest` properties of
-the parent test case. A failed sub-test also fails its parent stage, so later stages
-are gated and `validation_passed` is false as before.
+from (`[trace collection] (host=<node>)`), plus a failed
+`[trace collection] (artifact=torch_traces)` sub-test when no node produced usable
+traces. In the HTML report, expand the parent row to see one row per sub-test. Threshold
+rows show the measured value (Actual) next to the gate, and a failed row gives the
+reason. The JUnit XML lists each sub-test as a `cvs_aorta_subtest` property of the
+parent test case, for example `[threshold] (metric=max_avg_iteration_ms): failed; actual
+6829.69 ms; gate max 1.00 ms; Average iteration time 6829.69ms exceeds threshold 1ms`.
+A failed sub-test also fails its parent stage, so later stages are gated and
+`validation_passed` is false as before.
 
 `aorta_benchmark_report.json` retains cluster, configuration, performance, and per-rank
 summary fields. It also records execution status, validation status and trace-collection
