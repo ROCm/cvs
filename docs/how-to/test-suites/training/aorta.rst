@@ -27,8 +27,10 @@ Copy a JSON variant and its sibling threshold file:
 Replace every ``<changeme>`` in the selected variant. Set the repository storage path, GPU
 count, and distributed fabric interfaces for your cluster. Place Aorta at ``aorta_path`` on
 each node, or enable ``aorta_auto_clone`` and provide ``aorta_clone_url``. Keep the configured
-GPU count consistent with the selected Aorta YAML and profiling workload. Prefer writable
-local/scratch storage when root-squashed NFS prevents the container from writing artifacts.
+GPU count consistent with the selected Aorta YAML and profiling workload. On bare metal,
+prefer writable local/scratch storage when root-squashed NFS prevents the container from
+writing artifacts. Under SPUR or Slurm, ``aorta_path`` must be on shared storage; see
+:ref:`aorta-spur-slurm`.
 
 Full parameter list: :doc:`/reference/configuration-files/training/aorta`.
 
@@ -190,7 +192,9 @@ invocation and is separate from the CVS ``<run_id>`` above. Distributed
 traces use ``combined_traces/node_<rank>/<original-output>/torch_profiler/``. The JSON report,
 ``aorta_benchmark_report.json``, records cluster configuration, aggregate performance,
 per-rank summaries, execution status, validation status and collection errors. Benchmark and
-RCCL logs are also downloaded. No shared filesystem with the CVS machine is required.
+RCCL logs are also downloaded. On bare metal over SSH, CVS copies these files from each
+node, so no shared filesystem with the CVS machine is required. Under SPUR or Slurm, CVS
+reads them from ``aorta_path`` on shared storage; see :ref:`aorta-spur-slurm`.
 
 Calibrate the sample thresholds for your hardware, node count and workload. Set
 ``enforce_thresholds: false`` to record metrics without threshold assertions.
