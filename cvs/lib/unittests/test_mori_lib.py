@@ -514,6 +514,19 @@ class TestMoriIoLaunch(_MoriBenchCase):
             self.assertNotIn('--op-type read', cmd)
             self.assertIn('io_write_32768_256_8_node', cmd)
 
+    def test_buffer_size_caps_the_sweep(self):
+        # Without --sweep-max-size, --all sweeps to benchmark.py's 1 MiB default whatever the buffer size.
+        for buffer_size in (131072, 4194304):
+            with self.subTest(buffer_size=buffer_size):
+                orch = _ContainerFakeOrch()
+                MoriBenchmark(orch, _mori_dict()).run_mori_torch_io_test(
+                    op_type='read', buffer_size=buffer_size, transfer_batch_size=128
+                )
+                for cmd in orch.cmd_list_calls[0]['cmds']:
+                    self.assertIn('--all ', cmd)
+                    self.assertEqual(re.findall(r'--buffer-size (\d+)', cmd), [str(buffer_size)])
+                    self.assertEqual(re.findall(r'--sweep-max-size (\d+)', cmd), [str(buffer_size)])
+
     def test_kill_patterns_match_benchmark_but_not_the_kill_shell(self):
         # pkill -f would otherwise kill the bash running it (docker exec / ssh), losing the result.
         orch = _ContainerFakeOrch()
