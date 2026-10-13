@@ -59,15 +59,13 @@ def resolve_vllm_topology(mode, variant, hosts) -> EffectiveVllmTopology:
         raise ValueError("vLLM requires at least one orchestrator host")
 
     if mode == "single":
-        if variant.server_params.pipeline_parallel_size > 1:
-            raise ValueError("vllm_single requires pipeline_parallel_size=1")
         if len(hosts) != 1:
             raise ValueError("vllm_single orchestrator must be scoped to its first host")
-        return EffectiveVllmTopology("single", hosts, 1)
+        return EffectiveVllmTopology("single", hosts, variant.server_params.pipeline_parallel_size)
     if mode != "distributed":
         raise ValueError(f"unknown vLLM mode: {mode!r}")
     if len(hosts) == 1:
-        return EffectiveVllmTopology("single", hosts, 1)
+        return EffectiveVllmTopology("single", hosts, variant.server_params.pipeline_parallel_size)
 
     is_ray = variant.server_params.distributed_executor_backend == "ray"
     effective_pp = variant.server_params.pipeline_parallel_size

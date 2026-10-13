@@ -53,14 +53,10 @@ class TestVllmTopology(unittest.TestCase):
         self.assertEqual(targets, (tuple(hosts),))
         self.assertEqual(pp, 4)
 
-    def test_distributed_one_host_uses_singleton_fallback(self):
-        targets, pp = build_vllm_targets("distributed", _variant(pp="2"), ["node0"])
-        self.assertEqual(targets, (("node0",),))
-        self.assertEqual(pp, 1)
-
-    def test_single_rejects_pipeline_parallel_recipe(self):
-        with self.assertRaisesRegex(ValueError, "pipeline_parallel_size"):
-            build_vllm_targets("single", _variant(pp="2"), ["node0"])
+    def test_one_host_keeps_configured_pipeline_parallelism(self):
+        for mode in ("single", "distributed"):
+            with self.subTest(mode=mode):
+                self.assertEqual(build_vllm_targets(mode, _variant(pp="2"), ["node0"]), ((("node0",),), 2))
 
     def test_multi_host_mp_requires_pipeline_parallelism(self):
         with self.assertRaisesRegex(ValueError, "pipeline_parallel_size"):
