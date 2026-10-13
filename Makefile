@@ -189,7 +189,10 @@ html-doc: doc-venv
 		echo "Installing sphinx-autobuild..."; \
 		$(DOC_VENV_DIR)/bin/pip install -q sphinx-autobuild; \
 	fi
-	@echo "Watching docs for changes. Open http://$(shell hostname -I | awk '{print $$1}'):$(DOC_PORT) in your browser."
+	@echo "Watching docs for changes."
+	@echo "  Open in this machine's browser:  http://localhost:$(DOC_PORT)"
+	@echo "  (WSL: use localhost from Windows — do not use the WSL eth0 IP.)"
+	@echo "  LAN / other hosts (if needed):   http://$$(hostname -I | awk '{print $$1}'):$(DOC_PORT)"
 	@echo "Press Ctrl+C to stop."
 	@echo ""
 	ROCM_DOCS_USE_BUNDLED_MAPPINGS=1 \

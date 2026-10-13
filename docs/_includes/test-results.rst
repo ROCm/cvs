@@ -25,8 +25,63 @@ Sample output snapshots from a JAX MaxText training run.
 
 **HTML test report**
 
-.. image:: /images/jaxmaxtext_Training_html_report_sample.png
-   :alt: Sample JAX MaxText training HTML test report
+.. important::
+
+   The numbers in these sample reports and screenshots (throughput, loss, step
+   time, and every other metric) are **illustrative sample values, not final
+   tuned results**. They are shown only to illustrate the report layout.
+
+**Per-metric subtests**
+
+Each ``test_metric`` row expands to show every metric as its own pass / fail /
+skip verdict.
+
+
+**Per-metric subtests - collapsed:**
+
+.. image:: /images/jaxmaxtext_Training_html_report_subtests_collapsed.png
+   :alt: JAX MaxText per-metric subtests, collapsed
+
+**Per-metric subtests - expanded:**
+
+.. image:: /images/jaxmaxtext_Training_html_report_subtests_expanded.png
+   :alt: JAX MaxText per-metric subtests, expanded
+
+**Metric results table:**
+
+.. image:: /images/training_metric_results_table.png
+   :alt: JAX MaxText metric results table
+
+**Run Deck report**
+
+.. important::
+
+   The numbers in these sample reports and screenshots (throughput, loss, step
+   time, and every other metric) are **illustrative sample values, not final
+   tuned results**. They are shown only to illustrate the report layout.
+
+The Run Deck dashboard: run card, lifecycle timeline, sweep analytics charts,
+gate matrix, per-sweep cells and full results.
+
+.. image:: /images/jaxmaxtext_Training_rundeck_results_sample__runcard.png
+   :alt: JAX MaxText Run Deck run card
+
+.. image:: /images/jaxmaxtext_Training_rundeck_results_sample__sweep-charts.png
+   :alt: JAX MaxText Run Deck results metrics by sweep charts
+
+.. image:: /images/jaxmaxtext_Training_rundeck_results_sample__sweep-cells.png
+   :alt: JAX MaxText Run Deck sweep cells
+
+**Run Deck interactive viewer**
+
+The interactive viewer: per-step loss, learning-rate, grad-norm, throughput, and
+token graphs, with background / layout / metric-selector controls.
+
+.. image:: /images/jaxmaxtext_Training_viewer_graphs_sample__page1.png
+   :alt: JAX MaxText Run Deck interactive viewer graphs (page 1)
+
+.. image:: /images/jaxmaxtext_Training_viewer_graphs_sample__page2.png
+   :alt: JAX MaxText Run Deck interactive viewer graphs (page 2)
 
 Sample inference test results
 -----------------------------
