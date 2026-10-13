@@ -515,7 +515,12 @@ def wait_for_perftest_exit(phdl, app_name, timeout):
     return nodes
 
 
-def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None):
+def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None, running=None):
+    """Read BW/PPS from each node's perftest log.
+
+    Only nodes in ``running`` (default: every node) are polled for a missing result. A node
+    whose perftest pgrep confirmed exited has its final log, so it is read once.
+    """
     res_dict = {}
 
     # Run some of the standard verifications
@@ -533,6 +538,7 @@ def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None):
     # Collect the BW, PPS numbers
     pattern = r"{}\s+\d+\s+[0-9\.]+\s+([0-9\.]+)\s+([0-9\.]+)".format(msg_size)
     pending = list(out_dict.keys())
+    running = set(pending if running is None else running)
 
     def collect():
         out_dict = phdl.exec(cmd, print_console=False)
@@ -545,7 +551,9 @@ def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None):
             log.debug('BW results for msg_size %s not ready on %s', msg_size, pending)
         return pending
 
-    poll_until(collect, lambda nodes: not nodes, PERFTEST_BW_RESULT_TIMEOUT_S, PERFTEST_RESULT_POLL_S)
+    poll_until(
+        collect, lambda nodes: not running.intersection(nodes), PERFTEST_BW_RESULT_TIMEOUT_S, PERFTEST_RESULT_POLL_S
+    )
     for node in pending:
         fail_test(f'ERROR !!! on node {node} Client did not complete even after max iterations for msg size {msg_size}')
         fail_test(f'ERROR !!! pls check log file for errors on node {node}')
@@ -553,7 +561,8 @@ def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None):
     return res_dict
 
 
-def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None, result_nodes=None):
+def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None, result_nodes=None, running=None):
+    """Read latency from each node's perftest log; ``running`` works as in ``get_ib_bw_pps``."""
     res_dict = {}
 
     out_dict = phdl.exec(cmd, print_console=False)
@@ -572,6 +581,7 @@ def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None, result_nodes=None):
     )
     keys = ('t_min', 't_max', 't_typical', 't_avg', 't_stdev', 't_99_pct', 't_99_9_pct')
     pending = list(required_nodes)
+    running = set(pending if running is None else running)
 
     def collect():
         out_dict = phdl.exec(cmd, print_console=False)
@@ -584,7 +594,9 @@ def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None, result_nodes=None):
             log.debug('Latency results for msg_size %s not ready on %s', msg_size, pending)
         return pending
 
-    poll_until(collect, lambda nodes: not nodes, PERFTEST_LAT_RESULT_TIMEOUT_S, PERFTEST_RESULT_POLL_S)
+    poll_until(
+        collect, lambda nodes: not running.intersection(nodes), PERFTEST_LAT_RESULT_TIMEOUT_S, PERFTEST_RESULT_POLL_S
+    )
     for node in pending:
         fail_test(f'ERROR !!! on node {node} Client did not complete for msg size {msg_size}')
     _log_lat_summary(msg_size, res_dict, instance_no)
@@ -946,7 +958,9 @@ def run_ib_perf_bw_test(
 
     for instance_no in range(0, inst_count):
         try:
-            bw_pps_dict = get_ib_bw_pps(phdl, msg_size, f'cat /tmp/ib_perf_{instance_no}_logs', instance_no=instance_no)
+            bw_pps_dict = get_ib_bw_pps(
+                phdl, msg_size, f'cat /tmp/ib_perf_{instance_no}_logs', instance_no=instance_no, running=unconfirmed
+            )
             for node in bw_pps_dict.keys():
                 result_dict[node][instance_no] = {}
                 result_dict[node][instance_no]['pps'] = bw_pps_dict[node]['pps']
@@ -1098,6 +1112,7 @@ def run_ib_perf_lat_test(
                 f'cat /tmp/ib_perf_{instance_no}_logs',
                 instance_no=instance_no,
                 result_nodes=result_nodes,
+                running=unconfirmed,
             )
             for node, latency in lat_dict.items():
                 result_dict[node][instance_no] = latency

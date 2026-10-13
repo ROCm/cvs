@@ -405,6 +405,17 @@ class TestGetIbBwPps(unittest.TestCase):
         self.assertEqual(mock_fail.call_count, 2)
         self.assertTrue(all('node2' in c.args[0] for c in mock_fail.call_args_list))
 
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_exited_node_without_result_is_read_once(self, mock_fail):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': BW_LOG, 'node2': "Couldn't initialize ROCm device\n"}
+
+        res = ibperf_lib.get_ib_bw_pps(phdl, 8192, 'cat /tmp/ib_perf_0_logs', running=[])
+
+        self.assertEqual(res, {'node1': {'bw': '517.14', 'pps': '7.89'}})
+        self.assertEqual(phdl.exec.call_count, 2)
+        self.assertTrue(any('Client did not complete' in c.args[0] for c in mock_fail.call_args_list))
+
 
 class TestGetPerftestConfigureCmd(unittest.TestCase):
     def test_includes_rocm_dmabuf_by_default(self):
