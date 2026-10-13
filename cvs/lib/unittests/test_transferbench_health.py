@@ -193,5 +193,46 @@ class TestResolveA2aSweepTimeout(unittest.TestCase):
         self.assertEqual(tb.resolve_a2asweep_timeout({'a2asweep_timeout': 100}), 600)
 
 
+A2A_RTOTAL_OK = "│  RTotal │ 326.11   325.01   326.48   324.77   324.87   326.37   324.68   326.75 │\n"
+A2A_EXPECT_MIN = {'gpu_to_gpu_a2a_per_link_min': '32.9'}
+
+
+class TestParseTbA2aBw(unittest.TestCase):
+    def test_per_link_average_helper(self):
+        # Eight GPUs at 326 → mean(326/7) ≈ 46.57
+        avg = tb.a2a_per_link_average(['326'] * 8)
+        self.assertAlmostEqual(avg, 326.0 / 7.0, places=5)
+
+    def test_min_above_guide_bar_passes(self):
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_a2a_bw({'nodeA': A2A_RTOTAL_OK}, A2A_EXPECT_MIN)
+        fail_test.assert_not_called()
+
+    def test_legacy_avg_alias_passes(self):
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_a2a_bw({'nodeA': A2A_RTOTAL_OK}, {'gpu_to_gpu_a2a_avg': '32.9'})
+        fail_test.assert_not_called()
+
+    def test_min_below_guide_bar_fails(self):
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_a2a_bw({'nodeA': A2A_RTOTAL_OK}, {'gpu_to_gpu_a2a_per_link_min': '50.0'})
+        fail_test.assert_called()
+        self.assertIn('min per-link', fail_test.call_args.args[0])
+
+    def test_one_slow_gpu_fails_even_if_mean_clears(self):
+        # Seven GPUs at 400 (~57.1/link) and one at 100 (~14.3/link): mean ~51.8 clears 32.9, min does not.
+        mixed = "│  RTotal │ 400.0   400.0   400.0   400.0   400.0   400.0   400.0   100.0 │\n"
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_a2a_bw({'nodeA': mixed}, A2A_EXPECT_MIN)
+        fail_test.assert_called()
+        self.assertIn('min per-link', fail_test.call_args.args[0])
+
+    def test_missing_per_link_min_key_fails(self):
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_a2a_bw({'nodeA': A2A_RTOTAL_OK}, {'gpu_to_gpu_a2a_rtotal': '320.0'})
+        fail_test.assert_called()
+        self.assertIn('gpu_to_gpu_a2a_per_link_min', fail_test.call_args.args[0])
+
+
 if __name__ == '__main__':
     unittest.main()
