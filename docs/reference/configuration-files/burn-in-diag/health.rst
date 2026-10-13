@@ -43,6 +43,8 @@ See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on runni
           {
               "bytes_to_transfer": "268435456",
               "path": "/home/{user-id}/INSTALL/TransferBench",
+              "_comment_gpu_to_gpu_a2a_avg": "Guide a2a bar: mean per-link GB/s derived as mean(RTotal_i / (N-1)). Not the aggregate RTotal floor.",
+              "gpu_to_gpu_a2a_avg": "32.9",
               "gpu_to_gpu_a2a_rtotal": "320.0",
               "avg_gpu_to_gpu_p2p_unidir_bw": "33.9",
               "avg_gpu_to_gpu_p2p_bidir_bw": "43.9",
@@ -215,9 +217,12 @@ TransferBench
    * - ``bytes_to_transfer``
      - 268435456
      - Amount of data to transfer in bytes (256 MB); this is the payload size for bandwidth tests
+   * - ``gpu_to_gpu_a2a_avg``
+     - 32.9
+     - Guide bar for ``test_transfer_bench_a2a``: mean per-link bandwidth in GB/s, computed as ``mean(RTotal_i / (N-1))`` over the per-GPU RTotal row. This is the pass/fail gate when present. A benign unselected-provider warning (for example a VMware ``No such file`` line) is ignored by the TransferBench and Run Deck scanners so it does not false-fail a2a or p2p when native metrics pass.
    * - ``gpu_to_gpu_a2a_rtotal``
      - 320.0
-     - All-to-all communication total bandwidth in GB/s across all GPUs
+     - Aggregate all-to-all RTotal floor in GB/s. Kept for backward compatibility and Run Deck chart annotations when ``gpu_to_gpu_a2a_avg`` is absent; the default health config gates a2a on ``gpu_to_gpu_a2a_avg`` instead.
    * - ``avg_gpu_to_gpu_p2p_unidir_bw``
      - 33.9
      - Average peer-to-peer unidirectional bandwidth (GB/s) between GPU pairs
