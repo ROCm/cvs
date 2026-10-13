@@ -1,1 +1,0 @@
-"""CVS Cluster Monitor Application"""

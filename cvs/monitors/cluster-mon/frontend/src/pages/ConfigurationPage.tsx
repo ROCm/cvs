@@ -173,16 +173,6 @@ export function ConfigurationPage() {
       try {
         const reloadResult = await api.reloadConfiguration()
 
-        // Check if key upload is required
-        if (reloadResult.requires_key_upload) {
-          setMessage({
-            type: 'error',
-            text: `⚠️ Configuration saved but SSH keys missing!\n\n${reloadResult.error}\n\nPlease upload your SSH private key using the file upload above and try saving again.`,
-          })
-          setIsSaving(false)
-          return
-        }
-
         if (!reloadResult.success) {
           setMessage({
             type: 'error',
@@ -265,6 +255,12 @@ export function ConfigurationPage() {
         if (currentConfig.username) {
           setUsername(currentConfig.username)
         }
+        if (currentConfig.auth_method) {
+          setAuthMethod(currentConfig.auth_method as 'key' | 'password')
+        }
+        if (currentConfig.key_file) {
+          setKeyFilePath(currentConfig.key_file)
+        }
         if (currentConfig.jump_host_enabled) {
           setUseJumpHost(true)
           if (currentConfig.jump_host) {
@@ -272,6 +268,15 @@ export function ConfigurationPage() {
           }
           if (currentConfig.jump_host_username) {
             setJumpUsername(currentConfig.jump_host_username)
+          }
+          if (currentConfig.jump_host_key_file) {
+            setJumpKeyFilePath(currentConfig.jump_host_key_file)
+          }
+          if (currentConfig.node_username_via_jump) {
+            setNodeUsernameViaJump(currentConfig.node_username_via_jump)
+          }
+          if (currentConfig.node_key_file_on_jumphost) {
+            setNodeKeyFileOnJumpHost(currentConfig.node_key_file_on_jumphost)
           }
         }
       } catch (error) {
@@ -533,51 +538,22 @@ export function ConfigurationPage() {
               </div>
             </div>
 
-            {/* SSH Key Upload and Path */}
             {authMethod === 'key' && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Upload SSH Private Key
-                  </label>
-                  <input
-                    type="file"
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0]
-                      if (file) {
-                        try {
-                          await api.uploadSshKey(file)
-                          setMessage({ type: 'success', text: `SSH key '${file.name}' uploaded successfully` })
-                          // Update the key file path to match uploaded file
-                          setKeyFilePath(`/root/.ssh/${file.name}`)
-                        } catch (error: any) {
-                          setMessage({ type: 'error', text: `Failed to upload SSH key: ${error.message}` })
-                        }
-                      }
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Upload your SSH private key, or use mounted host paths below (see mounted paths)
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    SSH Private Key Path (in container)
-                  </label>
-                  <input
-                    type="text"
-                    value={keyFilePath}
-                    onChange={(e) => setKeyFilePath(e.target.value)}
-                    placeholder="/root/.ssh/id_rsa"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Upload SSH key to /root/.ssh/* or use path after manual volume mount
-                  </p>
-                </div>
-              </>
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  SSH Private Key Path (in container)
+                </label>
+                <input
+                  type="text"
+                  value={keyFilePath}
+                  onChange={(e) => setKeyFilePath(e.target.value)}
+                  placeholder="~/.ssh/id_ed25519"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Path is ~/.ssh/filename. That directory is mounted from this machine at the same path. Used when the jump host is off.
+                </p>
+              </div>
             )}
 
             {/* Password */}
@@ -679,50 +655,22 @@ export function ConfigurationPage() {
                   </div>
                 </div>
 
-                {/* Jump Host SSH Key Upload and Path */}
                 {jumpAuthMethod === 'key' && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium mb-2">
-                        Upload Jump Host SSH Private Key
-                      </label>
-                      <input
-                        type="file"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0]
-                          if (file) {
-                            try {
-                              await api.uploadSshKey(file)
-                              setMessage({ type: 'success', text: `Jump host key '${file.name}' uploaded successfully` })
-                              setJumpKeyFilePath(`/root/.ssh/${file.name}`)
-                            } catch (error: any) {
-                              setMessage({ type: 'error', text: `Failed to upload jump host key: ${error.message}` })
-                            }
-                          }
-                        }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        Upload SSH key to access the jump host from container
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium mb-2">
-                        Jump Host SSH Private Key Path (in container)
-                      </label>
-                      <input
-                        type="text"
-                        value={jumpKeyFilePath}
-                        onChange={(e) => setJumpKeyFilePath(e.target.value)}
-                        placeholder="/root/.ssh/id_rsa"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        Path will be set automatically after upload
-                      </p>
-                    </div>
-                  </>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">
+                      Jump Host SSH Private Key Path (in container)
+                    </label>
+                    <input
+                      type="text"
+                      value={jumpKeyFilePath}
+                      onChange={(e) => setJumpKeyFilePath(e.target.value)}
+                      placeholder="~/.ssh/id_ed25519"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Jump-host login key, as ~/.ssh/filename on this machine. The node key stays on the jump host.
+                    </p>
+                  </div>
                 )}
 
                 {/* Jump Host Password */}

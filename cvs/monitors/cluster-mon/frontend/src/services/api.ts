@@ -74,27 +74,6 @@ class ApiClient {
     return this.post('/config/reload', {})
   }
 
-  async uploadSshKey(file: File) {
-    const formData = new FormData()
-    formData.append('file', file)
-
-    const response = await fetch(`${this.baseUrl}/ssh-keys/upload`, {
-      method: 'POST',
-      body: formData,
-    })
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Failed to upload SSH key: ${response.statusText} - ${errorText}`)
-    }
-
-    return response.json()
-  }
-
-  async listSshKeys() {
-    return this.request('/ssh-keys/list')
-  }
-
   // Package management
   async getPackageList() {
     return this.request('/packages/list')

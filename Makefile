@@ -30,7 +30,7 @@ help:
 	@echo "  ruff-venv       - Create ruff virtual environment"
 	@echo "  install         - Install from built distribution in .cvs_venv"
 	@echo "  installtest     - Install from built distribution"
-	@echo "  ut              - Execute all Unittests"
+	@echo "  ut              - Execute Python Unittests"
 	@echo "  test            - Execute all UTs and cvs cli tests"
 	@echo "  lint            - Run ruff + pylint (logging E1205/E1206 on cvs/)"
 	@echo "  fmt             - Run ruff formatter"

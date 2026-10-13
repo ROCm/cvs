@@ -22,7 +22,6 @@ cluster:
 
   alerts:
     gpu_temp_threshold: 85.0
-    gpu_util_threshold: 95.0
 
   storage:
     redis:
@@ -36,6 +35,7 @@ cluster:
     ras_port: 28028
     poll_interval: 30
     collective_timeout_secs: 10
+    ras_max_response_bytes: 4194304
     debug_log_path: null
 
     inspector:
