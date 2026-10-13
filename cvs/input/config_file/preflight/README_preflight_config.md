@@ -209,6 +209,7 @@ All parameters below are optional and have sensible defaults. The sample configu
 
 - **`gid_index`** (default: "3")
   - GID index to check on all configured RDMA interfaces; on RoCE, choose a RoCE v2 GID, preferably IPv4-mapped
+  - Must be an explicit non-negative integer; `"auto"` is supported by ibperf only, and any other value fails the GID check on every node
 
 - **`gid_type`** (default: "RoCE v2")
   - Expected sysfs type at `gid_attrs/types/<gid_index>` on each interface; use `"any"` to disable type validation

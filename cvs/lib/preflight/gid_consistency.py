@@ -3,6 +3,7 @@
 from cvs.lib.preflight.base import PreflightCheck
 from cvs.lib.rdma_gid_lib import (
     DEFAULT_GID_TYPE,
+    GID_MISSING,
     GID_OK,
     build_gid_probe_cmd,
     check_gid_entry,
@@ -68,9 +69,34 @@ class GidConsistencyCheck(PreflightCheck):
                 self.log_warning(f'Node {node}: {warning}')
         return result
 
+    def _invalid_index_results(self, reason):
+        """Fail every node without probing when gid_index is not a sysfs index."""
+        message = (
+            f'Invalid connectivity_check.rdma.gid_index {self.gid_index!r}: {reason}. '
+            'Preflight needs an explicit GID index; "auto" is supported by ibperf only'
+        )
+        self.log_error(message)
+        devices = self.expected_interfaces or []
+        return {
+            node: {
+                'status': 'FAIL',
+                'interfaces': {
+                    device: {'status': GID_MISSING, 'gid_index': str(self.gid_index), 'error': message}
+                    for device in devices
+                },
+                'errors': [message],
+                'warnings': [],
+            }
+            for node in self.orch.all.reachable_hosts
+        }
+
     def run(self):
         """Execute GID validation across all cluster nodes."""
-        cmd = self._build_gid_check_command()
+        try:
+            cmd = self._build_gid_check_command()
+        except ValueError as exc:
+            self.results = self._invalid_index_results(exc)
+            return self.results
         self.results = {}
         out_dict = self.orch.all.exec(cmd)
         for node, output in out_dict.items():

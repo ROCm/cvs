@@ -87,3 +87,17 @@ class TestGidConsistency(unittest.TestCase):
         self.assertEqual(result['status'], 'FAIL')
         self.assertEqual(result['interfaces']['nic0']['status'], 'EMPTY')
         self.assertEqual(result['interfaces']['nic1']['status'], 'OK')
+
+    def test_non_numeric_index_fails_every_node_without_probing(self):
+        self.orch.all.reachable_hosts = ['nodeA', 'nodeB']
+        for index in ('auto', '3; reboot'):
+            with self.subTest(index=index):
+                self.orch.all.exec.reset_mock()
+                results = GidConsistencyCheck(self.orch, index, self.devices).run()
+                self.orch.all.exec.assert_not_called()
+                self.assertEqual(set(results), {'nodeA', 'nodeB'})
+                for result in results.values():
+                    self.assertEqual(result['status'], 'FAIL')
+                    self.assertIn('ibperf only', result['errors'][0])
+                    self.assertEqual({i['status'] for i in result['interfaces'].values()}, {'MISSING'})
+                    self.assertEqual(set(result['interfaces']), set(self.devices))
