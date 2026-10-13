@@ -85,12 +85,14 @@ class TestMoriSeries(unittest.TestCase):
 
         self.assertEqual(
             set(dataset["charts"]),
-            {"Avg_BW_GBps", "Avg_Lat_us", "bandwidth_gb", "time_ms", "rate_mpps"},
+            {"Avg_BW_GBps", "Avg_Lat_us", "bandwidth_gb", "rate_mpps"},
         )
         self.assertEqual(len(dataset["charts"]["Avg_BW_GBps"]), 1)
         self.assertEqual(len(dataset["charts"]["bandwidth_gb"]), 1)
         self.assertEqual(len(dataset["results_table"]["rows"]), 4)
-        self.assertIn("Avg latency (us)", dataset["results_table"]["headers"])
+        self.assertIn("Avg latency, rank mean (µs)", dataset["results_table"]["headers"])
+        self.assertIn("Slowest rank", dataset["results_table"]["headers"])
+        self.assertIn("IBGDA time (ms)", dataset["results_table"]["headers"])
         self.assertIn("IBGDA rate (Mpps)", dataset["results_table"]["headers"])
 
     def test_renders_run_card_graphs_and_table_without_viewer(self):
@@ -111,8 +113,9 @@ class TestMoriSeries(unittest.TestCase):
 
         document = render_rundeck_html(payload)
         self.assertIn("Mori Benchmark Run Deck", document)
-        self.assertIn("Torch IO average bandwidth by message size", document)
+        self.assertIn("Torch IO average bandwidth (mean of ranks) by message size", document)
         self.assertIn("IBGDA packet rate by message size", document)
+        self.assertNotIn("IBGDA completion time", document)
         self.assertIn("Full Mori benchmark results", document)
         self.assertIn("MI355X", document)
         self.assertNotIn("viewer_config", payload)
