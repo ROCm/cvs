@@ -13,6 +13,7 @@
       "lifetime": "per_run",
       "name": "flux2-benchmark_distributed",
       "_image_example": "rocm/ufb-private:xdit-gfx950-py3.12-prereleases-rocm10.1.0rc3-6b5b35c",
+      "_image_comment": "The image needs to support the FLUX.2-dev model.",
       "image": "<changeme>",
       "runtime": {
         "name": "docker",
@@ -27,7 +28,6 @@
             "{paths.log_dir}:/outputs",
             "/home/{user-id}/cvs/cvs/lib/inference/xdit/scripts/flux2_example.py:/benchmark/flux2_example.py",
             "/dev/infiniband:/dev/infiniband",
-            "<changeme> /usr/lib/x86_64-linux-gnu/libionic.so.1.0.54.0-149.g3304be71:/usr/lib/x86_64-linux-gnu/libionic.so.1.0.54.0-149.g3304be71:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",

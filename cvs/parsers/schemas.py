@@ -957,6 +957,11 @@ class PytorchXditUnifiedContainer(BaseModel):
         alias="_image_example",
         description="Documentation only: example container image",
     )
+    image_comment: Optional[str] = Field(
+        default=None,
+        alias="_image_comment",
+        description="Documentation only: model the container image must support",
+    )
 
 
 class PytorchXditUnifiedParams(BaseModel):
