@@ -37,6 +37,8 @@ See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on runni
           "git_tag": "v1.67.00",
           "_comment_rocm_path": "ROCm installation path. Set the placeholder changeme to auto-detect from /opt/rocm or /opt/rocm/core-*",
           "rocm_path": "<changeme>",
+          "_comment_a2asweep_timeout": "Orch.exec timeout seconds for the a2asweep preset. Default 1500 covers the shipped 24-combo sweep plus buffer. Override directly, or omit and derive via a2asweep_combos / a2asweep_sec_per_combo / a2asweep_timeout_buffer.",
+          "a2asweep_timeout": 1500,
           "results":
           {
               "bytes_to_transfer": "268435456",
@@ -198,6 +200,18 @@ TransferBench
    * - ``rocm_path``
      - ``<changeme>``
      - Set the path of rocm
+   * - ``a2asweep_timeout``
+     - ``1500``
+     - Orchestrator timeout in seconds for ``test_transfer_bench_a2asweep``. When set, this value wins. When omitted, CVS derives the timeout as ``a2asweep_combos`` × ``a2asweep_sec_per_combo`` + ``a2asweep_timeout_buffer`` (defaults ``24``, ``50``, ``300`` → ``1500``), and never returns less than ``600`` (the former hard-coded 10-minute limit). Raise this on slower nodes or larger custom sweep ranges so a healthy sweep is not aborted mid-run.
+   * - ``a2asweep_combos``
+     - ``24``
+     - Optional. Combo count used only when ``a2asweep_timeout`` is omitted. Matches the default TransferBench a2asweep table size (block size × unroll combinations).
+   * - ``a2asweep_sec_per_combo``
+     - ``50``
+     - Optional. Seconds assumed per combo when deriving ``a2asweep_timeout``.
+   * - ``a2asweep_timeout_buffer``
+     - ``300``
+     - Optional. Extra seconds added after ``combos`` × ``sec_per_combo`` when deriving ``a2asweep_timeout``.
    * - ``bytes_to_transfer``
      - 268435456
      - Amount of data to transfer in bytes (256 MB); this is the payload size for bandwidth tests

@@ -167,5 +167,31 @@ class TestScanTestResultsNumaAbort(unittest.TestCase):
         self.assertIn('allocate', mock_fail_test.call_args.args[0].lower())
 
 
+class TestResolveA2aSweepTimeout(unittest.TestCase):
+    def test_default_derivation_is_1500(self):
+        self.assertEqual(tb.resolve_a2asweep_timeout({}), 1500)
+
+    def test_explicit_timeout_wins(self):
+        self.assertEqual(tb.resolve_a2asweep_timeout({'a2asweep_timeout': 1800}), 1800)
+        self.assertEqual(tb.resolve_a2asweep_timeout({'a2asweep_timeout': '1200'}), 1200)
+
+    def test_custom_combos_sec_buffer_derivation(self):
+        cfg = {
+            'a2asweep_combos': 30,
+            'a2asweep_sec_per_combo': 40,
+            'a2asweep_timeout_buffer': 100,
+        }
+        self.assertEqual(tb.resolve_a2asweep_timeout(cfg), 30 * 40 + 100)
+
+    def test_floor_at_former_ten_minute_minimum(self):
+        cfg = {
+            'a2asweep_combos': 1,
+            'a2asweep_sec_per_combo': 1,
+            'a2asweep_timeout_buffer': 1,
+        }
+        self.assertEqual(tb.resolve_a2asweep_timeout(cfg), 600)
+        self.assertEqual(tb.resolve_a2asweep_timeout({'a2asweep_timeout': 100}), 600)
+
+
 if __name__ == '__main__':
     unittest.main()
