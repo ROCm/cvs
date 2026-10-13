@@ -60,7 +60,7 @@
         },
         "io_read":
         {
-           "BUFF_SIZE:16384,TRANSFER_SIZE:128,QP_COUNT:2":
+           "BUFF_SIZE:4194304,TRANSFER_SIZE:128,QP_COUNT:1":
 	   {
                "524288":
 	       {
@@ -70,14 +70,28 @@
                "1048576":
 	       {
 	           "max_bw": "46.0",
-	           "avg_lat": "2500"
+	           "avg_lat": "2920"
+	       }
+
+           },
+           "BUFF_SIZE:4194304,TRANSFER_SIZE:128,QP_COUNT:8":
+	   {
+               "524288":
+	       {
+		   "max_bw": "45.0",
+	           "avg_lat": "1500"
+	       },
+               "1048576":
+	       {
+	           "max_bw": "46.0",
+	           "avg_lat": "2920"
 	       }
 
            }
         },
         "io_write":
         {
-           "BUFF_SIZE:16384,TRANSFER_SIZE:128,QP_COUNT:2":
+           "BUFF_SIZE:4194304,TRANSFER_SIZE:128,QP_COUNT:1":
            {
                "524288":
 	       {
@@ -87,7 +101,21 @@
                "1048576":
 	       {
 	           "max_bw": "46.0",
-	           "avg_lat": "2500"
+	           "avg_lat": "2920"
+	       }
+
+           },
+           "BUFF_SIZE:4194304,TRANSFER_SIZE:128,QP_COUNT:8":
+           {
+               "524288":
+	       {
+		   "max_bw": "45.0",
+	           "avg_lat": "1500"
+	       },
+               "1048576":
+	       {
+	           "max_bw": "46.0",
+	           "avg_lat": "2920"
 	       }
 
            }
