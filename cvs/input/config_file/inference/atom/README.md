@@ -11,7 +11,7 @@ JSON variant and threshold files for the ``atom`` suite. Full documentation:
 
 | GPU | Native ATOM gate | Notes |
 |-----|------------------|--------|
-| MI300X / MI325X (gfx942) | DeepSeek-R1 and Qwen 3.5 FP8 | V4-Pro is the MI355X stem |
+| MI300X / MI325X (gfx942) | DeepSeek-R1, Qwen 3.5 FP8, and V4-Flash-Base TP8 | V4-Pro is the MI355X stem |
 | MI355X (gfx950) | V4-**Pro** TP8; Kimi K2.7-Code MXFP4 **TP4** | Spur/managed compute labs use these stems |
 
 Native ATOM is **node-local TP ≤ 8**. Cross-node pipeline parallel uses ``vllm_atom`` / ``sglang`` ``_distributed`` stems, not native ATOM. Atomesh P/D is not wired in this suite yet.
@@ -24,6 +24,7 @@ Configs are lab-validated unless a row is marked pending or bring-up.
 |------|-------|--------|
 | `mi3xx_atom_deepseek-r1_fp8` | `_single` (profiles: `perf`, `mtp3`), `_distributed` (`vllm_atom` PP=2) | native `atom` / `vllm_atom` |
 | `mi3xx_atom_qwen3.5-397b-a17b_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` |
+| `mi3xx_atom_deepseek-v4-flash` | `_single` | native `atom` (gfx942 V4-Flash-Base TP8; bring-up thresholds) |
 | `mi355x_atom_kimi-k27-code_mxfp4` | `_single` | native `atom` (MI355X; bring-up thresholds) |
 | `mi355x_atom_deepseek-v4-pro` | `_single` | native `atom` (MI355X; bring-up thresholds) |
 | `mi355x_atom_qwen3.5-397b-a17b_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` (MI355X; bring-up thresholds; `mtp3` benchmark cells lab-run, GSM8K pending) |
