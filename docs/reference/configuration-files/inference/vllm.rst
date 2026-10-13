@@ -339,7 +339,7 @@ All keys under ``runtime.args`` are optional. **List-valued keys append to the d
      - ``-v <host>:<ctr>[:ro]``
    * - ``devices``
      - append
-     - ``/dev/kfd``, ``/dev/dri``, ``/dev/infiniband``
+     - ``/dev/kfd``, ``/dev/dri``, plus each ``/dev/infiniband/*`` node the host has
      - ``--device <path>``
    * - ``cap_add``
      - append
