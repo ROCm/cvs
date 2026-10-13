@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - vLLM: the DeepSeek V4 sample configs no longer set `HF_HUB_OFFLINE` or `TRANSFORMERS_OFFLINE`. With those flags, an accuracy task added to a copy of a sample failed at the end of the sweep because lm-eval could not load its dataset. The vLLM configuration reference now says to set them only on clusters without Hub access, with accuracy datasets pre-cached, and that `distributed_executor_backend` and `dist_init_port` are ignored on one host.
 - vLLM suites accept the `spec_decode_*` statistics that `vllm bench serve` reports for speculative decoding, instead of failing the first cell and skipping the rest of the sweep.
 - vLLM and ATOM GPU metric snapshots and polls no longer reset the xGMI error counters. They ran a bare `amd-smi metric --json`, which also reads `--xgmi-err` and so clears the counters on every call; they now request only the `--usage` and `--mem-usage` sections they read. The raw `gpu.energy_j` snapshot field, which no suite reads, is now always `None`.
+- SGLang: the GPU occupancy check runs `amd-smi metric --mem-usage --json` instead of a bare `amd-smi metric --json`, so it reads only the VRAM section it uses and no longer reads the xGMI error section, which resets the xGMI error counters on MI200 and older GPUs.
 
 ## [0.2.0] - 2026-09-23
 

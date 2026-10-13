@@ -988,5 +988,15 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertIn('completion_endpoint', fail.call_args.args[0])
 
 
+class TestSglangGpuTopology(unittest.TestCase):
+    def test_topology_requests_only_the_mem_usage_section(self):
+        """A bare `amd-smi metric` also reads --xgmi-err, which resets the xGMI error counters on MI200 and older."""
+        host_exec = mock.Mock(return_value={'n0': '[]'})
+        sglang_common.collect_sglang_gpu_topology(host_exec, {'server': ['n0']}, timeout=30)
+        host_exec.assert_called_once_with(
+            'amd-smi metric --mem-usage --json', hosts=['n0'], timeout=30, print_console=False
+        )
+
+
 if __name__ == '__main__':
     unittest.main()
