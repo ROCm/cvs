@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import datetime
 import re
+import shlex
 
 from cvs.lib.utils_lib import *
 from cvs.lib.rocm_plib import *
@@ -459,7 +460,9 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
         end_dt = _parse_cvs_time(end_time_dict[node0])
         if end_dt:
             analysis_args['analysis_range_end'] = end_dt
-    output_dict = _collect_kernel_log(phdl, "sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never")
+    output_dict = _collect_kernel_log(
+        phdl, "sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never"
+    )
     err_dict = _node_scraper_scan(output_dict, analysis_args=analysis_args, source_label='Dmesg')
     _log_kernel_scan_summary('verify_dmesg_for_errors', output_dict, err_dict)
     return err_dict
@@ -468,18 +471,13 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
 _DMESG_DURING_TEST_LOG_LINE_CAP = 500
 
 
-def _shell_single_quote(value):
-    """Escape value for embedding in a single-quoted shell argument."""
-    return value.replace("'", "'\"'\"'")
-
-
 def dmesg_write_marker_cmd(marker):
     """Write marker to /dev/kmsg with the same literal text the dmesg scan searches for.
 
-    Single-quote escaping keeps $, backticks, and quotes out of shell expansion, matching
+    shlex.quote keeps $, backticks, and quotes out of shell expansion, matching
     _dmesg_slice_by_markers_cmd.
     """
-    return f"sudo echo '{_shell_single_quote(marker)}' | sudo tee /dev/kmsg"
+    return f"sudo echo {shlex.quote(marker)} | sudo tee /dev/kmsg"
 
 
 def _trim_trailing_blank_dmesg_lines(text):
@@ -506,15 +504,13 @@ def _dmesg_slice_by_markers_cmd(start_marker, end_marker):
     If the last start has no matching end (crash/hang), lines from that start to
     EOF are returned so the caller can warn and optionally scan partial output.
     """
-    start_quoted = _shell_single_quote(start_marker)
-    end_quoted = _shell_single_quote(end_marker)
     awk_script = (
         "index($0,s){buf=$0 ORS;cap=1;next} "
         "cap{buf=buf $0 ORS;if(index($0,e)){last=buf;cap=0;buf=\"\"}} "
         "END{if(cap&&buf)printf \"%s\",buf; else if(last)printf \"%s\",last}"
     )
     dmesg_cmd = "sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never"
-    return f"{dmesg_cmd} | awk -v s='{start_quoted}' -v e='{end_quoted}' '{awk_script}'"
+    return f"{dmesg_cmd} | awk -v s={shlex.quote(start_marker)} -v e={shlex.quote(end_marker)} '{awk_script}'"
 
 
 def verify_dmesg_during_test(phdl, start_marker, end_marker):
@@ -523,9 +519,10 @@ def verify_dmesg_during_test(phdl, start_marker, end_marker):
     and scan for error/warn patterns.
 
     Intended for RCCL tests that write markers via ``tee /dev/kmsg``. Callers
-    decide whether to invoke this (e.g. ``cvs_params.dmesg_during_test``). Missing
-    markers on a node produce a warning and skip scanning on that node (test is
-    not failed).
+    decide whether to invoke this (e.g. ``cvs_params.dmesg_during_test``). An
+    empty slice or a missing start marker warns and skips scanning on that node.
+    A missing end marker warns and still scans the partial slice. Neither case
+    fails the test by itself.
     """
     log.info('scan dmesg during test (markers: %s .. %s)', start_marker, end_marker)
     output_dict = phdl.exec(_dmesg_slice_by_markers_cmd(start_marker, end_marker))
@@ -559,7 +556,6 @@ def verify_dmesg_during_test(phdl, start_marker, end_marker):
                 node,
                 end_marker,
             )
-            continue
 
         scannable[node] = text
         lines = text.splitlines()
@@ -841,7 +837,9 @@ def verify_driver_errors(phdl):
     """
 
     err_dict = {}
-    output_dict = _collect_kernel_log(phdl, "sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never")
+    output_dict = _collect_kernel_log(
+        phdl, "sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never"
+    )
     for node in output_dict.keys():
         err_dict[node] = []
         events = node_scraper_adapter.parse_dmesg(
