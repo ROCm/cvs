@@ -2,9 +2,9 @@
   :description: Reference for CVS JAX MaxText training configuration files, covering container setup, sweep keys, threshold files, and distributed training parameters for AMD GPUs.
   :keywords: CVS, JAX, MaxText, training, ROCm, GPU, AMD, distributed, JSON, configuration, benchmark, RCCL, InfiniBand
 
-*************************************************************************
+***************************************************************************
 JAX MaxText training configuration files for Cluster Validation Suite (CVS)
-*************************************************************************
+***************************************************************************
 
 The JAX MaxText suites (``jaxmaxtext_single`` / ``jaxmaxtext_distributed``) run
 `MaxText <https://github.com/AI-Hypercomputer/maxtext>`_ pre-training inside a
