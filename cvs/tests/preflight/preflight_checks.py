@@ -795,7 +795,8 @@ def test_gid_consistency(orch, config_dict, lifecycle=None):
         log.info("GID consistency check: All nodes passed")
 
     log.info(
-        f"GID consistency results: {ok_interfaces}/{total_interfaces} interfaces have a valid {gid_type} GID at index {gid_index}"
+        f"GID consistency results: {ok_interfaces}/{total_interfaces} interfaces have a valid GID at index {gid_index} "
+        f"(expected type {gid_type}, not enforced on InfiniBand)"
     )
 
     _prune_nodes_from_phdl(orch.all, failed_nodes, "GID consistency:")

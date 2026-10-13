@@ -76,6 +76,7 @@ class TestGidConsistency(unittest.TestCase):
         for interface in result['interfaces'].values():
             self.assertEqual(interface['status'], 'OK')
             self.assertEqual(interface['link_layer'], 'InfiniBand')
+        self.assertEqual(result['warnings'], [])
 
     def test_infiniband_zero_gid_still_empty(self):
         ib = (

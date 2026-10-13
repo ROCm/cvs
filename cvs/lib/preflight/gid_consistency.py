@@ -7,6 +7,7 @@ from cvs.lib.rdma_gid_lib import (
     build_gid_probe_cmd,
     check_gid_entry,
     gid_scope,
+    is_infiniband,
     parse_gid_probe_output,
 )
 
@@ -58,7 +59,7 @@ class GidConsistencyCheck(PreflightCheck):
                 interface['error'] = message
                 result['status'] = 'FAIL'
                 result['errors'].append(message)
-            elif gid_scope(interface['gid_value']) == 'link-local':
+            elif gid_scope(interface['gid_value']) == 'link-local' and not is_infiniband(interface['link_layer']):
                 warning = (
                     f'GID index {self.gid_index} on {device} is link-local ({interface["gid_value"]}); '
                     'it is not routable across L3 RoCE fabrics'
