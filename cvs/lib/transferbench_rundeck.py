@@ -333,15 +333,12 @@ def record_a2a(res_dict, out_dict, exp_dict, meta=None):
         min_bw = min(per_link)
         # Every GPU must clear the guide bar so one slow device cannot be masked by the mean.
         items = [_metric_item(f"GPU{idx} per-link", val, avg_threshold) for idx, val in enumerate(per_link)]
-        metrics = [
-            _bandwidth_metric(f"GPU{idx:02d} per-link", val, avg_threshold) for idx, val in enumerate(per_link)
-        ]
+        metrics = [_bandwidth_metric(f"GPU{idx:02d} per-link", val, avg_threshold) for idx, val in enumerate(per_link)]
         metrics.append(_bandwidth_metric("per-link min", min_bw, avg_threshold))
         metrics.append(_bandwidth_metric("per-link avg", avg_bw, avg_threshold))
         if rtotal_threshold not in (None, ""):
             metrics.extend(
-                _bandwidth_metric(f"GPU{idx:02d} RTotal", raw, rtotal_threshold)
-                for idx, raw in enumerate(raws)
+                _bandwidth_metric(f"GPU{idx:02d} RTotal", raw, rtotal_threshold) for idx, raw in enumerate(raws)
             )
         status, items, summary = _rollup(items, f"per-link min {min_bw:.3f} / avg {avg_bw:.3f} GB/s")
         return _with_scan(text, "a2a", status, items, summary, _charts(metrics))
