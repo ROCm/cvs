@@ -236,6 +236,25 @@ class TestIbperfLib(unittest.TestCase):
             self.assertIsNone(ibperf_lib.resolve_gid_index(phdl, {'nodeA': ['nic0']}, 'auto'))
             fail.assert_called()
 
+    def test_resolve_auto_on_infiniband_selects_port_gid(self):
+        table = (
+            'GIDENT|mlx5_0|0|fe80:0000:0000:0000:a088:c203:0001:0001|IB/RoCE v1|InfiniBand\n'
+            'GIDENT|mlx5_0|1|fe80:0000:0000:0000:0000:0000:0000:0000|IB/RoCE v1|InfiniBand\n'
+            'GIDENT|mlx5_0|3|fe80:0000:0000:0000:0000:0000:0000:0000|IB/RoCE v1|InfiniBand\n'
+        )
+        probe = (
+            'DEVICE:mlx5_0\nLINK_LAYER:InfiniBand\nGID:fe80:0000:0000:0000:a088:c203:0001:0001\nGID_TYPE:IB/RoCE v1\n'
+        )
+        phdl = MagicMock()
+        phdl.exec.side_effect = [{'nodeA': table, 'nodeB': table}, {'nodeA': probe, 'nodeB': probe}]
+        with patch.object(ibperf_lib, 'fail_test') as fail:
+            self.assertEqual(
+                ibperf_lib.resolve_gid_index(phdl, {'nodeA': ['mlx5_0'], 'nodeB': ['mlx5_0']}, 'auto'), '0'
+            )
+            fail.assert_not_called()
+        self.assertIn('link_layer', phdl.exec.call_args_list[0].args[0])
+        self.assertIn('gids/0', phdl.exec.call_args_list[1].args[0])
+
     def test_resolve_invalid_index_before_exec(self):
         phdl = MagicMock()
         with patch.object(ibperf_lib, 'fail_test') as fail:

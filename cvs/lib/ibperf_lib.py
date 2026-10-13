@@ -454,7 +454,10 @@ def resolve_gid_index(phdl, node_dev_dict, gid_index, expected_gid_type=DEFAULT_
                 fail_test(error)
             return None
         log.info(
-            'Auto-selected GID index %s (%s, IPv4-mapped) for %d nodes', index, expected_gid_type, len(node_dev_dict)
+            'Auto-selected GID index %s for %d nodes (%s IPv4-mapped on RoCE, lowest populated on InfiniBand)',
+            index,
+            len(node_dev_dict),
+            expected_gid_type,
         )
     else:
         try:
@@ -475,11 +478,11 @@ def resolve_gid_index(phdl, node_dev_dict, gid_index, expected_gid_type=DEFAULT_
     if failed:
         return None
     log.info(
-        'GID index %s validated as %s on %d NICs across %d nodes',
+        'GID index %s validated on %d NICs across %d nodes (expected type %s, not enforced on InfiniBand)',
         index,
-        expected_gid_type,
         sum(map(len, node_dev_dict.values())),
         len(node_dev_dict),
+        expected_gid_type,
     )
     return index
 

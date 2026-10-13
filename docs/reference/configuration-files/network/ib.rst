@@ -115,7 +115,7 @@ Here's an exhaustive list of the available parameters in the IB Perf configurati
      - Test message sizes in bytes
    * - ``gid_index``
      - 3
-     - GID index validated on every NIC before perftest; ``auto`` selects the lowest common RoCE v2 IPv4-mapped index
+     - GID index validated on every NIC before perftest; ``auto`` selects the lowest common RoCE v2 IPv4-mapped index on RoCE, or the lowest populated index (normally 0) on InfiniBand
    * - ``gid_type``
      - RoCE v2
      - Expected sysfs GID type; ``any`` disables type checking, and InfiniBand link layers are exempt

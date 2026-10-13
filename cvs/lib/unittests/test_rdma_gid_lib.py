@@ -7,6 +7,9 @@ from cvs.lib import rdma_gid_lib as gid
 
 IPV4_GID = '0000:0000:0000:0000:0000:ffff:c000:0201'
 LINK_GID = 'fe80:0000:0000:0000:0000:0000:0000:0001'
+# InfiniBand port GID (subnet prefix + port GUID) and an unused InfiniBand slot (subnet prefix + zero GUID).
+IB_PORT_GID = 'fe80:0000:0000:0000:a088:c203:0001:0001'
+IB_UNUSED_GID = 'fe80:0000:0000:0000:0000:0000:0000:0000'
 
 
 class TestGidProbe(unittest.TestCase):
@@ -66,9 +69,22 @@ class TestGidProbe(unittest.TestCase):
         self.assertEqual(gid.gid_scope('2001:db8::1'), 'global')
 
     def test_parse_table_output(self):
-        output = f'GIDENT|rocep0|3|{IPV4_GID}|RoCE v2\nGIDENT|rocep0|bad|x|RoCE v2\nGIDENT|broken\n'
-        self.assertEqual(gid.parse_gid_table_output(output), {'rocep0': {3: {'gid': IPV4_GID, 'gid_type': 'RoCE v2'}}})
-        self.assertIn('GIDENT|', gid.build_gid_table_cmd(['rocep0']))
+        output = (
+            f'GIDENT|rocep0|3|{IPV4_GID}|RoCE v2|Ethernet\nGIDENT|rocep0|bad|x|RoCE v2|Ethernet\nGIDENT|broken\n'
+            f'GIDENT|mlx5_0|0|{IB_PORT_GID}|IB/RoCE v1|InfiniBand\nGIDENT|legacy|1|{IPV4_GID}|RoCE v2\n'
+        )
+        self.assertEqual(
+            gid.parse_gid_table_output(output),
+            {
+                'rocep0': {3: {'gid': IPV4_GID, 'gid_type': 'RoCE v2', 'link_layer': 'Ethernet'}},
+                'mlx5_0': {0: {'gid': IB_PORT_GID, 'gid_type': 'IB/RoCE v1', 'link_layer': 'InfiniBand'}},
+                'legacy': {1: {'gid': IPV4_GID, 'gid_type': 'RoCE v2', 'link_layer': ''}},
+            },
+        )
+        command = gid.build_gid_table_cmd(['rocep0'])
+        self.assertIn('GIDENT|', command)
+        self.assertIn('ports/1/link_layer', command)
+        self.assertIn('|$link_layer"', command)
 
 
 class TestCommonIndex(unittest.TestCase):
@@ -104,3 +120,44 @@ class TestCommonIndex(unittest.TestCase):
         index, errors = gid.select_common_gid_index(self.tables, self.nodes)
         self.assertIsNone(index)
         self.assertIn('on every NIC', errors[0])
+
+
+def ib_table(populated=8):
+    """InfiniBand GID table as read from sysfs: port GID at 0, unused slots after it."""
+    table = {0: {'gid': IB_PORT_GID, 'gid_type': 'IB/RoCE v1', 'link_layer': 'InfiniBand'}}
+    for index in range(1, populated):
+        table[index] = {'gid': IB_UNUSED_GID, 'gid_type': 'IB/RoCE v1', 'link_layer': 'InfiniBand'}
+    return table
+
+
+class TestCommonIndexInfiniBand(unittest.TestCase):
+    def setUp(self):
+        self.nodes = {'A': ['mlx5_0', 'mlx5_1'], 'B': ['mlx5_0', 'mlx5_1']}
+        self.tables = {node: {device: ib_table() for device in devices} for node, devices in self.nodes.items()}
+
+    def test_auto_selects_port_gid_on_infiniband(self):
+        self.assertEqual(gid.select_common_gid_index(self.tables, self.nodes), ('0', []))
+
+    def test_auto_ignores_gid_type_on_infiniband(self):
+        for expected in ('RoCE v2', 'IB/RoCE v1', 'any'):
+            with self.subTest(expected=expected):
+                self.assertEqual(gid.select_common_gid_index(self.tables, self.nodes, expected), ('0', []))
+
+    def test_auto_infiniband_without_port_gid_uses_lowest_populated(self):
+        for devices in self.tables.values():
+            for table in devices.values():
+                table.pop(0)
+        self.assertEqual(gid.select_common_gid_index(self.tables, self.nodes), ('1', []))
+
+    def test_auto_infiniband_with_empty_table_fails(self):
+        self.tables['B']['mlx5_1'] = {}
+        index, errors = gid.select_common_gid_index(self.tables, self.nodes)
+        self.assertIsNone(index)
+        self.assertIn('Node B NIC mlx5_1', errors[0])
+
+    def test_auto_still_requires_ipv4_roce_v2_on_ethernet_nic(self):
+        roce_link_local_only = {0: {'gid': LINK_GID, 'gid_type': 'RoCE v2', 'link_layer': 'Ethernet'}}
+        self.tables['B']['mlx5_1'] = roce_link_local_only
+        index, errors = gid.select_common_gid_index(self.tables, self.nodes)
+        self.assertIsNone(index)
+        self.assertIn('Node B NIC mlx5_1', errors[0])

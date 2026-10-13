@@ -2,7 +2,7 @@ IB (InfiniBand) perf and latency tests are tools used to measure network perform
 
 Following are the currently supported test suites
 
-Before launching perftest, ibperf validates `gid_index` against `gid_type` (default `RoCE v2`) on every node and NIC it uses. Set `gid_index` to `auto`, leave it empty, or remove it to select the lowest common IPv4-mapped GID of that type. Use `gid_type: "any"` to disable type checking; InfiniBand link layers are exempt.
+Before launching perftest, ibperf validates `gid_index` against `gid_type` (default `RoCE v2`) on every node and NIC it uses. Set `gid_index` to `auto`, leave it empty, or remove it to select the lowest common usable index: an IPv4-mapped GID of that type on RoCE, or the lowest populated GID (normally 0) on InfiniBand. Use `gid_type: "any"` to disable type checking; InfiniBand link layers are exempt.
 
 1. IB Bandwidth 
 2. IB Latency

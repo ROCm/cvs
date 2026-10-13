@@ -30,6 +30,11 @@ def is_auto_gid_index(gid_index):
     return gid_index is None or str(gid_index).strip().lower() in ('', 'auto')
 
 
+def is_infiniband(link_layer):
+    """Whether a sysfs port link layer is native InfiniBand."""
+    return (link_layer or '').strip().lower() == 'infiniband'
+
+
 def gid_type_matches(actual, expected):
     """Compare sysfs GID types, including the configured escape hatch."""
     wanted = ' '.join((expected or '').split()).lower()
@@ -107,7 +112,7 @@ def check_gid_entry(device, entry, gid_index, expected_gid_type=DEFAULT_GID_TYPE
         return GID_MISSING, f'GID index {index} missing on {device}: no sysfs GID entry'
     if not gid or gid.lower() == ZERO_GID:
         return GID_EMPTY, f"GID index {index} is empty on {device} (value '{gid}')"
-    if entry['link_layer'].lower() == 'infiniband':
+    if is_infiniband(entry['link_layer']):
         return GID_OK, ''
     if not gid_type_matches(entry['gid_type'], expected_gid_type):
         return GID_WRONG_TYPE, (
@@ -118,7 +123,7 @@ def check_gid_entry(device, entry, gid_index, expected_gid_type=DEFAULT_GID_TYPE
 
 
 def build_gid_table_cmd(devices=None, port=1):
-    """Build a shell command to dump populated GID table entries."""
+    """Build a shell command to dump populated GID table entries and the port link layer."""
     targets = (
         ' '.join(shlex.quote(f'{SYSFS_IB_ROOT}/{device}') for device in devices)
         if devices is not None
@@ -128,13 +133,14 @@ def build_gid_table_cmd(devices=None, port=1):
 for dev in {targets}; do
     [ -d "$dev" ] || continue
     dev_name=$(basename "$dev")
+    link_layer=$(cat "$dev/ports/{port}/link_layer" 2>/dev/null)
     for entry in "$dev"/ports/{port}/gids/*; do
         [ -f "$entry" ] || continue
         idx=$(basename "$entry")
         gid=$(cat "$entry" 2>/dev/null)
         [ -n "$gid" ] && [ "$gid" != "{ZERO_GID}" ] || continue
         gid_type=$(cat "$dev/ports/{port}/gid_attrs/types/$idx" 2>/dev/null)
-        echo "GIDENT|$dev_name|$idx|$gid|$gid_type"
+        echo "GIDENT|$dev_name|$idx|$gid|$gid_type|$link_layer"
     done
 done
 '''
@@ -146,7 +152,7 @@ def parse_gid_table_output(output):
     for line in (output or '').splitlines():
         parts = line.strip().split('|')
         if (
-            len(parts) != 5
+            len(parts) not in (5, 6)
             or parts[0] != 'GIDENT'
             or not parts[1]
             or not parts[2].isascii()
@@ -154,12 +160,21 @@ def parse_gid_table_output(output):
             or not parts[3]
         ):
             continue
-        tables.setdefault(parts[1], {})[int(parts[2])] = {'gid': parts[3].strip(), 'gid_type': parts[4].strip()}
+        tables.setdefault(parts[1], {})[int(parts[2])] = {
+            'gid': parts[3].strip(),
+            'gid_type': parts[4].strip(),
+            'link_layer': parts[5].strip() if len(parts) == 6 else '',
+        }
     return tables
 
 
 def select_common_gid_index(tables_by_node, node_dev_dict, expected_gid_type=DEFAULT_GID_TYPE):
-    """Find the lowest IPv4-mapped GID index usable on every selected NIC."""
+    """Find the lowest GID index usable on every selected NIC.
+
+    On RoCE, a candidate must have the expected type and an IPv4-mapped address.
+    On InfiniBand, where GID types and IPv4 addresses do not apply, every
+    populated index is a candidate, so index 0 (the port GID) normally wins.
+    """
     common = None
     errors = []
     candidates_by_nic = {}
@@ -169,7 +184,8 @@ def select_common_gid_index(tables_by_node, node_dev_dict, expected_gid_type=DEF
             candidates = {
                 index
                 for index, entry in table.items()
-                if gid_type_matches(entry['gid_type'], expected_gid_type) and gid_scope(entry['gid']) == 'ipv4-mapped'
+                if is_infiniband(entry.get('link_layer'))
+                or (gid_type_matches(entry['gid_type'], expected_gid_type) and gid_scope(entry['gid']) == 'ipv4-mapped')
             }
             candidates_by_nic[f'{node}/{device}'] = candidates
             if not candidates:
@@ -189,6 +205,7 @@ def select_common_gid_index(tables_by_node, node_dev_dict, expected_gid_type=DEF
     if not common:
         summary = '; '.join(f'{nic}={sorted(indices)}' for nic, indices in candidates_by_nic.items())
         return None, [
-            f'No GID index is {expected_gid_type} with an IPv4-mapped address on every NIC; candidates per NIC: {summary}'
+            f'No GID index is usable on every NIC ({expected_gid_type} with an IPv4-mapped address on RoCE, '
+            f'populated on InfiniBand); candidates per NIC: {summary}'
         ]
     return str(min(common)), []
