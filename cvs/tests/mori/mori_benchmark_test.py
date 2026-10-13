@@ -124,7 +124,8 @@ def test_concurrent_put_signal_thread(mori_obj):
 
 def test_ibgda_write_test(mori_obj):
     globals.error_list = []
-    mori_obj.run_ibgda_dist_write(no_of_procs=2, min_val=2, max_val='64m', ctas=2, threads=256, qp_count=4, iters=1)
+    # dist_write allocates max_val per thread (2 CTAs x 256 threads); 4m keeps that at 2 GiB per GPU.
+    mori_obj.run_ibgda_dist_write(no_of_procs=2, min_val=2, max_val='4m', ctas=2, threads=256, qp_count=4, iters=1)
 
     update_test_result()
 
