@@ -203,16 +203,24 @@ class TestParseTbA2aBw(unittest.TestCase):
         avg = tb.a2a_per_link_average(['326'] * 8)
         self.assertAlmostEqual(avg, 326.0 / 7.0, places=5)
 
-    def test_avg_above_guide_bar_passes(self):
+    def test_min_above_guide_bar_passes(self):
         with patch.object(tb, 'fail_test') as fail_test:
             tb.parse_tb_a2a_bw({'nodeA': A2A_RTOTAL_OK}, A2A_EXPECT_AVG)
         fail_test.assert_not_called()
 
-    def test_avg_below_guide_bar_fails(self):
+    def test_min_below_guide_bar_fails(self):
         with patch.object(tb, 'fail_test') as fail_test:
             tb.parse_tb_a2a_bw({'nodeA': A2A_RTOTAL_OK}, {'gpu_to_gpu_a2a_avg': '50.0'})
         fail_test.assert_called()
-        self.assertIn('per-link average', fail_test.call_args.args[0])
+        self.assertIn('min per-link', fail_test.call_args.args[0])
+
+    def test_one_slow_gpu_fails_even_if_mean_clears(self):
+        # Seven GPUs at 400 (~57.1/link) and one at 100 (~14.3/link): mean ~51.8 clears 32.9, min does not.
+        mixed = "│  RTotal │ 400.0   400.0   400.0   400.0   400.0   400.0   400.0   100.0 │\n"
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_a2a_bw({'nodeA': mixed}, A2A_EXPECT_AVG)
+        fail_test.assert_called()
+        self.assertIn('min per-link', fail_test.call_args.args[0])
 
     def test_missing_avg_key_fails(self):
         with patch.object(tb, 'fail_test') as fail_test:

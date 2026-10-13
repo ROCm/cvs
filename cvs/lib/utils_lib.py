@@ -64,22 +64,23 @@ def print_test_output(log, out_dict):
         log.info("%s", out_dict[node])
 
 
-# Unselected provider probes (e.g. VMware on an ionic fabric) emit "No such file"
-# noise that must not fail TransferBench/RCCL when native metrics pass (AIMVT-449).
-_BENIGN_PROVIDER_SCAN_RE = re.compile(
-    r'(?:vmware|provider).{0,120}(?:no such file|not found|unavailable)|'
-    r'(?:no such file|not found|unavailable).{0,120}(?:vmware|provider)',
+# Unselected VMware provider probes on ionic fabric emit "No such file" noise that
+# must not fail TransferBench/RVS when native metrics pass (AIMVT-449). Keep this
+# VMware-specific so a real provider-load failure is still scanned.
+_BENIGN_VMWARE_SCAN_RE = re.compile(
+    r'vmware.{0,120}(?:no such file|not found|unavailable)|'
+    r'(?:no such file|not found|unavailable).{0,120}vmware',
     re.I,
 )
 
 
 def strip_benign_scan_noise(text):
-    """Drop known-benign provider-probe lines before failure-indicator scanning."""
+    """Drop known-benign VMware provider-probe lines before failure-indicator scanning."""
     if not text:
         return text
     kept = []
     for line in text.splitlines(keepends=True):
-        if _BENIGN_PROVIDER_SCAN_RE.search(line):
+        if _BENIGN_VMWARE_SCAN_RE.search(line):
             continue
         kept.append(line)
     return ''.join(kept)
@@ -93,7 +94,7 @@ def scan_test_results(out_dict):
       out_dict (dict): Mapping of host -> output string (e.g., test logs or stdout/stderr).
 
     Behavior:
-      - Strips known-benign unselected-provider probe lines (e.g. VMware "No such file").
+      - Strips known-benign VMware provider-probe lines (e.g. "VMware ... No such file").
       - For each host, searches the remaining output for common failure patterns:
           'test FAIL', 'test ERROR', 'ABORT', 'Traceback', 'No such file', 'FATAL' (case-insensitive).
       - When a match is found, splits the full output into words and locates the first token

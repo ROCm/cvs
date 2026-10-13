@@ -5,7 +5,9 @@ import unittest
 from cvs.lib import transferbench_rundeck
 
 A2A_LINE = "RTotal 90.0 110.0 120.0 130.0 140.0 150.0 160.0 170.0\n"
-A2A_EXPECT = {"gpu_to_gpu_a2a_rtotal": "100"}
+# Per-link for A2A_LINE is value/7; 14.0 fails GPU0 (~12.86) and passes GPU1 (~15.71).
+A2A_EXPECT = {"gpu_to_gpu_a2a_avg": "14.0"}
+A2A_EXPECT_PASS = {"gpu_to_gpu_a2a_avg": "10.0"}
 
 P2P_OK = "Averages (During UniDir): 1.1 2.2 3.3 40.5\nAverages (During BiDir): 1.1 2.2 3.3 50.5\n"
 P2P_EXPECT = {
@@ -44,10 +46,10 @@ class TestRecordA2a(unittest.TestCase):
         transferbench_rundeck.record_a2a(results, {"n1": A2A_LINE}, A2A_EXPECT)
         node = _node(results, "a2a")
         self.assertEqual(node["status"], "fail")
-        self.assertEqual(node["items"][0]["name"], "GPU0")
+        self.assertEqual(node["items"][0]["name"], "GPU0 per-link")
         self.assertEqual(node["items"][0]["status"], "fail")
         self.assertEqual(node["items"][1]["status"], "pass")
-        self.assertIn("90.0", node["items_summary"])
+        self.assertIn("per-link min", node["items_summary"])
 
     def test_missing_rtotal_fails(self):
         results = {}
@@ -55,22 +57,29 @@ class TestRecordA2a(unittest.TestCase):
         self.assertEqual(_node(results, "a2a")["status"], "fail")
         self.assertIn("not found", _node(results, "a2a")["items"][0]["message"])
 
-    def test_traceback_fails_passing_rtotal(self):
+    def test_missing_avg_key_fails(self):
+        results = {}
+        transferbench_rundeck.record_a2a(results, {"n1": A2A_BOX}, {"gpu_to_gpu_a2a_rtotal": "320"})
+        node = _node(results, "a2a")
+        self.assertEqual(node["status"], "fail")
+        self.assertIn("gpu_to_gpu_a2a_avg", node["items"][0]["message"])
+
+    def test_traceback_fails_passing_metrics(self):
         results = {}
         text = "RTotal 110.0 120.0 130.0 140.0 150.0 160.0 170.0 180.0\nTraceback (most recent call last):\n"
-        transferbench_rundeck.record_a2a(results, {"n1": text}, A2A_EXPECT)
+        transferbench_rundeck.record_a2a(results, {"n1": text}, A2A_EXPECT_PASS)
         node = _node(results, "a2a")
         self.assertEqual(node["status"], "fail")
         self.assertEqual(node["items"][0]["status"], "pass")
         self.assertIn("Traceback", node["items"][-1]["message"])
 
-    def test_per_link_avg_gate_passes(self):
+    def test_per_link_gate_passes(self):
         results = {}
         transferbench_rundeck.record_a2a(results, {"n1": A2A_BOX}, {"gpu_to_gpu_a2a_avg": "32.9"})
         node = _node(results, "a2a")
         self.assertEqual(node["status"], "pass")
-        self.assertEqual(node["items"][0]["name"], "per-link avg")
-        self.assertIn("per-link avg", node["items_summary"])
+        self.assertEqual(node["items"][0]["name"], "GPU0 per-link")
+        self.assertIn("per-link min", node["items_summary"])
 
     def test_benign_vmware_warning_does_not_fail_passing_metrics(self):
         results = {}
@@ -187,20 +196,26 @@ Testing all-to-all XGMI copies             ........FAIL (56 test(s))
 
 
 class TestA2aCharts(unittest.TestCase):
-    def test_box_rtotal_emits_per_gpu_metrics(self):
+    def test_box_emits_per_gpu_per_link_metrics(self):
         results = {}
         meta = transferbench_rundeck.make_meta({"cluster_name": "helios"}, "transferbench_cvs")
-        transferbench_rundeck.record_a2a(results, {"node-a": A2A_BOX}, {"gpu_to_gpu_a2a_rtotal": "320"}, meta=meta)
+        transferbench_rundeck.record_a2a(
+            results,
+            {"node-a": A2A_BOX},
+            {"gpu_to_gpu_a2a_avg": "32.9", "gpu_to_gpu_a2a_rtotal": "320"},
+            meta=meta,
+        )
         node = _node(results, "a2a", "node-a")
         self.assertEqual(node["status"], "pass")
-        self.assertEqual(node["items"][0]["name"], "GPU0")
-        gpu00 = _metric(node, "GPU00")
-        self.assertEqual(gpu00["value"], 326.11)
+        self.assertEqual(node["items"][0]["name"], "GPU0 per-link")
+        gpu00 = _metric(node, "GPU00 per-link")
+        self.assertAlmostEqual(gpu00["value"], 326.11 / 7.0, places=5)
         self.assertEqual(gpu00["unit"], "GB/s")
-        self.assertEqual(gpu00["threshold"], 320.0)
+        self.assertEqual(gpu00["threshold"], 32.9)
         self.assertEqual(gpu00["direction"], "higher")
         self.assertEqual(gpu00["status"], "pass")
-        self.assertEqual(_metric(node, "GPU07")["value"], 326.75)
+        self.assertAlmostEqual(_metric(node, "GPU07 per-link")["value"], 326.75 / 7.0, places=5)
+        self.assertEqual(_metric(node, "GPU00 RTotal")["value"], 326.11)
         self.assertNotIn("series", node)
         self.assertEqual(results["_meta"]["version"], "1.67.00")
 
@@ -209,9 +224,9 @@ class TestA2aCharts(unittest.TestCase):
         transferbench_rundeck.record_a2a(results, {"n1": A2A_LINE}, A2A_EXPECT)
         node = _node(results, "a2a")
         self.assertEqual(node["status"], "fail")
-        self.assertEqual(_metric(node, "GPU00")["status"], "fail")
-        self.assertEqual(_metric(node, "GPU00")["value"], 90.0)
-        self.assertEqual(_metric(node, "GPU01")["status"], "pass")
+        self.assertEqual(_metric(node, "GPU00 per-link")["status"], "fail")
+        self.assertAlmostEqual(_metric(node, "GPU00 per-link")["value"], 90.0 / 7.0, places=5)
+        self.assertEqual(_metric(node, "GPU01 per-link")["status"], "pass")
 
     def test_missing_rtotal_omits_charts_but_keeps_version(self):
         results = {}

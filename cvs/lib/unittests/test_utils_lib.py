@@ -47,6 +47,12 @@ class TestUtilsLib(unittest.TestCase):
         utils_lib.scan_test_results(out_dict)
         mock_fail_test.assert_called()
 
+    @patch('cvs.lib.utils_lib.fail_test')
+    def test_scan_test_results_still_fails_non_vmware_provider_warning(self, mock_fail_test):
+        out_dict = {'host1': 'Failed to open ionic provider: No such file or directory'}
+        utils_lib.scan_test_results(out_dict)
+        mock_fail_test.assert_called()
+
     def test_cluster_target_output_label_strips_and_sanitizes(self):
         self.assertEqual(utils_lib.cluster_target_output_label("  node1.example.com  "), "node1.example.com")
         self.assertEqual(utils_lib.cluster_target_output_label("a/b"), "a_b")

@@ -315,13 +315,19 @@ def detect_rocm_path(orch, config_rocm_path):
     return '/opt/rocm'
 
 
-def a2a_per_link_average(rtotal_values):
-    """Mean per-link GB/s from per-GPU RTotal values (each GPU has N-1 peers)."""
+def a2a_per_link_values(rtotal_values):
+    """Per-GPU per-link GB/s from RTotal values (each GPU has N-1 peers)."""
     values = [float(v) for v in rtotal_values]
     n = len(values)
     if n < 2:
         raise ValueError(f'need at least 2 GPU RTotal values, got {n}')
-    return sum(v / (n - 1) for v in values) / n
+    return [v / (n - 1) for v in values]
+
+
+def a2a_per_link_average(rtotal_values):
+    """Mean per-link GB/s from per-GPU RTotal values (each GPU has N-1 peers)."""
+    per_link = a2a_per_link_values(rtotal_values)
+    return sum(per_link) / len(per_link)
 
 
 def parse_tb_a2a_bw(out_dict, exp_dict):
@@ -334,19 +340,23 @@ def parse_tb_a2a_bw(out_dict, exp_dict):
         if not rtotal_list:
             fail_test(f"RTotal row not found in TransferBench a2a output on node {node}")
             continue
-        # Guide bar is per-link average (≥32.9), not aggregate RTotal (AIMVT-449 / PB-1).
+        # Guide bar is per-link GB/s (≥32.9); every GPU must clear it (AIMVT-449 / PB-1).
         avg_key = 'gpu_to_gpu_a2a_avg'
-        if avg_key not in exp_dict:
+        if avg_key not in exp_dict or str(exp_dict.get(avg_key, '')).strip() == '':
             fail_test(f"Missing {avg_key} in transferbench.results for a2a gate on node {node}")
             continue
         try:
-            avg_bw = a2a_per_link_average(rtotal_list[0])
+            per_link = a2a_per_link_values(rtotal_list[0])
         except ValueError as exc:
-            fail_test(f"Cannot derive a2a per-link average on node {node}: {exc}")
+            fail_test(f"Cannot derive a2a per-link values on node {node}: {exc}")
             continue
-        if avg_bw < float(exp_dict[avg_key]):
+        threshold = float(exp_dict[avg_key])
+        min_bw = min(per_link)
+        avg_bw = sum(per_link) / len(per_link)
+        if min_bw < threshold:
             fail_test(
-                f"Actual a2a per-link average {avg_bw:.3f} GB/s lower than expected {exp_dict[avg_key]} on node {node}"
+                f"Actual a2a min per-link {min_bw:.3f} GB/s (mean {avg_bw:.3f}) lower than expected "
+                f"{exp_dict[avg_key]} on node {node}"
             )
 
 
