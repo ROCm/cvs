@@ -129,14 +129,14 @@ def _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, group, out_dict):
         log.warning("AGFHC '%s': could not capture Run Deck results: %s", group, exc)
 
 
-def _build_agfhc_cmd(orch, path, args):
+def _build_agfhc_cmd(orch, path, args, env=None):
     """Build an AGFHC CLI invocation with Spur/container-safe sudo."""
-    return agfhc_command(_payload_sudo_prefix(orch), path, args)
+    return agfhc_command(_payload_sudo_prefix(orch), path, args, env)
 
 
 def _run_agfhc(orch, config_dict, args, timeout, stage, agfhc_res_dict, cluster_dict, lifecycle):
     path = config_dict['path']
-    cmd = _build_agfhc_cmd(orch, path, args)
+    cmd = _build_agfhc_cmd(orch, path, args, config_dict.get('env'))
     with timed_stage(lifecycle, stage):
         out_dict = orch.exec(cmd, timeout=timeout)
     scan_agfc_results(out_dict)
@@ -381,7 +381,7 @@ def test_agfhc_pcie_lvl1(
 
     Behavior:
       - Resets the global error accumulator (globals.error_list) for a clean test run.
-      - Executes: sudo <path>/agfhc -r pcie_lvl1 with a 60-minute timeout.
+      - Runs agfhc -r pcie_lvl1 through the orchestrator (60-minute timeout). sudo is added only when passwordless sudo is available.
       - Scans output for success (and absence of error patterns) via scan_agfc_results.
       - Prints per-node output and updates the aggregated test result.
 
@@ -420,7 +420,7 @@ def test_agfhc_pcie_lvl3(
 
     Behavior:
       - Clears the error list for this test.
-      - Runs: sudo <path>/agfhc -r pcie_lvl3 (60-minute timeout).
+      - Runs agfhc -r pcie_lvl3 through the orchestrator (60-minute timeout). sudo is added only when passwordless sudo is available.
       - Checks for AGFHC_SUCCESS and error signatures.
       - Prints outputs per node and updates overall test status.
     """
@@ -454,7 +454,7 @@ def test_agfhc_xgmi_lvl1(
 
     Behavior:
       - Clears global error list.
-      - Runs: sudo <path>/agfhc -r xgmi_lvl1 (90-minute timeout).
+      - Runs agfhc -r xgmi_lvl1 through the orchestrator (90-minute timeout). sudo is added only when passwordless sudo is available.
       - Validates success markers and absence of failure patterns.
       - Prints outputs, then updates aggregated test result.
     """
@@ -488,7 +488,7 @@ def test_agfhc_all_perf(
 
     Behavior:
       - Resets error accumulator.
-      - Runs: sudo <path>/agfhc -r all_perf (90-minute timeout).
+      - Runs agfhc -r all_perf through the orchestrator (90-minute timeout). sudo is added only when passwordless sudo is available.
       - Scans outputs to ensure success and no fatal patterns.
       - Prints outputs and updates the aggregated test result.
     """
@@ -518,7 +518,7 @@ def test_agfhc_all_lvl5(
       config_dict (dict): Must include 'path'.
 
     Behavior:
-      - Runs: sudo <path>/agfhc --recipe-info all_lvl5 (260-minute timeout).
+      - Runs agfhc --recipe-info all_lvl5 through the orchestrator (260-minute timeout). sudo is added only when passwordless sudo is available.
       - Scans outputs for success/absence of error markers.
       - Prints outputs and updates the test result.
 
@@ -528,7 +528,7 @@ def test_agfhc_all_lvl5(
     log.info('Testcase all lvl5')
     path = config_dict['path']
     out_dict = orch.exec(
-        _build_agfhc_cmd(orch, path, '--recipe-info all_lvl5'),
+        _build_agfhc_cmd(orch, path, '--recipe-info all_lvl5', config_dict.get('env')),
         timeout=(60 * 260),
     )
     scan_agfc_results(out_dict)

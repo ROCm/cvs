@@ -25,7 +25,15 @@ See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on runni
             "path": "/opt/amd/agfhc",
             "package_tar_ball": "/home/{user-id}/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
             "install_dir": "/home/{user-id}/INSTALL/agfhc/",
-            "_comments_log_dir": "log_dir has to be a NON NFS local file system. Without passwordless sudo it must be writable by the SSH user, not /root.",
+            "_comment_env": "Companion-tool paths. Defaults match an /opt/amd install. Update every value when path changes. A missing key falls back to the directory next to path. FIREXS2_APP_PATH and LD_LIBRARY_PATH are derived from FIREXS_PATH.",
+            "env": {
+                "TXB_PATH": "/opt/amd/transferbench",
+                "MINIHPL_PATH": "/opt/amd/minihpl",
+                "MEMROCKER_PATH": "/opt/amd/memrocker",
+                "FIREXS_PATH": "/opt/amd/firexs2",
+                "AFIDSAG_PATH": "/opt/amd/afid"
+            },
+            "_comments_log_dir": "log_dir has to be a NON NFS local file system. CVS runs mkdir -p and test -w on each node before the recipes.",
             "log_dir": "/root/agfhc_logs",
             "hbm_test_duration": "00:01:30"
         },
@@ -164,16 +172,19 @@ AGFHC
      - Description
    * - ``path``
      - ``/opt/amd/agfhc``
-     - Directory that contains the ``agfhc`` executable. Without passwordless sudo, set a user-writable directory such as ``/home/{user-id}/INSTALL/agfhc/prefix/agfhc``. ``install_agfhc`` then runs ``./install --rocm-tar -o`` on the parent of ``path``.
+     - Directory that contains the ``agfhc`` executable. Any other path runs ``./install --rocm-tar -o`` on the parent of ``path``, without sudo. That parent must be writable on the nodes.
    * - ``package_tar_ball``
      - ``/home/{user-id}/`` |br| ``PACKAGES/agfhc-mi300x`` |br| ``_1.22.0_ub2204.tar.bz2``
      - Path where the tar ball is downloaded
    * - ``install_dir``
      - ``/home/{user-id}/INSTALL/agfhc/``
      - Path where AGFHC runs
+   * - ``env``
+     - ``TXB_PATH=/opt/amd/transferbench``, ``MINIHPL_PATH=/opt/amd/minihpl``, ``MEMROCKER_PATH=/opt/amd/memrocker``, ``FIREXS_PATH=/opt/amd/firexs2``, ``AFIDSAG_PATH=/opt/amd/afid``
+     - Companion-tool paths exported for every AGFHC run, including ``/opt/amd``. Update them when ``path`` changes. A missing key falls back to ``<parent of path>/transferbench``, ``minihpl``, ``memrocker``, ``firexs2``, or ``<path>/sag`` for ``AFIDSAG_PATH``. ``FIREXS2_APP_PATH`` and ``LD_LIBRARY_PATH`` are derived from ``FIREXS_PATH``.
    * - ``log_dir``
      - ``/root/agfhc_logs``
-     - Local, non-NFS log directory. Without passwordless sudo, use a path the SSH user can create.
+     - Local, non-NFS log directory. CVS runs ``mkdir -p`` and ``test -w`` on each node before the recipes.
    * - ``hbm_test_duration``
      - 00:01:30
      - HBM test duration

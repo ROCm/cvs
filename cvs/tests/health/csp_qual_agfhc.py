@@ -8,6 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import pytest
 
 import re
+import shlex
 import time
 import json
 
@@ -15,7 +16,7 @@ from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
 from cvs.lib import agfhc_rundeck, globals
-from cvs.lib.agfhc_cmd import agfhc_command, rootless_install
+from cvs.lib.agfhc_cmd import agfhc_command, probe_is_writable, writable_dir_commands
 from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 
 log = globals.log
@@ -134,15 +135,15 @@ def _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, group, out_dict, record
         log.warning("AGFHC '%s': could not capture Run Deck results: %s", group, exc)
 
 
-def _build_agfhc_cmd(orch, path, args):
+def _build_agfhc_cmd(orch, path, args, env=None):
     """Build an AGFHC CLI invocation with Spur/container-safe sudo."""
-    return agfhc_command(_payload_sudo_prefix(orch), path, args)
+    return agfhc_command(_payload_sudo_prefix(orch), path, args, env)
 
 
 def _run_agfhc_recipe(orch, config_dict, args, timeout, stage, out_name, agfhc_res_dict, cluster_dict, lifecycle):
     path = config_dict['path']
     log_dir = config_dict['log_dir']
-    cmd = _build_agfhc_cmd(orch, path, f'{args} --simple-output -o {log_dir}/{out_name}')
+    cmd = _build_agfhc_cmd(orch, path, f'{args} --simple-output -o {log_dir}/{out_name}', config_dict.get('env'))
     with timed_stage(lifecycle, stage):
         out_dict = orch.exec(cmd, timeout=timeout)
     scan_agfc_results(out_dict)
@@ -172,21 +173,23 @@ def scan_agfc_results(out_dict):
             fail_test(f'Test failed on node {host} - FAIL or ERROR or ABORT patterns seen')
 
 
+def _command_output(value):
+    if isinstance(value, dict):
+        return str(value.get('output', ''))
+    return str(value)
+
+
 def _exec_cmds_by_host(orch, commands_by_host):
-    """Run one command per host through the selected orchestrator backend."""
-    handle = getattr(orch, 'all', None)
-    hosts = list(
-        getattr(handle, 'reachable_hosts', None) or getattr(handle, 'host_list', None) or commands_by_host.keys()
-    )
-    hosts = [host for host in hosts if host in commands_by_host]
-    result = {}
-    for host in hosts:
-        out = orch.exec(commands_by_host[host], hosts=[host], timeout=90, print_console=False)
-        value = out.get(host, '')
-        if isinstance(value, dict):
-            value = value.get('output', '')
-        result[host] = str(value)
-    return result
+    """Run one command per host in one parallel call, in orch.hosts order."""
+    if not commands_by_host:
+        return {}
+    hosts = [host for host in getattr(orch, 'hosts', list(commands_by_host)) if host in commands_by_host]
+    cmd_list = [commands_by_host[host] for host in hosts]
+    if getattr(orch, 'orchestrator_type', None) == 'container':
+        output = orch.exec_cmd_list(cmd_list, timeout=90, print_console=False)
+    else:
+        output = orch.all.exec_cmd_list(cmd_list, timeout=90, print_console=False)
+    return {host: _command_output(output.get(host, '')) for host in hosts}
 
 
 def get_log_results(orch, out_dict):
@@ -194,21 +197,39 @@ def get_log_results(orch, out_dict):
     res_cmds = {}
     jrl_cmds = {}
     err_cmds = {}
-    for node in out_dict.keys():
-        match = re.search(r'Log directory:\s+([a-z0-9\/\-\_]+)', out_dict[node], re.I)
+    for node, text in out_dict.items():
+        match = re.search(r'Log directory:\s+(\S+)', str(text), re.I)
+        if not match:
+            fail_test(f'AGFHC did not report a log directory on node {node}')
+            continue
         log_dir = match.group(1)
-        res_cmds[node] = f'{sudo_prefix}cat {log_dir}/results.json'
-        jrl_cmds[node] = f'{sudo_prefix}cat {log_dir}/journal.log'
-        err_cmds[node] = f'{sudo_prefix}cat {log_dir}/error.json'
+        res_cmds[node] = f'{sudo_prefix}cat {shlex.quote(log_dir + "/results.json")}'
+        jrl_cmds[node] = f'{sudo_prefix}cat {shlex.quote(log_dir + "/journal.log")}'
+        err_cmds[node] = f'{sudo_prefix}cat {shlex.quote(log_dir + "/error.json")}'
     res_dict = _exec_cmds_by_host(orch, res_cmds)
-    for node in res_dict.keys():
-        pattern = r'"total_failed":\s+0,'
-        if not re.search(pattern, res_dict[node], re.I):
+    failed = [node for node in res_dict if not re.search(r'"total_failed":\s+0,', res_dict[node], re.I)]
+    if failed:
+        log.info('Dumping journal and error logs from nodes whose results.json is not clean')
+        journals = _exec_cmds_by_host(orch, jrl_cmds)
+        errors = _exec_cmds_by_host(orch, err_cmds)
+        for node in failed:
             fail_test(f'Total failed tests in results.json is not zero on node {node}')
-            log.info('Dumping journal log from all nodes for reference')
-            _exec_cmds_by_host(orch, jrl_cmds)
-            _exec_cmds_by_host(orch, err_cmds)
+            log.info('%s journal.log:\n%s', node, journals.get(node, ''))
+            log.info('%s error.json:\n%s', node, errors.get(node, ''))
     return res_dict
+
+
+def _log_dir_is_writable(orch, sudo_prefix, log_dir):
+    """False when log_dir cannot be created and written by the payload user."""
+    mkdir_cmd, probe_cmd = writable_dir_commands(log_dir, sudo_prefix)
+    orch.exec(mkdir_cmd)
+    probe = orch.exec(probe_cmd)
+    writable = True
+    for node, text in probe.items():
+        if not probe_is_writable(text):
+            fail_test(f'agfhc.log_dir {log_dir} is not writable on node {node}')
+            writable = False
+    return writable
 
 
 # Get the version of AGFHC
@@ -218,20 +239,20 @@ def test_version_check(orch, config_dict, agfhc_res_dict, cluster_dict, lifecycl
     path = config_dict['path']
     log_dir = config_dict['log_dir']
     sudo_prefix = _payload_sudo_prefix(orch)
-    if rootless_install(getattr(orch, 'orchestrator_type', None), sudo_prefix) and (
-        log_dir == '/root' or log_dir.startswith('/root/')
-    ):
-        fail_test('No passwordless sudo; set agfhc.log_dir to a user-writable local directory')
+    if not _log_dir_is_writable(orch, sudo_prefix, log_dir):
+        update_test_result()
+        return
     with timed_stage(lifecycle, 'version_check'):
-        out_dict = orch.exec(_build_agfhc_cmd(orch, path, '-v'))
+        out_dict = orch.exec(_build_agfhc_cmd(orch, path, '-v', config_dict.get('env')))
     for node in out_dict.keys():
         if not re.search('agfhc version:', out_dict[node], re.I):
             fail_test(f'Failed to print the AGFHC version on node {node}, installation not proper')
     # create the log directory to capture test logs
     try:
-        orch.exec(f'{sudo_prefix}rm -rf {log_dir}')
+        quoted_log_dir = shlex.quote(log_dir)
+        orch.exec(f'{sudo_prefix}rm -rf {quoted_log_dir}')
         time.sleep(2)
-        orch.exec(f'{sudo_prefix}mkdir {log_dir}')
+        orch.exec(f'{sudo_prefix}mkdir -p {quoted_log_dir}')
     except Exception:
         log.error(f'Error creating log directory {log_dir}')
     ls_dict = orch.exec(f'{sudo_prefix}ls -ld {log_dir}')

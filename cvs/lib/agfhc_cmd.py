@@ -5,10 +5,11 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-# ./install without -o exits unless uid is 0. These parents are not writable
-# by the SSH user, so a rootless install cannot target them. Paths are remote
-# POSIX paths, so this does not use os.path.
-_ROOT_INSTALL_PARENTS = ('/opt/amd', '/opt', '/usr', '/')
+import shlex
+
+# ./install without -o exits unless uid is 0. Paths are remote POSIX paths,
+# so this does not use os.path (Windows normpath rewrites /opt to \opt).
+_COMPANION_KEYS = ('TXB_PATH', 'MINIHPL_PATH', 'MEMROCKER_PATH', 'FIREXS_PATH', 'AFIDSAG_PATH')
 
 
 def rootless_install(orchestrator_type, sudo_prefix):
@@ -27,35 +28,79 @@ def rootless_output_dir(path):
     return parent or '/'
 
 
-def path_requires_root(path):
-    return rootless_output_dir(path) in _ROOT_INSTALL_PARENTS
+def uses_output_dir(orchestrator_type, sudo_prefix, path):
+    """True when ./install must pass -o and must not run as root.
+
+    Root-owned files under an NFS home fail with root squash, so -o drops sudo
+    even when passwordless sudo exists.
+    """
+    return rootless_install(orchestrator_type, sudo_prefix) or rootless_output_dir(path) != '/opt/amd'
+
+
+def derived_agfhc_env(path):
+    """Companion locations next to a -o prefix. Used when agfhc.env omits a key."""
+    root = rootless_output_dir(path)
+    agfhc_dir = path.rstrip('/')
+    return {
+        'TXB_PATH': f'{root}/transferbench',
+        'MINIHPL_PATH': f'{root}/minihpl',
+        'MEMROCKER_PATH': f'{root}/memrocker',
+        'FIREXS_PATH': f'{root}/firexs2',
+        'AFIDSAG_PATH': f'{agfhc_dir}/sag',
+    }
+
+
+def resolve_agfhc_env(path, env):
+    """agfhc.env values, with a derived path for any missing or empty key."""
+    derived = derived_agfhc_env(path)
+    supplied = env or {}
+    resolved = {}
+    for key in _COMPANION_KEYS:
+        value = supplied.get(key)
+        resolved[key] = value if value else derived[key]
+    return resolved
 
 
 def install_command(sudo_prefix, orchestrator_type, install_dir, path):
     flags = '--rocm-tar'
-    if rootless_install(orchestrator_type, sudo_prefix) or rootless_output_dir(path) != '/opt/amd':
-        flags = f'--rocm-tar -o {rootless_output_dir(path)}'
-    return f"{sudo_prefix}bash -c 'cd {install_dir} && ./install {flags}'"
+    prefix = sudo_prefix
+    if uses_output_dir(orchestrator_type, sudo_prefix, path):
+        flags = '--rocm-tar -o ' + shlex.quote(rootless_output_dir(path))
+        prefix = ''
+    inner = f'cd {shlex.quote(install_dir)} && ./install {flags}'
+    return f'{prefix}bash -c {shlex.quote(inner)}'
 
 
-def agfhc_command(sudo_prefix, path, args):
-    """AGFHC CLI. A non-/opt prefix needs the companion-tool env the installer prints."""
+def agfhc_command(sudo_prefix, path, args, env=None):
+    """AGFHC CLI. Companion paths come from agfhc.env, including a /opt/amd install."""
     tool = f'{path.rstrip("/")}/agfhc'
-    if rootless_output_dir(path) == '/opt/amd':
-        return f'{sudo_prefix}{tool} {args}'
-    root = rootless_output_dir(path)
-    agfhc_dir = path.rstrip('/')
-    script = (
-        f'root={root}; '
-        'if [ -d "$root/firexs2/usr/lib" ]; then fx="$root/firexs2"; '
-        'else fx="$root/firexs2-external"; fi; '
-        'export FIREXS_PATH="$fx"; '
-        'export FIREXS2_APP_PATH="$fx/usr/lib/firexs2"; '
-        'export LD_LIBRARY_PATH="$fx/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; '
-        f'export TXB_PATH="$root/transferbench"; '
-        f'export MINIHPL_PATH="$root/minihpl"; '
-        f'export MEMROCKER_PATH="$root/memrocker"; '
-        f'export AFIDSAG_PATH="{agfhc_dir}/sag"; '
-        f'exec {tool} {args}'
+    resolved = resolve_agfhc_env(path, env)
+    firexs = resolved['FIREXS_PATH'].rstrip('/')
+    lines = [f'export {key}={shlex.quote(resolved[key])}' for key in _COMPANION_KEYS]
+    lines.append(f'export FIREXS2_APP_PATH={shlex.quote(firexs + "/usr/lib/firexs2")}')
+    lines.append('export LD_LIBRARY_PATH=' + shlex.quote(firexs + '/usr/lib') + '${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}')
+    lines.append(f'exec {shlex.quote(tool)} {args}')
+    return f'{sudo_prefix}bash -c {shlex.quote("; ".join(lines))}'
+
+
+def writable_dir_commands(directory, sudo_prefix=''):
+    """mkdir -p, then a probe whose stdout is ``writable`` or ``not-writable``."""
+    quoted = shlex.quote(directory)
+    return (
+        f'{sudo_prefix}mkdir -p {quoted}',
+        f'{sudo_prefix}test -w {quoted} && echo writable || echo not-writable',
     )
-    return f"{sudo_prefix}bash -c '{script}'"
+
+
+def probe_is_writable(text):
+    body = str(text)
+    return 'not-writable' not in body and 'writable' in body
+
+
+def companion_probe_command(path, env):
+    """One shell that names each companion directory that is not a directory."""
+    resolved = resolve_agfhc_env(path, env)
+    checks = [
+        f'test -d {shlex.quote(directory)} || echo missing {key} {directory}' for key, directory in resolved.items()
+    ]
+    return 'bash -c ' + shlex.quote('; '.join(checks))

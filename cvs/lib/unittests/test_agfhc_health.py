@@ -58,7 +58,8 @@ class TestAgfhcPayloadSudo(unittest.TestCase):
         orch.sudo_prefix.return_value = 'sudo -n '
         self.assertEqual(agfhc._payload_sudo_prefix(orch), '')
         cmd = agfhc._build_agfhc_cmd(orch, '/opt/amd/agfhc', '-r hbm')
-        self.assertEqual(cmd, '/opt/amd/agfhc/agfhc -r hbm')
+        self.assertTrue(cmd.startswith('bash -c '))
+        self.assertIn('exec /opt/amd/agfhc/agfhc -r hbm', cmd)
         self.assertNotIn('sudo', cmd)
 
     def test_baremetal_payload_uses_sudo_prefix(self):
@@ -67,7 +68,8 @@ class TestAgfhcPayloadSudo(unittest.TestCase):
         orch.sudo_prefix.return_value = 'sudo -n '
         self.assertEqual(agfhc._payload_sudo_prefix(orch), 'sudo -n ')
         cmd = agfhc._build_agfhc_cmd(orch, '/opt/amd/agfhc', '-r hbm')
-        self.assertEqual(cmd, 'sudo -n /opt/amd/agfhc/agfhc -r hbm')
+        self.assertTrue(cmd.startswith('sudo -n bash -c '))
+        self.assertIn('exec /opt/amd/agfhc/agfhc -r hbm', cmd)
 
     def test_container_run_keeps_sudo_on_docker_exec(self):
         captured = []
@@ -103,43 +105,104 @@ class TestCspQualAgfhcOrch(unittest.TestCase):
         orch = MagicMock()
         orch.orchestrator_type = 'baremetal'
         orch.sudo_prefix.return_value = 'sudo -n '
-        self.assertEqual(
-            csp_qual._build_agfhc_cmd(orch, '/opt/amd/agfhc', '-v'),
-            'sudo -n /opt/amd/agfhc/agfhc -v',
-        )
+        bare = csp_qual._build_agfhc_cmd(orch, '/opt/amd/agfhc', '-v')
+        self.assertEqual(bare, agfhc._build_agfhc_cmd(orch, '/opt/amd/agfhc', '-v'))
 
     def test_get_log_results_uses_payload_sudo_prefix(self):
         orch = MagicMock()
         orch.orchestrator_type = 'baremetal'
+        orch.hosts = ['host1']
         orch.sudo_prefix.return_value = 'sudo -n '
-        handle = MagicMock()
-        handle.reachable_hosts = ['host1']
-        handle.host_list = ['host1']
-        orch.all = handle
-        orch.exec.return_value = {'host1': '"total_failed": 0,\n'}
-        out_dict = {'host1': 'Log directory: /var/tmp/agfhc_logs/run1\n'}
+        orch.all.exec_cmd_list.return_value = {'host1': '"total_failed": 0,\n'}
+        out_dict = {'host1': 'Log directory: /home/first.last/agfhc_logs/run1\n'}
         res = csp_qual.get_log_results(orch, out_dict)
         self.assertIn('total_failed', res['host1'])
-        cmd = orch.exec.call_args.args[0]
-        self.assertTrue(cmd.startswith('sudo -n cat '))
-        self.assertIn('/var/tmp/agfhc_logs/run1/results.json', cmd)
-        self.assertEqual(orch.exec.call_args.kwargs['hosts'], ['host1'])
+        cmd_list = orch.all.exec_cmd_list.call_args.args[0]
+        self.assertEqual(len(cmd_list), 1)
+        self.assertTrue(cmd_list[0].startswith('sudo -n cat '))
+        self.assertIn('/home/first.last/agfhc_logs/run1/results.json', cmd_list[0])
+        orch.exec_cmd_list.assert_not_called()
 
-    def test_get_log_results_container_omits_sudo(self):
+    def test_get_log_results_container_reads_dict_output_in_parallel(self):
         orch = MagicMock()
         orch.orchestrator_type = 'container'
+        orch.hosts = ['host2', 'host1']
         orch.sudo_prefix.return_value = 'sudo -n '
-        handle = MagicMock()
-        handle.reachable_hosts = ['host1']
-        handle.host_list = ['host1']
-        orch.all = handle
-        orch.exec.return_value = {'host1': '"total_failed": 0,\n'}
-        out_dict = {'host1': 'Log directory: /var/tmp/agfhc_logs/run1\n'}
-        csp_qual.get_log_results(orch, out_dict)
-        cmd = orch.exec.call_args.args[0]
-        self.assertTrue(cmd.startswith('cat '))
-        self.assertNotIn('sudo', cmd)
-        self.assertEqual(orch.exec.call_args.kwargs['hosts'], ['host1'])
+        orch.exec_cmd_list.return_value = {
+            'host2': {'output': '"total_failed": 0,\n'},
+            'host1': {'output': '"total_failed": 0,\n'},
+        }
+        out_dict = {
+            'host1': 'Log directory: /var/tmp/agfhc_logs/run1\n',
+            'host2': 'Log directory: /var/tmp/agfhc_logs/run2\n',
+        }
+        res = csp_qual.get_log_results(orch, out_dict)
+        self.assertIn('total_failed', res['host1'])
+        self.assertIn('total_failed', res['host2'])
+        cmd_list = orch.exec_cmd_list.call_args.args[0]
+        self.assertEqual(
+            cmd_list,
+            [
+                'cat /var/tmp/agfhc_logs/run2/results.json',
+                'cat /var/tmp/agfhc_logs/run1/results.json',
+            ],
+        )
+        self.assertEqual(orch.exec_cmd_list.call_count, 1)
+        orch.all.exec_cmd_list.assert_not_called()
+
+    def test_get_log_results_dumps_once_after_a_failure(self):
+        orch = MagicMock()
+        orch.orchestrator_type = 'baremetal'
+        orch.hosts = ['host1', 'host2']
+        orch.sudo_prefix.return_value = 'sudo -n '
+
+        def exec_cmd_list(cmd_list, timeout=None, print_console=True):
+            joined = ' '.join(cmd_list)
+            if 'results.json' in joined:
+                return {'host1': '"total_failed": 1,\n', 'host2': '"total_failed": 2,\n'}
+            if 'journal.log' in joined:
+                return {'host1': 'journal-1', 'host2': 'journal-2'}
+            return {'host1': 'error-1', 'host2': 'error-2'}
+
+        orch.all.exec_cmd_list.side_effect = exec_cmd_list
+        out_dict = {
+            'host1': 'Log directory: /tmp/a\n',
+            'host2': 'Log directory: /tmp/b\n',
+            'host3': 'no log directory here',
+        }
+        with patch.object(csp_qual, 'fail_test') as fail, patch.object(csp_qual.log, 'info') as info:
+            csp_qual.get_log_results(orch, out_dict)
+        self.assertEqual(orch.all.exec_cmd_list.call_count, 3)
+        messages = [call.args[0] for call in fail.call_args_list]
+        self.assertTrue(any('host3' in message for message in messages))
+        self.assertTrue(any('host1' in message for message in messages))
+        dumped = [call.args[0] for call in info.call_args_list if 'journal.log' in call.args[0]]
+        self.assertEqual(len(dumped), 2)
+
+    def test_log_dir_probe_returns_early(self):
+        orch = MagicMock()
+        orch.orchestrator_type = 'baremetal'
+        orch.sudo_prefix.return_value = ''
+        orch.exec.side_effect = [
+            {'host1': ''},
+            {'host1': 'not-writable'},
+        ]
+        with (
+            patch.object(csp_qual, 'fail_test') as fail,
+            patch.object(csp_qual, 'update_test_result') as update,
+            patch.object(csp_qual, 'timed_stage') as timed,
+        ):
+            csp_qual.test_version_check(
+                orch,
+                {'path': '/opt/amd/agfhc', 'log_dir': '/root/agfhc_logs'},
+                {},
+                {},
+                MagicMock(),
+            )
+        fail.assert_called_once()
+        self.assertIn('/root/agfhc_logs', fail.call_args.args[0])
+        update.assert_called_once()
+        timed.assert_not_called()
 
 
 class TestInstallAgfhcPayloadSudo(unittest.TestCase):
@@ -154,6 +217,36 @@ class TestInstallAgfhcPayloadSudo(unittest.TestCase):
         orch.orchestrator_type = 'baremetal'
         orch.sudo_prefix.return_value = 'sudo -n '
         self.assertEqual(install_agfhc._payload_sudo_prefix(orch), 'sudo -n ')
+
+    def test_unwritable_output_dir_returns_before_install(self):
+        orch = MagicMock()
+        orch.orchestrator_type = 'baremetal'
+        orch.sudo_prefix.return_value = 'sudo -n '
+        calls = []
+
+        def exec_cmd(cmd, timeout=None, **_kwargs):
+            calls.append(cmd)
+            if 'test -w' in cmd:
+                return {'host1': 'not-writable'}
+            return {'host1': 'ok'}
+
+        orch.exec.side_effect = exec_cmd
+        config = {
+            'install_dir': '/home/user/INSTALL/agfhc/',
+            'package_tar_ball': '/home/user/PACKAGES/agfhc.tar.bz2',
+            'path': '/home/user/INSTALL/agfhc/prefix/agfhc',
+        }
+        with (
+            patch.object(install_agfhc.time, 'sleep'),
+            patch.object(install_agfhc, 'fail_test') as fail,
+            patch.object(install_agfhc, 'update_test_result') as update,
+        ):
+            install_agfhc.test_install_agfhc(orch, config)
+        update.assert_called_once()
+        fail.assert_called_once()
+        self.assertIn('/home/user/INSTALL/agfhc/prefix', fail.call_args.args[0])
+        self.assertFalse(any('./install' in cmd for cmd in calls))
+        self.assertTrue(any('test -w' in cmd for cmd in calls))
 
 
 if __name__ == '__main__':
