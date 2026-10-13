@@ -11,17 +11,18 @@ including a healthcheck subtest line of ``Testing ... FAIL``. Chart fields never
 change that verdict: missing or unrecognized output simply omits metrics,
 series, and heatmaps.
 
-When the v1.67 tables are present, a2a requires ``gpu_to_gpu_a2a_avg`` and
-emits per-GPU per-link metrics (``RTotal_i / (N-1)``) against that bar; optional
-``gpu_to_gpu_a2a_rtotal`` is chart annotation only. p2p emits ``UniDir`` and
-``BiDir`` GPU-to-GPU metrics plus a series of the four path averages. The BiDir
-banner is ``Averages (During  BiDir)`` (two spaces). ``TransferBench vX.Y.Z``
-from the banner is stored on ``_meta.version``. healthcheck adds subtest items,
-per-GPU measured/criteria metrics, and an ``XGMI`` heatmap. A ``Testing ...
-FAIL`` line fails the node, as does a scan indicator. a2asweep keeps that scan
-verdict and adds a BlockSize/Unroll × SubExec heatmap plus highest-bandwidth
-and best BlockSize / Unroll / NumSubExec metrics. scaling adds one series per
-NumCUs endpoint and a Best-row metric per endpoint; only GPU00 carries
+When the v1.67 tables are present, a2a requires ``gpu_to_gpu_a2a_per_link_min``
+(legacy alias ``gpu_to_gpu_a2a_avg``) and emits per-GPU per-link metrics
+(``RTotal_i / (N-1)``) against that bar; optional ``gpu_to_gpu_a2a_rtotal`` is
+chart annotation only. p2p emits ``UniDir`` and ``BiDir`` GPU-to-GPU metrics
+plus a series of the four path averages. The BiDir banner is
+``Averages (During  BiDir)`` (two spaces). ``TransferBench vX.Y.Z`` from the
+banner is stored on ``_meta.version``. healthcheck adds subtest items, per-GPU
+measured/criteria metrics, and an ``XGMI`` heatmap. A ``Testing ... FAIL`` line
+fails the node, as does a scan indicator. a2asweep keeps that scan verdict and
+adds a BlockSize/Unroll × SubExec heatmap plus highest-bandwidth and best
+BlockSize / Unroll / NumSubExec metrics. scaling adds one series per NumCUs
+endpoint and a Best-row metric per endpoint; only GPU00 carries
 ``best_gpu0_bw``. schmoo adds one series per local and remote column (separate
 charts, so the GB/s scales stay apart) and threshold metrics for the gated 32
 CU row.
@@ -39,6 +40,21 @@ import re
 from cvs.lib.utils_lib import strip_benign_scan_noise
 
 _STATUSES = ("pass", "fail", "na")
+
+# Prefer the explicit min key; accept the coverage-workbook alias for one release.
+_A2A_PER_LINK_MIN_KEY = "gpu_to_gpu_a2a_per_link_min"
+_A2A_PER_LINK_MIN_LEGACY_KEY = "gpu_to_gpu_a2a_avg"
+
+
+def resolve_a2a_per_link_min(exp_dict):
+    """Return (key_used, threshold) for the a2a per-link min guide bar."""
+    expected = exp_dict or {}
+    for key in (_A2A_PER_LINK_MIN_KEY, _A2A_PER_LINK_MIN_LEGACY_KEY):
+        value = expected.get(key)
+        if value is not None and str(value).strip() != "":
+            return key, value
+    return _A2A_PER_LINK_MIN_KEY, None
+
 
 # Match the indicators scan_test_results already uses. Bandwidth presets apply
 # the same pattern after the metric rollup so a good GB/s line cannot hide it.
@@ -307,20 +323,19 @@ def _rollup(items, summary):
 def record_a2a(res_dict, out_dict, exp_dict, meta=None):
     '''Record a2a per-link guide bar derived from per-GPU RTotal.
 
-    ``gpu_to_gpu_a2a_avg`` is required (same as parse_tb_a2a_bw). The key name
-    follows the coverage workbook; pass/fail is every GPU's implied per-link
-    GB/s against that bar (min, not mean). Optional ``gpu_to_gpu_a2a_rtotal``
-    only adds threshold-less RTotal chart series so they cannot show chart-fail
-    while the cell passes.
+    ``gpu_to_gpu_a2a_per_link_min`` is required (legacy alias
+    ``gpu_to_gpu_a2a_avg``). Pass/fail is every GPU's implied per-link GB/s
+    against that bar. Optional ``gpu_to_gpu_a2a_rtotal`` only adds
+    threshold-less RTotal chart series.
     '''
     expected = exp_dict or {}
-    avg_threshold = expected.get("gpu_to_gpu_a2a_avg")
+    gate_key, per_link_min = resolve_a2a_per_link_min(expected)
     include_rtotal_charts = expected.get("gpu_to_gpu_a2a_rtotal") not in (None, "")
 
     def classify(text):
-        if avg_threshold in (None, ""):
-            message = "missing gpu_to_gpu_a2a_avg"
-            return _with_scan(text, "a2a", "fail", [_missing_item("gpu_to_gpu_a2a_avg", message)], message)
+        if per_link_min is None:
+            message = f"missing {gate_key}"
+            return _with_scan(text, "a2a", "fail", [_missing_item(gate_key, message)], message)
         match = _A2A_RTOTAL_RE.search(text)
         if not match:
             message = "RTotal row not found"
@@ -334,10 +349,10 @@ def record_a2a(res_dict, out_dict, exp_dict, meta=None):
         avg_bw = sum(per_link) / n
         min_bw = min(per_link)
         # Every GPU must clear the guide bar so one slow device cannot be masked by the mean.
-        items = [_metric_item(f"GPU{idx} per-link", val, avg_threshold) for idx, val in enumerate(per_link)]
-        metrics = [_bandwidth_metric(f"GPU{idx:02d} per-link", val, avg_threshold) for idx, val in enumerate(per_link)]
-        metrics.append(_bandwidth_metric("per-link min", min_bw, avg_threshold))
-        metrics.append(_bandwidth_metric("per-link avg", avg_bw, avg_threshold))
+        items = [_metric_item(f"GPU{idx} per-link", val, per_link_min) for idx, val in enumerate(per_link)]
+        metrics = [_bandwidth_metric(f"GPU{idx:02d} per-link", val, per_link_min) for idx, val in enumerate(per_link)]
+        metrics.append(_bandwidth_metric("per-link min", min_bw, per_link_min))
+        metrics.append(_bandwidth_metric("per-link avg", avg_bw, per_link_min))
         if include_rtotal_charts:
             # No threshold: annotation only; cell status comes from per-link items.
             metrics.extend(_bandwidth_metric(f"GPU{idx:02d} RTotal", raw, None) for idx, raw in enumerate(raws))

@@ -6,8 +6,8 @@ from cvs.lib import transferbench_rundeck
 
 A2A_LINE = "RTotal 90.0 110.0 120.0 130.0 140.0 150.0 160.0 170.0\n"
 # Per-link for A2A_LINE is value/7; 14.0 fails GPU0 (~12.86) and passes GPU1 (~15.71).
-A2A_EXPECT = {"gpu_to_gpu_a2a_avg": "14.0"}
-A2A_EXPECT_PASS = {"gpu_to_gpu_a2a_avg": "10.0"}
+A2A_EXPECT = {"gpu_to_gpu_a2a_per_link_min": "14.0"}
+A2A_EXPECT_PASS = {"gpu_to_gpu_a2a_per_link_min": "10.0"}
 
 P2P_OK = "Averages (During UniDir): 1.1 2.2 3.3 40.5\nAverages (During BiDir): 1.1 2.2 3.3 50.5\n"
 P2P_EXPECT = {
@@ -57,12 +57,17 @@ class TestRecordA2a(unittest.TestCase):
         self.assertEqual(_node(results, "a2a")["status"], "fail")
         self.assertIn("not found", _node(results, "a2a")["items"][0]["message"])
 
-    def test_missing_avg_key_fails(self):
+    def test_missing_per_link_min_key_fails(self):
         results = {}
         transferbench_rundeck.record_a2a(results, {"n1": A2A_BOX}, {"gpu_to_gpu_a2a_rtotal": "320"})
         node = _node(results, "a2a")
         self.assertEqual(node["status"], "fail")
-        self.assertIn("gpu_to_gpu_a2a_avg", node["items"][0]["message"])
+        self.assertIn("gpu_to_gpu_a2a_per_link_min", node["items"][0]["message"])
+
+    def test_legacy_avg_alias_still_gates(self):
+        results = {}
+        transferbench_rundeck.record_a2a(results, {"n1": A2A_BOX}, {"gpu_to_gpu_a2a_avg": "32.9"})
+        self.assertEqual(_node(results, "a2a")["status"], "pass")
 
     def test_traceback_fails_passing_metrics(self):
         results = {}
@@ -75,7 +80,7 @@ class TestRecordA2a(unittest.TestCase):
 
     def test_per_link_gate_passes(self):
         results = {}
-        transferbench_rundeck.record_a2a(results, {"n1": A2A_BOX}, {"gpu_to_gpu_a2a_avg": "32.9"})
+        transferbench_rundeck.record_a2a(results, {"n1": A2A_BOX}, {"gpu_to_gpu_a2a_per_link_min": "32.9"})
         node = _node(results, "a2a")
         self.assertEqual(node["status"], "pass")
         self.assertEqual(node["items"][0]["name"], "GPU0 per-link")
@@ -84,7 +89,7 @@ class TestRecordA2a(unittest.TestCase):
     def test_benign_vmware_warning_does_not_fail_passing_metrics(self):
         results = {}
         text = A2A_BOX + "Failed to open VMware provider: No such file or directory\n"
-        transferbench_rundeck.record_a2a(results, {"n1": text}, {"gpu_to_gpu_a2a_avg": "32.9"})
+        transferbench_rundeck.record_a2a(results, {"n1": text}, {"gpu_to_gpu_a2a_per_link_min": "32.9"})
         self.assertEqual(_node(results, "a2a")["status"], "pass")
 
 
@@ -202,7 +207,7 @@ class TestA2aCharts(unittest.TestCase):
         transferbench_rundeck.record_a2a(
             results,
             {"node-a": A2A_BOX},
-            {"gpu_to_gpu_a2a_avg": "32.9", "gpu_to_gpu_a2a_rtotal": "320"},
+            {"gpu_to_gpu_a2a_per_link_min": "32.9", "gpu_to_gpu_a2a_rtotal": "320"},
             meta=meta,
         )
         node = _node(results, "a2a", "node-a")
@@ -228,7 +233,7 @@ class TestA2aCharts(unittest.TestCase):
         transferbench_rundeck.record_a2a(
             results,
             {"n1": A2A_LINE},
-            {"gpu_to_gpu_a2a_avg": "10.0", "gpu_to_gpu_a2a_rtotal": "320"},
+            {"gpu_to_gpu_a2a_per_link_min": "10.0", "gpu_to_gpu_a2a_rtotal": "320"},
         )
         node = _node(results, "a2a")
         self.assertEqual(node["status"], "pass")

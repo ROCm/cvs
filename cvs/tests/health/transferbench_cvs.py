@@ -341,22 +341,22 @@ def parse_tb_a2a_bw(out_dict, exp_dict):
             fail_test(f"RTotal row not found in TransferBench a2a output on node {node}")
             continue
         # Guide bar is per-link GB/s (≥32.9); every GPU must clear it (AIMVT-449 / PB-1).
-        avg_key = 'gpu_to_gpu_a2a_avg'
-        if avg_key not in exp_dict or str(exp_dict.get(avg_key, '')).strip() == '':
-            fail_test(f"Missing {avg_key} in transferbench.results for a2a gate on node {node}")
+        gate_key, per_link_min = transferbench_rundeck.resolve_a2a_per_link_min(exp_dict)
+        if per_link_min is None:
+            fail_test(f"Missing {gate_key} in transferbench.results for a2a gate on node {node}")
             continue
         try:
             per_link = a2a_per_link_values(rtotal_list[0])
         except ValueError as exc:
             fail_test(f"Cannot derive a2a per-link values on node {node}: {exc}")
             continue
-        threshold = float(exp_dict[avg_key])
+        threshold = float(per_link_min)
         min_bw = min(per_link)
         avg_bw = sum(per_link) / len(per_link)
         if min_bw < threshold:
             fail_test(
                 f"Actual a2a min per-link {min_bw:.3f} GB/s (mean {avg_bw:.3f}) lower than expected "
-                f"{exp_dict[avg_key]} on node {node}"
+                f"{per_link_min} on node {node}"
             )
 
 

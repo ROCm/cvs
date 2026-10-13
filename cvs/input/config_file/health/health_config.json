@@ -27,9 +27,9 @@
         "results": {
             "bytes_to_transfer": "268435456",
             "path": "/home/{user-id}/INSTALL/TransferBench",
-            "_comment_gpu_to_gpu_a2a_avg": "Required a2a guide bar (GB/s). Key name matches the coverage workbook; gate is min per-link: every GPU's RTotal_i/(N-1) must be >= this value (32.9). Mean alone is not the gate. A clearer key name can follow later.",
-            "gpu_to_gpu_a2a_avg": "32.9",
-            "_comment_gpu_to_gpu_a2a_rtotal": "If set, Run Deck also plots raw per-GPU RTotal (no threshold). Not used for a2a pass/fail; gpu_to_gpu_a2a_avg is required.",
+            "_comment_gpu_to_gpu_a2a_per_link_min": "Required a2a guide bar (GB/s): every GPU's RTotal_i/(N-1) must be >= this value (workbook 32.9). Legacy alias gpu_to_gpu_a2a_avg is still accepted.",
+            "gpu_to_gpu_a2a_per_link_min": "32.9",
+            "_comment_gpu_to_gpu_a2a_rtotal": "If set, Run Deck also plots raw per-GPU RTotal (no threshold). Not used for a2a pass/fail; gpu_to_gpu_a2a_per_link_min is required.",
             "gpu_to_gpu_a2a_rtotal": "320.0",
             "avg_gpu_to_gpu_p2p_unidir_bw": "33.9",
             "avg_gpu_to_gpu_p2p_bidir_bw": "43.9",
