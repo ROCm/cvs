@@ -215,9 +215,27 @@ class TestA2aCharts(unittest.TestCase):
         self.assertEqual(gpu00["direction"], "higher")
         self.assertEqual(gpu00["status"], "pass")
         self.assertAlmostEqual(_metric(node, "GPU07 per-link")["value"], 326.75 / 7.0, places=5)
-        self.assertEqual(_metric(node, "GPU00 RTotal")["value"], 326.11)
+        rtotal00 = _metric(node, "GPU00 RTotal")
+        self.assertEqual(rtotal00["value"], 326.11)
+        self.assertEqual(rtotal00["status"], "pass")
+        self.assertNotIn("threshold", rtotal00)
         self.assertNotIn("series", node)
         self.assertEqual(results["_meta"]["version"], "1.67.00")
+
+    def test_rtotal_chart_has_no_threshold_even_when_key_set(self):
+        results = {}
+        # Low RTotals would fail a 320 floor, but RTotal series are annotation-only.
+        transferbench_rundeck.record_a2a(
+            results,
+            {"n1": A2A_LINE},
+            {"gpu_to_gpu_a2a_avg": "10.0", "gpu_to_gpu_a2a_rtotal": "320"},
+        )
+        node = _node(results, "a2a")
+        self.assertEqual(node["status"], "pass")
+        rtotal00 = _metric(node, "GPU00 RTotal")
+        self.assertEqual(rtotal00["value"], 90.0)
+        self.assertEqual(rtotal00["status"], "pass")
+        self.assertNotIn("threshold", rtotal00)
 
     def test_simple_line_marks_gpu_under_threshold(self):
         results = {}

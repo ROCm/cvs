@@ -43,9 +43,9 @@ See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on runni
           {
               "bytes_to_transfer": "268435456",
               "path": "/home/{user-id}/INSTALL/TransferBench",
-              "_comment_gpu_to_gpu_a2a_avg": "Required a2a guide bar (GB/s): every GPU's implied per-link RTotal_i/(N-1) must be >= this value (workbook 32.9).",
+              "_comment_gpu_to_gpu_a2a_avg": "Required a2a guide bar (GB/s). Workbook key name; gate is min per-link RTotal_i/(N-1) >= 32.9.",
               "gpu_to_gpu_a2a_avg": "32.9",
-              "_comment_gpu_to_gpu_a2a_rtotal": "Optional Run Deck chart annotation only. Not used for a2a pass/fail.",
+              "_comment_gpu_to_gpu_a2a_rtotal": "If set, Run Deck plots raw RTotal with no threshold. Not used for pass/fail.",
               "gpu_to_gpu_a2a_rtotal": "320.0",
               "avg_gpu_to_gpu_p2p_unidir_bw": "33.9",
               "avg_gpu_to_gpu_p2p_bidir_bw": "43.9",
@@ -220,10 +220,10 @@ TransferBench
      - Amount of data to transfer in bytes (256 MB); this is the payload size for bandwidth tests
    * - ``gpu_to_gpu_a2a_avg``
      - 32.9
-     - Required guide bar for ``test_transfer_bench_a2a`` (GB/s). For each GPU, implied per-link bandwidth is ``RTotal_i / (N-1)``; every GPU must meet this floor (min per-link, not mean-only), matching the coverage-matrix bar of 32.9. Pytest and Run Deck both require this key. Benign VMware provider ``No such file`` lines are ignored by ``scan_test_results`` / Run Deck scanning; other provider failures are not.
+     - Required guide bar for ``test_transfer_bench_a2a`` (GB/s). The key name matches the coverage workbook (“avg”); the gate is **min** per-link: for each GPU, ``RTotal_i / (N-1)`` must be at least this value. Pytest and Run Deck both require this key. A rename (for example ``gpu_to_gpu_a2a_per_link_min``) can follow later. Benign VMware provider ``No such file`` lines are ignored by scanning; other provider failures are not.
    * - ``gpu_to_gpu_a2a_rtotal``
      - 320.0
-     - Optional aggregate RTotal values for Run Deck chart annotation only. Not a pass/fail floor; omitting ``gpu_to_gpu_a2a_avg`` fails a2a in both pytest and Run Deck.
+     - If present, Run Deck also plots raw per-GPU RTotal series **without** a threshold (annotation only), so chart status cannot disagree with the per-link cell gate. Not used for pass/fail; omitting ``gpu_to_gpu_a2a_avg`` fails a2a in both pytest and Run Deck.
    * - ``avg_gpu_to_gpu_p2p_unidir_bw``
      - 33.9
      - Average peer-to-peer unidirectional bandwidth (GB/s) between GPU pairs

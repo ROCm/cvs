@@ -307,13 +307,15 @@ def _rollup(items, summary):
 def record_a2a(res_dict, out_dict, exp_dict, meta=None):
     '''Record a2a per-link guide bar derived from per-GPU RTotal.
 
-    ``gpu_to_gpu_a2a_avg`` is required (same as parse_tb_a2a_bw). Pass/fail is
-    every GPU's implied per-link GB/s against that bar. Optional
-    ``gpu_to_gpu_a2a_rtotal`` is chart annotation only and does not gate the cell.
+    ``gpu_to_gpu_a2a_avg`` is required (same as parse_tb_a2a_bw). The key name
+    follows the coverage workbook; pass/fail is every GPU's implied per-link
+    GB/s against that bar (min, not mean). Optional ``gpu_to_gpu_a2a_rtotal``
+    only adds threshold-less RTotal chart series so they cannot show chart-fail
+    while the cell passes.
     '''
     expected = exp_dict or {}
     avg_threshold = expected.get("gpu_to_gpu_a2a_avg")
-    rtotal_threshold = expected.get("gpu_to_gpu_a2a_rtotal")
+    include_rtotal_charts = expected.get("gpu_to_gpu_a2a_rtotal") not in (None, "")
 
     def classify(text):
         if avg_threshold in (None, ""):
@@ -336,10 +338,9 @@ def record_a2a(res_dict, out_dict, exp_dict, meta=None):
         metrics = [_bandwidth_metric(f"GPU{idx:02d} per-link", val, avg_threshold) for idx, val in enumerate(per_link)]
         metrics.append(_bandwidth_metric("per-link min", min_bw, avg_threshold))
         metrics.append(_bandwidth_metric("per-link avg", avg_bw, avg_threshold))
-        if rtotal_threshold not in (None, ""):
-            metrics.extend(
-                _bandwidth_metric(f"GPU{idx:02d} RTotal", raw, rtotal_threshold) for idx, raw in enumerate(raws)
-            )
+        if include_rtotal_charts:
+            # No threshold: annotation only; cell status comes from per-link items.
+            metrics.extend(_bandwidth_metric(f"GPU{idx:02d} RTotal", raw, None) for idx, raw in enumerate(raws))
         status, items, summary = _rollup(items, f"per-link min {min_bw:.3f} / avg {avg_bw:.3f} GB/s")
         return _with_scan(text, "a2a", status, items, summary, _charts(metrics))
 
