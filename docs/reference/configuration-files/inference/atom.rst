@@ -71,7 +71,7 @@ still runs with ``cvs run atom``.
      - Native ATOM perf + MTP-3; lab pending for ``mtp3``
    * - ``mi3xx_atom_deepseek-v4-flash``
      - ``_single``
-     - Native ATOM gfx942 V4-Flash-Base TP8 FP8 KV; bring-up thresholds
+     - Native ATOM gfx942 V4-Flash-Base TP8 BF16 KV; FP8 KV decode is not available on gfx942; bring-up thresholds
    * - ``mi355x_atom_kimi-k27-code_mxfp4``
      - ``_single``
      - Native ATOM MI355X, TP4 MXFP4; same Spur/Slurm job-step as V4-Pro;

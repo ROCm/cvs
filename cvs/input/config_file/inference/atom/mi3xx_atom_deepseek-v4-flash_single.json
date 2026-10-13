@@ -1,5 +1,5 @@
 {
-  "_comment": "DeepSeek-V4-Flash-Base on gfx942 (MI300X/MI325X). TP8, FP8 KV; quant is auto-detected. Bring-up stem — calibrate thresholds after the first clean lab run. Not V4-Pro.",
+  "_comment": "DeepSeek-V4-Flash-Base on gfx942 (MI300X/MI325X). TP8, BF16 KV. FP8 KV decode has no gfx942 kernel. Quant is auto-detected. Bring-up stem — calibrate thresholds after the first clean lab run. Not V4-Pro.",
   "threshold_json": "mi325x_atom_deepseek-v4-flash_single_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -40,7 +40,7 @@
         "-tp",
         "8",
         "--kv_cache_dtype",
-        "fp8",
+        "bf16",
         "--trust-remote-code"
       ],
       "env": {
