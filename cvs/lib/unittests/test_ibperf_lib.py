@@ -255,6 +255,34 @@ class TestIbperfLib(unittest.TestCase):
         self.assertIn('link_layer', phdl.exec.call_args_list[0].args[0])
         self.assertIn('gids/0', phdl.exec.call_args_list[1].args[0])
 
+    def test_resolve_explicit_index_on_infiniband(self):
+        gids = {
+            '0': 'fe80:0000:0000:0000:a088:c203:0001:0001',
+            '3': 'fe80:0000:0000:0000:0000:0000:0000:0000',
+        }
+        for requested, value in gids.items():
+            phdl = MagicMock()
+            phdl.exec.return_value = {
+                'nodeA': f'DEVICE:mlx5_0\nLINK_LAYER:InfiniBand\nGID:{value}\nGID_TYPE:IB/RoCE v1\n'
+            }
+            with self.subTest(requested=requested), patch.object(ibperf_lib, 'fail_test') as fail:
+                self.assertEqual(ibperf_lib.resolve_gid_index(phdl, {'nodeA': ['mlx5_0']}, requested), requested)
+                fail.assert_not_called()
+            self.assertEqual(phdl.exec.call_count, 1)
+
+    def test_resolve_explicit_index_on_infiniband_rejects_zero_and_missing(self):
+        outputs = {
+            'EMPTY': 'DEVICE:mlx5_0\nLINK_LAYER:InfiniBand\nGID:0000:0000:0000:0000:0000:0000:0000:0000\nGID_TYPE:\n',
+            'MISSING': 'DEVICE:mlx5_0\nLINK_LAYER:InfiniBand\nGID_MISSING\n',
+        }
+        for name, output in outputs.items():
+            phdl = MagicMock()
+            phdl.exec.return_value = {'nodeA': output}
+            with self.subTest(name=name), patch.object(ibperf_lib, 'fail_test') as fail:
+                self.assertIsNone(ibperf_lib.resolve_gid_index(phdl, {'nodeA': ['mlx5_0']}, '3'))
+                fail.assert_called_once()
+                self.assertIn('mlx5_0', fail.call_args.args[0])
+
     def test_resolve_invalid_index_before_exec(self):
         phdl = MagicMock()
         with patch.object(ibperf_lib, 'fail_test') as fail:

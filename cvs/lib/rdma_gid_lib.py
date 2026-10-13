@@ -110,6 +110,9 @@ def check_gid_entry(device, entry, gid_index, expected_gid_type=DEFAULT_GID_TYPE
     gid = entry['gid']
     if gid is None:
         return GID_MISSING, f'GID index {index} missing on {device}: no sysfs GID entry'
+    # Checked before the InfiniBand exemption on purpose: the kernel never stores an
+    # all-zero GID, so no verbs QP can use it on any link layer. Unused InfiniBand
+    # slots read as the subnet prefix with a zero GUID (fe80::), are valid, and pass.
     if not gid or gid.lower() == ZERO_GID:
         return GID_EMPTY, f"GID index {index} is empty on {device} (value '{gid}')"
     if is_infiniband(entry['link_layer']):

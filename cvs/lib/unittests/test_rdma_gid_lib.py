@@ -63,6 +63,19 @@ class TestGidProbe(unittest.TestCase):
         self.assertEqual(gid.check_gid_entry('rocep0', wrong, 3, 'any')[0], gid.GID_OK)
         self.assertEqual(gid.check_gid_entry('rocep0', entry, 3, ' roce  V2 ')[0], gid.GID_OK)
 
+    def test_check_entry_infiniband_explicit_indexes(self):
+        port = {'present': True, 'link_layer': 'InfiniBand', 'gid': IB_PORT_GID, 'gid_type': 'IB/RoCE v1'}
+        unused = dict(port, gid=IB_UNUSED_GID)
+        for name, entry in (('port GID at 0', port), ('unused slot at 3', unused)):
+            for expected in ('RoCE v2', 'any'):
+                with self.subTest(name=name, expected=expected):
+                    self.assertEqual(gid.check_gid_entry('mlx5_0', entry, 3, expected), (gid.GID_OK, ''))
+        self.assertEqual(gid.check_gid_entry('mlx5_0', dict(port, gid_type=''), 0)[0], gid.GID_OK)
+        status, message = gid.check_gid_entry('mlx5_0', dict(port, gid=gid.ZERO_GID), 3)
+        self.assertEqual(status, gid.GID_EMPTY)
+        self.assertIn('mlx5_0', message)
+        self.assertEqual(gid.check_gid_entry('mlx5_0', dict(port, gid=None), 8)[0], gid.GID_MISSING)
+
     def test_gid_scope(self):
         self.assertEqual(gid.gid_scope(IPV4_GID), 'ipv4-mapped')
         self.assertEqual(gid.gid_scope(LINK_GID), 'link-local')

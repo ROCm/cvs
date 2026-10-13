@@ -65,3 +65,24 @@ class TestGidConsistency(unittest.TestCase):
     def test_any_type_accepts_v1(self):
         result = self.run_check(self.good.replace('GID_TYPE:RoCE v2', 'GID_TYPE:IB/RoCE v1'), 'any')
         self.assertEqual(result['status'], 'PASS')
+
+    def test_infiniband_unused_and_port_gid_pass(self):
+        ib = (
+            'DEVICE:nic0\nLINK_LAYER:InfiniBand\nGID:fe80:0000:0000:0000:a088:c203:0001:0001\nGID_TYPE:IB/RoCE v1\n'
+            'DEVICE:nic1\nLINK_LAYER:InfiniBand\nGID:fe80:0000:0000:0000:0000:0000:0000:0000\nGID_TYPE:IB/RoCE v1\n'
+        )
+        result = self.run_check(ib)
+        self.assertEqual(result['status'], 'PASS')
+        for interface in result['interfaces'].values():
+            self.assertEqual(interface['status'], 'OK')
+            self.assertEqual(interface['link_layer'], 'InfiniBand')
+
+    def test_infiniband_zero_gid_still_empty(self):
+        ib = (
+            'DEVICE:nic0\nLINK_LAYER:InfiniBand\nGID:0000:0000:0000:0000:0000:0000:0000:0000\nGID_TYPE:\n'
+            'DEVICE:nic1\nLINK_LAYER:InfiniBand\nGID:fe80:0000:0000:0000:a088:c203:0001:0001\nGID_TYPE:IB/RoCE v1\n'
+        )
+        result = self.run_check(ib)
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertEqual(result['interfaces']['nic0']['status'], 'EMPTY')
+        self.assertEqual(result['interfaces']['nic1']['status'], 'OK')
