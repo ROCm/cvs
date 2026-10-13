@@ -15,11 +15,11 @@ This directory packages the ANC validation suite as CVS tests.
 | `anc_installation.py` | `cvs run anc_installation` | Download and install the ANC tool on every node. |
 
 **Group / item suites** — there are two group suites, `anc_test_cpu` and
-`anc_test_gpu` (in the `cpu/` and `gpu/` subfolders), plus per-family
-individual-item suites — `anc_test_computerocker`, `anc_test_memrocker`,
-`anc_test_oblex`, `anc_test_gemm`, `anc_test_xgmi`, `anc_test_ualink`,
-`anc_test_pcie`, `anc_test_babel`, and `anc_test_basic` (a catch-all for one-off
-items) — each in its own subfolder. Each holds one `test_<name>` **function**
+`anc_test_gpu`, plus per-family individual-item suites —
+`anc_test_computerocker`, `anc_test_memrocker`, `anc_test_oblex`,
+`anc_test_gemm`, `anc_test_xgmi`, `anc_test_ualink`, `anc_test_pcie`,
+`anc_test_babel`, and `anc_test_basic` (a catch-all for one-off items). Each
+suite is a single file in this directory and holds one `test_<name>` **function**
 per ANC group (cpu/gpu) or individual item (the family suites). Running the
 whole suite runs every function in that set; naming a function runs just that
 one. Each function ensures ANC is installed and ROCm ldconfig is fixed first
@@ -73,8 +73,8 @@ shared `run_anc_selection` core), and artifact collection — lives in
 `cvs/lib/anc_lib.py` (group sets are `CPU_GROUPS` / `GPU_GROUPS` with the
 DIMM/UMC groups part of `CPU_GROUPS`; individual items are in the per-family
 lists above).
-Shared pytest fixtures live in this directory's `conftest.py` and apply to the
-`cpu/`, `gpu/` and all per-family item subfolders too. ANC is invoked
+Shared pytest fixtures live in this directory's `conftest.py` and apply to every
+ANC suite file beside it. ANC is invoked
 from its installed location `<prefix>/anc/anc.py` — `<prefix>` is `/opt/amdtools`
 by default, or, for **tar** installs only, the relocated `ANC_INSTALL_PATH`
 (deb/rpm always use `/opt/amdtools`).

@@ -11,9 +11,9 @@ cvs.lib.anc_lib: the group sets (CPU_GROUPS / GPU_GROUPS) and the per-family
 individual-item lists (COMPUTEROCKER_ITEMS, MEMROCKER_ITEMS, OBLEX_ITEMS,
 GEMM_ITEMS, XGMI_ITEMS, UALINK_ITEMS, PCIE_ITEMS, BABEL_ITEMS, BASIC_ITEMS).
 
-There is one committed suite file per kind — e.g. ``cpu/anc_test_cpu.py``,
-``gpu/anc_test_gpu.py``, ``computerocker/anc_test_computerocker.py``,
-``basic/anc_test_basic.py`` — each holding one ``test_<name>`` function per ANC
+There is one committed suite file per kind, flat in ``cvs/tests/anc/`` — e.g.
+``anc_test_cpu.py``, ``anc_test_gpu.py``, ``anc_test_computerocker.py``,
+``anc_test_basic.py`` — each holding one ``test_<name>`` function per ANC
 group (cpu/gpu) or individual item (the family suites). So each kind is a single
 suite in ``cvs list`` (``anc_test_cpu`` / ``anc_test_gpu`` /
 ``anc_test_computerocker`` / ...); running the whole suite runs every group/item
@@ -97,13 +97,6 @@ def test_{name}(phdl, cluster_dict, config_dict, request):
     )
 '''
 
-_INIT_TEMPLATE = '''\
-\'\'\'
-{marker}
-Package marker for the generated ANC {title} suite.
-\'\'\'
-'''
-
 
 def _write(path, content):
     with open(path, "w") as fh:
@@ -122,34 +115,32 @@ def _is_generated(path):
         return False
 
 
-def _prune_stale(subdir, keep_filenames):
-    '''Remove generated .py files in subdir not in keep_filenames.'''
-    for name in os.listdir(subdir):
+def _prune_stale(keep_filenames):
+    '''Remove generated anc_test_*.py in ANC_TESTS_DIR not in keep_filenames.'''
+    for name in os.listdir(ANC_TESTS_DIR):
         if not name.endswith(".py") or name in keep_filenames:
             continue
-        path = os.path.join(subdir, name)
+        path = os.path.join(ANC_TESTS_DIR, name)
         if _is_generated(path):
             os.remove(path)
             print(f"pruned {os.path.relpath(path, REPO_ROOT)}")
 
 
-def _prune_stale_suite_dirs(keep_subdirs):
+def _prune_stale_suite_dirs():
     '''
-    Remove orphaned generated suite files left by a renamed/removed suite.
+    Remove the old per-suite subdirs now that suites are flat in ANC_TESTS_DIR.
 
-    A renamed/removed suite (e.g. the old ``individual_items/``) leaves a whole
-    directory behind that per-subdir _prune_stale never visits, because the loop
-    only looks inside the subdirs it is currently generating. Sweep the ANC tests
-    root for any OTHER subdir containing generator-marked .py files and remove
-    ONLY those files (plus the Python bytecode cache). The directory itself is
-    removed only once it is empty, so any hand-added sibling (a README, fixture,
-    or helper placed beside a generated suite) is preserved rather than erased.
+    Earlier layouts nested each suite in its own folder (``cpu/``, ``gpu/``,
+    ``computerocker/``, ... and before that ``individual_items/``). Those dirs
+    linger after the switch to flat files. Sweep every subdir of the ANC tests
+    root, drop the generator-marked suite file, its ``__init__.py`` (also
+    generator-marked in the old layout), and the bytecode cache, then remove the
+    dir only once it is empty. A subdir with any hand-added file (e.g.
+    ``resources/``) keeps that file and the dir, rather than being erased.
     '''
     for name in sorted(os.listdir(ANC_TESTS_DIR)):
-        if name in keep_subdirs:
-            continue
         subdir = os.path.join(ANC_TESTS_DIR, name)
-        if not os.path.isdir(subdir):
+        if not os.path.isdir(subdir) or name == "__pycache__":
             continue
         generated = [f for f in os.listdir(subdir) if f.endswith(".py") and _is_generated(os.path.join(subdir, f))]
         if not generated:
@@ -173,40 +164,35 @@ def _prune_stale_suite_dirs(keep_subdirs):
             print(f"pruned stale generated files in {os.path.relpath(subdir, REPO_ROOT)} (kept non-generated files)")
 
 
-# Specs carry only the non-derivable fields: the suite name (``anc_test_<subdir>``)
+# Specs carry only the non-derivable fields: the suite name (``anc_test_<key>``)
 # and run entrypoint (``run_anc_<unit>s``) are computed in generate() rather than
 # stored, so a spec cannot drift into naming a file/entrypoint that disagrees with
-# its folder/unit. ``title`` is the lone free-text key because the CPU/GPU vs
+# its key/unit. ``title`` is the lone free-text key because the CPU/GPU vs
 # "individual item" wording is not mechanically derivable from ``unit``.
 _SUITE_SPECS = (
-    {"subdir": "cpu", "names": CPU_GROUPS, "unit": "group", "title": "CPU group"},
-    {"subdir": "gpu", "names": GPU_GROUPS, "unit": "group", "title": "GPU group"},
-    {"subdir": "computerocker", "names": COMPUTEROCKER_ITEMS, "unit": "item", "title": "ComputeRocker item"},
-    {"subdir": "memrocker", "names": MEMROCKER_ITEMS, "unit": "item", "title": "MemRocker item"},
-    {"subdir": "oblex", "names": OBLEX_ITEMS, "unit": "item", "title": "Oblex item"},
-    {"subdir": "gemm", "names": GEMM_ITEMS, "unit": "item", "title": "GEMM item"},
-    {"subdir": "xgmi", "names": XGMI_ITEMS, "unit": "item", "title": "XGMI item"},
-    {"subdir": "ualink", "names": UALINK_ITEMS, "unit": "item", "title": "UALink item"},
-    {"subdir": "pcie", "names": PCIE_ITEMS, "unit": "item", "title": "PCIe item"},
-    {"subdir": "babel", "names": BABEL_ITEMS, "unit": "item", "title": "Babel item"},
-    {"subdir": "basic", "names": BASIC_ITEMS, "unit": "item", "title": "basic item"},
+    {"key": "cpu", "names": CPU_GROUPS, "unit": "group", "title": "CPU group"},
+    {"key": "gpu", "names": GPU_GROUPS, "unit": "group", "title": "GPU group"},
+    {"key": "computerocker", "names": COMPUTEROCKER_ITEMS, "unit": "item", "title": "ComputeRocker item"},
+    {"key": "memrocker", "names": MEMROCKER_ITEMS, "unit": "item", "title": "MemRocker item"},
+    {"key": "oblex", "names": OBLEX_ITEMS, "unit": "item", "title": "Oblex item"},
+    {"key": "gemm", "names": GEMM_ITEMS, "unit": "item", "title": "GEMM item"},
+    {"key": "xgmi", "names": XGMI_ITEMS, "unit": "item", "title": "XGMI item"},
+    {"key": "ualink", "names": UALINK_ITEMS, "unit": "item", "title": "UALink item"},
+    {"key": "pcie", "names": PCIE_ITEMS, "unit": "item", "title": "PCIe item"},
+    {"key": "babel", "names": BABEL_ITEMS, "unit": "item", "title": "Babel item"},
+    {"key": "basic", "names": BASIC_ITEMS, "unit": "item", "title": "basic item"},
 )
 
 
 def generate():
+    keep_filenames = set()
     for spec in _SUITE_SPECS:
         unit = spec["unit"]
-        suite = f"anc_test_{spec['subdir']}"
+        suite = f"anc_test_{spec['key']}"
         run_func = f"run_anc_{unit}s"
-        subdir = os.path.join(ANC_TESTS_DIR, spec["subdir"])
-        os.makedirs(subdir, exist_ok=True)
-
-        _write(
-            os.path.join(subdir, "__init__.py"),
-            _INIT_TEMPLATE.format(marker=GENERATED_MARKER, title=spec["title"]),
-        )
 
         suite_filename = f"{suite}.py"
+        keep_filenames.add(suite_filename)
         content = _FILE_HEADER.format(
             marker=GENERATED_MARKER,
             title=spec["title"],
@@ -215,13 +201,12 @@ def generate():
         )
         for name in spec["names"]:
             content += _FUNC_TEMPLATE.format(name=name, unit=unit, run_func=run_func)
-        _write(os.path.join(subdir, suite_filename), content)
+        _write(os.path.join(ANC_TESTS_DIR, suite_filename), content)
 
-        _prune_stale(subdir, {"__init__.py", suite_filename})
-
-    # Drop whole directories left behind by a renamed/removed suite (e.g. the old
-    # individual_items/), which the per-subdir prune above never visits.
-    _prune_stale_suite_dirs({spec["subdir"] for spec in _SUITE_SPECS})
+    # Drop any generated suite file we no longer produce (e.g. a removed family),
+    # then sweep the old per-suite subdirs left over from the nested layout.
+    _prune_stale(keep_filenames)
+    _prune_stale_suite_dirs()
 
 
 if __name__ == "__main__":

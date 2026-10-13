@@ -6,13 +6,13 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 
 Shared pytest fixtures for the ANC CVS suites (anc_installation, the per-group
-suites under cpu/ and gpu/, the per-family individual-item suites under
-computerocker/, memrocker/, oblex/, gemm/, xgmi/, ualink/, pcie/, babel/,
-basic/, and the exec-all suites). Each suite loads the same cluster/config JSON
-and opens one parallel-SSH handle across all nodes.
+suites anc_test_cpu / anc_test_gpu, and the per-family individual-item suites
+anc_test_computerocker / memrocker / oblex / gemm / xgmi / ualink / pcie /
+babel / basic). Every suite file sits flat in this directory. Each suite loads
+the same cluster/config JSON and opens one parallel-SSH handle across all nodes.
 
-This conftest lives at tests/anc/ so its fixtures also apply to the generated
-per-group/per-item suites in all those subfolders.
+This conftest lives at tests/anc/ so its fixtures apply to every generated
+per-group/per-item suite beside it.
 '''
 
 import json
@@ -34,7 +34,7 @@ log = globals.log
 # log archives attached by anc_lib._attach_anc_logs_to_html). pytest-html 4.x
 # renders links from report.extras; the core makereport hook sets report.extras
 # first, so this wrapper appends afterwards on the "call" phase. Applies to the
-# per-group cpu/ and gpu/ suites and the exec-all suites under this directory.
+# per-group and per-item ANC suites in this directory.
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):  # noqa: ARG001
     outcome = yield
