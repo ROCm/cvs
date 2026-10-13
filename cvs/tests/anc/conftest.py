@@ -6,11 +6,13 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 
 Shared pytest fixtures for the ANC CVS suites (anc_installation, the per-group
-suites under cpu/ and gpu/, and the exec-all suites). Each suite loads the same
-cluster/config JSON and opens one parallel-SSH handle across all nodes.
+suites anc_test_cpu / anc_test_gpu, and the per-family individual-item suites
+anc_test_computerocker / memrocker / oblex / gemm / xgmi / ualink / pcie /
+babel / basic). Every suite file sits flat in this directory. Each suite loads
+the same cluster/config JSON and opens one parallel-SSH handle across all nodes.
 
-This conftest lives at tests/anc/ so its fixtures also apply to the generated
-per-group suites in the cpu/ and gpu/ subfolders.
+This conftest lives at tests/anc/ so its fixtures apply to every generated
+per-group/per-item suite beside it.
 '''
 
 import json
@@ -32,7 +34,7 @@ log = globals.log
 # log archives attached by anc_lib._attach_anc_logs_to_html). pytest-html 4.x
 # renders links from report.extras; the core makereport hook sets report.extras
 # first, so this wrapper appends afterwards on the "call" phase. Applies to the
-# per-group cpu/ and gpu/ suites and the exec-all suites under this directory.
+# per-group and per-item ANC suites in this directory.
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):  # noqa: ARG001
     outcome = yield
@@ -126,9 +128,10 @@ def anc_res_dict():
     '''
     Module-scoped structured ANC results for the Run Deck ``status_matrix`` deck.
 
-    Each ``test_<group>`` run has anc_lib.run_anc_groups merge its per-node
-    records into this dict (keyed by group, then node label). The Run Deck
-    profiles (anc_test_cpu.json / anc_test_gpu.json) name this fixture in
+    Each ``test_<group>``/``test_<item>`` run has anc_lib.run_anc_groups /
+    run_anc_items merge its per-node records into this dict (keyed by group/item,
+    then node label). Each suite's Run Deck profile (anc_test_cpu.json /
+    anc_test_gpu.json / anc_test_<family>.json) names this fixture in
     ``sources.results``, so the session binding captures it at module teardown
     and the deck is generated at session finish. Starts empty; the install-only
     suite never touches it (no deck profile registered for that stem).

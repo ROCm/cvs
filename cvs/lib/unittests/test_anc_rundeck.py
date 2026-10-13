@@ -168,12 +168,12 @@ class TestBuildNodeRecord(unittest.TestCase):
 class TestRecordGroup(unittest.TestCase):
     def test_merges_groups_and_sets_meta_once(self):
         acc = {}
-        anc_rundeck.record_group(acc, "cpu_sanity", {"n1": {"status": "pass"}}, meta={"cluster": "c"})
+        anc_rundeck.record_group(acc, "cpu_content_check", {"n1": {"status": "pass"}}, meta={"cluster": "c"})
         anc_rundeck.record_group(acc, "hbm_lvl3", {"n1": {"status": "fail"}}, meta={"cluster": "OTHER"})
         self.assertEqual(acc["_meta"]["cluster"], "c")  # first meta wins
-        self.assertIn("cpu_sanity", acc["groups"])
+        self.assertIn("cpu_content_check", acc["groups"])
         self.assertIn("hbm_lvl3", acc["groups"])
-        self.assertEqual(acc["groups"]["cpu_sanity"]["nodes"]["n1"]["status"], "pass")
+        self.assertEqual(acc["groups"]["cpu_content_check"]["nodes"]["n1"]["status"], "pass")
 
     def test_rerun_same_group_overwrites_node(self):
         acc = {}

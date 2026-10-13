@@ -16,17 +16,24 @@ stays thin:
     (1.5.0+) URLs that point straight at a ``.deb`` / ``.rpm`` / ``.tar.gz``.
     An optional version precheck / post-verify is driven by
     ``config["anc"]["anc_version"]``.
-  - Group execution (``run_anc_groups``): run one or more ANC groups in a
-    single ``anc.py -g <groups...>`` invocation on all nodes, collect the
-    per-run artifacts, and judge pass/fail from the final ANC return code.
+  - Group/item execution (``run_anc_groups`` / ``run_anc_items``): run one or
+    more ANC groups (``anc.py -g``) or individual items (``anc.py -i``) in a
+    single invocation on all nodes, collect the per-run artifacts, and judge
+    pass/fail from the final ANC return code. Both are thin wrappers over the
+    shared ``run_anc_selection`` core.
   - Setup guard (``ensure_anc_ready``): session-cached install + ldconfig that
-    each group test calls first, so a single-group run self-installs and a
+    each group/item test calls first, so a single run self-installs and a
     full-suite run pays the setup cost once.
 
 The CPU/GPU group sets consumed by the ``anc_test_cpu`` / ``anc_test_gpu``
-suites live here (``CPU_GROUPS`` / ``GPU_GROUPS``). The per-group test
-functions in those two suite files are GENERATED from these lists by
-build_tools/gen_anc_suites.py (``make gen-anc-suites``); do not hand-edit them.
+suites live here (``CPU_GROUPS`` / ``GPU_GROUPS``; the DIMM/UMC groups are part
+of ``CPU_GROUPS`` because ANC reports them under the CPU device), as do the
+per-family individual-item lists (``COMPUTEROCKER_ITEMS``, ``MEMROCKER_ITEMS``,
+``OBLEX_ITEMS``, ``GEMM_ITEMS``, ``XGMI_ITEMS``, ``UALINK_ITEMS``,
+``PCIE_ITEMS``, ``BABEL_ITEMS``, ``BASIC_ITEMS``) consumed by the
+``anc_test_<family>`` suites. The per-group/per-item test functions in those
+suite files are GENERATED from these lists by build_tools/gen_anc_suites.py
+(``make gen-anc-suites``); do not hand-edit them.
 '''
 
 import os
@@ -71,22 +78,15 @@ RESOURCES_DIR = os.path.join(
 )
 
 # --- Group sets ----------------------------------------------------------
-# CPU validation groups run in a single anc.py -g invocation.
+# CPU validation groups run in a single anc.py -g invocation. The DIMM/UMC
+# groups are reported by ANC under the CPU device, so they live here too.
 CPU_GROUPS = [
-    "ampttk_full",
-    "cachewalker_full",
-    "cpu_all",
     "cpu_content_check",
     "cpu_mfg_l10",
-    "cpu_sanity",
-    "difect_full",
-    "fpdeluge_full",
-    "hdrt_full",
-    "maxcorestim_full",
-    "memtest_full",
-    "miidct_full",
-    "mithac_full",
     "weighted_sanity",
+    "dimm_content_check",
+    "dimm_mfg_l10",
+    "dimm_weighted_sanity",
 ]
 
 # GPU validation groups run in a single anc.py -g invocation.
@@ -98,6 +98,116 @@ GPU_GROUPS = [
     "hbm_lvl3",
     "hbm_lvl4",
     "hbm_lvl5",
+]
+
+# Individual ANC items, each run on its own with a single anc.py -i invocation.
+# Unlike the group sets above -- which bundle many items under one named group --
+# these are the leaf items ANC exposes via ``anc.py --item-list``, each wired as
+# its own CVS test. They are split into per-family suites (anc_test_computerocker,
+# anc_test_memrocker, ...) so a user can run a whole tool/subsystem family at
+# once, with a single one still runnable by its ``test_<item>`` function name.
+# BASIC_ITEMS is the catch-all for one-off items that do not belong to a family.
+COMPUTEROCKER_ITEMS = [
+    "computerocker_dist001_000",
+    "computerocker_dist001_001",
+    "computerocker_dist001_002",
+    "computerocker_dist001_003",
+    "computerocker_dist001_004",
+    "computerocker_dist001_005",
+    "computerocker_dist001_006",
+    "computerocker_dist001_007",
+    "computerocker_dist001_008",
+    "computerocker_dist001_009",
+    "computerocker_dist001_010",
+    "computerocker_dist002_000",
+    "computerocker_dist002_001",
+    "computerocker_dist002_002",
+    "computerocker_dist002_003",
+    "computerocker_dist002_004",
+    "computerocker_dist002_005",
+    "computerocker_dist002_006",
+    "computerocker_dist002_007",
+    "computerocker_dist002_008",
+    "computerocker_dist002_009",
+    "computerocker_msa001_001",
+    "computerocker_msa001_002",
+    "computerocker_msa001_003",
+]
+
+MEMROCKER_ITEMS = [
+    "memrocker_1002_6",
+    "memrocker_2_2",
+    "memrocker_3_1",
+    "memrocker_405_16",
+    "memrocker_405_17",
+    "memrocker_405_18",
+    "memrocker_405_20",
+    "memrocker_407_2",
+    "memrocker_700_1",
+    "memrocker_700_2",
+]
+
+OBLEX_ITEMS = [
+    "oblex_ds",
+    "oblex_ds_ntd",
+    "oblex_metronome",
+    "oblex_opt",
+    "oblex_remix2",
+    "oblex_s16",
+    "oblex_s16_ds",
+    "oblex_trad",
+]
+
+GEMM_ITEMS = [
+    "gemm_bf16_trig",
+    "gemm_fp16_trig",
+    "gemm_fp8_trig",
+]
+
+XGMI_ITEMS = [
+    "xgmi_cpu_rx_margin",
+    "xgmi_gpu_rx_margin",
+    "xgmi_link_status",
+]
+
+UALINK_ITEMS = [
+    "ualink_gpu_rx_margin",
+    "ualink_nic_rx_margin",
+    "ualink_status",
+]
+
+PCIE_ITEMS = [
+    "pcie_gpu_rx_margin",
+    "pcie_link_status",
+    "pcie_nic_rx_margin",
+]
+
+BABEL_ITEMS = [
+    "babel_modinit_read",
+    "babel_modinit_triad",
+]
+
+# Catch-all for one-off items that do not belong to a dedicated family above
+# (includes sdma_bidi_peak alongside the other standalone transfer/stress items).
+BASIC_ITEMS = [
+    "ampttk",
+    "cachewalker",
+    "cpu_bidi_peak",
+    "difect",
+    "fpdeluge",
+    "gfx_bidi_peak",
+    "hdrt",
+    "maxcorestim",
+    "maxiostim",
+    "memblock",
+    "memripper",
+    "memtest",
+    "miidct",
+    "mithac",
+    "no_op",
+    "sdma_bidi_peak",
+    "sprites",
+    "umcinfo",
 ]
 
 # --- Artifact / return-code parsing --------------------------------------
@@ -114,14 +224,29 @@ ANC_RETURN_CODE_RE = re.compile(r"return code\s+(\S+)\s*\[(-?\d+)\]")
 # run summary; surfaced verbatim so the CVS result shows the pass/fail counts.
 ANC_ITEMS_SUMMARY_RE = re.compile(r"^\s*Items:\s*\d+\s*Total\b.*$", re.MULTILINE)
 
-# ANC reports an unknown group both as a FATAL line and a dedicated return code:
-#   "FATAL: Group 'foo' not found"
-#   "Program exiting with return code ANC_PROG_NOT_FOUND [13]"
-# Either is sufficient to conclude the requested group is not installed on that
-# node; matching both covers print_all_to_console on (raw FATAL line streams
-# back) and off (only console.log is collected, which carries the return code).
-ANC_GROUP_NOT_FOUND_RE = re.compile(r"FATAL:\s*Group\s+'([^']*)'\s+not found", re.IGNORECASE)
-ANC_PROG_NOT_FOUND_NAME = "ANC_PROG_NOT_FOUND"
+# ANC reports an unknown group/item as a FATAL line naming the SELECTION KIND:
+#   "FATAL: Group 'foo' not found"   (a -g run)
+#   "FATAL: Item 'foo' not found"    (a -i run)
+# and exits ANC_PROG_NOT_FOUND [13]. The not-available verdict is keyed off the
+# kind-scoped FATAL line (see anc_not_found_re) rather than that return code,
+# because ANC ALSO exits ANC_PROG_NOT_FOUND when a leaf item inside an
+# otherwise-present group is missing -- keying off the code would mislabel that
+# genuine group failure as "not available". The FATAL line is written to
+# console.log, which is always collected, so the scoped matcher is reliable even
+# when print_all_to_console is off.
+
+
+def anc_not_found_re(unit):
+    '''
+    Compiled "FATAL: <Kind> '<name>' not found" matcher scoped to ``unit``.
+
+    ``unit`` is "group" or "item"; the returned regex matches only that kind's
+    FATAL line (``Group`` / ``Item``), so a group run is not misclassified as
+    "not available" by an item's not-found line and vice versa.
+    '''
+    kind = "Group" if unit == "group" else "Item"
+    return re.compile(rf"FATAL:\s*{kind}\s+'([^']*)'\s+not found", re.IGNORECASE)
+
 
 # console.log is the only artifact we must have (holds the verdict). Everything
 # else is pulled best-effort as part of the whole-directory copy.
@@ -223,7 +348,7 @@ def resolve_anc_log_folder(test_name, timestamp, node=None):
 
 # ANC group runs use an INACTIVITY timeout, not a total wall-clock cap: the run
 # is aborted only after this many seconds with NO new ANC output. A group that
-# keeps printing progress runs as long as it needs (long groups like cpu_all can
+# keeps printing progress runs as long as it needs (long groups like cpu_mfg_l10 can
 # legitimately exceed any fixed total budget). The old total-budget key
 # (test_timeout) capped healthy, actively-running groups and is no longer used.
 # Override via config["anc"]["inactivity_timeout"].
@@ -1969,7 +2094,7 @@ def _find_errors_json(console_path):
     return candidate if os.path.isfile(candidate) else None
 
 
-def _evaluate_node(cluster_dict, host, output, test_name, timestamp):
+def _evaluate_node(cluster_dict, host, output, test_name, timestamp, unit="group"):
     '''
     Collect the ANC log directory for one node and decide whether it passed.
 
@@ -1983,11 +2108,16 @@ def _evaluate_node(cluster_dict, host, output, test_name, timestamp):
     exiting with return code ANC_SUCCESS [0]" line. On failure, the item summary
     and FAILED rows are surfaced.
 
+    ``unit`` ("group" / "item") scopes the not-found detection and log messages
+    to the selection kind actually run, so a group run is not misclassified by an
+    item's FATAL line (and vice versa).
+
     Returns:
       NodeResult(reason, dest_dir, label, errors_json): reason is None when the
       node passed; dest_dir/label/errors_json are filled in as far as collection
       got (errors_json is the copied-out errors.json path, or None if absent).
     '''
+    not_found_re = anc_not_found_re(unit)
     try:
         single = Pssh(
             log,
@@ -2000,11 +2130,12 @@ def _evaluate_node(cluster_dict, host, output, test_name, timestamp):
 
     label = _node_label(host, cluster_dict)
 
-    # ANC prints "FATAL: Group '<x>' not found" (and exits ANC_PROG_NOT_FOUND)
-    # when the requested group is not installed on this node. There are no useful
-    # logs to collect in that case, so report it plainly and skip collection.
-    if ANC_GROUP_NOT_FOUND_RE.search(output or ""):
-        log.error("Node %s: ANC group '%s' not found on remote system", host, test_name)
+    # ANC prints "FATAL: <Group|Item> '<x>' not found" (and exits
+    # ANC_PROG_NOT_FOUND) when the requested group/item is not installed on this
+    # node. There are no useful logs to collect in that case, so report it plainly
+    # and skip collection.
+    if not_found_re.search(output or ""):
+        log.error("Node %s: ANC %s '%s' not found on remote system", host, unit, test_name)
         return NodeResult(f"This test is not available on the remote system [{label}]", None, label, None)
 
     ld_match = LOG_DIRECTORY_RE.search(output or "")
@@ -2037,11 +2168,17 @@ def _evaluate_node(cluster_dict, host, output, test_name, timestamp):
     rc_name, rc_value = rc_matches[-1][0], int(rc_matches[-1][1])
     log.info("Node %s: ANC %s program return code is %s [%s]", host, test_name, rc_name, rc_value)
     if rc_value != 0:
-        # Fallback path: ANC still writes a Log directory on a missing group, so
-        # if the FATAL line was not surfaced in the streamed output it is caught
-        # here via the dedicated return code, with the same friendly message.
-        if rc_name == ANC_PROG_NOT_FOUND_NAME or ANC_GROUP_NOT_FOUND_RE.search(console_text):
-            log.error("Node %s: ANC group '%s' not found on remote system", host, test_name)
+        # "Not available" is decided ONLY by the unit-scoped FATAL matcher in the
+        # collected console.log, never by the ANC_PROG_NOT_FOUND return code
+        # alone. ANC exits ANC_PROG_NOT_FOUND both when the requested selection is
+        # absent AND when a leaf item inside an otherwise-present group is missing
+        # (it prints "FATAL: Item ..." and exits the same code); keying off the
+        # return code would mislabel that genuine group failure as "not
+        # available". The scoped matcher distinguishes them by the FATAL line's
+        # kind (Group vs Item), so a missing leaf item in a group falls through to
+        # the real-failure path below.
+        if not_found_re.search(console_text):
+            log.error("Node %s: ANC %s '%s' not found on remote system", host, unit, test_name)
             return NodeResult(
                 f"This test is not available on the remote system [{label}]", dest_dir, label, errors_json
             )
@@ -2226,32 +2363,55 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
     '''
     Run one or more ANC groups in a single invocation on all nodes.
 
-    Executes ``cd <ANC_DIR> && sudo ./anc.py -g <groups...>`` on every node,
-    copies the ENTIRE ANC log directory under this run's run_dir
-    (laid down as ``<run_dir>/anc_logs/<node>/<test_name>/<timestamp>``, where
-    ``<node>`` is that node's ``<ip>_<hostname>`` label), and PASSES only
-    when every node's console.log ends with ANC_SUCCESS [0]. On failure the item
-    summary and FAILED rows are surfaced. Failures across parallel nodes are
-    aggregated into a SINGLE test failure.
+    Thin wrapper over run_anc_selection with the group selector (``-g``). See
+    run_anc_selection for the full behaviour.
+    '''
+    run_anc_selection(phdl, cluster_dict, config_dict, groups, test_name, selector="-g", unit="group", request=request)
+
+
+def run_anc_items(phdl, cluster_dict, config_dict, items, test_name, request=None):
+    '''
+    Run one or more individual ANC items in a single invocation on all nodes.
+
+    Thin wrapper over run_anc_selection with the item selector (``-i``). See
+    run_anc_selection for the full behaviour.
+    '''
+    run_anc_selection(phdl, cluster_dict, config_dict, items, test_name, selector="-i", unit="item", request=request)
+
+
+def run_anc_selection(phdl, cluster_dict, config_dict, selection, test_name, selector="-g", unit="group", request=None):
+    '''
+    Run one or more ANC groups OR items in a single invocation on all nodes.
+
+    Executes ``cd <ANC_DIR> && sudo ./anc.py <selector> <selection...>`` on every
+    node (``selector`` is ``-g`` for groups or ``-i`` for items), copies the
+    ENTIRE ANC log directory under this run's run_dir (laid down as
+    ``<run_dir>/anc_logs/<node>/<test_name>/<timestamp>``, where ``<node>`` is
+    that node's ``<ip>_<hostname>`` label), and PASSES only when every node's
+    console.log ends with ANC_SUCCESS [0]. On failure the item summary and FAILED
+    rows are surfaced. Failures across parallel nodes are aggregated into a
+    SINGLE test failure.
 
     Console behaviour is config-driven: when anc.print_all_to_console is truthy
-    (default), the full ANC group output is echoed to the console; when falsey,
-    ANC output is suppressed and only the "Log directory:" line is captured
-    (the verdict always comes from the collected console.log either way).
+    (default), the full ANC output is echoed to the console; when falsey, ANC
+    output is suppressed and only the "Log directory:" line is captured (the
+    verdict always comes from the collected console.log either way).
 
     Parameters:
-      groups:    list of ANC group names passed to ``anc.py -g``.
+      selection: list of ANC group/item names passed after ``selector``.
       test_name: name used for the log path and messages (e.g. "test_cpu").
+      selector:  ``-g`` (groups) or ``-i`` (items).
+      unit:      human label for log messages ("group" / "item").
     '''
     globals.error_list = []
 
     anc_cfg = config_dict["anc"]
     # anc.py lives under the per-install prefix (a relocated tar prefix when
-    # configured, else the default), so the group run cd's to where ANC actually
+    # configured, else the default), so the run cd's to where ANC actually
     # installed rather than the fixed default dir. Prefer the session-cached
     # location resolved + node-verified by resolve_anc_install_location (via
     # ensure_anc_ready); fall back to a fresh config resolve for direct callers
-    # that ran a group without going through the readiness guard.
+    # that ran without going through the readiness guard.
     anc_dir = (_ANC_INSTALL_PATHS or resolve_anc_paths_from_config(config_dict)).anc_dir
     inactivity_timeout = anc_cfg.get(INACTIVITY_TIMEOUT_KEY, DEFAULT_ANC_INACTIVITY_TIMEOUT)
     print_all = _as_bool(anc_cfg.get(PRINT_ALL_TO_CONSOLE_KEY), default=True)
@@ -2261,7 +2421,7 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
     # "<node>" left intact, purely to announce where logs will land.
     log_pattern = resolve_anc_log_folder(test_name, timestamp)
     expected_nodes = list(cluster_dict["node_dict"].keys())
-    groups_arg = " ".join(groups)
+    selection_arg = " ".join(selection)
 
     # Announce the resolved (substituted) log directory up front so the user
     # knows exactly where this run's ANC logs will land.
@@ -2273,7 +2433,7 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
         # Run ANC normally so its full output streams back, and print it. ANC's
         # own progress lines keep the SSH channel active, which continually
         # resets the inactivity timer (only a genuine stall trips it).
-        cmd = f"cd '{anc_dir}' && sudo ./anc.py -g {groups_arg}"
+        cmd = f"cd '{anc_dir}' && sudo ./anc.py {selector} {selection_arg}"
     else:
         # Suppress the (potentially huge) ANC output: redirect stdout/stderr to
         # a per-run file on the node and echo ONLY the "Log directory:" line.
@@ -2294,7 +2454,7 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
         remote_stdout = f"{user_tmp}/anc_run_$$.out"
         cmd = (
             f"mkdir -p '{user_tmp}' && cd '{anc_dir}' && "
-            f"( sudo ./anc.py -g {groups_arg} > '{remote_stdout}' 2>&1 ) & "
+            f"( sudo ./anc.py {selector} {selection_arg} > '{remote_stdout}' 2>&1 ) & "
             f"anc_pid=$! && "
             f"last=-1; "
             f"while kill -0 $anc_pid 2>/dev/null; do "
@@ -2304,21 +2464,22 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
             f"sleep {ANC_DOWNLOAD_PROGRESS_INTERVAL}; done; "
             f"wait $anc_pid; "
             # Echo the "Log directory:" line (used to locate artifacts) and any
-            # "FATAL: Group ... not found" line so a missing group is detectable
-            # even when full ANC output is suppressed.
-            f"grep -iE 'Log directory:|FATAL: Group' '{remote_stdout}'; "
+            # "FATAL: Group/Item ... not found" line so a missing group/item is
+            # detectable even when full ANC output is suppressed.
+            f"grep -iE 'Log directory:|FATAL: (Group|Item)' '{remote_stdout}'; "
             f"rm -f '{remote_stdout}'"
         )
 
     log.info(
-        "ANC '%s': running %d group(s) (print_all_to_console=%s, inactivity_timeout=%ss, logs under %s)",
+        "ANC '%s': running %d %s(s) (print_all_to_console=%s, inactivity_timeout=%ss, logs under %s)",
         test_name,
-        len(groups),
+        len(selection),
+        unit,
         print_all,
         inactivity_timeout,
         log_pattern,
     )
-    log.info("ANC '%s': groups=%s", test_name, groups_arg)
+    log.info("ANC '%s': %ss=%s", test_name, unit, selection_arg)
 
     try:
         out_dict = phdl.exec(cmd, inactivity_timeout=inactivity_timeout)
@@ -2353,6 +2514,7 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
             out_dict[host] or "",
             test_name,
             timestamp,
+            unit=unit,
         )
         # Fall back to the host key for the label if SSH-based labelling failed,
         # so every collected dir / link stays distinct.
@@ -2380,7 +2542,7 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
     # Capture structured per-node/per-group results into the Run Deck session
     # store (best-effort; a reporting problem never fails the test).
     _capture_rundeck_results(
-        request, cluster_dict, config_dict, groups, test_name, timestamp, results, errors_hrefs, tarball_hrefs
+        request, cluster_dict, config_dict, selection, test_name, timestamp, results, errors_hrefs, tarball_hrefs
     )
 
     update_test_result()
@@ -2406,13 +2568,13 @@ def _node_status(result):
 
 
 def _capture_rundeck_results(
-    request, cluster_dict, config_dict, groups, test_name, timestamp, results, errors_hrefs, tarball_hrefs
+    request, cluster_dict, config_dict, selection, test_name, timestamp, results, errors_hrefs, tarball_hrefs
 ):
     '''
-    Build the structured per-node records for this group and merge them into the
-    module-scoped ``anc_res_dict`` fixture, which the Run Deck session binding
-    picks up at module teardown. No-op when the fixture is absent (e.g. the
-    install-only suite) or on any error.
+    Build the structured per-node records for this group/item selection and merge
+    them into the module-scoped ``anc_res_dict`` fixture, which the Run Deck
+    session binding picks up at module teardown. No-op when the fixture is absent
+    (e.g. the install-only suite) or on any error.
 
     ``errors_hrefs`` / ``tarball_hrefs`` map node label -> the relative name of
     the errors.json / log tarball actually copied next to the report by
@@ -2431,7 +2593,7 @@ def _capture_rundeck_results(
     try:
         from cvs.lib import anc_rundeck
 
-        group_label = " ".join(groups) if isinstance(groups, (list, tuple)) else str(groups)
+        group_label = " ".join(selection) if isinstance(selection, (list, tuple)) else str(selection)
         suite_name = getattr(request.config, "_suite_name", "") or "anc"
         node_records = {}
         for r in results:

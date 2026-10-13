@@ -556,7 +556,7 @@ class HtmlReportManager:
         """Record a per-test PASS/FAIL verdict for the Reports section.
 
         Args:
-            test_name (str): The test function name (e.g. "test_cpu_all").
+            test_name (str): The test function name (e.g. "test_cpu_mfg_l10").
             passed (bool): True if the test passed on every node.
             detail (str): On pass, the node list ("PASS on all nodes [...]"); on fail,
                 which node(s) failed and a short reason.
