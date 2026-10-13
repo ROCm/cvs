@@ -15,6 +15,7 @@ from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
 from cvs.lib import agfhc_rundeck, globals
+from cvs.lib.agfhc_cmd import agfhc_command, rootless_install
 from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 
 log = globals.log
@@ -135,7 +136,7 @@ def _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, group, out_dict, record
 
 def _build_agfhc_cmd(orch, path, args):
     """Build an AGFHC CLI invocation with Spur/container-safe sudo."""
-    return f'{_payload_sudo_prefix(orch)}{path}/agfhc {args}'
+    return agfhc_command(_payload_sudo_prefix(orch), path, args)
 
 
 def _run_agfhc_recipe(orch, config_dict, args, timeout, stage, out_name, agfhc_res_dict, cluster_dict, lifecycle):
@@ -172,30 +173,19 @@ def scan_agfc_results(out_dict):
 
 
 def _exec_cmds_by_host(orch, commands_by_host):
-    """Run one command per host via orch.all.exec_cmd_list when available."""
+    """Run one command per host through the selected orchestrator backend."""
     handle = getattr(orch, 'all', None)
     hosts = list(
         getattr(handle, 'reachable_hosts', None) or getattr(handle, 'host_list', None) or commands_by_host.keys()
     )
     hosts = [host for host in hosts if host in commands_by_host]
-    executor = getattr(handle, 'exec_cmd_list', None) if handle is not None else None
-    if callable(executor):
-        try:
-            output = executor([commands_by_host[host] for host in hosts], timeout=90, print_console=False)
-            if isinstance(output, dict):
-                normalized = {}
-                for host in hosts:
-                    value = output.get(host, '')
-                    if isinstance(value, dict):
-                        value = value.get('output', '')
-                    normalized[host] = str(value)
-                return normalized
-        except TypeError:
-            pass
     result = {}
     for host in hosts:
-        out = orch.exec(commands_by_host[host], hosts=[host])
-        result[host] = str(out.get(host, ''))
+        out = orch.exec(commands_by_host[host], hosts=[host], timeout=90, print_console=False)
+        value = out.get(host, '')
+        if isinstance(value, dict):
+            value = value.get('output', '')
+        result[host] = str(value)
     return result
 
 
@@ -228,6 +218,10 @@ def test_version_check(orch, config_dict, agfhc_res_dict, cluster_dict, lifecycl
     path = config_dict['path']
     log_dir = config_dict['log_dir']
     sudo_prefix = _payload_sudo_prefix(orch)
+    if rootless_install(getattr(orch, 'orchestrator_type', None), sudo_prefix) and (
+        log_dir == '/root' or log_dir.startswith('/root/')
+    ):
+        fail_test('No passwordless sudo; set agfhc.log_dir to a user-writable local directory')
     with timed_stage(lifecycle, 'version_check'):
         out_dict = orch.exec(_build_agfhc_cmd(orch, path, '-v'))
     for node in out_dict.keys():

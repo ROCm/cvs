@@ -12,6 +12,7 @@ import re
 import time
 import json
 
+from cvs.lib.agfhc_cmd import install_command, path_requires_root, rootless_install
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -149,8 +150,17 @@ def test_install_agfhc(
     # just extracts the bundled debs into /, which is correct either way.
     try:
         sudo_prefix = _payload_sudo_prefix(orch)
+        if rootless_install(getattr(orch, 'orchestrator_type', None), sudo_prefix) and path_requires_root(
+            config_dict['path']
+        ):
+            fail_test(
+                'No passwordless sudo; set agfhc.path to a user-writable directory '
+                'ending in /agfhc (install runs ./install --rocm-tar -o on its parent)'
+            )
+            update_test_result()
+            return
         out_dict = orch.exec(
-            f"{sudo_prefix}bash -c 'cd {install_dir} && ./install --rocm-tar'",
+            install_command(sudo_prefix, getattr(orch, 'orchestrator_type', None), install_dir, config_dict['path']),
             timeout=90,
         )
         for node in out_dict.keys():

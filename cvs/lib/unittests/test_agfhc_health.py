@@ -115,14 +115,15 @@ class TestCspQualAgfhcOrch(unittest.TestCase):
         handle = MagicMock()
         handle.reachable_hosts = ['host1']
         handle.host_list = ['host1']
-        handle.exec_cmd_list.return_value = {'host1': '"total_failed": 0,\n'}
         orch.all = handle
+        orch.exec.return_value = {'host1': '"total_failed": 0,\n'}
         out_dict = {'host1': 'Log directory: /var/tmp/agfhc_logs/run1\n'}
         res = csp_qual.get_log_results(orch, out_dict)
         self.assertIn('total_failed', res['host1'])
-        cmd = handle.exec_cmd_list.call_args.args[0][0]
+        cmd = orch.exec.call_args.args[0]
         self.assertTrue(cmd.startswith('sudo -n cat '))
         self.assertIn('/var/tmp/agfhc_logs/run1/results.json', cmd)
+        self.assertEqual(orch.exec.call_args.kwargs['hosts'], ['host1'])
 
     def test_get_log_results_container_omits_sudo(self):
         orch = MagicMock()
@@ -131,13 +132,14 @@ class TestCspQualAgfhcOrch(unittest.TestCase):
         handle = MagicMock()
         handle.reachable_hosts = ['host1']
         handle.host_list = ['host1']
-        handle.exec_cmd_list.return_value = {'host1': '"total_failed": 0,\n'}
         orch.all = handle
+        orch.exec.return_value = {'host1': '"total_failed": 0,\n'}
         out_dict = {'host1': 'Log directory: /var/tmp/agfhc_logs/run1\n'}
         csp_qual.get_log_results(orch, out_dict)
-        cmd = handle.exec_cmd_list.call_args.args[0][0]
+        cmd = orch.exec.call_args.args[0]
         self.assertTrue(cmd.startswith('cat '))
         self.assertNotIn('sudo', cmd)
+        self.assertEqual(orch.exec.call_args.kwargs['hosts'], ['host1'])
 
 
 class TestInstallAgfhcPayloadSudo(unittest.TestCase):

@@ -13,6 +13,7 @@ import json
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import agfhc_rundeck, globals
+from cvs.lib.agfhc_cmd import agfhc_command
 from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 
 log = globals.log
@@ -130,7 +131,7 @@ def _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, group, out_dict):
 
 def _build_agfhc_cmd(orch, path, args):
     """Build an AGFHC CLI invocation with Spur/container-safe sudo."""
-    return f'{_payload_sudo_prefix(orch)}{path}/agfhc {args}'
+    return agfhc_command(_payload_sudo_prefix(orch), path, args)
 
 
 def _run_agfhc(orch, config_dict, args, timeout, stage, agfhc_res_dict, cluster_dict, lifecycle):
