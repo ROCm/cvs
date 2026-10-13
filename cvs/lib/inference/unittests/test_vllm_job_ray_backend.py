@@ -433,6 +433,7 @@ class TestServerArgvRayVsMp(unittest.TestCase):
             with self.subTest(flag=flag):
                 self.assertIn(flag, argv)
                 self.assertEqual(_value_after(argv, flag), val)
+        self.assertEqual(argv.count("--pipeline-parallel-size"), 1)
 
     def test_mp_worker_rank_is_headless(self):
         # RC1: rank>0 mp worker additionally carries --headless; rank 0 does not.
@@ -448,8 +449,8 @@ class TestServerArgvRayVsMp(unittest.TestCase):
         self.assertEqual(_value_after(argv1, "--node-rank"), "1")
 
     def test_single_node_ray_passthrough_no_driver_flags(self):
-        # Singleton fallback is always a plain single-node server, even when a
-        # distributed config carries a Ray backend setting.
+        # With pp=1 the singleton fallback is a plain single-node server, even
+        # when a distributed config carries a Ray backend setting.
         argv = _job(serve_args=RAY, nnodes="1", pp="1")._server_argv(0)
         for flag in self._DRIVER_DIST_FLAGS:
             with self.subTest(flag=flag):
@@ -480,6 +481,9 @@ class TestServerArgvRayVsMp(unittest.TestCase):
     def test_single_node_pp_gt_1_passes_pipeline_parallel_size(self):
         argv = _job(serve_args={}, nnodes="1", pp="2")._server_argv(0)
         self.assertEqual(_value_after(argv, "--pipeline-parallel-size"), "2")
+        for flag in ("--node-rank", "--headless", "--master-addr", "--master-port", "--nnodes"):
+            self.assertNotIn(flag, argv)
+        self.assertNotIn("--distributed-executor-backend", argv)
 
 
 # --------------------------------------------------------------------------- #

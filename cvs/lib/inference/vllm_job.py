@@ -215,7 +215,8 @@ class VllmJob:
         """vllm serve arg list for a specific node rank.
 
         Distributed flags added iff nnodes > 1. On single-node (nnodes=1)
-        this yields a plain single-node vllm serve command.
+        this yields a plain single-node vllm serve command, plus
+        --pipeline-parallel-size when pp > 1.
         """
         argv = [
             "vllm",

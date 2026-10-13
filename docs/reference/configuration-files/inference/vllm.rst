@@ -521,7 +521,9 @@ Every other snake-case key is passed through to ``vllm serve``.
      - Tensor-parallel degree.
    * - ``pipeline_parallel_size``
      - ``1``
-     - Pipeline-parallel degree.
+     - Pipeline-parallel degree. On one host, vLLM needs
+       ``tensor_parallel_size`` × ``pipeline_parallel_size`` GPUs on that
+       machine, so a TP 8 × PP 2 recipe needs 16.
    * - ``port``
      - ``8888``
      - OpenAI-compatible server port.
