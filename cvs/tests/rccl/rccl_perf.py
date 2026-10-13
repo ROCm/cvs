@@ -160,9 +160,7 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective)
         start_time = orch.all.exec('date +"%a %b %e %H:%M:%S"')
 
     # Get cluster snapshot ..
-    if can_use_sudo and re.search(
-        'True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I
-    ):
+    if can_use_sudo and re.search('True', cvs_params.get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_before = create_cluster_metrics_snapshot(orch.all)
 
     result_dict = rccl_lib.RcclJob.from_config(orch, rccl_collective, config_dict, node_list, vpc_node_list).run_perf()
@@ -184,9 +182,7 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective)
             verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=False)
 
     # Get new cluster snapshot and compare ..
-    if can_use_sudo and re.search(
-        'True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I
-    ):
+    if can_use_sudo and re.search('True', cvs_params.get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_after = create_cluster_metrics_snapshot(orch.all)
         compare_cluster_metrics_snapshots(cluster_dict_before, cluster_dict_after)
 

@@ -8,6 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import datetime
 import os
 import re
+import shlex
 
 from cvs.lib.utils_lib import *
 from cvs.lib.rocm_plib import *
@@ -380,13 +381,11 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
     start_time = start_time_dict[node0].rstrip("\n")
     end_time = end_time_dict[node0].rstrip("\n")
 
-    # Extract the "Mon Jan  2 03:04:05" style prefix from the provided timestamps
-    pattern = r"([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+\:[0-9]+)"
+    # Keep seconds when the caller supplied them. Minute-only timestamps still match.
+    pattern = r"([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+:[0-9]{2}(?::[0-9]{2})?)"
     match = re.search(pattern, start_time)
     start_pattern = match.group(1)
 
-    # Extract end timestamp prefix similarly
-    pattern = r"([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+\:[0-9]+)"
     match = re.search(pattern, end_time)
     end_pattern = match.group(1)
 
@@ -406,18 +405,13 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
 _DMESG_DURING_TEST_LOG_LINE_CAP = 500
 
 
-def _shell_single_quote(value):
-    """Escape value for embedding in a single-quoted shell argument."""
-    return value.replace("'", "'\"'\"'")
-
-
 def dmesg_write_marker_cmd(marker):
     """Write marker to /dev/kmsg with the same literal text the dmesg scan searches for.
 
-    Single-quote escaping keeps $, backticks, and quotes out of shell expansion, matching
+    shlex.quote keeps $, backticks, and quotes out of shell expansion, matching
     _dmesg_slice_by_markers_cmd.
     """
-    return f"sudo echo '{_shell_single_quote(marker)}' | sudo tee /dev/kmsg"
+    return f"sudo echo {shlex.quote(marker)} | sudo tee /dev/kmsg"
 
 
 def _trim_trailing_blank_dmesg_lines(text):
@@ -444,8 +438,6 @@ def _dmesg_slice_by_markers_cmd(start_marker, end_marker):
     If the last start has no matching end (crash/hang), lines from that start to
     EOF are returned so the caller can warn and optionally scan partial output.
     """
-    start_quoted = _shell_single_quote(start_marker)
-    end_quoted = _shell_single_quote(end_marker)
     awk_script = (
         "index($0,s){buf=$0 ORS;cap=1;next} "
         "cap{buf=buf $0 ORS;if(index($0,e)){last=buf;cap=0;buf=\"\"}} "
@@ -455,7 +447,7 @@ def _dmesg_slice_by_markers_cmd(start_marker, end_marker):
         dmesg_cmd = "sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never"
     else:
         dmesg_cmd = "sudo dmesg -T | grep -E -v 'ALLOWED|DENIED' --color=never"
-    return f"{dmesg_cmd} | awk -v s='{start_quoted}' -v e='{end_quoted}' '{awk_script}'"
+    return f"{dmesg_cmd} | awk -v s={shlex.quote(start_marker)} -v e={shlex.quote(end_marker)} '{awk_script}'"
 
 
 def _legacy_dmesg_scan(output_dict):
@@ -488,9 +480,10 @@ def verify_dmesg_during_test(phdl, start_marker, end_marker):
     and scan for error/warn patterns.
 
     Intended for RCCL tests that write markers via ``tee /dev/kmsg``. Callers
-    decide whether to invoke this (e.g. ``cvs_params.dmesg_during_test``). Missing
-    markers on a node produce a warning and skip scanning on that node (test is
-    not failed).
+    decide whether to invoke this (e.g. ``cvs_params.dmesg_during_test``). An
+    empty slice or a missing start marker warns and skips scanning on that node.
+    A missing end marker warns and still scans the partial slice. Neither case
+    fails the test by itself.
     """
     log.info('scan dmesg during test (markers: %s .. %s)', start_marker, end_marker)
     output_dict = phdl.exec(_dmesg_slice_by_markers_cmd(start_marker, end_marker))
@@ -524,7 +517,6 @@ def verify_dmesg_during_test(phdl, start_marker, end_marker):
                 node,
                 end_marker,
             )
-            continue
 
         scannable[node] = text
         lines = text.splitlines()
@@ -538,14 +530,22 @@ def verify_dmesg_during_test(phdl, start_marker, end_marker):
         return err_dict
 
     if use_node_scraper_dmesg():
-        scan_result = _node_scraper_scan(
-            scannable,
-            analysis_args=cvs_dmesg_analysis_args(),
-            source_label='Dmesg',
-        )
-    else:
-        scan_result = _legacy_dmesg_scan(scannable)
+        analysis_args = cvs_dmesg_analysis_args()
+        for node, text in scannable.items():
+            events = node_scraper_adapter.parse_dmesg(text, node_name=node, analysis_args=analysis_args)
+            for event in events:
+                lines = node_scraper_adapter.event_match_lines([event])
+                if not lines:
+                    continue
+                line = lines[0]
+                if str(event.get('priority') or 'ERROR').upper() == 'WARNING':
+                    log.warning(f'WARN - WARNING pattern *** {line} *** seen in Dmesg on node {node}')
+                    continue
+                fail_test(f'ERROR - Failure pattern *** {line} *** seen in Dmesg on node {node}')
+                err_dict[node].append(line)
+        return err_dict
 
+    scan_result = _legacy_dmesg_scan(scannable)
     for node, matches in scan_result.items():
         err_dict[node] = matches
     return err_dict

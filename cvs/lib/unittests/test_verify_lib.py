@@ -1,6 +1,7 @@
 import datetime
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import unittest
@@ -283,15 +284,14 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
         self.assertIn("on node node1", fail_msg)
         self.assertNotIn("Failue", fail_msg)
 
+    @unittest.skipUnless(_HAS_BASH_AND_AWK, "requires bash and awk")
     def test_shell_single_quote_metacharacters_reach_awk_command(self):
         start_marker = "Starting Test all_reduce's size=$1 `n`"
         end_marker = "End of Test all_reduce's size=$1 `n`"
-        quoted_start = verify_lib._shell_single_quote(start_marker)
-        self.assertEqual(quoted_start, "Starting Test all_reduce'\"'\"'s size=$1 `n`")
 
         cmd = verify_lib._dmesg_slice_by_markers_cmd(start_marker, end_marker)
-        self.assertIn(f"-v s='{quoted_start}'", cmd)
-        self.assertIn(f"-v e='{verify_lib._shell_single_quote(end_marker)}'", cmd)
+        self.assertIn(f"-v s={shlex.quote(start_marker)}", cmd)
+        self.assertIn(f"-v e={shlex.quote(end_marker)}", cmd)
 
         dmesg_text = f"noise\n{start_marker}\nkernel line\n{end_marker}\nafter\n"
         sliced = self._run_marker_awk_slice(dmesg_text, start_marker, end_marker)
@@ -300,10 +300,11 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
         self.assertNotIn("noise", sliced)
         self.assertNotIn("after", sliced)
 
+    @unittest.skipUnless(_HAS_BASH_AND_AWK, "requires bash and awk")
     def test_dmesg_write_marker_cmd_preserves_shell_metacharacters(self):
         marker = """Starting Test all_reduce's size=$1 `n` say "hi\""""
         cmd = verify_lib.dmesg_write_marker_cmd(marker)
-        self.assertEqual(cmd, f"sudo echo '{verify_lib._shell_single_quote(marker)}' | sudo tee /dev/kmsg")
+        self.assertEqual(cmd, f"sudo echo {shlex.quote(marker)} | sudo tee /dev/kmsg")
 
         echo_cmd = cmd.replace("sudo echo ", "echo ", 1).split(" | sudo tee ", 1)[0]
         completed = subprocess.run(["bash", "-c", echo_cmd], capture_output=True, text=True, check=True)
@@ -419,9 +420,10 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
         self.assertEqual(len(result["node1"]), 1)
         mock_fail_test.assert_called()
 
+    @patch("cvs.lib.verify_lib.log")
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
-    def test_node_scraper_warning_fails(self, mock_parse, mock_fail_test):
+    def test_node_scraper_warning_does_not_fail(self, mock_parse, mock_fail_test, mock_log):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [
             {
@@ -443,9 +445,10 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
             phdl, "Starting Test all_reduce_perf", "End of Test all_reduce_perf"
         )
 
-        self.assertEqual(len(result["node1"]), 1)
-        self.assertIn("Runlist is getting oversubscribed", result["node1"][0])
-        mock_fail_test.assert_called()
+        self.assertEqual(result, {"node1": []})
+        mock_fail_test.assert_not_called()
+        mock_log.warning.assert_called()
+        self.assertIn("Runlist is getting oversubscribed", mock_log.warning.call_args[0][0])
         self.assertEqual(mock_parse.call_args.kwargs["analysis_args"], verify_lib.cvs_dmesg_analysis_args())
 
 
@@ -694,6 +697,9 @@ class TestErrPatterns(unittest.TestCase):
             phdl, {"node1": "Wed Sep 30 18:05:22"}, {"node1": "Wed Sep 30 18:26:07"}, till_end_flag=False
         )
 
+        cmd = phdl.exec.call_args[0][0]
+        self.assertIn("18:05:22", cmd)
+        self.assertIn("18:26:07", cmd)
         self.assertEqual(result, {"node1": []})
         mock_fail_test.assert_not_called()
 
