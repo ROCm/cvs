@@ -16,6 +16,14 @@ from cvs.lib import globals
 log = globals.log
 
 
+def _exec_or_fail(hdl, cmd, timeout=None):
+    out = hdl.exec(cmd, timeout=timeout, detailed=True)
+    for node, res in out.items():
+        if res.get('exit_code', -1) != 0:
+            fail_test(f"Command failed (exit {res['exit_code']}) on {node}: {cmd!r}\n{res['output']}")
+    return out
+
+
 @pytest.fixture(scope="module")
 def config_dict(pytestconfig):
     """Load and return the OMPI-specific configuration dictionary for the test module."""
@@ -35,53 +43,37 @@ def config_dict(pytestconfig):
     return ompi_cfg
 
 
-def detect_rocm_path(phdl, config_rocm_path):
+def detect_rocm_path(orch, config_rocm_path):
     """
     Detect the ROCm installation path, supporting both old (/opt/rocm) and new (/opt/rocm/core-X.Y) layouts.
+
     Args:
-        phdl: Parallel SSH handle
-        config_rocm_path (str): Configured ROCm path from config file ('<changeme>' for auto-detect)
+        orch: Orchestrator instance
+        config_rocm_path (str): Configured ROCm path from config file (empty string for auto-detect)
+
     Returns:
         str: Detected ROCm path
     """
-    # If rocm_path is explicitly configured, validate and use it
     if config_rocm_path and config_rocm_path != '<changeme>':
-        out_dict = phdl.exec(
-            f'test -d {config_rocm_path}/lib && ls {config_rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
-        )
-        for node, output in out_dict.items():
-            if output.strip() and 'libamdhip64.so' in output:
-                log.info(f'Using configured ROCm path: {config_rocm_path} (validated)')
-                return config_rocm_path
-            else:
-                log.warning(
-                    f'Configured ROCm path {config_rocm_path} does not contain required libraries, will auto-detect'
-                )
+        log.info(f'Using configured ROCm path: {config_rocm_path}')
+        return config_rocm_path
 
-    # Auto-detect ROCm path
     log.info('Auto-detecting ROCm path...')
 
-    # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y)
-    out_dict = phdl.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
-    for node, output in out_dict.items():
+    out_dict = orch.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
+    for output in out_dict.values():
         if output and '/opt/rocm/core-' in output:
             rocm_path = output.strip()
-            validate_dict = phdl.exec(
-                f'test -d {rocm_path}/lib && ls {rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
-            )
-            for _, lib_output in validate_dict.items():
-                if lib_output.strip() and 'libamdhip64.so' in lib_output:
-                    log.info(f'Detected ROCm path (new layout): {rocm_path}')
-                    return rocm_path
+            log.info(f'Detected ROCm path (new layout): {rocm_path}')
+            return rocm_path
 
-    # Fall back to legacy /opt/rocm
-    out_dict = phdl.exec('test -d /opt/rocm/lib && ls /opt/rocm/lib/libamdhip64.so* 2>/dev/null | head -1')
-    for node, output in out_dict.items():
-        if output.strip() and 'libamdhip64.so' in output:
+    out_dict = orch.exec('test -d /opt/rocm', detailed=True)
+    for info in out_dict.values():
+        if info.get('exit_code') == 0:
             log.info('Detected ROCm path (legacy layout): /opt/rocm')
             return '/opt/rocm'
 
-    log.warning('Could not detect ROCm path with required libraries, defaulting to /opt/rocm')
+    log.warning('Could not detect ROCm path, defaulting to /opt/rocm')
     return '/opt/rocm'
 
 
@@ -90,20 +82,22 @@ def _install_ucx(hdl, config_dict):
     install_dir = config_dict["install_dir"].rstrip('/')
     tarball_name = ucx_url.split('/')[-1]
     ucx_src = tarball_name.rstrip('.tar.gz')
-    hdl.exec(
+    _exec_or_fail(
+        hdl,
         f"mkdir -p {install_dir}/{ucx_src} && cd {install_dir}/{ucx_src} && wget -q {ucx_url} && tar -zxf {tarball_name} --strip-components=1",
         timeout=600,
     )
-    hdl.exec(f"mkdir -p {install_dir}/{ucx_src}/build")
-    hdl.exec(f"mkdir -p {install_dir}/{ucx_src}/install")
+    _exec_or_fail(hdl, f"mkdir -p {install_dir}/{ucx_src}/build")
+    _exec_or_fail(hdl, f"mkdir -p {install_dir}/{ucx_src}/install")
     rocm_path = detect_rocm_path(hdl, config_dict.get('rocm_dir', '<changeme>'))
     log.info(f'Using ROCm path for ucx configure: {rocm_path}')
-    hdl.exec(
+    _exec_or_fail(
+        hdl,
         f'cd {install_dir}/{ucx_src}/build; ../configure --prefix={install_dir}/{ucx_src}/install --with-rocm={rocm_path}',
         timeout=500,
     )
-    hdl.exec(f'cd {install_dir}/{ucx_src}/build; make -j $(nproc)', timeout=500)
-    hdl.exec(f'cd {install_dir}/{ucx_src}/build; make install', timeout=500)
+    _exec_or_fail(hdl, f'cd {install_dir}/{ucx_src}/build; make -j $(nproc)', timeout=500)
+    _exec_or_fail(hdl, f'cd {install_dir}/{ucx_src}/build; make install', timeout=500)
     return ucx_src
 
 
@@ -174,8 +168,9 @@ def test_install_ompi(orch, config_dict):
     log.info("OMPI install prefix: %s", ompi_install_prefix)
     log.info("OMPI configure cmd: %s", configure_cmd)
 
-    hdl.exec(f'cd {install_dir} && wget -q -O {tarball_name} {ompi_url}', timeout=600)
-    hdl.exec(
+    _exec_or_fail(hdl, f'cd {install_dir} && wget -q -O {tarball_name} {ompi_url}', timeout=600)
+    _exec_or_fail(
+        hdl,
         f"cd {install_dir} && "
         f"rm -rf {ompi_src_dir} && "
         f"mkdir -p {ompi_src_dir} && "
@@ -183,7 +178,7 @@ def test_install_ompi(orch, config_dict):
         f"mkdir -p {ompi_build_dir}",
         timeout=600,
     )
-    hdl.exec(f"cd {ompi_build_dir} && {configure_cmd}", timeout=900)
-    hdl.exec(f"cd {ompi_build_dir} && make -j $(nproc)", timeout=3600)
-    hdl.exec(f"cd {ompi_build_dir} && make install", timeout=1800)
+    _exec_or_fail(hdl, f"cd {ompi_build_dir} && {configure_cmd}", timeout=900)
+    _exec_or_fail(hdl, f"cd {ompi_build_dir} && make -j $(nproc)", timeout=3600)
+    _exec_or_fail(hdl, f"cd {ompi_build_dir} && make install", timeout=1800)
     update_test_result()
