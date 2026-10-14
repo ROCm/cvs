@@ -67,7 +67,7 @@ Here's an exhaustive list of the available parameters in the IB Perf configurati
      - Description
    * - ``install_perf_package``
      - True
-     - Enable automatic installation of InfiniBand performance tools
+     - Build and install perftest from source with ROCm GPU support. CVS configures perftest with ``--enable-rocm-dmabuf`` so that ``--use_rocm_dmabuf`` is available, and falls back to a ROCm-only build if that configure fails.
    * - ``install_dir``
      - ``/home/{user-id}/``
      - Installation directory for performance testing tools

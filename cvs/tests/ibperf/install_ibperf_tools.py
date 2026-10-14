@@ -233,11 +233,7 @@ def test_install_ib_perf(phdl, shdl, config_dict):
         shdl.exec(f'cd {install_dir}; git clone https://github.com/linux-rdma/perftest', print_console=False)
         shdl.exec(f'cd {install_dir}/perftest; ./autogen.sh', timeout=100, print_console=False)
         rocm_path = ibperf_lib.detect_rocm_path(shdl, config_dict.get('rocm_dir', '<changeme>'))
-        shdl.exec(
-            f'cd {install_dir}/perftest; ./configure --prefix={install_dir}/perftest --with-rocm={rocm_path} --enable-rocm',
-            timeout=200,
-            print_console=False,
-        )
+        ibperf_lib.configure_perftest(shdl, install_dir, rocm_path)
         shdl.exec(f'cd {install_dir}/perftest; make', timeout=100, print_console=False)
         shdl.exec(f'cd {install_dir}/perftest; make install', timeout=100, print_console=False)
 
@@ -255,6 +251,10 @@ def test_install_ib_perf(phdl, shdl, config_dict):
                 verified_nodes += 1
         if verified_nodes:
             log.info('Perftest installation verified on %d node(s)', verified_nodes)
+        if not ibperf_lib.check_perftest_dmabuf_support(shdl, f'{install_dir}/perftest/ib_write_bw'):
+            log.warning(
+                'perftest was built without ROCm DMA-BUF support; ibperf tests will run without --use_rocm_dmabuf'
+            )
     else:
         log.info('Skipping perftest installation (install_perf_package is not true)')
     update_test_result()
