@@ -8,7 +8,7 @@ from pathlib import Path
 
 from cvs.lib.benchmark.aorta.aorta_config_loader import AortaVariantConfig
 from cvs.lib.benchmark.aorta.unittests.fixtures import variant_dict
-from cvs.parsers.schemas import validate_config_file
+from cvs.parsers.schemas import PreflightConfigFile, validate_config_file
 
 
 class TestAortaConfigDispatch(unittest.TestCase):
@@ -37,3 +37,14 @@ class TestAortaConfigDispatch(unittest.TestCase):
             path.write_text(json.dumps(raw))
             config = validate_config_file(path)
             self.assertEqual(config.container.name, f"{getpass.getuser()}_aorta")
+
+
+class TestPreflightRdmaGidType(unittest.TestCase):
+    def test_default_gid_type(self):
+        config = PreflightConfigFile.model_validate({'connectivity_check': {'rdma': {'gid_index': '3'}}})
+        self.assertEqual(config.connectivity_check.rdma.gid_type, 'RoCE v2')
+
+    def test_any_gid_type_round_trips(self):
+        config = PreflightConfigFile.model_validate({'connectivity_check': {'rdma': {'gid_type': 'any'}}})
+        self.assertEqual(config.connectivity_check.rdma.gid_type, 'any')
+        self.assertEqual(config.model_dump()['connectivity_check']['rdma']['gid_type'], 'any')

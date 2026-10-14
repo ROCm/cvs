@@ -7,7 +7,7 @@ A comprehensive validation system for GPU clusters before running performance te
 The preflight checks system validates essential cluster health and configuration consistency across all nodes. It performs the following validations:
 
 1. **Node Health** - Validates AMDGPU/KFD, GPU visibility, and kernel health, with optional MI4XX fabric admission
-2. **GID Consistency** - Ensures RDMA interfaces have valid Global Identifier entries
+2. **GID Consistency** - Ensures RDMA interfaces have populated Global Identifier entries of the expected type
 3. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
 4. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
 5. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(opt-in)*
@@ -125,6 +125,7 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 - **`node_check.expected_rocm_version`**: ROCm version expected across all nodes
 - **`connectivity_check.rdma.interfaces`**: List of expected RDMA interface names
 - **`connectivity_check.rdma.gid_index`**: GID index validated on those interfaces
+- **`connectivity_check.rdma.gid_type`**: Expected sysfs GID type (default `"RoCE v2"`); use `"any"` to disable type checking. InfiniBand link layers are exempt.
 - **`connectivity_check.rdma.ibv_test_timeout`**: Timeout in seconds for ibv_rc_pingpong tests
 - **`connectivity_check.rdma.ibv_test_port_range`**: Port range for parallel ibv_rc_pingpong tests
 
@@ -424,6 +425,7 @@ rdma link show
 
 # Check GID entries manually
 cat /sys/class/infiniband/*/ports/1/gids/3
+cat /sys/class/infiniband/*/ports/1/gid_attrs/types/3
 ```
 
 #### RDMA Connectivity Failures
