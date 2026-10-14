@@ -1,5 +1,5 @@
 {
-  "_comment": "DeepSeek-V4-Flash FP8 single-node vLLM on gfx942 (MI300X/MI325X). Bring-up thresholds are not a gate. Set the image, model id, and models mount before running.",
+  "_comment": "DeepSeek-V4-Flash FP8 single-node vLLM parity (MI3xx/MI325X). Thresholds are not a gate.",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_vllm_deepseek-v4-flash_fp8_single_threshold.json",
   "paths": {
@@ -9,12 +9,12 @@
     "hf_token_file": "{shared_fs}/.hf_token"
   },
   "model": {
-    "id": "<changeme>",
+    "id": "deepseek-ai/DeepSeek-V4-Flash",
     "remote": 0
   },
   "container": {
     "lifetime": "per_run",
-    "name": "vllm_mi3xx_deepseek_v4_flash",
+    "name": "vllm_mi3xx_deepseek_v4_flash_fp8_single",
     "image": "<changeme>",
     "runtime": {
       "name": "docker",
@@ -37,7 +37,7 @@
   "server_params": {
     "backend": "vllm_atom",
     "nnodes": "1",
-    "model": "<changeme>",
+    "model": "deepseek-ai/DeepSeek-V4-Flash",
     "tensor_parallelism": "8",
     "pipeline_parallelism": "1",
     "port_no": "8000",
@@ -51,6 +51,13 @@
       "gpu-memory-utilization": "0.9",
       "block-size": 256,
       "no-enable-prefix-caching": true
+    },
+    "env": {
+      "VLLM_ROCM_USE_AITER": "1",
+      "VLLM_ROCM_USE_AITER_LINEAR": "1",
+      "VLLM_DSV4_ROCM_GRAPH_SAFE": "0",
+      "VLLM_USE_BREAKABLE_CUDAGRAPH": "0",
+      "AMDGCN_USE_BUFFER_OPS": "0"
     }
   },
   "benchmark_params": {
@@ -61,6 +68,7 @@
     "max_model_length": "12288",
     "metric_percentiles": "95,99",
     "client_poll_count": "80",
+    "client_poll_wait_time": "60",
     "reuse_server_across_sweep": "true"
   },
   "sweeps": {
@@ -70,5 +78,73 @@
   "runs": [],
   "platform": {
     "gpu_metrics_poll": true
+  },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
+  "accuracy": {
+    "tasks": [
+      {
+        "id": "gsm8k_flex",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      },
+      {
+        "id": "gsm8k_strict",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4,
+        "metadata": {
+          "filter": "strict-match"
+        }
+      },
+      {
+        "id": "gsm8k_stderr",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4,
+        "metadata": {
+          "filter": "flexible-extract"
+        }
+      },
+      {
+        "id": "hellaswag",
+        "task": "hellaswag",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      },
+      {
+        "id": "mmlu_pro",
+        "task": "mmlu_pro",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      },
+      {
+        "id": "bbh",
+        "task": "bbh",
+        "num_fewshot": 3,
+        "num_concurrent": 4
+      },
+      {
+        "id": "musr",
+        "task": "musr",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      },
+      {
+        "id": "arc_challenge",
+        "task": "arc_challenge",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      },
+      {
+        "id": "winogrande",
+        "task": "winogrande",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      }
+    ]
   }
 }
