@@ -706,6 +706,8 @@ def verify_expected_lat(lat_test, msg_size, res_dict, expected_res):
     count = 0
     for node in sorted(res_dict):
         if not res_dict[node]:
+            if lat_test == 'ib_read_lat':
+                continue  # passive/server side of an RDMA read has no results by design
             fail_test(
                 f'No latency results for {lat_test} msg_size={msg_size} on node {node}; '
                 f'cannot verify expected latency {threshold} us'

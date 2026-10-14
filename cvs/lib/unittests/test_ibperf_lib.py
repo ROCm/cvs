@@ -972,6 +972,22 @@ class TestVerifyExpectedLat(unittest.TestCase):
         self.assertIn('Invalid actual latency', mock_fail.call_args.args[0])
         self.assertIn('node2 gpu=3', mock_fail.call_args.args[0])
 
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_read_latency_skips_passive_node_without_results(self, mock_fail):
+        expected = {'ib_read_lat': {'8192': '50'}}
+        results = {'server': {}, 'client': {0: {'t_avg': '10.98'}, 1: {'t_avg': '10.98'}}}
+        self.assertTrue(ibperf_lib.verify_expected_lat('ib_read_lat', 8192, results, expected))
+        mock_fail.assert_not_called()
+
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_write_latency_still_fails_node_without_results(self, mock_fail):
+        expected = {'ib_write_lat': {'8192': '50'}}
+        results = {'server': {}, 'client': {0: {'t_avg': '10.98'}, 1: {'t_avg': '10.98'}}}
+        self.assertFalse(ibperf_lib.verify_expected_lat('ib_write_lat', 8192, results, expected))
+        mock_fail.assert_called_once()
+        self.assertIn('No latency results', mock_fail.call_args.args[0])
+        self.assertIn('server', mock_fail.call_args.args[0])
+
 
 class TestFindUnmatchedThresholds(unittest.TestCase):
     def test_sample_config_8388608_is_reported(self):
