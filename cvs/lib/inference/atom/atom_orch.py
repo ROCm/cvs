@@ -838,8 +838,14 @@ class AtomJob:
             "--output-file",
             self._result_artifact,
         ]
-        if self.bench_extra_args:
-            argv.extend(shlex.split(self.bench_extra_args))
+        extra = shlex.split(self.bench_extra_args) if self.bench_extra_args else []
+        # bench_serving loads the tokenizer itself. Custom models fail unless this matches the server.
+        if "--trust-remote-code" not in extra and (
+            self.serve_args.get("trust-remote-code") is True or "--trust-remote-code" in self.sglang_server_args
+        ):
+            argv.append("--trust-remote-code")
+        if extra:
+            argv.extend(extra)
         return argv
 
     def _client_argv(self):

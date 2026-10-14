@@ -798,8 +798,12 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertIn("--pp-size 2", joined)
         self.assertIn("--node-rank 1", joined)
         self.assertIn("--dist-init-addr 10.0.0.1:29501", joined)
-        client = " ".join(job._sglang_client_argv())
-        self.assertIn("sglang.bench_serving", client)
+        client = job._sglang_client_argv()
+        self.assertIn("sglang.bench_serving", " ".join(client))
+        self.assertEqual(client.count("--trust-remote-code"), 1)
+        variant.roles.server.sglang_args = []
+        job.sglang_server_args = []
+        self.assertNotIn("--trust-remote-code", job._sglang_client_argv())
 
     def test_parse_results_scaling_efficiency(self):
         raw = json.loads((_FIXTURES / "vllm_results_sample.json").read_text())
