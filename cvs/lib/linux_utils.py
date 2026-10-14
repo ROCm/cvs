@@ -852,9 +852,11 @@ def get_nearest_bus_no(target_hex: str, candidates: list[str]) -> str:
 
 
 def _parse_pci_bdf(bdf):
-    """Return (domain, bus, device, function) as ints from an address like '0000:05:00.0'."""
-    match = re.search(r'([0-9a-f]+):([0-9a-f]+):([0-9a-f]+)\.([0-9a-f])', bdf, re.I)
-    return tuple(int(field, 16) for field in match.groups())
+    """Return (domain, bus, device, function) as ints from an address like '0000:05:00.0'; domain defaults to 0."""
+    match = re.search(r'(?:([0-9a-f]+):)?([0-9a-f]{2}):([0-9a-f]{2})\.([0-7])', str(bdf), re.I)
+    if not match:
+        raise ValueError(f'invalid PCI BDF {bdf!r}')
+    return tuple(int(field, 16) for field in match.groups(default='0'))
 
 
 def pair_gpus_with_nics(gpu_bdf_list, nic_bdf_list):
@@ -883,9 +885,11 @@ def pair_gpus_with_nics(gpu_bdf_list, nic_bdf_list):
         key=lambda pair: rank(*pair),
     )
     nic_for_gpu = {}
+    used = set()
     for gpu_idx, nic_idx in candidates:
-        if gpu_idx not in nic_for_gpu and nic_idx not in nic_for_gpu.values():
+        if gpu_idx not in nic_for_gpu and nic_idx not in used:
             nic_for_gpu[gpu_idx] = nic_idx
+            used.add(nic_idx)
 
     for gpu_idx in range(len(gpus)):
         if gpu_idx not in nic_for_gpu:

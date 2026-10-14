@@ -310,6 +310,21 @@ class TestGetRdmaCapableDevicesDict(unittest.TestCase):
         self.assertEqual(result['node15'], [f'eth{i}' for i in range(8)])
 
 
+class TestParsePciBdf(unittest.TestCase):
+    def test_parses_domain_bus_device_function(self):
+        self.assertEqual(linux_utils._parse_pci_bdf('0002:e1:1f.7'), (2, 0xE1, 0x1F, 7))
+
+    def test_parses_vmd_wide_domain(self):
+        self.assertEqual(linux_utils._parse_pci_bdf('10000:e1:00.0'), (0x10000, 0xE1, 0, 0))
+
+    def test_missing_domain_defaults_to_zero(self):
+        self.assertEqual(linux_utils._parse_pci_bdf('05:00.0'), (0, 5, 0, 0))
+
+    def test_garbage_raises_value_error_naming_input(self):
+        with self.assertRaisesRegex(ValueError, 'not-a-bdf'):
+            linux_utils._parse_pci_bdf('not-a-bdf')
+
+
 class TestGetGpuNicMappingDict(unittest.TestCase):
     GPU_BUSES = (0x05, 0x15, 0x65, 0x75, 0x85, 0x95, 0xE5, 0xF5)
     SINGLE_DOMAIN_GPUS = [f'0000:{bus:02x}:00.0' for bus in GPU_BUSES]
