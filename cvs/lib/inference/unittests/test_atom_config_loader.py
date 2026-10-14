@@ -609,10 +609,22 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             if "threshold" in cfg.name:
                 continue
             raw = json.loads(cfg.read_text(encoding="utf-8"))
-            profiles = list(raw["profiles"]) if isinstance(raw.get("profiles"), dict) else [None]
-            for profile in profiles:
-                load_variant(cfg, cluster, profile=profile)
-                loaded += 1
+            profiles = raw.get("profiles")
+            # load_variant without a profile uses default_profile, which is perf.
+            selected = list(profiles) if isinstance(profiles, dict) and profiles else [None]
+            for profile in selected:
+                with self.subTest(config=cfg.name, profile=profile or "default"):
+                    variant = load_variant(cfg, cluster, profile=profile)
+                    loaded += 1
+                    if not variant.threshold_json:
+                        continue
+                    label = cfg.name if profile is None else f"{cfg.name} profile={profile}"
+                    for cell in variant.expected_cells():
+                        self.assertIn(
+                            cell,
+                            variant.thresholds,
+                            f"{label}: missing threshold cell {cell!r}",
+                        )
         self.assertGreater(loaded, 0)
 
 
