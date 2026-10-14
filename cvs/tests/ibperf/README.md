@@ -14,6 +14,8 @@ In the config file, cvs/input/config_file/ibperf/ibperf_config.json, change the 
 
 Perftest must be built with ROCm DMA-BUF support. The tests probe the perftest binary on every node before launching. The `require_dmabuf` config setting defaults to `True` and fails the test if any node lacks support; set it to `False` to run without DMA-BUF on all nodes.
 
+Each NIC uses its PCIe-local GPU. The tests find the HIP ordinal for `--use_rocm` by matching the GPU BDF against KFD topology. Setting `HIP_VISIBLE_DEVICES`, `ROCR_VISIBLE_DEVICES`, `CUDA_VISIBLE_DEVICES`, or `GPU_DEVICE_ORDINAL` in cluster `env_vars` makes the ibperf tests fail.
+
 
 ```
 (myenv) [user@host]~/cvs:(main)$

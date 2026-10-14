@@ -21,6 +21,12 @@ PERFTEST_DMABUF_BUILD_HINT = 'rebuild perftest with ROCm DMA-BUF support (config
 
 # Cached one-time ROCm path probe results for the current process.
 _rocm_path_cache = {}
+_GPU_VISIBILITY_ENV_VARS = ('HIP_VISIBLE_DEVICES', 'ROCR_VISIBLE_DEVICES', 'CUDA_VISIBLE_DEVICES', 'GPU_DEVICE_ORDINAL')
+_GPU_ENV_TAG = '__CVS_GPU_ENV__'
+_HIP_DEVICE_PROBE_CMD = (
+    'grep -HE "^(simd_count|location_id|domain) " /sys/class/kfd/kfd/topology/nodes/*/properties 2>/dev/null; '
+    f"printf '{_GPU_ENV_TAG} %s=%s\\n' " + ' '.join(f'{var} "${{{var}-}}"' for var in _GPU_VISIBILITY_ENV_VARS)
+)
 
 DEFAULT_BW_TESTS = ['ib_write_bw', 'ib_read_bw', 'ib_send_bw']
 DEFAULT_LAT_TESTS = ['ib_write_lat', 'ib_send_lat']
@@ -331,6 +337,85 @@ def configure_perftest(shdl, install_dir, rocm_path):
     return False
 
 
+def parse_kfd_gpu_bdf_list(kfd_output):
+    """Return lowercase GPU BDFs in HIP device ordinal order from KFD properties output."""
+    props = {}
+    for line in kfd_output.splitlines():
+        match = re.match(r'/sys/class/kfd/kfd/topology/nodes/(\d+)/properties:(\w+)\s+(\d+)\s*$', line.strip())
+        if match:
+            node, key, value = match.groups()
+            props.setdefault(int(node), {})[key] = int(value)
+
+    # ROCr enumerates GPU agents in KFD node order, which differs from rocm-smi card order.
+    bdfs = []
+    for node in sorted(props):
+        if props[node].get('simd_count', 0) > 0:
+            loc = props[node].get('location_id', 0)
+            dom = props[node].get('domain', 0)
+            bdfs.append(f'{dom:04x}:{(loc >> 8) & 0xFF:02x}:{(loc >> 3) & 0x1F:02x}.{loc & 0x7:x}')
+    return bdfs
+
+
+def parse_gpu_visibility_env(probe_output):
+    """Return non-empty GPU visibility variables found on tagged probe lines."""
+    visible_env = {}
+    for line in probe_output.splitlines():
+        match = re.match(rf'{_GPU_ENV_TAG} (\w+)=(.*)$', line.strip())
+        if match:
+            var, value = match.groups()
+            value = value.strip()
+            if value and var in _GPU_VISIBILITY_ENV_VARS:
+                visible_env[var] = value
+    return visible_env
+
+
+def _card_index(card):
+    return int(re.sub(r'\D', '', card))
+
+
+def get_hip_device_dict(phdl, gpu_nic_dict):
+    """Return each node's card-to-HIP-ordinal map, failing and falling back to card index when unknown."""
+    out_dict = phdl.exec(_HIP_DEVICE_PROBE_CMD, print_console=False)
+    hip_dev_dict = {}
+    for node in gpu_nic_dict:
+        node_out = out_dict.get(node, '')
+        hip_dev_dict[node] = {}
+        visible_env = parse_gpu_visibility_env(node_out)
+        if visible_env:
+            fail_test(
+                f'GPU visibility env set on node {node}: '
+                + ', '.join(f'{var}={value}' for var, value in visible_env.items())
+                + '; HIP ordinal cannot be derived from KFD topology when device visibility is remapped, '
+                'falling back to card index for --use_rocm'
+            )
+            for card in gpu_nic_dict[node]:
+                hip_dev_dict[node][card] = _card_index(card)
+        else:
+            hip_bdfs = parse_kfd_gpu_bdf_list(node_out)
+            for card in gpu_nic_dict[node]:
+                bdf = str(gpu_nic_dict[node][card].get('gpu_bdf', '')).lower()
+                if bdf in hip_bdfs:
+                    hip_dev_dict[node][card] = hip_bdfs.index(bdf)
+                else:
+                    fail_test(
+                        f'Could not map {card} (GPU {bdf}) to a HIP device on node {node}; KFD GPU BDFs: {hip_bdfs}'
+                    )
+                    hip_dev_dict[node][card] = _card_index(card)
+        log.info(
+            'HIP device map for %s: %s',
+            node,
+            {
+                card: (
+                    gpu_nic_dict[node][card].get('rdma_dev'),
+                    gpu_nic_dict[node][card].get('gpu_bdf'),
+                    hip_dev_dict[node][card],
+                )
+                for card in gpu_nic_dict[node]
+            },
+        )
+    return hip_dev_dict
+
+
 def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None):
     res_dict = {}
 
@@ -454,6 +539,7 @@ def run_ib_perf_bw_test(
     duration=60,
     rocm_path='',
     use_dmabuf=True,
+    hip_dev_dict=None,
 ):
     log.info(
         '%s: msg_size=%s qp=%s start (%ss, %d nodes)',
@@ -463,6 +549,8 @@ def run_ib_perf_bw_test(
         duration,
         len(bck_nic_dict),
     )
+    if hip_dev_dict is None:
+        hip_dev_dict = get_hip_device_dict(phdl, gpu_nic_dict)
     app_port = port_no
     result_dict = {}
     i = 0
@@ -498,7 +586,7 @@ def run_ib_perf_bw_test(
                     f"{app_path}/{bw_test}",
                     "-d",
                     rdma_dev,
-                    f"--use_rocm={gpu_no}",
+                    f"--use_rocm={hip_dev_dict[node][card_no]}",
                     *(["--use_rocm_dmabuf"] if use_dmabuf else []),
                     "-x",
                     str(gid_index),
@@ -534,7 +622,7 @@ def run_ib_perf_bw_test(
                     f"{app_path}/{bw_test}",
                     "-d",
                     rdma_dev,
-                    f"--use_rocm={gpu_no}",
+                    f"--use_rocm={hip_dev_dict[node][card_no]}",
                     *(["--use_rocm_dmabuf"] if use_dmabuf else []),
                     "-x",
                     str(gid_index),
@@ -608,8 +696,11 @@ def run_ib_perf_lat_test(
     port_no=1516,
     rocm_path='',
     use_dmabuf=True,
+    hip_dev_dict=None,
 ):
     log.info('%s: msg_size=%s start (%d nodes)', lat_test, msg_size, len(bck_nic_dict))
+    if hip_dev_dict is None:
+        hip_dev_dict = get_hip_device_dict(phdl, gpu_nic_dict)
     app_port = port_no
     result_dict = {}
     i = 0
@@ -645,7 +736,7 @@ def run_ib_perf_lat_test(
                     f"{app_path}/{lat_test}",
                     "-d",
                     rdma_dev,
-                    f"--use_rocm={gpu_no}",
+                    f"--use_rocm={hip_dev_dict[node][card_no]}",
                     *(["--use_rocm_dmabuf"] if use_dmabuf else []),
                     "-x",
                     str(gid_index),
@@ -675,7 +766,7 @@ def run_ib_perf_lat_test(
                     f"{app_path}/{lat_test}",
                     "-d",
                     rdma_dev,
-                    f"--use_rocm={gpu_no}",
+                    f"--use_rocm={hip_dev_dict[node][card_no]}",
                     *(["--use_rocm_dmabuf"] if use_dmabuf else []),
                     "-x",
                     str(gid_index),
