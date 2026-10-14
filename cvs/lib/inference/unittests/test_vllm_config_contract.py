@@ -11,6 +11,7 @@ from cvs.lib.inference.utils.vllm_config_loader import (
     load_variant,
     serialize_cli_options,
 )
+from cvs.unittests.support import FAKE_CRED
 
 
 CELL = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
@@ -120,6 +121,19 @@ class TestVllmConfigContract(unittest.TestCase):
         config["container"]["env"] = {"NCCL_IB_HCA": " , "}
         with self.assertRaisesRegex(ValidationError, "must name at least one device"):
             VariantConfig(**config)
+
+    def test_rejects_hf_token_in_container_env_without_echoing_value(self):
+        for name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
+            for extra in ({}, {"NCCL_SOCKET_IFNAME": "eno0"}):
+                with self.subTest(name=name, extra=extra):
+                    config = _config()
+                    config["container"]["env"] = {**extra, name: FAKE_CRED}
+                    with self.assertRaises(ValidationError) as ctx:
+                        VariantConfig(**config)
+                    message = str(ctx.exception)
+                    self.assertIn(f"container.env must not set ['{name}']", message)
+                    self.assertIn("paths.hf_token_file", message)
+                    self.assertNotIn(FAKE_CRED, message)
 
     def test_preserves_runtime_environment_without_model_policy(self):
         for env in (

@@ -308,7 +308,7 @@ The following keys are accepted inside the ``container`` block.
      - Docker flags; see the table below.
    * - ``env``
      - ``{}``
-     - Container-level environment variables. **Top level, not under** ``runtime.args``.
+     - Container-level environment variables. **Top level, not under** ``runtime.args``. ``HF_TOKEN`` and ``HUGGING_FACE_HUB_TOKEN`` are rejected; set ``paths.hf_token_file`` instead.
    * - ``image_tar``
      - absent
      - Path on each host to a saved image tar to ``docker load`` instead of pulling. **Top level**.
