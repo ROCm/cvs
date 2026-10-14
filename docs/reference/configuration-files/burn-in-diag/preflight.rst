@@ -151,6 +151,8 @@ RDMA connectivity (``connectivity_check.rdma``)
 - ``interfaces`` — Expected RDMA device names on all nodes
 - ``gid_index`` — GID index validated on those interfaces
 - ``gid_type`` — Expected sysfs GID type (default ``"RoCE v2"``); ``"any"`` disables type checking, and InfiniBand link layers are exempt
+- ``mtu_check`` — Enable RDMA active MTU validation, plus jumbo-frame netdev MTU validation on RoCE ports (default ``true``)
+- ``min_netdev_mtu`` / ``min_active_mtu`` — Minimum netdev MTU on RoCE ports (default ``4200``; InfiniBand ports are exempt) and active MTU on all ports (default ``4096``); ``0`` disables either threshold
 - ``ibv_test_timeout`` / ``ibv_test_port_range`` — ``ibv_rc_pingpong`` test tuning
 
 Node Smoke Tier 1 (``node_smoke_tier1``)

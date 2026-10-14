@@ -10,6 +10,12 @@ import json
 from pathlib import Path
 
 from cvs.lib.preflight.base import PreflightCheck
+from cvs.lib.preflight.mtu_check import (
+    DEFAULT_MIN_ACTIVE_MTU,
+    DEFAULT_MIN_NETDEV_MTU,
+    INFINIBAND,
+    transport_label,
+)
 from cvs.lib.preflight.node_smoke import (
     DEFAULT_ARTIFACTS_ROOT_DIR,
     NODE_SMOKE_TIER1_LABEL,
@@ -37,6 +43,7 @@ from cvs.lib import globals
 log = globals.log
 
 PREFLIGHT_CHECK_DISPLAY_NAMES = {
+    'rdma_mtu': 'RDMA MTU',
     'node_smoke_tier1': NODE_SMOKE_TIER1_LABEL,
     'node_smoke_tier2': NODE_SMOKE_TIER2_LABEL,
     'node_smoke_tier3': NODE_SMOKE_TIER3_LABEL,
@@ -100,6 +107,7 @@ class PreflightReportGenerator(PreflightCheck):
     def _generate_preflight_summary(self):
         """Build summary dict from ``self.results`` (preflight_results bundle)."""
         gid_results = self.results.get('gid_consistency', {})
+        mtu_results = self.results.get('rdma_mtu', {})
         connectivity_results = self.results.get('rdma_connectivity', {})
         rocm_results = self.results.get('rocm_versions', {})
         interface_results = self.results.get('interface_names', {})
@@ -116,6 +124,7 @@ class PreflightReportGenerator(PreflightCheck):
                 'ssh_reachability': self._summarize_reachability_results(reachability_results),
                 'node_health': self._summarize_node_health_results(node_health_results),
                 'gid_consistency': self._summarize_gid_results(gid_results),
+                'rdma_mtu': self._summarize_rdma_mtu_results(mtu_results),
                 'node_smoke_tier1': self._summarize_node_smoke_tier1_results(node_smoke_tier1_results),
                 'node_smoke_tier2': self._summarize_node_smoke_tier2_results(node_smoke_tier1_results),
                 'node_smoke_tier3': self._summarize_node_smoke_tier3_results(node_smoke_tier3_results),
@@ -141,6 +150,9 @@ class PreflightReportGenerator(PreflightCheck):
             summary['recommendations'].append(
                 "Fix GID configuration on RDMA interfaces before running performance tests"
             )
+
+        if summary['checks']['rdma_mtu']['status'] == 'FAIL':
+            summary['recommendations'].extend(self._rdma_mtu_recommendations(summary['checks']['rdma_mtu']))
 
         if summary['checks']['node_health']['status'] == 'FAIL':
             summary['recommendations'].append(
@@ -271,6 +283,92 @@ class PreflightReportGenerator(PreflightCheck):
             'failed_nodes': failed_nodes,
             'summary': f"{ok_interfaces}/{total_interfaces} interfaces have valid GID",
         }
+
+    def _summarize_rdma_mtu_results(self, mtu_results):
+        """Summarize RDMA MTU measurements across nodes."""
+        if not mtu_results or mtu_results.get('skipped') or mtu_results.get('status') == 'SKIPPED':
+            return {
+                'status': 'SKIPPED',
+                'total_interfaces': 0,
+                'ok_interfaces': 0,
+                'failed_nodes': [],
+                'summary': mtu_results.get('message', 'Not run') if mtu_results else 'Not run',
+            }
+        total_interfaces = 0
+        ok_interfaces = 0
+        failed_nodes = []
+        netdev_mtus = set()
+        active_mtus = set()
+        transports = {}
+        failed_transports = set()
+        min_netdev_mtu = DEFAULT_MIN_NETDEV_MTU
+        min_active_mtu = DEFAULT_MIN_ACTIVE_MTU
+        for node, result in mtu_results.items():
+            if not isinstance(result, dict):
+                continue
+            min_netdev_mtu = result.get('min_netdev_mtu', min_netdev_mtu)
+            min_active_mtu = result.get('min_active_mtu', min_active_mtu)
+            for iface in (result.get('interfaces') or {}).values():
+                total_interfaces += 1
+                transport = transport_label(iface.get('link_layer'))
+                if transport:
+                    transports[transport] = transports.get(transport, 0) + 1
+                if iface.get('status') == 'OK':
+                    ok_interfaces += 1
+                elif iface.get('status') == 'FAIL':
+                    failed_transports.add(transport)
+                if iface.get('netdev_mtu') is not None and transport != INFINIBAND:
+                    netdev_mtus.add(iface['netdev_mtu'])
+                if iface.get('active_mtu') is not None:
+                    active_mtus.add(iface['active_mtu'])
+            if result.get('status') == 'FAIL':
+                failed_nodes.append(node)
+        netdev_mtus = sorted(netdev_mtus)
+        active_mtus = sorted(active_mtus)
+        summary = f"{ok_interfaces}/{total_interfaces} interfaces meet MTU minimums"
+        if transports:
+            summary += ' (' + ', '.join(f"{count} {name}" for name, count in sorted(transports.items())) + ')'
+        measured = []
+        if netdev_mtus:
+            measured.append(f"netdev MTU(s) {', '.join(map(str, netdev_mtus))}")
+        if active_mtus:
+            measured.append(f"active MTU(s) {', '.join(map(str, active_mtus))}")
+        if measured:
+            summary += '; ' + ', '.join(measured)
+        return {
+            'status': 'FAIL' if failed_nodes else 'PASS',
+            'total_interfaces': total_interfaces,
+            'ok_interfaces': ok_interfaces,
+            'failed_nodes': failed_nodes,
+            'netdev_mtus': netdev_mtus,
+            'active_mtus': active_mtus,
+            'transports': transports,
+            'failed_transports': sorted(failed_transports),
+            'min_netdev_mtu': min_netdev_mtu,
+            'min_active_mtu': min_active_mtu,
+            'summary': summary,
+        }
+
+    def _rdma_mtu_recommendations(self, mtu_summary):
+        """Name the configured MTU minimums in the fix for each failing transport."""
+        failed_transports = mtu_summary.get('failed_transports') or ['']
+        min_netdev_mtu = mtu_summary.get('min_netdev_mtu', DEFAULT_MIN_NETDEV_MTU)
+        min_active_mtu = mtu_summary.get('min_active_mtu', DEFAULT_MIN_ACTIVE_MTU)
+        recommendations = []
+        if any(transport != INFINIBAND for transport in failed_transports):
+            netdev_target = f"MTU >= {min_netdev_mtu} " if min_netdev_mtu else ''
+            active_target = f" so RoCE negotiates an active MTU of at least {min_active_mtu}" if min_active_mtu else ''
+            recommendations.append(
+                f"Enable jumbo frames on RoCE netdevs ({netdev_target}end-to-end, including switches)"
+                f"{active_target}; low MTU reduces GPU-Direct RDMA bandwidth"
+            )
+        if INFINIBAND in failed_transports:
+            active_target = f" so active_mtu reaches at least {min_active_mtu}" if min_active_mtu else ''
+            recommendations.append(
+                "Raise the InfiniBand port MTU (subnet manager partition MTU and switch ports)"
+                f"{active_target}; low MTU reduces GPU-Direct RDMA bandwidth"
+            )
+        return recommendations
 
     def _summarize_node_health_results(self, health_results):
         """Summarize mandatory GPU and optional MI4XX fabric admission."""
@@ -828,6 +926,7 @@ class PreflightReportGenerator(PreflightCheck):
             {self._generate_executive_summary_html(summary)}
             {self._generate_node_health_html(results.get('node_health', {}))}
             {self._generate_gid_consistency_html(results.get('gid_consistency', {}))}
+            {self._generate_rdma_mtu_html(results.get('rdma_mtu', {}))}
             {self._generate_node_smoke_tier1_html(results.get('node_smoke_tier1') or results.get('node_smoke', {}))}
             {self._generate_node_smoke_tier2_html(results.get('node_smoke_tier1') or results.get('node_smoke', {}))}
             {self._generate_node_smoke_tier3_html(results.get('node_smoke_tier3') or results.get('tier3_info', {}))}
@@ -1229,6 +1328,41 @@ class PreflightReportGenerator(PreflightCheck):
         </section>
         """
         return html
+
+    def _generate_rdma_mtu_html(self, mtu_results):
+        """Render failing RDMA interfaces and their measured MTUs."""
+        if not mtu_results or mtu_results.get('skipped') or mtu_results.get('status') == 'SKIPPED':
+            return ''
+        rows = []
+        for node, result in mtu_results.items():
+            if not isinstance(result, dict) or result.get('status') != 'FAIL':
+                continue
+            for dev, iface in (result.get('interfaces') or {}).items():
+                if iface.get('status') != 'FAIL':
+                    continue
+                values = (
+                    node,
+                    dev,
+                    transport_label(iface.get('link_layer')) or iface.get('link_layer') or 'unknown',
+                    iface.get('netdev', ''),
+                    iface.get('netdev_mtu'),
+                    iface.get('active_mtu'),
+                    iface.get('max_mtu'),
+                    '; '.join(iface.get('errors') or []),
+                )
+                rows.append('<tr>' + ''.join(f'<td>{html.escape(str(value))}</td>' for value in values) + '</tr>')
+        if not rows:
+            return ''
+        section = '''
+        <section>
+            <h2>RDMA MTU Issues</h2>
+            <table>
+                <thead><tr><th>Node</th><th>Interface</th><th>Transport</th><th>Netdev</th><th>Netdev MTU</th><th>Active MTU</th><th>Max MTU</th><th>Issues</th></tr></thead>
+                <tbody>
+        '''
+        section += '\n'.join(rows)
+        section += '</tbody></table></section>'
+        return section
 
     def _generate_gid_consistency_html(self, gid_results):
         """Generate GID inconsistencies section - only show failed nodes."""

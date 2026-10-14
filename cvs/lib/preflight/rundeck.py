@@ -15,6 +15,7 @@ attached when the payload carries them, including values stored on the Tier 1
 per-GPU details rather than under tier2.
 '''
 
+from cvs.lib.preflight.mtu_check import INFINIBAND, transport_label
 from cvs.lib.preflight.node_smoke_rows import (
     build_tier1_metric_rows,
     build_tier2_metric_rows,
@@ -30,6 +31,7 @@ IFOE_L2 = 'ifoe_l2_connectivity'
 TRANSFERBENCH = 'transferbench_smoke'
 INTERFACE_NAMES = 'interface_names'
 GID_CONSISTENCY = 'gid_consistency'
+RDMA_MTU = 'rdma_mtu'
 NODE_SMOKE_TIER1 = 'node_smoke_tier1'
 NODE_SMOKE_TIER2 = 'node_smoke_tier2'
 NODE_SMOKE_TIER3 = 'node_smoke_tier3'
@@ -43,6 +45,7 @@ CHECK_IDS = (
     TRANSFERBENCH,
     INTERFACE_NAMES,
     GID_CONSISTENCY,
+    RDMA_MTU,
     NODE_SMOKE_TIER1,
     NODE_SMOKE_TIER2,
     NODE_SMOKE_TIER3,
@@ -57,6 +60,7 @@ LIFECYCLE_BY_TEST = {
     'test_ifoe_transferbench_smoke': TRANSFERBENCH,
     'test_interface_name_consistency': INTERFACE_NAMES,
     'test_gid_consistency': GID_CONSISTENCY,
+    'test_rdma_mtu': RDMA_MTU,
     'test_node_smoke_tier1': NODE_SMOKE_TIER1,
     'test_node_smoke_tier2': NODE_SMOKE_TIER2,
     'test_node_smoke_tier3': NODE_SMOKE_TIER3,
@@ -199,10 +203,10 @@ def _known_nodes(results, cluster_dict):
             if isinstance(nested, dict):
                 for name in nested:
                     add(name)
-        if key in (ROCM_VERSIONS, INTERFACE_NAMES, GID_CONSISTENCY) or _flat_node_map(block):
+        if key in (ROCM_VERSIONS, INTERFACE_NAMES, GID_CONSISTENCY, RDMA_MTU) or _flat_node_map(block):
             for name in _flat_node_map(block):
                 add(name)
-    for key in (ROCM_VERSIONS, INTERFACE_NAMES, GID_CONSISTENCY):
+    for key in (ROCM_VERSIONS, INTERFACE_NAMES, GID_CONSISTENCY, RDMA_MTU):
         for name in _flat_node_map(results.get(key)):
             add(name)
     return nodes
@@ -449,6 +453,46 @@ def _gid_records(results, nodes):
     return _node_map_records(block, nodes, 'gid', _summary, _items)
 
 
+def _mtu_records(results, nodes):
+    block = results.get(RDMA_MTU)
+    if not isinstance(block, dict):
+        return None
+
+    def _summary(entry):
+        interfaces = entry.get('interfaces') or {}
+        transports = sorted({transport_label(iface.get('link_layer')) for iface in interfaces.values()} - {''})
+        netdev_mtus = sorted(
+            {
+                iface['netdev_mtu']
+                for iface in interfaces.values()
+                if iface.get('netdev_mtu') is not None and transport_label(iface.get('link_layer')) != INFINIBAND
+            }
+        )
+        active_mtus = sorted(
+            {iface['active_mtu'] for iface in interfaces.values() if iface.get('active_mtu') is not None}
+        )
+        measured = []
+        if netdev_mtus:
+            measured.append(f"netdev MTU {', '.join(map(str, netdev_mtus))}")
+        if active_mtus:
+            measured.append(f"active MTU {', '.join(map(str, active_mtus))}")
+        if measured:
+            prefix = f"{'/'.join(transports)}: " if transports else ''
+            return prefix + ', '.join(measured)
+        errors = entry.get('errors') or []
+        return errors[0] if errors else ''
+
+    def _items(entry):
+        items = [
+            _item(dev, 'fail', '; '.join(iface.get('errors') or []))
+            for dev, iface in (entry.get('interfaces') or {}).items()
+            if iface.get('status') == 'FAIL'
+        ]
+        return items or _fail_items(entry.get('errors'), 'mtu')
+
+    return _node_map_records(block, nodes, 'mtu', _summary, _items)
+
+
 def _smoke_block(results):
     block = results.get(NODE_SMOKE_TIER1) or results.get('node_smoke')
     return block if isinstance(block, dict) else None
@@ -670,6 +714,7 @@ _BUILDERS = {
     TRANSFERBENCH: _transferbench_records,
     INTERFACE_NAMES: _interface_records,
     GID_CONSISTENCY: _gid_records,
+    RDMA_MTU: _mtu_records,
     NODE_SMOKE_TIER1: _tier1_records,
     NODE_SMOKE_TIER2: _tier2_records,
     NODE_SMOKE_TIER3: _tier3_records,
