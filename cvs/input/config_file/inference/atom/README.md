@@ -22,16 +22,16 @@ Configs are lab-validated unless a row is marked pending or bring-up.
 
 | Stem | Files | Driver |
 |------|-------|--------|
-| `mi3xx_atom_deepseek-r1_fp8` | `_single` (profiles: `perf`, `mtp3`), `_distributed` (`vllm_atom` PP=2) | native `atom` / `vllm_atom` |
+| `mi3xx_atom_deepseek-r1_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` |
 | `mi3xx_atom_qwen3.5-397b-a17b_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` |
 | `mi355x_atom_kimi-k27-code_mxfp4` | `_single` | native `atom` (MI355X; bring-up thresholds) |
 | `mi355x_atom_deepseek-v4-pro` | `_single` | native `atom` (MI355X; bring-up thresholds) |
 | `mi355x_atom_qwen3.5-397b-a17b_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` (MI355X; bring-up thresholds; `mtp3` benchmark cells lab-run, GSM8K pending) |
-| `mi3xx_atom_vllm_deepseek-r1_fp8` | `_single` | `vllm_atom` (serving schema) |
+| `mi3xx_atom_vllm_deepseek-r1_fp8` | `_single`, `_distributed` | `vllm_atom` (serving schema; distributed uses PP=2) |
 | `mi3xx_atom_vllm_gpt-oss-120b_mxfp4` | `_single` | `vllm_atom` (serving schema) |
-| `mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `vllm_atom` (serving schema; lab pending) |
+| `mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `vllm_atom` (serving schema; `_single` lab-validated; `_distributed` pending) |
 | `mi3xx_atom_sglang_deepseek-r1_fp8` | `_single`, `_distributed` | `sglang` (serving schema) |
-| `mi3xx_atom_sglang_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `sglang` (serving schema; lab pending) |
+| `mi3xx_atom_sglang_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `sglang` (serving schema; `_single` lab-validated; `_distributed` pending) |
 
 Parity configs (`atom_vllm`, `atom_sglang`) use the unified serving schema:
 `server_params`, `benchmark_params`, `sweeps`, `runs`. Run with ``cvs run atom``.

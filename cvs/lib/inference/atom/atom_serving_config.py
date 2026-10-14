@@ -176,6 +176,17 @@ def serving_to_atom_variant_raw(raw: Mapping[str, Any], thresholds: Mapping[str,
         params["master_port"] = str(server.get("master_port") or server.get("dist_init_port"))
     if bench.get("scaling_baseline_output_throughput"):
         params["scaling_baseline_output_throughput"] = str(bench["scaling_baseline_output_throughput"])
+    for key in (
+        "server_poll_count",
+        "server_poll_wait_time",
+        "server_precheck_wait_s",
+        "server_warmup_wait_s",
+    ):
+        value = server.get(key)
+        if value is None:
+            value = bench.get(key)
+        if value is not None:
+            params[key] = str(value)
 
     model = dict(raw.get("model") or {})
     if not model.get("id"):
