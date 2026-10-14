@@ -358,6 +358,65 @@ class TestIbperfLib(unittest.TestCase):
         worksheet.merge_range.assert_any_call('A1:Z1', 'Test ib_write_lat - latency results', ANY)
 
 
+BW_LOG = '8192 bytes of GPU buffer\n 8192       5000           512.00             517.14             7.89\n'
+
+
+class TestWaitForPerftestExit(unittest.TestCase):
+    @patch.object(ibperf_lib.time, 'sleep')
+    def test_returns_once_pgrep_confirms_exit(self, _sleep):
+        phdl = MagicMock()
+        phdl.exec.side_effect = [
+            {'node1': 'pgrep_rc=0', 'node2': 'pgrep_rc=1'},
+            {'node1': 'pgrep_rc=1', 'node2': 'pgrep_rc=1'},
+        ]
+
+        self.assertEqual(ibperf_lib.wait_for_perftest_exit(phdl, 'raw_ethernet_burst_lat', 90), [])
+        self.assertEqual(phdl.exec.call_count, 2)
+        self.assertIn('pgrep -x raw_ethernet_bu ', phdl.exec.call_args.args[0])
+
+    def test_errored_poll_is_not_counted_as_exited(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': 'pgrep_rc=1', 'node2': 'ABORT: Timeout Error in Host: node2'}
+
+        self.assertEqual(ibperf_lib.wait_for_perftest_exit(phdl, 'ib_write_bw', 0), ['node2'])
+
+
+class TestGetIbBwPps(unittest.TestCase):
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_stops_polling_once_every_node_reports(self, mock_fail):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': BW_LOG, 'node2': BW_LOG}
+
+        res = ibperf_lib.get_ib_bw_pps(phdl, 8192, 'cat /tmp/ib_perf_0_logs')
+
+        self.assertEqual(res, {n: {'bw': '517.14', 'pps': '7.89'} for n in ('node1', 'node2')})
+        self.assertEqual(phdl.exec.call_count, 2)
+        mock_fail.assert_not_called()
+
+    @patch.object(ibperf_lib, 'PERFTEST_BW_RESULT_TIMEOUT_S', 0)
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_fails_once_per_node_after_retries_run_out(self, mock_fail):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': BW_LOG, 'node2': '8192 bytes of GPU buffer\n'}
+
+        res = ibperf_lib.get_ib_bw_pps(phdl, 8192, 'cat /tmp/ib_perf_0_logs')
+
+        self.assertEqual(res, {'node1': {'bw': '517.14', 'pps': '7.89'}})
+        self.assertEqual(mock_fail.call_count, 2)
+        self.assertTrue(all('node2' in c.args[0] for c in mock_fail.call_args_list))
+
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_exited_node_without_result_is_read_once(self, mock_fail):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': BW_LOG, 'node2': "Couldn't initialize ROCm device\n"}
+
+        res = ibperf_lib.get_ib_bw_pps(phdl, 8192, 'cat /tmp/ib_perf_0_logs', running=[])
+
+        self.assertEqual(res, {'node1': {'bw': '517.14', 'pps': '7.89'}})
+        self.assertEqual(phdl.exec.call_count, 2)
+        self.assertTrue(any('perftest exited without a result' in c.args[0] for c in mock_fail.call_args_list))
+
+
 class TestGetPerftestConfigureCmd(unittest.TestCase):
     def test_includes_rocm_dmabuf_by_default(self):
         self.assertEqual(
@@ -475,12 +534,13 @@ class TestReadLatencyResults(unittest.TestCase):
         self.assertEqual(len(results['client']), 8)
         self.assertTrue(all(row['t_avg'] == '10.98' for row in results['client'].values()))
 
+    @patch.object(ibperf_lib, 'PERFTEST_LAT_RESULT_TIMEOUT_S', 0)
     def test_write_latency_requires_server_table(self):
         server_log = 'allocated 65536 bytes of GPU buffer\n'
         client_log = server_log + '8192 1000 10.66 13.76 10.97 10.98 0.10 12.01 13.76\n'
         phdl = MagicMock()
         phdl.exec.return_value = {'server': server_log, 'client': client_log}
-        with patch.object(ibperf_lib.time, 'sleep'), patch.object(ibperf_lib, 'fail_test') as mock_fail:
+        with patch.object(ibperf_lib, 'fail_test') as mock_fail:
             results = ibperf_lib.get_ib_lat_numb(phdl, 8192, 'cat /tmp/ib_perf_0_logs')
 
         self.assertEqual(results['client']['t_avg'], '10.98')
@@ -575,8 +635,18 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
         self.run_latency()
         self.assertFalse(any('--help' in call.args[0] for call in self.phdl.exec.call_args_list))
 
+    @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
+    def test_waits_for_perftest_exit(self, mock_wait):
+        self.run_latency()
+        mock_wait.assert_called_once_with(self.phdl, 'ib_write_lat', ibperf_lib.PERFTEST_LAT_EXIT_TIMEOUT_S)
+
 
 class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
+    @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
+    def test_waits_for_perftest_exit_bounded_by_duration(self, mock_wait):
+        self.run_bandwidth(duration=30)
+        mock_wait.assert_called_once_with(self.phdl, 'ib_write_bw', 30 + ibperf_lib.PERFTEST_EXIT_SLACK_S)
+
     def test_builds_bw_commands_without_dmabuf(self):
         self.run_bandwidth(use_dmabuf=False)
         self.assertEqual(
@@ -1034,9 +1104,10 @@ class TestFindUnmatchedThresholds(unittest.TestCase):
 
 
 class TestSampleConfigDuration(unittest.TestCase):
+    @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
     @patch.object(ibperf_lib.time, 'sleep')
     @patch.object(ibperf_lib, 'get_ib_bw_pps', return_value={})
-    def test_sample_duration_finishes_before_results_are_read(self, _bw_pps, mock_sleep):
+    def test_sample_duration_finishes_before_results_are_read(self, _bw_pps, _sleep, mock_wait):
         config = json.loads(SAMPLE_CONFIG.read_text())['ibperf']
         duration = int(config['duration'])
         nodes = ('node1', 'node2')
@@ -1063,8 +1134,7 @@ class TestSampleConfigDuration(unittest.TestCase):
 
         _, client_cmd = phdl.exec_cmd_list.call_args_list[1].args[0]
         self.assertIn(f' -D {duration} ', client_cmd)
-        results_read_after = max(c.args[0] for c in mock_sleep.call_args_list)
-        self.assertLess(duration + PERFTEST_SETUP_HEADROOM_S, results_read_after)
+        self.assertLess(duration + PERFTEST_SETUP_HEADROOM_S, mock_wait.call_args.args[2])
 
 
 if __name__ == '__main__':
