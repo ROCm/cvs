@@ -176,6 +176,8 @@ A matching NIC/rank reference takes precedence over a flat reference. Flat refer
 
 Set `cvs_params.verify_bus_bw` to `"True"` to enforce bandwidth thresholds. Measurements below 95% of the configured reference fail, and a missing threshold for a requested collective also fails. Dip checks stay off unless `verify_bw_dip` or `verify_lat_dip` is `"True"`; either flag uses the resolved reference message sizes. With no matching reference, these checks have no reference data to validate.
 
+When `cvs_params.verify_ecc_delta` is `"True"` (default `"False"`), `rccl_perf` and `rccl_regression` capture UMC/SDMA/GFX/MMHUB/PCIE_BIF/HDP/XGMI_WAFL CE/UE/DE counters and log one post-test INFO table per node. Optionally set `cvs_params.verify_ecc_blocks` to a list of block names (for example `["UMC", "XGMI_WAFL"]`) to limit capture and delta reporting to those blocks; omit or leave empty for all blocks. An increase is a warning and does not fail the test. Grep the pytest log for `ECC_BLOCKS`. This requires passwordless sudo.
+
 ### Regression combinations
 
 A non-empty `regression` object is required for parametrization:
