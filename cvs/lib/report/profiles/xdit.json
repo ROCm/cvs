@@ -22,7 +22,7 @@
   },
   "sweep": {
     "metric_prefix": "",
-    "tier_order": ["latency", "record"],
+    "tier_order": ["latency", "quality", "record"],
     "throughput_metric": "avg_pipe_time_s",
     "ttft_metric": "avg_pipe_time_s",
     "headline_metric": "avg_pipe_time_s",
@@ -38,13 +38,16 @@
       ["Ring", "ring_degree"],
       ["Avg pipe time (s)", "avg_pipe_time_s"],
       ["Avg total time (s)", "avg_total_time_s"],
+      ["CLIP score", "clip_score"],
+      ["Mean frame CLIP", "mean_frame_clip_score"],
       ["Samples", "sample_count"],
-      ["Backend", "backend"],
-      ["Output", "output_dir"]
+      ["Backend", "backend"]
     ],
     "cell_highlights": [
       ["avg_pipe_time_s", "Avg pipe time"],
       ["avg_total_time_s", "Avg total time"],
+      ["clip_score", "CLIP score"],
+      ["mean_frame_clip_score", "Mean frame CLIP"],
       ["ulysses_degree", "Ulysses"],
       ["ring_degree", "Ring"],
       ["sample_count", "Samples"]
@@ -62,6 +65,7 @@
       "parallelism",
       "generate_and_benchmark",
       "parse_thresholds",
+      "clip_score",
       "teardown"
     ],
     "cell_labels": ["generate_and_benchmark", "parse_thresholds"]

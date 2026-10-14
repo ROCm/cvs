@@ -1,5 +1,7 @@
 """Unit tests for xDiT pytest wiring helpers."""
 
+import base64
+import json
 import os
 import tempfile
 import unittest
@@ -7,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from cvs.lib import globals
+from cvs.lib.inference.xdit.xdit_benchmark_job import cleanup_staged_artifacts
 from cvs.tests.inference.xdit import conftest
 from cvs.tests.inference.xdit._shared import (
     Lifecycle,
@@ -18,6 +21,7 @@ from cvs.tests.inference.xdit._shared import (
     _report_dimensions,
     _report_threshold,
     benchmark_params_from_variant,
+    clip_score_stage,
     hf_remote_download_enabled,
     hf_token_from_variant,
     inference_from_variant,
@@ -157,6 +161,10 @@ class TestReportResults(unittest.TestCase):
 
         self.assertEqual(_report_threshold(thresholds, "mi300x", "avg_pipe_time_s"), {"kind": "max", "value": 3.0})
         self.assertEqual(_report_threshold(thresholds, "other", "avg_pipe_time_s"), {"kind": "max", "value": 10.0})
+        self.assertEqual(
+            _report_threshold({"auto": {"min_clip_score": 20.0}}, "mi355", "clip_score"),
+            {"kind": "min", "value": 20.0},
+        )
 
 
 class _RecordingReportManager:
@@ -177,11 +185,12 @@ class TestAttachBenchmarkArtifacts(unittest.TestCase):
             os.makedirs(flux)
             os.makedirs(wan)
             flux_timing = os.path.join(flux, "timing.json")
+            flux_clip = os.path.join(flux, "clipscore.json")
             flux_png = os.path.join(flux, "flux_result.png")
             wan_video = os.path.join(wan, "video.mp4")
             wan_rank = os.path.join(wan, "rank0_step0.json")
             ignored = os.path.join(flux, "debug.log")
-            for path in (flux_timing, flux_png, wan_video, wan_rank, ignored):
+            for path in (flux_timing, flux_clip, flux_png, wan_video, wan_rank, ignored):
                 with open(path, "w", encoding="utf-8") as handle:
                     handle.write("x")
 
@@ -191,7 +200,11 @@ class TestAttachBenchmarkArtifacts(unittest.TestCase):
 
         self.assertEqual(
             flux_copied,
-            ["10.0.0.1_results_flux_result.png", "10.0.0.1_results_timing.json"],
+            [
+                "10.0.0.1_results_clipscore.json",
+                "10.0.0.1_results_flux_result.png",
+                "10.0.0.1_results_timing.json",
+            ],
         )
         self.assertEqual(
             wan_copied,
@@ -495,7 +508,9 @@ class TestVerifyModelStage(unittest.TestCase):
     def test_repo_id_downloads_when_remote_is_one(self):
         orch = MagicMock()
         orch.hosts = ["n1"]
+
         orch.all.exec.return_value = {"n1": "MODEL_OK"}
+        orch.exec.return_value = {"n1": "CLIP_OK"}
         variant = SimpleNamespace(
             model=SimpleNamespace(id="org/wan", remote=1),
             inference={
@@ -518,6 +533,48 @@ class TestVerifyModelStage(unittest.TestCase):
             verify_model_stage(orch, variant, {"family": "wan", "diffusers": False}, MagicMock(), MagicMock())
         download.assert_called_once()
         fail.assert_not_called()
+        probe = orch.exec.call_args.args[0]
+        self.assertIn("HF_HOME=/hf_home", probe)
+        self.assertNotIn("snapshot_download", str(orch.all.exec.call_args.args[0]))
+
+    def test_missing_clip_model_fails_even_when_thresholds_are_not_enforced(self):
+        orch = MagicMock()
+        orch.hosts = ["n1"]
+
+        orch.all.exec.return_value = {"n1": "MODEL_OK"}
+        orch.exec.return_value = {"n1": "CLIP_MISSING not in cache"}
+        variant = SimpleNamespace(
+            model=SimpleNamespace(id="org/wan", remote=1),
+            inference={
+                "model_repo": "org/wan",
+                "hf_home": "/cache/hf",
+                "hf_home_container": "/hf_home",
+            },
+            benchmark_params={"wan22_i2v_a14b": {"clip_model": "/models/clip"}},
+            enforce_thresholds=False,
+        )
+        with (
+            patch(
+                "cvs.tests.inference.xdit._shared.download_hf_snapshot",
+                return_value=({"/hf_home/hub/snap": "/hf_home/hub/snap"}, []),
+            ),
+            patch("cvs.tests.inference.xdit._shared.fail_test") as fail,
+            patch(
+                "cvs.tests.inference.xdit._shared.verify_required_checks_on_nodes",
+                return_value=None,
+            ),
+        ):
+            verify_model_stage(orch, variant, {"family": "wan", "diffusers": False}, MagicMock(), MagicMock())
+
+        fail.assert_called_once()
+        message = fail.call_args.args[0]
+        self.assertIn("/models/clip", message)
+        self.assertIn("does not download", message)
+        self.assertIn("enforce_thresholds", message)
+        probe = orch.exec.call_args.args[0]
+        self.assertIn("HF_HOME=/hf_home", probe)
+        self.assertIn("/models/clip", probe)
+        self.assertNotIn("snapshot_download", str(orch.all.exec.call_args.args[0]))
 
 
 class TestOutputParserRequirements(unittest.TestCase):
@@ -585,6 +642,316 @@ class TestGpuTypeFromDeviceProbe(unittest.TestCase):
     def test_probe_skips_non_amd_drm_cards(self):
         self.assertIn("${f%/*}/vendor", conftest._GPU_DEVICE_ID_PROBE)
         self.assertIn("0x1002", conftest._GPU_DEVICE_ID_PROBE)
+
+
+class _ClipOrch:
+    def __init__(self, by_host, collect=None):
+        self.by_host = by_host
+        self.collect = collect or {}
+        self.hosts_tried = []
+        self.cmds = []
+
+    def exec(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
+        del timeout, print_console
+        host = hosts[0]
+        self.hosts_tried.append(host)
+        self.cmds.append(cmd)
+        if "XDIT_ARTIFACTS_BEGIN" in cmd:
+            value = self.collect.get(host, "")
+            if detailed:
+                value = {"output": value, "exit_code": 0 if value else 1}
+            return {host: value}
+        value = self.by_host[host]
+        if detailed and not isinstance(value, dict):
+            value = {"output": value, "exit_code": 0 if "CVS_CLIP_SCORE " in str(value) else 1}
+        return {host: value}
+
+
+def _clip_variant(output_dirs, thresholds=None):
+    return SimpleNamespace(
+        inference={
+            "_test_container_output_dirs_by_node": output_dirs,
+            "_test_node_output_dirs_by_node": output_dirs,
+            "_test_output_dirs_by_node": output_dirs,
+        },
+        benchmark_params={
+            "flux1_dev_t2i": {
+                "prompt": "A small cat",
+                "height": 1024,
+                "width": 1024,
+                "num_inference_steps": 25,
+                "num_repetitions": 1,
+                "ulysses_degree": 8,
+                "ring_degree": 1,
+                "expected_results": thresholds or {"auto": {"max_avg_pipe_time_s": 10.0, "min_clip_score": 20.0}},
+            }
+        },
+        thresholds={},
+        enforce_thresholds=True,
+        model=SimpleNamespace(id="black-forest-labs/FLUX.1-dev"),
+    )
+
+
+def _wan_clip_variant(output_dirs, diffusers=False, thresholds=None):
+    timing = "max_avg_pipe_time_s" if diffusers else "max_avg_total_time_s"
+    model_id = "Wan-AI/Wan2.2-I2V-A14B-Diffusers" if diffusers else "Wan-AI/Wan2.2-I2V-A14B"
+    return SimpleNamespace(
+        inference={
+            "_test_container_output_dirs_by_node": output_dirs,
+            "_test_node_output_dirs_by_node": output_dirs,
+            "_test_output_dirs_by_node": output_dirs,
+        },
+        benchmark_params={
+            "wan22_i2v_a14b": {
+                "prompt": "A cat walking",
+                "size": "720*1280",
+                "frame_num": 81,
+                "num_inference_steps": 40,
+                "num_benchmark_steps": 1,
+                "torchrun_nproc": 8,
+                "ulysses_size": 8,
+                "ring_size": 1,
+                "expected_results": thresholds or {"auto": {timing: 300.0, "min_mean_frame_clip_score": 20.0}},
+            }
+        },
+        thresholds={},
+        enforce_thresholds=True,
+        model=SimpleNamespace(id=model_id),
+    )
+
+
+def _remote_clipscore_text(payload):
+    blob = json.dumps(payload).encode("utf-8")
+    items = [{"rel": "results/clipscore.json", "b64": base64.b64encode(blob).decode("ascii")}]
+    return f"XDIT_ARTIFACTS_BEGIN\n{json.dumps(items)}\nXDIT_ARTIFACTS_END\n"
+
+
+class TestClipScoreStage(unittest.TestCase):
+    def setUp(self):
+        globals.error_list = []
+
+    def tearDown(self):
+        cleanup_staged_artifacts()
+
+    def test_records_passing_score_from_container_output(self):
+        payload = {"clip_score": 27.5, "image_count": 1, "model": "openai/clip-vit-large-patch14", "scores": []}
+        orch = _ClipOrch({"10.0.0.1": f"loading\nCVS_CLIP_SCORE {json.dumps(payload)}\n"})
+        variant = _clip_variant({"10.0.0.1": "/outputs/flux_host_outputs"})
+        lifecycle = Lifecycle()
+        request = SimpleNamespace(node=SimpleNamespace(nodeid="test_clip_score"), config=SimpleNamespace())
+
+        clip_score_stage(
+            orch,
+            variant,
+            "auto",
+            {"family": "flux", "distributed": False, "diffusers": False},
+            lifecycle,
+            request,
+        )
+
+        self.assertEqual(globals.error_list, [])
+        self.assertEqual(lifecycle.results[0][6], "clip_score")
+        self.assertEqual(lifecycle.results[0][7], 27.5)
+        self.assertTrue(lifecycle.results[0][8])
+        self.assertEqual(variant.thresholds["SIZE=1024x1024,STEPS=25,BENCH=1"]["clip_score"]["kind"], "min")
+
+    def test_tries_next_host_when_shared_directory_has_no_image(self):
+        payload = {"clip_score": 22.0, "image_count": 1, "model": "openai/clip-vit-large-patch14"}
+        orch = _ClipOrch(
+            {
+                "10.0.0.1": {"output": "No FLUX PNG images found", "exit_code": 1},
+                "10.0.0.2": {"output": f"CVS_CLIP_SCORE {json.dumps(payload)}", "exit_code": 0},
+            }
+        )
+        variant = _clip_variant(
+            {
+                "10.0.0.1": "/outputs/flux_rank0_outputs",
+                "10.0.0.2": "/outputs/flux_rank0_outputs",
+            }
+        )
+        lifecycle = Lifecycle()
+        lifecycle.benchmark_host = "10.0.0.1"
+        request = SimpleNamespace(node=SimpleNamespace(nodeid="test_clip_score"), config=SimpleNamespace())
+
+        clip_score_stage(
+            orch,
+            variant,
+            "auto",
+            {"family": "flux", "distributed": True, "diffusers": False},
+            lifecycle,
+            request,
+        )
+
+        self.assertEqual(orch.hosts_tried[:2], ["10.0.0.1", "10.0.0.2"])
+        self.assertEqual(orch.hosts_tried[-1], "10.0.0.2")
+        self.assertEqual(globals.error_list, [])
+        self.assertEqual(lifecycle.results[0][0], "10.0.0.1")
+        self.assertEqual(lifecycle.results[0][7], 22.0)
+
+    def test_failure_below_floor_is_recorded(self):
+        payload = {"clip_score": 11.0, "image_count": 1, "model": "openai/clip-vit-large-patch14"}
+        orch = _ClipOrch({"10.0.0.1": {"output": f"CVS_CLIP_SCORE {json.dumps(payload)}", "exit_code": 0}})
+        variant = _clip_variant({"10.0.0.1": "/outputs/flux_host_outputs"})
+        lifecycle = Lifecycle()
+        request = SimpleNamespace(node=SimpleNamespace(nodeid="test_clip_score"), config=SimpleNamespace())
+
+        with patch("cvs.tests.inference.xdit._shared.update_test_result"):
+            clip_score_stage(
+                orch,
+                variant,
+                "auto",
+                {"family": "flux", "distributed": False, "diffusers": False},
+                lifecycle,
+                request,
+            )
+
+        self.assertTrue(lifecycle.failed)
+        self.assertTrue(any("11.00" in message for message in globals.error_list))
+
+    def test_reads_clipscore_file_when_output_dir_is_not_mounted(self):
+        payload = {"clip_score": 27.5, "image_count": 1, "model": "openai/clip-vit-base-patch32"}
+        orch = _ClipOrch(
+            {"10.0.0.1": f"CVS_CLIP_SCORE {json.dumps(payload)}\n"},
+            collect={"10.0.0.1": _remote_clipscore_text(payload)},
+        )
+        variant = _clip_variant({"10.0.0.1": "/outputs/flux_host_outputs"})
+        lifecycle = Lifecycle()
+        copied = []
+
+        def _attach(request, host, output_dir):
+            del request, host
+            copied.append(output_dir)
+            return []
+
+        request = SimpleNamespace(node=SimpleNamespace(nodeid="test_clip_score"), config=SimpleNamespace())
+        with patch("cvs.tests.inference.xdit._shared._attach_benchmark_artifacts", _attach):
+            clip_score_stage(
+                orch,
+                variant,
+                "auto",
+                {"family": "flux", "distributed": False, "diffusers": False},
+                lifecycle,
+                request,
+            )
+
+        self.assertEqual(globals.error_list, [])
+        self.assertTrue(any("XDIT_ARTIFACTS_BEGIN" in cmd for cmd in orch.cmds))
+        self.assertIn("/outputs/flux_host_outputs", orch.cmds[-1])
+        self.assertEqual(len(copied), 1)
+        with open(os.path.join(copied[0], "results", "clipscore.json"), encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertEqual(saved["clip_score"], 27.5)
+        self.assertFalse(os.path.exists("/outputs/flux_host_outputs"))
+
+    def test_wan_native_records_mean_frame_score(self):
+        payload = {
+            "mean_frame_clip_score": 27.5,
+            "min_frame_clip_score": 21.0,
+            "sample_count": 8,
+            "frame_indices": [0, 11, 23, 34, 46, 57, 69, 80],
+            "model": "openai/clip-vit-base-patch32",
+            "video": "video.mp4",
+        }
+        orch = _ClipOrch(
+            {"10.0.0.1": f"CVS_CLIP_SCORE {json.dumps(payload)}\n"},
+            collect={"10.0.0.1": _remote_clipscore_text(payload)},
+        )
+        variant = _wan_clip_variant({"10.0.0.1": "/outputs/wan_host_outputs"})
+        lifecycle = Lifecycle()
+        copied = []
+
+        def _attach(request, host, output_dir):
+            del request, host
+            copied.append(output_dir)
+            return []
+
+        request = SimpleNamespace(node=SimpleNamespace(nodeid="test_clip_score"), config=SimpleNamespace())
+        with patch("cvs.tests.inference.xdit._shared._attach_benchmark_artifacts", _attach):
+            clip_score_stage(
+                orch,
+                variant,
+                "auto",
+                {"family": "wan", "distributed": False, "diffusers": False},
+                lifecycle,
+                request,
+            )
+
+        self.assertEqual(globals.error_list, [])
+        self.assertIn("--sample-frames 8", orch.cmds[0])
+        self.assertIn("--video-name video.mp4", orch.cmds[0])
+        self.assertEqual(lifecycle.results[0][6], "mean_frame_clip_score")
+        self.assertEqual(lifecycle.results[0][7], 27.5)
+        self.assertTrue(lifecycle.results[0][8])
+        cell = "SIZE=720*1280,FRAMES=81,STEPS=40,BENCH=1"
+        self.assertEqual(variant.thresholds[cell]["mean_frame_clip_score"]["kind"], "min")
+        self.assertEqual(len(copied), 1)
+        with open(os.path.join(copied[0], "results", "clipscore.json"), encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertEqual(saved["mean_frame_clip_score"], 27.5)
+
+    def test_wan_diffusers_command_uses_i2v_video(self):
+        payload = {
+            "mean_frame_clip_score": 22.0,
+            "sample_count": 8,
+            "model": "openai/clip-vit-base-patch32",
+            "video": "video_i2v.mp4",
+        }
+        orch = _ClipOrch({"10.0.0.1": f"CVS_CLIP_SCORE {json.dumps(payload)}\n"})
+        variant = _wan_clip_variant({"10.0.0.1": "/outputs/wan_host_outputs"}, diffusers=True)
+        lifecycle = Lifecycle()
+        request = SimpleNamespace(node=SimpleNamespace(nodeid="test_clip_score"), config=SimpleNamespace())
+
+        clip_score_stage(
+            orch,
+            variant,
+            "auto",
+            {"family": "wan", "distributed": False, "diffusers": True},
+            lifecycle,
+            request,
+        )
+
+        self.assertEqual(globals.error_list, [])
+        self.assertIn("--video-name video_i2v.mp4", orch.cmds[0])
+        self.assertEqual(lifecycle.results[0][7], 22.0)
+
+    def test_wan_frame_score_below_floor_is_recorded(self):
+        payload = {"mean_frame_clip_score": 11.0, "sample_count": 8, "model": "openai/clip-vit-base-patch32"}
+        orch = _ClipOrch({"10.0.0.1": {"output": f"CVS_CLIP_SCORE {json.dumps(payload)}", "exit_code": 0}})
+        variant = _wan_clip_variant({"10.0.0.1": "/outputs/wan_host_outputs"})
+        lifecycle = Lifecycle()
+        request = SimpleNamespace(node=SimpleNamespace(nodeid="test_clip_score"), config=SimpleNamespace())
+
+        with patch("cvs.tests.inference.xdit._shared.update_test_result"):
+            clip_score_stage(
+                orch,
+                variant,
+                "auto",
+                {"family": "wan", "distributed": False, "diffusers": False},
+                lifecycle,
+                request,
+            )
+
+        self.assertTrue(lifecycle.failed)
+        self.assertTrue(any("11.00" in message for message in globals.error_list))
+
+    def test_wan_missing_video_fails(self):
+        orch = _ClipOrch({"10.0.0.1": {"output": "No WAN video video.mp4 found under /outputs/wan", "exit_code": 1}})
+        variant = _wan_clip_variant({"10.0.0.1": "/outputs/wan_host_outputs"})
+        lifecycle = Lifecycle()
+        request = SimpleNamespace(node=SimpleNamespace(nodeid="test_clip_score"), config=SimpleNamespace())
+
+        with patch("cvs.tests.inference.xdit._shared.update_test_result"):
+            clip_score_stage(
+                orch,
+                variant,
+                "auto",
+                {"family": "wan", "distributed": False, "diffusers": False},
+                lifecycle,
+                request,
+            )
+
+        self.assertTrue(lifecycle.failed)
+        self.assertTrue(any("No WAN video" in message for message in globals.error_list))
 
 
 if __name__ == "__main__":

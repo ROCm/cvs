@@ -41,6 +41,7 @@ if os.path.isdir(root):
         for name in names:
             keep = (
                 name == "timing.json"
+                or name == "clipscore.json"
                 or name.endswith(".png")
                 or name.endswith(".mp4")
                 or (name.startswith("rank0") and name.endswith(".json"))
@@ -603,6 +604,8 @@ class PytorchXditBenchmarkJob(ABC):
             self.inference_dict["_test_output_dirs_by_node"] = by_node
         if host_by_node:
             self.inference_dict["_test_node_output_dirs_by_node"] = host_by_node
+        if remote_by_node:
+            self.inference_dict["_test_container_output_dirs_by_node"] = dict(remote_by_node)
 
         if plan.primary_output_dir:
             host_primary = self._host_output_path(plan.primary_output_dir)

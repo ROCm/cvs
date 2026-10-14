@@ -47,7 +47,7 @@
     "backend": "xdit",
     "nnodes": "2",
     "log_level": "info",
-    "model": "<changeme>"
+    "model": "<changeme> /data/models/FLUX.1-dev"
   },
   "benchmark_params": {
     "prompt": "A small cat",

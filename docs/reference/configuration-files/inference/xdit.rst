@@ -1,14 +1,14 @@
 .. meta::
   :description: Reference for CVS xDiT inference benchmark configuration, covering FLUX.1, FLUX.2 text-to-image, and WAN 2.2 image-to-video suites on AMD GPU clusters.
-  :keywords: CVS, xDiT, inference, ROCm, FLUX, WAN, text-to-image, image-to-video, GPU, AMD, distributed, JSON, benchmark
+  :keywords: CVS, xDiT, inference, ROCm, FLUX, WAN, text-to-image, image-to-video, GPU, AMD, distributed, JSON, benchmark, CLIPScore
 
 *************************************************************************
 xDiT inference benchmark configuration for Cluster Validation Suite (CVS)
 *************************************************************************
 
 CVS ships five xDiT suites under ``cvs/tests/inference/xdit/``. Each suite reads a JSON
-file from ``cvs/input/config_file/inference/xdit/``. Latency limits live in a sibling
-threshold file named by top-level ``threshold_json``. ``mi3xx_*`` and ``mi35x_*``
+file from ``cvs/input/config_file/inference/xdit/``. Latency and CLIPScore limits live in a
+sibling threshold file named by top-level ``threshold_json``. ``mi3xx_*`` and ``mi35x_*``
 templates for the same workload share that file.
 
 - **Single-node** templates run one independent docker+torchrun job on every node in the
@@ -90,7 +90,7 @@ Packaged templates use these top-level keys:
    * - ``gpu_name``
      - Label shipped as ``<changeme> mi325`` or ``<changeme> mi355``. Remove ``<changeme>``. Threshold selection uses the detected GPU, not this string.
    * - ``enforce_thresholds``
-     - When ``true`` (the packaged default), latency must meet the selected GPU limit. ``false`` records the metric.
+     - When ``true`` (the packaged default), latency and CLIPScore must meet the selected GPU limits. ``false`` records the metrics.
    * - ``threshold_json``
      - Sibling threshold filename. Both GPU families for a workload share one file.
    * - ``paths``
@@ -277,6 +277,9 @@ when ``model_type`` is omitted.
    * - ``torchrun_nproc``
      - ``8``
      - Processes (GPUs) per node.
+   * - ``clip_model``
+     - omitted
+     - CLIP checkpoint id or local path used to score saved PNGs. Defaults to ``openai/clip-vit-base-patch32``. ``test_verify_model`` requires it to already be in the container cache or at that path. The suite does not download it. Prompts longer than that model's text context (77 tokens) are truncated.
 
 ``benchmark_params`` for WAN 2.2
 ================================
@@ -314,6 +317,12 @@ Runs ``/app/Wan2.2/run.py``. The threshold metric is ``max_avg_total_time_s``.
    * - ``torchrun_nproc``
      - ``8``
      - GPUs per node. Single-node native WAN infers ulysses from this value and ring ``1``.
+   * - ``clip_model``
+     - omitted
+     - CLIP checkpoint id or local path for sampled-frame scoring. Defaults to ``openai/clip-vit-base-patch32``. ``test_verify_model`` requires it offline in the container. The suite does not download it. Native and Diffusers WAN share this field.
+   * - ``clip_sample_frames``
+     - omitted
+     - Frames sampled evenly from the MP4, including the first and last. Defaults to ``8``. Native and Diffusers WAN share this field.
 
 Diffusers xFuser WAN
 --------------------
@@ -384,7 +393,7 @@ provider libraries (bnxt on ``mi3xx``, Ionic on ``mi35x``).
 Threshold files
 ===============
 
-Each threshold file is a map of GPU key to one latency limit. Keys that start with ``_``
+Each threshold file is a map of GPU key to latency and CLIPScore limits. Keys that start with ``_``
 are comments and are ignored. Allowed specific keys are ``mi300x``, ``mi325``, ``mi350``,
 and ``mi355``. ``auto`` is the fallback when the detected key is absent.
 
@@ -427,16 +436,41 @@ A detected GPU with no key of its own uses ``auto``. MI350X on
 ``auto`` limit of 12 seconds. MI325X (``0x74a5``) uses the ``mi325`` limit when that key
 exists, and ``auto`` otherwise.
 
-Comments in the FLUX.1 single and native WAN files mark which keys were measured and
+Comments in the FLUX.1 single and native WAN files mark which latency keys were measured and
 which remain placeholders. Tune the file for your stack before production gating.
-Set ``enforce_thresholds`` to ``false`` to record latency without failing the parse stage.
+Set ``enforce_thresholds`` to ``false`` to record latency and CLIPScore without failing those stages.
+
+Every shipped GPU entry also sets a CLIPScore floor of ``20.0``. That floor is an unvalidated
+starting value, not a measured pass bar.
+
+.. list-table::
+   :widths: 3 3 5
+   :header-rows: 1
+
+   * - Workload
+     - Threshold key
+     - What is scored
+   * - FLUX.1 and FLUX.2
+     - ``min_clip_score``
+     - Mean CLIPScore of saved PNGs (``flux_*.png``, ``flux2_*.png``). Cosine similarity × 100.
+   * - WAN native
+     - ``min_mean_frame_clip_score``
+     - Mean CLIPScore of frames sampled from ``video.mp4``.
+   * - WAN Diffusers
+     - ``min_mean_frame_clip_score``
+     - Mean CLIPScore of frames sampled from ``video_i2v.mp4``.
+
+``test_clip_score`` runs inside the benchmark container and writes ``results/clipscore.json``.
+The controller reads that file from the node, so the output directory does not have to be on
+NFS. Prompts longer than the CLIP text context are truncated, and the JSON sets
+``prompt_truncated`` when that happens. The default WAN prompt is longer than 77 tokens.
 
 Performance metrics
 ===================
 
-- **FLUX** — average ``pipe_time`` vs ``max_avg_pipe_time_s``; artifacts ``results/timing.json`` and ``flux_*.png``. FLUX.1 also requires ``num_repetitions`` samples.
-- **WAN native** — average ``total_time`` vs ``max_avg_total_time_s``; ``rank0_step*.json`` (count must equal ``num_benchmark_steps``) and ``video.mp4``.
-- **WAN Diffusers** — average pipe/epoch time vs ``max_avg_pipe_time_s``; ``results/timing.json`` and ``results/video_i2v.mp4``.
+- **FLUX** — average ``pipe_time`` vs ``max_avg_pipe_time_s``; artifacts ``results/timing.json`` and ``flux_*.png``. FLUX.1 also requires ``num_repetitions`` samples. CLIPScore of those PNGs vs ``min_clip_score``, written to ``results/clipscore.json``.
+- **WAN native** — average ``total_time`` vs ``max_avg_total_time_s``; ``rank0_step*.json`` (count must equal ``num_benchmark_steps``) and ``video.mp4``. Mean frame CLIPScore of that MP4 vs ``min_mean_frame_clip_score``.
+- **WAN Diffusers** — average pipe/epoch time vs ``max_avg_pipe_time_s``; ``results/timing.json`` and ``results/video_i2v.mp4``. Mean frame CLIPScore of that MP4 vs ``min_mean_frame_clip_score``.
 
 Troubleshooting
 ===============
@@ -458,6 +492,12 @@ Troubleshooting
 
 **Missing ``timing.json`` / ``video.mp4``**
   The benchmark docker exit code was non-zero or artifacts were written elsewhere; inspect the log tail on the failing node.
+
+**CLIP score command failed**
+  ``test_verify_model`` checks that ``clip_model`` (default ``openai/clip-vit-base-patch32``) is already in the container HF cache, or is a local directory, before the benchmark starts. The suite never downloads it. A missing checkpoint fails that stage on every host even when ``enforce_thresholds`` is ``false``; that flag only skips the numeric floor. WAN also needs a video decoder: ``imageio`` with ``imageio-ffmpeg``, OpenCV, or ``torchvision``. xFuser installs ``imageio`` when ``wan_xfuser_install_video_deps`` is true. A prompt longer than 77 tokens is truncated and does not fail the stage.
+
+**CLIPScore below the shipped floor**
+  ``min_clip_score`` and ``min_mean_frame_clip_score`` ship as ``20.0``, which is not a measured bar. Replace the floor after a known-good run, or set ``enforce_thresholds`` to ``false`` to record the score.
 
 **MI355X threshold uses ``auto`` or ``mi300x``**
   Confirm the node exposes device ID ``0x75a3``. A missing ``mi355`` key in the threshold file selects ``auto``. An unrecognized device ID selects ``mi300x``. MI325X is ``0x74a5`` and selects ``mi325``.

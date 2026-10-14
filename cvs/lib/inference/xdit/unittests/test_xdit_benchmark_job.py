@@ -234,6 +234,13 @@ class TestPytorchXditBenchmarkJob(unittest.TestCase):
                 "10.0.0.2": "/host/results/stub_container-10.0.0.2_outputs",
             },
         )
+        self.assertEqual(
+            inference_dict["_test_container_output_dirs_by_node"],
+            {
+                "10.0.0.1": "/outputs/stub_container-10.0.0.1_outputs",
+                "10.0.0.2": "/outputs/stub_container-10.0.0.2_outputs",
+            },
+        )
 
     def test_run_success(self):
         job = _make_job(["10.0.0.1"])
@@ -323,6 +330,8 @@ class TestStageRemoteBenchmarkOutputs(unittest.TestCase):
                 handle.write(json.dumps([{"pipe_time": 0.97}]))
             with open(os.path.join(flux, "flux_0.png"), "wb") as handle:
                 handle.write(b"png")
+            with open(os.path.join(flux, "clipscore.json"), "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"clip_score": 27.5}))
             with open(os.path.join(tmp, "noise.log"), "w", encoding="utf-8") as handle:
                 handle.write("ignore")
             text = _collect_tree(tmp)
@@ -334,6 +343,7 @@ class TestStageRemoteBenchmarkOutputs(unittest.TestCase):
         self.assertEqual(result.repetition_count, 1)
         self.assertTrue(result.image_paths)
         self.assertNotIn(base64.b64encode(b"png").decode("ascii"), text)
+        self.assertIn("clipscore.json", text)
 
     def test_each_node_keeps_its_own_timing(self):
         def payload(pipe_time):

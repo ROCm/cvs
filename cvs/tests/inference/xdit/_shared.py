@@ -5,7 +5,9 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 """
 
+import base64
 import inspect
+import json
 import os
 import shlex
 import time
@@ -15,7 +17,26 @@ import pytest
 from tabulate import tabulate
 
 from cvs.lib import globals
-from cvs.lib.inference.xdit.xdit_benchmark_job import cleanup_staged_artifacts
+from cvs.lib.inference.xdit.xdit_benchmark_job import (
+    _ARTIFACT_COLLECT_TIMEOUT_S,
+    _materialize_artifacts,
+    _parse_artifact_payload,
+    cleanup_staged_artifacts,
+    remote_benchmark_collect_cmd,
+)
+from cvs.lib.inference.xdit.xdit_clipscore import (
+    CLIP_SCORE_TIMEOUT_S,
+    build_clip_model_probe_cmd,
+    build_clipscore_cmd,
+    clip_model_missing_message,
+    clipscore_output_path,
+    parse_clipscore_text,
+    resolve_clip_model,
+    resolve_clip_sample_frames,
+    validate_clip_score,
+    validate_mean_frame_clip_score,
+    wan_clip_video_name,
+)
 from cvs.lib.inference.xdit.xdit_flux import FluxOutputParser
 from cvs.lib.inference.xdit.xdit_flux_job import (
     build_output_cleanup_cmd,
@@ -50,8 +71,9 @@ XDIT_TEST_ORDER = {
     "test_verify_parallelism": 3,
     "test_run_benchmark": 4,
     "test_parse_thresholds": 5,
-    "test_print_results": 6,
-    "test_teardown": 7,
+    "test_clip_score": 6,
+    "test_print_results": 7,
+    "test_teardown": 8,
 }
 
 
@@ -303,7 +325,44 @@ def verify_model_stage(orch, variant, spec, lifecycle, request):
                     inference.get("hf_home_container", "/hf_home").rstrip("/"),
                     1,
                 )
+        clip_error = _verify_clip_model_offline(orch, variant, spec)
+        if clip_error:
+            fail_test(clip_error)
     _complete(lifecycle, request, "model_verify", started)
+
+
+def _clip_model_for_variant(variant, spec):
+    params = {}
+    benchmark = value_from_variant(variant, "benchmark_params")
+    if isinstance(benchmark, dict):
+        key = "flux1_dev_t2i" if spec.get("family") == "flux" else "wan22_i2v_a14b"
+        workload = benchmark.get(key)
+        if isinstance(workload, dict):
+            params = workload
+    return resolve_clip_model(params)
+
+
+def _clip_probe_ok(output):
+    if isinstance(output, dict):
+        text = str(output.get("output") or "")
+    else:
+        text = str(output or "")
+    return any(line.strip() == "CLIP_OK" for line in text.splitlines())
+
+
+def _verify_clip_model_offline(orch, variant, spec):
+    """Fail when the CLIP checkpoint is not already in the container. Never downloads it."""
+    model = _clip_model_for_variant(variant, spec)
+    inference = inference_from_variant(variant)
+    hf_home = inference.get("hf_home_container") or "/hf_home"
+    try:
+        results = orch.exec(build_clip_model_probe_cmd(model, hf_home))
+    except Exception as exc:
+        return clip_model_missing_message(model, []) + f" Probe failed: {exc}"
+    missing = [host for host, output in (results or {}).items() if not _clip_probe_ok(output)]
+    if missing:
+        return clip_model_missing_message(model, missing)
+    return None
 
 
 def _parallel_degrees(workload, spec):
@@ -499,7 +558,7 @@ def _output_parser(spec, params, output_dir, variant):
 
 
 def _is_report_artifact(name):
-    if name == "timing.json" or name.endswith((".png", ".mp4")):
+    if name in {"timing.json", "clipscore.json"} or name.endswith((".png", ".mp4")):
         return True
     return name.startswith("rank0") and name.endswith(".json")
 
@@ -601,11 +660,11 @@ def _nnodes_count(variant, spec):
 
 def _report_threshold(thresholds, gpu_type, metric):
     selected = thresholds.get(gpu_type) or thresholds.get("auto") or {}
-    threshold_key = f"max_{metric}"
-    value = selected.get(threshold_key)
-    if value is None:
-        return None
-    return {"kind": "max", "value": value}
+    for prefix, kind in (("max_", "max"), ("min_", "min")):
+        value = selected.get(prefix + metric)
+        if value is not None:
+            return {"kind": kind, "value": value}
+    return None
 
 
 def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
@@ -690,6 +749,222 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
     for failure in failures:
         fail_test(failure)
     _complete(lifecycle, request, "parse_thresholds", started)
+
+
+def _container_output_groups(inference, lifecycle):
+    by_node = inference.get("_test_container_output_dirs_by_node") or {}
+    groups = {}
+    order = []
+    for host, output_dir in by_node.items():
+        if output_dir not in groups:
+            order.append(output_dir)
+            groups[output_dir] = []
+        groups[output_dir].append(host)
+    labeled = []
+    for output_dir in order:
+        hosts = groups[output_dir]
+        if lifecycle.benchmark_host and lifecycle.benchmark_host in hosts:
+            label = lifecycle.benchmark_host
+        else:
+            label = hosts[0]
+        labeled.append((label, output_dir, hosts))
+    return labeled
+
+
+def _exec_detail(value):
+    if isinstance(value, dict):
+        return str(value.get("output") or ""), int(value.get("exit_code", -1))
+    return str(value or ""), None
+
+
+def _score_one_directory(orch, hosts, output_dir, prompt, model, sample_frames=None, video_name=None):
+    cmd = build_clipscore_cmd(
+        prompt,
+        output_dir,
+        clipscore_output_path(output_dir),
+        model,
+        sample_frames=sample_frames,
+        video_name=video_name,
+    )
+    errors = []
+    for host in hosts:
+        try:
+            raw = orch.exec(cmd, hosts=[host], timeout=CLIP_SCORE_TIMEOUT_S, detailed=True, print_console=False)
+        except Exception as exc:
+            errors.append(f"{host}: {exc}")
+            continue
+        text, exit_code = _exec_detail((raw or {}).get(host))
+        payload = None
+        try:
+            payload = parse_clipscore_text(text)
+        except (ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"{host}: {exc}")
+            continue
+        if payload is not None and exit_code in (None, 0):
+            return host, payload, None
+        tail = " | ".join(line.strip() for line in text.splitlines() if line.strip())[-500:]
+        errors.append(f"{host}: CLIP score command failed ({tail or 'no output'})")
+    return None, None, "; ".join(errors) or "CLIP score command failed"
+
+
+def _clipscore_json(directory):
+    path = Path(directory) / "results" / "clipscore.json"
+    if path.is_file():
+        return path
+    return None
+
+
+def _local_clipscore_dir(inference, host):
+    """Return a directory the controller can already read, when one is mounted."""
+    seen = []
+    for key in ("_test_node_output_dirs_by_node", "_test_output_dirs_by_node"):
+        path = (inference.get(key) or {}).get(host)
+        if path and path not in seen:
+            seen.append(path)
+    for directory in seen:
+        if _clipscore_json(directory):
+            return directory
+    return None
+
+
+def _materialize_clipscore_payload(payload):
+    blob = (json.dumps(payload, indent=2) + "\n").encode("utf-8")
+    return _materialize_artifacts([{"rel": "results/clipscore.json", "b64": base64.b64encode(blob).decode("ascii")}])
+
+
+def _fetch_remote_clipscore(orch, host, container_dir):
+    """Read clipscore.json from the node. Node-local output dirs are not on NFS."""
+    cmd = remote_benchmark_collect_cmd(container_dir)
+    try:
+        raw = orch.exec(
+            cmd,
+            hosts=[host],
+            timeout=_ARTIFACT_COLLECT_TIMEOUT_S,
+            detailed=True,
+            print_console=False,
+        )
+    except Exception as exc:
+        log.warning("Could not read CLIP score file from %s: %s", host, exc)
+        return None
+    text, _exit_code = _exec_detail((raw or {}).get(host))
+    items = _parse_artifact_payload(text)
+    if not items:
+        return None
+    local = _materialize_artifacts(items)
+    if local and _clipscore_json(local):
+        return local
+    return None
+
+
+def _publish_clipscore(orch, writer, container_dir, inference, label, payload):
+    existing = _local_clipscore_dir(inference, label) or _local_clipscore_dir(inference, writer)
+    if existing:
+        return existing
+    fetched = _fetch_remote_clipscore(orch, writer, container_dir)
+    if fetched:
+        return fetched
+    return _materialize_clipscore_payload(payload)
+
+
+def _merge_clip_threshold(variant, cell_id, metric, spec):
+    slot = variant.thresholds.get(cell_id)
+    if isinstance(slot, dict) and slot and all(isinstance(value, dict) and "kind" in value for value in slot.values()):
+        slot[metric] = spec
+        return
+    variant.thresholds[cell_id] = {metric: spec}
+
+
+def clip_score_stage(orch, variant, gpu_type, spec, lifecycle, request):
+    if spec["family"] not in {"flux", "wan"}:
+        return
+    lifecycle.skip_if_failed()
+    globals.error_list = []
+    started = time.monotonic()
+    inference = inference_from_variant(variant)
+    groups = _container_output_groups(inference, lifecycle)
+    if not groups:
+        fail_test("xDiT benchmark did not publish container output directories for CLIP score")
+        _complete(lifecycle, request, "clip_score", started)
+        return
+
+    params, thresholds = _threshold_inputs(variant, spec)
+    scoring_video = spec["family"] == "wan"
+    prompt = params.get("prompt")
+    if not prompt:
+        fail_test(f"{'WAN' if scoring_video else 'FLUX'} CLIP score requires benchmark_params prompt")
+        _complete(lifecycle, request, "clip_score", started)
+        return
+    try:
+        sample_frames = resolve_clip_sample_frames(params) if scoring_video else None
+    except ValueError as exc:
+        fail_test(str(exc))
+        _complete(lifecycle, request, "clip_score", started)
+        return
+    video_name = wan_clip_video_name(spec["diffusers"]) if scoring_video else None
+    metric = "mean_frame_clip_score" if scoring_video else "clip_score"
+    subject = "WAN video" if scoring_video else "FLUX images"
+    model = resolve_clip_model(params)
+    enforce_thresholds = bool(value_from_variant(variant, "enforce_thresholds", True))
+    model_id, shape, steps, _backend, nnodes, cell_id = _report_dimensions(variant, params, spec)
+    topology = "distributed" if spec["distributed"] else "single"
+    ulysses_degree, ring_degree = _ulysses_ring(params, spec)
+    cell = lifecycle.report_results.setdefault((model_id, gpu_type, shape, steps, cell_id, str(nnodes)), {})
+    report_spec = _report_threshold(thresholds, gpu_type, metric)
+    if report_spec is not None:
+        _merge_clip_threshold(variant, cell_id, metric, report_spec)
+
+    node_dirs = inference.get("_test_node_output_dirs_by_node") or {}
+    failures = []
+    for label, output_dir, hosts in groups:
+        writer, payload, error = _score_one_directory(
+            orch,
+            hosts,
+            output_dir,
+            prompt,
+            model,
+            sample_frames=sample_frames,
+            video_name=video_name,
+        )
+        if payload is None:
+            failures.append(f"Failed to score {subject} for {label} under {output_dir}: {error}")
+            continue
+        if metric not in payload:
+            failures.append(f"Failed to score {subject} for {label} under {output_dir}: payload missing {metric}")
+            continue
+        local_dir = _publish_clipscore(orch, writer, output_dir, inference, label, payload)
+        if local_dir:
+            _attach_benchmark_artifacts(request, label, local_dir)
+        score = float(payload[metric])
+        if scoring_video:
+            passed, message = validate_mean_frame_clip_score(payload, thresholds, gpu_type)
+        else:
+            passed, message = validate_clip_score(payload, thresholds, gpu_type)
+        host_row = cell.setdefault(label, {})
+        host_row[metric] = score
+        reported_dir = node_dirs.get(label) or output_dir
+        host_row.setdefault("output_dir", reported_dir)
+        lifecycle.results.append(
+            (
+                label,
+                model_id,
+                topology,
+                ulysses_degree,
+                ring_degree,
+                reported_dir,
+                metric,
+                score,
+                passed if enforce_thresholds else None,
+                message,
+            )
+        )
+        logged = "Mean frame CLIPScore" if scoring_video else "CLIPScore"
+        log.info("%s on %s: %.2f (%s)", logged, label, score, message)
+        if enforce_thresholds and not passed:
+            failures.append(f"{label}: {message}")
+
+    for failure in failures:
+        fail_test(failure)
+    _complete(lifecycle, request, "clip_score", started)
 
 
 def print_results_stage(lifecycle):

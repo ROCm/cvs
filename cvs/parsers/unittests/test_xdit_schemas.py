@@ -189,6 +189,25 @@ class TestPytorchXditUnifiedSchemas(unittest.TestCase):
 
         self.assertEqual(validated.thresholds["mi300x"].max_avg_pipe_time_s, 3.0)
 
+    def test_threshold_file_accepts_flux_clip_score_floor(self):
+        validated = PytorchXditThresholdFile.model_validate(
+            {
+                "_comment": "starting floor",
+                "auto": {"max_avg_pipe_time_s": 10.0, "min_clip_score": 20.0},
+            }
+        )
+
+        self.assertEqual(validated.thresholds["auto"].min_clip_score, 20.0)
+
+    def test_threshold_file_accepts_wan_frame_clip_score_floor(self):
+        validated = PytorchXditThresholdFile.model_validate(
+            {
+                "auto": {"max_avg_total_time_s": 15.0, "min_mean_frame_clip_score": 20.0},
+            }
+        )
+
+        self.assertEqual(validated.thresholds["auto"].min_mean_frame_clip_score, 20.0)
+
     def test_packaged_unified_configs_validate(self):
         config_dir = Path(__file__).resolve().parents[2] / "input" / "config_file" / "inference" / "xdit"
         workload_files = sorted(path for path in config_dir.glob("mi3xx_*.json") if "threshold" not in path.name)
