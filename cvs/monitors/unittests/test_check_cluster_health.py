@@ -17,6 +17,9 @@ import unittest
 from unittest.mock import patch
 
 from cvs.monitors.check_cluster_health import CheckClusterHealthMonitor, load_cluster_file
+from cvs.unittests.support import TMP
+
+FAKE_CRED = "fake-cred"
 
 
 def _write(tmpdir, name, contents):
@@ -107,13 +110,13 @@ class TestArgParser(unittest.TestCase):
         self.parser = CheckClusterHealthMonitor().get_parser()
 
     def test_cluster_file_alone_is_accepted(self):
-        args = self.parser.parse_args(["--cluster_file", "/tmp/c.json"])
-        self.assertEqual(args.cluster_file, "/tmp/c.json")
+        args = self.parser.parse_args(["--cluster_file", f"{TMP}/c.json"])
+        self.assertEqual(args.cluster_file, f"{TMP}/c.json")
         self.assertIsNone(args.hosts_file)
 
     def test_hosts_file_alone_is_accepted(self):
-        args = self.parser.parse_args(["--hosts_file", "/tmp/h.txt", "--username", "u", "--key_file", "/k"])
-        self.assertEqual(args.hosts_file, "/tmp/h.txt")
+        args = self.parser.parse_args(["--hosts_file", f"{TMP}/h.txt", "--username", "u", "--key_file", "/k"])
+        self.assertEqual(args.hosts_file, f"{TMP}/h.txt")
         self.assertIsNone(args.cluster_file)
 
     def test_both_cluster_and_hosts_file_is_rejected(self):
@@ -185,10 +188,10 @@ class TestResolveConnection(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             hosts_path = _write(tmp, "hosts.txt", "1.1.1.1\n")
             nodes, user, pkey, password = self.monitor._resolve_connection(
-                self._ns(hosts_file=hosts_path, username="u", password="pw")
+                self._ns(hosts_file=hosts_path, username="u", password=FAKE_CRED)
             )
         self.assertEqual(nodes, ["1.1.1.1"])
-        self.assertEqual((user, pkey, password), ("u", None, "pw"))
+        self.assertEqual((user, pkey, password), ("u", None, FAKE_CRED))
 
     def test_hosts_file_missing_username_aborts(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -201,7 +204,7 @@ class TestResolveConnection(unittest.TestCase):
             hosts_path = _write(tmp, "hosts.txt", "1.1.1.1\n")
             with self.assertRaises(SystemExit):
                 self.monitor._resolve_connection(
-                    self._ns(hosts_file=hosts_path, username="u", password="p", key_file="/k")
+                    self._ns(hosts_file=hosts_path, username="u", password=FAKE_CRED, key_file="/k")
                 )
 
     def test_hosts_file_neither_password_nor_key_aborts(self):

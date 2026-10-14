@@ -2,6 +2,9 @@ import unittest
 from unittest.mock import patch, MagicMock
 from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
 from cvs.lib.parallel.config import ParallelConfig
+from cvs.unittests.support import TMP
+
+FAKE_CRED = "fake-cred"
 
 
 class TestMultiProcessParallelHandleInitialization(unittest.TestCase):
@@ -77,7 +80,7 @@ class TestMultiProcessParallelHandleInitialization(unittest.TestCase):
             config=config,
             transport='http',
             agent_port_map={host: 9 for host in self.host_list},
-            token_file='/dev/null',
+            token_file='/dev/null',  # nosec B106 - a file path, not a secret
         )
 
         self.assertIsNotNone(mph.phandle)
@@ -87,7 +90,7 @@ class TestMultiProcessParallelHandleInitialization(unittest.TestCase):
         """Test initialization with custom configuration."""
         config = ParallelConfig(hosts_per_shard=64, max_workers_per_cpu=8)
 
-        mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", password="pass", config=config)
+        mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", password=FAKE_CRED, config=config)
 
         self.assertEqual(mph.config, config)
 
@@ -279,7 +282,7 @@ class TestMultiProcessParallelHandleExec(unittest.TestCase):
         ]
 
         mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
-        result = mph.scp_file("test.txt", "/tmp/test.txt", recurse=False)
+        result = mph.scp_file("test.txt", f"{TMP}/test.txt", recurse=False)
 
         # Verify execute_sharded was called with real payloads
         self.mock_execute_sharded.assert_called_once()
@@ -290,7 +293,7 @@ class TestMultiProcessParallelHandleExec(unittest.TestCase):
         first_payload = payloads[0]
         self.assertEqual(first_payload['operation'], 'upload_file')  # scp_file delegates to upload_file
         self.assertEqual(first_payload['local_file'], 'test.txt')
-        self.assertEqual(first_payload['remote_file'], '/tmp/test.txt')
+        self.assertEqual(first_payload['remote_file'], f'{TMP}/test.txt')
         self.assertEqual(first_payload['recurse'], False)
 
         # scp_file should return empty dict (merged void results)
@@ -350,7 +353,7 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
 
                 # Manually set attributes that _init_sharded would set
                 mph.user = "test"
-                mph.password = "pass"
+                mph.password = FAKE_CRED
                 mph.pkey = "key"
                 mph.host_key_check = True
                 mph.stop_on_errors = False
@@ -361,7 +364,7 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
                 expected = {
                     'log': None,  # No longer pass logger to child processes (fixes pickling issue)
                     'user': "test",
-                    'password': "pass",
+                    'password': FAKE_CRED,
                     'pkey': "key",
                     'host_key_check': True,
                     'stop_on_errors': False,
@@ -404,7 +407,7 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
         ]
 
         mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
-        result = mph.upload_file("test.txt", "/tmp/test.txt", recurse=True)
+        result = mph.upload_file("test.txt", f"{TMP}/test.txt", recurse=True)
 
         # Verify execute_sharded was called with real payloads
         self.mock_execute_sharded.assert_called_once()
@@ -415,7 +418,7 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
         first_payload = payloads[0]
         self.assertEqual(first_payload['operation'], 'upload_file')
         self.assertEqual(first_payload['local_file'], 'test.txt')
-        self.assertEqual(first_payload['remote_file'], '/tmp/test.txt')
+        self.assertEqual(first_payload['remote_file'], f'{TMP}/test.txt')
         self.assertEqual(first_payload['recurse'], True)
         self.assertIn('init', first_payload)
 
@@ -427,8 +430,8 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
         host_list = ["host1", "host2", "host3", "host4"]
         config = ParallelConfig(hosts_per_shard=2, max_workers_per_cpu=1)
         node_path_map = {
-            "host2": ("/tmp/local2.sh", "/tmp/remote2.sh"),
-            "host3": ("/tmp/local3.sh", "/tmp/remote3.sh"),
+            "host2": (f"{TMP}/local2.sh", f"{TMP}/remote2.sh"),
+            "host3": (f"{TMP}/local3.sh", f"{TMP}/remote3.sh"),
         }
 
         self.mock_execute_sharded.return_value = [
@@ -445,11 +448,11 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
 
         self.assertEqual(payloads[0]['operation'], 'upload_file_list')
         self.assertEqual(payloads[0]['init']['host_list'], ["host2"])
-        self.assertEqual(payloads[0]['node_path_map'], {"host2": ("/tmp/local2.sh", "/tmp/remote2.sh")})
+        self.assertEqual(payloads[0]['node_path_map'], {"host2": (f"{TMP}/local2.sh", f"{TMP}/remote2.sh")})
 
         self.assertEqual(payloads[1]['operation'], 'upload_file_list')
         self.assertEqual(payloads[1]['init']['host_list'], ["host3"])
-        self.assertEqual(payloads[1]['node_path_map'], {"host3": ("/tmp/local3.sh", "/tmp/remote3.sh")})
+        self.assertEqual(payloads[1]['node_path_map'], {"host3": (f"{TMP}/local3.sh", f"{TMP}/remote3.sh")})
 
         self.assertEqual(result, {"host2": "host2: SUCCESS", "host3": "host3: SUCCESS"})
 
@@ -498,12 +501,12 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
 
         # Mock execute_sharded to return realistic download results
         self.mock_execute_sharded.return_value = [
-            {'result': {"host1": "/tmp/test.txt_host1"}, 'reachable_hosts': ["host1"], 'unreachable_hosts': []},
-            {'result': {"host2": "/tmp/test.txt_host2"}, 'reachable_hosts': ["host2"], 'unreachable_hosts': []},
+            {'result': {"host1": f"{TMP}/test.txt_host1"}, 'reachable_hosts': ["host1"], 'unreachable_hosts': []},
+            {'result': {"host2": f"{TMP}/test.txt_host2"}, 'reachable_hosts': ["host2"], 'unreachable_hosts': []},
         ]
 
         mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
-        result = mph.download_file("/remote/test.txt", "/tmp/test.txt", suffix_separator="_")
+        result = mph.download_file("/remote/test.txt", f"{TMP}/test.txt", suffix_separator="_")
 
         # Verify execute_sharded was called with real payloads
         self.mock_execute_sharded.assert_called_once()
@@ -514,18 +517,18 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
         first_payload = payloads[0]
         self.assertEqual(first_payload['operation'], 'download_file')
         self.assertEqual(first_payload['remote_file'], '/remote/test.txt')
-        self.assertEqual(first_payload['local_file'], '/tmp/test.txt')
+        self.assertEqual(first_payload['local_file'], f'{TMP}/test.txt')
         self.assertEqual(first_payload['suffix_separator'], '_')
         self.assertIn('init', first_payload)
 
         # download_file should return merged host->path dict
-        expected_result = {"host1": "/tmp/test.txt_host1", "host2": "/tmp/test.txt_host2"}
+        expected_result = {"host1": f"{TMP}/test.txt_host1", "host2": f"{TMP}/test.txt_host2"}
         self.assertEqual(result, expected_result)
 
     def test_download_file_with_sharding_targets_one_host(self):
         """A targeted download uses a one-host SFTP client, not every shard."""
         config = ParallelConfig(hosts_per_shard=1, max_workers_per_cpu=1)
-        expected_result = {"host2": "/tmp/test.txt_host2"}
+        expected_result = {"host2": f"{TMP}/test.txt_host2"}
 
         with (
             patch(
@@ -534,7 +537,7 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
             patch('cvs.lib.parallel.multiprocess_phandle.ParallelHandle.destroy_clients') as mock_destroy,
         ):
             mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
-            result = mph.download_file("/remote/test.txt", "/tmp/test.txt", hosts=["host2"])
+            result = mph.download_file("/remote/test.txt", f"{TMP}/test.txt", hosts=["host2"])
 
         self.assertEqual(result, expected_result)
         self.mock_execute_sharded.assert_not_called()
@@ -549,5 +552,7 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
             env_vars=None,
             transport='ssh',
         )
-        mock_download.assert_called_once_with("/remote/test.txt", "/tmp/test.txt", recurse=False, suffix_separator="_")
+        mock_download.assert_called_once_with(
+            "/remote/test.txt", f"{TMP}/test.txt", recurse=False, suffix_separator="_"
+        )
         mock_destroy.assert_called_once_with()
