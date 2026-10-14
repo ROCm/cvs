@@ -15,6 +15,9 @@ from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
 from cvs.lib.utils_lib import get_passwordless_sudo_status
 
+# Exit status of build_mpi_cmd's hostfile-creation command, by the step that failed.
+_HOSTFILE_STEP_FAILED = {2: 'mktemp failed', 3: 'writing the host list failed'}
+
 
 class BaremetalOrchestrator(Orchestrator):
     """
@@ -294,16 +297,18 @@ class BaremetalOrchestrator(Orchestrator):
         # call, so no other line of the head node's output can be taken for it.
         marker = f'cvs-mpi-hostfile-{uuid.uuid4().hex}:'
         cmd = (
-            'hf=$(mktemp "${TMPDIR:-/tmp}/cvs_mpi_hosts.XXXXXXXX") || exit 1; '
-            f'printf %s {shlex.quote(host_file_params)} > "$hf" || {{ rm -f "$hf"; exit 1; }}; '
+            'hf=$(mktemp "${TMPDIR:-/tmp}/cvs_mpi_hosts.XXXXXXXX") || exit 2; '
+            f'printf %s {shlex.quote(host_file_params)} > "$hf" || {{ rm -f "$hf"; exit 3; }}; '
             f'printf "%s%s\\n" {marker} "$hf"'
         )
         result = self.exec_on_head(cmd, detailed=True)
-        failed = [
-            f"{host} (exit {res.get('exit_code')}): {res.get('output', '').strip()}"
-            for host, res in result.items()
-            if res.get('exit_code') != 0
-        ]
+        failed = []
+        for host, res in result.items():
+            exit_code = res.get('exit_code')
+            if exit_code != 0:
+                step = _HOSTFILE_STEP_FAILED.get(exit_code)
+                status = f'exit {exit_code}, {step}' if step else f'exit {exit_code}'
+                failed.append(f"{host} ({status}): {res.get('output', '').strip()}")
         if failed:
             raise RuntimeError(f"Failed to create MPI hostfile: {'; '.join(failed)}")
 
