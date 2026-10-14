@@ -393,11 +393,12 @@ def test_cell_metrics(
 
     if not variant_config.enforce_thresholds or metric_tier == "record":
         return
+    # Efficiency is actual / (single-node baseline x nnodes). No baseline means
+    # nothing to gate, including a leftover scaling spec in the threshold cell.
+    baseline = (getattr(variant_config.params, "scaling_baseline_output_throughput", "") or "").strip()
+    if metric_tier == "scaling" and not baseline:
+        pytest.skip("scaling tier not configured (no single-node baseline)")
     if not specs:
-        # Efficiency is actual / (single-node baseline x nnodes). No baseline means nothing to gate.
-        baseline = (getattr(variant_config.params, "scaling_baseline_output_throughput", "") or "").strip()
-        if metric_tier == "scaling" and not baseline:
-            pytest.skip("scaling tier not configured (no single-node baseline)")
         pytest.fail(f"no threshold specs for tier {metric_tier!r} in cell {cell!r}")
     # ATOM benchmark_serving may omit some tail percentiles even when
     # metric_percentiles requests them; only gate metrics present in actuals.
