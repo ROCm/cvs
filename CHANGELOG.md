@@ -58,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SGLang: the GPU occupancy check runs `amd-smi metric --mem-usage --json` instead of a bare `amd-smi metric --json`, so it reads only the VRAM section it uses and no longer reads the xGMI error section, which resets the xGMI error counters on MI200 and older GPUs.
 - vLLM: `vllm_single` accepts `pipeline_parallel_size` greater than 1 instead of rejecting it, and `vllm_distributed` on a one-host cluster now serves with the configured pipeline width instead of 1.
 - vLLM: a server that exits during startup, or whose launch never created its log, now fails the cell at the next startup check instead of being polled for the whole readiness budget (about 66 minutes by default). A `vllm serve` launch lost in transport is retried up to twice when it left no server log or `server.pid` behind.
+- IB Perf sample config: `duration` is now `10` (was `30`). The bandwidth test reads perftest results about 20 seconds after launch, so 30-second runs were reported as failures; configs copied from the old sample must lower `duration` as well.
 
 ## [0.2.0] - 2026-09-23
 
