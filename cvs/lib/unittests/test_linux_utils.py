@@ -369,6 +369,18 @@ class TestGetGpuNicMappingDict(unittest.TestCase):
         self.assertEqual(rdma_devs, ['rdma0', 'rdma1', 'rdma2', 'rdma2', 'rdma4', 'rdma5', 'rdma6', 'rdma7'])
         self.assertEqual(len(logs.records), 1)
         self.assertIn('0000:75:00.0', logs.output[0])
+        self.assertIn('node1', logs.output[0])
+
+    def test_cross_domain_pair_is_logged(self):
+        gpus = [f'{domain}:00:{dev:02x}.0' for domain in ('0002', '0003') for dev in range(1, 5)]
+        nic_slots = [('0002', dev) for dev in range(9, 12)] + [('0003', dev) for dev in range(9, 14)]
+        nics = [(f'eth{i}', f'{domain}:00:{dev:02x}.0', f'ionic_{i}') for i, (domain, dev) in enumerate(nic_slots)]
+        with self.assertLogs(level='WARNING') as logs:
+            result = self._map(gpus, nics)
+        self.assertEqual(result['card3']['nic_bdf'], '0003:00:0d.0')
+        self.assertEqual(len(logs.records), 1)
+        for text in ('0002:00:04.0', '0003:00:0d.0', 'node1'):
+            self.assertIn(text, logs.output[0])
 
 
 if __name__ == '__main__':

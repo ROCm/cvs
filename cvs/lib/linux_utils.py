@@ -859,20 +859,21 @@ def _parse_pci_bdf(bdf):
     return tuple(int(field, 16) for field in match.groups(default='0'))
 
 
-def pair_gpus_with_nics(gpu_bdf_list, nic_bdf_list):
+def pair_gpus_with_nics(gpu_bdf_list, nic_bdf_list, node=None):
     """
     Pick a backend NIC for each GPU from their PCI addresses.
 
     A NIC in the GPU's PCI domain always beats one outside it; then the nearest
     bus wins, then the nearest device. Pairs are taken closest bus first across
     all GPUs, earlier GPUs winning ties, and each NIC goes to one GPU. A GPU
-    shares a NIC only when every NIC is already taken, and that is logged.
+    pairs with a NIC outside its domain, or shares a NIC, only when no better
+    NIC is free, and either is logged. node is used only in log and error messages.
 
     Returns:
         list: index into nic_bdf_list for each GPU, in GPU order.
     """
     if not nic_bdf_list:
-        raise ValueError('no backend NICs to pair with GPUs')
+        raise ValueError(f'no backend NICs to pair with GPUs on node {node}')
     gpus = [_parse_pci_bdf(bdf) for bdf in gpu_bdf_list]
     nics = [_parse_pci_bdf(bdf) for bdf in nic_bdf_list]
 
@@ -890,13 +891,21 @@ def pair_gpus_with_nics(gpu_bdf_list, nic_bdf_list):
         if gpu_idx not in nic_for_gpu and nic_idx not in used:
             nic_for_gpu[gpu_idx] = nic_idx
             used.add(nic_idx)
+            if gpus[gpu_idx][0] != nics[nic_idx][0]:
+                log.warning(
+                    'GPU %s on node %s paired with NIC %s outside its PCI domain',
+                    gpu_bdf_list[gpu_idx],
+                    node,
+                    nic_bdf_list[nic_idx],
+                )
 
     for gpu_idx in range(len(gpus)):
         if gpu_idx not in nic_for_gpu:
             nic_idx = min(range(len(nics)), key=lambda idx: rank(gpu_idx, idx))
             log.warning(
-                'GPU %s shares NIC %s: more GPUs than backend NICs',
+                'GPU %s on node %s shares NIC %s: more GPUs than backend NICs',
                 gpu_bdf_list[gpu_idx],
+                node,
                 nic_bdf_list[nic_idx],
             )
             nic_for_gpu[gpu_idx] = nic_idx
@@ -916,7 +925,7 @@ def get_gpu_nic_mapping_dict(
         eth_devs = list(lshw_dict[node].keys())
         gpu_bdf_list = [gpu_pcie_dict[node][card]['PCI Bus'] for card in cards]
         nic_bdf_list = [lshw_dict[node][eth_dev]['pci_bus'] for eth_dev in eth_devs]
-        nic_idx_list = pair_gpus_with_nics(gpu_bdf_list, nic_bdf_list)
+        nic_idx_list = pair_gpus_with_nics(gpu_bdf_list, nic_bdf_list, node=node)
 
         gpu_nic_dict[node] = {}
         for card, gpu_bdf, nic_idx in zip(cards, gpu_bdf_list, nic_idx_list):
