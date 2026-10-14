@@ -1,0 +1,97 @@
+{
+  "_comment": "DeepSeek-V4-Flash-Base FP8 single-node vLLM (gfx942). FP8 MoE needs moe-backend triton. This is not native ATOM. Thresholds are not a gate. The sweep is the short shape that was lab-validated.",
+  "enforce_thresholds": false,
+  "threshold_json": "mi325x_atom_vllm_deepseek-v4-flash-base_fp8_single_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "deepseek-ai/DeepSeek-V4-Flash-Base",
+    "remote": 0
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "vllm_mi3xx_deepseek_v4_flash_base_fp8_single",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme-models-mount>:/models:ro"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "server_params": {
+    "backend": "vllm_atom",
+    "nnodes": "1",
+    "model": "deepseek-ai/DeepSeek-V4-Flash-Base",
+    "tensor_parallelism": "8",
+    "pipeline_parallelism": "1",
+    "port_no": "8000",
+    "serve_args": {
+      "dtype": "auto",
+      "kv-cache-dtype": "fp8_e4m3",
+      "tokenizer-mode": "deepseek_v4",
+      "moe-backend": "triton",
+      "trust-remote-code": true,
+      "enforce-eager": true,
+      "gpu-memory-utilization": "0.9",
+      "block-size": 256,
+      "no-enable-prefix-caching": true
+    },
+    "env": {
+      "VLLM_ROCM_USE_AITER": "1",
+      "VLLM_ROCM_USE_AITER_LINEAR": "1",
+      "VLLM_DSV4_ROCM_GRAPH_SAFE": "0",
+      "VLLM_USE_BREAKABLE_CUDAGRAPH": "0",
+      "AMDGCN_USE_BUFFER_OPS": "0"
+    }
+  },
+  "benchmark_params": {
+    "backend": "vllm",
+    "data_set_name": "random",
+    "num_prompts": "64",
+    "random_range_ratio": "0.8",
+    "max_model_length": "4096",
+    "metric_percentiles": "95,99",
+    "client_poll_count": "180",
+    "client_poll_wait_time": "60",
+    "reuse_server_across_sweep": "true"
+  },
+  "sweeps": {
+    "ISL=128,OSL=32,TP=8,PP=1,CONC=8": {},
+    "ISL=256,OSL=64,TP=8,PP=1,CONC=8": {},
+    "ISL=512,OSL=128,TP=8,PP=1,CONC=16": {}
+  },
+  "runs": [],
+  "platform": {
+    "gpu_metrics_poll": true
+  },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
+  "accuracy": {
+    "tasks": [
+      {
+        "id": "gsm8k_flex",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      }
+    ]
+  }
+}

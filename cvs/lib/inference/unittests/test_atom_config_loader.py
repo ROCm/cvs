@@ -351,6 +351,23 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
         self.assertEqual(variant.params.driver, "vllm_atom")
 
+    def test_load_v4_flash_base_vllm_uses_triton_moe(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-v4-flash-base_fp8_single.json")
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.model.id, "deepseek-ai/DeepSeek-V4-Flash-Base")
+        self.assertEqual(variant.roles.server.serve_args["moe-backend"], "triton")
+        self.assertEqual(
+            variant.expected_cells(),
+            [
+                "ISL=128,OSL=32,TP=8,PP=1,CONC=8",
+                "ISL=256,OSL=64,TP=8,PP=1,CONC=8",
+                "ISL=512,OSL=128,TP=8,PP=1,CONC=16",
+            ],
+        )
+        for cell in variant.expected_cells():
+            self.assertIn(cell, variant.thresholds)
+
     def test_load_atom_vllm_gpt_oss_serving_schema(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_vllm_gpt-oss-120b_mxfp4_single.json")
