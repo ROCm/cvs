@@ -3,7 +3,6 @@
 import json
 import os
 import shlex
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -12,6 +11,8 @@ from unittest.mock import MagicMock, patch
 from pydantic import ValidationError
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
+
+from cvs.unittests.support import TMP, run_trusted
 
 from cvs.lib.preflight.ifoe_l2_connectivity import (
     AfmctlPortParser,
@@ -40,7 +41,7 @@ Summary:
 """
 
 
-SKIP_PASS_OUTPUT = """\
+SKIP_PASSING_OUTPUT = """\
 0001:01:00.1                   : Ping test results (1 pings per port pair)
 Accel ID    Port#     IFoE Req        IFoE Rsp        Non-IFoE
 --------    -----     --------        ---------       --------
@@ -145,6 +146,7 @@ Port#    State
 """
 
 
+PINGS_PASSED = 1
 PING_JSON_OUTPUT = json.dumps(
     {
         "bdf": "0001:01:00.1",
@@ -153,15 +155,15 @@ PING_JSON_OUTPUT = json.dumps(
             {
                 "destination_accelerator": 0,
                 "port": 0,
-                "ifoe_req": {"pass": 1, "total": 1, "status": "PASS"},
-                "ifoe_resp": {"pass": 1, "total": 1, "status": "PASS"},
-                "non_ifoe": {"pass": 1, "total": 1, "status": "PASS"},
+                "ifoe_req": {"pass": PINGS_PASSED, "total": 1, "status": "PASS"},
+                "ifoe_resp": {"pass": PINGS_PASSED, "total": 1, "status": "PASS"},
+                "non_ifoe": {"pass": PINGS_PASSED, "total": 1, "status": "PASS"},
             }
         ],
         "summary": {
-            "ifoe_req": {"pass": 1, "total": 1, "fail": 0, "loss_pct": 0.0},
-            "ifoe_resp": {"pass": 1, "total": 1, "fail": 0, "loss_pct": 0.0},
-            "non_ifoe": {"pass": 1, "total": 1, "fail": 0, "loss_pct": 0.0},
+            "ifoe_req": {"pass": PINGS_PASSED, "total": 1, "fail": 0, "loss_pct": 0.0},
+            "ifoe_resp": {"pass": PINGS_PASSED, "total": 1, "fail": 0, "loss_pct": 0.0},
+            "non_ifoe": {"pass": PINGS_PASSED, "total": 1, "fail": 0, "loss_pct": 0.0},
         },
     }
 )
@@ -207,7 +209,7 @@ class TestAfmctlPingParser(unittest.TestCase):
         self.assertFalse(parsed['parse_errors'])
 
     def test_skip_pass_output_retains_summary_without_success_rows(self):
-        parsed = AfmctlPingParser.parse(SKIP_PASS_OUTPUT)
+        parsed = AfmctlPingParser.parse(SKIP_PASSING_OUTPUT)
         self.assertEqual(parsed['bdf'], '0001:01:00.1')
         self.assertEqual(parsed['pings_per_port'], 1)
         self.assertEqual(parsed['ports'], {})
@@ -496,7 +498,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
     def test_skip_pass_summary_proves_selected_port_coverage(self):
         phdl = self._make_phdl(
             reachable_hosts=['nodeA'],
-            exec_responses=[{'nodeA': SKIP_PASS_OUTPUT}],
+            exec_responses=[{'nodeA': SKIP_PASSING_OUTPUT}],
         )
         check = IfoeL2ConnectivityCheck(
             _make_orch(phdl),
@@ -955,8 +957,8 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
             handle.write(content)
             path = handle.name
         try:
-            os.chmod(path, 0o755)
-            return subprocess.run([path], capture_output=True, text=True).stdout
+            os.chmod(path, 0o755)  # nosec B103 - test script in a private temp file
+            return run_trusted([path], capture_output=True, text=True).stdout
         finally:
             os.unlink(path)
 
@@ -989,13 +991,13 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
         check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
         for script in (
             check._build_ping_batch_script('nodeA', ['echo a', 'echo b']),
-            check._build_port_probe_script('nodeA', '/tmp/ws', ['echo a']),
+            check._build_port_probe_script('nodeA', f'{TMP}/ws', ['echo a']),
         ):
             self.assertFalse(
                 any(line.strip().startswith('set -e') for line in script.splitlines()),
                 'synchronous afmctl invocations must not run under set -e',
             )
-            self.assertEqual(0, subprocess.run(['bash', '-n'], input=script, capture_output=True, text=True).returncode)
+            self.assertEqual(0, run_trusted(['bash', '-n'], input=script, capture_output=True, text=True).returncode)
 
     def test_failing_invocation_does_not_abort_the_rest_of_the_batch(self):
         check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
@@ -1046,7 +1048,7 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
 
     def test_port_probe_script_reports_each_probe_exit_status(self):
         check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
-        script = check._build_port_probe_script('nodeA', '/tmp/ws', ['true', 'exit 4', 'true'])
+        script = check._build_port_probe_script('nodeA', f'{TMP}/ws', ['true', 'exit 4', 'true'])
         output = self._run_script(script)
 
         self.assertEqual(check._parse_batch_exit_codes(output), {'0': 0, '1': 4, '2': 0})
@@ -1054,7 +1056,7 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
 
     def test_workspace_honours_reporting_and_debug_configuration(self):
         check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
-        self.assertEqual(check._remote_ifoe_workspace_root(), '/tmp/preflight/ifoe_l2_connectivity_workspace')
+        self.assertEqual(check._remote_ifoe_workspace_root(), f'{TMP}/preflight/ifoe_l2_connectivity_workspace')
         self.assertFalse(check._scriptlet_enabled())
 
         configured = IfoeL2ConnectivityCheck(
@@ -1069,8 +1071,8 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
     def test_batch_artifact_paths_are_stable_per_round_unlike_the_unbatched_path(self):
         check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
         self.assertEqual(
-            check._batch_port_artifact_path('/tmp/ws', '0001:01:00.1'),
-            check._batch_port_artifact_path('/tmp/ws', '0001:01:00.1'),
+            check._batch_port_artifact_path(f'{TMP}/ws', '0001:01:00.1'),
+            check._batch_port_artifact_path(f'{TMP}/ws', '0001:01:00.1'),
         )
         self.assertNotEqual(check._port_artifact_path('0001:01:00.1'), check._port_artifact_path('0001:01:00.1'))
 

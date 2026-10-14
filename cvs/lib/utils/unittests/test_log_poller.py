@@ -6,12 +6,12 @@ Unit tests for cvs/lib/utils/log_poller.py::LogPoller.
 '''
 
 import os
-import subprocess
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
 from cvs.lib.utils.log_poller import LogPollTimeout, LogPoller
+from cvs.unittests.support import run_trusted
 
 _MOD = "cvs.lib.utils.log_poller"
 
@@ -57,7 +57,7 @@ class _LocalTailOrch:
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=False):
         # Keep \r as \r so this matches GNU tail's on-disk records (text=True would
         # turn \r into \n and reintroduce the cursor skew these tests catch).
-        out = subprocess.check_output(["bash", "-c", cmd_list[0]])
+        out = run_trusted(["bash", "-c", cmd_list[0]], check=True, capture_output=True).stdout
         return {"h0": out.decode("utf-8", errors="surrogateescape")}
 
 

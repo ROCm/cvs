@@ -18,6 +18,7 @@ from cvs.lib.preflight.node_smoke import (
     resolve_rdma_gid_index,
     resolve_rdma_interfaces,
 )
+from cvs.unittests.support import TMP
 
 
 def _make_orch(phdl):
@@ -28,7 +29,7 @@ def _make_orch(phdl):
 
 class TestBuildNodeSmokeFlags(unittest.TestCase):
     def test_default_flags_include_dump_path(self):
-        flags = build_node_smoke_flags(dump_path="/tmp/smoke")
+        flags = build_node_smoke_flags(dump_path=f"{TMP}/smoke")
         self.assertIn("--dump-path /tmp/smoke", flags)
 
     def test_empty_dump_path_uses_default(self):
@@ -44,7 +45,7 @@ class TestBuildNodeSmokeFlags(unittest.TestCase):
 
     def test_resolve_dump_path_without_reporting_section(self):
         cfg = {"node_smoke": {"dump_path": ""}}
-        self.assertEqual(_resolve_dump_path(cfg), "/tmp/preflight/node_smoke")
+        self.assertEqual(_resolve_dump_path(cfg), f"{TMP}/preflight/node_smoke")
 
     def test_rdma_and_host_limits(self):
         flags = build_node_smoke_flags(
@@ -61,7 +62,7 @@ class TestBuildNodeSmokeFlags(unittest.TestCase):
 
     def test_extra_args_forwarded(self):
         flags = build_node_smoke_flags(
-            dump_path="/tmp/smoke",
+            dump_path=f"{TMP}/smoke",
             extra_args=["--no-clean-dump-path", "--allow-foreign-procs"],
         )
         self.assertIn("--no-clean-dump-path", flags)
@@ -69,7 +70,7 @@ class TestBuildNodeSmokeFlags(unittest.TestCase):
 
     def test_tier2_perf_flags(self):
         flags = build_node_smoke_flags(
-            dump_path="/tmp/smoke",
+            dump_path=f"{TMP}/smoke",
             tier2_perf=True,
             gemm_tflops_min=700,
             hbm_gbs_min=4500,
@@ -86,7 +87,7 @@ class TestBuildNodeSmokeFlags(unittest.TestCase):
 
     def test_tier2_perf_off_omits_threshold_flags(self):
         flags = build_node_smoke_flags(
-            dump_path="/tmp/smoke",
+            dump_path=f"{TMP}/smoke",
             tier2_perf=False,
             gemm_tflops_min=700,
         )
@@ -104,7 +105,7 @@ class TestBuildRemoteCommand(unittest.TestCase):
             master_addr="node0",
             master_port=1234,
             gpus_per_node=8,
-            dump_path="/tmp/preflight/node_smoke",
+            dump_path=f"{TMP}/preflight/node_smoke",
             smoke_flags="--dump-path /tmp/preflight/node_smoke",
             nccl_ib_hca="rdma0,rdma1",
             nccl_ib_gid_index=3,

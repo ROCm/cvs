@@ -19,6 +19,7 @@ from cvs.lib.preflight.tier3_info import (
     parse_preflight_info_output,
     resolve_tier3_setting,
 )
+from cvs.unittests.support import TMP
 
 
 def _make_orch(phdl):
@@ -29,7 +30,7 @@ def _make_orch(phdl):
 
 class TestBuildPreflightInfoFlags(unittest.TestCase):
     def test_default_flags_include_host_gpu_network(self):
-        flags = build_preflight_info_flags(dump_path="/tmp/tier3")
+        flags = build_preflight_info_flags(dump_path=f"{TMP}/tier3")
         self.assertIn("--host", flags)
         self.assertIn("--gpu", flags)
         self.assertIn("--network", flags)
@@ -37,7 +38,7 @@ class TestBuildPreflightInfoFlags(unittest.TestCase):
         self.assertIn("--disable-pdf", flags)
 
     def test_resolve_dump_path_without_reporting_section(self):
-        self.assertEqual(_resolve_dump_path({"tier3_info": {"dump_path": ""}}), "/tmp/preflight/node_smoke_tier3")
+        self.assertEqual(_resolve_dump_path({"tier3_info": {"dump_path": ""}}), f"{TMP}/preflight/node_smoke_tier3")
 
     def test_master_node_includes_report_markers(self):
         cmd = build_remote_preflight_info_command(
@@ -48,7 +49,7 @@ class TestBuildPreflightInfoFlags(unittest.TestCase):
             master_addr="node0",
             master_port=1234,
             gpus_per_node=8,
-            dump_path="/tmp/preflight/tier3_info",
+            dump_path=f"{TMP}/preflight/tier3_info",
             preflight_flags="--host --gpu --network",
             report_file_name="tier3_info",
         )

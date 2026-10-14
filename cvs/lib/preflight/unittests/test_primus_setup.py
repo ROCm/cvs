@@ -3,13 +3,14 @@
 import os
 import shlex
 import stat
-import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
+
+from cvs.unittests.support import run_trusted
 
 from cvs.lib.preflight.primus_setup import (
     PrimusSetup,
@@ -150,13 +151,13 @@ class TestPrimusSetupCommands(unittest.TestCase):
         self.assertIn("pip uninstall -y torch", cmd)
         self.assertLess(cmd.index("if !"), cmd.index("pip uninstall -y torch"))
         self.assertNotIn('if ! python -c "import torch"', cmd)
-        subprocess.run(["bash", "-n", "-c", cmd], check=True)
+        run_trusted(["bash", "-n", "-c", cmd], check=True)
 
     def test_reinstall_group_does_not_run_after_failed_prefix(self):
         python_q = shlex.quote("/nonexistent/cvs-primus-python")
         reinstall = _torch_reinstall_shell(python_q, shlex.quote("https://example.invalid/simple"))
         script = f"false && {reinstall} && echo SHOULD_NOT_RUN"
-        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        result = run_trusted(["bash", "-c", script], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("SHOULD_NOT_RUN", result.stdout)
         self.assertNotIn("cvs-primus-python", result.stdout + result.stderr)
@@ -174,7 +175,7 @@ class TestPrimusSetupCommands(unittest.TestCase):
         self.assertIn(ready, cmd)
         self.assertLess(cmd.index("if !"), cmd.index("pip uninstall -y torch"))
         self.assertNotIn("torch.version", cmd)
-        subprocess.run(["bash", "-n", "-c", cmd], check=True)
+        run_trusted(["bash", "-n", "-c", cmd], check=True)
 
     def test_skip_mode_does_not_reinstall_torch(self):
         cmd = build_primus_venv_install_command(
@@ -196,7 +197,7 @@ class TestPrimusSetupCommands(unittest.TestCase):
         self.assertIn(shlex.quote(_torch_hip_check_script("7.2")), cmd)
         self.assertNotIn('python -c "import torch"', cmd)
         self.assertNotIn("bash -c", cmd)
-        subprocess.run(["bash", "-n", "-c", cmd], check=True)
+        run_trusted(["bash", "-n", "-c", cmd], check=True)
 
     def test_pathspec_error_is_git_not_pip(self):
         parsed = parse_setup_output(
@@ -234,7 +235,7 @@ class TestTorchHipCheckScript(unittest.TestCase):
                 f"mod.version = types.SimpleNamespace(hip={hip!r})\n"
                 "sys.modules['torch'] = mod\n"
             )
-        proc = subprocess.run(
+        proc = run_trusted(
             [sys.executable, "-c", prelude + script],
             capture_output=True,
             text=True,
@@ -281,7 +282,7 @@ class TestTorchHipCheckScript(unittest.TestCase):
                 )
             os.chmod(python_path, os.stat(python_path).st_mode | stat.S_IEXEC)
             cmd = _torch_hip_match_shell(shlex.quote(python_path), "7.2")
-            proc = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, check=False)
+            proc = run_trusted(["bash", "-c", cmd], capture_output=True, text=True, check=False)
         return proc.returncode
 
 

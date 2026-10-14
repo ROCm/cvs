@@ -129,7 +129,7 @@ GPU 0
 # every code path the parser is asked to handle).
 # ---------------------------------------------------------------------------
 
-SMOKETEST_PASS_OUTPUT = """\
+SMOKETEST_SUCCESS_OUTPUT = """\
 TransferBench (candidate) starting smoketest preset
 Detected 4 local GPUs in vpod_id=0, ppod_id=0
 
@@ -367,7 +367,7 @@ class TestReconcileClusterVpod(unittest.TestCase):
 
 class TestSmoketestParser(unittest.TestCase):
     def test_passing_output(self):
-        parsed = SmoketestParser.parse(_with_sentinel(SMOKETEST_PASS_OUTPUT, 0))
+        parsed = SmoketestParser.parse(_with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0))
         self.assertEqual(parsed['exit_code'], 0)
         self.assertEqual(parsed['num_pass'], 16)
         self.assertEqual(parsed['num_fail'], 0)
@@ -433,7 +433,7 @@ class TestSmoketestParser(unittest.TestCase):
 
 class TestEvaluateSmoketest(unittest.TestCase):
     def test_pass_verdict(self):
-        parsed = SmoketestParser.parse(_with_sentinel(SMOKETEST_PASS_OUTPUT, 0))
+        parsed = SmoketestParser.parse(_with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0))
         verdict, errors = evaluate_smoketest(parsed, max_skip_pct=25.0)
         self.assertEqual(verdict, 'PASS')
         self.assertEqual(errors, [])
@@ -451,7 +451,7 @@ class TestEvaluateSmoketest(unittest.TestCase):
         self.assertTrue(any('ERR_FATAL precondition' in e for e in errors))
 
     def test_fail_when_sentinel_missing(self):
-        parsed = SmoketestParser.parse(SMOKETEST_PASS_OUTPUT)
+        parsed = SmoketestParser.parse(SMOKETEST_SUCCESS_OUTPUT)
         verdict, errors = evaluate_smoketest(parsed)
         self.assertEqual(verdict, 'FAIL')
         self.assertTrue(any('exit code not captured' in e for e in errors))
@@ -898,8 +898,8 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
                     'nodeB': self._fabric_payload(FABRIC_TOPOLOGY_VPOD0_4GPU),
                 },
                 {
-                    'nodeA': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
-                    'nodeB': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
+                    'nodeA': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0),
+                    'nodeB': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0),
                 },
             ],
         )
@@ -918,8 +918,8 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
             reachable_hosts=['nodeA', 'nodeB'],
             exec_responses=[
                 {
-                    'nodeA': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
-                    'nodeB': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
+                    'nodeA': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0),
+                    'nodeB': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0),
                 },
             ],
         )
@@ -980,7 +980,7 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
                     'nodeB': self._fabric_payload(FABRIC_TOPOLOGY_VPOD0_4GPU),
                 },
                 {
-                    'nodeA': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
+                    'nodeA': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0),
                     'nodeB': _with_sentinel(SMOKETEST_FAIL_OUTPUT, 1),
                 },
             ],
@@ -1019,8 +1019,8 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
             ],
             cmd_list_responses=[
                 {
-                    'nodeA': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
-                    'nodeB': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
+                    'nodeA': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0),
+                    'nodeB': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0),
                 }
             ],
         )
@@ -1043,7 +1043,7 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
             reachable_hosts=['nodeA'],
             exec_responses=[
                 {'nodeA': self._fabric_payload(FABRIC_TOPOLOGY_VPOD0_4GPU)},
-                {'nodeA': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0)},
+                {'nodeA': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0)},
             ],
         )
         check = TransferBenchSmokeCheck(_make_orch(phdl), rank_mode='multi_rank')
@@ -1056,7 +1056,7 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         phdl = self._make_phdl(
             reachable_hosts=['nodeA'],
             exec_responses=[
-                {'nodeA': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0)},
+                {'nodeA': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0)},
             ],
         )
         check = TransferBenchSmokeCheck(_make_orch(phdl), rank_mode='per_node', skip_pod_check=True)
@@ -1086,7 +1086,7 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
             reachable_hosts=['nodeA'],
             exec_responses=[
                 {'nodeA': FABRIC_TEXT_VPOD0},
-                {'nodeA': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0)},
+                {'nodeA': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0)},
             ],
         )
         check = TransferBenchSmokeCheck(_make_orch(phdl), rank_mode='per_node')

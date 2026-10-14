@@ -3,6 +3,7 @@
 import unittest
 
 from cvs.lib.utils.model_query_lib import LongContextNiahBenchmark
+from cvs.unittests.support import TMP
 
 
 class TestLongContextNiahBenchmark(unittest.TestCase):
@@ -46,19 +47,20 @@ class TestLongContextNiahBenchmark(unittest.TestCase):
         self.assertNotIn('"request": req_str or prompt', src)
 
     def test_prepare_passes_local_files_only_to_probe_kwargs(self):
+        rate = 0.0
         _, scoring = LongContextNiahBenchmark.prepare(
             {
                 "num_prompts": 4,
                 "seed": 42,
                 "local_files_only": True,
-                "expected_results": {"auto": {"pass_rate": 0.0}},
+                "expected_results": {"auto": {"pass_rate": rate}},
             },
             port=8000,
             host="127.0.0.1",
             model_id="openai/gpt-oss-120b",
             isl=8192,
             osl=32,
-            log_dir="/tmp/logs",
+            log_dir=f"{TMP}/logs",
             log_basename="niah.log",
         )
         self.assertTrue(scoring["probe_kwargs"]["local_files_only"])

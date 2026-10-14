@@ -16,6 +16,7 @@ from cvs.lib.preflight.base import partition_nodes_into_groups
 from cvs.lib.preflight.rdma_connectivity import RdmaConnectivityCheck
 from cvs.lib.preflight.report import PreflightReportGenerator
 from cvs.parsers.schemas import PreflightConfigFile, normalize_legacy_preflight_rdma_config
+from cvs.unittests.support import TMP
 
 
 def _make_checker(
@@ -675,14 +676,14 @@ class TestGenerateServerCommandsScriptletDebug(unittest.TestCase):
     def test_default_no_strace(self):
         checker = _make_checker(expected_interfaces=['if1'], config_dict={})
         groups = {'group_1': ['A', 'B']}
-        cmds = checker._generate_ibv_server_commands('A', groups, 'intra_group', 5000, '/tmp/preflight')
+        cmds = checker._generate_ibv_server_commands('A', groups, 'intra_group', 5000, f'{TMP}/preflight')
         self.assertTrue(cmds)
         self.assertTrue(all('strace' not in c for c in cmds))
 
     def test_scriptlet_debug_adds_strace(self):
         checker = _make_checker(expected_interfaces=['if1'], config_dict={'debug': {'scriptlet': True}})
         groups = {'group_1': ['A', 'B']}
-        cmds = checker._generate_ibv_server_commands('A', groups, 'intra_group', 5000, '/tmp/preflight')
+        cmds = checker._generate_ibv_server_commands('A', groups, 'intra_group', 5000, f'{TMP}/preflight')
         self.assertTrue(cmds)
         for c in cmds:
             with self.subTest(cmd=c[:80]):
@@ -693,7 +694,7 @@ class TestGenerateServerCommandsScriptletDebug(unittest.TestCase):
     def test_scriptlet_debug_accepts_string_true(self):
         checker = _make_checker(expected_interfaces=['if1'], config_dict={'debug': {'scriptlet': 'true'}})
         groups = {'group_1': ['A', 'B']}
-        cmds = checker._generate_ibv_server_commands('A', groups, 'intra_group', 5000, '/tmp/preflight')
+        cmds = checker._generate_ibv_server_commands('A', groups, 'intra_group', 5000, f'{TMP}/preflight')
         self.assertTrue(any('strace' in c for c in cmds))
 
 
