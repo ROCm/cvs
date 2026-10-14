@@ -170,9 +170,21 @@ Each row with captured output has a ``Full Log`` link. Skipped rows show the rea
   the config disabled threshold assertions.
 - ``No parsed benchmark result available``: parsing produced no result to report.
 
-Threshold failures appear on ``test_validate_thresholds``, one message per metric
-giving the measured value and the threshold. Kernel-log matches and per-node launch
-failures appear on ``test_run_benchmark``.
+Threshold validation reports each configured threshold as a pytest sub-test
+(``[threshold] (metric=<key>)``), and trace collection reports each node it collected
+from (``[trace collection] (host=<node>)``), plus a failed
+``[trace collection] (artifact=torch_traces)`` sub-test when no node produced usable
+traces. Expand the ``test_validate_thresholds`` or ``test_collect_traces`` row to see
+one row per sub-test. Threshold rows show the measured value (Actual) next to the
+gate, and a failed row gives the reason. A failed sub-test also fails its parent row,
+so dependent stages are gated and ``validation_passed`` is false. Kernel-log matches
+and per-node launch failures appear on ``test_run_benchmark``.
+
+In the JUnit XML, each sub-test is a ``cvs_aorta_subtest`` property of the parent test
+case whose value gives the outcome, the measured value and gate for thresholds, and any
+failure message. JUnit keeps one ``<testcase>`` per stage, but each sub-test adds one
+to the ``testsuite`` ``tests`` total, and a failed sub-test adds its own ``<failure>``
+to the parent ``<testcase>`` next to the parent's failure.
 
 Next to the report, ``aorta_single_html/`` (or ``aorta_distributed_html/``) holds
 the per-stage logs and copies of the cluster and config files.
@@ -195,20 +207,6 @@ per-rank summaries, execution status, validation status and collection errors. B
 RCCL logs are also downloaded. On bare metal over SSH, CVS copies these files from each
 node, so no shared filesystem with the CVS machine is required. Under SPUR or Slurm, CVS
 reads them from ``aorta_path`` on shared storage; see :ref:`aorta-spur-slurm`.
-
-Threshold validation reports each configured threshold as a pytest sub-test
-(``[threshold] (metric=<key>)``), and trace collection reports each node it collected
-from (``[trace collection] (host=<node>)``), plus a failed
-``[trace collection] (artifact=torch_traces)`` sub-test when no node produced usable
-traces. In the HTML report, expand the ``test_validate_thresholds`` or
-``test_collect_traces`` row to see one row per sub-test. Threshold rows show the
-measured value (Actual) next to the gate, and a failed row gives the reason. In the
-JUnit XML, each sub-test is a ``cvs_aorta_subtest`` property of the parent test case
-whose value gives the outcome, the measured value and gate for thresholds, and any
-failure message. A failed sub-test also fails its parent test, so dependent stages are
-gated and ``validation_passed`` is false. JUnit keeps one ``<testcase>`` per stage, but
-each sub-test adds one to the ``testsuite`` ``tests`` total, and a failed sub-test adds
-its own ``<failure>`` to the parent ``<testcase>`` next to the parent's failure.
 
 Calibrate the sample thresholds for your hardware, node count and workload. Set
 ``enforce_thresholds: false`` to record metrics without threshold assertions.
