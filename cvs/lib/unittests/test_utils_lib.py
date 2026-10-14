@@ -1,4 +1,5 @@
 # cvs/lib/unittests/test_utils_lib.py
+import json
 import os
 import shlex
 import tempfile
@@ -105,8 +106,59 @@ class TestUtilsLib(unittest.TestCase):
         )
 
 
+class TestExtractJsonFromOutput(unittest.TestCase):
+    def test_plain_json_array_unchanged(self):
+        payload = '[{"gpu": 0}]'
+        self.assertEqual(utils_lib._extract_json_from_output(payload), payload)
+
+    def test_plain_json_object_unchanged(self):
+        payload = '{"key": "value"}'
+        self.assertEqual(utils_lib._extract_json_from_output(payload), payload)
+
+    def test_ssh_motd_banner_before_array_stripped(self):
+        banner = "WARNING: Conductor Auth\nThis is a restricted system.\n"
+        payload = '[{"gpu": 0}]'
+        result = utils_lib._extract_json_from_output(banner + payload)
+        self.assertEqual(result, payload)
+
+    def test_ssh_motd_banner_before_object_stripped(self):
+        banner = "WARNING: Conductor Auth\n"
+        payload = '{"rocm_version": "6.2.0"}'
+        result = utils_lib._extract_json_from_output(banner + payload)
+        self.assertEqual(result, payload)
+
+    def test_no_json_returns_original_string(self):
+        text = "No JSON here at all"
+        self.assertEqual(utils_lib._extract_json_from_output(text), text)
+
+    def test_empty_string_returns_empty_string(self):
+        self.assertEqual(utils_lib._extract_json_from_output(""), "")
+
+
+class TestConvertPhdlJsonToDict(unittest.TestCase):
+    @patch('cvs.lib.utils_lib.fail_test')
+    def test_banner_prefix_does_not_cause_failure(self, mock_fail_test):
+        """SSH MOTD banners prepended before amd-smi JSON must parse successfully."""
+        banner = "WARNING: Conductor Auth\nThis is a restricted system.\n"
+        payload = json.dumps([{"gpu": 0}])
+        result = utils_lib.convert_phdl_json_to_dict({'node1': banner + payload})
+        self.assertEqual(result['node1'], [{"gpu": 0}])
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.utils_lib.fail_test')
+    def test_banner_only_no_json_calls_fail_test(self, mock_fail_test):
+        """Output with banner but no JSON should invoke fail_test and return empty dict."""
+        result = utils_lib.convert_phdl_json_to_dict({'node1': 'WARNING: No JSON here'})
+        self.assertEqual(result['node1'], {})
+        mock_fail_test.assert_called()
+
+
 class TestResolveTestConfigPlaceholdersPaths(unittest.TestCase):
     """Path substitution is independent of a suite-specific config schema."""
+
+
+class TestResolveTestConfigPlaceholdersAorta(unittest.TestCase):
+    """Aorta benchmark YAML uses the same resolver as other CVS test suites (see tests/benchmark/test_aorta.py)."""
 
     def test_user_id_resolves_in_aorta_path(self):
         raw = {"aorta_path": "/scratch/users/{user-id}/aorta"}
@@ -173,6 +225,40 @@ class TestResolveRunDirPlaceholder(unittest.TestCase):
         self.assertEqual(resolved["log_path"], "/var/log/cvs")
         self.assertEqual(resolved["user"], "jdoe")
         self.assertIsNone(RunLayout._instance)
+
+
+class TestResolveTestConfigPlaceholdersSkipPaths(unittest.TestCase):
+    """skip_paths lets a caller exempt an inert config subtree from the <changeme> check
+    without disabling it for the rest of the config (see cvs/tests/preflight/preflight_checks.py's
+    _inert_nic_vendor_skip_paths, added for a config subsection unselected by a vendor selector)."""
+
+    CLUSTER = {"username": "jdoe", "home_mount_dir_name": "home", "node_dir_name": "root"}
+
+    def test_changeme_outside_skip_paths_still_raises(self):
+        raw = {"top": {"active": "<changeme>", "inert": {"value": "<changeme>"}}}
+        with self.assertRaises(SystemExit):
+            utils_lib.resolve_test_config_placeholders(raw, self.CLUSTER, skip_paths={"top.inert"})
+
+    def test_changeme_inside_skip_paths_does_not_raise(self):
+        raw = {"top": {"active": "fine", "inert": {"value": "<changeme>"}}}
+        resolved = utils_lib.resolve_test_config_placeholders(raw, self.CLUSTER, skip_paths={"top.inert"})
+        self.assertEqual(resolved["top"]["inert"]["value"], "<changeme>")
+
+    def test_skip_paths_does_not_match_sibling_with_shared_prefix(self):
+        # "top.inert" must not accidentally match a sibling key like "top.inertia".
+        raw = {"top": {"inertia": "<changeme>"}}
+        with self.assertRaises(SystemExit):
+            utils_lib.resolve_test_config_placeholders(raw, self.CLUSTER, skip_paths={"top.inert"})
+
+    def test_placeholder_substitution_still_applies_inside_skipped_subtree(self):
+        raw = {"top": {"inert": {"path": "/home/{user-id}/x"}}}
+        resolved = utils_lib.resolve_test_config_placeholders(raw, self.CLUSTER, skip_paths={"top.inert"})
+        self.assertEqual(resolved["top"]["inert"]["path"], "/home/jdoe/x")
+
+    def test_no_skip_paths_preserves_prior_behavior(self):
+        raw = {"top": {"value": "<changeme>"}}
+        with self.assertRaises(SystemExit):
+            utils_lib.resolve_test_config_placeholders(raw, self.CLUSTER)
 
 
 if __name__ == '__main__':

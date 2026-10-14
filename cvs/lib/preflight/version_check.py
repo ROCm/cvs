@@ -25,6 +25,14 @@ class RocmVersionCheck(PreflightCheck):
         self.expected_version = expected_version
 
     @staticmethod
+    def _extract_json_from_output(output: str) -> str:
+        """Strip any leading non-JSON content (e.g. SSH MOTD banners) before parsing."""
+        for i, ch in enumerate(output):
+            if ch in ('{', '['):
+                return output[i:]
+        return output
+
+    @staticmethod
     def _extract_rocm_version(output):
         """Parse ROCm version from amd-smi JSON output."""
         raw = output.strip()
@@ -32,7 +40,7 @@ class RocmVersionCheck(PreflightCheck):
             return 'NOT_FOUND'
 
         try:
-            payload = json.loads(raw)
+            payload = json.loads(RocmVersionCheck._extract_json_from_output(raw))
         except json.JSONDecodeError:
             return 'NOT_FOUND'
 
@@ -66,6 +74,15 @@ class RocmVersionCheck(PreflightCheck):
         out_dict = self.orch.all.exec(cmd)
 
         for node, output in out_dict.items():
+            if 'ABORT: Host Unreachable Error' in (output or ''):
+                self.results[node] = {
+                    'detected_version': 'NOT_FOUND',
+                    'expected_version': self.expected_version,
+                    'status': 'SKIPPED',
+                    'errors': [],
+                }
+                continue
+
             version = self._extract_rocm_version(output)
             self.results[node] = {
                 'detected_version': version,
