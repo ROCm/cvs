@@ -9,6 +9,7 @@ from cvs.lib.report import benchmark_metric_registry as registry
 from cvs.lib.report.render.perf_metric_table import is_benchmark_metrics_extra
 from cvs.tests.rccl import conftest
 from cvs.tests.rccl._case_report import RCCL_CASE_TESTS
+from cvs.unittests.support import TMP
 
 
 class _Outcome:
@@ -80,7 +81,7 @@ class TestRcclConftest(unittest.TestCase):
         self.assertEqual(data, ['captured log'])
 
     def test_sessionfinish_patches_each_case_test(self):
-        session = SimpleNamespace(config=SimpleNamespace(option=SimpleNamespace(htmlpath='/tmp/rccl.html')))
+        session = SimpleNamespace(config=SimpleNamespace(option=SimpleNamespace(htmlpath=f'{TMP}/rccl.html')))
         with patch.object(conftest, 'patch_benchmark_metrics_into_html') as patch_html:
             hook = conftest.pytest_sessionfinish(session, 0)
             next(hook)
@@ -88,7 +89,7 @@ class TestRcclConftest(unittest.TestCase):
                 next(hook)
         self.assertEqual(
             patch_html.call_args_list,
-            [call(Path('/tmp/rccl.html'), benchmark_test_name=name) for name in RCCL_CASE_TESTS],
+            [call(Path(f'{TMP}/rccl.html'), benchmark_test_name=name) for name in RCCL_CASE_TESTS],
         )
         session.config.option.htmlpath = None
         with patch.object(conftest, 'patch_benchmark_metrics_into_html') as patch_html:
