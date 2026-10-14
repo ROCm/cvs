@@ -45,6 +45,7 @@ from cvs.lib.inference.xdit.xdit_wan_job import (
     validate_wan_parallelism_config,
     validate_wan_xfuser_mounts,
 )
+from cvs.unittests.support import FAKE_CRED, TMP
 
 _WAN_BENCHMARK_PARAMS = {
     "prompt": "test prompt",
@@ -136,7 +137,7 @@ def _make_wan_job(
         phdl,
         inference_dict,
         benchmark_params,
-        hf_token="hf_test_token",
+        hf_token=FAKE_CRED,
         distributed=distributed,
         cluster_dict=cluster_dict,
     )
@@ -405,12 +406,12 @@ class TestWanOutputVerification(unittest.TestCase):
         self.assertTrue(scan_wan_fatal_output(output))
 
     def test_build_wan_output_verify_cmd(self):
-        cmd = build_wan_output_verify_cmd("/tmp/wan_22_host_outputs")
+        cmd = build_wan_output_verify_cmd(f"{TMP}/wan_22_host_outputs")
         self.assertIn("rank0_step*.json", cmd)
         self.assertIn("WAN_OUTPUT_OK", cmd)
 
     def test_build_wan_xfuser_output_verify_cmd(self):
-        cmd = build_wan_xfuser_output_verify_cmd("/tmp/wan_22_host_outputs")
+        cmd = build_wan_xfuser_output_verify_cmd(f"{TMP}/wan_22_host_outputs")
         self.assertIn("results/timing.json", cmd)
         self.assertIn("WAN_OUTPUT_OK", cmd)
 
@@ -608,7 +609,7 @@ class TestWanBenchmarkJob(unittest.TestCase):
         self.assertIn("docker run", cmd)
         self.assertIn(RUN_WAN_NATIVE_PATH, cmd)
         self.assertIn("--name wan22-benchmark", cmd)
-        self.assertNotIn("hf_test_token", cmd)
+        self.assertNotIn(FAKE_CRED, cmd)
 
     def test_build_docker_cmd_distributed_uses_ranked_container_name(self):
         cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}

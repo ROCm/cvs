@@ -28,7 +28,7 @@ from cvs.core.agent.http_client import (
 )
 from cvs.core.run_layout import RunLayout
 
-TOKEN = "test-token-123"
+AUTH_FIXTURE = "fixture-auth-123"
 
 
 def _exec_handler(request: httpx.Request) -> httpx.Response:
@@ -59,8 +59,10 @@ class HttpClientTestBase(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.tmp.cleanup)
         RunLayout.get(self.tmp.name)
 
-    def _make_client(self, agent_urls: dict[str, str], handler, token: str = TOKEN, **kwargs) -> ParallelHTTPClient:
-        client = ParallelHTTPClient(agent_urls, token, transport=httpx.MockTransport(handler), **kwargs)
+    def _make_client(
+        self, agent_urls: dict[str, str], handler, auth: str = AUTH_FIXTURE, **kwargs
+    ) -> ParallelHTTPClient:
+        client = ParallelHTTPClient(agent_urls, auth, transport=httpx.MockTransport(handler), **kwargs)
         self.addAsyncCleanup(client.destroy)
         return client
 
@@ -69,7 +71,7 @@ class TestParallelHTTPClientInit(unittest.TestCase):
     def test_ignores_ssh_client_kwargs(self):
         client = ParallelHTTPClient(
             {"h1": "http://h1"},
-            TOKEN,
+            AUTH_FIXTURE,
             timeout=60,
             num_retries=2,
             retry_delay=2,
@@ -98,9 +100,9 @@ class TestRunCommand(HttpClientTestBase):
             seen_headers.append(request.headers.get("authorization"))
             return _exec_handler(request)
 
-        client = self._make_client({"h1": "http://h1"}, handler, token="secret-abc")
+        client = self._make_client({"h1": "http://h1"}, handler, auth="custom-auth-abc")
         await client.run_command("true")
-        self.assertEqual(seen_headers, [f"{messages.AUTH_SCHEME} secret-abc"])
+        self.assertEqual(seen_headers, [f"{messages.AUTH_SCHEME} custom-auth-abc"])
 
     async def test_posts_to_exec_path_on_each_hosts_url(self):
         seen_urls = []
@@ -408,8 +410,8 @@ class TestOutputMode(HttpClientTestBase):
         self.assertEqual(outputs[0].stderr, ["err-line"])
 
     async def test_file_mode_rejects_path_outside_expected_exec_output(self):
-        secret = Path(self.tmp.name) / "secret.txt"
-        secret.write_text("classified")
+        outside_file = Path(self.tmp.name) / "outside.txt"
+        outside_file.write_text("classified")
 
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(
@@ -418,8 +420,8 @@ class TestOutputMode(HttpClientTestBase):
                     "exit_code": 0,
                     "stdout": ["preview"],
                     "stderr": [],
-                    "stdout_path": str(secret),
-                    "stderr_path": str(secret),
+                    "stdout_path": str(outside_file),
+                    "stderr_path": str(outside_file),
                     "truncated": None,
                     "timed_out": False,
                 },
@@ -429,7 +431,7 @@ class TestOutputMode(HttpClientTestBase):
         outputs = await client.run_command("true", output_mode=messages.ExecOutputMode.FILE, stop_on_errors=False)
         self.assertIsInstance(outputs[0].exception, HTTPProtocolError)
         self.assertEqual(outputs[0].stdout, [])
-        self.assertEqual(secret.read_text(), "classified")
+        self.assertEqual(outside_file.read_text(), "classified")
 
     async def test_file_mode_rejects_unexpected_filename_in_exec_output(self):
         def handler(request: httpx.Request) -> httpx.Response:
@@ -640,7 +642,7 @@ class TestRebuildAndDestroy(HttpClientTestBase):
         self.assertEqual(outputs[0].exit_code, 0)
 
     async def test_async_context_manager_destroys_on_exit(self):
-        client = ParallelHTTPClient({"h1": "http://h1"}, TOKEN, transport=httpx.MockTransport(_exec_handler))
+        client = ParallelHTTPClient({"h1": "http://h1"}, AUTH_FIXTURE, transport=httpx.MockTransport(_exec_handler))
         async with client as ctx_client:
             self.assertIs(ctx_client, client)
             await client.run_command("true")
@@ -650,7 +652,7 @@ class TestRebuildAndDestroy(HttpClientTestBase):
 
 class TestConnectionPool(HttpClientTestBase):
     def test_pool_is_unbounded_rather_than_capped_at_the_httpx_default_of_100(self):
-        client = ParallelHTTPClient({f"h{i}": f"http://h{i}" for i in range(101)}, TOKEN)
+        client = ParallelHTTPClient({f"h{i}": f"http://h{i}" for i in range(101)}, AUTH_FIXTURE)
         limits = client._pool_limits()
         self.assertIsNone(limits.max_connections)
         self.assertIsNone(limits.max_keepalive_connections)
@@ -681,7 +683,7 @@ class TestCreateAppIntegration(HttpClientTestBase):
     async def test_run_command_posts_json_accepted_by_create_app(self):
         agent_dir = Path(self.tmp.name) / "agent"
         agent_dir.mkdir()
-        (agent_dir / messages.AUTH_TOKEN_FILENAME).write_text(TOKEN + "\n")
+        (agent_dir / messages.AUTH_TOKEN_FILENAME).write_text(AUTH_FIXTURE + "\n")
         app = create_app(
             agent_dir=agent_dir,
             world_rank=0,
@@ -690,7 +692,9 @@ class TestCreateAppIntegration(HttpClientTestBase):
             own_port=9000,
         )
         async with app.router.lifespan_context(app):
-            client = ParallelHTTPClient({"local": "http://testserver"}, TOKEN, transport=httpx.ASGITransport(app=app))
+            client = ParallelHTTPClient(
+                {"local": "http://testserver"}, AUTH_FIXTURE, transport=httpx.ASGITransport(app=app)
+            )
             try:
                 outputs = await client.run_command("echo hello")
             finally:

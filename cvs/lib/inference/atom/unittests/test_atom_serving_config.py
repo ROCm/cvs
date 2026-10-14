@@ -13,6 +13,9 @@ from cvs.lib.inference.atom.atom_serving_config import (
     serving_selected_cell_keys,
     serving_to_atom_variant_raw,
 )
+from cvs.unittests.support import FAKE_CRED
+
+FAKE_CRED_FILE = "/token"
 
 
 class TestAtomServingConfig(unittest.TestCase):
@@ -176,14 +179,14 @@ class TestAtomServingConfig(unittest.TestCase):
             "container": {
                 "name": "atom",
                 "image": "example:latest",
-                "runtime": {"name": "docker", "args": {"env": {"HF_TOKEN": "secret"}}},
+                "runtime": {"name": "docker", "args": {"env": {"HF_TOKEN": FAKE_CRED}}},
             },
             "model": {"id": "example/model"},
             "paths": {
                 "shared_fs": "/shared",
                 "models_dir": "/models",
                 "log_dir": "/logs",
-                "hf_token_file": "/token",
+                "hf_token_file": FAKE_CRED_FILE,
             },
         }
         cell_thresholds = placeholder_gated_threshold_cell()
@@ -203,7 +206,7 @@ class TestAtomServingConfig(unittest.TestCase):
         self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
         self.assertEqual(variant.expected_cells(), [cell])
         self.assertNotIn("env", variant.container.runtime.args)
-        self.assertEqual(variant.roles.server.env.get("HF_TOKEN"), "secret")
+        self.assertEqual(variant.roles.server.env.get("HF_TOKEN"), FAKE_CRED)
         self.assertIn(cell, variant.thresholds)
         self.assertNotIn(orphan, variant.thresholds)
         self.assertIn("accuracy", variant.thresholds)
@@ -222,7 +225,7 @@ class TestAtomServingConfig(unittest.TestCase):
                 "shared_fs": "/shared",
                 "models_dir": "/models",
                 "log_dir": "/logs",
-                "hf_token_file": "/token",
+                "hf_token_file": FAKE_CRED_FILE,
             },
         }
         variant = AtomVariantConfig(**serving_to_atom_variant_raw(raw, {cell: placeholder_gated_threshold_cell()}))

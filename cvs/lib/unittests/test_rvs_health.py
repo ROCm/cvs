@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from cvs.core.runtimes.docker import DockerRuntime
+from cvs.unittests.support import TMP
 
 
 def _load(name, relative):
@@ -86,7 +87,7 @@ class TestInstallRvsTarball(unittest.TestCase):
         orch.exec.side_effect = OSError('ssh dropped')
         config = {'rocm_runtime_lib_path': ''}
         with patch.object(install_rvs, 'fail_test') as fail_test:
-            result = install_rvs._install_rvs_tarball(orch, config, '/opt/rocm', '/tmp/install', '')
+            result = install_rvs._install_rvs_tarball(orch, config, '/opt/rocm', f'{TMP}/install', '')
         fail_test.assert_called_once()
         self.assertIn('ssh dropped', fail_test.call_args.args[0])
         self.assertEqual(result, '/opt/rocm')

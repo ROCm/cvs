@@ -214,7 +214,7 @@ class TestBareProjection(unittest.TestCase):
             {
                 "completed": 0,
                 "failed": 1,
-                "total_token_throughput": 0.0,
+                "total_token_throughput": 0.0,  # nosec B105 - throughput metric key, not a credential
                 "mean_ttft_ms": 0,
                 "p99_itl_ms": 0,
                 "p50_itl_ms": 2,

@@ -27,6 +27,7 @@ from unittest.mock import MagicMock, patch
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.core.runtimes.docker import DockerRuntime
+from cvs.unittests.support import TMP
 
 
 def _make_runtime(captured, sudo_prefix=""):
@@ -374,7 +375,7 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
         rt = _make_runtime(captured)
         self.assertFalse(rt.registry_login({}))
         self.assertFalse(rt.registry_login({"username": "u"}))
-        self.assertFalse(rt.registry_login({"password_file": "/tmp/pw"}))
+        self.assertFalse(rt.registry_login({"password_file": f"{TMP}/pw"}))
 
     def test_registry_login_sudo_prefix_covers_entire_pipeline(self):
         # Regression test: `docker login` is the SECOND stage of the
@@ -393,7 +394,7 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
         orchestrator.sudo_prefix.return_value = "sudo -n "
         rt = DockerRuntime(MagicMock(), orchestrator)
 
-        rt.registry_login({"username": "u", "password_file": "/tmp/pw"})
+        rt.registry_login({"username": "u", "password_file": f"{TMP}/pw"})
 
         self.assertEqual(len(login_cmds), 1)
         cmd = login_cmds[0]
@@ -420,12 +421,13 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
         orchestrator.sudo_prefix.return_value = ""
         rt = DockerRuntime(MagicMock(), orchestrator)
 
-        result = rt.registry_login({"username": "myuser", "password_file": "/home/myuser/.docker_token"})
+        cred_file = "/home/myuser/.docker_token"
+        result = rt.registry_login({"username": "myuser", "password_file": cred_file})
 
         self.assertTrue(result)
         self.assertEqual(len(login_cmds), 1)
         cmd = login_cmds[0]
-        self.assertIn("cat /home/myuser/.docker_token", cmd)
+        self.assertIn(f"cat {cred_file}", cmd)
         self.assertIn("--password-stdin", cmd)
         self.assertIn("--username myuser", cmd)
         self.assertNotIn("--password ", cmd)
@@ -437,7 +439,7 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
         orchestrator.sudo_prefix.return_value = ""
         rt = DockerRuntime(MagicMock(), orchestrator)
 
-        self.assertFalse(rt.registry_login({"username": "u", "password_file": "/tmp/pw"}))
+        self.assertFalse(rt.registry_login({"username": "u", "password_file": f"{TMP}/pw"}))
 
     def test_setup_containers_logs_in_before_pull_when_registry_configured(self):
         calls = []
@@ -454,7 +456,7 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
 
         cfg = _container_config(
             image="rocm/ufb-private:latest",
-            extra_runtime_args={"registry": {"username": "myuser", "password_file": "/tmp/token"}},
+            extra_runtime_args={"registry": {"username": "myuser", "password_file": f"{TMP}/token"}},
         )
         result = rt.setup_containers(container_config=cfg, container_name="cvs_iter_test", volumes=[])
 
@@ -482,8 +484,8 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
         rt = DockerRuntime(MagicMock(), orchestrator)
 
         cfg = _container_config(
-            extra_runtime_args={"registry": {"username": "myuser", "password_file": "/tmp/token"}},
-            image_tar="/tmp/image.tar",
+            extra_runtime_args={"registry": {"username": "myuser", "password_file": f"{TMP}/token"}},
+            image_tar=f"{TMP}/image.tar",
         )
         rt.setup_containers(container_config=cfg, container_name="cvs_iter_test", volumes=[])
 

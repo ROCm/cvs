@@ -12,7 +12,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -24,6 +23,7 @@ from cvs.lib.mori_lib import (
     MoriBenchmark,
     parse_pretty_tables_multi_rank,
 )
+from cvs.unittests.support import run_trusted
 
 
 def _table(avg_bw_header='Avg Bw (GB/s)', avg_bw='44.00', avg_lat='1525.20'):
@@ -147,7 +147,7 @@ class TestEnvPrefix(unittest.TestCase):
         script = (
             prefix + 'printf "%s|%s|%s|%s" "$PYTHONPATH" "$LD_LIBRARY_PATH" "$MORI_RDMA_DEVICES" "$GLOO_SOCKET_IFNAME"'
         )
-        return subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True, check=True).stdout
+        return run_trusted(['bash', '-c', script], env=env, capture_output=True, text=True, check=True).stdout
 
     def _bench(self, mori_dir, env):
         return MoriBenchmark(_BaremetalFakeOrch(), _mori_dict(mori_dir=mori_dir, env=env))
@@ -301,15 +301,15 @@ class TestRemoteBoundInBash(unittest.TestCase):
         self.tag = f'{os.getpid()}{id(self) % 100000}'
 
     def tearDown(self):
-        subprocess.run(['pkill', '-9', '-f', f'[s]leep 300.{self.tag}'], check=False)
+        run_trusted(['pkill', '-9', '-f', f'[s]leep 300.{self.tag}'], check=False)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _run(self, inner, timeout):
         cmd = self.bench._mori_cmd(inner, timeout=timeout, log_name='probe')
-        return subprocess.run(['bash', '-c', cmd], capture_output=True, text=True, check=False).stdout
+        return run_trusted(['bash', '-c', cmd], capture_output=True, text=True, check=False).stdout
 
     def _alive(self):
-        out = subprocess.run(['pgrep', '-f', f'[s]leep 300.{self.tag}'], capture_output=True, text=True).stdout
+        out = run_trusted(['pgrep', '-f', f'[s]leep 300.{self.tag}'], capture_output=True, text=True).stdout
         return out.split()
 
     def test_expired_bound_kills_children_and_keeps_output(self):

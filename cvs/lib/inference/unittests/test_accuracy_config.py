@@ -20,6 +20,7 @@ import unittest
 from pydantic import ValidationError
 
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig, AccuracyTask
+from cvs.unittests.support import TMP
 
 
 def _task(**over):
@@ -252,13 +253,13 @@ class TestAccuracyTaskLmEvalSurface(unittest.TestCase):
             gen_kwargs={"temperature": 0},
             limit=100,
             samples={"hellaswag": [0, 1]},
-            use_cache="/tmp/cache.db",
+            use_cache=f"{TMP}/cache.db",
             cache_requests="refresh",
             check_integrity=True,
             system_instruction="Answer concisely.",
             apply_chat_template="chatml",
             fewshot_as_multiturn=False,
-            include_path="/tmp/tasks",
+            include_path=f"{TMP}/tasks",
             predict_only=True,
             seed=[1, None, 3, 4],
             trust_remote_code=True,

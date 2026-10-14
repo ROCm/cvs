@@ -9,6 +9,9 @@ from unittest.mock import MagicMock, patch
 import re
 
 from cvs.lib.training.torchtitan.torchtitan_lib import TorchTitanTrainingJob
+from cvs.unittests.support import FAKE_CRED
+
+FAKE_CRED_FILE = '/test/.hf_token'
 
 
 class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
@@ -27,7 +30,7 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
             'log_dir': '/test/logs',
             'scripts_dir': '/test/scripts',
             'data_cache_dir': '/test/cache',
-            'hf_token_file': '/test/.hf_token',
+            'hf_token_file': FAKE_CRED_FILE,
             'torchtitan_root': '/workspace/torchtitan',
             'training_iterations': '10',
             'nnodes': '2',
@@ -49,7 +52,7 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         job = TorchTitanTrainingJob(
             orch=self.mock_orch,
             variant_config=self.mock_variant_config,
-            hf_token='test_token',
+            hf_token=FAKE_CRED,
             run_label='test_combo_123',
             distributed_training=False,
         )
@@ -90,7 +93,7 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         job = TorchTitanTrainingJob(
             orch=self.mock_orch,
             variant_config=self.mock_variant_config,
-            hf_token='test_token',
+            hf_token=FAKE_CRED,
             run_label='llama3_1_8b-mi355-bs48-mbs6-bf16',
             distributed_training=True,
         )
@@ -141,7 +144,7 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         job = TorchTitanTrainingJob(
             orch=self.mock_orch,
             variant_config=self.mock_variant_config,
-            hf_token='test_token',
+            hf_token=FAKE_CRED,
             run_label='combo:with/special\\chars!',
             distributed_training=False,
         )
@@ -165,7 +168,7 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         job = TorchTitanTrainingJob(
             orch=self.mock_orch,
             variant_config=self.mock_variant_config,
-            hf_token='test_token',
+            hf_token=FAKE_CRED,
             run_label=None,
             distributed_training=False,
         )
@@ -183,7 +186,7 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         single = TorchTitanTrainingJob(
             orch=self.mock_orch,
             variant_config=self.mock_variant_config,
-            hf_token='test_token',
+            hf_token=FAKE_CRED,
             run_label='gpus4',
             distributed_training=False,
         )
@@ -195,7 +198,7 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         distributed = TorchTitanTrainingJob(
             orch=self.mock_orch,
             variant_config=self.mock_variant_config,
-            hf_token='test_token',
+            hf_token=FAKE_CRED,
             run_label='gpus4-dist',
             distributed_training=True,
             tune_model_params=False,
@@ -210,7 +213,7 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         job = TorchTitanTrainingJob(
             orch=self.mock_orch,
             variant_config=self.mock_variant_config,
-            hf_token='test_token',
+            hf_token=FAKE_CRED,
             global_batch_size='48',
             run_label='step-time',
             distributed_training=False,

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.lib.parallel.config import ParallelConfig
+from cvs.unittests.support import TMP
 
 
 def _make_orch_config():
@@ -114,10 +115,10 @@ class TestBaremetalOrchestrator(unittest.TestCase):
     def test_download_file_delegates_to_host_transport(self, _mock_pssh):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         orch.all = MagicMock()
-        orch.all.download_file.return_value = {"10.0.0.2": "/tmp/result.log"}
-        result = orch.download_file("/remote/result.log", "/tmp/result.log", hosts=["10.0.0.2"])
-        orch.all.download_file.assert_called_once_with("/remote/result.log", "/tmp/result.log", hosts=["10.0.0.2"])
-        self.assertEqual(result, {"10.0.0.2": "/tmp/result.log"})
+        orch.all.download_file.return_value = {"10.0.0.2": f"{TMP}/result.log"}
+        result = orch.download_file("/remote/result.log", f"{TMP}/result.log", hosts=["10.0.0.2"])
+        orch.all.download_file.assert_called_once_with("/remote/result.log", f"{TMP}/result.log", hosts=["10.0.0.2"])
+        self.assertEqual(result, {"10.0.0.2": f"{TMP}/result.log"})
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_on_host_targets_requested_host_subset(self, _mock_pssh):
@@ -421,11 +422,11 @@ class TestBaremetalOrchestratorSubsetHandleCleanup(unittest.TestCase):
                 if side_effect is None:
                     mock_pssh.return_value.exec.return_value = {"10.0.0.2": {"exit_code": 0}}
                     mock_pssh.return_value.exec.side_effect = None
-                    orch.setup_env(["10.0.0.2"], env_script="/tmp/env.sh")
+                    orch.setup_env(["10.0.0.2"], env_script=f"{TMP}/env.sh")
                 else:
                     mock_pssh.return_value.exec.side_effect = side_effect
                     with self.assertRaises(RuntimeError):
-                        orch.setup_env(["10.0.0.2"], env_script="/tmp/env.sh")
+                        orch.setup_env(["10.0.0.2"], env_script=f"{TMP}/env.sh")
 
                 mock_pssh.return_value.destroy_clients.assert_called_once_with()
 

@@ -9,6 +9,7 @@ from cvs.lib.report.viewer.status_matrix import write_status_matrix_viewer
 
 class TestStatusMatrixViewer(unittest.TestCase):
     def test_embeds_payload_and_health_controls(self):
+        rate, passed = 1.0, 1
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "health_run_deck_viewer.html"
             write_status_matrix_viewer(
@@ -21,7 +22,7 @@ class TestStatusMatrixViewer(unittest.TestCase):
                         "status_matrix": {
                             "nodes": ["n1"],
                             "groups": ["a2a"],
-                            "overview": {"pass_rate": 1.0, "counts": {"pass": 1, "fail": 0, "na": 0}},
+                            "overview": {"pass_rate": rate, "counts": {"pass": passed, "fail": 0, "na": 0}},
                             "metric_charts": {
                                 "metrics": [{"name": "rtotal", "group": "a2a", "points": [{"node": "n1", "value": 1}]}],
                                 "series": [],

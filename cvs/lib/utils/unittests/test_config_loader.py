@@ -41,7 +41,7 @@ def _paths_dict():
         "shared_fs": "/data/shared",
         "models_dir": "/data/models",
         "log_dir": "/data/logs",
-        "hf_token_file": "/data/.hf_token",
+        "hf_token_file": "/data/.hf_token",  # nosec B105 - a file path, not a secret
     }
 
 

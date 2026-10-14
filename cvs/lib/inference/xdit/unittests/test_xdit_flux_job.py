@@ -33,6 +33,7 @@ from cvs.lib.inference.xdit.xdit_flux_job import (
     _exec_result_exit_code,
     _exec_result_output,
 )
+from cvs.unittests.support import FAKE_CRED
 
 _FLUX_BENCHMARK_PARAMS = {
     "prompt": "A small cat",
@@ -131,7 +132,7 @@ def _make_flux_job(
         phdl,
         inference_dict,
         benchmark_params,
-        hf_token="hf_test_token",
+        hf_token=FAKE_CRED,
         distributed=distributed,
         cluster_dict=cluster_dict,
     )
@@ -735,7 +736,7 @@ class TestFluxBenchmarkJob(unittest.TestCase):
         self.assertIn("docker run", cmd)
         self.assertIn(RUN_USP_PATH, cmd)
         self.assertIn("--name flux-benchmark", cmd)
-        self.assertNotIn("hf_test_token", cmd)
+        self.assertNotIn(FAKE_CRED, cmd)
 
     def test_build_docker_cmd_distributed_uses_ranked_container_name(self):
         cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}

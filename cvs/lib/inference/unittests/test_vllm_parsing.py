@@ -32,7 +32,7 @@ def _raw(**overrides):
         "request_throughput": 3.174886210170704,
         "request_goodput": 3.174886210170704,
         "output_throughput": 4099.180497760143,
-        "total_token_throughput": 4800.0,
+        "total_token_throughput": 4800.0,  # nosec B105 - throughput metric key, not a credential
         "max_output_tokens_per_s": 4590.0,
         "max_concurrency": 64,
         "max_concurrent_requests": 76,

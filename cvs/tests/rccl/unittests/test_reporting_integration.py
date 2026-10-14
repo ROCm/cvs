@@ -3,13 +3,13 @@
 import html
 import json
 import re
-import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
-import xml.etree.ElementTree as element_tree
 from pathlib import Path
+
+from cvs.unittests.support import parse_trusted_xml, run_trusted
 
 
 def _html_tests(html_text):
@@ -105,7 +105,7 @@ class TestRcclReportingIntegration(unittest.TestCase):
             cluster_path.write_text('{}', encoding='utf-8')
             config_path.write_text('{}', encoding='utf-8')
             args += ['-p', 'cvs.conftest', f'--cluster_file={cluster_path}', f'--config_file={config_path}']
-        completed = subprocess.run(args, check=False, capture_output=True, text=True)
+        completed = run_trusted(args, check=False, capture_output=True, text=True)
         self.assertEqual(completed.returncode, 1, f'stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}')
         tests = _html_tests(html_path.read_text(encoding='utf-8'))
         perf = [
@@ -121,7 +121,7 @@ class TestRcclReportingIntegration(unittest.TestCase):
         return (
             completed,
             html_path.read_text(encoding='utf-8'),
-            element_tree.parse(xml_path).getroot(),
+            parse_trusted_xml(xml_path).getroot(),
             perf[0][1][0],
             pairwise[0][1][0],
         )

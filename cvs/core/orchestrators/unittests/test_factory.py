@@ -126,14 +126,15 @@ class TestOrchestratorConfig(unittest.TestCase):
             OrchestratorConfig.from_configs(cluster, None, ["not-a-dict"])
 
     def test_from_configs_preserves_agent_token_file(self):
+        agent_file = "/shared/run/agent/secret"
         cluster = {
             "node_dict": {"node01": {"agent_port": 9000}},
             "username": "u",
             "priv_key_file": "/dev/null",
-            "agent_token_file": "/shared/run/agent/secret",
+            "agent_token_file": agent_file,
         }
         cfg = OrchestratorConfig.from_configs(cluster)
-        self.assertEqual(cfg.agent_token_file, "/shared/run/agent/secret")
+        self.assertEqual(cfg.agent_token_file, agent_file)
 
     def test_from_configs_preserves_env_vars(self):
         cluster = {

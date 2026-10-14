@@ -1,10 +1,10 @@
 # cvs/lib/unittests/test_linux_utils.py
 import os
-import subprocess
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 import cvs.lib.linux_utils as linux_utils
+from cvs.unittests.support import run_trusted
 
 
 class TestGetRdmaNicDict(unittest.TestCase):
@@ -179,7 +179,7 @@ class TestGetNicEthtoolStatsDict(unittest.TestCase):
 class TestReadOrDenied(unittest.TestCase):
     def _run(self, reader):
         cmd = linux_utils._read_or_denied(reader)
-        return subprocess.run(['bash', '-c', cmd], capture_output=True, text=True)
+        return run_trusted(['bash', '-c', cmd], capture_output=True, text=True)
 
     def test_missing_file_emits_denial_token(self):
         result = self._run('cat /no/such/cvs-bios-version')
@@ -196,7 +196,7 @@ class TestReadOrDenied(unittest.TestCase):
 class TestSudoNOrDenied(unittest.TestCase):
     def _run(self, reader, filter_cmd):
         cmd = linux_utils._sudo_n_or_denied(reader, filter_cmd)
-        return subprocess.run(['bash', '-c', cmd], capture_output=True, text=True)
+        return run_trusted(['bash', '-c', cmd], capture_output=True, text=True)
 
     def test_failing_reader_emits_denial_token(self):
         result = self._run('ls /no/such/cvs-sudo-reader', 'grep ACSCtl')
@@ -240,7 +240,7 @@ class TestPcieLinkStatusCmd(unittest.TestCase):
                 with open(os.path.join(device, name), 'w', encoding='utf-8') as handle:
                     handle.write(text)
             rendered = cmd.replace('/sys/bus/pci/devices/0000:03:00.0', device)
-            result = subprocess.run(['bash', '-c', rendered], capture_output=True, text=True, check=True)
+            result = run_trusted(['bash', '-c', rendered], capture_output=True, text=True, check=True)
         self.assertEqual(result.stdout, 'LnkSta: Speed 16GT/s, Width x8 (downgraded)\n')
 
     def test_rejects_unsafe_bdf(self):

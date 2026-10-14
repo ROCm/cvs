@@ -29,6 +29,8 @@ from cvs.lib.inference.atom.atom_config_loader import (
 )
 from cvs.lib.inference.utils.inferencing_config_loader import Run, SeqCombo, Sweep
 
+FAKE_CRED_FILE = "/home/x/.hf"
+
 
 def _cluster_dict():
     return {"username": "testuser"}
@@ -127,7 +129,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
                 "shared_fs": "/home/x",
                 "models_dir": "/home/x/models",
                 "log_dir": "/home/x/LOGS",
-                "hf_token_file": "/home/x/.hf",
+                "hf_token_file": FAKE_CRED_FILE,
             },
             model={"id": "openai/gpt-oss-120b", "remote": 0, "precision": "bf16"},
             container={
@@ -184,7 +186,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
                     "shared_fs": "/home/x",
                     "models_dir": "/home/x/models",
                     "log_dir": "/home/x/LOGS",
-                    "hf_token_file": "/home/x/.hf",
+                    "hf_token_file": FAKE_CRED_FILE,
                 },
                 model={"id": "deepseek-ai/DeepSeek-R1-0528", "remote": 0, "precision": "fp8"},
                 container={
@@ -238,7 +240,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
                 "shared_fs": "/home/x",
                 "models_dir": "/home/x/models",
                 "log_dir": "/home/x/LOGS",
-                "hf_token_file": "/home/x/.hf",
+                "hf_token_file": FAKE_CRED_FILE,
             },
             model={"id": "deepseek-ai/DeepSeek-R1-0528", "remote": 0, "precision": "fp8"},
             container={
@@ -273,7 +275,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
                 "shared_fs": "/home/x",
                 "models_dir": "/home/x/models",
                 "log_dir": "/home/x/LOGS",
-                "hf_token_file": "/home/x/.hf",
+                "hf_token_file": FAKE_CRED_FILE,
             },
             model={"id": "deepseek-ai/DeepSeek-R1-0528", "remote": 0, "precision": "fp8"},
             container={
@@ -459,7 +461,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             "gpu_arch": "mi3xx",
             "default_profile": "perf",
             "threshold_json": "t.json",
-            "paths": {"shared_fs": "/home/x", "models_dir": "/m", "log_dir": "/l", "hf_token_file": "/h"},
+            "paths": {"shared_fs": "/home/x", "models_dir": "/m", "log_dir": "/l", "hf_token_file": "/h"},  # nosec B105 - a file path, not a secret
             "model": {"id": "m", "remote": 0, "precision": "fp8"},
             "profiles": {
                 "perf": {
@@ -482,7 +484,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             "framework": "atom",
             "gpu_arch": "mi3xx",
             "default_profile": "perf",
-            "paths": {"shared_fs": "/home/x", "models_dir": "/m", "log_dir": "/l", "hf_token_file": "/h"},
+            "paths": {"shared_fs": "/home/x", "models_dir": "/m", "log_dir": "/l", "hf_token_file": "/h"},  # nosec B105 - a file path, not a secret
             "model": {"id": "m", "remote": 0},
             "profiles": {
                 "perf": {

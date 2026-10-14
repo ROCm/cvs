@@ -3,23 +3,25 @@
 import unittest
 
 from cvs.lib.utils.model_query_lib import LongContextNiahBenchmark
+from cvs.unittests.support import TMP
 
 
 class TestSglangLongCtxNiah(unittest.TestCase):
     def test_prepare_parses_enable_thinking_false(self):
+        min_rate = 0.0
         _, scoring = LongContextNiahBenchmark.prepare(
             {
                 "num_prompts": 6,
                 "seed": 42,
                 "enable_thinking": False,
-                "expected_results": {"auto": {"pass_rate": 0.0}},
+                "expected_results": {"auto": {"pass_rate": min_rate}},
             },
             port=8000,
             host="127.0.0.1",
             model_id="/models/qwen",
             isl=8192,
             osl=32,
-            log_dir="/tmp/logs",
+            log_dir=f"{TMP}/logs",
             log_basename="niah.log",
         )
         self.assertIs(scoring["probe_kwargs"]["enable_thinking"], False)

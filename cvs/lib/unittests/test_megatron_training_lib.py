@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 from cvs.lib import megatron_training_lib  # noqa: F401  (referenced by name in subsequent PRs)
 from cvs.lib.megatron_training_lib import MegatronLlamaTrainingJob
+from cvs.unittests.support import FAKE_CRED
 
 
 def _make_megatron_job(
@@ -78,7 +79,7 @@ def _make_megatron_job(
             model_name,
             training_dict,
             model_params_dict,
-            hf_token='dummy',
+            hf_token=FAKE_CRED,
             gpu_type=gpu_type,
             distributed_training=distributed_training,
             tune_model_params=False,

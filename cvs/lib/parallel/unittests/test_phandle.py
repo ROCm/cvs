@@ -5,6 +5,9 @@ from pssh.exceptions import Timeout
 
 from cvs.lib.parallel.http_transport import HttpTransport
 from cvs.lib.parallel.phandle import ParallelHandle  # Test basic ParallelHandle class directly
+from cvs.unittests.support import TMP
+
+FAKE_CRED = "fake-cred"
 
 
 class TestParallelHandleExec(unittest.TestCase):
@@ -16,7 +19,7 @@ class TestParallelHandleExec(unittest.TestCase):
         self.mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
         self.mock_log = MagicMock()
-        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password="pass")
+        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password=FAKE_CRED)
         self.handle.log = self.mock_log
 
     def test_exec_successful(self):
@@ -199,7 +202,7 @@ class TestParallelHandleExec(unittest.TestCase):
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
         self.mock_log = MagicMock()
-        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password="pass")
+        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password=FAKE_CRED)
         self.handle.stop_on_errors = False
         self.handle.check_connectivity = mock_check_connectivity
         from pssh.exceptions import ConnectionError
@@ -238,7 +241,7 @@ class TestParallelHandleExec(unittest.TestCase):
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
         self.mock_log = MagicMock()
-        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password="pass")
+        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password=FAKE_CRED)
         self.handle.stop_on_errors = False
         self.handle.check_connectivity = mock_check_connectivity
         from pssh.exceptions import Timeout
@@ -277,7 +280,7 @@ class TestParallelHandleExec(unittest.TestCase):
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2", "host3"]
         self.mock_log = MagicMock()
-        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password="pass")
+        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password=FAKE_CRED)
         self.handle.stop_on_errors = False
         self.handle.check_connectivity = mock_check_connectivity
         from pssh.exceptions import ConnectionError
@@ -324,7 +327,7 @@ class TestParallelHandleExec(unittest.TestCase):
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
         self.mock_log = MagicMock()
-        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password="pass")
+        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password=FAKE_CRED)
         self.handle.stop_on_errors = False
         from pssh.exceptions import Timeout
 
@@ -362,7 +365,7 @@ class TestParallelHandleExec(unittest.TestCase):
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
         self.mock_log = MagicMock()
-        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password="pass")
+        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password=FAKE_CRED)
         self.handle.stop_on_errors = False
         from pssh.exceptions import Timeout
 
@@ -654,7 +657,7 @@ class TestParallelHandleExec(unittest.TestCase):
         # shrunk the orchestrator's view of the cluster.
         mock_pssh_client.return_value = MagicMock()
         original = ["a", "b", "c"]
-        handle = ParallelHandle(self.mock_log, original, user="user", password="pass")
+        handle = ParallelHandle(self.mock_log, original, user="user", password=FAKE_CRED)
         # Simulate what prune_unreachable_hosts does internally.
         handle.reachable_hosts.remove("b")
         # (i) Caller's list must be untouched.
@@ -667,10 +670,10 @@ class TestParallelHandleExec(unittest.TestCase):
     @patch("cvs.lib.parallel.phandle.ParallelSSHClient")
     def test_init_stores_host_key_check_without_forwarding_to_client(self, mock_pssh_client):
         mock_pssh_client.return_value = MagicMock()
-        handle = ParallelHandle(self.mock_log, ["h1"], user="user", password="pass", host_key_check=False)
+        handle = ParallelHandle(self.mock_log, ["h1"], user="user", password=FAKE_CRED, host_key_check=False)
 
         self.assertFalse(handle.host_key_check)
-        mock_pssh_client.assert_called_once_with(["h1"], user="user", password="pass", keepalive_seconds=30)
+        mock_pssh_client.assert_called_once_with(["h1"], user="user", password=FAKE_CRED, keepalive_seconds=30)
 
 
 class TestParallelHandleExecCmdList(unittest.TestCase):
@@ -682,7 +685,7 @@ class TestParallelHandleExecCmdList(unittest.TestCase):
         self.mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
         self.mock_log = MagicMock()
-        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password="pass")
+        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password=FAKE_CRED)
         self.handle.log = self.mock_log
 
     def test_exec_cmd_list_successful(self):
@@ -809,7 +812,7 @@ class TestParallelHandleExecCmdList(unittest.TestCase):
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
         self.mock_log = MagicMock()
-        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password="pass")
+        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password=FAKE_CRED)
         self.handle.stop_on_errors = False
         self.handle.check_connectivity = mock_check_connectivity
         cmd_list = ["echo success", "echo fail"]
@@ -849,7 +852,7 @@ class TestParallelHandleExecCmdList(unittest.TestCase):
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
         self.mock_log = MagicMock()
-        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password="pass")
+        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password=FAKE_CRED)
         self.handle.stop_on_errors = False
         self.handle.check_connectivity = mock_check_connectivity
         cmd_list = ["echo success", "echo fail"]
@@ -890,7 +893,7 @@ class TestParallelHandleExecCmdList(unittest.TestCase):
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
         self.mock_log = MagicMock()
-        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password="pass")
+        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password=FAKE_CRED)
         self.handle.stop_on_errors = False
         self.handle.check_connectivity = mock_check_connectivity
         cmd_list = ["echo success", "echo fail"]
@@ -929,7 +932,7 @@ class TestParallelHandleExecCmdList(unittest.TestCase):
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2", "host3"]
         self.mock_log = MagicMock()
-        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password="pass")
+        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password=FAKE_CRED)
         self.handle.stop_on_errors = False
         self.handle.check_connectivity = mock_check_connectivity
         cmd_list = ["echo success", "echo fail1", "echo fail2"]
@@ -979,7 +982,7 @@ class TestParallelHandleExecCmdList(unittest.TestCase):
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
         self.mock_log = MagicMock()
-        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password="pass")
+        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password=FAKE_CRED)
         self.handle.stop_on_errors = False
         self.handle.check_connectivity = mock_check_connectivity
         cmd_list = ["echo success", "echo fail"]
@@ -1098,7 +1101,7 @@ class TestParallelHandleFileTransfer(unittest.TestCase):
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
         self.mock_log = MagicMock()
-        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password="pass")
+        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password=FAKE_CRED)
 
     def _ok_greenlet(self):
         g = MagicMock()
@@ -1116,18 +1119,18 @@ class TestParallelHandleFileTransfer(unittest.TestCase):
         # Both hosts succeed -> no exception, copy_file called with right args
         self.mock_client.copy_file.return_value = [self._ok_greenlet(), self._ok_greenlet()]
 
-        self.handle.upload_file("/tmp/local.json", "/remote/dest.json")
+        self.handle.upload_file(f"{TMP}/local.json", "/remote/dest.json")
 
-        self.mock_client.copy_file.assert_called_once_with("/tmp/local.json", "/remote/dest.json", recurse=False)
+        self.mock_client.copy_file.assert_called_once_with(f"{TMP}/local.json", "/remote/dest.json", recurse=False)
         self.mock_client.pool.join.assert_called_once()
 
     def test_upload_file_recurse_passes_through(self):
         # recurse=True must be propagated to copy_file
         self.mock_client.copy_file.return_value = [self._ok_greenlet(), self._ok_greenlet()]
 
-        self.handle.upload_file("/tmp/dir", "/remote/dir", recurse=True)
+        self.handle.upload_file(f"{TMP}/dir", "/remote/dir", recurse=True)
 
-        self.mock_client.copy_file.assert_called_once_with("/tmp/dir", "/remote/dir", recurse=True)
+        self.mock_client.copy_file.assert_called_once_with(f"{TMP}/dir", "/remote/dir", recurse=True)
 
     def test_upload_file_partial_failure_raises_ioerror(self):
         # host1 ok, host2 raises -> IOError listing offending host
@@ -1135,7 +1138,7 @@ class TestParallelHandleFileTransfer(unittest.TestCase):
         self.mock_client.copy_file.return_value = [self._ok_greenlet(), self._fail_greenlet(boom)]
 
         with self.assertRaises(IOError) as cm:
-            self.handle.upload_file("/tmp/local.json", "/remote/dest.json")
+            self.handle.upload_file(f"{TMP}/local.json", "/remote/dest.json")
 
         msg = str(cm.exception)
         self.assertIn("upload_file '/tmp/local.json' -> '/remote/dest.json'", msg)
@@ -1151,7 +1154,7 @@ class TestParallelHandleFileTransfer(unittest.TestCase):
         ]
 
         with self.assertRaises(IOError) as cm:
-            self.handle.upload_file("/tmp/local.json", "/remote/dest.json")
+            self.handle.upload_file(f"{TMP}/local.json", "/remote/dest.json")
 
         self.assertIn("upload_file '/tmp/local.json' -> '/remote/dest.json'", str(cm.exception))
         self.assertIn("failed on 2/2 hosts", str(cm.exception))
@@ -1166,7 +1169,7 @@ class TestParallelHandleFileTransfer(unittest.TestCase):
         ]
 
         with self.assertRaises(IOError) as cm:
-            self.handle.upload_file("/tmp/local.json", "/remote/dest.json")
+            self.handle.upload_file(f"{TMP}/local.json", "/remote/dest.json")
 
         self.assertIn("libssh2 channel closed", str(cm.exception))
 
@@ -1179,14 +1182,14 @@ class TestParallelHandleFileTransfer(unittest.TestCase):
             self._ok_greenlet(),
         ]
 
-        result = self.handle.download_file("/remote/file.json", "/tmp/local.json")
+        result = self.handle.download_file("/remote/file.json", f"{TMP}/local.json")
 
         self.assertEqual(
             result,
-            {"host1": "/tmp/local.json_host1", "host2": "/tmp/local.json_host2"},
+            {"host1": f"{TMP}/local.json_host1", "host2": f"{TMP}/local.json_host2"},
         )
         self.mock_client.copy_remote_file.assert_called_once_with(
-            "/remote/file.json", "/tmp/local.json", recurse=False, suffix_separator="_"
+            "/remote/file.json", f"{TMP}/local.json", recurse=False, suffix_separator="_"
         )
         self.mock_client.pool.join.assert_called_once()
 
@@ -1197,14 +1200,14 @@ class TestParallelHandleFileTransfer(unittest.TestCase):
             self._ok_greenlet(),
         ]
 
-        result = self.handle.download_file("/remote/file.json", "/tmp/local.json", suffix_separator=".")
+        result = self.handle.download_file("/remote/file.json", f"{TMP}/local.json", suffix_separator=".")
 
         self.assertEqual(
             result,
-            {"host1": "/tmp/local.json.host1", "host2": "/tmp/local.json.host2"},
+            {"host1": f"{TMP}/local.json.host1", "host2": f"{TMP}/local.json.host2"},
         )
         self.mock_client.copy_remote_file.assert_called_once_with(
-            "/remote/file.json", "/tmp/local.json", recurse=False, suffix_separator="."
+            "/remote/file.json", f"{TMP}/local.json", recurse=False, suffix_separator="."
         )
 
     def test_download_file_targets_only_requested_host(self):
@@ -1213,19 +1216,19 @@ class TestParallelHandleFileTransfer(unittest.TestCase):
         target_client._host_clients = {}
         target_client.copy_remote_file.return_value = [self._ok_greenlet()]
         with patch("cvs.lib.parallel.phandle.ParallelSSHClient", return_value=target_client) as mock_client:
-            result = self.handle.download_file("/remote/file.json", "/tmp/local.json", hosts=["host2"])
+            result = self.handle.download_file("/remote/file.json", f"{TMP}/local.json", hosts=["host2"])
 
-        self.assertEqual(result, {"host2": "/tmp/local.json_host2"})
+        self.assertEqual(result, {"host2": f"{TMP}/local.json_host2"})
         self.mock_client.copy_remote_file.assert_not_called()
-        mock_client.assert_called_once_with(["host2"], user="user", password="pass", keepalive_seconds=30)
+        mock_client.assert_called_once_with(["host2"], user="user", password=FAKE_CRED, keepalive_seconds=30)
         target_client.copy_remote_file.assert_called_once_with(
-            "/remote/file.json", "/tmp/local.json", recurse=False, suffix_separator="_"
+            "/remote/file.json", f"{TMP}/local.json", recurse=False, suffix_separator="_"
         )
         target_client.pool.join.assert_called_once()
 
     def test_download_file_rejects_unknown_target_host(self):
         with self.assertRaisesRegex(ValueError, "unreachable host"):
-            self.handle.download_file("/remote/file.json", "/tmp/local.json", hosts=["host3"])
+            self.handle.download_file("/remote/file.json", f"{TMP}/local.json", hosts=["host3"])
         self.mock_client.copy_remote_file.assert_not_called()
 
     def test_download_file_partial_failure_raises_ioerror(self):
@@ -1238,7 +1241,7 @@ class TestParallelHandleFileTransfer(unittest.TestCase):
         ]
 
         with self.assertRaises(IOError) as cm:
-            self.handle.download_file("/remote/file.json", "/tmp/local.json")
+            self.handle.download_file("/remote/file.json", f"{TMP}/local.json")
 
         msg = str(cm.exception)
         self.assertIn("download_file '/remote/file.json' -> '/tmp/local.json'", msg)
@@ -1253,7 +1256,7 @@ class TestParallelHandleFileTransfer(unittest.TestCase):
         ]
 
         with self.assertRaises(IOError) as cm:
-            self.handle.download_file("/remote/file.json", "/tmp/local.json")
+            self.handle.download_file("/remote/file.json", f"{TMP}/local.json")
 
         self.assertIn("download_file '/remote/file.json' -> '/tmp/local.json'", str(cm.exception))
         self.assertIn("failed on 2/2 hosts", str(cm.exception))
@@ -1264,10 +1267,10 @@ class TestParallelHandleFileTransfer(unittest.TestCase):
             self._ok_greenlet(),
         ]
 
-        self.handle.download_file("/remote/dir", "/tmp/local", recurse=True)
+        self.handle.download_file("/remote/dir", f"{TMP}/local", recurse=True)
 
         self.mock_client.copy_remote_file.assert_called_once_with(
-            "/remote/dir", "/tmp/local", recurse=True, suffix_separator="_"
+            "/remote/dir", f"{TMP}/local", recurse=True, suffix_separator="_"
         )
 
     # -------------------- scp_file (alias) --------------------
@@ -1276,14 +1279,14 @@ class TestParallelHandleFileTransfer(unittest.TestCase):
         # scp_file must call upload_file with the same args. We patch upload_file
         # to confirm delegation rather than reimplementing the underlying mock.
         with patch.object(ParallelHandle, "upload_file") as mock_upload:
-            self.handle.scp_file("/tmp/local.json", "/remote/dest.json", recurse=True)
-            mock_upload.assert_called_once_with("/tmp/local.json", "/remote/dest.json", recurse=True)
+            self.handle.scp_file(f"{TMP}/local.json", "/remote/dest.json", recurse=True)
+            mock_upload.assert_called_once_with(f"{TMP}/local.json", "/remote/dest.json", recurse=True)
 
     def test_scp_file_propagates_ioerror_from_upload_file(self):
         # When upload_file raises, scp_file lets it propagate (no swallowing)
         with patch.object(ParallelHandle, "upload_file", side_effect=IOError("boom")):
             with self.assertRaises(IOError):
-                self.handle.scp_file("/tmp/local.json", "/remote/dest.json")
+                self.handle.scp_file(f"{TMP}/local.json", "/remote/dest.json")
 
 
 class TestParallelHandleScpFile(unittest.TestCase):
@@ -1302,7 +1305,7 @@ class TestParallelHandleScpFile(unittest.TestCase):
         # Mock the pool.join() method that gets called in scp_file
         self.mock_client.pool = MagicMock()
         self.mock_log = MagicMock()
-        self.handle = ParallelHandle(self.mock_log, ["host1"], user="user", password="pass")
+        self.handle = ParallelHandle(self.mock_log, ["host1"], user="user", password=FAKE_CRED)
 
     def test_scp_file_preserves_original_io_error(self):
         # Regression (B3): scp_file's exception handler used to read:
@@ -1346,7 +1349,7 @@ class TestParallelHandleInactivityTimeout(unittest.TestCase):
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1"]
         self.mock_log = MagicMock()
-        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password="pass")
+        self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password=FAKE_CRED)
 
     @staticmethod
     def _slow_stream(gaps, lines):
@@ -1411,7 +1414,7 @@ class TestParallelHandleDestroyClients(unittest.TestCase):
         mock_client._host_clients = {(0, 'host1'): host_client}
         mock_client_cls.return_value = mock_client
 
-        handle = ParallelHandle(MagicMock(), ['host1'], user='user', password='pass')
+        handle = ParallelHandle(MagicMock(), ['host1'], user='user', password=FAKE_CRED)
         handle.destroy_clients()
 
         host_client._disconnect.assert_called_once_with()
@@ -1444,7 +1447,7 @@ class TestParallelHandleHttpTransport(unittest.TestCase):
             hosts,
             transport='http',
             agent_port_map={},
-            token_file='/dev/null',
+            token_file='/dev/null',  # nosec B106 - a file path, not a secret
         )
         handle.log = MagicMock()
         return handle, transport, client

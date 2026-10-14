@@ -15,6 +15,8 @@ from cvs.cli_plugins.exec_plugin import ExecPlugin, _collect_switch_hosts
 # Helpers
 # ---------------------------------------------------------------------------
 
+FAKE_CRED = "fake-cred"
+
 PLAIN_CLUSTER = {
     "username": "root",
     "priv_key_file": "/home/user/.ssh/id_rsa",
@@ -34,7 +36,7 @@ RACK_CLUSTER = {
     },
     "racks": {
         "switch_ssh_user": "admin",
-        "switch_ssh_password": "password",
+        "switch_ssh_password": FAKE_CRED,
         "rack-01": {
             "platform": "HeliosP",
             "switch_trays": ["192.168.1.1", "192.168.1.2"],
@@ -291,7 +293,7 @@ class TestExecPluginRunTargets(unittest.TestCase):
     def test_switches_passes_global_password(self):
         """Global switch_ssh_password is passed when no key file."""
         mock_run = self._run_with_cluster(RACK_CLUSTER, self._make_args(target="switches"))
-        self.assertEqual(mock_run.call_args.kwargs.get("password"), "password")
+        self.assertEqual(mock_run.call_args.kwargs.get("password"), FAKE_CRED)
 
     def test_switches_key_file_suppresses_password(self):
         """When switch_ssh_key_file is set, password must be None."""
@@ -302,7 +304,7 @@ class TestExecPluginRunTargets(unittest.TestCase):
             "racks": {
                 "switch_ssh_user": "admin",
                 "switch_ssh_key_file": "/switch_key",
-                "switch_ssh_password": "should_be_ignored",
+                "switch_ssh_password": FAKE_CRED,
                 "rack-01": {"switch_trays": ["192.168.1.1"]},
             },
         }
@@ -467,9 +469,9 @@ class TestRunOnHosts(unittest.TestCase):
         mock_pssh = MagicMock()
         mock_pssh.exec.return_value = {}
         MockPssh.return_value = mock_pssh
-        self._call(pkey=None, password="secret")
+        self._call(pkey=None, password=FAKE_CRED)
         init_kwargs = MockPssh.call_args[1]
-        self.assertEqual(init_kwargs.get("password"), "secret")
+        self.assertEqual(init_kwargs.get("password"), FAKE_CRED)
         self.assertIsNone(init_kwargs.get("pkey"))
 
     @patch("cvs.cli_plugins.exec_plugin.Pssh")

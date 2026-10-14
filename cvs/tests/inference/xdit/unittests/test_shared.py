@@ -32,6 +32,9 @@ from cvs.tests.inference.xdit._shared import (
     suite_spec,
     verify_model_stage,
 )
+from cvs.unittests.support import TMP
+
+MISSING_CRED_FILE = "/missing/.hf_token"
 
 
 class _Variant:
@@ -70,8 +73,8 @@ class TestVariantHelpers(unittest.TestCase):
 
     def test_missing_hf_token_file_returns_empty(self):
         variant = SimpleNamespace(
-            paths=SimpleNamespace(hf_token_file="/missing/.hf_token"),
-            inference={"hf_token_file": "/missing/.hf_token"},
+            paths=SimpleNamespace(hf_token_file=MISSING_CRED_FILE),
+            inference={"hf_token_file": MISSING_CRED_FILE},
         )
         self.assertEqual(hf_token_from_variant(variant), "")
 
@@ -279,7 +282,7 @@ class TestParseThresholdsStage(unittest.TestCase):
     def test_parse_failure_names_node_output_path(self):
         variant = SimpleNamespace(
             inference={
-                "_test_output_dirs_by_node": {"10.0.0.1": "/tmp/xdit-results-gone"},
+                "_test_output_dirs_by_node": {"10.0.0.1": f"{TMP}/xdit-results-gone"},
                 "_test_node_output_dirs_by_node": {"10.0.0.1": "/home/user/flux_host_outputs"},
             },
             benchmark_params={

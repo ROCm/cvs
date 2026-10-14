@@ -47,6 +47,7 @@ from cvs.lib.utils.gpu import (
     parse_energy,
     parse_gpu_metrics,
 )
+from cvs.unittests.support import TMP
 
 # ---------------------------------------------------------------------------
 # Shared fixtures — amd-smi JSON schema (one GPU entry)
@@ -900,11 +901,11 @@ def _poller_file_text(*chunks: str) -> str:
 
 class TestGpuPollerHandle(unittest.TestCase):
     def test_fields(self):
-        handle = GpuPollerHandle(run_id="r1", marker="cvs_gpu_poll_r1", nodes=None, paths="/tmp/cvs_gpu_poll_r1.log")
+        handle = GpuPollerHandle(run_id="r1", marker="cvs_gpu_poll_r1", nodes=None, paths=f"{TMP}/cvs_gpu_poll_r1.log")
         self.assertEqual(handle.run_id, "r1")
         self.assertEqual(handle.marker, "cvs_gpu_poll_r1")
         self.assertIsNone(handle.nodes)
-        self.assertEqual(handle.paths, "/tmp/cvs_gpu_poll_r1.log")
+        self.assertEqual(handle.paths, f"{TMP}/cvs_gpu_poll_r1.log")
 
 
 class TestStartGpuPollerSingleNode(unittest.TestCase):
@@ -1018,7 +1019,7 @@ class TestStopAndCollectGpuPollerSingleNode(unittest.TestCase):
     """nodes=None: pkill via exec_on_head, read-back via exec_on_head cat."""
 
     def _handle(self):
-        return GpuPollerHandle(run_id="r1", marker="cvs_gpu_poll_r1", nodes=None, paths="/tmp/cvs_gpu_poll_r1.log")
+        return GpuPollerHandle(run_id="r1", marker="cvs_gpu_poll_r1", nodes=None, paths=f"{TMP}/cvs_gpu_poll_r1.log")
 
     def test_pkill_contains_marker(self):
         orch = MagicMock()
@@ -1136,7 +1137,7 @@ class TestStopAndCollectGpuPollerMultiNode(unittest.TestCase):
             run_id="r1",
             marker="cvs_gpu_poll_r1",
             nodes=nodes,
-            paths={h: "/tmp/cvs_gpu_poll_r1.log" for h in nodes},
+            paths={h: f"{TMP}/cvs_gpu_poll_r1.log" for h in nodes},
         )
 
     def test_round_alignment_longer_host_extends_not_truncates(self):

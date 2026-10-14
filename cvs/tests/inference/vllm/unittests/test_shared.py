@@ -13,7 +13,7 @@ from cvs.tests.inference.vllm import _shared
 
 class TestPrintResultsTable(unittest.TestCase):
     def test_blank_gpu_report_slot_preserves_six_field_key(self):
-        results = {("model", "", "1024", "1024", "default", 16): {"host": {"total_token_throughput": 1.0}}}
+        results = {("model", "", "1024", "1024", "default", 16): {"host": {"total_token_throughput": 1.0}}}  # nosec B105 - throughput metric key, not a credential
 
         with mock.patch.object(_shared.log, "info") as log_info:
             _shared.print_results_table(results)

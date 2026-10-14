@@ -5,6 +5,7 @@ import unittest
 from pydantic import ValidationError
 
 from cvs.lib.training.torchtitan.utils.training_config_loader import TorchTitanVariantConfig
+from cvs.unittests.support import TMP
 
 
 def _config(**overrides):
@@ -12,10 +13,10 @@ def _config(**overrides):
         "gpu_name": "MI355X",
         "enforce_thresholds": False,
         "paths": {
-            "hf_token_file": "/tmp/token",
-            "log_dir": "/tmp/logs",
-            "scripts_dir": "/tmp/scripts",
-            "data_cache_dir": "/tmp/cache",
+            "hf_token_file": f"{TMP}/token",
+            "log_dir": f"{TMP}/logs",
+            "scripts_dir": f"{TMP}/scripts",
+            "data_cache_dir": f"{TMP}/cache",
         },
         "container": {
             "name": "torchtitan",
