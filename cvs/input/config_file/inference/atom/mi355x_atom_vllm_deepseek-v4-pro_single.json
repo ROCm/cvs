@@ -60,6 +60,7 @@
     "num_prompts": "1000",
     "random_range_ratio": "0.8",
     "metric_percentiles": "95,99",
+    "max_model_length": "8192",
     "client_poll_count": "80"
   },
   "sweeps": {
