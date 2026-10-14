@@ -11,11 +11,33 @@ import re
 import json
 
 from cvs.lib.utils_lib import *
-from cvs.lib.verify_lib import *
 from cvs.lib import agfhc_rundeck, globals
 from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 
 log = globals.log
+
+
+def _payload_sudo_prefix(orch):
+    """Sudo for a command passed to orch.exec().
+
+    sudo_prefix() is host passwordless sudo. Container exec already applies
+    that to `docker exec`, and the payload runs inside the container.
+    """
+    if getattr(orch, 'orchestrator_type', None) == 'container':
+        return ''
+    return orch.sudo_prefix()
+
+
+def _build_agfhc_cmd(path, args, sudo_prefix=''):
+    """Build an agfhc invocation for orch.exec().
+
+    sudo_prefix is _payload_sudo_prefix(): empty inside a container and on
+    Spur/bare metal when passwordless sudo is unavailable, otherwise 'sudo -n '.
+    """
+    cmd = f'{path}/agfhc {args}'
+    if sudo_prefix:
+        return f'{sudo_prefix}{cmd}'
+    return cmd
 
 
 # NOTE: This module assumes the following symbols are available in scope:
@@ -118,9 +140,10 @@ def _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, group, out_dict):
 
 
 def _run_agfhc(orch, config_dict, args, timeout, stage, agfhc_res_dict, cluster_dict, lifecycle):
-    path = config_dict['path']
+    cmd = _build_agfhc_cmd(config_dict['path'], args, sudo_prefix=_payload_sudo_prefix(orch))
+    log.info('AGFHC command: %s', cmd)
     with timed_stage(lifecycle, stage):
-        out_dict = orch.exec(f'sudo {path}/agfhc {args}', timeout=timeout)
+        out_dict = orch.exec(cmd, timeout=timeout)
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, stage, out_dict)
@@ -363,7 +386,9 @@ def test_agfhc_pcie_lvl1(
 
     Behavior:
       - Resets the global error accumulator (globals.error_list) for a clean test run.
-      - Executes: sudo <path>/agfhc -r pcie_lvl1 with a 60-minute timeout.
+      - Executes <path>/agfhc -r pcie_lvl1 with a 60-minute timeout.
+        Privileged runs use the payload sudo prefix (empty in a container and
+        when passwordless sudo is unavailable).
       - Scans output for success (and absence of error patterns) via scan_agfc_results.
       - Prints per-node output and updates the aggregated test result.
 
@@ -402,7 +427,7 @@ def test_agfhc_pcie_lvl3(
 
     Behavior:
       - Clears the error list for this test.
-      - Runs: sudo <path>/agfhc -r pcie_lvl3 (60-minute timeout).
+      - Runs <path>/agfhc -r pcie_lvl3 (60-minute timeout), with the payload sudo prefix.
       - Checks for AGFHC_SUCCESS and error signatures.
       - Prints outputs per node and updates overall test status.
     """
@@ -436,7 +461,7 @@ def test_agfhc_xgmi_lvl1(
 
     Behavior:
       - Clears global error list.
-      - Runs: sudo <path>/agfhc -r xgmi_lvl1 (90-minute timeout).
+      - Runs <path>/agfhc -r xgmi_lvl1 (90-minute timeout), with the payload sudo prefix.
       - Validates success markers and absence of failure patterns.
       - Prints outputs, then updates aggregated test result.
     """
@@ -470,7 +495,7 @@ def test_agfhc_all_perf(
 
     Behavior:
       - Resets error accumulator.
-      - Runs: sudo <path>/agfhc -r all_perf (90-minute timeout).
+      - Runs <path>/agfhc -r all_perf (90-minute timeout), with the payload sudo prefix.
       - Scans outputs to ensure success and no fatal patterns.
       - Prints outputs and updates the aggregated test result.
     """
@@ -500,7 +525,7 @@ def test_agfhc_all_lvl5(
       config_dict (dict): Must include 'path'.
 
     Behavior:
-      - Runs: sudo <path>/agfhc --recipe-info all_lvl5 (260-minute timeout).
+      - Runs <path>/agfhc --recipe-info all_lvl5 (260-minute timeout), with the payload sudo prefix.
       - Scans outputs for success/absence of error markers.
       - Prints outputs and updates the test result.
 
@@ -508,8 +533,8 @@ def test_agfhc_all_lvl5(
     test stays out of the Run Deck results and lifecycle.
     """
     log.info('Testcase all lvl5')
-    path = config_dict['path']
-    out_dict = orch.exec(f'sudo {path}/agfhc --recipe-info all_lvl5', timeout=(60 * 260))
+    cmd = _build_agfhc_cmd(config_dict['path'], '--recipe-info all_lvl5', sudo_prefix=_payload_sudo_prefix(orch))
+    out_dict = orch.exec(cmd, timeout=(60 * 260))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
