@@ -423,21 +423,28 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
             self.assertNotIn("sudo", sent)
 
     def test_build_mpi_cmd_raises_with_head_output_when_hostfile_cannot_be_created(self):
-        # The error carries what the head node printed, so a log shows whether
-        # mktemp or the write failed, and why.
+        # The error names the step that failed (by exit status) and carries what
+        # the head node printed, so a log shows what failed and why.
         cases = {
-            "mktemp_fails": ({"tmpdir": os.path.join(self.scratch, "missing")}, "mktemp:"),
+            "mktemp_fails": (
+                {"tmpdir": os.path.join(self.scratch, "missing")},
+                ["(exit 2, mktemp failed)", "mktemp:"],
+            ),
             # mktemp succeeds, then the write hits the file size limit like a full disk.
-            "write_fails": ({"prelude": "trap '' XFSZ; ulimit -f 0"}, "File too large"),
+            "write_fails": (
+                {"prelude": "trap '' XFSZ; ulimit -f 0"},
+                ["(exit 3, writing the host list failed)", "File too large"],
+            ),
             # The path is printed, but the handle reports the command as failed.
-            "head_reports_failure": ({"exit_code": -1}, "exit -1"),
+            "head_reports_failure": ({"exit_code": -1}, ["(exit -1)"]),
         }
         for label, (head_kwargs, expected) in cases.items():
             with self.subTest(label):
                 self._use_local_head(**head_kwargs)
                 with self.assertRaises(RuntimeError) as raised:
                     self._build()
-                self.assertIn(expected, str(raised.exception))
+                for part in expected:
+                    self.assertIn(part, str(raised.exception))
                 if label == "write_fails":
                     self.assertEqual(self._created_files(), [])
 
