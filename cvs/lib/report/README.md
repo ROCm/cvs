@@ -56,7 +56,7 @@ Root `cvs/conftest.py` binds fixtures from profile `sources` via `pytest_hooks.p
 | `series` | Nested dict: collective → message size → metrics |
 | `matrix` | Current results + golden reference for compare rows |
 | `status_matrix` | Node × group pass/fail/na with per-item drill-down. Optional per-node `metrics`, `series`, and `heatmaps` roll up into `overview` and `metric_charts`. Contract: `dataset_builders/status_matrix.py`. Example: `profiles/anc_base.json` |
-| `training_sweep` | String combo keys `MBS=…,GBS=…,PRECISION=…` → metric lists (`train_res_dict`) |
+| `training_sweep` | String combo keys → metric lists (`train_res_dict`); optional per-combo `_metric_charts` with `metrics`, `series`, and `heatmaps` in the `status_matrix` item shape appear as `datasets.training_sweep.metric_charts` |
 
 Use `testing/fixtures.generic_sweep_profile()` as a template when authoring a
 sweep profile. Schema: `profiles/schema.json`.
@@ -98,7 +98,8 @@ reference the suite parsing module directly in profile JSON.
 Shared layout across related stems uses ``PROFILE_STEM_ALIASES`` in
 ``profile.py`` when the deck is identical — ``sglang.json`` for SGLang suites,
 ``rccl.json`` for ``rccl_perf`` / ``rccl_regression`` / ``rccl_pairwise``,
-``megatron.json`` for ``megatron_single`` / ``megatron_distributed``.
+``megatron.json`` for ``megatron_single`` / ``megatron_distributed``, and
+``aorta.json`` for ``aorta_single`` / ``aorta_distributed``.
 
 ### 3. Wire suite fixtures
 

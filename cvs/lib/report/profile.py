@@ -22,6 +22,8 @@ _PROFILES_DIR = Path(__file__).resolve().parent / "profiles"
 
 # Multiple ``cvs run`` stems may share one deck profile (same sweep/report layout).
 PROFILE_STEM_ALIASES: dict[str, str] = {
+    "aorta_single": "aorta",
+    "aorta_distributed": "aorta",
     "sglang_single": "sglang",
     "sglang_distributed": "sglang",
     "sglang_disagg_distributed": "sglang",
