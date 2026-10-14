@@ -9,9 +9,94 @@ Key guarantees:
 - Allows controlled expansion ONLY for `$KEY` where KEY is the variable being
   assigned (e.g., PATH=/x:$PATH, LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/y).
 - Expansion is performed on the *remote shell*, not locally.
+
+Also provides redact_secrets() for masking credential values in command
+strings before they are logged.
 """
 
+import re
 import shlex
+
+REDACTED = "<redacted>"
+
+# Name words (split on "_", case-insensitive) that mark a secret: HF_TOKEN,
+# SWITCH_SSH_PASSWORD, WANDB_API_KEY. Whole words only, so MAX_NUM_BATCHED_TOKENS
+# and TOKENIZERS_PARALLELISM do not match.
+_SECRET_WORDS = {"TOKEN", "PASSWORD", "PASSWD", "SECRET", "APIKEY"}
+# A last word naming a location means the value is not the secret (HF_TOKEN_PATH, password_file).
+_LOCATION_WORDS = {"FILE", "PATH", "DIR"}
+
+_ASSIGNMENT = re.compile(r"(?<![A-Za-z0-9_])(?P<name>[A-Za-z_][A-Za-z0-9_]*)=")
+
+# One shell word: shlex-quoted inside an outer single-quoted string ('"'"'a b'"'"'),
+# single-quoted, double-quoted, or bare. Bare words stop at quotes, whitespace and
+# shell operators so an outer quote is never consumed.
+_VALUE_PATTERN = r"(?:'\"'\"'[^\n]*?'\"'\"'|'[^']*'|\"[^\"]*\"|[^\s'\";&|<>()]+)"
+_VALUE = re.compile(_VALUE_PATTERN)
+# NAME=value as one quoted word (docker's -e 'HF_TOKEN=a b'): the value runs to the closing quote.
+_UNTIL_QUOTE = {"'": re.compile(r"[^'\n]*'"), '"': re.compile(r'[^"\n]*"')}
+
+_SECRET_FLAG = re.compile(
+    r"(?P<flag>(?<![A-Za-z0-9_-])--(?:(?:hf[-_])?token|password|api[-_]key))"
+    rf"(?P<sep>=|[ \t]+){_VALUE_PATTERN}",
+    re.IGNORECASE,
+)
+
+
+def _is_secret_name(name):
+    words = name.upper().split("_")
+    if words[-1] in _LOCATION_WORDS:
+        return False
+    if _SECRET_WORDS.intersection(words):
+        return True
+    return any(first == "API" and second == "KEY" for first, second in zip(words, words[1:]))
+
+
+def _redact_assignments(text):
+    parts = []
+    pos = 0
+    for match in _ASSIGNMENT.finditer(text):
+        if match.start() < pos or not _is_secret_name(match["name"]):
+            continue
+        value_start = match.end()
+        before = text[match.start() - 1] if match.start() else ""
+        quoted = _UNTIL_QUOTE[before].match(text, value_start) if before in _UNTIL_QUOTE else None
+        if quoted:
+            value_end = quoted.end() - 1
+        else:
+            bare = _VALUE.match(text, value_start)
+            value_end = bare.end() if bare else value_start
+        if value_end == value_start:
+            continue
+        parts.append(text[pos:value_start])
+        parts.append(REDACTED)
+        pos = value_end
+    if not parts:
+        return text
+    parts.append(text[pos:])
+    return "".join(parts)
+
+
+def redact_secrets(text):
+    """
+    Return text with credential values replaced by ``<redacted>``, for logging.
+
+    Masks the value of:
+      - NAME=value where NAME has TOKEN, PASSWORD, PASSWD, SECRET or API_KEY as a
+        whole "_"-separated word and its last word is not FILE, PATH or DIR
+        (case-insensitive);
+      - the flags --token, --hf-token/--hf_token, --password and --api-key/--api_key.
+
+    Use the result only for log output; always execute the original string.
+    Non-string and empty input is returned unchanged. Runs in time linear in len(text).
+    """
+    if not text or not isinstance(text, str):
+        return text
+    if "=" in text:
+        text = _redact_assignments(text)
+    if "--" in text:
+        text = _SECRET_FLAG.sub(lambda m: f"{m['flag']}{m['sep']}{REDACTED}", text)
+    return text
 
 
 def build_env_prefix(env_vars):

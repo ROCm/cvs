@@ -2,9 +2,20 @@ import unittest
 from unittest.mock import patch, MagicMock
 from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
 from cvs.lib.parallel.config import ParallelConfig
+from cvs.lib.env_lib import build_env_prefix
 from cvs.unittests.support import TMP
 
 FAKE_CRED = "fake-cred"
+DUMMY_ENV = {"HF_TOKEN": FAKE_CRED, "PATH": "/opt/bin:$PATH"}
+
+
+def _logged_messages(mock_log):
+    messages = []
+    for level in ("debug", "info", "warning", "error"):
+        for call in getattr(mock_log, level).call_args_list:
+            if call.args:
+                messages.append(str(call.args[0]) % call.args[1:] if len(call.args) > 1 else str(call.args[0]))
+    return messages
 
 
 class TestMultiProcessParallelHandleInitialization(unittest.TestCase):
@@ -556,3 +567,49 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
             "/remote/test.txt", f"{TMP}/test.txt", recurse=False, suffix_separator="_"
         )
         mock_destroy.assert_called_once_with()
+
+
+class TestMultiProcessParallelHandleLogRedaction(unittest.TestCase):
+    """Sharded path: command log lines mask secrets; shard payloads keep the original command."""
+
+    def setUp(self):
+        patcher = patch('cvs.lib.parallel.phandle_sharder.ParallelHandleSharder.execute_sharded')
+        patcher.start().side_effect = self._run_shards
+        self.addCleanup(patcher.stop)
+        self.mock_log = MagicMock()
+        config = ParallelConfig(hosts_per_shard=1, max_workers_per_cpu=1)
+        with patch('cvs.lib.parallel.multiprocess_phandle.global_log', self.mock_log):
+            self.mph = MultiProcessParallelHandle(None, ["host1", "host2"], user="u", config=config, env_vars=DUMMY_ENV)
+        self.mph.log = self.mock_log
+
+    def _run_shards(self, payloads):
+        self.payloads = payloads
+        hosts = [h for payload in payloads for h in payload['init']['host_list']]
+        return [{'result': {h: "done"}, 'reachable_hosts': [h], 'unreachable_hosts': []} for h in hosts]
+
+    def assertLogsMasked(self, masked):
+        messages = _logged_messages(self.mock_log)
+        self.assertFalse([m for m in messages if FAKE_CRED in m])
+        self.assertTrue(any(masked in m for m in messages))
+
+    def test_constructor_env_log(self):
+        self.assertLogsMasked("Environ vars: export HF_TOKEN=<redacted> ; export PATH=/opt/bin:$PATH")
+        self.assertEqual(self.mph.env_prefix, build_env_prefix(DUMMY_ENV))
+
+    def test_exec(self):
+        cmd = f"docker exec c bash -c 'export API_KEY={FAKE_CRED}; run'"
+        for kwargs in ({}, {"timeout": 10}):
+            with self.subTest(kwargs=kwargs):
+                self.mock_log.reset_mock()
+                self.mph.exec(cmd, **kwargs)
+                self.assertEqual([(p['cmd'], p['init']['env_vars']) for p in self.payloads], [(cmd, DUMMY_ENV)] * 2)
+                self.assertLogsMasked(
+                    "cmd = export HF_TOKEN=<redacted> ; export PATH=/opt/bin:$PATH ; docker exec c bash -c 'export API_KEY=<redacted>; run'"
+                )
+
+    def test_exec_cmd_list(self):
+        cmd_list = [f"run --hf-token {FAKE_CRED}", f"export PASSWORD={FAKE_CRED}; run"]
+        self.mock_log.reset_mock()
+        self.mph.exec_cmd_list(cmd_list)
+        self.assertEqual([p['cmd_list'] for p in self.payloads], [[cmd_list[0]], [cmd_list[1]]])
+        self.assertLogsMasked("export PASSWORD=<redacted>; run")

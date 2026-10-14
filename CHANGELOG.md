@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cvs run` writes a self-contained pytest HTML report and a text log under `<workspace>/cvs_runs/<run_id>/` by default. `--html` and `--log-file` override those paths; `--no-html` and `--no-log-file` suppress them.
 - ANC artifacts now all live under the run directory. Collected ANC logs land at `<run_dir>/anc_logs/<node>/<test_name>/<timestamp>/` instead of a configured prefix, and the HTML/log reports come from `cvs run`'s standard paths. The `anc.log_folder_path` and `anc.COLLECT_HTML_REPORTS` config keys are removed (ANC no longer self-collects HTML; use `--no-html` to suppress the report).
 - A scheduler-managed `cvs run` must now set an explicit workspace on shared storage (`--workspace` or `CVS_WORKSPACE`); it no longer silently falls back to the venv parent, which is node-local in a container and loses collected artifacts at job teardown.
+- Logged command lines show `<redacted>` in place of the values of token, password, secret and API-key variables and flags; the commands sent to nodes are unchanged.
 
 ### Fixed
 

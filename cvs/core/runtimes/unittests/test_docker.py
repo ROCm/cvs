@@ -27,7 +27,7 @@ from unittest.mock import MagicMock, patch
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.core.runtimes.docker import DockerRuntime
-from cvs.unittests.support import TMP
+from cvs.unittests.support import FAKE_CRED, TMP
 
 
 def _make_runtime(captured, sudo_prefix=""):
@@ -721,6 +721,21 @@ class TestDockerRuntimeExecSubsetHandleCleanup(unittest.TestCase):
                         rt.exec("cvs_iter_test", "sleep 300", hosts=["host1"], timeout=1)
 
                 mock_pssh.destroy_clients.assert_called_once_with()
+
+
+class TestDockerRuntimeStartCommandRedaction(unittest.TestCase):
+    """The logged `docker run` masks secret env values; the executed command keeps them."""
+
+    def test_start_command_log(self):
+        captured = []
+        rt = _make_runtime(captured)
+        environment = {"HF_TOKEN": FAKE_CRED, "WANDB_API_KEY": f"{FAKE_CRED} x"}
+        rt.setup_containers(_container_config(), "cvs_iter_test", environment=environment)
+
+        self.assertIn(f"-e HF_TOKEN={FAKE_CRED} -e 'WANDB_API_KEY={FAKE_CRED} x'", captured[0])
+        logged = [str(c.args[0]) for c in rt.log.debug.call_args_list if "Container start command" in str(c.args[0])]
+        self.assertNotIn(FAKE_CRED, logged[0])
+        self.assertIn("-e HF_TOKEN=<redacted> -e 'WANDB_API_KEY=<redacted>'", logged[0])
 
 
 if __name__ == "__main__":
