@@ -15,7 +15,7 @@ The suite drives a training job inside a Docker container on one or more cluster
 - **Parameter sweeps** — one full training run per enabled combo (for example FP8 and BF16), each with its own result rows in the report.
 - **Loss curve** — a per-combo decreasing-trend check on ``lm_loss`` at steps 100 / 500 / 1k / 5k.
 - **Training-log error scanning** — NCCL, GPU HW faults, OOM, and other signatures fail a run early with a clear reason.
-- **HTML report** — per-test rows with linked logs and a consolidated metric results page.
+- **HTML report and Run Deck** — per-test rows with linked logs, pytest metric subtest panels, a consolidated metric results page, and the Megatron Run Deck summary.
 
 The mode is which suite you invoke (``megatron_single`` vs ``megatron_distributed``). Use a ``*_single.json`` config with the single-node suite and a ``*_distributed.json`` config with the distributed suite.
 
@@ -60,7 +60,7 @@ Full parameter list: :doc:`/reference/configuration-files/training/megatron`.
 Primus vs Megatron-LM
 =====================
 
-The same eight test stages run for both backends. ``_make_training_job`` in ``megatron_single.py`` / ``megatron_distributed.py`` picks the job class from ``container.image`` (substring ``primus``, case-insensitive). Llama 3.1 8B, Llama 3.3 70B, and DeepSeek V2 Lite support **both** Megatron-LM and Primus. Llama 3.1 405B is **Primus only** (distributed).
+The same ordered test stages run for both backends. ``_make_training_job`` in ``megatron_single.py`` / ``megatron_distributed.py`` picks the job class from ``container.image`` (substring ``primus``, case-insensitive). Llama 3.1 8B, Llama 3.3 70B, and DeepSeek V2 Lite support **both** Megatron-LM and Primus. Llama 3.1 405B is **Primus only** (distributed).
 
 .. list-table::
    :header-rows: 1
@@ -71,6 +71,9 @@ The same eight test stages run for both backends. ``_make_training_job`` in ``me
      - Primus (image contains ``primus``)
    * - ``test_launch_container``
      - Launch the Docker container on all suite hosts
+     - Same
+   * - ``test_backend_nic_speed``
+     - Verify every discovered backend NIC is linked at 400 Gbps before training starts
      - Same
    * - ``test_download_tokenizer``
      - Downloads ``tokenizer.model`` into ``data_cache_dir`` for DeepSeek/Mixtral. Llama/Qwen skip (HF repo ID is enough)
@@ -87,6 +90,9 @@ The same eight test stages run for both backends. ``_make_training_job`` in ``me
    * - ``test_metric`` / ``test_loss_curve``
      - Parse Megatron-LM log metrics
      - Parse Primus log metrics (same ``training.*`` names)
+   * - ``test_print_results_table``
+     - Render the combined metric results table
+     - Same
    * - ``test_teardown``
      - Tear down the container
      - Same
@@ -108,12 +114,14 @@ You can list all available test stages using the CLI:
 
   Available tests in megatron_single:
     - test_launch_container
+    - test_backend_nic_speed
     - test_download_tokenizer
     - test_smoke
     - test_checkpoint
     - test_training
     - test_metric
     - test_loss_curve
+    - test_print_results_table
     - test_teardown
 
 .. code:: bash
@@ -124,12 +132,14 @@ You can list all available test stages using the CLI:
 
   Available tests in megatron_distributed:
     - test_launch_container
+    - test_backend_nic_speed
     - test_download_tokenizer
     - test_smoke
     - test_checkpoint
     - test_training
     - test_metric
     - test_loss_curve
+    - test_print_results_table
     - test_teardown
 
 Use a ``*_single.json`` config with ``megatron_single`` and a ``*_distributed.json`` config with ``megatron_distributed``.
@@ -199,30 +209,38 @@ Tests run in this pinned order. ``[combo]`` = one row per enabled sweep combo.
      - once
      - Launch and verify the container
    * - 1
+     - ``test_backend_nic_speed``
+     - once
+     - Verify every discovered backend NIC is linked at 400 Gbps before training starts
+   * - 2
      - ``test_download_tokenizer``
      - once
      - Megatron-LM: download ``tokenizer.model`` for DeepSeek/Mixtral. Primus: always skip (HF repo IDs).
-   * - 2
+   * - 3
      - ``test_smoke``
      - once
      - Small run from the ``smoke`` config block confirming the model loads and trains without error. Skipped when ``smoke.enabled`` is ``false``
-   * - 3
+   * - 4
      - ``test_checkpoint``
      - once
      - Primus-only checkpoint save + resume with loss continuity at the first resume step. Uses the ``smoke`` block for MBS, GBS, and precision. Skipped when ``checkpoint.enforce: false`` or the image name does not contain ``primus``.
-   * - 4
+   * - 5
      - ``test_training[combo]``
      - per combo
      - Build cmd, train, poll logs, parse results; GPU memory freed between combos
-   * - 5
+   * - 6
      - ``test_metric[combo]``
      - per combo
      - Threshold PASS/FAIL per metric
-   * - 6
+   * - 7
      - ``test_loss_curve[combo]``
      - per combo
      - Gate on downward ``lm_loss`` trend at steps 100 / 500 / 1k / 5k
-   * - 7
+   * - 8
+     - ``test_print_results_table``
+     - once
+     - Render all sweep verdicts into one linked metric-results table
+   * - 9
      - ``test_teardown``
      - once
      - Tear the container down
@@ -249,7 +267,9 @@ Pytest parametrizes ``sweep_name`` (one row per ``sweep.runs`` entry, or ``defau
 Metrics and PASS/FAIL
 =====================
 
-Each ``test_metric[combo]`` compares the parsed metric against its threshold spec and reports one of:
+Each ``test_metric[combo]`` compares every parsed metric against its threshold spec. The pytest HTML report renders those metric verdicts as a collapsible subtest-style panel under the combo's ``test_metric`` row, so one parent row shows each metric as ``PASS``, ``FAIL``, ``RECORD``, or ``SKIPPED``. The parent ``test_metric`` fails only when a gated metric violates its threshold.
+
+Metric verdicts report one of:
 
 .. list-table::
    :header-rows: 1
@@ -347,6 +367,8 @@ Reports and logs
 ================
 
 - **Results table** — one row per test; metric rows show PASS/FAIL from the threshold check.
+- **Pytest metric subtests** — each ``test_metric[combo]`` row expands to show one verdict per parsed metric, with pass/fail/skip counts reflected in the pytest HTML filter summary.
+- **Megatron Run Deck** — ``megatron_run_deck.html``, ``megatron_run_deck.json``, and the optional ``megatron_run_deck_viewer.html`` are written beside the pytest HTML report and bundled into the report zip. The deck includes the run card, lifecycle timeline, sweep analytics, gate matrix, per-combo cells, and full results table.
 - **Full log** — each test row links to its own captured log.
 - **Training logs** — Megatron-LM writes ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``. Primus writes ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``. Folder names use the sanitized combo ID (see the table below).
 
