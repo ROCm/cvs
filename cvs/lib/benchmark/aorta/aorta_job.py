@@ -385,15 +385,16 @@ class AortaJob:
         """Record each host's own clock before the GPU workload."""
         self.kernel_start = self._exec("date +'%a %b %e %H:%M:%S'", on_host=True)
 
-    def _dmesg_exec(self, cmd):
+    def _dmesg_exec(self, cmd, print_console=False):
         """Run a dmesg scan command, requiring every host to respond.
 
         A host silently absent from a non-detailed result (e.g. dropped from
         the transport's reachable set) would otherwise scan as "no errors
         found" instead of "scan failed" -- request detailed results and check
         the full expected host set before handing text to the verifier.
+        print_console is accepted because verify_lib's kernel-log scanners pass it.
         """
-        results = self.orch.exec_on_host(cmd, hosts=self.hosts, timeout=120, detailed=True, print_console=False)
+        results = self.orch.exec_on_host(cmd, hosts=self.hosts, timeout=120, detailed=True, print_console=print_console)
         results = results or {}
         missing = [host for host in self.hosts if host not in results]
         failed = []

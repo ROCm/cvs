@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Kernel-log health checks (`verify_dmesg_for_errors`, `full_dmesg_scan`, `full_journalctl_scan`, `verify_driver_errors`, `verify_nic_link_flap`, and platform `test_check_dmesg_driver_errors`) no longer echo each node's full dmesg/journal into the run log and HTML report. On nodes with a large kernel backlog this produced multi-hundred-MB logs and runs that appeared stalled. Each `verify_lib` scan now logs one `kernel-log scan …` summary line (hosts, lines scanned, matches); detected errors are still reported line by line. `Orchestrator.exec` now declares `detailed` and `print_console`.
 - ibperf `verify_bw` now enforces `expected_results`. Previously the bandwidth and latency
   thresholds were never evaluated, so `ib_perf_bw_test` passed regardless of measured performance.
   Every GPU instance is checked against the threshold for its message size and QP count, and
