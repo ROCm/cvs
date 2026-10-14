@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import MagicMock, mock_open, patch
 
 import cvs.lib.anc_lib as anc_lib
+from cvs.unittests.support import TMP
 
 
 def _patch_run_dir(run_dir):
@@ -787,9 +788,9 @@ class TestEvaluateNodeNotFoundScoping(unittest.TestCase):
         # and console_text is whatever the test supplies.
         patchers = [
             patch.object(anc_lib, "_node_label", return_value="n1"),
-            patch.object(anc_lib, "resolve_anc_log_folder", return_value="/tmp/dest"),
+            patch.object(anc_lib, "resolve_anc_log_folder", return_value=f"{TMP}/dest"),
             patch.object(anc_lib.os, "makedirs"),
-            patch.object(anc_lib, "_pull_log_dir", return_value=("/tmp/dest/console.log", None)),
+            patch.object(anc_lib, "_pull_log_dir", return_value=(f"{TMP}/dest/console.log", None)),
             patch.object(anc_lib, "_find_errors_json", return_value=None),
         ]
         for p in patchers:
@@ -1028,11 +1029,11 @@ class TestPerUserTmpNamespacing(unittest.TestCase):
     ownership collisions on shared nodes.'''
 
     def test_remote_user_tmp(self):
-        self.assertEqual(anc_lib._remote_user_tmp("alice"), "/tmp/alice")
+        self.assertEqual(anc_lib._remote_user_tmp("alice"), f"{TMP}/alice")
 
     def test_remote_user_tmp_sanitizes(self):
         # A user value with a path separator collapses to one safe component.
-        self.assertEqual(anc_lib._remote_user_tmp("a/b"), "/tmp/a_b")
+        self.assertEqual(anc_lib._remote_user_tmp("a/b"), f"{TMP}/a_b")
 
     def test_validate_exe_paths_uses_per_user_tmp(self):
         cluster = {"node_dict": {"node1": {}}, "username": "alice", "priv_key_file": "k"}
@@ -1055,7 +1056,7 @@ class TestPerUserTmpNamespacing(unittest.TestCase):
 
         joined = "\n".join(cmds)
         self.assertIn("mkdir -p '/tmp/alice'", joined)
-        self.assertIn("/tmp/alice/validate_exe_paths.py", joined)
+        self.assertIn(f"{TMP}/alice/validate_exe_paths.py", joined)
 
     def test_run_anc_groups_quiet_uses_per_user_tmp(self):
         anc_lib._ANC_INSTALL_PATHS = anc_lib.AncPaths("/opt/amdtools", "/opt/amdtools/anc", "/opt/amdtools/anc/anc.py")
@@ -1073,7 +1074,7 @@ class TestPerUserTmpNamespacing(unittest.TestCase):
             with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
                 anc_lib.run_anc_groups(FakeOrch(), cluster, cfg, ["cpu_content_check"], "test_cpu_content_check")
 
-        self.assertIn("/tmp/bob/anc_run_$$.out", captured["cmd"])
+        self.assertIn(f"{TMP}/bob/anc_run_$$.out", captured["cmd"])
         self.assertIn("mkdir -p '/tmp/bob'", captured["cmd"])
 
 
@@ -1183,7 +1184,7 @@ class TestChownArgumentQuoted(unittest.TestCase):
         # download_file returns {} so _pull_log_dir bails after the archive_cmd;
         # we only care that the archive command quotes the user and is scoped to
         # the single host.
-        anc_lib._pull_log_dir(FakeOrch(), "node1", "alice", "/root/logs/run1", "/tmp/dest")
+        anc_lib._pull_log_dir(FakeOrch(), "node1", "alice", "/root/logs/run1", f"{TMP}/dest")
         self.assertIn("sudo chown 'alice'", captured["first"])
         self.assertEqual(captured["hosts"], ["node1"])
 

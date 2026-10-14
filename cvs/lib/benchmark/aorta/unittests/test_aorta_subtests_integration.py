@@ -4,13 +4,13 @@ import html
 import json
 import os
 import re
-import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
-import xml.etree.ElementTree as element_tree
 from pathlib import Path
+
+from cvs.unittests.support import parse_trusted_xml, run_trusted
 
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -78,7 +78,7 @@ def _run_pytest(source):
         html_path = root / "report.html"
         xml_path = root / "report.xml"
         test_path.write_text(_HEADER + textwrap.dedent(source))
-        completed = subprocess.run(
+        completed = run_trusted(
             [
                 sys.executable,
                 "-m",
@@ -101,7 +101,7 @@ def _run_pytest(source):
         )
         details = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
         html_text = html_path.read_text() if html_path.is_file() else ""
-        xml_root = element_tree.parse(xml_path).getroot() if xml_path.is_file() else None
+        xml_root = parse_trusted_xml(xml_path).getroot() if xml_path.is_file() else None
     return completed, details, html_text, xml_root
 
 

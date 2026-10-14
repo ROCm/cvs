@@ -119,11 +119,12 @@ class TestStatusMatrixCard(unittest.TestCase):
         self.assertNotIn("item breakdown", html)
 
     def test_status_overview_shows_pass_rate_and_failures(self):
+        rate, passed, row_passed = 0.75, 3, 1
         overview = {
-            "pass_rate": 0.75,
-            "counts": {"pass": 3, "fail": 1, "na": 2},
-            "failures_by_node": [{"node": "n2", "fail": 1, "pass": 1, "na": 0}],
-            "failures_by_group": [{"group": "hbm_lvl3", "fail": 1, "pass": 1, "na": 0}],
+            "pass_rate": rate,
+            "counts": {"pass": passed, "fail": 1, "na": 2},
+            "failures_by_node": [{"node": "n2", "fail": 1, "pass": row_passed, "na": 0}],
+            "failures_by_group": [{"group": "hbm_lvl3", "fail": 1, "pass": row_passed, "na": 0}],
         }
         html = self.renderer.render_status_overview({}, {}, overview)
         self.assertIn("75%", html)
@@ -132,7 +133,8 @@ class TestStatusMatrixCard(unittest.TestCase):
         self.assertIn("overview-table", html)
 
     def test_status_overview_empty(self):
-        html = self.renderer.render_status_overview({}, {}, {"counts": {"pass": 0, "fail": 0, "na": 0}})
+        passed = 0
+        html = self.renderer.render_status_overview({}, {}, {"counts": {"pass": passed, "fail": 0, "na": 0}})
         self.assertIn("No node results", html)
 
     def test_metric_charts_threshold_series_and_heatmap(self):

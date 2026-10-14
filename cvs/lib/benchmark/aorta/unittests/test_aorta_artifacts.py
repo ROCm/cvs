@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from cvs.lib.benchmark.aorta.aorta_artifacts import extract_artifacts, main, pack_reports, pack_traces
+from cvs.unittests.support import TMP
 
 
 class TestAortaArtifacts(unittest.TestCase):
@@ -74,7 +75,7 @@ class TestAortaArtifacts(unittest.TestCase):
                 with tarfile.open(self.archive, "w:gz") as bundle:
                     member = tarfile.TarInfo(name)
                     member.type = kind
-                    member.linkname = "/tmp/escape"
+                    member.linkname = f"{TMP}/escape"
                     bundle.addfile(member, io.BytesIO())
                 with self.assertRaises(ValueError):
                     extract_artifacts(self.archive, Path(self.tmp.name) / "dest")

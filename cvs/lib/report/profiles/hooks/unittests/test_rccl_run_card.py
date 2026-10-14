@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from cvs.lib.report.profiles.hooks.rccl_run_card import rccl_run_card_display
 from cvs.lib.report.profiles.hooks.rccl_session import variant_from_config
+from cvs.unittests.support import TMP
 
 
 class TestRcclRunCard(unittest.TestCase):
@@ -21,7 +22,7 @@ class TestRcclRunCard(unittest.TestCase):
             cvs_params={"nic_model": "thor", "verify_bus_bw": "False"},
             enforce_thresholds=False,
         )
-        rows = rccl_run_card_display(variant, {"pytest_html_path": "/tmp/report.html"})
+        rows = rccl_run_card_display(variant, {"pytest_html_path": f"{TMP}/report.html"})
         labels = [label for label, _value, _link in rows]
         self.assertIn("MPI nodes", labels)
         self.assertIn("Collectives", labels)

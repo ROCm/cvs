@@ -3,7 +3,6 @@
 import json
 import os
 import shlex
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +14,7 @@ from cvs.lib.benchmark.aorta.aorta_config_loader import AortaVariantConfig
 from cvs.lib.benchmark.aorta.aorta_job import AortaJob, _text
 from cvs.lib.utils.log_poller import LogPollTimeout
 from cvs.lib.benchmark.aorta.unittests.fixtures import variant_dict
+from cvs.unittests.support import TMP, run_trusted
 
 
 class TestAortaJob(unittest.TestCase):
@@ -167,7 +167,7 @@ class TestAortaJob(unittest.TestCase):
         write_commands = self.orch.exec_cmd_list.call_args_list[-2].args[0]
         for rank, wrapped in enumerate(write_commands):
             script = shlex.split(shlex.split(wrapped)[2])[2]
-            result = subprocess.run(
+            result = run_trusted(
                 ["bash"],
                 input=script,
                 text=True,
@@ -183,7 +183,7 @@ class TestAortaJob(unittest.TestCase):
 
     def test_phase_exit_codes_reports_per_host_completion(self):
         job = self.job()
-        job.log_paths = ["/tmp/rank0.log", "/tmp/rank1.log"]
+        job.log_paths = [f"{TMP}/rank0.log", f"{TMP}/rank1.log"]
         self.orch.exec_cmd_list.return_value = {
             "node-a": "0\nCVS_AORTA_COMMAND_OK",
             "node-b": "\nCVS_AORTA_COMMAND_OK",
@@ -201,7 +201,7 @@ class TestAortaJob(unittest.TestCase):
     def test_benchmark_polling_updates_status_and_duration(self, poller):
         job = self.job()
         job.start_time = 100
-        job.log_paths = ["/tmp/rank0.log", "/tmp/rank1.log"]
+        job.log_paths = [f"{TMP}/rank0.log", f"{TMP}/rank1.log"]
         with patch("cvs.lib.benchmark.aorta.aorta_job.time.time", return_value=110):
             job.poll_for_completion()
         self.assertTrue(job.succeeded)
@@ -218,7 +218,7 @@ class TestAortaJob(unittest.TestCase):
     @patch("cvs.lib.benchmark.aorta.aorta_job.LogPoller")
     def test_poll_timeout_is_distinguished_from_a_node_failure(self, poller):
         job = self.job()
-        job.log_paths = ["/tmp/rank0.log", "/tmp/rank1.log"]
+        job.log_paths = [f"{TMP}/rank0.log", f"{TMP}/rank1.log"]
         poller.return_value.poll.side_effect = LogPollTimeout("Aorta did not complete within 30s")
         with self.assertRaises(TimeoutError):
             job.poll_for_completion()
@@ -231,7 +231,7 @@ class TestAortaJob(unittest.TestCase):
     @patch("cvs.lib.benchmark.aorta.aorta_job.LogPoller")
     def test_poll_phase_logs_newly_failed_hosts_without_ending_the_wait(self, poller):
         job = self.job()
-        job.log_paths = ["/tmp/rank0.log", "/tmp/rank1.log"]
+        job.log_paths = [f"{TMP}/rank0.log", f"{TMP}/rank1.log"]
         with patch.object(job, "_phase_exit_codes", return_value={"node-a": 0, "node-b": 0}):
             job._poll_phase()
         is_complete = poller.call_args.kwargs["is_complete"]
@@ -247,7 +247,7 @@ class TestAortaJob(unittest.TestCase):
     @patch("cvs.lib.benchmark.aorta.aorta_job.LogPoller")
     def test_is_complete_retries_after_a_transient_scrape_failure(self, poller):
         job = self.job()
-        job.log_paths = ["/tmp/rank0.log", "/tmp/rank1.log"]
+        job.log_paths = [f"{TMP}/rank0.log", f"{TMP}/rank1.log"]
         with patch.object(job, "_phase_exit_codes", return_value={"node-a": 0, "node-b": 0}):
             job._poll_phase()
         is_complete = poller.call_args.kwargs["is_complete"]
@@ -269,7 +269,7 @@ class TestAortaJob(unittest.TestCase):
 
         poller.return_value.poll.side_effect = fake_poll
         job = self.job()
-        job.log_paths = ["/tmp/rank0.log", "/tmp/rank1.log"]
+        job.log_paths = [f"{TMP}/rank0.log", f"{TMP}/rank1.log"]
         with patch.object(job, "_phase_exit_codes", return_value={"node-a": 0, "node-b": 3}):
             with self.assertRaisesRegex(RuntimeError, "node-b.*3"):
                 job._poll_phase()
@@ -286,7 +286,7 @@ class TestAortaJob(unittest.TestCase):
 
         poller.return_value.poll.side_effect = fake_poll
         job = self.job()
-        job.log_paths = ["/tmp/rank0.log", "/tmp/rank1.log"]
+        job.log_paths = [f"{TMP}/rank0.log", f"{TMP}/rank1.log"]
         codes = MagicMock(return_value={"node-a": 0, "node-b": 0})
         with patch.object(job, "_phase_exit_codes", codes):
             job._poll_phase()
@@ -544,7 +544,7 @@ class TestAortaJob(unittest.TestCase):
     def test_teardown_reports_stop_failure_after_ownership_restore(self):
         job = self.job()
         job.owners = {host: "1000:1000" for host in self.orch.hosts}
-        job.pid_paths = ["/tmp/aorta0.pid", "/tmp/aorta1.pid"]
+        job.pid_paths = [f"{TMP}/aorta0.pid", f"{TMP}/aorta1.pid"]
         with (
             patch.object(job, "_exec_list", side_effect=[RuntimeError("node down"), {}]) as execute,
             patch.object(job, "collect_logs"),
@@ -573,15 +573,15 @@ class TestAortaJob(unittest.TestCase):
         # (the `case`/`if` guard filters it out); `|| true` only covers kill
         # failing to signal an already-dead, otherwise-valid pid.
         job = self.job()
-        job.pid_paths = ["/tmp/aorta0.pid"]
+        job.pid_paths = [f"{TMP}/aorta0.pid"]
         with patch.object(job, "_exec_list") as execute:
             job.stop_processes()
         command = execute.call_args.args[0][0]
         with tempfile.TemporaryDirectory() as tmp:
             pid_file = Path(tmp) / "aorta0.pid"
             pid_file.write_text("not-a-pid")
-            script = command.replace("/tmp/aorta0.pid", str(pid_file))
-            result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+            script = command.replace(f"{TMP}/aorta0.pid", str(pid_file))
+            result = run_trusted(["bash", "-c", script], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(pid_file.exists())
 
@@ -592,7 +592,7 @@ class TestAortaJob(unittest.TestCase):
         # a naive digit-only check would accept, but which is numerically 1)
         # must never reach kill, not just be trusted to no-op.
         job = self.job()
-        job.pid_paths = ["/tmp/aorta0.pid"]
+        job.pid_paths = [f"{TMP}/aorta0.pid"]
         with patch.object(job, "_exec_list") as execute:
             job.stop_processes()
         command = execute.call_args.args[0][0]
@@ -602,16 +602,16 @@ class TestAortaJob(unittest.TestCase):
                     pid_file = Path(tmp) / "aorta0.pid"
                     pid_file.write_text(bad_pid)
                     kill_log = Path(tmp) / "kill.log"
-                    script = command.replace("/tmp/aorta0.pid", str(pid_file))
+                    script = command.replace(f"{TMP}/aorta0.pid", str(pid_file))
                     wrapped = f'kill() {{ printf "%s\\n" "$*" >> {shlex.quote(str(kill_log))}; }}\n{script}'
-                    result = subprocess.run(["bash", "-c", wrapped], capture_output=True, text=True)
+                    result = run_trusted(["bash", "-c", wrapped], capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertFalse(pid_file.exists())
                     self.assertFalse(kill_log.exists())
 
     def test_stop_processes_signals_a_valid_pid(self):
         job = self.job()
-        job.pid_paths = ["/tmp/aorta0.pid"]
+        job.pid_paths = [f"{TMP}/aorta0.pid"]
         with patch.object(job, "_exec_list") as execute:
             job.stop_processes()
         command = execute.call_args.args[0][0]
@@ -619,9 +619,9 @@ class TestAortaJob(unittest.TestCase):
             pid_file = Path(tmp) / "aorta0.pid"
             pid_file.write_text("123")
             kill_log = Path(tmp) / "kill.log"
-            script = command.replace("/tmp/aorta0.pid", str(pid_file))
+            script = command.replace(f"{TMP}/aorta0.pid", str(pid_file))
             wrapped = f'kill() {{ printf "%s\\n" "$*" >> {shlex.quote(str(kill_log))}; }}\n{script}'
-            result = subprocess.run(["bash", "-c", wrapped], capture_output=True, text=True)
+            result = run_trusted(["bash", "-c", wrapped], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(pid_file.exists())
             self.assertEqual(kill_log.read_text().splitlines(), ["-TERM -- -123", "-KILL -- -123"])

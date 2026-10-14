@@ -351,11 +351,11 @@ class TestBabelAndMemMetrics(unittest.TestCase):
         self.assertEqual(perf["series"], [])
         self.assertEqual(perf["heatmaps"], [])
 
-        pass_only = "[memtest] mem Test 1 : PASS"
-        perf = rvs_rundeck.parse_node_performance(pass_only, module_hint="mem_test")
+        passing_only = "[memtest] mem Test 1 : PASS"
+        perf = rvs_rundeck.parse_node_performance(passing_only, module_hint="mem_test")
         self.assertEqual(perf["metrics"], [])
         results = {}
-        rvs_rundeck.record_outputs(results, "mem_test", {"node-b": pass_only}, [])
+        rvs_rundeck.record_outputs(results, "mem_test", {"node-b": passing_only}, [])
         node = results["groups"]["mem_test"]["nodes"]["node-b"]
         self.assertEqual(node["status"], "pass")
         self.assertNotIn("metrics", node)

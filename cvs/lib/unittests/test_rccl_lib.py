@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 import cvs.lib.rccl_lib as rccl_lib
 from cvs.core.run_layout import RunLayout
+from cvs.unittests.support import TMP
 
 
 def _download_writes_suffixed_path(content, host='head'):
@@ -877,7 +878,7 @@ class TestRcclLib(unittest.TestCase):
     @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
     def test_rccl_job_from_config_composes_openmpi_and_srun(self, _managed):
         config = {
-            'env_source_script': '/tmp/ainic.sh',
+            'env_source_script': f'{TMP}/ainic.sh',
             'mpi_params': {
                 'mpi_dir': '/opt/openmpi/bin',
                 'no_of_nodes': '2',
@@ -888,7 +889,7 @@ class TestRcclLib(unittest.TestCase):
             'cvs_params': {'cvs_exec_timeout': '600'},
         }
         job = rccl_lib.RcclJob.from_config(_FakeOrch(), 'all_reduce_perf', config, ['n1', 'n2'], ['v1', 'v2'])
-        self.assertEqual(job.env_file, '/tmp/ainic.sh')
+        self.assertEqual(job.env_file, f'{TMP}/ainic.sh')
         self.assertEqual(job.head_node, 'n1')
         self.assertEqual(job.no_of_global_ranks, 8)
         self.assertEqual(job.openmpi.oob_port, 'ens3')
@@ -953,11 +954,11 @@ class TestRcclLib(unittest.TestCase):
         launcher = self._srun(['n1', 'n2'], 2, 8, 16, orch=orch)
         self.assertIs(launcher.prepare(), launcher)
         launcher.prepare()
-        self.assertEqual(launcher.session_dir, '/tmp/cvsuser/ompi-4242')
+        self.assertEqual(launcher.session_dir, f'{TMP}/cvsuser/ompi-4242')
         orch.exec.assert_called_once()
         mkdir_cmd = orch.exec.call_args[0][0]
         self.assertIn('mkdir -p -m 700 /tmp/cvsuser', mkdir_cmd)
-        self.assertIn('/tmp/cvsuser/ompi-4242', mkdir_cmd)
+        self.assertIn(f'{TMP}/cvsuser/ompi-4242', mkdir_cmd)
 
     @patch.dict(os.environ, {'USER': 'cvsuser', 'SLURM_JOB_ID': '4242'}, clear=False)
     def test_srun_exports_literal_session_dir(self):

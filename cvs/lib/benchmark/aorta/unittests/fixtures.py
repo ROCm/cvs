@@ -4,7 +4,7 @@
 def variant_dict():
     return {
         "schema_version": 1,
-        "paths": {"shared_fs": "/scratch/tester", "models_dir": "/models", "log_dir": "/logs", "hf_token_file": ""},
+        "paths": {"shared_fs": "/scratch/tester", "models_dir": "/models", "log_dir": "/logs", "hf_token_file": ""},  # nosec B105 - empty path, no token
         "model": {"id": "test", "remote": 0},
         "container": {
             "name": "aorta_test",

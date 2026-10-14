@@ -37,7 +37,7 @@ class TestSubtestReports(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 namespace = {'called_from_subtest_context': subtest_reports.called_from_subtest_context}
-                exec(compile(source, path, 'exec'), namespace)
+                exec(compile(source, path, 'exec'), namespace)  # nosec B102 - runs a fixed test snippet under a fake filename
                 self.assertEqual(namespace['Context']().__exit__(), expected)
 
     def test_not_in_subtest_context_by_default(self):
