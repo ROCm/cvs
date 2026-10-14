@@ -12,26 +12,58 @@ import re
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import globals
-from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 
 log = globals.log
 
 
 @pytest.fixture(scope="module")
 def cluster_file(pytestconfig):
+    """
+    Retrieve the --cluster_file CLI option provided to pytest.
+
+    Args:
+      pytestconfig: Built-in pytest fixture exposing command-line options.
+
+    Returns:
+      str: Path to the cluster configuration JSON file.
+    """
     return pytestconfig.getoption("cluster_file")
 
 
 @pytest.fixture(scope="module")
 def config_file(pytestconfig):
+    """
+    Retrieve the --config_file CLI option provided to pytest.
+
+    Args:
+      pytestconfig: Built-in pytest fixture exposing command-line options.
+
+    Returns:
+      str: Path to the test configuration JSON file.
+
+    Notes:
+      - Ensure your pytest invocation includes: --config_file=/path/to/config.json
+      - Module scope ensures this is resolved once per module.
+    """
     return pytestconfig.getoption("config_file")
 
 
 @pytest.fixture(scope="module")
 def cluster_dict(cluster_file):
+    """
+    Load and return the entire cluster configuration.
+
+    Args:
+      cluster_file (str): Path to the cluster configuration JSON file.
+
+    Returns:
+      dict: Parsed cluster configuration (nodes, credentials, etc).
+    """
     with open(cluster_file) as json_file:
         cluster_dict = json.load(json_file)
+
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
+
     log.info("%s", cluster_dict)
     return cluster_dict
 
@@ -72,16 +104,6 @@ def config_dict(config_file, cluster_dict):
         rccl_install_cfg["rccl_tests_repository"] = rccl_install_cfg["rccl_repository"]
     log.info("%s", rccl_install_cfg)
     return rccl_install_cfg
-
-
-@pytest.fixture(scope="module")
-def orch(cluster_file, config_file):
-    if not cluster_file or not config_file:
-        pytest.fail("orch fixture requires --cluster_file and --config_file")
-    cfg = OrchestratorConfig.from_configs(cluster_file, config_file)
-    orchestrator = OrchestratorFactory.create_orchestrator(log, cfg)
-    yield orchestrator
-    orchestrator.close()
 
 
 _UBUNTU_BUILD_DEPS = [
@@ -191,41 +213,37 @@ def _detect_gpu_arch(hdl, config_dict):
     return detected
 
 
-def detect_rocm_path(phdl, config_rocm_path):
+def detect_rocm_path(orch, config_rocm_path):
+    """
+    Detect the ROCm installation path, supporting both old (/opt/rocm) and new (/opt/rocm/core-X.Y) layouts.
+
+    Args:
+        orch: Orchestrator instance
+        config_rocm_path (str): Configured ROCm path from config file (empty string for auto-detect)
+
+    Returns:
+        str: Detected ROCm path
+    """
     if config_rocm_path and config_rocm_path != '<changeme>':
-        out_dict = phdl.exec(
-            f'test -d {config_rocm_path}/lib && ls {config_rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
-        )
-        for node, output in out_dict.items():
-            if output.strip() and 'libamdhip64.so' in output:
-                log.info(f'Using configured ROCm path: {config_rocm_path} (validated)')
-                return config_rocm_path
-            else:
-                log.warning(
-                    f'Configured ROCm path {config_rocm_path} does not contain required libraries, will auto-detect'
-                )
+        log.info(f'Using configured ROCm path: {config_rocm_path}')
+        return config_rocm_path
 
     log.info('Auto-detecting ROCm path...')
 
-    out_dict = phdl.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
-    for node, output in out_dict.items():
+    out_dict = orch.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
+    for output in out_dict.values():
         if output and '/opt/rocm/core-' in output:
             rocm_path = output.strip()
-            validate_dict = phdl.exec(
-                f'test -d {rocm_path}/lib && ls {rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
-            )
-            for _, lib_output in validate_dict.items():
-                if lib_output.strip() and 'libamdhip64.so' in lib_output:
-                    log.info(f'Detected ROCm path (new layout): {rocm_path}')
-                    return rocm_path
+            log.info(f'Detected ROCm path (new layout): {rocm_path}')
+            return rocm_path
 
-    out_dict = phdl.exec('test -d /opt/rocm/lib && ls /opt/rocm/lib/libamdhip64.so* 2>/dev/null | head -1')
-    for node, output in out_dict.items():
-        if output.strip() and 'libamdhip64.so' in output:
+    out_dict = orch.exec('test -d /opt/rocm', detailed=True)
+    for info in out_dict.values():
+        if info.get('exit_code') == 0:
             log.info('Detected ROCm path (legacy layout): /opt/rocm')
             return '/opt/rocm'
 
-    log.warning('Could not detect ROCm path with required libraries, defaulting to /opt/rocm')
+    log.warning('Could not detect ROCm path, defaulting to /opt/rocm')
     return '/opt/rocm'
 
 
@@ -357,7 +375,10 @@ def _git_clone_source(hdl, repository, dest_dir, sparse_path=None, git_tag=""):
     Clone repository at dest_dir. When sparse_path is set, use partial clone +
     sparse-checkout for a single rocm-systems project path.
     """
-    hdl.exec(f"rm -rf {dest_dir}", timeout=60)
+    result = hdl.exec(f"rm -rf {dest_dir}", timeout=60, detailed=True)
+    failed = [node for node, res in result.items() if res.get('exit_code') != 0]
+    if failed:
+        fail_test(f"rm -rf {dest_dir} failed on nodes {failed}")
     branch_arg = f"-b {git_tag} " if git_tag else ""
     if sparse_path:
         log.info(
@@ -366,25 +387,33 @@ def _git_clone_source(hdl, repository, dest_dir, sparse_path=None, git_tag=""):
             dest_dir,
             sparse_path,
         )
-        hdl.exec(
+        result = hdl.exec(
             f"bash -c '"
             f"git clone --depth 1 --filter=blob:none {branch_arg} --sparse {repository} {dest_dir} && "
             f"cd {dest_dir} && git sparse-checkout set {sparse_path}"
             f"'",
             timeout=600,
+            detailed=True,
         )
+        failed = [node for node, res in result.items() if res.get('exit_code') != 0]
+        if failed:
+            fail_test(f"Sparse clone of {repository} failed on nodes {failed}: {result[failed[0]].get('output', '')}")
     else:
         log.info("Full clone %s -> %s", repository, dest_dir)
-        hdl.exec(f"git clone {repository} {dest_dir}", timeout=300)
+        result = hdl.exec(f"git clone {repository} {dest_dir}", timeout=300, detailed=True)
+        failed = [node for node, res in result.items() if res.get('exit_code') != 0]
+        if failed:
+            fail_test(f"git clone {repository} failed on nodes {failed}: {result[failed[0]].get('output', '')}")
 
         if git_tag:
-            out_dict = hdl.exec(
+            result = hdl.exec(
                 f"bash -c 'cd {dest_dir} && git checkout {git_tag}'",
                 timeout=120,
+                detailed=True,
             )
-            for node, output in out_dict.items():
-                if re.search(r"error:|fatal:", output, re.I):
-                    fail_test(f"git checkout {git_tag} failed on node {node}: {output.strip()}")
+            failed = [node for node, res in result.items() if res.get('exit_code') != 0]
+            if failed:
+                fail_test(f"git checkout {git_tag} failed on nodes {failed}: {result[failed[0]].get('output', '')}")
 
 
 def _check_ompi_installed(hdl, config_dict):
@@ -409,42 +438,28 @@ def _check_ompi_installed(hdl, config_dict):
 
     # --- 1. Directory exists ---
     log.info("Checking OMPI install directory: %s", ompi_install_dir)
-    out_dict = hdl.exec(
-        f"test -d {ompi_install_dir} && echo 'DIR_OK' || echo 'DIR_MISSING'",
-        timeout=30,
-    )
-    for node, output in out_dict.items():
-        if "DIR_MISSING" in output:
-            log.error(
-                "OMPI install directory not found on node %s: %s",
-                node,
-                ompi_install_dir,
-            )
-            return False
+    result = hdl.exec(f"test -d {ompi_install_dir}", timeout=30, detailed=True)
+    failed = [node for node, res in result.items() if res.get('exit_code') != 0]
+    if failed:
+        for node in failed:
+            log.error("OMPI install directory not found on node %s: %s", node, ompi_install_dir)
+        return False
 
     # --- 2. mpirun binary is executable ---
     log.info("Checking mpirun binary: %s", mpirun_path)
-    out_dict = hdl.exec(
-        f"test -x {mpirun_path} && echo 'MPIRUN_OK' || echo 'MPIRUN_MISSING'",
-        timeout=30,
-    )
-    for node, output in out_dict.items():
-        if "MPIRUN_MISSING" in output:
-            log.error(
-                "mpirun not found or not executable on node %s: %s",
-                node,
-                mpirun_path,
-            )
-            return False
+    result = hdl.exec(f"test -x {mpirun_path}", timeout=30, detailed=True)
+    failed = [node for node, res in result.items() if res.get('exit_code') != 0]
+    if failed:
+        for node in failed:
+            log.error("mpirun not found or not executable on node %s: %s", node, mpirun_path)
+        return False
 
     # --- 3. mpirun --version produces recognisable output ---
     log.info("Running mpirun --version to validate binary on all nodes")
-    out_dict = hdl.exec(
-        f"{mpirun_path} --version",
-        timeout=30,
-    )
-    for node, output in out_dict.items():
-        if not output or "mpi" not in output.lower():
+    result = hdl.exec(f"{mpirun_path} --version", timeout=30, detailed=True)
+    for node, res in result.items():
+        output = res.get('output', '')
+        if res.get('exit_code') != 0 or not output or "mpi" not in output.lower():
             log.error(
                 "mpirun --version did not produce valid output on node %s: %s",
                 node,
@@ -508,10 +523,14 @@ def _install_rccl_lib(hdl, config_dict):
     cmake_flags = f"-DCMAKE_PREFIX_PATH={rocm_path} -DCMAKE_CXX_COMPILER={hipcc}"
     if gpu_arch:
         cmake_flags += f" -DGPU_TARGETS={gpu_arch} -DAMDGPU_TARGETS={gpu_arch}"
-    hdl.exec(
+    result = hdl.exec(
         f"bash -c '{build_env}cd {rccl_project_dir} && mkdir -p build && cd build && cmake {cmake_flags} .. && make -j $(nproc)'",
         timeout=rccl_lib_build_timeout,
+        detailed=True,
     )
+    failed = [node for node, res in result.items() if res.get('exit_code') != 0]
+    if failed:
+        fail_test(f"RCCL library build (cmake/make) failed on nodes {failed}: {result[failed[0]].get('output', '')}")
     nccl_home = rccl_build_dir
     search_roots = [rccl_build_dir, rccl_project_dir]
 
@@ -585,14 +604,16 @@ def _install_rccl_tests(hdl, config_dict, rccl_lib_prefix, use_custom_rccl_lib, 
     else:
         make_cmd += f"RCCL_HOME={rccl_lib_prefix} "
 
-    out_dict = hdl.exec(
+    result = hdl.exec(
         f"bash -c '{build_env}cd {rccl_tests_srcdir} && {make_cmd}'",
         timeout=1800,
+        detailed=True,
     )
+    out_dict = {node: res.get('output', '') for node, res in result.items()}
     scan_test_results(out_dict)
-    for node, output in out_dict.items():
-        if re.search(r'\berror:', output, re.I):
-            fail_test(f"rccl-tests build failed on node {node}: {output.strip()}")
+    failed = [node for node, res in result.items() if res.get('exit_code') != 0]
+    if failed:
+        fail_test(f"rccl-tests build failed on nodes {failed}: {out_dict[failed[0]]}")
 
     build_dir = f"{rccl_tests_srcdir}/build"
     log.info("rccl-tests build complete. Build dir: %s", build_dir)
@@ -688,15 +709,11 @@ def test_install_rccl_tests(orch, config_dict):
 
     # Verify build artifacts are present on every node
     log.info("Verifying rccl-tests build artifacts at: %s", rccl_tests_build_dir)
-    out_dict = hdl.exec(f"ls {rccl_tests_build_dir}", timeout=30)
-    for node, output in out_dict.items():
-        if not output or re.search(r'No such file|cannot access', output, re.I):
+    result = hdl.exec(f"ls {rccl_tests_build_dir}", timeout=30, detailed=True)
+    for node, res in result.items():
+        if res.get('exit_code') != 0 or not res.get('output', '').strip():
             fail_test(f"rccl-tests build artifacts not found on node {node} at {rccl_tests_build_dir}")
         else:
-            log.info(
-                "Node %s: rccl-tests artifacts present:\n%s",
-                node,
-                output.strip(),
-            )
+            log.info("Node %s: rccl-tests artifacts present:\n%s", node, res['output'].strip())
 
     update_test_result()
