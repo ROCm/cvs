@@ -209,17 +209,22 @@ def discover_socket_netdev_name(orch, master_addr: str | None = None) -> str:
 
     master = (master_addr or "").strip() or hosts[0]
     per_host: dict[str, str] = {}
-    master_ip = ""
+    resolved_master = ""
+    for host in hosts:
+        resolved_master = _cluster_ipv4(orch, host, master)
+        if resolved_master:
+            break
+    # An unresolved master must stay the original string. Routing to this
+    # host's own address comes back as lo and is rejected.
+    route_dest = resolved_master or master
     for host in hosts:
         host_ip = _cluster_ipv4(orch, host, str(host).strip())
-        if not master_ip:
-            master_ip = _cluster_ipv4(orch, host, master) or host_ip
         netdev = ""
         if host_ip:
             out = _topology_exec(orch, _netdev_for_ip_cmd(host_ip), hosts=[host])
             netdev = (out or {}).get(host, "").strip()
-        if not _valid_netdev_name(netdev) and master_ip:
-            out = _topology_exec(orch, _netdev_via_route_cmd(master_ip), hosts=[host])
+        if not _valid_netdev_name(netdev) and route_dest:
+            out = _topology_exec(orch, _netdev_via_route_cmd(route_dest), hosts=[host])
             netdev = (out or {}).get(host, "").strip()
         if not _valid_netdev_name(netdev):
             raise RuntimeError(
