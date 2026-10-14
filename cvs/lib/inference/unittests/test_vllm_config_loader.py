@@ -13,6 +13,7 @@ from cvs.lib.inference.utils.vllm_config_loader import (
 
 
 CELL = "ISL=128,OSL=2048,TP=8,PP=1,CONC=16"
+FAKE_CRED_FILE = "/home/x/.hf"
 
 
 def _variant(thresholds, enforce=False):
@@ -23,7 +24,7 @@ def _variant(thresholds, enforce=False):
             "shared_fs": "/home/x",
             "models_dir": "/home/x/models",
             "log_dir": "/home/x/LOGS",
-            "hf_token_file": "/home/x/.hf",
+            "hf_token_file": FAKE_CRED_FILE,
         },
         container={"name": "test", "image": "test", "runtime": {"name": "docker", "args": {}}},
         server_params={"model": "amd/model", "tensor_parallel_size": 8},

@@ -14,6 +14,7 @@ from cvs.lib.inference.utils.vllm_config_loader import (
 
 
 CELL = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
+FAKE_CRED_FILE = "/home/test/.hf_token"
 
 
 def _packaged_configs():
@@ -31,7 +32,7 @@ def _config(**overrides):
             "shared_fs": "/home/test",
             "models_dir": "/models",
             "log_dir": "/logs",
-            "hf_token_file": "/home/test/.hf_token",
+            "hf_token_file": FAKE_CRED_FILE,
         },
         "container": {"name": "vllm", "image": "image", "runtime": {"name": "docker", "args": {}}},
         "server_params": {

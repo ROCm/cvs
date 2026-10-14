@@ -24,6 +24,7 @@ from cvs.lib.inference.utils.lm_eval_job import (
     normalize_client_base_url,
     run_accuracy_tasks,
 )
+from cvs.unittests.support import TMP
 
 
 def _task(**overrides):
@@ -37,7 +38,7 @@ def _ctx(**overrides):
         base_url="http://127.0.0.1:8000",
         model_id="meta-llama/Llama-3-8b",
         model_path="/data/models/Llama-3-8b",
-        output_dir="/tmp/accuracy-out",
+        output_dir=f"{TMP}/accuracy-out",
     )
     defaults.update(overrides)
     return LmEvalCtx(**defaults)
@@ -176,13 +177,13 @@ class TestBuildLmEvalCmd(unittest.TestCase):
                 device="cpu",
                 limit=100,
                 samples={"gsm8k": [0]},
-                use_cache="/tmp/cache.db",
+                use_cache=f"{TMP}/cache.db",
                 cache_requests="refresh",
                 check_integrity=True,
                 system_instruction="Be concise",
                 apply_chat_template="chatml",
                 fewshot_as_multiturn=False,
-                include_path="/tmp/tasks",
+                include_path=f"{TMP}/tasks",
                 predict_only=True,
                 seed=[1, None, 3, 4],
                 trust_remote_code=True,
@@ -227,13 +228,13 @@ class TestBuildLmEvalCmd(unittest.TestCase):
             include_path="/path with spaces/tasks",
             gen_kwargs={"stop": "a b\"c"},
         )
-        ctx = _ctx(output_dir="/tmp/out dir")
+        ctx = _ctx(output_dir=f"{TMP}/out dir")
         cmd = build_lm_eval_cmd(task, ctx)
         # Command must be shell-parseable without raising, and round-trip the
         # exact values through shlex (proves quoting, not just substring presence).
         parts = shlex.split(cmd)
         self.assertIn("weird task", parts)
-        self.assertIn("/tmp/out dir/weird id", parts)
+        self.assertIn(f"{TMP}/out dir/weird id", parts)
         self.assertIn("/path with spaces/tasks", parts)
         self.assertIn('stop=a b"c', parts)
 
@@ -311,7 +312,7 @@ class TestRunAccuracyTasks(unittest.TestCase):
             base_url="http://127.0.0.1:8000",
             model_id="meta-llama/Llama-3-8b",
             model_path="/data/models/Llama-3-8b",
-            output_dir="/tmp/accuracy-out",
+            output_dir=f"{TMP}/accuracy-out",
         )
 
     def test_single_task_success_id_keyed_and_projected(self):
@@ -443,7 +444,7 @@ class TestRunAccuracyTasks(unittest.TestCase):
             base_url="http://0.0.0.0:8000",
             model_id="meta-llama/Llama-3-8b",
             model_path="/data/models/Llama-3-8b",
-            output_dir="/tmp/accuracy-out",
+            output_dir=f"{TMP}/accuracy-out",
         )
         self.assertIn("base_url=http://127.0.0.1:8000/v1/completions", orch.head_cmds[0])
 

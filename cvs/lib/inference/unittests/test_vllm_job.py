@@ -9,7 +9,7 @@ and fail-fast startup checks.
 import os
 import shutil
 import signal
-import subprocess
+import subprocess  # nosec B404 - Popen gives the test a real child PID to inspect
 import sys
 import tempfile
 import unittest
@@ -18,7 +18,9 @@ from unittest import mock
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
 from cvs.lib.inference.utils.vllm_config_loader import VariantConfig
 from cvs.lib.inference.vllm_job import VllmJob
+from cvs.unittests.support import FAKE_CRED, TMP, run_trusted
 
+FAKE_CRED_FILE = "/models/.hf"
 HEAD = "10.0.0.1"
 WORKER = "10.0.0.2"
 
@@ -73,7 +75,7 @@ def _variant(log_dir, pp):
     return VariantConfig(
         enforce_thresholds=False,
         threshold_json="threshold.json",
-        paths={"shared_fs": log_dir, "models_dir": "/models", "log_dir": log_dir, "hf_token_file": "/models/.hf"},
+        paths={"shared_fs": log_dir, "models_dir": "/models", "log_dir": log_dir, "hf_token_file": FAKE_CRED_FILE},
         container={"name": "test", "image": "test"},
         server_params={
             "model": "/models/test-model",
@@ -92,7 +94,7 @@ def _job(responder=None, hosts=(HEAD,), log_dir="/logs"):
     return VllmJob(
         orch=orch,
         variant=_variant(log_dir, pp=len(hosts)),
-        hf_token="tok",
+        hf_token=FAKE_CRED,
         isl="1024",
         osl="1024",
         concurrency="16",
@@ -178,8 +180,8 @@ class TestServerCommandsInBash(unittest.TestCase):
 
     def _bash(self, cmd, hosts=None, detailed=False, **kwargs):
         if self.env_script:
-            cmd = cmd.replace("/tmp/server_env_script.sh", self.env_script)
-        proc = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, check=False, env=self.env)
+            cmd = cmd.replace(f"{TMP}/server_env_script.sh", self.env_script)
+        proc = run_trusted(["bash", "-c", cmd], capture_output=True, text=True, check=False, env=self.env)
         output = proc.stdout + proc.stderr
         return {HEAD: {"output": output, "exit_code": proc.returncode} if detailed else output}
 
@@ -188,7 +190,7 @@ class TestServerCommandsInBash(unittest.TestCase):
             f.write(text)
 
     def _state_of_exited(self, reap):
-        proc = subprocess.Popen(["true"])
+        proc = subprocess.Popen(["true"])  # nosec B603 B607 - fixed argv; the test needs a live, unreaped child
         self.addCleanup(proc.wait)
         if reap:
             proc.wait()
