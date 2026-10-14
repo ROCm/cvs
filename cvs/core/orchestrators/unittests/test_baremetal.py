@@ -15,7 +15,6 @@ import os
 import shlex
 import shutil
 import stat
-import subprocess
 import unittest
 import tempfile
 from unittest.mock import MagicMock, patch
@@ -23,7 +22,7 @@ from unittest.mock import MagicMock, patch
 from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.lib.parallel.config import ParallelConfig
-from cvs.unittests.support import FAKE_CRED, TMP
+from cvs.unittests.support import FAKE_CRED, TMP, run_trusted
 
 
 def _make_orch_config():
@@ -254,7 +253,8 @@ def _write_executable(path, body):
 
 
 class _LocalHead:
-    """Head-node handle stand-in that runs each command in a local bash.
+    """Head-node handle stand-in that runs each command in a local shell
+    (interpreter, bash by default).
 
     TMPDIR points at the test's scratch directory, so mktemp never writes
     outside it, and LC_ALL=C keeps error messages in English. prelude runs
@@ -265,9 +265,12 @@ class _LocalHead:
     a handle does when it gives up on a command (e.g. on a read timeout).
     """
 
-    def __init__(self, test, host, tmpdir, path_dir=None, prelude="", banner="", warning="", exit_code=None):
+    def __init__(
+        self, test, host, tmpdir, interpreter="bash", path_dir=None, prelude="", banner="", warning="", exit_code=None
+    ):
         self.test = test
         self.host = host
+        self.interpreter = interpreter
         self.env = dict(os.environ, TMPDIR=tmpdir, LC_ALL="C")
         if path_dir:
             self.env["PATH"] = path_dir + os.pathsep + self.env["PATH"]
@@ -283,7 +286,7 @@ class _LocalHead:
         self.test.assertNotIn("sudo", cmd)
         self.test.assertNotIn("mpi_hosts.txt", cmd)
         script = f"{self.prelude}\n{cmd}" if self.prelude else cmd
-        proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=self.env, check=False)
+        proc = run_trusted([self.interpreter, "-c", script], capture_output=True, text=True, env=self.env, check=False)
         output = self.banner + proc.stdout + proc.stderr + self.warning
         exit_code = proc.returncode if self.exit_code is None else self.exit_code
         return {self.host: {"output": output, "exit_code": exit_code}}
@@ -293,6 +296,9 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
     """build_mpi_cmd's hostfile: a private mktemp file written by one head-node
     command as the SSH user, quoted wherever it is used, and removed by the
     returned command however its shell exits."""
+
+    # Shell that runs the head node's commands; the sh subclass below repeats these tests with sh.
+    head_shell = "bash"
 
     def setUp(self):
         pssh_patcher = patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
@@ -314,6 +320,7 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
 
     def _use_local_head(self, **kwargs):
         kwargs.setdefault("tmpdir", self.tmpdir)
+        kwargs.setdefault("interpreter", self.head_shell)
         self.orch.head = _LocalHead(self, self.orch.head_node, **kwargs)
         return self.orch.head
 
@@ -334,7 +341,7 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
     @staticmethod
     def _run(cmd, mpirun_status=0, mpirun_signal="", interpreter="bash"):
         # sh as well as bash: managed-compute agents run commands through /bin/sh.
-        return subprocess.run(
+        return run_trusted(
             [interpreter, "-c", cmd],
             capture_output=True,
             text=True,
@@ -426,25 +433,25 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
         # The error names the step that failed (by exit status) and carries what
         # the head node printed, so a log shows what failed and why.
         cases = {
-            "mktemp_fails": (
-                {"tmpdir": os.path.join(self.scratch, "missing")},
-                ["(exit 2, mktemp failed)", "mktemp:"],
-            ),
-            # mktemp succeeds, then the write hits the file size limit like a full disk.
+            "mktemp_fails": ({"tmpdir": os.path.join(self.scratch, "missing")}, "(exit 2, mktemp failed)", "mktemp:"),
+            # mktemp succeeds, then the write hits the file size limit like a full
+            # disk; bash reports it as "File too large", dash as "I/O error".
             "write_fails": (
                 {"prelude": "trap '' XFSZ; ulimit -f 0"},
-                ["(exit 3, writing the host list failed)", "File too large"],
+                "(exit 3, writing the host list failed)",
+                "File too large|I/O error",
             ),
             # The path is printed, but the handle reports the command as failed.
-            "head_reports_failure": ({"exit_code": -1}, ["(exit -1)"]),
+            "head_reports_failure": ({"exit_code": -1}, "(exit -1)", None),
         }
-        for label, (head_kwargs, expected) in cases.items():
+        for label, (head_kwargs, status, head_output) in cases.items():
             with self.subTest(label):
                 self._use_local_head(**head_kwargs)
                 with self.assertRaises(RuntimeError) as raised:
                     self._build()
-                for part in expected:
-                    self.assertIn(part, str(raised.exception))
+                self.assertIn(status, str(raised.exception))
+                if head_output:
+                    self.assertRegex(str(raised.exception), head_output)
                 if label == "write_fails":
                     self.assertEqual(self._created_files(), [])
 
@@ -486,6 +493,13 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
         created = self._created_files()
         self.assertEqual(len(created), 1, created)
         self.assertEqual(self._hostfile_given_to_mpirun(cmd), created)
+
+
+class TestBaremetalOrchestratorMpiHostfileUnderSh(TestBaremetalOrchestratorMpiHostfile):
+    """The same tests with the head node's commands run by sh, the way
+    managed-compute agents run them."""
+
+    head_shell = "sh"
 
 
 class TestBaremetalOrchestratorSudoPrefix(unittest.TestCase):
