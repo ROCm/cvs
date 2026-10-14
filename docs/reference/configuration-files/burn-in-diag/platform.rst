@@ -44,6 +44,11 @@ See :doc:`/how-to/test-suites/burn-in-diag/platform` for more information on run
           "nic_pcie_width": "<changeme>",
           "_example_nic_pcie_width": "16",
           "_comment_nic_pcie_width": "If the NIC is connected via UALink (for example, MI450) delete nic_pcie_width. Otherwise replace <changeme> with the NIC PCIe width.",
+          "nic_link_speed": "400000",
+          "_comment_nic_link_speed": "Expected backend NIC link speed in Mb/s as reported by /sys/class/net/<iface>/speed. 400000 (400 Gb/s) is the AMD Instinct acceptance requirement; change it only for a different NIC generation.",
+          "nic_link_interfaces": ["<changeme>"],
+          "_example_nic_link_interfaces": ["enp28s0np0", "enp62s0np0", "enp79s0np0", "enp96s0np0", "enp158s0np0", "enp190s0np0", "enp206s0np0", "enp222s0np0"],
+          "_comment_nic_link_interfaces": "Backend (scale-out) NIC netdev names as listed in /sys/class/net (not RDMA device names such as rocep28s0 or mlx5_0). Set to [] to auto-detect backend NICs on each node. Auto-detect only sees NICs that have a netdev and an RDMA device and fails a node with fewer NICs than another node; list the names here to also catch a NIC missing on every node or on a single-node run.",
           "fw_dict":
           {
               "CP_MEC1": "<changeme>",
@@ -115,6 +120,12 @@ The following parameters are available in the platform configuration file. Set e
    * - ``gpu_pcie_width``
      - 16
      - Width of PCIe
+   * - ``nic_link_speed``
+     - ``400000``
+     - Expected backend NIC link speed in Mb/s (``/sys/class/net/<iface>/speed``)
+   * - ``nic_link_interfaces``
+     - ``<cluster-specific>``
+     - Backend NIC netdev names; ``[]`` auto-detects and fails a node with fewer NICs than another node
    * - ``CP_MEC1``
      - 32945
      - Compute Pipeline MicroEngine Controller 1 firmware
