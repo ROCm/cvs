@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from cvs.cli_plugins.run_plugin import RunPlugin, resolve_test_function_name, resolve_test_function_names
+from cvs.unittests.support import TMP
 
 
 class TestRunPlugin(unittest.TestCase):
@@ -38,7 +39,7 @@ class TestRunPlugin(unittest.TestCase):
             html=None,
             no_html=False,
             self_contained_html=False,
-            log_file="/tmp/test.log",
+            log_file=f"{TMP}/test.log",
             no_log_file=False,
             log_level=None,
             capture="tee-sys",
@@ -66,7 +67,7 @@ class TestRunPlugin(unittest.TestCase):
             "--config_file=/path/to/config.json",
             f"--html={self._run_dir}/test.html",
             "--self-contained-html",
-            "--log-file=/tmp/test.log",
+            f"--log-file={TMP}/test.log",
             "--capture=tee-sys",
         ]
         mock_pytest_main.assert_called_once_with(expected_args)
@@ -94,7 +95,7 @@ class TestRunPlugin(unittest.TestCase):
             "--config_file=/path/to/config.json",
             f"--html={self._run_dir}/test.html",
             "--self-contained-html",
-            "--log-file=/tmp/test.log",
+            f"--log-file={TMP}/test.log",
             "--capture=tee-sys",
         ]
         mock_pytest_main.assert_called_once_with(expected_args)
@@ -355,7 +356,7 @@ class TestRunPluginWorkspace(unittest.TestCase):
     def test_conflicting_html_flags_exit_1(self, mock_print, mock_pytest_main, mock_layout):
         self._bind_run_dir(mock_layout)
         args = self._make_args("/shared/ws")
-        args.html = "/tmp/report.html"
+        args.html = f"{TMP}/report.html"
         args.no_html = True
         with patch("cvs.cli_plugins.run_plugin.sys.exit", side_effect=SystemExit(1)) as mock_exit:
             with patch.object(self.plugin, "get_test_file", return_value="/mock/path/test.py"):
@@ -416,10 +417,10 @@ class TestResolveReportPaths(unittest.TestCase):
         html, log_file, contained = self.plugin._resolve_report_paths(
             "/ws/cvs_runs/1",
             "/mock/path/health.py",
-            self._args(workspace="/ws", html="/tmp/out.html", log_file="/tmp/out.log"),
+            self._args(workspace="/ws", html=f"{TMP}/out.html", log_file=f"{TMP}/out.log"),
         )
-        self.assertEqual(html, "/tmp/out.html")
-        self.assertEqual(log_file, "/tmp/out.log")
+        self.assertEqual(html, f"{TMP}/out.html")
+        self.assertEqual(log_file, f"{TMP}/out.log")
         self.assertFalse(contained)
 
     def test_no_html_and_no_log_file_suppress_auto_derive(self):
@@ -442,12 +443,12 @@ class TestResolveReportPaths(unittest.TestCase):
 
     def test_html_conflict_raises(self):
         with self.assertRaises(ValueError) as ctx:
-            self.plugin._resolve_report_paths("/ws/run", "/t.py", self._args(html="/tmp/a.html", no_html=True))
+            self.plugin._resolve_report_paths("/ws/run", "/t.py", self._args(html=f"{TMP}/a.html", no_html=True))
         self.assertIn("--html", str(ctx.exception))
 
     def test_log_file_conflict_raises(self):
         with self.assertRaises(ValueError) as ctx:
-            self.plugin._resolve_report_paths("/ws/run", "/t.py", self._args(log_file="/tmp/a.log", no_log_file=True))
+            self.plugin._resolve_report_paths("/ws/run", "/t.py", self._args(log_file=f"{TMP}/a.log", no_log_file=True))
         self.assertIn("--log-file", str(ctx.exception))
 
     def test_blank_values_do_not_count(self):

@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 
 from cvs.core.agent import lifecycle, messages
+from cvs.unittests.support import TMP
 
 
 class TestLifecycle(unittest.TestCase):
@@ -56,7 +57,7 @@ class TestLifecycle(unittest.TestCase):
 
     @patch("cvs.core.agent.lifecycle.socket.socket")
     def test_http_agent_prefers_scheduler_hostname(self, mock_socket):
-        mock_socket.return_value.getsockname.return_value = ("0.0.0.0", 9000)
+        mock_socket.return_value.getsockname.return_value = ("0.0.0.0", 9000)  # nosec B104 - mocked socket address; nothing binds
         with patch.dict(os.environ, {"SLURM_NODENAME": "scheduler-host"}, clear=True):
             agent = lifecycle.HttpAgentServer(self.agent_dir, rank=1, world_size=2)
         self.addCleanup(agent.stop)
@@ -179,13 +180,13 @@ class TestLifecycle(unittest.TestCase):
 
 class TestClusterFile(unittest.TestCase):
     def test_cluster_file_cannot_add_nodes(self):
-        layout = SimpleNamespace(run_dir=Path("/tmp"), agent_dir=Path("/tmp/agent"))
+        layout = SimpleNamespace(run_dir=Path(TMP), agent_dir=Path(f"{TMP}/agent"))
         cluster_file = lifecycle.ClusterFile(["node01"], layout, {"node_dict": {"node02": {}}})
         with self.assertRaisesRegex(ValueError, "outside this scheduler job"):
             cluster_file.build()
 
     def test_uses_scheduler_hosts_and_cluster_metadata(self):
-        layout = SimpleNamespace(run_dir=Path("/tmp"), agent_dir=Path("/tmp/agent"))
+        layout = SimpleNamespace(run_dir=Path(TMP), agent_dir=Path(f"{TMP}/agent"))
         cluster_file = lifecycle.ClusterFile(
             ["node01", "node02"],
             layout,

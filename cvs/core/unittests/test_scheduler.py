@@ -10,7 +10,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # and subprocess.run so tests run with no scheduler binaries or live cluster access.
 
 import os
-import subprocess
+import subprocess  # nosec B404 - only for subprocess.TimeoutExpired; the test runs no commands
 import unittest
 from unittest.mock import patch
 

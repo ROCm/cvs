@@ -11,6 +11,8 @@ from cvs.parsers.schemas import (
     validate_config_file,
 )
 
+HF_AUTH_FILE = "{home}/.hf_token"
+
 
 def _wan_benchmark_params():
     return {
@@ -62,7 +64,7 @@ def _unified_flux_config():
             "shared_fs": "{home}",
             "models_dir": "{home}/.cache/huggingface",
             "log_dir": "{home}/cvs_flux_output",
-            "hf_token_file": "{home}/.hf_token",
+            "hf_token_file": HF_AUTH_FILE,
         },
         "model": {"id": "black-forest-labs/FLUX.1-dev", "remote": 0},
         "container": {

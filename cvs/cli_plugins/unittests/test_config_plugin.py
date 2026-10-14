@@ -7,6 +7,7 @@ from contextlib import redirect_stdout
 
 import cvs.main as main
 from cvs.cli_plugins.config_plugin import ConfigPlugin
+from cvs.unittests.support import TMP
 
 
 class TestConfigPlugin(unittest.TestCase):
@@ -51,7 +52,7 @@ class TestConfigPlugin(unittest.TestCase):
                     argparse.Namespace(
                         config_command="copy",
                         path=None,
-                        output="/tmp/out",
+                        output=f"{TMP}/out",
                         all=False,
                         force=False,
                     )

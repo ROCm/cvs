@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from cvs.core.agent import messages
 from cvs.core.agent.http_agent import AgentInfo, AgentRegistry, create_app, _terminate_process_group
+from cvs.unittests.support import TMP
 
 
 class TestAgentRegistry(unittest.IsolatedAsyncioTestCase):
@@ -71,13 +72,13 @@ class TestTerminateProcessGroup(unittest.IsolatedAsyncioTestCase):
 
 
 class HttpAgentTestBase(unittest.TestCase):
-    TOKEN = "test-token-123"
+    AUTH_FIXTURE = "fixture-auth-123"
 
     def _make_client(self, world_rank: int, world_size: int = 1) -> TestClient:
         tmp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(tmp_dir.cleanup)
         agent_dir = Path(tmp_dir.name)
-        (agent_dir / messages.AUTH_TOKEN_FILENAME).write_text(self.TOKEN + "\n")
+        (agent_dir / messages.AUTH_TOKEN_FILENAME).write_text(self.AUTH_FIXTURE + "\n")
         app = create_app(
             agent_dir=agent_dir,
             world_rank=world_rank,
@@ -90,9 +91,9 @@ class HttpAgentTestBase(unittest.TestCase):
         self.addCleanup(client.__exit__, None, None, None)
         return client
 
-    def _auth_headers(self, token: str | None = None) -> dict[str, str]:
+    def _auth_headers(self, auth: str | None = None) -> dict[str, str]:
         return {
-            messages.AUTH_HEADER: f"{messages.AUTH_SCHEME} {token if token is not None else self.TOKEN}",
+            messages.AUTH_HEADER: f"{messages.AUTH_SCHEME} {auth if auth is not None else self.AUTH_FIXTURE}",
             "content-type": "application/json",
         }
 
@@ -105,7 +106,7 @@ class TestAuth(HttpAgentTestBase):
 
     def test_wrong_token_is_rejected(self):
         client = self._make_client(world_rank=0)
-        response = client.get(messages.HEALTH_PATH, headers=self._auth_headers(token="wrong-token"))
+        response = client.get(messages.HEALTH_PATH, headers=self._auth_headers(auth="wrong-auth"))
         self.assertEqual(response.status_code, 401)
 
     def test_correct_token_is_accepted(self):
@@ -135,7 +136,7 @@ class TestRankZeroSelfRegistration(HttpAgentTestBase):
         tmp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(tmp_dir.cleanup)
         agent_dir = Path(tmp_dir.name)
-        (agent_dir / messages.AUTH_TOKEN_FILENAME).write_text(self.TOKEN + "\n")
+        (agent_dir / messages.AUTH_TOKEN_FILENAME).write_text(self.AUTH_FIXTURE + "\n")
         return agent_dir
 
     def test_rank0_requires_own_hostname_and_port(self):
@@ -173,7 +174,7 @@ class TestExec(HttpAgentTestBase):
         kwargs = dict(
             cmd="true",
             env={},
-            cwd=Path("/tmp"),
+            cwd=Path(TMP),
             timeout=None,
             inactivity_timeout=None,
             cmd_id="cmd-1",
@@ -277,7 +278,7 @@ class TestExecTimeouts(HttpAgentTestBase):
         kwargs = dict(
             cmd="true",
             env={},
-            cwd=Path("/tmp"),
+            cwd=Path(TMP),
             timeout=None,
             inactivity_timeout=None,
             cmd_id="cmd-timeout",
@@ -365,7 +366,7 @@ class TestInlineExec(HttpAgentTestBase):
         kwargs = dict(
             cmd="true",
             env={},
-            cwd=Path("/tmp"),
+            cwd=Path(TMP),
             timeout=None,
             inactivity_timeout=None,
             cmd_id="cmd-inline",
@@ -417,7 +418,7 @@ class TestExecConcurrency(HttpAgentTestBase):
         kwargs = dict(
             cmd="true",
             env={},
-            cwd=Path("/tmp"),
+            cwd=Path(TMP),
             timeout=None,
             inactivity_timeout=None,
             cmd_id="cmd-1",
