@@ -3,13 +3,13 @@
 import html
 import json
 import re
-import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
-import xml.etree.ElementTree as element_tree
 from pathlib import Path
+
+from cvs.unittests.support import parse_trusted_xml, run_trusted
 
 
 def _html_tests(html_text):
@@ -99,7 +99,7 @@ class TestVllmReportingIntegration(unittest.TestCase):
             html_path = root / "report.html"
             xml_path = root / "report.xml"
             test_path.write_text(source)
-            completed = subprocess.run(
+            completed = run_trusted(
                 [
                     sys.executable,
                     "-m",
@@ -123,7 +123,7 @@ class TestVllmReportingIntegration(unittest.TestCase):
                 f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
             )
             html = html_path.read_text()
-            xml_root = element_tree.parse(xml_path).getroot()
+            xml_root = parse_trusted_xml(xml_path).getroot()
 
         self.assertIn("output_throughput", html)
         self.assertIn("mean_ttft_ms", html)
@@ -216,7 +216,7 @@ class TestVllmReportingIntegration(unittest.TestCase):
             test_path = root / "test_vllm_record_only.py"
             html_path = root / "report.html"
             test_path.write_text(source)
-            completed = subprocess.run(
+            completed = run_trusted(
                 [
                     sys.executable,
                     "-m",

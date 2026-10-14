@@ -8,6 +8,9 @@ from pathlib import Path
 from unittest import mock
 
 from cvs.lib.inference.sglang import sglang_config_loader as loader
+from cvs.unittests.support import FAKE_CRED
+
+FAKE_CRED_FILE = '/home/user/.hf_token'
 
 _THRESHOLDS = {
     'ISL=1024,OSL=1024,TP=8,PP=1,CONC=64': {
@@ -188,7 +191,7 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
             'threshold_json': 'threshold.json',
             'paths': {
                 'log_dir': '/logs',
-                'hf_token_file': '/home/user/.hf_token',
+                'hf_token_file': FAKE_CRED_FILE,
             },
             'model': {'id': '/models/model'},
             'container': {
@@ -261,16 +264,16 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
         self.assertIn('FROM_RUNTIME=1', params['add_export_env'])
 
     def test_hf_token_is_not_copied_into_logged_env(self):
-        self.raw['container']['runtime']['args']['env']['HF_TOKEN'] = 'hf_secret_value'
-        self.raw['params']['add_export_env'].append('HF_TOKEN=hf_secret_value')
+        self.raw['container']['runtime']['args']['env']['HF_TOKEN'] = FAKE_CRED
+        self.raw['params']['add_export_env'].append(f'HF_TOKEN={FAKE_CRED}')
 
         inference, params, server = loader._unified_runtime_views(self.raw, self.thresholds)
 
         self.assertNotIn('HF_TOKEN', server['env'])
         self.assertNotIn('HF_TOKEN', inference['container_config']['env_dict'])
         self.assertFalse(any(str(entry).startswith('HF_TOKEN=') for entry in params['add_export_env']))
-        self.assertNotIn('hf_secret_value', str(server['env']))
-        self.assertNotIn('hf_secret_value', str(params['add_export_env']))
+        self.assertNotIn(FAKE_CRED, str(server['env']))
+        self.assertNotIn(FAKE_CRED, str(params['add_export_env']))
 
     def test_duplicate_accuracy_task_ids_raise(self):
         self.raw['accuracy']['tasks'].append(
@@ -289,7 +292,7 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
             'threshold_json': 'threshold.json',
             'paths': {
                 'log_dir': '/logs',
-                'hf_token_file': '/home/user/.hf_token',
+                'hf_token_file': FAKE_CRED_FILE,
             },
             'container': {
                 'name': 'sglang',
@@ -344,7 +347,7 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
             'threshold_json': 'threshold.json',
             'paths': {
                 'log_dir': '/logs',
-                'hf_token_file': '/home/user/.hf_token',
+                'hf_token_file': FAKE_CRED_FILE,
             },
             'container': {
                 'name': 'sglang',

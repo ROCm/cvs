@@ -26,6 +26,7 @@ from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import (
     needs_hf_tokenizer,
 )
 from cvs.lib.utils.log_poller import LogPoller
+from cvs.unittests.support import FAKE_CRED, TMP
 
 
 def _training(**overrides):
@@ -75,9 +76,9 @@ def _make_job(hosts=None, **training_overrides):
     variant = SimpleNamespace(
         training=_training(**training_overrides),
         model=SimpleNamespace(id="llama3.3-70b"),
-        paths=SimpleNamespace(log_dir="/logs", models_dir="/models", temp_dir="/tmp/tester/jaxmaxtext"),
+        paths=SimpleNamespace(log_dir="/logs", models_dir="/models", temp_dir=f"{TMP}/tester/jaxmaxtext"),
     )
-    return MaxTextTrainingJob(orch, variant, hf_token="dummy"), orch
+    return MaxTextTrainingJob(orch, variant, hf_token=FAKE_CRED), orch
 
 
 def _wire_container_exec(orch, script="/workspace/maxtext/src/MaxText/train.py"):
@@ -372,7 +373,7 @@ class BuildTrainingCmdTests(unittest.TestCase):
         self.assertIn("NNODES=2", cmds[0])
         # resolved train script and user-namespaced scratch dir are wired in
         self.assertIn("/workspace/maxtext/src/MaxText/train.py", cmds[0])
-        self.assertIn("/tmp/tester/jaxmaxtext/maxtext_config.yml", cmds[0])
+        self.assertIn(f"{TMP}/tester/jaxmaxtext/maxtext_config.yml", cmds[0])
         # per-node log file is one-per-rank; common env comes from docker -e, so
         # the launcher no longer sources an env script.
         self.assertIn("training_node0.log", cmds[0])
@@ -446,25 +447,25 @@ class TrainScriptResolveTests(unittest.TestCase):
 class ScratchDirTests(unittest.TestCase):
     def test_uses_paths_temp_dir(self):
         job, orch = _make_job()
-        self.assertEqual(job._get_scratch_dir(), "/tmp/tester/jaxmaxtext")
+        self.assertEqual(job._get_scratch_dir(), f"{TMP}/tester/jaxmaxtext")
         orch.exec.assert_not_called()
 
     def test_falls_back_when_temp_dir_unset(self):
         job, orch = _make_job()
         job.variant.paths = SimpleNamespace(log_dir="/logs", models_dir="/models")
-        self.assertEqual(job._get_scratch_dir(), "/tmp/cvs/jaxmaxtext")
+        self.assertEqual(job._get_scratch_dir(), f"{TMP}/cvs/jaxmaxtext")
         orch.exec.assert_not_called()
 
     def test_strips_trailing_slash(self):
         job, _ = _make_job()
-        job.variant.paths.temp_dir = "/tmp/alice/jaxmaxtext/"
-        self.assertEqual(job._get_scratch_dir(), "/tmp/alice/jaxmaxtext")
+        job.variant.paths.temp_dir = f"{TMP}/alice/jaxmaxtext/"
+        self.assertEqual(job._get_scratch_dir(), f"{TMP}/alice/jaxmaxtext")
 
     def test_result_is_cached(self):
         job, orch = _make_job()
-        job.variant.paths.temp_dir = "/tmp/bob/jaxmaxtext"
+        job.variant.paths.temp_dir = f"{TMP}/bob/jaxmaxtext"
         first = job._get_scratch_dir()
-        job.variant.paths.temp_dir = "/tmp/other/jaxmaxtext"
+        job.variant.paths.temp_dir = f"{TMP}/other/jaxmaxtext"
         self.assertEqual(job._get_scratch_dir(), first)
         orch.exec.assert_not_called()
 
@@ -504,7 +505,7 @@ class WriteMaxtextYamlTests(unittest.TestCase):
         # run YAML, the poll/timeout budget, and completion -- not the base steps.
         base, _ = _make_job()
         sweep = SimpleNamespace(name="BS=2,PRECISION=BF16,SL=8192", maxtext_overrides={"steps": 7})
-        job = MaxTextTrainingJob(base.orch, base.variant, hf_token="dummy", sweep=sweep)
+        job = MaxTextTrainingJob(base.orch, base.variant, hf_token=FAKE_CRED, sweep=sweep)
         self.assertEqual(job.steps, 7)  # base training.steps is 3
         self.assertEqual(job._poll_count, 70)
         job._write_maxtext_yaml()
@@ -528,7 +529,7 @@ class WriteMaxtextYamlTests(unittest.TestCase):
                 "quantization": "",
             },
         )
-        job = MaxTextTrainingJob(base.orch, base.variant, hf_token="dummy", sweep=sweep)
+        job = MaxTextTrainingJob(base.orch, base.variant, hf_token=FAKE_CRED, sweep=sweep)
         self.assertEqual(job.steps, 5)
         self.assertEqual(job._poll_count, 50)
         job._write_maxtext_yaml()

@@ -22,6 +22,8 @@ from cvs.lib.inference.xdit.xdit_flux import FluxOutputParser
 from cvs.lib.inference.xdit.xdit_wan import WanOutputParser
 from cvs.lib.inference.xdit.xdit_wan_i2v import WanI2vOutputParser
 
+FAKE_CRED_FILE = "/home/user/.hf_token"
+
 
 class _StubBenchmarkJob(PytorchXditBenchmarkJob):
     def validate_parallelism(self):
@@ -183,7 +185,7 @@ class TestPytorchXditBenchmarkJob(unittest.TestCase):
 
     def test_token_umask_stays_inside_subshell(self):
         job = _make_job(["10.0.0.1"])
-        job.inference_dict["hf_token_file"] = "/home/user/.hf_token"
+        job.inference_dict["hf_token_file"] = FAKE_CRED_FILE
         cmd = job.build_launch_plan().docker_cmds[0]
         umask_at = cmd.index("(umask 077;")
         subshell_end = cmd.index(");", umask_at)
@@ -298,7 +300,7 @@ def _collect_tree(root):
     try:
         sys.argv = ["collect", root]
         sys.stdout = buffer
-        exec(_REMOTE_COLLECT_SCRIPT, {"__name__": "__collect__"})
+        exec(_REMOTE_COLLECT_SCRIPT, {"__name__": "__collect__"})  # nosec B102 - runs the module's own collect script
     finally:
         sys.argv = saved_argv
         sys.stdout = saved_stdout

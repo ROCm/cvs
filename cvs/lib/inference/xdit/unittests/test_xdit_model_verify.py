@@ -12,6 +12,8 @@ from cvs.lib.inference.xdit.xdit_model_verify import (
     wan_native_hf_snapshot_required_checks,
 )
 
+FAKE_CRED_FILE = "/run/secrets/hf_token"
+
 
 class TestDiffusersLocalModelChecks(unittest.TestCase):
     def test_includes_model_index_and_transformer(self):
@@ -75,13 +77,13 @@ class TestHfSnapshotDownload(unittest.TestCase):
             "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
             revision="main",
             hf_home="/hf_home",
-            token_file="/run/secrets/hf_token",
+            token_file=FAKE_CRED_FILE,
         )
         self.assertIn("snapshot_download", cmd)
         self.assertIn("XDIT_HF_REPO=Wan-AI/Wan2.2-I2V-A14B-Diffusers", cmd)
         self.assertIn("XDIT_HF_REVISION=main", cmd)
         self.assertIn("HF_HOME=/hf_home", cmd)
-        self.assertIn("XDIT_HF_TOKEN_FILE=/run/secrets/hf_token", cmd)
+        self.assertIn(f"XDIT_HF_TOKEN_FILE={FAKE_CRED_FILE}", cmd)
         self.assertNotIn("HF_TOKEN=hf_secret", cmd)
         self.assertNotIn("hf_secret", cmd)
 
@@ -118,13 +120,13 @@ class TestHfSnapshotDownload(unittest.TestCase):
             {
                 "model_repo": "org/model",
                 "hf_home_container": "/hf_home",
-                "hf_token_file_container": "/run/secrets/hf_token",
+                "hf_token_file_container": FAKE_CRED_FILE,
             },
         )
         self.assertEqual(errors, [])
         self.assertEqual(snapshots, {"n1": "/hf_home/hub/snap"})
         self.assertIn("XDIT_HF_REPO=org/model", orch.cmd)
-        self.assertIn("XDIT_HF_TOKEN_FILE=/run/secrets/hf_token", orch.cmd)
+        self.assertIn(f"XDIT_HF_TOKEN_FILE={FAKE_CRED_FILE}", orch.cmd)
         self.assertNotIn("HF_TOKEN=", orch.cmd)
 
 

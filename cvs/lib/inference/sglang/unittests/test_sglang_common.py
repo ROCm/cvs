@@ -8,6 +8,7 @@ from cvs.lib.inference.sglang import sglang_common
 from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
 from cvs.lib.inference.sglang.sglang_distributed_lib import SglangDistributed
 from cvs.lib.inference.sglang.sglang_single_lib import SglangSingle
+from cvs.unittests.support import TMP
 
 
 def _orch_with_token_file():
@@ -156,8 +157,8 @@ class TestSglangCommonHelpers(unittest.TestCase):
             self.assertIn('export HSA_FORCE_FINE_GRAIN_PCIE=0\n', cmd)
 
     def test_env_scripts_read_hf_token_from_file(self):
-        secret = 'hf_secret_value'
-        token_file = '/home/user/.hf_token'
+        hf_value = 'hf_secret_value'
+        cred_file = '/home/user/.hf_token'
         inf_dict = {
             'nccl_debug': 'ERROR',
             'nccl_ib_hca': 'rdma0',
@@ -165,7 +166,7 @@ class TestSglangCommonHelpers(unittest.TestCase):
             'nccl_socket_ifname': 'eno0',
             'gloo_socket_ifname': 'eno0',
             'hsa_force_fine_grain_pcie': '1',
-            'hf_token_file': token_file,
+            'hf_token_file': cred_file,
             'prefill_coordinator_addr': '10.0.0.1',
             'prefill_coordinator_port': '40001',
             'decode_coordinator_addr': '10.0.0.2',
@@ -175,14 +176,14 @@ class TestSglangCommonHelpers(unittest.TestCase):
             'model': 'org/model',
             'tensor_parallelism': '8',
             'pipeline_parallelism': '1',
-            'add_export_env': [f'HF_TOKEN={secret}', 'FOO=bar'],
+            'add_export_env': [f'HF_TOKEN={hf_value}', 'FOO=bar'],
         }
 
         distributed = SglangDistributed.__new__(SglangDistributed)
         distributed.inf_dict = dict(inf_dict)
         distributed.bp_dict = dict(bp_dict)
         body = distributed._server_env_body()
-        self.assertNotIn(secret, body)
+        self.assertNotIn(hf_value, body)
         self.assertIn('if [ ! -s /home/user/.hf_token ]; then ', body)
         self.assertIn('exit 1', body)
         self.assertIn("export HF_TOKEN=\"$(tr -d '[:space:]' < /home/user/.hf_token)\"", body)
@@ -219,7 +220,7 @@ class TestSglangCommonHelpers(unittest.TestCase):
             disagg.setup_benchmark_serv_container_env()
 
         for cmd in single_cmds + disagg_cmds:
-            self.assertNotIn(secret, cmd)
+            self.assertNotIn(hf_value, cmd)
             self.assertNotIn('export HF_TOKEN=hf_', cmd)
             self.assertIn('/home/user/.hf_token', cmd)
             self.assertIn('tr -d', cmd)
@@ -320,9 +321,9 @@ class TestSglangCommonHelpers(unittest.TestCase):
 
     def test_launch_script_start_cmd_quotes_paths_and_nohups_with_bash(self):
         cmd = sglang_common.launch_script_start_cmd(
-            '/tmp/server_launch_script.sh',
+            f'{TMP}/server_launch_script.sh',
             'python3 -m sglang.launch_server --host 0.0.0.0\n',
-            '/tmp/server_env_script.sh',
+            f'{TMP}/server_env_script.sh',
             '/logs/node a/server.log',
         )
         self.assertTrue(cmd.startswith('bash -c '))
@@ -345,9 +346,9 @@ class TestSglangCommonHelpers(unittest.TestCase):
         sglang_common.stage_and_start_launch_script(
             exec_in_container,
             'n0',
-            '/tmp/prefill_launch_script.sh',
+            f'{TMP}/prefill_launch_script.sh',
             'export NNODES=1\n',
-            '/tmp/prefill_env_script.sh',
+            f'{TMP}/prefill_env_script.sh',
             '/logs/prefill_node0/prefill_server.log',
         )
         self.assertEqual(seen['hosts'], ['n0'])

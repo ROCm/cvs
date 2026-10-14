@@ -9,6 +9,7 @@ from cvs.lib.inference.xdit.xdit_wan import (
     WanBenchmarkResult,
     WanOutputParser,
 )
+from cvs.unittests.support import TMP
 
 
 def _write_rank0_json(directory: Path, name: str, total_time: float) -> Path:
@@ -40,7 +41,7 @@ class TestWanOutputParserHelpers(unittest.TestCase):
             self.assertEqual(bench_dir, results_outputs)
 
     def test_label_from_run_dir_strips_prefix_and_suffix(self):
-        label = WanOutputParser._label_from_run_dir(Path("/tmp/wan_22_tus1-p3-g40_outputs"))
+        label = WanOutputParser._label_from_run_dir(Path(f"{TMP}/wan_22_tus1-p3-g40_outputs"))
         self.assertEqual(label, "tus1-p3-g40")
 
 
@@ -239,7 +240,7 @@ class TestWanOutputParserParseRunsUnderBaseDir(unittest.TestCase):
             self.assertTrue(any("Artifact 'video.mp4' not found" in err for err in errors))
 
     def test_parse_runs_missing_base_dir(self):
-        aggregate, errors = WanOutputParser.parse_runs_under_base_dir("/tmp/does-not-exist-wan-parser")
+        aggregate, errors = WanOutputParser.parse_runs_under_base_dir(f"{TMP}/does-not-exist-wan-parser")
         self.assertIsNone(aggregate)
         self.assertTrue(any("Base directory does not exist" in err for err in errors))
 
@@ -251,11 +252,11 @@ class TestWanOutputParserValidateThreshold(unittest.TestCase):
             step_count=1,
             step_times=[avg_total_time_s],
             json_files=["rank0_step0.json"],
-            artifact_path="/tmp/video.mp4",
+            artifact_path=f"{TMP}/video.mp4",
         )
 
     def test_validate_threshold_pass(self):
-        parser = WanOutputParser("/tmp/unused")
+        parser = WanOutputParser(f"{TMP}/unused")
         passed, message = parser.validate_threshold(
             self._sample_result(100.0),
             {"auto": {"max_avg_total_time_s": 200.0}},
@@ -265,7 +266,7 @@ class TestWanOutputParserValidateThreshold(unittest.TestCase):
         self.assertIn("PASS", message)
 
     def test_validate_threshold_fail(self):
-        parser = WanOutputParser("/tmp/unused")
+        parser = WanOutputParser(f"{TMP}/unused")
         passed, message = parser.validate_threshold(
             self._sample_result(250.0),
             {"auto": {"max_avg_total_time_s": 200.0}},
@@ -275,7 +276,7 @@ class TestWanOutputParserValidateThreshold(unittest.TestCase):
         self.assertIn("FAIL", message)
 
     def test_validate_threshold_uses_gpu_specific_entry(self):
-        parser = WanOutputParser("/tmp/unused")
+        parser = WanOutputParser(f"{TMP}/unused")
         passed, message = parser.validate_threshold(
             self._sample_result(150.0),
             {
@@ -288,7 +289,7 @@ class TestWanOutputParserValidateThreshold(unittest.TestCase):
         self.assertIn("mi300x", message)
 
     def test_validate_threshold_falls_back_to_auto(self):
-        parser = WanOutputParser("/tmp/unused")
+        parser = WanOutputParser(f"{TMP}/unused")
         passed, message = parser.validate_threshold(
             self._sample_result(90.0),
             {"auto": {"max_avg_total_time_s": 100.0}},
@@ -299,7 +300,7 @@ class TestWanOutputParserValidateThreshold(unittest.TestCase):
         self.assertIn("100.00s", message)
 
     def test_validate_threshold_missing_config(self):
-        parser = WanOutputParser("/tmp/unused")
+        parser = WanOutputParser(f"{TMP}/unused")
         passed, message = parser.validate_threshold(
             self._sample_result(10.0),
             {"mi300x": {"max_avg_total_time_s": 100.0}},

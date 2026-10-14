@@ -7,6 +7,9 @@ from cvs.lib.inference.xdit.xdit_config_loader import (
     load_variant,
     orchestrator_container_from_variant,
 )
+from cvs.unittests.support import FAKE_CRED
+
+FAKE_CRED_FILE = "/shared/token"
 
 
 class TestXditConfigLoader(unittest.TestCase):
@@ -26,7 +29,7 @@ class TestXditConfigLoader(unittest.TestCase):
                 "config": {
                     "container_image": "xdit:test",
                     "container_name": "xdit-job",
-                    "hf_token_file": "/home/test/.hf_token",
+                    "hf_token_file": "/home/test/.hf_token",  # nosec B105 - a file path, not a secret
                     "hf_home": "/models",
                     "output_base_dir": "/results",
                     "model_repo": "/models/FLUX.1-dev",
@@ -72,7 +75,7 @@ class TestXditConfigLoader(unittest.TestCase):
                     "shared_fs": "/shared",
                     "models_dir": "/shared/models",
                     "log_dir": "/shared/results",
-                    "hf_token_file": "/shared/token",
+                    "hf_token_file": FAKE_CRED_FILE,
                 },
                 "model": {"id": "/shared/models/wan", "remote": 0},
                 "container": {
@@ -133,7 +136,7 @@ class TestXditConfigLoader(unittest.TestCase):
                     "shared_fs": "/shared",
                     "models_dir": "/shared/models",
                     "log_dir": "/shared/results",
-                    "hf_token_file": "/shared/token",
+                    "hf_token_file": FAKE_CRED_FILE,
                 },
                 "model": {"id": "org/wan", "remote": 1},
                 "container": {
@@ -178,7 +181,7 @@ class TestXditConfigLoader(unittest.TestCase):
                     "shared_fs": "/shared",
                     "models_dir": "/shared/models",
                     "log_dir": "/shared/results",
-                    "hf_token_file": "/shared/token",
+                    "hf_token_file": FAKE_CRED_FILE,
                 },
                 "model": {"id": "/shared/models/wan", "remote": 0},
                 "container": {
@@ -229,7 +232,7 @@ class TestXditConfigLoader(unittest.TestCase):
                     "shared_fs": "/shared",
                     "models_dir": "/shared/models",
                     "log_dir": "/shared/results",
-                    "hf_token_file": "/shared/token",
+                    "hf_token_file": FAKE_CRED_FILE,
                 },
                 "container": {
                     "lifetime": "per_run",
@@ -284,7 +287,7 @@ class TestXditConfigLoader(unittest.TestCase):
                     "shared_fs": "/shared",
                     "models_dir": "/shared/models",
                     "log_dir": "/shared/results",
-                    "hf_token_file": "/shared/token",
+                    "hf_token_file": FAKE_CRED_FILE,
                 },
                 "container": {
                     "lifetime": "per_run",
@@ -328,7 +331,7 @@ class TestXditConfigLoader(unittest.TestCase):
                     "shared_fs": "/shared",
                     "models_dir": "/data/models",
                     "log_dir": "/shared/results",
-                    "hf_token_file": "/shared/token",
+                    "hf_token_file": FAKE_CRED_FILE,
                 },
                 "container": {
                     "lifetime": "per_run",
@@ -426,7 +429,7 @@ class TestXditConfigLoader(unittest.TestCase):
                 "shared_fs": "/shared",
                 "models_dir": "/shared/models",
                 "log_dir": "/shared/results",
-                "hf_token_file": "/shared/token",
+                "hf_token_file": FAKE_CRED_FILE,
             },
             "model": {"id": "/shared/models/wan", "remote": 0},
             "container": {
@@ -478,7 +481,7 @@ class TestXditConfigLoader(unittest.TestCase):
 
     def test_top_level_container_env_hf_token_does_not_reach_docker_env(self):
         payload = self._distributed_payload(nnodes=2)
-        payload["container"]["env"] = {"HF_TOKEN": "hf_secret", "NCCL_DEBUG": "ERROR"}
+        payload["container"]["env"] = {"HF_TOKEN": FAKE_CRED, "NCCL_DEBUG": "ERROR"}
         path = self._write_config(payload, {"auto": {"max_avg_pipe_time_s": 300.0}})
 
         variant = load_variant(path, {"node_dict": {"node-a": {}, "node-b": {}}})
