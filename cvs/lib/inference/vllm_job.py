@@ -362,7 +362,7 @@ class VllmJob:
         rank_log = shlex.quote(self._rank_log(rank))
         pid_file = shlex.quote(self._rank_pid_file(rank))
         serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv(rank))
-        inner = f"source /tmp/server_env_script.sh && {{ nohup {serve_cmd} > {rank_log} 2>&1 & echo $! > {pid_file}; }}"
+        inner = f"source /tmp/server_env_script.sh && {{ nohup {serve_cmd} < /dev/null > {rank_log} 2>&1 & echo $! > {pid_file}; }}"
         for attempt in range(1, self._launch_retries + 2):
             out = self.orch.exec("bash -c " + shlex.quote(inner), hosts=[host], detailed=True)
             lost = None
@@ -434,8 +434,8 @@ class VllmJob:
     def _check_early_failure(self, emit_tail: bool = False):
         """Check per-rank logs on each host for early failure / fatal patterns.
 
-        Also raises when the rank log is missing (the server never started) or
-        the server's PID is dead, which catches exits that log no known pattern.
+        Also raises when the rank log or PID file is missing (the server never started)
+        or the server's PID is dead, which catches exits that log no known pattern.
 
         Ray worker nodes (rank > 0 under ray multi-node) do not produce a
         per-rank server log because vllm serve only runs on the head under ray.
@@ -449,6 +449,10 @@ class VllmJob:
             log_state, pid_state = self._server_state(rank, host)
             if log_state == "missing":
                 raise RuntimeError(f"vllm server not started on {host} (rank {rank}): no log at {rank_log}")
+            if pid_state == "none":
+                raise RuntimeError(
+                    f"vllm server not started on {host} (rank {rank}): no PID file at {self._rank_pid_file(rank)}"
+                )
             tail = ""
             # print_console=False: the tail is re-emitted below under emit_tail
             # with host+rank+provenance labels, which is the copy worth keeping.

@@ -116,8 +116,10 @@ class TestStartServer(unittest.TestCase):
     def test_lost_launch_that_left_no_files_is_retried_after_a_settle_wait(self, sleep):
         script = ServerScript(launch=[LOST, LAUNCHED], state=[NOTHING_ON_DISK])
         sleep.side_effect = lambda seconds: script.events.append("sleep")
-        _job(script).start_server()
+        job = _job(script)
+        job.start_server()
         self.assertEqual(script.events, ["launch", "sleep", "probe", "launch"])
+        sleep.assert_called_once_with(job._launch_retry_wait)
 
     def test_three_lost_launches_raise_not_started(self, sleep):
         script = ServerScript(launch=[LOST], state=[NOTHING_ON_DISK])
@@ -153,6 +155,10 @@ class TestWaitReadyFailsFast(unittest.TestCase):
         )
         with self.assertRaisesRegex(RuntimeError, "vllm server not started"):
             _job(script).wait_ready()
+
+    def test_log_without_pid_file_raises_not_started(self, sleep):
+        with self.assertRaisesRegex(RuntimeError, "vllm server not started .*no PID file"):
+            _job(ServerScript(state=[_state("present", "none")], ready=True)).wait_ready()
 
     def test_dead_worker_is_reported_with_its_host_and_rank(self, sleep):
         script = ServerScript(state={HEAD: [ALIVE], WORKER: [DEAD]})
