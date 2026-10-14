@@ -210,6 +210,8 @@ The ``results`` section is a sibling of ``cvs_params`` under ``rccl``. Values ar
 
 Set ``verify_bus_bw`` to ``"True"`` to require actual bandwidth to reach at least 95% of the configured value. A missing collective threshold fails the test when this check is enabled. Set ``verify_bw_dip`` or ``verify_lat_dip`` to ``"True"`` to check for bandwidth or latency dips at the configured message sizes; either check can fail the test.
 
+Each enabled check is reported per message size and data type as a pytest sub-test, and the parent row in the HTML report expands into one row per check with its actual value and threshold.
+
 .. dropdown:: ``results`` snippet
 
   .. code:: json

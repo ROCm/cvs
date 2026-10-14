@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- RCCL perf, regression and pairwise report each bandwidth or dip check per collective, data type and message size, or pairwise phase and node, as a pytest sub-test. The HTML report expands each parent row into per-case pass/fail rows.
+
 ### Changed
 
 - RCCL perf, regression, and pairwise suites use the orchestrator for workload execution, including container-aware launches and cleanup. `RcclJob` and `RcclJob.from_config` now take one `orch` argument in place of the previous two execution handles; `OpenMPI.prepare`, `MpiRun`, and `Srun` callers must also migrate.
@@ -20,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A scheduler-managed `cvs run` must now set an explicit workspace on shared storage (`--workspace` or `CVS_WORKSPACE`); it no longer silently falls back to the venv parent, which is node-local in a container and loses collected artifacts at job teardown.
 
 ### Fixed
+
+- Pytest sub-test reports no longer write their own per-test log file or Full Log link, which could replace the parent test's Full Log link.
 
 - RCCL bandwidth thresholds and dip checks now read the configured `rccl.results` table.
   The shipped dip-check defaults are now `"False"`. Existing configs with

@@ -17,6 +17,7 @@ from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import globals
 from cvs.lib.report.profiles.hooks.rccl_session import publish_graph
+from cvs.tests.rccl._case_report import RcclCaseReporter
 
 log = globals.log
 
@@ -177,7 +178,7 @@ def test_print_env_once(orch, config_dict):
     update_test_result()
 
 
-def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective, regression_params):
+def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective, regression_params, request, subtests):
     """
     Execute RCCL regression test across the cluster with parametrized environment overrides.
 
@@ -188,12 +189,14 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
       - config_dict: test configuration with RCCL/MPI paths, env, and thresholds.
       - rccl_collective: which RCCL collective test to run (e.g., "all_reduce_perf").
       - regression_params: dict of all regression parametrized values (NCCL_ALGO, NCCL_PROTO, NCCL_*_NCHANNELS, etc.)
+      - request, subtests: pytest reporting fixtures.
 
     Flow:
       1) Capture start time to bound dmesg checks later.
       2) Optionally snapshot cluster metrics before the test (for debugging/compare).
       3) Build env_overrides dict from all regression parameters.
       4) Invoke RcclJob.from_config(...).run_regression() with parameters built from config and fixtures.
+      4a) Report each verification verdict as a pytest sub-test and HTML case row.
       5) Capture end time and verify dmesg for errors between start/end.
       6) Optionally snapshot metrics again and compare before/after.
       7) Call update_test_result() to finalize test status.
@@ -229,14 +232,16 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
     # Build env_overrides from all regression parameters (convert values to strings)
     env_overrides = {k: str(v) for k, v in regression_params.items()}
 
-    result_dict = rccl_lib.RcclJob.from_config(
+    job = rccl_lib.RcclJob.from_config(
         orch,
         rccl_collective,
         config_dict,
         node_list,
         vpc_node_list,
         env_overrides=env_overrides,
-    ).run_regression()
+    )
+    result_dict = job.run_regression()
+    RcclCaseReporter(request, subtests).report_verdicts(job.verdicts, rccl_collective)
 
     log.info("%s", result_dict)
     key_name = f'{rccl_collective}-{params_str}'
