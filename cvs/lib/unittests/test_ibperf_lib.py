@@ -414,7 +414,7 @@ class TestGetIbBwPps(unittest.TestCase):
 
         self.assertEqual(res, {'node1': {'bw': '517.14', 'pps': '7.89'}})
         self.assertEqual(phdl.exec.call_count, 2)
-        self.assertTrue(any('Client did not complete' in c.args[0] for c in mock_fail.call_args_list))
+        self.assertTrue(any('perftest exited without a result' in c.args[0] for c in mock_fail.call_args_list))
 
 
 class TestGetPerftestConfigureCmd(unittest.TestCase):

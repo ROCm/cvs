@@ -555,7 +555,12 @@ def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None, running=None):
         collect, lambda nodes: not running.intersection(nodes), PERFTEST_BW_RESULT_TIMEOUT_S, PERFTEST_RESULT_POLL_S
     )
     for node in pending:
-        fail_test(f'ERROR !!! on node {node} Client did not complete even after max iterations for msg size {msg_size}')
+        why = (
+            f'no result within {PERFTEST_BW_RESULT_TIMEOUT_S}s'
+            if node in running
+            else 'perftest exited without a result'
+        )
+        fail_test(f'ERROR !!! on node {node} Client did not complete for msg size {msg_size}: {why}')
         fail_test(f'ERROR !!! pls check log file for errors on node {node}')
     _log_bw_summary(msg_size, res_dict, instance_no)
     return res_dict
