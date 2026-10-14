@@ -95,6 +95,12 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
   font-size: 0.72rem; color: var(--muted); }
 .series-swatch { display: inline-block; width: 0.65rem; height: 0.65rem; margin-right: 0.3rem;
   border-radius: 2px; vertical-align: -1px; }
+.series-swatch-dash { height: 2px; width: 0.9rem; vertical-align: 3px;
+  -webkit-mask: repeating-linear-gradient(90deg, #000 0 4px, transparent 4px 7px);
+  mask: repeating-linear-gradient(90deg, #000 0 4px, transparent 4px 7px); }
+.series-swatch-mark { height: 3px; width: 0.75rem; vertical-align: 2px; background: var(--accent); }
+.summary-verdict { margin: 0 0 1rem; font-size: 0.95rem; }
+.card-collapse > summary { cursor: pointer; color: var(--accent2); font-size: 0.85rem; margin-bottom: 0.5rem; }
 .chart-bar { width: 100%; max-width: 40px; min-height: 3px; border-radius: 4px 4px 0 0; }
 .chart-bar-accent { background: linear-gradient(180deg, var(--accent) 0%, #c44d28 100%); }
 .chart-bar-accent2 { background: linear-gradient(180deg, var(--accent2) 0%, #3d5a99 100%); }
@@ -194,6 +200,7 @@ footer.page-foot { text-align: center; color: var(--muted); font-size: 0.75rem; 
 .hm-table th { color: var(--muted); font-weight: 500; }
 .hm-pass { background: rgba(61,214,140,0.35); }
 .hm-fail { background: rgba(255,92,106,0.35); }
+.hm-warn { background: rgba(240,192,64,0.35); }
 .hm-na { color: var(--na); }
 @media (max-width: 640px) {
   body { padding: 1rem; }

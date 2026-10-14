@@ -8,6 +8,7 @@ Profile-driven card renderers for Run Deck static HTML.
 from __future__ import annotations
 
 import html
+import math
 from typing import Any
 
 from cvs.lib.report.formatting import fmt_num, link_or_text_html
@@ -131,6 +132,28 @@ def _series_points(series):
             continue
         points.append((x, y))
     return points
+
+
+def _round_ticks(low, high, count=5):
+    span = (high - low) or abs(high) or 1.0
+    raw = span / (count - 1)
+    magnitude = 10 ** math.floor(math.log10(raw))
+    step = next(m * magnitude for m in (1, 2, 2.5, 5, 10) if m * magnitude >= raw)
+    ticks = [math.floor(low / step) * step]
+    while ticks[-1] < high:
+        ticks.append(ticks[-1] + step)
+    return [round(tick, 9) for tick in ticks]
+
+
+def _tick_text(value):
+    return f"{value:,.0f}" if float(value).is_integer() else f"{value:g}"
+
+
+def _heat_cell(raw):
+    """Split a heatmap cell into (value, options); a dict cell may carry label, status and tip."""
+    if isinstance(raw, dict):
+        return raw.get("value"), raw
+    return raw, {}
 
 
 class DeckCardRenderer:
@@ -639,63 +662,141 @@ class DeckCardRenderer:
             lines = []
             for item in items:
                 points = _series_points(item)
-                if len(points) >= 2:
-                    lines.append((str(item.get("node") or ""), points))
-            if lines:
+                if items[0].get("log_x"):
+                    points = [(float(x), y) for x, y in points if (_as_float(x) or 0) > 0]
+                # A single point only reads when another line sets the axis.
+                if points:
+                    lines.append((item, str(item.get("label") or item.get("node") or ""), points))
+            if any(len(points) >= 2 for _item, _label, points in lines):
                 panels.append(self._multi_series_panel(name, unit, lines, items[0]))
         return panels
 
+    @staticmethod
+    def _y_axis(values, sample):
+        """Return (y_to_unit, ticks): log decades, zero-based round ticks, or the min-max default."""
+        if sample.get("log_y"):
+            positive = [value for value in values if value > 0] or [1.0]
+            low, high = math.floor(math.log10(min(positive))), math.ceil(math.log10(max(positive)))
+            high = max(high, low + 1)
+            return (lambda v: (math.log10(max(v, 1e-12)) - low) / (high - low)), [10.0**e for e in range(low, high + 1)]
+        y_min = _as_float(sample.get("y_min"))
+        if y_min is not None:
+            ticks = _round_ticks(y_min, max(values + [y_min]))
+            return (lambda v: (v - ticks[0]) / ((ticks[-1] - ticks[0]) or 1.0)), ticks
+        domain_min, domain_max, ticks = SweepChartRenderer._display_scale(min(values), max(values))
+        return (lambda v: SweepChartRenderer._value_pct(v, domain_min, domain_max) / 100), ticks
+
     def _multi_series_panel(self, name, unit, lines, sample):
+        """One panel per (name, unit); the first item sets the axes.
+
+        Optional axis keys: ``log_x`` (numeric log2 x), ``log_y``, ``y_min`` (round ticks from it),
+        ``x_ticks`` ([x, label] pairs), ``x_title``, ``y_title``. Optional line keys: ``label``,
+        ``color`` (palette index), ``dash``, ``band`` ([x, low, high] triples), ``markers``
+        ([x, y, tip] threshold ticks).
+        """
         total = len(lines)
         lines = lines[: self.MAX_SERIES_LINES]
         x_values = []
-        for _node, points in lines:
+        for _item, _label, points in lines:
             for x, _y in points:
                 if x not in x_values:
                     x_values.append(x)
-        ys = [y for _node, points in lines for _x, y in points]
-        domain_min, domain_max, ticks = SweepChartRenderer._display_scale(min(ys), max(ys))
+        ys = [y for _item, _label, points in lines for _x, y in points]
+        for item, _label, _points in lines:
+            ys.extend(_as_float(value) for band in item.get("band") or [] for value in band[1:3])
+            ys.extend(_as_float(marker[1]) for marker in item.get("markers") or [])
+        ys = [y for y in ys if y is not None]
+        y_unit, ticks = self._y_axis(ys, sample)
+        x_title, y_title = str(sample.get("x_title") or ""), str(sample.get("y_title") or "")
+        height = 228 if x_title else 214
 
         # A narrow canvas keeps axis text legible when the panel sits in a three-column grid.
         left, right = 64, 392
 
         def y_of(value):
-            return 180 - 160 * SweepChartRenderer._value_pct(value, domain_min, domain_max) / 100
+            return 180 - 160 * max(0.0, min(1.0, y_unit(value)))
 
-        def x_of(x):
-            return left + (right - left) * x_values.index(x) / max(1, len(x_values) - 1)
+        if sample.get("log_x"):
+            low, high = math.log2(min(x_values)), math.log2(max(x_values))
+
+            def x_of(x):
+                return left + (right - left) * (math.log2(x) - low) / ((high - low) or 1.0)
+
+        else:
+
+            def x_of(x):
+                return left + (right - left) * x_values.index(x) / max(1, len(x_values) - 1)
 
         x_label = str(sample.get("x_label") or "")
+        round_ticks = sample.get("log_y") or _as_float(sample.get("y_min")) is not None
         svg = []
         for tick in ticks:
             y = y_of(tick)
+            text = _tick_text(tick) if round_ticks else fmt_num(tick)
             svg.append(
                 f"<line x1='{left}' x2='{right}' y1='{y:.2f}' y2='{y:.2f}' stroke='var(--border)'/>"
                 f"<text x='{left - 6}' y='{y:.2f}' text-anchor='end' dominant-baseline='middle'>"
-                f"{html.escape(fmt_num(tick))}</text>"
+                f"{html.escape(text)}</text>"
             )
-        step = max(1, (len(x_values) + 5) // 6)
-        last = len(x_values) - 1
-        for index, x in enumerate(x_values):
-            ticked = index % step == 0 and (last - index >= step / 2 or index == last)
-            if not ticked and index != last:
-                continue
-            anchor = "end" if index == last and last > 0 else ("start" if index == 0 and last > 0 else "middle")
-            svg.append(f"<text x='{x_of(x):.2f}' y='202' text-anchor='{anchor}'>{html.escape(str(x))}</text>")
+        if sample.get("x_ticks"):
+            for x, text in sample["x_ticks"]:
+                if x in x_values:
+                    svg.append(f"<text x='{x_of(x):.2f}' y='202' text-anchor='middle'>{html.escape(str(text))}</text>")
+        else:
+            step = max(1, (len(x_values) + 5) // 6)
+            last = len(x_values) - 1
+            for index, x in enumerate(x_values):
+                ticked = index % step == 0 and (last - index >= step / 2 or index == last)
+                if not ticked and index != last:
+                    continue
+                anchor = "end" if index == last and last > 0 else ("start" if index == 0 and last > 0 else "middle")
+                svg.append(f"<text x='{x_of(x):.2f}' y='202' text-anchor='{anchor}'>{html.escape(str(x))}</text>")
+        if x_title:
+            svg.append(f"<text x='{(left + right) / 2:.0f}' y='222' text-anchor='middle'>{html.escape(x_title)}</text>")
+        if y_title:
+            svg.append(
+                f"<text transform='translate(12,100) rotate(-90)' text-anchor='middle'>{html.escape(y_title)}</text>"
+            )
         legend = []
-        for index, (node, points) in enumerate(lines):
-            color = SERIES_COLORS[index % len(SERIES_COLORS)]
+        marked = False
+        for index, (item, label, points) in enumerate(lines):
+            color = SERIES_COLORS[int(item.get("color", index)) % len(SERIES_COLORS)]
+            band = [b for b in item.get("band") or [] if len(b) >= 3 and b[0] in x_values]
+            if band:
+                edge = [(x_of(b[0]), y_of(float(b[2]))) for b in band] + [
+                    (x_of(b[0]), y_of(float(b[1]))) for b in reversed(band)
+                ]
+                coords = " ".join(f"{x:.2f},{y:.2f}" for x, y in edge)
+                svg.append(f"<polygon points='{coords}' fill='{color}' fill-opacity='0.15' stroke='none'/>")
+            dash = " stroke-dasharray='4 3'" if item.get("dash") else ""
+            width = "1.5" if item.get("dash") else "2"
             coords = " ".join(f"{x_of(x):.2f},{y_of(y):.2f}" for x, y in points)
-            svg.append(f"<polyline points='{coords}' fill='none' stroke='{color}' stroke-width='2'/>")
+            svg.append(f"<polyline points='{coords}' fill='none' stroke='{color}' stroke-width='{width}'{dash}/>")
             for x, y in points:
-                tip = html.escape(f"{node} · {x}: {fmt_num(y)} {unit}".strip())
+                x_text = _tick_text(x) if sample.get("log_x") else x
+                tip = html.escape(f"{label} · {x_text}: {fmt_num(y)} {unit}".strip())
                 svg.append(
                     f"<circle cx='{x_of(x):.2f}' cy='{y_of(y):.2f}' r='3' fill='{color}' tabindex='0' "
                     f"role='img' aria-label='{tip}'><title>{tip}</title></circle>"
                 )
+            for marker in item.get("markers") or []:
+                if marker[0] not in x_values:
+                    continue
+                marked = True
+                mx, my = x_of(marker[0]), y_of(float(marker[1]))
+                tip = html.escape(str(marker[2]) if len(marker) > 2 else fmt_num(marker[1]))
+                svg.append(
+                    f"<line x1='{mx - 6:.2f}' x2='{mx + 6:.2f}' y1='{my:.2f}' y2='{my:.2f}' stroke='var(--accent)' "
+                    f"stroke-width='2.5'><title>{tip}</title></line>"
+                )
+            swatch = "series-swatch series-swatch-dash" if item.get("dash") else "series-swatch"
             legend.append(
-                f"<span class='series-key'><span class='series-swatch' style='background:{color}'></span>"
-                f"{html.escape(node)}</span>"
+                f"<span class='series-key'><span class='{swatch}' style='background:{color}'></span>"
+                f"{html.escape(label)}</span>"
+            )
+        if marked:
+            legend.append(
+                "<span class='series-key'><span class='series-swatch series-swatch-mark'></span>threshold</span>"
             )
         more = (
             f"<span class='muted'>+{total - len(lines)} more nodes in the viewer</span>" if total > len(lines) else ""
@@ -704,7 +805,7 @@ class DeckCardRenderer:
         return (
             f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
             f"<div class='series-legend'>{''.join(legend)}{more}</div>"
-            f"<svg viewBox='0 0 400 214' role='img' aria-label='{html.escape(title)}' "
+            f"<svg viewBox='0 0 400 {height}' role='img' aria-label='{html.escape(title)}' "
             f"style='width:100%;fill:var(--muted);font-size:11px'>{''.join(svg)}</svg>"
             f"<div class='chart-unit'>{html.escape(unit)}</div></div>"
         )
@@ -720,7 +821,7 @@ class DeckCardRenderer:
             value
             for row in values
             if isinstance(row, list)
-            for value in row
+            for value, _opts in map(_heat_cell, row)
             if isinstance(value, (int, float)) and not isinstance(value, bool)
         ]
         lo = min(numbers) if numbers else 0.0
@@ -737,10 +838,13 @@ class DeckCardRenderer:
             row_values = values[index] if index < len(values) and isinstance(values[index], list) else []
             cells = []
             for col_index, _col in enumerate(cols):
-                value = row_values[col_index] if col_index < len(row_values) else None
+                value, opts = _heat_cell(row_values[col_index] if col_index < len(row_values) else None)
                 css, style = _heat_style(value, threshold, direction, lo, hi)
-                shown = "—" if value is None else fmt_num(value)
-                cells.append(f"<td class='hm-cell {css}' style='{style}'>{html.escape(shown)}</td>")
+                if opts.get("status") in ("pass", "warn", "fail", "na"):
+                    css, style = f"hm-{opts['status']}", ""
+                shown = str(opts.get("label") or ("—" if value is None else fmt_num(value)))
+                tip = f" title='{html.escape(str(opts['tip']))}'" if opts.get("tip") else ""
+                cells.append(f"<td class='hm-cell {css}' style='{style}'{tip}>{html.escape(shown)}</td>")
             body.append(f"<tr><th>{html.escape(str(row_name))}</th>{''.join(cells)}</tr>")
         title = str(heat.get("name") or "heatmap")
         if heat.get("node"):
@@ -751,6 +855,30 @@ class DeckCardRenderer:
             f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
             f"<div class='hm-wrap'><table class='hm-table'>{head}{''.join(body)}</table></div>{unit_html}</div>"
         )
+
+    @staticmethod
+    def render_summary_cards(_payload, _card, data):
+        summary = data if isinstance(data, dict) else {}
+        cards = [item for item in summary.get("cards") or [] if isinstance(item, dict)]
+        if not cards:
+            return ""
+        verdict = ""
+        if summary.get("verdict"):
+            status = html.escape(str(summary.get("status") or "na"))
+            verdict = (
+                f"<p class='summary-verdict'><span class='chip chip-{status}'>{status}</span> "
+                f"{html.escape(str(summary['verdict']))}</p>"
+            )
+        body = []
+        for item in cards:
+            tone = f" summary-stat-{item['tone']}" if item.get("tone") in ("pass", "fail", "na") else ""
+            body.append(
+                f"<article class='summary-card'><h3>{html.escape(str(item.get('label') or ''))}</h3>"
+                f"<div class='summary-stat{tone}'>{html.escape(str(item.get('value', '—')))} "
+                f"<span class='headline-unit'>{html.escape(str(item.get('unit') or ''))}</span></div>"
+                f"<div class='summary-meta'>{html.escape(str(item.get('meta') or ''))}</div></article>"
+            )
+        return f"{verdict}<div class='summary-grid'>{''.join(body)}</div>"
 
     @staticmethod
     def render_launch(_payload: dict, _card: dict, data: Any) -> str:
@@ -829,6 +957,7 @@ class DeckCardRenderer:
             "status_matrix": self.render_status_matrix,
             "status_overview": self.render_status_overview,
             "metric_charts": self.render_metric_charts,
+            "summary_cards": self.render_summary_cards,
             "launch_panel": self.render_launch,
             "line_chart": self.render_line_chart,
             "heatmap": self.render_heatmap,
@@ -849,6 +978,10 @@ class DeckCardRenderer:
         html_body = renderer(payload, card, data)
         if not html_body:
             return "", "", False
+        collapsed = card.get("collapsed")
+        if collapsed:
+            label = collapsed if isinstance(collapsed, str) else "Show"
+            html_body = f"<details class='card-collapse'><summary>{html.escape(label)}</summary>{html_body}</details>"
 
         section_id = card.get("id") or card_type.replace("_", "-")
         title = card.get("title") or section_id.replace("-", " ").title()

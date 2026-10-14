@@ -72,6 +72,16 @@ class TestSeries(unittest.TestCase):
         )
         self.assertEqual(table["rows"], [["io_read · rank 0", "524288", 47.5, "—", "pass"]])
 
+    def test_series_extras_hook_merges_named_datasets(self):
+        profile = {"hooks": {"series_extras": f"{__name__}:_extras"}, "series": {"y_fields": "bus_bw"}}
+        dataset = build_series_datasets({"results": {"a": {"1": {"bus_bw": 1}}}, "variant": {"n": 2}}, profile)
+        self.assertEqual(dataset["summary"], {"series": ["a"], "variant": {"n": 2}})
+        self.assertIn("charts", dataset)
+
+
+def _extras(results, variant):
+    return {"summary": {"series": sorted(results), "variant": variant}}
+
 
 if __name__ == "__main__":
     unittest.main()

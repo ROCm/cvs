@@ -53,7 +53,7 @@ Root `cvs/conftest.py` binds fixtures from profile `sources` via `pytest_hooks.p
 | Builder | Results shape |
 | ------- | --------------- |
 | `sweep` | Cell-keyed dict → metric fields (ISL/OSL/concurrency sweeps) |
-| `series` | Nested dict: collective → message size → metrics |
+| `series` | Nested dict: collective → message size → metrics. Optional `hooks.series_extras` adds named datasets (for example `summary` for `summary_cards`, `metric_charts`, tables) bound as `datasets.series.<key>` |
 | `matrix` | Current results + golden reference for compare rows |
 | `status_matrix` | Node × group pass/fail/na with per-item drill-down. Optional per-node `metrics`, `series`, and `heatmaps` roll up into `overview` and `metric_charts`. Contract: `dataset_builders/status_matrix.py`. Example: `profiles/anc_base.json` |
 | `training_sweep` | String combo keys `MBS=…,GBS=…,PRECISION=…` → metric lists (`train_res_dict`) |

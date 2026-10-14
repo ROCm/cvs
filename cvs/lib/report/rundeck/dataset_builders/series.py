@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from cvs.lib.report.rundeck.config_adapter import import_callable
 from cvs.lib.report.rundeck.dataset_builders.registry import register_dataset_builder
 
 
@@ -99,9 +100,13 @@ def build_series_datasets(sources: dict[str, Any], profile: dict[str, Any]) -> d
                 continue
             table_rows.append([_table_value(field, collective, size_key, entry) for _label, field in table_columns])
 
-    return {
+    dataset = {
         "charts": charts,
         "results_table": {"headers": headers, "rows": table_rows},
         "x_field": series_cfg.get("x_field", "size"),
         "y_fields": y_fields,
     }
+    extras_hook = (profile.get("hooks") or {}).get("series_extras")
+    if extras_hook:
+        dataset.update(import_callable(extras_hook)(results, sources.get("variant")))
+    return dataset

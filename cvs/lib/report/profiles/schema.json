@@ -45,7 +45,11 @@
         "metric_verdict": { "type": "string" },
         "run_card_display": { "type": "string" },
         "launch_provenance": { "type": "string" },
-        "cell_dimensions": { "type": "string" }
+        "cell_dimensions": { "type": "string" },
+        "series_extras": {
+          "type": "string",
+          "description": "series builder: callable(results, variant) whose dict merges into datasets.series."
+        }
       }
     },
     "cards": {
@@ -63,6 +67,10 @@
             "description": "Optional help line. status_matrix shows this instead of the generic item-breakdown hint."
           },
           "when_empty": { "enum": ["hide"] },
+          "collapsed": {
+            "type": ["boolean", "string"],
+            "description": "Fold the card body into a closed <details>; a string is the summary label."
+          },
           "columns_from": { "type": "string" }
         }
       }

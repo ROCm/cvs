@@ -46,5 +46,75 @@ class TestRenderLineChart(unittest.TestCase):
         self.assertEqual(html_out, "<p class='muted'>No series data.</p>")
 
 
+class TestMetricChartOverlay(unittest.TestCase):
+    def test_log_x_zero_based_panel_overlays_band_dash_marker_and_single_point(self):
+        axes = {"log_x": True, "y_min": 0, "x_ticks": [[2, "2"], [8192, "8K"]], "x_title": "Message size (bytes)"}
+        series = [
+            {
+                **axes,
+                "name": "ib_write_bw",
+                "unit": "Gb/s",
+                "label": "QP 8 median",
+                "y_title": "Gb/s per NIC",
+                "points": [[2, 1.0], [1024, 150.0], [8192, 380.0]],
+                "band": [[2, 0.5, 1.5], [1024, 140.0, 160.0], [8192, 190.0, 392.0]],
+                "markers": [[8192, 300.0, "threshold 300"]],
+            },
+            {"name": "ib_write_bw", "unit": "Gb/s", "label": "QP 8 slowest", "dash": True, "points": [[2, 0.5]]},
+            {"name": "ib_write_bw", "unit": "Gb/s", "label": "QP 16 median", "points": [[8192, 390.0]]},
+        ]
+
+        out = DeckCardRenderer().render_metric_charts({}, {}, {"series": series})
+
+        self.assertEqual(out.count("class='chart-panel'"), 1)
+        self.assertIn("cx='310.00'", out)
+        for text in (">0</text>", ">400</text>", ">8K</text>", "Message size (bytes)", "Gb/s per NIC"):
+            self.assertIn(text, out)
+        self.assertIn("<polygon", out)
+        self.assertIn("stroke-dasharray='4 3'", out)
+        self.assertIn("<title>threshold 300</title>", out)
+        self.assertIn("QP 16 median · 8,192: 390.0 Gb/s", out)
+
+    def test_log_y_ticks_are_decades(self):
+        series = [{"name": "lat", "unit": "us", "log_x": True, "log_y": True, "points": [[2, 2.0], [65536, 820.0]]}]
+        out = DeckCardRenderer().render_metric_charts({}, {}, {"series": series})
+        for text in (">1</text>", ">10</text>", ">100</text>", ">1,000</text>"):
+            self.assertIn(text, out)
+
+    def test_heatmap_cell_dict_sets_label_status_and_tip(self):
+        heat = {
+            "name": "bw",
+            "rows": ["node-a"],
+            "cols": ["NIC 0", "NIC 1"],
+            "values": [[{"value": 49.0, "label": "49%", "status": "fail", "tip": "node-a NIC 0"}, 99.0]],
+            "threshold": 90,
+            "direction": "higher",
+        }
+        out = DeckCardRenderer._heatmap_panel(heat)
+        self.assertIn("<td class='hm-cell hm-fail' style='' title='node-a NIC 0'>49%</td>", out)
+        self.assertIn("<td class='hm-cell hm-pass' style=''>99.0</td>", out)
+
+
+class TestSummaryAndCollapse(unittest.TestCase):
+    def test_summary_cards_show_verdict_and_tone(self):
+        data = {
+            "status": "fail",
+            "verdict": "1 of 4 checks failed",
+            "cards": [{"label": "Slowest NIC", "value": 193, "unit": "Gb/s", "meta": "node-a NIC 3", "tone": "fail"}],
+        }
+        out = DeckCardRenderer.render_summary_cards({}, {}, data)
+        self.assertIn("<span class='chip chip-fail'>fail</span> 1 of 4 checks failed", out)
+        self.assertIn("<div class='summary-stat summary-stat-fail'>193 <span class='headline-unit'>Gb/s</span>", out)
+        self.assertEqual(DeckCardRenderer.render_summary_cards({}, {}, {"cards": []}), "")
+
+    def test_collapsed_card_folds_body_into_details(self):
+        payload = {"tbl": {"headers": ["a"], "rows": [[1]]}}
+        _sid, out, _nav = DeckCardRenderer().render_card(
+            payload, {"type": "table", "id": "t", "bind": "tbl", "collapsed": "Bandwidth rows"}
+        )
+        self.assertIn("<details class='card-collapse'><summary>Bandwidth rows</summary>", out)
+        self.assertNotIn("<details", DeckCardRenderer().render_card(payload, {"type": "table", "bind": "tbl"})[1])
+
+
 if __name__ == "__main__":
     unittest.main()
