@@ -72,6 +72,38 @@ class TestPerfMetricTable(unittest.TestCase):
         self.assertIn('metric unavailable', html_out)
         self.assertNotIn('<th>Node</th>', html_out)
 
+    def test_render_benchmark_metrics_html_defaults_to_one_decimal_place(self):
+        html_out = render_benchmark_metrics_html(
+            [{'metric': 'ratio', 'status': 'pass', 'actual': 0.02235, 'spec': {'kind': 'min', 'value': 0.01}}]
+        )
+        self.assertIn("<td class='col-actual'>0.0</td>", html_out)
+        self.assertIn("<td class='col-gate'>min 0.0</td>", html_out)
+
+    def test_render_benchmark_metrics_html_uses_row_digits(self):
+        html_out = render_benchmark_metrics_html(
+            [
+                {
+                    'metric': 'ratio',
+                    'status': 'pass',
+                    'actual': 0.02236,
+                    'spec': {'kind': 'min', 'value': 0.01},
+                    'digits': 4,
+                },
+                {
+                    'metric': 'time',
+                    'status': 'fail',
+                    'actual': 6829.694,
+                    'unit': 'ms',
+                    'spec': {'kind': 'max', 'value': 1},
+                    'digits': 2,
+                },
+                {'metric': 'count', 'status': 'pass', 'actual': 3, 'spec': {'kind': 'min', 'value': 2}, 'digits': 0},
+            ]
+        )
+        self.assertIn("<td class='col-actual'>0.0224</td><td class='col-gate'>min 0.0100</td>", html_out)
+        self.assertIn("<td class='col-actual'>6,829.69 ms</td><td class='col-gate'>max 1.00</td>", html_out)
+        self.assertIn("<td class='col-actual'>3</td><td class='col-gate'>min 2</td>", html_out)
+
     def test_render_benchmark_metrics_html_names_node_when_several_nodes(self):
         html_out = render_benchmark_metrics_html(
             [
