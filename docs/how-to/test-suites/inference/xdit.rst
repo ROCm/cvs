@@ -1,6 +1,6 @@
 .. meta::
   :description: Run xDiT diffusion inference tests for FLUX.1, FLUX.2, and WAN 2.2 workloads on AMD Instinct GPU clusters with CVS and ROCm.
-  :keywords: CVS, xDiT, inference, AMD Instinct, ROCm, AMD, GPU, FLUX, WAN, diffusion, distributed, PyTorch
+  :keywords: CVS, xDiT, inference, AMD Instinct, ROCm, AMD, GPU, FLUX, WAN, diffusion, distributed, PyTorch, CLIPScore
 
 **************************************************
 Run xDiT diffusion inference tests with CVS
@@ -28,7 +28,7 @@ Config reference: :doc:`/reference/configuration-files/inference/xdit`.
 Test suites
 ===========
 
-The following suites are available. Every suite runs the same eight stages.
+The following suites are available. Every suite runs the same nine stages.
 
 .. list-table::
    :widths: 3 3 5
@@ -167,6 +167,7 @@ Every xDiT suite uses this order:
     - test_verify_parallelism
     - test_run_benchmark
     - test_parse_thresholds
+    - test_clip_score
     - test_print_results
     - test_teardown
 
@@ -246,14 +247,26 @@ Key stages to watch:
   run ``docker system prune`` unless ``CVS_SKIP_DOCKER_SYSTEM_PRUNE=1``.
 - **Prerequisites** — ``test_verify_prerequisites`` requires ``/dev/kfd`` and ``torchrun``
   inside the container on every participating node.
-- **Model** — ``test_verify_model`` checks the staged weights. A missing cache or host
-  path fails the stage. The suite does not download weights.
+- **Model** — ``test_verify_model`` checks the staged weights and that the CLIP checkpoint
+  is already in the container cache. A missing cache or host path fails the stage. The
+  suite does not download weights. ``enforce_thresholds: false`` does not skip a missing
+  CLIP model.
 - **Parallelism** — ``test_verify_parallelism``.
 - **Benchmark** — ``test_run_benchmark``.
 - **Parse** — ``test_parse_thresholds`` compares the average latency to the threshold file.
   FLUX.1 requires ``num_repetitions``, and ``timing.json`` must contain that many
   ``pipe_time`` samples. Native WAN requires ``num_benchmark_steps``, and that many
   ``rank0_step*.json`` files must be present.
+- **CLIP score** — ``test_clip_score`` scores the saved media inside the benchmark
+  container. FLUX scores ``flux_*.png`` and ``flux2_*.png`` (``clip_score`` against
+  ``min_clip_score``). WAN samples 8 frames from ``video.mp4`` (native) or
+  ``video_i2v.mp4`` (Diffusers) and gates ``mean_frame_clip_score`` against
+  ``min_mean_frame_clip_score``. The default model is ``openai/clip-vit-base-patch32``.
+  Prompts longer than its 77-token context are truncated, and ``results/clipscore.json``
+  sets ``prompt_truncated`` when that happens. WAN needs ``imageio`` with ``imageio-ffmpeg``,
+  OpenCV, or ``torchvision`` in the container to decode the MP4. The shipped floor of 20 is
+  an unvalidated placeholder. ``enforce_thresholds: false`` records a score that misses
+  that floor and does not fail the stage. It does not skip a missing CLIP checkpoint.
 - **Teardown** — ``test_teardown`` stops the container.
 
 .. list-table::
@@ -276,6 +289,18 @@ Key stages to watch:
      - average epoch / pipe time from ``results/timing.json``
      - ``max_avg_pipe_time_s``
      - ``results/timing.json``, ``results/video_i2v.mp4``
+   * - FLUX
+     - mean CLIPScore of the saved PNGs
+     - ``min_clip_score``
+     - ``results/clipscore.json``
+   * - WAN native
+     - mean CLIPScore of 8 frames from ``video.mp4``
+     - ``min_mean_frame_clip_score``
+     - ``results/clipscore.json``
+   * - WAN Diffusers
+     - mean CLIPScore of 8 frames from ``video_i2v.mp4``
+     - ``min_mean_frame_clip_score``
+     - ``results/clipscore.json``
 
 Single-node output dirs use the node hostname, for example
 ``${paths.log_dir}/flux_<hostname>_outputs`` or ``wan_22_<hostname>_outputs``.

@@ -291,8 +291,10 @@ class TestProfile(unittest.TestCase):
         config = build_inference_config_from_profile(load_json_profile("xdit"))
 
         self.assertEqual(config.metric_prefix, "")
-        self.assertEqual(config.metric_tier_order, ("latency", "record"))
+        self.assertEqual(config.metric_tier_order, ("latency", "quality", "record"))
         self.assertEqual(config.full_metric("avg_pipe_time_s"), "avg_pipe_time_s")
+        self.assertEqual(config.full_metric("clip_score"), "clip_score")
+        self.assertEqual(config.full_metric("mean_frame_clip_score"), "mean_frame_clip_score")
 
 
 if __name__ == "__main__":

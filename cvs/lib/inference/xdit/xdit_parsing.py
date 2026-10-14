@@ -8,6 +8,8 @@ All rights reserved.
 XDIT_METRIC_UNITS = {
     "avg_pipe_time_s": "s",
     "avg_total_time_s": "s",
+    "clip_score": "score",
+    "mean_frame_clip_score": "score",
     "sample_count": "count",
 }
 
@@ -21,13 +23,15 @@ XDIT_RESULTS_COLUMNS = (
     ("Host", None),
     ("Avg pipe time (s)", "avg_pipe_time_s"),
     ("Avg total time (s)", "avg_total_time_s"),
+    ("CLIP score", "clip_score"),
+    ("Mean frame CLIP", "mean_frame_clip_score"),
     ("Samples", "sample_count"),
     ("Backend", "backend"),
-    ("Output", "output_dir"),
 )
 
 METRIC_TIERS = {
     "latency": ("avg_pipe_time_s", "avg_total_time_s"),
+    "quality": ("clip_score", "mean_frame_clip_score"),
     "record": ("sample_count",),
 }
 

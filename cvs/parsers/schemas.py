@@ -444,6 +444,18 @@ class PytorchXditExpectedResults(BaseModel):
         gt=0,
         description="Maximum acceptable average pipe_time in seconds (xFuser Wan I2V)",
     )
+    min_clip_score: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Minimum CLIPScore (cosine similarity x 100) for saved FLUX images",
+    )
+    min_mean_frame_clip_score: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description=("Minimum mean frame CLIPScore (cosine similarity x 100) across frames sampled from a WAN MP4"),
+    )
 
     @model_validator(mode="after")
     def validate_threshold_present(self) -> "PytorchXditExpectedResults":
@@ -535,6 +547,18 @@ class PytorchXditWan22Benchmarks(BaseModel):
         default=True,
         description="Require video.mp4 under the output dir when parsing results.",
     )
+    clip_model: Optional[str] = Field(
+        default=None,
+        description=(
+            "CLIP model id or local path used to score sampled WAN video frames. "
+            "Defaults to openai/clip-vit-base-patch32 when omitted."
+        ),
+    )
+    clip_sample_frames: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Frames uniformly sampled from the WAN MP4 for CLIPScore. Defaults to 8 when omitted.",
+    )
     compile: bool = Field(default=True, description="Whether to use torch.compile for optimization")
     torchrun_nproc: int = Field(default=8, ge=1, description="Number of processes for torchrun (usually num GPUs)")
     ulysses_size: int = Field(default=8, ge=1, description="Ulysses parallelism degree")
@@ -565,6 +589,12 @@ class PytorchXditFluxExpectedResults(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_avg_pipe_time_s: float = Field(gt=0, description="Maximum acceptable average pipe_time in seconds")
+    min_clip_score: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Minimum CLIPScore (cosine similarity x 100) for saved FLUX images",
+    )
 
 
 class PytorchXditFlux1DevBenchmarks(BaseModel):
@@ -606,6 +636,13 @@ class PytorchXditFlux1DevBenchmarks(BaseModel):
     data_parallel_degree: int = Field(default=1, ge=1, description="Data-parallel degree (1 = disabled)")
     use_torch_compile: bool = Field(default=True, description="Whether to use torch.compile for optimization")
     torchrun_nproc: int = Field(default=8, ge=1, description="Number of processes for torchrun (usually num GPUs)")
+    clip_model: Optional[str] = Field(
+        default=None,
+        description=(
+            "CLIP model id or local path used to score saved FLUX images. "
+            "Defaults to openai/clip-vit-base-patch32, the CLIPScore paper model, when omitted."
+        ),
+    )
     expected_results: Optional[Dict[str, PytorchXditFluxExpectedResults]] = Field(
         default=None,
         description="Legacy inline thresholds by GPU type (auto, mi300x, mi355, etc.)",

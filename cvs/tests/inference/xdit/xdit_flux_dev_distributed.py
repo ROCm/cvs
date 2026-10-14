@@ -1,6 +1,7 @@
 """Distributed FLUX xDiT lifecycle suite."""
 
 from cvs.tests.inference.xdit._shared import (
+    clip_score_stage,
     launch_container_stage,
     parse_thresholds_stage,
     print_results_stage,
@@ -34,6 +35,10 @@ def test_run_benchmark(orch, variant_config, cluster_dict, xdit_spec, lifecycle,
 
 def test_parse_thresholds(variant_config, gpu_type, xdit_spec, lifecycle, request):
     parse_thresholds_stage(variant_config, gpu_type, xdit_spec, lifecycle, request)
+
+
+def test_clip_score(orch, variant_config, gpu_type, xdit_spec, lifecycle, request):
+    clip_score_stage(orch, variant_config, gpu_type, xdit_spec, lifecycle, request)
 
 
 def test_print_results(lifecycle):

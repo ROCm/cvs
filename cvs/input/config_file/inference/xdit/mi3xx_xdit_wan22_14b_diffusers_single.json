@@ -38,7 +38,7 @@
     "backend": "xdit",
     "nnodes": "1",
     "log_level": "info",
-    "model": "<changeme>"
+    "model": "<changeme> /data/models/Wan2.2-I2V-A14B-Diffusers"
   },
   "benchmark_params": {
     "model_format": "diffusers",

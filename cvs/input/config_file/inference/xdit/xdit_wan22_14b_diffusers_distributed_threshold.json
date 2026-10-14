@@ -1,14 +1,19 @@
 {
+  "_comment": "min_mean_frame_clip_score is the mean CLIPScore (cosine similarity x 100) of 8 frames sampled from video_i2v.mp4 against the prompt; 20 is an unvalidated starting floor.",
   "auto": {
-    "max_avg_pipe_time_s": 300.0
+    "max_avg_pipe_time_s": 300.0,
+    "min_mean_frame_clip_score": 20.0
   },
   "mi325": {
-    "max_avg_pipe_time_s": 300.0
+    "max_avg_pipe_time_s": 300.0,
+    "min_mean_frame_clip_score": 20.0
   },
   "mi350": {
-    "max_avg_pipe_time_s": 300.0
+    "max_avg_pipe_time_s": 300.0,
+    "min_mean_frame_clip_score": 20.0
   },
   "mi355": {
-    "max_avg_pipe_time_s": 900.0
+    "max_avg_pipe_time_s": 900.0,
+    "min_mean_frame_clip_score": 20.0
   }
 }
