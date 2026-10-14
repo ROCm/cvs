@@ -23,11 +23,11 @@ List the items:    cvs list anc_test_computerocker
 from cvs.lib import anc_lib
 
 
-def test_computerocker_dist001_000(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist001_000(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist001_000".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist001_000"],
@@ -36,11 +36,11 @@ def test_computerocker_dist001_000(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist001_001(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist001_001(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist001_001".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist001_001"],
@@ -49,11 +49,11 @@ def test_computerocker_dist001_001(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist001_002(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist001_002(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist001_002".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist001_002"],
@@ -62,11 +62,11 @@ def test_computerocker_dist001_002(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist001_003(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist001_003(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist001_003".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist001_003"],
@@ -75,11 +75,11 @@ def test_computerocker_dist001_003(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist001_004(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist001_004(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist001_004".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist001_004"],
@@ -88,11 +88,11 @@ def test_computerocker_dist001_004(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist001_005(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist001_005(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist001_005".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist001_005"],
@@ -101,11 +101,11 @@ def test_computerocker_dist001_005(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist001_006(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist001_006(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist001_006".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist001_006"],
@@ -114,11 +114,11 @@ def test_computerocker_dist001_006(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist001_007(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist001_007(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist001_007".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist001_007"],
@@ -127,11 +127,11 @@ def test_computerocker_dist001_007(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist001_008(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist001_008(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist001_008".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist001_008"],
@@ -140,11 +140,11 @@ def test_computerocker_dist001_008(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist001_009(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist001_009(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist001_009".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist001_009"],
@@ -153,11 +153,11 @@ def test_computerocker_dist001_009(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist001_010(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist001_010(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist001_010".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist001_010"],
@@ -166,11 +166,11 @@ def test_computerocker_dist001_010(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist002_000(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist002_000(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist002_000".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist002_000"],
@@ -179,11 +179,11 @@ def test_computerocker_dist002_000(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist002_001(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist002_001(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist002_001".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist002_001"],
@@ -192,11 +192,11 @@ def test_computerocker_dist002_001(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist002_002(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist002_002(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist002_002".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist002_002"],
@@ -205,11 +205,11 @@ def test_computerocker_dist002_002(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist002_003(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist002_003(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist002_003".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist002_003"],
@@ -218,11 +218,11 @@ def test_computerocker_dist002_003(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist002_004(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist002_004(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist002_004".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist002_004"],
@@ -231,11 +231,11 @@ def test_computerocker_dist002_004(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist002_005(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist002_005(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist002_005".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist002_005"],
@@ -244,11 +244,11 @@ def test_computerocker_dist002_005(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist002_006(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist002_006(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist002_006".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist002_006"],
@@ -257,11 +257,11 @@ def test_computerocker_dist002_006(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist002_007(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist002_007(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist002_007".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist002_007"],
@@ -270,11 +270,11 @@ def test_computerocker_dist002_007(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist002_008(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist002_008(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist002_008".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist002_008"],
@@ -283,11 +283,11 @@ def test_computerocker_dist002_008(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_dist002_009(phdl, cluster_dict, config_dict, request):
+def test_computerocker_dist002_009(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_dist002_009".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_dist002_009"],
@@ -296,11 +296,11 @@ def test_computerocker_dist002_009(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_msa001_001(phdl, cluster_dict, config_dict, request):
+def test_computerocker_msa001_001(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_msa001_001".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_msa001_001"],
@@ -309,11 +309,11 @@ def test_computerocker_msa001_001(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_msa001_002(phdl, cluster_dict, config_dict, request):
+def test_computerocker_msa001_002(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_msa001_002".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_msa001_002"],
@@ -322,11 +322,11 @@ def test_computerocker_msa001_002(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_computerocker_msa001_003(phdl, cluster_dict, config_dict, request):
+def test_computerocker_msa001_003(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "computerocker_msa001_003".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["computerocker_msa001_003"],

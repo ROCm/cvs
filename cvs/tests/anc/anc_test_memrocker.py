@@ -23,11 +23,11 @@ List the items:    cvs list anc_test_memrocker
 from cvs.lib import anc_lib
 
 
-def test_memrocker_1002_6(phdl, cluster_dict, config_dict, request):
+def test_memrocker_1002_6(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "memrocker_1002_6".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["memrocker_1002_6"],
@@ -36,11 +36,11 @@ def test_memrocker_1002_6(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_memrocker_2_2(phdl, cluster_dict, config_dict, request):
+def test_memrocker_2_2(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "memrocker_2_2".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["memrocker_2_2"],
@@ -49,11 +49,11 @@ def test_memrocker_2_2(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_memrocker_3_1(phdl, cluster_dict, config_dict, request):
+def test_memrocker_3_1(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "memrocker_3_1".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["memrocker_3_1"],
@@ -62,11 +62,11 @@ def test_memrocker_3_1(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_memrocker_405_16(phdl, cluster_dict, config_dict, request):
+def test_memrocker_405_16(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "memrocker_405_16".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["memrocker_405_16"],
@@ -75,11 +75,11 @@ def test_memrocker_405_16(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_memrocker_405_17(phdl, cluster_dict, config_dict, request):
+def test_memrocker_405_17(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "memrocker_405_17".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["memrocker_405_17"],
@@ -88,11 +88,11 @@ def test_memrocker_405_17(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_memrocker_405_18(phdl, cluster_dict, config_dict, request):
+def test_memrocker_405_18(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "memrocker_405_18".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["memrocker_405_18"],
@@ -101,11 +101,11 @@ def test_memrocker_405_18(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_memrocker_405_20(phdl, cluster_dict, config_dict, request):
+def test_memrocker_405_20(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "memrocker_405_20".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["memrocker_405_20"],
@@ -114,11 +114,11 @@ def test_memrocker_405_20(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_memrocker_407_2(phdl, cluster_dict, config_dict, request):
+def test_memrocker_407_2(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "memrocker_407_2".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["memrocker_407_2"],
@@ -127,11 +127,11 @@ def test_memrocker_407_2(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_memrocker_700_1(phdl, cluster_dict, config_dict, request):
+def test_memrocker_700_1(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "memrocker_700_1".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["memrocker_700_1"],
@@ -140,11 +140,11 @@ def test_memrocker_700_1(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_memrocker_700_2(phdl, cluster_dict, config_dict, request):
+def test_memrocker_700_2(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "memrocker_700_2".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["memrocker_700_2"],

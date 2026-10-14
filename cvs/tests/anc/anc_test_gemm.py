@@ -23,11 +23,11 @@ List the items:    cvs list anc_test_gemm
 from cvs.lib import anc_lib
 
 
-def test_gemm_bf16_trig(phdl, cluster_dict, config_dict, request):
+def test_gemm_bf16_trig(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "gemm_bf16_trig".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["gemm_bf16_trig"],
@@ -36,11 +36,11 @@ def test_gemm_bf16_trig(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_gemm_fp16_trig(phdl, cluster_dict, config_dict, request):
+def test_gemm_fp16_trig(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "gemm_fp16_trig".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["gemm_fp16_trig"],
@@ -49,11 +49,11 @@ def test_gemm_fp16_trig(phdl, cluster_dict, config_dict, request):
     )
 
 
-def test_gemm_fp8_trig(phdl, cluster_dict, config_dict, request):
+def test_gemm_fp8_trig(orch, cluster_dict, config_dict, request):
     '''Run the ANC item "gemm_fp8_trig".'''
-    anc_lib.ensure_anc_ready(phdl, cluster_dict, config_dict)
+    anc_lib.ensure_anc_ready(orch, cluster_dict, config_dict)
     anc_lib.run_anc_items(
-        phdl,
+        orch,
         cluster_dict,
         config_dict,
         ["gemm_fp8_trig"],
