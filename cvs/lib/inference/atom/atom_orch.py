@@ -421,7 +421,7 @@ class AtomJob:
                     "export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1",
                 ]
             )
-        if self.ib_hcas:
+        if self.ib_hcas and "NCCL_IB_HCA" not in self.server_env:
             env_lines.append(f"export NCCL_IB_HCA={shlex.quote(','.join(self.ib_hcas))}")
         if self.distributed and not self.ib_netdev:
             raise RuntimeError(
@@ -429,18 +429,17 @@ class AtomJob:
                 "(set roles.server.ib_netdev or fix cluster IP discovery)"
             )
         if self.distributed and self.ib_netdev:
-            env_lines.append(f"export NCCL_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
-            env_lines.append(f"export GLOO_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
-            env_lines.append(f"export TP_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
+            if "NCCL_SOCKET_IFNAME" not in self.server_env:
+                env_lines.append(f"export NCCL_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
+            if "GLOO_SOCKET_IFNAME" not in self.server_env:
+                env_lines.append(f"export GLOO_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
+            if "TP_SOCKET_IFNAME" not in self.server_env:
+                env_lines.append(f"export TP_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
         for k, v in self.server_env.items():
             if k in (
                 "CVS_GPU_MEMORY_UTIL",
                 "VLLM_GPU_MEMORY_UTIL",
                 "VLLM_ENFORCE_EAGER",
-                "NCCL_SOCKET_IFNAME",
-                "GLOO_SOCKET_IFNAME",
-                "TP_SOCKET_IFNAME",
-                "NCCL_IB_HCA",
             ):
                 continue
             env_lines.append(f"export {k}={shlex.quote(str(v))}")

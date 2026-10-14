@@ -916,6 +916,39 @@ class TestATOMAtomBuildServerCmd(unittest.TestCase):
         script_single = self._env_script(orch_single)
         self.assertNotIn("SOCKET_IFNAME", script_single)
 
+    def test_server_env_ib_vars_override_discovered_fabric(self):
+        orch = FakeOrch()
+        variant = _fake_variant(
+            driver="vllm_atom",
+            nnodes="2",
+            pipeline_parallel_size="2",
+            master_addr="10.0.0.1",
+        )
+        variant.roles.server.env = {
+            "NCCL_IB_HCA": "ionic_0,ionic_1",
+            "NCCL_SOCKET_IFNAME": "ens3",
+            "GLOO_SOCKET_IFNAME": "ens3",
+            "GLOO_TCP_IFNAME": "ens3",
+        }
+        job = AtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+            **_PREFILLED_FABRIC,
+        )
+        job.build_server_cmd()
+        script = self._env_script(orch)
+        self.assertIn("export NCCL_IB_HCA=ionic_0,ionic_1", script)
+        self.assertNotIn("mlx5_0", script)
+        self.assertIn("export NCCL_SOCKET_IFNAME=ens3", script)
+        self.assertIn("export GLOO_SOCKET_IFNAME=ens3", script)
+        self.assertIn("export GLOO_TCP_IFNAME=ens3", script)
+        self.assertIn("export TP_SOCKET_IFNAME=eth0", script)
+
     @patch("cvs.lib.utils.ib_discovery.resolve_multinode_fabric")
     def test_build_server_cmd_resolves_topology_when_lifecycle_skipped(self, mock_resolve):
         mock_resolve.return_value = (["mlx5_0", "mlx5_1"], "ens51f1np1")
