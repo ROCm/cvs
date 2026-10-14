@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - vLLM and ATOM GPU metric snapshots and polls no longer reset the xGMI error counters. They ran a bare `amd-smi metric --json`, which also reads `--xgmi-err` and so clears the counters on every call; they now request only the `--usage` and `--mem-usage` sections they read. The raw `gpu.energy_j` snapshot field, which no suite reads, is now always `None`.
 - SGLang: the GPU occupancy check runs `amd-smi metric --mem-usage --json` instead of a bare `amd-smi metric --json`, so it reads only the VRAM section it uses and no longer reads the xGMI error section, which resets the xGMI error counters on MI200 and older GPUs.
 - vLLM: `vllm_single` accepts `pipeline_parallel_size` greater than 1 instead of rejecting it, and `vllm_distributed` on a one-host cluster now serves with the configured pipeline width instead of 1.
+- vLLM: a server that exits during startup, or whose launch never created its log, now fails the cell at the next startup check instead of being polled for the whole readiness budget (about 66 minutes by default). A `vllm serve` launch lost in transport is retried up to twice when it left no server log or `server.pid` behind.
 
 ## [0.2.0] - 2026-09-23
 
