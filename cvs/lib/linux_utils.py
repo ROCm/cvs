@@ -924,7 +924,14 @@ def get_gpu_nic_mapping_dict(
                 'rdma_dev': lshw_dict[node][eth_dev]['rdma_dev'],
                 'nic_bdf': nic_bdf_list[nic_idx],
             }
-    log.info("%s", gpu_nic_dict)
+        log.info(
+            'GPU-NIC map on node %s: %s',
+            node,
+            '; '.join(
+                f"{card}: {pair['gpu_bdf']} -> {pair['rdma_dev']} ({pair['nic_bdf']})"
+                for card, pair in gpu_nic_dict[node].items()
+            ),
+        )
     return gpu_nic_dict
 
 

@@ -356,6 +356,12 @@ class TestGetGpuNicMappingDict(unittest.TestCase):
             {'gpu_bdf': '0000:75:00.0', 'eth_dev': 'eth3', 'rdma_dev': 'rdma3', 'nic_bdf': '0000:76:00.0'},
         )
 
+    def test_map_is_logged_per_node(self):
+        with self.assertLogs(level='INFO') as logs:
+            self._map(self.SINGLE_DOMAIN_GPUS, self.SINGLE_DOMAIN_NICS)
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn('node node1: card0: 0000:05:00.0 -> rdma0 (0000:06:00.0); card1:', logs.output[0])
+
     def test_two_domains_on_bus_zero_pair_within_domain_in_device_order(self):
         domains = ('0002', '0003')
         gpus = [f'{domain}:00:{dev:02x}.0' for domain in domains for dev in range(1, 5)]
