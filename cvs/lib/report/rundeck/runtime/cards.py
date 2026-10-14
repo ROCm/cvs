@@ -353,14 +353,14 @@ class DeckCardRenderer:
         return f"{banner}<div class='cells'>{''.join(cards) or empty_cells}</div>"
 
     @staticmethod
-    def render_table(_payload: dict, _card: dict, data: Any) -> str:
+    def render_table(_payload: dict, card: dict, data: Any) -> str:
         table = data if isinstance(data, dict) else {}
         # .results-wrap gives the (potentially wide, all-metrics) table a
         # horizontal scrollbar instead of overflowing the card.
         inner = render_results_table_html(
             table.get("headers") or [],
             table.get("rows") or [],
-            empty_message="No results table rows.",
+            empty_message=str((card or {}).get("empty_message") or "No results table rows."),
         )
         return f"<div class='results-wrap'>{inner}</div>"
 
@@ -533,9 +533,9 @@ class DeckCardRenderer:
             parts.append(f"<div class='chart-group'>{title}<div class='chart-grid'>{''.join(panels)}</div></div>")
         heat_html = "".join(self._heatmap_panel(item) for item in heatmaps)
         if heat_html:
+            heat_title = "<h3 class='chart-group-title'>Heatmaps</h3>" if parts else ""
             parts.append(
-                "<div class='chart-group'><h3 class='chart-group-title'>Heatmaps</h3>"
-                f"<div class='chart-grid chart-grid-heat'>{heat_html}</div></div>"
+                f"<div class='chart-group'>{heat_title}<div class='chart-grid chart-grid-heat'>{heat_html}</div></div>"
             )
         return "".join(parts) or "<p class='muted'>No metric data recorded.</p>"
 
@@ -802,12 +802,14 @@ class DeckCardRenderer:
             f"<span class='muted'>+{total - len(lines)} more nodes in the viewer</span>" if total > len(lines) else ""
         )
         title = f"{name} by {x_label}" if x_label else name
+        # A titled y-axis already names the unit; capping the width keeps a lone panel's text at grid size.
+        width = "width:100%;max-width:640px" if y_title else "width:100%"
+        unit_html = "" if y_title else f"<div class='chart-unit'>{html.escape(unit)}</div>"
         return (
             f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
             f"<div class='series-legend'>{''.join(legend)}{more}</div>"
             f"<svg viewBox='0 0 400 {height}' role='img' aria-label='{html.escape(title)}' "
-            f"style='width:100%;fill:var(--muted);font-size:11px'>{''.join(svg)}</svg>"
-            f"<div class='chart-unit'>{html.escape(unit)}</div></div>"
+            f"style='{width};fill:var(--muted);font-size:11px'>{''.join(svg)}</svg>{unit_html}</div>"
         )
 
     @staticmethod

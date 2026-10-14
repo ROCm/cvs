@@ -71,7 +71,8 @@
             "type": ["boolean", "string"],
             "description": "Fold the card body into a closed <details>; a string is the summary label."
           },
-          "columns_from": { "type": "string" }
+          "columns_from": { "type": "string" },
+          "empty_message": { "type": "string", "description": "table: text shown when the table has no rows." }
         }
       }
     },

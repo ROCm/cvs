@@ -74,6 +74,8 @@ class TestMetricChartOverlay(unittest.TestCase):
         self.assertIn("stroke-dasharray='4 3'", out)
         self.assertIn("<title>threshold 300</title>", out)
         self.assertIn("QP 16 median · 8,192: 390.0 Gb/s", out)
+        self.assertIn("max-width:640px", out)
+        self.assertNotIn("chart-unit", out)
 
     def test_log_y_ticks_are_decades(self):
         series = [{"name": "lat", "unit": "us", "log_x": True, "log_y": True, "points": [[2, 2.0], [65536, 820.0]]}]
@@ -90,7 +92,8 @@ class TestMetricChartOverlay(unittest.TestCase):
             "threshold": 90,
             "direction": "higher",
         }
-        out = DeckCardRenderer._heatmap_panel(heat)
+        out = DeckCardRenderer().render_metric_charts({}, {}, {"heatmaps": [heat]})
+        self.assertNotIn("Heatmaps", out)
         self.assertIn("<td class='hm-cell hm-fail' style='' title='node-a NIC 0'>49%</td>", out)
         self.assertIn("<td class='hm-cell hm-pass' style=''>99.0</td>", out)
 
@@ -114,6 +117,10 @@ class TestSummaryAndCollapse(unittest.TestCase):
         )
         self.assertIn("<details class='card-collapse'><summary>Bandwidth rows</summary>", out)
         self.assertNotIn("<details", DeckCardRenderer().render_card(payload, {"type": "table", "bind": "tbl"})[1])
+
+    def test_table_card_empty_message(self):
+        out = DeckCardRenderer.render_table({}, {"empty_message": "No weak NICs."}, {"headers": ["a"], "rows": []})
+        self.assertIn("No weak NICs.", out)
 
 
 if __name__ == "__main__":
