@@ -324,6 +324,11 @@ class TestParsePciBdf(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'not-a-bdf'):
             linux_utils._parse_pci_bdf('not-a-bdf')
 
+    def test_surrounding_junk_is_rejected(self):
+        for bdf in ('0000:05:00.0:extra', 'junk 0000:05:00.0 junk'):
+            with self.assertRaises(ValueError):
+                linux_utils._parse_pci_bdf(bdf)
+
 
 class TestGetGpuNicMappingDict(unittest.TestCase):
     GPU_BUSES = (0x05, 0x15, 0x65, 0x75, 0x85, 0x95, 0xE5, 0xF5)

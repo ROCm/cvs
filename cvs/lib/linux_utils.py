@@ -839,21 +839,9 @@ def pcie_link_status_cmd(bdf):
     )
 
 
-def get_nearest_bus_no(target_hex: str, candidates: list[str]) -> str:
-    """
-    Return the nearest matching hex value (as one of the candidate strings).
-    - Inputs are hex strings like '0x1f', '1F', '-0x10' (case-insensitive).
-    - Tie-breaker: picks the smaller numeric value.
-    """
-    if not candidates:
-        raise ValueError("candidates must be non-empty")
-    t = int(target_hex, 16)
-    return min(candidates, key=lambda s: (abs(int(s, 16) - t), int(s, 16)))
-
-
 def _parse_pci_bdf(bdf):
     """Return (domain, bus, device, function) as ints from an address like '0000:05:00.0'; domain defaults to 0."""
-    match = re.search(r'(?:([0-9a-f]+):)?([0-9a-f]{2}):([0-9a-f]{2})\.([0-7])', str(bdf), re.I)
+    match = re.fullmatch(r'(?:([0-9a-f]+):)?([0-9a-f]{2}):([0-9a-f]{2})\.([0-7])', str(bdf).strip(), re.I)
     if not match:
         raise ValueError(f'invalid PCI BDF {bdf!r}')
     return tuple(int(field, 16) for field in match.groups(default='0'))
