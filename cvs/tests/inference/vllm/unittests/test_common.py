@@ -6,6 +6,8 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
+
 from cvs.lib.report import benchmark_metric_registry as registry
 from cvs.tests.inference.vllm import _common
 
@@ -14,6 +16,7 @@ class _FakeStash(dict):
     pass
 
 
+# Records only pytest.fail(); an AssertionError escapes, since bare asserts are stripped under python -O.
 class _CapturingSubtests:
     def __init__(self):
         self.calls = []
@@ -24,7 +27,7 @@ class _CapturingSubtests:
         self.calls.append(kwargs)
         try:
             yield
-        except AssertionError as exc:
+        except pytest.fail.Exception as exc:
             self.failures.append(str(exc))
 
 
@@ -141,7 +144,10 @@ class TestInferenceCellMetrics(unittest.TestCase):
                 {'node': 'worker', 'metric': 'mean_ttft_ms'},
             ],
         )
-        self.assertEqual(len(subtests.failures), 2)
+        self.assertEqual(
+            subtests.failures,
+            ['output_throughput: actual 99 < min 100', 'mean_ttft_ms: actual 60 > max 50'],
+        )
         keys = [key for key, _value in node.user_properties]
         self.assertEqual(keys.count(_common.VLLM_JUNIT_PROPERTY), 1)
 

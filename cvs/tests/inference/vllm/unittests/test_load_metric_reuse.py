@@ -5,6 +5,8 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
+
 from cvs.lib.inference.utils.vllm_metrics import UnknownMetricContractError, project_vllm_metrics
 from cvs.tests.inference.vllm import _common
 
@@ -322,7 +324,7 @@ class TestLoadMetricReuse(unittest.TestCase):
         self.variant.thresholds = {run.cell.key: {"output_throughput": {"kind": "min", "value": 5.0}}}
         subtests = _Subtests()
 
-        with self.assertRaisesRegex(AssertionError, "output_throughput"):
+        with self.assertRaisesRegex(pytest.fail.Exception, "output_throughput"):
             self.invoke(
                 run,
                 job,
