@@ -192,8 +192,7 @@ the per-stage logs and copies of the cluster and config files.
 the report with those files for sharing. The bundle does not contain Aorta traces
 or the JSON report; those stay under ``output_dir``.
 
-Aorta does not produce a Run Deck report. Use the HTML report for stage verdicts and
-``aorta_benchmark_report.json`` for metrics.
+The report also links the Aorta Run Deck; see :ref:`aorta-run-deck`.
 
 Benchmark artifacts
 -------------------
