@@ -47,8 +47,10 @@ DEFAULT_LAT_TESTS = ['ib_write_lat', 'ib_send_lat']
 SUPPORTED_BW_TESTS = ('ib_write_bw', 'ib_read_bw', 'ib_send_bw')
 SUPPORTED_LAT_TESTS = ('ib_write_lat', 'ib_read_lat', 'ib_send_lat')
 
-# Covers connection setup, the client's launch delay, and perftest's warm-up margins.
+# Added to the BW ``duration``: covers connection setup, the client's launch delay, and perftest's warm-up margins.
 PERFTEST_EXIT_SLACK_S = 60
+# Latency tests have no ``-D`` duration, so this bounds the whole run.
+PERFTEST_LAT_EXIT_TIMEOUT_S = 60
 PERFTEST_EXIT_POLL_S = 5
 PERFTEST_RESULT_POLL_S = 10
 PERFTEST_BW_RESULT_TIMEOUT_S = 80
@@ -1078,10 +1080,13 @@ def run_ib_perf_lat_test(
     time.sleep(2)
     phdl.exec('source /tmp/ib_cmds_file.txt', print_console=False)
 
-    unconfirmed = wait_for_perftest_exit(phdl, lat_test, PERFTEST_EXIT_SLACK_S)
+    unconfirmed = wait_for_perftest_exit(phdl, lat_test, PERFTEST_LAT_EXIT_TIMEOUT_S)
     if unconfirmed:
         log.warning(
-            '%s exit not confirmed on %s after %ss; reading logs anyway', lat_test, unconfirmed, PERFTEST_EXIT_SLACK_S
+            '%s exit not confirmed on %s after %ss; reading logs anyway',
+            lat_test,
+            unconfirmed,
+            PERFTEST_LAT_EXIT_TIMEOUT_S,
         )
 
     result_nodes = list(bck_nic_dict)[1::2] if lat_test == 'ib_read_lat' else None

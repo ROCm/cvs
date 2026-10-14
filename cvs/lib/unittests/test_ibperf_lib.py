@@ -628,7 +628,7 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
     @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
     def test_waits_for_perftest_exit(self, mock_wait):
         self.run_latency()
-        mock_wait.assert_called_once_with(self.phdl, 'ib_write_lat', ibperf_lib.PERFTEST_EXIT_SLACK_S)
+        mock_wait.assert_called_once_with(self.phdl, 'ib_write_lat', ibperf_lib.PERFTEST_LAT_EXIT_TIMEOUT_S)
 
 
 class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
