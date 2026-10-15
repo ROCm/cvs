@@ -248,7 +248,7 @@ Without collected results, the log shows ``Skipping Run Deck generation: no resu
 
 Series labels vary by suite:
 
-- ``rccl_perf`` uses the collective name, for example ``all_reduce_perf``.
+- ``rccl_perf`` uses the collective name, for example ``all_reduce_perf``; with several ``data_types``, one series per type, for example ``all_reduce_perf [type=float]`` and ``all_reduce_perf [type=bfloat16]``.
 - ``rccl_regression`` uses ``<collective>-<ENV=val ENV=val …>``.
 - ``rccl_pairwise`` uses ``Phase0 sanity <node>``, ``Phase1 <ref> <-> <cand>``, and ``Phase2 <N>-node cluster (adding <cand>)``. Its run card's MPI nodes and MPI ranks list each distinct count used across phases; Nodes counts distinct nodes used.
 
@@ -256,7 +256,7 @@ Keep these limits in mind when reading the deck:
 
 - Each series has its own chart, sorted by label. At most 40 charts are drawn per card. Truncated cards say "Showing N of M series charts"; the table and JSON keep all results.
 - Chart x-labels are humanized (``1K``, ``1M``, ``1G``); the table and JSON use raw bytes.
-- When rows share a series and message size, the last row wins across in-place/out-of-place, data type, and cycle.
+- Each point uses the rows the checks evaluate (in-place; out-of-place for ``alltoall_perf``/``alltoallv_perf``), averaged across cycles, with message sizes in ascending order.
 - The deck shows only collectives and sizes actually collected.
 
 The JSON includes ``results_table.headers`` and ``results_table.rows``, ``datasets.series.charts.bus_bw|alg_bw|time``, ``run_card_display``, ``provenance``, ``generated_at``, and ``cvs_version``. Its ``overall_status`` is always ``record`` because the deck is not a verdict. For example, extract one collective's rows with:

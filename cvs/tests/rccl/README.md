@@ -24,9 +24,7 @@ come from collected results, including when only part of a suite runs.
 Pairwise series retain their Phase 0/1/2 labels, and its run card lists the
 node and MPI rank counts used across those runs.
 
-Reporting does not change qualification checks. The deck uses the existing
-graph conversion: when several rows share a series and message size, the
-last row wins across in-place/out-of-place, data type, and cycle dimensions.
+Reporting does not change qualification checks. Graph conversion charts the rows the checks evaluate: in-place rows, or out-of-place rows for `alltoall_perf`/`alltoallv_perf`. Cycles of the same data type and message size are averaged, and message sizes are listed in ascending order. A series with several data types is split into one series per type, labelled `<series> [type=<dtype>]`; a single-type series keeps its plain name.
 The Thresholds row reflects the configured `verify_*` switches; it does not
 confirm that a bus-bandwidth threshold was found or applied. Existing
 threshold configuration mismatches still require separate correction.
@@ -176,7 +174,7 @@ Both suites also accept the shipped legacy flat format:
 
 A matching NIC/rank reference takes precedence over a flat reference. Flat references apply regardless of data type or rank count, so calibrate them for every topology you test. The sample numbers are examples for two nodes, not qualification targets for other clusters. Pairwise/incremental sub-runs drop flat references entirely, since a threshold calibrated for the full cluster does not apply at pairwise node counts; only NIC/rank-keyed references, already scoped by rank count, are honored there.
 
-Set `cvs_params.verify_bus_bw` to `"True"` to enforce bandwidth thresholds. Measurements below 95% of the configured reference fail, and a missing threshold for a requested collective also fails. Dip checks stay off unless `verify_bw_dip` or `verify_lat_dip` is `"True"`; either flag uses the resolved reference message sizes. Dip checks compare consecutive reference sizes within one data type (and, for unaggregated rows, one rccl-tests cycle), in ascending size order; rows of different data types are never compared with each other. With no matching reference, these checks have no reference data to validate.
+Set `cvs_params.verify_bus_bw` to `"True"` to enforce bandwidth thresholds. Measurements below 95% of the configured reference fail, and a missing threshold for a requested collective also fails. Dip checks stay off unless `verify_bw_dip` or `verify_lat_dip` is `"True"`; either flag uses the resolved reference message sizes. Dip checks compare consecutive reference sizes within one data type (and, for unaggregated rows, one rccl-tests cycle), in ascending size order; rows of different data types are never compared with each other. With no matching reference, these checks have no reference data to validate. Bus-bandwidth failure messages end with the data type of the failing row, for example `[type=bfloat16]`.
 
 ### Regression combinations
 
