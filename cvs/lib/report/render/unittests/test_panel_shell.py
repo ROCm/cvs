@@ -14,6 +14,10 @@ class TestRenderResultsTableHtml(unittest.TestCase):
             "<tbody><tr><td>write</td><td>1.5</td></tr><tr><td>read</td><td>None</td></tr></tbody></table>",
         )
 
+    def test_units_render_beside_headers_outside_the_uppercase_text(self):
+        out = render_results_table_html(["Test", "Latency"], [["write", 1.5]], units=[None, "µs"])
+        self.assertIn("<th>Test</th><th>Latency <span class='th-unit'>(µs)</span></th>", out)
+
     def test_no_rows_renders_the_empty_message_instead_of_a_table(self):
         self.assertEqual(
             render_results_table_html(["Test"], iter([]), empty_message="No <rows>."),

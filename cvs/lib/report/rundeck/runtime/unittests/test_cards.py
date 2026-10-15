@@ -79,6 +79,7 @@ class TestRenderTable(unittest.TestCase):
         self.assertIn("Full results", document)
         self.assertNotIn("results-scroll'", document)
         self.assertNotIn("max-height:", document)
+        self.assertNotIn("class='th-unit'", document)
 
 
 if __name__ == "__main__":

@@ -207,15 +207,16 @@ def _results_table(io_cases, statuses, ibgda, titles, names):
         "Operation",
         "Case or node",
         "Message size",
-        "Bandwidth (GB/s)",
+        "Bandwidth",
         "Slowest rank",
-        "Slowest rank BW (GB/s)",
-        "Latency per batch (usec)",
-        "Worst rank latency (usec)",
-        "Message rate (Mpps)",
+        "Slowest rank BW",
+        "Latency per batch",
+        "Worst rank latency",
+        "Message rate",
         "Status",
     ]
-    return {"headers": headers, "rows": rows}
+    units = [None, None, None, "GB/s", None, "GB/s", "µs", "µs", "Mpps", None]
+    return {"headers": headers, "units": units, "rows": rows}
 
 
 def _rebuild(store):

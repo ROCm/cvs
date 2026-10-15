@@ -237,12 +237,13 @@ class TestMoriDeckProfile(unittest.TestCase):
         rows = [dict(zip(table["headers"], row)) for row in table["rows"]]
         self.assertEqual(len(rows), 3 + 3 + 2 * 2)
         self.assertEqual(
-            [rows[0][k] for k in ("Operation", "Case or node", "Message size", "Bandwidth (GB/s)", "Status")],
+            [rows[0][k] for k in ("Operation", "Case or node", "Message size", "Bandwidth", "Status")],
             ["MORI-IO READ", "buffer 4 MiB · batch 128 · QP 1", "8B", 46.5, "pass"],
         )
-        self.assertEqual((rows[0]["Slowest rank"], rows[0]["Slowest rank BW (GB/s)"]), (1, 46.0))
+        self.assertEqual((rows[0]["Slowest rank"], rows[0]["Slowest rank BW"]), (1, 46.0))
+        self.assertEqual(table["units"][3:9], ["GB/s", None, "GB/s", "µs", "µs", "Mpps"])
         self.assertEqual(
-            [rows[-1][k] for k in ("Operation", "Case or node", "Message size", "Message rate (Mpps)")],
+            [rows[-1][k] for k in ("Operation", "Case or node", "Message size", "Message rate")],
             ["IBGDA WRITE", "node01", "1M", 10.0],
         )
         self.assertEqual([row["Message size"] for row in rows[:3]], ["8B", "32K", "1M"])
