@@ -231,6 +231,7 @@ Collective meanings
 The following collectives can be specified in the ``results`` block; each name maps to a distinct RCCL operation.
 
 - ``all_reduce_perf``: all ranks reduce then receive the reduced result.
+- ``all_reduce_bias_perf``: all-reduce with a bias buffer (``ncclAllReduceWithBias``). Not run by default; add it to ``rccl_collective`` when your RCCL build exports ``ncclAllReduceWithBias``. rccl-tests reports these rows as ``AllReduce``, so set thresholds under ``all_reduce_bias_perf``.
 - ``all_gather_perf``: each rank receives data from all ranks.
 - ``scatter_perf``: root rank distributes shards to all ranks.
 - ``gather_perf``: all ranks send data to a root rank.

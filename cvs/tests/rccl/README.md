@@ -140,6 +140,7 @@ Start from [`rccl_config.json`](../../input/config_file/rccl/rccl_config.json). 
 - `mpi_params.no_of_nodes` and `no_of_local_ranks` set the MPI topology explicitly. For a single-node run, set `no_of_nodes` to `1` and provide a one-node cluster or allocation.
 - `mpi_params.mpi_dir` names the Open MPI installation prefix; a trailing `/bin` is accepted. `mpi_pml`, `mpi_oob_port`, `net_dev_list`, and `ucx_tls` control Open MPI/UCX discovery and initialization.
 - `rccl_test_params.rccl_tests_dir` names the directory containing the collective binaries. Message sizes, iteration counts, and optional `rccl_timeout`/`output_algo_proto_channels` flags belong in this object.
+- `rccl_test_params.rccl_collective` lists rccl-tests binary names from `rccl_tests_dir`. Thresholds in `results`, report series, and sub-test labels are keyed by these names, not by the collective name in the rccl-tests JSON. Optional binaries can be added to the list; for example, `all_reduce_bias_perf` (requires an RCCL build that exports `ncclAllReduceWithBias`) reports its rows as `AllReduce`, so give it its own `results.all_reduce_bias_perf` entry rather than relying on `all_reduce_perf` thresholds.
 - `env_source_script` names one existing script, available at the same path on every participating node or container. Use `/dev/null` or `"none"` when no script is needed. Regression overrides are applied after sourcing it.
 - `cvs_params.cvs_exec_timeout` caps the outer collective launch (default 2400 seconds).
 
