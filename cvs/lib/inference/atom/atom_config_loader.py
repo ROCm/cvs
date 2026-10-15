@@ -97,6 +97,7 @@ class AtomRoleServer(RoleServer):
             return "auto"
         return v
 
+
 class AtomRoles(_Forbid):
     server: AtomRoleServer = AtomRoleServer()
 
