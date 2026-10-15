@@ -193,7 +193,7 @@ Configuration parameters for RCCL suites:
      - Description
    * - ``verify_bus_bw``
      - ``"False"``
-     - Enable bus-bandwidth threshold validation.
+     - Enable bus-bandwidth threshold validation. Off by default; enable for qualification after confirming the ``results`` entry for your GPU, NIC and rank count.
    * - ``nic_model``
      - ``"thor"``
      - Selects NIC-keyed ``results.<nic>`` references for scale-out runs.
@@ -201,8 +201,8 @@ Configuration parameters for RCCL suites:
      - ``"scale_out"``
      - ``scale_out`` or ``scale_up``; selects the ``results`` namespace.
    * - ``bus_bw_tolerance``
-     - ``"0.95"``
-     - Fraction in (0, 1] of the reference that a measurement must reach. The guide configs use ``"1.0"``. Dip checks keep a fixed 5% tolerance.
+     - ``"0.95"`` (sample: ``"1.0"``)
+     - Fraction in (0, 1] of the reference bus bandwidth a measurement must reach. Default 0.95 when absent; an invalid value fails the test. The guide configs use 1.0. Dip checks keep a fixed 5% tolerance.
    * - ``verify_bw_dip``
      - ``"False"``
      - Enable bandwidth-dip validation.
@@ -222,9 +222,9 @@ Configuration parameters for RCCL suites:
 Expected results format
 -----------------------
 
-The ``results`` section is a sibling of ``cvs_params`` under ``rccl``. Values are keyed by collective and message size (bytes), with expected bus bandwidth in GB/s. Re-baseline the shipped values for your cluster before enabling checks. The shipped values assume two nodes with eight ranks per node.
+The ``results`` section is a sibling of ``cvs_params`` under ``rccl``. Values are keyed by collective and message size (bytes), with expected bus bandwidth in GB/s. NIC/rank keys have the form ``<nic>.<collective>-<data_types>-<total ranks>``; ``cvs_params.nic_model`` selects ``ainic``, ``thor`` or ``connectx``. A matching NIC/rank entry takes precedence over the flat entry. The shipped ``thor`` entries cover the MI350X/MI355X scale-out guide range of 2–16 nodes at 8 ranks per node: total rank keys 16 through 128 in steps of 8 use the 350 GB/s all_reduce bar at 8589934592 bytes. The sample tolerance of 1.0 enforces it exactly. MI300X clusters must set each all_reduce entry to 304. The guide lists both 304 and 350 for MI355X, an open question; its "8 GB" is interpreted as 8 GiB (8589934592 bytes), also open. The other nine collectives have null entries over the same rank range because no guide bar is published. Flat values are generic two-node examples, compared without slack at tolerance 1.0. Other NICs and rank counts fall back to these examples.
 
-Set ``verify_bus_bw`` to ``"True"`` to require actual bandwidth to reach at least ``bus_bw_tolerance`` (default 0.95) times the configured value. A missing collective threshold fails the test when this check is enabled. Set ``verify_bw_dip`` or ``verify_lat_dip`` to ``"True"`` to check for bandwidth or latency dips at the configured message sizes; either check can fail the test. An enabled dip check with no resolved reference fails.
+Set ``verify_bus_bw`` to ``"True"`` to require actual bandwidth to reach ``bus_bw × cvs_params.bus_bw_tolerance``. The tolerance defaults to 0.95 when absent, must be a fraction in (0, 1], and an invalid value fails the test. The sample uses 1.0. A missing collective threshold or a configured size without a matching in-place result row (out-of-place for alltoall/alltoallv) fails; ensure ``start_msg_size`` and ``end_msg_size`` cover every configured size. A ``null`` entry marks a collective with no published threshold, logs ``No published threshold for <collective>; bus_bw not gated``, and skips its bus-bandwidth gate. Invalid entries fail with their full ``rccl.results.<nic>.<key>.<size>`` path. Verification is off in the sample because other NICs and rank counts use flat examples, MI300X needs 304, and regression and pairwise reuse the same entries. Enable it after checking the results for your GPU, NIC and rank count. Set ``verify_bw_dip`` or ``verify_lat_dip`` to ``"True"`` to check for bandwidth or latency dips at the configured message sizes; either check can fail the test. An enabled dip check with no resolved reference fails.
 
 Each enabled check is reported per message size and data type as a pytest sub-test, and the parent row in the HTML report expands into one row per check with its actual value and threshold.
 A missing reference or an invalid ``bus_bw_tolerance`` is reported as one failing case for its check.
@@ -239,6 +239,19 @@ A missing reference or an invalid ``bus_bw_tolerance`` is reported as one failin
           "8589934592": "330.00",
           "17179869184": "350.00"
         }
+      }
+    }
+
+.. dropdown:: NIC/rank-keyed results snippet
+
+  .. code:: json
+
+    "results": {
+      "thor": {
+        "all_reduce_perf-float-16": {
+          "8589934592": {"bus_bw": "350.00"}
+        },
+        "all_gather_perf-float-16": null
       }
     }
 
