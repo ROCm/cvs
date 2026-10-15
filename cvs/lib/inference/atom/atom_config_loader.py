@@ -67,7 +67,6 @@ def merge_mxfp4_triton_env(precision, env, gpu_arch=""):
 log = globals.log
 
 # Written by test_discover_topology / resolve_multinode_fabric — not user env.
-_ORCH_MANAGED_NETWORK_ENV = frozenset({"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME", "NCCL_IB_HCA"})
 _IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.IGNORECASE)
 
 
@@ -97,21 +96,6 @@ class AtomRoleServer(RoleServer):
             )
             return "auto"
         return v
-
-    @model_validator(mode="after")
-    def _strip_orchestrator_managed_network_env(self):
-        if not self.env:
-            return self
-        dropped = sorted(k for k in self.env if k in _ORCH_MANAGED_NETWORK_ENV)
-        if not dropped:
-            return self
-        log.warning(
-            "roles.server.env drops orchestrator-managed keys %s "
-            "(set by test_discover_topology / build_server_cmd instead)",
-            dropped,
-        )
-        self.env = {k: v for k, v in self.env.items() if k not in _ORCH_MANAGED_NETWORK_ENV}
-        return self
 
 
 class AtomRoles(_Forbid):
