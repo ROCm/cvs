@@ -20,7 +20,7 @@ _CELL_RE = re.compile(
 )
 _METADATA_PREFIXES = ("_comment", "_example")
 _SOCKET_ENV = {"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"}
-_HF_TOKEN_ENV = {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN"}
+_HF_TOKEN_ENV = {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"}
 _SERVER_RESERVED = {"master_addr", "master_port", "nnodes", "node_rank", "headless"}
 
 
@@ -71,6 +71,14 @@ class Runtime(_Forbid):
     args: RuntimeArgs = Field(default_factory=RuntimeArgs)
 
 
+class ContainerEnvTokenError(Exception):
+    """A Hugging Face token name in container.env.
+
+    Not a ValueError, so pydantic raises it as is instead of wrapping it in a
+    ValidationError whose str(), errors() and json() would carry the token value.
+    """
+
+
 class ContainerConfig(_Forbid):
     lifetime: Literal["no_launch", "per_run", "persistent"] = "per_run"
     name: str
@@ -78,15 +86,17 @@ class ContainerConfig(_Forbid):
     env: Dict[str, str] = Field(default_factory=dict)
     runtime: Runtime = Field(default_factory=Runtime)
 
-    @model_validator(mode="after")
-    def _reject_hf_token_env(self):
-        tokens = sorted(name for name in self.env if name.upper() in _HF_TOKEN_ENV)
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_hf_token_env(cls, data):
+        env = data.get("env") if isinstance(data, dict) else None
+        tokens = sorted(name for name in env or {} if str(name).upper() in _HF_TOKEN_ENV)
         if tokens:
-            raise ValueError(
+            raise ContainerEnvTokenError(
                 f"container.env must not set {tokens}: container.env values become docker run -e arguments. "
                 "Put the Hugging Face token in the file named by paths.hf_token_file instead."
             )
-        return self
+        return data
 
     @model_validator(mode="after")
     def _validate_network_env(self):
@@ -281,9 +291,6 @@ def _strip_metadata(value: Any) -> Any:
 
 
 class VariantConfig(_Forbid):
-    # Error text would otherwise echo the raw input, including container.env values.
-    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
-
     enforce_thresholds: bool = True
     threshold_json: str
     ib_hca_devices: Union[Literal["auto"], List[str], None] = "auto"

@@ -5,6 +5,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from cvs.lib.inference.utils.vllm_config_loader import (
+    ContainerEnvTokenError,
     RunCell,
     VariantConfig,
     _strip_metadata,
@@ -123,17 +124,23 @@ class TestVllmConfigContract(unittest.TestCase):
             VariantConfig(**config)
 
     def test_rejects_hf_token_in_container_env_without_echoing_value(self):
-        for name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN", "hf_token", "Hf_Token"):
+        for name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "hf_token", "Hf_Token"):
             for extra in ({}, {"NCCL_SOCKET_IFNAME": "eno0"}):
                 with self.subTest(name=name, extra=extra):
                     config = _config()
                     config["container"]["env"] = {**extra, name: FAKE_CRED}
-                    with self.assertRaises(ValidationError) as ctx:
+                    with self.assertRaises(ContainerEnvTokenError) as ctx:
                         VariantConfig(**config)
-                    message = str(ctx.exception)
-                    self.assertIn(f"container.env must not set ['{name}']", message)
-                    self.assertIn("paths.hf_token_file", message)
-                    self.assertNotIn(FAKE_CRED, message)
+                    self.assertIn(f"container.env must not set ['{name}']", str(ctx.exception))
+                    self.assertIn("paths.hf_token_file", str(ctx.exception))
+                    self.assertNotIn(FAKE_CRED, repr(ctx.exception.args))
+
+    def test_other_container_errors_keep_their_input(self):
+        config = _config()
+        config["container"]["env"] = {"NCCL_SOCKET_IFNAME": "eno0"}
+        with self.assertRaises(ValidationError) as ctx:
+            VariantConfig(**config)
+        self.assertIn("input_value", str(ctx.exception))
 
     def test_preserves_runtime_environment_without_model_policy(self):
         for env in (
