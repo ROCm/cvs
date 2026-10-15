@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 # Import the module under test
 import cvs.lib.verify_lib as verify_lib
+from cvs.lib.unittests import mce_dmesg_fixtures as mce
 
 
 SCANS = (
@@ -172,7 +173,7 @@ class TestVerifyGpuPcieBusWidth(unittest.TestCase):
     @patch("cvs.lib.verify_lib.get_gpu_pcie_bus_dict")
     @patch("cvs.lib.verify_lib.fail_test")
     def test_auto_detects_expected_cards_when_omitted(self, mock_fail_test, mock_get_bus_dict):
-        """Platforms with fewer than 8 GPUs per node (e.g. a 4-GPU Helios-R tray)
+        """Platforms with fewer than 8 GPUs per node (e.g. a 4-GPU node)
         must not be judged against a hardcoded expectation when none is given."""
         mock_get_bus_dict.return_value = {
             "node1": {"card0": {"PCI Bus": "0000:01:00.0"}, "card1": {"PCI Bus": "0000:02:00.0"}},
@@ -690,6 +691,170 @@ class TestVerifyHostLspci(unittest.TestCase):
         self.mock_phdl.exec_cmd_list.return_value = {'node1': 'LnkSta: Speed 16GT/s, Width x8'}
         verify_lib.verify_host_lspci(self.mock_phdl, 32, 16)
         mock_fail_test.assert_called()
+
+
+class TestCorrectedHostMce(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
+
+    def _scan(self, scan, lines, parser='node-scraper', **kwargs):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = parser
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': mce.text(lines)}
+        with patch('cvs.lib.verify_lib.fail_test') as mock_fail, patch.object(verify_lib, 'log') as mock_log:
+            result = scan(phdl, **kwargs)
+        failures = [call.args[0] for call in mock_fail.call_args_list]
+        warnings = [call.args[0] for call in mock_log.warning.call_args_list]
+        return result, failures, warnings, phdl.exec.call_args.args[0]
+
+    def test_full_dmesg_scan_node_scraper_ignores_real_ce(self):
+        for lines in (mce.CE_LINES, mce.CE_LINES_PREFIXED_EMPTY):
+            with self.subTest(prefixed_empty=bool(lines[6])):
+                result, failures, warnings, _ = self._scan(verify_lib.full_dmesg_scan, lines)
+                self.assertEqual(result, {'node1': []})
+                self.assertEqual(failures, [])
+                self.assertEqual(len(warnings), 1)
+                self.assertIn('1 corrected host-CPU MCE(s)', warnings[0])
+                self.assertIn('MC53_STATUS[Over|CE|', warnings[0])
+
+    def test_full_dmesg_scan_node_scraper_fails_ue_fatal_deferred(self):
+        for lines, status in (
+            (mce.UE_LINES, mce.UE_STATUS),
+            (mce.FATAL_LINES, mce.FATAL_STATUS),
+            (mce.DEFERRED_LINES, mce.DEFERRED_STATUS),
+        ):
+            with self.subTest(header=lines[1]):
+                _, failures, warnings, _ = self._scan(verify_lib.full_dmesg_scan, lines)
+                self.assertTrue(failures)
+                self.assertTrue(any(status in msg and 'Uncorrected host-CPU MCE' in msg for msg in failures))
+                self.assertFalse(any('corrected host-CPU' in msg for msg in warnings))
+
+    def test_full_dmesg_scan_node_scraper_mixed_still_fails(self):
+        for lines, status in (
+            (mce.MIXED_CE_UE, mce.UE_STATUS),
+            (mce.MIXED_CE_DEFERRED, mce.DEFERRED_STATUS),
+            (mce.MIXED_UE_CE, mce.UE_STATUS),
+        ):
+            with self.subTest(status=status, ce_first=lines[1] == mce.CE_LINES[1]):
+                _, failures, warnings, _ = self._scan(verify_lib.full_dmesg_scan, lines)
+                self.assertTrue(any(status in msg for msg in failures))
+                self.assertFalse(any(mce.CE_STATUS in msg or mce.CE_HEADER in msg for msg in failures))
+                self.assertEqual(len(warnings), 1)
+                self.assertIn('1 corrected host-CPU MCE(s)', warnings[0])
+
+    def test_legacy_full_dmesg_scan(self):
+        for lines, should_fail in (
+            (mce.CE_LINES, False),
+            (mce.UE_LINES, True),
+            (mce.DEFERRED_LINES, True),
+        ):
+            with self.subTest(header=lines[1]):
+                result, failures, warnings, _ = self._scan(verify_lib.full_dmesg_scan, mce.as_dmesg_T(lines), 'legacy')
+                self.assertEqual(bool(failures), should_fail)
+                if not should_fail:
+                    self.assertEqual(result, {'node1': []})
+                    self.assertEqual(len(warnings), 1)
+        for lines, remaining in (
+            (mce.MIXED_CE_UE, mce.UE_LINES),
+            (mce.MIXED_CE_DEFERRED, mce.DEFERRED_LINES),
+            (mce.MIXED_UE_CE, mce.UE_LINES),
+        ):
+            with self.subTest(header=remaining[1], ce_first=lines[1] == mce.CE_LINES[1]):
+                result, failures, _, _ = self._scan(verify_lib.full_dmesg_scan, mce.as_dmesg_T(lines), 'legacy')
+                self.assertTrue(failures)
+                self.assertEqual(set(result['node1']), set(line for line in mce.as_dmesg_T(remaining) if line))
+
+    def test_ce_block_followed_by_ghes_line_still_fails(self):
+        lines = mce.CE_LINES[:3] + [mce.GHES_LINE] + mce.CE_LINES[3:]
+        _, failures, _, _ = self._scan(verify_lib.full_dmesg_scan, lines)
+        self.assertTrue(failures)
+        result, failures, _, _ = self._scan(verify_lib.full_dmesg_scan, mce.as_dmesg_T(lines), 'legacy')
+        self.assertTrue(failures)
+        self.assertTrue(
+            any('{1}[Hardware Error]:  section_type: general processor error' in line for line in result['node1'])
+        )
+
+    def test_unrelated_error_inside_ce_block_still_fails(self):
+        fault = (
+            'kern  :err   : 2026-10-15T06:24:34,080231+00:00 '
+            'amdgpu 0000:05:00.0: amdgpu: [gfxhub] page fault (src_id:0 ring:153 vmid:8 pasid:32770)'
+        )
+        lines = mce.CE_LINES[:3] + [fault] + mce.CE_LINES[3:]
+        _, failures, _, _ = self._scan(verify_lib.full_dmesg_scan, lines)
+        self.assertTrue(any('page fault' in msg for msg in failures))
+
+    def test_verify_dmesg_for_errors_window_real_node_scraper(self):
+        times = {
+            'Thu Oct 15 06:24:00': datetime.datetime(2026, 10, 15, 6, 24, tzinfo=datetime.timezone.utc),
+            'Thu Oct 15 06:25:00': datetime.datetime(2026, 10, 15, 6, 25, tzinfo=datetime.timezone.utc),
+        }
+        kwargs = {
+            'start_time_dict': {'node1': 'Thu Oct 15 06:24:00'},
+            'end_time_dict': {'node1': 'Thu Oct 15 06:25:00'},
+            'till_end_flag': False,
+        }
+        outside_deferred = [line.replace('T06:24:34,', 'T06:18:47,') for line in mce.DEFERRED_LINES]
+        with patch.object(verify_lib, '_parse_cvs_time', side_effect=times.get):
+            for lines, should_fail in (
+                (mce.CE_LINES_EARLIER + mce.CE_LINES, False),
+                (mce.CE_LINES_EARLIER + mce.DEFERRED_LINES, True),
+                (outside_deferred + mce.CE_LINES, False),
+            ):
+                with self.subTest(should_fail=should_fail, header=lines[-8]):
+                    result, failures, warnings, _ = self._scan(verify_lib.verify_dmesg_for_errors, lines, **kwargs)
+                    self.assertEqual(bool(failures), should_fail)
+                    if should_fail:
+                        self.assertTrue(any(mce.DEFERRED_STATUS in msg for msg in failures))
+                    else:
+                        self.assertEqual(result, {'node1': []})
+                        self.assertEqual(len(warnings), 1)
+                        self.assertIn('1 corrected host-CPU MCE(s)', warnings[0])
+
+    def test_verify_dmesg_for_errors_legacy(self):
+        kwargs = {
+            'start_time_dict': {'node1': 'Thu Oct 15 06:24:00'},
+            'end_time_dict': {'node1': 'Thu Oct 15 06:25:00'},
+            'till_end_flag': False,
+        }
+        result, failures, warnings, _ = self._scan(
+            verify_lib.verify_dmesg_for_errors, mce.as_dmesg_T(mce.CE_LINES), 'legacy', **kwargs
+        )
+        self.assertEqual(result, {'node1': []})
+        self.assertEqual(failures, [])
+        self.assertEqual(len(warnings), 1)
+        _, failures, _, _ = self._scan(
+            verify_lib.verify_dmesg_for_errors, mce.as_dmesg_T(mce.DEFERRED_LINES), 'legacy', **kwargs
+        )
+        self.assertTrue(failures)
+
+    def test_full_journalctl_scan_legacy_greps_status_rows(self):
+        result, failures, _, command = self._scan(
+            verify_lib.full_journalctl_scan, mce.as_journal_short(mce.CE_LINES[1:3]), 'legacy'
+        )
+        self.assertIn('MC[0-9]+_STATUS', command)
+        self.assertEqual(result, {'node1': []})
+        self.assertEqual(failures, [])
+        _, failures, _, _ = self._scan(
+            verify_lib.full_journalctl_scan, mce.as_journal_short(mce.DEFERRED_LINES[1:3]), 'legacy'
+        )
+        self.assertTrue(failures)
+
+    def test_full_journalctl_scan_node_scraper_ignores_ce(self):
+        result, failures, warnings, _ = self._scan(
+            verify_lib.full_journalctl_scan, mce.as_journal_short_iso(mce.CE_LINES)
+        )
+        self.assertEqual(result, {'node1': []})
+        self.assertEqual(failures, [])
+        self.assertEqual(len(warnings), 1)
+
+    def test_full_journalctl_scan_node_scraper_fails_ue_and_deferred(self):
+        for lines, status in ((mce.UE_LINES, mce.UE_STATUS), (mce.DEFERRED_LINES, mce.DEFERRED_STATUS)):
+            with self.subTest(header=lines[1]):
+                _, failures, warnings, _ = self._scan(verify_lib.full_journalctl_scan, mce.as_journal_short_iso(lines))
+                self.assertTrue(
+                    any('Uncorrected host-CPU MCE' in message and status in message for message in failures)
+                )
+                self.assertFalse(any('corrected host-CPU' in message for message in warnings))
 
 
 if __name__ == "__main__":
