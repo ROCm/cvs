@@ -356,6 +356,17 @@ class TestGetGpuNicMappingDict(unittest.TestCase):
             {'gpu_bdf': '0000:75:00.0', 'eth_dev': 'eth3', 'rdma_dev': 'rdma3', 'nic_bdf': '0000:76:00.0'},
         )
 
+    def test_node_with_no_gpus_or_nics_maps_to_empty(self):
+        gpu_dict = {'n1': {'card0': {'PCI Bus': '0000:05:00.0'}}, 'n2': {}}
+        nic_dict = {'n1': {'eth0': {'pci_bus': '0000:06:00.0', 'rdma_dev': 'rdma0'}}, 'n2': {}}
+        with (
+            patch.object(linux_utils.rocm_plib, 'get_gpu_pcie_bus_dict', return_value=gpu_dict),
+            patch.object(linux_utils, 'get_lshw_backend_nic_dict', return_value=nic_dict),
+        ):
+            result = linux_utils.get_gpu_nic_mapping_dict(MagicMock())
+        self.assertEqual(result['n1']['card0']['rdma_dev'], 'rdma0')
+        self.assertEqual(result['n2'], {})
+
     def test_map_is_logged_per_node(self):
         with self.assertLogs(level='INFO') as logs:
             self._map(self.SINGLE_DOMAIN_GPUS, self.SINGLE_DOMAIN_NICS)

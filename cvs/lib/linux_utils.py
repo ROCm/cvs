@@ -860,6 +860,8 @@ def pair_gpus_with_nics(gpu_bdf_list, nic_bdf_list, node=None):
     Returns:
         list: index into nic_bdf_list for each GPU, in GPU order.
     """
+    if not gpu_bdf_list:
+        return []
     if not nic_bdf_list:
         raise ValueError(f'no backend NICs to pair with GPUs on node {node}')
     gpus = [_parse_pci_bdf(bdf) for bdf in gpu_bdf_list]
