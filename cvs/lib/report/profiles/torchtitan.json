@@ -63,6 +63,7 @@
   "lifecycle": {
     "session_labels": [
       "container_launch",
+      "backend_nic_speed",
       "rdma_setup",
       "tokenizer_download",
       "smoke",
