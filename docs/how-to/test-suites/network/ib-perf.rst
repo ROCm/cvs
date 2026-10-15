@@ -26,6 +26,14 @@ Follow these steps to set up the IB performance configuration.
 
 For the complete field reference, see :doc:`/reference/configuration-files/network/ib`.
 
+To test scale-out links across vPODs on MI4XX, enable AFM pairing in ``ibperf_config.json``. The SSH user needs passwordless sudo for ``afmctl show device --json`` (often ``/usr/sbin/afmctl`` on MI4XX). The suite also supports ``intra_vpod`` and explicit ``node_dict[<node>].vpod_id`` labels with ``vpod_source=cluster_file``. GPU instance count follows discovery.
+
+.. code:: json
+
+  "pairing_mode": "inter_vpod",
+  "vpod_source": "afm",
+  "afmctl_path": "/usr/sbin/afmctl"
+
 .. _ib-perf-run-tests:
 
 Run tests

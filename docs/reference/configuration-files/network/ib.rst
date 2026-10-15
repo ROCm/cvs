@@ -25,6 +25,9 @@ The following sample shows the ``ibperf_config.json`` structure:
           "install_dir": "/home/{user-id}/",
           "rocm_dir": "<changeme>",
           "require_dmabuf": "True",
+          "pairing_mode": "sequential",
+          "vpod_source": "afm",
+          "afmctl_path": "afmctl",
           "qp_count_list": [ "8", "16" ],
           "ib_bw_test_list": [ "ib_write_bw", "ib_read_bw", "ib_send_bw" ],
           "ib_lat_test_list": [ "ib_write_lat", "ib_send_lat" ],
@@ -68,6 +71,15 @@ Here's an exhaustive list of the available parameters in the IB Perf configurati
    * - ``require_dmabuf``
      - True
      - Fail before launching if the perftest binary on any test node was built without ROCm DMA-BUF support (``--use_rocm_dmabuf``). Set to False to run without DMA-BUF; the run records ``dmabuf=off``.
+   * - ``pairing_mode``
+     - ``sequential``
+     - Pair consecutive cluster-file nodes, pair across vPODs with ``inter_vpod``, or pair within a vPOD with ``intra_vpod``.
+   * - ``vpod_source``
+     - ``afm``
+     - For vPOD modes, discover the scale-up fabric ``(physical_pod.id, virtual_pod.id)`` key using AFM, or read ``node_dict[<node>].vpod_id`` with ``cluster_file``.
+   * - ``afmctl_path``
+     - ``afmctl``
+     - Path to ``afmctl`` for AFM discovery. The SSH user needs passwordless sudo for ``sudo -n afmctl show device --json``; MI4XX installations may use ``/usr/sbin/afmctl``.
    * - ``qp_count_list``
      - Values:
         - 8 
@@ -141,3 +153,29 @@ The sample ``ib_write_bw`` thresholds are:
       "16": "200.0"
     }
 
+vPOD-aware pairing
+==================
+
+``sequential`` pairs consecutive nodes in cluster-file order. ``inter_vpod`` pairs nodes from different vPODs for scale-out tests; ``intra_vpod`` pairs nodes within each vPOD. Nodes left without a partner are excluded and logged. Discovery errors and pairs excluded during the test cause a test failure.
+
+With ``vpod_source=afm``, the suite runs ``sudo -n afmctl show device --json`` on each node. AFM vPOD identity is ``(scaleup_fabric.physical_pod.id, scaleup_fabric.virtual_pod.id)``. Older AFM builds without these IDs fall back to ``vpod_accelerators``, which is unique only within one physical pod. Overlapping accelerator IDs stop discovery and recommend ``vpod_source=cluster_file``. The SSH user must have passwordless sudo for ``afmctl``.
+
+For an explicit cluster-file mapping, set ``vpod_source`` to ``cluster_file`` and label each node:
+
+.. code:: json
+
+   "node_dict": {
+     "n1": {"vpod_id": "A"},
+     "n2": {"vpod_id": "A"},
+     "n3": {"vpod_id": "B"},
+     "n4": {"vpod_id": "B"}
+   }
+
+``inter_vpod`` then forms ``(n1, n3)`` and ``(n2, n4)``.
+
+GPUs per node
+=============
+
+The number of GPU instances follows GPU discovery. Both nodes of a pair must report the same GPU cards, and all active pairs must use the same card list. A mismatched pair fails and is excluded while eligible pairs continue.
+
+Known limitation: GPU-to-NIC mapping compares PCI bus numbers only and ignores the PCI domain. On MI450 this can map every GPU to the same NIC, so 4-GPU traffic measurements are not meaningful until the shared mapping code is corrected.

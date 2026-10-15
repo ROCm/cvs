@@ -10,7 +10,9 @@ import re
 import json
 import os
 
+import pytest
 
+from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import ibperf_lib
 from cvs.lib.rdma_gid_lib import DEFAULT_GID_TYPE
 
@@ -47,6 +49,40 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize('lat_test', ibperf_lib.configured_lat_tests(ibperf_config))
 
 
+def _create_orch(cluster_dict, nodes):
+    node_dict = {node: cluster_dict['node_dict'][node] for node in nodes}
+    cfg = OrchestratorConfig.from_configs({**cluster_dict, 'node_dict': node_dict}, {})
+    return OrchestratorFactory.create_orchestrator(log, cfg)
+
+
+@pytest.fixture(scope="module")
+def node_pairing(cluster_dict, config_dict):
+    """Resolve server/client pairs from the cluster and ibperf configuration."""
+    node_list = list(cluster_dict['node_dict'])
+    discovery_orchs = []
+
+    def make_handle(nodes):
+        discovery_orchs.append(_create_orch(cluster_dict, nodes))
+        return discovery_orchs[-1].all
+
+    try:
+        return ibperf_lib.resolve_ibperf_node_pairing(node_list, config_dict, cluster_dict, phdl_factory=make_handle)
+    finally:
+        for discovery_orch in discovery_orchs:
+            discovery_orch.close()
+
+
+@pytest.fixture(scope="module")
+def orch(cluster_dict, node_pairing):
+    """Orchestrator over the paired nodes only; overrides the suite conftest's even-prefix ``orch``."""
+    node_list = [node for pair in node_pairing['pairs'] for node in pair]
+    log.info('Connecting to %d paired cluster nodes', len(node_list))
+    log.debug('Paired cluster nodes: %s', node_list)
+    o = _create_orch(cluster_dict, node_list)
+    yield o
+    o.close()
+
+
 def can_read_dmesg(orch):
     if all(get_passwordless_sudo_status(orch.all).values()):
         return True
@@ -54,7 +90,7 @@ def can_read_dmesg(orch):
     return False
 
 
-def test_ib_bw_perf(orch, bw_test, config_dict, request):
+def test_ib_bw_perf(orch, bw_test, config_dict, request, node_pairing):
     globals.error_list = []
     ib_bw_dict[bw_test] = {}
     scan_dmesg = can_read_dmesg(orch)
@@ -115,6 +151,7 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request):
                 rocm_path=rocm_path,
                 use_dmabuf=use_dmabuf,
                 hip_dev_dict=hip_dev_dict,
+                node_pairs=node_pairing['pairs'],
             )
             end_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
             if scan_dmesg:
@@ -129,10 +166,12 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request):
                 )
 
     log.debug('ib_bw_dict: %s', ib_bw_dict)
+    for err in node_pairing['errors']:
+        fail_test(err)
     update_test_result()
 
 
-def test_ib_lat_perf(orch, lat_test, config_dict, request):
+def test_ib_lat_perf(orch, lat_test, config_dict, request, node_pairing):
     globals.error_list = []
     ib_lat_dict[lat_test] = {}
     scan_dmesg = can_read_dmesg(orch)
@@ -190,6 +229,7 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request):
             rocm_path=rocm_path,
             use_dmabuf=use_dmabuf,
             hip_dev_dict=hip_dev_dict,
+            node_pairs=node_pairing['pairs'],
         )
         end_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
         if scan_dmesg:
@@ -200,6 +240,8 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request):
             )
 
     log.debug('ib_lat_dict: %s', ib_lat_dict)
+    for err in node_pairing['errors']:
+        fail_test(err)
     update_test_result()
 
 
