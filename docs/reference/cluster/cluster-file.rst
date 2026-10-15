@@ -6,7 +6,11 @@
 Cluster Validation Suite (CVS) cluster file: configuration and backend selection
 ***************************************************************************
 
-Each ``cvs run`` invocation is pointed at a cluster file via ``--cluster_file <path>``. The cluster file declares the SSH credentials, the node list, and the **execution backend** that runs the workload. CVS ships two starter templates:
+In SSH mode, each ``cvs run`` invocation is pointed at a cluster file via ``--cluster_file <path>``. The cluster file declares the SSH credentials, the node list, and the **execution backend** that runs the workload. CVS ships two starter templates:
+
+.. note::
+
+  Under a Slurm or SPUR job step ``--cluster_file`` is optional: CVS generates ``<workspace>/cvs_runs/<job_id>/cluster_agents.json`` from the job's node list. See :ref:`scheduler-cluster-agents`.
 
 .. list-table::
    :widths: 3 2 6
@@ -24,7 +28,7 @@ Each ``cvs run`` invocation is pointed at a cluster file via ``--cluster_file <p
 
 Copy the template that matches your cluster shape, edit the placeholders, and pass it to ``cvs run`` and ``cvs exec``. The choice of backend is made entirely in the cluster file. The ``cvs run`` invocation does not change.
 
-Ensure :doc:`/reference/cluster/passwordless-ssh` is configured before running CVS against the cluster.
+For SSH-mode runs, configure :doc:`/reference/cluster/passwordless-ssh` before running CVS against the cluster.
 
 Backends
 ========
@@ -122,7 +126,10 @@ The following table describes every key accepted at the top level of the cluster
      - Custom environment variables exported on every host before each command. Honored by the legacy parallel-SSH path; ``cvs exec`` does not export this block.
    * - ``node_dict``
      - (required)
-     - Cluster member nodes keyed by public IP or hostname. Each value is ``{"bmc_ip": "NA", "vpc_ip": "..."}``. ``vpc_ip`` is the address reachable from other nodes; set it equal to the public IP if there is no separate VPC.
+     - Cluster member nodes keyed by public IP or hostname. Each value is ``{"bmc_ip": "NA", "vpc_ip": "..."}``. ``vpc_ip`` is the address reachable from other nodes; set it equal to the public IP if there is no separate VPC. In scheduler-managed runs CVS adds ``agent_port`` to each node.
+   * - ``agent_token_file``
+     - (generated)
+     - Written by CVS in scheduler-managed runs only; path to the agent bearer token. Do not set by hand.
    * - ``container``
      - ``{}``
      - Container backend configuration. Required when ``orchestrator`` is ``container``. See the next section.

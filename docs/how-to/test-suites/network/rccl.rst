@@ -153,6 +153,8 @@ Run under SPUR or Slurm (managed mode)
 
 Start one CVS task per node inside an allocation. Rank 0 runs pytest and the other ranks serve commands through HTTP agents; an allocation shell alone does not start the agents.
 
+For scheduler detection, requirements, and ``cluster_agents.json``, see :doc:`/how-to/run-under-scheduler`.
+
 For SPUR:
 
 .. code:: bash
@@ -174,12 +176,12 @@ For Slurm:
       --capture=tee-sys -vvv -s
 
 - ``--workspace`` or ``CVS_WORKSPACE`` is required for every managed run. It must name writable shared storage visible at the same path on all nodes; otherwise CVS exits before starting. The run directory is ``<workspace>/cvs_runs/<job_id>/``, where ``<job_id>`` is ``$SLURM_JOB_ID`` (also set by SPUR).
-- ``--cluster_file`` is optional. CVS synthesizes a job-owned cluster file using each node's hostname as its ``vpc_ip``. Pass a cluster file when selecting the container orchestrator.
+- ``--cluster_file`` is optional. CVS synthesizes a job-owned cluster file using each node's hostname as its ``vpc_ip``. Pass a cluster file to add per-node metadata or select the container orchestrator; see :ref:`scheduler-cluster-agents`.
 - Scheduler detection checks SPUR before Slurm. Override it with ``CVS_SCHEDULER=spur`` or ``CVS_SCHEDULER=slurm``. The override does not remove the job-step requirement. Configure ``SPUR_CONTROLLER_ADDR`` as your Spur deployment requires.
 - CVS launches each RCCL workload as a nested ``spur run --overlap --mpi=pmix`` or ``srun --overlap --mpi=pmix`` step. It supplies MPI/PMIx settings from ``mpi_params``. The ``env_source_script`` must still exist at the same path on every node.
 - Before the first launch, CVS writes a sentinel through the head node into the result directory (``cvs_params.rccl_result_file``, default ``{run_dir}/rccl_result_file.json``) and reads it back. If the directory is unwritable or unreachable, the run fails early and the error names ``--workspace``/``CVS_WORKSPACE``.
 - Under SPUR, ``test_rccl_pairwise`` and ``test_rccl_incremental`` are skipped with the reason "SPUR 0.11 ignores --nodelist on job steps; pairwise/incremental RCCL is not supported until Spur applies -w to nested steps." Host and network collection still runs; ``test_gen_graph`` finds no results, so no Run Deck is written. Under Slurm, subset steps use ``-w`` and pairwise runs normally.
-- Every suite run in the same allocation shares one run directory because the run ID is the job ID. Different suites use files named by test-file stem. Re-running the same suite in that allocation overwrites ``<stem>.html`` and ``<stem>.log`` and clears ``<stem>_html/``. Pass distinct ``--html`` and ``--log-file`` paths per repeat to keep both; a new timestamped zip is written each time.
+- Every suite run in the same allocation shares one run directory because the run ID is the job ID. Different suites use files named by test-file stem. Re-running the same suite in that allocation overwrites ``<stem>.html`` and ``<stem>.log`` and clears ``<stem>_html/``. Pass distinct ``--html`` and ``--log-file`` paths per repeat to keep both; a new timestamped zip is written each time. To avoid a race with stale agent rendezvous files on repeated managed runs, use a distinct ``--workspace`` per run (see :ref:`scheduler-run-layout`).
 - Only rank 0 writes the report. Collect artifacts from the shared workspace, rather than node-local paths.
 
 .. _rccl-read-results:

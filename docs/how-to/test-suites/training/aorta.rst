@@ -80,6 +80,8 @@ allocation shell, or a batch script that never starts a step, is not a managed r
 (``SLURM_STEP_ID`` stays unset). CVS then requires ``--cluster_file`` and SSH access,
 as on bare metal.
 
+For scheduler detection, requirements, and ``cluster_agents.json``, see :doc:`/how-to/run-under-scheduler`.
+
 - Request one node for ``aorta_single`` and two or more for ``aorta_distributed``, with
   ``--ntasks-per-node 1`` and ``--mpi=none``. Request at least ``gpus_per_node`` GPUs
   on each node.
