@@ -9,11 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- RCCL sample config gates scale-out `all_reduce_perf` at the published MI350X/MI355X acceptance bar: `results.thor.all_reduce_perf-float-16` requires busBw ≥ 350 GB/s at 8589934592 bytes. MI300X clusters must override to 304. Collectives without a published bar are `null` and are not gated. `verify_bus_bw` remains `"False"` by default.
+- RCCL `cvs_params.bus_bw_tolerance` (default 0.95): fraction in (0, 1] of the reference bus bandwidth a measurement must reach; an invalid value fails the test. The sample `rccl_config.json` sets 1.0.
 - RCCL perf, regression and pairwise report each bandwidth or dip check per collective, data type and message size, or pairwise phase and node, as a pytest sub-test. The HTML report expands each parent row into per-case pass/fail rows.
 - Aorta `aorta_single` and `aorta_distributed` write an Aorta Run Deck (`<suite>_html/aorta_run_deck.html` and `.json`) beside the pytest HTML report, with a run card showing each configured threshold's verdict from the threshold gate, a lifecycle timeline, a threshold gate matrix, per-rank time and ratio charts, and a full results table. Pass/fail gating is unchanged.
 
 ### Changed
 
+- A `null` RCCL `results` entry now means 'no published threshold': with `verify_bus_bw` on it logs and skips the bandwidth gate instead of failing. Absent or empty entries still fail.
 - ibperf now probes every test node's perftest binary for ROCm DMA-BUF support before launching. It fails with the node, the binary path and the build flag when support is missing, unless `ibperf.require_dmabuf` is `"False"`. Whether DMA-BUF was used is recorded as a `dmabuf` user property and in the Excel sheet headings. `run_ib_perf_bw_test` / `run_ib_perf_lat_test` no longer take `shdl` and accept `use_dmabuf`. `check_perftest_dmabuf_support` is replaced by `check_perftest_dmabuf`.
 - Aorta threshold validation and trace collection report each threshold and each node as a pytest sub-test, shown as rows of the parent test in the HTML report, with the measured value next to each threshold, and as `cvs_aorta_subtest` properties in JUnit XML that carry the outcome, measured value, gate and failure message. JUnit `<testcase>` names and count are unchanged, but each sub-test adds one to the `testsuite` `tests` total, and a failed sub-test adds its own `<failure>` to the parent `<testcase>` next to the parent's failure, so `failures` counts both.
 - RCCL perf, regression, and pairwise suites use the orchestrator for workload execution, including container-aware launches and cleanup. `RcclJob` and `RcclJob.from_config` now take one `orch` argument in place of the previous two execution handles; `OpenMPI.prepare`, `MpiRun`, and `Srun` callers must also migrate.
@@ -26,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- RCCL bus-bandwidth verification fails when a configured message size has no matching result row, instead of silently skipping it. Configs whose `end_msg_size` does not reach a configured size now fail with `verify_bus_bw` on.
+- NIC/rank-keyed `results` entries are validated and normalized like flat entries. A `bus_bw`-wrapped entry is now checked instead of silently matching no size, and invalid values fail with their config path instead of raising inside the verifier.
 - ibperf `verify_bw` now enforces `expected_results`. Previously the bandwidth and latency
   thresholds were never evaluated, so `ib_perf_bw_test` passed regardless of measured performance.
   Every GPU instance is checked against the threshold for its message size and QP count, and
@@ -34,7 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `"True"` may now report failures; re-baseline thresholds for your cluster.
 - Platform `host_configs_cvs` now checks the network link speed of every backend NIC (`test_check_be_nic_link_speed`) against `nic_link_speed` (default `400000` Mb/s) and reports node, interface and actual speed on mismatch. Set `nic_link_interfaces` to the backend netdev names; without it the backend NICs are auto-detected, and a node with fewer backend NICs than another node fails. Existing configs without `nic_link_speed` gate at 400000 and will fail on NICs running at another speed.
 - Pytest sub-test reports no longer write their own per-test log file or Full Log link, which could replace the parent test's Full Log link.
-
 - RCCL bandwidth thresholds and dip checks now read the configured `rccl.results` table.
   The shipped dip-check defaults are now `"False"`. Existing configs with
   `verify_bw_dip` or `verify_lat_dip` set to `"True"`, including copies of the
