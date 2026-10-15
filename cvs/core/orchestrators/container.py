@@ -10,6 +10,7 @@ from cvs.core.scheduler import is_managed_compute
 import getpass
 import re
 from cvs.core.runtimes import RuntimeFactory
+from cvs.lib.env_lib import redact_secrets
 
 
 DEFAULT_SSHD_PORT = 2224
@@ -743,7 +744,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         )
 
         self.log.info("Launching MPI job in containers")
-        self.log.debug(f"MPI command: {full_mpi_cmd}")
+        self.log.debug(f"MPI command: {redact_secrets(full_mpi_cmd)}")
 
         # Execute on head node
         return self.exec_on_head(full_mpi_cmd, timeout=600)

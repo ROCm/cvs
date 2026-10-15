@@ -12,6 +12,7 @@ import shlex
 import time
 
 from cvs.lib import globals
+from cvs.lib.env_lib import redact_secrets
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -180,7 +181,7 @@ def launch_docker_container(
     cmd = cmd + f' --shm-size {shm_size} --name {container_name} {image} '
     cmd = cmd + 'tail -f /dev/null'
 
-    log.info(f'cmd = {cmd}')
+    log.info(f'cmd = {redact_secrets(cmd)}')
     out_dict = phdl.exec(cmd, timeout=timeout)
     time.sleep(15)
 
