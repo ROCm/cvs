@@ -32,6 +32,12 @@
       "title": "MORI-IO and IBGDA by message size",
       "bind": "datasets.status_matrix.metric_charts"
     },
-    {"type": "table", "id": "results", "title": "Full results", "bind": "datasets.status_matrix.meta.results_table"}
+    {
+      "type": "table",
+      "id": "results",
+      "title": "Full results",
+      "bind": "datasets.status_matrix.meta.results_table",
+      "max_height": "480px"
+    }
   ]
 }

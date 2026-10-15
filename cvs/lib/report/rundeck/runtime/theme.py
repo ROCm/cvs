@@ -195,6 +195,8 @@ footer.page-foot { text-align: center; color: var(--muted); font-size: 0.75rem; 
 .hm-pass { background: rgba(61,214,140,0.35); }
 .hm-fail { background: rgba(255,92,106,0.35); }
 .hm-na { color: var(--na); }
+.results-scroll .results-table th { position: sticky; top: 0; z-index: 1;
+  background: linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.04)), var(--panel); }
 @media (max-width: 640px) {
   body { padding: 1rem; }
   .hero-head { flex-direction: column; }

@@ -330,7 +330,7 @@ class DeckCardRenderer:
         return f"{banner}<div class='cells'>{''.join(cards) or empty_cells}</div>"
 
     @staticmethod
-    def render_table(_payload: dict, _card: dict, data: Any) -> str:
+    def render_table(_payload: dict, card: dict, data: Any) -> str:
         table = data if isinstance(data, dict) else {}
         # .results-wrap gives the (potentially wide, all-metrics) table a
         # horizontal scrollbar instead of overflowing the card.
@@ -339,7 +339,11 @@ class DeckCardRenderer:
             table.get("rows") or [],
             empty_message="No results table rows.",
         )
-        return f"<div class='results-wrap'>{inner}</div>"
+        max_height = (card or {}).get("max_height")
+        if not max_height:
+            return f"<div class='results-wrap'>{inner}</div>"
+        style = f"max-height:{html.escape(str(max_height))};overflow-y:auto"
+        return f"<div class='results-wrap results-scroll' style='{style}'>{inner}</div>"
 
     @staticmethod
     def render_status_matrix(payload: dict, _card: dict, data: Any) -> str:

@@ -63,6 +63,10 @@
             "description": "Optional help line. status_matrix shows this instead of the generic item-breakdown hint."
           },
           "when_empty": { "enum": ["hide"] },
+          "max_height": {
+            "type": "string",
+            "description": "table: CSS max-height; the table scrolls vertically under a sticky header row."
+          },
           "columns_from": { "type": "string" }
         }
       }
