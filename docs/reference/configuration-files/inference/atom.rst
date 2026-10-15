@@ -84,7 +84,7 @@ still runs with ``cvs run atom``.
      - Native ATOM MI355X copy; ``gpu_arch`` mi355x; bring-up thresholds; ``mtp3`` benchmark cells and GSM8K lab-run
    * - ``mi355x_atom_vllm_deepseek-v4-pro``
      - ``_single``
-     - vLLM parity for V4-Pro FP4 TP8; fp8 KV cache and block size 256; same 1K/1K and 128/32 cells; bring-up; throughput and ``gsm8k_flex`` lab-run, remaining accuracy pending
+     - vLLM parity for V4-Pro FP4 TP8; fp8 KV cache and block size 256; same 1K/1K and 128/32 cells; bring-up; throughput, ``gsm8k_flex``, and ``gsm8k_strict`` lab-run, remaining accuracy pending
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
      - vLLM parity (serving schema); distributed uses PP=2
