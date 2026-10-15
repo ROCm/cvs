@@ -1,5 +1,5 @@
 {
-  "_comment": "GLM-5.2-FP8 native openai_server for MI300X/MI308X. Recipe table and the vLLM MI300 section use TP8. Bring-up thresholds. Select perf for the base server or mtp3 for MTP with 3 speculative tokens.",
+  "_comment": "GLM-5.2-FP8 native openai_server for MI300X/MI308X. Recipe table and the vLLM MI300 section use TP8. The MI325X perf and mtp3 runs passed smoke, server health, the recipe cells, and GSM8K. Thresholds stay bring-up. Select perf for the base server or mtp3 for MTP with 3 speculative tokens.",
   "gpu_arch": "mi3xx",
   "schema_version": 2,
   "framework": "atom",
