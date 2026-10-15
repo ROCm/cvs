@@ -105,6 +105,9 @@ still runs with ``cvs run atom``.
      - Qwen FP8 SGLang parity; ``_single`` lab-validated (hybrid mamba ``no_buffer``,
        writable ``HF_HUB_CACHE``, ``SGLANG_ROCM_ARCH=gfx942``); distributed PP=2 pending.
        Image must include ``aiter.ops.flydsl.moe_common``.
+   * - ``mi3xx_atom_sglang_qwen3.5-397b-a17b_fp8-gfx950``
+     - ``_single``, ``_distributed``
+     - Qwen FP8 SGLang parity on MI355X; ``gpu_arch`` mi355x; bring-up thresholds
 
 Config profiles
 ===============
