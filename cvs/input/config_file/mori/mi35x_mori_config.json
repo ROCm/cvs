@@ -1,4 +1,5 @@
 {
+    "gpu_name": "mi35x",
     "no_of_nodes": "2",
     "_example_options_orchestrator": "container|baremetal",
     "orchestrator": "container",

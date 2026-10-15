@@ -12,7 +12,7 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.mori_lib import DMESG_DATE_CMD
+from cvs.lib.mori_lib import DMESG_DATE_CMD, io_initiator
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders, resolve_test_config_placeholders
 
 log = globals.log
@@ -95,6 +95,24 @@ def orch(cluster_dict, mori_dict, lifecycle):
             o.teardown_containers()
     finally:
         o.close()
+
+
+@pytest.fixture(scope="module")
+def cvs_results_dict():
+    return {}
+
+
+@pytest.fixture(scope="module")
+def mori_variant_config(mori_dict, orch):
+    """Run-card fields for the mori Run Deck."""
+    return {
+        "gpu_name": mori_dict.get("gpu_name"),
+        "node_count": len(orch.hosts),
+        "mori_device_list": (mori_dict.get("env") or {}).get("MORI_RDMA_DEVICES"),
+        "container_image": orch.container_config.get("image") if orch.orchestrator_type == "container" else None,
+        "hosts": list(orch.hosts),
+        "initiator": io_initiator(mori_dict, orch),
+    }
 
 
 def pytest_collection_modifyitems(items):
