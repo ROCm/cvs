@@ -501,6 +501,32 @@ class TestMoriIoLaunch(_MoriBenchCase):
         self.assertIn('BW is lower than expected', globals.error_list[0])
         self.assertIn('Latency is higher than expected', globals.error_list[1])
 
+    def test_op_type_and_qp_count_reach_benchmark(self):
+        # Without these, test_io_write ran reads and the 8-QP cases repeated the 1-QP ones.
+        orch = _ContainerFakeOrch()
+        MoriBenchmark(orch, _mori_dict()).run_mori_torch_io_test(
+            op_type='write', buffer_size=32768, transfer_batch_size=256, no_of_qp_per_transfer=8
+        )
+        launch = orch.cmd_list_calls[0]['cmds']
+        for cmd in launch:
+            self.assertIn('--op-type write ', cmd)
+            self.assertIn('--num-qp-per-transfer 8 ', cmd)
+            self.assertNotIn('--op-type read', cmd)
+            self.assertIn('io_write_32768_256_8_node', cmd)
+
+    def test_buffer_size_caps_the_sweep(self):
+        # Without --sweep-max-size, --all sweeps to benchmark.py's 1 MiB default whatever the buffer size.
+        for buffer_size in (131072, 4194304):
+            with self.subTest(buffer_size=buffer_size):
+                orch = _ContainerFakeOrch()
+                MoriBenchmark(orch, _mori_dict()).run_mori_torch_io_test(
+                    op_type='read', buffer_size=buffer_size, transfer_batch_size=128
+                )
+                for cmd in orch.cmd_list_calls[0]['cmds']:
+                    self.assertIn('--all ', cmd)
+                    self.assertEqual(re.findall(r'--buffer-size (\d+)', cmd), [str(buffer_size)])
+                    self.assertEqual(re.findall(r'--sweep-max-size (\d+)', cmd), [str(buffer_size)])
+
     def test_kill_patterns_match_benchmark_but_not_the_kill_shell(self):
         # pkill -f would otherwise kill the bash running it (docker exec / ssh), losing the result.
         orch = _ContainerFakeOrch()

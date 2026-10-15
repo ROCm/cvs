@@ -124,7 +124,8 @@ def test_concurrent_put_signal_thread(mori_obj):
 
 def test_ibgda_write_test(mori_obj):
     globals.error_list = []
-    mori_obj.run_ibgda_dist_write(no_of_procs=2, min_val=2, max_val='64m', ctas=2, threads=256, qp_count=4, iters=1)
+    # dist_write allocates max_val per thread (2 CTAs x 256 threads); 4m keeps that at 2 GiB per GPU.
+    mori_obj.run_ibgda_dist_write(no_of_procs=2, min_val=2, max_val='4m', ctas=2, threads=256, qp_count=4, iters=1)
 
     update_test_result()
 
@@ -133,7 +134,8 @@ def test_ibgda_write_test(mori_obj):
 # Input Test Matrix
 #
 # This matrix defines combinations of:
-#   - buffer_size              : Size of the IO buffer (bytes)
+#   - buffer_size              : Largest message size (bytes); each case sweeps
+#                                8 B doubling up to it
 #   - transfer_batch_size      : Number of transfers grouped per batch
 #   - no_of_qp_per_transfer    : Number of Queue Pairs used per transfer
 #
@@ -141,18 +143,19 @@ def test_ibgda_write_test(mori_obj):
 # The matrix is used by pytest.parametrize to generate multiple test cases,
 # allowing systematic coverage of different IO and parallelism settings.
 #
-# These combinations are chosen to:
-#   - Exercise different buffer sizes
-#   - Validate single-QP vs multi-QP transfers
-#   - Test multiple batch sizes for scalability
+# Two sweeps with the same batch size would only repeat each other's smaller
+# sizes, so each size range gets its own batch size:
+#   - up to 128 KiB at batch 256: paged KV-cache blocks (one block of one layer
+#     per transfer, hundreds of blocks per request)
+#   - up to 4 MiB at batch 128: coalesced per-layer KV regions; the link is
+#     saturated well before 4 MiB, so larger sizes add runtime, not information
+#   - single-QP vs multi-QP for each
 # -----------------------------------------------------------------------------
 input_test_matrix = [
-    (16384, 128, 1),
-    (16384, 128, 8),
-    (32768, 128, 1),
-    (32768, 128, 8),
-    (32768, 256, 1),
-    (32768, 256, 8),
+    (131072, 256, 1),
+    (131072, 256, 8),
+    (4194304, 128, 1),
+    (4194304, 128, 8),
 ]
 
 
@@ -174,7 +177,11 @@ input_test_matrix = [
 def test_io_read(mori_obj, buffer_size, transfer_batch_size, no_of_qp_per_transfer):
     globals.error_list = []
     mori_obj.run_mori_torch_io_test(
-        op_type='read', enable_sess=True, buffer_size=buffer_size, transfer_batch_size=transfer_batch_size
+        op_type='read',
+        enable_sess=True,
+        buffer_size=buffer_size,
+        transfer_batch_size=transfer_batch_size,
+        no_of_qp_per_transfer=no_of_qp_per_transfer,
     )
     update_test_result()
 
@@ -192,7 +199,11 @@ def test_io_read(mori_obj, buffer_size, transfer_batch_size, no_of_qp_per_transf
 def test_io_write(mori_obj, buffer_size, transfer_batch_size, no_of_qp_per_transfer):
     globals.error_list = []
     mori_obj.run_mori_torch_io_test(
-        op_type='write', enable_sess=True, buffer_size=buffer_size, transfer_batch_size=transfer_batch_size
+        op_type='write',
+        enable_sess=True,
+        buffer_size=buffer_size,
+        transfer_batch_size=transfer_batch_size,
+        no_of_qp_per_transfer=no_of_qp_per_transfer,
     )
     update_test_result()
 

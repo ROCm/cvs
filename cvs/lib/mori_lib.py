@@ -510,10 +510,14 @@ class MoriBenchmark:
         - Verifies bandwidth and latency against expected baselines
 
         Args:
-        op_type (str): IO operation type ('read' or 'write'), used to select
-                       expected results.
+        op_type (str): IO operation type ('read' or 'write'), passed to
+                       benchmark.py as --op-type and used to select expected results.
         enable_sess (bool): Enable MORI session mode if True.
-        buffer_size (int): Size of the IO buffer in bytes.
+        buffer_size (int): Largest message size in bytes, passed as both --buffer-size
+                           and --sweep-max-size. Under --all, benchmark.py sizes its buffer
+                           to max(--buffer-size, --sweep-max-size) and sweeps 8 B doubling
+                           up to --sweep-max-size (default 1 MiB), so --buffer-size alone
+                           never changes a result.
         transfer_batch_size (int): Number of transfers batched together.
         no_of_qp_per_transfer (int): Number of Queue Pairs per transfer.
         no_of_initiators (int): Number of initiator devices.
@@ -525,7 +529,8 @@ class MoriBenchmark:
 
         # Build command-line options for the MORI benchmark
         # These options control IO batching, buffer sizing, and device topology
-        cmd_opts = f'--enable-batch-transfer --buffer-size {buffer_size} '
+        cmd_opts = f'--op-type {op_type} --enable-batch-transfer --buffer-size {buffer_size} '
+        cmd_opts = cmd_opts + f' --sweep-max-size {buffer_size}'
         cmd_opts = cmd_opts + f' --transfer-batch-size {transfer_batch_size}'
         cmd_opts = cmd_opts + f' --num-qp-per-transfer {no_of_qp_per_transfer}'
         cmd_opts = cmd_opts + f' --num-initiator-dev {no_of_initiators}'
