@@ -338,8 +338,27 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
         with patch("cvs.lib.verify_lib.fail_test"):
             verify_lib.verify_dmesg_during_test(phdl, "Starting Test all_reduce_perf", "End of Test all_reduce_perf")
 
-        info_call = mock_log.info.call_args_list[-1]
-        self.assertEqual(info_call[0][2], 2)
+        self.assertIs(phdl.exec.call_args.kwargs.get("print_console"), False)
+        body_idx = next(
+            i
+            for i, call in enumerate(mock_log.info.call_args_list)
+            if call.args and "dmesg during test (%d lines)" in str(call.args[0])
+        )
+        body_call = mock_log.info.call_args_list[body_idx]
+        self.assertEqual(body_call[0][2], 2)
+        self.assertIn("Starting Test all_reduce_perf", body_call[0][3])
+        self.assertIn("End of Test all_reduce_perf", body_call[0][3])
+        framed = [call.args[0] for call in mock_log.info.call_args_list[body_idx - 3 : body_idx + 2]]
+        self.assertEqual(
+            framed,
+            [
+                verify_lib._DMESG_LOG_SEP,
+                "Host == %s ==",
+                verify_lib._DMESG_LOG_SEP,
+                body_call.args[0],
+                verify_lib._DMESG_LOG_SEP,
+            ],
+        )
 
     @unittest.skipUnless(_HAS_BASH_AND_AWK, "requires bash and awk")
     def test_awk_slice_returns_last_marker_pair_only(self):
