@@ -187,7 +187,7 @@ def _results_table(io_cases, statuses, ibgda, titles, names):
                     [
                         titles[op].split(" · ")[0],
                         _case_label(*case_key[1:]),
-                        _int(size),
+                        _tick(_int(size)),
                         entry.get("Avg_BW_GBps", "—"),
                         entry.get("Slowest_rank", "—"),
                         entry.get("Slowest_rank_BW_GBps", "—"),
@@ -200,13 +200,13 @@ def _results_table(io_cases, statuses, ibgda, titles, names):
     for host in sorted(ibgda, key=lambda h: (h not in names, names.get(h, h))):
         for row in sorted(ibgda[host]["rows"], key=lambda r: _int(r.get("size_bytes"))):
             rows.append(
-                [titles["ibgda_write"].split(" · ")[0], names.get(host, host), _int(row["size_bytes"])]
+                [titles["ibgda_write"].split(" · ")[0], names.get(host, host), _tick(_int(row["size_bytes"]))]
                 + [row.get("bandwidth_gb", "—"), "—", "—", "—", "—", row.get("rate_mpps", "—"), ibgda[host]["status"]]
             )
     headers = [
         "Operation",
         "Case or node",
-        "Message size (B)",
+        "Message size",
         "Bandwidth (GB/s)",
         "Slowest rank",
         "Slowest rank BW (GB/s)",
