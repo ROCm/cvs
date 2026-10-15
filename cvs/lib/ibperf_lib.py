@@ -5,13 +5,17 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import json
 import logging
 import math
 import re
 import shlex
 import time
 import xlsxwriter
+from collections import Counter
+from xlsxwriter.utility import xl_col_to_name
 
+from cvs.lib.preflight.scaleup_fabric import parse_afmctl_device_json
 from cvs.lib.utils_lib import *
 from cvs.lib.rdma_gid_lib import (
     DEFAULT_GID_TYPE,
@@ -28,6 +32,10 @@ from cvs.lib.rdma_gid_lib import (
 from cvs.lib.utils.polling import poll_until
 
 log = logging.getLogger(__name__)
+
+IBPERF_PAIRING_MODES = ('sequential', 'intra_vpod', 'inter_vpod')
+IBPERF_VPOD_SOURCES = ('afm', 'cluster_file')
+_AFM_ROOT_ERROR_RE = re.compile(r'requires root privileges|sudo: a (?:password|terminal) is required', re.I)
 
 DMABUF_SUPPORTED = 'supported'
 DMABUF_UNSUPPORTED = 'unsupported'
@@ -62,6 +70,276 @@ PERFTEST_BW_RESULT_TIMEOUT_S = 80
 PERFTEST_LAT_RESULT_TIMEOUT_S = 20
 # The command file needs bash because a node's agent can run commands under dash, which has no ``source``.
 PERFTEST_LAUNCH_CMD = f'{_GPU_ENV_UNSET} bash /tmp/ib_cmds_file.txt'
+
+
+def build_ibperf_node_pairs(node_list, pairing_mode='sequential', vpod_map=None):
+    """Return ordered (server, client) pairs and unpaired nodes in input order."""
+    if pairing_mode not in IBPERF_PAIRING_MODES:
+        raise ValueError(f'Invalid ibperf pairing_mode {pairing_mode!r}; allowed values: {IBPERF_PAIRING_MODES}')
+    if pairing_mode == 'sequential':
+        return (
+            [(node_list[i], node_list[i + 1]) for i in range(0, len(node_list) - 1, 2)],
+            list(node_list[len(node_list) // 2 * 2 :]),
+        )
+    if vpod_map is None:
+        raise ValueError(f'vpod_map is required for ibperf pairing_mode {pairing_mode}')
+
+    groups = {}
+    for node in node_list:
+        key = vpod_map.get(node)
+        if key is not None:
+            groups.setdefault(key, []).append(node)
+
+    pairs = []
+    if pairing_mode == 'intra_vpod':
+        for group in groups.values():
+            pairs.extend((group[i], group[i + 1]) for i in range(0, len(group) - 1, 2))
+    else:
+        remaining = [list(group) for group in groups.values()]
+        while sum(bool(group) for group in remaining) >= 2:
+            first, second = sorted(
+                (index for index, group in enumerate(remaining) if group),
+                key=lambda index: (-len(remaining[index]), index),
+            )[:2]
+            server_group, client_group = sorted((first, second))
+            pairs.append((remaining[server_group].pop(0), remaining[client_group].pop(0)))
+
+    paired_nodes = {node for pair in pairs for node in pair}
+    return pairs, [node for node in node_list if node not in paired_nodes]
+
+
+def get_cluster_file_vpod_map(cluster_dict):
+    """Read node vPOD labels from a cluster configuration."""
+    vpod_map = {}
+    errors = []
+    for node, details in cluster_dict['node_dict'].items():
+        value = details.get('vpod_id')
+        label = str(value).strip() if value is not None else ''
+        if label:
+            vpod_map[node] = label
+        else:
+            errors.append(f'{node}: node_dict entry has no vpod_id (required when ibperf.vpod_source is cluster_file)')
+    return vpod_map, errors
+
+
+def _afm_pod_id(section):
+    if isinstance(section, dict) and section.get('id') is not None:
+        return str(section['id']).strip()
+    return ''
+
+
+def extract_afm_pod_keys(output):
+    """Read keys unique across racks because virtual pod IDs are scoped by physical pod IDs."""
+    try:
+        document = json.loads(output)
+    except (TypeError, ValueError):
+        return []
+    records = document.get('device', document.get('devices')) if isinstance(document, dict) else document
+    if not isinstance(records, list):
+        return []
+    keys = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        spec = record['spec'] if isinstance(record.get('spec'), dict) else record
+        fabric = spec.get('scaleup_fabric')
+        if not isinstance(fabric, dict):
+            fabric = {}
+        physical = _afm_pod_id(fabric.get('physical_pod'))
+        virtual = _afm_pod_id(fabric.get('virtual_pod'))
+        keys.append((physical, virtual) if physical and virtual else None)
+    return keys
+
+
+def parse_afm_vpod_membership(out_dict):
+    """Parse per-node AFM output into vPOD keys and discovery errors."""
+    pod_keyed = {}
+    fallback = {}
+    accels = {}
+    errors = []
+    for node, output in out_dict.items():
+        root_match = _AFM_ROOT_ERROR_RE.search(output or '')
+        if root_match:
+            line = next(line.strip() for line in output.splitlines() if root_match.group(0) in line)
+            errors.append(
+                f'{node}: afmctl needs root ({line}); CVS runs "sudo -n afmctl show device --json", '
+                'so grant the SSH user passwordless sudo for afmctl'
+            )
+            continue
+        devices, parse_errors = parse_afmctl_device_json(output)
+        if parse_errors or not devices:
+            errors.append(f'{node}: AFM vPOD discovery failed: {"; ".join(parse_errors) or "no devices"}')
+            continue
+        accels[node] = {d['accelerator_id'] for d in devices if d.get('accelerator_id') is not None}
+        keys = extract_afm_pod_keys(output)
+        present = set(keys) - {None}
+        if len(present) > 1:
+            errors.append(f'{node}: AFM devices report multiple vPODs: {sorted(present)}')
+        elif present and None in keys:
+            errors.append(f'{node}: AFM reports scaleup_fabric physical_pod/virtual_pod IDs on only some devices')
+        elif present:
+            pod_keyed[node] = next(iter(present))
+        else:
+            sets = {tuple(sorted(d.get('vpod_accelerators') or [])) for d in devices} - {()}
+            if not sets:
+                errors.append(f'{node}: AFM reports no vPOD membership')
+            elif len(sets) > 1:
+                errors.append(f'{node}: AFM devices report multiple vPOD memberships: {sorted(sets)}')
+            else:
+                fallback[node] = next(iter(sets))
+
+    if pod_keyed:
+        for node in fallback:
+            errors.append(
+                f'{node}: AFM does not report scaleup_fabric physical_pod/virtual_pod IDs while other nodes do; '
+                'cannot compare vPOD membership across AFM versions'
+            )
+        vpod_map = dict(pod_keyed)
+        log.info('AFM vPOD key: scaleup_fabric (physical_pod.id, virtual_pod.id) for %d node(s)', len(pod_keyed))
+    elif fallback:
+        log.warning(
+            'AFM on %s reports no scaleup_fabric physical_pod/virtual_pod IDs; keying vPODs by '
+            'vpod_accelerators, which is only unique within one physical pod',
+            sorted(fallback),
+        )
+        vpod_map = dict(fallback)
+        members_by_key = {}
+        for node, key in vpod_map.items():
+            for other in members_by_key.get(key, []):
+                if accels[node] & accels[other]:
+                    raise ValueError(
+                        f'AFM vPOD {list(key)} is reported by nodes with overlapping accelerator IDs ({other}, {node}); '
+                        'AFM accelerator IDs are only unique within one scale-up domain. Set ibperf.vpod_source to '
+                        '"cluster_file" and label each node_dict entry with vpod_id.'
+                    )
+            members_by_key.setdefault(key, []).append(node)
+    else:
+        vpod_map = {}
+    return vpod_map, errors
+
+
+def discover_afm_vpod_map(phdl, afmctl_path='afmctl'):
+    """Query AFM on every node in a parallel handle and parse vPOD membership."""
+    cmd = f'sudo -n {shlex.quote(afmctl_path)} show device --json 2>&1'
+    return parse_afm_vpod_membership(phdl.exec(cmd, print_console=False))
+
+
+def resolve_ibperf_node_pairing(node_list, config_dict, cluster_dict, phdl_factory=None):
+    """Resolve pairing configuration and return pairs, leftovers, and discovery errors."""
+    mode = str(config_dict.get('pairing_mode', 'sequential')).strip().lower()
+    source = str(config_dict.get('vpod_source', 'afm')).strip().lower()
+    if mode not in IBPERF_PAIRING_MODES:
+        raise ValueError(f'Invalid ibperf pairing_mode {mode!r}; allowed values: {IBPERF_PAIRING_MODES}')
+    if source not in IBPERF_VPOD_SOURCES:
+        raise ValueError(f'Invalid ibperf vpod_source {source!r}; allowed values: {IBPERF_VPOD_SOURCES}')
+
+    vpod_map = None
+    errors = []
+    if mode != 'sequential':
+        if source == 'cluster_file':
+            vpod_map, errors = get_cluster_file_vpod_map(cluster_dict)
+        else:
+            if phdl_factory is None:
+                raise ValueError('phdl_factory is required for ibperf.vpod_source afm')
+            hdl = phdl_factory(node_list)
+            try:
+                vpod_map, errors = discover_afm_vpod_map(hdl, config_dict.get('afmctl_path', 'afmctl'))
+            finally:
+                hdl.destroy_clients()
+        log.info('ibperf vPOD map (vpod_source=%s): %s', source, vpod_map)
+
+    pairs, unpaired = build_ibperf_node_pairs(node_list, mode, vpod_map)
+    for err in errors:
+        log.error('%s', err)
+    if not pairs:
+        reason = {
+            'inter_vpod': 'inter_vpod needs nodes in at least two vPODs',
+            'intra_vpod': 'intra_vpod needs at least two nodes in one vPOD',
+            'sequential': 'at least 2 nodes are required',
+        }[mode]
+        raise ValueError(
+            f'No ibperf node pairs could be formed (pairing_mode={mode}, nodes={len(node_list)}); '
+            + ('; '.join(errors) if errors else reason)
+        )
+    log.info('ibperf pairing_mode=%s: %d pair(s): %s', mode, len(pairs), pairs)
+    if unpaired:
+        if mode == 'sequential':
+            log.info(
+                'Odd number of nodes (%d); excluding last node %s to form server/client pairs',
+                len(node_list),
+                unpaired[-1],
+            )
+        else:
+            log.warning('Nodes left unpaired by %s pairing: %s', mode, unpaired)
+    return {'pairing_mode': mode, 'vpod_source': source, 'pairs': pairs, 'unpaired': unpaired, 'errors': errors}
+
+
+def _assign_pair_roles(node_pairs, nodes):
+    """Return active node roles in handle order and nodes lacking a partner."""
+    assignments = {}
+    for server, client in node_pairs:
+        if server in assignments or client in assignments or server == client:
+            raise ValueError(f'A node appears in more than one ibperf pair: {(server, client)}')
+        assignments[server] = None
+        assignments[client] = server
+    present = set(nodes)
+    active = {
+        node for server, client in node_pairs if server in present and client in present for node in (server, client)
+    }
+    roles = {node: assignments[node] for node in nodes if node in active}
+    orphans = [node for node in nodes if node not in active]
+    return roles, orphans
+
+
+def get_node_gpu_cards(gpu_nic_dict, node):
+    """Return card names in GPU index order, including card2 before card10."""
+    return sorted(gpu_nic_dict.get(node, {}), key=_card_index)
+
+
+def _prepare_pair_roles(node_pairs, nodes, gpu_nic_dict, gpu_numa_dict, hip_dev_dict, test_name):
+    """Keep only complete pairs with the same discovered GPU card list and command inputs."""
+    roles, orphans = _assign_pair_roles(node_pairs, nodes)
+    if orphans:
+        fail_test(f'ibperf partner node unreachable or unpaired for {orphans}; excluding them from {test_name}')
+    pair_cards = {}
+    for client, server in roles.items():
+        if server is None:
+            continue
+        server_cards = get_node_gpu_cards(gpu_nic_dict, server)
+        client_cards = get_node_gpu_cards(gpu_nic_dict, client)
+        if not server_cards or server_cards != client_cards:
+            fail_test(
+                f'ibperf pair ({server}, {client}) has different or missing GPU cards '
+                f'({server}: {server_cards}, {client}: {client_cards}); excluding the pair from {test_name}'
+            )
+            continue
+        missing = []
+        for node in (server, client):
+            for card in server_cards:
+                if not gpu_nic_dict[node][card].get('rdma_dev'):
+                    missing.append(f'{node}/{card} RDMA device')
+                if not gpu_numa_dict.get(node, {}).get(card, {}).get('local_cpulist'):
+                    missing.append(f'{node}/{card} NUMA CPU list')
+                if hip_dev_dict.get(node, {}).get(card) is None:
+                    missing.append(f'{node}/{card} HIP device')
+        if missing:
+            fail_test(
+                f'ibperf pair ({server}, {client}) has incomplete GPU mapping: {missing}; '
+                f'excluding the pair from {test_name}'
+            )
+            continue
+        pair_cards[(server, client)] = tuple(server_cards)
+    common = Counter(pair_cards.values()).most_common(1)[0][0] if pair_cards else ()
+    for (server, client), pair in pair_cards.items():
+        if pair != common:
+            fail_test(
+                f'ibperf pair ({server}, {client}) has GPU cards {list(pair)}, but other pairs use '
+                f'{list(common)}; excluding the pair from {test_name}'
+            )
+    kept = {node for pair, cards in pair_cards.items() if cards == common for node in pair}
+    roles = {node: server for node, server in roles.items() if node in kept}
+    excluded = [node for node in nodes if node not in roles]
+    return roles, list(common), excluded
 
 
 def _configured_tests(config, key, defaults, supported):
@@ -446,14 +724,18 @@ def get_hip_device_dict(phdl, gpu_nic_dict):
     return hip_dev_dict
 
 
-def get_ibperf_rdma_devices(gpu_nic_dict, bck_nic_dict, gpu_count=8):
+def get_ibperf_rdma_devices(gpu_nic_dict, bck_nic_dict, gpu_count=None):
     """Mirror the NIC selection in the bandwidth and latency perftest runners."""
     return {
         node: sorted(
             {
                 device
-                for gpu in range(gpu_count)
-                if (device := gpu_nic_dict.get(node, {}).get(f'card{gpu}', {}).get('rdma_dev')) is not None
+                for card in (
+                    get_node_gpu_cards(gpu_nic_dict, node)
+                    if gpu_count is None
+                    else (f'card{gpu}' for gpu in range(gpu_count))
+                )
+                if (device := gpu_nic_dict.get(node, {}).get(card, {}).get('rdma_dev')) is not None
             }
         )
         for node in bck_nic_dict
@@ -841,6 +1123,7 @@ def run_ib_perf_bw_test(
     rocm_path='',
     use_dmabuf=True,
     hip_dev_dict=None,
+    node_pairs=None,
 ):
     log.info(
         '%s: msg_size=%s qp=%s start (%ss, %d nodes)',
@@ -854,7 +1137,6 @@ def run_ib_perf_bw_test(
         hip_dev_dict = get_hip_device_dict(phdl, gpu_nic_dict)
     app_port = port_no
     result_dict = {}
-    i = 0
     cmd_dict = {}
     phdl.exec('rm -rf /tmp/ib_cmds_file.txt', print_console=False)
     phdl.exec('rm -rf /tmp/ib_perf*', print_console=False)
@@ -865,20 +1147,26 @@ def run_ib_perf_bw_test(
             f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt',
             print_console=False,
         )
-    server_addr = None
-    for node in bck_nic_dict.keys():
+    nodes = list(bck_nic_dict.keys())
+    if node_pairs is None:
+        node_pairs = build_ibperf_node_pairs(nodes)[0]
+    roles, cards, excluded = _prepare_pair_roles(node_pairs, nodes, gpu_nic_dict, gpu_numa_dict, hip_dev_dict, bw_test)
+    if excluded:
+        phdl.prune_nodes(excluded)
+        for node in excluded:
+            bck_nic_dict.pop(node, None)
+    if not roles:
+        return result_dict
+    for node, server_addr in roles.items():
         result_dict[node] = {}
         cmd_dict[node] = []
-        # even nodes make it server and odd as clients
-        if i % 2 == 0:
+        if server_addr is None:
             # server
-            server_addr = node
             cmd = 'echo "sleep 1" >> /tmp/ib_cmds_file.txt'
             cmd_dict[node].append(cmd)
             inst_count = 0
             port_no = app_port
-            for gpu_no in range(0, 8):
-                card_no = 'card' + str(gpu_no)
+            for card_no in cards:
                 rdma_dev = gpu_nic_dict[node][card_no]['rdma_dev']
                 cmd_parts = [
                     "numactl",
@@ -913,8 +1201,7 @@ def run_ib_perf_bw_test(
             cmd_dict[node].append(cmd)
             inst_count = 0
             port_no = app_port
-            for gpu_no in range(0, 8):
-                card_no = 'card' + str(gpu_no)
+            for card_no in cards:
                 rdma_dev = gpu_nic_dict[node][card_no]['rdma_dev']
                 cmd_parts = [
                     "numactl",
@@ -944,7 +1231,6 @@ def run_ib_perf_bw_test(
                 cmd_dict[node].append(f'echo "{cmd}" >> /tmp/ib_cmds_file.txt')
                 inst_count = inst_count + 1
                 port_no = port_no + 1
-        i = i + 1
 
     # Get number of commands in cmd_dict - should be same for all nodes
     node_list = list(cmd_dict.keys())
@@ -1003,13 +1289,13 @@ def run_ib_perf_lat_test(
     rocm_path='',
     use_dmabuf=True,
     hip_dev_dict=None,
+    node_pairs=None,
 ):
     log.info('%s: msg_size=%s start (%d nodes)', lat_test, msg_size, len(bck_nic_dict))
     if hip_dev_dict is None:
         hip_dev_dict = get_hip_device_dict(phdl, gpu_nic_dict)
     app_port = port_no
     result_dict = {}
-    i = 0
     cmd_dict = {}
     phdl.exec('rm -rf /tmp/ib_cmds_file.txt', print_console=False)
     phdl.exec('rm -rf /tmp/ib_perf*', print_console=False)
@@ -1020,20 +1306,26 @@ def run_ib_perf_lat_test(
             f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt',
             print_console=False,
         )
-    server_addr = None
-    for node in bck_nic_dict.keys():
+    nodes = list(bck_nic_dict.keys())
+    if node_pairs is None:
+        node_pairs = build_ibperf_node_pairs(nodes)[0]
+    roles, cards, excluded = _prepare_pair_roles(node_pairs, nodes, gpu_nic_dict, gpu_numa_dict, hip_dev_dict, lat_test)
+    if excluded:
+        phdl.prune_nodes(excluded)
+        for node in excluded:
+            bck_nic_dict.pop(node, None)
+    if not roles:
+        return result_dict
+    for node, server_addr in roles.items():
         result_dict[node] = {}
         cmd_dict[node] = []
-        # even nodes make it server and odd as clients
-        if i % 2 == 0:
+        if server_addr is None:
             # server
-            server_addr = node
             cmd = 'echo "sleep 1" >> /tmp/ib_cmds_file.txt'
             cmd_dict[node].append(cmd)
             inst_count = 0
             port_no = app_port
-            for gpu_no in range(0, 8):
-                card_no = 'card' + str(gpu_no)
+            for card_no in cards:
                 rdma_dev = gpu_nic_dict[node][card_no]['rdma_dev']
                 cmd_parts = [
                     "numactl",
@@ -1062,8 +1354,7 @@ def run_ib_perf_lat_test(
             cmd_dict[node].append(cmd)
             inst_count = 0
             port_no = app_port
-            for gpu_no in range(0, 8):
-                card_no = 'card' + str(gpu_no)
+            for card_no in cards:
                 rdma_dev = gpu_nic_dict[node][card_no]['rdma_dev']
                 cmd_parts = [
                     "numactl",
@@ -1087,7 +1378,6 @@ def run_ib_perf_lat_test(
                 cmd_dict[node].append(f'echo "{cmd}" >> /tmp/ib_cmds_file.txt')
                 inst_count = inst_count + 1
                 port_no = port_no + 1
-        i = i + 1
 
     # Get number of commands in cmd_dict - should be same for all nodes
     node_list = list(cmd_dict.keys())
@@ -1115,7 +1405,7 @@ def run_ib_perf_lat_test(
             PERFTEST_LAT_EXIT_TIMEOUT_S,
         )
 
-    result_nodes = list(bck_nic_dict)[1::2] if lat_test == 'ib_read_lat' else None
+    result_nodes = [node for node, server in roles.items() if server is not None] if lat_test == 'ib_read_lat' else None
     for instance_no in range(0, inst_count):
         try:
             lat_dict = get_ib_lat_numb(
@@ -1211,6 +1501,12 @@ def _dmabuf_heading_suffix(dmabuf_dict, app_name):
     return ' (DMA-BUF on)' if dmabuf_dict[app_name] else ' (DMA-BUF off)'
 
 
+def _result_gpu_list(node_results):
+    """Return GPU instance indexes through the largest result index."""
+    instances = [index for results in node_results for index in results]
+    return list(range(max(instances) + 1)) if instances else []
+
+
 def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx', dmabuf_dict=None):
     workbook = xlsxwriter.Workbook(excel_file)
 
@@ -1237,7 +1533,6 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx', dmabuf_
     node_list = []
     msg_size_list = []
     qp_count_list = []
-    gpu_no_list = [0, 1, 2, 3, 4, 5, 6, 7]
 
     for app_name in app_list:
         for msg_size in res_dict[app_name].keys():
@@ -1252,6 +1547,10 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx', dmabuf_
                     if node not in node_list:
                         node_list.append(node)
 
+    gpu_no_list = _result_gpu_list(
+        res_dict[a][m][q][n] for a in app_list for m in res_dict[a] for q in res_dict[a][m] for n in res_dict[a][m][q]
+    )
+
     for app_name in app_list:
         for qp_count in qp_count_list:
             sheet_name = app_name + "_qp_" + str(qp_count)
@@ -1261,26 +1560,11 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx', dmabuf_
             heading = "Test {} - BW, MPPS Numbers for {} QPs{}".format(
                 app_name, qp_count, _dmabuf_heading_suffix(dmabuf_dict, app_name)
             )
-            worksheet.merge_range("A1:T1", heading, merge_format)
+            worksheet.merge_range(f'A1:{xl_col_to_name(3 + 2 * len(gpu_no_list))}1', heading, merge_format)
 
-            # Init data lists
             d_msg_size_list = []
-            d_bw_gpu_0_list = []
-            d_bw_gpu_1_list = []
-            d_bw_gpu_2_list = []
-            d_bw_gpu_3_list = []
-            d_bw_gpu_4_list = []
-            d_bw_gpu_5_list = []
-            d_bw_gpu_6_list = []
-            d_bw_gpu_7_list = []
-            d_pps_gpu_0_list = []
-            d_pps_gpu_1_list = []
-            d_pps_gpu_2_list = []
-            d_pps_gpu_3_list = []
-            d_pps_gpu_4_list = []
-            d_pps_gpu_5_list = []
-            d_pps_gpu_6_list = []
-            d_pps_gpu_7_list = []
+            d_bw_gpu = {g: [] for g in gpu_no_list}
+            d_pps_gpu = {g: [] for g in gpu_no_list}
             d_pps_total_list = []
             d_bw_total_list = []
 
@@ -1290,106 +1574,34 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx', dmabuf_
                     tot_pps = 0.0
                     tot_bw = 0.0
                     for gpu_no in gpu_no_list:
-                        if gpu_no == 0:
-                            d_bw_gpu_0_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
-                            d_pps_gpu_0_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_pps = tot_pps + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_bw = tot_bw + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
-                        elif gpu_no == 1:
-                            d_bw_gpu_1_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
-                            d_pps_gpu_1_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_pps = tot_pps + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_bw = tot_bw + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
-                        elif gpu_no == 2:
-                            d_bw_gpu_2_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
-                            d_pps_gpu_2_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_pps = tot_pps + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_bw = tot_bw + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
-                        elif gpu_no == 3:
-                            d_bw_gpu_3_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
-                            d_pps_gpu_3_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_pps = tot_pps + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_bw = tot_bw + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
-                        elif gpu_no == 4:
-                            d_bw_gpu_4_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
-                            d_pps_gpu_4_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_pps = tot_pps + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_bw = tot_bw + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
-                        elif gpu_no == 5:
-                            d_bw_gpu_5_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
-                            d_pps_gpu_5_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_pps = tot_pps + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_bw = tot_bw + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
-                        elif gpu_no == 6:
-                            d_bw_gpu_6_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
-                            d_pps_gpu_6_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_pps = tot_pps + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_bw = tot_bw + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
-                        elif gpu_no == 7:
-                            d_bw_gpu_7_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
-                            d_pps_gpu_7_list.append(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_pps = tot_pps + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['pps'])
-                            tot_bw = tot_bw + float(res_dict[app_name][msg_size][qp_count][node][gpu_no]['bw'])
+                        data = res_dict[app_name][msg_size][qp_count][node][gpu_no]
+                        d_bw_gpu[gpu_no].append(data['bw'])
+                        d_pps_gpu[gpu_no].append(data['pps'])
+                        tot_pps = tot_pps + float(data['pps'])
+                        tot_bw = tot_bw + float(data['bw'])
                     d_bw_total_list.append(tot_bw)
                     d_pps_total_list.append(tot_pps)
 
             split_bw_list = split_list_into_n_chunks(d_bw_total_list, len(node_list))
             split_pps_list = split_list_into_n_chunks(d_pps_total_list, len(node_list))
-            split_bw_gpu0_list = split_list_into_n_chunks(d_bw_gpu_0_list, len(node_list))
-            split_bw_gpu1_list = split_list_into_n_chunks(d_bw_gpu_1_list, len(node_list))
-            split_bw_gpu2_list = split_list_into_n_chunks(d_bw_gpu_2_list, len(node_list))
-            split_bw_gpu3_list = split_list_into_n_chunks(d_bw_gpu_3_list, len(node_list))
-            split_bw_gpu4_list = split_list_into_n_chunks(d_bw_gpu_4_list, len(node_list))
-            split_bw_gpu5_list = split_list_into_n_chunks(d_bw_gpu_5_list, len(node_list))
-            split_bw_gpu6_list = split_list_into_n_chunks(d_bw_gpu_6_list, len(node_list))
-            split_bw_gpu7_list = split_list_into_n_chunks(d_bw_gpu_7_list, len(node_list))
-            split_pps_gpu0_list = split_list_into_n_chunks(d_pps_gpu_0_list, len(node_list))
-            split_pps_gpu1_list = split_list_into_n_chunks(d_pps_gpu_1_list, len(node_list))
-            split_pps_gpu2_list = split_list_into_n_chunks(d_pps_gpu_2_list, len(node_list))
-            split_pps_gpu3_list = split_list_into_n_chunks(d_pps_gpu_3_list, len(node_list))
-            split_pps_gpu4_list = split_list_into_n_chunks(d_pps_gpu_4_list, len(node_list))
-            split_pps_gpu5_list = split_list_into_n_chunks(d_pps_gpu_5_list, len(node_list))
-            split_pps_gpu6_list = split_list_into_n_chunks(d_pps_gpu_6_list, len(node_list))
-            split_pps_gpu7_list = split_list_into_n_chunks(d_pps_gpu_7_list, len(node_list))
-
             avg_bw_data = average_of_lists(split_bw_list)
             avg_pps_data = average_of_lists(split_pps_list)
-            avg_bw_gpu0_data = average_of_lists(split_bw_gpu0_list)
-            avg_bw_gpu1_data = average_of_lists(split_bw_gpu1_list)
-            avg_bw_gpu2_data = average_of_lists(split_bw_gpu2_list)
-            avg_bw_gpu3_data = average_of_lists(split_bw_gpu3_list)
-            avg_bw_gpu4_data = average_of_lists(split_bw_gpu4_list)
-            avg_bw_gpu5_data = average_of_lists(split_bw_gpu5_list)
-            avg_bw_gpu6_data = average_of_lists(split_bw_gpu6_list)
-            avg_bw_gpu7_data = average_of_lists(split_bw_gpu7_list)
-
-            avg_pps_gpu0_data = average_of_lists(split_pps_gpu0_list)
-            avg_pps_gpu1_data = average_of_lists(split_pps_gpu1_list)
-            avg_pps_gpu2_data = average_of_lists(split_pps_gpu2_list)
-            avg_pps_gpu3_data = average_of_lists(split_pps_gpu3_list)
-            avg_pps_gpu4_data = average_of_lists(split_pps_gpu4_list)
-            avg_pps_gpu5_data = average_of_lists(split_pps_gpu5_list)
-            avg_pps_gpu6_data = average_of_lists(split_pps_gpu6_list)
-            avg_pps_gpu7_data = average_of_lists(split_pps_gpu7_list)
+            avg_bw_gpu = {
+                g: average_of_lists(split_list_into_n_chunks(d_bw_gpu[g], len(node_list))) for g in gpu_no_list
+            }
+            avg_pps_gpu = {
+                g: average_of_lists(split_list_into_n_chunks(d_pps_gpu[g], len(node_list))) for g in gpu_no_list
+            }
 
             # Merge cols for Node IP
             worksheet.merge_range("A2:A3", "Node IP", bold)
             worksheet.merge_range("B2:B3", "Msg Size", bold)
             # Merge 2 cols for every GPU and Total
             worksheet.merge_range("C2:D2", "Total", bold)
-            worksheet.merge_range("E2:F2", "GPU0", bold)
-            worksheet.merge_range("G2:H2", "GPU1", bold)
-            worksheet.merge_range("I2:J2", "GPU2", bold)
-            worksheet.merge_range("K2:L2", "GPU3", bold)
-            worksheet.merge_range("M2:N2", "GPU4", bold)
-            worksheet.merge_range("O2:P2", "GPU5", bold)
-            worksheet.merge_range("Q2:R2", "GPU6", bold)
-            worksheet.merge_range("S2:T2", "GPU7", bold)
+            for pos, g in enumerate(gpu_no_list):
+                worksheet.merge_range(f'{xl_col_to_name(4 + 2 * pos)}2:{xl_col_to_name(5 + 2 * pos)}2', f'GPU{g}', bold)
 
-            headings = []
-            for i in range(0, 9):
-                headings.append("BW")
-                headings.append("PPS")
+            headings = ['BW', 'PPS'] * (len(gpu_no_list) + 1)
             # Write headings for BW, PPS for total and every GPU
             worksheet.write_row("C3", headings, bold)
 
@@ -1405,44 +1617,18 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx', dmabuf_
             worksheet.write_column("B4", round_vals(d_msg_size_list))
             worksheet.write_column("C4", round_vals(d_bw_total_list))
             worksheet.write_column("D4", round_vals(d_pps_total_list))
-            worksheet.write_column("E4", round_vals(d_bw_gpu_0_list))
-            worksheet.write_column("F4", round_vals(d_pps_gpu_0_list))
-            worksheet.write_column("G4", round_vals(d_bw_gpu_1_list))
-            worksheet.write_column("H4", round_vals(d_pps_gpu_1_list))
-            worksheet.write_column("I4", round_vals(d_bw_gpu_2_list))
-            worksheet.write_column("J4", round_vals(d_pps_gpu_2_list))
-            worksheet.write_column("K4", round_vals(d_bw_gpu_3_list))
-            worksheet.write_column("L4", round_vals(d_pps_gpu_3_list))
-            worksheet.write_column("M4", round_vals(d_bw_gpu_4_list))
-            worksheet.write_column("N4", round_vals(d_pps_gpu_4_list))
-            worksheet.write_column("O4", round_vals(d_bw_gpu_5_list))
-            worksheet.write_column("P4", round_vals(d_pps_gpu_5_list))
-            worksheet.write_column("Q4", round_vals(d_bw_gpu_6_list))
-            worksheet.write_column("R4", round_vals(d_pps_gpu_6_list))
-            worksheet.write_column("S4", round_vals(d_bw_gpu_7_list))
-            worksheet.write_column("T4", round_vals(d_pps_gpu_7_list))
+            for pos, g in enumerate(gpu_no_list):
+                worksheet.write_column(f'{xl_col_to_name(4 + 2 * pos)}4', round_vals(d_bw_gpu[g]))
+                worksheet.write_column(f'{xl_col_to_name(5 + 2 * pos)}4', round_vals(d_pps_gpu[g]))
 
             x_chart_index = len(d_msg_size_list) + 4
 
             worksheet.write_column(f"B{x_chart_index}", msg_size_list)
             worksheet.write_column(f"C{x_chart_index}", round_vals(avg_bw_data))
             worksheet.write_column(f"D{x_chart_index}", round_vals(avg_pps_data))
-            worksheet.write_column(f"E{x_chart_index}", round_vals(avg_bw_gpu0_data))
-            worksheet.write_column(f"F{x_chart_index}", round_vals(avg_pps_gpu0_data))
-            worksheet.write_column(f"G{x_chart_index}", round_vals(avg_bw_gpu1_data))
-            worksheet.write_column(f"H{x_chart_index}", round_vals(avg_pps_gpu1_data))
-            worksheet.write_column(f"I{x_chart_index}", round_vals(avg_bw_gpu2_data))
-            worksheet.write_column(f"J{x_chart_index}", round_vals(avg_pps_gpu2_data))
-            worksheet.write_column(f"K{x_chart_index}", round_vals(avg_bw_gpu3_data))
-            worksheet.write_column(f"L{x_chart_index}", round_vals(avg_pps_gpu3_data))
-            worksheet.write_column(f"M{x_chart_index}", round_vals(avg_bw_gpu4_data))
-            worksheet.write_column(f"N{x_chart_index}", round_vals(avg_pps_gpu4_data))
-            worksheet.write_column(f"O{x_chart_index}", round_vals(avg_bw_gpu5_data))
-            worksheet.write_column(f"P{x_chart_index}", round_vals(avg_pps_gpu5_data))
-            worksheet.write_column(f"Q{x_chart_index}", round_vals(avg_bw_gpu6_data))
-            worksheet.write_column(f"R{x_chart_index}", round_vals(avg_pps_gpu6_data))
-            worksheet.write_column(f"S{x_chart_index}", round_vals(avg_bw_gpu7_data))
-            worksheet.write_column(f"T{x_chart_index}", round_vals(avg_pps_gpu7_data))
+            for pos, g in enumerate(gpu_no_list):
+                worksheet.write_column(f'{xl_col_to_name(4 + 2 * pos)}{x_chart_index}', round_vals(avg_bw_gpu[g]))
+                worksheet.write_column(f'{xl_col_to_name(5 + 2 * pos)}{x_chart_index}', round_vals(avg_pps_gpu[g]))
 
             x_chart_index = len(d_msg_size_list) + len(msg_size_list) + 7
             y_chart_index = 2
@@ -1490,6 +1676,7 @@ def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx', dmabuf_di
     bold = workbook.add_format({'bold': 1})
 
     for app_name, sizes in res_dict.items():
+        gpu_no_list = _result_gpu_list(instances for nodes in sizes.values() for instances in nodes.values())
         sheet_name = app_name + '_lat'
         worksheet = workbook.add_worksheet(sheet_name)
         worksheet.merge_range(
@@ -1498,10 +1685,10 @@ def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx', dmabuf_di
         worksheet.merge_range('A2:A3', 'Node IP', bold)
         worksheet.merge_range('B2:B3', 'Msg Size', bold)
         worksheet.merge_range('C2:G2', 'Node Avg ', bold)
-        for gpu_no in range(8):
+        for gpu_no in gpu_no_list:
             first_col = 7 + gpu_no * len(metrics)
             worksheet.merge_range(1, first_col, 1, first_col + len(metrics) - 1, f'GPU{gpu_no}', bold)
-        worksheet.write_row(2, 2, ['Tmin', 'Tmax', 'TAvg', 'TStdev', 'T99pct'] * 9, bold)
+        worksheet.write_row(2, 2, ['Tmin', 'Tmax', 'TAvg', 'TStdev', 'T99pct'] * (len(gpu_no_list) + 1), bold)
 
         nodes = list(dict.fromkeys(node for size_nodes in sizes.values() for node in size_nodes))
         msg_sizes = [size for size, size_nodes in sizes.items() if any(size_nodes.values())]
@@ -1537,7 +1724,7 @@ def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx', dmabuf_di
                 worksheet.write_number(
                     cluster_row + offset, col, round(sum(float(data[metric]) for data in instances) / len(instances), 2)
                 )
-            for gpu_no in range(8):
+            for gpu_no in gpu_no_list:
                 gpu_rows = [
                     node_instances[gpu_no] for node_instances in sizes[size].values() if gpu_no in node_instances
                 ]

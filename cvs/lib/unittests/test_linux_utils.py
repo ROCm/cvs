@@ -8,6 +8,37 @@ import cvs.lib.linux_utils as linux_utils
 from cvs.unittests.support import run_trusted
 
 
+class TestGetGpuNumaDict(unittest.TestCase):
+    def test_each_node_uses_its_own_cards(self):
+        for short_node in ('a', 'b'):
+            with self.subTest(short_node=short_node):
+                gpu_pcie = {
+                    node: {
+                        card: {'PCI Bus': f'0000:{index + 1:02x}:00.0'}
+                        for index, card in enumerate(('card0',) if node == short_node else ('card0', 'card1'))
+                    }
+                    for node in ('a', 'b')
+                }
+                phdl = MagicMock()
+
+                def exec_commands(commands):
+                    return {
+                        node: ('0-3\n' if 'local_cpulist' in command else '0\n') if command != 'true' else ''
+                        for node, command in zip(('a', 'b'), commands)
+                    }
+
+                phdl.exec_cmd_list.side_effect = exec_commands
+                with patch.object(linux_utils.rocm_plib, 'get_gpu_pcie_bus_dict', return_value=gpu_pcie):
+                    result = linux_utils.get_gpu_numa_dict(phdl)
+
+                self.assertEqual(list(result[short_node]), ['card0'])
+                self.assertEqual(list(result['b' if short_node == 'a' else 'a']), ['card0', 'card1'])
+                self.assertEqual(result[short_node]['card0'], {'local_cpulist': '0-3', 'numa_node': '0'})
+                self.assertEqual(phdl.exec_cmd_list.call_count, 4)
+                for call in (phdl.exec_cmd_list.call_args_list[1], phdl.exec_cmd_list.call_args_list[3]):
+                    self.assertEqual(call.args[0][0 if short_node == 'a' else 1], 'true')
+
+
 class TestGetRdmaNicDict(unittest.TestCase):
     def test_get_rdma_nic_dict_with_hyphenated_devices(self):
         """Test that get_rdma_nic_dict properly parses hyphenated device names like tw-eth0."""
