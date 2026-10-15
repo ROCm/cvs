@@ -155,6 +155,24 @@ def _parse_cvs_time(time_str):
     )
 
 
+def _drop_corrected_mces(output_dict, source_label='Dmesg'):
+    """Remove clean corrected host-CPU MCE reports and log one WARN per affected node.
+
+    The kernel already corrected these ("no action required"); uncorrected,
+    deferred, poisoned and TCC reports remain in place.
+    """
+    filtered = {}
+    for node, text in output_dict.items():
+        kept, status_lines = dmesg_noise.drop_corrected_mce_blocks(text)
+        if status_lines:
+            log.warning(
+                f'WARN - {len(status_lines)} corrected host-CPU MCE(s) in {source_label} on node {node} '
+                f'not treated as failures (kernel: no action required); first: {status_lines[0]}'
+            )
+        filtered[node] = kept
+    return filtered
+
+
 def _node_scraper_scan(output_dict, analysis_args=None, source_label='Dmesg'):
     """Scan per-node log text with node-scraper and report each detected error.
 
@@ -166,7 +184,18 @@ def _node_scraper_scan(output_dict, analysis_args=None, source_label='Dmesg'):
 
     Returns:
         {node: [matched lines]}; calls fail_test for each detected error.
+        Corrected MCE blocks are removed first and logged as WARN. Uncorrected
+        and deferred status rows are reported verbatim.
     """
+    range_start = (analysis_args or {}).get('analysis_range_start')
+    range_end = (analysis_args or {}).get('analysis_range_end')
+    if range_start or range_end:
+        # Keep the WARN count and uncorrected-MCE report within the analysis window.
+        output_dict = {
+            node: node_scraper_adapter.filter_dmesg_range(text, range_start, range_end)
+            for node, text in output_dict.items()
+        }
+    output_dict = _drop_corrected_mces(output_dict, source_label)
     err_dict = {}
     for node in output_dict.keys():
         err_dict[node] = []
@@ -181,6 +210,11 @@ def _node_scraper_scan(output_dict, analysis_args=None, source_label='Dmesg'):
             msg = f'ERROR - Failure pattern *** {line} *** seen in {source_label} on node {node}'
             fail_test(msg)
             err_dict[node].append(line)
+        for row in dmesg_noise.uncorrected_mce_status_lines(output_dict[node]):
+            fail_test(
+                f'ERROR - Failure pattern *** Uncorrected host-CPU MCE: {row} *** seen in {source_label} on node {node}'
+            )
+            err_dict[node].append(row)
     return err_dict
 
 
@@ -383,6 +417,7 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
       - Filters out lines containing 'ALLOWED' or 'DENIED' (non-fatal/noisy) via egrep -v.
       - Scans each line against err_patterns_dict (fail_test on match) and warn_patterns_dict
         (log.warning only on match; test still passes but run carries a visible WARN).
+      - Clean corrected host-CPU MCE reports are removed before scanning and logged as WARN (both parsers).
 
     Assumptions:
       - err_patterns_dict and warn_patterns_dict are defined in scope: {name: regex_pattern, ...}.
@@ -447,7 +482,7 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
             phdl,
             f"sudo dmesg -T | awk '/{start_pattern}.*/,/{end_pattern}.*/' | egrep -v 'ALLOWED|DENIED' --color=never",
         )
-    # print(output_dict)
+    output_dict = _drop_corrected_mces(output_dict, 'Dmesg')
     for node in output_dict.keys():
         err_dict[node] = []
 
@@ -645,7 +680,8 @@ def full_journalctl_scan(phdl, start_time_dict=None):
 
     Behavior:
       - Runs 'journalctl -k' (kernel messages) filtered through egrep for high-signal
-        keywords: amdgpu, interrupt, error, fail, timeout, fault.
+        keywords: amdgpu, interrupt, error, fail, timeout, fault, MCn_STATUS.
+      - Clean corrected host-CPU MCE reports are removed before scanning and logged as WARN.
       - Iterates over each node?s output and checks each line against regex patterns
         defined in err_patterns_dict.
       - If any line matches a known failure pattern, calls fail_test immediately
@@ -691,8 +727,10 @@ def full_journalctl_scan(phdl, start_time_dict=None):
     err_dict = {}
     # Fetch kernel logs filtered for likely error indicators across nodes
     out_dict = _collect_kernel_log(
-        phdl, f'sudo journalctl -k{since_clause} | egrep "amdgpu|interrupt|error|fail|timeout|fault"'
+        phdl,
+        f'sudo journalctl -k{since_clause} | egrep "amdgpu|interrupt|error|fail|timeout|fault|MC[0-9]+_STATUS"',
     )
+    out_dict = _drop_corrected_mces(out_dict, 'journalctl')
     for node in out_dict.keys():
         err_dict[node] = []
 
@@ -736,6 +774,7 @@ def full_dmesg_scan(
       - Iterates through each remaining line and checks for matches against regex patterns
         defined in err_patterns_dict.
       - On the first match, invokes fail_test with a message indicating the failing line and node.
+      - Clean corrected host-CPU MCE reports are removed before scanning and logged as WARN.
 
     Assumptions:
       - err_patterns_dict is available in scope and maps labels to regex patterns:
@@ -775,6 +814,7 @@ def full_dmesg_scan(
     output_dict = _collect_kernel_log(
         phdl, "sudo dmesg -T | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never"
     )
+    output_dict = _drop_corrected_mces(output_dict, 'Dmesg')
     for node in output_dict.keys():
         err_dict[node] = []
 

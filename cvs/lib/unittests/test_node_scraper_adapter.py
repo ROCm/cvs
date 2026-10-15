@@ -6,8 +6,10 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 import unittest
+from datetime import datetime, timezone
 
 from cvs.lib import node_scraper_adapter
+from cvs.lib.unittests import mce_dmesg_fixtures as mce
 
 
 # Small, self-contained dmesg sample in node-scraper's `dmesg --time-format iso -x`
@@ -64,6 +66,22 @@ class TestParseDmesg(unittest.TestCase):
         events = node_scraper_adapter.parse_dmesg(SAMPLE_DMESG)
         lines = node_scraper_adapter.event_match_lines(events)
         self.assertTrue(any("Out of memory" in line for line in lines))
+
+
+class TestFilterDmesgRange(unittest.TestCase):
+    def test_no_bounds_preserve_text(self):
+        source = mce.text(mce.CE_LINES)
+        self.assertIs(node_scraper_adapter.filter_dmesg_range(source), source)
+        self.assertEqual(node_scraper_adapter.filter_dmesg_range(None), '')
+
+    def test_real_analyzer_filters_to_window(self):
+        source = mce.text(mce.CE_LINES_EARLIER + mce.CE_LINES)
+        start = datetime(2026, 10, 15, 6, 24, tzinfo=timezone.utc)
+        end = datetime(2026, 10, 15, 6, 25, tzinfo=timezone.utc)
+        kept = node_scraper_adapter.filter_dmesg_range(source, start, end)
+        self.assertIn('06:24:34', kept)
+        self.assertNotIn('06:18:47', kept)
+        self.assertNotIn('\n\n', kept)
 
 
 if __name__ == "__main__":
