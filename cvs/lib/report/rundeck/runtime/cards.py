@@ -339,6 +339,7 @@ class DeckCardRenderer:
             table.get("rows") or [],
             empty_message="No results table rows.",
             units=table.get("units"),
+            align=table.get("align"),
         )
         max_height = (card or {}).get("max_height")
         if not max_height:

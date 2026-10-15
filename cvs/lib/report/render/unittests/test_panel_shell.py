@@ -18,6 +18,10 @@ class TestRenderResultsTableHtml(unittest.TestCase):
         out = render_results_table_html(["Test", "Latency"], [["write", 1.5]], units=[None, "µs"])
         self.assertIn("<th>Test</th><th>Latency <span class='th-unit'>(µs)</span></th>", out)
 
+    def test_align_sets_a_class_per_column(self):
+        out = render_results_table_html(["Test", "BW", "Note"], [["write", 1.5, "x"]], align=["left", "right"])
+        self.assertIn("<tr><td class='al-left'>write</td><td class='al-right'>1.5</td><td>x</td></tr>", out)
+
     def test_no_rows_renders_the_empty_message_instead_of_a_table(self):
         self.assertEqual(
             render_results_table_html(["Test"], iter([]), empty_message="No <rows>."),

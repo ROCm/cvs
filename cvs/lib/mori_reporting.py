@@ -216,7 +216,8 @@ def _results_table(io_cases, statuses, ibgda, titles, names):
         "Status",
     ]
     units = [None, None, None, "GB/s", None, "GB/s", "µs", "µs", "Mpps", None]
-    return {"headers": headers, "units": units, "rows": rows}
+    align = ["left", "left"] + ["right"] * 7 + ["left"]
+    return {"headers": headers, "units": units, "align": align, "rows": rows}
 
 
 def _rebuild(store):

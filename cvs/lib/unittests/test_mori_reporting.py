@@ -242,6 +242,7 @@ class TestMoriDeckProfile(unittest.TestCase):
         )
         self.assertEqual((rows[0]["Slowest rank"], rows[0]["Slowest rank BW"]), (1, 46.0))
         self.assertEqual(table["units"][3:9], ["GB/s", None, "GB/s", "µs", "µs", "Mpps"])
+        self.assertEqual((table["align"][1], table["align"][2], table["align"][-1]), ("left", "right", "left"))
         self.assertEqual(
             [rows[-1][k] for k in ("Operation", "Case or node", "Message size", "Message rate")],
             ["IBGDA WRITE", "node01", "1M", 10.0],
