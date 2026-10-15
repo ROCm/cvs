@@ -51,6 +51,14 @@ class TestRenderLineChart(unittest.TestCase):
         self.assertEqual(html_out, "<p class='muted'>No series data.</p>")
 
 
+class TestMetricChartsHeatmapHeading(unittest.TestCase):
+    DATA = {"heatmaps": [{"name": "per rank", "rows": ["a"], "cols": ["0"], "values": [[1.0]]}]}
+
+    def test_heatmap_heading_false_drops_the_subheading(self):
+        self.assertIn(">Heatmaps</h3>", DeckCardRenderer().render_metric_charts({}, {}, self.DATA))
+        self.assertNotIn("Heatmaps", DeckCardRenderer().render_metric_charts({}, {"heatmap_heading": False}, self.DATA))
+
+
 class TestRenderTable(unittest.TestCase):
     TABLE = {"headers": ["Test", "BW"], "rows": [["write", 1.0]]}
 

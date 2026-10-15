@@ -493,7 +493,7 @@ class DeckCardRenderer:
         head = f"<tr><th>{html.escape(title)}</th><th>Fail</th><th>Pass</th><th>n/a</th></tr>"
         return f"<table class='overview-table'><thead>{head}</thead><tbody>{''.join(body)}</tbody></table>"
 
-    def render_metric_charts(self, _payload, _card, data):
+    def render_metric_charts(self, _payload, card, data):
         charts = data if isinstance(data, dict) else {}
         metrics = [item for item in (charts.get("metrics") or []) if isinstance(item, dict)]
         series = [item for item in (charts.get("series") or []) if isinstance(item, dict)]
@@ -514,9 +514,12 @@ class DeckCardRenderer:
             parts.append(f"<div class='chart-group'>{title}<div class='chart-grid'>{''.join(panels)}</div></div>")
         heat_html = "".join(self._heatmap_panel(item) for item in heatmaps)
         if heat_html:
+            # A card that holds only its heatmaps already names them in its section title.
+            heading = (
+                "" if (card or {}).get("heatmap_heading") is False else "<h3 class='chart-group-title'>Heatmaps</h3>"
+            )
             parts.append(
-                "<div class='chart-group'><h3 class='chart-group-title'>Heatmaps</h3>"
-                f"<div class='chart-grid chart-grid-heat'>{heat_html}</div></div>"
+                f"<div class='chart-group'>{heading}<div class='chart-grid chart-grid-heat'>{heat_html}</div></div>"
             )
         return "".join(parts) or "<p class='muted'>No metric data recorded.</p>"
 

@@ -227,6 +227,7 @@ class TestMoriDeckProfile(unittest.TestCase):
             "<section class='panel' id='charts'>"
         )
         self.assertIn("<h2>MORI-IO per rank</h2>", ranks)
+        self.assertNotIn("Heatmaps", ranks)
         self.assertIn("hm-pass", ranks)
         self.assertNotIn("MORI-IO per rank", charts)
         self.assertIn("<section class='panel' id='results'><h2>Full results</h2>", charts)

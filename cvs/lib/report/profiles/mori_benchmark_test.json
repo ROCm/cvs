@@ -24,7 +24,8 @@
       "id": "ranks",
       "title": "MORI-IO per rank",
       "bind": "datasets.status_matrix.meta.rank_grid",
-      "when_empty": "hide"
+      "when_empty": "hide",
+      "heatmap_heading": false
     },
     {
       "type": "metric_charts",
