@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "extends": "arc_base",
+  "profile_id": "arc_test_workload_rundeck",
+  "suite_id": "arc_test_workload",
+  "report_basename": "arc_test_workload_run_deck",
+  "title": "ARC Run Deck · Workload Item",
+  "link_name": "ARC Workload Item Run Deck"
+}
