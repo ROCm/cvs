@@ -80,6 +80,7 @@ Set these before a run (full field tables are under `Common parameters`_):
 The following fields must be customized to match your cluster and hardware before invoking any Megatron suite.
 
 * ``gpu_name`` / ``threshold_json`` — on ``mi3xx_`` templates, set ``MI300X`` or ``MI325X`` and the matching SKU threshold filename. ``gpu_name`` must be exactly ``MI300X``, ``MI325X``, or ``MI355X`` after uppercase.
+* ``gpus_per_node`` — number of GPUs available on each node. Packaged templates set ``8``; change it only for systems with a different per-node GPU count.
 * ``container.image`` — Megatron-LM or Primus ROCm image on all nodes.
 * ``train_params.training_iterations`` — default training steps (for example ``"30"``). Each ``sweep.combinations`` body sets ``training_iterations`` (packaged value ``"20"``); that overlay wins for that cell.
 * ``train_params.micro_batch_size`` / ``global_batch_size`` / ``precision`` — required when ``sweep`` is omitted. Packaged files already set them; with a declared sweep the combination key supplies those values for each cell.
@@ -87,7 +88,7 @@ The following fields must be customized to match your cluster and hardware befor
 * ``container.env.NCCL_SOCKET_IFNAME`` / ``GLOO_SOCKET_IFNAME`` / ``NCCL_IB_GID_INDEX`` / ``NCCL_DEBUG`` — templates include example values plus ``<changeme>`` (for example ``enp193s0f1np1 <changeme>``, ``3 <changeme>``, ``ERROR <changeme>``). Remove ``<changeme>`` and keep or edit the example. Required on single-node and distributed.
 * ``sweep.runs`` — combination keys to execute (same ``MBS=…,GBS=…,PRECISION=…`` strings as in ``sweep.combinations``). Must be non-empty when ``combinations`` is present.
 * Do not set ``NNODES`` in JSON.
-* **Distributed only:** ``container.env.MASTER_ADDR``, ``container.env.NCCL_IB_HCA`` (example HCA list plus ``<changeme>``). ``paths.data_cache_dir`` must be a shared filesystem. When ``checkpoint.enforce`` is ``true``, also set ``checkpoint.checkpoint_dir`` and replace the last ``<changeme>:<changeme>`` volume with that shared path.
+* **Distributed only:** ``container.env.MASTER_ADDR``, ``container.env.NCCL_IB_HCA`` (example HCA list plus ``<changeme>``). Set ``paths.data_cache_dir`` to a shared filesystem (not node-local home) and bind-mount it in ``container.runtime.args.volumes``. When ``checkpoint.enforce`` is ``true``, also set ``checkpoint.checkpoint_dir`` and replace the last ``<changeme>:<changeme>`` volume with that shared path.
 
 Top-level fields
 ================
@@ -143,6 +144,7 @@ Available as ``mi3xx_megatron_llama-3.1-8b_{single,distributed}.json`` (MI300X/M
     {
       "gpu_name": "<changeme>",
       "enforce_thresholds": true,
+      "gpus_per_node": 8,
       "threshold_json": "<changeme>",
       "train_params": {
         "model_name": "llama3.1_8B",
@@ -204,6 +206,12 @@ Available as ``mi3xx_megatron_llama-3.1-8b_{single,distributed}.json`` (MI300X/M
    * - ``sequence_length``
      - ``8192``
      - Maximum context length.
+   * - ``recompute``
+     - ``0``
+     - Activation recompute flag passed to the training backend. ``1`` trades extra compute for lower activation memory.
+   * - ``fsdp``
+     - ``0``
+     - FSDP flag passed to the training backend.
    * - ``tensor_parallelism``
      - ``1``
      - Fits on a single GPU; no tensor splitting needed.
@@ -236,6 +244,7 @@ Available as ``mi3xx_megatron_llama-3.3-70b_{single,distributed}.json`` (MI300X/
     {
       "gpu_name": "<changeme>",
       "enforce_thresholds": true,
+      "gpus_per_node": 8,
       "threshold_json": "<changeme>",
       "train_params": {
         "model_name": "llama3.3_70B",
@@ -289,6 +298,12 @@ Available as ``mi3xx_megatron_llama-3.3-70b_{single,distributed}.json`` (MI300X/
    * - ``sequence_length``
      - ``8192``
      - Maximum context length.
+   * - ``recompute``
+     - ``0``
+     - Activation recompute flag passed to the training backend. ``1`` trades extra compute for lower activation memory.
+   * - ``fsdp``
+     - ``0``
+     - FSDP flag passed to the training backend.
    * - ``tensor_parallelism``
      - ``8``
      - Splits the model across all 8 GPUs on the node.
@@ -321,6 +336,7 @@ Available as ``mi3xx_megatron_deepseek-v2-lite_{single,distributed}.json`` (MI30
     {
       "gpu_name": "<changeme>",
       "enforce_thresholds": true,
+      "gpus_per_node": 8,
       "threshold_json": "<changeme>",
       "train_params": {
         "model_name": "deepseek_v2_lite",
@@ -374,6 +390,12 @@ Available as ``mi3xx_megatron_deepseek-v2-lite_{single,distributed}.json`` (MI30
    * - ``sequence_length``
      - ``4096``
      - Shorter context than Llama due to DeepSeek V2's attention architecture.
+   * - ``recompute``
+     - ``0``
+     - Activation recompute flag passed to the training backend. ``1`` trades extra compute for lower activation memory.
+   * - ``fsdp``
+     - ``0``
+     - FSDP flag passed to the training backend.
    * - ``tensor_parallelism``
      - ``1``
      - Fits on a single GPU.
@@ -406,6 +428,7 @@ Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X; 
     {
       "gpu_name": "<changeme>",
       "enforce_thresholds": true,
+      "gpus_per_node": 8,
       "threshold_json": "<changeme>",
       "train_params": {
         "model_name": "llama3.1_405B",
@@ -459,6 +482,12 @@ Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X; 
    * - ``sequence_length``
      - ``8192``
      - Maximum context length.
+   * - ``recompute``
+     - ``0``
+     - Activation recompute flag passed to the training backend. ``1`` trades extra compute for lower activation memory.
+   * - ``fsdp``
+     - ``0``
+     - FSDP flag passed to the training backend.
    * - ``tensor_parallelism``
      - ``8``
      - Splits across all 8 GPUs per node.
@@ -507,7 +536,7 @@ Host paths used by the job. They must be volume-mounted into the container (typi
      - Host path where the lib writes per-rank wrapper scripts.
    * - ``data_cache_dir``
      - ``/home/{user-id}/cache``
-     - Dataset and tokenizer cache directory. On distributed runs this path must be a shared filesystem.
+     - Dataset and tokenizer cache. Megatron ``MOCK_DATA=1`` writes ``MockGPTDataset-*-document_index.npy`` (and related index files) here; every rank then loads them. On **distributed** runs the path must be a shared filesystem visible on every node. The packaged ``/home/{user-id}/cache`` value is node-local once ``/home/{user-id}`` is bind-mounted, so replace it with NFS (or similar) and add that path to ``container.runtime.args.volumes``. Single-node can keep the home-directory default.
    * - ``rocm_dir``
      - ``""``
      - ROCm installation path inside the container. Leave empty for auto-detection.
@@ -576,7 +605,7 @@ These values are passed into the container as ``docker run -e`` flags and also f
      - Required for ROCm GPU and InfiniBand device access.
    * - ``runtime.args.volumes``
      - *(see below)*
-     - List of ``host:container`` bind mounts. At minimum, mount the user home directory (``/home/{user-id}:/home/{user-id}``) so ``log_dir``, ``scripts_dir``, and ``data_cache_dir`` are accessible inside the container. Distributed configs also require ``/dev/infiniband:/dev/infiniband`` and the Broadcom driver library mount. The last entry (``<changeme>:<changeme>``) is the shared filesystem bind mount for ``checkpoint.checkpoint_dir`` — replace both sides with the same shared path (e.g. ``/mnt/shared/ckpt:/mnt/shared/ckpt``). Required only when ``checkpoint.enforce`` is ``true``; the loader skips this entry when ``enforce`` is ``false``.
+     - List of ``host:container`` bind mounts. At minimum, mount the user home directory (``/home/{user-id}:/home/{user-id}``) so ``log_dir`` and ``scripts_dir`` are accessible inside the container. Distributed configs also require ``/dev/infiniband:/dev/infiniband`` and the Broadcom driver library mount. If ``paths.data_cache_dir`` is not under that home mount, add it as its own ``host:container`` entry so every node sees the same cache. The last entry (``<changeme>:<changeme>``) is the shared filesystem bind mount for ``checkpoint.checkpoint_dir`` — replace both sides with the same shared path (e.g. ``/mnt/shared/ckpt:/mnt/shared/ckpt``). Required only when ``checkpoint.enforce`` is ``true``; the loader skips this entry when ``enforce`` is ``false``.
    * - ``runtime.args.devices``
      - ``/dev/kfd``, ``/dev/dri``
      - GPU device nodes to expose. Distributed configs also add ``/dev/infiniband/rdma_cm``.
