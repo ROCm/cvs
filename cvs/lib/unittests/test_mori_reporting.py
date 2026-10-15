@@ -148,27 +148,27 @@ class TestGroups(unittest.TestCase):
         self.assertEqual(lat["values"][1][-1], round(40.0 + MIB / 1000, 2))
         self.assertNotIn("threshold", bw)
 
-    def test_rank_heatmap_sits_on_the_largest_case_both_operations_ran(self):
+    def test_rank_heatmap_covers_the_largest_case_both_operations_ran(self):
         store = {}
         record_io_results(store, _case("io_write", {0: 48.0, 1: 46.0, 2: 41.0}), case_qp_count=8, variant=VARIANT)
         record_io_results(store, _case("io_read", {0: 47.5, 1: 48.0, 2: 47.0}), case_qp_count=8, variant=VARIANT)
         record_io_results(store, _case("io_write", {0: 1.0}, sizes=(8, 32768)), case_qp_count=1, variant=VARIANT)
         record_io_results(store, _case("io_write", {0: 1.0}, batch=256), case_qp_count=8, variant=VARIANT)
-        nodes = store["groups"][WRITE]["nodes"]
-        holders = [label for label, cell in nodes.items() if label != "all cases" and cell.get("heatmaps")]
-        self.assertEqual(holders, ["buffer 4 MiB · batch 128 · QP 8"])
-        heat = nodes[holders[0]]["heatmaps"][0]
+        (heat,) = store["_meta"]["rank_grid"]["heatmaps"]
+        self.assertEqual(heat["name"], "MORI-IO per rank at 1 MiB, both directions · buffer 4 MiB · batch 128 · QP 8")
         self.assertEqual(heat["rows"], ["node00 → node01", "node01 → node00"])
         self.assertEqual(heat["cols"], ["rank 0 · GPU 0", "rank 1 · GPU 1", "rank 2 · GPU 2"])
         self.assertEqual(heat["values"], [[48.0, 46.0, 41.0], [47.5, 48.0, 47.0]])
         self.assertEqual((heat["threshold"], heat["direction"]), (round(0.97 * 47.5, 2), "higher"))
-        self.assertNotIn("heatmaps", store["groups"][READ]["nodes"]["buffer 4 MiB · batch 128 · QP 8"])
+        # The size heatmaps stay in the groups; the rank grid is only in its own section.
+        cells = [cell for group in store["groups"].values() for cell in group["nodes"].values()]
+        self.assertNotIn(heat["name"], [h["name"] for cell in cells for h in cell.get("heatmaps", [])])
 
     def test_rank_heatmap_needs_both_operations_and_marks_missing_ranks(self):
         store = record_io_results({}, _case("io_write", {0: 48.0, 1: 48.0}), variant=VARIANT)
-        self.assertNotIn("heatmaps", store["groups"][WRITE]["nodes"]["buffer 4 MiB · batch 128 · QP 1"])
+        self.assertNotIn("rank_grid", store["_meta"])
         record_io_results(store, _case("io_read", {0: 48.0}), variant=VARIANT)
-        heat = store["groups"][WRITE]["nodes"]["buffer 4 MiB · batch 128 · QP 1"]["heatmaps"][0]
+        heat = store["_meta"]["rank_grid"]["heatmaps"][0]
         self.assertEqual(heat["values"], [[48.0, 48.0], [48.0, None]])
 
 
@@ -205,9 +205,8 @@ class TestMoriDeckProfile(unittest.TestCase):
             cvs_version="1.0.0",
         )
 
-    def test_deck_renders_per_op_groups_rank_grid_and_results_without_script(self):
-        payload = self._payload()
-        document = render_rundeck_html(payload)
+    def test_deck_renders_per_op_groups_rank_section_and_results_without_script(self):
+        document = render_rundeck_html(self._payload())
         for text in (
             "Mori Benchmark Run Deck",
             f"<h3 class='chart-group-title'>{READ}</h3>",
@@ -224,6 +223,12 @@ class TestMoriDeckProfile(unittest.TestCase):
         self.assertNotIn("<script", document)
         self.assertNotIn("<table class='status-matrix'>", document)
         self.assertNotIn("Viewer</a>", document)
+        charts, ranks = document.split("<section class='panel' id='charts'>")[1].split(
+            "<section class='panel' id='ranks'>"
+        )
+        self.assertNotIn("MORI-IO per rank", charts)
+        self.assertIn("<h2>MORI-IO per rank</h2>", ranks)
+        self.assertIn("hm-pass", ranks)
 
 
 if __name__ == "__main__":

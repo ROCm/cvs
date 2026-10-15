@@ -7,9 +7,9 @@ Record Mori benchmark results in the status_matrix shape the Run Deck renders.
 The store holds ``groups`` (one per operation, titled with the data direction), whose
 ``nodes`` are the IO cases or the IBGDA nodes, each carrying its curves as ``series``.
 An extra "all cases" (IO) or "both nodes" (IBGDA) cell carries the bandwidth and latency
-heatmaps over message sizes, and the write group's largest case carries the per-rank
-heatmap. Raw per-size results live under ``_mori`` so every record call can rebuild the
-groups in a fixed order.
+heatmaps over message sizes. The per-rank heatmap lives in ``_meta["rank_grid"]``, which
+the builder passes through, so the profile can render it as its own section. Raw per-size
+results live under ``_mori`` so every record call can rebuild the groups in a fixed order.
 '''
 
 KEY_MSG_SIZE = 1 << 20
@@ -134,15 +134,15 @@ def _rank_heatmap(io_cases, directions):
             by_op.setdefault(op, {})[(buffer_size, batch, qp)] = ranks
     common = set(by_op.get("io_write", {})) & set(by_op.get("io_read", {}))
     if not common:
-        return None, None
+        return None
     shape = max(common)
     write, read = by_op["io_write"][shape], by_op["io_read"][shape]
     ranks = sorted(set(write) | set(read), key=_int)
     values = sorted(v for column in (write, read) for v in column.values())
     median = values[len(values) // 2]
     initiator, target = directions
-    heatmap = {
-        "name": f"MORI-IO per rank at {size_text(KEY_MSG_SIZE)}, both directions",
+    return {
+        "name": f"MORI-IO per rank at {size_text(KEY_MSG_SIZE)}, both directions · {_case_label(*shape)}",
         "unit": "GB/s",
         "rows": [f"{initiator} → {target}", f"{target} → {initiator}"],
         "cols": [f"rank {_int(r)} · GPU {_int(r)}" for r in ranks],
@@ -151,7 +151,6 @@ def _rank_heatmap(io_cases, directions):
         "threshold": round(0.97 * median, 2),
         "direction": "higher",
     }
-    return heatmap, shape
 
 
 def _key_sizes(sizes):
@@ -184,15 +183,12 @@ def _rebuild(store):
         op, buffer_size, batch, qp = key.split("|")
         io_cases[(op, _int(buffer_size), _int(batch), _int(qp))] = value["sizes"]
     statuses = {key: value["status"] for key, value in (raw.get("io") or {}).items()}
-    heatmap, heat_shape = _rank_heatmap(io_cases, directions)
     groups = {}
     for op in ("io_read", "io_write"):
         nodes = {}
         for case_key in sorted(k for k in io_cases if k[0] == op):
             _op, buffer_size, batch, qp = case_key
             cell = _io_cell(io_cases[case_key], statuses["|".join(str(part) for part in case_key)])
-            if op == "io_write" and heatmap and (buffer_size, batch, qp) == heat_shape:
-                cell["heatmaps"] = [heatmap]
             nodes[_case_label(buffer_size, batch, qp)] = cell
         if nodes:
             cases = [(label, case_key) for label, case_key in zip(nodes, sorted(k for k in io_cases if k[0] == op))]
@@ -229,6 +225,12 @@ def _rebuild(store):
         }
         groups[titles["ibgda_write"]] = {"nodes": nodes}
     store["groups"] = groups
+    meta = store.setdefault("_meta", {"suite": "mori_benchmark_test"})
+    rank_heatmap = _rank_heatmap(io_cases, directions)
+    if rank_heatmap:
+        meta["rank_grid"] = {"heatmaps": [rank_heatmap]}
+    else:
+        meta.pop("rank_grid", None)
     return store
 
 

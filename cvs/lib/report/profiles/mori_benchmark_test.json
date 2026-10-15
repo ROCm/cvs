@@ -24,6 +24,13 @@
       "id": "charts",
       "title": "MORI-IO and IBGDA by message size",
       "bind": "datasets.status_matrix.metric_charts"
+    },
+    {
+      "type": "metric_charts",
+      "id": "ranks",
+      "title": "MORI-IO per rank",
+      "bind": "datasets.status_matrix.meta.rank_grid",
+      "when_empty": "hide"
     }
   ]
 }
