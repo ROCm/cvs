@@ -20,7 +20,7 @@ _CELL_RE = re.compile(
 )
 _METADATA_PREFIXES = ("_comment", "_example")
 _SOCKET_ENV = {"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"}
-_HF_TOKEN_ENV = {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"}
+_HF_TOKEN_ENV = {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN"}
 _SERVER_RESERVED = {"master_addr", "master_port", "nnodes", "node_rank", "headless"}
 
 
@@ -80,7 +80,7 @@ class ContainerConfig(_Forbid):
 
     @model_validator(mode="after")
     def _reject_hf_token_env(self):
-        tokens = sorted(_HF_TOKEN_ENV & set(self.env))
+        tokens = sorted(name for name in self.env if name.upper() in _HF_TOKEN_ENV)
         if tokens:
             raise ValueError(
                 f"container.env must not set {tokens}: container.env values become docker run -e arguments. "

@@ -64,7 +64,6 @@ from cvs.lib.inference.utils.vllm_config_loader import VariantConfig, serialize_
 from cvs.lib.inference.vllm_job import VllmJob
 
 RAY = {"distributed-executor-backend": "ray"}
-FAKE_CRED = "fake-cred"
 FAKE_CRED_FILE = "/logs/.hf"
 
 # EARLY_FAILURE_RE-matching / non-matching bootstrap outputs (spec Failure Modes).
@@ -274,7 +273,6 @@ def _job(
     return VllmJob(
         orch=orch,
         variant=_variant(serve_args, pp, ib_netdev, tp, master_addr, env),
-        hf_token=FAKE_CRED,
         isl=isl,
         osl=osl,
         concurrency=concurrency,
@@ -356,7 +354,6 @@ class TestCellKeyRayMultiNode(unittest.TestCase):
         job = VllmJob(
             orch=RecordingOrch(),
             variant=variant,
-            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=16,
@@ -1107,7 +1104,6 @@ class TestVllmJobWaitReady(unittest.TestCase):
         job = VllmJob(
             orch=RecordingOrch(responder=_responder_ok(), hosts=[HEAD]),
             variant=variant,
-            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=16,

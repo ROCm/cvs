@@ -40,16 +40,14 @@ def test_model_fetch(orch, variant_config, lifecycle, request):
     return _common.model_fetch(orch, variant_config, lifecycle, request)
 
 
-def test_openai_compatible_smoke(orch, variant_config, hf_token, vllm_targets, lifecycle, request):
+def test_openai_compatible_smoke(orch, variant_config, vllm_targets, lifecycle, request):
     """Start a short-lived server and check the OpenAI-compatible endpoints answer."""
-    return _common.openai_compatible_smoke(orch, variant_config, hf_token, vllm_targets, lifecycle, request)
+    return _common.openai_compatible_smoke(orch, variant_config, vllm_targets, lifecycle, request)
 
 
-def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_res_dict, lifecycle, request, subtests):
+def test_vllm_inference(orch, variant_config, vllm_targets, run, inf_res_dict, lifecycle, request, subtests):
     """Benchmark one sweep cell, then report its metrics and verify enforced thresholds as subtests."""
-    return _common.vllm_inference(
-        orch, variant_config, hf_token, vllm_targets, run, inf_res_dict, lifecycle, request, subtests
-    )
+    return _common.vllm_inference(orch, variant_config, vllm_targets, run, inf_res_dict, lifecycle, request, subtests)
 
 
 def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):

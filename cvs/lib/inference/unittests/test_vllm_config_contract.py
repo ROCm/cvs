@@ -123,7 +123,7 @@ class TestVllmConfigContract(unittest.TestCase):
             VariantConfig(**config)
 
     def test_rejects_hf_token_in_container_env_without_echoing_value(self):
-        for name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
+        for name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN", "hf_token", "Hf_Token"):
             for extra in ({}, {"NCCL_SOCKET_IFNAME": "eno0"}):
                 with self.subTest(name=name, extra=extra):
                     config = _config()

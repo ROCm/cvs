@@ -94,7 +94,6 @@ def _job(responder=None, hosts=(HEAD,), log_dir="/logs"):
     return VllmJob(
         orch=orch,
         variant=_variant(log_dir, pp=len(hosts)),
-        hf_token=FAKE_CRED,
         isl="1024",
         osl="1024",
         concurrency="16",
@@ -206,6 +205,25 @@ class TestServerCommandsInBash(unittest.TestCase):
         for reap in (True, False):
             with self.subTest(reap=reap):
                 self.assertEqual(self._state_of_exited(reap), ("present", "dead"))
+
+    def test_server_env_reads_the_token_file_in_the_shell(self):
+        token_file = os.path.join(self.tmp, "hf_token")
+        self.job.hf_token_file = token_file
+        self.env_script = os.path.join(self.tmp, "server_env_script.sh")
+        sent = []
+        self.job.orch.exec = lambda cmd, hosts=None, **kwargs: (sent.append(cmd), self._bash(cmd, hosts, **kwargs))[1]
+        for content, expected in ((f"{FAKE_CRED}\n", FAKE_CRED), (None, "")):
+            with self.subTest(file_present=content is not None):
+                if content is None:
+                    os.remove(token_file)
+                else:
+                    self._write(token_file, content)
+                self.job.build_server_cmd()
+                exported = run_trusted(
+                    ["bash", "-c", f'. {self.env_script}; printf %s "$HF_TOKEN"'], capture_output=True, text=True
+                )
+                self.assertEqual(exported.stdout, expected)
+                self.assertFalse([cmd for cmd in sent if FAKE_CRED in cmd])
 
     def test_nothing_on_disk(self):
         self.assertEqual(self.job._server_state(0, HEAD), ("missing", "none"))
