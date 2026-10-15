@@ -665,13 +665,19 @@ class RcclJob:
 
     @property
     def result_file(self):
-        """Result path shared by the collective, combined, and aggregated files."""
+        """Configured base result path; regression writes here and perf derives per-collective paths."""
         configured = self.cvs_params.get('rccl_result_file')
         if configured:
             return str(configured)
         from cvs.core.run_layout import RunLayout
 
         return str(RunLayout.get().run_dir / 'rccl_result_file.json')
+
+    @property
+    def perf_result_file(self):
+        """Per-collective combined perf path; dtype, aggregated, and topology files derive from its stem."""
+        base = Path(self.result_file)
+        return str(base.with_name(f'{base.stem}_{self.test_name}.json'))
 
     def _prepare_result_directory(self):
         """Require a result directory CVS can create and read back via download_from_head."""
@@ -1007,7 +1013,7 @@ class RcclJob:
         self.topology_checks = []
         params = self.rccl_test_params
         data_types = params.get('data_types', ['float'])
-        result_file = self.result_file
+        result_file = self.perf_result_file
         base_path = Path(result_file)
         raw_results = []
         validated_results = []

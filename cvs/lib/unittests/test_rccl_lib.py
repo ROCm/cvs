@@ -1252,6 +1252,17 @@ class TestRcclLib(unittest.TestCase):
             layout.return_value.run_dir = Path('/shared/cvs_runs/1234')
             self.assertEqual(job.result_file, '/shared/cvs_runs/1234/rccl_result_file.json')
 
+    def test_perf_result_file_includes_collective_name(self):
+        job = self._job(_FakeOrch())
+        self.assertEqual(job.perf_result_file, '/shared/rccl_all_reduce_perf.json')
+        self.assertEqual(job.result_file, '/shared/rccl.json')
+        job.cvs_params.pop('rccl_result_file')
+        with patch('cvs.core.run_layout.RunLayout.get') as layout:
+            layout.return_value.run_dir = Path('/shared/cvs_runs/1234')
+            self.assertEqual(job.perf_result_file, '/shared/cvs_runs/1234/rccl_result_file_all_reduce_perf.json')
+        job.cvs_params['rccl_result_file'] = '/shared/rccl.out'
+        self.assertEqual(job.perf_result_file, '/shared/rccl_all_reduce_perf.json')
+
     def test_result_transfers_use_head_host_handle(self):
         orch = _FakeOrch()
         job = self._job(orch)
@@ -1444,6 +1455,11 @@ class TestRcclLib(unittest.TestCase):
 
 
 class TestRcclTopology(unittest.TestCase):
+    _AUDIT = {
+        'run_perf': '/results/rccl_all_reduce_perf_topology_check.json',
+        'run_regression': '/results/rccl_topology_check.json',
+    }
+
     def setUp(self):
         self.requested = {'nodes': 2, 'ranks': 2, 'ranksPerNode': 1, 'gpusPerRank': 8}
         self.row = {
@@ -1464,11 +1480,11 @@ class TestRcclTopology(unittest.TestCase):
         }
         self.job = self._job()
 
-    def _job(self, cvs_params=None, mpi_params=None, nodes=None, managed=True):
+    def _job(self, cvs_params=None, mpi_params=None, nodes=None, managed=True, test_name='all_reduce_perf'):
         with patch('cvs.lib.rccl_lib.is_managed_compute', return_value=managed):
             return rccl_lib.RcclJob(
                 _FakeOrch(),
-                'all_reduce_perf',
+                test_name,
                 '/dev/null',
                 mpi_params or {'no_of_nodes': '2', 'no_of_local_ranks': '1'},
                 {'threads_per_gpu': '8'},
@@ -1477,23 +1493,24 @@ class TestRcclTopology(unittest.TestCase):
                 nodes or ['n1', 'n2'],
             )
 
-    def _mock_run(self, rows):
-        saved = {}
+    def _mock_run(self, rows, job=None, saved=None):
+        job = job or self.job
+        saved = {} if saved is None else saved
 
         def upload(local_path, remote_path):
             saved[remote_path] = json.loads(Path(local_path).read_text())
 
         for patcher in (
-            patch.object(self.job, 'prepare'),
-            patch.object(self.job, 'execute', return_value='completed'),
-            patch.object(self.job, 'read_results', return_value=rows),
-            patch.object(self.job, 'collect_gpu_info'),
-            patch.object(self.job, '_verify_results'),
+            patch.object(job, 'prepare'),
+            patch.object(job, 'execute', return_value='completed'),
+            patch.object(job, 'read_results', return_value=rows),
+            patch.object(job, 'collect_gpu_info'),
+            patch.object(job, '_verify_results'),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
-        self.job.orch.upload_to_head.side_effect = upload
-        self.job.cvs_params['rccl_result_file'] = '/results/rccl.json'
+        job.orch.upload_to_head.side_effect = upload
+        job.cvs_params['rccl_result_file'] = '/results/rccl.json'
         return saved
 
     def _mock_download(self, payload):
@@ -1770,8 +1787,8 @@ class TestRcclTopology(unittest.TestCase):
         self.job.read_results.side_effect = [rows, [{**self.row, 'type': 'half'}]]
         result = self.job.run_perf()
         self.assertEqual(rows, [self.row])
-        self.assertEqual(saved['/results/rccl.json'], result)
-        artifact = saved['/results/rccl_topology_check.json']
+        self.assertEqual(saved['/results/rccl_all_reduce_perf.json'], result)
+        artifact = saved['/results/rccl_all_reduce_perf_topology_check.json']
         self.assertEqual(artifact['mode'], 'warn')
         self.assertEqual(
             [check['label'] for check in artifact['checks']], ['all_reduce_perf_float', 'all_reduce_perf_half']
@@ -1779,13 +1796,59 @@ class TestRcclTopology(unittest.TestCase):
         for check in artifact['checks']:
             self.assertEqual(check['requested'], self.requested)
             self.assertEqual(check['verdict'], 'mismatch')
-        for row in result + saved['/results/rccl_aggregated.json']:
+        for row in result + saved['/results/rccl_all_reduce_perf_aggregated.json']:
             self.assertEqual({key: row[key] for key in rccl_lib.TOPOLOGY_FIELDS}, artifact['checks'][0]['reported'])
         self.assertEqual(
-            set(saved), {'/results/rccl.json', '/results/rccl_aggregated.json', '/results/rccl_topology_check.json'}
+            set(saved),
+            {
+                '/results/rccl_all_reduce_perf.json',
+                '/results/rccl_all_reduce_perf_aggregated.json',
+                '/results/rccl_all_reduce_perf_topology_check.json',
+            },
         )
         self.assertIn('-g 8', self.job.execute.call_args.args[0])
         fail.assert_not_called()
+
+    def test_perf_artifacts_are_kept_per_collective(self):
+        ar = self._job()
+        ag = self._job(test_name='all_gather_perf')
+        saved = {}
+        for job, name in ((ar, 'AllReduce'), (ag, 'AllGather')):
+            row_float = {**self.row, 'name': name}
+            row_half = {**row_float, 'type': 'half'}
+            job.rccl_test_params['data_types'] = ['float', 'half']
+            self._mock_run([row_float], job=job, saved=saved)
+            job.read_results.side_effect = [[row_float], [row_half]]
+
+        ar.run_perf()
+        ag.run_perf()
+
+        self.assertEqual(
+            set(saved),
+            {
+                '/results/rccl_all_reduce_perf.json',
+                '/results/rccl_all_reduce_perf_aggregated.json',
+                '/results/rccl_all_reduce_perf_topology_check.json',
+                '/results/rccl_all_gather_perf.json',
+                '/results/rccl_all_gather_perf_aggregated.json',
+                '/results/rccl_all_gather_perf_topology_check.json',
+            },
+        )
+        self.assertNotIn('/results/rccl.json', saved)
+        self.assertEqual({row['name'] for row in saved['/results/rccl_all_reduce_perf.json']}, {'AllReduce'})
+        self.assertEqual({row['name'] for row in saved['/results/rccl_all_gather_perf.json']}, {'AllGather'})
+        self.assertEqual(
+            [call.args[0] for call in ag.read_results.call_args_list],
+            ['/results/rccl_all_gather_perf_float.json', '/results/rccl_all_gather_perf_half.json'],
+        )
+        self.assertIn('/results/rccl_all_gather_perf_half.json', ag.execute.call_args.args[0])
+
+    def test_regression_keeps_configured_result_file(self):
+        saved = self._mock_run([self.row])
+        self.job.run_regression()
+        self.assertIn('/results/rccl.json', self.job.execute.call_args.args[0])
+        self.assertEqual(self.job.read_results.call_args.args[0], '/results/rccl.json')
+        self.assertEqual(set(saved), {'/results/rccl_topology_check.json'})
 
     def test_perf_strict_records_failure_and_still_saves_results(self):
         saved = self._mock_run([self.row])
@@ -1793,8 +1856,8 @@ class TestRcclTopology(unittest.TestCase):
         with patch.object(rccl_lib.globals, 'error_list', []):
             self.assertEqual(self.job.run_perf(), [self.row])
             self.assertEqual(len(rccl_lib.globals.error_list), 1)
-        self.assertEqual(saved['/results/rccl_topology_check.json']['checks'][0]['verdict'], 'mismatch')
-        self.assertIn('/results/rccl_aggregated.json', saved)
+        self.assertEqual(saved['/results/rccl_all_reduce_perf_topology_check.json']['checks'][0]['verdict'], 'mismatch')
+        self.assertIn('/results/rccl_all_reduce_perf_aggregated.json', saved)
 
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_perf_single_node_without_topology_is_skipped_in_strict_mode(self, fail):
@@ -1807,11 +1870,11 @@ class TestRcclTopology(unittest.TestCase):
         row = {key: value for key, value in self.row.items() if key not in rccl_lib.TOPOLOGY_FIELDS}
         saved = self._mock_run([row])
         self.assertEqual(self.job.run_perf(), [row])
-        check = saved['/results/rccl_topology_check.json']['checks'][0]
+        check = saved['/results/rccl_all_reduce_perf_topology_check.json']['checks'][0]
         self.assertEqual(check['verdict'], 'skipped')
         self.assertEqual(check['reason'], 'Producer did not report topology fields')
         self.assertEqual(check['mismatches'], [])
-        self.assertIsNone(saved['/results/rccl_aggregated.json'][0]['nodes'])
+        self.assertIsNone(saved['/results/rccl_all_reduce_perf_aggregated.json'][0]['nodes'])
         fail.assert_not_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
@@ -1828,7 +1891,7 @@ class TestRcclTopology(unittest.TestCase):
         self.job.rccl_test_params['data_types'] = ['float', 'half']
         self.job.execute.side_effect = ['completed', None]
         self.assertEqual(self.job.run_perf(), [self.row])
-        checks = saved['/results/rccl_topology_check.json']['checks']
+        checks = saved['/results/rccl_all_reduce_perf_topology_check.json']['checks']
         self.assertEqual([check['verdict'] for check in checks], ['mismatch', 'skipped'])
 
     @patch('cvs.lib.rccl_lib.fail_test')
@@ -1836,7 +1899,7 @@ class TestRcclTopology(unittest.TestCase):
         saved = self._mock_run([self.row])
         self.job.topology_check_mode = 'off'
         self.job.run_perf()
-        self.assertEqual(saved['/results/rccl_topology_check.json'], {'mode': 'off', 'checks': []})
+        self.assertEqual(saved['/results/rccl_all_reduce_perf_topology_check.json'], {'mode': 'off', 'checks': []})
         fail.assert_not_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
@@ -1846,8 +1909,8 @@ class TestRcclTopology(unittest.TestCase):
         self.job.run_perf()
         fail.assert_called_once()
         self.assertIn('Inconsistent cluster config', fail.call_args.args[0])
-        self.assertEqual(saved['/results/rccl_topology_check.json'], {'mode': 'off', 'checks': []})
-        self.assertNotIn('/results/rccl_aggregated.json', saved)
+        self.assertEqual(saved['/results/rccl_all_reduce_perf_topology_check.json'], {'mode': 'off', 'checks': []})
+        self.assertNotIn('/results/rccl_all_reduce_perf_aggregated.json', saved)
 
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_schema_failure_still_aborts_and_saves_prior_checks(self, fail):
@@ -1857,7 +1920,7 @@ class TestRcclTopology(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'schema validation failed'):
             self.job.run_perf()
         self.assertIn('SEVERE DATA CORRUPTION', fail.call_args.args[0])
-        checks = saved['/results/rccl_topology_check.json']['checks']
+        checks = saved['/results/rccl_all_reduce_perf_topology_check.json']['checks']
         self.assertEqual(len(checks), 2)
         self.assertEqual([check['label'] for check in checks], ['all_reduce_perf_float', 'all_reduce_perf_half'])
         self.assertEqual(checks[1]['verdict'], 'mismatch')
@@ -1912,7 +1975,7 @@ class TestRcclTopology(unittest.TestCase):
                     fail.assert_called_once()
                     self.assertIn('expected an array of result objects', fail.call_args.args[0])
                     self.job._verify_results.assert_not_called()
-                    checks = saved['/results/rccl_topology_check.json']['checks']
+                    checks = saved[self._AUDIT[method]]['checks']
                     if mode == 'off':
                         self.assertEqual(checks, [])
                     else:
@@ -1926,7 +1989,7 @@ class TestRcclTopology(unittest.TestCase):
                 saved = self._mock_run([])
                 self.assertEqual(getattr(self.job, method)(), [])
                 self.job._verify_results.assert_not_called()
-                check = saved['/results/rccl_topology_check.json']['checks'][0]
+                check = saved[self._AUDIT[method]]['checks'][0]
                 self.assertEqual(check['verdict'], 'skipped')
                 self.assertIn('No result rows', check['reason'])
 
@@ -1946,9 +2009,14 @@ class TestRcclTopology(unittest.TestCase):
 
     def test_reused_job_resets_checks_for_each_run(self):
         saved = self._mock_run([self.row])
-        for run in (self.job.run_perf, self.job.run_perf, self.job.run_regression, self.job.run_regression):
+        for run, audit in (
+            (self.job.run_perf, self._AUDIT['run_perf']),
+            (self.job.run_perf, self._AUDIT['run_perf']),
+            (self.job.run_regression, self._AUDIT['run_regression']),
+            (self.job.run_regression, self._AUDIT['run_regression']),
+        ):
             run()
-            self.assertEqual(len(saved['/results/rccl_topology_check.json']['checks']), 1)
+            self.assertEqual(len(saved[audit]['checks']), 1)
 
     def test_save_topology_checks_reports_upload_failure(self):
         self.job.orch.upload_to_head.side_effect = IOError('unreachable head node')
