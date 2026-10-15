@@ -469,6 +469,7 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
 
 
 _DMESG_DURING_TEST_LOG_LINE_CAP = 500
+_DMESG_LOG_SEP = '#----------------------------------------------------------#'
 
 
 def dmesg_write_marker_cmd(marker):
@@ -525,8 +526,7 @@ def verify_dmesg_during_test(phdl, start_marker, end_marker):
     fails the test by itself.
     """
     log.info('scan dmesg during test (markers: %s .. %s)', start_marker, end_marker)
-    output_dict = phdl.exec(_dmesg_slice_by_markers_cmd(start_marker, end_marker))
-    log.info('#----------------------------------------------------------#')
+    output_dict = phdl.exec(_dmesg_slice_by_markers_cmd(start_marker, end_marker), print_console=False)
 
     err_dict = {}
     scannable = {}
@@ -563,7 +563,12 @@ def verify_dmesg_during_test(phdl, start_marker, end_marker):
         body = '\n'.join(logged)
         if len(lines) > _DMESG_DURING_TEST_LOG_LINE_CAP:
             body = f'{body}\n... (truncated, {len(lines)} lines total)'
+        # print_console=False skips the host banner, so frame the marker window here.
+        log.info(_DMESG_LOG_SEP)
+        log.info('Host == %s ==', node)
+        log.info(_DMESG_LOG_SEP)
         log.info('node %s: dmesg during test (%d lines):\n%s', node, len(lines), body)
+        log.info(_DMESG_LOG_SEP)
 
     if not scannable:
         return err_dict
