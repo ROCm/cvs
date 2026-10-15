@@ -134,6 +134,7 @@ Heatmap config requires:
 ## Configuration
 
 Start from [`rccl_config.json`](../../input/config_file/rccl/rccl_config.json). Replace any `<changeme>` values and configure paths, interfaces, node counts, and reference bandwidths for your cluster.
+For the single-node 8-GPU `all_reduce` guide bar, start from `mi300x_rccl_single_node_config.json` or `mi350x_rccl_single_node_config.json` instead (`cvs config copy rccl/<file>`), and replace only the `<changeme>` site paths.
 
 - `mpi_params.no_of_nodes` and `no_of_local_ranks` set the MPI topology explicitly. For a single-node run, set `no_of_nodes` to `1` and provide a one-node cluster or allocation.
 - `mpi_params.mpi_dir` names the Open MPI installation prefix; a trailing `/bin` is accepted. `mpi_pml`, `mpi_oob_port`, `net_dev_list`, and `ucx_tls` control Open MPI/UCX discovery and initialization.
@@ -163,6 +164,12 @@ For thresholds that depend on NIC, data types, and MPI rank count, use this form
 
 NIC keys are `ainic`, `thor`, and `connectx`, selected from `cvs_params.nic_model`. The result key is `<collective>-<data_types joined with underscores>-<total MPI ranks>`. Perf uses its configured data types in order; regression uses `float`, the rccl-tests default for its command. Pairwise uses the rank count of the current subset. A NIC/rank reference is used only when its full key matches.
 
+`cvs_params.fabric` selects `scale_out` (the default when omitted) or `scale_up`. Matching is case-insensitive; hyphens, underscores, and spaces are ignored. `scale_out` looks up the NIC key from `nic_model`, then the flat table. `scale_up` reads only `results.scale_up.<collective>-<data_types>-<total ranks>`; NIC-keyed and flat references are never used. The rank suffix follows the GPU count, for example `all_reduce_perf-float-4` for a 4-GPU tray. A missing scale-up key logs a warning with the exact path and fails the test when `verify_bus_bw` is `"True"`. Unknown fabric values warn and fall back to `scale_out`.
+
+```json
+"scale_up": {"all_reduce_perf-float-8": {"8589934592": {"bus_bw": "350"}}}
+```
+
 Both suites also accept the shipped legacy flat format:
 
 ```json
@@ -175,7 +182,20 @@ Both suites also accept the shipped legacy flat format:
 
 A matching NIC/rank reference takes precedence over a flat reference. Flat references apply regardless of data type or rank count, so calibrate them for every topology you test. The sample numbers are examples for two nodes, not qualification targets for other clusters. Pairwise/incremental sub-runs drop flat references entirely, since a threshold calibrated for the full cluster does not apply at pairwise node counts; only NIC/rank-keyed references, already scoped by rank count, are honored there.
 
-Set `cvs_params.verify_bus_bw` to `"True"` to enforce bandwidth thresholds. Measurements below 95% of the configured reference fail, and a missing threshold for a requested collective also fails. Dip checks stay off unless `verify_bw_dip` or `verify_lat_dip` is `"True"`; either flag uses the resolved reference message sizes. Dip checks compare consecutive reference sizes within one data type (and, for unaggregated rows, one rccl-tests cycle), in ascending size order; rows of different data types are never compared with each other. With no matching reference, these checks have no reference data to validate. Bus-bandwidth failure messages end with the data type of the failing row, for example `[type=bfloat16]`.
+Set `cvs_params.verify_bus_bw` to `"True"` to enforce bandwidth thresholds. Measurements below `cvs_params.bus_bw_tolerance` times the configured reference fail; the default is `0.95`, and the value must be a fraction in `(0, 1]` or the test fails. A missing threshold for a requested collective also fails. Dip checks stay off unless `verify_bw_dip` or `verify_lat_dip` is `"True"`; either flag uses the resolved reference message sizes and keeps a fixed 5% tolerance independent of `bus_bw_tolerance`. Dip checks compare consecutive reference sizes within one data type (and, for unaggregated rows, one rccl-tests cycle), in ascending size order; rows of different data types are never compared with each other. An enabled dip check with no resolved reference fails. Bus-bandwidth failure messages end with the data type of the failing row, for example `[type=bfloat16]`.
+
+### Single-node guide bars
+
+| Config | Platform | Bar | Tolerance |
+|---|---|---|---|
+| `mi300x_rccl_single_node_config.json` | MI300X | 304 GB/s | `1.0` |
+| `mi350x_rccl_single_node_config.json` | MI350X | 350 GB/s | `1.0` |
+
+Both bars are for `all_reduce_perf`, 8 GiB, in-place, float, on 1 node with 8 ranks. These configs are for `rccl_perf` only.
+
+**Open item:** The guide gives both 304 and 350 GB/s as the MI355X bar at 8 GiB in-place. CVS ships no MI355X bar until this is resolved; do not use the MI350X config as an MI355X gate.
+
+**Open item:** MI4xx scale-up references still need a published, validated bar; none is shipped.
 
 When `cvs_params.report_ecc_delta` is `"True"` (default `"False"`), `rccl_perf` and `rccl_regression` capture UMC/SDMA/GFX/MMHUB/PCIE_BIF/HDP/XGMI_WAFL CE/UE/DE counters and log one post-test INFO table per node. Optionally set `cvs_params.report_ecc_blocks` to a list of block names (for example `["UMC", "XGMI_WAFL"]`) to limit capture and delta reporting to those blocks; omit or leave empty for all blocks. An unknown block name fails the test. Allowed names are UMC, SDMA, GFX, MMHUB, PCIE_BIF, HDP, and XGMI_WAFL. An increase is a warning and does not fail the test. A GPU present in only one snapshot is warned as missing data (`MISSING_BEFORE` or `MISSING_AFTER`) and is not reported as a counter change. A node whose amd-smi capture returns no GPUs, bad JSON, or times out is reported as `NO_DATA`. `report_ecc_delta` stays a warning when `cluster_snapshot_debug` is also enabled. That debug snapshot still records a test failure if the RAS or PCIE `amd-smi` JSON cannot be parsed. Grep the pytest log for `ECC_BLOCKS`. This requires passwordless sudo.
 
@@ -257,6 +277,7 @@ Use paths and node counts appropriate to your allocation. Repeat for `rccl_regre
 Perf and regression add their charts to the pytest HTML report. CVS writes a timestamped suite ZIP beside the HTML report. Pairwise also records phase membership in `cvs_params.pairwise_results_file`; choose a persistent path if needed.
 
 When `verify_bus_bw`, `verify_bw_dip`, or `verify_lat_dip` is enabled, perf and regression report each comparison as a pytest sub-test labelled with the collective, check (`bus_bw`, `bw_dip`, `lat_dip`, or `results`), data type, and message size when known. Pairwise reports each Phase 0/1/2 candidate with phase and node labels. Each parent row in the HTML report expands into pass/fail case rows showing measurements and thresholds, and the filter bar shows sub-test totals. Failing cases appear as `SUBFAILED(...)` in the terminal and add a message-only `<failure>` to JUnit. Parent failure counts stay the same. With all verification flags off, perf and regression emit no sub-tests.
+A missing reference for an enabled check, or an invalid `bus_bw_tolerance`, is reported as one failing case for that check (`bus_bw`, `bw_dip`, or `lat_dip`) without a size label.
 
 For cluster validation, retain before/after bare-metal result JSONs and HTML bundles, record each managed suite's pass/fail/skip outcome, and check that results can be read from shared storage. SPUR pairwise validation must record the observed version and subset behavior. Upload report bundles outside CVS, for example:
 
