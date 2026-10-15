@@ -7,8 +7,9 @@ Record Mori benchmark results in the status_matrix shape the Run Deck renders.
 The store holds ``groups`` (one per operation, titled with the data direction), whose
 ``nodes`` are the IO cases or the IBGDA nodes, each carrying its curves as ``series``.
 An extra "all cases" (IO) or "both nodes" (IBGDA) cell carries the bandwidth and latency
-heatmaps over message sizes. The per-rank heatmap lives in ``_meta["rank_grid"]``, which
-the builder passes through, so the profile can render it as its own section. Raw per-size
+heatmaps over message sizes. The per-rank heatmap lives in ``_meta["rank_grid"]`` and the
+full results in ``_meta["results_table"]``, which the builder passes through, so the
+profile can render them as their own sections. Raw per-size
 results live under ``_mori`` so every record call can rebuild the groups in a fixed order.
 '''
 
@@ -175,6 +176,48 @@ def _case_label(buffer_size, batch, qp):
     return f"buffer {size_text(buffer_size)} · batch {batch} · QP {qp}"
 
 
+def _results_table(io_cases, statuses, ibgda, titles, names):
+    """One row per IO case x message size, then per IBGDA node x message size."""
+    rows = []
+    for op in ("io_read", "io_write"):
+        for case_key in sorted(k for k in io_cases if k[0] == op):
+            status = statuses["|".join(str(part) for part in case_key)]
+            for size, entry in sorted(io_cases[case_key].items(), key=lambda item: _int(item[0])):
+                rows.append(
+                    [
+                        titles[op].split(" · ")[0],
+                        _case_label(*case_key[1:]),
+                        _int(size),
+                        entry.get("Avg_BW_GBps", "—"),
+                        entry.get("Slowest_rank", "—"),
+                        entry.get("Slowest_rank_BW_GBps", "—"),
+                        entry.get("Avg_Lat_us", "—"),
+                        entry.get("Worst_rank_Lat_us", "—"),
+                        "—",
+                        status,
+                    ]
+                )
+    for host in sorted(ibgda, key=lambda h: (h not in names, names.get(h, h))):
+        for row in sorted(ibgda[host]["rows"], key=lambda r: _int(r.get("size_bytes"))):
+            rows.append(
+                [titles["ibgda_write"].split(" · ")[0], names.get(host, host), _int(row["size_bytes"])]
+                + [row.get("bandwidth_gb", "—"), "—", "—", "—", "—", row.get("rate_mpps", "—"), ibgda[host]["status"]]
+            )
+    headers = [
+        "Operation",
+        "Case or node",
+        "Message size (B)",
+        "Bandwidth (GB/s)",
+        "Slowest rank",
+        "Slowest rank BW (GB/s)",
+        "Latency per batch (usec)",
+        "Worst rank latency (usec)",
+        "Message rate (Mpps)",
+        "Status",
+    ]
+    return {"headers": headers, "rows": rows}
+
+
 def _rebuild(store):
     titles, names, directions = _titles(store.get("_meta") or {})
     raw = store.get("_mori") or {}
@@ -231,6 +274,7 @@ def _rebuild(store):
         meta["rank_grid"] = {"heatmaps": [rank_heatmap]}
     else:
         meta.pop("rank_grid", None)
+    meta["results_table"] = _results_table(io_cases, statuses, ibgda, titles, names)
     return store
 
 

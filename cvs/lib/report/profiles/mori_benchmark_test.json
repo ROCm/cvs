@@ -21,16 +21,17 @@
     {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
     {
       "type": "metric_charts",
-      "id": "charts",
-      "title": "MORI-IO and IBGDA by message size",
-      "bind": "datasets.status_matrix.metric_charts"
-    },
-    {
-      "type": "metric_charts",
       "id": "ranks",
       "title": "MORI-IO per rank",
       "bind": "datasets.status_matrix.meta.rank_grid",
       "when_empty": "hide"
-    }
+    },
+    {
+      "type": "metric_charts",
+      "id": "charts",
+      "title": "MORI-IO and IBGDA by message size",
+      "bind": "datasets.status_matrix.metric_charts"
+    },
+    {"type": "table", "id": "results", "title": "Full results", "bind": "datasets.status_matrix.meta.results_table"}
   ]
 }

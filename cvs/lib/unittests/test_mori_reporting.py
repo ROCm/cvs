@@ -223,12 +223,27 @@ class TestMoriDeckProfile(unittest.TestCase):
         self.assertNotIn("<script", document)
         self.assertNotIn("<table class='status-matrix'>", document)
         self.assertNotIn("Viewer</a>", document)
-        charts, ranks = document.split("<section class='panel' id='charts'>")[1].split(
-            "<section class='panel' id='ranks'>"
+        ranks, charts = document.split("<section class='panel' id='ranks'>")[1].split(
+            "<section class='panel' id='charts'>"
         )
-        self.assertNotIn("MORI-IO per rank", charts)
         self.assertIn("<h2>MORI-IO per rank</h2>", ranks)
         self.assertIn("hm-pass", ranks)
+        self.assertNotIn("MORI-IO per rank", charts)
+        self.assertIn("<section class='panel' id='results'><h2>Full results</h2>", charts)
+
+    def test_results_table_has_a_row_per_case_and_ibgda_node_per_size(self):
+        table = self._payload()["datasets"]["status_matrix"]["meta"]["results_table"]
+        rows = [dict(zip(table["headers"], row)) for row in table["rows"]]
+        self.assertEqual(len(rows), 3 + 3 + 2 * 2)
+        self.assertEqual(
+            [rows[0][k] for k in ("Operation", "Case or node", "Message size (B)", "Bandwidth (GB/s)", "Status")],
+            ["MORI-IO READ", "buffer 4 MiB · batch 128 · QP 1", 8, 46.5, "pass"],
+        )
+        self.assertEqual((rows[0]["Slowest rank"], rows[0]["Slowest rank BW (GB/s)"]), (1, 46.0))
+        self.assertEqual(
+            [rows[-1][k] for k in ("Operation", "Case or node", "Message size (B)", "Message rate (Mpps)")],
+            ["IBGDA WRITE", "node01", MIB, 10.0],
+        )
 
 
 if __name__ == "__main__":
