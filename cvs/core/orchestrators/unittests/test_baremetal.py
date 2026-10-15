@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.lib.parallel.config import ParallelConfig
-from cvs.unittests.support import TMP
+from cvs.unittests.support import FAKE_CRED, TMP
 
 
 def _make_orch_config():
@@ -101,6 +101,17 @@ class TestBaremetalOrchestrator(unittest.TestCase):
             "ls", timeout=5, detailed=False, print_console=True, inactivity_timeout=None
         )
         self.assertEqual(result, {"10.0.0.1": "ok", "10.0.0.2": "ok"})
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_distribute_using_mpi_logs_masked_command(self, _mock_pssh):
+        log = MagicMock()
+        orch = BaremetalOrchestrator(log, _make_orch_config())
+        cmd = f"mpirun -x HF_TOKEN={FAKE_CRED} hostname"
+        with patch.object(orch, "build_mpi_cmd", return_value=cmd), patch.object(orch, "exec_on_head") as run:
+            orch.distribute_using_mpi("hostname", ["10.0.0.1"], 1, {"HF_TOKEN": FAKE_CRED}, "/opt/ompi")
+        run.assert_called_once_with(cmd, timeout=500)
+        logged = [c.args[0] for c in log.debug.call_args_list if str(c.args[0]).startswith("MPI command: ")]
+        self.assertEqual(logged, ["MPI command: mpirun -x HF_TOKEN=<redacted> hostname"])
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_on_head_delegates_to_head_handle(self, _mock_pssh):

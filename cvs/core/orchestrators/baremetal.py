@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 from cvs.core.orchestrators.base import Orchestrator
 from cvs.core.scheduler import is_managed_compute
+from cvs.lib.env_lib import redact_secrets
 from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
 from cvs.lib.utils_lib import get_passwordless_sudo_status
@@ -340,7 +341,7 @@ class BaremetalOrchestrator(Orchestrator):
         )
 
         self.log.info("Launching MPI job")
-        self.log.debug(f"MPI command: {full_mpi_cmd}")
+        self.log.debug(f"MPI command: {redact_secrets(full_mpi_cmd)}")
 
         # Execute on head node
         result = self.exec_on_head(full_mpi_cmd, timeout=500)  # Default timeout

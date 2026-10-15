@@ -88,6 +88,16 @@ class TestRedactSecrets(unittest.TestCase):
         self.assertNotIn(FAKE_CRED, result)
         self.assertIn("export HF_TOKEN=<redacted>\nexport HF_HUB_CACHE=/models\n", result)
 
+    def test_masks_escaped_ansi_c_and_newline_separated_values(self):
+        for text, expected in (
+            (f"run --token {FAKE_CRED}\\ x --y", "run --token <redacted> --y"),
+            (f"export TOKEN=$'{FAKE_CRED} x'; run", "export TOKEN=<redacted>; run"),
+            (f"run --token\n{FAKE_CRED}", "run --token\n<redacted>"),
+            (f"run --token \\\n{FAKE_CRED}", "run --token \\\n<redacted>"),
+        ):
+            with self.subTest(text=text):
+                self.assertRedacted(text, expected)
+
     def test_leaves_non_secrets_unchanged(self):
         for text in (
             "export TOKENIZERS_PARALLELISM=false ; export MAX_NUM_BATCHED_TOKENS=8192",

@@ -29,16 +29,17 @@ _LOCATION_WORDS = {"FILE", "PATH", "DIR"}
 _ASSIGNMENT = re.compile(r"(?<![A-Za-z0-9_])(?P<name>[A-Za-z_][A-Za-z0-9_]*)=")
 
 # One shell word: shlex-quoted inside an outer single-quoted string ('"'"'a b'"'"'),
-# single-quoted, double-quoted, or bare. Bare words stop at quotes, whitespace and
-# shell operators so an outer quote is never consumed.
-_VALUE_PATTERN = r"(?:'\"'\"'[^\n]*?'\"'\"'|'[^']*'|\"[^\"]*\"|[^\s'\";&|<>()]+)"
+# ANSI-C quoted ($'a b'), single-quoted, double-quoted, or bare. Bare words keep
+# backslash escapes (a\ b) and stop at quotes, whitespace and shell operators so an
+# outer quote is never consumed.
+_VALUE_PATTERN = r"(?:'\"'\"'[^\n]*?'\"'\"'|\$'(?:[^'\\\n]|\\.)*'|'[^']*'|\"[^\"]*\"|(?:\\.|[^\s'\";&|<>()\\])+)"
 _VALUE = re.compile(_VALUE_PATTERN)
 # NAME=value as one quoted word (docker's -e 'HF_TOKEN=a b'): the value runs to the closing quote.
 _UNTIL_QUOTE = {"'": re.compile(r"[^'\n]*'"), '"': re.compile(r'[^"\n]*"')}
 
 _SECRET_FLAG = re.compile(
     r"(?P<flag>(?<![A-Za-z0-9_-])--(?:(?:hf[-_])?token|password|api[-_]key))"
-    rf"(?P<sep>=|[ \t]+){_VALUE_PATTERN}",
+    rf"(?P<sep>=|(?:\s|\\\n)+){_VALUE_PATTERN}",
     re.IGNORECASE,
 )
 
