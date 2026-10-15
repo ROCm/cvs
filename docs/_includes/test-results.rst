@@ -21,7 +21,7 @@ Test output examples
 Sample training test results
 ----------------------------
 
-Sample output snapshots from a JAX MaxText training run.
+Sample output snapshots from a training run.
 
 **HTML test report**
 
@@ -39,18 +39,18 @@ skip verdict.
 
 **Per-metric subtests - collapsed:**
 
-.. image:: /images/jaxmaxtext_Training_html_report_subtests_collapsed.png
-   :alt: JAX MaxText per-metric subtests, collapsed
+.. image:: /images/training_html_report_subtests_collapsed.png
+   :alt: Training per-metric subtests, collapsed
 
 **Per-metric subtests - expanded:**
 
-.. image:: /images/jaxmaxtext_Training_html_report_subtests_expanded.png
-   :alt: JAX MaxText per-metric subtests, expanded
+.. image:: /images/training_html_report_subtests_expanded.png
+   :alt: Training per-metric subtests, expanded
 
 **Metric results table:**
 
 .. image:: /images/training_metric_results_table.png
-   :alt: JAX MaxText metric results table
+   :alt: Training metric results table
 
 **Run Deck report**
 
@@ -63,25 +63,25 @@ skip verdict.
 The Run Deck dashboard: run card, lifecycle timeline, sweep analytics charts,
 gate matrix, per-sweep cells and full results.
 
-.. image:: /images/jaxmaxtext_Training_rundeck_results_sample__runcard.png
-   :alt: JAX MaxText Run Deck run card
+.. image:: /images/training_rundeck_results_sample__runcard.png
+   :alt: Training Run Deck run card
 
-.. image:: /images/jaxmaxtext_Training_rundeck_results_sample__sweep-charts.png
-   :alt: JAX MaxText Run Deck results metrics by sweep charts
+.. image:: /images/training_rundeck_results_sample__sweep-charts.png
+   :alt: Training Run Deck results metrics by sweep charts
 
-.. image:: /images/jaxmaxtext_Training_rundeck_results_sample__sweep-cells.png
-   :alt: JAX MaxText Run Deck sweep cells
+.. image:: /images/training_rundeck_results_sample__sweep-cells.png
+   :alt: Training Run Deck sweep cells
 
 **Run Deck interactive viewer**
 
 The interactive viewer: per-step loss, learning-rate, grad-norm, throughput, and
 token graphs, with background / layout / metric-selector controls.
 
-.. image:: /images/jaxmaxtext_Training_viewer_graphs_sample__page1.png
-   :alt: JAX MaxText Run Deck interactive viewer graphs (page 1)
+.. image:: /images/training_viewer_graphs_sample__page1.png
+   :alt: Training Run Deck interactive viewer graphs (page 1)
 
-.. image:: /images/jaxmaxtext_Training_viewer_graphs_sample__page2.png
-   :alt: JAX MaxText Run Deck interactive viewer graphs (page 2)
+.. image:: /images/training_viewer_graphs_sample__page2.png
+   :alt: Training Run Deck interactive viewer graphs (page 2)
 
 Sample inference test results
 -----------------------------
