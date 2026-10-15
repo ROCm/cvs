@@ -226,8 +226,8 @@ def get_rdma_nic_dict(phdl):
 
     Notes:
       - Only lines beginning with 'link' are considered.
-      - This parser assumes the canonical `rdma link` output format; if the output
-        varies (driver/version differences), the regex may fail to match.
+      - This parser assumes the canonical `rdma link` output format; lines that do
+        not match the expected format are skipped.
       - If multiple ports exist for the same RDMA device, later matches will overwrite
         the same device key (since the device name is used as the key). If per-port
         granularity is required, consider using a composite key (e.g., "<dev>/<port>").
@@ -242,14 +242,15 @@ def get_rdma_nic_dict(phdl):
         rdma_dict[node] = {}
         for line in out_dict[node].split("\n"):
             if re.search('^link', line):
-                pattern = r"link\s+([a-zA-Z0-9_.-]+)\/([0-9]+)\s+state\s+([A-Za-z]+)\s+physical_state\s+([A-Za-z_]+)\s+netdev\s+([a-zA-Z0-9.-]+)"
+                pattern = r"link\s+([a-zA-Z0-9_.-]+)\/([0-9]+)\s+state\s+([A-Za-z]+)\s+physical_state\s+([A-Za-z_]+)\s+netdev\s+([a-zA-Z0-9._-]+)"
                 match = re.search(pattern, line)
-                dev = match.group(1)
-                rdma_dict[node][dev] = {}
-                rdma_dict[node][dev]['port'] = match.group(2)  # Port number (string)
-                rdma_dict[node][dev]['device_status'] = match.group(3)  # Device state (e.g., ACTIVE)
-                rdma_dict[node][dev]['link_status'] = match.group(4)  # Physical link state (e.g., LinkUp)
-                rdma_dict[node][dev]['eth_device'] = match.group(5)  # Associated netdev (e.g., eth0)
+                if match:
+                    dev = match.group(1)
+                    rdma_dict[node][dev] = {}
+                    rdma_dict[node][dev]['port'] = match.group(2)  # Port number (string)
+                    rdma_dict[node][dev]['device_status'] = match.group(3)  # Device state (e.g., ACTIVE)
+                    rdma_dict[node][dev]['link_status'] = match.group(4)  # Physical link state (e.g., LinkUp)
+                    rdma_dict[node][dev]['eth_device'] = match.group(5)  # Associated netdev (e.g., eth0)
     return rdma_dict
 
 
@@ -372,12 +373,12 @@ def get_backend_nic_dict(phdl, use_sudo=True):
     return bck_net_dict
 
 
-def get_backend_rdma_nic_dict(phdl, use_sudo=True):
+def get_backend_rdma_nic_dict(phdl, use_sudo=True, active_only=True):
     """
     Build a per-node dictionary of RDMA devices that map to backend NICs.
 
     This function cross-references:
-      - All active RDMA NICs (via get_active_rdma_nic_dict)
+      - RDMA NICs in the selected link states (via get_active_rdma_nic_dict or get_rdma_nic_dict)
       - The list of backend NICs (via get_backend_nic_dict)
 
     For each node, it filters RDMA devices to only those whose associated Ethernet
@@ -385,6 +386,7 @@ def get_backend_rdma_nic_dict(phdl, use_sudo=True):
 
     Args:
         phdl: Execution/handle/context object passed through to helper functions.
+        active_only: Include only ACTIVE RDMA devices when True; include all states when False.
 
     Returns:
         dict: Nested structure of the form:
@@ -404,14 +406,13 @@ def get_backend_rdma_nic_dict(phdl, use_sudo=True):
     # Gather backend NICs per node (e.g., NICs designated for backend traffic)
     bck_nic_dict = get_backend_nic_dict(phdl, use_sudo=use_sudo)
 
-    # Gather active RDMA NIC information per node
-    rdma_nic_dict = get_active_rdma_nic_dict(phdl)
+    rdma_nic_dict = get_active_rdma_nic_dict(phdl) if active_only else get_rdma_nic_dict(phdl)
 
     # Iterate over nodes that have RDMA NIC info
     for node in rdma_nic_dict.keys():
         # Backend NIC list for this node (e.g., ["eth0", "eth1"])
         bck_rdma_nic_dict[node] = {}
-        bck_nic_list = bck_nic_dict[node]
+        bck_nic_list = bck_nic_dict.get(node, [])
 
         # For each RDMA device on this node, keep it only if its associated
         # Ethernet device is in the backend list
@@ -763,10 +764,11 @@ def get_linux_perf_tuning_dict(phdl):
     out_dict['cpu_power_profile'] = phdl.exec('sudo cpupower info')
 
 
-def get_lshw_backend_nic_dict(phdl, use_sudo=True):
+def get_lshw_backend_nic_dict(phdl, use_sudo=True, active_only=True):
+    """Return {node: {eth_dev: {'pci_bus', 'description', 'rdma_dev', 'device_status'}}}."""
     lshw_bck_nic_dict = {}
     lshw_dict = get_lshw_network_dict(phdl, use_sudo=use_sudo)
-    rdma_nic_dict = get_backend_rdma_nic_dict(phdl, use_sudo=use_sudo)
+    rdma_nic_dict = get_backend_rdma_nic_dict(phdl, use_sudo=use_sudo, active_only=active_only)
     for node in rdma_nic_dict.keys():
         lshw_bck_nic_dict[node] = {}
         for rdma_dev in rdma_nic_dict[node].keys():
@@ -775,11 +777,26 @@ def get_lshw_backend_nic_dict(phdl, use_sudo=True):
             lshw_bck_nic_dict[node][eth_dev]['pci_bus'] = lshw_dict[node][eth_dev]['pci_bus']
             lshw_bck_nic_dict[node][eth_dev]['description'] = lshw_dict[node][eth_dev]['description']
             lshw_bck_nic_dict[node][eth_dev]['rdma_dev'] = rdma_dev
+            lshw_bck_nic_dict[node][eth_dev]['device_status'] = rdma_nic_dict[node][rdma_dev]['device_status']
     return lshw_bck_nic_dict
 
 
 # VMD domains are wider than four hex digits (for example 10000:e1:00.0).
 _PCI_BDF_RE = re.compile(r'^(?:[0-9a-f]{4,}:)?[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$')
+
+
+def parse_pci_bdf(bdf):
+    """Return (domain, bus, device, function) as ints, or None when bdf is not a PCI address.
+
+    A bus-only address such as ``03:00.0`` is in domain 0. Wide VMD domains (``10000:e1:00.0``) are kept.
+    """
+    address = str(bdf).strip().lower()
+    if not _PCI_BDF_RE.match(address):
+        return None
+    parts = address.replace('.', ':').split(':')
+    if len(parts) == 3:
+        parts.insert(0, '0')
+    return (int(parts[0], 16), int(parts[1], 16), int(parts[2], 16), int(parts[3]))
 
 
 def _read_or_denied(reader):
@@ -839,63 +856,83 @@ def pcie_link_status_cmd(bdf):
     )
 
 
-def get_nearest_bus_no(target_hex: str, candidates: list[str]) -> str:
+def map_gpus_to_nics(gpu_bdf_dict, nic_dict, active_only=True):
+    """Map each GPU card on one node to its PCIe-local backend NIC.
+
+    gpu_bdf_dict: {card: gpu_bdf}
+    nic_dict: {eth_dev: {'pci_bus', 'rdma_dev', 'device_status', ...}} for every backend NIC,
+        whatever its link state (get_lshw_backend_nic_dict(..., active_only=False)).
+
+    Returns {card: {'gpu_bdf', 'eth_dev', 'rdma_dev', 'nic_bdf'}}. A card with no eligible
+    NIC keeps only 'gpu_bdf'.
     """
-    Return the nearest matching hex value (as one of the candidate strings).
-    - Inputs are hex strings like '0x1f', '1F', '-0x10' (case-insensitive).
-    - Tie-breaker: picks the smaller numeric value.
-    """
-    if not candidates:
-        raise ValueError("candidates must be non-empty")
-    t = int(target_hex, 16)
-    return min(candidates, key=lambda s: (abs(int(s, 16) - t), int(s, 16)))
+    parsed_nics = []
+    for eth_dev, info in nic_dict.items():
+        address = parse_pci_bdf(info.get('pci_bus'))
+        if address is None:
+            log.warning('Skipping backend NIC %s with unparsable PCI address %r', eth_dev, info.get('pci_bus'))
+            continue
+        parsed_nics.append((eth_dev, info, address))
+
+    parsed_gpus = {card: parse_pci_bdf(bdf) for card, bdf in gpu_bdf_dict.items()}
+    gpu_domains = {address[0] for address in parsed_gpus.values() if address is not None}
+    nic_domains = {address[0] for _, _, address in parsed_nics}
+    # A NIC in a domain without GPUs must not carry GPU traffic; decide before the link filter so down local links cannot restore it.
+    partitioned = bool(gpu_domains & nic_domains)
+
+    mapping = {}
+    for card, gpu_bdf in gpu_bdf_dict.items():
+        entry = {'gpu_bdf': gpu_bdf}
+        mapping[card] = entry
+        gpu_address = parsed_gpus[card]
+        if gpu_address is None:
+            log.warning('Cannot parse PCI address %r of %s; leaving it unmapped', gpu_bdf, card)
+            continue
+        gpu_domain, gpu_bus, _, _ = gpu_address
+        # Match the ACTIVE test in get_active_rdma_nic_dict so existing link-state behavior is preserved.
+        eligible = [
+            (eth_dev, info, address)
+            for eth_dev, info, address in parsed_nics
+            if (not partitioned or address[0] == gpu_domain)
+            and (not active_only or re.search('ACTIVE', info.get('device_status', ''), re.I))
+        ]
+        if not eligible:
+            log.warning(
+                'No %sbackend NIC in PCI domain %04x for %s (GPU %s); leaving it unmapped',
+                'active ' if active_only else '',
+                gpu_domain,
+                card,
+                gpu_bdf,
+            )
+            continue
+        eth_dev, info, _ = min(
+            eligible,
+            key=lambda nic: (
+                abs(nic[2][1] - gpu_bus),
+                nic[2][1],
+                nic[2][2],
+                nic[2][3],
+                nic[2][0],
+            ),
+        )
+        entry['eth_dev'] = eth_dev
+        entry['rdma_dev'] = info['rdma_dev']
+        entry['nic_bdf'] = info['pci_bus']
+    return mapping
 
 
-def get_gpu_nic_mapping_dict(
-    phdl,
-    use_sudo=True,
-):
+def get_gpu_nic_mapping_dict(phdl, use_sudo=True, active_only=True):
+    """Map GPU cards to backend NICs, restricting to each GPU's PCI domain when domains overlap.
+
+    By default only ACTIVE NICs are eligible. With active_only=False, the result
+    follows topology regardless of link state. An unmapped card keeps only gpu_bdf.
+    """
     gpu_nic_dict = {}
     gpu_pcie_dict = rocm_plib.get_gpu_pcie_bus_dict(phdl, use_sudo=use_sudo)
-    lshw_dict = get_lshw_backend_nic_dict(phdl, use_sudo=use_sudo)
-
-    nic_bus_dict = {}
-    for node in lshw_dict.keys():
-        nic_bus_dict[node] = []
-        for eth_dev in lshw_dict[node].keys():
-            nic_pci = lshw_dict[node][eth_dev]['pci_bus']
-            match = re.search('[0-9a-f]+\:([0-9a-f]+)\:[0-9a-f]+\.[0-9a-f]', nic_pci, re.I)
-            nic_bus_no = match.group(1)
-            nic_bus_dict[node].append(nic_bus_no)
-
-    for node in gpu_pcie_dict.keys():
-        gpu_nic_dict[node] = {}
-        for card in gpu_pcie_dict[node].keys():
-            gpu_nic_dict[node][card] = {}
-            gpu_bdf = gpu_pcie_dict[node][card]['PCI Bus']
-            gpu_nic_dict[node][card]['gpu_bdf'] = gpu_bdf
-            match = re.search('[0-9a-f]+\:([0-9a-f]+)\:[0-9a-f]+\.[0-9a-f]', gpu_bdf, re.I)
-            bus_no = match.group(1)
-
-            # find nearest nic bus no.
-            nic_bus_list = nic_bus_dict[node]
-            log.info(f'nic_bus_list = {nic_bus_list}')
-            log.info(f'bus_no = {bus_no}')
-
-            nearest_nic_bus_no = get_nearest_bus_no(bus_no, nic_bus_list)
-
-            log.info(f'nic_bus_list = {nic_bus_list}')
-            log.info(f'nearest_nic_bus_no = {nearest_nic_bus_no}')
-            for eth_dev in lshw_dict[node].keys():
-                match = re.search(
-                    '[0-9a-f]+\:([0-9a-f]+)\:[0-9a-f]+\.[0-9a-f]', lshw_dict[node][eth_dev]['pci_bus'], re.I
-                )
-                lshw_bus_no = match.group(1)
-                if hex(int(nearest_nic_bus_no, 16)) == hex(int(lshw_bus_no, 16)):
-                    gpu_nic_dict[node][card]['eth_dev'] = eth_dev
-                    gpu_nic_dict[node][card]['rdma_dev'] = lshw_dict[node][eth_dev]['rdma_dev']
-                    gpu_nic_dict[node][card]['nic_bdf'] = lshw_dict[node][eth_dev]['pci_bus']
-                    continue
+    nic_dict = get_lshw_backend_nic_dict(phdl, use_sudo=use_sudo, active_only=False)
+    for node, cards in gpu_pcie_dict.items():
+        gpu_bdf_dict = {card: info.get('PCI Bus', '') for card, info in cards.items()}
+        gpu_nic_dict[node] = map_gpus_to_nics(gpu_bdf_dict, nic_dict.get(node, {}), active_only=active_only)
     log.info("%s", gpu_nic_dict)
     return gpu_nic_dict
 
@@ -941,8 +978,8 @@ def get_ucx_net_devices(phdl):
     """
     Build UCX_NET_DEVICES string from backend NIC RDMA device names.
 
-    Uses get_gpu_nic_mapping_dict() which maps each GPU card to its nearest
-    backend NIC. The 'rdma_dev' key gives the IB/RDMA device name (e.g. bnxt_re0).
+    Uses get_gpu_nic_mapping_dict() which maps each GPU card to the PCIe-local
+    active backend NIC in its PCI domain. The 'rdma_dev' key gives the IB/RDMA device name (e.g. bnxt_re0).
     UCX_NET_DEVICES requires IB device names with port suffix ':1'
     (e.g. bnxt_re0:1), NOT ethernet names (ens20np0).
 
@@ -976,7 +1013,7 @@ def get_ucx_net_devices(phdl):
         if not rdma_dev:
             raise ValueError(
                 f'Card {card_no!r} on node {node_0!r} has no rdma_dev mapping '
-                '(PCI-bus match to a backend NIC failed); cannot determine '
+                "(no active backend NIC in the GPU's PCI domain); cannot determine "
                 'UCX_NET_DEVICES.'
             )
         ucx_net_devices_list.append(f'{rdma_dev}:1')  # UCX needs port suffix :1

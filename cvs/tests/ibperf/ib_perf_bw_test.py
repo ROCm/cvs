@@ -238,6 +238,14 @@ def test_ib_bw_perf(phdl, bw_test, config_dict, request):
     update_test_result()
 
     gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
+    for node, card_dict in gpu_nic_dict.items():
+        for card, nic_info in card_dict.items():
+            if not nic_info.get('rdma_dev'):
+                fail_test(
+                    f'No active backend RDMA NIC in the PCI domain of {card} '
+                    f'(GPU {nic_info.get("gpu_bdf")}) on node {node}; not running perftest over a non-local NIC'
+                )
+    update_test_result()
     gpu_numa_dict = linux_utils.get_gpu_numa_dict(phdl)
     hip_dev_dict = ibperf_lib.get_hip_device_dict(phdl, gpu_nic_dict)
 
@@ -310,6 +318,14 @@ def test_ib_lat_perf(phdl, lat_test, config_dict, request):
     update_test_result()
 
     gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
+    for node, card_dict in gpu_nic_dict.items():
+        for card, nic_info in card_dict.items():
+            if not nic_info.get('rdma_dev'):
+                fail_test(
+                    f'No active backend RDMA NIC in the PCI domain of {card} '
+                    f'(GPU {nic_info.get("gpu_bdf")}) on node {node}; not running perftest over a non-local NIC'
+                )
+    update_test_result()
     gpu_numa_dict = linux_utils.get_gpu_numa_dict(phdl)
     hip_dev_dict = ibperf_lib.get_hip_device_dict(phdl, gpu_nic_dict)
 
