@@ -82,6 +82,15 @@ still runs with ``cvs run atom``.
    * - ``mi355x_atom_qwen3.5-397b-a17b_fp8``
      - ``_single`` (``perf`` + ``mtp3`` profiles)
      - Native ATOM MI355X copy; ``gpu_arch`` mi355x; bring-up thresholds; ``mtp3`` benchmark cells and GSM8K lab-run
+   * - ``mi355x_atom_glm-5.2_fp8``
+     - ``_single`` (``perf`` + ``mtp3``)
+     - Native ATOM MI355 TP4; ``zai-org/GLM-5.2-FP8``; experts stay block FP8; bring-up thresholds
+   * - ``mi355x_atom_vllm_glm-5.2_fp8``
+     - ``_single``, ``_distributed``
+     - vLLM MI355 TP4; distributed PP=2; bring-up thresholds
+   * - ``mi355x_atom_sglang_glm-5.2_fp8``
+     - ``_single``, ``_distributed``
+     - SGLang MI355 TP4; distributed PP=2; bring-up thresholds
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
      - vLLM parity (serving schema); distributed uses PP=2
