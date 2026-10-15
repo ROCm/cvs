@@ -1,6 +1,5 @@
 {
   "_comment": "DeepSeek-R1-0528 FP8 single-node vLLM parity (MI355X). MI355X bring-up copy of the gfx942 recipe; thresholds are not a gate.",
-  "gpu_arch": "mi355x",
   "enforce_thresholds": false,
   "threshold_json": "mi355x_atom_vllm_deepseek-r1_fp8_single_threshold.json",
   "paths": {
@@ -11,8 +10,7 @@
   },
   "model": {
     "id": "deepseek-ai/DeepSeek-R1-0528",
-    "remote": 0,
-    "precision": "fp8"
+    "remote": 0
   },
   "container": {
     "lifetime": "per_run",
@@ -53,9 +51,7 @@
     },
     "env": {
       "VLLM_ROCM_USE_AITER": "1",
-      "AMDGCN_USE_BUFFER_OPS": "0",
-      "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
-      "HF_HOME": "{paths.shared_fs}/.cache/huggingface"
+      "AMDGCN_USE_BUFFER_OPS": "0"
     }
   },
   "benchmark_params": {
