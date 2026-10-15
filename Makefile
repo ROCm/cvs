@@ -16,7 +16,7 @@ PYLINT = $(RUFF_VENV_DIR)/bin/pylint
 CVS = $(TEST_VENV_DIR)/bin/cvs
 
 .PHONY: all help hooks sdist build test-venv cvs-venv install installtest ut test \
-        doc-venv html-doc clean_doc_venv gen-anc-suites \
+        doc-venv html-doc clean_doc_venv gen-anc-suites gen-arc-suites \
         clean_test_venv clean_cvs_venv clean_sdist clean_pycache clean
 
 all: build test-venv installtest test
@@ -40,6 +40,7 @@ help:
 	@echo "  html-doc        - Build and serve docs with live-reload at http://localhost:$(DOC_PORT)"
 	@echo "                    Override port: make html-doc DOC_PORT=9090"
 	@echo "  gen-anc-suites  - Regenerate per-group ANC suite files from anc_lib group lists"
+	@echo "  gen-arc-suites  - Regenerate ARC flow and item suites from arc_lib lists"
 	@echo "  hooks           - Enable the repo git hooks (commit-msg format, trailing-space warn)"
 	@echo "  all             - Run build, test-venv, installtest, and test"
 	@echo "  clean           - Remove virtual environment, build artifacts, and Python cache files"
@@ -60,6 +61,16 @@ gen-anc-suites:
 		"$(TEST_VENV_DIR)/bin/python" build_tools/gen_anc_suites.py; \
 	else \
 		$(PYTHON) build_tools/gen_anc_suites.py; \
+	fi
+
+gen-arc-suites:
+	@echo "Generating ARC flow and item suite files..."
+	@if [ -x "$(CVS_VENV_DIR)/bin/python" ]; then \
+		"$(CVS_VENV_DIR)/bin/python" build_tools/gen_arc_suites.py; \
+	elif [ -x "$(TEST_VENV_DIR)/bin/python" ]; then \
+		"$(TEST_VENV_DIR)/bin/python" build_tools/gen_arc_suites.py; \
+	else \
+		$(PYTHON) build_tools/gen_arc_suites.py; \
 	fi
 
 sdist: clean_sdist
