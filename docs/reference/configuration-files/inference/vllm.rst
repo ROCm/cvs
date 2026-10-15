@@ -308,7 +308,7 @@ The following keys are accepted inside the ``container`` block.
      - Docker flags; see the table below.
    * - ``env``
      - ``{}``
-     - Container-level environment variables. **Top level, not under** ``runtime.args``.
+     - Container-level environment variables. **Top level, not under** ``runtime.args``. ``HF_TOKEN`` and ``HUGGING_FACE_HUB_TOKEN`` are rejected; set ``paths.hf_token_file`` instead.
    * - ``image_tar``
      - absent
      - Path on each host to a saved image tar to ``docker load`` instead of pulling. **Top level**.
@@ -470,7 +470,8 @@ All four keys are required.
    * - ``hf_token_file``
      - Path to a file containing the Hugging Face token.
 
-If ``hf_token_file`` does not exist, the run continues with an empty token. vLLM
+``hf_token_file`` is read inside the container on each node, so it must be on a
+mounted path. If it is missing or empty, the run continues with an empty token. vLLM
 configs always serve a pre-staged model mounted under ``paths.models_dir``.
 
 Per-cell artifacts land in::
@@ -601,7 +602,7 @@ The generated per-command environment always exports:
 
 .. code:: bash
 
-  export HF_TOKEN=<token>
+  export HF_TOKEN="$(tr -d '[:space:]' < <paths.hf_token_file>)"  # empty if the file is missing
   export HF_HUB_CACHE=<paths.models_dir>
 
 Packaged configurations set the HCA, socket-interface, GID, and NCCL debug
