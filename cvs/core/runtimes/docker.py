@@ -7,6 +7,8 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import shlex
 
+from cvs.lib.env_lib import redact_secrets
+
 
 class DockerRuntime:
     """Docker container runtime implementation."""
@@ -192,7 +194,7 @@ class DockerRuntime:
         )
 
         self.log.info(f"Starting long-running containers on {len(self.orchestrator.hosts)} nodes: {container_name}")
-        self.log.debug(f"Container start command: {cmd}")
+        self.log.debug(f"Container start command: {redact_secrets(cmd)}")
 
         # Remove any existing container with the same name
         remove_cmd = f"{self.orchestrator.sudo_prefix()}docker rm -f {container_name} || true"
