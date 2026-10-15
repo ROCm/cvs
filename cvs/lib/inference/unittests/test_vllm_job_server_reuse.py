@@ -81,7 +81,6 @@ def _make_job_for_check(tail_output="", grep_exit=1):
     return VllmJob(
         orch=orch,
         variant=variant,
-        hf_token="tok",
         isl="1024",
         osl="1024",
         concurrency="8",
@@ -117,7 +116,6 @@ def _job(isl, osl, conc, serve_args=None, benchmark_params=None):
     return VllmJob(
         orch=FakeOrch(),
         variant=_variant(serve_args, benchmark_params),
-        hf_token="tok",
         isl=isl,
         osl=osl,
         concurrency=conc,
@@ -157,7 +155,6 @@ class TestMaxModelLenFallback(unittest.TestCase):
         job = VllmJob(
             orch=FakeOrch(),
             variant=variant,
-            hf_token="tok",
             isl=run.cell.isl,
             osl=run.cell.osl,
             concurrency=run.cell.concurrency,
@@ -275,7 +272,6 @@ class TestRunClientTrustRemoteCode(unittest.TestCase):
                 job = VllmJob(
                     orch=FakeOrch(),
                     variant=variant,
-                    hf_token="tok",
                     isl=run.cell.isl,
                     osl=run.cell.osl,
                     concurrency=run.cell.concurrency,
@@ -331,7 +327,6 @@ class TestDumpServerLog(unittest.TestCase):
         job = VllmJob(
             orch=orch,
             variant=_variant({"distributed-executor-backend": "mp"}),
-            hf_token="tok",
             isl="1024",
             osl="1024",
             concurrency=8,
@@ -349,7 +344,6 @@ class TestDumpServerLog(unittest.TestCase):
         job = VllmJob(
             orch=orch,
             variant=_variant({"distributed-executor-backend": "ray"}),
-            hf_token="tok",
             isl="1024",
             osl="1024",
             concurrency=8,
