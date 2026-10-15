@@ -1,0 +1,96 @@
+{
+  "_comment": "vLLM single-node DeepSeek-V4-Flash baseline on MI455X: TP4 PP1, AITER on, FP8 KV cache; no MTP, no TunableOp, stock RCCL. Set paths.shared_fs and server_params.model before running.",
+  "enforce_thresholds": true,
+  "threshold_json": "mi455x_vllm_deepseek-v4-flash_fp8_single_threshold.json",
+  "paths": {
+    "_comment": "Host and container paths for model access, artifacts, and Hugging Face authentication.",
+    "shared_fs": "<changeme>",
+    "models_dir": "{shared_fs}/hf_cache",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "container": {
+    "_comment": "Container definition and static environment inherited by server and benchmark commands.",
+    "lifetime": "per_run",
+    "name": "vllm_deepseek-v4-flash_fp8_single_mi455x",
+    "image": "rocm/vllm-dev:nightly_455_wip__torch__1002_b296",
+    "env": {
+      "VLLM_ROCM_USE_AITER": "1",
+      "HIP_VISIBLE_DEVICES": "0,1,2,3",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "NUMEXPR_NUM_THREADS": "1",
+      "VECLIB_MAXIMUM_THREADS": "1",
+      "VLLM_ENGINE_READY_TIMEOUT_S": "1800",
+      "HSA_DISABLE_COREDUMP_ON_EXCEPTION": "1",
+      "PYTHONFAULTHANDLER": "1",
+      "VLLM_LOG_STATS_INTERVAL": "5",
+      "VLLM_PORT": "40000",
+      "NCCL_DEBUG": "INFO",
+      "NCCL_DEBUG_SUBSYS": "INIT,GRAPH,ENV",
+      "NCCL_DEBUG_FILE": "{paths.log_dir}/rccl.%h.%p.log",
+      "NCCL_TOPO_DUMP_FILE": "{paths.log_dir}/rccl-topo.xml",
+      "VLLM_CACHE_ROOT": "{paths.shared_fs}/cache/vllm",
+      "AITER_JIT_DIR": "{paths.shared_fs}/cache/aiter-jit",
+      "TRITON_CACHE_DIR": "{paths.shared_fs}/cache/triton",
+      "XDG_CACHE_HOME": "{paths.shared_fs}/cache/xdg"
+    },
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "volumes": [
+          "{paths.shared_fs}:{paths.shared_fs}"
+        ]
+      }
+    }
+  },
+  "server_params": {
+    "_comment": "Harness fields plus snake-case vllm serve options.",
+    "model": "<changeme>",
+    "tensor_parallel_size": 4,
+    "port": 8947,
+    "dist_init_port": 28947,
+    "server_poll_iterations": 120,
+    "server_poll_wait_s": 20,
+    "server_warmup_wait_s": 30,
+    "trust_remote_code": true,
+    "kv_cache_dtype": "fp8",
+    "max_model_len": 20480,
+    "gpu_memory_utilization": 0.9,
+    "max_num_seqs": 256,
+    "no_enable_prefix_caching": true
+  },
+  "benchmark_params": {
+    "_comment": "Default vllm bench serve settings; per-cell values in sweeps override these defaults.",
+    "dataset_name": "random",
+    "num_prompts": 750,
+    "request_rate": "inf",
+    "seed": 1234,
+    "random_range_ratio": 0.0,
+    "client_initial_wait_s": 20,
+    "client_poll_wait_s": 10,
+    "client_poll_iterations": 360,
+    "trust_remote_code": true,
+    "ignore_eos": true,
+    "temperature": 0
+  },
+  "_comment_sweeps": "Canonical run cells; entries override benchmark_params for that cell.",
+  "sweeps": {
+    "ISL=1024,OSL=256,TP=4,PP=1,CONC=64": {},
+    "ISL=16384,OSL=128,TP=4,PP=1,CONC=4": {},
+    "ISL=1024,OSL=1024,TP=4,PP=1,CONC=16": {},
+    "ISL=1024,OSL=1024,TP=4,PP=1,CONC=32": {},
+    "ISL=1024,OSL=1024,TP=4,PP=1,CONC=64": {},
+    "ISL=8192,OSL=1024,TP=4,PP=1,CONC=32": {}
+  },
+  "_comment_runs": "Explicit ordered run cells to execute.",
+  "runs": [
+    "ISL=1024,OSL=256,TP=4,PP=1,CONC=64",
+    "ISL=16384,OSL=128,TP=4,PP=1,CONC=4",
+    "ISL=1024,OSL=1024,TP=4,PP=1,CONC=16",
+    "ISL=1024,OSL=1024,TP=4,PP=1,CONC=32",
+    "ISL=1024,OSL=1024,TP=4,PP=1,CONC=64",
+    "ISL=8192,OSL=1024,TP=4,PP=1,CONC=32"
+  ]
+}
