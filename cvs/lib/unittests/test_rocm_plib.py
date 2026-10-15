@@ -2,6 +2,8 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
+from pssh.exceptions import Timeout
+
 import cvs.lib.rocm_plib as rocm_plib
 
 
@@ -62,6 +64,7 @@ class TestGetAmdSmiEccBlocksDict(unittest.TestCase):
         self.assertEqual(result['node1'][0]['GFX']['correctable_count'], 0)
         phdl.exec.assert_called_once()
         self.assertIn('metric -g all', phdl.exec.call_args[0][0])
+        self.assertEqual(phdl.exec.call_args.kwargs.get('timeout'), rocm_plib._ECC_SMI_TIMEOUT)
         self.assertFalse(phdl.exec.call_args.kwargs.get('print_console', True))
 
     def test_parses_gpu_data_wrapper(self):
@@ -104,22 +107,78 @@ class TestGetAmdSmiEccBlocksDict(unittest.TestCase):
         missing_blocks = [c.args[3] for c in mock_debug.call_args_list if c.args and 'not present' in c.args[0]]
         self.assertEqual(missing_blocks, list(rocm_plib.RCCL_ECC_BLOCKS))
 
+    def test_missing_gpu_id_is_not_stored_as_zero(self):
+        payload = json.dumps(
+            [
+                {'ecc_blocks': _blocks_with(UMC={'correctable_count': 4})},
+                {'ecc_blocks': _blocks_with(HDP={'correctable_count': 9})},
+            ]
+        )
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': payload}
+        with patch.object(rocm_plib.log, 'warning') as mock_warn:
+            result = rocm_plib.get_amd_smi_ecc_blocks_dict(phdl)
+        self.assertEqual(result, {'node1': None})
+        messages = [call[0][0] for call in mock_warn.call_args_list]
+        self.assertEqual(sum('missing gpu id' in message for message in messages), 2)
+
+    def test_missing_gpu_id_does_not_overwrite_gpu_zero(self):
+        payload = json.dumps(
+            [
+                _metric_gpu(0, _blocks_with(UMC={'correctable_count': 4})),
+                {'ecc_blocks': _blocks_with(UMC={'correctable_count': 9})},
+            ]
+        )
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': payload}
+        with patch.object(rocm_plib.log, 'warning') as mock_warn:
+            result = rocm_plib.get_amd_smi_ecc_blocks_dict(phdl)
+        self.assertEqual(result['node1'][0]['UMC']['correctable_count'], 4)
+        self.assertIn('missing gpu id', mock_warn.call_args[0][0])
+
+    def test_duplicate_gpu_id_keeps_first(self):
+        payload = json.dumps(
+            [
+                _metric_gpu(1, _blocks_with(UMC={'correctable_count': 4})),
+                _metric_gpu(1, _blocks_with(UMC={'correctable_count': 9})),
+            ]
+        )
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': payload}
+        with patch.object(rocm_plib.log, 'warning') as mock_warn:
+            result = rocm_plib.get_amd_smi_ecc_blocks_dict(phdl)
+        self.assertEqual(result['node1'][1]['UMC']['correctable_count'], 4)
+        self.assertIn('duplicate gpu id', mock_warn.call_args[0][0])
+        self.assertEqual(mock_warn.call_args[0][2], 1)
+
     def test_empty_amd_smi_skips_without_fail_test(self):
         phdl = MagicMock()
         phdl.exec.return_value = {'node1': '[]'}
-        with patch('cvs.lib.rocm_plib.fail_test') as mock_fail:
+        with patch.object(rocm_plib.log, 'warning') as mock_warn, patch('cvs.lib.rocm_plib.fail_test') as mock_fail:
             result = rocm_plib.get_amd_smi_ecc_blocks_dict(phdl)
-        self.assertEqual(result, {'node1': {}})
+        self.assertEqual(result, {'node1': None})
         mock_fail.assert_not_called()
+        self.assertIn('no GPUs', mock_warn.call_args[0][0])
 
     def test_invalid_json_warns_without_fail_test(self):
         phdl = MagicMock()
         phdl.exec.return_value = {'node1': 'not-json'}
         with patch.object(rocm_plib.log, 'warning') as mock_warn, patch('cvs.lib.rocm_plib.fail_test') as mock_fail:
             result = rocm_plib.get_amd_smi_ecc_blocks_dict(phdl)
-        self.assertEqual(result, {'node1': {}})
+        self.assertEqual(result, {'node1': None})
         mock_fail.assert_not_called()
         mock_warn.assert_called()
+
+    def test_timeout_marks_hosts_failed_without_raising(self):
+        phdl = MagicMock()
+        phdl.reachable_hosts = ['node1', 'node2']
+        phdl.exec.side_effect = Timeout('read timed out')
+        with patch.object(rocm_plib.log, 'warning') as mock_warn, patch('cvs.lib.rocm_plib.fail_test') as mock_fail:
+            result = rocm_plib.get_amd_smi_ecc_blocks_dict(phdl)
+        self.assertEqual(result, {'node1': None, 'node2': None})
+        mock_fail.assert_not_called()
+        self.assertIn('timed out', mock_warn.call_args[0][0])
+        self.assertEqual(phdl.exec.call_args.kwargs.get('timeout'), rocm_plib._ECC_SMI_TIMEOUT)
 
 
 class TestCompareEccBlocksSnapshots(unittest.TestCase):
@@ -177,6 +236,97 @@ class TestCompareEccBlocksSnapshots(unittest.TestCase):
         increases = rocm_plib.compare_ecc_blocks_snapshots(before, after)
         self.assertEqual(increases, [])
 
+    def test_gpu_missing_after_is_not_a_decrease(self):
+        before = {'node1': {0: _blocks_with(UMC={'correctable_count': 4})}}
+        after = {'node1': {}}
+        with patch.object(rocm_plib.log, 'warning') as mock_warn, patch.object(rocm_plib.log, 'info') as mock_info:
+            increases = rocm_plib.compare_ecc_blocks_snapshots(before, after)
+        self.assertEqual(increases, [])
+        self.assertIn('missing snapshot data', mock_warn.call_args[0][0])
+        self.assertEqual(mock_warn.call_args[0][3], 'MISSING_AFTER')
+        text = _logged_text(mock_info)
+        self.assertIn('result=MISSING_DATA', text)
+        self.assertIn('gpu=0  result=MISSING_AFTER', text)
+        self.assertNotIn('result=DECREASED', text)
+        self.assertNotIn('decreased', _logged_text(mock_warn))
+        self.assertNotIn('-4', text)
+
+    def test_gpu_missing_before_is_not_an_increase(self):
+        before = {'node1': {}}
+        after = {'node1': {1: _blocks_with(UMC={'correctable_count': 4})}}
+        with patch.object(rocm_plib.log, 'warning') as mock_warn, patch.object(rocm_plib.log, 'info') as mock_info:
+            increases = rocm_plib.compare_ecc_blocks_snapshots(before, after)
+        self.assertEqual(increases, [])
+        self.assertEqual(mock_warn.call_args[0][3], 'MISSING_BEFORE')
+        text = _logged_text(mock_info)
+        self.assertIn('gpu=1  result=MISSING_BEFORE', text)
+        self.assertNotIn('result=INCREASED', text)
+        self.assertNotIn('+4', text)
+
+    def test_node_missing_after_is_missing_data(self):
+        before = {
+            'node1': {
+                0: _blocks_with(UMC={'correctable_count': 4}),
+                1: _blocks_with(HDP={'uncorrectable_count': 2}),
+            }
+        }
+        after = {}
+        with patch.object(rocm_plib.log, 'warning') as mock_warn, patch.object(rocm_plib.log, 'info') as mock_info:
+            increases = rocm_plib.compare_ecc_blocks_snapshots(before, after)
+        self.assertEqual(increases, [])
+        self.assertEqual(mock_warn.call_count, 2)
+        text = _logged_text(mock_info)
+        self.assertIn('node=node1  result=MISSING_DATA', text)
+        self.assertIn('gpu=0  result=MISSING_AFTER', text)
+        self.assertIn('gpu=1  result=MISSING_AFTER', text)
+        self.assertNotIn('result=CLEAN', text)
+        self.assertNotIn('result=DECREASED', text)
+
+    def test_missing_gpu_does_not_hide_increase_on_another_gpu(self):
+        before = {
+            'node1': {
+                0: _zero_blocks(),
+                1: _blocks_with(UMC={'correctable_count': 4}),
+            }
+        }
+        after = {'node1': {0: _blocks_with(UMC={'correctable_count': 2})}}
+        with patch.object(rocm_plib.log, 'warning') as mock_warn, patch.object(rocm_plib.log, 'info') as mock_info:
+            increases = rocm_plib.compare_ecc_blocks_snapshots(before, after)
+        self.assertEqual(len(increases), 1)
+        self.assertEqual(increases[0]['gpu'], 0)
+        warn_text = _logged_text(mock_warn)
+        self.assertIn('missing snapshot data', warn_text)
+        self.assertIn('increased', warn_text)
+        text = _logged_text(mock_info)
+        self.assertIn('result=MISSING_DATA', text)
+        self.assertIn('gpu=0  result=INCREASED', text)
+        self.assertIn('gpu=1  result=MISSING_AFTER', text)
+
+    def test_capture_failed_on_both_sides_is_no_data(self):
+        snap = {'node1': None}
+        with patch.object(rocm_plib.log, 'warning') as mock_warn, patch.object(rocm_plib.log, 'info') as mock_info:
+            increases = rocm_plib.compare_ecc_blocks_snapshots(snap, snap)
+        self.assertEqual(increases, [])
+        self.assertIn('capture failed', mock_warn.call_args[0][0])
+        text = _logged_text(mock_info)
+        self.assertIn('node=node1  result=NO_DATA', text)
+        self.assertNotIn('result=CLEAN', text)
+
+    def test_capture_failed_after_is_not_a_decrease(self):
+        before = {'node1': {0: _blocks_with(UMC={'correctable_count': 4})}}
+        after = {'node1': None}
+        with patch.object(rocm_plib.log, 'warning') as mock_warn, patch.object(rocm_plib.log, 'info') as mock_info:
+            increases = rocm_plib.compare_ecc_blocks_snapshots(before, after)
+        self.assertEqual(increases, [])
+        warn_text = _logged_text(mock_warn)
+        self.assertIn('capture failed', warn_text)
+        self.assertIn('missing snapshot data', warn_text)
+        text = _logged_text(mock_info)
+        self.assertIn('gpu=0  result=MISSING_AFTER', text)
+        self.assertIn('result=MISSING_DATA', text)
+        self.assertNotIn('result=DECREASED', text)
+        self.assertNotIn('-4', text)
+
     def test_decrease_warns_but_is_not_an_increase(self):
         before = {'node1': {0: _blocks_with(HDP={'correctable_count': 4})}}
         after = {'node1': {0: _zero_blocks()}}
@@ -214,49 +364,55 @@ class TestCompareEccBlocksSnapshots(unittest.TestCase):
 class TestEccDeltaCheckEnabled(unittest.TestCase):
     def test_default_false_when_key_missing(self):
         self.assertFalse(rocm_plib.ecc_delta_check_enabled({}))
-        self.assertTrue(rocm_plib.ecc_delta_check_enabled({'cvs_params': {'verify_ecc_delta': 'True'}}))
-        self.assertFalse(rocm_plib.ecc_delta_check_enabled({'cvs_params': {'verify_ecc_delta': 'False'}}))
+        self.assertTrue(rocm_plib.ecc_delta_check_enabled({'cvs_params': {'report_ecc_delta': 'True'}}))
+        self.assertFalse(rocm_plib.ecc_delta_check_enabled({'cvs_params': {'report_ecc_delta': 'False'}}))
+
+    def test_sudo_skip_mentions_ecc_only_when_enabled(self):
+        disabled = rocm_plib.skipped_sudo_work({})
+        enabled = rocm_plib.skipped_sudo_work({'cvs_params': {'report_ecc_delta': 'True'}})
+        self.assertNotIn('ECC_BLOCKS', disabled)
+        self.assertIn('dmesg markers/verification', disabled)
+        self.assertIn('ECC_BLOCKS capture', enabled)
 
 
 class TestResolveEccBlocks(unittest.TestCase):
     def test_missing_key_returns_all_blocks(self):
         self.assertEqual(rocm_plib.resolve_ecc_blocks({}), rocm_plib.RCCL_ECC_BLOCKS)
         self.assertEqual(
-            rocm_plib.resolve_ecc_blocks({'cvs_params': {'verify_ecc_blocks': []}}),
+            rocm_plib.resolve_ecc_blocks({'cvs_params': {'report_ecc_blocks': []}}),
             rocm_plib.RCCL_ECC_BLOCKS,
         )
 
     def test_subset_from_list(self):
-        blocks = rocm_plib.resolve_ecc_blocks({'cvs_params': {'verify_ecc_blocks': ['UMC', 'SDMA']}})
+        blocks = rocm_plib.resolve_ecc_blocks({'cvs_params': {'report_ecc_blocks': ['UMC', 'SDMA']}})
         self.assertEqual(blocks, ('UMC', 'SDMA'))
 
     def test_normalizes_case(self):
-        blocks = rocm_plib.resolve_ecc_blocks({'cvs_params': {'verify_ecc_blocks': ['umc', 'xgmi_wafl']}})
+        blocks = rocm_plib.resolve_ecc_blocks({'cvs_params': {'report_ecc_blocks': ['umc', 'xgmi_wafl']}})
         self.assertEqual(blocks, ('UMC', 'XGMI_WAFL'))
 
     def test_comma_separated_string(self):
-        blocks = rocm_plib.resolve_ecc_blocks({'cvs_params': {'verify_ecc_blocks': 'UMC, GFX'}})
+        blocks = rocm_plib.resolve_ecc_blocks({'cvs_params': {'report_ecc_blocks': 'UMC, GFX'}})
         self.assertEqual(blocks, ('UMC', 'GFX'))
 
-    def test_unknown_entries_warn_and_fallback_to_all(self):
-        with patch.object(rocm_plib.log, 'warning') as mock_warn:
-            blocks = rocm_plib.resolve_ecc_blocks({'cvs_params': {'verify_ecc_blocks': ['FOO']}})
-        self.assertEqual(blocks, rocm_plib.RCCL_ECC_BLOCKS)
-        messages = [call[0][0] for call in mock_warn.call_args_list]
-        self.assertIn('ECC_BLOCKS: unknown verify_ecc_blocks entries %s; ignoring', messages)
-        self.assertIn('ECC_BLOCKS: no valid verify_ecc_blocks entries; using all blocks', messages)
+    def test_unknown_entries_fail_without_fallback(self):
+        with patch('cvs.lib.rocm_plib.fail_test') as mock_fail:
+            blocks = rocm_plib.resolve_ecc_blocks({'cvs_params': {'report_ecc_blocks': ['FOO']}})
+        self.assertEqual(blocks, ())
+        self.assertIn('unknown report_ecc_blocks entries', mock_fail.call_args[0][0])
+        self.assertIn('XGMI_WAFL', mock_fail.call_args[0][0])
 
-    def test_mixed_valid_and_unknown_keeps_valid_only(self):
-        with patch.object(rocm_plib.log, 'warning') as mock_warn:
-            blocks = rocm_plib.resolve_ecc_blocks({'cvs_params': {'verify_ecc_blocks': ['UMC', 'FOO']}})
+    def test_mixed_valid_and_unknown_keeps_valid_and_fails(self):
+        with patch('cvs.lib.rocm_plib.fail_test') as mock_fail:
+            blocks = rocm_plib.resolve_ecc_blocks({'cvs_params': {'report_ecc_blocks': ['UMC', 'FOO']}})
         self.assertEqual(blocks, ('UMC',))
-        mock_warn.assert_called_once()
+        self.assertIn('FOO', mock_fail.call_args[0][0])
 
-    def test_invalid_type_warns_and_returns_all(self):
-        with patch.object(rocm_plib.log, 'warning') as mock_warn:
-            blocks = rocm_plib.resolve_ecc_blocks({'cvs_params': {'verify_ecc_blocks': 42}})
-        self.assertEqual(blocks, rocm_plib.RCCL_ECC_BLOCKS)
-        self.assertIn('must be a list', mock_warn.call_args[0][0])
+    def test_invalid_type_fails_without_fallback(self):
+        with patch('cvs.lib.rocm_plib.fail_test') as mock_fail:
+            blocks = rocm_plib.resolve_ecc_blocks({'cvs_params': {'report_ecc_blocks': 42}})
+        self.assertEqual(blocks, ())
+        self.assertIn('must be a list', mock_fail.call_args[0][0])
 
 
 class TestFilteredEccBlocks(unittest.TestCase):

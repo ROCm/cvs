@@ -7,6 +7,8 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import json
 
+from pssh.exceptions import Timeout
+
 from cvs.lib.utils_lib import *
 
 RCCL_ECC_BLOCKS = (
@@ -26,6 +28,7 @@ ECC_TABLE_COLUMNS = (
 )
 _ECC_BLOCK_COL_W = 10
 _ECC_NUM_COL_W = 9
+_ECC_SMI_TIMEOUT = 60
 
 
 def _amd_smi_json_command(args: str, use_sudo=True) -> str:
@@ -108,10 +111,29 @@ def _format_ecc_block_fields(block_dict, blocks=None):
     return ' '.join(parts)
 
 
+def _phdl_host_names(phdl):
+    for attr in ('reachable_hosts', 'host_list'):
+        hosts = getattr(phdl, attr, None)
+        if isinstance(hosts, (list, tuple)) and hosts:
+            return list(hosts)
+    return []
+
+
+def _mark_ecc_capture_failed(ecc_dict, node, parsed):
+    if parsed is not None:
+        log.warning('ECC_BLOCKS: amd-smi returned no GPUs on node=%s; capture failed', node)
+    ecc_dict[node] = None
+
+
 def get_amd_smi_ecc_blocks_dict(phdl, blocks=None):
     """Capture named ECC_BLOCKS counters from ``amd-smi metric -g all --json``.
 
-    Does not call fail_test: missing amd-smi or bad JSON is logged and skipped.
+    Does not call fail_test. Missing amd-smi, empty output, bad JSON, and a
+    command timeout are logged and stored as None so the report shows NO_DATA.
+    That split is intentional: report_ecc_delta is log-only. With
+    cluster_snapshot_debug also enabled, get_amd_smi_ras_metrics_dict and
+    get_amd_smi_pcie_metrics_dict still parse through convert_phdl_json_to_dict,
+    which records a test failure on bad JSON for the same amd-smi command.
     Extra amd-smi blocks outside RCCL_ECC_BLOCKS are ignored. Top-level ``ecc``
     totals are ignored (those are what ``metric --ecc`` reports).
 
@@ -119,35 +141,68 @@ def get_amd_smi_ecc_blocks_dict(phdl, blocks=None):
         blocks: Optional subset of RCCL_ECC_BLOCKS to capture. Defaults to all blocks.
     """
     ecc_dict = {}
-    raw_by_node = phdl.exec(_amd_smi_json_command('metric -g all'), print_console=False)
+    try:
+        raw_by_node = phdl.exec(
+            _amd_smi_json_command('metric -g all'),
+            timeout=_ECC_SMI_TIMEOUT,
+            print_console=False,
+        )
+    except Timeout:
+        hosts = _phdl_host_names(phdl)
+        log.warning(
+            'ECC_BLOCKS: amd-smi timed out after %ss; capture failed on nodes=%s',
+            _ECC_SMI_TIMEOUT,
+            hosts,
+        )
+        return {node: None for node in hosts}
     for node, payload in raw_by_node.items():
         log.debug('amd-smi metric -g all output node=%s:\n%s', node, payload)
         parsed = _parse_amd_smi_json_payload(node, payload)
-        ecc_dict[node] = {}
-        if parsed is None:
+        gpu_dicts = _iter_amd_smi_gpu_dicts(parsed) if parsed is not None else []
+        if not gpu_dicts:
+            _mark_ecc_capture_failed(ecc_dict, node, parsed)
             continue
-        for gpu_dict in _iter_amd_smi_gpu_dicts(parsed):
+        ecc_dict[node] = {}
+        for gpu_dict in gpu_dicts:
             if not isinstance(gpu_dict, dict):
                 continue
-            gpu_id = gpu_dict.get('gpu', 0)
+            gpu_id = gpu_dict.get('gpu')
+            if gpu_id is None:
+                log.warning('ECC_BLOCKS: node=%s gpu_data entry missing gpu id; skipping', node)
+                continue
+            if gpu_id in ecc_dict[node]:
+                log.warning('ECC_BLOCKS: node=%s duplicate gpu id=%s; keeping first', node, gpu_id)
+                continue
             ecc_dict[node][gpu_id] = _project_ecc_blocks(gpu_dict.get('ecc_blocks'), node, gpu_id, blocks=blocks)
+        if not ecc_dict[node]:
+            _mark_ecc_capture_failed(ecc_dict, node, parsed)
     return ecc_dict
 
 
 def log_ecc_blocks_snapshot(label, ecc_dict, blocks=None):
     for node in sorted(ecc_dict.keys(), key=str):
-        for gpu_id in sorted(ecc_dict[node].keys(), key=str):
+        node_gpus = ecc_dict[node]
+        if not isinstance(node_gpus, dict):
+            log.debug('ECC_BLOCKS %s: node=%s capture failed', label, node)
+            continue
+        for gpu_id in sorted(node_gpus.keys(), key=str):
             log.debug(
                 'ECC_BLOCKS %s: node=%s gpu=%s %s',
                 label,
                 node,
                 gpu_id,
-                _format_ecc_block_fields(ecc_dict[node][gpu_id], blocks=blocks),
+                _format_ecc_block_fields(node_gpus[gpu_id], blocks=blocks),
             )
 
 
 def _gpu_id_map(node_gpus):
+    if not isinstance(node_gpus, dict):
+        return {}
     return {str(gpu_id): gpu_id for gpu_id in node_gpus}
+
+
+def _snapshot_capture_failed(snapshot, node):
+    return node in snapshot and snapshot[node] is None
 
 
 def _ecc_delta_result(n_increased, n_decreased):
@@ -158,6 +213,14 @@ def _ecc_delta_result(n_increased, n_decreased):
     if n_decreased:
         return 'DECREASED'
     return 'CLEAN'
+
+
+def _missing_gpu_snapshot_result(before_present, after_present):
+    if before_present and not after_present:
+        return 'MISSING_AFTER'
+    if after_present and not before_present:
+        return 'MISSING_BEFORE'
+    return None
 
 
 def _format_signed_delta(delta):
@@ -211,104 +274,166 @@ def _gpu_ecc_rows(before_blocks, after_blocks, blocks=None):
     return rows, n_increased, n_decreased, changes
 
 
-def format_ecc_blocks_report(before, after, collective=None, blocks=None):
-    """Build the post-test ECC_BLOCKS INFO table (one section per node)."""
-    sections = []
+def _ecc_snapshot_comparisons(before, after, collective=None, blocks=None):
+    """Walk each node and GPU once.
+
+    The report table and the warning list both come from this result, so a
+    later change to delta handling stays in one place.
+    """
+    comparisons = []
     nodes = sorted(set(before) | set(after), key=str)
     for node in nodes:
         before_gpus = _gpu_id_map(before.get(node, {}))
         after_gpus = _gpu_id_map(after.get(node, {}))
         gpu_keys = sorted(set(before_gpus) | set(after_gpus), key=str)
+        before_failed = _snapshot_capture_failed(before, node)
+        after_failed = _snapshot_capture_failed(after, node)
         gpu_sections = []
+        findings = []
         node_increased = 0
         node_decreased = 0
+        node_missing = False
         for gpu_key in gpu_keys:
+            before_present = gpu_key in before_gpus
+            after_present = gpu_key in after_gpus
             gpu_id = after_gpus.get(gpu_key, before_gpus.get(gpu_key))
-            before_blocks = before.get(node, {}).get(before_gpus.get(gpu_key, gpu_id), {})
-            after_blocks = after.get(node, {}).get(after_gpus.get(gpu_key, gpu_id), {})
-            rows, n_increased, n_decreased, _changes = _gpu_ecc_rows(before_blocks, after_blocks, blocks=blocks)
+            missing_result = _missing_gpu_snapshot_result(before_present, after_present)
+            if missing_result:
+                gpu_sections.append(f'  gpu={gpu_id}  result={missing_result}')
+                findings.append(('missing', {'node': node, 'gpu': gpu_id, 'result': missing_result}))
+                node_missing = True
+                continue
+            before_blocks = before.get(node, {}).get(before_gpus[gpu_key], {})
+            after_blocks = after.get(node, {}).get(after_gpus[gpu_key], {})
+            rows, n_increased, n_decreased, changes = _gpu_ecc_rows(before_blocks, after_blocks, blocks=blocks)
             node_increased += n_increased
             node_decreased += n_decreased
+            for change in changes:
+                found = {'node': node, 'gpu': gpu_id, **change}
+                if change['delta'] > 0:
+                    findings.append(('increase', found))
+                elif change['delta'] < 0:
+                    findings.append(('decrease', found))
             gpu_result = _ecc_delta_result(n_increased, n_decreased)
             gpu_lines = [f'  gpu={gpu_id}  result={gpu_result}', f'    {_ecc_table_header()}']
             gpu_lines.extend(f'    {row}' for row in rows)
             gpu_sections.append('\n'.join(gpu_lines))
+        if not gpu_keys and (before_failed or after_failed):
+            node_result = 'NO_DATA'
+        elif node_missing:
+            node_result = 'MISSING_DATA'
+        else:
+            node_result = _ecc_delta_result(node_increased, node_decreased)
         header = 'ECC_BLOCKS'
         if collective:
             header += f'  collective={collective}'
-        header += (
-            f'  node={node}  result={_ecc_delta_result(node_increased, node_decreased)}'
-            f'  increased={node_increased}  decreased={node_decreased}'
+        header += f'  node={node}  result={node_result}  increased={node_increased}  decreased={node_decreased}'
+        comparisons.append(
+            {
+                'node': node,
+                'section': header + '\n' + '\n'.join(gpu_sections),
+                'findings': findings,
+                'before_failed': before_failed,
+                'after_failed': after_failed,
+            }
         )
-        sections.append(header + '\n' + '\n'.join(gpu_sections))
-    return '\n'.join(sections)
+    return comparisons
+
+
+def _format_ecc_report_sections(comparisons):
+    return '\n'.join(item['section'] for item in comparisons)
+
+
+def format_ecc_blocks_report(before, after, collective=None, blocks=None):
+    """Build the post-test ECC_BLOCKS INFO table (one section per node)."""
+    comparisons = _ecc_snapshot_comparisons(before, after, collective=collective, blocks=blocks)
+    return _format_ecc_report_sections(comparisons)
+
+
+def _log_ecc_finding(kind, found):
+    if kind == 'missing':
+        log.warning(
+            'ECC_BLOCKS missing snapshot data: node=%s gpu=%s result=%s',
+            found['node'],
+            found['gpu'],
+            found['result'],
+        )
+        return
+    message = 'ECC_BLOCKS increased: node=%s gpu=%s block=%s field=%s before=%s after=%s delta=%s'
+    if kind == 'decrease':
+        message = 'ECC_BLOCKS decreased: node=%s gpu=%s block=%s field=%s before=%s after=%s delta=%s'
+    log.warning(
+        message,
+        found['node'],
+        found['gpu'],
+        found['block'],
+        found['field'],
+        found['before'],
+        found['after'],
+        found['delta'],
+    )
 
 
 def compare_ecc_blocks_snapshots(before, after, collective=None, blocks=None):
     """Log a post-test ECC_BLOCKS table and warn on counter increases.
 
     INFO is one aligned table per node (CE/UE/DE before, after, Delta). Capture
-    one-liners stay at DEBUG. Never calls fail_test.
+    one-liners stay at DEBUG. A GPU present in only one snapshot is warned as
+    missing data and is not compared as a counter change. A node whose capture
+    failed on both sides is reported as NO_DATA. Never calls fail_test.
     Returns a list of increase dicts for unit tests.
     """
+    comparisons = _ecc_snapshot_comparisons(before, after, collective=collective, blocks=blocks)
     increases = []
-    nodes = sorted(set(before) | set(after), key=str)
-    for node in nodes:
-        before_gpus = _gpu_id_map(before.get(node, {}))
-        after_gpus = _gpu_id_map(after.get(node, {}))
-        gpu_keys = sorted(set(before_gpus) | set(after_gpus), key=str)
-        for gpu_key in gpu_keys:
-            gpu_id = after_gpus.get(gpu_key, before_gpus.get(gpu_key))
-            before_blocks = before.get(node, {}).get(before_gpus.get(gpu_key, gpu_id), {})
-            after_blocks = after.get(node, {}).get(after_gpus.get(gpu_key, gpu_id), {})
-            _rows, _n_inc, _n_dec, changes = _gpu_ecc_rows(before_blocks, after_blocks, blocks=blocks)
-            for change in changes:
-                if change['delta'] > 0:
-                    log.warning(
-                        'ECC_BLOCKS increased: node=%s gpu=%s block=%s field=%s before=%s after=%s delta=%s',
-                        node,
-                        gpu_id,
-                        change['block'],
-                        change['field'],
-                        change['before'],
-                        change['after'],
-                        change['delta'],
-                    )
-                    increases.append({'node': node, 'gpu': gpu_id, **change})
-                elif change['delta'] < 0:
-                    log.warning(
-                        'ECC_BLOCKS decreased: node=%s gpu=%s block=%s field=%s before=%s after=%s delta=%s',
-                        node,
-                        gpu_id,
-                        change['block'],
-                        change['field'],
-                        change['before'],
-                        change['after'],
-                        change['delta'],
-                    )
-    report = format_ecc_blocks_report(before, after, collective=collective, blocks=blocks)
+    for item in comparisons:
+        if item['before_failed'] or item['after_failed']:
+            log.warning(
+                'ECC_BLOCKS capture failed: node=%s before_snapshot=%s after_snapshot=%s',
+                item['node'],
+                'failed' if item['before_failed'] else 'ok',
+                'failed' if item['after_failed'] else 'ok',
+            )
+        for kind, found in item['findings']:
+            _log_ecc_finding(kind, found)
+            if kind == 'increase':
+                increases.append(found)
+    report = _format_ecc_report_sections(comparisons)
     if report:
         log.info('%s', f'======== ECC_BLOCKS report ========\n{report}')
     return increases
 
 
 def ecc_delta_check_enabled(config_dict):
-    return bool(re.search('True', str(config_dict.get('cvs_params', {}).get('verify_ecc_delta', 'False')), re.I))
+    return bool(re.search('True', str(config_dict.get('cvs_params', {}).get('report_ecc_delta', 'False')), re.I))
+
+
+def skipped_sudo_work(config_dict):
+    """Work the RCCL sudo gate skips. ECC capture is included only when report_ecc_delta is on."""
+    parts = ['dmesg markers/verification']
+    if ecc_delta_check_enabled(config_dict):
+        parts.append('ECC_BLOCKS capture')
+    parts.append('sudo-only snapshots')
+    return ', '.join(parts)
 
 
 _RCCL_ECC_BLOCKS_BY_UPPER = {block.upper(): block for block in RCCL_ECC_BLOCKS}
 
 
 def resolve_ecc_blocks(config_dict):
-    """Return the ECC block subset to capture/compare from cvs_params.verify_ecc_blocks."""
-    raw = config_dict.get('cvs_params', {}).get('verify_ecc_blocks')
+    """Return the ECC block subset from cvs_params.report_ecc_blocks.
+
+    Missing or empty means all blocks. An unknown name or a non-list value
+    calls fail_test and does not substitute the full block list.
+    """
+    raw = config_dict.get('cvs_params', {}).get('report_ecc_blocks')
     if not raw:
         return RCCL_ECC_BLOCKS
     if isinstance(raw, str):
         raw = [entry.strip() for entry in raw.split(',') if entry.strip()]
+    allowed = ', '.join(RCCL_ECC_BLOCKS)
     if not isinstance(raw, (list, tuple)):
-        log.warning('ECC_BLOCKS: verify_ecc_blocks must be a list; using all blocks')
-        return RCCL_ECC_BLOCKS
+        fail_test(f'ECC_BLOCKS: report_ecc_blocks must be a list, got {type(raw).__name__}. Allowed blocks: {allowed}')
+        return ()
     resolved = []
     unknown = []
     for entry in raw:
@@ -322,10 +447,11 @@ def resolve_ecc_blocks(config_dict):
         if canonical not in resolved:
             resolved.append(canonical)
     if unknown:
-        log.warning('ECC_BLOCKS: unknown verify_ecc_blocks entries %s; ignoring', unknown)
+        fail_test(f'ECC_BLOCKS: unknown report_ecc_blocks entries {unknown}. Allowed blocks: {allowed}')
     if not resolved:
-        log.warning('ECC_BLOCKS: no valid verify_ecc_blocks entries; using all blocks')
-        return RCCL_ECC_BLOCKS
+        if not unknown:
+            fail_test(f'ECC_BLOCKS: report_ecc_blocks has no valid block names. Allowed blocks: {allowed}')
+        return ()
     return tuple(resolved)
 
 

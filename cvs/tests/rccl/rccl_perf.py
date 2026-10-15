@@ -135,8 +135,8 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
 
     Notes:
       - cluster_snapshot_debug controls whether before/after cluster snapshots are taken.
-      - verify_ecc_delta (default False) logs a post-test ECC_BLOCKS table (CE/UE/DE before, after, Delta).
-      - verify_ecc_blocks (optional list) limits capture/compare to named blocks when verify_ecc_delta is True.
+      - report_ecc_delta (default False) logs a post-test ECC_BLOCKS table (CE/UE/DE before, after, Delta).
+      - report_ecc_blocks (optional list) limits capture/compare to named blocks when report_ecc_delta is True.
     """
 
     globals.error_list = []
@@ -145,8 +145,8 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
     if not can_use_sudo:
         no_sudo_nodes = [node for node, ok in sudo_status.items() if not ok]
         log.warning(
-            "Skipping dmesg markers/verification, ECC_BLOCKS capture, and sudo-only snapshots because "
-            "passwordless sudo is unavailable on nodes: %s",
+            'Skipping %s because passwordless sudo is unavailable on nodes: %s',
+            skipped_sudo_work(config_dict),
             no_sudo_nodes,
         )
 
@@ -162,10 +162,10 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
     ):
         cluster_dict_before = create_cluster_metrics_snapshot(orch.all)
 
-    verify_ecc_delta = ecc_delta_check_enabled(config_dict)
-    ecc_blocks = resolve_ecc_blocks(config_dict) if verify_ecc_delta else None
+    report_ecc_delta = ecc_delta_check_enabled(config_dict)
+    ecc_blocks = resolve_ecc_blocks(config_dict) if report_ecc_delta else None
     ecc_before = {}
-    if can_use_sudo and verify_ecc_delta:
+    if can_use_sudo and report_ecc_delta:
         ecc_before = capture_ecc_blocks_snapshot(orch.all, 'before', blocks=ecc_blocks)
 
     job = rccl_lib.RcclJob.from_config(orch, rccl_collective, config_dict, node_list, vpc_node_list)
@@ -176,7 +176,7 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
     key_name = f'{rccl_collective}'
     rccl_res_dict[key_name] = result_dict
 
-    if can_use_sudo and verify_ecc_delta:
+    if can_use_sudo and report_ecc_delta:
         ecc_after = capture_ecc_blocks_snapshot(orch.all, 'after', blocks=ecc_blocks)
         compare_ecc_blocks_snapshots(ecc_before, ecc_after, collective=rccl_collective, blocks=ecc_blocks)
 
