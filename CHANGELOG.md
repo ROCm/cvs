@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Run Deck for most suites: health, platform, preflight, ibperf, MORI, ANC, RCCL, training and inference runs write a Run Deck beside the pytest HTML report. Install suites do not.
+- AMD Rack Check (ARC) suites: `arc_installation`, flow and item suites run from per-rack controllers (`arc.controller_nodes`), with ANC-style install, logs under `<run_dir>/arc_logs/`, and Run Deck. Disruptive flows and items are opt-in through `arc.allow_disruptive`. ARC runs print a liveness heartbeat while ARC is alive, so silent items such as `ANCGPUTest` no longer trip `arc.inactivity_timeout`, and `arc.run_timeout` (default 14400 s) stops ARC's process group on the controller when exceeded.
+
+- Run Deck for most suites: health, platform, preflight, ibperf, MORI, ANC, ARC, RCCL, training and inference runs write a Run Deck beside the pytest HTML report. Install suites do not.
 - `cvs run` supports Slurm and SPUR: launch it with `srun` or `spur run`, and supported suites run without passwordless SSH.
 - ibperf bandwidth and latency tests support vPOD-aware node pairing (`ibperf.pairing_mode`).
 - RCCL:
@@ -37,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Custom `Orchestrator` subclasses must implement `exec_on_host`, `upload_to_head`, `download_from_head` and `download_file`.
 - Node Smoke Tier 1, Tier 2 and Tier 3 now run by default. To keep them off, set `node_smoke_tier1.connectivity_mode` and `node_smoke_tier3.connectivity_mode` to `"skip"`.
 - `cvs run` writes a self-contained pytest HTML report and a text log under `<workspace>/cvs_runs/<run_id>/` by default; `--no-html` and `--no-log-file` suppress them.
+- Generic ANC install and log helpers moved to `cvs/lib/amdtools_lib.py`; `anc_lib` names unchanged.
 - Logged command lines show `<redacted>` in place of the values of token, password, secret and API-key variables and flags; the commands sent to nodes are unchanged.
 
 ### Fixed
