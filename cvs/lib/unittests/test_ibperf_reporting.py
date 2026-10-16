@@ -130,6 +130,16 @@ class TestDeck(unittest.TestCase):
         self.assertEqual(store["_meta"]["nic_grid"]["heatmaps"][0]["values"][1], [UNAVAILABLE, UNAVAILABLE])
         self.assertEqual(store["groups"][WRITE]["nodes"]["QP 8"]["status"], "fail")
 
+    def test_read_latency_server_side_is_not_unavailable(self):
+        store = {}
+        lat = {"t_avg": "2.0", "t_typical": "1.9", "t_99_pct": "2.0"}
+        record_lat_results(store, "ib_write_lat", 2, {h: {0: lat, 1: lat} for h in HOSTS})
+        record_lat_results(store, "ib_read_lat", 2, {"host-a": {}, "host-b": {0: lat, 1: lat}})
+        rows = store["_meta"]["results_table"]["rows"]
+        self.assertEqual(
+            [(row[0], row[10], row[11]) for row in rows], [("ib_read_lat", "—", 2), ("ib_write_lat", "—", 8)]
+        )
+
     def test_deck_renders_run_card_groups_and_heatmap(self):
         payload = _payload(_fleet())
         self.assertEqual(payload["overall_status"], "fail")

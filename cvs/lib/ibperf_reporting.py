@@ -55,16 +55,21 @@ def _cells(instances, field):
 
 
 def _missing(instances):
-    return not instances or any(not nics or None in nics.values() for nics in instances.values())
+    return not any(instances.values()) or any(None in nics.values() for nics in instances.values())
 
 
 def _fill_missing(runs):
-    """Mark an instance that another run of the same kind measured, but this run did not return, as unavailable."""
-    known = {(host, nic) for instances in runs.values() for host, nics in instances.items() for nic in nics}
+    """Mark an instance that another run of the same test measured, but this run did not return, as unavailable.
+
+    Only the same test counts: ib_read_lat reports from the client side only, so its server nodes stay empty.
+    """
+    known = {}
+    for run, instances in runs.items():
+        known.setdefault(run[0], set()).update((host, nic) for host, nics in instances.items() for nic in nics)
     filled = {}
     for run, instances in runs.items():
         filled[run] = {host: dict(nics) for host, nics in instances.items()}
-        for host, nic in known:
+        for host, nic in known[run[0]]:
             filled[run].setdefault(host, {}).setdefault(nic, None)
     return filled
 
