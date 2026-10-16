@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- RCCL perf result files now include the collective name (`<stem>_<collective>.json`, `<stem>_<collective>_<dtype>.json`, `<stem>_<collective>_aggregated.json`, `<stem>_<collective>_topology_check.json`), so a `rccl_perf` run keeps every collective's results instead of only the last. Tools that read `rccl_result_file.json`, `rccl_result_file_<dtype>.json` or `rccl_result_file_aggregated.json` after a perf run must use the new names. Regression file names are unchanged.
 - ibperf `verify_bw` now enforces `expected_results`. Previously the bandwidth and latency
   thresholds were never evaluated, so `ib_perf_bw_test` passed regardless of measured performance.
   Every GPU instance is checked against the threshold for its message size and QP count, and

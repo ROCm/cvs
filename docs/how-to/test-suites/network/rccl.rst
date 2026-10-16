@@ -265,7 +265,7 @@ The JSON includes ``results_table.headers`` and ``results_table.rows``, ``datase
 
   jq -r '.results_table.rows[] | select(.[0]=="all_reduce_perf") | @tsv' rccl_run_deck.json
 
-The deck is built from in-memory results. Per-run JSON files under ``{run_dir}`` (``rccl_result_file*.json``, ``*_aggregated.json``, ``*_topology_check.json``) are separate. Later pairwise and regression sub-runs overwrite those files.
+The deck is built from in-memory results. Per-run JSON files under ``{run_dir}`` (``rccl_result_file*.json``) are separate: perf writes ``rccl_result_file_<collective>.json``, ``rccl_result_file_<collective>_<dtype>.json``, ``rccl_result_file_<collective>_aggregated.json`` and ``rccl_result_file_<collective>_topology_check.json``; regression writes ``rccl_result_file.json`` and ``rccl_result_file_topology_check.json``. Perf keeps one set per collective, while later pairwise and regression sub-runs overwrite their respective files.
 
 Related resources
 =================
