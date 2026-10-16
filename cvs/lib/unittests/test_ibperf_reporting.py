@@ -2,7 +2,7 @@
 
 import unittest
 
-from cvs.lib.ibperf_reporting import UNAVAILABLE, record_bw_results, record_lat_results
+from cvs.lib.ibperf_reporting import UNAVAILABLE, record_bw_results, record_lat_results, record_test_failure
 from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.lib.report.rundeck.render import render_rundeck_html
@@ -139,6 +139,21 @@ class TestDeck(unittest.TestCase):
         self.assertEqual(
             [(row[0], row[10], row[11]) for row in rows], [("ib_read_lat", "—", 2), ("ib_write_lat", "—", 8)]
         )
+
+    def test_an_uncharted_failed_test_fails_the_deck_and_is_listed(self):
+        store = {}
+        record_bw_results(store, "ib_write_bw", 8192, "8", _bw(lambda h, n: 380.0), VARIANT)
+        self.assertEqual(_payload(store)["overall_status"], "pass")
+        record_test_failure(
+            store, "test_build_ib_lat_perf_chart", "call", "Failed: No latency results\nfor ib_read_lat"
+        )
+        payload = _payload(store)
+        self.assertEqual(payload["overall_status"], "fail")
+        self.assertEqual(
+            payload["datasets"]["status_matrix"]["meta"]["failed_tests"]["rows"],
+            [["test_build_ib_lat_perf_chart", "call", "Failed: No latency results for ib_read_lat"]],
+        )
+        self.assertIn("<section class='panel' id='failed-tests'><h2>Failed tests</h2>", render_rundeck_html(payload))
 
     def test_deck_renders_run_card_groups_and_heatmap(self):
         payload = _payload(_fleet())

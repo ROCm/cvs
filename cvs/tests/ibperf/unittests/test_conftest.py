@@ -9,6 +9,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from cvs.lib import ibperf_lib
 from cvs.tests.ibperf import conftest
 
@@ -59,6 +61,31 @@ class TestRunDeckFixtures(unittest.TestCase):
         self.assertEqual(variant['ib_bw_test_list'], ['ib_write_bw'])
         self.assertEqual(variant['ib_lat_test_list'], ibperf_lib.configured_lat_tests({}))
         self.assertEqual(variant['verify_bw'], 'True')
+
+
+class TestFailedTestHook(unittest.TestCase):
+    def _report(self, config, name, outcome, when='call', message=None):
+        item = SimpleNamespace(config=config, name=name)
+        call = SimpleNamespace(excinfo=SimpleNamespace(exconly=lambda: message) if message else None)
+        report = SimpleNamespace(failed=outcome == 'failed', outcome=outcome, when=when)
+        hook = conftest.pytest_runtest_makereport(item, call)
+        next(hook)
+        with self.assertRaises(StopIteration):
+            hook.send(SimpleNamespace(get_result=lambda: report))
+
+    def test_failed_and_errored_tests_are_recorded_and_passes_are_not(self):
+        config = SimpleNamespace(stash=pytest.Stash())
+        results = conftest.cvs_results_dict.__wrapped__(SimpleNamespace(config=config))
+        self._report(config, 'test_ib_bw_perf[ib_write_bw]', 'passed')
+        self._report(config, 'test_build_ib_lat_perf_chart', 'failed', message='Failed: No latency results')
+        self._report(config, 'test_ib_lat_perf[ib_read_lat]', 'failed', when='setup', message='KeyError: rocm_dir')
+        self.assertEqual(
+            results['_meta']['failed_tests']['rows'],
+            [
+                ['test_build_ib_lat_perf_chart', 'call', 'Failed: No latency results'],
+                ['test_ib_lat_perf[ib_read_lat]', 'setup', 'KeyError: rocm_dir'],
+            ],
+        )
 
 
 if __name__ == '__main__':

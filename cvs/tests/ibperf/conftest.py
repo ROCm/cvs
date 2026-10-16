@@ -11,10 +11,11 @@ import re
 import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
-from cvs.lib import globals, ibperf_lib
+from cvs.lib import globals, ibperf_lib, ibperf_reporting
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders, resolve_test_config_placeholders
 
 log = globals.log
+_RESULTS_KEY = pytest.StashKey[dict]()
 
 
 @pytest.fixture(scope="module")
@@ -78,8 +79,21 @@ def orch(cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def cvs_results_dict():
-    return {}
+def cvs_results_dict(request):
+    results = {}
+    request.config.stash[_RESULTS_KEY] = results
+    return results
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Record every failed or errored test in the Run Deck, so a test the deck does not chart still fails it."""
+    outcome = yield
+    report = outcome.get_result()
+    results = item.config.stash.get(_RESULTS_KEY, None)
+    if report.failed and results is not None:
+        reason = call.excinfo.exconly() if call.excinfo else report.outcome
+        ibperf_reporting.record_test_failure(results, item.name, report.when, reason)
 
 
 @pytest.fixture(scope="module")

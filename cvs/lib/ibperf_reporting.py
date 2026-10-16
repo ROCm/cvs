@@ -15,6 +15,8 @@ LAT_OUTLIER_RATIO = 2.0
 LATENCY_SPLIT = 32 << 10
 OUTLIER_RULE = f"BW < {BW_OUTLIER_PCT}% of fleet median at the largest size; p99 > {LAT_OUTLIER_RATIO:g}× median p99"
 UNAVAILABLE = "unavailable"
+FAILED_TESTS_GROUP = "Other tests"
+_REASON_LIMIT = 200
 # perftest's client initiates every test; read pulls data from the server.
 _DIRECTION = {"read": "server → client", "lat": "client ↔ server"}
 
@@ -309,7 +311,33 @@ def _rebuild(store):
     store["groups"] = deck.groups()
     store["_meta"]["results_table"] = deck.results_table()
     store["_meta"]["nic_grid"] = {"heatmaps": [deck.heatmap()]} if deck.bw else {}
+    failed = (store.get("_ibperf") or {}).get("failed_tests") or {}
+    if failed:
+        store["groups"][FAILED_TESTS_GROUP] = {"nodes": {name: {"status": "fail"} for name in failed}}
+        store["_meta"]["failed_tests"] = {
+            "headers": ["Test", "Phase", "Reason"],
+            "rows": [[name, entry["phase"], entry["reason"]] for name, entry in failed.items()],
+        }
     return store
 
 
-__all__ = ["OUTLIER_RULE", "UNAVAILABLE", "node_names", "record_bw_results", "record_lat_results", "size_text"]
+def record_test_failure(results_store, test_name, phase, reason):
+    """Record a failed or errored test so the deck fails and lists it, including tests it does not chart."""
+    reason = " ".join(str(reason).split())
+    if len(reason) > _REASON_LIMIT:
+        reason = reason[: _REASON_LIMIT - 1] + "…"
+    results_store.setdefault("_meta", {})
+    failed = results_store.setdefault("_ibperf", {}).setdefault("failed_tests", {})
+    failed.setdefault(str(test_name), {"phase": phase, "reason": reason})
+    return _rebuild(results_store)
+
+
+__all__ = [
+    "OUTLIER_RULE",
+    "UNAVAILABLE",
+    "node_names",
+    "record_bw_results",
+    "record_lat_results",
+    "record_test_failure",
+    "size_text",
+]
