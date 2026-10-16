@@ -68,6 +68,42 @@ class TestKernelLogScanQuietAndSummarized(unittest.TestCase):
         self.assertEqual(mock_log.info.call_args.args[1:], ('full_dmesg_scan', 2, 3, 1))
         mock_fail.assert_called_once()
 
+    def _run_link_flap(self, dmesg_out):
+        stats = {
+            'n1': {'eth0': {'link_down_events': '3', 'rx_packets': '9'}},
+            'n2': {'eth0': {'link_down_events': '0'}},
+        }
+        phdl = MagicMock()
+        phdl.exec.return_value = dmesg_out
+        with (
+            patch('cvs.lib.verify_lib.fail_test') as mock_fail,
+            patch.object(verify_lib.linux_utils, 'get_nic_ethtool_stats_dict', return_value=stats),
+            patch.object(verify_lib, 'log') as mock_log,
+        ):
+            err_dict = verify_lib.verify_nic_link_flap(phdl)
+        mock_log.info.assert_called_once()
+        return err_dict, mock_fail, mock_log.info.call_args.args[1:]
+
+    def test_link_flap_summary_excludes_ethtool_failures(self):
+        err_dict, mock_fail, summary = self._run_link_flap({'n1': 'eth0: link up\n', 'n2': ''})
+        self.assertEqual(summary, ('verify_nic_link_flap', 2, 1, 0))
+        self.assertEqual(err_dict, {'n1': ['ERROR !! n1 eth0 link_down_events 3'], 'n2': []})
+        mock_fail.assert_called_once_with('ERROR !! n1 eth0 link_down_events 3')
+
+    def test_link_flap_summary_counts_only_dmesg_matches(self):
+        err_dict, mock_fail, summary = self._run_link_flap(
+            {'n1': 'bnxt_en eth0: NIC Link is Down\n', 'n2': 'eth0: link up\nbnxt_en eth0: NIC Link is Down\n'}
+        )
+        self.assertEqual(summary, ('verify_nic_link_flap', 2, 3, 2))
+        self.assertEqual(
+            err_dict,
+            {
+                'n1': ['ERROR !! n1 eth0 link_down_events 3', 'ERROR !! NIC Link down dmesg logs seen on node n1'],
+                'n2': ['ERROR !! NIC Link down dmesg logs seen on node n2'],
+            },
+        )
+        self.assertEqual(mock_fail.call_count, 3)
+
     def test_summary_is_bounded(self):
         output = {f'host-{i}': 'SECRET-LINE\n' * 1000 for i in range(1000)}
         with patch.object(verify_lib, 'log') as mock_log:

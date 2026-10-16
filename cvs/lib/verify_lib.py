@@ -530,12 +530,16 @@ def verify_nic_link_flap(phdl):
     nic_dmesg_dict = _collect_kernel_log(phdl, 'sudo dmesg -T | grep -i link --color=never')
 
     # If the kernel logs show link down messages, fail the test
+    # err_dict also holds the ethtool counter failures above; the kernel-log
+    # summary must count only what the dmesg scan itself found.
+    dmesg_err_dict = {node: [] for node in nic_dmesg_dict}
     for node in nic_dmesg_dict.keys():
         if re.search('NIC Link is down', nic_dmesg_dict[node], re.I):
             msg = f'ERROR !! NIC Link down dmesg logs seen on node {node}'
             fail_test(msg)
             err_dict[node].append(msg)
-    _log_kernel_scan_summary('verify_nic_link_flap', nic_dmesg_dict, err_dict)
+            dmesg_err_dict[node].append(msg)
+    _log_kernel_scan_summary('verify_nic_link_flap', nic_dmesg_dict, dmesg_err_dict)
     return err_dict
 
 
