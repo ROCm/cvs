@@ -1,6 +1,7 @@
 """Unit tests for ibperf test collection."""
 
 import json
+import inspect
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,9 +21,23 @@ _CONFIG = {
     'duration': '10',
     'verify_bw': 'False',
 }
+_PAIRING = {'pairs': [('n1', 'n2')], 'errors': []}
 
 
 class TestIbPerfCollection(unittest.TestCase):
+    def test_perf_tests_take_node_pairing(self):
+        for test_function in (ib_perf_bw_test.test_ib_bw_perf, ib_perf_bw_test.test_ib_lat_perf):
+            self.assertIn('node_pairing', inspect.signature(test_function).parameters)
+        self.assertFalse(hasattr(ib_perf_bw_test, 'vpc_node_list'))
+
+    def test_shipped_sample_config_pairing_defaults(self):
+        config_path = Path(__file__).resolve().parents[3] / 'input' / 'config_file' / 'ibperf' / 'ibperf_config.json'
+        config = json.loads(config_path.read_text(encoding='utf-8'))['ibperf']
+        self.assertEqual(config['pairing_mode'], 'sequential')
+        self.assertEqual(config['vpod_source'], 'afm')
+        self.assertEqual(config['afmctl_path'], 'afmctl')
+        self.assertEqual(ibperf_lib.resolve_ibperf_node_pairing(['a', 'b'], config, {})['pairs'], [('a', 'b')])
+
     def _metafunc(self, config_path, fixturenames):
         return SimpleNamespace(
             config=SimpleNamespace(getoption=lambda _name: config_path),
@@ -126,11 +141,12 @@ class TestIbBwPerf(unittest.TestCase):
     def test_runs_on_the_orch_all_handle(self, linux_utils, ibperf_lib, verify_dmesg, _update):
         orch = MagicMock()
         linux_utils.get_active_rdma_nic_dict.return_value = {}
-        ib_perf_bw_test.test_ib_bw_perf(orch, 'ib_write_bw', _CONFIG, MagicMock())
+        ib_perf_bw_test.test_ib_bw_perf(orch, 'ib_write_bw', _CONFIG, MagicMock(), _PAIRING)
         linux_utils.get_gpu_nic_mapping_dict.assert_called_once_with(orch.all, use_sudo=False)
         linux_utils.get_gpu_numa_dict.assert_called_once_with(orch.all, use_sudo=False)
         linux_utils.get_backend_nic_dict.assert_called_once_with(orch.all, use_sudo=False)
         self.assertIs(ibperf_lib.run_ib_perf_bw_test.call_args.args[0], orch.all)
+        self.assertEqual(ibperf_lib.run_ib_perf_bw_test.call_args.kwargs['node_pairs'], _PAIRING['pairs'])
         self.assertIs(verify_dmesg.call_args.args[0], orch.all)
 
     @patch.object(ib_perf_bw_test, 'update_test_result')
@@ -142,10 +158,35 @@ class TestIbBwPerf(unittest.TestCase):
         linux_utils.get_active_rdma_nic_dict.return_value = {}
         orch = MagicMock()
         with self.assertLogs(ib_perf_bw_test.log, 'WARNING') as logs:
-            ib_perf_bw_test.test_ib_bw_perf(orch, 'ib_write_bw', _CONFIG, MagicMock())
+            ib_perf_bw_test.test_ib_bw_perf(orch, 'ib_write_bw', _CONFIG, MagicMock(), _PAIRING)
         verify_dmesg.assert_not_called()
         self.assertFalse(any('/dev/kmsg' in c.args[0] for c in orch.all.exec.call_args_list))
         self.assertIn("SKIPPING the dmesg error check", logs.output[0])
+
+
+class TestPairingFixtures(unittest.TestCase):
+    _CLUSTER = {'username': 'user', 'priv_key_file': '/keys/id', 'node_dict': {n: {} for n in ('n1', 'n2', 'n3')}}
+
+    @patch.object(ib_perf_bw_test.OrchestratorFactory, 'create_orchestrator')
+    def test_orch_covers_only_paired_nodes(self, create):
+        gen = ib_perf_bw_test.orch.__wrapped__(self._CLUSTER, {'pairs': [('n3', 'n1')], 'errors': []})
+        self.assertIs(next(gen), create.return_value)
+        self.assertEqual(list(create.call_args.args[1].node_dict), ['n3', 'n1'])
+        with self.assertRaises(StopIteration):
+            next(gen)
+        create.return_value.close.assert_called_once_with()
+
+    @patch.object(ib_perf_bw_test.OrchestratorFactory, 'create_orchestrator')
+    def test_node_pairing_discovers_on_a_closed_orch_handle(self, create):
+        def resolve(node_list, _config, _cluster, phdl_factory):
+            self.assertIs(phdl_factory(node_list), create.return_value.all)
+            raise ValueError('no pairs')
+
+        with patch.object(ib_perf_bw_test.ibperf_lib, 'resolve_ibperf_node_pairing', side_effect=resolve):
+            with self.assertRaises(ValueError):
+                ib_perf_bw_test.node_pairing.__wrapped__(self._CLUSTER, {})
+        self.assertEqual(list(create.call_args.args[1].node_dict), ['n1', 'n2', 'n3'])
+        create.return_value.close.assert_called_once_with()
 
 
 if __name__ == '__main__':
