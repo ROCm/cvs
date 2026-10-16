@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Aorta script mode (the `aorta_single` default) now applies `training_overrides`. CVS writes
+  them into a run-local copy of `base_config` and passes that path to `experiment_script`,
+  because Aorta's `scripts/launch_rocm.sh` reads only its first argument (`$1`). Before this
+  fix, runs silently used the YAML values, for example 12 steps and 4 profiled instead of
+  the sample's 15 and 6. The applied config is saved as `effective_config.yaml`. The copy is a
+  PyYAML round-trip: comments are dropped, and anchors and aliases are expanded into
+  independent copies, so an override changes only its own key path. Making `launch_rocm.sh`
+  forward `"${@:2}"` to `train.py` would need a change in Aorta, outside CVS.
 - ibperf `verify_bw` now enforces `expected_results`. Previously the bandwidth and latency
   thresholds were never evaluated, so `ib_perf_bw_test` passed regardless of measured performance.
   Every GPU instance is checked against the threshold for its message size and QP count, and

@@ -41,6 +41,12 @@ set, otherwise the first cluster node's `vpc_ip`, otherwise its node identifier.
 `master_port` or set it to zero to choose an available port on that node. Omit
 `nproc_per_node` or set it to zero to use `gpus_per_node`.
 
+In script mode with `training_overrides`, CVS writes the overrides into a run-local copy of
+`base_config` under `.cvs-aorta/<run-id>/node_0/` and passes that path to `experiment_script`.
+Keys missing from the base YAML are logged as warnings, and the `--override` group is still
+appended. Aorta's `launch_rocm.sh` reads only `$1`; it would need to forward `"${@:2}"` to
+`train.py` to honour `--override` itself. That change is in the Aorta repository, outside CVS.
+
 The shared loader resolves `{user-id}`, references within `paths` such as `{shared_fs}`, and
 cross-block references such as `{paths.shared_fs}`. Unknown placeholders and `<changeme>`
 markers fail before container launch. The common schema includes `model`, `models_dir` and
@@ -50,6 +56,8 @@ markers fail before container launch. The common schema includes `model`, `model
 
 Artifacts are downloaded through the orchestrator's transport to `output_dir/<run-id>/` on
 the machine running CVS. Shared storage between that machine and the cluster is unnecessary.
+In script mode with overrides, `effective_config.yaml` records the YAML actually launched
+in `output_dir/<run-id>/`.
 Distributed traces retain the parser layout
 `combined_traces/node_<rank>/<original-output>/torch_profiler/`. Single-node collection keeps
 the newest fresh profiler tree. Files older than each node's recorded benchmark start are
