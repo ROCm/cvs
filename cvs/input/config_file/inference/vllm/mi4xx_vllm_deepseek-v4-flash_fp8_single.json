@@ -100,5 +100,33 @@
     "ISL=1024,OSL=1024,TP=4,PP=1,CONC=32",
     "ISL=1024,OSL=1024,TP=4,PP=1,CONC=64",
     "ISL=8192,OSL=1024,TP=4,PP=1,CONC=32"
-  ]
+  ],
+  "accuracy": {
+    "tasks": [
+      {
+        "id": "gsm8k_flex",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      },
+      {
+        "id": "gsm8k_strict",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4,
+        "metadata": {
+          "filter": "strict-match"
+        }
+      },
+      {
+        "id": "gsm8k_stderr",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4,
+        "metadata": {
+          "filter": "flexible-extract"
+        }
+      }
+    ]
+  }
 }
