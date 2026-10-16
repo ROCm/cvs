@@ -14,6 +14,8 @@ import uuid
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
+import yaml
+
 from cvs.lib.benchmark.aorta import aorta_artifacts
 from cvs.lib.utils.log_poller import LogPollTimeout, LogPoller
 from cvs.lib import verify_lib
@@ -25,6 +27,68 @@ _COMMAND_OK = "CVS_AORTA_COMMAND_OK"
 def _text(result):
     """Normalize orchestrator text and detailed results."""
     return result if isinstance(result, str) else (result or {}).get("output", "")
+
+
+def _expand_aliases(value, ancestors=frozenset()):
+    """Return value with every dict and list rebuilt, so YAML aliases no longer share objects.
+
+    Raises ValueError for a recursive alias, which has no finite expansion.
+    """
+    if not isinstance(value, (dict, list)):
+        return value
+    if id(value) in ancestors:
+        raise ValueError("Aorta base config contains a recursive YAML alias")
+    ancestors = ancestors | {id(value)}
+    if isinstance(value, dict):
+        return {key: _expand_aliases(item, ancestors) for key, item in value.items()}
+    return [_expand_aliases(item, ancestors) for item in value]
+
+
+class _ExpandingSafeDumper(yaml.SafeDumper):
+    """SafeDumper that writes repeated objects in full instead of as anchors and aliases.
+
+    Only safe for acyclic data; _expand_aliases rejects cycles first.
+    """
+
+    def ignore_aliases(self, data):
+        return True
+
+
+def overlay_training_overrides(base_text, overrides):
+    """Apply dotted-key overrides to YAML, preserving the JSON value types.
+
+    The result is a PyYAML round-trip: comments are dropped, and anchors, aliases and
+    merge keys are expanded into independent copies, so an override changes only its
+    own key path. Missing keys are added with a warning. Invalid YAML, recursive
+    aliases, non-mapping paths, and empty key segments raise ValueError.
+    """
+    try:
+        data = yaml.safe_load(base_text)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Cannot parse Aorta base config: {exc}") from exc
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError("Aorta base config must be a YAML mapping")
+
+    data = _expand_aliases(data)
+    for key, value in overrides.items():
+        parts = key.split(".")
+        if any(not part for part in parts):
+            raise ValueError(f"Invalid training override key: {key!r}")
+        node = data
+        missing = False
+        for segment in parts[:-1]:
+            if segment not in node:
+                node[segment] = {}
+                missing = True
+            if not isinstance(node[segment], dict):
+                raise ValueError(f"Training override {key!r} crosses non-mapping value at {segment!r}")
+            node = node[segment]
+        if missing or parts[-1] not in node:
+            log.warning("Aorta training override %s is not in the base config; adding it", key)
+        node[parts[-1]] = value
+    return yaml.dump(data, Dumper=_ExpandingSafeDumper, sort_keys=False, default_flow_style=False)
 
 
 class AortaJob:
@@ -197,8 +261,29 @@ class AortaJob:
         env.setdefault("TENSILE_STREAMK_MAX_CUS", str(256 - int(env["NCCL_MAX_NCHANNELS"])))
         return env
 
-    def _build_experiment_command(self):
-        parts = ["bash", str(self.mount / self.config.experiment_script), str(self.mount / self.config.base_config)]
+    def _write_effective_config(self):
+        """Write the overridden base config to the head work dir and return its container path."""
+        self._prepare_work_dirs()
+        remote = PurePosixPath(self.config.aorta_path) / self.config.base_config
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=self.output_dir) as staging:
+            downloaded = self.orch.download_file(
+                str(remote), str(Path(staging) / "base_config.yaml"), hosts=[self.head_node]
+            )
+            if self.head_node not in (downloaded or {}):
+                raise RuntimeError(f"Could not download Aorta base config {remote} from {self.head_node}")
+            base_text = Path(downloaded[self.head_node]).read_text()
+        text = overlay_training_overrides(base_text, self.config.training_overrides)
+        target = self.work_dirs[0] / PurePosixPath(self.config.base_config).name
+        self._exec(f"printf %s {shlex.quote(text)} > {shlex.quote(str(target))}", hosts=[self.head_node])
+        local = self.output_dir / "effective_config.yaml"
+        local.write_text(text)
+        self.artifacts["effective_config"] = local
+        log.info("Aorta script mode uses effective config %s with overrides %s", target, self.config.training_overrides)
+        return target
+
+    def _build_experiment_command(self, config_path):
+        parts = ["bash", str(self.mount / self.config.experiment_script), str(config_path)]
         if self.config.training_overrides:
             parts += ["--override", *(f"{key}={value}" for key, value in self.config.training_overrides.items())]
         return shlex.join(parts)
@@ -226,7 +311,11 @@ class AortaJob:
     def build_launch_cmd(self):
         """Resolve rendezvous on the first cluster node and build every rank's command."""
         if self.mode == "script":
-            self.launch_commands = [self._build_experiment_command()]
+            config_path = self.mount / self.config.base_config
+            # Launchers such as Aorta's launch_rocm.sh read only the YAML path and drop --override.
+            if self.config.training_overrides:
+                config_path = self._write_effective_config()
+            self.launch_commands = [self._build_experiment_command(config_path)]
             return self.launch_commands
         mn = self.config.multi_node
         self.master_addr = mn.master_addr or self.node_vpc_ips.get(self.head_node) or self.head_node
