@@ -18,6 +18,8 @@ from cvs.lib.preflight.node_smoke_counts import (
     TIER3_CHECK_CATALOG,
     TIER3_TOP_LEVEL_GROUPS,
     _has_number,
+    tier2_check_failed_by_primus,
+    tier2_per_gpu_entries,
     _has_own_verdict,
     _tier2_point_measured,
     aggregate_node_smoke_test_counts,
@@ -25,6 +27,11 @@ from cvs.lib.preflight.node_smoke_counts import (
 )
 
 _NOT_REPORTED = "Primus did not report this check"
+
+# Primus prefixes a collector's node fail reason with these names (``nic:`` for ``nics``).
+_TIER1_REASON_KEYS = {"nics": ("nics", "nic")}
+# Primus collectors that state their verdict as a list of problems instead of ok/status.
+_TIER1_PROBLEM_LIST_KEYS = ("issues", "fail_reasons")
 _TIER3_GROUP_LABELS = {"host": "Host", "gpu": "GPU", "network": "Network"}
 
 
@@ -128,6 +135,43 @@ def _own_status(value):
             return "skip"
         return None
     return _status_from_value(value, default=None)
+
+
+def _collector_status(value):
+    """Verdict of a Tier 1 collector: its own ok/status, else its problem list.
+
+    Primus ``nics`` reports ``issues`` and ``host_limits`` / ``gpu_visibility`` report
+    ``fail_reasons``; an empty list is a pass, and every entry is a node FAIL reason.
+    """
+    verdict = _own_status(value)
+    if verdict or not isinstance(value, dict):
+        return verdict, ""
+    for key in _TIER1_PROBLEM_LIST_KEYS:
+        problems = value.get(key)
+        if isinstance(problems, list):
+            if problems:
+                return "fail", "; ".join(str(problem) for problem in problems)
+            return "pass", ""
+    return None, ""
+
+
+def _tier1_gpu_status(entry):
+    """Tier 1 verdict of one GPU entry; a Tier 2 GEMM/HBM miss is not a Tier 1 failure.
+
+    Primus runs the per-GPU Tier 2 measurements only after every Tier 1 check on that
+    GPU passed, so a FAIL whose reason is a Tier 2 miss means Tier 1 passed.
+    """
+    if tier2_check_failed_by_primus(entry):
+        return "pass"
+    return _own_status(entry)
+
+
+def _is_tier2_reason(reason):
+    """True for a node reason Primus built from a per-GPU Tier 2 miss (``gpuN: FAIL: GEMM ...``)."""
+    parts = str(reason).split(":", 2)
+    if len(parts) < 3:
+        return False
+    return bool(tier2_check_failed_by_primus({"status": parts[1].strip(), "reason": parts[2].strip()}))
 
 
 def _slug(text):
@@ -254,7 +298,8 @@ def build_tier1_metric_rows(node_smoke_results):
             entry = per_gpu[gpu_idx] if gpu_idx < len(per_gpu) else None
             gpu_id = _gpu_index(entry, gpu_idx) if isinstance(entry, dict) else gpu_idx
             hits = _reasons_for_key(f"gpu{gpu_id}", reasons) or _reasons_for_key(f"gpu{gpu_idx}", reasons)
-            verdict = _own_status(entry)
+            hits = [hit for hit in hits if not _is_tier2_reason(hit)]
+            verdict = _tier1_gpu_status(entry)
             if hits:
                 status = "fail"
                 reason = "; ".join(hits)
@@ -266,14 +311,16 @@ def build_tier1_metric_rows(node_smoke_results):
                 reason = _NOT_REPORTED
             rows.append(_row(host, f"{host}/gpu{gpu_idx}", f"GPU {gpu_id}", status, reason=reason))
         for collector in TIER1_NODE_OPERATIONAL_COLLECTORS:
-            hits = _reasons_for_key(collector, reasons)
-            verdict = _own_status(tier1.get(collector)) if collector in tier1 else None
+            hits = []
+            for key in _TIER1_REASON_KEYS.get(collector, (collector,)):
+                hits.extend(_reasons_for_key(key, reasons))
+            verdict, problems = _collector_status(tier1.get(collector)) if collector in tier1 else (None, "")
             if hits:
                 status = "fail"
                 reason = "; ".join(hits)
             elif verdict:
                 status = verdict
-                reason = ""
+                reason = problems
             else:
                 status = "skip"
                 reason = _NOT_REPORTED
@@ -300,7 +347,7 @@ def build_tier2_metric_rows(node_smoke_results):
         payload = _node_payload(result)
         reasons = _node_fail_reasons(result)
         tier2 = payload.get("tier2") if isinstance(payload.get("tier2"), dict) else {}
-        per_gpu = [entry for entry in (tier2.get("per_gpu") or []) if isinstance(entry, dict)]
+        per_gpu = tier2_per_gpu_entries(payload)
         n_gpus = _configured_gpu_slots(node_smoke_results, per_gpu)
         gemm_spec = (
             {"kind": ">=", "value": thresholds.get("gemm_tflops_min")} if thresholds.get("gemm_tflops_min") else None
@@ -327,7 +374,7 @@ def build_tier2_metric_rows(node_smoke_results):
                     reason = "; ".join(hits)
                 elif _tier2_point_measured(check_key, check_value, entry):
                     status = _own_status(check_value) or "pass"
-                    reason = ""
+                    reason = str(check_value.get("reason") or "") if isinstance(check_value, dict) else ""
                 else:
                     status = "skip"
                     reason = _NOT_REPORTED
