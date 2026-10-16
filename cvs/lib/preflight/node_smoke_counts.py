@@ -175,6 +175,62 @@ def _tier2_point_measured(check_key: str, value: Any, entry: Any) -> bool:
     return value is None and _has_number(entry, *number_keys)
 
 
+# Primus node_smoke (dev/preflight-direct-test and main) writes the Tier 2 GEMM / HBM
+# numbers into ``tier1.per_gpu[i].details`` next to that GPU's Tier 1 verdict, and puts
+# only the local RCCL result under ``tier2``. Primus' own report reads them from there.
+# A Tier 2 miss turns that GPU entry into ``FAIL`` with one of these reason prefixes.
+TIER2_DETAIL_KEYS = {"large_gemm": "gemm_tflops", "hbm_d2d": "hbm_gbs"}
+TIER2_REASON_PREFIXES = {"large_gemm": ("gemm tflops",), "hbm_d2d": ("hbm gb/s", "hbm bandwidth")}
+
+
+def tier2_check_failed_by_primus(entry: Any) -> Optional[str]:
+    """Tier 2 check key named by a Primus per-GPU ``FAIL`` reason, else None."""
+    if not isinstance(entry, dict) or str(entry.get("status") or "").strip().upper() != "FAIL":
+        return None
+    reason = str(entry.get("reason") or "").strip().lower()
+    for check_key, prefixes in TIER2_REASON_PREFIXES.items():
+        if reason.startswith(prefixes):
+            return check_key
+    return None
+
+
+def tier2_per_gpu_entries(node_payload: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Per-GPU Tier 2 points for one node.
+
+    Uses ``tier2.per_gpu`` when the payload has it, otherwise derives one entry per
+    ``tier1.per_gpu`` GPU from its ``details`` (where Primus records the numbers).
+    A GPU that failed a Tier 2 check carries ``{"status": "FAIL", ...}`` under that
+    check key so the miss is a Tier 2 verdict, not a Tier 1 one.
+    """
+    if not isinstance(node_payload, dict):
+        return []
+    tier2 = node_payload.get("tier2") if isinstance(node_payload.get("tier2"), dict) else {}
+    explicit = [entry for entry in (tier2.get("per_gpu") or []) if isinstance(entry, dict)]
+    if explicit:
+        return explicit
+    tier1 = node_payload.get("tier1") if isinstance(node_payload.get("tier1"), dict) else {}
+    entries: List[Dict[str, Any]] = []
+    for idx, gpu_entry in enumerate(tier1.get("per_gpu") or []):
+        if not isinstance(gpu_entry, dict):
+            continue
+        details = gpu_entry.get("details") if isinstance(gpu_entry.get("details"), dict) else {}
+        point: Dict[str, Any] = {"gpu": gpu_entry.get("gpu", idx)}
+        for detail_key in TIER2_DETAIL_KEYS.values():
+            value = details.get(detail_key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                point[detail_key] = value
+        failed = tier2_check_failed_by_primus(gpu_entry)
+        if failed:
+            verdict: Dict[str, Any] = {"status": "FAIL", "reason": str(gpu_entry.get("reason") or "")}
+            if TIER2_DETAIL_KEYS[failed] in point:
+                verdict[TIER2_DETAIL_KEYS[failed]] = point[TIER2_DETAIL_KEYS[failed]]
+            point[failed] = verdict
+        entries.append(point)
+    if not any(len(point) > 1 for point in entries):
+        return []
+    return entries
+
+
 def count_tier1_tests_from_payload(
     node_payload: Optional[Dict[str, Any]],
     *,
@@ -210,12 +266,9 @@ def count_tier2_tests_from_payload(
     if not isinstance(node_payload, dict):
         return 0
     tier2 = node_payload.get("tier2") if isinstance(node_payload.get("tier2"), dict) else {}
-    if not tier2_enabled and not tier2:
+    per_gpu = tier2_per_gpu_entries(node_payload)
+    if not tier2 and not per_gpu:
         return 0
-    if not tier2:
-        return 0
-
-    per_gpu = [entry for entry in (tier2.get("per_gpu") or []) if isinstance(entry, dict)]
     width = len(per_gpu)
     if width == 0:
         series_lengths = [len(tier2[key]) for key in TIER2_PER_GPU_CHECKS if isinstance(tier2.get(key), list)]
