@@ -12,6 +12,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cvs.lib import ibperf_lib
+from cvs.lib.report.profile import load_json_profile
+from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.tests.ibperf import conftest
 
 
@@ -73,19 +75,24 @@ class TestFailedTestHook(unittest.TestCase):
         with self.assertRaises(StopIteration):
             hook.send(SimpleNamespace(get_result=lambda: report))
 
-    def test_failed_and_errored_tests_are_recorded_and_passes_are_not(self):
+    def test_failures_before_the_results_fixture_exists_still_fail_the_deck(self):
+        # A setup error in the first test (e.g. its orch fixture) comes before cvs_results_dict is created.
         config = SimpleNamespace(stash=pytest.Stash())
+        self._report(config, 'test_ib_bw_perf[ib_write_bw]', 'failed', when='setup', message='KeyError: rocm_dir')
         results = conftest.cvs_results_dict.__wrapped__(SimpleNamespace(config=config))
-        self._report(config, 'test_ib_bw_perf[ib_write_bw]', 'passed')
+        self._report(config, 'test_ib_lat_perf[ib_read_lat]', 'passed')
         self._report(config, 'test_build_ib_lat_perf_chart', 'failed', message='Failed: No latency results')
-        self._report(config, 'test_ib_lat_perf[ib_read_lat]', 'failed', when='setup', message='KeyError: rocm_dir')
         self.assertEqual(
             results['_meta']['failed_tests']['rows'],
             [
+                ['test_ib_bw_perf[ib_write_bw]', 'setup', 'KeyError: rocm_dir'],
                 ['test_build_ib_lat_perf_chart', 'call', 'Failed: No latency results'],
-                ['test_ib_lat_perf[ib_read_lat]', 'setup', 'KeyError: rocm_dir'],
             ],
         )
+        payload = build_rundeck_payload(
+            profile=load_json_profile('ib_perf_bw_test'), store={'cvs_results_dict': results}, cvs_version='1.0.0'
+        )
+        self.assertEqual(payload['overall_status'], 'fail')
 
 
 if __name__ == '__main__':
