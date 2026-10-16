@@ -67,13 +67,21 @@ Workload and launch
    * - ``base_config``
      - Aorta YAML path relative to the repository.
    * - ``experiment_script``
-     - Script-mode launcher. Receives the base config followed by one ``--override`` group.
+     - Script-mode launcher. Receives the config path followed by one ``--override`` group.
+       When ``training_overrides`` is non-empty, the config path is a run-local copy of
+       ``base_config`` with the overrides applied
+       (``<container_mount_path>/.cvs-aorta/<run-id>/node_0/<base name>``). Launchers that
+       read only the YAML path, such as Aorta's ``scripts/launch_rocm.sh``, still honour the overrides.
    * - ``build_script``, ``skip_rccl_build``
      - Optional RCCL build script and skip gate. The sample skips the build and uses container-native RCCL.
    * - ``rccl``
      - ``clone_url``, ``branch``, ``build_path``. Exposed to scripts through ``RCCL_CLONE_URL``, ``RCCL_BRANCH``, and ``rccl_path``; the build script must consume its checkout/build settings.
    * - ``training_overrides``
-     - Key/value settings forwarded together after one ``--override`` argument.
+     - Dotted-key settings. Torchrun mode forwards them after one ``--override`` argument to
+       ``train.py``. Script mode also writes them into the run-local YAML, keeping JSON value
+       types. Keys missing from the base YAML are added with a warning. A key whose path
+       crosses a non-mapping value fails the benchmark stage. The applied YAML is saved as
+       ``effective_config.yaml`` in the run output directory.
    * - ``gpus_per_node``
      - Required positive GPU count used per node. Match it to the workload and configured hardware.
    * - ``timeout_seconds``
@@ -94,6 +102,10 @@ Workload and launch
      - Environment overrides, including cluster-specific ``NCCL_SOCKET_IFNAME`` and ``NCCL_IB_HCA``.
    * - ``multi_node.collect_traces``
      - Default true: gather all node traces in torchrun mode. False: collect only the head's newest tree; use true for complete distributed metrics.
+
+Aorta's ``scripts/launch_rocm.sh`` reads only its first argument (``$1``). To honour
+``--override`` itself, it would need to forward ``"${@:2}"`` to ``train.py``. That change
+is in the Aorta repository, outside CVS.
 
 Environment values move from the old ``environment`` block to ``container.env``.
 ``TENSILE_STREAMK_MAX_CUS`` defaults to 256 minus ``NCCL_MAX_NCHANNELS``. The launch environment
