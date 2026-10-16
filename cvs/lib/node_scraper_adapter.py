@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from nodescraper.models import SystemInfo
 from nodescraper.plugins.inband.dmesg.analyzer_args import DmesgAnalyzerArgs
+from nodescraper.plugins.inband.dmesg.dmesg_analyzer import DmesgAnalyzer
 from nodescraper.plugins.inband.dmesg.dmesg_plugin import DmesgPlugin
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,17 @@ EVENT_KEYS = (
     "timestamps",
     "source",
 )
+
+
+def filter_dmesg_range(dmesg_content, analysis_range_start=None, analysis_range_end=None):
+    """Return lines in the node-scraper analysis window, or the original text without bounds.
+
+    Lines without an ISO timestamp are dropped when a bound is supplied, as in
+    DmesgAnalyzer.filter_dmesg.
+    """
+    if not (analysis_range_start or analysis_range_end):
+        return dmesg_content or ''
+    return DmesgAnalyzer.filter_dmesg(dmesg_content or '', analysis_range_start, analysis_range_end)
 
 
 def parse_dmesg(
