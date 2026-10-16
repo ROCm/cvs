@@ -385,6 +385,7 @@ def _cell_result_rows(node, group_name, cell):
             )
         ]
     rows = []
+    summary = cell.get("items_summary") or ""
     for metric in metrics:
         rows.append(
             _result_row(
@@ -395,7 +396,7 @@ def _cell_result_rows(node, group_name, cell):
                 _blank(metric.get("unit")),
                 _number_text(metric.get("threshold")),
                 metric.get("status") or status,
-                _BLANK,
+                _blank(summary),
                 logs,
             )
         )

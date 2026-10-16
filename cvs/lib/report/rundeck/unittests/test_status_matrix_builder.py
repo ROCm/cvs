@@ -253,7 +253,7 @@ class TestResultsTable(unittest.TestCase):
             ["Node", "Check", "Result", "Value", "Unit", "Threshold", "Status", "Message", "Logs"],
         )
         by_result = {row[2]: row for row in table["rows"]}
-        self.assertEqual(by_result["fp8"][3:7], ["1299650", "GFLOPS", "983000", "pass"])
+        self.assertEqual(by_result["fp8"][3:8], ["1299650", "GFLOPS", "983000", "pass", "1 failure pattern(s)"])
         self.assertEqual(by_result["scan"][6:9], ["fail", "gst action failed", "errors.json logs.tar.gz"])
         self.assertEqual(by_result["mem_test"][6:8], ["pass", "passed"])
         self.assertEqual([row[2] for row in table["rows"] if row[6] == "fail"], ["scan"])
