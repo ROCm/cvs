@@ -11,6 +11,7 @@ from cvs.lib.preflight.node_smoke_counts import (
     TIER2_CHECKS_PER_GPU,
     TIER2_RCCL_CHECK,
     TIER3_TOP_LEVEL_GROUPS,
+    aggregate_node_smoke_test_counts,
 )
 from cvs.lib.preflight.node_smoke_rows import (
     build_tier1_metric_rows,
@@ -400,6 +401,115 @@ class TestTierRunnerOutcomes(unittest.TestCase):
         tier2_rows = build_tier2_metric_rows(results)
         self.assertEqual(tier2_runner_outcome(tier2_rows), "skip")
         self.assertEqual(tier1_runner_outcome(results, tier1_rows, tier2_rows), "fail")
+
+
+def _primus_payload(n_gpus=8, gpu_overrides=None, fail_reasons=None, host_limit_reasons=None, nic_issues=None):
+    """Payload shaped like Primus dev/preflight-direct-test node_smoke --tier2-perf JSON.
+
+    GEMM/HBM numbers live in ``tier1.per_gpu[i].details``; ``tier2`` only has ``rccl``;
+    ``nics`` / ``host_limits`` / ``gpu_visibility`` carry problem lists, not ``ok``.
+    """
+    per_gpu = []
+    for idx in range(n_gpus):
+        entry = {
+            "gpu": idx,
+            "status": "PASS",
+            "reason": "",
+            "duration_sec": 1.5,
+            "details": {"hbm_pre_touch_used_gib": 0.6, "gemm_tflops": 767.18, "hbm_gbs": 4476.1},
+        }
+        entry.update((gpu_overrides or {}).get(idx, {}))
+        per_gpu.append(entry)
+    tier1 = {
+        "per_gpu": per_gpu,
+        "gpu_processes": {"ok": True, "foreign_count": 0},
+        "nics": {"expected_count": 8, "ports": [], "issues": list(nic_issues or [])},
+        "host_limits": {"memlock_soft_bytes": -1, "fail_reasons": list(host_limit_reasons or [])},
+        "gpu_low_level": {"ok": True, "per_gpu": []},
+        "xgmi": {"ok": True, "non_xgmi_pairs": []},
+        "tooling": {"ok": True, "latency_sec": 0.06},
+        "gpu_visibility": {"expected_gpus": n_gpus, "torch_visible": n_gpus, "fail_reasons": []},
+    }
+    reasons = list(fail_reasons or [])
+    return {
+        "status": "FAIL" if reasons else "PASS",
+        "fail_reasons": reasons,
+        "tier1": tier1,
+        "tier2": {"rccl": {"status": "PASS", "gbs": 278.1}},
+    }
+
+
+def _primus_results(payload, status="PASS"):
+    return {
+        "tier2_perf": True,
+        "gpus_per_node": 8,
+        "total_nodes": 1,
+        "failed_nodes": [] if status == "PASS" else ["node0"],
+        "tier2_thresholds": {"gemm_tflops_min": 600, "hbm_gbs_min": 2000, "rccl_gbs_min": 100},
+        "node_results": {"node0": {"status": status, "fail_reasons": payload["fail_reasons"], "node_payload": payload}},
+    }
+
+
+class TestNodeSmokeRowsPrimusSchema(unittest.TestCase):
+    """Rows built from the payload Primus actually writes, not the CVS-side ideal shape."""
+
+    def test_every_tier1_and_tier2_row_is_measured(self):
+        results = _primus_results(_primus_payload())
+        tier1 = build_tier1_metric_rows(results)
+        tier2 = build_tier2_metric_rows(results)
+        self.assertEqual([r["metric"] for r in tier1 if r["status"] != "pass"], [])
+        self.assertEqual([r["metric"] for r in tier2 if r["status"] != "pass"], [])
+        self.assertEqual(len(tier2), TIER2_CHECKS_PER_GPU * 8 + TIER2_RCCL_CHECK)
+        gemm = next(r for r in tier2 if r["metric"] == "node0/gpu3/large_gemm")
+        hbm = next(r for r in tier2 if r["metric"] == "node0/gpu3/hbm_d2d")
+        self.assertEqual((gemm["actual"], gemm["unit"]), (767.18, "TFLOPS"))
+        self.assertEqual((hbm["actual"], hbm["unit"]), (4476.1, "GB/s"))
+        counts = aggregate_node_smoke_test_counts(results)
+        self.assertEqual(counts["tier1_tests_run"], 8 + len(TIER1_NODE_OPERATIONAL_COLLECTORS))
+        self.assertEqual(counts["tier2_tests_run"], TIER2_CHECKS_PER_GPU * 8 + TIER2_RCCL_CHECK)
+
+    def test_gemm_miss_fails_tier2_row_not_tier1(self):
+        reason = "GEMM TFLOPS 500 < threshold 600"
+        payload = _primus_payload(
+            gpu_overrides={2: {"status": "FAIL", "reason": reason, "details": {"gemm_tflops": 500.0}}},
+            fail_reasons=[f"gpu2: FAIL: {reason}"],
+        )
+        results = _primus_results(payload, status="FAIL")
+        tier1 = build_tier1_metric_rows(results)
+        tier2 = build_tier2_metric_rows(results)
+        self.assertEqual(next(r for r in tier1 if r["metric"] == "node0/gpu2")["status"], "pass")
+        gemm = next(r for r in tier2 if r["metric"] == "node0/gpu2/large_gemm")
+        self.assertEqual((gemm["status"], gemm["actual"]), ("fail", 500.0))
+        self.assertIn("500 < threshold 600", gemm["reason"])
+        # Primus stops after the GEMM miss, so HBM on that GPU was never measured.
+        self.assertEqual(next(r for r in tier2 if r["metric"] == "node0/gpu2/hbm_d2d")["status"], "skip")
+        self.assertEqual(tier2_runner_outcome(tier2), "fail")
+        self.assertEqual(tier1_runner_outcome(results, tier1, tier2), "pass")
+
+    def test_tier1_gpu_failure_stays_tier1(self):
+        reason = "pre-touch HBM busy: 43.0 GiB already in use"
+        payload = _primus_payload(
+            gpu_overrides={5: {"status": "FAIL", "reason": reason, "details": {}}},
+            fail_reasons=[f"gpu5: FAIL: {reason}"],
+        )
+        results = _primus_results(payload, status="FAIL")
+        tier1 = build_tier1_metric_rows(results)
+        tier2 = build_tier2_metric_rows(results)
+        self.assertEqual(next(r for r in tier1 if r["metric"] == "node0/gpu5")["status"], "fail")
+        self.assertEqual(next(r for r in tier2 if r["metric"] == "node0/gpu5/large_gemm")["status"], "skip")
+        self.assertEqual(tier1_runner_outcome(results, tier1, tier2), "fail")
+
+    def test_collector_problem_lists_fail_their_row(self):
+        payload = _primus_payload(
+            host_limit_reasons=["ulimit -l = 8012 MiB < 32 GiB"],
+            nic_issues=["rdma3 port 1 state DOWN"],
+            fail_reasons=["host_limits: ulimit -l = 8012 MiB < 32 GiB", "nic: rdma3 port 1 state DOWN"],
+        )
+        rows = {r["metric"]: r for r in build_tier1_metric_rows(_primus_results(payload, status="FAIL"))}
+        self.assertEqual(rows["node0/host_limits"]["status"], "fail")
+        self.assertEqual(rows["node0/nics"]["status"], "fail")
+        self.assertIn("rdma3", rows["node0/nics"]["reason"])
+        self.assertEqual(rows["node0/gpu_visibility"]["status"], "pass")
 
 
 if __name__ == "__main__":
