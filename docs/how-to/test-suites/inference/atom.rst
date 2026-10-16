@@ -52,7 +52,7 @@ Spur example:
 .. code:: bash
 
   spur run -A <account> -p <partition> \
-    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    -N 1 --ntasks-per-node 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
     bash -lc 'source ~/.cvs_venv/bin/activate &&
       cvs run atom --config_file <atom-config.json> --html <report.html> \
         --workspace /shared/<user>/cvs'
@@ -62,7 +62,7 @@ Slurm example:
 .. code:: bash
 
   srun -A <account> -p <partition> \
-    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    -N 1 --ntasks-per-node 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
     bash -lc 'source ~/.cvs_venv/bin/activate &&
       cvs run atom --config_file <atom-config.json> --html <report.html> \
         --workspace /shared/<user>/cvs'
@@ -81,7 +81,7 @@ bind ``PYTHON`` to ``.cvs_venv/bin/python3`` and then delete that path.
 
   # on login: git pull only. deactivate before make install.
   spur run -A <account> -p <partition> \
-    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    -N 1 --ntasks-per-node 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
     bash -lc 'export PATH=/usr/bin:/bin:$PATH
       cd ~/cvs && make install &&
       source ~/.cvs_venv/bin/activate &&
@@ -126,7 +126,7 @@ fails with ``docker exec None``.
 .. code:: bash
 
   spur run -A <account> -p <partition> \
-    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    -N 1 --ntasks-per-node 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
     bash -lc 'source ~/.cvs_venv/bin/activate &&
       cvs run atom \
         --config_file ~/input/config_file/inference/atom/kimi355/mi355x_atom_kimi-k27-code_mxfp4_single.json \

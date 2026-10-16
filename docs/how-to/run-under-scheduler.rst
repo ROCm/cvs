@@ -81,8 +81,12 @@ Requirements
   environment files must have the same paths on every node, usually on a
   shared home directory. Build the virtual environment with a supported
   Python interpreter that also runs on the compute nodes.
-- **Allow agent connections.** Every node must reach the other nodes on
-  arbitrary TCP ports. Agents bind an ephemeral port on ``0.0.0.0``.
+- **Allow agent connections to rank 0.** The agent protocol is a star:
+  workers register with rank 0 and rank 0 sends them commands, so every
+  node needs a path to and from rank 0's agent port; workers never connect
+  to each other. (A suite such as RCCL can still require a full mesh
+  between nodes on its own ports.) Agents bind an ephemeral port on
+  ``0.0.0.0``.
 - **Request the GPUs for the outer step.** For example, use
   ``--gpus-per-node <n> --exclusive`` if your cluster defines GPU resources.
   Agent commands run inside that step and see its device limits on clusters
@@ -259,11 +263,15 @@ Limitations
 - ``cvs exec``, ``cvs scp`` and ``cvs monitor`` still use SSH. ``cvs list``
   reads the local catalog and does not start scheduler agents.
 - Suites that construct their own parallel-SSH handle still connect over
-  SSH in a managed run. They need passwordless SSH and correct ``username``
-  and ``priv_key_file`` values, supplied through ``--cluster_file`` if the
-  defaults do not match. These include ``csp_qual_agfhc``,
-  ``ib_perf_bw_test``, ``install_ibperf_tools``, ``install_ompi`` and the
-  ``megatron_llama3_1_*`` suites.
+  SSH in a managed run. These are ``csp_qual_agfhc``, ``install_ompi`` and
+  the ``megatron_llama3_1_*`` suites. The generated cluster file's
+  ``username`` and ``priv_key_file`` resolve the ``{user-id}`` placeholder
+  to the job's ``$USER`` and ``/home/$USER/.ssh/id_rsa``, not to verified
+  SSH settings. Pass a ``--cluster_file`` with a working ``username`` and
+  ``priv_key_file`` when running these suites, and make sure passwordless
+  SSH works between the nodes. ``ib_perf_bw_test`` and
+  ``install_ibperf_tools`` use the ``orch`` fixture like other managed-mode
+  suites and do not need SSH.
 - Under SPUR, ``test_rccl_pairwise`` and ``test_rccl_incremental`` are
   skipped. See :ref:`rccl-run-managed`.
 - The container backend skips its in-container ``sshd`` setup under a
