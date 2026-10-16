@@ -34,5 +34,15 @@
       "kind": "max",
       "value": 0
     }
+  },
+  "accuracy": {
+    "gsm8k_flex": {
+      "gsm8k.exact_match__flexible-extract": {
+        "kind": "min",
+        "value": 0
+      }
+    },
+    "gsm8k_strict": {},
+    "gsm8k_stderr": {}
   }
 }
