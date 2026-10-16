@@ -58,14 +58,70 @@ On the machine where you run ``cvs run``:
 Test results
 ============
 
-Sample pytest HTML report from an SGLang inference run.
+Sample output snapshots from inference and diffusion runs.
 
 .. important::
 
-   The numbers in this sample report are **illustrative sample values, not final
-   tuned results**. They are shown only to illustrate the report layout.
+   The numbers in these sample reports and screenshots (throughput, latency,
+   and every other metric) are **illustrative sample values, not final tuned
+   results**. They are shown only to illustrate the report layout.
 
-**HTML test report**
+Inference
+---------
 
-.. image:: /images/inference_pytest_report_sample.png
-   :alt: Sample SGLang inference HTML test report
+HTML test report
+~~~~~~~~~~~~~~~~
+
+.. image:: /images/inference_pytest_summary.png
+   :alt: Inference pytest HTML report summary
+
+Run Deck report
+~~~~~~~~~~~~~~~
+
+The Run Deck dashboard: run card, lifecycle timeline, sweep cells, cross-shape
+comparison, and full results.
+
+.. image:: /images/inference_rundeck.png
+   :alt: Inference Run Deck run card and lifecycle timeline
+
+.. image:: /images/inference_sweep_cells.png
+   :alt: Inference Run Deck sweep cells
+
+.. image:: /images/inference_cross_shape_comparison.png
+   :alt: Inference Run Deck cross-shape comparison
+
+.. image:: /images/inference_full_results.png
+   :alt: Inference Run Deck full results
+
+Run Deck interactive viewer
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The interactive viewer: token throughput per GPU versus interactivity, and gate
+margin versus concurrency.
+
+.. image:: /images/inference_interactivity.png
+   :alt: Inference Run Deck interactive viewer
+
+.. image:: /images/inference_gate_margin.png
+   :alt: Inference Run Deck gate margin versus concurrency
+
+Diffusion
+---------
+
+HTML test report
+~~~~~~~~~~~~~~~~
+
+.. image:: /images/diffusion_pytest_summary.png
+   :alt: Diffusion pytest HTML report summary
+
+Run Deck report
+~~~~~~~~~~~~~~~
+
+The Run Deck dashboard: run card and full results.
+
+.. image:: /images/diffusion_rundeck.png
+   :alt: Diffusion Run Deck run card
+
+.. image:: /images/diffusion_full_results.png
+   :alt: Diffusion Run Deck full results
+
