@@ -126,7 +126,7 @@ class TestIbBwPerf(unittest.TestCase):
     def test_runs_on_the_orch_all_handle(self, linux_utils, ibperf_lib, verify_dmesg, _update):
         orch = MagicMock()
         linux_utils.get_active_rdma_nic_dict.return_value = {}
-        ib_perf_bw_test.test_ib_bw_perf(orch, 'ib_write_bw', _CONFIG, MagicMock())
+        ib_perf_bw_test.test_ib_bw_perf(orch, 'ib_write_bw', _CONFIG, MagicMock(), {}, {})
         linux_utils.get_gpu_nic_mapping_dict.assert_called_once_with(orch.all, use_sudo=False)
         linux_utils.get_gpu_numa_dict.assert_called_once_with(orch.all, use_sudo=False)
         linux_utils.get_backend_nic_dict.assert_called_once_with(orch.all, use_sudo=False)
@@ -142,10 +142,24 @@ class TestIbBwPerf(unittest.TestCase):
         linux_utils.get_active_rdma_nic_dict.return_value = {}
         orch = MagicMock()
         with self.assertLogs(ib_perf_bw_test.log, 'WARNING') as logs:
-            ib_perf_bw_test.test_ib_bw_perf(orch, 'ib_write_bw', _CONFIG, MagicMock())
+            ib_perf_bw_test.test_ib_bw_perf(orch, 'ib_write_bw', _CONFIG, MagicMock(), {}, {})
         verify_dmesg.assert_not_called()
         self.assertFalse(any('/dev/kmsg' in c.args[0] for c in orch.all.exec.call_args_list))
         self.assertIn("SKIPPING the dmesg error check", logs.output[0])
+
+    @patch.object(ib_perf_bw_test, 'update_test_result')
+    @patch.object(ib_perf_bw_test, 'verify_dmesg_for_errors')
+    @patch.object(ib_perf_bw_test, 'ibperf_lib')
+    @patch.object(ib_perf_bw_test, 'linux_utils')
+    def test_records_each_run_for_the_run_deck(self, linux_utils, ibperf_lib, *_):
+        linux_utils.get_active_rdma_nic_dict.return_value = {}
+        linux_utils.get_gpu_nic_mapping_dict.return_value = {'n1': {'card0': {}, 'card1': {}}}
+        ibperf_lib.check_perftest_dmabuf.return_value = True
+        ibperf_lib.run_ib_perf_bw_test.return_value = {'n1': {0: {'bw': '390.5', 'pps': '0.7'}}}
+        results, variant = {}, {}
+        ib_perf_bw_test.test_ib_bw_perf(MagicMock(), 'ib_write_bw', _CONFIG, MagicMock(), results, variant)
+        self.assertEqual(results['_ibperf']['bw'], {'ib_write_bw|8|65536': {'n1': {'0': {'bw': 390.5}}}})
+        self.assertEqual(variant, {'dmabuf': True, 'nic_count': 2})
 
 
 class TestUnmappedGpuGuard(unittest.TestCase):

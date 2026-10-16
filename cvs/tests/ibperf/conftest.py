@@ -75,3 +75,24 @@ def orch(cluster_dict):
     o = OrchestratorFactory.create_orchestrator(log, cfg)
     yield o
     o.close()
+
+
+@pytest.fixture(scope="module")
+def cvs_results_dict():
+    return {}
+
+
+@pytest.fixture(scope="module")
+def ibperf_variant_config(config_dict, orch):
+    """Run-card fields for the ibperf Run Deck; the tests add dmabuf and nic_count once probed."""
+    return {
+        'hosts': list(orch.hosts),
+        'node_count': len(orch.hosts),
+        'ib_bw_test_list': ibperf_lib.configured_bw_tests(config_dict),
+        'ib_lat_test_list': ibperf_lib.configured_lat_tests(config_dict),
+        'msg_size_list': config_dict.get('msg_size_list'),
+        'qp_count_list': config_dict.get('qp_count_list'),
+        'duration': config_dict.get('duration'),
+        'expected_results': config_dict.get('expected_results'),
+        'verify_bw': config_dict.get('verify_bw'),
+    }
