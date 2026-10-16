@@ -148,5 +148,31 @@ class TestIbBwPerf(unittest.TestCase):
         self.assertIn("SKIPPING the dmesg error check", logs.output[0])
 
 
+class TestUnmappedGpuGuard(unittest.TestCase):
+    @patch.object(ib_perf_bw_test, 'get_passwordless_sudo_status', return_value={'n1': True})
+    @patch.object(ib_perf_bw_test, 'ibperf_lib')
+    @patch.object(ib_perf_bw_test, 'linux_utils')
+    def test_unmapped_card_fails_before_perftest(self, linux_utils, ibperf_lib, _sudo):
+        ibperf_lib.check_perftest_dmabuf.return_value = True
+        linux_utils.get_gpu_nic_mapping_dict.return_value = {
+            'n1': {
+                'card0': {'gpu_bdf': '0001:01:00.0', 'rdma_dev': 'rdma0'},
+                'card1': {'gpu_bdf': '0002:01:00.0'},
+            }
+        }
+        for test_function, test_name in (
+            (ib_perf_bw_test.test_ib_bw_perf, 'ib_write_bw'),
+            (ib_perf_bw_test.test_ib_lat_perf, 'ib_write_lat'),
+        ):
+            with self.subTest(test=test_name):
+                orch = MagicMock()
+                with self.assertRaisesRegex(BaseException, r'card1 \(GPU 0002:01:00.0\) on node n1'):
+                    test_function(orch, test_name, _CONFIG, MagicMock())
+                linux_utils.get_gpu_nic_mapping_dict.assert_called_with(orch.all, use_sudo=False)
+        ibperf_lib.get_hip_device_dict.assert_not_called()
+        ibperf_lib.run_ib_perf_bw_test.assert_not_called()
+        ibperf_lib.run_ib_perf_lat_test.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
