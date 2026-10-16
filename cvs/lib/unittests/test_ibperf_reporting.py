@@ -2,7 +2,7 @@
 
 import unittest
 
-from cvs.lib.ibperf_reporting import record_bw_results, record_lat_results
+from cvs.lib.ibperf_reporting import UNAVAILABLE, record_bw_results, record_lat_results
 from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.lib.report.rundeck.render import render_rundeck_html
@@ -50,11 +50,17 @@ def _payload(store):
 
 
 class TestRecord(unittest.TestCase):
-    def test_keeps_per_instance_values_and_skips_failed_instances(self):
+    def test_keeps_failed_instances_and_runs_as_unavailable(self):
         store = {}
         record_bw_results(store, "ib_write_bw", 65536, "8", {"host-a": {0: {"bw": "390.5"}, 1: {}}})
         record_bw_results(store, "ib_write_bw", 2, "8", {"host-a": {0: {"bw": "N/A"}}})
-        self.assertEqual(store["_ibperf"]["bw"], {"ib_write_bw|8|65536": {"host-a": {"0": {"bw": 390.5}}}})
+        self.assertEqual(
+            store["_ibperf"]["bw"],
+            {
+                "ib_write_bw|8|65536": {"host-a": {"0": {"bw": 390.5}, "1": None}},
+                "ib_write_bw|8|2": {"host-a": {"0": None}},
+            },
+        )
 
 
 class TestDeck(unittest.TestCase):
@@ -96,6 +102,20 @@ class TestDeck(unittest.TestCase):
         self.assertEqual(store["groups"][WRITE]["nodes"]["QP 8"]["status"], "na")
         self.assertEqual(store["_meta"]["results_table"]["rows"][0][9:11], ["180", "—"])
         self.assertEqual(_payload(store)["overall_status"], "na")
+
+    def test_collection_failures_show_as_unavailable_and_fail_the_deck(self):
+        variant = {**VARIANT, "verify_bw": "False"}
+        store = {}
+        record_bw_results(store, "ib_write_bw", 8192, "8", {h: {0: {}, 1: {}} for h in HOSTS}, variant)
+        partial = _bw(lambda h, n: 380.0)
+        partial["host-b"][1] = {}
+        record_bw_results(store, "ib_write_bw", 65536, "8", partial, variant)
+        self.assertEqual(store["_meta"]["nic_grid"]["heatmaps"][0]["values"][1], [100.0, UNAVAILABLE])
+        rows = store["_meta"]["results_table"]["rows"]
+        self.assertEqual([rows[0][k] for k in (3, 4, 10, 11)], ["—", "—", UNAVAILABLE, 0])
+        self.assertEqual([rows[1][k] for k in (3, 10, 11)], [380.0, UNAVAILABLE, 7])
+        self.assertEqual(store["groups"][WRITE]["nodes"]["QP 8"]["status"], "fail")
+        self.assertEqual(_payload(store)["overall_status"], "fail")
 
     def test_deck_renders_run_card_groups_and_heatmap(self):
         payload = _payload(_fleet())
