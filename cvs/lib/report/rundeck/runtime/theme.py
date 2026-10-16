@@ -168,6 +168,11 @@ footer.page-foot { text-align: center; color: var(--muted); font-size: 0.75rem; 
 .sm-links a { color: var(--accent2); text-decoration: none; font-size: 0.72rem; }
 .sm-links a:hover { text-decoration: underline; }
 .sm-hint { font-size: 0.78rem; margin-top: 0.75rem; }
+.rd-pager { display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem;
+  margin-top: 0.75rem; font-size: 0.8rem; color: var(--muted); }
+.rd-pager button { background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer; }
+.rd-pager button:hover { border-color: var(--accent); }
 .overview-split { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
 .overview-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
 .overview-table th, .overview-table td { text-align: left; padding: 0.35rem 0.4rem;

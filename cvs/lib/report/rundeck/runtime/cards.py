@@ -22,6 +22,7 @@ from cvs.lib.report.rundeck.runtime.theme import render_launch_panel_html
 from cvs.lib.report.types import DEFAULT_SESSION_LIFECYCLE_LABELS
 
 SESSION_FALLBACK = DEFAULT_SESSION_LIFECYCLE_LABELS
+RESULTS_PAGE_SIZE = 25
 
 _DEFAULT_STATUS_HINT_HTML = (
     "Click a cell's <strong>items</strong> to expand that node × group's item breakdown and artifact links."
@@ -131,6 +132,50 @@ def _series_points(series):
             continue
         points.append((x, y))
     return points
+
+
+def _table_dom_id(card, prefix):
+    raw = str(card.get("id") or "") if isinstance(card, dict) else ""
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in raw) or "results"
+    return f"{prefix}-{safe}"
+
+
+def _pager_html(table_id, total, page_size):
+    """Previous/next over rows already in the page. Short tables get no control."""
+    if total <= page_size:
+        return ""
+    end = min(page_size, total)
+    safe_id = html.escape(table_id)
+    return (
+        f"<div class='rd-pager' data-table='{safe_id}' data-page-size='{page_size}'>"
+        f"<button type='button' data-dir='-1'>Previous</button>"
+        f"<span class='rd-pager-count'>1\u2013{end} of {total}</span>"
+        f"<button type='button' data-dir='1'>Next</button></div>"
+        "<script>(function(pager){"
+        "var size=Number(pager.getAttribute('data-page-size'));"
+        "var rows=document.getElementById(pager.getAttribute('data-table')).tBodies[0].rows;"
+        "var page=0;var label=pager.querySelector('.rd-pager-count');"
+        "function show(){var start=page*size;var end=Math.min(start+size,rows.length);"
+        "for(var i=0;i<rows.length;i++){rows[i].hidden=i<start||i>=start+size;}"
+        "label.textContent=(start+1)+'\\u2013'+end+' of '+rows.length;}"
+        "pager.addEventListener('click',function(event){"
+        "var button=event.target.closest('button');if(!button){return;}"
+        "var pages=Math.ceil(rows.length/size);"
+        "page=Math.max(0,Math.min(pages-1,page+Number(button.getAttribute('data-dir'))));"
+        "show();});"
+        "})(document.currentScript.previousElementSibling);</script>"
+    )
+
+
+def _hide_overflow_rows(row_html, page_size):
+    if len(row_html) <= page_size:
+        return row_html
+    paged = []
+    for index, row in enumerate(row_html):
+        if index >= page_size and row.startswith("<tr"):
+            row = "<tr hidden" + row[3:]
+        paged.append(row)
+    return paged
 
 
 class DeckCardRenderer:
@@ -330,13 +375,30 @@ class DeckCardRenderer:
         return f"{banner}<div class='cells'>{''.join(cards) or empty_cells}</div>"
 
     @staticmethod
-    def render_table(_payload: dict, _card: dict, data: Any) -> str:
+    def render_table(_payload: dict, card: dict, data: Any) -> str:
         table = data if isinstance(data, dict) else {}
-        # .results-wrap gives the (potentially wide, all-metrics) table a
-        # horizontal scrollbar instead of overflowing the card.
+        headers = table.get("headers") or []
+        rows = list(table.get("rows") or [])
+        # Every suite's full-results table uses the same page. The rows stay in
+        # the HTML; only the ones past the first page start hidden.
+        page_size = RESULTS_PAGE_SIZE
+        if rows and len(rows) > page_size:
+            table_id = _table_dom_id(card, "rd-table")
+            header_html = "".join(f"<th>{html.escape(str(header))}</th>" for header in headers)
+            body = []
+            for index, row in enumerate(rows):
+                hidden = " hidden" if index >= page_size else ""
+                cells = "".join(f"<td>{html.escape(str(value))}</td>" for value in row)
+                body.append(f"<tr{hidden}>{cells}</tr>")
+            inner = (
+                f"<table id='{html.escape(table_id)}' class='results-table'>"
+                f"<thead><tr>{header_html}</tr></thead><tbody>{''.join(body)}</tbody></table>"
+            )
+            pager = _pager_html(table_id, len(rows), page_size)
+            return f"<div class='results-wrap'>{inner}</div>{pager}"
         inner = render_results_table_html(
-            table.get("headers") or [],
-            table.get("rows") or [],
+            headers,
+            rows,
             empty_message="No results table rows.",
         )
         return f"<div class='results-wrap'>{inner}</div>"
@@ -361,12 +423,16 @@ class DeckCardRenderer:
                 cell = (grid.get(node) or {}).get(group) or {}
                 cells.append(DeckCardRenderer._status_cell_html(cell))
             body_rows.append(f"<tr>{''.join(cells)}</tr>")
+        body_rows = _hide_overflow_rows(body_rows, RESULTS_PAGE_SIZE)
+        table_id = _table_dom_id(_card, "rd-matrix")
+        pager = _pager_html(table_id, len(body_rows), RESULTS_PAGE_SIZE)
 
         hint = str(_card.get("hint") or "").strip() if isinstance(_card, dict) else ""
         hint_html = html.escape(hint) if hint else _DEFAULT_STATUS_HINT_HTML
         return (
-            "<div class='results-wrap'><table class='status-matrix'>"
-            f"{header}{''.join(body_rows)}</table></div>"
+            f"<div class='results-wrap'><table id='{html.escape(table_id)}' class='status-matrix'>"
+            f"<thead>{header}</thead><tbody>{''.join(body_rows)}</tbody></table></div>"
+            f"{pager}"
             f"<p class='muted sm-hint'>{hint_html}</p>"
         )
 

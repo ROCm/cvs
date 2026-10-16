@@ -211,7 +211,35 @@ class TestStatusMatrixCard(unittest.TestCase):
         self.assertIn(".chart-bar-pass", css)
         self.assertIn(".chart-threshold", css)
         self.assertIn(".hm-pass", css)
+        self.assertIn(".rd-pager", css)
         self.assertIn("grid-template-columns: 1fr", css)
+
+    def test_short_results_table_has_no_pager(self):
+        html = self.renderer.render_table({}, {"id": "results"}, {"headers": ["Node"], "rows": [["n1"], ["n2"]]})
+        self.assertNotIn("rd-pager", html)
+        self.assertIn("n1", html)
+        self.assertIn("n2", html)
+
+    def test_long_results_table_pages_every_suite(self):
+        rows = [[f"n{index}"] for index in range(26)]
+        html = self.renderer.render_table({}, {"id": "results"}, {"headers": ["Node"], "rows": rows})
+        self.assertIn("rd-pager", html)
+        self.assertIn("1–25 of 26", html)
+        self.assertIn("Previous", html)
+        self.assertIn("Next", html)
+        self.assertIn("<tr hidden>", html)
+        self.assertIn("n25", html)
+        self.assertNotIn("<tr hidden><td>n0</td>", html)
+
+    def test_long_status_matrix_pages_nodes(self):
+        nodes = [f"n{index}" for index in range(26)]
+        grid = {node: {"check": {"status": "pass", "items": []}} for node in nodes}
+        html = self.renderer.render_status_matrix(
+            {}, {"id": "results"}, {"nodes": nodes, "groups": ["check"], "grid": grid}
+        )
+        self.assertIn("rd-pager", html)
+        self.assertIn("1–25 of 26", html)
+        self.assertIn("n25", html)
 
 
 if __name__ == "__main__":
