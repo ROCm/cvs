@@ -56,7 +56,7 @@ class TestAgfhcDeck(unittest.TestCase):
         types = [card["type"] for card in self.profile["cards"]]
         self.assertEqual(
             types,
-            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "status_matrix"],
+            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "table"],
         )
         metrics = next(card for card in self.profile["cards"] if card["type"] == "metric_charts")
         self.assertEqual(metrics["bind"], "datasets.status_matrix.metric_charts")
@@ -66,7 +66,7 @@ class TestAgfhcDeck(unittest.TestCase):
         self.assertEqual(self.profile["sources"]["lifecycle"], "lifecycle")
         self.assertEqual(self.profile["dataset_builder"], "status_matrix")
         self.assertIn("Pass rate", self.html)
-        self.assertIn("Columns are executed AGFHC recipes", self.html)
+        self.assertIn("results-table", self.html)
         self.assertIn("agfhc_run_deck_viewer.html", self.html)
         self.assertNotIn("Measurements", self.html)
         self.assertNotIn("item breakdown", self.html)
@@ -94,7 +94,7 @@ class TestAgfhcDeck(unittest.TestCase):
         self.assertNotIn("ANC version", self.html)
 
     def test_status_matrix_shows_failed_recipe(self):
-        self.assertIn("status-matrix", self.html)
+        self.assertIn("results-table", self.html)
         self.assertIn("hbm", self.html)
         self.assertIn("node-a", self.html)
         self.assertIn("hbm_bw", self.html)

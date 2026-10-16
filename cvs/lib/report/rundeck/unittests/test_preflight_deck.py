@@ -44,7 +44,7 @@ class TestPreflightDeck(unittest.TestCase):
         types = [card['type'] for card in self.profile['cards']]
         self.assertEqual(
             types,
-            ['run_card', 'lifecycle_timeline', 'status_overview', 'metric_charts', 'status_matrix'],
+            ['run_card', 'lifecycle_timeline', 'status_overview', 'metric_charts', 'table'],
         )
         metrics = next(card for card in self.profile['cards'] if card['type'] == 'metric_charts')
         self.assertEqual(metrics['title'], 'Perf sanity')
@@ -55,7 +55,7 @@ class TestPreflightDeck(unittest.TestCase):
         self.assertEqual(self.profile['dataset_builder'], 'status_matrix')
         self.assertEqual(self.profile['report_basename'], 'preflight_run_deck')
         self.assertIn('Pass rate', self.html)
-        self.assertIn('Columns are preflight checks', self.html)
+        self.assertIn('results-table', self.html)
         self.assertIn('preflight_run_deck_viewer.html', self.html)
         self.assertNotIn('Perf sanity', self.html)
         self.assertNotIn('item breakdown', self.html)
@@ -82,7 +82,7 @@ class TestPreflightDeck(unittest.TestCase):
         self.assertIn('lab', self.html)
 
     def test_status_matrix_shows_failed_check_and_skipped_rdma(self):
-        self.assertIn('status-matrix', self.html)
+        self.assertIn('results-table', self.html)
         self.assertIn('rocm_versions', self.html)
         self.assertIn('rdma_connectivity', self.html)
         self.assertIn('n1', self.html)

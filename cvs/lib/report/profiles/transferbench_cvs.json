@@ -25,10 +25,6 @@
     {
       "id": "metrics",
       "title": "Bandwidth highlights"
-    },
-    {
-      "id": "results",
-      "hint": "Open a cell for that preset's bandwidth, healthcheck subtests, and log links."
     }
   ]
 }
