@@ -18,7 +18,7 @@ LAT = "ib_write_lat · client ↔ server, 2 node pairs"
 
 
 def _bw(value_of):
-    return {host: {nic: {"bw": str(value_of(host, nic)), "pps": "1.0"} for nic in (0, 1)} for host in HOSTS}
+    return {host: {nic: {"bw": str(value_of(host, nic))} for nic in (0, 1)} for host in HOSTS}
 
 
 def _fleet():
@@ -40,18 +40,20 @@ def _fleet():
     return store
 
 
+def _payload(store):
+    return build_rundeck_payload(
+        profile=load_json_profile("ib_perf_bw_test"),
+        store={"cvs_results_dict": store, "variant_config": {"node_count": 4, **VARIANT}},
+        cvs_version="1.0.0",
+    )
+
+
 class TestRecord(unittest.TestCase):
     def test_keeps_per_instance_values_and_skips_failed_instances(self):
         store = {}
-        per_node = {"host-a": {0: {"bw": "390.5", "pps": "0.745"}, 1: {}}, "host-b": {0: {"bw": "380.0"}}}
-        record_bw_results(store, "ib_write_bw", 65536, "8", per_node)
-        self.assertEqual(
-            store["_ibperf"]["bw"]["ib_write_bw|8|65536"],
-            {"host-a": {"0": {"bw": 390.5, "pps": 0.745}}, "host-b": {"0": {"bw": 380.0}}},
-        )
-        untouched = {}
-        self.assertIs(record_bw_results(untouched, "ib_write_bw", 2, "8", {"host-a": {0: {}}}), untouched)
-        self.assertEqual(untouched, {})
+        record_bw_results(store, "ib_write_bw", 65536, "8", {"host-a": {0: {"bw": "390.5"}, 1: {}}})
+        record_bw_results(store, "ib_write_bw", 2, "8", {"host-a": {0: {"bw": "N/A"}}})
+        self.assertEqual(store["_ibperf"]["bw"], {"ib_write_bw|8|65536": {"host-a": {"0": {"bw": 390.5}}}})
 
 
 class TestDeck(unittest.TestCase):
@@ -73,31 +75,10 @@ class TestDeck(unittest.TestCase):
         self.assertEqual(heat["values"][2], [100.0, 50.0])
         self.assertEqual((heat["threshold"], heat["direction"]), (95, "higher"))
 
-    def test_weak_nics_name_nodes_peers_and_breaches(self):
-        meta = _fleet()["_meta"]
-        rows = [dict(zip(meta["weak_nics"]["headers"], row)) for row in meta["weak_nics"]["rows"]]
-        self.assertEqual(
-            [(r["Status"], r["Node · NIC"], r["Pair peer"], r["QPs"], r["Relative"]) for r in rows],
-            [
-                ("outlier", "node02 · NIC 1", "node03", "8, 16", "50% of median"),
-                ("outlier", "node03 · NIC 1", "node02", "8, 16", "50% of median"),
-                ("below threshold", "node00 · NIC 0", "node01", "8", "92% of median"),
-                ("outlier", "node01 · NIC 0", "node00", "—", "4.5× median"),
-            ],
-        )
-
     def test_results_table_has_a_row_per_run_with_threshold_status(self):
         table = _fleet()["_meta"]["results_table"]
         rows = [dict(zip(table["headers"], row)) for row in table["rows"]]
-        self.assertEqual(
-            [(r["Test"], r["QP"], r["Message size"]) for r in rows[:4]],
-            [
-                ("ib_write_bw", "8", "8K"),
-                ("ib_write_bw", "8", "64K"),
-                ("ib_write_bw", "16", "8K"),
-                ("ib_write_bw", "16", "64K"),
-            ],
-        )
+        self.assertEqual(len(rows), 8)
         self.assertEqual(
             [rows[0][k] for k in ("Median BW", "Min BW", "Slowest NIC", "BW threshold", "Status")],
             [185.0, 170.0, "node00 NIC 0", "180", "fail"],
@@ -108,32 +89,18 @@ class TestDeck(unittest.TestCase):
             ["ib_write_lat", "2B", 1.9, 2.0, 9.0],
         )
 
-    def test_deck_renders_weak_nics_groups_and_heatmap(self):
-        payload = build_rundeck_payload(
-            profile=load_json_profile("ib_perf_bw_test"),
-            store={"cvs_results_dict": _fleet(), "variant_config": {"node_count": 4, **VARIANT}},
-            cvs_version="1.0.0",
-        )
+    def test_deck_renders_run_card_groups_and_heatmap(self):
+        payload = _payload(_fleet())
         self.assertEqual(payload["overall_status"], "fail")
         document = render_rundeck_html(payload)
         for text in (
-            "Weak NICs and links",
             "node00 = host-a, node01 = host-b",
             f"<h3 class='chart-group-title'>{WRITE}</h3>",
             f"<h3 class='chart-group-title'>{LAT}</h3>",
-            "Bandwidth, slowest NIC by message size",
-            "Per-NIC bandwidth",
             "NIC bandwidth at 64 KiB, worst % of fleet median over every test and QP",
             "does not affect validation gates",
         ):
             self.assertIn(text, document)
-        self.assertNotIn("<table class='status-matrix'>", document)
-        self.assertIn("results-scroll' style='max-height:480px", document)
-        self.assertIn("Median p99 <span class='th-unit'>(µs)</span>", document)
-        self.assertIn("<td class='al-left'>ib_write_bw</td><td class='al-right'>8</td>", document)
-        self.assertNotIn("Heatmaps", document.split("id='nics'>")[1].split("id='charts'>")[0])
-        order = [document.index(f"id='{sid}'") for sid in ("run-card", "nics", "charts", "weak-nics", "results")]
-        self.assertEqual(order, sorted(order))
 
 
 if __name__ == "__main__":

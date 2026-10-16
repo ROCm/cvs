@@ -27,10 +27,7 @@ def _nodes(count):
 
 
 def _sizes(sizes):
-    try:
-        sizes = sorted(int(size) for size in sizes or [])
-    except (TypeError, ValueError):
-        return _display(sizes)
+    sizes = sorted(int(size) for size in sizes or [])
     return f"{size_text(sizes[0])} – {size_text(sizes[-1])} · {len(sizes)} sizes" if sizes else "—"
 
 

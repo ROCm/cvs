@@ -32,7 +32,6 @@
       "title": "perftest bandwidth and latency by message size",
       "bind": "datasets.status_matrix.metric_charts"
     },
-    {"type": "table", "id": "weak-nics", "title": "Weak NICs and links", "bind": "datasets.status_matrix.meta.weak_nics"},
     {
       "type": "table",
       "id": "results",

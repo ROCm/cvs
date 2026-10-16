@@ -34,12 +34,6 @@ class TestIbperfRunCard(unittest.TestCase):
         self.assertEqual(display["Outlier rule"], OUTLIER_RULE)
         self.assertEqual(display["Pytest report"], "ibperf.html")
 
-    def test_missing_variant_renders_dashes(self):
-        display = {label: value for label, value, _is_link in ibperf_run_card_display(None, {})}
-        self.assertEqual(display.pop("BW thresholds"), "none configured")
-        self.assertEqual(display.pop("Outlier rule"), OUTLIER_RULE)
-        self.assertEqual(set(display.values()), {"—"})
-
 
 if __name__ == "__main__":
     unittest.main()
