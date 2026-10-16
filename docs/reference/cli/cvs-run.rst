@@ -159,10 +159,19 @@ Required options:
 
    * - Option
      - Description
-   * - ``--cluster_file PATH``
-     - Cluster JSON (nodes, SSH credentials, backend). Required outside a scheduler-managed (Slurm/spur) run.
    * - ``--config_file PATH``
      - Suite-specific test configuration JSON.
+
+Conditionally required options:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Option
+     - Description
+   * - ``--cluster_file PATH``
+     - Cluster JSON (nodes, SSH credentials, backend). Required unless ``cvs run`` is launched as a Slurm/SPUR job step; then CVS writes ``<run_dir>/cluster_agents.json`` and an optional file supplies extra metadata. See :doc:`/how-to/run-under-scheduler`.
 
 Optional options:
 
@@ -173,7 +182,7 @@ Optional options:
    * - Option
      - Description
    * - ``--workspace PATH``
-     - Shared-filesystem root; run dir is ``<workspace>/cvs_runs/<run_id>``. Falls back to ``$CVS_WORKSPACE``, then the venv parent directory. Scheduler-managed runs in a container must set this explicitly. HTML and log reports default to this run directory.
+     - Shared-filesystem root; run dir is ``<workspace>/cvs_runs/<run_id>``. Falls back to ``$CVS_WORKSPACE``, then the venv parent directory. Every scheduler-managed run must set this or ``CVS_WORKSPACE`` to storage shared by all nodes. HTML and log reports default to this run directory.
    * - ``--html PATH``
      - Pytest HTML report path. Defaults to ``<run_dir>/<test-file-stem>.html`` (self-contained). Parent directories are created automatically.
    * - ``--no-html``
@@ -192,6 +201,10 @@ Optional options:
 Omit ``--html`` and ``--log-file`` to use the run-directory defaults. Pass either flag with a path to override. ``--no-html`` and ``--no-log-file`` suppress generation.
 
 All other pytest flags pass through. Run ``pytest --help`` for the full list.
+
+``CVS_SCHEDULER`` overrides scheduler detection with ``spur``, ``slurm`` or
+``bare_metal``. ``CVS_WORKSPACE`` supplies the workspace when ``--workspace``
+is omitted. See :doc:`/how-to/run-under-scheduler` for managed runs.
 
 See :doc:`/how-to/test-suites/index`.
 
