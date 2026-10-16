@@ -81,12 +81,16 @@ Requirements
   environment files must have the same paths on every node, usually on a
   shared home directory. Build the virtual environment with a supported
   Python interpreter that also runs on the compute nodes.
-- **Allow agent connections to rank 0.** The agent protocol is a star:
-  workers register with rank 0 and rank 0 sends them commands, so every
-  node needs a path to and from rank 0's agent port; workers never connect
-  to each other. (A suite such as RCCL can still require a full mesh
-  between nodes on its own ports.) Agents bind an ephemeral port on
-  ``0.0.0.0``.
+- **Allow agent connections in both directions.** The agent protocol is a
+  star, but registration and commands travel opposite ways on different
+  ports: each worker connects to rank 0's agent port to register, and
+  rank 0 connects back to each worker's own agent port (the ``agent_port``
+  written in ``cluster_agents.json``) to send it commands. Every agent,
+  rank 0 included, binds an ephemeral port on ``0.0.0.0``, so there is no
+  fixed port to allow; a firewall must permit both directions between
+  rank 0 and every worker, or registration succeeds and commands then
+  fail. Workers never connect to each other. (A suite such as RCCL can
+  still require a full mesh between nodes on its own ports.)
 - **Request the GPUs for the outer step.** For example, use
   ``--gpus-per-node <n> --exclusive`` if your cluster defines GPU resources.
   Agent commands run inside that step and see its device limits on clusters
