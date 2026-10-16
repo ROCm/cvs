@@ -429,6 +429,14 @@ class TestGetRdmaNicDictAllStates(unittest.TestCase):
         result = self._parse('link rdma0/1 state ACTIVE physical_state LINK_UP netdev tw_eth0')
         self.assertEqual(result['rdma0']['eth_device'], 'tw_eth0')
 
+    def test_down_port_does_not_hide_active_port(self):
+        active = 'link mlx4_0/1 state ACTIVE physical_state LINK_UP netdev ib0'
+        down = 'link mlx4_0/2 state DOWN physical_state DISABLED netdev ib1'
+        for output in (f'{active}\n{down}', f'{down}\n{active}'):
+            result = self._parse(output)
+            self.assertEqual(result['mlx4_0']['eth_device'], 'ib0')
+            self.assertEqual(result['mlx4_0']['device_status'], 'ACTIVE')
+
     def test_down_devices_included(self):
         output = (
             'link rdma0/1 state ACTIVE physical_state LINK_UP netdev eth0\n'

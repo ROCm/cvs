@@ -227,8 +227,9 @@ def get_rdma_nic_dict(phdl):
     Notes:
       - Only lines beginning with 'link' are considered.
       - Lines that do not match the expected format are skipped.
-      - If multiple ports exist for the same RDMA device, later matches will overwrite
-        the same device key (since the device name is used as the key). If per-port
+      - If multiple ports exist for the same RDMA device, later matches overwrite
+        the same device key (since the device name is used as the key), except that
+        an ACTIVE port is never replaced by a non-ACTIVE one. If per-port
         granularity is required, consider using a composite key (e.g., "<dev>/<port>").
     """
 
@@ -248,6 +249,9 @@ def get_rdma_nic_dict(phdl):
                 match = re.search(pattern, line)
                 if match:
                     dev = match.group(1)
+                    # Keyed by device, so a later DOWN port must not hide an ACTIVE one.
+                    if rdma_dict[node].get(dev, {}).get('device_status') == 'ACTIVE' and match.group(3) != 'ACTIVE':
+                        continue
                     rdma_dict[node][dev] = {}
                     rdma_dict[node][dev]['port'] = match.group(2)  # Port number (string)
                     rdma_dict[node][dev]['device_status'] = match.group(3)  # Device state (e.g., ACTIVE)
