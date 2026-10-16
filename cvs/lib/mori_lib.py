@@ -167,6 +167,11 @@ def parse_ibgda_output(text: str) -> Tuple[Dict, List[Dict]]:
     return metadata, results
 
 
+def io_initiator(mori_dict, orch):
+    """Host that runs torchrun node rank 0, which mori's IO benchmark makes the initiator."""
+    return mori_dict.get('master_addr') or orch.head_node
+
+
 class MoriBenchmark:
     """Runs the MORI benchmarks through an orchestrator.
 
@@ -198,7 +203,7 @@ class MoriBenchmark:
         self.host_list = list(orch.hosts)
         self.nnodes = len(self.host_list)
         self.mori_dict = mori_dict
-        self.master_addr = self.mori_dict.get('master_addr') or orch.head_node
+        self.master_addr = io_initiator(self.mori_dict, orch)
         self.master_port = self.mori_dict['master_port']
         self.mori_dir = self.mori_dict['mori_dir']
         self.env = dict(self.mori_dict.get('env') or {})
@@ -298,11 +303,13 @@ class MoriBenchmark:
         )
         out_dict = self.orch.exec(cmd, timeout=self.IBGDA_TIMEOUT)
         exp_res_dict = self.expected_results_dict['ibgda_write']
+        node_results = {}
         for node in out_dict.keys():
             if not re.search(r'Index\s+Size', out_dict[node], re.I):
                 fail_test(f'ERROR - dist_write did not complete properly on node {node} - results not seen')
             else:
                 meta_data, results = parse_ibgda_output(out_dict[node])
+                node_results[node] = {"metadata": meta_data, "rows": results}
                 log.info("%s", results)
                 m_key = f'''PROCS:{no_of_procs},CTAS:{ctas},THREADS:{threads},QP_COUNT:{qp_count}'''
                 if m_key in exp_res_dict.keys():
@@ -327,6 +334,15 @@ class MoriBenchmark:
                                       PROCS:{no_of_procs},CTAS:{ctas},THREADS:{threads},QP_COUNT:{qp_count} \
                                       expected = {exp_bw}, actual = {actual_bw}'
                                     )
+        return {
+            "operation": "ibgda_write",
+            "processes": no_of_procs,
+            "ctas": ctas,
+            "threads": threads,
+            "qp_count": qp_count,
+            "iterations": iters,
+            "nodes": node_results,
+        }
 
     def run_dispatch_combine(
         self,
@@ -578,6 +594,17 @@ class MoriBenchmark:
         # ------------------------------------------------------------------
         # act_res_dict = parse_pretty_table_to_dict( script_out )
         act_res_dict = parse_pretty_tables_multi_rank(script_out)
+        act_res_dict.update(
+            {
+                "operation": f"io_{op_type}",
+                "buffer_size": buffer_size,
+                "transfer_batch_size": transfer_batch_size,
+                "qp_count": no_of_qp_per_transfer,
+                "initiators": no_of_initiators,
+                "targets": no_of_targets,
+                "session_enabled": enable_sess,
+            }
+        )
         if op_type == "read":
             op_key = "io_read"
         elif op_type == "write":
@@ -640,3 +667,4 @@ class MoriBenchmark:
                                       expected Avg Lat {exp_avg_lat}, \
                                       buffer_size,transfer_batch_size,no_of_qp_per_transfer = \
                                       {m_key}''')
+        return act_res_dict

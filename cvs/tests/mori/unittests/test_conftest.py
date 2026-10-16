@@ -9,6 +9,10 @@ import os
 import unittest
 from types import SimpleNamespace
 
+import pytest
+
+from cvs.lib.report.profile import load_json_profile
+from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.tests.mori import conftest as mori_conftest
 
 _MORI_FILE = os.path.join(mori_conftest._HERE, 'mori_benchmark_test.py')
@@ -76,6 +80,70 @@ class TestCollectionOrder(unittest.TestCase):
         items = [_item('test_teardown')] + [_item(c) for c in cases]
         mori_conftest.pytest_collection_modifyitems(items)
         self.assertEqual([it.name for it in items], cases + ['test_teardown'])
+
+
+class TestRunDeckFixtures(unittest.TestCase):
+    def _variant(self, mori_dict, orchestrator_type, image='img:1'):
+        orch = SimpleNamespace(
+            orchestrator_type=orchestrator_type, hosts=['n0', 'n1'], head_node='n0', container_config={'image': image}
+        )
+        return mori_conftest.mori_variant_config.__wrapped__(mori_dict, orch)
+
+    def test_container_variant_reads_config_and_orch(self):
+        mori_dict = {'gpu_name': 'mi325x', 'env': {'MORI_RDMA_DEVICES': 'rdma0,rdma1'}}
+        self.assertEqual(
+            self._variant(mori_dict, 'container'),
+            {
+                'gpu_name': 'mi325x',
+                'node_count': 2,
+                'mori_device_list': 'rdma0,rdma1',
+                'container_image': 'img:1',
+                'hosts': ['n0', 'n1'],
+                'initiator': 'n0',
+            },
+        )
+
+    def test_variant_initiator_follows_master_addr(self):
+        variant = self._variant({'env': {}, 'master_addr': 'n1'}, 'container')
+        self.assertEqual(variant['initiator'], 'n1')
+        self.assertEqual(variant['hosts'], ['n0', 'n1'])
+
+    def test_baremetal_variant_reports_no_image(self):
+        # The merged container block may still carry an image, but nothing is launched under baremetal.
+        variant = self._variant({'env': {}}, 'baremetal')
+        self.assertIsNone(variant['container_image'])
+        self.assertIsNone(variant['gpu_name'])
+        self.assertIsNone(variant['mori_device_list'])
+
+
+class TestFailedTestHook(unittest.TestCase):
+    def _report(self, config, name, outcome, when='call', message=None):
+        item = SimpleNamespace(config=config, name=name)
+        call = SimpleNamespace(excinfo=SimpleNamespace(exconly=lambda: message) if message else None)
+        report = SimpleNamespace(failed=outcome == 'failed', outcome=outcome, when=when)
+        hook = mori_conftest.pytest_runtest_makereport(item, call)
+        next(hook)
+        with self.assertRaises(StopIteration):
+            hook.send(SimpleNamespace(get_result=lambda: report))
+
+    def test_failures_before_the_results_fixture_exists_still_fail_the_deck(self):
+        # Suite order: test_shmem_api and the concurrent_put tests run before any test requests cvs_results_dict.
+        config = SimpleNamespace(stash=pytest.Stash())
+        self._report(config, 'test_setup_env', 'passed')
+        self._report(config, 'test_shmem_api', 'failed', message="Failed: Following FAILURES seen - ['hang']")
+        results = mori_conftest.cvs_results_dict.__wrapped__(SimpleNamespace(config=config))
+        self._report(config, 'test_teardown', 'failed', when='teardown', message='RuntimeError: gone')
+        self.assertEqual(
+            results['_meta']['failed_tests']['rows'],
+            [
+                ['test_shmem_api', 'call', "Failed: Following FAILURES seen - ['hang']"],
+                ['test_teardown', 'teardown', 'RuntimeError: gone'],
+            ],
+        )
+        payload = build_rundeck_payload(
+            profile=load_json_profile('mori_benchmark_test'), store={'cvs_results_dict': results}, cvs_version='1.0.0'
+        )
+        self.assertEqual(payload['overall_status'], 'fail')
 
 
 if __name__ == '__main__':

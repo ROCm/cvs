@@ -63,6 +63,14 @@
             "description": "Optional help line. status_matrix shows this instead of the generic item-breakdown hint."
           },
           "when_empty": { "enum": ["hide"] },
+          "heatmap_heading": {
+            "type": "boolean",
+            "description": "metric_charts: false drops the Heatmaps subheading above the heatmap grid."
+          },
+          "max_height": {
+            "type": "string",
+            "description": "table: CSS max-height; the table scrolls vertically under a sticky header row."
+          },
           "columns_from": { "type": "string" }
         }
       }

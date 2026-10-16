@@ -10,6 +10,7 @@ import pytest
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import verify_dmesg_for_errors
 from cvs.lib import mori_lib
+from cvs.lib import mori_reporting
 from cvs.lib import globals
 
 log = globals.log
@@ -122,10 +123,14 @@ def test_concurrent_put_signal_thread(mori_obj):
     update_test_result()
 
 
-def test_ibgda_write_test(mori_obj):
+def test_ibgda_write_test(mori_obj, cvs_results_dict, mori_variant_config):
     globals.error_list = []
     # dist_write allocates max_val per thread (2 CTAs x 256 threads); 4m keeps that at 2 GiB per GPU.
-    mori_obj.run_ibgda_dist_write(no_of_procs=2, min_val=2, max_val='4m', ctas=2, threads=256, qp_count=4, iters=1)
+    parsed_results = mori_obj.run_ibgda_dist_write(
+        no_of_procs=2, min_val=2, max_val='4m', ctas=2, threads=256, qp_count=4, iters=1
+    )
+    status = "fail" if globals.error_list else "pass"
+    mori_reporting.record_ibgda_results(cvs_results_dict, parsed_results, status=status, variant=mori_variant_config)
 
     update_test_result()
 
@@ -174,14 +179,24 @@ input_test_matrix = [
 # independent test cases, one per input configuration.
 # -----------------------------------------------------------------------------
 @pytest.mark.parametrize("buffer_size,transfer_batch_size,no_of_qp_per_transfer", input_test_matrix)
-def test_io_read(mori_obj, buffer_size, transfer_batch_size, no_of_qp_per_transfer):
+def test_io_read(
+    mori_obj, cvs_results_dict, mori_variant_config, buffer_size, transfer_batch_size, no_of_qp_per_transfer
+):
     globals.error_list = []
-    mori_obj.run_mori_torch_io_test(
+    parsed_results = mori_obj.run_mori_torch_io_test(
         op_type='read',
         enable_sess=True,
         buffer_size=buffer_size,
         transfer_batch_size=transfer_batch_size,
         no_of_qp_per_transfer=no_of_qp_per_transfer,
+    )
+    status = "fail" if globals.error_list else "pass"
+    mori_reporting.record_io_results(
+        cvs_results_dict,
+        parsed_results,
+        case_qp_count=no_of_qp_per_transfer,
+        status=status,
+        variant=mori_variant_config,
     )
     update_test_result()
 
@@ -196,14 +211,24 @@ def test_io_read(mori_obj, buffer_size, transfer_batch_size, no_of_qp_per_transf
 # Each parameter combination produces a separate pytest test case.
 # -----------------------------------------------------------------------------
 @pytest.mark.parametrize("buffer_size,transfer_batch_size,no_of_qp_per_transfer", input_test_matrix)
-def test_io_write(mori_obj, buffer_size, transfer_batch_size, no_of_qp_per_transfer):
+def test_io_write(
+    mori_obj, cvs_results_dict, mori_variant_config, buffer_size, transfer_batch_size, no_of_qp_per_transfer
+):
     globals.error_list = []
-    mori_obj.run_mori_torch_io_test(
+    parsed_results = mori_obj.run_mori_torch_io_test(
         op_type='write',
         enable_sess=True,
         buffer_size=buffer_size,
         transfer_batch_size=transfer_batch_size,
         no_of_qp_per_transfer=no_of_qp_per_transfer,
+    )
+    status = "fail" if globals.error_list else "pass"
+    mori_reporting.record_io_results(
+        cvs_results_dict,
+        parsed_results,
+        case_qp_count=no_of_qp_per_transfer,
+        status=status,
+        variant=mori_variant_config,
     )
     update_test_result()
 
