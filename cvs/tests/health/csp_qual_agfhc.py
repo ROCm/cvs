@@ -143,7 +143,8 @@ def _build_agfhc_cmd(orch, path, args, env=None):
 def _run_agfhc_recipe(orch, config_dict, args, timeout, stage, out_name, agfhc_res_dict, cluster_dict, lifecycle):
     path = config_dict['path']
     log_dir = config_dict['log_dir']
-    cmd = _build_agfhc_cmd(orch, path, f'{args} --simple-output -o {log_dir}/{out_name}', config_dict.get('env'))
+    log_path = shlex.quote(f'{log_dir}/{out_name}')
+    cmd = _build_agfhc_cmd(orch, path, f'{args} --simple-output -o {log_path}', config_dict.get('env'))
     with timed_stage(lifecycle, stage):
         out_dict = orch.exec(cmd, timeout=timeout)
     scan_agfc_results(out_dict)
@@ -180,16 +181,16 @@ def _command_output(value):
 
 
 def _exec_cmds_by_host(orch, commands_by_host):
-    """Run one command per host in one parallel call, in orch.hosts order."""
+    """One command per orch.hosts entry. A no-op keeps the list the same length."""
     if not commands_by_host:
         return {}
-    hosts = [host for host in getattr(orch, 'hosts', list(commands_by_host)) if host in commands_by_host]
-    cmd_list = [commands_by_host[host] for host in hosts]
+    hosts = list(getattr(orch, 'hosts', list(commands_by_host)))
+    cmd_list = [commands_by_host.get(host, 'true') for host in hosts]
     if getattr(orch, 'orchestrator_type', None) == 'container':
         output = orch.exec_cmd_list(cmd_list, timeout=90, print_console=False)
     else:
         output = orch.all.exec_cmd_list(cmd_list, timeout=90, print_console=False)
-    return {host: _command_output(output.get(host, '')) for host in hosts}
+    return {host: _command_output(output.get(host, '')) for host in hosts if host in commands_by_host}
 
 
 def get_log_results(orch, out_dict):
@@ -255,7 +256,7 @@ def test_version_check(orch, config_dict, agfhc_res_dict, cluster_dict, lifecycl
         orch.exec(f'{sudo_prefix}mkdir -p {quoted_log_dir}')
     except Exception:
         log.error(f'Error creating log directory {log_dir}')
-    ls_dict = orch.exec(f'{sudo_prefix}ls -ld {log_dir}')
+    ls_dict = orch.exec(f'{sudo_prefix}ls -ld {shlex.quote(log_dir)}')
     for node in ls_dict.keys():
         if re.search('no such', ls_dict[node], re.I):
             fail_test(f'Error creating the log directory {log_dir} on node {node}')

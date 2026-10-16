@@ -179,6 +179,98 @@ class TestCspQualAgfhcOrch(unittest.TestCase):
         dumped = [call.args[0] for call in info.call_args_list if 'journal.log' in call.args[0]]
         self.assertEqual(len(dumped), 2)
 
+    def test_get_log_results_noop_fills_a_host_with_no_log_directory(self):
+        orch = MagicMock()
+        orch.orchestrator_type = 'baremetal'
+        orch.hosts = ['h1', 'h2', 'h3']
+        orch.sudo_prefix.return_value = 'sudo -n '
+        orch.all.exec_cmd_list.return_value = {
+            'h1': '"total_failed": 0,\n',
+            'h3': '"total_failed": 0,\n',
+        }
+        out_dict = {
+            'h1': 'Log directory: /tmp/a\n',
+            'h2': 'no log directory here',
+            'h3': 'Log directory: /tmp/c\n',
+        }
+        with patch.object(csp_qual, 'fail_test') as fail:
+            res = csp_qual.get_log_results(orch, out_dict)
+        cmd_list = orch.all.exec_cmd_list.call_args.args[0]
+        self.assertEqual(
+            cmd_list,
+            [
+                'sudo -n cat /tmp/a/results.json',
+                'true',
+                'sudo -n cat /tmp/c/results.json',
+            ],
+        )
+        self.assertEqual(orch.all.exec_cmd_list.call_count, 1)
+        self.assertNotIn('h2', res)
+        fail.assert_called_once()
+        self.assertIn('h2', fail.call_args.args[0])
+
+    def test_recipe_quotes_log_dir_with_a_dollar(self):
+        orch = MagicMock()
+        orch.orchestrator_type = 'baremetal'
+        orch.sudo_prefix.return_value = ''
+        orch.exec.return_value = {'host1': 'return code AGFHC_SUCCESS\n'}
+        with (
+            patch.object(csp_qual, 'scan_agfc_results'),
+            patch.object(csp_qual, 'get_log_results', return_value={}),
+            patch.object(csp_qual, 'print_test_output'),
+            patch.object(csp_qual, '_capture_agfhc_rundeck'),
+            patch.object(csp_qual, 'update_test_result'),
+            patch.object(csp_qual, 'timed_stage') as timed,
+        ):
+            timed.return_value.__enter__ = MagicMock(return_value=None)
+            timed.return_value.__exit__ = MagicMock(return_value=False)
+            csp_qual._run_agfhc_recipe(
+                orch,
+                {'path': '/opt/amd/agfhc', 'log_dir': '/tmp/$logs'},
+                '-r hbm',
+                30,
+                'hbm',
+                'out',
+                {},
+                {},
+                MagicMock(),
+            )
+        cmd = orch.exec.call_args.args[0]
+        self.assertIn('/tmp/$logs/out', cmd)
+        self.assertNotIn('-o /tmp/$logs/out', cmd)
+
+    def test_version_check_quotes_log_dir_for_ls(self):
+        orch = MagicMock()
+        orch.orchestrator_type = 'baremetal'
+        orch.sudo_prefix.return_value = ''
+        calls = []
+
+        def exec_cmd(cmd, timeout=None, **_kwargs):
+            calls.append(cmd)
+            if 'test -w' in cmd:
+                return {'host1': 'writable'}
+            if 'agfhc' in cmd and '-v' in cmd:
+                return {'host1': 'agfhc version: 1.0'}
+            return {'host1': ''}
+
+        orch.exec.side_effect = exec_cmd
+        with (
+            patch.object(csp_qual.time, 'sleep'),
+            patch.object(csp_qual, 'update_test_result'),
+            patch.object(csp_qual, '_capture_agfhc_rundeck'),
+            patch.object(csp_qual, 'timed_stage') as timed,
+        ):
+            timed.return_value.__enter__ = MagicMock(return_value=None)
+            timed.return_value.__exit__ = MagicMock(return_value=False)
+            csp_qual.test_version_check(
+                orch,
+                {'path': '/opt/amd/agfhc', 'log_dir': '/tmp/$logs'},
+                {},
+                {},
+                MagicMock(),
+            )
+        self.assertTrue(any("ls -ld '/tmp/$logs'" in cmd for cmd in calls))
+
     def test_log_dir_probe_returns_early(self):
         orch = MagicMock()
         orch.orchestrator_type = 'baremetal'
