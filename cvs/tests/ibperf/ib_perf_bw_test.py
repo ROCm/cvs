@@ -11,7 +11,7 @@ import json
 import os
 
 
-from cvs.lib import ibperf_lib
+from cvs.lib import ibperf_lib, ibperf_reporting
 from cvs.lib.rdma_gid_lib import DEFAULT_GID_TYPE
 
 from cvs.lib.utils_lib import *
@@ -67,7 +67,11 @@ def can_read_dmesg(orch):
     return False
 
 
-def test_ib_bw_perf(orch, bw_test, config_dict, request):
+def _note_run_facts(variant, use_dmabuf, gpu_nic_dict):
+    variant.update(dmabuf=use_dmabuf, nic_count=max((len(cards) for cards in gpu_nic_dict.values()), default=None))
+
+
+def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibperf_variant_config):
     globals.error_list = []
     ib_bw_dict[bw_test] = {}
     scan_dmesg = can_read_dmesg(orch)
@@ -87,6 +91,7 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request):
     update_test_result()
     gpu_numa_dict = linux_utils.get_gpu_numa_dict(orch.all, use_sudo=False)
     hip_dev_dict = ibperf_lib.get_hip_device_dict(orch.all, gpu_nic_dict)
+    _note_run_facts(ibperf_variant_config, use_dmabuf, gpu_nic_dict)
 
     bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(orch.all, use_sudo=False)
     rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(orch.all)
@@ -130,6 +135,14 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request):
                 use_dmabuf=use_dmabuf,
                 hip_dev_dict=hip_dev_dict,
             )
+            ibperf_reporting.record_bw_results(
+                cvs_results_dict,
+                bw_test,
+                msg_size,
+                qp_count,
+                ib_bw_dict[bw_test][msg_size][qp_count],
+                ibperf_variant_config,
+            )
             end_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
             if scan_dmesg:
                 verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=True)
@@ -146,7 +159,7 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request):
     update_test_result()
 
 
-def test_ib_lat_perf(orch, lat_test, config_dict, request):
+def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibperf_variant_config):
     globals.error_list = []
     ib_lat_dict[lat_test] = {}
     scan_dmesg = can_read_dmesg(orch)
@@ -166,6 +179,7 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request):
     update_test_result()
     gpu_numa_dict = linux_utils.get_gpu_numa_dict(orch.all, use_sudo=False)
     hip_dev_dict = ibperf_lib.get_hip_device_dict(orch.all, gpu_nic_dict)
+    _note_run_facts(ibperf_variant_config, use_dmabuf, gpu_nic_dict)
 
     bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(orch.all, use_sudo=False)
     rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(orch.all)
@@ -205,6 +219,9 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request):
             rocm_path=rocm_path,
             use_dmabuf=use_dmabuf,
             hip_dev_dict=hip_dev_dict,
+        )
+        ibperf_reporting.record_lat_results(
+            cvs_results_dict, lat_test, msg_size, ib_lat_dict[lat_test][msg_size], ibperf_variant_config
         )
         end_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
         if scan_dmesg:

@@ -11,10 +11,11 @@ import re
 import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
-from cvs.lib import globals, ibperf_lib
+from cvs.lib import globals, ibperf_lib, ibperf_reporting
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders, resolve_test_config_placeholders
 
 log = globals.log
+_RESULTS_KEY = pytest.StashKey[dict]()
 
 
 @pytest.fixture(scope="module")
@@ -75,3 +76,36 @@ def orch(cluster_dict):
     o = OrchestratorFactory.create_orchestrator(log, cfg)
     yield o
     o.close()
+
+
+@pytest.fixture(scope="module")
+def cvs_results_dict(request):
+    """The Run Deck store, shared with pytest_runtest_makereport whichever of them needs it first."""
+    return request.config.stash.setdefault(_RESULTS_KEY, {})
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Record every failed or errored test in the Run Deck, so a test the deck does not chart still fails it."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.failed:
+        reason = call.excinfo.exconly() if call.excinfo else report.outcome
+        results = item.config.stash.setdefault(_RESULTS_KEY, {})
+        ibperf_reporting.record_test_failure(results, item.name, report.when, reason)
+
+
+@pytest.fixture(scope="module")
+def ibperf_variant_config(config_dict, orch):
+    """Run-card fields for the ibperf Run Deck; the tests add dmabuf and nic_count once probed."""
+    return {
+        'hosts': list(orch.hosts),
+        'node_count': len(orch.hosts),
+        'ib_bw_test_list': ibperf_lib.configured_bw_tests(config_dict),
+        'ib_lat_test_list': ibperf_lib.configured_lat_tests(config_dict),
+        'msg_size_list': config_dict.get('msg_size_list'),
+        'qp_count_list': config_dict.get('qp_count_list'),
+        'duration': config_dict.get('duration'),
+        'expected_results': config_dict.get('expected_results'),
+        'verify_bw': config_dict.get('verify_bw'),
+    }
