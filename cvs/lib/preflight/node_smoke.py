@@ -229,10 +229,13 @@ def build_remote_node_smoke_command(
         env_lines.append(f"export NCCL_IB_GID_INDEX={int(nccl_ib_gid_index)}")
 
     primus_cli = f"{primus_q}/runner/primus-cli"
+    # Primus writes <dump>/smoke/<short hostname>.json for every node into the same
+    # (usually shared) dump path, so read this node's own file. Taking the first
+    # *.json would hand every node the payload of whichever host sorts first.
     json_cat = (
         f"echo '{_JSON_BEGIN}'; "
-        f"json=$(ls -1 {dump_q}/smoke/*.json 2>/dev/null | head -1); "
-        f'if [ -n "$json" ]; then cat "$json"; fi; '
+        f"h=$(hostname); json={dump_q}/smoke/\"${{h%%.*}}\".json; "
+        f'if [ -f "$json" ]; then cat "$json"; fi; '
         f"echo '{_JSON_END}'"
     )
 
