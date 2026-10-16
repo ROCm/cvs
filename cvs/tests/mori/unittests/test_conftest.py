@@ -9,6 +9,8 @@ import os
 import unittest
 from types import SimpleNamespace
 
+import pytest
+
 from cvs.tests.mori import conftest as mori_conftest
 
 _MORI_FILE = os.path.join(mori_conftest._HERE, 'mori_benchmark_test.py')
@@ -110,6 +112,31 @@ class TestRunDeckFixtures(unittest.TestCase):
         self.assertIsNone(variant['container_image'])
         self.assertIsNone(variant['gpu_name'])
         self.assertIsNone(variant['mori_device_list'])
+
+
+class TestFailedTestHook(unittest.TestCase):
+    def _report(self, config, name, outcome, when='call', message=None):
+        item = SimpleNamespace(config=config, name=name)
+        call = SimpleNamespace(excinfo=SimpleNamespace(exconly=lambda: message) if message else None)
+        report = SimpleNamespace(failed=outcome == 'failed', outcome=outcome, when=when)
+        hook = mori_conftest.pytest_runtest_makereport(item, call)
+        next(hook)
+        with self.assertRaises(StopIteration):
+            hook.send(SimpleNamespace(get_result=lambda: report))
+
+    def test_failed_and_errored_tests_are_recorded_and_passes_are_not(self):
+        config = SimpleNamespace(stash=pytest.Stash())
+        results = mori_conftest.cvs_results_dict.__wrapped__(SimpleNamespace(config=config))
+        self._report(config, 'test_setup_env', 'passed')
+        self._report(config, 'test_shmem_api', 'failed', message="Failed: Following FAILURES seen - ['hang']")
+        self._report(config, 'test_teardown', 'failed', when='teardown', message='RuntimeError: gone')
+        self.assertEqual(
+            results['_meta']['failed_tests']['rows'],
+            [
+                ['test_shmem_api', 'call', "Failed: Following FAILURES seen - ['hang']"],
+                ['test_teardown', 'teardown', 'RuntimeError: gone'],
+            ],
+        )
 
 
 if __name__ == '__main__':

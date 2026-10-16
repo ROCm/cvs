@@ -2,7 +2,7 @@
 
 import unittest
 
-from cvs.lib.mori_reporting import record_ibgda_results, record_io_results
+from cvs.lib.mori_reporting import record_ibgda_results, record_io_results, record_test_failure
 from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.lib.report.rundeck.render import render_rundeck_html
@@ -221,6 +221,7 @@ class TestMoriDeckProfile(unittest.TestCase):
         ):
             self.assertIn(text, document)
         self.assertNotIn("<script", document)
+        self.assertNotIn("id='failed-tests'", document)
         self.assertNotIn("<table class='status-matrix'>", document)
         self.assertNotIn("Viewer</a>", document)
         ranks, charts = document.split("<section class='panel' id='ranks'>")[1].split(
@@ -231,6 +232,22 @@ class TestMoriDeckProfile(unittest.TestCase):
         self.assertIn("hm-pass", ranks)
         self.assertNotIn("MORI-IO per rank", charts)
         self.assertIn("<section class='panel' id='results'><h2>Full results</h2>", charts)
+
+    def test_an_uncharted_failed_test_fails_the_deck_and_is_listed(self):
+        store = {}
+        record_test_failure(store, "test_shmem_api", "call", "Failed: Following FAILURES seen -\n['shmem hang']")
+        record_io_results(store, _case("io_read", {0: 47.0, 1: 46.0}), variant=VARIANT)
+        payload = build_rundeck_payload(
+            profile=load_json_profile("mori_benchmark_test"),
+            store={"cvs_results_dict": store, "variant_config": VARIANT},
+            cvs_version="1.0.0",
+        )
+        self.assertEqual(payload["overall_status"], "fail")
+        self.assertEqual(
+            payload["datasets"]["status_matrix"]["meta"]["failed_tests"]["rows"],
+            [["test_shmem_api", "call", "Failed: Following FAILURES seen - ['shmem hang']"]],
+        )
+        self.assertIn("<section class='panel' id='failed-tests'><h2>Failed tests</h2>", render_rundeck_html(payload))
 
     def test_results_table_has_a_row_per_case_and_ibgda_node_per_size(self):
         table = self._payload()["datasets"]["status_matrix"]["meta"]["results_table"]

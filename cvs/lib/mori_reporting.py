@@ -16,6 +16,8 @@ results live under ``_mori`` so every record call can rebuild the groups in a fi
 KEY_MSG_SIZE = 1 << 20
 # Latency spans three decades on a linear axis; splitting at 32 KiB keeps small messages readable.
 LATENCY_SPLIT = 32 << 10
+FAILED_TESTS_GROUP = "Other tests"
+_REASON_LIMIT = 200
 
 _IO_SHARED_FIELDS = ("MsgSize_B", "BatchSize", "TotalSize_MB")
 
@@ -277,7 +279,28 @@ def _rebuild(store):
     else:
         meta.pop("rank_grid", None)
     meta["results_table"] = _results_table(io_cases, statuses, ibgda, titles, names)
+    return _apply_failed_tests(store)
+
+
+def _apply_failed_tests(store):
+    failed = (store.get("_mori") or {}).get("failed_tests") or {}
+    if failed:
+        store.setdefault("groups", {})[FAILED_TESTS_GROUP] = {"nodes": {name: {"status": "fail"} for name in failed}}
+        store.setdefault("_meta", {"suite": "mori_benchmark_test"})["failed_tests"] = {
+            "headers": ["Test", "Phase", "Reason"],
+            "rows": [[name, entry["phase"], entry["reason"]] for name, entry in failed.items()],
+        }
     return store
+
+
+def record_test_failure(results_store, test_name, phase, reason):
+    """Record a failed or errored test so the deck fails and lists it, including tests it does not chart."""
+    reason = " ".join(str(reason).split())
+    if len(reason) > _REASON_LIMIT:
+        reason = reason[: _REASON_LIMIT - 1] + "…"
+    failed = results_store.setdefault("_mori", {}).setdefault("failed_tests", {})
+    failed.setdefault(str(test_name), {"phase": phase, "reason": reason})
+    return _apply_failed_tests(results_store)
 
 
 def record_io_results(results_store, parsed_results, case_qp_count=None, status="pass", variant=None):
@@ -333,4 +356,4 @@ def record_ibgda_results(results_store, parsed_results, status="pass", variant=N
     return _rebuild(results_store)
 
 
-__all__ = ["node_names", "record_ibgda_results", "record_io_results", "size_text"]
+__all__ = ["node_names", "record_ibgda_results", "record_io_results", "record_test_failure", "size_text"]

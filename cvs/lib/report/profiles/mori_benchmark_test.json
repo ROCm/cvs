@@ -20,6 +20,13 @@
   "cards": [
     {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
     {
+      "type": "table",
+      "id": "failed-tests",
+      "title": "Failed tests",
+      "bind": "datasets.status_matrix.meta.failed_tests",
+      "when_empty": "hide"
+    },
+    {
       "type": "metric_charts",
       "id": "ranks",
       "title": "MORI-IO per rank",
