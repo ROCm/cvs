@@ -1,5 +1,6 @@
 # cvs/lib/unittests/test_linux_utils.py
 import os
+import json
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -403,6 +404,249 @@ class TestGetGpuNicMappingDict(unittest.TestCase):
         self.assertEqual(len(logs.records), 1)
         for text in ('0002:00:04.0', '0003:00:0d.0', 'node1'):
             self.assertIn(text, logs.output[0])
+
+
+class TestGetRdmaNicDictAllStates(unittest.TestCase):
+    def _parse(self, output):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'n1': output}
+        return linux_utils.get_rdma_nic_dict(phdl)['n1']
+
+    def test_unparsable_link_line_is_skipped(self):
+        result = self._parse('link weird/1 state\nlink rdma0/1 state ACTIVE physical_state LINK_UP netdev eth0')
+        self.assertEqual(list(result), ['rdma0'])
+
+    def test_ib_link_without_netdev_is_skipped(self):
+        output = (
+            'link mlx5_0/1 subnet_prefix fe80:0000:0000:0000 lid 1 sm_lid 1 lmc 0 '
+            'state ACTIVE physical_state LINK_UP\n'
+            'link rdma0/1 state ACTIVE physical_state LINK_UP netdev eth0'
+        )
+        self.assertEqual(list(self._parse(output)), ['rdma0'])
+
+    def test_underscore_netdev(self):
+        result = self._parse('link rdma0/1 state ACTIVE physical_state LINK_UP netdev tw_eth0')
+        self.assertEqual(result['rdma0']['eth_device'], 'tw_eth0')
+
+    def test_down_devices_included(self):
+        output = (
+            'link rdma0/1 state ACTIVE physical_state LINK_UP netdev eth0\n'
+            'link rdma1/1 state DOWN physical_state DISABLED netdev eth1'
+        )
+        result = self._parse(output)
+        self.assertEqual(result['rdma0']['device_status'], 'ACTIVE')
+        self.assertEqual(result['rdma1']['device_status'], 'DOWN')
+
+
+class TestBackendNicLinkStateFilter(unittest.TestCase):
+    def test_get_backend_rdma_nic_dict_active_only(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            'n1': '\n'.join(
+                (
+                    'link rdma0/1 state ACTIVE physical_state LINK_UP netdev eth0',
+                    'link rdma1/1 state DOWN physical_state DISABLED netdev eth1',
+                    'link rdma9/1 state ACTIVE physical_state LINK_UP netdev eth9',
+                )
+            )
+        }
+        with patch.object(linux_utils, 'get_backend_nic_dict', return_value={'n1': ['eth0', 'eth1']}):
+            active = linux_utils.get_backend_rdma_nic_dict(phdl)
+            all_states = linux_utils.get_backend_rdma_nic_dict(phdl, active_only=False)
+        self.assertEqual(list(active['n1']), ['rdma0'])
+        self.assertEqual(set(all_states['n1']), {'rdma0', 'rdma1'})
+
+    def test_lshw_backend_forwards_active_only_and_status(self):
+        lshw = {'n1': {'eth0': {'pci_bus': '0000:06:00.0', 'description': 'Backend NIC'}}}
+        rdma = {
+            'n1': {
+                'rdma0': {'eth_device': 'eth0', 'device_status': 'ACTIVE'},
+            }
+        }
+        for active_only in (True, False):
+            with (
+                patch.object(linux_utils, 'get_lshw_network_dict', return_value=lshw),
+                patch.object(linux_utils, 'get_backend_rdma_nic_dict', return_value=rdma) as backend,
+            ):
+                result = linux_utils.get_lshw_backend_nic_dict(MagicMock(), active_only=active_only)
+            self.assertEqual(backend.call_args.kwargs['active_only'], active_only)
+            self.assertEqual(result['n1']['eth0']['rdma_dev'], 'rdma0')
+            self.assertEqual(result['n1']['eth0']['device_status'], 'ACTIVE')
+
+
+class TestGpuNicMappingPciDomain(unittest.TestCase):
+    def _map(self, gpu_bdfs, nics, active_only=True):
+        gpu_dict = {'node1': {f'card{i}': {'PCI Bus': bdf} for i, bdf in enumerate(gpu_bdfs)}}
+        nic_dict = {
+            'node1': {
+                eth: {'pci_bus': bdf, 'rdma_dev': rdma, 'device_status': status} for eth, bdf, rdma, status in nics
+            }
+        }
+        with (
+            patch.object(linux_utils.rocm_plib, 'get_gpu_pcie_bus_dict', return_value=gpu_dict),
+            patch.object(linux_utils, 'get_lshw_backend_nic_dict', return_value=nic_dict) as lshw,
+        ):
+            result = linux_utils.get_gpu_nic_mapping_dict(MagicMock(), active_only=active_only)
+        return result['node1'], lshw
+
+    def _helios(self):
+        gpus = [f'000{i}:01:00.0' for i in range(1, 5)]
+        nics = [('enp4s0np0', '0000:04:00.0', 'rocep4s0', 'ACTIVE')]
+        for i in range(1, 5):
+            for port, bus in ((68, 0x44), (72, 0x48)):
+                nics.append((f'enP{i}p{port}s0', f'000{i}:{bus:02x}:00.0', f'roceP{i}p{port}s0', 'DOWN'))
+        return gpus, nics
+
+    def test_requests_backend_nics_in_every_link_state(self):
+        gpus, nics = self._helios()
+        for active_only in (True, False):
+            _, lshw = self._map(gpus, nics, active_only=active_only)
+            lshw.assert_called_once()
+            self.assertFalse(lshw.call_args.kwargs['active_only'])
+
+    def test_mi450_default_leaves_every_gpu_unmapped(self):
+        gpus, nics = self._helios()
+        with self.assertLogs(linux_utils.log, 'WARNING') as logs:
+            result, _ = self._map(gpus, nics)
+        for i, bdf in enumerate(gpus):
+            self.assertEqual(result[f'card{i}'], {'gpu_bdf': bdf})
+            for fragment in (f'card{i}', bdf, 'node1', f'PCI domain 000{i + 1}'):
+                self.assertIn(fragment, logs.output[i])
+        self.assertEqual(len(logs.records), 4)
+        self.assertNotIn('rocep4s0', str(result))
+        self.assertNotIn('0000:04:00.0', str(result))
+
+    def test_mi450_topology_maps_each_gpu_to_its_p68_port(self):
+        gpus, nics = self._helios()
+        result, _ = self._map(gpus, nics, active_only=False)
+        for i in range(1, 5):
+            info = result[f'card{i - 1}']
+            self.assertEqual(info['rdma_dev'], f'roceP{i}p68s0')
+            self.assertEqual(info['eth_dev'], f'enP{i}p68s0')
+            self.assertEqual(info['nic_bdf'], f'000{i}:44:00.0')
+        self.assertNotIn('rocep4s0', str(result))
+
+    def test_mi450_links_up_maps_same_domain(self):
+        gpus, nics = self._helios()
+        nics = [(eth, bdf, rdma, 'ACTIVE') for eth, bdf, rdma, _ in nics]
+        result, _ = self._map(gpus, nics)
+        for i in range(1, 5):
+            self.assertEqual(result[f'card{i - 1}']['rdma_dev'], f'roceP{i}p68s0')
+        self.assertNotIn('rocep4s0', str(result))
+
+    def test_partial_overlap_leaves_gpu_without_active_local_nic_unmapped(self):
+        gpus = ['0000:05:00.0', '0001:05:00.0']
+        nics = [('eth0', '0000:06:00.0', 'rdma0', 'ACTIVE'), ('eth1', '0001:06:00.0', 'rdma1', 'DOWN')]
+        with self.assertLogs(linux_utils.log, 'WARNING') as logs:
+            result, _ = self._map(gpus, nics)
+        self.assertEqual(
+            result['card0'],
+            {'gpu_bdf': gpus[0], 'eth_dev': 'eth0', 'rdma_dev': 'rdma0', 'nic_bdf': '0000:06:00.0'},
+        )
+        self.assertEqual(result['card1'], {'gpu_bdf': gpus[1]})
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn(gpus[1], logs.output[0])
+        self.assertIn('node1', logs.output[0])
+        topology, _ = self._map(gpus, nics, active_only=False)
+        self.assertEqual(topology['card1']['rdma_dev'], 'rdma1')
+
+    def test_partial_overlap_gpu_domain_without_any_backend_nic_is_unmapped(self):
+        gpus = ['0000:05:00.0', '0001:05:00.0']
+        nics = [('eth0', '0000:06:00.0', 'rdma0', 'ACTIVE')]
+        with self.assertLogs(linux_utils.log, 'WARNING'):
+            result, _ = self._map(gpus, nics)
+        self.assertEqual(result['card0']['rdma_dev'], 'rdma0')
+        self.assertEqual(result['card1'], {'gpu_bdf': gpus[1]})
+
+    def test_no_domain_overlap_keeps_cross_domain_pairing(self):
+        with self.assertLogs(linux_utils.log, 'WARNING') as logs:
+            result, _ = self._map(['0000:05:00.0'], [('eth0', '10000:e1:00.0', 'rdma0', 'ACTIVE')])
+        self.assertEqual(result['card0']['rdma_dev'], 'rdma0')
+        self.assertIn('outside its PCI domain', logs.output[0])
+
+    def test_domain0_down_nic_shares_within_domain(self):
+        gpus = TestGetGpuNicMappingDict.SINGLE_DOMAIN_GPUS
+        nics = [
+            (eth, bdf, rdma, 'DOWN' if rdma == 'rdma3' else 'ACTIVE')
+            for eth, bdf, rdma in TestGetGpuNicMappingDict.SINGLE_DOMAIN_NICS
+        ]
+        with self.assertLogs(linux_utils.log, 'WARNING'):
+            result, _ = self._map(gpus, nics)
+        self.assertEqual(
+            [result[f'card{i}']['rdma_dev'] for i in range(8)],
+            ['rdma0', 'rdma1', 'rdma2', 'rdma2', 'rdma4', 'rdma5', 'rdma6', 'rdma7'],
+        )
+
+    def test_domain0_all_links_down_leaves_cards_unmapped_without_raising(self):
+        gpus = TestGetGpuNicMappingDict.SINGLE_DOMAIN_GPUS
+        nics = [(eth, bdf, rdma, 'DOWN') for eth, bdf, rdma in TestGetGpuNicMappingDict.SINGLE_DOMAIN_NICS]
+        with self.assertLogs(linux_utils.log, 'WARNING'):
+            result, _ = self._map(gpus, nics)
+        for i, bdf in enumerate(gpus):
+            self.assertEqual(result[f'card{i}'], {'gpu_bdf': bdf})
+
+    def test_unmapped_card_in_info_line(self):
+        gpus = ['0000:05:00.0', '0001:05:00.0']
+        nics = [('eth0', '0000:06:00.0', 'rdma0', 'ACTIVE'), ('eth1', '0001:06:00.0', 'rdma1', 'DOWN')]
+        with self.assertLogs(linux_utils.log, 'INFO') as logs:
+            self._map(gpus, nics)
+        self.assertIn('card1: 0001:05:00.0 -> unmapped', logs.output[-1])
+        self.assertIn('card0: 0000:05:00.0 -> rdma0 (0000:06:00.0)', logs.output[-1])
+
+
+class TestHeliosCaptureEndToEnd(unittest.TestCase):
+    def setUp(self):
+        lshw_lines = [
+            'Bus info          Device           Class          Description',
+            '=============================================================',
+            'pci@0000:04:00.0  enp4s0np0        network        DSC Ethernet Controller',
+        ]
+        rdma_lines = ['link rocep4s0/1 state ACTIVE physical_state LINK_UP netdev enp4s0np0']
+        netdevs = ['enp4s0np0']
+        for i in range(1, 5):
+            lshw_lines.append(f'pci@000{i}:01:00.1                   network        Advanced Micro Devices, Inc. [AMD]')
+            for port, bus in ((68, 0x44), (72, 0x48)):
+                netdev = f'enP{i}p{port}s0'
+                lshw_lines.append(f'pci@000{i}:{bus:02x}:00.0  {netdev}        network        DSC Ethernet Controller')
+                rdma_lines.append(f'link roceP{i}p{port}s0/1 state DOWN physical_state DISABLED netdev {netdev}')
+                netdevs.append(netdev)
+        lshw_lines.append('usb@1:1.1         enxaa5bd15c64f9  network        Ethernet interface')
+        output = {
+            'rocm-smi': json.dumps({f'card{i - 1}': {'PCI Bus': f'000{i}:01:00.0'} for i in range(1, 5)}),
+            'lshw': '\n'.join(lshw_lines),
+            '/sys/class/infiniband': '\n'.join(netdevs),
+            'rdma link': '\n'.join(rdma_lines),
+        }
+
+        def fake_exec(cmd, *args, **kwargs):
+            for key, value in output.items():
+                if key in cmd:
+                    return {'tray': value}
+            raise AssertionError(cmd)
+
+        self.phdl = MagicMock()
+        self.phdl.exec.side_effect = fake_exec
+
+    def test_default_mapping_never_selects_management_nic(self):
+        with self.assertLogs(linux_utils.log, 'WARNING') as logs:
+            mapping = linux_utils.get_gpu_nic_mapping_dict(self.phdl)['tray']
+        self.assertEqual(len(mapping), 4)
+        self.assertEqual(len(logs.records), 4)
+        for i in range(1, 5):
+            self.assertEqual(mapping[f'card{i - 1}'], {'gpu_bdf': f'000{i}:01:00.0'})
+        self.assertNotIn('rocep4s0', str(mapping))
+
+    def test_topology_mapping(self):
+        mapping = linux_utils.get_gpu_nic_mapping_dict(self.phdl, active_only=False)['tray']
+        for i in range(1, 5):
+            self.assertEqual(mapping[f'card{i - 1}']['rdma_dev'], f'roceP{i}p68s0')
+            self.assertEqual(mapping[f'card{i - 1}']['nic_bdf'], f'000{i}:44:00.0')
+        self.assertNotIn('rocep4s0', str(mapping))
+
+    def test_ucx_net_devices_refuses_unmapped_tray(self):
+        with self.assertLogs(linux_utils.log, 'WARNING'):
+            with self.assertRaisesRegex(ValueError, 'PCI domain'):
+                linux_utils.get_ucx_net_devices(self.phdl)
 
 
 if __name__ == '__main__':
