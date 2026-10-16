@@ -100,9 +100,8 @@ def orch(cluster_dict, mori_dict, lifecycle):
 
 @pytest.fixture(scope="module")
 def cvs_results_dict(request):
-    results = {}
-    request.config.stash[_RESULTS_KEY] = results
-    return results
+    """The Run Deck store, shared with pytest_runtest_makereport whichever of them needs it first."""
+    return request.config.stash.setdefault(_RESULTS_KEY, {})
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -110,9 +109,9 @@ def pytest_runtest_makereport(item, call):
     """Record every failed or errored test in the Run Deck, so a test the deck does not chart still fails it."""
     outcome = yield
     report = outcome.get_result()
-    results = item.config.stash.get(_RESULTS_KEY, None)
-    if report.failed and results is not None:
+    if report.failed:
         reason = call.excinfo.exconly() if call.excinfo else report.outcome
+        results = item.config.stash.setdefault(_RESULTS_KEY, {})
         mori_reporting.record_test_failure(results, item.name, report.when, reason)
 
 

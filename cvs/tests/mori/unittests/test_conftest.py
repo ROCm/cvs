@@ -11,6 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from cvs.lib.report.profile import load_json_profile
+from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.tests.mori import conftest as mori_conftest
 
 _MORI_FILE = os.path.join(mori_conftest._HERE, 'mori_benchmark_test.py')
@@ -124,11 +126,12 @@ class TestFailedTestHook(unittest.TestCase):
         with self.assertRaises(StopIteration):
             hook.send(SimpleNamespace(get_result=lambda: report))
 
-    def test_failed_and_errored_tests_are_recorded_and_passes_are_not(self):
+    def test_failures_before_the_results_fixture_exists_still_fail_the_deck(self):
+        # Suite order: test_shmem_api and the concurrent_put tests run before any test requests cvs_results_dict.
         config = SimpleNamespace(stash=pytest.Stash())
-        results = mori_conftest.cvs_results_dict.__wrapped__(SimpleNamespace(config=config))
         self._report(config, 'test_setup_env', 'passed')
         self._report(config, 'test_shmem_api', 'failed', message="Failed: Following FAILURES seen - ['hang']")
+        results = mori_conftest.cvs_results_dict.__wrapped__(SimpleNamespace(config=config))
         self._report(config, 'test_teardown', 'failed', when='teardown', message='RuntimeError: gone')
         self.assertEqual(
             results['_meta']['failed_tests']['rows'],
@@ -137,6 +140,10 @@ class TestFailedTestHook(unittest.TestCase):
                 ['test_teardown', 'teardown', 'RuntimeError: gone'],
             ],
         )
+        payload = build_rundeck_payload(
+            profile=load_json_profile('mori_benchmark_test'), store={'cvs_results_dict': results}, cvs_version='1.0.0'
+        )
+        self.assertEqual(payload['overall_status'], 'fail')
 
 
 if __name__ == '__main__':
