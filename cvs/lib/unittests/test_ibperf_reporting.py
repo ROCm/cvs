@@ -117,6 +117,19 @@ class TestDeck(unittest.TestCase):
         self.assertEqual(store["groups"][WRITE]["nodes"]["QP 8"]["status"], "fail")
         self.assertEqual(_payload(store)["overall_status"], "fail")
 
+    def test_instances_the_suite_did_not_return_are_unavailable(self):
+        store = {}
+        record_bw_results(store, "ib_write_bw", 8192, "8", _bw(lambda h, n: 380.0), VARIANT)
+        partial = _bw(lambda h, n: 380.0)
+        del partial["host-b"][1]
+        record_bw_results(store, "ib_write_bw", 65536, "8", partial, VARIANT)
+        record_bw_results(store, "ib_write_bw", 1 << 20, "8", {h: {} for h in HOSTS}, VARIANT)
+        self.assertEqual(
+            [row[10] for row in store["_meta"]["results_table"]["rows"]], ["pass", UNAVAILABLE, UNAVAILABLE]
+        )
+        self.assertEqual(store["_meta"]["nic_grid"]["heatmaps"][0]["values"][1], [UNAVAILABLE, UNAVAILABLE])
+        self.assertEqual(store["groups"][WRITE]["nodes"]["QP 8"]["status"], "fail")
+
     def test_deck_renders_run_card_groups_and_heatmap(self):
         payload = _payload(_fleet())
         self.assertEqual(payload["overall_status"], "fail")

@@ -55,7 +55,18 @@ def _cells(instances, field):
 
 
 def _missing(instances):
-    return not instances or any(m is None for nics in instances.values() for m in nics.values())
+    return not instances or any(not nics or None in nics.values() for nics in instances.values())
+
+
+def _fill_missing(runs):
+    """Mark an instance that another run of the same kind measured, but this run did not return, as unavailable."""
+    known = {(host, nic) for instances in runs.values() for host, nics in instances.items() for nic in nics}
+    filled = {}
+    for run, instances in runs.items():
+        filled[run] = {host: dict(nics) for host, nics in instances.items()}
+        for host, nic in known:
+            filled[run].setdefault(host, {}).setdefault(nic, None)
+    return filled
 
 
 def _remember_variant(store, variant):
@@ -119,6 +130,7 @@ class _Deck:
         for key, instances in (raw.get("lat") or {}).items():
             test, size = key.split("|")
             self.lat[(test, int(size))] = instances
+        self.bw, self.lat = _fill_missing(self.bw), _fill_missing(self.lat)
         hosts = list(self.meta.get("hosts") or [])
         for instances in list(self.bw.values()) + list(self.lat.values()):
             hosts.extend(host for host in instances if host not in hosts)
