@@ -58,6 +58,7 @@ def ibperf_run_card_display(variant, provenance):
         ("Duration per test", f"{duration} s" if duration not in (None, "") else "—", False),
         ("dmabuf", _display(config.get("dmabuf")), False),
         ("BW thresholds", _thresholds(config.get("expected_results")), False),
+        ("verify_bw", _display(config.get("verify_bw")), False),
         ("Outlier rule", OUTLIER_RULE, False),
     ]
     rows.extend(provenance_link_rows(provenance))

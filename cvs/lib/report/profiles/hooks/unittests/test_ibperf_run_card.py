@@ -20,6 +20,7 @@ class TestIbperfRunCard(unittest.TestCase):
                 "duration": "30",
                 "dmabuf": False,
                 "expected_results": {"ib_write_bw": {"8388608": {"8": "280"}, "8192": {"8": "180"}}},
+                "verify_bw": "True",
             },
             {"pytest_html_href": "ibperf.html"},
         )
@@ -32,6 +33,7 @@ class TestIbperfRunCard(unittest.TestCase):
         self.assertEqual(display["dmabuf"], "off")
         self.assertEqual(display["BW thresholds"], "ib_write_bw at 8 KiB, 8 MiB")
         self.assertEqual(display["Outlier rule"], OUTLIER_RULE)
+        self.assertEqual(display["verify_bw"], "True")
         self.assertEqual(display["Pytest report"], "ibperf.html")
 
 

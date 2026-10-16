@@ -56,7 +56,7 @@ def _cells(instances, field):
 
 def _remember_variant(store, variant):
     meta = store.setdefault("_meta", {})
-    for key in ("hosts", "expected_results", "ib_bw_test_list", "ib_lat_test_list"):
+    for key in ("hosts", "expected_results", "verify_bw", "ib_bw_test_list", "ib_lat_test_list"):
         if variant and variant.get(key) is not None:
             meta[key] = variant[key]
 
@@ -110,6 +110,7 @@ class _Deck:
     def __init__(self, store):
         self.meta = store.get("_meta") or {}
         self.expected = self.meta.get("expected_results") or {}
+        self.verify = "true" in str(self.meta.get("verify_bw", "")).lower()
         raw = store.get("_ibperf") or {}
         self.bw = {}
         for key, instances in (raw.get("bw") or {}).items():
@@ -137,7 +138,7 @@ class _Deck:
     def _breach(self, run):
         test, qp, size = run
         limit = _threshold(self.expected, test, size, qp)
-        return limit is not None and any(v < limit for _h, _n, v in _cells(self.bw[run], "bw"))
+        return self.verify and limit is not None and any(v < limit for _h, _n, v in _cells(self.bw[run], "bw"))
 
     def _find(self):
         self.failed = {(t, q) for (t, q, s) in self.bw if self._breach((t, q, s))}
@@ -152,7 +153,7 @@ class _Deck:
         runs = [(test, qp, s) for s in sorted(s for t, q, s in self.bw if (t, q) == (test, qp))]
         median_points = [[_tick(run[2]), round(self.median[run], 2)] for run in runs]
         slowest = [[_tick(run[2]), min(v for _h, _n, v in _cells(self.bw[run], "bw"))] for run in runs]
-        evaluated = any(_threshold(self.expected, test, run[2], qp) is not None for run in runs)
+        evaluated = self.verify and any(_threshold(self.expected, test, run[2], qp) is not None for run in runs)
         status = "fail" if (test, qp) in self.failed else ("pass" if evaluated else "na")
         return {
             "status": status,
@@ -240,7 +241,7 @@ class _Deck:
                     low, host, nic = min((v, h, n) for h, n, v in cells)
                     median_bw, slowest = round(self.median[run], 2), f"{self.name(host)} NIC {nic}"
                     limit = _threshold(self.expected, test, size, qp)
-                    status = "fail" if self._breach(run) else ("pass" if limit is not None else "—")
+                    status = "fail" if self._breach(run) else ("pass" if self.verify and limit is not None else "—")
                     limit_text = "—" if limit is None else f"{limit:g}"
                     rows.append(
                         [test, qp, _tick(size), median_bw, low, slowest, "—", "—", "—", limit_text, status, len(cells)]

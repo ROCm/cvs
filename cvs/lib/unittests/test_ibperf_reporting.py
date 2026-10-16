@@ -11,6 +11,7 @@ HOSTS = ["host-a", "host-b", "host-c", "host-d"]
 VARIANT = {
     "hosts": HOSTS,
     "expected_results": {"ib_write_bw": {"8192": {"8": "180.0"}}},
+    "verify_bw": "True",
     "ib_bw_test_list": ["ib_write_bw"],
 }
 WRITE = "ib_write_bw · client → server, 2 node pairs"
@@ -88,6 +89,13 @@ class TestDeck(unittest.TestCase):
             [rows[4][k] for k in ("Test", "Message size", "Median typical", "Median p99", "Worst p99")],
             ["ib_write_lat", "2B", 1.9, 2.0, 9.0],
         )
+
+    def test_threshold_misses_fail_only_when_verify_bw_is_on(self):
+        store = {}
+        record_bw_results(store, "ib_write_bw", 8192, "8", _bw(lambda h, n: 170.0), {**VARIANT, "verify_bw": "False"})
+        self.assertEqual(store["groups"][WRITE]["nodes"]["QP 8"]["status"], "na")
+        self.assertEqual(store["_meta"]["results_table"]["rows"][0][9:11], ["180", "—"])
+        self.assertEqual(_payload(store)["overall_status"], "na")
 
     def test_deck_renders_run_card_groups_and_heatmap(self):
         payload = _payload(_fleet())
