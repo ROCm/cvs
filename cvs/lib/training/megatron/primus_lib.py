@@ -105,6 +105,19 @@ def _parse_mean_from_iterations(log_text, pattern, skip_warmup=True):
     return str(sum(values) / len(values))
 
 
+def _format_primus_cli_overrides(overrides):
+    """Normalize a train_params/sweep ``primus_cli_overrides`` value into a CLI arg string.
+
+    Accepts either a pre-formatted string (used as-is, e.g. ``"--recompute-granularity full"``)
+    or a dict of flag name -> value (each rendered as ``--flag value``, matching the
+    space-separated style of the rest of batch_args), so config authors can write
+    ``{"use_backend": "triton"}`` instead of the raw string ``"--use_backend triton"``.
+    """
+    if isinstance(overrides, dict):
+        return ' '.join(f'--{key} {value}' for key, value in overrides.items())
+    return str(overrides or '')
+
+
 def _parse_step_losses(log_text):
     """Return {step: lm_loss} from a Primus training log.
 
@@ -209,6 +222,7 @@ class PrimusTrainingJob:
         pdict.setdefault('training_iterations', 10)
         pdict.setdefault('tensor_parallelism', '1')
         pdict.setdefault('pipeline_parallelism', '1')
+        pdict.setdefault('primus_cli_overrides', '')
 
         self.tokenizer_model = pdict['tokenizer_model']
         self.precision = pdict['precision']
@@ -217,6 +231,7 @@ class PrimusTrainingJob:
         self.iterations = int(pdict['training_iterations'])
         self.tensor_parallelism = pdict['tensor_parallelism']
         self.pipeline_parallelism = pdict['pipeline_parallelism']
+        self.primus_cli_overrides = _format_primus_cli_overrides(pdict['primus_cli_overrides'])
 
         raw_label = run_label or f"{self.model_name}_mbs{micro_batch_size}_gbs{global_batch_size}_{self.precision}"
         self.run_label = re.sub(r'[^A-Za-z0-9._-]', '_', str(raw_label))
@@ -397,6 +412,13 @@ class PrimusTrainingJob:
             batch_args += f' --load {self.checkpoint_dir}/checkpoints'
             if self.distributed_training:
                 batch_args += ' --auto_detect_ckpt_format'
+        if self.primus_cli_overrides:
+            # Appended last so these take precedence for flags primus-cli treats as
+            # "last one wins" (argparse-style), without CVS needing named plumbing
+            # for every possible primus-cli flag. Config-driven: train_params or a
+            # sweep combination body can set primus_cli_overrides as a raw string
+            # of extra `--flag value` args.
+            batch_args += f' {self.primus_cli_overrides}'
 
         if self.distributed_training:
             for i in range(len(self.orch.hosts)):
