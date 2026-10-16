@@ -8,6 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import pytest
 import json
 import re
+import shlex
 
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
@@ -81,13 +82,13 @@ def config_dict(config_file, cluster_dict):
             "rccl_lib_install_dir":   "/path/to/rccl/install",
             "rccl_tests_install_dir": "/path/to/rccl-tests",
             "rccl_repository":        "https://github.com/ROCm/rocm-systems.git",
-            "rccl_git_tag":           "rocm-6.x.y",        (optional)
+            "rccl_git_tag":           "rocm-6.x.y",
             "rccl_tests_repository":  "same as rccl_repository if omitted",
-            "rccl_tests_git_tag":     "rocm-6.x.y",        (optional)
-            "rccl_sparse_path":       "projects/rccl",     (optional, auto for rocm-systems)
+            "rccl_tests_git_tag":     "rocm-6.x.y",
+            "rccl_sparse_path":       "projects/rccl",
             "rccl_tests_sparse_path": "projects/rccl-tests",
             "ompi_install_dir":       "/opt/ompi/build",
-            "rocm_path":              "/opt/rocm"          (or "<changeme>"),
+            "rocm_path":              "/opt/rocm",
             "gpu_arch":               ""                   (or e.g. "gfx942"; empty = auto-detect),
             "rccl_tests_use_amdclang": "True" | "False"    (optional, default True),
             "rccl_lib_build_timeout": "10800"              (optional, default 14400)
@@ -224,7 +225,7 @@ def detect_rocm_path(orch, config_rocm_path):
     Returns:
         str: Detected ROCm path
     """
-    if config_rocm_path and config_rocm_path != '<changeme>':
+    if config_rocm_path:
         log.info(f'Using configured ROCm path: {config_rocm_path}')
         return config_rocm_path
 
@@ -271,38 +272,13 @@ def _sparse_checkout_path(config_dict, for_tests=False):
     return None
 
 
-def _rccl_install_prefix(config_dict):
-    """
-    Workspace root for RCCL source/build trees (sparse clone at this prefix).
-
-    rccl_lib_install_dir may point at the install root or at .../lib when reusing
-    the ROCm layout.
-    """
-    install_dir = config_dict["rccl_lib_install_dir"].rstrip("/")
-    if install_dir.endswith("/lib"):
-        return install_dir[: -len("/lib")]
-    return install_dir
-
-
-def _rccl_source_layout(config_dict):
-    """Return install prefix, RCCL project dir, and cmake build dir for rccl_lib_install_dir."""
-    install_prefix = _rccl_install_prefix(config_dict)
-    sparse_path = _sparse_checkout_path(config_dict, for_tests=False)
-    if sparse_path:
-        rccl_project_dir = f"{install_prefix}/{sparse_path}"
-    else:
-        rccl_project_dir = f"{install_prefix}/src"
-    rccl_build_dir = f"{rccl_project_dir}/build"
-    return install_prefix, rccl_project_dir, rccl_build_dir
-
-
 def _find_rccl_shared_lib(hdl, search_roots):
     """
     Locate librccl.so or libnccl.so under search_roots on every node reached by hdl.
 
     Returns the path from the first node, or "" if not found on any node.
     """
-    roots = " ".join(search_roots)
+    roots = " ".join(shlex.quote(r) for r in search_roots)
     out_dict = hdl.exec(
         f"bash -c 'for root in {roots}; do "
         f"find \"$root\" -maxdepth 5 "
@@ -338,7 +314,7 @@ def _rocm_hipcc(rocm_path):
     return f"{rocm_path.rstrip('/')}/bin/hipcc"
 
 
-def _config_bool_str(value, default=True):
+def _config_bool_str(value, default=False):
     """Parse rccl_install flags stored as \"True\" / \"False\" strings."""
     if value is None or str(value).strip() == "":
         return default
@@ -360,11 +336,11 @@ def _build_env_exports(ompi_install_dir, rocm_path, *, use_amdclang=False):
     rocm = rocm_path.rstrip("/")
     hip_compiler = _rocm_amdclang_pp(rocm) if use_amdclang else f"{rocm}/bin/hipcc"
     return (
-        f"export OMPI_PREFIX={ompi}; "
-        f"export ROCM_PREFIX={rocm}; "
-        f"export ROCM_PATH={rocm}; "
-        f"export HIPCC={hip_compiler}; "
-        f"export CXX={hip_compiler}; "
+        f"export OMPI_PREFIX={shlex.quote(ompi)}; "
+        f"export ROCM_PREFIX={shlex.quote(rocm)}; "
+        f"export ROCM_PATH={shlex.quote(rocm)}; "
+        f"export HIPCC={shlex.quote(hip_compiler)}; "
+        f"export CXX={shlex.quote(hip_compiler)}; "
         f"export PATH=${{OMPI_PREFIX}}/bin:${{ROCM_PREFIX}}/bin:${{PATH}}; "
         f"export LD_LIBRARY_PATH=${{OMPI_PREFIX}}/lib:${{ROCM_PREFIX}}/lib:${{LD_LIBRARY_PATH:-}}; "
     )
@@ -375,11 +351,10 @@ def _git_clone_source(hdl, repository, dest_dir, sparse_path=None, git_tag=""):
     Clone repository at dest_dir. When sparse_path is set, use partial clone +
     sparse-checkout for a single rocm-systems project path.
     """
-    result = hdl.exec(f"rm -rf {dest_dir}", timeout=60, detailed=True)
+    result = hdl.exec(f"rm -rf {shlex.quote(dest_dir)}", timeout=60, detailed=True)
     failed = [node for node, res in result.items() if res.get('exit_code') != 0]
     if failed:
         fail_test(f"rm -rf {dest_dir} failed on nodes {failed}")
-    branch_arg = f"-b {git_tag} " if git_tag else ""
     if sparse_path:
         log.info(
             "Sparse clone %s -> %s (path=%s)",
@@ -387,10 +362,18 @@ def _git_clone_source(hdl, repository, dest_dir, sparse_path=None, git_tag=""):
             dest_dir,
             sparse_path,
         )
+        branch_flag = f"-b {shlex.quote(git_tag)} " if git_tag else ""
+        # Pass config-derived values as env vars — shlex.quote cannot be used
+        # inside single-quoted bash -c strings directly.
+        env = (
+            f"GIT_REPO={shlex.quote(repository)} "
+            f"DEST_DIR={shlex.quote(dest_dir)} "
+            f"SPARSE_PATH={shlex.quote(sparse_path)} "
+        )
         result = hdl.exec(
-            f"bash -c '"
-            f"git clone --depth 1 --filter=blob:none {branch_arg} --sparse {repository} {dest_dir} && "
-            f"cd {dest_dir} && git sparse-checkout set {sparse_path}"
+            f"{env}bash -c '"
+            f"git clone --depth 1 --filter=blob:none {branch_flag}--sparse \"$GIT_REPO\" \"$DEST_DIR\" && "
+            f"cd \"$DEST_DIR\" && git sparse-checkout set \"$SPARSE_PATH\""
             f"'",
             timeout=600,
             detailed=True,
@@ -400,14 +383,15 @@ def _git_clone_source(hdl, repository, dest_dir, sparse_path=None, git_tag=""):
             fail_test(f"Sparse clone of {repository} failed on nodes {failed}: {result[failed[0]].get('output', '')}")
     else:
         log.info("Full clone %s -> %s", repository, dest_dir)
-        result = hdl.exec(f"git clone {repository} {dest_dir}", timeout=300, detailed=True)
+        result = hdl.exec(f"git clone {shlex.quote(repository)} {shlex.quote(dest_dir)}", timeout=300, detailed=True)
         failed = [node for node, res in result.items() if res.get('exit_code') != 0]
         if failed:
             fail_test(f"git clone {repository} failed on nodes {failed}: {result[failed[0]].get('output', '')}")
 
         if git_tag:
             result = hdl.exec(
-                f"bash -c 'cd {dest_dir} && git checkout {git_tag}'",
+                f"DEST_DIR={shlex.quote(dest_dir)} GIT_TAG={shlex.quote(git_tag)} "
+                f"bash -c 'cd \"$DEST_DIR\" && git checkout \"$GIT_TAG\"'",
                 timeout=120,
                 detailed=True,
             )
@@ -426,7 +410,7 @@ def _check_ompi_installed(hdl, config_dict):
       3. mpirun --version produces output that contains the word 'mpi'.
 
     Args:
-      hdl:         Pssh handle (shdl or phdl, already resolved by the caller).
+      hdl:         orch handle.
       config_dict: Test configuration dict; must contain 'ompi_install_dir'.
 
     Returns:
@@ -438,7 +422,7 @@ def _check_ompi_installed(hdl, config_dict):
 
     # --- 1. Directory exists ---
     log.info("Checking OMPI install directory: %s", ompi_install_dir)
-    result = hdl.exec(f"test -d {ompi_install_dir}", timeout=30, detailed=True)
+    result = hdl.exec(f"test -d {shlex.quote(ompi_install_dir)}", timeout=30, detailed=True)
     failed = [node for node, res in result.items() if res.get('exit_code') != 0]
     if failed:
         for node in failed:
@@ -447,7 +431,7 @@ def _check_ompi_installed(hdl, config_dict):
 
     # --- 2. mpirun binary is executable ---
     log.info("Checking mpirun binary: %s", mpirun_path)
-    result = hdl.exec(f"test -x {mpirun_path}", timeout=30, detailed=True)
+    result = hdl.exec(f"test -x {shlex.quote(mpirun_path)}", timeout=30, detailed=True)
     failed = [node for node, res in result.items() if res.get('exit_code') != 0]
     if failed:
         for node in failed:
@@ -456,7 +440,7 @@ def _check_ompi_installed(hdl, config_dict):
 
     # --- 3. mpirun --version produces recognisable output ---
     log.info("Running mpirun --version to validate binary on all nodes")
-    result = hdl.exec(f"{mpirun_path} --version", timeout=30, detailed=True)
+    result = hdl.exec(f"{shlex.quote(mpirun_path)} --version", timeout=30, detailed=True)
     for node, res in result.items():
         output = res.get('output', '')
         if res.get('exit_code') != 0 or not output or "mpi" not in output.lower():
@@ -482,11 +466,11 @@ def _install_rccl_lib(hdl, config_dict):
     """
     rccl_repository = config_dict["rccl_repository"]
     rccl_git_tag = config_dict.get("rccl_git_tag", "").strip()
-    install_prefix = _rccl_install_prefix(config_dict)
+    install_prefix = config_dict["rccl_lib_install_dir"].rstrip("/")
     ompi_install_dir = config_dict["ompi_install_dir"].rstrip("/")
 
     sparse_path = _sparse_checkout_path(config_dict, for_tests=False)
-    rocm_path = detect_rocm_path(hdl, config_dict.get("rocm_path", "<changeme>"))
+    rocm_path = detect_rocm_path(hdl, config_dict.get("rocm_path", ""))
     build_env = _build_env_exports(ompi_install_dir, rocm_path)
     raw_timeout = str(config_dict.get("rccl_lib_build_timeout", "")).strip()
     rccl_lib_build_timeout = int(raw_timeout) if raw_timeout else 14400
@@ -518,13 +502,25 @@ def _install_rccl_lib(hdl, config_dict):
 
     rccl_build_dir = f"{rccl_project_dir}/build"
     gpu_arch = _detect_gpu_arch(hdl, config_dict)
-    log.info("  gpu_arch   : %s", gpu_arch or "<auto/not set>")
+    if not gpu_arch:
+        fail_test(
+            "gpu_arch could not be determined. "
+            "Set 'gpu_arch' explicitly in rccl_tests_install_config.json (e.g. 'gfx942' for MI300X, 'gfx1250' for MI455X). "
+            "Building RCCL without a target GPU architecture takes hours or fails on some hardware."
+        )
+        update_test_result()
+        return None, ""
+    log.info("  gpu_arch   : %s", gpu_arch)
     hipcc = f"{rocm_path.rstrip('/')}/bin/hipcc"
-    cmake_flags = f"-DCMAKE_PREFIX_PATH={rocm_path} -DCMAKE_CXX_COMPILER={hipcc}"
-    if gpu_arch:
-        cmake_flags += f" -DGPU_TARGETS={gpu_arch} -DAMDGPU_TARGETS={gpu_arch}"
+    cmake_flags = (
+        f"-DCMAKE_PREFIX_PATH={shlex.quote(rocm_path)} "
+        f"-DCMAKE_CXX_COMPILER={shlex.quote(hipcc)} "
+        f"-DGPU_TARGETS={shlex.quote(gpu_arch)} "
+        f"-DAMDGPU_TARGETS={shlex.quote(gpu_arch)}"
+    )
     result = hdl.exec(
-        f"bash -c '{build_env}cd {rccl_project_dir} && mkdir -p build && cd build && cmake {cmake_flags} .. && make -j $(nproc)'",
+        f"BUILD_DIR={shlex.quote(rccl_project_dir)} "
+        f"bash -c '{build_env}cd \"$BUILD_DIR\" && mkdir -p build && cd build && cmake {cmake_flags} .. && make -j $(nproc)'",
         timeout=rccl_lib_build_timeout,
         detailed=True,
     )
@@ -547,7 +543,7 @@ def _install_rccl_tests(hdl, config_dict, rccl_lib_prefix, use_custom_rccl_lib, 
     from source, the build passes CUSTOM_RCCL_LIB=<prefix>/lib/librccl.so.
 
     Args:
-      hdl:                   Pssh handle (shdl or phdl, already resolved by caller).
+      hdl:                   orch handle.
       config_dict:           rccl_install object from rccl_tests_install_config.json.
       rccl_lib_prefix:       RCCL install prefix or ROCm root for bundled librccl.
       use_custom_rccl_lib:   True when rccl-tests must link against a custom build.
@@ -561,7 +557,7 @@ def _install_rccl_tests(hdl, config_dict, rccl_lib_prefix, use_custom_rccl_lib, 
     ompi_install_dir = config_dict["ompi_install_dir"].rstrip("/")
 
     sparse_path = _sparse_checkout_path(config_dict, for_tests=True)
-    rocm_path = detect_rocm_path(hdl, config_dict.get("rocm_path", "<changeme>"))
+    rocm_path = detect_rocm_path(hdl, config_dict.get("rocm_path", ""))
     use_amdclang = _config_bool_str(config_dict.get("rccl_tests_use_amdclang"), default=True)
     hip_compiler = _rccl_tests_hip_compiler(rocm_path, use_amdclang)
     build_env = _build_env_exports(ompi_install_dir, rocm_path, use_amdclang=use_amdclang)
@@ -593,19 +589,28 @@ def _install_rccl_tests(hdl, config_dict, rccl_lib_prefix, use_custom_rccl_lib, 
         git_tag=rccl_tests_git_tag,
     )
 
+    # rccl-tests build for all arch doesn't break or take too long
+    # so even if the gpu arch is not given or couldn't be detected
+    # the rccl-tests build can proceed with building it for all
+    # architectures.
     gpu_arch = _detect_gpu_arch(hdl, config_dict)
     log.info("  gpu_arch            : %s", gpu_arch or "<auto/not set>")
 
-    make_cmd = f"make -j $(nproc) MPI=1 MPI_HOME={ompi_install_dir} ROCM_PATH={rocm_path} HIPCC={hip_compiler} "
+    make_cmd = (
+        f"make -j $(nproc) MPI=1 "
+        f"MPI_HOME={shlex.quote(ompi_install_dir)} "
+        f"ROCM_PATH={shlex.quote(rocm_path)} "
+        f"HIPCC={shlex.quote(hip_compiler)} "
+    )
     if gpu_arch:
-        make_cmd += f"AMDGPU_TARGETS={gpu_arch} GPU_TARGETS={gpu_arch} "
+        make_cmd += f"AMDGPU_TARGETS={shlex.quote(gpu_arch)} GPU_TARGETS={shlex.quote(gpu_arch)} "
     if use_custom_rccl_lib:
-        make_cmd += f"CUSTOM_RCCL_LIB={custom_rccl_lib_path} NCCL_HOME={rccl_lib_prefix} "
+        make_cmd += f"CUSTOM_RCCL_LIB={shlex.quote(custom_rccl_lib_path)} NCCL_HOME={shlex.quote(rccl_lib_prefix)} "
     else:
-        make_cmd += f"RCCL_HOME={rccl_lib_prefix} "
+        make_cmd += f"RCCL_HOME={shlex.quote(rccl_lib_prefix)} "
 
     result = hdl.exec(
-        f"bash -c '{build_env}cd {rccl_tests_srcdir} && {make_cmd}'",
+        f"SRC_DIR={shlex.quote(rccl_tests_srcdir)} bash -c '{build_env}cd \"$SRC_DIR\" && {make_cmd}'",
         timeout=1800,
         detailed=True,
     )
@@ -645,36 +650,52 @@ def test_install_rccl_tests(orch, config_dict):
 
     log.info("Testcase: install rccl-tests")
 
-    nfs_install = config_dict["nfs_install"]
-    rccl_lib_install = config_dict["rccl_lib_install"]
+    nfs_install = _config_bool_str(config_dict["nfs_install"])
+    rccl_lib_install = _config_bool_str(config_dict["rccl_lib_install"])
 
     rccl_lib_install_dir = config_dict["rccl_lib_install_dir"].rstrip('/')
     rccl_tests_install_dir = config_dict["rccl_tests_install_dir"].rstrip('/')
     rccl_repository = config_dict["rccl_repository"]
     ompi_install_dir = config_dict["ompi_install_dir"].rstrip('/')
 
-    # orch.head = single head-node handle (Pssh); orch.all = all-nodes handle (Pssh).
-    # Both share the same .exec(cmd, timeout=...) interface used by all helpers below.
-    if nfs_install == "True":
+    if nfs_install:
         hdl = orch.head
     else:
         hdl = orch.all
 
-    log.info("NFS install        : %s", nfs_install)
-    log.info("RCCL lib install   : %s", rccl_lib_install)
+    # Guard always-required path parameters against empty strings
+    _required_paths = {
+        "rccl_tests_install_dir": rccl_tests_install_dir,
+        "ompi_install_dir": ompi_install_dir,
+        "rccl_repository": rccl_repository,
+    }
+    for param, value in _required_paths.items():
+        if not value:
+            log.error("Config parameter '%s' is empty. Update it in rccl_tests_install_config.json", param)
+            fail_test(f"Required config parameter '{param}' is empty – aborting rccl-tests installation")
+            update_test_result()
+            return
+
+    log.info("NFS install        : %s", config_dict["nfs_install"])
+    log.info("RCCL lib install   : %s", config_dict["rccl_lib_install"])
     log.info("OMPI install dir   : %s", ompi_install_dir)
     log.info("RCCL tests dir     : %s", rccl_tests_install_dir)
     log.info("RCCL repository    : %s", rccl_repository)
-    if rccl_lib_install == "True":
-        log.info("RCCL lib dir       : %s", rccl_lib_install_dir)
-    else:
-        log.info(
-            "RCCL lib dir       : bundled ROCm under %s/lib (rccl_lib_install_dir ignored)",
-            config_dict.get("rocm_path", "<changeme>"),
-        )
+    log.info("RCCL lib dir       : %s", rccl_lib_install_dir)
 
-    # Check and install Ubuntu build prerequisites (non-fatal)
-    _check_install_build_deps(hdl)
+    # When building a custom RCCL library, the install dir must not be the default
+    # ROCm lib path — building into /opt/rocm/lib would corrupt the system ROCm install.
+    if rccl_lib_install and rccl_lib_install_dir == "/opt/rocm/lib":
+        log.error(
+            "rccl_lib_install is True but rccl_lib_install_dir is still '/opt/rocm/lib'. "
+            "Set rccl_lib_install_dir to a writable build directory in rccl_tests_install_config.json"
+        )
+        fail_test("rccl_lib_install_dir must be changed from the default when rccl_lib_install=True")
+        update_test_result()
+        return
+
+    # OS packages are node-local, not NFS-shared — always install on every node
+    _check_install_build_deps(orch.all)
 
     # Verify OMPI is present and functional before doing any work
     ompi_installed = _check_ompi_installed(hdl, config_dict)
@@ -690,11 +711,11 @@ def test_install_rccl_tests(orch, config_dict):
 
     # Resolve RCCL library prefix
     custom_rccl_lib_path = ""
-    if rccl_lib_install == "True":
+    if rccl_lib_install:
         rccl_lib_prefix, custom_rccl_lib_path = _install_rccl_lib(hdl, config_dict)
         use_custom_rccl_lib = True
     else:
-        rccl_lib_prefix = detect_rocm_path(hdl, config_dict.get("rocm_path", "<changeme>"))
+        rccl_lib_prefix = detect_rocm_path(hdl, config_dict.get("rocm_path", ""))
         use_custom_rccl_lib = False
         log.info("Using bundled RCCL from ROCm at: %s/lib", rccl_lib_prefix)
 
@@ -709,7 +730,7 @@ def test_install_rccl_tests(orch, config_dict):
 
     # Verify build artifacts are present on every node
     log.info("Verifying rccl-tests build artifacts at: %s", rccl_tests_build_dir)
-    result = hdl.exec(f"ls {rccl_tests_build_dir}", timeout=30, detailed=True)
+    result = hdl.exec(f"ls {shlex.quote(rccl_tests_build_dir)}", timeout=30, detailed=True)
     for node, res in result.items():
         if res.get('exit_code') != 0 or not res.get('output', '').strip():
             fail_test(f"rccl-tests build artifacts not found on node {node} at {rccl_tests_build_dir}")
