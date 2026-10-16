@@ -181,7 +181,7 @@ class TestUnmappedGpuGuard(unittest.TestCase):
             with self.subTest(test=test_name):
                 orch = MagicMock()
                 with self.assertRaisesRegex(BaseException, r'card1 \(GPU 0002:01:00.0\) on node n1'):
-                    test_function(orch, test_name, _CONFIG, MagicMock())
+                    test_function(orch, test_name, _CONFIG, MagicMock(), {}, {})
                 linux_utils.get_gpu_nic_mapping_dict.assert_called_with(orch.all, use_sudo=False)
         ibperf_lib.get_hip_device_dict.assert_not_called()
         ibperf_lib.run_ib_perf_bw_test.assert_not_called()
