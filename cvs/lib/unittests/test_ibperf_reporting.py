@@ -2,7 +2,14 @@
 
 import unittest
 
-from cvs.lib.ibperf_reporting import UNAVAILABLE, record_bw_results, record_lat_results, record_test_failure
+from cvs.lib.ibperf_reporting import (
+    OUTLIER,
+    RUN_STATUS_GROUP,
+    UNAVAILABLE,
+    record_bw_results,
+    record_lat_results,
+    record_test_failure,
+)
 from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.lib.report.rundeck.render import render_rundeck_html
@@ -66,15 +73,15 @@ class TestRecord(unittest.TestCase):
 class TestDeck(unittest.TestCase):
     def test_groups_are_titled_by_direction_with_qp_lines_and_split_latency(self):
         groups = _fleet()["groups"]
-        self.assertEqual(list(groups), [WRITE, LAT])
+        self.assertEqual(list(groups), [WRITE, LAT, RUN_STATUS_GROUP])
         self.assertEqual(list(groups[WRITE]["nodes"]), ["QP 8", "QP 16"])
         qp8 = groups[WRITE]["nodes"]["QP 8"]
-        self.assertEqual(qp8["status"], "fail")
-        self.assertEqual(groups[WRITE]["nodes"]["QP 16"]["status"], "na")
         self.assertEqual(qp8["series"][1]["points"], [["8K", 170.0], ["64K", 190.0]])
         worst = groups[LAT]["nodes"]["worst NIC p99"]
-        self.assertEqual(worst["status"], "fail")
         self.assertEqual([s["name"] for s in worst["series"]], ["Latency, up to 32 KiB", "Latency, from 32 KiB"])
+        self.assertEqual(groups[RUN_STATUS_GROUP]["nodes"], {"ib_write_bw · QP 8 · 8K": {"status": "fail"}})
+        charts = [cell["status"] for name in (WRITE, LAT) for cell in groups[name]["nodes"].values()]
+        self.assertEqual(set(charts), {"na"})
 
     def test_heatmap_flags_nics_below_95_percent_of_median(self):
         heat = _fleet()["_meta"]["nic_grid"]["heatmaps"][0]
@@ -90,11 +97,36 @@ class TestDeck(unittest.TestCase):
             [rows[0][k] for k in ("Median BW", "Min BW", "Slowest NIC", "BW threshold", "Status")],
             [185.0, 170.0, "node00 NIC 0", "180", "fail"],
         )
-        self.assertEqual(rows[2]["Status"], "—")
+        self.assertEqual([row["Status"] for row in rows[1:5]], [OUTLIER, "—", OUTLIER, OUTLIER])
         self.assertEqual(
             [rows[4][k] for k in ("Test", "Message size", "Median typical", "Median p99", "Worst p99")],
             ["ib_write_lat", "2B", 1.9, 2.0, 9.0],
         )
+
+    def test_outliers_are_flagged_in_status_and_heatmap_but_do_not_fail(self):
+        store = {}
+        record_bw_results(store, "ib_write_bw", 8192, "8", _bw(lambda h, n: 185.0), VARIANT)
+        record_bw_results(
+            store, "ib_write_bw", 65536, "8", _bw(lambda h, n: 190.0 if (h, n) == ("host-c", 1) else 380.0)
+        )
+        lat = {h: {n: {"t_avg": "2.0", "t_typical": "1.9", "t_99_pct": "2.0"} for n in (0, 1)} for h in HOSTS}
+        lat["host-b"][0]["t_99_pct"] = "9.0"
+        record_lat_results(store, "ib_write_lat", 2, lat)
+        self.assertEqual([row[10] for row in store["_meta"]["results_table"]["rows"]], ["pass", OUTLIER, OUTLIER])
+        self.assertEqual(store["_meta"]["nic_grid"]["heatmaps"][0]["values"][2], [100.0, 50.0])
+        self.assertEqual(store["groups"][RUN_STATUS_GROUP]["nodes"], {"ib_write_bw · QP 8 · 8K": {"status": "pass"}})
+        self.assertEqual(_payload(store)["overall_status"], "pass")
+
+    def test_min_bw_and_worst_p99_round_like_the_medians(self):
+        store = {}
+        record_bw_results(
+            store, "ib_write_bw", 8192, "8", _bw(lambda h, n: 170.123456 if (h, n) == ("host-a", 0) else 185.0)
+        )
+        lat = {h: {n: {"t_avg": "2.0", "t_typical": "1.9", "t_99_pct": "2.0"} for n in (0, 1)} for h in HOSTS}
+        lat["host-b"][0]["t_99_pct"] = "9.87654"
+        record_lat_results(store, "ib_write_lat", 2, lat)
+        bw_row, lat_row = store["_meta"]["results_table"]["rows"]
+        self.assertEqual((bw_row[4], lat_row[8]), (170.12, 9.88))
 
     def test_threshold_misses_fail_only_when_verify_bw_is_on(self):
         store = {}
@@ -114,7 +146,10 @@ class TestDeck(unittest.TestCase):
         rows = store["_meta"]["results_table"]["rows"]
         self.assertEqual([rows[0][k] for k in (3, 4, 10, 11)], ["—", "—", UNAVAILABLE, 0])
         self.assertEqual([rows[1][k] for k in (3, 10, 11)], [380.0, UNAVAILABLE, 7])
-        self.assertEqual(store["groups"][WRITE]["nodes"]["QP 8"]["status"], "fail")
+        self.assertEqual(
+            store["groups"][RUN_STATUS_GROUP]["nodes"],
+            {"ib_write_bw · QP 8 · 8K": {"status": "fail"}, "ib_write_bw · QP 8 · 64K": {"status": "fail"}},
+        )
         self.assertEqual(_payload(store)["overall_status"], "fail")
 
     def test_instances_the_suite_did_not_return_are_unavailable(self):
@@ -128,7 +163,21 @@ class TestDeck(unittest.TestCase):
             [row[10] for row in store["_meta"]["results_table"]["rows"]], ["pass", UNAVAILABLE, UNAVAILABLE]
         )
         self.assertEqual(store["_meta"]["nic_grid"]["heatmaps"][0]["values"][1], [UNAVAILABLE, UNAVAILABLE])
-        self.assertEqual(store["groups"][WRITE]["nodes"]["QP 8"]["status"], "fail")
+
+    def test_a_missing_nic_fails_only_its_own_size(self):
+        store = {}
+        record_bw_results(store, "ib_write_bw", 8192, "8", _bw(lambda h, n: 380.0), VARIANT)
+        partial = _bw(lambda h, n: 380.0)
+        del partial["host-b"][1]
+        record_bw_results(store, "ib_write_bw", 65536, "8", partial, VARIANT)
+        record_bw_results(store, "ib_write_bw", 1 << 20, "8", _bw(lambda h, n: 380.0), VARIANT)
+        self.assertEqual([row[10] for row in store["_meta"]["results_table"]["rows"]], ["pass", UNAVAILABLE, "—"])
+        self.assertEqual(
+            store["groups"][RUN_STATUS_GROUP]["nodes"],
+            {"ib_write_bw · QP 8 · 8K": {"status": "pass"}, "ib_write_bw · QP 8 · 64K": {"status": "fail"}},
+        )
+        self.assertEqual(store["groups"][WRITE]["nodes"]["QP 8"]["status"], "na")
+        self.assertEqual(_payload(store)["overall_status"], "fail")
 
     def test_read_latency_server_side_is_not_unavailable(self):
         store = {}

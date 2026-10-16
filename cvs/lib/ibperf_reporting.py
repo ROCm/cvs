@@ -13,9 +13,16 @@ BW_OUTLIER_PCT = 95
 LAT_OUTLIER_RATIO = 2.0
 # Latency spans three decades on a linear axis; splitting at 32 KiB keeps small messages readable.
 LATENCY_SPLIT = 32 << 10
-OUTLIER_RULE = f"BW < {BW_OUTLIER_PCT}% of fleet median at the largest size; p99 > {LAT_OUTLIER_RATIO:g}× median p99"
+OUTLIER_RULE = (
+    f"BW < {BW_OUTLIER_PCT}% of fleet median at the largest size, or p99 > {LAT_OUTLIER_RATIO:g}× median p99: "
+    "flagged as outlier, does not fail"
+)
 UNAVAILABLE = "unavailable"
+OUTLIER = "outlier"
 FAILED_TESTS_GROUP = "Other tests"
+# One status-only cell per Full results row, so overall_status follows the Status column.
+RUN_STATUS_GROUP = "Status by run"
+_CELL_STATUS = {"fail": "fail", UNAVAILABLE: "fail", "pass": "pass"}
 _REASON_LIMIT = 200
 # perftest's client initiates every test; read pulls data from the server.
 _DIRECTION = {"read": "server → client", "lat": "client ↔ server"}
@@ -151,35 +158,52 @@ class _Deck:
         for run, instances in self.bw.items():
             values = [v for _h, _n, v in _cells(instances, "bw")]
             self.median[run] = median(values) if values else None
-        self._find()
+        self.largest = max((s for _t, _q, s in self.bw), default=None)
 
     def name(self, host):
         return self.names.get(host, host)
 
-    def _breach(self, run):
+    def _bw_status(self, run):
+        """A threshold miss (with verify_bw on) fails, missing data is unavailable, an outlier is only flagged."""
         test, qp, size = run
         limit = _threshold(self.expected, test, size, qp)
-        return self.verify and limit is not None and any(v < limit for _h, _n, v in _cells(self.bw[run], "bw"))
+        values = [v for _h, _n, v in _cells(self.bw[run], "bw")]
+        if self.verify and limit is not None and any(v < limit for v in values):
+            return "fail"
+        if _missing(self.bw[run]):
+            return UNAVAILABLE
+        med = self.median[run]
+        if size == self.largest and med and any(100 * v / med < BW_OUTLIER_PCT for v in values):
+            return OUTLIER
+        return "pass" if self.verify and limit is not None else "—"
 
-    def _find(self):
-        self.failed = {(t, q) for (t, q, s), inst in self.bw.items() if _missing(inst) or self._breach((t, q, s))}
-        self.lat_failed = {test for (test, _s), instances in self.lat.items() if _missing(instances)}
-        self.lat_outliers = set()
-        for (test, _size), instances in self.lat.items():
-            p99 = [v for _h, _n, v in _cells(instances, "t_99_pct")]
-            med = median(p99) if p99 else 0
-            if med and max(p99) / med > LAT_OUTLIER_RATIO:
-                self.lat_outliers.add(test)
+    def _lat_status(self, run):
+        if _missing(self.lat[run]):
+            return UNAVAILABLE
+        p99 = [v for _h, _n, v in _cells(self.lat[run], "t_99_pct")]
+        med = median(p99) if p99 else 0
+        return OUTLIER if med and max(p99) / med > LAT_OUTLIER_RATIO else "—"
+
+    def _status(self, run):
+        return self._bw_status(run) if len(run) == 3 else self._lat_status(run)
+
+    def _runs(self):
+        """Bandwidth runs (test, QP, size), then latency runs (test, size), in Full results order."""
+        for test in self.bw_tests:
+            for qp in self.qps:
+                for size in sorted(s for t, q, s in self.bw if (t, q) == (test, qp)):
+                    yield (test, qp, size)
+        for test in self.lat_tests:
+            for size in sorted(s for t, s in self.lat if t == test):
+                yield (test, size)
 
     def _bw_cell(self, test, qp):
         runs = [(test, qp, s) for s in sorted(s for t, q, s in self.bw if (t, q) == (test, qp))]
         measured = [run for run in runs if self.median[run] is not None]
         median_points = [[_tick(run[2]), round(self.median[run], 2)] for run in measured]
-        slowest = [[_tick(run[2]), min(v for _h, _n, v in _cells(self.bw[run], "bw"))] for run in measured]
-        evaluated = self.verify and any(_threshold(self.expected, test, run[2], qp) is not None for run in runs)
-        status = "fail" if (test, qp) in self.failed else ("pass" if evaluated else "na")
+        slowest = [[_tick(run[2]), round(min(v for _h, _n, v in _cells(self.bw[run], "bw")), 2)] for run in measured]
         return {
-            "status": status,
+            "status": "na",
             "series": [
                 _series("Bandwidth, median NIC", "Gbit/s", median_points),
                 _series("Bandwidth, slowest NIC", "Gbit/s", slowest),
@@ -202,9 +226,8 @@ class _Deck:
                     points.append((size, round(pick(values), 2)))
             small = [[_tick(s), v] for s, v in points if s <= LATENCY_SPLIT]
             large = [[_tick(s), v] for s, v in points if s >= LATENCY_SPLIT]
-            outlier = label == "worst NIC p99" and test in self.lat_outliers
             cells[label] = {
-                "status": "fail" if outlier or test in self.lat_failed else "na",
+                "status": "na",
                 "series": [
                     _series(f"Latency, up to {size_text(LATENCY_SPLIT)}", "µs", small),
                     _series(f"Latency, from {size_text(LATENCY_SPLIT)}", "µs", large),
@@ -251,41 +274,46 @@ class _Deck:
             groups[_title(test, pairs)] = {"nodes": nodes}
         for test in self.lat_tests:
             groups[_title(test, pairs)] = {"nodes": self._lat_cells(test)}
+        verdicts = {}
+        for run in self._runs():
+            status = self._status(run)
+            if status in _CELL_STATUS:
+                label = " · ".join([run[0]] + ([f"QP {run[1]}"] if len(run) == 3 else []) + [_tick(run[-1])])
+                verdicts[label] = {"status": _CELL_STATUS[status]}
+        if verdicts:
+            groups[RUN_STATUS_GROUP] = {"nodes": verdicts}
         return groups
 
     def results_table(self):
         """One row per bandwidth test x QP x message size, then per latency test x message size."""
         rows = []
-        for test in self.bw_tests:
-            for qp in self.qps:
-                for size in sorted(s for t, q, s in self.bw if (t, q) == (test, qp)):
-                    run = (test, qp, size)
-                    cells = _cells(self.bw[run], "bw")
-                    low = median_bw = slowest = "—"
-                    if cells:
-                        low, host, nic = min((v, h, n) for h, n, v in cells)
-                        median_bw, slowest = round(self.median[run], 2), f"{self.name(host)} NIC {nic}"
-                    limit = _threshold(self.expected, test, size, qp)
-                    if self._breach(run):
-                        status = "fail"
-                    elif _missing(self.bw[run]):
-                        status = UNAVAILABLE
-                    else:
-                        status = "pass" if self.verify and limit is not None else "—"
-                    limit_text = "—" if limit is None else f"{limit:g}"
-                    rows.append(
-                        [test, qp, _tick(size), median_bw, low, slowest, "—", "—", "—", limit_text, status, len(cells)]
+        for run in self._runs():
+            status = self._status(run)
+            if len(run) == 3:
+                test, qp, size = run
+                cells = _cells(self.bw[run], "bw")
+                low = median_bw = slowest = "—"
+                if cells:
+                    value, host, nic = min((v, h, n) for h, n, v in cells)
+                    low, median_bw, slowest = (
+                        round(value, 2),
+                        round(self.median[run], 2),
+                        f"{self.name(host)} NIC {nic}",
                     )
-        for test in self.lat_tests:
-            for size in sorted(s for t, s in self.lat if t == test):
-                instances = self.lat[(test, size)]
+                limit = _threshold(self.expected, test, size, qp)
+                limit_text = "—" if limit is None else f"{limit:g}"
+                rows.append(
+                    [test, qp, _tick(size), median_bw, low, slowest, "—", "—", "—", limit_text, status, len(cells)]
+                )
+            else:
+                test, size = run
+                instances = self.lat[run]
                 typical = [v for _h, _n, v in _cells(instances, "t_typical")]
                 p99 = [v for _h, _n, v in _cells(instances, "t_99_pct")]
-                status = UNAVAILABLE if _missing(instances) else "—"
                 rows.append(
                     [test, "—", _tick(size), "—", "—", "—"]
                     + [round(median(v), 2) if v else "—" for v in (typical, p99)]
-                    + [max(p99) if p99 else "—", "—", status, len(_cells(instances, "t_avg"))]
+                    + [round(max(p99), 2) if p99 else "—", "—", status, len(_cells(instances, "t_avg"))]
                 )
         headers = [
             "Test",
