@@ -47,6 +47,19 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize('lat_test', ibperf_lib.configured_lat_tests(ibperf_config))
 
 
+def _fail_unmapped_gpus(orch):
+    """Map GPUs to RDMA NICs on orch.all, failing each card left without one before perftest starts."""
+    gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(orch.all, use_sudo=False)
+    for node, card_dict in gpu_nic_dict.items():
+        for card, nic_info in card_dict.items():
+            if not nic_info.get('rdma_dev'):
+                fail_test(
+                    f'No active backend RDMA NIC in the PCI domain of {card} '
+                    f'(GPU {nic_info.get("gpu_bdf")}) on node {node}; not running perftest over a NIC outside it'
+                )
+    return gpu_nic_dict
+
+
 def can_read_dmesg(orch):
     if all(get_passwordless_sudo_status(orch.all).values()):
         return True
@@ -70,7 +83,8 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request):
     request.node.user_properties.append(("dmabuf", "on" if use_dmabuf else "off"))
     update_test_result()
 
-    gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(orch.all, use_sudo=False)
+    gpu_nic_dict = _fail_unmapped_gpus(orch)
+    update_test_result()
     gpu_numa_dict = linux_utils.get_gpu_numa_dict(orch.all, use_sudo=False)
     hip_dev_dict = ibperf_lib.get_hip_device_dict(orch.all, gpu_nic_dict)
 
@@ -148,7 +162,8 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request):
     request.node.user_properties.append(("dmabuf", "on" if use_dmabuf else "off"))
     update_test_result()
 
-    gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(orch.all, use_sudo=False)
+    gpu_nic_dict = _fail_unmapped_gpus(orch)
+    update_test_result()
     gpu_numa_dict = linux_utils.get_gpu_numa_dict(orch.all, use_sudo=False)
     hip_dev_dict = ibperf_lib.get_hip_device_dict(orch.all, gpu_nic_dict)
 

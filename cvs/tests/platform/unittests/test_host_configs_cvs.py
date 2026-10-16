@@ -59,5 +59,21 @@ class TestCheckBeNicLinkSpeed(unittest.TestCase):
         self.assertEqual(globals.error_list, [])
 
 
+class TestCheckBeNicPcieSpeedWidth(unittest.TestCase):
+    def setUp(self):
+        globals.error_list = []
+
+    def test_maps_nics_in_every_link_state(self):
+        orch = MagicMock()
+        orch.all.exec_cmd_list.return_value = {'n1': 'LnkSta: Speed 32GT/s, Width x16'}
+        mapping = {'n1': {'card0': {'gpu_bdf': '0001:05:00.0', 'nic_bdf': '0001:06:00.0'}}}
+        config = {'nic_pcie_speed': '32', 'nic_pcie_width': '16'}
+        with patch.object(suite.linux_utils, 'get_gpu_nic_mapping_dict', return_value=mapping) as nic_map:
+            suite.test_check_be_nic_pcie_speed_width(orch, config, {}, {}, None)
+        nic_map.assert_called_once_with(orch.all, use_sudo=False, active_only=False)
+        self.assertIn('0001:06:00.0', orch.all.exec_cmd_list.call_args.args[0][0])
+        self.assertEqual(globals.error_list, [])
+
+
 if __name__ == '__main__':
     unittest.main()
