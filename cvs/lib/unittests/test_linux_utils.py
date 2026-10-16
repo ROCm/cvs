@@ -394,15 +394,16 @@ class TestGetGpuNicMappingDict(unittest.TestCase):
         self.assertIn('0000:75:00.0', logs.output[0])
         self.assertIn('node1', logs.output[0])
 
-    def test_cross_domain_pair_is_logged(self):
+    def test_uneven_domains_share_within_domain(self):
         gpus = [f'{domain}:00:{dev:02x}.0' for domain in ('0002', '0003') for dev in range(1, 5)]
         nic_slots = [('0002', dev) for dev in range(9, 12)] + [('0003', dev) for dev in range(9, 14)]
         nics = [(f'eth{i}', f'{domain}:00:{dev:02x}.0', f'ionic_{i}') for i, (domain, dev) in enumerate(nic_slots)]
         with self.assertLogs(level='WARNING') as logs:
             result = self._map(gpus, nics)
-        self.assertEqual(result['card3']['nic_bdf'], '0003:00:0d.0')
+        self.assertEqual(result['card3']['nic_bdf'], '0002:00:09.0')
+        self.assertNotIn('0003:00:0d.0', str(result))
         self.assertEqual(len(logs.records), 1)
-        for text in ('0002:00:04.0', '0003:00:0d.0', 'node1'):
+        for text in ('0002:00:04.0', 'shares NIC 0002:00:09.0', 'node1'):
             self.assertIn(text, logs.output[0])
 
 
@@ -592,6 +593,50 @@ class TestGpuNicMappingPciDomain(unittest.TestCase):
             self._map(gpus, nics)
         self.assertIn('card1: 0001:05:00.0 -> unmapped', logs.output[-1])
         self.assertIn('card0: 0000:05:00.0 -> rdma0 (0000:06:00.0)', logs.output[-1])
+
+    def test_down_local_nic_shares_in_domain_instead_of_crossing(self):
+        gpus = ['0001:01:00.0', '0001:02:00.0']
+        nics = [
+            ('enp4s0np0', '0000:04:00.0', 'rocep4s0', 'ACTIVE'),
+            ('enP1p68s0', '0001:44:00.0', 'roceP1p68s0', 'ACTIVE'),
+            ('enP1p72s0', '0001:48:00.0', 'roceP1p72s0', 'DOWN'),
+        ]
+        with self.assertLogs(linux_utils.log, 'WARNING') as logs:
+            result, _ = self._map(gpus, nics)
+        self.assertEqual([result[f'card{i}']['rdma_dev'] for i in range(2)], ['roceP1p68s0', 'roceP1p68s0'])
+        self.assertNotIn('rocep4s0', str(result))
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn('shares NIC 0001:44:00.0', logs.output[0])
+
+    def test_no_domain_overlap_without_active_nic_leaves_cards_unmapped(self):
+        gpus = ['0000:05:00.0', '0000:15:00.0']
+        nics = [('eth0', '10000:e1:00.0', 'rdma0', 'DOWN')]
+        with self.assertLogs(linux_utils.log, 'WARNING') as logs:
+            result, _ = self._map(gpus, nics)
+        for i, bdf in enumerate(gpus):
+            self.assertEqual(result[f'card{i}'], {'gpu_bdf': bdf})
+        self.assertEqual(len(logs.records), 2)
+        self.assertIn('no active backend NIC', logs.output[0])
+        self.assertNotIn('PCI domain', logs.output[0])
+
+    def test_node_with_gpus_and_no_backend_nics_leaves_cards_unmapped(self):
+        gpu_dict = {
+            'n1': {'card0': {'PCI Bus': '0000:05:00.0'}},
+            'n2': {'card0': {'PCI Bus': '0000:05:00.0'}},
+        }
+        nic_dict = {
+            'n1': {'eth0': {'pci_bus': '0000:06:00.0', 'rdma_dev': 'rdma0', 'device_status': 'ACTIVE'}},
+            'n2': {},
+        }
+        with (
+            patch.object(linux_utils.rocm_plib, 'get_gpu_pcie_bus_dict', return_value=gpu_dict),
+            patch.object(linux_utils, 'get_lshw_backend_nic_dict', return_value=nic_dict),
+            self.assertLogs(linux_utils.log, 'WARNING') as logs,
+        ):
+            result = linux_utils.get_gpu_nic_mapping_dict(MagicMock())
+        self.assertEqual(result['n1']['card0']['rdma_dev'], 'rdma0')
+        self.assertEqual(result['n2']['card0'], {'gpu_bdf': '0000:05:00.0'})
+        self.assertIn('n2', logs.output[0])
 
 
 class TestHeliosCaptureEndToEnd(unittest.TestCase):

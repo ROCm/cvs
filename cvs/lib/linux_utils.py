@@ -920,7 +920,9 @@ def get_gpu_nic_mapping_dict(phdl, use_sudo=True, active_only=True):
     Map GPU cards to backend NICs by PCI topology.
 
     With active_only, only ACTIVE NICs are eligible. When GPU and backend NIC
-    domains overlap, leave a GPU without an eligible NIC in its domain unmapped.
+    domains overlap, each GPU pairs only with NICs in its own domain, sharing one
+    there if needed. A GPU with no eligible NIC is left unmapped, with only
+    'gpu_bdf' in its entry.
     """
     gpu_nic_dict = {}
     gpu_pcie_dict = rocm_plib.get_gpu_pcie_bus_dict(phdl, use_sudo=use_sudo)
@@ -933,27 +935,34 @@ def get_gpu_nic_mapping_dict(phdl, use_sudo=True, active_only=True):
         nic_bdf_list = [lshw_dict[node][eth_dev]['pci_bus'] for eth_dev in eth_devs]
 
         gpu_domains = [_parse_pci_bdf(bdf)[0] for bdf in gpu_bdf_list]
-        eligible_domains = {_parse_pci_bdf(bdf)[0] for bdf in nic_bdf_list}
-        # Down links in a GPU's domain still prevent fallback to another domain.
+        nic_domains = [_parse_pci_bdf(bdf)[0] for bdf in nic_bdf_list]
+        # Down links in a GPU's domain still keep it off NICs in other domains.
         backend_domains = {_parse_pci_bdf(info['pci_bus'])[0] for info in lshw_dict[node].values()}
-        stranded = set()
-        if backend_domains.intersection(gpu_domains):
-            stranded = {card for card, domain in zip(cards, gpu_domains) if domain not in eligible_domains}
+        per_domain = bool(backend_domains.intersection(gpu_domains))
 
-        paired = [(card, bdf) for card, bdf in zip(cards, gpu_bdf_list) if card not in stranded]
-        nic_idx_list = pair_gpus_with_nics([bdf for _, bdf in paired], nic_bdf_list, node=node)
-        nic_for_card = {card: nic_idx for (card, _), nic_idx in zip(paired, nic_idx_list)}
+        groups = {}
+        for card, gpu_bdf, domain in zip(cards, gpu_bdf_list, gpu_domains):
+            groups.setdefault(domain if per_domain else None, []).append((card, gpu_bdf))
+        nic_for_card = {}
+        for domain, group in groups.items():
+            nic_idxs = [idx for idx, nic_domain in enumerate(nic_domains) if domain in (None, nic_domain)]
+            if not nic_idxs:
+                continue
+            picks = pair_gpus_with_nics(
+                [gpu_bdf for _, gpu_bdf in group], [nic_bdf_list[idx] for idx in nic_idxs], node=node
+            )
+            nic_for_card.update((card, nic_idxs[pick]) for (card, _), pick in zip(group, picks))
 
         gpu_nic_dict[node] = {}
         for card, gpu_bdf, domain in zip(cards, gpu_bdf_list, gpu_domains):
-            if card in stranded:
+            if card not in nic_for_card:
                 log.warning(
-                    'GPU %s (%s) on node %s left unmapped: no %sbackend NIC in its PCI domain %04x',
+                    'GPU %s (%s) on node %s left unmapped: no %sbackend NIC%s',
                     card,
                     gpu_bdf,
                     node,
                     'active ' if active_only else '',
-                    domain,
+                    f' in its PCI domain {domain:04x}' if per_domain else '',
                 )
                 gpu_nic_dict[node][card] = {'gpu_bdf': gpu_bdf}
                 continue
