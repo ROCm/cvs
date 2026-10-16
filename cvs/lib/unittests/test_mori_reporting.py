@@ -249,6 +249,15 @@ class TestMoriDeckProfile(unittest.TestCase):
         )
         self.assertIn("<section class='panel' id='failed-tests'><h2>Failed tests</h2>", render_rundeck_html(payload))
 
+    def test_results_table_rounds_rank_and_ibgda_values_like_the_means(self):
+        store = record_io_results({}, _case("io_read", {0: 47.123456, 1: 46.987654}, sizes=(MIB,)), variant=VARIANT)
+        ibgda = _ibgda({"host-a": 48.123456})
+        ibgda["nodes"]["host-a"]["rows"][0]["rate_mpps"] = 10.98765
+        record_ibgda_results(store, ibgda, variant=VARIANT)
+        io_row, ibgda_row = store["_meta"]["results_table"]["rows"][:2]
+        self.assertEqual((io_row[5], io_row[7]), (46.99, 1088.58))
+        self.assertEqual((ibgda_row[3], ibgda_row[8]), (48.12, 10.99))
+
     def test_results_table_has_a_row_per_case_and_ibgda_node_per_size(self):
         table = self._payload()["datasets"]["status_matrix"]["meta"]["results_table"]
         rows = [dict(zip(table["headers"], row)) for row in table["rows"]]

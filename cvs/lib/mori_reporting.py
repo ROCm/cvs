@@ -174,6 +174,11 @@ def _size_heatmap(name, unit, rows):
     }
 
 
+def _rounded(value):
+    number = _float(value)
+    return "—" if number is None else round(number, 2)
+
+
 def _case_label(buffer_size, batch, qp):
     return f"buffer {size_text(buffer_size)} · batch {batch} · QP {qp}"
 
@@ -192,9 +197,9 @@ def _results_table(io_cases, statuses, ibgda, titles, names):
                         _tick(_int(size)),
                         entry.get("Avg_BW_GBps", "—"),
                         entry.get("Slowest_rank", "—"),
-                        entry.get("Slowest_rank_BW_GBps", "—"),
+                        _rounded(entry.get("Slowest_rank_BW_GBps")),
                         entry.get("Avg_Lat_us", "—"),
-                        entry.get("Worst_rank_Lat_us", "—"),
+                        _rounded(entry.get("Worst_rank_Lat_us")),
                         "—",
                         status,
                     ]
@@ -203,7 +208,8 @@ def _results_table(io_cases, statuses, ibgda, titles, names):
         for row in sorted(ibgda[host]["rows"], key=lambda r: _int(r.get("size_bytes"))):
             rows.append(
                 [titles["ibgda_write"].split(" · ")[0], names.get(host, host), _tick(_int(row["size_bytes"]))]
-                + [row.get("bandwidth_gb", "—"), "—", "—", "—", "—", row.get("rate_mpps", "—"), ibgda[host]["status"]]
+                + [_rounded(row.get("bandwidth_gb")), "—", "—", "—", "—", _rounded(row.get("rate_mpps"))]
+                + [ibgda[host]["status"]]
             )
     headers = [
         "Operation",
