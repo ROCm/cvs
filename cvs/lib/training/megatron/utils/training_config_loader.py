@@ -37,7 +37,7 @@ from cvs.lib.utils.config_loader import (
     substitute_config,
 )
 
-_ALLOWED_GPU_NAMES = ("MI300X", "MI325X", "MI355X")
+_ALLOWED_GPU_NAMES = ("MI300X", "MI325X", "MI355X", "MI400X", "MI455X")
 # jaxmaxtext-style implicit cell when sweep.combinations is omitted/empty.
 DEFAULT_SWEEP_NAME = "default"
 _DEFAULT_COMBO_KEYS = ("micro_batch_size", "global_batch_size", "precision")
@@ -324,6 +324,34 @@ class MegatronVariantConfig(_Forbid):
     @classmethod
     def _fill_implicit_default_sweep(cls, data):
         return _implicit_default_sweep(data)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sync_gpus_per_node_with_container_env(cls, data):
+        """Keep gpus_per_node and container.env.GPUS_PER_NODE from drifting apart.
+
+        - If gpus_per_node is set explicitly, it wins: propagate it into
+          container.env.GPUS_PER_NODE (adding or overwriting that key) so the
+          value actually exported to the training container matches.
+        - If gpus_per_node is absent but container.env.GPUS_PER_NODE is set,
+          derive gpus_per_node from it instead.
+
+        Either way, configs only need to state the per-node GPU count once.
+        """
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        container = dict(data.get("container") or {})
+        env = dict(container.get("env") or {})
+
+        if "gpus_per_node" in data:
+            env["GPUS_PER_NODE"] = str(data["gpus_per_node"])
+            container["env"] = env
+            data["container"] = container
+        elif "GPUS_PER_NODE" in env:
+            data["gpus_per_node"] = env["GPUS_PER_NODE"]
+
+        return data
 
     @field_validator("gpu_name")
     @classmethod
