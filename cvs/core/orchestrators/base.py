@@ -39,7 +39,7 @@ class Orchestrator(ABC):
         """
 
     @abstractmethod
-    def exec(self, cmd, hosts=None, timeout=None):
+    def exec(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
         """
         Execute command across hosts using the orchestrator's execution strategy.
 
@@ -50,6 +50,10 @@ class Orchestrator(ABC):
             cmd: Command to execute
             hosts: Target hosts (if None, uses all hosts)
             timeout: Command timeout in seconds
+            detailed: If True, return detailed execution info including exit_code.
+            print_console: If False, return output without logging it. Use for bulk
+                data the caller parses itself, such as kernel logs. Implementations
+                must accept it.
 
         Returns:
             Dictionary mapping hosts to execution results

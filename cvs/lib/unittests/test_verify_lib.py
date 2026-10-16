@@ -9,6 +9,136 @@ from unittest.mock import MagicMock, patch
 import cvs.lib.verify_lib as verify_lib
 
 
+SCANS = (
+    ('full_dmesg_scan', lambda p: verify_lib.full_dmesg_scan(p)),
+    ('verify_driver_errors', lambda p: verify_lib.verify_driver_errors(p)),
+    (
+        'full_journalctl_scan',
+        lambda p: verify_lib.full_journalctl_scan(p, start_time_dict={'node1': 'Mon Jun  5 08:53:27'}),
+    ),
+    (
+        'verify_dmesg_for_errors',
+        lambda p: verify_lib.verify_dmesg_for_errors(
+            p, {'node1': 'Mon Jun  5 08:00'}, {'node1': 'Mon Jun  5 09:00'}, till_end_flag=True
+        ),
+    ),
+    (
+        'verify_dmesg_for_errors',
+        lambda p: verify_lib.verify_dmesg_for_errors(
+            p, {'node1': 'Mon Jun  5 08:00'}, {'node1': 'Mon Jun  5 09:00'}, till_end_flag=False
+        ),
+    ),
+    ('verify_nic_link_flap', lambda p: verify_lib.verify_nic_link_flap(p)),
+)
+
+
+class TestKernelLogScanQuietAndSummarized(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
+
+    def test_every_scan_fetches_quietly_and_logs_one_summary(self):
+        for parser in ('legacy', 'node-scraper'):
+            for name, scan in SCANS:
+                with self.subTest(parser=parser, scan=name):
+                    os.environ[verify_lib.DMESG_PARSER_ENV] = parser
+                    phdl = MagicMock()
+                    phdl.exec.return_value = {'node1': 'a\nb\n', 'node2': 'c\n'}
+                    with (
+                        patch('cvs.lib.verify_lib.fail_test'),
+                        patch.object(verify_lib.node_scraper_adapter, 'parse_dmesg', return_value=[]),
+                        patch.object(verify_lib.linux_utils, 'get_nic_ethtool_stats_dict', return_value={}),
+                        patch.object(verify_lib, 'log') as mock_log,
+                    ):
+                        scan(phdl)
+                    self.assertTrue(phdl.exec.call_args_list)
+                    for call in phdl.exec.call_args_list:
+                        self.assertIs(call.kwargs.get('print_console'), False)
+                    self.assertEqual(mock_log.info.call_count, 1)
+                    self.assertEqual(
+                        mock_log.info.call_args.args,
+                        ('kernel-log scan %s: %d host(s), %d line(s) scanned, %d match(es)', name, 2, 3, 0),
+                    )
+
+    def test_summary_counts_matches(self):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = 'legacy'
+        phdl = MagicMock()
+        phdl.exec.return_value = {'n1': 'ordinary line\nGPU reset begin\n', 'n2': 'x\n'}
+        with patch('cvs.lib.verify_lib.fail_test') as mock_fail, patch.object(verify_lib, 'log') as mock_log:
+            verify_lib.full_dmesg_scan(phdl)
+        self.assertEqual(mock_log.info.call_args.args[1:], ('full_dmesg_scan', 2, 3, 1))
+        mock_fail.assert_called_once()
+
+    def _run_link_flap(self, dmesg_out):
+        stats = {
+            'n1': {'eth0': {'link_down_events': '3', 'rx_packets': '9'}},
+            'n2': {'eth0': {'link_down_events': '0'}},
+        }
+        phdl = MagicMock()
+        phdl.exec.return_value = dmesg_out
+        with (
+            patch('cvs.lib.verify_lib.fail_test') as mock_fail,
+            patch.object(verify_lib.linux_utils, 'get_nic_ethtool_stats_dict', return_value=stats),
+            patch.object(verify_lib, 'log') as mock_log,
+        ):
+            err_dict = verify_lib.verify_nic_link_flap(phdl)
+        mock_log.info.assert_called_once()
+        return err_dict, mock_fail, mock_log.info.call_args.args[1:]
+
+    def test_link_flap_summary_excludes_ethtool_failures(self):
+        err_dict, mock_fail, summary = self._run_link_flap({'n1': 'eth0: link up\n', 'n2': ''})
+        self.assertEqual(summary, ('verify_nic_link_flap', 2, 1, 0))
+        self.assertEqual(err_dict, {'n1': ['ERROR !! n1 eth0 link_down_events 3'], 'n2': []})
+        mock_fail.assert_called_once_with('ERROR !! n1 eth0 link_down_events 3')
+
+    def test_link_flap_summary_counts_only_dmesg_matches(self):
+        err_dict, mock_fail, summary = self._run_link_flap(
+            {'n1': 'bnxt_en eth0: NIC Link is Down\n', 'n2': 'eth0: link up\nbnxt_en eth0: NIC Link is Down\n'}
+        )
+        self.assertEqual(summary, ('verify_nic_link_flap', 2, 3, 2))
+        self.assertEqual(
+            err_dict,
+            {
+                'n1': ['ERROR !! n1 eth0 link_down_events 3', 'ERROR !! NIC Link down dmesg logs seen on node n1'],
+                'n2': ['ERROR !! NIC Link down dmesg logs seen on node n2'],
+            },
+        )
+        self.assertEqual(mock_fail.call_count, 3)
+
+    def test_summary_is_bounded(self):
+        output = {f'host-{i}': 'SECRET-LINE\n' * 1000 for i in range(1000)}
+        with patch.object(verify_lib, 'log') as mock_log:
+            verify_lib._log_kernel_scan_summary('full_dmesg_scan', output, {'host-0': ['x']})
+        args = mock_log.info.call_args.args
+        rendered = args[0] % args[1:]
+        self.assertLess(len(rendered), 120)
+        self.assertNotIn('host-', rendered)
+        self.assertNotIn('SECRET-LINE', rendered)
+        mock_log.info.assert_called_once()
+
+    def test_real_parallel_handle_does_not_log_dmesg_lines(self):
+        from cvs.lib.parallel.phandle import ParallelHandle
+
+        sentinel = '2026-09-28T19:27:21,000000+00:00 kern  :err   : SENTINEL-KERNEL-LOG IPVS: rr: TCP 192.0.2.10:8989 - no destination available'
+        with patch('cvs.lib.parallel.phandle.ParallelSSHClient') as client_class:
+            handle = ParallelHandle(None, ['node1'], user='u', pkey='k')
+            handle.log = MagicMock()
+            item = MagicMock()
+            item.host = 'node1'
+            item.stdout = [sentinel] * 50
+            item.stderr = []
+            item.exception = None
+            item.exit_code = 0
+            client_class.return_value.run_command.return_value = [item]
+            with patch('cvs.lib.verify_lib.fail_test'):
+                for parser in ('node-scraper', 'legacy'):
+                    with self.subTest(parser=parser):
+                        os.environ[verify_lib.DMESG_PARSER_ENV] = parser
+                        verify_lib.full_dmesg_scan(handle)
+        self.assertFalse(
+            any('SENTINEL-KERNEL-LOG' in str(arg) for call in handle.log.info.call_args_list for arg in call.args)
+        )
+
+
 class TestVerifyGpuPcieBusWidth(unittest.TestCase):
     @patch("cvs.lib.verify_lib.get_gpu_pcie_bus_dict")
     @patch("cvs.lib.verify_lib.fail_test")
