@@ -91,6 +91,49 @@ class TestNetworkChecks(unittest.TestCase):
 
         self.assertEqual(violations, ["no backend RDMA NICs discovered; expected link speed 400000"])
 
+    @patch("cvs.lib.training.torchtitan.utils.network_checks.linux_utils.get_backend_rdma_nic_dict")
+    def test_flags_node_whose_rdma_devices_have_no_eth_device(self, mock_backend):
+        mock_backend.return_value = {
+            "node0": {"rdma0": {"eth_device": "eno0"}},
+            "node1": {"rdma0": {"state": "active"}},
+        }
+        orch = FakeOrch([{"node0": "400000\n", "node1": "\n"}])
+
+        violations = backend_nic_link_speed_violations(orch)
+
+        self.assertEqual(violations, ["node1: no backend RDMA NICs discovered; expected link speed 400000"])
+        self.assertEqual(len(orch.all.commands), 1)
+        self.assertIn("/sys/class/net/eno0/speed", orch.all.commands[0][0])
+        self.assertEqual(orch.all.commands[0][1], "true")
+
+    @patch("cvs.lib.training.torchtitan.utils.network_checks.linux_utils.get_backend_rdma_nic_dict")
+    def test_pairs_speed_reads_when_nodes_have_uneven_nic_counts(self, mock_backend):
+        mock_backend.return_value = {
+            "node0": {
+                "rdma0": {"eth_device": "eno0"},
+                "rdma1": {"eth_device": "eno1"},
+            },
+            "node1": {"rdma0": {"eth_device": "ens10"}},
+        }
+        orch = FakeOrch(
+            [
+                {"node0": "400000\n", "node1": "400000\n"},
+                {"node0": "200000\n", "node1": "\n"},
+            ]
+        )
+
+        violations = backend_nic_link_speed_violations(orch)
+
+        self.assertEqual(len(orch.all.commands), 2)
+        self.assertIn("/sys/class/net/eno0/speed", orch.all.commands[0][0])
+        self.assertIn("/sys/class/net/ens10/speed", orch.all.commands[0][1])
+        self.assertIn("/sys/class/net/eno1/speed", orch.all.commands[1][0])
+        self.assertEqual(orch.all.commands[1][1], "true")
+        self.assertEqual(
+            violations,
+            ["node0: backend NIC eno1 (rdma1) link speed 200000 < expected 400000"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
