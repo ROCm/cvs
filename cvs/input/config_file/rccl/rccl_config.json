@@ -19,6 +19,7 @@
         "env_source_script": "/home/{user-id}/thor2_env_script.sh",
 
         "rccl_test_params": {
+            "_comment_rccl_collective": "rccl-tests binary names in rccl_tests_dir; thresholds (results), report series and sub-test labels are keyed by these names. Optional: all_reduce_bias_perf (requires an RCCL build exporting ncclAllReduceWithBias; its JSON rows report the collective as AllReduce).",
             "rccl_collective": [ "all_reduce_perf", "all_gather_perf", "scatter_perf", "gather_perf", "reduce_scatter_perf", "sendrecv_perf", "alltoall_perf", "alltoallv_perf", "broadcast_perf" ],
             "rccl_tests_dir": "/home/{user-id}/rccl-tests/build",
             "start_msg_size": "1024",
