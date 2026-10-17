@@ -10,6 +10,7 @@ Topology is determined by the config file:
 
 Lifecycle (each stage is a separate test):
   test_launch_container  — launch the container once for all sweep combos
+  test_backend_nic_speed — verify backend NICs are linked at 400 Gbps
   test_setup_rdma        — copy RDMA lib into container and verify ibv_devinfo
   test_download_tokenizer— download tokenizer if needed for model family
   test_smoke             — fixed small cell: model loads and runs N steps without error
@@ -42,6 +43,7 @@ from cvs.lib.training.torchtitan.utils.iteration_metrics import (
     sample_loss_curve,
     sample_training_curves,
 )
+from cvs.lib.training.torchtitan.utils.network_checks import backend_nic_link_speed_violations
 from cvs.lib.training.torchtitan.utils.loss_curve import evaluate_loss_decreasing
 from cvs.lib.training.torchtitan.utils.loss_curve_plot import render_loss_curve_png
 from cvs.lib.training.torchtitan.utils.results_table import (
@@ -51,7 +53,7 @@ from cvs.lib.training.torchtitan.utils.results_table import (
 )
 from cvs.lib.training.torchtitan.utils.scaling import compute_scaling_efficiency
 from cvs.lib.utils.verdict import _check_one, ThresholdViolation
-from cvs.lib.utils_lib import update_test_result
+from cvs.lib.utils_lib import fail_test, update_test_result
 
 log = globals.log
 
@@ -91,8 +93,29 @@ def test_launch_container(orch, variant_config, lifecycle, request):
         pytest.fail(f"container {name} not running after setup_containers()")
 
 
+def test_backend_nic_speed(orch, lifecycle, request):
+    """Stage 1: verify every backend NIC is linked at 400 Gbps before training starts.
+
+    This reads host sysfs link speed. ``test_setup_rdma`` still copies the
+    Broadcom RDMA library into the container on thor2 nodes.
+    """
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+
+    t = time.monotonic()
+    globals.error_list = []
+    violations = backend_nic_link_speed_violations(orch)
+    for violation in violations:
+        fail_test(violation)
+    if violations:
+        lifecycle.failed = True
+    lifecycle.record(request.node.nodeid, "backend_nic_speed", time.monotonic() - t)
+    update_test_result()
+    log.info("backend NIC link speed check PASSED")
+
+
 def test_setup_rdma(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 1: copy RDMA lib into container (thor2 NIC) and verify ibv_devinfo."""
+    """Stage 2: copy RDMA lib into container (thor2 NIC) and verify ibv_devinfo."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
@@ -120,7 +143,7 @@ def test_setup_rdma(orch, variant_config, hf_token, lifecycle, request):
 
 
 def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 2: download the tokenizer model once if the model family requires it."""
+    """Stage 3: download the tokenizer model once if the model family requires it."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
@@ -157,7 +180,7 @@ def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
 
 
 def test_smoke(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 2: smoke-test — model loads and runs smoke.iters steps without error.
+    """Stage 4: smoke-test — model loads and runs smoke.iters steps without error.
 
     Knobs come from the top-level ``smoke`` block (defaults: 10 iters, MBS 1,
     GBS 8, BF16). Set ``smoke.enabled`` false to skip. Completion without error
@@ -208,7 +231,7 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
 
 
 def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 3.5: checkpoint save + resume — verify step counter and loss continuity (distributed).
+    """Stage 5: checkpoint save + resume — verify step counter and loss continuity (distributed).
 
     Two phases:
       Phase 1 — Save : train checkpoint.save_iters steps, saving every checkpoint.save_interval.
@@ -421,7 +444,7 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
 
 
 def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, lifecycle, request):
-    """Stage 4 (parametrized): run one sweep combo inside the shared container.
+    """Stage 6 (parametrized): run one sweep combo inside the shared container.
 
     stop_training_processes() runs in a finally block after every combo so GPU
     memory is released before the next combo starts.
@@ -516,7 +539,7 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
 
 
 def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
-    """Stage 5 (parametrized): compare each combo's metrics against thresholds.
+    """Stage 7 (parametrized): compare each combo's metrics against thresholds.
 
     Every metric is evaluated and recorded as its own pass/fail verdict row so the
     report renders them as an expandable per-metric panel under this test: expand
@@ -716,7 +739,7 @@ def test_print_results_table(train_res_dict, request):
 
 
 def test_teardown(orch, lifecycle, request):
-    """Stage 6: tear down the container once after all combos have run."""
+    """Stage 8: tear down the container once after all combos have run."""
     name = orch.get_container_name(orch.container_config, orch.container_config["image"])
     t = time.monotonic()
     orch.teardown_containers()

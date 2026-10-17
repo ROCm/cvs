@@ -11,7 +11,9 @@ TorchTitan validates single-node and multi-node pre-training on AMD Instinct GPU
 There are two suites:
 
 - ``torchtitan_single`` — single-node configs (``framework: torchtitan_single``)
-- ``torchtitan_distributed`` — multi-node configs (``framework: torchtitan_distributed``); adds RDMA setup
+- ``torchtitan_distributed`` — multi-node configs (``framework: torchtitan_distributed``); adds RDMA library setup
+
+Both suites run ``test_backend_nic_speed`` after the container launches. It checks that every discovered backend NIC is linked at 400 Gbps before tokenizer download or training. The distributed suite still runs ``test_setup_rdma`` after that check to copy the Broadcom RDMA library into the container on ``thor2`` nodes.
 
 .. _torchtitan-set-up-config:
 
@@ -56,6 +58,7 @@ Run the following command to list available stages:
 
   Available tests in torchtitan_single:
     - test_launch_container
+    - test_backend_nic_speed
     - test_download_tokenizer
     - test_smoke
     - test_training[...]
@@ -72,6 +75,7 @@ Run the following command to list available stages:
 
   Available tests in torchtitan_distributed:
     - test_launch_container
+    - test_backend_nic_speed
     - test_setup_rdma
     - test_download_tokenizer
     - test_smoke
