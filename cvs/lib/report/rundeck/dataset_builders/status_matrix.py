@@ -73,7 +73,10 @@ The builder also emits ``overview`` and ``metric_charts``:
 * ``results_table`` is one row per metric and one row per item. Columns are
   Node, Check, Result, Value, Unit, Threshold, Status, and Message.
   A cell with neither still gets one row. Failed rows come first. Heatmaps
-  and series stay in ``metric_charts``.
+  and series stay in ``metric_charts``. When the results card asks for
+  Passed and Failed, those counts are appended from the cell's
+  "N PASSED, M FAILED" summary. ANC records named failures only, so a
+  passing item has a count and no row of its own.
 
 Grid cells keep the same normalized ``metrics``, ``series``, and ``heatmaps``
 without repeating ``node`` (the grid key is the node).
@@ -81,6 +84,7 @@ without repeating ``node`` (the grid key is the node).
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 from cvs.lib.report.rundeck.dataset_builders.registry import register_dataset_builder
@@ -99,6 +103,8 @@ _RESULTS_HEADERS = [
     "Message",
 ]
 _BLANK = "\u2014"
+_COUNT_COLUMNS = ("Passed", "Failed")
+_ITEMS_COUNT_RE = re.compile(r"(\d+)\s+PASSED\b.*?(\d+)\s+FAILED\b", re.IGNORECASE)
 
 
 def _results(sources: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -355,11 +361,26 @@ def _summary_message(entry, status):
     return _BLANK
 
 
-def _result_row(node, group_name, result, value, unit, threshold, status, message):
-    return [str(node), str(group_name), str(result), value, unit, threshold, str(status), message]
+def _count_columns(profile):
+    for card in (profile or {}).get("cards") or []:
+        columns = card.get("columns") if isinstance(card, dict) else None
+        if isinstance(card, dict) and card.get("id") == "results" and isinstance(columns, list):
+            return [name for name in _COUNT_COLUMNS if name in columns]
+    return []
 
 
-def _cell_result_rows(node, group_name, cell):
+def _item_counts(summary):
+    match = _ITEMS_COUNT_RE.search(str(summary or ""))
+    if not match:
+        return _BLANK, _BLANK
+    return match.group(1), match.group(2)
+
+
+def _result_row(node, group_name, result, value, unit, threshold, status, message, counts=()):
+    return [str(node), str(group_name), str(result), value, unit, threshold, str(status), message, *counts]
+
+
+def _cell_result_rows(node, group_name, cell, counts=()):
     status = cell.get("status") or "na"
     metrics = cell.get("metrics") or []
     items = [item for item in (cell.get("items") or []) if isinstance(item, dict)]
@@ -374,6 +395,7 @@ def _cell_result_rows(node, group_name, cell):
                 _BLANK,
                 status,
                 _summary_message(cell, status),
+                counts,
             )
         ]
     rows = []
@@ -389,6 +411,7 @@ def _cell_result_rows(node, group_name, cell):
                 _number_text(metric.get("threshold")),
                 metric.get("status") or status,
                 _blank(summary),
+                counts,
             )
         )
     for item in items:
@@ -402,18 +425,27 @@ def _cell_result_rows(node, group_name, cell):
                 _BLANK,
                 item.get("status") or status,
                 _blank(item.get("message")),
+                counts,
             )
         )
     return rows
 
 
-def _results_table(grid, nodes, groups):
+def _results_table(grid, nodes, groups, count_columns=()):
     rows = []
     for node in nodes:
         for group_name in groups:
-            rows.extend(_cell_result_rows(node, group_name, (grid.get(node) or {}).get(group_name) or {}))
+            cell = (grid.get(node) or {}).get(group_name) or {}
+            counts = ()
+            if count_columns:
+                passed, failed = _item_counts(cell.get("items_summary"))
+                counts = tuple({"Passed": passed, "Failed": failed}[name] for name in count_columns)
+            rows.extend(_cell_result_rows(node, group_name, cell, counts))
     rows.sort(key=lambda row: _STATUS_RANK.get(row[6], 1))
-    return {"headers": list(_RESULTS_HEADERS), "rows": rows}
+    headers = list(_RESULTS_HEADERS)
+    if count_columns:
+        headers.extend(count_columns)
+    return {"headers": headers, "rows": rows}
 
 
 @register_dataset_builder("status_matrix")
@@ -508,5 +540,5 @@ def build_status_matrix_datasets(sources: dict, profile: dict) -> dict:
             "series": chart_series,
             "heatmaps": chart_heatmaps,
         },
-        "results_table": _results_table(grid, node_labels, group_names),
+        "results_table": _results_table(grid, node_labels, group_names, _count_columns(profile)),
     }

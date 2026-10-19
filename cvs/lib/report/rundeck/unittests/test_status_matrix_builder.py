@@ -268,6 +268,27 @@ class TestResultsTable(unittest.TestCase):
         self.assertEqual(only[2], "hbm")
         self.assertEqual(only[6], "pass")
 
+    def test_requested_count_columns_come_from_the_items_summary(self):
+        results = {
+            "groups": {
+                "hbm_lvl1": {
+                    "nodes": {
+                        "node-11": {
+                            "status": "fail",
+                            "items_summary": "Items: 6 Total | 5 PASSED, 1 FAILED",
+                            "items": [{"name": "oblex_remix2", "status": "fail", "message": "PDC Failed"}],
+                        }
+                    }
+                }
+            }
+        }
+        profile = {"cards": [{"id": "results", "columns": ["Node", "Passed", "Failed", "Status"]}]}
+        table = build_status_matrix_datasets(_sources(results), profile)["results_table"]
+        self.assertEqual(table["headers"][-2:], ["Passed", "Failed"])
+        row = table["rows"][0]
+        self.assertEqual(row[2], "oblex_remix2")
+        self.assertEqual(row[6:], ["fail", "PDC Failed", "5", "1"])
+
     def test_absent_group_on_a_node_is_not_evaluated(self):
         results = {
             "groups": {

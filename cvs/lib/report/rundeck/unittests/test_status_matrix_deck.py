@@ -38,9 +38,13 @@ class TestStatusMatrixDeck(unittest.TestCase):
         self.payload = build_rundeck_payload(profile=profile, store=store, provenance={}, cvs_version="dev")
         self.html = render_rundeck_html(self.payload)
 
-    def test_profile_uses_run_card_and_status_matrix_only(self):
-        types = [c["type"] for c in load_json_profile("anc_test_gpu")["cards"]]
-        self.assertEqual(types, ["run_card", "status_matrix"])
+    def test_profile_uses_run_card_and_flat_results_table(self):
+        cards = load_json_profile("anc_test_gpu")["cards"]
+        self.assertEqual([c["type"] for c in cards], ["run_card", "table"])
+        self.assertEqual(
+            cards[1]["columns"],
+            ["Node", "Check", "Result", "Passed", "Failed", "Status", "Message"],
+        )
 
     def test_overall_status_is_fail(self):
         self.assertEqual(self.payload["overall_status"], "fail")
@@ -51,12 +55,22 @@ class TestStatusMatrixDeck(unittest.TestCase):
         self.assertIn("1.7.0", self.html)
         self.assertIn("Run card", self.html)
 
-    def test_status_matrix_shows_failure_detail_and_link(self):
-        self.assertIn("status-matrix", self.html)
+    def test_full_results_lists_the_failed_test_without_expanding(self):
+        table = self.payload["datasets"]["status_matrix"]["results_table"]
+        self.assertEqual(
+            table["headers"],
+            ["Node", "Check", "Result", "Value", "Unit", "Threshold", "Status", "Message", "Passed", "Failed"],
+        )
+        self.assertEqual(table["rows"][0][2], "oblex_remix2")
+        self.assertEqual(table["rows"][0][-2:], ["5", "1"])
         self.assertIn("Full results", self.html)
+        self.assertIn("<th>Passed</th>", self.html)
+        self.assertIn("<th>Failed</th>", self.html)
+        self.assertNotIn("<th>Value</th>", self.html)
         self.assertIn("oblex_remix2", self.html)
         self.assertIn("ANC_PDC_DMESG_ERROR", self.html)
-        self.assertIn("n1_test_hbm_lvl1_errors.json", self.html)
+        self.assertNotIn("<details", self.html)
+        self.assertNotIn("No per-item detail captured", self.html)
 
     def test_no_inference_gate_vocabulary(self):
         self.assertNotIn("Gate matrix", self.html)
