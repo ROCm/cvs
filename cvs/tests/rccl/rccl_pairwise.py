@@ -97,9 +97,10 @@ def run_pairwise_rccl(orch, node_pair_vpc, node_pair_mgmt, config_dict, phase_la
     try:
         pair_config = dict(config_dict)
         pair_config['mpi_params'] = mpi_params_pair
-        # Legacy flat results.<test_name>.bus_bw thresholds aren't rank-count scoped; drop them here.
+        # Flat results.<test_name>.bus_bw thresholds aren't rank-count scoped; retain named references only.
+        reference_namespaces = (*rccl_lib.NIC_TYPES, rccl_lib.SCALE_OUT, rccl_lib.SCALE_UP)
         pair_config['results'] = {
-            key: value for key, value in config_dict.get('results', {}).items() if key in rccl_lib.NIC_TYPES
+            key: value for key, value in config_dict.get('results', {}).items() if key in reference_namespaces
         }
         result_dict = rccl_lib.RcclJob.from_config(
             orch,

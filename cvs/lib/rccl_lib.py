@@ -191,7 +191,16 @@ class RcclVerifier:
     def _check_dip(self, check_name, field, metric, value_name, record_key, unit):
         tolerance = 0.95
         if not self.expected:
-            log.warning(f"No reference data provided for {check_name} check, skipping validation for {self.test_name}")
+            if self.resolver_failed:
+                return
+            label = 'BW' if record_key == 'bw_dip' else 'latency'
+            self._record(
+                record_key,
+                None,
+                False,
+                f'No reference message sizes for {label} dip check of {self.test_name} '
+                f'in rccl.results.{self.test_name}',
+            )
             return
         if not self.results:
             log.warning(f"No RCCL results available for {check_name} check, skipping validation for {self.test_name}")
@@ -235,25 +244,9 @@ class RcclVerifier:
                     f'No bus bandwidth thresholds for {self.test_name} in rccl.results.{self.test_name}',
                 )
         if re.search('True', self.cvs_params.get('verify_bw_dip', 'False'), re.I):
-            if self.expected:
-                self.check_bw_dip()
-            elif not self.resolver_failed:
-                self._record(
-                    'bw_dip',
-                    None,
-                    False,
-                    f'No reference message sizes for BW dip check of {self.test_name} in rccl.results.{self.test_name}',
-                )
+            self.check_bw_dip()
         if re.search('True', self.cvs_params.get('verify_lat_dip', 'False'), re.I):
-            if self.expected:
-                self.check_lat_dip()
-            elif not self.resolver_failed:
-                self._record(
-                    'lat_dip',
-                    None,
-                    False,
-                    f'No reference message sizes for latency dip check of {self.test_name} in rccl.results.{self.test_name}',
-                )
+            self.check_lat_dip()
 
     @staticmethod
     def is_severe_wrong_corruption_error(err: ValidationError) -> bool:
@@ -346,14 +339,20 @@ SCALE_OUT = 'scale_out'
 SCALE_UP = 'scale_up'
 
 
+def _normalize_cvs_enum(value, choices, default, option_name):
+    """Normalize a cvs_params enum, warning and using its default if unknown."""
+    normalized_choices = {re.sub(r'[\s_-]', '', choice).lower(): choice for choice in choices}
+    value_key = re.sub(r'[\s_-]', '', str(value or default)).lower()
+    normalized = normalized_choices.get(value_key)
+    if normalized is None:
+        log.warning('Unrecognised %s %r; falling back to %s', option_name, value, default)
+        return default
+    return normalized
+
+
 def fabric_type(fabric):
-    """Normalise cvs_params.fabric; unknown values warn and fall back to scale_out."""
-    value = re.sub(r'[\s_-]', '', str(fabric or SCALE_OUT)).lower()
-    fabric_key = {'scaleout': SCALE_OUT, 'scaleup': SCALE_UP}.get(value)
-    if fabric_key is None:
-        log.warning('Unrecognised fabric %r; falling back to %s', fabric, SCALE_OUT)
-        return SCALE_OUT
-    return fabric_key
+    """Normalize cvs_params.fabric; unknown values warn and fall back to scale_out."""
+    return _normalize_cvs_enum(fabric, (SCALE_OUT, SCALE_UP), SCALE_OUT, 'fabric')
 
 
 def configured_collectives(config):
@@ -706,10 +705,9 @@ class RcclJob:
         self.prepared = False
         self.topology_checks = []
         self.verdicts = []
-        self.topology_check_mode = str(cvs_params.get('topology_check', 'warn')).strip().lower()
-        if self.topology_check_mode not in ('off', 'warn', 'strict'):
-            log.warning('Unrecognised topology_check mode %r; falling back to warn', self.topology_check_mode)
-            self.topology_check_mode = 'warn'
+        self.topology_check_mode = _normalize_cvs_enum(
+            cvs_params.get('topology_check'), ('off', 'warn', 'strict'), 'warn', 'topology_check mode'
+        )
         self.fabric = fabric_type(cvs_params.get('fabric'))
 
     @classmethod

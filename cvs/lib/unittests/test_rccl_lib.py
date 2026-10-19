@@ -1042,16 +1042,19 @@ class TestRcclLib(unittest.TestCase):
         mock_fail_test.assert_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
-    def test_check_bw_dip_no_reference(self, mock_fail_test):
-        """Test bandwidth dip check without reference data"""
+    def test_check_bw_dip_no_reference_fails_closed(self, mock_fail_test):
+        """A direct bandwidth dip check without reference data fails closed."""
         test_name = "all_reduce_perf"
         output = [
             {"size": 1024, "inPlace": 1, "busBw": 100.0},
             {"size": 2048, "inPlace": 1, "busBw": 50.0},  # Big drop but no reference
         ]
 
-        rccl_lib.RcclVerifier(test_name, output, None).check_bw_dip()
-        mock_fail_test.assert_not_called()
+        verifier = rccl_lib.RcclVerifier(test_name, output, None)
+        verifier.check_bw_dip()
+        mock_fail_test.assert_called_once()
+        self.assertEqual(verifier.verdicts[0]['check'], 'bw_dip')
+        self.assertIn('No reference message sizes', mock_fail_test.call_args.args[0])
 
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_check_bw_dip_no_results(self, mock_fail_test):
@@ -1089,16 +1092,19 @@ class TestRcclLib(unittest.TestCase):
         mock_fail_test.assert_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
-    def test_check_lat_dip_no_reference(self, mock_fail_test):
-        """Test latency dip check without reference data"""
+    def test_check_lat_dip_no_reference_fails_closed(self, mock_fail_test):
+        """A direct latency dip check without reference data fails closed."""
         test_name = "all_reduce_perf"
         output = [
             {"size": 1024, "inPlace": 1, "time": 20.0},
             {"size": 2048, "inPlace": 1, "time": 5.0},  # Big drop but no reference
         ]
 
-        rccl_lib.RcclVerifier(test_name, output, None).check_lat_dip()
-        mock_fail_test.assert_not_called()
+        verifier = rccl_lib.RcclVerifier(test_name, output, None)
+        verifier.check_lat_dip()
+        mock_fail_test.assert_called_once()
+        self.assertEqual(verifier.verdicts[0]['check'], 'lat_dip')
+        self.assertIn('No reference message sizes', mock_fail_test.call_args.args[0])
 
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_check_lat_dip_no_results(self, mock_fail_test):
