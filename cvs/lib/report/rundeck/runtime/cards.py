@@ -15,14 +15,13 @@ from cvs.lib.report.inference_payload import sweep_has_multi_shape_comparison
 from cvs.lib.report.render.cell_card import CellCardConfig, CellCardRenderer
 from cvs.lib.report.render.gate_matrix import GateMatrixRenderer
 from cvs.lib.report.render.loss_chart import SERIES_COLORS
-from cvs.lib.report.render.panel_shell import render_results_table_html
+from cvs.lib.report.render.panel_shell import paged_table_html, render_results_table_html
 from cvs.lib.report.rundeck.context import is_empty, resolve_bind
 from cvs.lib.report.rundeck.runtime.sweep_charts import SweepChartRenderer
 from cvs.lib.report.rundeck.runtime.theme import render_launch_panel_html
 from cvs.lib.report.types import DEFAULT_SESSION_LIFECYCLE_LABELS
 
 SESSION_FALLBACK = DEFAULT_SESSION_LIFECYCLE_LABELS
-RESULTS_PAGE_SIZE = 25
 
 _DEFAULT_STATUS_HINT_HTML = (
     "Click a cell's <strong>items</strong> to expand that node × group's item breakdown and artifact links."
@@ -134,48 +133,15 @@ def _series_points(series):
     return points
 
 
+def _next_table_id(prefix):
+    DeckCardRenderer._table_seq = getattr(DeckCardRenderer, "_table_seq", 0) + 1
+    return f"{prefix}-{DeckCardRenderer._table_seq}"
+
+
 def _table_dom_id(card, prefix):
     raw = str(card.get("id") or "") if isinstance(card, dict) else ""
     safe = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in raw) or "results"
     return f"{prefix}-{safe}"
-
-
-def _pager_html(table_id, total, page_size):
-    """Previous/next over rows already in the page. Short tables get no control."""
-    if total <= page_size:
-        return ""
-    end = min(page_size, total)
-    safe_id = html.escape(table_id)
-    return (
-        f"<div class='rd-pager' data-table='{safe_id}' data-page-size='{page_size}'>"
-        f"<button type='button' data-dir='-1'>Previous</button>"
-        f"<span class='rd-pager-count'>1\u2013{end} of {total}</span>"
-        f"<button type='button' data-dir='1'>Next</button></div>"
-        "<script>(function(pager){"
-        "var size=Number(pager.getAttribute('data-page-size'));"
-        "var rows=document.getElementById(pager.getAttribute('data-table')).tBodies[0].rows;"
-        "var page=0;var label=pager.querySelector('.rd-pager-count');"
-        "function show(){var start=page*size;var end=Math.min(start+size,rows.length);"
-        "for(var i=0;i<rows.length;i++){rows[i].hidden=i<start||i>=start+size;}"
-        "label.textContent=(start+1)+'\\u2013'+end+' of '+rows.length;}"
-        "pager.addEventListener('click',function(event){"
-        "var button=event.target.closest('button');if(!button){return;}"
-        "var pages=Math.ceil(rows.length/size);"
-        "page=Math.max(0,Math.min(pages-1,page+Number(button.getAttribute('data-dir'))));"
-        "show();});"
-        "})(document.currentScript.previousElementSibling);</script>"
-    )
-
-
-def _hide_overflow_rows(row_html, page_size):
-    if len(row_html) <= page_size:
-        return row_html
-    paged = []
-    for index, row in enumerate(row_html):
-        if index >= page_size and row.startswith("<tr"):
-            row = "<tr hidden" + row[3:]
-        paged.append(row)
-    return paged
 
 
 class DeckCardRenderer:
@@ -333,15 +299,17 @@ class DeckCardRenderer:
         )
         return f"<div class='summary-grid'>{summary_html}</div>{viewer_banner}{hint}{charts_html}"
 
-    def render_gate_matrix(self, payload: dict, _card: dict, data: Any) -> str:
+    def render_gate_matrix(self, payload: dict, card: dict, data: Any) -> str:
         gate_matrix = data if isinstance(data, list) else payload.get("gate_matrix") or []
         tier_order = (payload.get("report") or {}).get("metric_tier_order") or ()
-        return self._gate.render_table(gate_matrix, tier_order)
+        return self._gate.render_table(gate_matrix, tier_order, table_id=_table_dom_id(card, "rd-gates"))
 
-    def render_gate_heatmap(self, payload: dict, _card: dict, data: Any) -> str:
+    def render_gate_heatmap(self, payload: dict, card: dict, data: Any) -> str:
         gate_matrix = data if isinstance(data, list) else payload.get("gate_matrix") or []
         tier_order = (payload.get("report") or {}).get("metric_tier_order") or ()
-        heatmap = self._gate.render_heatmap(gate_matrix, tier_order)
+        heatmap = self._gate.render_heatmap(
+            gate_matrix, tier_order, table_id=_table_dom_id(card, "rd-gate-heat")
+        )
         return f"<div id='heatmap' class='heatmap-section'>{heatmap}</div>" if heatmap else ""
 
     def render_cell_cards(self, payload: dict, _card: dict, data: Any) -> str:
@@ -381,21 +349,13 @@ class DeckCardRenderer:
         rows = list(table.get("rows") or [])
         # Every suite's full-results table uses the same page. The rows stay in
         # the HTML; only the ones past the first page start hidden.
-        page_size = RESULTS_PAGE_SIZE
-        if rows and len(rows) > page_size:
+        if rows:
             table_id = _table_dom_id(card, "rd-table")
             header_html = "".join(f"<th>{html.escape(str(header))}</th>" for header in headers)
-            body = []
-            for index, row in enumerate(rows):
-                hidden = " hidden" if index >= page_size else ""
-                cells = "".join(f"<td>{html.escape(str(value))}</td>" for value in row)
-                body.append(f"<tr{hidden}>{cells}</tr>")
-            inner = (
-                f"<table id='{html.escape(table_id)}' class='results-table'>"
-                f"<thead><tr>{header_html}</tr></thead><tbody>{''.join(body)}</tbody></table>"
-            )
-            pager = _pager_html(table_id, len(rows), page_size)
-            return f"<div class='results-wrap'>{inner}</div>{pager}"
+            body = [
+                "<tr>" + "".join(f"<td>{html.escape(str(value))}</td>" for value in row) + "</tr>" for row in rows
+            ]
+            return paged_table_html(table_id, "results-table", header_html, body)
         inner = render_results_table_html(
             headers,
             rows,
@@ -412,9 +372,7 @@ class DeckCardRenderer:
         if not nodes or not groups:
             return "<p class='muted'>No node results recorded.</p>"
 
-        header = (
-            "<tr><th class='sm-node'>Node</th>" + "".join(f"<th>{html.escape(str(g))}</th>" for g in groups) + "</tr>"
-        )
+        header_html = "<th class='sm-node'>Node</th>" + "".join(f"<th>{html.escape(str(g))}</th>" for g in groups)
 
         body_rows = []
         for node in nodes:
@@ -423,16 +381,11 @@ class DeckCardRenderer:
                 cell = (grid.get(node) or {}).get(group) or {}
                 cells.append(DeckCardRenderer._status_cell_html(cell))
             body_rows.append(f"<tr>{''.join(cells)}</tr>")
-        body_rows = _hide_overflow_rows(body_rows, RESULTS_PAGE_SIZE)
         table_id = _table_dom_id(_card, "rd-matrix")
-        pager = _pager_html(table_id, len(body_rows), RESULTS_PAGE_SIZE)
-
         hint = str(_card.get("hint") or "").strip() if isinstance(_card, dict) else ""
         hint_html = html.escape(hint) if hint else _DEFAULT_STATUS_HINT_HTML
         return (
-            f"<div class='results-wrap'><table id='{html.escape(table_id)}' class='status-matrix'>"
-            f"<thead>{header}</thead><tbody>{''.join(body_rows)}</tbody></table></div>"
-            f"{pager}"
+            f"{paged_table_html(table_id, 'status-matrix', header_html, body_rows)}"
             f"<p class='muted sm-hint'>{hint_html}</p>"
         )
 
@@ -526,14 +479,14 @@ class DeckCardRenderer:
         )
         tables = (
             "<div class='overview-split'>"
-            f"<div>{DeckCardRenderer._failure_table('Node', overview.get('failures_by_node') or [], 'node')}</div>"
-            f"<div>{DeckCardRenderer._failure_table('Group', overview.get('failures_by_group') or [], 'group')}</div>"
+            f"<div>{DeckCardRenderer._failure_table('Node', overview.get('failures_by_node') or [], 'node', _table_dom_id(_card, 'rd-by-node'))}</div>"
+            f"<div>{DeckCardRenderer._failure_table('Group', overview.get('failures_by_group') or [], 'group', _table_dom_id(_card, 'rd-by-group'))}</div>"
             "</div>"
         )
         return summary + tables
 
     @staticmethod
-    def _failure_table(title, rows, label_key):
+    def _failure_table(title, rows, label_key, table_id):
         if not rows:
             return "<p class='muted'>No results.</p>"
         max_fail = max(int(row.get("fail") or 0) for row in rows if isinstance(row, dict)) or 1
@@ -552,8 +505,8 @@ class DeckCardRenderer:
                 f"<td>{int(row.get('na') or 0)}</td>"
                 "</tr>"
             )
-        head = f"<tr><th>{html.escape(title)}</th><th>Fail</th><th>Pass</th><th>n/a</th></tr>"
-        return f"<table class='overview-table'><thead>{head}</thead><tbody>{''.join(body)}</tbody></table>"
+        header = f"<th>{html.escape(title)}</th><th>Fail</th><th>Pass</th><th>n/a</th>"
+        return paged_table_html(table_id, "overview-table", header, body)
 
     def render_metric_charts(self, _payload, _card, data):
         charts = data if isinstance(data, dict) else {}
@@ -682,7 +635,7 @@ class DeckCardRenderer:
     @staticmethod
     def _settings_panel(settings):
         nodes = _ordered_nodes(point for _metric, points in settings for point, _value in points)
-        head = "<tr><th></th>" + "".join(f"<th>{html.escape(node)}</th>" for node in nodes) + "</tr>"
+        header = "<th></th>" + "".join(f"<th>{html.escape(node)}</th>" for node in nodes)
         body = []
         for metric, points in settings:
             by_node = {str(point.get("node") or ""): value for point, value in points}
@@ -692,7 +645,8 @@ class DeckCardRenderer:
             body.append(f"<tr><th>{html.escape(str(metric.get('name') or 'metric'))}</th>{cells}</tr>")
         return (
             "<div class='chart-panel'><h3>Settings</h3>"
-            f"<table class='overview-table'><thead>{head}</thead><tbody>{''.join(body)}</tbody></table></div>"
+            f"{paged_table_html(_next_table_id('rd-settings'), 'overview-table', header, body)}"
+            "</div>"
         )
 
     def _series_group_panels(self, series):
@@ -797,7 +751,7 @@ class DeckCardRenderer:
         except (TypeError, ValueError):
             threshold = None
         direction = str(heat.get("direction") or "")
-        head = "<tr><th></th>" + "".join(f"<th>{html.escape(str(col))}</th>" for col in cols) + "</tr>"
+        header = "<th></th>" + "".join(f"<th>{html.escape(str(col))}</th>" for col in cols)
         body = []
         for index, row_name in enumerate(rows):
             row_values = values[index] if index < len(values) and isinstance(values[index], list) else []
@@ -815,7 +769,8 @@ class DeckCardRenderer:
         unit_html = f"<div class='chart-unit'>{html.escape(unit)}</div>" if unit else ""
         return (
             f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
-            f"<div class='hm-wrap'><table class='hm-table'>{head}{''.join(body)}</table></div>{unit_html}</div>"
+            f"{paged_table_html(_next_table_id('rd-hm'), 'hm-table', header, body, wrap_class='hm-wrap')}"
+            f"{unit_html}</div>"
         )
 
     @staticmethod
@@ -875,13 +830,14 @@ class DeckCardRenderer:
         if not rows:
             return ""
         headers = ["Collective", "Size", "Current", "Reference", "Delta %"]
-        body = "".join(
+        body = [
             "<tr>" + "".join(f"<td>{html.escape(str(v) if v is not None else '—')}</td>" for v in row) + "</tr>"
             for row in rows
-        )
+        ]
         head = "".join(f"<th>{html.escape(h)}</th>" for h in headers)
         title = card.get("title") or "Compare matrix"
-        return f"<h3>{html.escape(title)}</h3><table class='results-table'><tr>{head}</tr>{body}</table>"
+        table = paged_table_html(_table_dom_id(card, "rd-compare"), "results-table", head, body)
+        return f"<h3>{html.escape(title)}</h3>{table}"
 
     def card_renderers(self) -> dict[str, Any]:
         return {

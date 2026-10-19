@@ -241,6 +241,41 @@ class TestStatusMatrixCard(unittest.TestCase):
         self.assertIn("1–25 of 26", html)
         self.assertIn("n25", html)
 
+    def test_long_gate_matrix_pages(self):
+        rows = [
+            {"label": f"c{index}", "cell_id": str(index), "concurrency": index, "tiers": {"throughput": "pass"}}
+            for index in range(26)
+        ]
+        html = self.renderer.render_gate_matrix(
+            {"report": {"metric_tier_order": ["throughput"]}},
+            {"id": "gates"},
+            rows,
+        )
+        self.assertIn("rd-pager", html)
+        self.assertIn("1–25 of 26", html)
+        self.assertIn("<tr hidden>", html)
+
+    def test_short_gate_matrix_has_no_pager(self):
+        rows = [{"label": "c0", "cell_id": "0", "concurrency": 1, "tiers": {"throughput": "pass"}}]
+        html = self.renderer.render_gate_matrix(
+            {"report": {"metric_tier_order": ["throughput"]}},
+            {"id": "gates"},
+            rows,
+        )
+        self.assertNotIn("rd-pager", html)
+        self.assertIn("c0", html)
+
+    def test_long_overview_table_pages(self):
+        nodes = [{"node": f"n{index}", "pass": 1, "fail": 0, "na": 0} for index in range(26)]
+        html = self.renderer.render_status_overview(
+            {},
+            {"id": "overview"},
+            {"failures_by_node": nodes, "failures_by_group": []},
+        )
+        self.assertIn("rd-pager", html)
+        self.assertIn("1–25 of 26", html)
+        self.assertIn("n25", html)
+
 
 if __name__ == "__main__":
     unittest.main()

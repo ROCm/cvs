@@ -6,6 +6,8 @@ import html
 from dataclasses import dataclass
 from typing import Iterable, List, Mapping
 
+from cvs.lib.report.render.panel_shell import paged_table_html
+
 
 @dataclass(frozen=True)
 class GateMatrixConfig:
@@ -60,12 +62,12 @@ class GateMatrixRenderer:
 .results-table td:nth-child(-n+7) { text-align: left; }
 """
 
-    def render_table(self, gate_matrix: List[dict], tier_order: Iterable[str]) -> str:
+    def render_table(self, gate_matrix: List[dict], tier_order: Iterable[str], table_id: str = "rd-gates") -> str:
         tiers = tuple(tier_order) or self.config.tier_order
         if not gate_matrix:
             return "<p class='muted'>No gate matrix (no cells recorded).</p>"
-        header = "<tr><th>Cell</th>" + "".join(f"<th>{html.escape(t)}</th>" for t in tiers) + "</tr>"
-        rows = "".join(
+        header = "<th>Cell</th>" + "".join(f"<th>{html.escape(t)}</th>" for t in tiers)
+        rows = [
             f"<tr><td>{html.escape(row['label'])}</td>"
             + "".join(
                 f"<td class='matrix-{html.escape(row['tiers'].get(t, 'na'))}'>{html.escape(row['tiers'].get(t, 'na'))}</td>"
@@ -73,14 +75,16 @@ class GateMatrixRenderer:
             )
             + "</tr>"
             for row in gate_matrix
-        )
-        return f"<table class='matrix'>{header}{rows}</table>"
+        ]
+        return paged_table_html(table_id, "matrix", header, rows, wrap_class="matrix-wrap")
 
-    def render_heatmap(self, gate_matrix: List[dict], tier_order: Iterable[str]) -> str:
+    def render_heatmap(
+        self, gate_matrix: List[dict], tier_order: Iterable[str], table_id: str = "rd-gate-heat"
+    ) -> str:
         tiers = tuple(tier_order) or self.config.tier_order
         if not gate_matrix or not tiers:
             return ""
-        header = "<tr><th>Cell</th>" + "".join(f"<th>{html.escape(t)}</th>" for t in tiers) + "</tr>"
+        header = "<th>Cell</th>" + "".join(f"<th>{html.escape(t)}</th>" for t in tiers)
         rows = []
         for row in gate_matrix:
             cells = "".join(
@@ -89,10 +93,8 @@ class GateMatrixRenderer:
                 for t in tiers
             )
             rows.append(f"<tr><td class='heat-label'>{html.escape(row['label'])}</td>{cells}</tr>")
-        return (
-            "<p class='muted heat-caption'>Compact gate heatmap (hover for tier status)</p>"
-            f"<table class='matrix heatmap'>{header}{''.join(rows)}</table>"
-        )
+        table = paged_table_html(table_id, "matrix heatmap", header, rows, wrap_class="matrix-wrap")
+        return "<p class='muted heat-caption'>Compact gate heatmap (hover for tier status)</p>" + table
 
     @staticmethod
     def heatmap_css() -> str:
