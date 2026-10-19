@@ -3,7 +3,7 @@
 > [!NOTE]
 > **Documentation:** Full documentation is at [rocm.docs.amd.com/projects/cvs](https://rocm.docs.amd.com/projects/cvs/en/latest/) (search, table of contents, and how-to guides). Source files are in the `docs/` folder. To contribute, see [Contribute to ROCm documentation](https://rocm.docs.amd.com/en/latest/contribute/contributing.html).
 
-CVS is a collection of test suites that validate AMD AI clusters end to end — from single-node burn-in health checks to cluster-wide distributed training and inference. CVS requires only SSH connectivity to cluster nodes (no Slurm or Kubernetes).
+CVS is a collection of test suites that validate AMD AI clusters end to end — from single-node burn-in health checks to cluster-wide distributed training and inference. CVS runs over SSH from a head node, or as a Slurm/SPUR job step (`srun`/`spur run`, one task per node) without a hand-written cluster file.
 
 ## Quick install
 
@@ -24,6 +24,7 @@ cvs list
 | Install and upgrade | [Install](docs/getting-started/install.rst) · [Upgrade](docs/getting-started/upgrade.rst) |
 | Set up cluster and config files | [Set up test configs](docs/how-to/configure/test-suite-config/index.rst) · [Set up cluster file](docs/how-to/configure/cluster-config.rst) |
 | Run test suites | [Run tests](docs/how-to/run-tests/index.rst) |
+| Run under Slurm or SPUR | [Run under a scheduler](docs/how-to/run-under-scheduler.rst) |
 | JSON schemas | [Configuration files](docs/reference/configuration-files/index.rst) |
 | CLI options | [CLI reference](docs/reference/cli/cvs-run.rst) |
 

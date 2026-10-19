@@ -40,9 +40,10 @@ On **Spur or Slurm managed compute**:
   ``spur run --mpi=none`` or ``srun --mpi=none``. A bare allocation or a
   ``spur submit`` / ``sbatch`` script that never starts a step is not
   managed CVS (``SLURM_STEP_ID`` stays unset).
-- Use the managed cluster file produced from ``SPUR_NODES`` / HTTP agents.
+- CVS writes the managed cluster file (``cluster_agents.json``) from the job's node list; see :doc:`/how-to/run-under-scheduler`.
   ATOM still uses the ``orch`` fixture and the config ``container`` block;
   do not add nested ``spur run`` inside ``AtomJob``.
+- Pass ``--workspace`` (or set ``CVS_WORKSPACE``) to shared storage; managed runs fail without it.
 - Prove an existing single-node stem first, then run the ``mi355x_atom_*``
   stems (Kimi TP4, V4-Pro TP8).
 
@@ -51,18 +52,20 @@ Spur example:
 .. code:: bash
 
   spur run -A <account> -p <partition> \
-    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    -N 1 --ntasks-per-node 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
     bash -lc 'source ~/.cvs_venv/bin/activate &&
-      cvs run atom --config_file <atom-config.json> --html <report.html>'
+      cvs run atom --config_file <atom-config.json> --html <report.html> \
+        --workspace /shared/<user>/cvs'
 
 Slurm example:
 
 .. code:: bash
 
   srun -A <account> -p <partition> \
-    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    -N 1 --ntasks-per-node 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
     bash -lc 'source ~/.cvs_venv/bin/activate &&
-      cvs run atom --config_file <atom-config.json> --html <report.html>'
+      cvs run atom --config_file <atom-config.json> --html <report.html> \
+        --workspace /shared/<user>/cvs'
 
 In managed mode, ``cvs run`` is the **job step on the GPU node**.
 ``--cluster_file`` is optional. CVS builds the live cluster file from
@@ -78,11 +81,12 @@ bind ``PYTHON`` to ``.cvs_venv/bin/python3`` and then delete that path.
 
   # on login: git pull only. deactivate before make install.
   spur run -A <account> -p <partition> \
-    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    -N 1 --ntasks-per-node 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
     bash -lc 'export PATH=/usr/bin:/bin:$PATH
       cd ~/cvs && make install &&
       source ~/.cvs_venv/bin/activate &&
-      cvs run atom --config_file <atom-config.json> --html <report.html>'
+      cvs run atom --config_file <atom-config.json> --html <report.html> \
+        --workspace /shared/<user>/cvs'
 
 MI355X Spur stems (same job-step pattern)
 -----------------------------------------
@@ -122,11 +126,12 @@ fails with ``docker exec None``.
 .. code:: bash
 
   spur run -A <account> -p <partition> \
-    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    -N 1 --ntasks-per-node 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
     bash -lc 'source ~/.cvs_venv/bin/activate &&
       cvs run atom \
         --config_file ~/input/config_file/inference/atom/kimi355/mi355x_atom_kimi-k27-code_mxfp4_single.json \
-        --html ~/cvs_reports/atom_kimi.html --self-contained-html'
+        --html ~/cvs_reports/atom_kimi.html --self-contained-html \
+        --workspace /shared/<user>/cvs'
 
 Then the same command with
 ``~/input/config_file/inference/atom/pro355/mi355x_atom_deepseek-v4-pro_single.json``

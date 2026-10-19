@@ -6,9 +6,9 @@
 Run Cluster Validation Suite (CVS) test suites on AMD Instinct GPU clusters
 ***************************************************************************
 
-To run a test suite you need two files: a **cluster file** (``--cluster_file``) that describes your nodes and SSH access, and a **test suite config** (``--config_file``) with suite-specific settings. Set those up first — see :doc:`/how-to/configure/cluster-config` and :doc:`/how-to/configure/test-suite-config/index`. To choose the right template, see :doc:`/how-to/configure/test-suite-config/pick-config-file`.
+To run a test suite over SSH you need two files: a **cluster file** (``--cluster_file``) that describes your nodes and SSH access, and a **test suite config** (``--config_file``) with suite-specific settings. Set those up first — see :doc:`/how-to/configure/cluster-config` and :doc:`/how-to/configure/test-suite-config/index`. To choose the right template, see :doc:`/how-to/configure/test-suite-config/pick-config-file`. On Slurm or SPUR, launch ``cvs run`` as a job step instead and the cluster file becomes optional (see :doc:`/how-to/run-under-scheduler`).
 
-Then use ``cvs run`` on the head node to execute tests across the cluster.
+For SSH mode, use ``cvs run`` on the head node to execute tests across the cluster.
 
 List available suites
 =============================
@@ -70,6 +70,21 @@ CVS selects an execution backend in the cluster file:
 - **Container** — use when you cannot install or change ROCm on the hosts, or when you have a Docker image with a pinned ROCm version and framework dependencies (for example PyTorch) that you run on each node.
 
 See :doc:`/how-to/run-with-containers` for ``cluster_container.json``, image selection, and container run commands.
+
+Run under Slurm or SPUR
+=======================
+
+Launch one CVS task per node as a job step and give every task the same shared
+workspace. CVS generates the cluster file from the allocated node list; see
+:doc:`/how-to/run-under-scheduler` for setup and a complete quickstart.
+
+.. code:: bash
+
+  srun -A <account> -p <partition> -N 2 --ntasks-per-node 1 --exclusive --mpi=none \
+    bash -lc 'source <cvs-checkout>/.cvs_venv/bin/activate &&
+      cvs run host_configs_cvs test_check_os_release test_check_kernel_version \
+        --config_file /shared/<user>/cvs/host_config.json \
+        --workspace /shared/<user>/cvs'
 
 Common ``cvs run`` options
 ==========================
