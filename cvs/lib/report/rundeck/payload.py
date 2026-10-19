@@ -133,8 +133,11 @@ class RundeckPayloadBuilder:
         accuracy_metrics = extract_accuracy_from_lifecycle(lifecycle_report)
         # A status-matrix run has no sweep cells. The inference run card and an
         # empty results table would hide the node checks under datasets.
+        # A suite hook (MORI, ibperf) already built its own run card; health and
+        # ANC have none, so they use the node-check summary.
         if self.builder_id == "status_matrix":
-            run_card_display = active_data.get("run_card_display") or run_card_display
+            if not (self.profile_dict.get("hooks") or {}).get("run_card_display"):
+                run_card_display = active_data.get("run_card_display") or run_card_display
             results_table = active_data.get("results_table") or {}
             sweep_fields = {}
         else:
