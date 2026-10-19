@@ -62,7 +62,7 @@ class GateMatrixRenderer:
 .results-table td:nth-child(-n+7) { text-align: left; }
 """
 
-    def render_table(self, gate_matrix: List[dict], tier_order: Iterable[str], table_id: str = "rd-gates") -> str:
+    def render_table(self, gate_matrix: List[dict], tier_order: Iterable[str], table_id="rd-gates") -> str:
         tiers = tuple(tier_order) or self.config.tier_order
         if not gate_matrix:
             return "<p class='muted'>No gate matrix (no cells recorded).</p>"
@@ -78,9 +78,7 @@ class GateMatrixRenderer:
         ]
         return paged_table_html(table_id, "matrix", header, rows, wrap_class="matrix-wrap")
 
-    def render_heatmap(
-        self, gate_matrix: List[dict], tier_order: Iterable[str], table_id: str = "rd-gate-heat"
-    ) -> str:
+    def render_heatmap(self, gate_matrix: List[dict], tier_order: Iterable[str], table_id="rd-gate-heat") -> str:
         tiers = tuple(tier_order) or self.config.tier_order
         if not gate_matrix or not tiers:
             return ""
