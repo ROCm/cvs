@@ -668,7 +668,8 @@ def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dic
             linux_utils._sudo_n_or_denied(
                 'sudo -n /usr/bin/dmesg --time-format iso -x',
                 "egrep -v 'ALLOWED|DENIED' --color=never",
-            )
+            ),
+            print_console=False,
         )
         denied_nodes = [node for node, output in out_dict.items() if 'CVS_CMD_DENIED' in str(output)]
         readable = {node: output for node, output in out_dict.items() if node not in denied_nodes}
@@ -691,7 +692,8 @@ def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dic
         out_dict = orch.all.exec(
             linux_utils._sudo_n_or_denied(
                 'sudo -n /usr/bin/dmesg -T', "grep -i amdgpu | egrep -i 'fail|error' --color=never"
-            )
+            ),
+            print_console=False,
         )
     records, messages = host_configs_rundeck.eval_dmesg_driver(out_dict)
     _fail_messages(messages)
@@ -701,7 +703,8 @@ def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dic
         out_dict = orch.all.exec(
             linux_utils._sudo_n_or_denied(
                 'sudo -n /usr/bin/dmesg -T', "grep -i amdgpu | egrep -i 'reset|hang|traceback' --color=never"
-            )
+            ),
+            print_console=False,
         )
     records, messages = host_configs_rundeck.eval_dmesg_reset(out_dict)
     _fail_messages(messages)

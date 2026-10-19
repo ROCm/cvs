@@ -198,6 +198,25 @@ def parse_dmesg_nodes(output_dict, analysis_args=None):
     return parsed
 
 
+def _collect_kernel_log(phdl, cmd):
+    """Fetch kernel-log text without echoing it into the run log."""
+    # A historical backlog can contain millions of lines, and scans run repeatedly.
+    return phdl.exec(cmd, print_console=False)
+
+
+def _log_kernel_scan_summary(scan_name, output_dict, err_dict):
+    """Log host, fetched-line, and reported-match counts for one scan."""
+    line_count = sum(len(str(text or '').splitlines()) for text in output_dict.values())
+    match_count = sum(len(lines) for lines in err_dict.values())
+    log.info(
+        'kernel-log scan %s: %d host(s), %d line(s) scanned, %d match(es)',
+        scan_name,
+        len(output_dict),
+        line_count,
+        match_count,
+    )
+
+
 def verify_gpu_pcie_bus_width(phdl, expected_cards=None, gpu_pcie_speed=32, gpu_pcie_width=16):
     """
     Verify that all GPUs across nodes are operating at the expected PCIe link speed and width.
@@ -354,7 +373,7 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
     patterns are logged via log.warning but do not fail the test.
 
     Parameters:
-      phdl: pssh handle that can execute remote shell commands via .exec(cmd) -> dict.
+      phdl: pssh handle supporting exec(cmd, print_console=False) -> {node: str}.
       start_time_dict (dict): Mapping of node -> start timestamp string (human-readable, e.g., 'Mon Jan  2 03:04:05').
       end_time_dict (dict): Mapping of node -> end timestamp string (same format as start).
 
@@ -367,7 +386,7 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
 
     Assumptions:
       - err_patterns_dict and warn_patterns_dict are defined in scope: {name: regex_pattern, ...}.
-      - phdl.exec(cmd) returns a dict: { node: stdout_str }.
+      - phdl.exec(cmd, print_console=False) returns a dict: { node: stdout_str }.
       - Input timestamps contain a prefix matching the regex used here.
       - sudo is available and does not prompt for a password when running dmesg.
 
@@ -377,9 +396,8 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
         perf measurements from the run (e.g. RCCL bandwidth, training step time).
       - If start/end times are not aligned with dmesg -T formatting, the awk range may be empty.
       - Consider handling cases where regex extraction fails (no match) to avoid attribute errors.
+      - Logs one 'kernel-log scan' INFO summary line; the fetched log text itself is not logged.
     """
-
-    log.info('scan dmesg')
 
     if use_node_scraper_dmesg():
         # node-scraper path: collect full dmesg with ISO timestamps and let the
@@ -394,8 +412,12 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
             end_dt = _parse_cvs_time(end_time_dict[node0])
             if end_dt:
                 analysis_args['analysis_range_end'] = end_dt
-        output_dict = phdl.exec("sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
-        return _node_scraper_scan(output_dict, analysis_args=analysis_args, source_label='Dmesg')
+        output_dict = _collect_kernel_log(
+            phdl, "sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never"
+        )
+        err_dict = _node_scraper_scan(output_dict, analysis_args=analysis_args, source_label='Dmesg')
+        _log_kernel_scan_summary('verify_dmesg_for_errors', output_dict, err_dict)
+        return err_dict
 
     err_dict = {}
 
@@ -417,12 +439,13 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
     # Pull human-readable dmesg and slice the lines between start and end timestamps.
     # Filter out allowed/denied lines to reduce noise. Return is a dict keyed by node.
     if till_end_flag:
-        output_dict = phdl.exec(
-            f"sudo dmesg -T | sed -n '/{start_pattern}/,$p' | egrep -v 'ALLOWED|DENIED' --color=never"
+        output_dict = _collect_kernel_log(
+            phdl, f"sudo dmesg -T | sed -n '/{start_pattern}/,$p' | egrep -v 'ALLOWED|DENIED' --color=never"
         )
     else:
-        output_dict = phdl.exec(
-            f"sudo dmesg -T | awk '/{start_pattern}.*/,/{end_pattern}.*/' | egrep -v 'ALLOWED|DENIED' --color=never"
+        output_dict = _collect_kernel_log(
+            phdl,
+            f"sudo dmesg -T | awk '/{start_pattern}.*/,/{end_pattern}.*/' | egrep -v 'ALLOWED|DENIED' --color=never",
         )
     # print(output_dict)
     for node in output_dict.keys():
@@ -448,6 +471,7 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
                         f'-- perf numbers from this run may not be trustworthy'
                     )
 
+    _log_kernel_scan_summary('verify_dmesg_for_errors', output_dict, err_dict)
     return err_dict
 
 
@@ -458,7 +482,7 @@ def verify_nic_link_flap(phdl):
 
     Parameters:
       phdl: A pssh handle that supports:
-            - exec(cmd: str) -> dict[node: str, output: str]
+            - exec(cmd, print_console=False) -> {node: str}
             Used here to run dmesg on each node.
 
     Behavior:
@@ -480,6 +504,7 @@ def verify_nic_link_flap(phdl):
         Counter values are strings that can be cast to int.
       - fail_test is available in scope to signal a test failure (raises/exits).
       - sudo dmesg is allowed without prompting.
+      - Logs one 'kernel-log scan' INFO summary line; the fetched log text itself is not logged.
     """
 
     err_dict = {}
@@ -502,14 +527,19 @@ def verify_nic_link_flap(phdl):
                         err_dict[node].append(msg)
 
     # Scan dmesg for link-related messages across nodes
-    nic_dmesg_dict = phdl.exec('sudo dmesg -T | grep -i link --color=never')
+    nic_dmesg_dict = _collect_kernel_log(phdl, 'sudo dmesg -T | grep -i link --color=never')
 
     # If the kernel logs show link down messages, fail the test
+    # err_dict also holds the ethtool counter failures above; the kernel-log
+    # summary must count only what the dmesg scan itself found.
+    dmesg_err_dict = {node: [] for node in nic_dmesg_dict}
     for node in nic_dmesg_dict.keys():
         if re.search('NIC Link is down', nic_dmesg_dict[node], re.I):
             msg = f'ERROR !! NIC Link down dmesg logs seen on node {node}'
             fail_test(msg)
             err_dict[node].append(msg)
+            dmesg_err_dict[node].append(msg)
+    _log_kernel_scan_summary('verify_nic_link_flap', nic_dmesg_dict, dmesg_err_dict)
     return err_dict
 
 
@@ -604,7 +634,7 @@ def full_journalctl_scan(phdl, start_time_dict=None):
 
     Parameters:
       phdl: Host/process handle abstraction that supports:
-            - exec(cmd: str) -> dict[node: str, output: str]
+            - exec(cmd, print_console=False) -> {node: str}
               Executes the given command on all relevant nodes and returns a mapping
               of node identifier to the command's stdout.
       start_time_dict: Optional {node: cvs_time_str} (same format produced by
@@ -633,6 +663,7 @@ def full_journalctl_scan(phdl, start_time_dict=None):
         all matches per node if you prefer a single consolidated report.
       - The initial egrep reduces volume; ensure it doesn?t hide relevant lines
         not containing those keywords if broader scanning is desired.
+      - Logs one 'kernel-log scan' INFO summary line; the fetched log text itself is not logged.
     """
 
     since_clause = ''
@@ -648,16 +679,20 @@ def full_journalctl_scan(phdl, start_time_dict=None):
         # lossy egrep prefilter + per-line regex. --since (when available) is
         # applied server-side so journalctl itself, not just the analyzer,
         # avoids transferring/parsing the entire historic journal.
-        output_dict = phdl.exec(f'sudo journalctl -k -o short-iso{since_clause}')
-        return _node_scraper_scan(
+        output_dict = _collect_kernel_log(phdl, f'sudo journalctl -k -o short-iso{since_clause}')
+        err_dict = _node_scraper_scan(
             output_dict,
             analysis_args=cvs_dmesg_analysis_args(),
             source_label='journalctl',
         )
+        _log_kernel_scan_summary('full_journalctl_scan', output_dict, err_dict)
+        return err_dict
 
     err_dict = {}
     # Fetch kernel logs filtered for likely error indicators across nodes
-    out_dict = phdl.exec(f'sudo journalctl -k{since_clause} | egrep "amdgpu|interrupt|error|fail|timeout|fault"')
+    out_dict = _collect_kernel_log(
+        phdl, f'sudo journalctl -k{since_clause} | egrep "amdgpu|interrupt|error|fail|timeout|fault"'
+    )
     for node in out_dict.keys():
         err_dict[node] = []
 
@@ -672,6 +707,7 @@ def full_journalctl_scan(phdl, start_time_dict=None):
                     msg = f'ERROR - Failure pattern *** {line} *** seen in Dmesg on node {node}'
                     fail_test(msg)
                     err_dict[node].append(line)
+    _log_kernel_scan_summary('full_journalctl_scan', out_dict, err_dict)
     return err_dict
 
 
@@ -689,7 +725,7 @@ def full_dmesg_scan(
 
     Parameters:
       phdl: Host/process handle abstraction that supports:
-            - exec(cmd: str) -> dict[node: str]
+            - exec(cmd, print_console=False) -> {node: str}
               Executes the given command on all target nodes and returns a map of node to output.
 
     Behavior:
@@ -713,29 +749,32 @@ def full_dmesg_scan(
         consider accumulating them and failing once at the end.
       - Current filters are simple grep/egrep; adjust if they exclude useful diagnostics.
       - Consider adding case-insensitive filtering (e.g., grep -i) where appropriate.
+      - Logs one 'kernel-log scan' INFO summary line; the fetched log text itself is not logged.
     """
-
-    log.info('scan dmesg')
 
     if use_node_scraper_dmesg():
         # node-scraper path: collect with ISO timestamps + decoded level prefix
         # ('--time-format iso -x') so the analyzer's full pattern set and
         # timestamp extraction apply, then flag every detected error. CVS's
         # historical patterns are added as analyzer extensions.
-        output_dict = phdl.exec(
-            "sudo dmesg --time-format iso -x | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never"
+        output_dict = _collect_kernel_log(
+            phdl, "sudo dmesg --time-format iso -x | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never"
         )
-        return _node_scraper_scan(
+        err_dict = _node_scraper_scan(
             output_dict,
             analysis_args=cvs_dmesg_analysis_args(),
             source_label='Dmesg',
         )
+        _log_kernel_scan_summary('full_dmesg_scan', output_dict, err_dict)
+        return err_dict
 
     # Legacy path: historical err_patterns_dict regex over human-readable dmesg.
     err_dict = {}
 
     # Pull human-readable kernel logs and filter out common noise
-    output_dict = phdl.exec("sudo dmesg -T | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never")
+    output_dict = _collect_kernel_log(
+        phdl, "sudo dmesg -T | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never"
+    )
     for node in output_dict.keys():
         err_dict[node] = []
 
@@ -751,6 +790,7 @@ def full_dmesg_scan(
                     msg = f'ERROR - Failure pattern *** {line} *** seen in Dmesg on node {node}'
                     fail_test(msg)
                     err_dict[node].append(line)
+    _log_kernel_scan_summary('full_dmesg_scan', output_dict, err_dict)
     return err_dict
 
 
@@ -760,7 +800,7 @@ def verify_driver_errors(phdl):
 
     Parameters:
       phdl: Host/process handle abstraction that supports:
-            - exec(cmd: str) -> dict[node: str]
+            - exec(cmd, print_console=False) -> {node: str}
               Runs the given command across relevant nodes and returns a mapping
               from node identifier to the command's stdout.
 
@@ -784,16 +824,17 @@ def verify_driver_errors(phdl):
         to include node identification and perhaps sample matching lines for context.
       - The function fails fast (first detection); if you want a comprehensive report across nodes,
         aggregate matches and report them collectively before failing.
+      - Logs one 'kernel-log scan' INFO summary line; the fetched log text itself is not logged.
     """
-
-    log.info('Scan for AMD GPU driver errors')
 
     if use_node_scraper_dmesg():
         # node-scraper path: parse full dmesg, then report driver-related events
         # (amdgpu match or SW_DRIVER category) to preserve this check's
         # driver-error focus while reusing node-scraper's pattern table.
         err_dict = {}
-        output_dict = phdl.exec("sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
+        output_dict = _collect_kernel_log(
+            phdl, "sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never"
+        )
         for node in output_dict.keys():
             err_dict[node] = []
             events = node_scraper_adapter.parse_dmesg(
@@ -810,11 +851,14 @@ def verify_driver_errors(phdl):
                     msg = f'ERROR !! amdgpu driver errors detected in dmesg on node {node}: {line}'
                     fail_test(msg)
                     err_dict[node].append(line)
+        _log_kernel_scan_summary('verify_driver_errors', output_dict, err_dict)
         return err_dict
 
     err_dict = {}
     # Collect AMDGPU-related kernel messages filtered for likely error terms
-    out_dict = phdl.exec("sudo dmesg -T | grep -i amdgpu  | egrep -i 'fail|error|reset|hang|traceback' --color=never")
+    out_dict = _collect_kernel_log(
+        phdl, "sudo dmesg -T | grep -i amdgpu  | egrep -i 'fail|error|reset|hang|traceback' --color=never"
+    )
     for node in out_dict.keys():
         err_dict[node] = []
 
@@ -825,6 +869,7 @@ def verify_driver_errors(phdl):
                 msg = f'ERROR !! amdgpu driver errors detected in dmesg on node {node}: {line}'
                 fail_test(msg)
                 err_dict[node].append(line)
+    _log_kernel_scan_summary('verify_driver_errors', out_dict, err_dict)
     return err_dict
 
 

@@ -5,6 +5,7 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -23,6 +24,24 @@ def _orch(outputs):
     orch.hosts = list(outputs)
     orch.all.exec.return_value = outputs
     return orch
+
+
+class TestCheckDmesgDriverErrors(unittest.TestCase):
+    def setUp(self):
+        globals.error_list = []
+
+    def tearDown(self):
+        os.environ.pop('CVS_DMESG_PARSER', None)
+
+    def test_dmesg_reads_disable_console_echo(self):
+        for parser, expected_calls in (('legacy', 2), ('node-scraper', 1)):
+            with self.subTest(parser=parser):
+                os.environ['CVS_DMESG_PARSER'] = parser
+                orch = _orch({'n1': '\n', 'n2': '\n'})
+                suite.test_check_dmesg_driver_errors(orch, {}, None, {}, None)
+                self.assertEqual(orch.all.exec.call_count, expected_calls)
+                for call in orch.all.exec.call_args_list:
+                    self.assertIs(call.kwargs['print_console'], False)
 
 
 class TestCheckBeNicLinkSpeed(unittest.TestCase):
