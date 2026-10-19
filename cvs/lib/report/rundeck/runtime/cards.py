@@ -133,11 +133,6 @@ def _series_points(series):
     return points
 
 
-def _next_table_id(prefix):
-    DeckCardRenderer._table_seq = getattr(DeckCardRenderer, "_table_seq", 0) + 1
-    return f"{prefix}-{DeckCardRenderer._table_seq}"
-
-
 def _columns_from_card(card, headers, rows):
     wanted = card.get("columns") if isinstance(card, dict) else None
     if not isinstance(wanted, list) or not wanted:
@@ -173,6 +168,11 @@ class DeckCardRenderer:
     ):
         self._gate = gate_renderer or GateMatrixRenderer()
         self._charts = chart_renderer or SweepChartRenderer()
+        self._table_seq = 0
+
+    def _next_table_id(self, prefix):
+        self._table_seq += 1
+        return f"{prefix}-{self._table_seq}"
 
     def render_run_card(self, payload: dict, _card: dict, data: Any) -> str:
         # A card may bind its own run-card rows (e.g. datasets.status_matrix.
@@ -321,9 +321,7 @@ class DeckCardRenderer:
     def render_gate_heatmap(self, payload: dict, card: dict, data: Any) -> str:
         gate_matrix = data if isinstance(data, list) else payload.get("gate_matrix") or []
         tier_order = (payload.get("report") or {}).get("metric_tier_order") or ()
-        heatmap = self._gate.render_heatmap(
-            gate_matrix, tier_order, table_id=_table_dom_id(card, "rd-gate-heat")
-        )
+        heatmap = self._gate.render_heatmap(gate_matrix, tier_order, table_id=_table_dom_id(card, "rd-gate-heat"))
         return f"<div id='heatmap' class='heatmap-section'>{heatmap}</div>" if heatmap else ""
 
     def render_cell_cards(self, payload: dict, _card: dict, data: Any) -> str:
@@ -365,9 +363,7 @@ class DeckCardRenderer:
         if rows:
             table_id = _table_dom_id(card, "rd-table")
             header_html = "".join(f"<th>{html.escape(str(header))}</th>" for header in headers)
-            body = [
-                "<tr>" + "".join(f"<td>{html.escape(str(value))}</td>" for value in row) + "</tr>" for row in rows
-            ]
+            body = ["<tr>" + "".join(f"<td>{html.escape(str(value))}</td>" for value in row) + "</tr>" for row in rows]
             return paged_table_html(table_id, "results-table", header_html, body)
         inner = render_results_table_html(
             headers,
@@ -645,8 +641,7 @@ class DeckCardRenderer:
             f"<div class='chart-unit'>{html.escape(unit)}</div></div>"
         )
 
-    @staticmethod
-    def _settings_panel(settings):
+    def _settings_panel(self, settings):
         nodes = _ordered_nodes(point for _metric, points in settings for point, _value in points)
         header = "<th></th>" + "".join(f"<th>{html.escape(node)}</th>" for node in nodes)
         body = []
@@ -658,7 +653,7 @@ class DeckCardRenderer:
             body.append(f"<tr><th>{html.escape(str(metric.get('name') or 'metric'))}</th>{cells}</tr>")
         return (
             "<div class='chart-panel'><h3>Settings</h3>"
-            f"{paged_table_html(_next_table_id('rd-settings'), 'overview-table', header, body)}"
+            f"{paged_table_html(self._next_table_id('rd-settings'), 'overview-table', header, body)}"
             "</div>"
         )
 
@@ -742,8 +737,7 @@ class DeckCardRenderer:
             f"<div class='chart-unit'>{html.escape(unit)}</div></div>"
         )
 
-    @staticmethod
-    def _heatmap_panel(heat):
+    def _heatmap_panel(self, heat):
         rows = heat.get("rows") or []
         cols = heat.get("cols") or []
         values = heat.get("values") or []
@@ -782,7 +776,7 @@ class DeckCardRenderer:
         unit_html = f"<div class='chart-unit'>{html.escape(unit)}</div>" if unit else ""
         return (
             f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
-            f"{paged_table_html(_next_table_id('rd-hm'), 'hm-table', header, body, wrap_class='hm-wrap')}"
+            f"{paged_table_html(self._next_table_id('rd-hm'), 'hm-table', header, body, wrap_class='hm-wrap')}"
             f"{unit_html}</div>"
         )
 
@@ -926,6 +920,12 @@ class DeckCardRenderer:
 
 
 _DEFAULT_RENDERER = DeckCardRenderer()
+
+
+def reset_table_ids():
+    """Start table ids at 1 for the deck about to be rendered."""
+    _DEFAULT_RENDERER._table_seq = 0
+
 
 CARD_RENDERERS = _DEFAULT_RENDERER.card_renderers()
 

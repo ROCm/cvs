@@ -2,7 +2,7 @@
 
 import unittest
 
-from cvs.lib.report.rundeck.runtime.cards import DeckCardRenderer
+from cvs.lib.report.rundeck.runtime.cards import DeckCardRenderer, _DEFAULT_RENDERER, reset_table_ids
 
 
 def _series_data(names):
@@ -44,6 +44,16 @@ class TestRenderLineChart(unittest.TestCase):
     def test_no_series_data_returns_muted_message(self):
         html_out = self.renderer.render_line_chart({}, self.card, {"charts": {}})
         self.assertEqual(html_out, "<p class='muted'>No series data.</p>")
+
+
+class TestTableIds(unittest.TestCase):
+    def test_ids_restart_for_each_report(self):
+        reset_table_ids()
+        self.assertEqual(_DEFAULT_RENDERER._next_table_id("rd-hm"), "rd-hm-1")
+        self.assertEqual(_DEFAULT_RENDERER._next_table_id("rd-settings"), "rd-settings-2")
+        reset_table_ids()
+        self.assertEqual(_DEFAULT_RENDERER._next_table_id("rd-hm"), "rd-hm-1")
+        reset_table_ids()
 
 
 if __name__ == "__main__":
