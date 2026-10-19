@@ -10,9 +10,10 @@ from __future__ import annotations
 import html
 
 from cvs.lib.report.formatting import status_badge_html
-from cvs.lib.report.rundeck.runtime.theme import report_css
+from cvs.lib.report.render.panel_shell import page_long_tables
 from cvs.lib.report.rundeck.payload import default_deck_cards
 from cvs.lib.report.rundeck.runtime.cards import close_gate_matrix_section, render_card
+from cvs.lib.report.rundeck.runtime.theme import report_css
 
 
 def _cards_from_payload(payload: dict) -> list[dict]:
@@ -95,7 +96,7 @@ def render_rundeck_html(payload: dict) -> str:
         )
 
     nav = _build_nav(nav_items, viewer_name)
-    return f"""<!DOCTYPE html>
+    document = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>{html.escape(report.get('title', 'Run Deck'))} &mdash; {html.escape(str(model_label))}</title>
 <style>{report_css()}</style></head><body><div class="wrap">
@@ -105,3 +106,4 @@ def render_rundeck_html(payload: dict) -> str:
 {incompatibility}
 {''.join(sections)}
 <footer class="page-foot">{html.escape(report.get('footer', ''))}</footer></div></body></html>"""
+    return page_long_tables(document)
