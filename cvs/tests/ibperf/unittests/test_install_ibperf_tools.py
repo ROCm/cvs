@@ -47,9 +47,19 @@ class TestInstallIbPerf(unittest.TestCase):
     def test_missing_runtime_deps_fail_naming_node_before_build(self):
         with self.assertRaises(BaseException) as ctx:
             self._run({'install_system_packages': 'False'}, {'n2': 'MISSING:numactl\nMISSING:librdmacm\n'})
-        self.assertIn('node n2: numactl, librdmacm', str(ctx.exception))
+        self.assertIn(
+            'node n2: numactl, librdmacm; install them or set install_system_packages to True', str(ctx.exception)
+        )
         self.assertNotIn('node n1', str(ctx.exception))
         self.assertFalse(any('make' in c for c in self.head_cmds))
+
+    def test_missing_runtime_deps_in_job_step_say_install_outside_step(self):
+        for flag in ('False', 'True'):
+            with self.subTest(flag=flag):
+                with self.assertRaises(BaseException) as ctx:
+                    self._run({'install_system_packages': flag}, {'n1': 'MISSING:numactl\n'}, managed=True)
+                self.assertIn('node n1: numactl; install them outside the job step', str(ctx.exception))
+                self.assertNotIn('install_system_packages', str(ctx.exception))
 
     def test_opt_in_runs_apt_except_in_managed_job_step(self):
         self._run({'install_system_packages': 'true'})

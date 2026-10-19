@@ -37,8 +37,9 @@ def test_install_ib_perf(orch, config_dict):
         install_dir = config_dict['install_dir']
         log.info('Installing perftest to %s', install_dir)
         orch.head.exec(f'mkdir -p {install_dir}', print_console=False)
+        managed = is_managed_compute()
         install_system_packages = re.search('true', config_dict.get('install_system_packages', 'False'), re.I)
-        if install_system_packages and is_managed_compute():
+        if install_system_packages and managed:
             log.warning('Managed Spur/Slurm step: skipping apt install of perftest dependencies')
             install_system_packages = False
         if install_system_packages:
@@ -57,13 +58,14 @@ def test_install_ib_perf(orch, config_dict):
             orch.all.exec('sudo apt install -y libpci-dev', print_console=False)
             orch.all.exec('sudo apt install -y numactl', print_console=False)
         else:
+            if managed:
+                hint = 'install them outside the job step, e.g. in the node image or before allocation'
+            else:
+                hint = 'install them or set install_system_packages to True'
             for node, out in orch.all.exec(RUNTIME_DEPS_CHECK, print_console=False).items():
                 missing = re.findall(r'MISSING:(\S+)', out)
                 if missing:
-                    fail_test(
-                        f'perftest runtime dependencies missing on node {node}: {", ".join(missing)}; '
-                        'install them or set install_system_packages to True'
-                    )
+                    fail_test(f'perftest runtime dependencies missing on node {node}: {", ".join(missing)}; {hint}')
             update_test_result()
         orch.head.exec(f'cd {install_dir}; git clone https://github.com/linux-rdma/perftest', print_console=False)
         orch.head.exec(f'cd {install_dir}/perftest; ./autogen.sh', timeout=100, print_console=False)
