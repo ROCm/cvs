@@ -204,7 +204,8 @@ function $(id) { return document.getElementById(id); }
 
 function esc(value) {
   return String(value == null ? "" : value)
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 function num(value) {

@@ -38,6 +38,7 @@ class TestStatusMatrixViewer(unittest.TestCase):
             self.assertIn("Health viewer", text)
             self.assertIn('<a class="to-top" href="#top">Go to top</a>', text)
             self.assertIn("function pageLongTables", text)
+            self.assertIn(".replace(/'/g, \"&#39;\")", text)
             self.assertNotIn("__PAGE_TABLES_JS__", text)
             self.assertIn("embedded-report-json", text)
             self.assertIn('"rtotal"', text)
