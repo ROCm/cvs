@@ -158,6 +158,14 @@ class RcclVerifier:
             parts.append(f'cycle={cycle}')
         return f" [{', '.join(parts)}]" if parts else ''
 
+    @staticmethod
+    def split_series_label(name):
+        """Invert _series_label on a series name: return (base name, data type or None)."""
+        match = re.fullmatch(r'(?P<base>.+?) \[type=(?P<dtype>[^,\]]+)(?:, cycle=[^\]]+)?\]', str(name))
+        if not match:
+            return str(name), None
+        return match.group('base'), match.group('dtype')
+
     def _check_dip(self, check_name, field, metric, value_name, record_key, unit):
         tolerance = 0.95
         if not self.expected:
@@ -223,13 +231,21 @@ class RcclVerifier:
         return 'SEVERE DATA CORRUPTION' in s or "'#wrong'" in s
 
 
-def _mean_graph_point(rows):
+def _graph_metrics(row):
+    """Return (busBw, algBw, time) as floats, or None when any is missing or not numeric."""
+    try:
+        return float(row['busBw']), float(row['algBw']), float(row['time'])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _mean_graph_point(points):
     """Average one (series, type, size) across rccl-tests cycles, as aggregate_results does."""
-    count = len(rows)
+    count = len(points)
     return {
-        'bus_bw': sum(float(row['busBw']) for row in rows) / count,
-        'alg_bw': sum(float(row['algBw']) for row in rows) / count,
-        'time': sum(float(row['time']) for row in rows) / count,
+        'bus_bw': sum(point[0] for point in points) / count,
+        'alg_bw': sum(point[1] for point in points) / count,
+        'time': sum(point[2] for point in points) / count,
     }
 
 
@@ -243,16 +259,27 @@ def convert_to_graph_dict(result_dict):
     graph_dict = {}
     for series_name, rows in result_dict.items():
         by_dtype = {}
+        dropped = 0
         for row in rows or []:
             # RcclVerifier checks out-of-place rows for alltoall and in-place rows otherwise; chart the same rows.
             collective = str(row.get('name') or series_name)
             in_place = 0 if re.search('alltoall|all_to_all', collective, re.I) else 1
             if row.get('inPlace') != in_place:
                 continue
-            by_dtype.setdefault(row.get('type'), {}).setdefault(row['size'], []).append(row)
+            point = _graph_metrics(row)
+            if point is None:
+                dropped += 1
+                continue
+            by_dtype.setdefault(row.get('type'), {}).setdefault(row['size'], []).append(point)
+        if dropped:
+            log.warning(
+                'Dropped %d RCCL rows with missing or non-numeric busBw/algBw/time from graph series %s',
+                dropped,
+                series_name,
+            )
         if not by_dtype:
             if rows:
-                log.warning('No verified-placement RCCL rows for %s; its graph series is empty', series_name)
+                log.warning('No usable verified-placement RCCL rows for %s; its graph series is empty', series_name)
             graph_dict[series_name] = {}
             continue
         for dtype, sizes in by_dtype.items():

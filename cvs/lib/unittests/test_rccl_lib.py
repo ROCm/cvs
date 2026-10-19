@@ -499,6 +499,56 @@ class TestRcclLib(unittest.TestCase):
         del row['inPlace']
         self.assertEqual(rccl_lib.convert_to_graph_dict({'all_reduce_perf': [row]}), {'all_reduce_perf': {}})
 
+    def test_graph_drops_non_numeric_metric_rows(self):
+        for field, value in (('busBw', 'N/A'), ('algBw', None), ('time', '')):
+            with self.subTest(field=field, value=value):
+                row = self._graph_row(1024, 'float', 1, 1.0)
+                row[field] = value
+                with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+                    graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': [row]})
+                self.assertEqual(graph, {'all_reduce_perf': {}})
+                self.assertEqual(len(captured.output), 2)
+                self.assertIn('Dropped 1 RCCL rows', captured.output[0])
+                self.assertIn('all_reduce_perf', captured.output[0])
+                self.assertIn('No usable verified-placement RCCL rows for all_reduce_perf', captured.output[1])
+
+    def test_graph_drops_rows_missing_a_metric(self):
+        for field in ('busBw', 'algBw', 'time'):
+            with self.subTest(field=field):
+                row = self._graph_row(1024, 'float', 1, 1.0)
+                del row[field]
+                with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+                    graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': [row]})
+                self.assertEqual(graph, {'all_reduce_perf': {}})
+                self.assertIn('Dropped 1 RCCL rows', captured.output[0])
+
+    def test_graph_averages_good_rows_around_bad_ones(self):
+        good = [self._graph_row(1024, 'float', 1, bus_bw, cycle=cycle) for cycle, bus_bw in enumerate((100.0, 120.0))]
+        bad_value = self._graph_row(1024, 'float', 1, 1.0, cycle=2)
+        bad_value['busBw'] = 'nan-ish'
+        missing = self._graph_row(2048, 'float', 1, 1.0)
+        del missing['time']
+        unchecked_placement = self._graph_row(1024, 'float', 0, 1.0)
+        unchecked_placement['busBw'] = 'ignored'
+        rows = [good[0], bad_value, missing, unchecked_placement, good[1], self._graph_row(2048, 'float', 1, 300.0)]
+        with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+            graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': rows})
+        self.assertEqual(list(graph), ['all_reduce_perf'])
+        self.assertEqual(graph['all_reduce_perf'][1024], {'bus_bw': 110.0, 'alg_bw': 55.0, 'time': 1.0})
+        self.assertEqual(graph['all_reduce_perf'][2048]['bus_bw'], 300.0)
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn('Dropped 2 RCCL rows', captured.output[0])
+
+    def test_split_series_label_inverts_series_label(self):
+        for base in ('all_reduce_perf', 'Phase1 n0 <-> n1', 'all_reduce_perf-NCCL_ALGO=Ring NCCL_PROTO=Simple'):
+            for dtype in ('float', 'bfloat16'):
+                for cycle in (None, 2):
+                    with self.subTest(base=base, dtype=dtype, cycle=cycle):
+                        name = f'{base}{rccl_lib.RcclVerifier._series_label(dtype, cycle)}'
+                        self.assertEqual(rccl_lib.RcclVerifier.split_series_label(name), (base, dtype))
+            with self.subTest(base=base, plain=True):
+                self.assertEqual(rccl_lib.RcclVerifier.split_series_label(base), (base, None))
+
     def test_graph_matches_aggregated_verification_rows(self):
         for series, name, verified_placement in (
             ('all_reduce_perf', 'AllReduce', 1),
