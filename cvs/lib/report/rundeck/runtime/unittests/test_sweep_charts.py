@@ -3,6 +3,7 @@
 import unittest
 
 from cvs.lib.report.rundeck.runtime.sweep_charts import SweepChartRenderer
+from cvs.lib.report.rundeck.runtime.theme import report_css
 
 
 class TestSweepChartRenderer(unittest.TestCase):
@@ -47,6 +48,13 @@ class TestSweepChartRenderer(unittest.TestCase):
                 self.assertIn("&lt;size&gt;", doc)
                 self.assertIn("&lt;unit&gt;", doc)
                 self.assertNotIn("<size>", doc)
+
+    def test_short_chart_tick_lines_still_wrap(self):
+        css = report_css()
+        start = css.index(".chart-xlbl-line")
+        rule = css[start : css.index("}", start)]
+        self.assertIn("overflow-wrap: anywhere", rule)
+        self.assertNotIn("text-overflow", rule)
 
 
 if __name__ == "__main__":
