@@ -107,6 +107,14 @@ class TestAgfhcDeck(unittest.TestCase):
         self.assertNotIn("Gate matrix", self.html)
         self.assertNotIn("hover for tier status", self.html)
 
+    def test_sidecar_publishes_the_health_results(self):
+        self.assertEqual(self.payload["results_table"]["rows"][0][2], "hbm_bw")
+        self.assertEqual(self.payload["run_card_display"][0][0], "Cluster")
+        self.assertEqual(self.payload["report"]["session_lifecycle_labels"][0], "hbm")
+        self.assertNotIn("headline_metric", self.payload["report"])
+        self.assertNotIn("cells", self.payload)
+        self.assertNotIn("gate_matrix", self.payload)
+
 
 if __name__ == "__main__":
     unittest.main()

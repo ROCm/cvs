@@ -63,6 +63,10 @@ class TestStatusMatrixDeck(unittest.TestCase):
         )
         self.assertEqual(table["rows"][0][2], "oblex_remix2")
         self.assertEqual(table["rows"][0][-2:], ["5", "1"])
+        self.assertEqual(self.payload["results_table"], table)
+        self.assertEqual(self.payload["run_card_display"][0][0], "Cluster")
+        self.assertNotIn("headline_metric", self.payload["report"])
+        self.assertNotIn("cells", self.payload)
         self.assertIn("Full results", self.html)
         self.assertIn("<th>Passed</th>", self.html)
         self.assertIn("<th>Failed</th>", self.html)
@@ -81,6 +85,8 @@ class TestStatusMatrixDeck(unittest.TestCase):
         # The regression: a missing profile/binding would produce an empty deck.
         self.assertIn("10.0.0.1_n1", self.html)
         self.assertGreater(len(self.html), 2000)
+        self.assertIn('id="top"', self.html)
+        self.assertIn('<a class="to-top" href="#top">Go to top</a>', self.html)
 
 
 if __name__ == "__main__":

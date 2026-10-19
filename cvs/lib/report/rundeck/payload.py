@@ -74,6 +74,29 @@ class RundeckPayloadBuilder:
         suite_stem = store.get("suite_stem") if isinstance(store, dict) else None
         return subtitle.replace("{mode}", self._training_mode_label(variant_config, suite_stem))
 
+    def _report_block(self, variant_config):
+        report = {
+            "title": self.config.title,
+            "subtitle": self._resolve_subtitle(variant_config),
+            "footer": self.config.footer,
+        }
+        if self.builder_id == "status_matrix":
+            labels = (self.profile_dict.get("lifecycle") or {}).get("session_labels")
+            if labels:
+                report["session_lifecycle_labels"] = list(labels)
+            return report
+        report.update(
+            {
+                "metric_tier_order": self.config.metric_tier_order,
+                "headline_metric": self.config.headline_metric,
+                "sweep_ttft_metric": self.config.sweep_ttft_metric,
+                "session_lifecycle_labels": self.config.session_lifecycle_labels,
+                "cell_lifecycle_labels": self.config.cell_lifecycle_labels,
+                "expand_lifecycle_labels": self.config.expand_lifecycle_labels,
+            }
+        )
+        return report
+
     def build(self) -> dict[str, Any]:
         datasets = self._build_datasets()
         prov = self._provenance()
@@ -108,6 +131,21 @@ class RundeckPayloadBuilder:
 
         lifecycle = LifecycleAggregator.aggregate(lifecycle_report, self.config.session_lifecycle_labels)
         accuracy_metrics = extract_accuracy_from_lifecycle(lifecycle_report)
+        # A status-matrix run has no sweep cells. The inference run card and an
+        # empty results table would hide the node checks under datasets.
+        if self.builder_id == "status_matrix":
+            run_card_display = active_data.get("run_card_display") or run_card_display
+            results_table = active_data.get("results_table") or {}
+            sweep_fields = {}
+        else:
+            results_table = sweep_data.get("results_table") or datasets.get("series", {}).get("results_table") or {}
+            sweep_fields = {
+                "cells": cells,
+                "chart_series": sweep_data.get("chart_series") or {},
+                "chart_config": sweep_data.get("chart_config") or [],
+                "sweep_summaries": sweep_data.get("sweep_summaries") or [],
+                "gate_matrix": sweep_data.get("gate_matrix") or [],
+            }
 
         payload = {
             "schema_version": 1,
@@ -116,28 +154,14 @@ class RundeckPayloadBuilder:
             "cvs_version": self.ctx.cvs_version,
             "overall_status": active_data.get("overall_status")
             or ("record" if self.builder_id not in ("sweep", "training_sweep") else "na"),
-            "report": {
-                "title": self.config.title,
-                "subtitle": self._resolve_subtitle(variant_config),
-                "footer": self.config.footer,
-                "metric_tier_order": self.config.metric_tier_order,
-                "headline_metric": self.config.headline_metric,
-                "sweep_ttft_metric": self.config.sweep_ttft_metric,
-                "session_lifecycle_labels": self.config.session_lifecycle_labels,
-                "cell_lifecycle_labels": self.config.cell_lifecycle_labels,
-                "expand_lifecycle_labels": self.config.expand_lifecycle_labels,
-            },
+            "report": self._report_block(variant_config),
             "run_card_display": run_card_display,
             "run_card_notes": run_card_notes,
             "provenance": prov,
             "lifecycle": lifecycle,
             "accuracy": accuracy_metrics,
-            "cells": cells,
-            "chart_series": sweep_data.get("chart_series") or {},
-            "chart_config": sweep_data.get("chart_config") or [],
-            "sweep_summaries": sweep_data.get("sweep_summaries") or [],
-            "gate_matrix": sweep_data.get("gate_matrix") or [],
-            "results_table": sweep_data.get("results_table") or datasets.get("series", {}).get("results_table") or {},
+            **sweep_fields,
+            "results_table": results_table,
             "panels": panels,
             "datasets": datasets,
             "deck_profile": self.profile_dict or {"cards": default_deck_cards()},
