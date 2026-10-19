@@ -3,7 +3,6 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from cvs.lib import globals
 from cvs.tests.ibperf import install_ibperf_tools
 
 _NODES = ('n1', 'n2')
@@ -15,9 +14,6 @@ class TestInstallIbPerf(unittest.TestCase):
             patcher = patch.object(install_ibperf_tools.ibperf_lib, name)
             patcher.start()
             self.addCleanup(patcher.stop)
-        patcher = patch.object(globals, 'error_list', [])
-        patcher.start()
-        self.addCleanup(patcher.stop)
 
     def _run(self, config, deps_out=None, managed=False):
         deps_out = deps_out or {}

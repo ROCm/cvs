@@ -25,8 +25,8 @@ rccl_res_dict = {}
 
 RUNTIME_DEPS_CHECK = (
     'command -v numactl >/dev/null || echo MISSING:numactl; '
-    'ldconfig -p | grep -q libibverbs.so.1 || echo MISSING:libibverbs; '
-    'ldconfig -p | grep -q librdmacm.so.1 || echo MISSING:librdmacm'
+    '/sbin/ldconfig -p | grep -q libibverbs.so.1 || echo MISSING:libibverbs; '
+    '/sbin/ldconfig -p | grep -q librdmacm.so.1 || echo MISSING:librdmacm'
 )
 
 
@@ -42,7 +42,6 @@ def test_install_ib_perf(orch, config_dict):
             log.warning('Managed Spur/Slurm step: skipping apt install of perftest dependencies')
             install_system_packages = False
         if install_system_packages:
-            log.warning('install_system_packages is true: running apt on every node')
             orch.all.exec('sudo apt update -y', timeout=200, print_console=False)
             orch.all.exec(
                 'sudo apt install -y git build-essential autoconf automake libtool pkg-config',
