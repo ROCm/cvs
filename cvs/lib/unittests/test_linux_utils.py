@@ -417,13 +417,26 @@ class TestGetRdmaNicDictAllStates(unittest.TestCase):
         result = self._parse('link weird/1 state\nlink rdma0/1 state ACTIVE physical_state LINK_UP netdev eth0')
         self.assertEqual(list(result), ['rdma0'])
 
-    def test_ib_link_without_netdev_is_skipped(self):
+    def test_ib_link_without_netdev_is_parsed(self):
         output = (
             'link mlx5_0/1 subnet_prefix fe80:0000:0000:0000 lid 1 sm_lid 1 lmc 0 '
             'state ACTIVE physical_state LINK_UP\n'
             'link rdma0/1 state ACTIVE physical_state LINK_UP netdev eth0'
         )
-        self.assertEqual(list(self._parse(output)), ['rdma0'])
+        result = self._parse(output)
+        self.assertEqual(list(result), ['mlx5_0', 'rdma0'])
+        self.assertEqual(
+            result['mlx5_0'],
+            {'port': '1', 'device_status': 'ACTIVE', 'link_status': 'LINK_UP', 'eth_device': None},
+        )
+
+    def test_ib_link_active_only(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            'n1': 'link mlx5_0/1 subnet_prefix fe80:0000:0000:0000 lid 1 sm_lid 1 lmc 0 state ACTIVE physical_state LINK_UP'
+        }
+        result = linux_utils.get_active_rdma_nic_dict(phdl)['n1']
+        self.assertIsNone(result['mlx5_0']['eth_device'])
 
     def test_underscore_netdev(self):
         result = self._parse('link rdma0/1 state ACTIVE physical_state LINK_UP netdev tw_eth0')
