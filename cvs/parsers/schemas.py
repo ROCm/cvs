@@ -560,6 +560,13 @@ class PytorchXditWan22Benchmarks(BaseModel):
         description="Frames uniformly sampled from the WAN MP4 for CLIPScore. Defaults to 8 when omitted.",
     )
     compile: bool = Field(default=True, description="Whether to use torch.compile for optimization")
+    gemm_quantization: Optional[str] = Field(
+        default=None,
+        description=(
+            "xFuser transformer GEMM profile for the xfuser_example launcher, such as fp8. "
+            "Omit to keep the checkpoint dtype. The container xFuser build must accept gemm_quantization."
+        ),
+    )
     torchrun_nproc: int = Field(default=8, ge=1, description="Number of processes for torchrun (usually num GPUs)")
     ulysses_size: int = Field(default=8, ge=1, description="Ulysses parallelism degree")
     ring_size: int = Field(default=1, ge=1, description="Ring parallelism degree")
