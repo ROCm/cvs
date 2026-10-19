@@ -433,6 +433,18 @@ class TestGetIbBwPps(unittest.TestCase):
         self.assertEqual(phdl.exec.call_count, 2)
         self.assertTrue(any('perftest exited without a result' in c.args[0] for c in mock_fail.call_args_list))
 
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_nonzero_exit_fails_even_with_result_row(self, mock_fail):
+        phdl = MagicMock()
+        phdl.exec.side_effect = [
+            {'node1': BW_LOG + 'perftest_rc=0\n', 'node2': BW_LOG},
+            {'node1': BW_LOG + 'perftest_rc=0\n', 'node2': BW_LOG + 'perftest_rc=1\n'},
+        ]
+
+        ibperf_lib.get_ib_bw_pps(phdl, 8192, 'cat /tmp/ib_perf_3_logs', instance_no=3, running=['node2'])
+
+        mock_fail.assert_called_once_with('perftest instance 3 on node node2 exited with code 1')
+
 
 class TestGetPerftestConfigureCmd(unittest.TestCase):
     def test_includes_rocm_dmabuf_by_default(self):
@@ -565,6 +577,21 @@ class TestReadLatencyResults(unittest.TestCase):
         mock_fail.assert_called_once()
         self.assertIn('server', mock_fail.call_args.args[0])
 
+    def test_read_latency_server_nonzero_exit_fails(self):
+        server_log = 'allocated 65536 bytes of GPU buffer\npartial line'
+        client_log = 'allocated 65536 bytes of GPU buffer\n8192 1000 10.66 13.76 10.97 10.98 0.10 12.01 13.76\n'
+        phdl = MagicMock()
+        phdl.exec.side_effect = [
+            {'server': server_log, 'client': client_log},
+            {'server': server_log + 'perftest_rc=2\n', 'client': client_log},
+        ]
+        with patch.object(ibperf_lib, 'fail_test') as mock_fail:
+            ibperf_lib.get_ib_lat_numb(
+                phdl, 8192, 'cat /tmp/ib_perf_0_logs', instance_no=0, result_nodes=['client'], running=['server']
+            )
+
+        mock_fail.assert_called_once_with('perftest instance 0 on node server exited with code 2')
+
 
 class IbPerfCommandFixtures:
     def setUp(self):
@@ -622,26 +649,26 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
         self.run_latency(use_dmabuf=False, hip_dev_dict=hip_dev_dict)
         self.assertEqual(
             self.commands()[0],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=1'
-            ' -x 3 -F -p 1516 -s 64 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=1'
+            ' -x 3 -F -p 1516 -s 64; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
         self.assertEqual(
             self.commands()[1],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=1'
-            ' -x 3 -F -p 1516 -s 64 node1 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=1'
+            ' -x 3 -F -p 1516 -s 64 node1; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
 
     def test_dmabuf_flag_added_when_enabled(self):
         self.run_latency(use_dmabuf=True)
         self.assertEqual(
             self.commands()[0],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=0'
-            ' --use_rocm_dmabuf -x 3 -F -p 1516 -s 64 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=0'
+            ' --use_rocm_dmabuf -x 3 -F -p 1516 -s 64; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
         self.assertEqual(
             self.commands()[1],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=0'
-            ' --use_rocm_dmabuf -x 3 -F -p 1516 -s 64 node1 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=0'
+            ' --use_rocm_dmabuf -x 3 -F -p 1516 -s 64 node1; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
 
     def test_dmabuf_defaults_on(self):
@@ -670,14 +697,14 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
         self.run_bandwidth(use_dmabuf=False)
         self.assertEqual(
             self.commands()[0],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
-            ' -x 3 --report_gbits -b -F -D 60 -p 1516 -s 64 -q 8 > /tmp/ib_perf_0_logs 2>&1 &"'
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
+            ' -x 3 --report_gbits -b -F -D 60 -p 1516 -s 64 -q 8; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &"'
             ' >> /tmp/ib_cmds_file.txt',
         )
         self.assertEqual(
             self.commands()[1],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
-            ' -x 3 --report_gbits -b -F -D 60 -p 1516 -s 64 -q 8 node1 > /tmp/ib_perf_0_logs 2>&1 &"'
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
+            ' -x 3 --report_gbits -b -F -D 60 -p 1516 -s 64 -q 8 node1; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &"'
             ' >> /tmp/ib_cmds_file.txt',
         )
 
@@ -685,16 +712,30 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
         self.run_bandwidth(use_dmabuf=True)
         self.assertEqual(
             self.commands()[0],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
             ' --use_rocm_dmabuf -x 3 --report_gbits -b -F -D 60 -p 1516 -s 64 -q 8'
-            ' > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            '; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
         self.assertEqual(
             self.commands()[1],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
             ' --use_rocm_dmabuf -x 3 --report_gbits -b -F -D 60 -p 1516 -s 64 -q 8 node1'
-            ' > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            '; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
+
+
+class TestResultReaderException(IbPerfCommandFixtures, unittest.TestCase):
+    def test_instance_lost_to_exception_fails_test(self):
+        for reader, run in (('get_ib_bw_pps', self.run_bandwidth), ('get_ib_lat_numb', self.run_latency)):
+            with (
+                self.subTest(reader=reader),
+                patch.object(ibperf_lib, reader, side_effect=[KeyError('node2')] + [{}] * 7),
+                patch.object(ibperf_lib, 'fail_test') as mock_fail,
+                self.assertLogs(ibperf_lib.log, 'ERROR'),
+            ):
+                run()
+                mock_fail.assert_called_once()
+                self.assertIn('instance=0', mock_fail.call_args.args[0])
 
 
 class TestProbePerftestDmabufSupport(unittest.TestCase):
@@ -831,13 +872,13 @@ class TestRunIbPerfBwHipDevice(unittest.TestCase):
         server_cmd, client_cmd = phdl.exec_cmd_list.call_args_list[1].args[0]
         self.assertEqual(
             server_cmd,
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=1'
-            ' -x 3 --report_gbits -b -F -D 10 -p 1516 -s 65536 -q 16 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=1'
+            ' -x 3 --report_gbits -b -F -D 10 -p 1516 -s 65536 -q 16; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
         self.assertEqual(
             client_cmd,
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=1'
-            ' -x 3 --report_gbits -b -F -D 10 -p 1516 -s 65536 -q 16 node1 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=1'
+            ' -x 3 --report_gbits -b -F -D 10 -p 1516 -s 65536 -q 16 node1; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
 
     @patch.object(ibperf_lib.time, 'sleep')
