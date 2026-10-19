@@ -74,6 +74,11 @@ Run the IB Perf suite:
        --config_file ~/cvs_workspace/ibperf/ibperf_config.json \
        --capture=tee-sys -vvv
 
+Run on managed compute
+~~~~~~~~~~~~~~~~~~~~~~
+
+Follow :doc:`/how-to/run-on-managed-compute` to run IB Perf on managed compute.
+
 .. _ib-perf-dmesg-scan:
 
 Kernel log (dmesg) scan

@@ -137,6 +137,38 @@ def test_example(orch, config_dict):
     update_test_result()
 ```
 
+## Documentation
+
+User docs live in `docs/` and are published from those sources. Write for someone running CVS. A section belongs only when reading it changes a command, a config field, or a file the user must provide.
+
+Preview with `make html-doc` (see [CONTRIBUTORS.md](CONTRIBUTORS.md)). Check the new cross-reference from a suite page to the shared page.
+
+### Put shared behavior in one place
+
+- **Pytest report, attachments, zip bundle, and Run Deck packaging**: `docs/how-to/test-suites/index.rst` (`pytest-html-report-and-bundle`). Say that a Run Deck is included when the suite supports it. Report and log flags stay in `docs/reference/cli/cvs-run.rst`.
+- **Managed compute**: `docs/how-to/run-on-managed-compute.rst`. On a suite page, add one **Run on managed compute** subsection under the run step and link that page. Add a suite limitation only when that suite behaves differently, such as the RCCL pairwise SPUR limit or Aorta's shared path and torchrun rendezvous.
+- **Bare metal and containers**: `docs/how-to/test-suites/index.rst` and `docs/how-to/run-with-containers.rst`.
+- **Category prerequisites**: the category `index.rst`, with a stable reference label such as `training-common-prerequisites` or `inference-common-prerequisites`. A suite page links that section and lists only its additional requirements.
+- **Sample screenshots**: the category index, under **Test results**, labeled as sample layout. One representative suite is enough for the category.
+- **Schema, shipped models, and field meanings**: `docs/reference/configuration-files/`. The how-to links there instead of copying the inventory.
+
+Use the same subsection title and step order on every suite in a category.
+
+### Keep a suite page to that suite
+
+A suite how-to covers additional prerequisites, copying and editing its config, the `cvs run` command, and any scheduler limitation unique to that suite. Multinode setup stays in the edit step: host count matches the configured node count, and the head-node address is reachable from every participating node.
+
+Model-specific parallelism, image paths, token files, and shared paths stay when that suite requires them. A shipped-model list stays in the config reference.
+
+### Leave these out
+
+- Internal report or Run Deck mechanics: deck profiles, session stores, variant configs, chart limits, JSON field lists, and extraction recipes.
+- A second explanation of a shared feature on a suite page. Link the canonical page.
+- Lab bring-up sequences, hardcoded accounts, wall-clock limits, report filenames, and debug symptoms from one machine.
+- Environment names such as "VPC IP" when the requirement is an address reachable from the other nodes.
+- Nested `spur run` or `srun` instructions. The scheduler starts CVS; document another step only when the user must launch one.
+- Scheduler overwrite notes and per-suite repeats of `--html`, `--no-html`, or `--self-contained-html`.
+
 ## Do Not
 
 ### Security & Credentials

@@ -26,3 +26,8 @@ Host validation, GPU burn-in, and preflight checks run before network, training,
      - :doc:`/reference/configuration-files/burn-in-diag/preflight`
 
 See also :doc:`/how-to/test-suites/index` for common ``cvs run`` flags and workflow.
+
+Test results
+============
+
+The sample report for this category is a preflight pytest HTML report. ``cvs run`` writes it under ``<workspace>/cvs_runs/<run_id>/``.

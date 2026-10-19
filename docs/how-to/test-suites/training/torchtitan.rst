@@ -13,6 +13,16 @@ There are two suites:
 - ``torchtitan_single`` — single-node configs (``framework: torchtitan_single``)
 - ``torchtitan_distributed`` — multi-node configs (``framework: torchtitan_distributed``); adds RDMA setup
 
+Prerequisites
+=============
+
+In addition to the :ref:`common training prerequisites <training-common-prerequisites>`:
+
+- The container image must provide TorchTitan at ``torchtitan_root``. The
+  shipped default is ``/workspace/torchtitan``.
+- A Hugging Face token file at ``hf_token_file`` for the tokenizer download.
+  The nodes need network access to reach Hugging Face.
+
 .. _torchtitan-set-up-config:
 
 Set up config
@@ -111,3 +121,8 @@ Run a single stage
     --config_file input/config_file/training/torchtitan/mi355x_torchtitan_llama-3.1-8b_single.json
 
 Use a single-node config with ``torchtitan_single`` and a distributed config with ``torchtitan_distributed``. The config ``framework`` field must match the suite name.
+
+Run on managed compute
+----------------------
+
+Follow :doc:`/how-to/run-on-managed-compute` to run TorchTitan on managed compute.

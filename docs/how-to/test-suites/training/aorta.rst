@@ -11,6 +11,16 @@ validates iteration time, compute ratio, overlap ratio and rank balance.
 Each run produces a pytest HTML report with one row per stage and a JSON benchmark report
 with the measured metrics.
 
+Prerequisites
+=============
+
+In addition to the :ref:`common training prerequisites <training-common-prerequisites>`:
+
+- Place Aorta at ``aorta_path`` on each node, or enable ``aorta_auto_clone`` and
+  provide ``aorta_clone_url``.
+- Passwordless ``sudo dmesg`` for the job user. The suite uses it to scan the
+  kernel log for the benchmark window.
+
 .. _aorta-set-up-config:
 
 Set up config
@@ -70,26 +80,18 @@ HTML report.
 
 .. _aorta-spur-slurm:
 
-Run under SPUR or Slurm
-=======================
+Run on managed compute
+----------------------
 
-On a SPUR or Slurm cluster, launch ``cvs run`` as a job step with one task per node.
-Rank 0 runs pytest and drives every stage. The other ranks serve HTTP agents that run
-the suite's commands on their nodes, so the run needs no SSH between nodes. A bare
-allocation shell, or a batch script that never starts a step, is not a managed run
-(``SLURM_STEP_ID`` stays unset). CVS then requires ``--cluster_file`` and SSH access,
-as on bare metal.
+Follow :doc:`/how-to/run-on-managed-compute` to run Aorta on managed compute.
 
-For scheduler detection, requirements, and ``cluster_agents.json``, see :doc:`/how-to/run-under-scheduler`.
+Aorta adds these suite-specific requirements:
 
 - Request one node for ``aorta_single`` and two or more for ``aorta_distributed``, with
-  ``--ntasks-per-node 1`` and ``--mpi=none``. Request at least ``gpus_per_node`` GPUs
-  on each node.
-- Pass ``--workspace`` or set ``CVS_WORKSPACE`` to writable storage shared by every
-  node in the job. A managed run fails without it.
-- ``--cluster_file`` is optional. CVS builds the cluster file from the job's node list
-  and uses each node's hostname as its ``vpc_ip``, so torchrun rendezvous uses the
-  first node's hostname. To use a fabric address instead, either:
+  at least ``gpus_per_node`` GPUs on each node.
+- The generated cluster file uses each node's hostname as its ``vpc_ip``, so
+  torchrun rendezvous uses the first node's hostname. To use a fabric address
+  instead, either:
 
   - Set ``multi_node.master_addr`` in the Aorta config; or
   - Pass a ``--cluster_file`` whose ``node_dict`` lists only this job's nodes, with
@@ -100,38 +102,9 @@ For scheduler detection, requirements, and ``cluster_agents.json``, see :doc:`/h
   clone Aorta from a login node and leave ``aorta_auto_clone`` false.
 - Set ``output_dir`` to an absolute path on shared storage. A relative ``output_dir``
   resolves against the working directory of ``cvs run`` on the job's first node.
-- Every node needs Docker access for the job user and passwordless ``sudo dmesg`` for
-  the kernel-log scan.
-- Do not add a nested ``spur run`` or ``srun`` around the workload. CVS starts one
-  torchrun process per node inside the Aorta containers.
+- CVS starts one torchrun process per node inside the Aorta containers.
 - Set the job time limit higher than ``timeout_seconds`` plus the time for container
   launch and the RCCL build.
-
-SPUR example:
-
-.. code-block:: bash
-
-   spur run -A <account> -p <partition> \
-     -N 2 --ntasks-per-node 1 --gpus-per-node 8 --exclusive -t 02:00:00 --mpi=none \
-     bash -lc 'source <cvs-checkout>/.cvs_venv/bin/activate &&
-       cvs run aorta_distributed \
-         --config_file /shared/<user>/aorta/aorta_distributed.json \
-         --workspace /shared/<user>/cvs'
-
-Slurm example:
-
-.. code-block:: bash
-
-   srun -A <account> -p <partition> \
-     -N 2 --ntasks-per-node 1 --gpus-per-node 8 --exclusive -t 02:00:00 --mpi=none \
-     bash -lc 'source <cvs-checkout>/.cvs_venv/bin/activate &&
-       cvs run aorta_distributed \
-         --config_file /shared/<user>/aorta/aorta_distributed.json \
-         --workspace /shared/<user>/cvs'
-
-For ``aorta_single``, use ``-N 1`` and the single-node config. Scheduler detection
-checks SPUR before Slurm; set ``CVS_SCHEDULER=spur`` or ``CVS_SCHEDULER=slurm`` to
-override it. Set ``SPUR_CONTROLLER_ADDR`` if your SPUR deployment requires it.
 
 .. _aorta-reports:
 
@@ -141,12 +114,7 @@ Reports and outputs
 Pytest HTML report
 ------------------
 
-``cvs run`` writes a self-contained pytest HTML report and a text log to
-``<workspace>/cvs_runs/<run_id>/``, named after the suite: ``aorta_single.html`` and
-``aorta_single.log``, or ``aorta_distributed.html`` and ``aorta_distributed.log``.
-``<run_id>`` is ``local-<timestamp>`` on bare metal and the scheduler job ID under
-SPUR or Slurm. Pass ``--html`` or ``--log-file`` to choose other paths, or
-``--no-html`` to skip the report. See :doc:`/reference/cli/cvs-run`.
+``cvs run`` writes the pytest HTML report and text log described in :ref:`pytest-html-report-and-bundle`. Aorta names them after the suite: ``aorta_single.html`` and ``aorta_single.log``, or ``aorta_distributed.html`` and ``aorta_distributed.log``.
 
 The report has one row per stage, in run order:
 
@@ -200,7 +168,7 @@ Benchmark artifacts
 -------------------
 
 CVS downloads artifacts to ``output_dir/<run-id>/`` on the machine running CVS, which is
-the job's first node under SPUR or Slurm. ``<run-id>`` is a new hexadecimal ID for each
+the job's first node on managed compute. ``<run-id>`` is a new hexadecimal ID for each
 invocation and is separate from the CVS ``<run_id>`` above. Distributed
 traces use ``combined_traces/node_<rank>/<original-output>/torch_profiler/``. The JSON report,
 ``aorta_benchmark_report.json``, records cluster configuration, aggregate performance,
@@ -217,12 +185,10 @@ Calibrate the sample thresholds for your hardware, node count and workload. Set
 Run Deck
 ========
 
-``cvs run`` writes ``<suite>_html/aorta_run_deck.html`` and
-``aorta_run_deck.json`` beside the pytest HTML under
-``<workspace>/cvs_runs/<run_id>/``. The pytest report links the deck as
-"Aorta Run Deck", and the files are included in the zip bundle. The deck is
-render-only: it does not change pass/fail. A run has one result, so there is no
-interactive viewer.
+The Aorta files are ``aorta_run_deck.html`` and
+``aorta_run_deck.json``. The pytest report links the deck as "Aorta Run Deck".
+See :ref:`pytest-html-report-and-bundle` for generic Run Deck behavior and
+packaging. A run has one result, so Aorta has no interactive viewer.
 
 The run card shows workload, framework, image, cluster dimensions, metrics
 source, threshold state, one verdict with actual and limit per configured

@@ -55,3 +55,8 @@ Run individual Node Smoke tiers:
   cvs run preflight_checks test_node_smoke_tier3 \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/preflight/preflight_config.json
+
+Run on managed compute
+~~~~~~~~~~~~~~~~~~~~~~
+
+Follow :doc:`/how-to/run-on-managed-compute` to run preflight on managed compute.

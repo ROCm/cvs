@@ -214,12 +214,18 @@ Each module can also be run with pytest:
     --config_file ~/cvs_workspace/mi3xx_sglang_llama_70b_single.json \
     --html ~/cvs_results/sglang_single.html
 
+Run on managed compute
+----------------------
+
+Follow :doc:`/how-to/run-on-managed-compute` to run SGLang on managed compute.
+
 Read the results
 ================
 
-``cvs run`` writes a pytest HTML report under the run directory by default, plus
-``sglang_run_deck.html`` (interactive viewer) using the shared ``sglang`` report
-profile. Direct ``pytest`` still needs ``--html`` for that bundle.
+``cvs run`` writes the pytest HTML report and Run Deck described in
+:ref:`pytest-html-report-and-bundle`. SGLang names its interactive viewer
+``sglang_run_deck.html`` and builds it with the shared ``sglang`` report
+profile.
 
 Key lifecycle stages to watch:
 

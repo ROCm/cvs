@@ -24,7 +24,7 @@ cvs list
 | Install and upgrade | [Install](docs/getting-started/install.rst) · [Upgrade](docs/getting-started/upgrade.rst) |
 | Set up cluster and config files | [Set up test configs](docs/how-to/configure/test-suite-config/index.rst) · [Set up cluster file](docs/how-to/configure/cluster-config.rst) |
 | Run test suites | [Run tests](docs/how-to/run-tests/index.rst) |
-| Run under Slurm or SPUR | [Run under a scheduler](docs/how-to/run-under-scheduler.rst) |
+| Run on managed compute | [Run on managed compute](docs/how-to/run-on-managed-compute.rst) |
 | JSON schemas | [Configuration files](docs/reference/configuration-files/index.rst) |
 | CLI options | [CLI reference](docs/reference/cli/cvs-run.rst) |
 
