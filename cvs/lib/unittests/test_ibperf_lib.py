@@ -1579,28 +1579,51 @@ class TestParseAfmVpodMembership(unittest.TestCase):
         outputs = {
             'n1': 'ERR - afmctl requires root privileges, please login as superuser or use sudo\n',
             'n2': 'sudo: a password is required\n',
-            'n3': 'sudo: afmctl: command not found',
+            'n3': 'sudo: Passwort erforderlich',
+            'n4': 'CVS_ERROR: ibperf.vpod_source afm needs passwordless sudo for afmctl',
         }
         labels, errors = ibperf_lib.parse_afm_vpod_membership(outputs)
         self.assertEqual(labels, {})
-        self.assertEqual(len(errors), 3)
-        for error in errors[:2]:
-            self.assertIn('root', error)
-            self.assertNotIn('Invalid afmctl', error)
-        self.assertIn('AFM vPOD discovery failed', errors[2])
+        self.assertEqual(len(errors), 4)
+        self.assertIn('root', errors[0])
+        self.assertNotIn('Invalid afmctl', errors[0])
+        for error in errors[1:3]:
+            self.assertIn('AFM vPOD discovery failed', error)
+            self.assertNotIn('needs root', error)
+        self.assertIn('n4: ibperf.vpod_source afm needs passwordless sudo for afmctl', errors[3])
 
 
 class TestDiscoverAfmVpodMap(unittest.TestCase):
-    def test_command_and_quoted_path(self):
+    def test_relative_command_is_resolved_before_sudo(self):
         phdl = MagicMock()
         phdl.exec.return_value = {'n': AFM_FIXTURE.read_text()}
         self.assertEqual(ibperf_lib.discover_afm_vpod_map(phdl), ({'n': (MI450_POD, '3')}, []))
-        phdl.exec.assert_called_once_with('sudo -n afmctl show device --json 2>&1', print_console=False)
-        phdl.reset_mock()
+        phdl.exec.assert_called_once_with(
+            '{ if ! sudo -n true >/dev/null 2>&1; then '
+            "printf '%s\\n' 'CVS_ERROR: ibperf.vpod_source afm needs passwordless sudo for afmctl' >&2; exit 1; fi; "
+            '_cvs_afmctl="$(command -v afmctl)" || '
+            "{ printf '%s\\n' 'Unable to find afmctl in PATH' >&2; exit 127; }; "
+            'case "$_cvs_afmctl" in /*) ;; *) '
+            "printf '%s\\n' 'Resolved afmctl path is not absolute' >&2; exit 127 ;; esac; "
+            'sudo -n "$_cvs_afmctl" show device --json; } 2>&1',
+            print_console=False,
+        )
+
+    def test_absolute_and_quoted_commands(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'n': AFM_FIXTURE.read_text()}
         ibperf_lib.discover_afm_vpod_map(phdl, '/path with space/afmctl')
         phdl.exec.assert_called_once_with(
-            "sudo -n '/path with space/afmctl' show device --json 2>&1", print_console=False
+            '{ if ! sudo -n true >/dev/null 2>&1; then '
+            "printf '%s\\n' 'CVS_ERROR: ibperf.vpod_source afm needs passwordless sudo for afmctl' >&2; exit 1; fi; "
+            "sudo -n '/path with space/afmctl' show device --json; } 2>&1",
+            print_console=False,
         )
+        phdl.reset_mock()
+        ibperf_lib.discover_afm_vpod_map(phdl, 'my afmctl')
+        command = phdl.exec.call_args.args[0]
+        self.assertIn("command -v 'my afmctl'", command)
+        self.assertIn('sudo -n "$_cvs_afmctl"', command)
 
 
 class TestResolveIbperfNodePairing(unittest.TestCase):
@@ -1665,7 +1688,7 @@ class TestResolveIbperfNodePairing(unittest.TestCase):
         factory = MagicMock()
         factory.return_value.exec.return_value = {
             'a': 'ERR - afmctl requires root privileges',
-            'b': 'sudo: a password is required',
+            'b': 'CVS_ERROR: ibperf.vpod_source afm needs passwordless sudo for afmctl',
         }
         with self.assertLogs(ibperf_lib.log, 'ERROR') as logs:
             with self.assertRaisesRegex(ValueError, 'No ibperf node pairs') as failure:

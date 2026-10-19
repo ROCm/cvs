@@ -75,8 +75,11 @@ def node_pairing(cluster_dict, config_dict):
     discovery_orchs = []
 
     def make_handle(nodes):
-        discovery_orchs.append(_create_orch(cluster_dict, nodes))
-        return discovery_orchs[-1].all
+        discovery_orch = _create_orch(cluster_dict, nodes)
+        discovery_orchs.append(discovery_orch)
+        if not discovery_orch.sudo_prefix():
+            raise ValueError('ibperf.vpod_source afm needs passwordless sudo for afmctl')
+        return discovery_orch.all
 
     try:
         return ibperf_lib.resolve_ibperf_node_pairing(node_list, config_dict, cluster_dict, phdl_factory=make_handle)

@@ -35,7 +35,8 @@ log = logging.getLogger(__name__)
 
 IBPERF_PAIRING_MODES = ('sequential', 'intra_vpod', 'inter_vpod')
 IBPERF_VPOD_SOURCES = ('afm', 'cluster_file')
-_AFM_ROOT_ERROR_RE = re.compile(r'requires root privileges|sudo: a (?:password|terminal) is required', re.I)
+_AFM_ROOT_ERROR_RE = re.compile(r'requires root privileges', re.I)
+_AFM_SUDO_ERROR_MARKER = 'CVS_ERROR: ibperf.vpod_source afm needs passwordless sudo for afmctl'
 
 DMABUF_SUPPORTED = 'supported'
 DMABUF_UNSUPPORTED = 'unsupported'
@@ -158,6 +159,9 @@ def parse_afm_vpod_membership(out_dict):
     accels = {}
     errors = []
     for node, output in out_dict.items():
+        if _AFM_SUDO_ERROR_MARKER in (output or ''):
+            errors.append(f'{node}: ibperf.vpod_source afm needs passwordless sudo for afmctl')
+            continue
         root_match = _AFM_ROOT_ERROR_RE.search(output or '')
         if root_match:
             line = next(line.strip() for line in output.splitlines() if root_match.group(0) in line)
@@ -218,9 +222,30 @@ def parse_afm_vpod_membership(out_dict):
     return vpod_map, errors
 
 
+def _build_afmctl_device_command(afmctl_path):
+    """Check sudo per host and resolve relative afmctl names outside sudo's secure_path."""
+    afmctl_path = str(afmctl_path or 'afmctl')
+    arguments = 'show device --json'
+    executable = shlex.quote(afmctl_path)
+    sudo_error = shlex.quote(_AFM_SUDO_ERROR_MARKER)
+    sudo_check = f'if ! sudo -n true >/dev/null 2>&1; then printf \'%s\\n\' {sudo_error} >&2; exit 1; fi; '
+    if afmctl_path.startswith('/'):
+        command = f'{sudo_check}sudo -n {executable} {arguments}'
+    else:
+        missing_command = shlex.quote(f'Unable to find {afmctl_path} in PATH')
+        command = (
+            f'{sudo_check}_cvs_afmctl="$(command -v {executable})" || '
+            f'{{ printf \'%s\\n\' {missing_command} >&2; exit 127; }}; '
+            'case "$_cvs_afmctl" in /*) ;; *) '
+            "printf '%s\\n' 'Resolved afmctl path is not absolute' >&2; exit 127 ;; esac; "
+            'sudo -n "$_cvs_afmctl" show device --json'
+        )
+    return f'{{ {command}; }} 2>&1'
+
+
 def discover_afm_vpod_map(phdl, afmctl_path='afmctl'):
     """Query AFM on every node in a parallel handle and parse vPOD membership."""
-    cmd = f'sudo -n {shlex.quote(afmctl_path)} show device --json 2>&1'
+    cmd = _build_afmctl_device_command(afmctl_path)
     return parse_afm_vpod_membership(phdl.exec(cmd, print_console=False))
 
 

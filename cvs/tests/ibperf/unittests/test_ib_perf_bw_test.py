@@ -226,6 +226,21 @@ class TestPairingFixtures(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ib_perf_bw_test.node_pairing.__wrapped__(self._CLUSTER, {})
         self.assertEqual(list(create.call_args.args[1].node_dict), ['n1', 'n2', 'n3'])
+        create.return_value.sudo_prefix.assert_called_once_with()
+        create.return_value.close.assert_called_once_with()
+
+    @patch.object(ib_perf_bw_test.OrchestratorFactory, 'create_orchestrator')
+    def test_node_pairing_reports_missing_passwordless_sudo_before_discovery(self, create):
+        create.return_value.sudo_prefix.return_value = ''
+
+        def resolve(node_list, _config, _cluster, phdl_factory):
+            phdl_factory(node_list)
+
+        with patch.object(ib_perf_bw_test.ibperf_lib, 'resolve_ibperf_node_pairing', side_effect=resolve):
+            with self.assertRaisesRegex(ValueError, 'ibperf.vpod_source afm needs passwordless sudo for afmctl'):
+                ib_perf_bw_test.node_pairing.__wrapped__(self._CLUSTER, {})
+        create.return_value.sudo_prefix.assert_called_once_with()
+        create.return_value.all.exec.assert_not_called()
         create.return_value.close.assert_called_once_with()
 
 
