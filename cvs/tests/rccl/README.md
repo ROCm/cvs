@@ -86,12 +86,11 @@ The expected total is therefore `threads_per_gpu` on both paths. For example,
 Perf writes `<result_file_stem>_<collective>_topology_check.json` beside the result
 files on the head node. For example, `/results/rccl.json` produces
 `/results/rccl_all_reduce_perf_topology_check.json` for `all_reduce_perf`, with one
-check entry per data type. Regression writes `<result_file_stem>_topology_check.json`
-(`/results/rccl_topology_check.json`) beside the configured result file. The
-regression suite reuses `rccl_result_file` across cases, so later cases overwrite
-the earlier result and audit files. Callers using `RcclJob` directly can set a
-distinct `rccl_result_file` per regression case to retain every audit. Each check
-entry contains
+check entry per data type. Regression writes
+`<result_file_stem>_<collective>[_<case-hash>]_topology_check.json` beside the
+configured result file. The case hash is a stable digest of the sorted regression
+environment overrides and is present when overrides are configured, so each
+parameterized case keeps its result and audit files. Each check entry contains
 `label`, `requested`, `reported` (the first row that contains any topology field, not
 necessarily row 0), `mismatches`, `mode`, and `verdict` (`pass`, `mismatch`, or
 `skipped`). Skipped entries include a `reason`; differences in later rows appear in
@@ -200,7 +199,7 @@ CVS takes the Cartesian product of the environment axes and configured collectiv
 
 ### Result storage
 
-`cvs_params.rccl_result_file` defaults to `{run_dir}/rccl_result_file.json`. CVS resolves `{run_dir}` under `<workspace>/cvs_runs/<run_id>/`; managed jobs use the scheduler job ID. Perf writes `<stem>_<collective>.json`, `<stem>_<collective>_<dtype>.json`, `<stem>_<collective>_aggregated.json` and `<stem>_<collective>_topology_check.json`, so each collective in a `rccl_perf` run keeps its own files. Derived names always use `.json`, even when the configured path has another suffix. Regression writes to the configured result path, and its cases overwrite each other. Pairwise runs one `all_reduce_perf` job per phase/candidate pair against this same path, so each sub-run overwrites the previous `<stem>_all_reduce_perf*.json` files — only the last phase's files survive on disk. Pass/fail is unaffected, since pairwise verifies each sub-run's in-memory result immediately after it runs; copy the files out between sub-runs if you need every phase's artifacts.
+`cvs_params.rccl_result_file` defaults to `{run_dir}/rccl_result_file.json`. CVS resolves `{run_dir}` under `<workspace>/cvs_runs/<run_id>/`; managed jobs use the scheduler job ID. Perf writes `<stem>_<collective>.json`, `<stem>_<collective>_<dtype>.json`, `<stem>_<collective>_aggregated.json` and `<stem>_<collective>_topology_check.json`, so each collective in a `rccl_perf` run keeps its own files. Regression writes `<stem>_<collective>[_<case-hash>].json` and its matching topology audit, so every collective and environment override combination keeps its files. The case hash is a stable digest of sorted regression environment overrides and is present when overrides are configured. Characters outside the unreserved filename set are percent-encoded in collective and data type names (for example, `/` becomes `%2F`), and CVS rejects configs whose derived perf paths collide. Derived names always use `.json`, even when the configured path has another suffix. Pairwise runs one `all_reduce_perf` job per phase/candidate pair against this same path, so each sub-run overwrites the previous `<stem>_all_reduce_perf*.json` files — only the last phase's files survive on disk. Pass/fail is unaffected, since pairwise verifies each sub-run's in-memory result immediately after it runs; copy the files out between sub-runs if you need every phase's artifacts.
 
 Every run — managed or not, bare metal or container — requires the result directory to be writable and reachable through the same head-host transfer interface RCCL uses to save results. During preparation, CVS writes a unique sentinel through the head-node orchestrator, then reads it back with `download_from_head` and checks the round trip. An unavailable directory fails before launching RCCL and names `--workspace`/`CVS_WORKSPACE` in the error. This checks the result path between CVS and the head; it does not certify every mount on every allocated node.
 
