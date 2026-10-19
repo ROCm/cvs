@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, _resolve_container_lifetime
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
-from cvs.core.orchestrators.container import ContainerOrchestrator, ib_device_expansion
+from cvs.core.orchestrators.container import ContainerOrchestrator, covered_by_ib_expansion, ib_device_expansion
 from cvs.unittests.support import FAKE_CRED, run_trusted
 
 
@@ -257,10 +257,22 @@ class TestContainerOrchestrator(unittest.TestCase):
     def test_get_devices_appends_configured_devices_without_accumulating(self):
         # Configured devices follow the defaults, and the defaults are copied:
         # extending them in place would repeat devices on every later call.
-        orch, _ = self._make(runtime_args={"devices": ["/dev/infiniband/rdma_cm"]})
-        expected = ["/dev/kfd", "/dev/dri", "/dev/infiniband/rdma_cm"]
+        orch, _ = self._make(runtime_args={"devices": ["/dev/fuse"]})
+        expected = ["/dev/kfd", "/dev/dri", "/dev/fuse"]
         self.assertEqual(orch.get_devices(), expected)
         self.assertEqual(orch.get_devices(), expected)
+
+    def test_get_devices_leaves_configured_infiniband_entries_to_the_expansion(self):
+        # The shipped distributed samples list these; as plain --device flags they
+        # fail a non-privileged launch on a host without /dev/infiniband.
+        devices = [
+            "/dev/infiniband",
+            "/dev/fuse",
+            "/dev/infiniband/rdma_cm",
+            "/dev/infiniband/uverbs0:/dev/infiniband/uverbs0",
+        ]
+        orch, _ = self._make(runtime_args={"devices": devices})
+        self.assertEqual(orch.get_devices(), ["/dev/kfd", "/dev/dri", "/dev/fuse"])
 
     def test_launch_adds_infiniband_only_through_guarded_expansion(self):
         # With /dev/infiniband out of the defaults, the per-host expansion is the
@@ -484,6 +496,27 @@ class TestInfinibandDeviceExpansion(unittest.TestCase):
                 words = _shell_words(shell, ib_device_expansion(self.dev_dir))
                 self.assertEqual(words[0::2], ["--device"] * len(paths))
                 self.assertCountEqual(words[1::2], [f"{path}:{path}" for path in paths])
+
+
+class TestCoveredByIbExpansion(unittest.TestCase):
+    """Only entries the expansion passes identically may be dropped from --device."""
+
+    def test_rows(self):
+        rows = [
+            ("/dev/infiniband", True),
+            ("/dev/infiniband/rdma_cm", True),
+            ("/dev/infiniband/uverbs0:/dev/infiniband/uverbs0", True),
+            # The expansion maps each node to the same path with default permissions.
+            ("/dev/infiniband/uverbs0:/dev/uverbs0", False),
+            ("/dev/infiniband/rdma_cm:/dev/infiniband/rdma_cm:r", False),
+            # It covers only direct entries of /dev/infiniband.
+            ("/dev/infiniband/by-ibdev/ionic_0", False),
+            ("/dev/infiniband_extra", False),
+            ("/dev/kfd", False),
+        ]
+        for device, expected in rows:
+            with self.subTest(device=device):
+                self.assertIs(covered_by_ib_expansion(device), expected)
 
 
 class TestResolveContainerLifetime(unittest.TestCase):
