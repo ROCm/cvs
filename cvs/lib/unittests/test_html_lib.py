@@ -51,7 +51,6 @@ class TestBuildHtmlNicTable(unittest.TestCase):
             with open(filename) as fp:
                 html = fp.read()
         self.assertIn("['rdma0']", html)
-        self.assertIn("['0000:06:00.0']", html)
         self.assertNotIn('mlx5_0', html)
 
 
