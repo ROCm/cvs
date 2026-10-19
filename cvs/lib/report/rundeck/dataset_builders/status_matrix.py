@@ -71,7 +71,7 @@ The builder also emits ``overview`` and ``metric_charts``:
 * ``metric_charts.series`` copies each series and adds ``node``.
 * ``metric_charts.heatmaps`` copies each heatmap and adds ``node``.
 * ``results_table`` is one row per metric and one row per item. Columns are
-  Node, Check, Result, Value, Unit, Threshold, Status, Message, and Logs.
+  Node, Check, Result, Value, Unit, Threshold, Status, and Message.
   A cell with neither still gets one row. Failed rows come first. Heatmaps
   and series stay in ``metric_charts``.
 
@@ -97,7 +97,6 @@ _RESULTS_HEADERS = [
     "Threshold",
     "Status",
     "Message",
-    "Logs",
 ]
 _BLANK = "\u2014"
 
@@ -347,11 +346,6 @@ def _number_text(value):
     return f"{number:.4f}".rstrip("0").rstrip(".")
 
 
-def _logs(entry):
-    parts = [str(entry[key]) for key in ("errors_json_href", "log_tarball_href") if entry.get(key)]
-    return " ".join(parts) if parts else _BLANK
-
-
 def _summary_message(entry, status):
     summary = entry.get("items_summary") or ""
     if summary:
@@ -361,13 +355,12 @@ def _summary_message(entry, status):
     return _BLANK
 
 
-def _result_row(node, group_name, result, value, unit, threshold, status, message, logs):
-    return [str(node), str(group_name), str(result), value, unit, threshold, str(status), message, logs]
+def _result_row(node, group_name, result, value, unit, threshold, status, message):
+    return [str(node), str(group_name), str(result), value, unit, threshold, str(status), message]
 
 
 def _cell_result_rows(node, group_name, cell):
     status = cell.get("status") or "na"
-    logs = _logs(cell)
     metrics = cell.get("metrics") or []
     items = [item for item in (cell.get("items") or []) if isinstance(item, dict)]
     if not metrics and not items:
@@ -381,7 +374,6 @@ def _cell_result_rows(node, group_name, cell):
                 _BLANK,
                 status,
                 _summary_message(cell, status),
-                logs,
             )
         ]
     rows = []
@@ -397,7 +389,6 @@ def _cell_result_rows(node, group_name, cell):
                 _number_text(metric.get("threshold")),
                 metric.get("status") or status,
                 _blank(summary),
-                logs,
             )
         )
     for item in items:
@@ -411,7 +402,6 @@ def _cell_result_rows(node, group_name, cell):
                 _BLANK,
                 item.get("status") or status,
                 _blank(item.get("message")),
-                logs,
             )
         )
     return rows
