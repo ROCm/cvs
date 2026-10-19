@@ -17,6 +17,14 @@ class TestSweepChartRenderer(unittest.TestCase):
         self.assertIn("chart-bar-accent", doc)
         self.assertNotIn("<polyline", doc)
 
+    def test_dense_bar_chart_drops_ticks_and_keeps_hover(self):
+        points = [(index, float(index + 1)) for index in range(9)]
+        doc = self.renderer.render_bar_chart("TFLOP/s/GPU", points, "TFLOP/s/GPU")
+        self.assertNotIn("chart-xlbl", doc)
+        self.assertIn("chart-bars-dense", doc)
+        self.assertIn("C=1: 2.0 TFLOP/s/GPU", doc)
+        self.assertEqual(doc.count("chart-bar "), 9)
+
     def test_custom_bar_labels_and_single_point(self):
         doc = self.renderer.render_bar_chart("size", [("1K", 2)], "GB/s", x_label="{x}", min_points=1)
         self.assertIn("1K: 2.0 GB/s", doc)

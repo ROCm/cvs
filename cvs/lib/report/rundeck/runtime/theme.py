@@ -84,6 +84,9 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
   border-top: 1px solid rgba(42, 47, 61, 0.95); }
 .chart-bars { position: absolute; inset: 0; z-index: 1; display: flex; align-items: flex-end;
   justify-content: space-around; padding: 0 0.35rem; gap: 0.35rem; }
+.chart-bars-dense { gap: 2px; padding: 0 0.15rem; justify-content: stretch; }
+.chart-bars-dense .chart-col { border-left: none; max-width: none; }
+.chart-viz-dense .chart-ywrap { padding-bottom: 0; }
 .chart-col { flex: 1 1 0; min-width: 0; max-width: 52px; height: 100%; display: flex; align-items: flex-end;
   justify-content: center; border-left: 1px solid rgba(42, 47, 61, 0.55); }
 .chart-col:first-child { border-left: none; }
@@ -108,7 +111,7 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
 .chart-xrow { display: flex; justify-content: space-around; gap: 0.35rem; padding: 0.4rem 0.35rem 0; }
 .chart-xlbl { flex: 1 1 0; min-width: 0; max-width: 52px; text-align: center; font-size: 0.68rem;
   color: var(--muted); line-height: 1.2; }
-.chart-xlbl-line { display: block; overflow-wrap: anywhere; }
+.chart-xlbl-line { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chart-unit { text-align: center; font-size: 0.7rem; color: var(--muted); margin-top: 0.45rem; }
 .chart-sweep-hint { margin: 0 0 0.75rem; font-size: 0.75rem; color: var(--muted); }
 .chart-group { margin-bottom: 1.25rem; }
