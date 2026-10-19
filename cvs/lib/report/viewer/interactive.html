@@ -1784,7 +1784,7 @@ function makeStepChart(canvas, datasets, yTitle) {
       parsing: false,
       interaction: { mode: 'nearest', intersect: false },
       plugins: {
-        legend: { labels: lineLegendLabels(t.legend) },
+        legend: { labels: { color: t.legend, boxWidth: 12, font: { size: 11 } } },
         tooltip: { callbacks: { label: ctx => {
           const y = ctx.parsed && ctx.parsed.y;
           const x = ctx.parsed && ctx.parsed.x;
@@ -1856,24 +1856,21 @@ function buildStepChart(rows, spec) {
   rows.forEach((c, index) => {
     const pts = parseCurvePoints(stepSpecCurve(c, spec), warmupStepFor(plannedStepsFor(c), warmupPercent()));
     if (!pts.length) return;
-    const style = lineStyle(index);
+    const color = CHART_COLORS[index % CHART_COLORS.length];
     datasets.push({
       label: c.subtitle || c.cell_id || ('combo ' + index),
       data: pts,
-      borderColor: style.color,
-      backgroundColor: style.color,
+      borderColor: color,
+      backgroundColor: color,
       borderWidth: 2,
-      borderDash: style.dash,
       tension: 0.15,
       fill: false,
       pointRadius: pts.length > 40 ? 0 : 3,
       pointHoverRadius: 5,
-      pointStyle: style.point,
-      pointBackgroundColor: style.color,
+      pointBackgroundColor: color,
       pointBorderColor: '#1a1d27',
       pointBorderWidth: 1,
       spanGaps: true,
-      order: style.dash.length ? index : index + 10,
     });
   });
 
