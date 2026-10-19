@@ -99,11 +99,11 @@ def render_rundeck_html(payload: dict) -> str:
     document = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>{html.escape(report.get('title', 'Run Deck'))} &mdash; {html.escape(str(model_label))}</title>
-<style>{report_css()}</style></head><body><div class="wrap">
+<style>{report_css()}</style></head><body><div class="wrap" id="top">
 <div class="hero-head"><div><h1>{html.escape(report.get('title', 'Run Deck'))}</h1>
 <p class="subtitle">{html.escape(report.get('subtitle', ''))}</p></div>{status_badge_html(overall)}</div>
 {nav}
 {incompatibility}
 {''.join(sections)}
-<footer class="page-foot">{html.escape(report.get('footer', ''))}</footer></div></body></html>"""
+<footer class="page-foot">{html.escape(report.get('footer', ''))}<a class="to-top" href="#top">Go to top</a></footer></div></body></html>"""
     return page_long_tables(document)

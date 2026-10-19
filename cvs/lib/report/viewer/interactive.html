@@ -206,6 +206,11 @@ tr.changed td { background: rgba(255,107,53,0.1); }
 .rd-pager button { background: #12151f; color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer; }
 .rd-pager button:hover { border-color: var(--accent); }
+footer.page-foot { text-align: center; margin-top: 2rem; }
+.to-top { display: block; width: max-content; margin: 0.85rem auto 0; padding: 0.3rem 0.75rem;
+  border: 1px solid var(--border); border-radius: 6px; background: #12151f; color: var(--accent2);
+  text-decoration: none; font-size: 0.8rem; }
+.to-top:hover { border-color: var(--accent); }
 @media (max-width: 640px) {
   body { padding: 0.75rem; }
   .chart-grid { grid-template-columns: 1fr; }
@@ -213,7 +218,7 @@ tr.changed td { background: rgba(255,107,53,0.1); }
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="wrap" id="top">
 <header class="hero">
   <div>
     <h1>__TITLE__</h1>
@@ -396,6 +401,7 @@ tr.changed td { background: rgba(255,107,53,0.1); }
     <table class="data"><thead><tr id="cells-header"></tr></thead><tbody id="rows"></tbody></table>
   </div>
 </section>
+<footer class="page-foot"><a class="to-top" href="#top">Go to top</a></footer>
 </div>
 
 __EMBEDDED_JSON__

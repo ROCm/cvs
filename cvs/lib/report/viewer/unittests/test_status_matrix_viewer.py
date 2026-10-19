@@ -36,6 +36,7 @@ class TestStatusMatrixViewer(unittest.TestCase):
             text = out.read_text(encoding="utf-8")
             self.assertIn("health_run_deck.json", text)
             self.assertIn("Health viewer", text)
+            self.assertIn('<a class="to-top" href="#top">Go to top</a>', text)
             self.assertIn("embedded-report-json", text)
             self.assertIn('"rtotal"', text)
             self.assertIn("chart.js", text)

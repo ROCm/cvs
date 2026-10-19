@@ -136,6 +136,10 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
 .cell-foot { font-size: 0.65rem; color: var(--muted); margin-top: auto; padding-top: 0.5rem; border-top: 1px solid var(--border); }
 .muted { color: var(--muted); }
 footer.page-foot { text-align: center; color: var(--muted); font-size: 0.75rem; margin-top: 2rem; }
+.to-top { display: block; width: max-content; margin: 0.85rem auto 0; padding: 0.3rem 0.75rem;
+  border: 1px solid var(--border); border-radius: 6px; background: #12151f; color: var(--accent2);
+  text-decoration: none; font-size: 0.8rem; }
+.to-top:hover { border-color: var(--accent); }
 .report-nav { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin-bottom: 1.25rem; padding: 0.75rem 1rem;
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px; font-size: 0.8rem; }
 .report-nav a { color: var(--accent2); text-decoration: none; }
@@ -222,6 +226,7 @@ footer.page-foot { text-align: center; color: var(--muted); font-size: 0.75rem; 
     print-color-adjust: exact; -webkit-print-color-adjust: exact;
   }
   a { color: #06c; }
+  .to-top { display: none; }
 }
 """
         + gate_heatmap_css()

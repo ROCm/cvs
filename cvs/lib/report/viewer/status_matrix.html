@@ -97,6 +97,11 @@ th { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-
 .rd-pager button { background: #12151f; color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer; }
 .rd-pager button:hover { border-color: var(--accent); }
+footer.page-foot { text-align: center; margin-top: 2rem; }
+.to-top { display: block; width: max-content; margin: 0.85rem auto 0; padding: 0.3rem 0.75rem;
+  border: 1px solid var(--border); border-radius: 6px; background: #12151f; color: var(--accent2);
+  text-decoration: none; font-size: 0.8rem; }
+.to-top:hover { border-color: var(--accent); }
 @media (max-width: 720px) {
   .toolbar label.filter-search { grid-column: span 1; }
 }
@@ -107,7 +112,7 @@ th { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-
 </style>
 </head>
 <body data-viewer="status-matrix">
-<div class="wrap">
+<div class="wrap" id="top">
 <header class="hero">
   <div>
     <h1>__TITLE__</h1>
@@ -182,6 +187,7 @@ th { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-
   <p id="details-empty" class="empty" hidden>No matching results.</p>
   <div class="hm-wrap"><table class="details" id="details-table"></table></div>
 </section>
+<footer class="page-foot"><a class="to-top" href="#top">Go to top</a></footer>
 </div>
 __EMBEDDED_JSON__
 <script>
