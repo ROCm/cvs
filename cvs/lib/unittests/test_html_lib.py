@@ -35,6 +35,26 @@ class TestNormalizeBytes(unittest.TestCase):
             html_lib.normalize_bytes("not a number")
 
 
+class TestBuildHtmlNicTable(unittest.TestCase):
+    def test_port_without_netdev_is_left_out(self):
+        rdma_dict = {
+            'node1': {
+                'mlx5_0': {'eth_device': None, 'device_status': 'ACTIVE', 'link_status': 'LINK_UP'},
+                'rdma0': {'eth_device': 'eth0', 'device_status': 'ACTIVE', 'link_status': 'LINK_UP'},
+            }
+        }
+        lshw_dict = {'node1': {'eth0': {'pci_bus': '0000:06:00.0'}}}
+        ip_dict = {'node1': {'eth0': {'mtu': '9000', 'ipv4_addr_list': [], 'ipv6_addr_list': []}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            filename = os.path.join(tmp, 'nic.html')
+            html_lib.build_html_nic_table(filename, rdma_dict, lshw_dict, ip_dict)
+            with open(filename) as fp:
+                html = fp.read()
+        self.assertIn("['rdma0']", html)
+        self.assertIn("['0000:06:00.0']", html)
+        self.assertNotIn('mlx5_0', html)
+
+
 class TestBuildHtmlMemUtilizationTable(unittest.TestCase):
     def setUp(self):
         self.tmp_file = tempfile.NamedTemporaryFile(delete=False, mode="w+", encoding="utf-8")

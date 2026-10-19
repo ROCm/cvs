@@ -217,7 +217,7 @@ def get_rdma_nic_dict(phdl):
             "port": "<port_number_as_string>",
             "device_status": "<STATE>",       # e.g., ACTIVE, DOWN
             "link_status": "<PHYS_STATE>",    # e.g., LinkUp, Disabled
-            "eth_device": "<NETDEV>"          # e.g., eth0
+            "eth_device": "<NETDEV>"          # e.g., eth0; None for native InfiniBand
           },
           ...
         },
@@ -226,6 +226,7 @@ def get_rdma_nic_dict(phdl):
 
     Notes:
       - Only lines beginning with 'link' are considered.
+      - Native InfiniBand lines (subnet_prefix/lid fields before state, no netdev) are parsed too.
       - Lines that do not match the expected format are skipped.
       - If multiple ports exist for the same RDMA device, later matches overwrite
         the same device key (since the device name is used as the key), except that
@@ -243,8 +244,8 @@ def get_rdma_nic_dict(phdl):
         for line in out_dict[node].split("\n"):
             if re.search('^link', line):
                 pattern = (
-                    r"link\s+([a-zA-Z0-9_.-]+)\/([0-9]+)\s+state\s+([A-Za-z]+)\s+"
-                    r"physical_state\s+([A-Za-z_]+)\s+netdev\s+([a-zA-Z0-9._-]+)"
+                    r"link\s+([a-zA-Z0-9_.-]+)\/([0-9]+)\s+(?:.*?\s)?state\s+([A-Za-z]+)\s+"
+                    r"physical_state\s+([A-Za-z_]+)(?:\s+netdev\s+([a-zA-Z0-9._-]+))?"
                 )
                 match = re.search(pattern, line)
                 if match:
@@ -281,7 +282,7 @@ def get_active_rdma_nic_dict(phdl):
             "port": "<port_number_as_string>",
             "device_status": "<STATE>",       # e.g., if device status is Active
             "link_status": "<PHYS_STATE>",    # e.g., LinkUp, Disabled
-            "eth_device": "<NETDEV>"          # e.g., eth0
+            "eth_device": "<NETDEV>"          # e.g., eth0; None for native InfiniBand
           },
           ...
         },
@@ -290,6 +291,7 @@ def get_active_rdma_nic_dict(phdl):
 
     Notes:
       - Only lines beginning with 'link' are considered.
+      - Native InfiniBand lines (subnet_prefix/lid fields before state, no netdev) are parsed too.
       - This parser assumes the canonical `rdma link` output format; if the output
         varies (driver/version differences), the regex may fail to match.
       - If multiple ports exist for the same RDMA device, later matches will overwrite
@@ -304,7 +306,7 @@ def get_active_rdma_nic_dict(phdl):
         rdma_dict[node] = {}
         for line in out_dict[node].split("\n"):
             if re.search('^link', line):
-                pattern = r"link\s+([a-zA-Z0-9_.-]+)\/([0-9]+)\s+state\s+([A-Za-z]+)\s+physical_state\s+([A-Za-z_]+)\s+netdev\s+([a-zA-Z0-9._-]+)"
+                pattern = r"link\s+([a-zA-Z0-9_.-]+)\/([0-9]+)\s+(?:.*?\s)?state\s+([A-Za-z]+)\s+physical_state\s+([A-Za-z_]+)(?:\s+netdev\s+([a-zA-Z0-9._-]+))?"
                 match = re.search(pattern, line)
                 # dereference match only when it is non-null
                 if match:
