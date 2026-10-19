@@ -45,6 +45,11 @@ def parse_args():
     parser.add_argument("--save_video_path", default="results/video_i2v.mp4")
     parser.add_argument("--video_fps", type=int, default=16)
     parser.add_argument(
+        "--gemm_quantization",
+        default="",
+        help="xFuser transformer GEMM profile, for example fp8. Empty keeps the checkpoint dtype.",
+    )
+    parser.add_argument(
         "--timing_json_path",
         default="results/timing.json",
         help="Flux-style timing JSON: list of {\"pipe_time\": seconds} entries.",
@@ -182,6 +187,17 @@ def _string_only_defaults(args_cls, names):
     return {name: "" for name in names if name in supported}
 
 
+def xfuser_config_overrides(args_cls, gemm_quantization):
+    """Pass GEMM quantization only when this xFuser build declares the field."""
+    value = str(gemm_quantization or "").strip()
+    if not value or not dataclasses.is_dataclass(args_cls):
+        return {}
+    if "gemm_quantization" not in {field.name for field in dataclasses.fields(args_cls)}:
+        print(f"wan_i2v_example: this xFuser build has no gemm_quantization field; ignoring {value!r}")
+        return {}
+    return {"gemm_quantization": value}
+
+
 def _as_rank_string(value):
     if isinstance(value, str):
         return value
@@ -245,6 +261,7 @@ def main():
         "output_directory": args.output_directory,
     }
     config_kwargs.update(_string_only_defaults(xFuserArgs, _RANK_STRING_FIELDS))
+    config_kwargs.update(xfuser_config_overrides(xFuserArgs, args.gemm_quantization))
 
     config = xFuserArgs(**config_kwargs)
 

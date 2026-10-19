@@ -280,7 +280,17 @@ class TestBuildRunWanArgs(unittest.TestCase):
         self.assertIn(f"--save_video_path {WAN_XFUSER_VIDEO_CONTAINER_PATH}", args)
         self.assertIn("--timing_json_path results/timing.json", args)
         self.assertIn("--output_type pil", args)
+        self.assertNotIn("--gemm_quantization", args)
         self.assertNotIn("--task i2v", args)
+
+    def test_xfuser_example_passes_gemm_quantization(self):
+        params = {**self._BASE_PARAMS, "compile": False, "gemm_quantization": "fp8"}
+        args = build_run_wan_xfuser_example_args(
+            params,
+            model_path="/model",
+            i2v_image_path="/benchmark/i2v_input.JPG",
+        )
+        self.assertIn("--gemm_quantization fp8", args)
 
     def test_resolve_xfuser_launcher_from_config(self):
         self.assertEqual(

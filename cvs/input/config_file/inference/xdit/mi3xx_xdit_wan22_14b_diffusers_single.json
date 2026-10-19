@@ -54,6 +54,7 @@
     "num_inference_steps": 40,
     "warmup_steps": 1,
     "compile": false,
+    "gemm_quantization": "fp8",
     "torchrun_nproc": 8,
     "ulysses_size": 8,
     "ring_size": 1

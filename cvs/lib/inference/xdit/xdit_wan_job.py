@@ -398,14 +398,17 @@ def build_run_wan_xfuser_example_args(
         if timing_json_path.startswith(CONTAINER_OUTPUT_MOUNT + "/"):
             timing_json_path = output_dir_container + timing_json_path[len(CONTAINER_OUTPUT_MOUNT) :]
     video_fps = _optional_int(wan_params.get("wan_diffusers_video_fps"), 16)
+    gemm_quantization = str(wan_params.get("gemm_quantization") or "").strip()
+    gemm_flag = f"--gemm_quantization {shlex.quote(gemm_quantization)} " if gemm_quantization else ""
 
     log.info(
-        "WAN xFuser wan_i2v_example: model=%s size=%dx%d repetitions=%s warmup=%s",
+        "WAN xFuser wan_i2v_example: model=%s size=%dx%d repetitions=%s warmup=%s gemm_quantization=%s",
         model_path,
         height,
         width,
         num_repetitions,
         warmup_steps,
+        gemm_quantization or "off",
     )
 
     return (
@@ -424,6 +427,7 @@ def build_run_wan_xfuser_example_args(
         f"--save_video_path {shlex.quote(save_video_path)} "
         f"--timing_json_path {shlex.quote(timing_json_path)} "
         f"--video_fps {video_fps} "
+        f"{gemm_flag}"
         f"--prompt {shlex.quote(str(wan_params['prompt']))}"
     ).strip()
 
