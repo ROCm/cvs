@@ -49,18 +49,14 @@ You can list all available MORI test cases using the CLI:
     - test_concurrent_put_threads
     - test_ibgda_write_test
     - test_install_container_packages
-    - test_io_read[16384-128-1]
-    - test_io_read[16384-128-8]
-    - test_io_read[32768-128-1]
-    - test_io_read[32768-128-8]
-    - test_io_read[32768-256-1]
-    - test_io_read[32768-256-8]
-    - test_io_write[16384-128-1]
-    - test_io_write[16384-128-8]
-    - test_io_write[32768-128-1]
-    - test_io_write[32768-128-8]
-    - test_io_write[32768-256-1]
-    - test_io_write[32768-256-8]
+    - test_io_read[131072-256-1]
+    - test_io_read[131072-256-8]
+    - test_io_read[4194304-128-1]
+    - test_io_read[4194304-128-8]
+    - test_io_write[131072-256-1]
+    - test_io_write[131072-256-8]
+    - test_io_write[4194304-128-1]
+    - test_io_write[4194304-128-8]
     - test_launch_mori_container
     - test_setup_env
     - test_setup_ibv_devices

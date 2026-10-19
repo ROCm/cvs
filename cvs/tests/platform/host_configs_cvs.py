@@ -536,7 +536,7 @@ def test_check_be_nic_pcie_speed_width(orch, config_dict, host_res_dict, cluster
     Verify PCIe link speed and width for each Backend NIC on all nodes.
 
     Reads 'nic_pcie_speed' and 'nic_pcie_width' from config_dict.
-    Uses get_gpu_nic_mapping_dict(orch.all, use_sudo=False) to get NIC BDF per card per node.
+    Uses get_gpu_nic_mapping_dict(orch.all, use_sudo=False, active_only=False) to get NIC BDF per card per node.
     Reads each NIC's sysfs link speed and width and prints an LnkSta line.
     Checks Speed, Width, and absence of 'downgrade' in the output.
     """
@@ -554,7 +554,8 @@ def test_check_be_nic_pcie_speed_width(orch, config_dict, host_res_dict, cluster
     records = {}
 
     with timed_stage(lifecycle, host_configs_rundeck.NIC_PCIE):
-        out_dict = linux_utils.get_gpu_nic_mapping_dict(orch.all, use_sudo=False)
+        # A NIC's PCIe link is up whether or not its network link is.
+        out_dict = linux_utils.get_gpu_nic_mapping_dict(orch.all, use_sudo=False, active_only=False)
         for card_no in host_configs_rundeck.pcie_card_list(out_dict):
             cmd_list, present = _link_cmds_for_card(out_dict, card_no, 'nic_bdf', records)
             pci_dict = orch.all.exec_cmd_list(cmd_list)
@@ -667,7 +668,8 @@ def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dic
             linux_utils._sudo_n_or_denied(
                 'sudo -n /usr/bin/dmesg --time-format iso -x',
                 "egrep -v 'ALLOWED|DENIED' --color=never",
-            )
+            ),
+            print_console=False,
         )
         denied_nodes = [node for node, output in out_dict.items() if 'CVS_CMD_DENIED' in str(output)]
         readable = {node: output for node, output in out_dict.items() if node not in denied_nodes}
@@ -690,7 +692,8 @@ def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dic
         out_dict = orch.all.exec(
             linux_utils._sudo_n_or_denied(
                 'sudo -n /usr/bin/dmesg -T', "grep -i amdgpu | egrep -i 'fail|error' --color=never"
-            )
+            ),
+            print_console=False,
         )
     records, messages = host_configs_rundeck.eval_dmesg_driver(out_dict)
     _fail_messages(messages)
@@ -700,7 +703,8 @@ def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dic
         out_dict = orch.all.exec(
             linux_utils._sudo_n_or_denied(
                 'sudo -n /usr/bin/dmesg -T', "grep -i amdgpu | egrep -i 'reset|hang|traceback' --color=never"
-            )
+            ),
+            print_console=False,
         )
     records, messages = host_configs_rundeck.eval_dmesg_reset(out_dict)
     _fail_messages(messages)

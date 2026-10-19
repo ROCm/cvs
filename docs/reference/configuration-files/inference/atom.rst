@@ -85,6 +85,9 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
      - vLLM parity (serving schema); distributed uses PP=2
+   * - ``mi355x_atom_vllm_deepseek-r1_fp8``
+     - ``_single``, ``_distributed``
+     - vLLM parity on MI355X; ``gpu_arch`` mi355x; bring-up thresholds; single-node lab-run, PP=2 pending
    * - ``mi3xx_atom_vllm_gpt-oss-120b_mxfp4``
      - ``_single``
      - GPT-OSS MXFP4 vLLM parity (serving schema)
@@ -94,14 +97,23 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8``
      - ``_single``, ``_distributed``
      - Qwen FP8 vLLM parity; ``_single`` lab-validated; distributed PP=2 pending
+   * - ``mi355x_atom_vllm_qwen3.5-397b-a17b_fp8``
+     - ``_single``, ``_distributed``
+     - Qwen FP8 vLLM parity on MI355X; ``gpu_arch`` mi355x; bring-up thresholds
    * - ``mi3xx_atom_sglang_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
      - SGLang parity (serving schema)
+   * - ``mi355x_atom_sglang_deepseek-r1_fp8``
+     - ``_single``, ``_distributed``
+     - SGLang parity on MI355X; ``gpu_arch`` mi355x; bring-up thresholds
    * - ``mi3xx_atom_sglang_qwen3.5-397b-a17b_fp8``
      - ``_single``, ``_distributed``
      - Qwen FP8 SGLang parity; ``_single`` lab-validated (hybrid mamba ``no_buffer``,
        writable ``HF_HUB_CACHE``, ``SGLANG_ROCM_ARCH=gfx942``); distributed PP=2 pending.
        Image must include ``aiter.ops.flydsl.moe_common``.
+   * - ``mi355x_atom_sglang_qwen3.5-397b-a17b_fp8``
+     - ``_single``, ``_distributed``
+     - Qwen FP8 SGLang parity on MI355X; ``gpu_arch`` mi355x; bring-up thresholds
 
 Config profiles
 ===============

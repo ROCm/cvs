@@ -15,7 +15,7 @@ from cvs.lib.report.inference_payload import sweep_has_multi_shape_comparison
 from cvs.lib.report.render.cell_card import CellCardConfig, CellCardRenderer
 from cvs.lib.report.render.gate_matrix import GateMatrixRenderer
 from cvs.lib.report.render.loss_chart import SERIES_COLORS
-from cvs.lib.report.render.panel_shell import paged_table_html, render_results_table_html
+from cvs.lib.report.render.panel_shell import paged_table_html, render_results_table_html, results_table_parts
 from cvs.lib.report.rundeck.context import is_empty, resolve_bind
 from cvs.lib.report.rundeck.runtime.sweep_charts import SweepChartRenderer
 from cvs.lib.report.rundeck.runtime.theme import render_launch_panel_html
@@ -133,17 +133,21 @@ def _series_points(series):
     return points
 
 
-def _columns_from_card(card, headers, rows):
+def _columns_from_card(card, headers, rows, units=None, align=None):
     wanted = card.get("columns") if isinstance(card, dict) else None
+    units = list(units or [])
+    align = list(align or [])
     if not isinstance(wanted, list) or not wanted:
-        return headers, rows
+        return headers, rows, units, align
     index = {str(header): position for position, header in enumerate(headers)}
     keep = [index[str(name)] for name in wanted if str(name) in index]
     if not keep:
-        return headers, rows
+        return headers, rows, units, align
     return (
         [headers[position] for position in keep],
         [[row[position] if position < len(row) else "" for position in keep] for row in rows],
+        [units[position] if position < len(units) else None for position in keep],
+        [align[position] if position < len(align) else None for position in keep],
     )
 
 
@@ -357,20 +361,31 @@ class DeckCardRenderer:
     @staticmethod
     def render_table(_payload: dict, card: dict, data: Any) -> str:
         table = data if isinstance(data, dict) else {}
-        headers, rows = _columns_from_card(card, list(table.get("headers") or []), list(table.get("rows") or []))
+        headers, rows, units, align = _columns_from_card(
+            card,
+            list(table.get("headers") or []),
+            list(table.get("rows") or []),
+            table.get("units"),
+            table.get("align"),
+        )
+        max_height = (card or {}).get("max_height")
+        wrap_class = "results-wrap results-scroll" if max_height else "results-wrap"
+        wrap_style = f"max-height:{max_height};overflow-y:auto" if max_height else ""
         # Every suite's full-results table uses the same page. The rows stay in
         # the HTML; only the ones past the first page start hidden.
         if rows:
-            table_id = _table_dom_id(card, "rd-table")
-            header_html = "".join(f"<th>{html.escape(str(header))}</th>" for header in headers)
-            body = ["<tr>" + "".join(f"<td>{html.escape(str(value))}</td>" for value in row) + "</tr>" for row in rows]
-            return paged_table_html(table_id, "results-table", header_html, body)
-        inner = render_results_table_html(
-            headers,
-            rows,
-            empty_message="No results table rows.",
-        )
-        return f"<div class='results-wrap'>{inner}</div>"
+            header_html, body = results_table_parts(headers, rows, units, align)
+            return paged_table_html(
+                _table_dom_id(card, "rd-table"),
+                "results-table",
+                header_html,
+                body,
+                wrap_class=wrap_class,
+                wrap_style=wrap_style,
+            )
+        inner = render_results_table_html(headers, rows, empty_message="No results table rows.")
+        style = f" style='{html.escape(wrap_style)}'" if wrap_style else ""
+        return f"<div class='{wrap_class}'{style}>{inner}</div>"
 
     @staticmethod
     def render_status_matrix(payload: dict, _card: dict, data: Any) -> str:
@@ -517,7 +532,7 @@ class DeckCardRenderer:
         header = f"<th>{html.escape(title)}</th><th>Fail</th><th>Pass</th><th>n/a</th>"
         return paged_table_html(table_id, "overview-table", header, body)
 
-    def render_metric_charts(self, _payload, _card, data):
+    def render_metric_charts(self, _payload, card, data):
         charts = data if isinstance(data, dict) else {}
         metrics = [item for item in (charts.get("metrics") or []) if isinstance(item, dict)]
         series = [item for item in (charts.get("series") or []) if isinstance(item, dict)]
@@ -538,9 +553,12 @@ class DeckCardRenderer:
             parts.append(f"<div class='chart-group'>{title}<div class='chart-grid'>{''.join(panels)}</div></div>")
         heat_html = "".join(self._heatmap_panel(item) for item in heatmaps)
         if heat_html:
+            # A card that holds only its heatmaps already names them in its section title.
+            heading = (
+                "" if (card or {}).get("heatmap_heading") is False else "<h3 class='chart-group-title'>Heatmaps</h3>"
+            )
             parts.append(
-                "<div class='chart-group'><h3 class='chart-group-title'>Heatmaps</h3>"
-                f"<div class='chart-grid chart-grid-heat'>{heat_html}</div></div>"
+                f"<div class='chart-group'>{heading}<div class='chart-grid chart-grid-heat'>{heat_html}</div></div>"
             )
         return "".join(parts) or "<p class='muted'>No metric data recorded.</p>"
 

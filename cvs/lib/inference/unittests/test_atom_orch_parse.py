@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 from cvs.lib.inference.atom.atom_orch import AtomJob
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
+from cvs.lib.inference.utils.vllm_benchmark_scripts import clamped_bench_random_range_ratio_str
 
 _HERE = Path(__file__).parent
 _FIXTURES = _HERE / "fixtures"
@@ -382,6 +383,39 @@ class TestATOMAtomOrchParse(unittest.TestCase):
             num_prompts=100,
         )
         self.assertIn("--disable-tqdm", job._vllm_client_argv())
+
+    def test_vllm_client_argv_clamps_range_ratio_that_exceeds_model_length(self):
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="8192",
+            concurrency=32,
+            num_prompts=1000,
+        )
+        job.max_model_length = "12288"
+        job.random_range_ratio = "0.8"
+        expected, was_clamped = clamped_bench_random_range_ratio_str("0.8", "1024", "8192", "12288")
+        self.assertTrue(was_clamped)
+        argv = job._vllm_client_argv()
+        self.assertEqual(argv[argv.index("--random-range-ratio") + 1], expected)
+        self.assertLessEqual((1024 + 8192) * (1.0 + float(expected)), 12288 + 1e-6)
+
+    def test_vllm_client_argv_keeps_range_ratio_when_it_fits(self):
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="128",
+            osl="32",
+            concurrency=1,
+            num_prompts=8,
+        )
+        job.max_model_length = "12288"
+        job.random_range_ratio = "0.8"
+        argv = job._vllm_client_argv()
+        self.assertEqual(argv[argv.index("--random-range-ratio") + 1], "0.8")
 
     def test_vllm_argv_uses_python_module_cli(self):
         job = AtomJob(
@@ -881,6 +915,39 @@ class TestATOMAtomBuildServerCmd(unittest.TestCase):
         job_single.build_server_cmd()
         script_single = self._env_script(orch_single)
         self.assertNotIn("SOCKET_IFNAME", script_single)
+
+    def test_server_env_ib_vars_override_discovered_fabric(self):
+        orch = FakeOrch()
+        variant = _fake_variant(
+            driver="vllm_atom",
+            nnodes="2",
+            pipeline_parallel_size="2",
+            master_addr="10.0.0.1",
+        )
+        variant.roles.server.env = {
+            "NCCL_IB_HCA": "ionic_0,ionic_1",
+            "NCCL_SOCKET_IFNAME": "ens3",
+            "GLOO_SOCKET_IFNAME": "ens3",
+            "GLOO_TCP_IFNAME": "ens3",
+        }
+        job = AtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+            **_PREFILLED_FABRIC,
+        )
+        job.build_server_cmd()
+        script = self._env_script(orch)
+        self.assertIn("export NCCL_IB_HCA=ionic_0,ionic_1", script)
+        self.assertNotIn("mlx5_0", script)
+        self.assertIn("export NCCL_SOCKET_IFNAME=ens3", script)
+        self.assertIn("export GLOO_SOCKET_IFNAME=ens3", script)
+        self.assertIn("export GLOO_TCP_IFNAME=ens3", script)
+        self.assertIn("export TP_SOCKET_IFNAME=eth0", script)
 
     @patch("cvs.lib.utils.ib_discovery.resolve_multinode_fabric")
     def test_build_server_cmd_resolves_topology_when_lifecycle_skipped(self, mock_resolve):

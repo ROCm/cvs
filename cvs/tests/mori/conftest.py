@@ -11,13 +11,14 @@ import os
 import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
-from cvs.lib import globals
-from cvs.lib.mori_lib import DMESG_DATE_CMD
+from cvs.lib import globals, mori_reporting
+from cvs.lib.mori_lib import DMESG_DATE_CMD, io_initiator
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders, resolve_test_config_placeholders
 
 log = globals.log
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+_RESULTS_KEY = pytest.StashKey[dict]()
 
 
 def _deep_merge(base, override):
@@ -95,6 +96,36 @@ def orch(cluster_dict, mori_dict, lifecycle):
             o.teardown_containers()
     finally:
         o.close()
+
+
+@pytest.fixture(scope="module")
+def cvs_results_dict(request):
+    """The Run Deck store, shared with pytest_runtest_makereport whichever of them needs it first."""
+    return request.config.stash.setdefault(_RESULTS_KEY, {})
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Record every failed or errored test in the Run Deck, so a test the deck does not chart still fails it."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.failed:
+        reason = call.excinfo.exconly() if call.excinfo else report.outcome
+        results = item.config.stash.setdefault(_RESULTS_KEY, {})
+        mori_reporting.record_test_failure(results, item.name, report.when, reason)
+
+
+@pytest.fixture(scope="module")
+def mori_variant_config(mori_dict, orch):
+    """Run-card fields for the mori Run Deck."""
+    return {
+        "gpu_name": mori_dict.get("gpu_name"),
+        "node_count": len(orch.hosts),
+        "mori_device_list": (mori_dict.get("env") or {}).get("MORI_RDMA_DEVICES"),
+        "container_image": orch.container_config.get("image") if orch.orchestrator_type == "container" else None,
+        "hosts": list(orch.hosts),
+        "initiator": io_initiator(mori_dict, orch),
+    }
 
 
 def pytest_collection_modifyitems(items):

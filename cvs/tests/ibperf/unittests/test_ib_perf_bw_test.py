@@ -5,11 +5,21 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, call, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 from cvs.lib import ibperf_lib
 from cvs.lib import globals
 from cvs.tests.ibperf import ib_perf_bw_test
+
+_CONFIG = {
+    'install_dir': '/opt/ibperf',
+    'msg_size_list': [65536],
+    'qp_count_list': [8],
+    'gid_index': '3',
+    'port_no': '1',
+    'duration': '10',
+    'verify_bw': 'False',
+}
 
 
 class TestIbPerfCollection(unittest.TestCase):
@@ -27,7 +37,7 @@ class TestIbPerfCollection(unittest.TestCase):
             patch.object(globals, 'error_list', []),
         ):
             with self.assertRaisesRegex(BaseException, 'No latency results for ib_read_lat'):
-                ib_perf_bw_test.test_build_ib_lat_perf_chart(None)
+                ib_perf_bw_test.test_build_ib_lat_perf_chart()
 
     def test_bw_and_lat_parametrize_from_config(self):
         config = {
@@ -106,6 +116,76 @@ class TestIbPerfCollection(unittest.TestCase):
             with self.subTest(test_function=test_function.__name__):
                 marks = [mark.name for mark in getattr(test_function, 'pytestmark', [])]
                 self.assertNotIn('parametrize', marks)
+
+
+class TestIbBwPerf(unittest.TestCase):
+    @patch.object(ib_perf_bw_test, 'update_test_result')
+    @patch.object(ib_perf_bw_test, 'verify_dmesg_for_errors')
+    @patch.object(ib_perf_bw_test, 'ibperf_lib')
+    @patch.object(ib_perf_bw_test, 'linux_utils')
+    def test_runs_on_the_orch_all_handle(self, linux_utils, ibperf_lib, verify_dmesg, _update):
+        orch = MagicMock()
+        linux_utils.get_active_rdma_nic_dict.return_value = {}
+        ib_perf_bw_test.test_ib_bw_perf(orch, 'ib_write_bw', _CONFIG, MagicMock(), {}, {})
+        linux_utils.get_gpu_nic_mapping_dict.assert_called_once_with(orch.all, use_sudo=False)
+        linux_utils.get_gpu_numa_dict.assert_called_once_with(orch.all, use_sudo=False)
+        linux_utils.get_backend_nic_dict.assert_called_once_with(orch.all, use_sudo=False)
+        self.assertIs(ibperf_lib.run_ib_perf_bw_test.call_args.args[0], orch.all)
+        self.assertIs(verify_dmesg.call_args.args[0], orch.all)
+
+    @patch.object(ib_perf_bw_test, 'update_test_result')
+    @patch.object(ib_perf_bw_test, 'get_passwordless_sudo_status', return_value={'n1': True, 'n2': False})
+    @patch.object(ib_perf_bw_test, 'verify_dmesg_for_errors')
+    @patch.object(ib_perf_bw_test, 'ibperf_lib')
+    @patch.object(ib_perf_bw_test, 'linux_utils')
+    def test_skips_dmesg_check_with_warning_without_sudo(self, linux_utils, _ibperf_lib, verify_dmesg, *_):
+        linux_utils.get_active_rdma_nic_dict.return_value = {}
+        orch = MagicMock()
+        with self.assertLogs(ib_perf_bw_test.log, 'WARNING') as logs:
+            ib_perf_bw_test.test_ib_bw_perf(orch, 'ib_write_bw', _CONFIG, MagicMock(), {}, {})
+        verify_dmesg.assert_not_called()
+        self.assertFalse(any('/dev/kmsg' in c.args[0] for c in orch.all.exec.call_args_list))
+        self.assertIn("SKIPPING the dmesg error check", logs.output[0])
+
+    @patch.object(ib_perf_bw_test, 'update_test_result')
+    @patch.object(ib_perf_bw_test, 'verify_dmesg_for_errors')
+    @patch.object(ib_perf_bw_test, 'ibperf_lib')
+    @patch.object(ib_perf_bw_test, 'linux_utils')
+    def test_records_each_run_for_the_run_deck(self, linux_utils, ibperf_lib, *_):
+        linux_utils.get_active_rdma_nic_dict.return_value = {}
+        linux_utils.get_gpu_nic_mapping_dict.return_value = {'n1': {'card0': {}, 'card1': {}}}
+        ibperf_lib.check_perftest_dmabuf.return_value = True
+        ibperf_lib.run_ib_perf_bw_test.return_value = {'n1': {0: {'bw': '390.5', 'pps': '0.7'}}}
+        results, variant = {}, {}
+        ib_perf_bw_test.test_ib_bw_perf(MagicMock(), 'ib_write_bw', _CONFIG, MagicMock(), results, variant)
+        self.assertEqual(results['_ibperf']['bw'], {'ib_write_bw|8|65536': {'n1': {'0': {'bw': 390.5}}}})
+        self.assertEqual(variant, {'dmabuf': True, 'nic_count': 2})
+
+
+class TestUnmappedGpuGuard(unittest.TestCase):
+    @patch.object(ib_perf_bw_test, 'get_passwordless_sudo_status', return_value={'n1': True})
+    @patch.object(ib_perf_bw_test, 'ibperf_lib')
+    @patch.object(ib_perf_bw_test, 'linux_utils')
+    def test_unmapped_card_fails_before_perftest(self, linux_utils, ibperf_lib, _sudo):
+        ibperf_lib.check_perftest_dmabuf.return_value = True
+        linux_utils.get_gpu_nic_mapping_dict.return_value = {
+            'n1': {
+                'card0': {'gpu_bdf': '0001:01:00.0', 'rdma_dev': 'rdma0'},
+                'card1': {'gpu_bdf': '0002:01:00.0'},
+            }
+        }
+        for test_function, test_name in (
+            (ib_perf_bw_test.test_ib_bw_perf, 'ib_write_bw'),
+            (ib_perf_bw_test.test_ib_lat_perf, 'ib_write_lat'),
+        ):
+            with self.subTest(test=test_name):
+                orch = MagicMock()
+                with self.assertRaisesRegex(BaseException, r'card1 \(GPU 0002:01:00.0\) on node n1'):
+                    test_function(orch, test_name, _CONFIG, MagicMock(), {}, {})
+                linux_utils.get_gpu_nic_mapping_dict.assert_called_with(orch.all, use_sudo=False)
+        ibperf_lib.get_hip_device_dict.assert_not_called()
+        ibperf_lib.run_ib_perf_bw_test.assert_not_called()
+        ibperf_lib.run_ib_perf_lat_test.assert_not_called()
 
 
 if __name__ == '__main__':

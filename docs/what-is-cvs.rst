@@ -43,7 +43,7 @@ You can :doc:`monitor cluster health <how-to/monitor/index>` in two ways:
 - :doc:`Health reports <how-to/monitor/health-reports/index>`: Run the Cluster Health Checker to generate a self-contained HTML report covering GPU/NIC counters, RAS errors, PCIe/XGMI status, and ``dmesg`` signatures. Use this for point-in-time snapshots before or after test campaigns.
 - :doc:`Live dashboards <how-to/monitor/live-dashboards/index>`: Stream real-time GPU and cluster metrics to Grafana using either an agentless SSH-based collector or Prometheus exporters installed on the cluster nodes.
 
-CVS uses the open-source PyTest framework to run the tests and generate reports. You can launch CVS from a head node or any Linux management station that has connectivity to the cluster nodes via SSH. The single node tests run cluster-wide in parallel using the open-source parallel-SSH Python modules to optimize their running time.
+CVS uses the open-source PyTest framework to run the tests and generate reports. You can launch CVS from a head node or any Linux management station that has connectivity to the cluster nodes via SSH. The single node tests run cluster-wide in parallel using the open-source parallel-SSH Python modules to optimize their running time. On Slurm or SPUR clusters, ``cvs run`` can instead be launched as a job step, where per-node HTTP agents replace SSH for orchestrator-based suites; see :doc:`/how-to/run-under-scheduler`.
 
 .. note::
 

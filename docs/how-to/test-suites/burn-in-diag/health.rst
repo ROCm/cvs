@@ -21,7 +21,7 @@ Set up config
 
 2. Edit paths and any remaining ``<changeme>`` placeholders:
 
-   - Under ``agfhc``: ``path``, ``package_tar_ball``, ``install_dir``
+   - Under ``agfhc``: ``path``, ``package_tar_ball``, ``install_dir``, ``env``, ``log_dir``. A ``path`` other than ``/opt/amd/agfhc`` installs with ``./install --rocm-tar -o`` and no sudo; its parent and ``log_dir`` must be writable on the nodes. Update ``env`` when ``path`` changes.
    - Under ``transferbench``: ``git_install_path``, ``rocm_path`` (or leave ``<changeme>`` to auto-detect). For ``test_transfer_bench_a2a``, set required ``results.gpu_to_gpu_a2a_per_link_min`` (default ``32.9``). For ``test_transfer_bench_a2asweep``, set ``a2asweep_timeout`` (default ``1500``) or omit it to derive the orch timeout from sweep size; see :doc:`/reference/configuration-files/burn-in-diag/health`.
    - Under ``rvs``: ``git_install_path``, ``path``, ``rocm_path``
 

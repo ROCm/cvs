@@ -5,6 +5,7 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -23,6 +24,24 @@ def _orch(outputs):
     orch.hosts = list(outputs)
     orch.all.exec.return_value = outputs
     return orch
+
+
+class TestCheckDmesgDriverErrors(unittest.TestCase):
+    def setUp(self):
+        globals.error_list = []
+
+    def tearDown(self):
+        os.environ.pop('CVS_DMESG_PARSER', None)
+
+    def test_dmesg_reads_disable_console_echo(self):
+        for parser, expected_calls in (('legacy', 2), ('node-scraper', 1)):
+            with self.subTest(parser=parser):
+                os.environ['CVS_DMESG_PARSER'] = parser
+                orch = _orch({'n1': '\n', 'n2': '\n'})
+                suite.test_check_dmesg_driver_errors(orch, {}, None, {}, None)
+                self.assertEqual(orch.all.exec.call_count, expected_calls)
+                for call in orch.all.exec.call_args_list:
+                    self.assertIs(call.kwargs['print_console'], False)
 
 
 class TestCheckBeNicLinkSpeed(unittest.TestCase):
@@ -56,6 +75,22 @@ class TestCheckBeNicLinkSpeed(unittest.TestCase):
     def test_configured_interfaces_skip_count_comparison(self):
         orch = _orch({'n1': _link('eth0'), 'n2': _link('eth0') + _link('eth1', '200000')})
         suite.test_check_be_nic_link_speed(orch, {'nic_link_interfaces': ['eth0']}, {}, {}, None)
+        self.assertEqual(globals.error_list, [])
+
+
+class TestCheckBeNicPcieSpeedWidth(unittest.TestCase):
+    def setUp(self):
+        globals.error_list = []
+
+    def test_maps_nics_in_every_link_state(self):
+        orch = MagicMock()
+        orch.all.exec_cmd_list.return_value = {'n1': 'LnkSta: Speed 32GT/s, Width x16'}
+        mapping = {'n1': {'card0': {'gpu_bdf': '0001:05:00.0', 'nic_bdf': '0001:06:00.0'}}}
+        config = {'nic_pcie_speed': '32', 'nic_pcie_width': '16'}
+        with patch.object(suite.linux_utils, 'get_gpu_nic_mapping_dict', return_value=mapping) as nic_map:
+            suite.test_check_be_nic_pcie_speed_width(orch, config, {}, {}, None)
+        nic_map.assert_called_once_with(orch.all, use_sudo=False, active_only=False)
+        self.assertIn('0001:06:00.0', orch.all.exec_cmd_list.call_args.args[0][0])
         self.assertEqual(globals.error_list, [])
 
 

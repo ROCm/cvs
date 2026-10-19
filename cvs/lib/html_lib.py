@@ -1969,7 +1969,8 @@ def build_html_nic_table(filename, rdma_dict, lshw_dict, ip_dict):
 
         # For each node, collect NIC/RDMA properties into lists (one row per node)
         for node in rdma_dict.keys():
-            rdma_dev_list = list(rdma_dict[node].keys())
+            # Native InfiniBand ports have no netdev to look up in lshw_dict/ip_dict.
+            rdma_dev_list = [dev for dev in rdma_dict[node] if rdma_dict[node][dev]['eth_device']]
             eth_dev_list = []
             dev_status_list = []
             link_status_list = []

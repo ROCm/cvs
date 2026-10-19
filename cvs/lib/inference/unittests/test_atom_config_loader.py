@@ -261,7 +261,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         )
         self.assertEqual(variant.roles.server.ib_netdev, "auto")
 
-    def test_server_env_strips_orchestrator_network_keys(self):
+    def test_server_env_keeps_explicit_network_keys(self):
         sweep = Sweep(
             sequence_combinations=[SeqCombo(name="w1", isl="512", osl="512")],
             runs=[Run(combo="w1", concurrency=16)],
@@ -302,7 +302,14 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             sweep=sweep,
             thresholds={},
         )
-        self.assertEqual(variant.roles.server.env, {"NCCL_IB_GID_INDEX": "1"})
+        self.assertEqual(
+            variant.roles.server.env,
+            {
+                "GLOO_SOCKET_IFNAME": "mlx5_0",
+                "NCCL_IB_HCA": "mlx5_0",
+                "NCCL_IB_GID_INDEX": "1",
+            },
+        )
 
     def test_load_w1_accuracy_variant(self):
         root = Path(__file__).resolve().parents[3]
