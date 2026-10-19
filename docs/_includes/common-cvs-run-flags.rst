@@ -4,11 +4,11 @@
 
 **Conditionally required**
 
-- ``--cluster_file``: Cluster JSON with node list, SSH credentials, and execution backend. Required unless ``cvs run`` is launched as a Slurm/SPUR job step (see :doc:`/how-to/run-under-scheduler`). See :doc:`/reference/cluster/cluster-file`.
+- ``--cluster_file``: Cluster JSON with node list, SSH credentials, and execution backend. Required unless ``cvs run`` is launched as a Slurm/SPUR job step (see :doc:`/how-to/run-on-managed-compute`). See :doc:`/reference/cluster/cluster-file`.
 
 **Optional**
 
-- ``--workspace``: Shared-filesystem root for this run. The HTML report and text log default to ``<workspace>/cvs_runs/<run_id>/``. Falls back to ``$CVS_WORKSPACE`` then the venv parent directory. Every scheduler-managed run must set this (or ``CVS_WORKSPACE``) to storage shared by all nodes.
+- ``--workspace``: Shared-filesystem root for this run. The HTML report and text log default to ``<workspace>/cvs_runs/<run_id>/``. Falls back to ``$CVS_WORKSPACE`` then the venv parent directory. Every scheduler-managed run must set this (or ``CVS_WORKSPACE``) to storage shared by all nodes. The files written there are listed in :ref:`pytest-html-report-and-bundle`.
 - ``--html``: HTML report path override. Omit to use the run-directory default; ``--no-html`` skips the auto-derived report.
 - ``--self-contained-html``: Embed CSS/JS in the HTML report for a portable single file. Implied when the HTML path is auto-derived; pass it with an explicit ``--html`` path if you want a portable override.
 - ``--log-file``: Text log path override. Omit to use the run-directory default; ``--no-log-file`` skips the auto-derived file (console logging is unaffected).

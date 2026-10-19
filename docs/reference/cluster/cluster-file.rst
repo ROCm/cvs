@@ -10,7 +10,7 @@ In SSH mode, each ``cvs run`` invocation is pointed at a cluster file via ``--cl
 
 .. note::
 
-  Under a Slurm or SPUR job step ``--cluster_file`` is optional: CVS generates ``<workspace>/cvs_runs/<job_id>/cluster_agents.json`` from the job's node list. See :ref:`scheduler-cluster-agents`.
+  Under a Slurm or SPUR job step ``--cluster_file`` is optional. See :doc:`/how-to/run-on-managed-compute`.
 
 .. list-table::
    :widths: 3 2 6

@@ -69,3 +69,8 @@ Run the platform host check suite:
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/platform/host_config.json \
     --capture=tee-sys -vvv -s
+
+Run on managed compute
+~~~~~~~~~~~~~~~~~~~~~~
+
+Follow :doc:`/how-to/run-on-managed-compute` to run the platform checks on managed compute.

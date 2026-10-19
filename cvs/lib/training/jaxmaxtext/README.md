@@ -103,7 +103,7 @@ metrics two ways:
   graphs (background, layout, and metric-selector controls). Run Deck internals:
   `cvs/lib/report/README.md`.
 
-Sample screenshots of both are in the user docs (`docs/_includes/test-results.rst`).
+Sample screenshots of both are in the user docs (`docs/how-to/test-suites/training/index.rst`).
 
 > **Note:** every number shown in the sample reports/screenshots is an
 > illustrative sample value, **not** a final tuned result.

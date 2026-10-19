@@ -13,6 +13,19 @@ the config (distributed configs carry the NCCL RDMA device-selection vars in
 ``container.env``, single-node configs omit them). Copy the matching
 ``*_threshold.json`` into the same directory as the suite config.
 
+Prerequisites
+=============
+
+In addition to the :ref:`common training prerequisites <training-common-prerequisites>`:
+
+- The container image must bundle MaxText and JAX for ROCm.
+- A Hugging Face token file at ``paths.hf_token_file`` when any enabled run
+  downloads a tokenizer. The nodes need network access for that download. A run
+  where every enabled sweep uses ``dataset_type: synthetic`` does not need the
+  token.
+- A shared filesystem at ``paths.shared_fs``, reachable from every node, for the
+  models cache and logs.
+
 .. _jax-set-up-config:
 
 Set up config
@@ -108,19 +121,10 @@ stage), while single-node configs omit them. Run single-node configs with
 ``jaxmaxtext_single`` and distributed configs with ``jaxmaxtext_distributed`` —
 the suite must match the config.
 
-Prerequisites
-=============
+Run on managed compute
+----------------------
 
-The following prerequisites are required.
-
-- Passwordless SSH from the control host to each node (key in the cluster file),
-  and Docker available on the nodes.
-- A container image bundling MaxText/JAX for ROCm (config ``container.image``).
-- A Hugging Face token file at ``paths.hf_token_file`` (used to fetch the
-  tokenizer; needs network access on the nodes). Skipped when every enabled run
-  uses ``dataset_type: synthetic``.
-- A shared filesystem (``paths.shared_fs``) reachable from all nodes for the
-  models cache and logs.
+Follow :doc:`/how-to/run-on-managed-compute` to run JAX MaxText on managed compute.
 
 Test lifecycle
 ==============

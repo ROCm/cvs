@@ -8,7 +8,7 @@ Configure the Cluster Validation Suite (CVS) cluster file (cluster.json)
 
 The cluster file (``--cluster_file``) tells CVS how to reach your cluster nodes: SSH credentials, which hosts to use, and whether to run on bare metal or in containers. You pass it to ``cvs run``, ``cvs exec``, and ``cvs scp``.
 
-On a Slurm or SPUR cluster you can skip this file when ``cvs run`` is launched as a job step; see :doc:`/how-to/run-under-scheduler`.
+On a Slurm or SPUR cluster you can skip this file when ``cvs run`` is launched as a job step; see :doc:`/how-to/run-on-managed-compute`.
 
 For the complete field reference — every parameter, its type, default value, the container block schema, and the ``lifetime`` state matrix — see :doc:`/reference/cluster/cluster-file`.
 
