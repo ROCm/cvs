@@ -66,6 +66,10 @@ class TestCspQualAgfhcDeck(unittest.TestCase):
         self.assertEqual(self.profile["suite_id"], "csp_qual_agfhc")
         self.assertIn("Pass rate", self.html)
         self.assertIn("results-table", self.html)
+        self.assertIn("<th>Message</th>", self.html)
+        self.assertNotIn("<th>Value</th>", self.html)
+        self.assertNotIn("<th>Unit</th>", self.html)
+        self.assertNotIn("<th>Threshold</th>", self.html)
         self.assertIn("csp_qual_agfhc_run_deck_viewer.html", self.html)
         self.assertNotIn("Measurements", self.html)
 

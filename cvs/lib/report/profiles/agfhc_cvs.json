@@ -25,5 +25,13 @@
       "xgmi_lvl1",
       "all_perf"
     ]
-  }
+  },
+  "cards": [
+    {
+      "type": "table",
+      "id": "results",
+      "bind": "datasets.status_matrix.results_table",
+      "columns": ["Node", "Check", "Result", "Status", "Message"]
+    }
+  ]
 }

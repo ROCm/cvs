@@ -138,6 +138,20 @@ def _next_table_id(prefix):
     return f"{prefix}-{DeckCardRenderer._table_seq}"
 
 
+def _columns_from_card(card, headers, rows):
+    wanted = card.get("columns") if isinstance(card, dict) else None
+    if not isinstance(wanted, list) or not wanted:
+        return headers, rows
+    index = {str(header): position for position, header in enumerate(headers)}
+    keep = [index[str(name)] for name in wanted if str(name) in index]
+    if not keep:
+        return headers, rows
+    return (
+        [headers[position] for position in keep],
+        [[row[position] if position < len(row) else "" for position in keep] for row in rows],
+    )
+
+
 def _table_dom_id(card, prefix):
     raw = str(card.get("id") or "") if isinstance(card, dict) else ""
     safe = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in raw) or "results"
@@ -345,8 +359,7 @@ class DeckCardRenderer:
     @staticmethod
     def render_table(_payload: dict, card: dict, data: Any) -> str:
         table = data if isinstance(data, dict) else {}
-        headers = table.get("headers") or []
-        rows = list(table.get("rows") or [])
+        headers, rows = _columns_from_card(card, list(table.get("headers") or []), list(table.get("rows") or []))
         # Every suite's full-results table uses the same page. The rows stay in
         # the HTML; only the ones past the first page start hidden.
         if rows:

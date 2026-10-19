@@ -63,7 +63,12 @@
             "description": "Optional help line. status_matrix shows this instead of the generic item-breakdown hint."
           },
           "when_empty": { "enum": ["hide"] },
-          "columns_from": { "type": "string" }
+          "columns_from": { "type": "string" },
+          "columns": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Headers to show for a table card. Other headers stay in the dataset and are left out of this card."
+          }
         }
       }
     },

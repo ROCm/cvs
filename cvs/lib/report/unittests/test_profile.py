@@ -91,9 +91,9 @@ class TestProfile(unittest.TestCase):
         self.assertEqual(transferbench_raw["extends"], "health_status_base")
         self.assertEqual([card["id"] for card in transferbench_raw["cards"]], ["metrics"])
         self.assertEqual(agfhc_raw["extends"], "health_status_base")
-        self.assertNotIn("cards", agfhc_raw)
+        self.assertEqual([card["id"] for card in agfhc_raw["cards"]], ["results"])
         self.assertEqual(csp_raw["extends"], "health_status_base")
-        self.assertNotIn("cards", csp_raw)
+        self.assertEqual([card["id"] for card in csp_raw["cards"]], ["results"])
         self.assertEqual(host_raw["extends"], "health_status_base")
         self.assertNotIn("cards", host_raw)
         self.assertEqual(preflight_raw["extends"], "health_status_base")
@@ -121,6 +121,15 @@ class TestProfile(unittest.TestCase):
             [card["id"] for card in csp["cards"]],
             ["run-card", "lifecycle", "overview", "metrics", "results"],
         )
+        self.assertEqual(
+            next(card for card in agfhc["cards"] if card["id"] == "results")["columns"],
+            ["Node", "Check", "Result", "Status", "Message"],
+        )
+        self.assertEqual(
+            next(card for card in csp["cards"] if card["id"] == "results")["columns"],
+            ["Node", "Check", "Result", "Status", "Message"],
+        )
+        self.assertNotIn("columns", next(card for card in rvs["cards"] if card["id"] == "results"))
         self.assertEqual(
             [card["id"] for card in host["cards"]],
             ["run-card", "lifecycle", "overview", "metrics", "results"],

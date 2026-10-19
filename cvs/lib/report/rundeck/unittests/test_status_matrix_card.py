@@ -231,6 +231,18 @@ class TestStatusMatrixCard(unittest.TestCase):
         self.assertIn("n25", html)
         self.assertNotIn("<tr hidden><td>n0</td>", html)
 
+    def test_table_card_can_drop_columns(self):
+        table = {
+            "headers": ["Node", "Check", "Result", "Value", "Unit", "Threshold", "Status", "Message"],
+            "rows": [["n1", "hbm", "hbm_bw", "—", "—", "—", "fail", "hbm_bw failed"]],
+        }
+        card = {"id": "results", "columns": ["Node", "Check", "Result", "Status", "Message"]}
+        html = self.renderer.render_table({}, card, table)
+        self.assertIn("<th>Message</th>", html)
+        self.assertNotIn("<th>Value</th>", html)
+        self.assertIn("<td>hbm_bw failed</td>", html)
+        self.assertNotIn("<td>—</td>", html)
+
     def test_long_status_matrix_pages_nodes(self):
         nodes = [f"n{index}" for index in range(26)]
         grid = {node: {"check": {"status": "pass", "items": []}} for node in nodes}
