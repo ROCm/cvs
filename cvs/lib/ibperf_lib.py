@@ -522,6 +522,21 @@ def wait_for_perftest_exit(phdl, app_name, timeout):
     return nodes
 
 
+def _perftest_cmd_file_line(cmd_parts, inst_count):
+    """The redirect wraps the subshell so it does not hold the launch session's stdout open;
+    ``\\$?`` stays escaped to survive the ``echo "..."`` into the command file.
+    """
+    cmd = f'( {" ".join(cmd_parts)}; echo perftest_rc=\\$? ) > /tmp/ib_perf_{inst_count}_logs 2>&1 &'
+    return f'echo "{cmd}" >> /tmp/ib_cmds_file.txt'
+
+
+def _fail_nonzero_perftest_rc(out_dict, instance_no):
+    for node, out in out_dict.items():
+        match = re.search(r'perftest_rc=(\d+)', out)
+        if match and match.group(1) != '0':
+            fail_test(f'perftest instance {instance_no} on node {node} exited with code {match.group(1)}')
+
+
 def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None, running=None):
     """Read BW/PPS from each node's perftest log.
 
@@ -548,7 +563,7 @@ def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None, running=None):
     running = set(pending if running is None else running)
 
     def collect():
-        out_dict = phdl.exec(cmd, print_console=False)
+        out_dict.update(phdl.exec(cmd, print_console=False))
         for node in list(pending):
             match = re.search(pattern, out_dict.get(node, ''))
             if match:
@@ -561,6 +576,7 @@ def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None, running=None):
     poll_until(
         collect, lambda nodes: not running.intersection(nodes), PERFTEST_BW_RESULT_TIMEOUT_S, PERFTEST_RESULT_POLL_S
     )
+    _fail_nonzero_perftest_rc(out_dict, instance_no)
     for node in pending:
         why = (
             f'no result within {PERFTEST_BW_RESULT_TIMEOUT_S}s'
@@ -596,7 +612,7 @@ def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None, result_nodes=None, ru
     running = set(pending if running is None else running)
 
     def collect():
-        out_dict = phdl.exec(cmd, print_console=False)
+        out_dict.update(phdl.exec(cmd, print_console=False))
         for node in list(pending):
             match = re.search(pattern, out_dict.get(node, ''))
             if match:
@@ -609,6 +625,7 @@ def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None, result_nodes=None, ru
     poll_until(
         collect, lambda nodes: not running.intersection(nodes), PERFTEST_LAT_RESULT_TIMEOUT_S, PERFTEST_RESULT_POLL_S
     )
+    _fail_nonzero_perftest_rc(out_dict, instance_no)
     for node in pending:
         fail_test(f'ERROR !!! on node {node} Client did not complete for msg size {msg_size}')
     _log_lat_summary(msg_size, res_dict, instance_no)
@@ -903,8 +920,7 @@ def run_ib_perf_bw_test(
                     "-q",
                     str(qp_count),
                 ]
-                cmd = " ".join(cmd_parts) + f" > /tmp/ib_perf_{inst_count}_logs 2>&1 &"
-                cmd_dict[node].append(f'echo "{cmd}" >> /tmp/ib_cmds_file.txt')
+                cmd_dict[node].append(_perftest_cmd_file_line(cmd_parts, inst_count))
                 inst_count = inst_count + 1
                 port_no = port_no + 1
         else:
@@ -940,8 +956,7 @@ def run_ib_perf_bw_test(
                     str(qp_count),
                     server_addr,
                 ]
-                cmd = " ".join(cmd_parts) + f" > /tmp/ib_perf_{inst_count}_logs 2>&1 &"
-                cmd_dict[node].append(f'echo "{cmd}" >> /tmp/ib_cmds_file.txt')
+                cmd_dict[node].append(_perftest_cmd_file_line(cmd_parts, inst_count))
                 inst_count = inst_count + 1
                 port_no = port_no + 1
         i = i + 1
@@ -985,6 +1000,7 @@ def run_ib_perf_bw_test(
                 instance_no,
                 exc_info=True,
             )
+            fail_test(f'BW/PPS results lost for msg_size={msg_size} qp_count={qp_count} instance={instance_no}')
 
     _log_bw_run_done(bw_test, msg_size, qp_count, result_dict)
     return result_dict
@@ -1052,8 +1068,7 @@ def run_ib_perf_lat_test(
                     "-s",
                     str(msg_size),
                 ]
-                cmd = " ".join(cmd_parts) + f" > /tmp/ib_perf_{inst_count}_logs 2>&1 &"
-                cmd_dict[node].append(f'echo "{cmd}" >> /tmp/ib_cmds_file.txt')
+                cmd_dict[node].append(_perftest_cmd_file_line(cmd_parts, inst_count))
                 inst_count = inst_count + 1
                 port_no = port_no + 1
         else:
@@ -1083,8 +1098,7 @@ def run_ib_perf_lat_test(
                     str(msg_size),
                     server_addr,
                 ]
-                cmd = " ".join(cmd_parts) + f" > /tmp/ib_perf_{inst_count}_logs 2>&1 &"
-                cmd_dict[node].append(f'echo "{cmd}" >> /tmp/ib_cmds_file.txt')
+                cmd_dict[node].append(_perftest_cmd_file_line(cmd_parts, inst_count))
                 inst_count = inst_count + 1
                 port_no = port_no + 1
         i = i + 1
@@ -1135,6 +1149,7 @@ def run_ib_perf_lat_test(
                 instance_no,
                 exc_info=True,
             )
+            fail_test(f'Latency results lost for msg_size={msg_size} instance={instance_no}')
 
     _log_lat_run_done(lat_test, msg_size, result_dict)
     return result_dict
