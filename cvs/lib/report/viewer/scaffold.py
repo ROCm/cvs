@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from cvs.lib.report.artifacts import export_payload
+from cvs.lib.report.viewer.paging import page_tables_js
 
 _TEMPLATE_PATH = Path(__file__).with_name("interactive.html")
 
@@ -43,6 +44,7 @@ def write_interactive_viewer(
         .replace("__JSON_PATH__", json.dumps(json_basename))
         .replace("__TIER_ORDER__", tier_js)
         .replace("__EMBEDDED_JSON__", embedded)
+        .replace("__PAGE_TABLES_JS__", page_tables_js())
     )
     out_html.write_text(doc, encoding="utf-8")
     return out_html
