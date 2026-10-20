@@ -9,12 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- AMD Rack Check (ARC) suites: `arc_installation`, flow and item suites run from per-rack controllers (`arc.controller_nodes`), with ANC-style install, logs under `<run_dir>/arc_logs/`, and Run Deck. Disruptive flows and items are opt-in through `arc.allow_disruptive`. ARC runs print a liveness heartbeat while ARC is alive, so silent items such as `ANCGPUTest` no longer trip `arc.inactivity_timeout`, and `arc.run_timeout` (default 14400 s) stops ARC's process group on the controller when exceeded.
+
 - RCCL perf, regression and pairwise report each bandwidth or dip check per collective, data type and message size, or pairwise phase and node, as a pytest sub-test. The HTML report expands each parent row into per-case pass/fail rows.
 - Aorta `aorta_single` and `aorta_distributed` write an Aorta Run Deck (`<suite>_html/aorta_run_deck.html` and `.json`) beside the pytest HTML report, with a run card showing each configured threshold's verdict from the threshold gate, a lifecycle timeline, a threshold gate matrix, per-rank time and ratio charts, and a full results table. Pass/fail gating is unchanged.
 
 ### Changed
 
 - vLLM configs that set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` (any case) in `container.env` now fail to load with `ContainerEnvTokenError`, because `container.env` values become `docker run -e` arguments; set `paths.hf_token_file` instead. The vLLM server now reads that file inside the container on each node, so it must be on a mounted path.
+- Generic ANC install and log helpers moved to `cvs/lib/amdtools_lib.py`; `anc_lib` names unchanged.
+
 - ibperf now probes every test node's perftest binary for ROCm DMA-BUF support before launching. It fails with the node, the binary path and the build flag when support is missing, unless `ibperf.require_dmabuf` is `"False"`. Whether DMA-BUF was used is recorded as a `dmabuf` user property and in the Excel sheet headings. `run_ib_perf_bw_test` / `run_ib_perf_lat_test` no longer take `shdl` and accept `use_dmabuf`. `check_perftest_dmabuf_support` is replaced by `check_perftest_dmabuf`.
 - Aorta threshold validation and trace collection report each threshold and each node as a pytest sub-test, shown as rows of the parent test in the HTML report, with the measured value next to each threshold, and as `cvs_aorta_subtest` properties in JUnit XML that carry the outcome, measured value, gate and failure message. JUnit `<testcase>` names and count are unchanged, but each sub-test adds one to the `testsuite` `tests` total, and a failed sub-test adds its own `<failure>` to the parent `<testcase>` next to the parent's failure, so `failures` counts both.
 - RCCL perf, regression, and pairwise suites use the orchestrator for workload execution, including container-aware launches and cleanup. `RcclJob` and `RcclJob.from_config` now take one `orch` argument in place of the previous two execution handles; `OpenMPI.prepare`, `MpiRun`, and `Srun` callers must also migrate.
