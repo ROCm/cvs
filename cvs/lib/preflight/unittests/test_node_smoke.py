@@ -132,7 +132,7 @@ class TestBuildRemoteCommand(unittest.TestCase):
             cli = os.path.join(primus, "runner", "primus-cli")
             with open(cli, "w") as f:
                 f.write("#!/bin/sh\nexit 0\n")
-            os.chmod(cli, 0o755)
+            os.chmod(cli, 0o700)
             dump = os.path.join(root, "node_smoke")
             os.makedirs(os.path.join(dump, "smoke"))
             me = socket.gethostname().split(".")[0]
