@@ -60,14 +60,33 @@ def _hide_overflow_rows(row_html, page_size):
     return paged
 
 
+_ARTIFACT_LINKS = (
+    ("errors_json_href", "errors.json"),
+    ("log_tarball_href", "logs.tar.gz"),
+)
+
+
+def artifact_link_records(cell):
+    """The errors.json and log-tarball links stored on a status cell."""
+    if not isinstance(cell, dict):
+        return []
+    return [{"label": label, "href": str(cell[key])} for key, label in _ARTIFACT_LINKS if cell.get(key)]
+
+
+def _anchor(label, href):
+    return f"<a href='{html.escape(str(href), quote=True)}'>{html.escape(str(label or 'link'))}</a>"
+
+
+def render_artifact_links(cell, separator=""):
+    """Anchors for a status cell's errors.json and log tarball."""
+    return separator.join(_anchor(item["label"], item["href"]) for item in artifact_link_records(cell))
+
+
 def _cell_html(value):
-    # A path string is escaped text. ANC stores its artifact hrefs as link records
-    # so the same cell can render anchors without trusting raw HTML.
+    # A path string is escaped text. Link records use the same anchors as the
+    # status-matrix cell, so the href escaping stays in one place.
     if isinstance(value, list) and value and all(isinstance(item, dict) and item.get("href") for item in value):
-        return " · ".join(
-            f"<a href='{html.escape(str(item['href']), quote=True)}'>{html.escape(str(item.get('label') or 'link'))}</a>"
-            for item in value
-        )
+        return " · ".join(_anchor(item.get("label"), item["href"]) for item in value)
     return html.escape(str(value))
 
 

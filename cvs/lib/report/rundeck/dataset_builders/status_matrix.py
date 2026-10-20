@@ -88,6 +88,7 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
+from cvs.lib.report.render.panel_shell import artifact_link_records
 from cvs.lib.report.rundeck.dataset_builders.registry import register_dataset_builder
 
 _STATUSES = ("pass", "fail", "na")
@@ -380,14 +381,7 @@ def _logs_column(profile):
 
 
 def _artifact_links(cell):
-    links = []
-    errors = cell.get("errors_json_href")
-    logs = cell.get("log_tarball_href")
-    if errors:
-        links.append({"label": "errors.json", "href": str(errors)})
-    if logs:
-        links.append({"label": "logs.tar.gz", "href": str(logs)})
-    return links or _BLANK
+    return artifact_link_records(cell) or _BLANK
 
 
 def _item_counts(summary):
