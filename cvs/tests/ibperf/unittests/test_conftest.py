@@ -35,9 +35,24 @@ class TestOrchFixture(unittest.TestCase):
         self.assertIs(next(gen), orch)
         return gen, orch, create.call_args.args[1]
 
-    def test_odd_node_count_drops_the_last_node(self):
-        _, _, cfg = self._start(['n1', 'n2', 'n3'])
-        self.assertEqual(list(cfg.node_dict), ['n1', 'n2'])
+    def test_install_orch_covers_nodes_used_by_vpod_pairs_with_odd_count(self):
+        cluster_nodes = ['A', 'B', 'C']
+        install_gen, install_orch, cfg = self._start(cluster_nodes)
+        install_nodes = set(cfg.node_dict)
+        pairings = (
+            ('inter_vpod', {'A': '1', 'B': '1', 'C': '2'}),
+            ('intra_vpod', {'A': '1', 'B': '2', 'C': '2'}),
+        )
+        for mode, vpod_map in pairings:
+            with self.subTest(mode=mode):
+                pairs, _ = ibperf_lib.build_ibperf_node_pairs(cluster_nodes, mode, vpod_map)
+                paired_nodes = {node for pair in pairs for node in pair}
+                self.assertLessEqual(paired_nodes, install_nodes)
+                self.assertIn('C', paired_nodes)
+        self.assertEqual(install_nodes, set(cluster_nodes))
+        with self.assertRaises(StopIteration):
+            next(install_gen)
+        install_orch.close.assert_called_once_with()
 
     def test_teardown_closes_the_orchestrator(self):
         gen, orch, _ = self._start(['n1', 'n2'])

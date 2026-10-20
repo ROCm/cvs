@@ -198,7 +198,7 @@ html-doc: doc-venv
 	ROCM_DOCS_USE_BUNDLED_MAPPINGS=1 \
 		$(DOC_VENV_DIR)/bin/python -m sphinx build -a docs $(DOC_BUILD_DIR) -q
 	ROCM_DOCS_USE_BUNDLED_MAPPINGS=1 \
-		$(DOC_VENV_DIR)/bin/sphinx-autobuild docs $(DOC_BUILD_DIR) --port $(DOC_PORT) --host 0.0.0.0 -q
+		$(DOC_VENV_DIR)/bin/sphinx-autobuild docs $(DOC_BUILD_DIR) --port $(DOC_PORT) --host 0.0.0.0 -a -q
 
 clean_doc_venv:
 	@echo "Removing doc virtual environment and build artifacts..."

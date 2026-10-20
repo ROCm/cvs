@@ -995,35 +995,40 @@ def get_gpu_nic_mapping_dict(phdl, use_sudo=True, active_only=True):
 def get_gpu_numa_dict(phdl, use_sudo=True):
     gpu_numa_dict = {}
     gpu_pcie_dict = rocm_plib.get_gpu_pcie_bus_dict(phdl, use_sudo=use_sudo)
-
-    first_node = list(gpu_pcie_dict.keys())[0]
-    card_list = list(gpu_pcie_dict[first_node].keys())
-    for node in gpu_pcie_dict.keys():
-        gpu_numa_dict[node] = {}
-        for card in card_list:
-            gpu_numa_dict[node][card] = {}
+    nodes = list(gpu_pcie_dict)
+    card_list = list(dict.fromkeys(card for cards in gpu_pcie_dict.values() for card in cards))
+    for node, cards in gpu_pcie_dict.items():
+        gpu_numa_dict[node] = {card: {} for card in cards}
 
     # Build cmd list
     for card in card_list:
         cmd_list = []
-        for node in gpu_pcie_dict.keys():
-            gpu_bdf = str(gpu_pcie_dict[node][card]['PCI Bus']).lower()
-            cmd_list.append(f'cat /sys/bus/pci/devices/{gpu_bdf}/local_cpulist')
+        for node in nodes:
+            if card in gpu_pcie_dict[node]:
+                gpu_bdf = str(gpu_pcie_dict[node][card]['PCI Bus']).lower()
+                cmd_list.append(f'cat /sys/bus/pci/devices/{gpu_bdf}/local_cpulist')
+            else:
+                cmd_list.append('true')
 
         out_dict = phdl.exec_cmd_list(cmd_list)
-        for node in out_dict.keys():
-            gpu_numa_dict[node][card]['local_cpulist'] = str(out_dict[node]).rstrip('\n').rstrip('\r')
+        for node in nodes:
+            if card in gpu_pcie_dict[node] and node in out_dict:
+                gpu_numa_dict[node][card]['local_cpulist'] = str(out_dict[node]).rstrip('\n').rstrip('\r')
 
     # Build cmd list
     for card in card_list:
         cmd_list = []
-        for node in gpu_pcie_dict.keys():
-            gpu_bdf = str(gpu_pcie_dict[node][card]['PCI Bus']).lower()
-            cmd_list.append(f'cat /sys/bus/pci/devices/{gpu_bdf}/numa_node')
+        for node in nodes:
+            if card in gpu_pcie_dict[node]:
+                gpu_bdf = str(gpu_pcie_dict[node][card]['PCI Bus']).lower()
+                cmd_list.append(f'cat /sys/bus/pci/devices/{gpu_bdf}/numa_node')
+            else:
+                cmd_list.append('true')
 
         out_dict = phdl.exec_cmd_list(cmd_list)
-        for node in out_dict.keys():
-            gpu_numa_dict[node][card]['numa_node'] = str(out_dict[node]).rstrip('\n').rstrip('\r')
+        for node in nodes:
+            if card in gpu_pcie_dict[node] and node in out_dict:
+                gpu_numa_dict[node][card]['numa_node'] = str(out_dict[node]).rstrip('\n').rstrip('\r')
 
     log.info("%s", gpu_numa_dict)
     return gpu_numa_dict

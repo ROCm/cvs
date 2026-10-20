@@ -184,3 +184,8 @@ Run the RVS test:
 .. note::
 
   Both ``cvs run install_rvs`` and ``cvs run rvs_cvs`` support running inside a per-host container instead of on the host filesystem. Pass a ``cluster_container.json`` cluster file with ``orchestrator: container`` to route invocations through the container backend. See :doc:`/how-to/run-with-containers`.
+
+Run on managed compute
+~~~~~~~~~~~~~~~~~~~~~~
+
+Follow :doc:`/how-to/run-on-managed-compute` to run these health suites on managed compute.

@@ -26,3 +26,8 @@ InfiniBand performance, RCCL collectives, and MORI RDMA benchmarks validate clus
      - :doc:`/reference/configuration-files/network/mori`
 
 See also :doc:`/how-to/test-suites/index` for common ``cvs run`` flags and workflow.
+
+Test results
+============
+
+The sample report for this category is an RCCL pytest HTML report. ``cvs run`` writes it under ``<workspace>/cvs_runs/<run_id>/``.

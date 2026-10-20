@@ -6,7 +6,7 @@
 Run Cluster Validation Suite (CVS) test suites on AMD Instinct GPU clusters
 ***************************************************************************
 
-To run a test suite over SSH you need two files: a **cluster file** (``--cluster_file``) that describes your nodes and SSH access, and a **test suite config** (``--config_file``) with suite-specific settings. Set those up first — see :doc:`/how-to/configure/cluster-config` and :doc:`/how-to/configure/test-suite-config/index`. To choose the right template, see :doc:`/how-to/configure/test-suite-config/pick-config-file`. On Slurm or SPUR, launch ``cvs run`` as a job step instead and the cluster file becomes optional (see :doc:`/how-to/run-under-scheduler`).
+To run a test suite over SSH you need two files: a **cluster file** (``--cluster_file``) that describes your nodes and SSH access, and a **test suite config** (``--config_file``) with suite-specific settings. Set those up first — see :doc:`/how-to/configure/cluster-config` and :doc:`/how-to/configure/test-suite-config/index`. To choose the right template, see :doc:`/how-to/configure/test-suite-config/pick-config-file`. On Slurm or SPUR, launch ``cvs run`` as a job step instead and the cluster file becomes optional (see :doc:`/how-to/run-on-managed-compute`).
 
 For SSH mode, use ``cvs run`` on the head node to execute tests across the cluster.
 
@@ -33,10 +33,7 @@ Pass the cluster file and test suite config from your workspace:
     --config_file ~/cvs_workspace/health_config.json \
     --capture=tee-sys -vvv -s
 
-``cvs run`` writes a self-contained HTML report and a text log under
-``<workspace>/cvs_runs/<run_id>/`` by default. Pass ``--html`` or ``--log-file``
-to override those paths, or ``--no-html`` / ``--no-log-file`` to skip a file.
-See :doc:`/reference/cli/cvs-run`.
+``cvs run`` writes the pytest HTML report, text log, and zip bundle under the run directory. See :ref:`pytest-html-report-and-bundle`.
 
 List test cases in a suite
 ==========================
@@ -71,12 +68,12 @@ CVS selects an execution backend in the cluster file:
 
 See :doc:`/how-to/run-with-containers` for ``cluster_container.json``, image selection, and container run commands.
 
-Run under Slurm or SPUR
-=======================
+Run on managed compute
+======================
 
 Launch one CVS task per node as a job step and give every task the same shared
 workspace. CVS generates the cluster file from the allocated node list; see
-:doc:`/how-to/run-under-scheduler` for setup and a complete quickstart.
+:doc:`/how-to/run-on-managed-compute` for setup and a complete quickstart.
 
 .. code:: bash
 
@@ -124,6 +121,46 @@ For clusters with 32 or more nodes, CVS automatically shards work across paralle
 Test results
 ============
 
-CVS writes a pytest HTML report after each run. The report includes per-node pass/fail status, captured output, and links to any custom suite-specific reports (for example RCCL performance charts).
+CVS writes a pytest HTML report after each run. The report includes per-node pass/fail status, captured output, and links to any custom suite-specific reports.
+
+.. _pytest-html-report-and-bundle:
+
+Pytest HTML report and bundle
+-----------------------------
+
+.. list-table::
+   :header-rows: 1
+
+   * - Artifact
+     - Default location
+     - Notes
+   * - Pytest HTML report
+     - ``<run_dir>/<test-file-stem>.html``
+     - For example, ``<workspace>/cvs_runs/<run_id>/rccl_perf.html``. The auto-derived report is self-contained.
+   * - Text log
+     - ``<run_dir>/<test-file-stem>.log``
+     - Pytest run log.
+   * - Attachments
+     - ``<run_dir>/<test-file-stem>_html/``
+     - Per-test "Full Log" pages and a copy of the run log. When the suite supports a Run Deck, this directory also holds the Run Deck HTML and JSON, and may include a summary page or an interactive viewer. The pytest report's **Reports** section links the Run Deck HTML. The other deck files stay in this directory and in the zip. Recreated at the start of each run.
+   * - Zip bundle
+     - ``<run_dir>/<test-file-stem>_<YYYY-mm-ddTHHMMSS>.zip``
+     - Contains the report, the attachments directory, and the cluster and config files. Links still work after extraction.
+
+``<run_dir>`` is ``<workspace>/cvs_runs/<run_id>``. ``<run_id>`` is ``local-<YYYYmmdd-HHMMSS>`` outside a scheduler, or the job ID under SPUR or Slurm.
+
+A Run Deck summarizes results collected during the run. It is included when the selected suite supports it. Run Deck generation does not affect the suite result.
+
+See :doc:`/reference/cli/cvs-run` for the report and log options.
+
+Test output examples
+--------------------
 
 .. include:: /_includes/test-results.rst
+
+Sample reports for each category are on that category's page, under **Test results**:
+
+- :doc:`Burn-in / Diag </how-to/test-suites/burn-in-diag/index>` — preflight
+- :doc:`Network </how-to/test-suites/network/index>` — RCCL
+- :doc:`Training </how-to/test-suites/training/index>` — pytest HTML report, Run Deck, and interactive viewer
+- :doc:`Inference </how-to/test-suites/inference/index>` — SGLang pytest HTML report

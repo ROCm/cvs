@@ -229,10 +229,15 @@ Each module can also be run with pytest:
     --config_file ~/cvs_workspace/inference/xdit/mi3xx_xdit_flux1_dev_single.json \
     --html ~/cvs_results/xdit_flux1_single.html
 
+Run on managed compute
+----------------------
+
+Follow :doc:`/how-to/run-on-managed-compute` to run xDiT on managed compute.
+
 Read the results
 ================
 
-``cvs run`` writes a pytest HTML report under the run directory by default. Benchmark pass/fail uses the docker
+``cvs run`` writes the pytest HTML report described in :ref:`pytest-html-report-and-bundle`. Benchmark pass/fail uses the docker
 exit code plus parsed artifacts and the GPU key in the sibling threshold file.
 
 The suite reads PCI device IDs from ``/sys/class/drm/card*/device/device``. ``0x74a5``

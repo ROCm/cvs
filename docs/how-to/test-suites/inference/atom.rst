@@ -19,130 +19,12 @@ and parameter reference, see :doc:`/reference/configuration-files/inference/atom
 Prerequisites
 =============
 
-The following prerequisites are required.
+In addition to the :ref:`common inference prerequisites <inference-common-prerequisites>`:
 
-On every **GPU node**:
-
-- Docker with ROCm device passthrough (``sudo docker`` or docker group).
-- ATOM (or vLLM-ATOM / SGLang) container image available on the node.
-- Model weights at ``paths.models_dir`` when ``model.remote: 0``.
-- Shared log path mounted when using multinode PP.
-
-On the **launcher** (where you run ``cvs run``):
-
-- CVS installed (see :doc:`/install/install`).
-- SSH key access to cluster nodes (``priv_key_file`` in the cluster file).
-- Hugging Face token file at ``paths.hf_token_file`` when required.
-
-On **Spur or Slurm managed compute**:
-
-- Launch CVS inside a **job step** (one task per node), for example
-  ``spur run --mpi=none`` or ``srun --mpi=none``. A bare allocation or a
-  ``spur submit`` / ``sbatch`` script that never starts a step is not
-  managed CVS (``SLURM_STEP_ID`` stays unset).
-- CVS writes the managed cluster file (``cluster_agents.json``) from the job's node list; see :doc:`/how-to/run-under-scheduler`.
-  ATOM still uses the ``orch`` fixture and the config ``container`` block;
-  do not add nested ``spur run`` inside ``AtomJob``.
-- Pass ``--workspace`` (or set ``CVS_WORKSPACE``) to shared storage; managed runs fail without it.
-- Prove an existing single-node stem first, then run the ``mi355x_atom_*``
-  stems (Kimi TP4, V4-Pro TP8).
-
-Spur example:
-
-.. code:: bash
-
-  spur run -A <account> -p <partition> \
-    -N 1 --ntasks-per-node 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
-    bash -lc 'source ~/.cvs_venv/bin/activate &&
-      cvs run atom --config_file <atom-config.json> --html <report.html> \
-        --workspace /shared/<user>/cvs'
-
-Slurm example:
-
-.. code:: bash
-
-  srun -A <account> -p <partition> \
-    -N 1 --ntasks-per-node 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
-    bash -lc 'source ~/.cvs_venv/bin/activate &&
-      cvs run atom --config_file <atom-config.json> --html <report.html> \
-        --workspace /shared/<user>/cvs'
-
-In managed mode, ``cvs run`` is the **job step on the GPU node**.
-``--cluster_file`` is optional. CVS builds the live cluster file from
-scheduler hosts and starts one HTTP agent per scheduler task.
-
-``make install`` needs ``python3-venv`` (``ensurepip``). Scheduler **login**
-nodes often lack it; do not ``apt install`` packages there. Pull the tree
-on the shared home from login, then create ``.cvs_venv`` **inside** the job
-step on the GPU node. Deactivate any existing venv first so Make does not
-bind ``PYTHON`` to ``.cvs_venv/bin/python3`` and then delete that path.
-
-.. code:: bash
-
-  # on login: git pull only. deactivate before make install.
-  spur run -A <account> -p <partition> \
-    -N 1 --ntasks-per-node 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
-    bash -lc 'export PATH=/usr/bin:/bin:$PATH
-      cd ~/cvs && make install &&
-      source ~/.cvs_venv/bin/activate &&
-      cvs run atom --config_file <atom-config.json> --html <report.html> \
-        --workspace /shared/<user>/cvs'
-
-MI355X Spur stems (same job-step pattern)
------------------------------------------
-
-On gfx950, copy **Kimi TP4** then **V4-Pro TP8** into **separate** directories
-so each ``--config_file`` sees only its matching ``*threshold.json``. Both
-stems use ``driver=atom`` and ``lifetime: per_run``. The server reads weights
-from the ``/models`` mount. If the checkpoint lives under the home cache,
-point the models volume at that directory.
-
-.. code:: bash
-
-  KIMI_DIR=~/input/config_file/inference/atom/kimi355
-  PRO_DIR=~/input/config_file/inference/atom/pro355
-  mkdir -p "$KIMI_DIR" "$PRO_DIR"
-
-  cvs config copy inference/atom/mi355x_atom_kimi-k27-code_mxfp4_single.json \
-    --output "$KIMI_DIR/mi355x_atom_kimi-k27-code_mxfp4_single.json"
-  cvs config copy inference/atom/mi355x_atom_kimi-k27-code_mxfp4_single_threshold.json \
-    --output "$KIMI_DIR/mi355x_atom_kimi-k27-code_mxfp4_single_threshold.json"
-
-  cvs config copy inference/atom/mi355x_atom_deepseek-v4-pro_single.json \
-    --output "$PRO_DIR/mi355x_atom_deepseek-v4-pro_single.json"
-  cvs config copy inference/atom/mi355x_atom_deepseek-v4-pro_single_threshold.json \
-    --output "$PRO_DIR/mi355x_atom_deepseek-v4-pro_single_threshold.json"
-
-In each copy set ``container.image``, the host side of the models volume,
-``paths.shared_fs``, and ``model.id`` to the in-container weights path when
-``model.remote`` is ``0`` (for example ``/models/<local-folder>``). Keep
-``tensor_parallelism`` / ``-tp`` at **4** for Kimi and **8** for V4-Pro.
-
-Launch Kimi first, then Pro, with the same ``spur run --mpi=none`` wrapper
-(one exclusive 8-GPU node). Run the **full** suite: accuracy eval needs the
-server started by earlier lifecycle tests; ``-k test_accuracy_eval`` alone
-fails with ``docker exec None``.
-
-.. code:: bash
-
-  spur run -A <account> -p <partition> \
-    -N 1 --ntasks-per-node 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
-    bash -lc 'source ~/.cvs_venv/bin/activate &&
-      cvs run atom \
-        --config_file ~/input/config_file/inference/atom/kimi355/mi355x_atom_kimi-k27-code_mxfp4_single.json \
-        --html ~/cvs_reports/atom_kimi.html --self-contained-html \
-        --workspace /shared/<user>/cvs'
-
-Then the same command with
-``~/input/config_file/inference/atom/pro355/mi355x_atom_deepseek-v4-pro_single.json``
-and ``atom_v4pro.html``.
-
-For **multinode PP** (``params.nnodes: 2``, ``pipeline_parallel_size: 2``):
-
-- Two hosts in ``node_dict`` matching ``params.nnodes``.
-- ``params.master_addr`` set to the head node VPC IP.
-- IB/socket fabric discoverable, or explicit ``roles.server.ib_hca_devices`` /
-  ``roles.server.ib_netdev`` (socket netdev must **not** be an ``mlx5_*`` HCA name).
+- The container image must provide the selected serving stack: native ATOM,
+  vLLM-ATOM, or SGLang.
+- When ``model.remote`` is ``0``, place the weights at ``paths.models_dir``.
+- For multinode pipeline parallelism, mount the shared log path on every node.
 
 Step 1: Copy config and cluster files
 =====================================
@@ -189,8 +71,13 @@ lookups. SGLang ``bench_serving`` with ``dataset_name=random`` also downloads
 ShareGPT into ``HF_HUB_CACHE``, so Qwen SGLang samples override
 ``HF_HUB_CACHE`` / ``HF_HOME`` to ``{paths.shared_fs}/.cache/huggingface``.
 
-For multinode PP, also set ``params.master_addr`` and verify
-``roles.server.ib_netdev`` (``"auto"`` is the default on shipped distributed stems).
+For multinode PP:
+
+- Keep the number of hosts in ``node_dict`` equal to ``params.nnodes``.
+- Set ``params.master_addr`` to the head-node address reachable from every node.
+- Verify automatic fabric discovery or set ``roles.server.ib_hca_devices`` and
+  ``roles.server.ib_netdev`` explicitly. The netdev must be a network interface,
+  not an ``mlx5_*`` HCA device name.
 
 .. tip::
 
@@ -237,7 +124,12 @@ Smoke one cell with pytest ``-k``, for example ``-k "w1_1k_1k-conc128"``.
 
 After ``git pull``, run ``make install`` before ``source .cvs_venv/bin/activate``.
 On Spur or Slurm, do that on the GPU node inside the job step if login cannot
-create a venv (see the managed-compute notes above).
+create a venv.
+
+Run on managed compute
+----------------------
+
+Follow :doc:`/how-to/run-on-managed-compute` to run ATOM on managed compute.
 
 Test lifecycle
 ==============
@@ -321,9 +213,9 @@ Reports and logs
 
 - **pytest HTML** — one row per lifecycle stage and per metric tier.
 - **Console tables** — ``test_print_results_table`` prints per-cell throughput and latency.
-- **Run Deck** — ``atom_run_deck.html`` / ``.json`` / ``_viewer.html`` are bundled
-  into the pytest zip when an HTML report is generated (``cvs run`` does this by
-  default; direct ``pytest`` needs ``--html``). Render-only; does not affect gates.
+- **Run Deck** — ``atom_run_deck.html`` / ``.json`` /
+  ``_viewer.html``. See :ref:`pytest-html-report-and-bundle` for generic Run
+  Deck behavior and packaging.
 - **Per-cell logs** — under ``paths.log_dir`` on cluster nodes (server + client logs).
 
 Launcher vs GPU node

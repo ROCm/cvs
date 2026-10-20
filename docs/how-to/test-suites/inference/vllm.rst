@@ -17,23 +17,17 @@ This page walks through a first run. For the full schema, every metric, and the 
 Prerequisites
 =============
 
-On every cluster node:
+In addition to the :ref:`common inference prerequisites <inference-common-prerequisites>`:
 
-- **Docker** installed, with the SSH user able to run it (passwordless ``sudo docker`` or membership in the ``docker`` group).
-- **Host driver** loaded, so ``/dev/kfd``, ``/dev/dri/*``, and ``/dev/infiniband/*`` are present for passthrough.
-- **A vLLM image** either already loaded or pullable from a reachable registry. It must contain ``vllm`` on the path — the suite invokes ``vllm serve`` and ``vllm bench serve`` inside the container.
-- **Model weights** staged on a shared filesystem that every node mounts at the same path. Remote model download is not implemented, so weights must be present before the run.
-- **A Hugging Face token file**, if the model needs one. A pre-staged model can run without it.
+- The container image must provide ``vllm`` on ``PATH``. The suite runs
+  ``vllm serve`` and ``vllm bench serve`` inside the container.
+- Stage the model weights before the run. The suite does not download models.
 
-On the head node where you launch ``cvs run``:
+For a multinode run, also identify:
 
-- CVS installed (see :doc:`/install/install`).
-- SSH key-based access to every cluster node.
-
-For a multinode run, additionally have on hand:
-
-- The **head node address** reachable from every worker.
-- The **network interface name** used for inter-node traffic, for example ``ens51f1np1``. Find it with ``ip -br addr`` on a node. CVS cannot derive this automatically.
+- The head-node address reachable from every worker.
+- The network interface used for inter-node traffic, for example ``ens51f1np1``.
+  Find it with ``ip -br addr`` on a node.
 
 .. _vllm-set-up-config:
 
@@ -78,6 +72,7 @@ In the **configuration file**, set:
 - ``paths.models_dir`` — where the weights live. Make sure this path is also mounted into the container by ``container.runtime.args.volumes``.
 - ``paths.hf_token_file`` — path to your token file.
 - ``server_params.model`` — the model to serve.
+- RDMA volumes — keep the NIC family installed on the nodes. ``_comment_bnxt_mount`` is Broadcom Thor2 (``libbnxt_re-rdmav34.so``). ``_comment_ionic_mounts`` is AMD Pensando Ionic / AINIC; replace ``<changeme-libionic-soname>`` with the host soname filename from ``readlink -f /usr/lib/x86_64-linux-gnu/libionic.so.1``. Delete the other family. ``docker run`` fails if a listed host path is missing.
 
 For a **multinode** configuration, also set:
 
@@ -115,11 +110,14 @@ Use ``vllm_distributed`` for one distributed service across the cluster:
 
 .. note::
 
-  ``cvs run`` writes a self-contained HTML report under the run directory by default.
-  Pass ``--html PATH`` to override the location. Direct ``pytest`` still needs ``--html``
-  (and ``--self-contained-html`` if you want a single portable file).
+  ``cvs run`` writes the pytest HTML report described in :ref:`pytest-html-report-and-bundle`.
 
   Any flag CVS does not recognize is passed straight through to pytest, so options such as ``-vvv`` and ``--capture=tee-sys`` work as usual.
+
+Run on managed compute
+----------------------
+
+Follow :doc:`/how-to/run-on-managed-compute` to run vLLM on managed compute.
 
 Step 4: Read the results
 ========================

@@ -22,12 +22,16 @@ The mode is which suite you invoke (``megatron_single`` vs ``megatron_distribute
 Prerequisites
 =============
 
-The following prerequisites are required.
+In addition to the :ref:`common training prerequisites <training-common-prerequisites>`:
 
-- Passwordless SSH from the control host to each cluster node (key in the cluster file) and Docker available on the nodes.
-- A container image for ROCm (``container.image`` in the config). A Megatron-LM image must provide Megatron-LM at ``/workspace/Megatron-LM``. A Primus image (name contains ``primus``) uses in-image YAML under ``examples/megatron/configs/{gpu_arch}/`` instead.
-- A Hugging Face token file at ``paths.hf_token_file`` (used to fetch the tokenizer). Tokenizer download requires network access on the nodes. For gated models (LLaMA, DeepSeek), model access must be granted on huggingface.co.
-- For distributed runs: RDMA interfaces configured and reachable on all nodes; a shared filesystem path reachable from all nodes for ``paths.data_cache_dir``, logs, and scripts.
+- A Megatron-LM image must provide Megatron-LM at ``/workspace/Megatron-LM``. A
+  Primus image, whose name contains ``primus``, uses the in-image YAML under
+  ``examples/megatron/configs/{gpu_arch}/``.
+- A Hugging Face token file at ``paths.hf_token_file``. The nodes need network
+  access to download the tokenizer. Gated models such as LLaMA and DeepSeek also
+  need access granted on huggingface.co.
+- For a distributed run, use a shared filesystem reachable from every node for
+  ``paths.data_cache_dir``, logs, and scripts.
 
 .. _megatron-set-up-config:
 
@@ -146,7 +150,7 @@ Use a ``*_single.json`` config with ``megatron_single`` and a ``*_distributed.js
 
 - ``--cluster_file`` — JSON describing the node(s); see :doc:`/how-to/configure/cluster-config`.
 - ``--config_file`` — one of the files under ``input/config_file/training/megatron/``; field reference: :doc:`/reference/configuration-files/training/megatron`.
-- ``--html`` / ``--self-contained-html`` — optional HTML path override. ``cvs run`` writes a self-contained report under the run directory by default.
+- ``--html`` / ``--self-contained-html`` — optional HTML path override. The report layout is described in :ref:`pytest-html-report-and-bundle`.
 
 Single-node — MI300X / MI325X
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -190,6 +194,11 @@ Run a specific stage
   cvs run megatron_single test_smoke \
     --cluster_file input/cluster_file/cluster.json \
     --config_file input/config_file/training/megatron/mi3xx_megatron_llama-3.1-8b_single.json
+
+Run on managed compute
+~~~~~~~~~~~~~~~~~~~~~~
+
+Follow :doc:`/how-to/run-on-managed-compute` to run Megatron on managed compute.
 
 Test lifecycle
 ==============
@@ -368,7 +377,12 @@ Reports and logs
 
 - **Results table** — one row per test; metric rows show PASS/FAIL from the threshold check.
 - **Pytest metric subtests** — each ``test_metric[combo]`` row expands to show one verdict per parsed metric, with pass/fail/skip counts reflected in the pytest HTML filter summary.
-- **Megatron Run Deck** — ``megatron_run_deck.html``, ``megatron_run_deck.json``, and the optional ``megatron_run_deck_viewer.html`` are written beside the pytest HTML report and bundled into the report zip. The deck includes the run card, lifecycle timeline, sweep analytics, gate matrix, per-combo cells, and full results table.
+- **Megatron Run Deck** — ``megatron_run_deck.html``,
+  ``megatron_run_deck.json``, and the optional
+  ``megatron_run_deck_viewer.html``. See
+  :ref:`pytest-html-report-and-bundle` for generic Run Deck behavior and
+  packaging. The deck includes the run card, lifecycle timeline, sweep
+  analytics, gate matrix, per-combo cells, and full results table.
 - **Full log** — each test row links to its own captured log.
 - **Training logs** — Megatron-LM writes ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``. Primus writes ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``. Folder names use the sanitized combo ID (see the table below).
 

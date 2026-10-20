@@ -256,6 +256,14 @@ Container and Docker configuration
 ==================================
 
 The container block controls image selection, lifetime, and the ``docker run`` flags.
+Packaged configurations leave Hugging Face hub access online.
+Their volume list includes both NIC families, labeled by ``_comment_bnxt_mount``
+(Broadcom Thor2, ``libbnxt_re-rdmav34.so``) and ``_comment_ionic_mounts``
+(AMD Pensando Ionic / AINIC: ``libionic.so``, ``libionic.so.1``, the versioned
+``libionic.so.1.*`` soname, ``libionic-rdmav34.so``, and ``ionic.driver``).
+Replace ``<changeme-libionic-soname>`` with the filename from
+``readlink -f /usr/lib/x86_64-linux-gnu/libionic.so.1``, and delete the family
+that is not installed. ``docker run`` fails when a listed host path is missing.
 
 .. code:: json
 
@@ -336,7 +344,7 @@ All keys under ``runtime.args`` are optional. **List-valued keys append to the d
      - ``-v <host>:<ctr>[:ro]``
    * - ``devices``
      - append
-     - ``/dev/kfd``, ``/dev/dri``, ``/dev/infiniband``
+     - ``/dev/kfd``, ``/dev/dri``, plus each ``/dev/infiniband/*`` node the host has
      - ``--device <path>``
    * - ``cap_add``
      - append

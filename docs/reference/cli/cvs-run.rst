@@ -171,7 +171,7 @@ Conditionally required options:
    * - Option
      - Description
    * - ``--cluster_file PATH``
-     - Cluster JSON (nodes, SSH credentials, backend). Required unless ``cvs run`` is launched as a Slurm/SPUR job step; then CVS writes ``<run_dir>/cluster_agents.json`` and an optional file supplies extra metadata. See :doc:`/how-to/run-under-scheduler`.
+     - Cluster JSON (nodes, SSH credentials, backend). Required unless ``cvs run`` is launched as a Slurm/SPUR job step; then CVS writes ``<run_dir>/cluster_agents.json`` and an optional file supplies extra metadata. See :doc:`/how-to/run-on-managed-compute`.
 
 Optional options:
 
@@ -204,7 +204,7 @@ All other pytest flags pass through. Run ``pytest --help`` for the full list.
 
 ``CVS_SCHEDULER`` overrides scheduler detection with ``spur``, ``slurm`` or
 ``bare_metal``. ``CVS_WORKSPACE`` supplies the workspace when ``--workspace``
-is omitted. See :doc:`/how-to/run-under-scheduler` for managed runs.
+is omitted. See :doc:`/how-to/run-on-managed-compute` for managed runs.
 
 See :doc:`/how-to/test-suites/index`.
 

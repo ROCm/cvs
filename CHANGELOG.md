@@ -9,12 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ibperf bandwidth/latency tests support vPOD-aware node pairing: `ibperf.pairing_mode` = `sequential` (default, unchanged), `inter_vpod`, or `intra_vpod`. vPODs come from AFM (`afmctl show device --json`, keyed by scale-up fabric physical pod and virtual pod IDs) or from `node_dict[<node>].vpod_id` (`ibperf.vpod_source`).
 - RCCL perf, regression and pairwise report each bandwidth or dip check per collective, data type and message size, or pairwise phase and node, as a pytest sub-test. The HTML report expands each parent row into per-case pass/fail rows.
 - Aorta `aorta_single` and `aorta_distributed` write an Aorta Run Deck (`<suite>_html/aorta_run_deck.html` and `.json`) beside the pytest HTML report, with a run card showing each configured threshold's verdict from the threshold gate, a lifecycle timeline, a threshold gate matrix, per-rank time and ratio charts, and a full results table. Pass/fail gating is unchanged.
 
 ### Changed
 
 - vLLM configs that set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` (any case) in `container.env` now fail to load with `ContainerEnvTokenError`, because `container.env` values become `docker run -e` arguments; set `paths.hf_token_file` instead. The vLLM server now reads that file inside the container on each node, so it must be on a mounted path.
+- `run_ib_perf_bw_test` / `run_ib_perf_lat_test` accept `node_pairs`. A node without a partner in the discovered NIC set now fails the test and is excluded instead of running as a server with no client. `get_ibperf_rdma_devices` covers every discovered GPU by default.
 - ibperf now probes every test node's perftest binary for ROCm DMA-BUF support before launching. It fails with the node, the binary path and the build flag when support is missing, unless `ibperf.require_dmabuf` is `"False"`. Whether DMA-BUF was used is recorded as a `dmabuf` user property and in the Excel sheet headings. `run_ib_perf_bw_test` / `run_ib_perf_lat_test` no longer take `shdl` and accept `use_dmabuf`. `check_perftest_dmabuf_support` is replaced by `check_perftest_dmabuf`.
 - Aorta threshold validation and trace collection report each threshold and each node as a pytest sub-test, shown as rows of the parent test in the HTML report, with the measured value next to each threshold, and as `cvs_aorta_subtest` properties in JUnit XML that carry the outcome, measured value, gate and failure message. JUnit `<testcase>` names and count are unchanged, but each sub-test adds one to the `testsuite` `tests` total, and a failed sub-test adds its own `<failure>` to the parent `<testcase>` next to the parent's failure, so `failures` counts both.
 - RCCL perf, regression, and pairwise suites use the orchestrator for workload execution, including container-aware launches and cleanup. `RcclJob` and `RcclJob.from_config` now take one `orch` argument in place of the previous two execution handles; `OpenMPI.prepare`, `MpiRun`, and `Srun` callers must also migrate.
@@ -37,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   independent copies, so an override changes only its own key path. Making `launch_rocm.sh`
   forward `"${@:2}"` to `train.py` would need a change in Aorta, outside CVS.
 - Kernel-log health checks (`verify_dmesg_for_errors`, `full_dmesg_scan`, `full_journalctl_scan`, `verify_driver_errors`, `verify_nic_link_flap`, and platform `test_check_dmesg_driver_errors`) no longer echo each node's full dmesg/journal into the run log and HTML report. On nodes with a large kernel backlog this produced multi-hundred-MB logs and runs that appeared stalled. Each `verify_lib` scan now logs one `kernel-log scan …` summary line (hosts, lines scanned, matches); detected errors are still reported line by line. `Orchestrator.exec` now declares `detailed` and `print_console`.
+- ibperf runs on nodes with fewer than 8 GPUs (for example 4-GPU MI450 trays). Previously it failed with `KeyError: 'card4'` before launching. Instance count and chart columns follow the discovered GPUs; a pair whose nodes report different GPUs fails and is excluded.
 - ibperf `verify_bw` now enforces `expected_results`. Previously the bandwidth and latency
   thresholds were never evaluated, so `ib_perf_bw_test` passed regardless of measured performance.
   Every GPU instance is checked against the threshold for its message size and QP count, and
@@ -70,6 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - vLLM: `vllm_single` accepts `pipeline_parallel_size` greater than 1 instead of rejecting it, and `vllm_distributed` on a one-host cluster now serves with the configured pipeline width instead of 1.
 - vLLM: a server that exits during startup, or whose launch never created its log, now fails the cell at the next startup check instead of being polled for the whole readiness budget (about 66 minutes by default). A `vllm serve` launch lost in transport is retried up to twice when it left no server log or `server.pid` behind.
 - IB Perf sample config: `duration` is now `10` (was `30`). The bandwidth test reads perftest results about 20 seconds after launch, so 30-second runs were reported as failures; configs copied from the old sample must lower `duration` as well.
+- Container launches pass InfiniBand devices only where the host has them. `/dev/infiniband` is no longer a default device, `/dev/infiniband` entries in `runtime.args.devices` go through the same per-host discovery, and a host without `/dev/infiniband` gets no InfiniBand `--device` flags, so containers with `runtime.args.privileged: false` now start there instead of failing on the missing path.
 
 ## [0.2.0] - 2026-09-23
 

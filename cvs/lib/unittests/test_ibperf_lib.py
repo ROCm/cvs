@@ -4,7 +4,7 @@ import unittest
 import tempfile
 import zipfile
 from pathlib import Path
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, MagicMock, call as mock_call, patch
 import cvs.lib.ibperf_lib as ibperf_lib
 from cvs.lib import globals
 
@@ -191,6 +191,15 @@ PERFTEST_SETUP_HEADROOM_S = 5
 
 
 class TestIbperfLib(unittest.TestCase):
+    def test_get_ibperf_rdma_devices_defaults_to_discovered_cards(self):
+        _, nic, _ = gpu_maps(['four'], 4)
+        _, ten, _ = gpu_maps(['ten'], 10)
+        nic.update(ten)
+        self.assertEqual(
+            ibperf_lib.get_ibperf_rdma_devices(nic, {'four': {}, 'ten': {}}),
+            {'four': [f'rdma{g}' for g in range(4)], 'ten': sorted((f'rdma{g}' for g in range(10)))},
+        )
+
     def test_get_ibperf_rdma_devices(self):
         mapping = {
             'nodeA': {
@@ -433,6 +442,18 @@ class TestGetIbBwPps(unittest.TestCase):
         self.assertEqual(phdl.exec.call_count, 2)
         self.assertTrue(any('perftest exited without a result' in c.args[0] for c in mock_fail.call_args_list))
 
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_nonzero_exit_fails_even_with_result_row(self, mock_fail):
+        phdl = MagicMock()
+        phdl.exec.side_effect = [
+            {'node1': BW_LOG + 'perftest_rc=0\n', 'node2': BW_LOG},
+            {'node1': BW_LOG + 'perftest_rc=0\n', 'node2': BW_LOG + 'perftest_rc=1\n'},
+        ]
+
+        ibperf_lib.get_ib_bw_pps(phdl, 8192, 'cat /tmp/ib_perf_3_logs', instance_no=3, running=['node2'])
+
+        mock_fail.assert_called_once_with('perftest instance 3 on node node2 exited with code 1')
+
 
 class TestGetPerftestConfigureCmd(unittest.TestCase):
     def test_includes_rocm_dmabuf_by_default(self):
@@ -565,9 +586,29 @@ class TestReadLatencyResults(unittest.TestCase):
         mock_fail.assert_called_once()
         self.assertIn('server', mock_fail.call_args.args[0])
 
+    def test_read_latency_server_nonzero_exit_fails(self):
+        server_log = 'allocated 65536 bytes of GPU buffer\npartial line'
+        client_log = 'allocated 65536 bytes of GPU buffer\n8192 1000 10.66 13.76 10.97 10.98 0.10 12.01 13.76\n'
+        phdl = MagicMock()
+        phdl.exec.side_effect = [
+            {'server': server_log, 'client': client_log},
+            {'server': server_log + 'perftest_rc=2\n', 'client': client_log},
+        ]
+        with patch.object(ibperf_lib, 'fail_test') as mock_fail:
+            ibperf_lib.get_ib_lat_numb(
+                phdl, 8192, 'cat /tmp/ib_perf_0_logs', instance_no=0, result_nodes=['client'], running=['server']
+            )
+
+        mock_fail.assert_called_once_with('perftest instance 0 on node server exited with code 2')
+
 
 class IbPerfCommandFixtures:
+    def active_nodes(self):
+        excluded = self.phdl.prune_nodes.call_args.args[0] if self.phdl.prune_nodes.called else []
+        return [node for node in self.bck_nic_dict if node not in excluded]
+
     def setUp(self):
+        globals.error_list = []
         nodes = ('node1', 'node2')
         self.phdl = MagicMock()
         self.gpu_nic_dict = {n: {f'card{g}': {'rdma_dev': f'rdma{g}'} for g in range(8)} for n in nodes}
@@ -575,9 +616,13 @@ class IbPerfCommandFixtures:
         self.bck_nic_dict = {n: {} for n in nodes}
         self.hip_dev_dict = {n: {f'card{g}': g for g in range(8)} for n in nodes}
         lat = dict.fromkeys(('t_min', 't_max', 't_typical', 't_avg', 't_stdev', 't_99_pct', 't_99_9_pct'), '1.0')
-        lat_patch = patch.object(ibperf_lib, 'get_ib_lat_numb', return_value={n: lat for n in nodes})
+        lat_patch = patch.object(
+            ibperf_lib, 'get_ib_lat_numb', side_effect=lambda *args, **kwargs: {n: lat for n in self.active_nodes()}
+        )
         bw_patch = patch.object(
-            ibperf_lib, 'get_ib_bw_pps', return_value={n: {'bw': '1.0', 'pps': '1.0'} for n in nodes}
+            ibperf_lib,
+            'get_ib_bw_pps',
+            side_effect=lambda *args, **kwargs: {n: {'bw': '1.0', 'pps': '1.0'} for n in self.active_nodes()},
         )
         sleep_patch = patch.object(ibperf_lib.time, 'sleep')
         for patcher in (lat_patch, bw_patch, sleep_patch):
@@ -617,31 +662,105 @@ class IbPerfCommandFixtures:
 
 
 class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
+    def test_default_pairs_latency_commands_unchanged(self):
+        result = self.run_latency(use_dmabuf=False)
+        calls = self.phdl.exec_cmd_list.call_args_list
+        self.assertEqual(len(calls), 9)
+        self.assertEqual(
+            calls[0].args[0],
+            [
+                'echo "sleep 1" >> /tmp/ib_cmds_file.txt',
+                'echo "sleep 5" >> /tmp/ib_cmds_file.txt',
+            ],
+        )
+        for g in range(8):
+            stem = (
+                f'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat '
+                f'-d rdma{g} --use_rocm={g} -x 3 -F -p {1516 + g} -s 64'
+            )
+            suffix = f'; echo perftest_rc=\\$? ) > /tmp/ib_perf_{g}_logs 2>&1 &" >> /tmp/ib_cmds_file.txt'
+            self.assertEqual(calls[g + 1].args[0], [stem + suffix, stem + ' node1' + suffix])
+        self.assertEqual({n: set(result[n]) for n in result}, {n: set(range(8)) for n in result})
+        self.phdl.prune_nodes.assert_not_called()
+        self.assertEqual(globals.error_list, [])
+
+    def test_four_gpu_node(self):
+        self.gpu_numa_dict, self.gpu_nic_dict, self.hip_dev_dict = gpu_maps(('node1', 'node2'), 4)
+        result = self.run_latency(use_dmabuf=False)
+        calls = self.phdl.exec_cmd_list.call_args_list
+        self.assertEqual(len(calls), 5)
+        for cmd in calls[4].args[0]:
+            self.assertIn('rdma3 --use_rocm=3', cmd)
+            self.assertIn('-p 1519', cmd)
+            self.assertIn('/tmp/ib_perf_3_logs', cmd)
+        self.assertEqual({n: set(result[n]) for n in result}, {n: set(range(4)) for n in result})
+        self.phdl.prune_nodes.assert_not_called()
+        self.assertEqual(globals.error_list, [])
+
+    def test_explicit_pairs_and_read_clients(self):
+        nodes = ['n1', 'n2', 'n3', 'n4']
+        self.gpu_numa_dict, self.gpu_nic_dict, self.hip_dev_dict = gpu_maps(nodes)
+        self.bck_nic_dict = {n: {} for n in nodes}
+        with patch.object(ibperf_lib, 'get_ib_lat_numb', return_value={}) as get_lat:
+            ibperf_lib.run_ib_perf_lat_test(
+                self.phdl,
+                'ib_read_lat',
+                self.gpu_numa_dict,
+                self.gpu_nic_dict,
+                self.bck_nic_dict,
+                '/opt/perftest/bin',
+                64,
+                3,
+                hip_dev_dict=self.hip_dev_dict,
+                node_pairs=[('n1', 'n3'), ('n2', 'n4')],
+            )
+        commands = self.phdl.exec_cmd_list.call_args_list[1].args[0]
+        self.assertIn('-s 64 n1; echo perftest_rc=\\$? ) >', commands[2])
+        self.assertIn('-s 64 n2; echo perftest_rc=\\$? ) >', commands[3])
+        self.assertEqual(get_lat.call_args.kwargs['result_nodes'], ['n3', 'n4'])
+
+    def test_orphan_and_no_active_pairs(self):
+        nodes = ['n1', 'n2', 'n3']
+        self.gpu_numa_dict, self.gpu_nic_dict, self.hip_dev_dict = gpu_maps(nodes)
+        self.bck_nic_dict = {n: {} for n in nodes}
+        result = self.run_latency(node_pairs=[('n1', 'n2'), ('n3', 'n9')])
+        self.phdl.prune_nodes.assert_called_once_with(['n3'])
+        self.assertEqual(set(result), {'n1', 'n2'})
+        self.assertEqual({n: set(result[n]) for n in result}, {'n1': set(range(8)), 'n2': set(range(8))})
+        self.assertIn('n3', globals.error_list[0])
+        self.phdl.reset_mock()
+        globals.error_list = []
+        self.bck_nic_dict = {'n1': {}}
+        result = self.run_latency(node_pairs=[('n1', 'n2')])
+        self.assertEqual(result, {})
+        self.phdl.prune_nodes.assert_called_once_with(['n1'])
+        self.phdl.exec_cmd_list.assert_not_called()
+
     def test_builds_latency_commands(self):
         hip_dev_dict = {n: {f'card{g}': (g + 1) % 8 for g in range(8)} for n in ('node1', 'node2')}
         self.run_latency(use_dmabuf=False, hip_dev_dict=hip_dev_dict)
         self.assertEqual(
             self.commands()[0],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=1'
-            ' -x 3 -F -p 1516 -s 64 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=1'
+            ' -x 3 -F -p 1516 -s 64; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
         self.assertEqual(
             self.commands()[1],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=1'
-            ' -x 3 -F -p 1516 -s 64 node1 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=1'
+            ' -x 3 -F -p 1516 -s 64 node1; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
 
     def test_dmabuf_flag_added_when_enabled(self):
         self.run_latency(use_dmabuf=True)
         self.assertEqual(
             self.commands()[0],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=0'
-            ' --use_rocm_dmabuf -x 3 -F -p 1516 -s 64 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=0'
+            ' --use_rocm_dmabuf -x 3 -F -p 1516 -s 64; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
         self.assertEqual(
             self.commands()[1],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=0'
-            ' --use_rocm_dmabuf -x 3 -F -p 1516 -s 64 node1 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=0'
+            ' --use_rocm_dmabuf -x 3 -F -p 1516 -s 64 node1; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
 
     def test_dmabuf_defaults_on(self):
@@ -660,6 +779,116 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
 
 
 class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
+    def test_default_pairs_commands_unchanged(self):
+        result = self.run_bandwidth(use_dmabuf=False)
+        calls = self.phdl.exec_cmd_list.call_args_list
+        self.assertEqual(len(calls), 9)
+        self.assertEqual(
+            calls[0].args[0],
+            [
+                'echo "sleep 1" >> /tmp/ib_cmds_file.txt',
+                'echo "sleep 5" >> /tmp/ib_cmds_file.txt',
+            ],
+        )
+        for g in range(8):
+            stem = (
+                f'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw '
+                f'-d rdma{g} --use_rocm={g} -x 3 --report_gbits -b -F -D 60 '
+                f'-p {1516 + g} -s 64 -q 8'
+            )
+            suffix = f'; echo perftest_rc=\\$? ) > /tmp/ib_perf_{g}_logs 2>&1 &" >> /tmp/ib_cmds_file.txt'
+            self.assertEqual(calls[g + 1].args[0], [stem + suffix, stem + ' node1' + suffix])
+        self.assertEqual(
+            [c.args[0] for c in self.phdl.exec.call_args_list[:3]],
+            ['rm -rf /tmp/ib_cmds_file.txt', 'rm -rf /tmp/ib_perf*', 'touch /tmp/ib_cmds_file.txt'],
+        )
+        self.phdl.prune_nodes.assert_not_called()
+        self.assertEqual(globals.error_list, [])
+        self.assertEqual({n: set(result[n]) for n in result}, {n: set(range(8)) for n in result})
+
+    def test_default_pairs_four_nodes_unchanged(self):
+        nodes = ['n1', 'n2', 'n3', 'n4']
+        self.gpu_numa_dict, self.gpu_nic_dict, self.hip_dev_dict = gpu_maps(nodes)
+        self.bck_nic_dict = {n: {} for n in nodes}
+        self.run_bandwidth(use_dmabuf=False)
+        for g, call_args in enumerate(self.phdl.exec_cmd_list.call_args_list[1:]):
+            commands = call_args.args[0]
+            self.assertEqual(len(commands), 4)
+            suffix = f'-q 8; echo perftest_rc=\\$? ) > /tmp/ib_perf_{g}_logs 2>&1 &" >> /tmp/ib_cmds_file.txt'
+            self.assertTrue(commands[0].endswith(suffix))
+            self.assertTrue(commands[2].endswith(suffix))
+            self.assertTrue(commands[1].endswith(suffix.replace('-q 8;', '-q 8 n1;')))
+            self.assertTrue(commands[3].endswith(suffix.replace('-q 8;', '-q 8 n3;')))
+
+    def test_four_gpu_node(self):
+        self.gpu_numa_dict, self.gpu_nic_dict, self.hip_dev_dict = gpu_maps(('node1', 'node2'), 4)
+        result = self.run_bandwidth(use_dmabuf=False)
+        calls = self.phdl.exec_cmd_list.call_args_list
+        self.assertEqual(len(calls), 5)
+        for cmd in calls[4].args[0]:
+            self.assertIn('rdma3 --use_rocm=3', cmd)
+            self.assertIn('-p 1519', cmd)
+            self.assertIn('/tmp/ib_perf_3_logs', cmd)
+        self.assertEqual({n: set(result[n]) for n in result}, {n: set(range(4)) for n in result})
+        self.phdl.prune_nodes.assert_not_called()
+        self.assertEqual(globals.error_list, [])
+
+    def test_explicit_pairs_and_orphan(self):
+        nodes = ['n1', 'n2', 'n3', 'n4']
+        self.gpu_numa_dict, self.gpu_nic_dict, self.hip_dev_dict = gpu_maps(nodes)
+        self.bck_nic_dict = {n: {} for n in nodes}
+        self.run_bandwidth(node_pairs=[('n1', 'n3'), ('n2', 'n4')])
+        commands = self.phdl.exec_cmd_list.call_args_list[1].args[0]
+        self.assertIn('-q 8 n1; echo perftest_rc=\\$? ) >', commands[2])
+        self.assertIn('-q 8 n2; echo perftest_rc=\\$? ) >', commands[3])
+        self.phdl.reset_mock()
+        result = self.run_bandwidth(node_pairs=[('n1', 'n2'), ('n3', 'n9')])
+        self.phdl.prune_nodes.assert_called_once_with(['n3', 'n4'])
+        self.assertEqual(set(result), {'n1', 'n2'})
+        self.assertIn('n3', globals.error_list[0])
+
+    def test_mismatch_pair_pruned_and_no_active_pairs(self):
+        nodes = ['n1', 'n2', 'n3', 'n4']
+        self.gpu_numa_dict, self.gpu_nic_dict, self.hip_dev_dict = gpu_maps(nodes)
+        self.gpu_nic_dict['n4'] = dict(list(self.gpu_nic_dict['n4'].items())[:4])
+        self.bck_nic_dict = {n: {} for n in nodes}
+        self.run_bandwidth(node_pairs=[('n1', 'n2'), ('n3', 'n4')])
+        self.phdl.prune_nodes.assert_called_once_with(['n3', 'n4'])
+        self.assertTrue(all(len(call_args.args[0]) == 2 for call_args in self.phdl.exec_cmd_list.call_args_list))
+        self.assertEqual(len(globals.error_list), 1)
+        self.assertIn('n3', globals.error_list[0])
+        self.assertIn('n4', globals.error_list[0])
+        self.phdl.reset_mock()
+        globals.error_list = []
+        self.bck_nic_dict = {'n1': {}}
+        self.assertEqual(self.run_bandwidth(node_pairs=[('n1', 'n2')]), {})
+        self.phdl.prune_nodes.assert_called_once_with(['n1'])
+        self.phdl.exec_cmd_list.assert_not_called()
+
+    def test_first_pair_has_fewer_cards_than_majority(self):
+        nodes = ['a', 'b', 'c', 'd', 'e', 'f']
+        self.gpu_numa_dict, self.gpu_nic_dict, self.hip_dev_dict = gpu_maps(nodes)
+        for node in ('a', 'b'):
+            self.gpu_numa_dict[node] = dict(list(self.gpu_numa_dict[node].items())[:4])
+            self.gpu_nic_dict[node] = dict(list(self.gpu_nic_dict[node].items())[:4])
+            self.hip_dev_dict[node] = dict(list(self.hip_dev_dict[node].items())[:4])
+        self.bck_nic_dict = {node: {} for node in nodes}
+        pairs = [('a', 'b'), ('c', 'd'), ('e', 'f')]
+
+        result = self.run_bandwidth(node_pairs=pairs)
+
+        self.assertEqual(set(result), {'c', 'd', 'e', 'f'})
+        self.assertEqual(len(self.phdl.exec_cmd_list.call_args_list), 9)
+        self.assertTrue(all(len(call.args[0]) == 4 for call in self.phdl.exec_cmd_list.call_args_list))
+        self.phdl.prune_nodes.assert_called_once_with(['a', 'b'])
+        self.assertEqual(len(globals.error_list), 1)
+        self.assertIn('a, b', globals.error_list[0])
+
+        self.phdl.reset_mock()
+        self.run_bandwidth(node_pairs=pairs)
+        self.phdl.prune_nodes.assert_not_called()
+        self.assertEqual(len(globals.error_list), 1)
+
     @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
     def test_launches_then_waits_for_perftest_exit_bounded_by_duration(self, mock_wait):
         self.run_bandwidth(duration=30)
@@ -670,14 +899,14 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
         self.run_bandwidth(use_dmabuf=False)
         self.assertEqual(
             self.commands()[0],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
-            ' -x 3 --report_gbits -b -F -D 60 -p 1516 -s 64 -q 8 > /tmp/ib_perf_0_logs 2>&1 &"'
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
+            ' -x 3 --report_gbits -b -F -D 60 -p 1516 -s 64 -q 8; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &"'
             ' >> /tmp/ib_cmds_file.txt',
         )
         self.assertEqual(
             self.commands()[1],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
-            ' -x 3 --report_gbits -b -F -D 60 -p 1516 -s 64 -q 8 node1 > /tmp/ib_perf_0_logs 2>&1 &"'
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
+            ' -x 3 --report_gbits -b -F -D 60 -p 1516 -s 64 -q 8 node1; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &"'
             ' >> /tmp/ib_cmds_file.txt',
         )
 
@@ -685,16 +914,30 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
         self.run_bandwidth(use_dmabuf=True)
         self.assertEqual(
             self.commands()[0],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
             ' --use_rocm_dmabuf -x 3 --report_gbits -b -F -D 60 -p 1516 -s 64 -q 8'
-            ' > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            '; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
         self.assertEqual(
             self.commands()[1],
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=0'
             ' --use_rocm_dmabuf -x 3 --report_gbits -b -F -D 60 -p 1516 -s 64 -q 8 node1'
-            ' > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            '; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
+
+
+class TestResultReaderException(IbPerfCommandFixtures, unittest.TestCase):
+    def test_instance_lost_to_exception_fails_test(self):
+        for reader, run in (('get_ib_bw_pps', self.run_bandwidth), ('get_ib_lat_numb', self.run_latency)):
+            with (
+                self.subTest(reader=reader),
+                patch.object(ibperf_lib, reader, side_effect=[KeyError('node2')] + [{}] * 7),
+                patch.object(ibperf_lib, 'fail_test') as mock_fail,
+                self.assertLogs(ibperf_lib.log, 'ERROR'),
+            ):
+                run()
+                mock_fail.assert_called_once()
+                self.assertIn('instance=0', mock_fail.call_args.args[0])
 
 
 class TestProbePerftestDmabufSupport(unittest.TestCase):
@@ -831,13 +1074,13 @@ class TestRunIbPerfBwHipDevice(unittest.TestCase):
         server_cmd, client_cmd = phdl.exec_cmd_list.call_args_list[1].args[0]
         self.assertEqual(
             server_cmd,
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=1'
-            ' -x 3 --report_gbits -b -F -D 10 -p 1516 -s 65536 -q 16 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=1'
+            ' -x 3 --report_gbits -b -F -D 10 -p 1516 -s 65536 -q 16; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
         self.assertEqual(
             client_cmd,
-            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=1'
-            ' -x 3 --report_gbits -b -F -D 10 -p 1516 -s 65536 -q 16 node1 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+            'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw -d rdma0 --use_rocm=1'
+            ' -x 3 --report_gbits -b -F -D 10 -p 1516 -s 65536 -q 16 node1; echo perftest_rc=\\$? ) > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
 
     @patch.object(ibperf_lib.time, 'sleep')
@@ -1154,6 +1397,564 @@ class TestSampleConfigDuration(unittest.TestCase):
         _, client_cmd = phdl.exec_cmd_list.call_args_list[1].args[0]
         self.assertIn(f' -D {duration} ', client_cmd)
         self.assertLess(duration + PERFTEST_SETUP_HEADROOM_S, mock_wait.call_args.args[2])
+
+
+AFM_FIXTURE = Path(__file__).parent / 'fixtures' / 'afmctl_show_device_mi450.json'
+MI450_POD = '7699065b-19a2-4934-bac8-434ba1054400'
+
+
+def afm_output(accel_offset=0, physical_pod=None, virtual_pod=None, vpod_accelerators=None, drop_pod_ids=False):
+    document = json.loads(AFM_FIXTURE.read_text())
+    for record in document['device']:
+        spec = record['spec']
+        spec['accelerator_id'] = str(int(spec['accelerator_id']) + accel_offset)
+        fabric = spec['scaleup_fabric']
+        if physical_pod is not None:
+            fabric['physical_pod']['id'] = physical_pod
+        if virtual_pod is not None:
+            fabric['virtual_pod']['id'] = virtual_pod
+        if vpod_accelerators is not None:
+            spec['vpod_accelerators'] = list(vpod_accelerators)
+        if drop_pod_ids:
+            del fabric['physical_pod']['id']
+            del fabric['virtual_pod']['id']
+    return json.dumps(document, indent=4)
+
+
+def afm_devices(accelerators, membership):
+    return json.dumps(
+        {
+            'devices': [
+                {
+                    'bdf': f'0000:{index + 1:02x}:00.1',
+                    'accelerator_id': index,
+                    'config_phase': 'ACTIVE',
+                    'virtualization_mode': 'bare-metal',
+                    'local_accelerators': list(accelerators),
+                    'vpod_accelerators': list(membership),
+                    'num_network_ports': 36,
+                }
+                for index in accelerators
+            ]
+        }
+    )
+
+
+def gpu_maps(nodes, gpu_count=8):
+    numa = {n: {f'card{g}': {'local_cpulist': '0-63'} for g in range(gpu_count)} for n in nodes}
+    nic = {n: {f'card{g}': {'rdma_dev': f'rdma{g}'} for g in range(gpu_count)} for n in nodes}
+    hip = {n: {f'card{g}': g for g in range(gpu_count)} for n in nodes}
+    return numa, nic, hip
+
+
+class TestBuildIbperfNodePairs(unittest.TestCase):
+    def test_sequential_even_odd_and_tuple_input(self):
+        nodes = ['n1', 'n2', 'n3', 'n4']
+        self.assertEqual(ibperf_lib.build_ibperf_node_pairs(nodes), ([('n1', 'n2'), ('n3', 'n4')], []))
+        self.assertEqual(ibperf_lib.build_ibperf_node_pairs(tuple(nodes + ['n5']))[1], ['n5'])
+
+    def test_intra_vpod_with_missing_labels(self):
+        nodes = ['n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7']
+        labels = {'n1': 'A', 'n2': 'A', 'n3': 'A', 'n4': 'B', 'n5': 'B', 'n6': None}
+        self.assertEqual(
+            ibperf_lib.build_ibperf_node_pairs(nodes, 'intra_vpod', labels),
+            ([('n1', 'n2'), ('n4', 'n5')], ['n3', 'n6', 'n7']),
+        )
+
+    def test_inter_vpod_equal_and_unequal_groups(self):
+        nodes = ['n1', 'n2', 'n3', 'n4']
+        labels = {'n1': (0, 1), 'n2': (0, 1), 'n3': (2, 3), 'n4': (2, 3)}
+        self.assertEqual(
+            ibperf_lib.build_ibperf_node_pairs(nodes, 'inter_vpod', labels), ([('n1', 'n3'), ('n2', 'n4')], [])
+        )
+        nodes = ['a0', 'a1', 'a2', 'a3', 'b0', 'b1', 'c0', 'c1']
+        labels = {n: n[0].upper() for n in nodes}
+        self.assertEqual(
+            ibperf_lib.build_ibperf_node_pairs(nodes, 'inter_vpod', labels)[0],
+            [('a0', 'b0'), ('a1', 'c0'), ('a2', 'b1'), ('a3', 'c1')],
+        )
+
+    def test_pair_invariants(self):
+        for labels in (
+            {'a': 'A', 'b': 'A', 'c': 'B', 'd': 'B'},
+            {'a': 'A', 'b': 'A', 'c': 'A', 'd': 'B', 'e': 'C'},
+            {'a': (1, 2), 'b': (1, 2), 'c': (2, 2), 'd': (3, 2)},
+            {
+                f'{group}{i}': group
+                for group, size in (('A', 3), ('B', 1), ('C', 4), ('D', 2), ('E', 1))
+                for i in range(size)
+            },
+            {f'a{i}': 'A' for i in range(5)} | {'b': 'B', 'c': 'C'},
+        ):
+            with self.subTest(labels=labels):
+                nodes = list(labels)
+                pairs, _ = ibperf_lib.build_ibperf_node_pairs(nodes, 'inter_vpod', labels)
+                self.assertTrue(all(labels[s] != labels[c] for s, c in pairs))
+                self.assertEqual(len({n for pair in pairs for n in pair}), 2 * len(pairs))
+                largest = max(list(labels.values()).count(key) for key in labels.values())
+                self.assertEqual(len(pairs), min(len(nodes) // 2, len(nodes) - largest))
+                intra, _ = ibperf_lib.build_ibperf_node_pairs(nodes, 'intra_vpod', labels)
+                self.assertTrue(all(labels[s] == labels[c] for s, c in intra))
+
+    def test_invalid_and_single_group(self):
+        nodes = ['n1', 'n2', 'n3']
+        self.assertEqual(
+            ibperf_lib.build_ibperf_node_pairs(nodes, 'inter_vpod', dict.fromkeys(nodes, 'A')), ([], nodes)
+        )
+        with self.assertRaisesRegex(ValueError, 'pairing_mode'):
+            ibperf_lib.build_ibperf_node_pairs(nodes, 'bad')
+        with self.assertRaisesRegex(ValueError, 'vpod_map'):
+            ibperf_lib.build_ibperf_node_pairs(nodes, 'inter_vpod')
+
+
+class TestGetClusterFileVpodMap(unittest.TestCase):
+    def test_labels_and_errors(self):
+        labels, errors = ibperf_lib.get_cluster_file_vpod_map(
+            {
+                'node_dict': {
+                    'n1': {'vpod_id': ' A '},
+                    'n2': {'vpod_id': 'B'},
+                    'n3': {},
+                    'n4': {'vpod_id': '  '},
+                    'n5': {'vpod_id': None},
+                }
+            }
+        )
+        self.assertEqual(labels, {'n1': 'A', 'n2': 'B'})
+        self.assertEqual(len(errors), 3)
+        self.assertEqual([error.split(':')[0] for error in errors], ['n3', 'n4', 'n5'])
+
+
+class TestExtractAfmPodKeys(unittest.TestCase):
+    def test_pod_id_normalization(self):
+        self.assertEqual(ibperf_lib._afm_pod_id({'id': ' 3 '}), '3')
+        self.assertEqual(ibperf_lib._afm_pod_id({'id': 3}), '3')
+        self.assertEqual(ibperf_lib._afm_pod_id({'id': None}), '')
+        self.assertEqual(ibperf_lib._afm_pod_id(None), '')
+
+    def test_real_and_missing_ids(self):
+        self.assertEqual(ibperf_lib.extract_afm_pod_keys(AFM_FIXTURE.read_text()), [(MI450_POD, '3')] * 4)
+        self.assertEqual(ibperf_lib.extract_afm_pod_keys(afm_output(drop_pod_ids=True)), [None] * 4)
+        document = json.loads(afm_output())
+        del document['device'][0]['spec']['scaleup_fabric']
+        self.assertEqual(ibperf_lib.extract_afm_pod_keys(json.dumps(document))[0], None)
+        self.assertEqual(ibperf_lib.extract_afm_pod_keys(json.dumps(document['device']))[1:], [(MI450_POD, '3')] * 3)
+
+    def test_flat_and_invalid_documents(self):
+        self.assertEqual(ibperf_lib.extract_afm_pod_keys(afm_devices(range(2), range(4))), [None] * 2)
+        flat = {'devices': [{'scaleup_fabric': {'physical_pod': {'id': MI450_POD}, 'virtual_pod': {'id': '3'}}}]}
+        self.assertEqual(ibperf_lib.extract_afm_pod_keys(json.dumps(flat)), [(MI450_POD, '3')])
+        for output in ('bad json', 'ERR - afmctl requires root privileges', '{}', None):
+            self.assertEqual(ibperf_lib.extract_afm_pod_keys(output), [])
+
+
+class TestParseAfmVpodMembership(unittest.TestCase):
+    def test_real_fixture_and_same_pod(self):
+        with self.assertLogs(ibperf_lib.log, 'INFO') as logs:
+            labels, errors = ibperf_lib.parse_afm_vpod_membership({'tray': AFM_FIXTURE.read_text()})
+        self.assertEqual((labels, errors), ({'tray': (MI450_POD, '3')}, []))
+        self.assertIn('physical_pod.id', '\n'.join(logs.output))
+        labels, errors = ibperf_lib.parse_afm_vpod_membership({'tray': afm_output(), 'n2': afm_output(4)})
+        self.assertEqual(labels['tray'], labels['n2'])
+        self.assertEqual(errors, [])
+        self.assertEqual(ibperf_lib.build_ibperf_node_pairs(['tray', 'n2'], 'intra_vpod', labels)[0], [('tray', 'n2')])
+        self.assertEqual(ibperf_lib.build_ibperf_node_pairs(['tray', 'n2'], 'inter_vpod', labels)[0], [])
+
+    def test_distinct_virtual_and_physical_pods(self):
+        outputs = {
+            'tray': afm_output(),
+            'virtual': afm_output(4, virtual_pod='4'),
+            'physical': afm_output(physical_pod='00000000-0000-4000-8000-000000000002'),
+        }
+        labels, errors = ibperf_lib.parse_afm_vpod_membership(outputs)
+        self.assertEqual(errors, [])
+        self.assertEqual(labels['virtual'], (MI450_POD, '4'))
+        self.assertNotEqual(labels['tray'], labels['physical'])
+        self.assertEqual(
+            ibperf_lib.build_ibperf_node_pairs(['tray', 'physical'], 'inter_vpod', labels)[0], [('tray', 'physical')]
+        )
+
+    def test_fallback_and_overlap_guard(self):
+        outputs = {
+            'n1': afm_output(drop_pod_ids=True, vpod_accelerators=range(8)),
+            'n2': afm_output(4, drop_pod_ids=True, vpod_accelerators=range(8)),
+        }
+        with self.assertLogs(ibperf_lib.log, 'WARNING') as logs:
+            labels, errors = ibperf_lib.parse_afm_vpod_membership(outputs)
+        self.assertEqual(labels, {'n1': tuple(range(8)), 'n2': tuple(range(8))})
+        self.assertEqual(errors, [])
+        self.assertIn('vpod_accelerators', '\n'.join(logs.output))
+        outputs['n2'] = afm_output(2, drop_pod_ids=True, vpod_accelerators=range(8))
+        with self.assertRaisesRegex(ValueError, 'cluster_file'):
+            ibperf_lib.parse_afm_vpod_membership(outputs)
+        labels, errors = ibperf_lib.parse_afm_vpod_membership(
+            {'n1': afm_devices(range(4), range(8)), 'n2': afm_devices(range(4, 8), range(8))}
+        )
+        self.assertEqual(labels['n1'], labels['n2'])
+        self.assertEqual(errors, [])
+
+    def test_membership_errors(self):
+        document = json.loads(afm_output())
+        document['device'][1]['spec']['scaleup_fabric']['virtual_pod']['id'] = '5'
+        labels, errors = ibperf_lib.parse_afm_vpod_membership({'n': json.dumps(document)})
+        self.assertEqual(labels, {})
+        self.assertIn('multiple vPODs', errors[0])
+        document = json.loads(afm_output())
+        del document['device'][2]['spec']['scaleup_fabric']['physical_pod']['id']
+        labels, errors = ibperf_lib.parse_afm_vpod_membership({'n': json.dumps(document)})
+        self.assertEqual(labels, {})
+        self.assertIn('only some devices', errors[0])
+        labels, errors = ibperf_lib.parse_afm_vpod_membership({'n1': afm_output(), 'n2': afm_output(drop_pod_ids=True)})
+        self.assertEqual(list(labels), ['n1'])
+        self.assertIn('n2', errors[0])
+        mixed = json.loads(afm_devices(range(2), range(4)))
+        mixed['devices'][1]['vpod_accelerators'] = list(range(4, 8))
+        labels, errors = ibperf_lib.parse_afm_vpod_membership(
+            {'n1': afm_devices(range(2), []), 'n2': json.dumps(mixed)}
+        )
+        self.assertEqual(labels, {})
+        self.assertIn('no vPOD membership', errors[0])
+        self.assertIn('multiple vPOD memberships', errors[1])
+
+    def test_root_and_command_errors(self):
+        outputs = {
+            'n1': 'ERR - afmctl requires root privileges, please login as superuser or use sudo\n',
+            'n2': 'sudo: a password is required\n',
+            'n3': 'sudo: Passwort erforderlich',
+            'n4': 'CVS_ERROR: ibperf.vpod_source afm needs passwordless sudo for afmctl',
+        }
+        labels, errors = ibperf_lib.parse_afm_vpod_membership(outputs)
+        self.assertEqual(labels, {})
+        self.assertEqual(len(errors), 4)
+        self.assertIn('root', errors[0])
+        self.assertNotIn('Invalid afmctl', errors[0])
+        for error in errors[1:3]:
+            self.assertIn('AFM vPOD discovery failed', error)
+            self.assertNotIn('needs root', error)
+        self.assertIn('n4: ibperf.vpod_source afm needs passwordless sudo for afmctl', errors[3])
+
+
+class TestDiscoverAfmVpodMap(unittest.TestCase):
+    def test_relative_command_is_resolved_before_sudo(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'n': AFM_FIXTURE.read_text()}
+        self.assertEqual(ibperf_lib.discover_afm_vpod_map(phdl), ({'n': (MI450_POD, '3')}, []))
+        phdl.exec.assert_called_once_with(
+            '{ if ! sudo -n true >/dev/null 2>&1; then '
+            "printf '%s\\n' 'CVS_ERROR: ibperf.vpod_source afm needs passwordless sudo for afmctl' >&2; exit 1; fi; "
+            '_cvs_afmctl="$(command -v afmctl)" || '
+            "{ printf '%s\\n' 'Unable to find afmctl in PATH' >&2; exit 127; }; "
+            'case "$_cvs_afmctl" in /*) ;; *) '
+            "printf '%s\\n' 'Resolved afmctl path is not absolute' >&2; exit 127 ;; esac; "
+            'sudo -n "$_cvs_afmctl" show device --json; } 2>&1',
+            print_console=False,
+        )
+
+    def test_absolute_and_quoted_commands(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'n': AFM_FIXTURE.read_text()}
+        ibperf_lib.discover_afm_vpod_map(phdl, '/path with space/afmctl')
+        phdl.exec.assert_called_once_with(
+            '{ if ! sudo -n true >/dev/null 2>&1; then '
+            "printf '%s\\n' 'CVS_ERROR: ibperf.vpod_source afm needs passwordless sudo for afmctl' >&2; exit 1; fi; "
+            "sudo -n '/path with space/afmctl' show device --json; } 2>&1",
+            print_console=False,
+        )
+        phdl.reset_mock()
+        ibperf_lib.discover_afm_vpod_map(phdl, 'my afmctl')
+        command = phdl.exec.call_args.args[0]
+        self.assertIn("command -v 'my afmctl'", command)
+        self.assertIn('sudo -n "$_cvs_afmctl"', command)
+
+
+class TestResolveIbperfNodePairing(unittest.TestCase):
+    def test_modes_and_handle_lifecycle(self):
+        nodes = ['tray', 's1', 's2', 's3']
+        factory = MagicMock()
+        factory.return_value.exec.return_value = {
+            'tray': afm_output(),
+            's1': afm_output(4),
+            's2': afm_output(8, virtual_pod='4'),
+            's3': afm_output(physical_pod='00000000-0000-4000-8000-000000000002'),
+        }
+        with self.assertLogs(ibperf_lib.log, 'INFO') as logs:
+            inter = ibperf_lib.resolve_ibperf_node_pairing(nodes, {'pairing_mode': 'inter_vpod'}, {}, factory)
+        self.assertEqual(inter['pairs'], [('tray', 's2'), ('s1', 's3')])
+        self.assertIn('ibperf vPOD map', '\n'.join(logs.output))
+        factory.return_value.destroy_clients.assert_called_once()
+        intra = ibperf_lib.resolve_ibperf_node_pairing(nodes, {'pairing_mode': 'intra_vpod'}, {}, factory)
+        self.assertEqual(intra['pairs'], [('tray', 's1')])
+        self.assertEqual(intra['unpaired'], ['s2', 's3'])
+        factory.reset_mock()
+        sequential = ibperf_lib.resolve_ibperf_node_pairing(nodes, {}, {}, factory)
+        self.assertEqual(sequential['pairs'], [('tray', 's1'), ('s2', 's3')])
+        factory.assert_not_called()
+        factory.return_value.exec.side_effect = RuntimeError('discovery failed')
+        with self.assertRaisesRegex(RuntimeError, 'discovery failed'):
+            ibperf_lib.resolve_ibperf_node_pairing(nodes, {'pairing_mode': 'inter_vpod'}, {}, factory)
+        factory.return_value.destroy_clients.assert_called_once()
+
+    def test_cluster_file_errors_and_validation(self):
+        nodes = ['n1', 'n2', 'n3', 'n4', 'n5']
+        cluster = {
+            'node_dict': {
+                'n1': {'vpod_id': 'A'},
+                'n2': {'vpod_id': 'B'},
+                'n3': {},
+                'n4': {'vpod_id': 'A'},
+                'n5': {'vpod_id': 'B'},
+            }
+        }
+        result = ibperf_lib.resolve_ibperf_node_pairing(
+            nodes, {'pairing_mode': 'inter_vpod', 'vpod_source': 'cluster_file'}, cluster
+        )
+        self.assertEqual(result['pairs'], [('n1', 'n2'), ('n4', 'n5')])
+        self.assertEqual(result['unpaired'], ['n3'])
+        self.assertIn('n3', result['errors'][0])
+        for key in ('pairing_mode', 'vpod_source'):
+            with self.assertRaisesRegex(ValueError, key):
+                ibperf_lib.resolve_ibperf_node_pairing(['a', 'b'], {key: 'bad'}, {})
+        with self.assertRaisesRegex(ValueError, 'at least 2 nodes'):
+            ibperf_lib.resolve_ibperf_node_pairing(['a'], {}, {})
+        with self.assertRaisesRegex(ValueError, 'intra_vpod needs'):
+            ibperf_lib.resolve_ibperf_node_pairing(
+                ['a', 'b'],
+                {'pairing_mode': 'intra_vpod', 'vpod_source': 'cluster_file'},
+                {'node_dict': {'a': {'vpod_id': 'A'}, 'b': {'vpod_id': 'B'}}},
+            )
+        with self.assertRaisesRegex(ValueError, 'phdl_factory'):
+            ibperf_lib.resolve_ibperf_node_pairing(['a', 'b'], {'pairing_mode': 'inter_vpod'}, {})
+
+    def test_errors_logged_before_zero_pair_error(self):
+        factory = MagicMock()
+        factory.return_value.exec.return_value = {
+            'a': 'ERR - afmctl requires root privileges',
+            'b': 'CVS_ERROR: ibperf.vpod_source afm needs passwordless sudo for afmctl',
+        }
+        with self.assertLogs(ibperf_lib.log, 'ERROR') as logs:
+            with self.assertRaisesRegex(ValueError, 'No ibperf node pairs') as failure:
+                ibperf_lib.resolve_ibperf_node_pairing(['a', 'b'], {'pairing_mode': 'inter_vpod'}, {}, factory)
+        for node in ('a', 'b'):
+            self.assertIn(node, str(failure.exception))
+            self.assertIn(node, '\n'.join(logs.output))
+
+
+class TestAssignPairRoles(unittest.TestCase):
+    def test_order_orphans_and_duplicate(self):
+        nodes = ['n1', 'n2', 'n3', 'n4']
+        roles, orphans = ibperf_lib._assign_pair_roles([('n1', 'n3'), ('n2', 'n4')], nodes)
+        self.assertEqual(roles, {'n1': None, 'n2': None, 'n3': 'n1', 'n4': 'n2'})
+        self.assertEqual(list(roles), nodes)
+        self.assertEqual(orphans, [])
+        roles, orphans = ibperf_lib._assign_pair_roles([('n1', 'n2'), ('n3', 'n9')], nodes)
+        self.assertEqual(roles, {'n1': None, 'n2': 'n1'})
+        self.assertEqual(orphans, ['n3', 'n4'])
+        with self.assertRaisesRegex(ValueError, 'more than one'):
+            ibperf_lib._assign_pair_roles([('n1', 'n2'), ('n2', 'n3')], nodes)
+        with self.assertRaisesRegex(ValueError, 'more than one'):
+            ibperf_lib._assign_pair_roles([('n1', 'n1')], nodes)
+
+
+class TestNodeGpuCards(unittest.TestCase):
+    def test_numeric_order_and_missing_node(self):
+        self.assertEqual(
+            ibperf_lib.get_node_gpu_cards({'n': {'card10': {}, 'card2': {}, 'card0': {}}}, 'n'),
+            ['card0', 'card2', 'card10'],
+        )
+        self.assertEqual(ibperf_lib.get_node_gpu_cards({}, 'n'), [])
+
+
+class TestPreparePairRoles(unittest.TestCase):
+    def setUp(self):
+        self.fail_patch = patch.object(ibperf_lib, 'fail_test')
+        self.fail = self.fail_patch.start()
+        self.addCleanup(self.fail_patch.stop)
+
+    def test_equal_and_mismatch_cards(self):
+        numa, cards, hip = gpu_maps(['n1', 'n2'])
+        roles, selected, excluded = ibperf_lib._prepare_pair_roles([('n1', 'n2')], ['n1', 'n2'], cards, numa, hip, 'bw')
+        self.assertEqual(roles, {'n1': None, 'n2': 'n1'})
+        self.assertEqual(selected, [f'card{g}' for g in range(8)])
+        self.assertEqual(excluded, [])
+        self.fail.assert_not_called()
+        cards['n2'] = dict(list(cards['n2'].items())[:4])
+        self.assertEqual(
+            ibperf_lib._prepare_pair_roles([('n1', 'n2')], ['n1', 'n2'], cards, numa, hip, 'bw')[2],
+            ['n1', 'n2'],
+        )
+        self.assertIn('n1', self.fail.call_args.args[0])
+        self.assertIn('n2', self.fail.call_args.args[0])
+        del cards['n2']
+        self.assertEqual(
+            ibperf_lib._prepare_pair_roles([('n1', 'n2')], ['n1', 'n2'], cards, numa, hip, 'bw')[2],
+            ['n1', 'n2'],
+        )
+
+    def test_majority_tie_and_orphan(self):
+        numa, cards, hip = gpu_maps(['a', 'b', 'c', 'd', 'e', 'f', 'g'])
+        for node in ('a', 'b'):
+            cards[node] = dict(list(cards[node].items())[:4])
+        pairs = [('a', 'b'), ('c', 'd'), ('e', 'f')]
+        roles, selected, excluded = ibperf_lib._prepare_pair_roles(pairs, list(cards), cards, numa, hip, 'bw')
+        self.assertEqual(selected, [f'card{g}' for g in range(8)])
+        self.assertEqual(excluded, ['a', 'b', 'g'])
+        self.assertEqual(list(roles), ['c', 'd', 'e', 'f'])
+        self.assertEqual(self.fail.call_count, 2)
+        roles, selected, excluded = ibperf_lib._prepare_pair_roles(
+            pairs[:2], ['a', 'b', 'c', 'd'], cards, numa, hip, 'bw'
+        )
+        self.assertEqual(selected, [f'card{g}' for g in range(4)])
+        self.assertEqual(excluded, ['c', 'd'])
+        self.assertEqual(list(roles), ['a', 'b'])
+
+    def test_missing_command_inputs_excludes_pair(self):
+        numa, nic, hip = gpu_maps(['a', 'b', 'c', 'd'])
+        del numa['b']['card4']
+        del hip['b']['card5']
+        del nic['b']['card6']['rdma_dev']
+        roles, cards, excluded = ibperf_lib._prepare_pair_roles(
+            [('a', 'b'), ('c', 'd')], list(nic), nic, numa, hip, 'bw'
+        )
+        self.assertEqual(list(roles), ['c', 'd'])
+        self.assertEqual(cards, [f'card{g}' for g in range(8)])
+        self.assertEqual(excluded, ['a', 'b'])
+        message = self.fail.call_args.args[0]
+        self.assertIn('b/card4 NUMA CPU list', message)
+        self.assertIn('b/card5 HIP device', message)
+        self.assertIn('b/card6 RDMA device', message)
+
+
+class TestDynamicIbperfCharts(unittest.TestCase):
+    def setUp(self):
+        globals.error_list = []
+
+    def bw_results(self, gpu_count=8):
+        return {
+            'ib_write_bw': {
+                size: {
+                    8: {
+                        node: {
+                            g: {
+                                'bw': str(100 * node_index + 10 * size_index + g + 1),
+                                'pps': str(1000 * node_index + 100 * size_index + g + 1),
+                            }
+                            for g in range(gpu_count)
+                        }
+                        for node_index, node in enumerate(('node1', 'node2'))
+                    }
+                }
+                for size_index, size in enumerate((1024, 2048))
+            }
+        }
+
+    def lat_results(self, gpu_count=8):
+        data = {metric: '1.0' for metric in ('t_min', 't_max', 't_avg', 't_stdev', 't_99_pct')}
+        return {'ib_write_lat': {1024: {'node1': {g: dict(data) for g in range(gpu_count)}}}}
+
+    @patch('xlsxwriter.Workbook')
+    def test_bw_chart_8_gpu_golden(self, workbook_class):
+        worksheet = workbook_class.return_value.add_worksheet.return_value
+        ibperf_lib.generate_ibperf_bw_chart(self.bw_results(), 'test.xlsx')
+        merges = [
+            mock_call('A1:T1', 'Test ib_write_bw - BW, MPPS Numbers for 8 QPs', ANY),
+            mock_call('A2:A3', 'Node IP', ANY),
+            mock_call('B2:B3', 'Msg Size', ANY),
+            mock_call('C2:D2', 'Total', ANY),
+            mock_call('E2:F2', 'GPU0', ANY),
+            mock_call('G2:H2', 'GPU1', ANY),
+            mock_call('I2:J2', 'GPU2', ANY),
+            mock_call('K2:L2', 'GPU3', ANY),
+            mock_call('M2:N2', 'GPU4', ANY),
+            mock_call('O2:P2', 'GPU5', ANY),
+            mock_call('Q2:R2', 'GPU6', ANY),
+            mock_call('S2:T2', 'GPU7', ANY),
+            mock_call('A4:A5', 'node1', ANY),
+            mock_call('A6:A7', 'node2', ANY),
+            mock_call('A8:A9', 'Cluster Avg'),
+        ]
+        self.assertEqual(worksheet.merge_range.call_args_list, merges)
+        self.assertEqual(worksheet.write_row.call_args_list, [mock_call('C3', ['BW', 'PPS'] * 9, ANY)])
+        gpu_bw = {g: [float(100 * n + 10 * s + g + 1) for n in range(2) for s in range(2)] for g in range(8)}
+        gpu_pps = {g: [float(1000 * n + 100 * s + g + 1) for n in range(2) for s in range(2)] for g in range(8)}
+        total_bw = [sum(gpu_bw[g][i] for g in range(8)) for i in range(4)]
+        total_pps = [sum(gpu_pps[g][i] for g in range(8)) for i in range(4)]
+        expected = [
+            mock_call('B4', [1024.0, 2048.0, 1024.0, 2048.0]),
+            mock_call('C4', total_bw),
+            mock_call('D4', total_pps),
+        ]
+        for g in range(8):
+            first = ibperf_lib.xl_col_to_name(4 + 2 * g)
+            second = ibperf_lib.xl_col_to_name(5 + 2 * g)
+            expected.extend([mock_call(f'{first}4', gpu_bw[g]), mock_call(f'{second}4', gpu_pps[g])])
+        expected.extend(
+            [
+                mock_call('B8', [1024, 2048]),
+                mock_call('C8', [(total_bw[i] + total_bw[i + 2]) / 2 for i in range(2)]),
+                mock_call('D8', [(total_pps[i] + total_pps[i + 2]) / 2 for i in range(2)]),
+            ]
+        )
+        for g in range(8):
+            first = ibperf_lib.xl_col_to_name(4 + 2 * g)
+            second = ibperf_lib.xl_col_to_name(5 + 2 * g)
+            expected.extend(
+                [
+                    mock_call(f'{first}8', [(gpu_bw[g][i] + gpu_bw[g][i + 2]) / 2 for i in range(2)]),
+                    mock_call(f'{second}8', [(gpu_pps[g][i] + gpu_pps[g][i + 2]) / 2 for i in range(2)]),
+                ]
+            )
+        self.assertEqual(worksheet.write_column.call_args_list, expected)
+
+    @patch('xlsxwriter.Workbook')
+    def test_bw_chart_four_gpus(self, workbook_class):
+        worksheet = workbook_class.return_value.add_worksheet.return_value
+        ibperf_lib.generate_ibperf_bw_chart(self.bw_results(4), 'test.xlsx')
+        self.assertEqual(
+            worksheet.merge_range.call_args_list[0],
+            mock_call('A1:L1', 'Test ib_write_bw - BW, MPPS Numbers for 8 QPs', ANY),
+        )
+        self.assertIn(mock_call('K2:L2', 'GPU3', ANY), worksheet.merge_range.call_args_list)
+        self.assertNotIn(mock_call('M2:N2', 'GPU4', ANY), worksheet.merge_range.call_args_list)
+        self.assertEqual(worksheet.write_row.call_args_list, [mock_call('C3', ['BW', 'PPS'] * 5, ANY)])
+
+    @patch('xlsxwriter.Workbook')
+    def test_lat_chart_8_gpu_golden(self, workbook_class):
+        worksheet = workbook_class.return_value.add_worksheet.return_value
+        ibperf_lib.generate_ibperf_lat_chart(self.lat_results(), 'test.xlsx')
+        self.assertEqual(
+            worksheet.merge_range.call_args_list,
+            [
+                mock_call('A1:Z1', 'Test ib_write_lat - latency results', ANY),
+                mock_call('A2:A3', 'Node IP', ANY),
+                mock_call('B2:B3', 'Msg Size', ANY),
+                mock_call('C2:G2', 'Node Avg ', ANY),
+                mock_call(1, 7, 1, 11, 'GPU0', ANY),
+                mock_call(1, 12, 1, 16, 'GPU1', ANY),
+                mock_call(1, 17, 1, 21, 'GPU2', ANY),
+                mock_call(1, 22, 1, 26, 'GPU3', ANY),
+                mock_call(1, 27, 1, 31, 'GPU4', ANY),
+                mock_call(1, 32, 1, 36, 'GPU5', ANY),
+                mock_call(1, 37, 1, 41, 'GPU6', ANY),
+                mock_call(1, 42, 1, 46, 'GPU7', ANY),
+            ],
+        )
+        self.assertEqual(
+            worksheet.write_row.call_args_list, [mock_call(2, 2, ['Tmin', 'Tmax', 'TAvg', 'TStdev', 'T99pct'] * 9, ANY)]
+        )
+
+    @patch('xlsxwriter.Workbook')
+    def test_lat_chart_four_gpus(self, workbook_class):
+        worksheet = workbook_class.return_value.add_worksheet.return_value
+        ibperf_lib.generate_ibperf_lat_chart(self.lat_results(4), 'test.xlsx')
+        self.assertEqual(
+            worksheet.write_row.call_args_list, [mock_call(2, 2, ['Tmin', 'Tmax', 'TAvg', 'TStdev', 'T99pct'] * 5, ANY)]
+        )
+        self.assertIn(mock_call(1, 22, 1, 26, 'GPU3', ANY), worksheet.merge_range.call_args_list)
+        self.assertNotIn(mock_call(1, 27, 1, 31, 'GPU4', ANY), worksheet.merge_range.call_args_list)
+
+    def test_result_gpu_list(self):
+        self.assertEqual(ibperf_lib._result_gpu_list([{}, {0: {}, 3: {}}]), [0, 1, 2, 3])
+        self.assertEqual(ibperf_lib._result_gpu_list([{}, {}]), [])
 
 
 if __name__ == '__main__':

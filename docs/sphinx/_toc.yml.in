@@ -80,8 +80,8 @@ subtrees:
             title: SGLang tests
           - file: how-to/test-suites/inference/xdit
             title: xDiT tests
-  - file: how-to/run-under-scheduler
-    title: Run under Slurm or SPUR
+  - file: how-to/run-on-managed-compute
+    title: Run on managed compute
   - file: how-to/execute-cluster-commands
     title: Run cluster commands
   - file: how-to/copy-to-cluster

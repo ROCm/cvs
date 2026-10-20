@@ -7,7 +7,7 @@ ROCm Cluster Validation Suite (CVS) documentation
 ********************************************
 
 CVS is a collection of test suites that validate AMD ROCm clusters end to end, from single-node burn-in health tests to cluster-wide distributed training and inference.
-CVS runs over SSH from a head node, or as a Slurm or SPUR job step with no SSH between nodes for orchestrator-based suites; see :doc:`Run under Slurm or SPUR <how-to/run-under-scheduler>`.
+CVS runs over SSH from a head node, or on managed compute with no SSH between nodes for orchestrator-based suites. Slurm and SPUR are supported; see :doc:`Run on managed compute <how-to/run-on-managed-compute>`.
 
 The component public repository is located at `https://github.com/ROCm/cvs <https://github.com/ROCm/cvs>`_.
 
@@ -26,7 +26,7 @@ The component public repository is located at `https://github.com/ROCm/cvs <http
     * :doc:`Set up a cluster file <how-to/configure/cluster-config>`
     * :doc:`Set up test configs <how-to/configure/test-suite-config/index>`
     * :doc:`Run tests <how-to/test-suites/index>`
-    * :doc:`Run under Slurm or SPUR <how-to/run-under-scheduler>`
+    * :doc:`Run on managed compute <how-to/run-on-managed-compute>`
     * :doc:`Run cluster commands <how-to/execute-cluster-commands>`
     * :doc:`Copy files to cluster nodes <how-to/copy-to-cluster>`
     * :doc:`Monitor cluster health <how-to/monitor/index>`

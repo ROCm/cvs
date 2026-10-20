@@ -70,3 +70,8 @@ Run the MORI benchmark suite:
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/mori/mi35x_mori_config.json \
     --capture=tee-sys -vvv -s
+
+Run on managed compute
+----------------------
+
+Follow :doc:`/how-to/run-on-managed-compute` to run MORI on managed compute.
