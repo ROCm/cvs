@@ -325,6 +325,15 @@ transfer (multi-GPU collectives) runs below full-fabric throughput. With the
 diagnostic floor of `0`, a fully-dark mask is admitted but still raises that same
 degraded-fabric warning rather than passing silently.
 
+- **`reject_partial_stations`** (default: `true`) — Fail when station-mask nibbles indicate partial stations
+- **`allow_disabled_stations`** (default: `true`) — Allow masks that intentionally disable ports
+- **`expected_station_masks`** (default: `{}`) — Map of GPU BDF to expected 18-nibble station masks
+- **`require_uniform_station_mask`** (default: `false`) — Require identical masks across GPUs on a node
+- **`agent_process_name`** (default: `"inb-node-agent"`) — AIFM in-band node agent process name to verify
+
+`min_up_ports_per_gpu` may also be set under `node_check` when `connectivity_check.ifoe` does not
+define it; IFoE values take precedence when both are present.
+
 ##### L2 ping (`connectivity_check.ifoe.l2ping`)
 
 Runs `afmctl test ping` with strict full-mesh coverage on every admitted IFoE

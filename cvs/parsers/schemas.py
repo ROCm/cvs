@@ -1399,6 +1399,11 @@ class PreflightNodeCheckConfig(BaseModel):
     enabled: bool = Field(default=True, description="Enable generic GPU node health and ROCm validation")
     gpus_per_node: int = Field(default=4, ge=1, description="Expected AMD GPU count on each node")
     expected_rocm_version: str = Field(default="6.2.0", description="Expected ROCm version across all cluster nodes")
+    min_up_ports_per_gpu: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=("Optional MI4XX fabric admission override; prefer connectivity_check.ifoe.min_up_ports_per_gpu"),
+    )
 
 
 class PreflightRdmaConfig(BaseModel):
@@ -1598,6 +1603,26 @@ class PreflightIfoeConfig(BaseModel):
         ge=0,
         description="Minimum enabled IFoE ports each GPU's station mask must report; "
         "default 2 (one station) fails an un-provisioned fabric, 0 admits it for diagnostics",
+    )
+    reject_partial_stations: bool = Field(
+        default=True,
+        description="Fail when any station mask nibble indicates a partial station",
+    )
+    allow_disabled_stations: bool = Field(
+        default=True,
+        description="Allow station masks that intentionally disable ports",
+    )
+    expected_station_masks: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Optional per-GPU BDF expected 18-nibble station masks",
+    )
+    require_uniform_station_mask: bool = Field(
+        default=False,
+        description="Require identical station masks across all GPUs on a node",
+    )
+    agent_process_name: str = Field(
+        default="inb-node-agent",
+        description="Process name checked for the AIFM in-band node agent",
     )
     l2ping: PreflightL2PingConfig = Field(
         default_factory=PreflightL2PingConfig,

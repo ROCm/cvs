@@ -154,15 +154,43 @@ def _reject_flat_preflight_checks(config_dict):
         )
 
 
+_NODE_CHECK_STATION_POLICY_KEYS = frozenset({'min_up_ports_per_gpu'})
+
+_STATION_POLICY_IFOE_KEYS = frozenset(
+    {
+        'min_up_ports_per_gpu',
+        'reject_partial_stations',
+        'allow_disabled_stations',
+        'expected_station_masks',
+        'require_uniform_station_mask',
+        'agent_process_name',
+    }
+)
+
+
+def _node_health_station_policy_kwargs(config_dict, *, fabric_checks):
+    """Map customer-facing station-policy knobs to ``NodeHealthCheck`` kwargs."""
+    if not fabric_checks:
+        return {}
+    ifoe = _ifoe_config(config_dict)
+    kwargs = {}
+    for key in _STATION_POLICY_IFOE_KEYS:
+        if key == 'min_up_ports_per_gpu':
+            continue
+        if key in ifoe:
+            kwargs[key] = ifoe[key]
+    kwargs['min_up_ports_per_gpu'] = _station_mask_min_up_ports(config_dict)
+    return kwargs
+
+
 def _node_check_config(config_dict):
     """Return the customer-facing generic node-check configuration."""
     _reject_flat_preflight_checks(config_dict)
     config = config_dict.get('node_check', {}) if isinstance(config_dict, dict) else {}
     if not isinstance(config, dict):
         raise ValueError("preflight.node_check must be an object")
-    unknown = sorted(
-        key for key in set(config) - {'enabled', 'gpus_per_node', 'expected_rocm_version'} if not key.startswith('_')
-    )
+    allowed = {'enabled', 'gpus_per_node', 'expected_rocm_version'} | _NODE_CHECK_STATION_POLICY_KEYS
+    unknown = sorted(key for key in set(config) - allowed if not key.startswith('_'))
     if unknown:
         raise ValueError("Unsupported preflight.node_check option(s): " + ', '.join(unknown))
     return config
@@ -174,11 +202,8 @@ def _ifoe_config(config_dict):
     config = get_nested_config(config_dict, 'connectivity_check', 'ifoe', {})
     if not isinstance(config, dict):
         raise ValueError("preflight.connectivity_check.ifoe must be an object")
-    unknown = sorted(
-        key
-        for key in set(config) - {'fabric_checks', 'l2ping', 'transferbench', 'min_up_ports_per_gpu'}
-        if not key.startswith('_')
-    )
+    allowed = {'fabric_checks', 'l2ping', 'transferbench'} | _STATION_POLICY_IFOE_KEYS
+    unknown = sorted(key for key in set(config) - allowed if not key.startswith('_'))
     if unknown:
         raise ValueError("Unsupported preflight.connectivity_check.ifoe option(s): " + ', '.join(unknown))
     return config
@@ -214,22 +239,28 @@ def _station_mask_min_up_ports(config_dict):
     profile may set ``min_up_ports_per_gpu: 0`` to admit such a node on purpose.
     """
     ifoe = _ifoe_config(config_dict)
-    if 'min_up_ports_per_gpu' not in ifoe:
+    node_check = _node_check_config(config_dict)
+    if 'min_up_ports_per_gpu' in ifoe:
+        raw = ifoe['min_up_ports_per_gpu']
+        option = 'preflight.connectivity_check.ifoe.min_up_ports_per_gpu'
+    elif 'min_up_ports_per_gpu' in node_check:
+        raw = node_check['min_up_ports_per_gpu']
+        option = 'preflight.node_check.min_up_ports_per_gpu'
+    else:
         return DEFAULT_MIN_UP_PORTS_PER_GPU
-    raw = ifoe['min_up_ports_per_gpu']
     # Reject bool (a bool is an int in Python) and anything that is not an exact
     # integer; the run path loads config via raw json.load, so int() truncation
     # of 0.5 or 2.9 would silently weaken or disable the floor.
     if isinstance(raw, bool):
-        raise ValueError("preflight.connectivity_check.ifoe.min_up_ports_per_gpu must be an integer, not a boolean")
+        raise ValueError(f"{option} must be an integer, not a boolean")
     if isinstance(raw, float) and not raw.is_integer():
-        raise ValueError("preflight.connectivity_check.ifoe.min_up_ports_per_gpu must be a whole number")
+        raise ValueError(f"{option} must be a whole number")
     try:
         min_up_ports = int(raw) if not isinstance(raw, str) else int(raw.strip())
     except (TypeError, ValueError):
-        raise ValueError("preflight.connectivity_check.ifoe.min_up_ports_per_gpu must be an integer")
+        raise ValueError(f"{option} must be an integer")
     if min_up_ports < 0:
-        raise ValueError("preflight.connectivity_check.ifoe.min_up_ports_per_gpu must not be negative")
+        raise ValueError(f"{option} must not be negative")
     return min_up_ports
 
 
@@ -592,13 +623,12 @@ def test_node_health(orch, config_dict, cluster_dict, lifecycle=None):
         fabric_checks,
         len(orch.all.reachable_hosts),
     )
-    station_policy = {'min_up_ports_per_gpu': _station_mask_min_up_ports(config_dict)} if fabric_checks else {}
     checker = NodeHealthCheck(
         orch,
         expected_gpus_per_node=gpus_per_node,
         fabric_checks=fabric_checks,
         config_dict=config_dict,
-        **station_policy,
+        **_node_health_station_policy_kwargs(config_dict, fabric_checks=fabric_checks),
     )
     results = checker.run()
     declared_nodes = sorted(cluster_dict.get('node_dict', {}).keys())
