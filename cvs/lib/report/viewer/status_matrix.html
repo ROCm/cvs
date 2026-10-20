@@ -665,9 +665,9 @@ function renderHeatmaps(matrix) {
     const heatTitle = (heat.group && heat.group !== heatName ? heat.group + " · " : "") + heatName + " · " + heat.node;
     let html = "<div class='chart-block'><h3>" + esc(heatTitle) + "</h3>"
       + (note ? "<p class='chart-note'>" + esc(note) + "</p>" : "");
-    html += "<div class='hm-wrap'><table class='hm-table'><tr><th>" + esc(heat.row_label && heat.col_label ? heat.row_label + " \\ " + heat.col_label : "") + "</th>";
+    html += "<div class='hm-wrap'><table class='hm-table'><thead><tr><th>" + esc(heat.row_label && heat.col_label ? heat.row_label + " \\ " + heat.col_label : "") + "</th>";
     cols.forEach(col => { html += "<th>" + esc(col) + "</th>"; });
-    html += "</tr>";
+    html += "</tr></thead><tbody>";
     rows.forEach((rowName, index) => {
       const row = values[index] || [];
       html += "<tr><th>" + esc(rowName) + "</th>";
@@ -683,7 +683,7 @@ function renderHeatmaps(matrix) {
       });
       html += "</tr>";
     });
-    html += "</table></div></div>";
+    html += "</tbody></table></div></div>";
     host.insertAdjacentHTML("beforeend", html);
   });
   $("heatmap-count").textContent = heatmaps.length ? heatmaps.length + " map" + (heatmaps.length === 1 ? "" : "s") : "";

@@ -12,6 +12,8 @@ class TestPageTablesJs(unittest.TestCase):
         self.assertEqual(script.count("function pageLongTables"), 1)
         self.assertIn(f"var pageSize = {TABLE_PAGE_SIZE};", script)
         self.assertNotIn("__TABLE_PAGE_SIZE__", script)
+        self.assertLess(script.index("rd-pager"), script.index("if (!rows.length) return"))
+        self.assertIn("cells[i].tagName !== \"TH\"", script)
 
 
 if __name__ == "__main__":
