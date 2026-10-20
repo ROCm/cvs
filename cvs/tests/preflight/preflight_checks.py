@@ -40,6 +40,7 @@ from cvs.lib.preflight.etc_hosts_consistency import EtcHostsConsistencyCheck
 from cvs.lib.preflight.limits_conf_check import LimitsConfCheck
 from cvs.lib.preflight.nic_firmware_check import NicFirmwareCheck
 from cvs.lib.preflight.ainic_pfc_qos_dcqcn import PfcValidationCheck, QosValidationCheck, DcqcnValidationCheck
+from cvs.lib.preflight.broadcom_rdma_qos import BroadcomRdmaQosCheck
 from cvs.lib.preflight.nic_driver_version import NicDriverVersionCheck
 
 # RdmaConnectivityCheck not used - using legacy function temporarily
@@ -59,6 +60,7 @@ from cvs.lib.preflight.rundeck import (
     build_preflight_deck,
 )
 from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
+
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.parsers.schemas import (
@@ -263,7 +265,7 @@ def _ifoe_config(config_dict):
         raise ValueError("preflight.connectivity_check.ifoe must be an object")
     unknown = sorted(
         key
-        for key in set(config) - {'fabric_checks', 'l2ping', 'transferbench', 'nic_firmware', 'pfc_qos_dcqcn'}
+        for key in set(config) - {'fabric_checks', 'l2ping', 'transferbench', 'nic_firmware'}
         if not key.startswith('_')
     )
     if unknown:
@@ -397,89 +399,55 @@ def _nic_firmware_enabled(config_dict):
     )
 
 
-def _pfc_qos_dcqcn_config(config_dict):
-    """Return the scale_out.pfc_qos_dcqcn configuration."""
-    config = _scale_out_config(config_dict).get('pfc_qos_dcqcn', {})
+def _rdma_qos_config(config_dict):
+    """Return the scale_out.rdma_qos block."""
+    config = _scale_out_config(config_dict).get('rdma_qos', {})
     if not isinstance(config, dict):
-        raise ValueError("preflight.connectivity_check.scale_out.pfc_qos_dcqcn must be an object")
-    unknown = sorted(key for key in set(config) - {'enabled', 'pfc', 'qos', 'dcqcn'} if not key.startswith('_'))
-    if unknown:
-        raise ValueError(
-            "Unsupported preflight.connectivity_check.scale_out.pfc_qos_dcqcn option(s): " + ', '.join(unknown)
-        )
-
-    pfc = config.get('pfc', {})
-    if not isinstance(pfc, dict):
-        raise ValueError("preflight.connectivity_check.scale_out.pfc_qos_dcqcn.pfc must be an object")
-    unknown_pfc = sorted(
-        key for key in set(pfc) - {'expected_card_count', 'expected_pause_type'} if not key.startswith('_')
-    )
-    if unknown_pfc:
-        raise ValueError(
-            "Unsupported preflight.connectivity_check.scale_out.pfc_qos_dcqcn.pfc option(s): " + ', '.join(unknown_pfc)
-        )
-
-    qos = config.get('qos', {})
-    if not isinstance(qos, dict):
-        raise ValueError("preflight.connectivity_check.scale_out.pfc_qos_dcqcn.qos must be an object")
-    unknown_qos = sorted(
-        key
-        for key in set(qos)
-        - {
-            'expected_card_count',
-            'dscp24_priority',
-            'dscp46_priority',
-            'dscp46_purpose',
-            'pfc_priority_bitmap',
-            'pfc_no_drop_priorities',
-            'priority0_scheduling',
-            'priority3_scheduling',
-            'priority6_scheduling',
-        }
-        if not key.startswith('_')
-    )
-    if unknown_qos:
-        raise ValueError(
-            "Unsupported preflight.connectivity_check.scale_out.pfc_qos_dcqcn.qos option(s): " + ', '.join(unknown_qos)
-        )
-
-    dcqcn = config.get('dcqcn', {})
-    if not isinstance(dcqcn, dict):
-        raise ValueError("preflight.connectivity_check.scale_out.pfc_qos_dcqcn.dcqcn must be an object")
-    unknown_dcqcn = sorted(
-        key
-        for key in set(dcqcn)
-        - {
-            'expected_device_count',
-            'profile_id',
-            'status',
-            'ai_rate',
-            'byte_count',
-            'alpha_g',
-            'alpha_interval',
-            'hai_rate',
-            'initial_alpha',
-            'monitor_period',
-            'rate_threshold',
-            'rate_interval',
-            'token_bucket',
-            'cnp_dscp',
-        }
-        if not key.startswith('_')
-    )
-    if unknown_dcqcn:
-        raise ValueError(
-            "Unsupported preflight.connectivity_check.scale_out.pfc_qos_dcqcn.dcqcn option(s): "
-            + ', '.join(unknown_dcqcn)
-        )
-
+        raise ValueError("preflight.connectivity_check.scale_out.rdma_qos must be an object")
     return config
 
 
-def _pfc_qos_dcqcn_enabled(config_dict):
+def _rdma_qos_enabled(config_dict):
     return _scale_out_enabled(config_dict) and _config_flag_enabled(
-        _pfc_qos_dcqcn_config(config_dict).get('enabled'), default=False
+        _rdma_qos_config(config_dict).get('enabled'), default=False
     )
+
+
+def _rdma_qos_ainic_config(config_dict):
+    """Return the scale_out.rdma_qos.ainic block (PFC/QoS/DCQCN)."""
+    config = _rdma_qos_config(config_dict).get('ainic', {})
+    if not isinstance(config, dict):
+        raise ValueError("preflight.connectivity_check.scale_out.rdma_qos.ainic must be an object")
+    return config
+
+
+def _rdma_qos_ainic_enabled(config_dict):
+    return _rdma_qos_enabled(config_dict) and _config_flag_enabled(
+        _rdma_qos_ainic_config(config_dict).get('enabled'), default=False
+    )
+
+
+def _rdma_qos_broadcom_config(config_dict):
+    """Return the scale_out.rdma_qos.broadcom block."""
+    config = _rdma_qos_config(config_dict).get('broadcom', {})
+    if not isinstance(config, dict):
+        raise ValueError("preflight.connectivity_check.scale_out.rdma_qos.broadcom must be an object")
+    return config
+
+
+def _rdma_qos_broadcom_enabled(config_dict):
+    return _rdma_qos_enabled(config_dict) and _config_flag_enabled(
+        _rdma_qos_broadcom_config(config_dict).get('enabled'), default=False
+    )
+
+
+# Backwards-compat alias used by existing unit tests referencing pfc_qos_dcqcn path
+def _pfc_qos_dcqcn_config(config_dict):
+    return _rdma_qos_ainic_config(config_dict)
+
+
+def _pfc_qos_dcqcn_enabled(config_dict):
+    return _rdma_qos_ainic_enabled(config_dict)
 
 
 def _nic_driver_version_config(config_dict):
@@ -764,8 +732,14 @@ def config_dict(config_file, cluster_dict):
     if smoke_warning:
         log.warning(smoke_warning)
 
-    # Resolve path placeholders, exempting vendor sub-blocks not selected by nic_type
+    # Resolve path placeholders, exempting:
+    # - vendor sub-blocks not selected by nic_type
+    # - RDMA gid_index/interfaces when connectivity_mode is skip (never read)
     skip_paths = _inert_nic_vendor_skip_paths(config_dict)
+    preflight_raw = config_dict.get('preflight', config_dict)
+    rdma_raw = preflight_raw.get('connectivity_check', {}).get('rdma', {}) if isinstance(preflight_raw, dict) else {}
+    if isinstance(rdma_raw, dict) and rdma_raw.get('connectivity_mode', 'skip') == 'skip':
+        skip_paths |= {'connectivity_check.rdma.gid_index', 'connectivity_check.rdma.interfaces'}
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict, skip_paths=skip_paths)
     log.info("Loaded preflight configuration")
     log.info(config_dict)
@@ -796,56 +770,20 @@ def _bind_preflight_rundeck(preflight_res_dict, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def phdl(cluster_dict, config_dict):
-    """Build and return a MultiProcessParallelHandle for all cluster nodes."""
-    node_list = list(cluster_dict['node_dict'].keys())
-    env_vars = cluster_dict.get("env_vars")
-    log.info(f"Creating parallel SSH handle for {len(node_list)} nodes")
+def phdl(orch):
+    """Return the all-nodes parallel handle from the orch fixture.
 
-    hosts_per_shard = get_nested_config(
-        config_dict,
-        'connectivity_check.rdma',
-        'nodes_per_full_mesh_group',
-        get_nested_config(
-            config_dict,
-            'connectivity_check.rdma',
-            'parallel_group_size',
-            get_nested_config(config_dict, 'parallelism', 'parallel_group_size', 32),
-        ),
-    )
-    config = ParallelConfig(hosts_per_shard=hosts_per_shard)
-
-    phdl = MultiProcessParallelHandle(
-        log,
-        node_list,
-        user=cluster_dict['username'],
-        pkey=cluster_dict['priv_key_file'],
-        env_vars=env_vars,
-        stop_on_errors=False,
-        config=config,
-        timeout=60,
-        num_retries=2,
-        retry_delay=2,
-    )
-    return phdl
+    Wraps orch.all so that the new phdl-based checks share the same SSH
+    connections and reachable_hosts state as the rest of the preflight module
+    without creating a duplicate fixture dependency chain.
+    """
+    return orch.all
 
 
 @pytest.fixture(scope="module")
-def shdl(cluster_dict):
-    """Build and return a MultiProcessParallelHandle for the head node only."""
-    head_node = cluster_dict['head_node_dict']['mgmt_ip']
-    env_vars = cluster_dict.get("env_vars")
-    log.info(f"Creating single SSH handle for head node: {head_node}")
-
-    shdl = MultiProcessParallelHandle(
-        log,
-        [head_node],
-        user=cluster_dict['username'],
-        pkey=cluster_dict['priv_key_file'],
-        env_vars=env_vars,
-        stop_on_errors=False,
-    )
-    return shdl
+def shdl(orch):
+    """Return a single-node parallel handle for the head node from orch."""
+    return orch.head
 
 
 def test_node_ping_reachability(phdl, config_dict, cluster_dict):
@@ -1323,47 +1261,36 @@ def test_ifoe_l2_connectivity(orch, config_dict, cluster_dict, lifecycle=None):
     _run_ifoe_l2_connectivity(orch, config_dict, cluster_dict)
 
 
-def test_ainic_pfc_qos_dcqcn(phdl, config_dict):
-    """Validate AINIC PFC/QoS/DCQCN control-plane state.
+def test_rdma_qos(phdl, config_dict):
+    """Validate RDMA QoS control-plane state (AINIC and Broadcom).
 
-    Opt-in via ``preflight.connectivity_check.scale_out.pfc_qos_dcqcn.enabled``
-    (also requires ``scale_out.enabled: true``). Only runs when ``nic_type``
-    includes 'ainic'.
+    Dispatches to AINIC PFC/QoS/DCQCN (nicctl) and Broadcom ETS/NVM
+    (niccli) checks based on which vendor sub-checks are enabled under
+    ``connectivity_check.scale_out.rdma_qos``.
+    Opt-in; requires ``scale_out.enabled: true`` and ``rdma_qos.enabled: true``.
     """
     global preflight_results
 
     if _node_health_admission_failed(config_dict):
-        blocked = _blocked_by_node_health('AINIC PFC/QoS/DCQCN validation')
-        preflight_results['pfc_qos_dcqcn'] = blocked
+        blocked = _blocked_by_node_health('RDMA QoS validation')
+        preflight_results['rdma_qos'] = blocked
         log.warning(blocked['message'])
         preflight_update_test_result()
         return
 
-    if not _pfc_qos_dcqcn_enabled(config_dict):
-        preflight_results['pfc_qos_dcqcn'] = {
+    if not _rdma_qos_enabled(config_dict):
+        preflight_results['rdma_qos'] = {
             'status': 'SKIPPED',
             'skipped': True,
-            'message': 'AINIC PFC/QoS/DCQCN validation is not enabled',
-        }
-        preflight_update_test_result()
-        return
-
-    nic_types = _scale_out_config(config_dict).get('nic_type', ['ainic'])
-    if 'ainic' not in nic_types:
-        message = f"AINIC PFC/QoS/DCQCN validation skipped: configured nic_type is {nic_types}, not ['ainic']"
-        log.info(message)
-        preflight_results['pfc_qos_dcqcn'] = {
-            'status': 'SKIPPED',
-            'skipped': True,
-            'message': message,
+            'message': 'RDMA QoS validation is not enabled',
         }
         preflight_update_test_result()
         return
 
     if not phdl.reachable_hosts:
-        message = 'No reachable nodes available for AINIC PFC/QoS/DCQCN validation'
+        message = 'No reachable nodes available for RDMA QoS validation'
         log.warning(message)
-        preflight_results['pfc_qos_dcqcn'] = {
+        preflight_results['rdma_qos'] = {
             'status': 'FAIL',
             'skipped': False,
             'message': message,
@@ -1372,80 +1299,108 @@ def test_ainic_pfc_qos_dcqcn(phdl, config_dict):
         pytest.fail(message)
         return
 
-    pqd_config = _pfc_qos_dcqcn_config(config_dict)
-    pfc_config = pqd_config.get('pfc', {})
-    qos_config = pqd_config.get('qos', {})
-    dcqcn_config = pqd_config.get('dcqcn', {})
-
-    log.info(f"Testing AINIC PFC/QoS/DCQCN control-plane state on {len(phdl.reachable_hosts)} reachable node(s)")
-
-    pfc_checker = PfcValidationCheck(
-        phdl,
-        expected_card_count=int(pfc_config.get('expected_card_count', 8)),
-        expected_pause_type=pfc_config.get('expected_pause_type', 'PFC'),
-        config_dict=config_dict,
-    )
-    qos_checker = QosValidationCheck(
-        phdl,
-        expected_card_count=int(qos_config.get('expected_card_count', 8)),
-        dscp24_priority=qos_config.get('dscp24_priority', '3'),
-        dscp46_priority=qos_config.get('dscp46_priority', '6'),
-        dscp46_purpose=qos_config.get('dscp46_purpose', 'xccl-cts'),
-        pfc_priority_bitmap=qos_config.get('pfc_priority_bitmap', '0x8'),
-        pfc_no_drop_priorities=qos_config.get('pfc_no_drop_priorities', '3'),
-        priority0_scheduling=qos_config.get('priority0_scheduling', 'DWRR|1|N/A'),
-        priority3_scheduling=qos_config.get('priority3_scheduling', 'DWRR|99|N/A'),
-        priority6_scheduling=qos_config.get('priority6_scheduling', 'strict|N/A|10'),
-        config_dict=config_dict,
-    )
-    dcqcn_checker = DcqcnValidationCheck(
-        phdl,
-        expected_device_count=int(dcqcn_config.get('expected_device_count', 8)),
-        profile_id=int(dcqcn_config.get('profile_id', 1)),
-        status=dcqcn_config.get('status', 'Enabled'),
-        ai_rate=dcqcn_config.get('ai_rate', '160'),
-        byte_count=dcqcn_config.get('byte_count', '431068'),
-        alpha_g=dcqcn_config.get('alpha_g', '512'),
-        alpha_interval=dcqcn_config.get('alpha_interval', '1'),
-        hai_rate=dcqcn_config.get('hai_rate', '300'),
-        initial_alpha=dcqcn_config.get('initial_alpha', '64'),
-        monitor_period=dcqcn_config.get('monitor_period', '1'),
-        rate_threshold=dcqcn_config.get('rate_threshold', '1'),
-        rate_interval=dcqcn_config.get('rate_interval', '1'),
-        token_bucket=dcqcn_config.get('token_bucket', '800000'),
-        cnp_dscp=dcqcn_config.get('cnp_dscp', '46'),
-        config_dict=config_dict,
-    )
-
-    pfc_results = pfc_checker.run()
-    qos_results = qos_checker.run()
-    dcqcn_results = dcqcn_checker.run()
-
-    node_results = {}
+    node_results = {node: {'status': 'PASS', 'errors': []} for node in phdl.reachable_hosts}
     failed_nodes = []
-    for node in phdl.reachable_hosts:
-        pfc_result = pfc_results.get(node, {})
-        qos_result = qos_results.get(node, {})
-        dcqcn_result = dcqcn_results.get(node, {})
-        sub_statuses = [pfc_result.get('status'), qos_result.get('status'), dcqcn_result.get('status')]
-        status = 'FAIL' if any(s == 'FAIL' for s in sub_statuses) else 'PASS'
-        errors = (
-            list(pfc_result.get('errors') or [])
-            + list(qos_result.get('errors') or [])
-            + list(dcqcn_result.get('errors') or [])
-        )
-        node_results[node] = {
-            'status': status,
-            'pfc': pfc_result,
-            'qos': qos_result,
-            'dcqcn': dcqcn_result,
-            'errors': errors,
-        }
-        if status == 'FAIL':
-            failed_nodes.append(node)
 
-    overall_status = 'FAIL' if failed_nodes else 'PASS'
-    preflight_results['pfc_qos_dcqcn'] = {
+    # ---- AINIC PFC/QoS/DCQCN -----------------------------------------------
+    nic_types = _scale_out_config(config_dict).get('nic_type', ['ainic'])
+    if _rdma_qos_ainic_enabled(config_dict) and 'ainic' in nic_types:
+        ainic_cfg = _rdma_qos_ainic_config(config_dict)
+        pfc_config = ainic_cfg.get('pfc', {})
+        qos_config = ainic_cfg.get('qos', {})
+        dcqcn_config = ainic_cfg.get('dcqcn', {})
+
+        log.info(f"Testing AINIC PFC/QoS/DCQCN on {len(phdl.reachable_hosts)} node(s)")
+        pfc_results = PfcValidationCheck(
+            phdl,
+            expected_card_count=int(pfc_config.get('expected_card_count', 8)),
+            expected_pause_type=pfc_config.get('expected_pause_type', 'PFC'),
+            config_dict=config_dict,
+        ).run()
+        qos_results = QosValidationCheck(
+            phdl,
+            expected_card_count=int(qos_config.get('expected_card_count', 8)),
+            dscp24_priority=qos_config.get('dscp24_priority', '3'),
+            dscp46_priority=qos_config.get('dscp46_priority', '6'),
+            dscp46_purpose=qos_config.get('dscp46_purpose', 'xccl-cts'),
+            pfc_priority_bitmap=qos_config.get('pfc_priority_bitmap', '0x8'),
+            pfc_no_drop_priorities=qos_config.get('pfc_no_drop_priorities', '3'),
+            priority0_scheduling=qos_config.get('priority0_scheduling', 'DWRR|1|N/A'),
+            priority3_scheduling=qos_config.get('priority3_scheduling', 'DWRR|99|N/A'),
+            priority6_scheduling=qos_config.get('priority6_scheduling', 'strict|N/A|10'),
+            config_dict=config_dict,
+        ).run()
+        dcqcn_results = DcqcnValidationCheck(
+            phdl,
+            expected_device_count=int(dcqcn_config.get('expected_device_count', 8)),
+            profile_id=int(dcqcn_config.get('profile_id', 1)),
+            status=dcqcn_config.get('status', 'Enabled'),
+            ai_rate=dcqcn_config.get('ai_rate', '160'),
+            byte_count=dcqcn_config.get('byte_count', '431068'),
+            alpha_g=dcqcn_config.get('alpha_g', '512'),
+            alpha_interval=dcqcn_config.get('alpha_interval', '1'),
+            hai_rate=dcqcn_config.get('hai_rate', '300'),
+            initial_alpha=dcqcn_config.get('initial_alpha', '64'),
+            monitor_period=dcqcn_config.get('monitor_period', '1'),
+            rate_threshold=dcqcn_config.get('rate_threshold', '1'),
+            rate_interval=dcqcn_config.get('rate_interval', '1'),
+            token_bucket=dcqcn_config.get('token_bucket', '800000'),
+            cnp_dscp=dcqcn_config.get('cnp_dscp', '46'),
+            config_dict=config_dict,
+        ).run()
+
+        for node in phdl.reachable_hosts:
+            sub_errors = (
+                list(pfc_results.get(node, {}).get('errors') or [])
+                + list(qos_results.get(node, {}).get('errors') or [])
+                + list(dcqcn_results.get(node, {}).get('errors') or [])
+            )
+            node_results[node]['ainic'] = {
+                'pfc': pfc_results.get(node, {}),
+                'qos': qos_results.get(node, {}),
+                'dcqcn': dcqcn_results.get(node, {}),
+            }
+            node_results[node]['errors'].extend(sub_errors)
+            if sub_errors:
+                node_results[node]['status'] = 'FAIL'
+
+    # ---- Broadcom ETS/NVM QoS -----------------------------------------------
+    if _rdma_qos_broadcom_enabled(config_dict) and 'broadcom' in nic_types:
+        bcfg = _rdma_qos_broadcom_config(config_dict)
+        qos_cfg = bcfg.get('qos', {})
+        dscp_table = [dict(e) for e in qos_cfg.get('dscp_app_table', [])]
+        log.info(f"Testing Broadcom RDMA QoS settings on {len(phdl.reachable_hosts)} node(s)")
+        brc_results = BroadcomRdmaQosCheck(
+            phdl,
+            expected_prio_map=qos_cfg.get('prio_map', '0:0 1:0 2:0 3:1 4:0 5:0 6:0 7:2'),
+            expected_tc_bandwidth=qos_cfg.get('tc_bandwidth', '50% 50% 0%'),
+            expected_tsa_map=qos_cfg.get('tsa_map', '0:ets 1:ets 2:strict'),
+            expected_pfc_enabled=str(qos_cfg.get('pfc_enabled', '3')),
+            expected_dscp_app_table=dscp_table,
+            expected_support_rdma=bcfg.get('support_rdma', True),
+            expected_performance_profile=bcfg.get('performance_profile', 'RoCE'),
+            expected_pcie_relaxed_ordering=bcfg.get('pcie_relaxed_ordering', 'Enabled'),
+            expected_enable_sriov=bcfg.get('enable_sriov'),
+            config_dict=config_dict,
+        ).run()
+
+        for node, result in brc_results.items():
+            node_results.setdefault(node, {'status': 'PASS', 'errors': []})
+            node_results[node]['broadcom'] = result
+            node_results[node]['errors'].extend(result.get('errors') or [])
+            brc_status = result.get('status', 'PASS')
+            # Propagate FAIL and WARNING — WARNING from "niccli not found / no devices"
+            # must surface and not be silently absorbed into an overall PASS.
+            if brc_status == 'FAIL':
+                node_results[node]['status'] = 'FAIL'
+            elif brc_status == 'WARNING' and node_results[node]['status'] == 'PASS':
+                node_results[node]['status'] = 'WARNING'
+
+    failed_nodes = [n for n, r in node_results.items() if r['status'] == 'FAIL']
+    warned_nodes = [n for n, r in node_results.items() if r['status'] == 'WARNING']
+    overall_status = 'FAIL' if failed_nodes else ('WARNING' if warned_nodes else 'PASS')
+
+    preflight_results['rdma_qos'] = {
         'status': overall_status,
         'skipped': False,
         'node_results': node_results,
@@ -1453,18 +1408,21 @@ def test_ainic_pfc_qos_dcqcn(phdl, config_dict):
     }
 
     if failed_nodes:
-        log.error(
-            f"AINIC PFC/QoS/DCQCN validation FAILED on {len(failed_nodes)} node(s): {', '.join(sorted(failed_nodes))}"
-        )
+        log.error(f"RDMA QoS validation FAILED on {len(failed_nodes)} node(s): {', '.join(sorted(failed_nodes))}")
         for node in failed_nodes:
             for error in node_results[node]['errors']:
-                log.error(f"Node {node} PFC/QoS/DCQCN: {error}")
+                log.error(f"Node {node} RDMA QoS: {error}")
+    elif warned_nodes:
+        log.warning(
+            f"RDMA QoS validation WARNING on {len(warned_nodes)} node(s): {', '.join(sorted(warned_nodes))}"
+            " (niccli not found or no devices — check is enabled but could not validate)"
+        )
     else:
-        log.info("AINIC PFC/QoS/DCQCN validation PASS on all reachable nodes")
+        log.info("RDMA QoS validation PASS on all reachable nodes")
 
     preflight_update_test_result()
     if overall_status == 'FAIL':
-        pytest.fail("AINIC PFC/QoS/DCQCN preflight gate failed; see preflight report")
+        pytest.fail("RDMA QoS preflight gate failed; see preflight report")
 
 
 @_timed_stage(TRANSFERBENCH)
@@ -2442,7 +2400,7 @@ def test_generate_preflight_report(orch, config_dict, request):
         'node_smoke_tier1',
         'node_smoke_tier3',
         'ifoe_l2_connectivity',
-        'pfc_qos_dcqcn',
+        'rdma_qos',
         'transferbench_smoke',
         'rdma_connectivity',
     ]

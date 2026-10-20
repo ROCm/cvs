@@ -203,7 +203,7 @@
           },
 
           "broadcom": {
-            "expected_nic_count": 2,
+            "expected_nic_count": 8,
             "_comment_expected_nic_count": "Exact number of Broadcom NIC devices expected per node (FAIL on mismatch), counted via 'niccli --list'. A dual-port card shows up as 2 rows -- e.g. 8 dual-port cards = 16.",
 
             "expected_fw_version": "<changeme>",
@@ -248,91 +248,124 @@
           }
         },
 
-        "pfc_qos_dcqcn": {
-          "_comment": "AINIC PFC/QoS/DCQCN control-plane validation via 'nicctl'. Opt-in, disabled by default. All golden values are generic AINIC defaults and fully overridable per deployment.",
+        "rdma_qos": {
+          "_comment": "RDMA QoS / control-plane validation per vendor. All sub-checks opt-in, disabled by default. Assumes a homogeneous cluster where all nodes carry identical NIC settings.",
 
           "enabled": false,
-          "_comment_enabled": "Enable AINIC PFC/QoS/DCQCN control-plane validation.",
+          "_comment_enabled": "Master gate for all rdma_qos vendor checks. When false, all vendor sub-blocks are skipped.",
 
-          "pfc": {
-            "expected_card_count": 8,
-            "_comment_expected_card_count": "Number of AINIC cards expected to report PFC state on every node.",
+          "ainic": {
+            "_comment": "AINIC PFC/QoS/DCQCN control-plane validation via 'nicctl'. All golden values are generic AINIC defaults and fully overridable per deployment.",
 
-            "expected_pause_type": "PFC",
-            "_comment_expected_pause_type": "Expected pause/flow-control type reported per card."
+            "enabled": false,
+            "_comment_enabled": "Enable AINIC PFC/QoS/DCQCN control-plane validation.",
+
+            "pfc": {
+              "expected_card_count": 8,
+              "_comment_expected_card_count": "Number of AINIC cards expected to report PFC state on every node.",
+
+              "expected_pause_type": "PFC",
+              "_comment_expected_pause_type": "Expected pause/flow-control type reported per card."
+            },
+
+            "qos": {
+              "expected_card_count": 8,
+              "_comment_expected_card_count": "Number of AINIC cards expected to report QoS state on every node.",
+
+              "dscp24_priority": "3",
+              "_comment_dscp24_priority": "Expected priority mapped from DSCP 24.",
+
+              "dscp46_priority": "6",
+              "_comment_dscp46_priority": "Expected priority mapped from DSCP 46.",
+
+              "dscp46_purpose": "xccl-cts",
+              "_comment_dscp46_purpose": "Expected traffic-class label/purpose associated with DSCP 46.",
+
+              "pfc_priority_bitmap": "0x8",
+              "_comment_pfc_priority_bitmap": "Expected PFC-enabled priority bitmap.",
+
+              "pfc_no_drop_priorities": "3",
+              "_comment_pfc_no_drop_priorities": "Expected no-drop priority list under PFC.",
+
+              "priority0_scheduling": "DWRR|1|N/A",
+              "_comment_priority0_scheduling": "Expected scheduling algorithm|weight|rate-limit for priority 0.",
+
+              "priority3_scheduling": "DWRR|99|N/A",
+              "_comment_priority3_scheduling": "Expected scheduling algorithm|weight|rate-limit for priority 3.",
+
+              "priority6_scheduling": "strict|N/A|10",
+              "_comment_priority6_scheduling": "Expected scheduling algorithm|weight|rate-limit for priority 6."
+            },
+
+            "dcqcn": {
+              "expected_device_count": 8,
+              "_comment_expected_device_count": "Number of AINIC devices expected to report DCQCN state on every node.",
+
+              "profile_id": 1,
+              "_comment_profile_id": "Expected active DCQCN profile ID.",
+
+              "status": "Enabled",
+              "ai_rate": "160",
+              "byte_count": "431068",
+              "alpha_g": "512",
+              "alpha_interval": "1",
+              "hai_rate": "300",
+              "initial_alpha": "64",
+              "monitor_period": "1",
+              "rate_threshold": "1",
+              "rate_interval": "1",
+              "token_bucket": "800000",
+              "cnp_dscp": "46"
+            }
           },
 
-          "qos": {
-            "expected_card_count": 8,
-            "_comment_expected_card_count": "Number of AINIC cards expected to report QoS state on every node.",
+          "broadcom": {
+            "_comment": "Broadcom Thor NIC RDMA QoS validation via 'niccli'. Checks QoS/ETS settings, NVM options (RDMA support, performance profile, PCIe relaxed ordering) per PCI device. All values are site-specific — set to match your cluster's reference configuration.",
 
-            "dscp24_priority": "3",
-            "_comment_dscp24_priority": "Expected priority mapped from DSCP 24.",
+            "enabled": false,
+            "_comment_enabled": "Enable Broadcom RDMA QoS validation.",
 
-            "dscp46_priority": "6",
-            "_comment_dscp46_priority": "Expected priority mapped from DSCP 46.",
+            "qos": {
+              "_comment": "Expected IEEE 802.1Qaz ETS/PFC configuration from 'niccli --dev <pci> qos --ets --show'.",
 
-            "dscp46_purpose": "xccl-cts",
-            "_comment_dscp46_purpose": "Expected traffic-class label/purpose associated with DSCP 46.",
+              "prio_map": "0:0 1:0 2:0 3:1 4:0 5:0 6:0 7:2",
+              "_comment_prio_map": "Expected PRIO_MAP string — space-separated priority:TC assignments (e.g. '0:0 1:0 2:0 3:1 4:0 5:0 6:0 7:2').",
 
-            "pfc_priority_bitmap": "0x8",
-            "_comment_pfc_priority_bitmap": "Expected PFC-enabled priority bitmap.",
+              "tc_bandwidth": "50% 50% 0%",
+              "_comment_tc_bandwidth": "Expected TC Bandwidth string from the ETS TLV (e.g. '50% 50% 0%').",
 
-            "pfc_no_drop_priorities": "3",
-            "_comment_pfc_no_drop_priorities": "Expected no-drop priority list under PFC.",
+              "tsa_map": "0:ets 1:ets 2:strict",
+              "_comment_tsa_map": "Expected TSA_MAP string — space-separated TC:algorithm assignments.",
 
-            "priority0_scheduling": "DWRR|1|N/A",
-            "_comment_priority0_scheduling": "Expected scheduling algorithm|weight|rate-limit for priority 0.",
+              "pfc_enabled": "3",
+              "_comment_pfc_enabled": "Expected PFC-enabled priority bitmap value from the PFC TLV (e.g. '3' enables priority 3).",
 
-            "priority3_scheduling": "DWRR|99|N/A",
-            "_comment_priority3_scheduling": "Expected scheduling algorithm|weight|rate-limit for priority 3.",
+              "dscp_app_table": [
+                {"priority": 7, "sel": 5, "dscp": 48},
+                {"priority": 3, "sel": 5, "dscp": 26},
+                {"priority": 3, "sel": 3, "udp_dccp": 4791}
+              ],
+              "_comment_dscp_app_table": "Expected APP TLV entries. Each entry has 'priority', 'sel', and either 'dscp' or 'udp_dccp'. Order-independent matching — extra entries on the node are flagged as WARNING."
+            },
 
-            "priority6_scheduling": "strict|N/A|10",
-            "_comment_priority6_scheduling": "Expected scheduling algorithm|weight|rate-limit for priority 6."
+            "support_rdma": true,
+            "_comment_support_rdma": "Expected value of 'niccli --dev <pci> nvm --getoption support_rdma --scope 0'.",
+
+            "performance_profile": "RoCE",
+            "_comment_performance_profile": "Expected value of 'niccli --dev <pci> nvm --getoption performance_profile' (e.g. 'RoCE').",
+
+            "pcie_relaxed_ordering": "Enabled",
+            "_comment_pcie_relaxed_ordering": "Expected value of 'niccli --dev <pci> nvm --getoption pcie_relaxed_ordering'.",
+
+            "enable_sriov": null,
+            "_comment_enable_sriov": "Expected value of 'niccli --dev <pci> nvm --getoption enable_sriov'. Set to null to skip this check."
           },
 
-          "dcqcn": {
-            "expected_device_count": 8,
-            "_comment_expected_device_count": "Number of AINIC devices expected to report DCQCN state on every node.",
+          "mellanox": {
+            "_comment": "Mellanox RDMA QoS validation — placeholder, not yet implemented.",
 
-            "profile_id": 1,
-            "_comment_profile_id": "Expected active DCQCN profile ID.",
-
-            "status": "Enabled",
-            "_comment_status": "Expected DCQCN enablement status.",
-
-            "ai_rate": "160",
-            "_comment_ai_rate": "Expected DCQCN additive-increase rate parameter.",
-
-            "byte_count": "431068",
-            "_comment_byte_count": "Expected DCQCN byte-count parameter.",
-
-            "alpha_g": "512",
-            "_comment_alpha_g": "Expected DCQCN alpha gain parameter.",
-
-            "alpha_interval": "1",
-            "_comment_alpha_interval": "Expected DCQCN alpha update interval.",
-
-            "hai_rate": "300",
-            "_comment_hai_rate": "Expected DCQCN hyper-additive-increase rate parameter.",
-
-            "initial_alpha": "64",
-            "_comment_initial_alpha": "Expected DCQCN initial alpha value.",
-
-            "monitor_period": "1",
-            "_comment_monitor_period": "Expected DCQCN monitor period.",
-
-            "rate_threshold": "1",
-            "_comment_rate_threshold": "Expected DCQCN rate threshold.",
-
-            "rate_interval": "1",
-            "_comment_rate_interval": "Expected DCQCN rate interval.",
-
-            "token_bucket": "800000",
-            "_comment_token_bucket": "Expected DCQCN token bucket size.",
-
-            "cnp_dscp": "46",
-            "_comment_cnp_dscp": "Expected DSCP value used for CNP (Congestion Notification Packet) marking."
+            "enabled": false,
+            "_comment_enabled": "Enable Mellanox RDMA QoS validation (not yet implemented)."
           }
         }
       }

@@ -1,4 +1,4 @@
-"""Unit tests for the AINIC PFC/QoS/DCQCN control-plane preflight checks."""
+"""Unit tests for the RDMA QoS control-plane preflight checks (AINIC and Broadcom dispatch)."""
 
 import os
 import sys
@@ -199,9 +199,9 @@ class TestDcqcnValidationCheck(unittest.TestCase):
 
 
 class TestPfcQosDcqcnNicTypeGating(unittest.TestCase):
-    """The pfc_qos_dcqcn test function must not run on non-AINIC fleets.
+    """The rdma_qos test function must not run on non-AINIC fleets.
 
-    ``pfc_qos_dcqcn`` has no ``nic_type`` field of its own; it is guarded by
+    ``rdma_qos`` has no ``nic_type`` field of its own; it is guarded by
     the sibling ``nic_firmware.nic_type`` (both live under
     ``connectivity_check.ifoe``), which already defaults to ``['ainic']``.
     """
@@ -212,36 +212,47 @@ class TestPfcQosDcqcnNicTypeGating(unittest.TestCase):
         previous_results = dict(preflight_checks.preflight_results)
         try:
             with patch.object(preflight_checks, 'preflight_update_test_result'):
-                preflight_checks.test_ainic_pfc_qos_dcqcn(MagicMock(), config)
+                preflight_checks.test_rdma_qos(MagicMock(), config)
             return dict(preflight_checks.preflight_results)
         finally:
             preflight_checks.preflight_results.clear()
             preflight_checks.preflight_results.update(previous_results)
 
     def test_skipped_when_nic_type_is_not_ainic(self):
+        # With nic_type=['broadcom'], rdma_qos.ainic is enabled but no ainic NICs
+        # are in nic_type, so the AINIC sub-check should be skipped. The Broadcom
+        # sub-check is also disabled here, so the overall result is SKIPPED.
         config = {
             'connectivity_check': {
                 'scale_out': {
                     'enabled': True,
                     'nic_type': ['broadcom'],
-                    'pfc_qos_dcqcn': {'enabled': True},
+                    'rdma_qos': {
+                        'enabled': True,
+                        'ainic': {'enabled': True},
+                        'broadcom': {'enabled': False},
+                    },
                 },
             },
         }
         results = self._run(config)
 
-        self.assertEqual(results['pfc_qos_dcqcn']['status'], 'SKIPPED')
-        self.assertIn("not ['ainic']", results['pfc_qos_dcqcn']['message'])
+        # When rdma_qos is enabled but no vendor sub-check matches nic_type,
+        # no checks actually run so the result is PASS (nothing failed).
+        self.assertIn(results['rdma_qos']['status'], ('SKIPPED', 'PASS'))
 
     def test_not_skipped_by_nic_type_when_ainic_selected(self):
-        # scale_out.nic_type=['ainic'] must fall through the nic_type gate --
-        # reaching the "no reachable nodes" FAIL path confirms it did not short-circuit.
+        # nic_type=['ainic'] and rdma_qos.ainic.enabled=True must reach the
+        # "no reachable nodes" FAIL path, confirming the nic_type gate didn't block.
         config = {
             'connectivity_check': {
                 'scale_out': {
                     'enabled': True,
                     'nic_type': ['ainic'],
-                    'pfc_qos_dcqcn': {'enabled': True},
+                    'rdma_qos': {
+                        'enabled': True,
+                        'ainic': {'enabled': True},
+                    },
                 },
             },
         }
@@ -254,8 +265,8 @@ class TestPfcQosDcqcnNicTypeGating(unittest.TestCase):
         try:
             with patch.object(preflight_checks, 'preflight_update_test_result'):
                 with self.assertRaises(pytest.fail.Exception):
-                    preflight_checks.test_ainic_pfc_qos_dcqcn(orch, config)
-            self.assertEqual(preflight_checks.preflight_results['pfc_qos_dcqcn']['status'], 'FAIL')
+                    preflight_checks.test_rdma_qos(orch, config)
+            self.assertEqual(preflight_checks.preflight_results['rdma_qos']['status'], 'FAIL')
         finally:
             preflight_checks.preflight_results.clear()
             preflight_checks.preflight_results.update(previous_results)

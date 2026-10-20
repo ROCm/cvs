@@ -340,7 +340,7 @@ def _resolve_placeholders_in_dict(target_dict, replacements, context_name="", sk
     skip_paths = skip_paths or set()
 
     def is_skipped(path):
-        return any(path == skip or path.startswith(skip + '.') for skip in skip_paths)
+        return any(path == skip or path.startswith(skip + '.') or path.startswith(skip + '[') for skip in skip_paths)
 
     def replace_in_string(value, path=""):
         """Replace all placeholders in a string and check for unresolved patterns."""

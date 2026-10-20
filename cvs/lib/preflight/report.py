@@ -117,7 +117,7 @@ class PreflightReportGenerator(PreflightCheck):
         limits_conf_results = self.results.get('limits_conf')
         nic_firmware_results = self.results.get('nic_firmware')
         nic_driver_version_results = self.results.get('nic_driver_version')
-        pfc_qos_dcqcn_results = self.results.get('pfc_qos_dcqcn')
+        rdma_qos_results = self.results.get('rdma_qos')
         summary = {
             'overall_status': 'PASS',
             'checks': {
@@ -135,7 +135,7 @@ class PreflightReportGenerator(PreflightCheck):
                 'node_smoke_tier2': self._summarize_node_smoke_tier2_results(node_smoke_tier1_results),
                 'node_smoke_tier3': self._summarize_node_smoke_tier3_results(node_smoke_tier3_results),
                 'ifoe_l2_connectivity': self._summarize_ifoe_l2_results(ifoe_l2_results),
-                'pfc_qos_dcqcn': self._summarize_pfc_qos_dcqcn_results(pfc_qos_dcqcn_results),
+                'rdma_qos': self._summarize_rdma_qos_results(rdma_qos_results),
                 'transferbench_smoke': self._summarize_transferbench_smoke_results(tb_smoke_results),
                 'rdma_connectivity': self._summarize_connectivity_results(connectivity_results),
                 'rocm_versions': self._summarize_rocm_results(rocm_results),
@@ -202,7 +202,7 @@ class PreflightReportGenerator(PreflightCheck):
                 "Update NIC firmware/host-software to the expected version for the configured vendor(s) (nic_type)"
             )
 
-        if summary['checks']['pfc_qos_dcqcn']['status'] == 'FAIL':
+        if summary['checks']['rdma_qos']['status'] == 'FAIL':
             summary['recommendations'].append(
                 "Correct AINIC PFC/QoS/DCQCN control-plane configuration (nicctl) on affected nodes before benchmarking"
             )
@@ -945,7 +945,7 @@ class PreflightReportGenerator(PreflightCheck):
             results, 'NIC driver version validation', 'NIC driver version validation is not enabled'
         )
 
-    def _summarize_pfc_qos_dcqcn_results(self, pqd_results):
+    def _summarize_rdma_qos_results(self, pqd_results):
         """Summarize AINIC PFC/QoS/DCQCN control-plane validation results."""
         if pqd_results and (pqd_results.get('blocked') or pqd_results.get('status') == 'BLOCKED'):
             return {
@@ -1025,7 +1025,7 @@ class PreflightReportGenerator(PreflightCheck):
             {self._generate_node_smoke_tier2_html(results.get('node_smoke_tier1') or results.get('node_smoke', {}))}
             {self._generate_node_smoke_tier3_html(results.get('node_smoke_tier3') or results.get('tier3_info', {}))}
             {self._generate_ifoe_l2_html(results.get('ifoe_l2_connectivity', {}))}
-            {self._generate_pfc_qos_dcqcn_html(results.get('pfc_qos_dcqcn', {}))}
+            {self._generate_rdma_qos_html(results.get('rdma_qos', {}))}
             {self._generate_transferbench_smoke_html(results.get('transferbench_smoke', {}))}
             {self._generate_connectivity_html(results.get('rdma_connectivity', {}))}
             {self._generate_ssh_connectivity_html(results.get('ssh_connectivity', {}))}
@@ -2843,7 +2843,7 @@ class PreflightReportGenerator(PreflightCheck):
     def _generate_nic_driver_version_html(self, results):
         return self._generate_simple_check_html(results, "NIC Driver Version Issues")
 
-    def _generate_pfc_qos_dcqcn_html(self, pqd_results):
+    def _generate_rdma_qos_html(self, pqd_results):
         """Generate AINIC PFC/QoS/DCQCN section - only show failed nodes."""
         if not pqd_results:
             return ""

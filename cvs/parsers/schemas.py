@@ -1838,8 +1838,106 @@ class PreflightIfoeConfig(BaseModel):
     )
 
 
+class PreflightAinicRdmaQosConfig(BaseModel):
+    """AINIC PFC/QoS/DCQCN control-plane validation (nicctl)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = Field(default=False, description="Enable AINIC PFC/QoS/DCQCN validation")
+    pfc: PreflightPfcConfig = Field(default_factory=PreflightPfcConfig)
+    qos: PreflightQosConfig = Field(default_factory=PreflightQosConfig)
+    dcqcn: PreflightDcqcnConfig = Field(default_factory=PreflightDcqcnConfig)
+
+
+class PreflightBroadcomRdmaQosDscpEntry(BaseModel):
+    """One APP TLV entry from the Broadcom ETS/QoS output."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    priority: int = Field(description="802.1p priority")
+    sel: int = Field(description="APP selector (3=UDP/DCCP, 5=DSCP)")
+    dscp: Optional[int] = Field(default=None, description="DSCP value (when sel=5)")
+    udp_dccp: Optional[int] = Field(default=None, description="UDP/DCCP port (when sel=3)")
+
+
+class PreflightBroadcomRdmaQosQosConfig(BaseModel):
+    """Expected IEEE 802.1Qaz ETS/PFC settings for Broadcom Thor NICs."""
+
+    model_config = ConfigDict(extra="allow")
+
+    prio_map: str = Field(
+        default="0:0 1:0 2:0 3:1 4:0 5:0 6:0 7:2",
+        description="Expected PRIO_MAP string from 'niccli qos --ets --show'",
+    )
+    tc_bandwidth: str = Field(
+        default="50% 50% 0%",
+        description="Expected TC Bandwidth string from the ETS TLV",
+    )
+    tsa_map: str = Field(
+        default="0:ets 1:ets 2:strict",
+        description="Expected TSA_MAP string",
+    )
+    pfc_enabled: str = Field(
+        default="3",
+        description="Expected PFC-enabled priority bitmap value",
+    )
+    dscp_app_table: List[PreflightBroadcomRdmaQosDscpEntry] = Field(
+        default_factory=list,
+        description="Expected APP TLV entries (order-independent matching)",
+    )
+
+
+class PreflightBroadcomRdmaQosConfig(BaseModel):
+    """Broadcom Thor NIC RDMA QoS validation via niccli."""
+
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = Field(default=False, description="Enable Broadcom RDMA QoS validation")
+    qos: PreflightBroadcomRdmaQosQosConfig = Field(
+        default_factory=PreflightBroadcomRdmaQosQosConfig,
+        description="Expected ETS/PFC/APP QoS settings",
+    )
+    support_rdma: bool = Field(default=True, description="Expected support_rdma NVM option value")
+    performance_profile: str = Field(default="RoCE", description="Expected performance_profile NVM option value")
+    pcie_relaxed_ordering: str = Field(default="Enabled", description="Expected pcie_relaxed_ordering NVM option value")
+    enable_sriov: Optional[str] = Field(
+        default=None, description="Expected enable_sriov NVM option value; null skips the check"
+    )
+
+
+class PreflightMellanoxRdmaQosConfig(BaseModel):
+    """Mellanox RDMA QoS validation — placeholder for future implementation."""
+
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = Field(default=False, description="Enable Mellanox RDMA QoS validation (not yet implemented)")
+
+
+class PreflightRdmaQosConfig(BaseModel):
+    """RDMA QoS / control-plane validation grouped by vendor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False,
+        description="Master gate for all rdma_qos vendor checks",
+    )
+    ainic: PreflightAinicRdmaQosConfig = Field(
+        default_factory=PreflightAinicRdmaQosConfig,
+        description="AINIC PFC/QoS/DCQCN validation via nicctl",
+    )
+    broadcom: PreflightBroadcomRdmaQosConfig = Field(
+        default_factory=PreflightBroadcomRdmaQosConfig,
+        description="Broadcom Thor NIC QoS/NVM option validation via niccli",
+    )
+    mellanox: PreflightMellanoxRdmaQosConfig = Field(
+        default_factory=PreflightMellanoxRdmaQosConfig,
+        description="Mellanox RDMA QoS validation (placeholder)",
+    )
+
+
 class PreflightScaleOutConfig(BaseModel):
-    """Scale-out network NIC checks (AINIC/Broadcom/Mellanox firmware, driver, PFC/QoS/DCQCN)."""
+    """Scale-out network NIC checks (AINIC/Broadcom/Mellanox firmware, driver, RDMA QoS)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -1859,9 +1957,9 @@ class PreflightScaleOutConfig(BaseModel):
         default_factory=PreflightNicDriverVersionConfig,
         description="Per-vendor NIC driver/package version validation",
     )
-    pfc_qos_dcqcn: PreflightPfcQosDcqcnConfig = Field(
-        default_factory=PreflightPfcQosDcqcnConfig,
-        description="AINIC PFC/QoS/DCQCN control-plane validation",
+    rdma_qos: PreflightRdmaQosConfig = Field(
+        default_factory=PreflightRdmaQosConfig,
+        description="RDMA QoS / control-plane validation per vendor (AINIC, Broadcom, Mellanox)",
     )
 
     @field_validator('nic_type')
