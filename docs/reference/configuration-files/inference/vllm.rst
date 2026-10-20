@@ -2,11 +2,11 @@
   :description: Reference for the vLLM inference benchmark configuration in CVS, covering container setup, sweep cells, threshold files, accuracy tests, and multi-node execution.
   :keywords: CVS, vLLM, inference, ROCm, LLM, benchmark, GPU, AMD, threshold, multinode, accuracy, JSON, configuration
 
-****************************************************************************
+******************************************************************************
 vLLM inference benchmark configuration file for Cluster Validation Suite (CVS)
-****************************************************************************
+******************************************************************************
 
-The vLLM suites benchmark LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file, with one-host fallback when only a single host is present. Packaged distributed recipes and thresholds are calibrated for two hosts; retune them before treating other sizes as pass/fail.
+The vLLM suites benchmark LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file. One host does not raise: ``resolve_vllm_topology`` returns an effective single-node topology, and ``vllm serve`` omits the multi-host flags. Packaged distributed recipes are laid out for two hosts. Their threshold values are zeros, not measured pass/fail limits.
 
 For a mapping-style ``node_dict``, "first cluster host" means the first JSON key
 in insertion order. ``vllm_single`` scopes execution to that host and rewrites
@@ -63,7 +63,7 @@ Each stage of the run is an independent test, so every stage becomes its own tim
 
 .. note::
 
-  ``test_setup_sshd`` always skips in this suite. vLLM uses ``--distributed-executor-backend mp`` with NCCL over the host network, so no inter-container sshd is needed. A skipped row here is expected, not a problem.
+  ``test_setup_sshd`` always skips in this suite. The skip reason is ``vLLM uses host-network NCCL/gloo rather than in-container sshd``. A skipped row here is expected.
 
 .. note::
 
@@ -87,7 +87,7 @@ A vLLM configuration file has these top-level keys:
      - Description
    * - ``enforce_thresholds``
      - no (default ``true``)
-     - When ``false``, metrics record without requiring calibrated threshold cells.
+     - When ``false``, metrics record and no threshold spec is asserted. Packaged Llama files set ``false``.
    * - ``threshold_json``
      - yes
      - Explicit path to the threshold file. See :ref:`vllm-threshold-discovery`.
@@ -118,12 +118,15 @@ A vLLM configuration file has these top-level keys:
 
 .. important::
 
-  Top-level and structural blocks **forbid unknown keys**. ``server_params``,
-  ``benchmark_params``, and individual sweep overrides deliberately accept
-  arbitrary snake-case vLLM option names. CVS converts them to kebab-case CLI
-  flags. ``null`` omits a flag, ``true`` emits a bare flag, scalars emit one
-  value, lists emit one flag followed by values, and mappings emit compact JSON.
-  Use an option's negative form instead of ``false``.
+  Top-level keys, ``paths``, ``container``, ``container.runtime``, and
+  ``container.runtime.args`` **forbid unknown keys**. ``server_params``,
+  ``benchmark_params``, and individual sweep overrides accept extra snake-case
+  vLLM option names. CVS converts those extras to kebab-case CLI flags.
+  ``null`` omits a flag, ``true`` emits a bare flag, scalars emit one value,
+  lists emit one flag followed by values, and mappings emit compact JSON.
+  ``false`` is rejected on those extra options. The harness booleans
+  ``benchmark_params.ignore_eos`` and ``trust_remote_code`` do accept ``false``.
+  Use an option's negative form instead of ``false`` for any other flag.
 
 Placeholder substitution
 ------------------------
@@ -181,14 +184,14 @@ Four different things in this stack are called a "backend". They are unrelated, 
 
 .. warning::
 
-  ``enroot`` is registered but **not implemented**. Every method is a stub that returns failure, so a run with ``runtime.name: "enroot"`` fails at ``test_launch_container``. Podman is not supported. Use ``docker``.
+  The vLLM schema accepts only ``container.runtime.name`` ``"docker"``. ``enroot`` and podman are rejected at config load, before ``test_launch_container``.
 
 Distributed executor: mp and ray
 --------------------------------
 
 Multinode runs support **two** executor backends. ``mp`` is the default and requires no configuration key at all.
 
-**mp (default).** Used whenever ``server_params.distributed_executor_backend`` is absent. The suite injects the full distributed block into each rank's ``vllm serve`` command:
+**mp (default).** Used when ``server_params.distributed_executor_backend`` is absent or ``"mp"``. On two or more hosts the suite injects the full distributed block into each rank's ``vllm serve`` command:
 
 .. code:: bash
 
@@ -197,9 +200,9 @@ Multinode runs support **two** executor backends. ``mp`` is the default and requ
     --nnodes <n> --pipeline-parallel-size <pp> \
     --distributed-executor-backend mp
 
-Every rank above 0 additionally gets ``--headless``. This path **requires pipeline parallelism** (``pipeline_parallel_size`` greater than 1).
+Every rank above 0 additionally gets ``--headless``. Two or more hosts on this path **require pipeline parallelism** (``pipeline_parallel_size`` greater than 1). One host does not: the serve command stays single-node, and ``--pipeline-parallel-size`` is added only when that size is greater than 1. ``distributed_executor_backend`` is not passed on one host.
 
-**ray (opt-in).** Selected by setting ``server_params.distributed_executor_backend`` to the exact lowercase string ``"ray"``. Other values are configuration errors. Ray takes a completely different route:
+**ray (opt-in).** Selected by setting the snake_case key ``server_params.distributed_executor_backend`` to the exact lowercase string ``"ray"``. Other values are configuration errors. On two or more hosts, Ray takes a different route:
 
 1. Bootstrap the cluster head: ``ray start --head --port=<master_port>``
 2. Bootstrap each worker: ``ray start --address=<cluster-head>:<dist_init_port>``
@@ -232,12 +235,14 @@ These rules are enforced when the configuration file loads, before anything star
    * - two or more cluster hosts, either backend
      - ``container.env.NCCL_SOCKET_IFNAME`` is **required**
 
-The corresponding error messages are:
+One host never hits these rules. ``resolve_vllm_topology`` returns mode ``single`` and does not raise. The exact multi-host errors are:
 
 .. code:: text
 
-  multi-host distributed execution requires pipeline_parallel_size > 1 unless using ray
+  vllm_distributed requires pipeline_parallel_size>1 unless distributed-executor-backend=ray
   vllm_distributed requires container.env.NCCL_SOCKET_IFNAME on multi-host clusters
+
+The first message names the flag with hyphens. The JSON key you set is ``distributed_executor_backend``. A legacy top-level ``ib_netdev`` also satisfies the socket-interface check. If ``container.env`` sets any of ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, or ``TP_SOCKET_IFNAME``, it must set all three, and none of them may be empty.
 
 Multinode prerequisites
 -----------------------
@@ -250,28 +255,22 @@ Beyond the validation rules, a multinode run needs:
 - ``container.env.GLOO_SOCKET_IFNAME`` and ``TP_SOCKET_IFNAME`` — generally the frontend/control-plane interface.
 - ``container.env.NCCL_IB_GID_INDEX`` — the index for the intended RoCE/IB fabric. Use ``show_gids`` inside the container and choose an entry available on every selected HCA and node. If that command is unavailable, inspect ``ibv_devinfo -v`` and ``/sys/class/infiniband/<hca>/ports/<port>/gid_attrs/``.
 
+``test_discover_topology`` runs only for two or more hosts. It checks that every node has the same non-empty HCA list (``ibv_devinfo -l``, otherwise ``/sys/class/infiniband``) and that every requested ``NCCL_IB_HCA`` name is in that list. A missing name fails with ``ib_discovery preflight: requested HCA devices <missing> not found on <host>. Available: <devs>``. It does not check socket-interface names, the GID index, or link state. One host, including one-host ``vllm_distributed``, skips this stage. When ``NCCL_IB_HCA`` is set, discovery does not overwrite it. When it is unset, the discovered list is exported as ``NCCL_IB_HCA`` in the per-command env script.
+
 .. _vllm-container:
 
 Container and Docker configuration
 ==================================
 
-The container block controls image selection, lifetime, and the ``docker run`` flags.
-Packaged configurations leave Hugging Face hub access online.
-Their volume list includes both NIC families, labeled by ``_comment_bnxt_mount``
-(Broadcom Thor2, ``libbnxt_re-rdmav34.so``) and ``_comment_ionic_mounts``
-(AMD Pensando Ionic / AINIC: ``libionic.so``, ``libionic.so.1``, the versioned
-``libionic.so.1.*`` soname, ``libionic-rdmav34.so``, and ``ionic.driver``).
-Replace ``<changeme-libionic-soname>`` with the filename from
-``readlink -f /usr/lib/x86_64-linux-gnu/libionic.so.1``, and delete the family
-that is not installed. ``docker run`` fails when a listed host path is missing.
+The vLLM ``container`` block selects the image, the container name, the lifetime, ``container.env``, and a small set of ``docker run`` arguments. The container orchestrator adds further flags from its defaults and from the cluster file. Packaged MI3xx configurations leave Hugging Face hub access online. Their volume list includes both NIC families, labeled by ``_comment_bnxt_mount`` (Broadcom Thor2, ``libbnxt_re-rdmav34.so``) and ``_comment_ionic_mounts`` (AMD Pensando Ionic / AINIC: ``libionic.so``, ``libionic.so.1``, the versioned ``libionic.so.1.*`` soname, ``libionic-rdmav34.so``, and ``ionic.driver``). Replace ``<changeme-libionic-soname>`` with the filename from ``readlink -f /usr/lib/x86_64-linux-gnu/libionic.so.1``, and delete the family that is not installed. ``docker run`` fails when a listed host path is missing.
 
 .. code:: json
 
     {
       "container": {
         "lifetime": "per_run",
-        "name": "vllm_perf_inference_rocm",
-        "image": "rocm/vllm:latest",
+        "name": "vllm_llama33-70b_fp8_single_mi325x",
+        "image": "<changeme>",
         "runtime": {
           "name": "docker",
           "args": {
@@ -280,7 +279,7 @@ that is not installed. ``docker run`` fails when a listed host path is missing.
             "privileged": true,
             "volumes": [
               "/home/{user-id}:/home/{user-id}",
-              "{paths.models_dir}:/models"
+              "<changeme-models-mount>:/models:ro"
             ]
           }
         }
@@ -290,7 +289,7 @@ that is not installed. ``docker run`` fails when a listed host path is missing.
 Container block keys
 --------------------
 
-The following keys are accepted inside the ``container`` block.
+``ContainerConfig`` accepts only these keys. Anything else, including ``image_tar``, is a validation error.
 
 .. list-table::
    :widths: 3 2 5
@@ -301,83 +300,50 @@ The following keys are accepted inside the ``container`` block.
      - Description
    * - ``image``
      - none
-     - Container image. **Required** — launch fails with ``Container image not specified in config``.
+     - Container image. **Required.** An empty string makes the orchestrator log ``Container image not specified in config`` and ``test_launch_container`` fails because ``setup_containers()`` returned false.
    * - ``name``
-     - ``<user>_<sanitized-image>``
-     - Container name.
+     - required
+     - Container name. The orchestrator's ``<user>_<sanitized-image>`` fallback applies only when a container block reaches it without a name. The vLLM schema requires ``name``.
    * - ``lifetime``
      - ``"per_run"``
      - One of ``no_launch``, ``per_run``, ``persistent``.
    * - ``runtime.name``
      - ``"docker"``
-     - Container runtime.
+     - The only value the vLLM schema accepts.
    * - ``runtime.args``
-     - ``{}``
-     - Docker flags; see the table below.
+     - see below
+     - Only ``network``, ``ipc``, ``privileged``, ``volumes``, and ``devices``.
    * - ``env``
      - ``{}``
-     - Container-level environment variables. **Top level, not under** ``runtime.args``. ``HF_TOKEN`` and ``HUGGING_FACE_HUB_TOKEN`` are rejected; set ``paths.hf_token_file`` instead.
-   * - ``image_tar``
-     - absent
-     - Path on each host to a saved image tar to ``docker load`` instead of pulling. **Top level**.
+     - Environment variables passed as ``docker run -e``. **On** ``container``, not under ``runtime.args``. ``HF_TOKEN`` and ``HUGGING_FACE_HUB_TOKEN`` are rejected; set ``paths.hf_token_file`` instead.
+
+``image_tar``, ``runtime.args.registry``, ``runtime.args.shm_size``, and ``runtime.args.cap_add`` are not fields of this model. Putting them in the vLLM file fails config load. Set those on the cluster file's ``container`` block. The vLLM conftest deep-merges the variant onto that block and keeps cluster keys the variant does not set. The orchestrator still emits them: ``image_tar`` loads an image, ``registry`` logs in before a pull, ``shm_size`` becomes ``--shm-size``, and ``cap_add`` appends to the orchestrator's default capabilities. See :doc:`/reference/cluster/cluster-file` for the orchestrator container keys that page documents.
 
 .. warning::
 
-  Put ``env`` at the **container top level**. Placing it under ``runtime.args`` crashes container launch: the code iterates that value as a sequence of pairs, which raises ``ValueError: too many values to unpack`` for any key longer than two characters.
+  Put ``env`` on ``container``. ``RuntimeArgs`` forbids unknown keys, so ``env`` under ``runtime.args`` is rejected before launch.
 
 Runtime arguments
 -----------------
 
-All keys under ``runtime.args`` are optional. **List-valued keys append to the defaults; scalar keys override them.** There is no way to remove a default device or capability.
+``RuntimeArgs`` accepts only the keys below. Schema defaults are ``network`` ``host``, ``ipc`` ``host``, ``privileged`` true, and empty ``volumes`` and ``devices``. The orchestrator then appends its own mounts and devices; you cannot drop those defaults from the vLLM file.
 
 .. list-table::
-   :widths: 2 1 3 4
+   :widths: 3 7
    :header-rows: 1
 
    * - Key
-     - Merge
-     - Default
-     - Emitted flag
+     - What the vLLM file may set
    * - ``volumes``
-     - append
-     - ``/home/$USER/.ssh:/host_ssh`` (always added)
-     - ``-v <host>:<ctr>[:ro]``
+     - Bind mounts, ``host:container[:ro]``. The orchestrator also adds ``/home/$USER/.ssh:/host_ssh``.
    * - ``devices``
-     - append
-     - ``/dev/kfd``, ``/dev/dri``, plus each ``/dev/infiniband/*`` node the host has
-     - ``--device <path>``
-   * - ``cap_add``
-     - append
-     - ``SYS_PTRACE``, ``IPC_LOCK``, ``SYS_ADMIN``
-     - ``--cap-add <cap>``
-   * - ``security_opt``
-     - append
-     - ``seccomp=unconfined``, ``apparmor=unconfined``
-     - ``--security-opt <opt>``
-   * - ``group_add``
-     - append
-     - ``video``
-     - ``--group-add <group>``
-   * - ``ulimit``
-     - append
-     - ``memlock=-1``
-     - ``--ulimit <limit>``
+     - Extra ``--device`` paths, appended to the orchestrator defaults ``/dev/kfd``, ``/dev/dri``, and each ``/dev/infiniband/*`` node the host has. Packaged files list ``/dev/kfd`` and ``/dev/dri`` again; that appends a second copy, it does not replace the defaults.
    * - ``network``
-     - override
-     - ``host``
-     - ``--network <mode>``
+     - ``--network``. Schema default ``host``.
    * - ``ipc``
-     - override
-     - ``host``
-     - ``--ipc <mode>``
+     - ``--ipc``. Schema default ``host``.
    * - ``privileged``
-     - override
-     - ``true``
-     - ``--privileged``
-   * - ``registry``
-     - n/a
-     - none
-     - Triggers ``docker login``; see below
+     - ``--privileged`` when true. Schema default true.
 
 The assembled command is:
 
@@ -389,9 +355,7 @@ The container is a long-lived sidecar; every workload command runs through ``doc
 
 .. note::
 
-  ``--gpus`` is deliberately never emitted — GPU access on AMD hardware comes from the ``/dev/kfd`` and ``/dev/dri`` device mounts plus the ``video`` group.
-
-  ``shm_size`` is **not supported** on this path. Setting ``runtime.args.shm_size`` is silently ignored; ``--shm-size`` is never emitted.
+  ``--gpus`` is deliberately never emitted. GPU access on AMD hardware comes from the ``/dev/kfd`` and ``/dev/dri`` device mounts plus the ``video`` group, which the orchestrator adds. Capabilities, security options, groups, ulimits, shared-memory size, registry login, and image-tar load are orchestrator behavior. Set them in the cluster file, not in the vLLM schema. ``runtime.args.shm_size`` in the vLLM file is rejected; the same key on the cluster file is emitted as ``--shm-size``.
 
 Container lifetime
 ------------------
@@ -422,19 +386,7 @@ The ``lifetime`` key controls when the container is started and stopped relative
 Registry authentication
 -----------------------
 
-Set ``runtime.args.registry`` to log in before pulling:
-
-.. code:: json
-
-    {
-      "registry": {
-        "username": "myuser",
-        "password_file": "/path/on/each/host/to/token",
-        "server": "registry.example.com"
-      }
-    }
-
-``username`` and ``password_file`` are required; ``server`` defaults to Docker Hub. The password is read from a **file path on each remote host** — there is no inline password or token key, and the login is kept out of the logs. Login is skipped entirely when ``image_tar`` is set, since a tar load never pulls.
+``runtime.args.registry`` and top-level ``image_tar`` are rejected in the vLLM file. Set them on the cluster file's ``container`` block if you need a private pull or a ``docker load``. The orchestrator then does the following. ``username`` and ``password_file`` are required; ``server`` defaults to Docker Hub. The password is read from a file on each remote host. There is no inline password key, and the login is kept out of the logs. Login is skipped when ``image_tar`` is set, because a tar load does not pull.
 
 Image resolution order at launch:
 
@@ -454,7 +406,7 @@ The variant's ``container`` block is deep-merged **onto** the cluster file's blo
 
 .. warning::
 
-  A ``container`` block in the variant always contributes ``lifetime``, ``name``, and ``image`` — including empty defaults. If your variant defines ``container`` but omits ``image``, it overwrites a cluster-file ``image`` with an empty string and the launch fails. Set ``image`` in whichever file defines the block.
+  A loaded vLLM ``container`` block always contributes ``lifetime``, ``name``, and ``image``. ``name`` and ``image`` are required, so omitting them fails validation. An empty ``image`` string overwrites a cluster-file image. The orchestrator then logs ``Container image not specified in config`` and ``test_launch_container`` fails because ``setup_containers()`` returned false. Set ``image`` in the vLLM file. The packaged Llama files use ``<changeme>`` there.
 
 .. _vllm-paths:
 
@@ -472,15 +424,13 @@ All four keys are required.
    * - ``shared_fs``
      - Root of the shared filesystem, typically the anchor other paths reference.
    * - ``models_dir``
-     - Model weight cache; exported into the server as ``HF_HUB_CACHE``.
+     - In-container directory exported as ``HF_HUB_CACHE``. ``test_model_fetch`` runs ``du -sb`` on this path inside the container. In the packaged Llama files it is ``/models``, not the host weight directory. The host directory is the volume source ``<changeme-models-mount>:/models:ro``.
    * - ``log_dir``
-     - Root for run artifacts.
+     - Root for run artifacts. In the packaged Llama files it is ``{shared_fs}/LOGS``, and ``shared_fs`` is ``/home/{user-id}``, which is also bind-mounted into the container. ``per_run`` teardown deletes the container, not that host directory, so the logs remain.
    * - ``hf_token_file``
-     - Path to a file containing the Hugging Face token.
+     - Path of the Hugging Face token file as seen inside the container. In the packaged Llama files it is ``{shared_fs}/.hf_token``. CVS does not read the file on the machine that starts ``cvs run``. The env script reads it inside the container when a server or benchmark command is sourced. A missing or empty file exports an empty ``HF_TOKEN`` and the run continues.
 
-``hf_token_file`` is read inside the container on each node, so it must be on a
-mounted path. If it is missing or empty, the run continues with an empty token. vLLM
-configs always serve a pre-staged model mounted under ``paths.models_dir``.
+``{user-id}`` becomes the login name of the ``cvs run`` process unless the cluster file sets ``username``. Place the token file on each node at the substituted host path. The home volume makes that path visible inside the container. Do not put the token in ``container.env``.
 
 Per-cell artifacts land in::
 
@@ -503,7 +453,7 @@ Model
      - Description
    * - ``server_params.model``
      - none
-     - Local path, for example ``/models/Llama-3.1-70B-Instruct-FP8-KV``
+     - Path ``vllm serve`` opens inside the container. Packaged Llama files set ``<changeme>``. With their mount, use a path under ``/models``.
 
 .. _vllm-roles:
 
@@ -535,16 +485,24 @@ Every other snake-case key is passed through to ``vllm serve``.
        machine, so a TP 8 × PP 2 recipe needs 16.
    * - ``port``
      - ``8888``
-     - OpenAI-compatible server port.
+     - OpenAI-compatible server port. The client calls ``http://0.0.0.0:<port>``.
    * - ``dist_init_port``
      - ``29501``
      - Head-node port for multi-host startup: ``--master-port`` on mp, the Ray
        head port on ray. Ignored on one host.
+   * - ``server_poll_iterations``
+     - ``60``
+     - Readiness polls after warmup. The packaged Llama single file keeps 60; the distributed file sets 360.
+   * - ``server_poll_wait_s``
+     - ``60``
+     - Seconds between readiness polls, including after the last unreadiness check. Packaged Llama single keeps 60; distributed sets 10.
+   * - ``server_warmup_wait_s``
+     - ``330``
+     - Seconds after a 30-second log precheck and before the readiness polls. Packaged Llama single keeps 330; distributed sets 30.
    * - ``distributed_executor_backend``
      - ``"mp"``
-     - Multi-host executor, ``"mp"`` or ``"ray"``; see :ref:`vllm-backends`.
-       Ignored on one host: CVS passes no ``--distributed-executor-backend``,
-       and vLLM picks its own executor.
+     - Snake-case JSON key. ``"mp"`` or ``"ray"``. See :ref:`vllm-backends`.
+       Ignored on one host: CVS passes no ``--distributed-executor-backend``.
 
 How server_params are flattened
 -------------------------------
@@ -603,40 +561,52 @@ These are separate and are frequently confused.
      - Requires recreating the container.
      - Takes effect on the next command.
    * - Defaults
-     - ``GPUS=8``, ``MULTINODE=true``
+     - Orchestrator adds ``GPUS=8`` and ``MULTINODE=true`` as ``docker run -e`` unless ``container.env`` overrides them.
      - No network overrides unless a legacy top-level field is set.
 
 The generated per-command environment always exports:
 
 .. code:: bash
 
-  export HF_TOKEN="$(tr -d '[:space:]' < <paths.hf_token_file>)"  # empty if the file is missing
+  if [ -s <paths.hf_token_file> ]; then export HF_TOKEN="$(tr -d '[:space:]' < <paths.hf_token_file>)"; else export HF_TOKEN=; fi
   export HF_HUB_CACHE=<paths.models_dir>
 
-Packaged configurations set the HCA, socket-interface, GID, and NCCL debug
-settings in ``container.env`` so every command inherits them and topology
-discovery does not overwrite them. The legacy top-level ``ib_hca_devices`` and
-``ib_netdev`` fields remain fallbacks for external configurations that omit
-their corresponding container environment variables. Put other static ROCm,
-NCCL, and vLLM exports in ``container.env``.
+Packaged multi-host MI3xx files set the HCA, socket-interface, GID, and NCCL
+debug settings in ``container.env`` so every command inherits them and
+topology discovery does not overwrite ``NCCL_IB_HCA``. The packaged Llama
+single-node file sets no ``container.env``. The legacy top-level
+``ib_hca_devices`` and ``ib_netdev`` fields remain fallbacks for external
+configurations that omit their corresponding container environment variables.
+Put other static ROCm, NCCL, and vLLM exports in ``container.env``.
 
-The packaged MI3xx catalog's AITER settings are image- and model-scoped. For
-the image based on vLLM commit ``4bdc8a788``:
+Packaged ``container.env`` AITER settings differ by recipe. The commit id
+``4bdc8a788`` appears only as documentation context; it is not stored in the
+JSON. Follow the env block of the file you copied. Current files that set
+AITER-related variables:
 
-- DeepSeek V4 Flash, DeepSeek V4 Pro, GLM 5.1, and GLM 5.2 set
-  ``VLLM_ROCM_USE_AITER=1``, ``VLLM_ROCM_USE_AITER_MHA=0``, and
-  ``GPU_ARCHS=gfx942``.
+- DeepSeek V4 Flash, DeepSeek V4 Pro, GLM 5.1 FP8, and GLM 5.2 FP8 single-node
+  files set ``VLLM_ROCM_USE_AITER=1``, ``VLLM_ROCM_USE_AITER_MHA=0``, and
+  ``GPU_ARCHS=gfx942``. Their distributed twins, and GLM 5.1 BF16 distributed,
+  add ``VLLM_ROCM_USE_AITER_FP4BMM=0``.
+- Mistral Large 3 FP8 distributed sets ``VLLM_ROCM_USE_AITER=1``,
+  ``VLLM_ROCM_USE_AITER_MHA=0``, and ``GPU_ARCHS=gfx942``.
+- DeepSeek R1 0528 FP8 distributed sets ``VLLM_ROCM_USE_AITER=1`` and disables
+  ``VLLM_ROCM_USE_AITER_MHA``, ``VLLM_ROCM_USE_AITER_MLA``, and
+  ``VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS``, with ``GPU_ARCHS=gfx942``.
 - Kimi K2.5 sets ``VLLM_ROCM_USE_AITER=1`` and disables
   ``VLLM_ROCM_USE_AITER_MHA``, ``VLLM_ROCM_USE_AITER_FP4BMM``,
   ``VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS``, and
-  ``VLLM_ROCM_USE_AITER_MLA``.
-- Other packaged model families carry no AITER overrides.
+  ``VLLM_ROCM_USE_AITER_MLA``. The distributed file also sets ``GPU_ARCHS=gfx942``.
+- Kimi K2.6 and Kimi K2.7 Code distributed set ``VLLM_ROCM_USE_AITER=0`` and
+  disable the same four feature variables, with ``GPU_ARCHS=gfx942``.
+- DeepSeek R1 0528 MXFP4 distributed and Qwen3.5 397B MXFP4 distributed set
+  only ``VLLM_ROCM_USE_AITER_FP4BMM=0``.
+- The MI455X DeepSeek V4 Flash single file sets ``VLLM_ROCM_USE_AITER=1`` and
+  ``AITER_JIT_DIR``.
 
-Do not add ``VLLM_USE_AITER_UNIFIED_ATTENTION`` or
-``VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4``: this image does not register them, so
-they are warning-only and ignored. Do not substitute
-``VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION`` or other attention-backend variables
-without validating both registration and call sites in the exact image.
+Llama 3.3 70B and the other packaged recipes that do not appear above set no
+AITER variables. Do not copy an AITER block from another recipe without
+checking the image you actually run.
 
 .. _vllm-params:
 
@@ -657,39 +627,49 @@ percentile reporting.
    * - ``backend``
      - ``"vllm"``
      - Client backend for ``vllm bench serve``.
-   * - ``base_url``
-     - ``"http://0.0.0.0"``
-     - Server base URL.
-   * - ``num_prompts``
-     - ``3200``
-     - Total prompts per cell.
    * - ``dataset_name``
      - ``"random"``
      - Dataset for the load generator.
    * - ``num_prompts``
-     - ``"3200"``
-     - Total prompts per cell.
+     - ``3200``
+     - Total prompts per cell. The packaged Llama single file sets 320; the distributed file sets 64.
    * - ``burstiness``
-     - ``"1.0"``
+     - ``1.0``
      - 1.0 is a uniform arrival process; lower is burstier.
    * - ``seed``
-     - ``"0"``
+     - ``0``
      - Random seed.
    * - ``request_rate``
      - ``"inf"``
      - Arrival rate; ``inf`` sends as fast as concurrency allows.
    * - ``random_range_ratio``
-     - ``"0.0"``
+     - ``0.0``
      - Length jitter around ISL/OSL; also feeds the derived max-model-len.
    * - ``random_prefix_len``
-     - ``"0"``
+     - ``0``
      - Shared prefix length.
    * - ``tokenizer_mode``
      - ``"auto"``
      - Tokenizer mode.
    * - ``client_poll_iterations``
      - ``20``
-     - Client completion polls before giving up.
+     - Client completion polls. Packaged Llama single sets 90; distributed sets 540.
+   * - ``client_poll_wait_s``
+     - ``60``
+     - Seconds between client polls. Packaged Llama single keeps 60; distributed sets 10.
+   * - ``client_initial_wait_s``
+     - ``120``
+     - Seconds before the first client poll. Packaged Llama single keeps 120; distributed sets 10.
+   * - ``trust_remote_code``
+     - ``false``
+     - Emits ``--trust-remote-code`` when true.
+   * - ``ignore_eos``
+     - ``true``
+     - Emits ``--ignore-eos`` when true.
+
+``base_url`` is not a config key. ``VllmJob`` always uses ``http://0.0.0.0``. Setting it, or any other reserved benchmark name, fails load with ``benchmark_params cannot override harness fields``. Reserved names are ``backend``, ``base_url``, ``model``, ``max_concurrency``, ``random_input_len``, ``random_output_len``, ``result_dir``, ``result_filename``, ``percentile_metrics``, and ``metric_percentiles``. Reserved server names, which CVS adds itself on multi-host mp, are ``master_addr``, ``master_port``, ``nnodes``, ``node_rank``, and ``headless``.
+
+The client gives up with ``client did not complete before poll cap`` after the initial wait plus one sleep per poll. The server gives up with ``vllm server did not become ready before timeout`` after a fixed 30-second log precheck, the warmup, and one sleep per unreadiness poll. Failed requests above 1 percent raise ``client failed:``, including ``Failed requests: <n>/<total> (<percent>)``. At or below 1 percent the cell continues.
 
 .. tip::
 
@@ -781,11 +761,13 @@ Thresholds are keyed by canonical cell, then by a bare metric name:
       }
     }
 
+The ``4000`` and ``500`` figures only illustrate the grammar. Packaged threshold files use ``0``.
+
 A cell may contain any subset of the registry, including an empty object. When
 ``enforce_thresholds`` is true, every selected run must have a threshold cell,
 but only specs present in that cell create verification subtests. When it is
-false, produced and configured values are passing subtests and no threshold
-is asserted.
+false, recorded metrics keep status ``pass`` and no threshold subtest is
+emitted.
 
 Sweep specs are strict at load time regardless of enforcement:
 
@@ -813,13 +795,23 @@ Threshold file discovery
 ------------------------
 
 Set ``threshold_json`` to the threshold file. A relative path resolves against
-the configuration file's directory. The packaged 28 files contain two cells
-each and intentionally retain the previous 32-metric assertion subset in
-canonical registry order. All 56 registry metrics remain supported, and every
-finite produced value is reported whether or not it has a threshold spec. The
-packaged zero values are uncalibrated placeholders, and every paired config
-keeps enforcement disabled. Users may add any other registered metric or
-remove any packaged entry.
+the configuration file's directory. If that file is missing, CVS warns and
+uses the packaged file of the same name. Copy the sibling beside the config
+when you want to edit the numbers.
+
+There are 33 packaged threshold files. Every numeric ``value`` in them is
+``0``. Those zeros are uncalibrated placeholders, not measured limits. The
+Llama 3.3 70B FP8 single file has two cells
+(``ISL=1024,OSL=1024,TP=8,PP=1,CONC=16`` and ``CONC=32``), each with the same
+32-metric subset, and ``enforce_thresholds`` false. Its distributed sibling
+has one cell, ``ISL=1024,OSL=1024,TP=8,PP=2,CONC=16``, with the same 32 zeros.
+Most other MI3xx files also use that 32-metric subset, with one, two, or three
+cells. ``mi455x_vllm_deepseek-v4-flash_fp8_single_threshold.json`` is the
+exception: six cells, each gating only ``failed`` at ``0``, and the paired
+config sets ``enforce_thresholds`` to true. All 56 registry metrics remain
+supported, and every finite produced value is reported whether or not it has
+a threshold spec. You may add any other registered metric or remove any
+packaged entry.
 
 Metrics
 =======
@@ -917,14 +909,27 @@ Derived metrics are emitted only when their result is finite:
 Reporting and compatibility
 ---------------------------
 
-Each ``test_vllm_inference`` row verifies its own cell. After the benchmark
-completes, it computes all host rows before emitting one subtest for each
-present, enforced spec, so one failure does not hide sibling verdicts. A missed
-threshold fails that cell's row but does not skip later cells. With enforcement
-off, those rows pass and no threshold is asserted. With enforcement on, finite
-values without a spec also pass, and each enforced spec is a single subtest.
-The row also emits one
-compact JUnit property with ``actuals_by_host`` and metric contract ``{"id":"vllm-bare","version":1}``.
+Each ``test_vllm_inference[<cell>]`` row verifies its own cell. The ``<cell>``
+id is the canonical key, such as ``ISL=1024,OSL=1024,TP=8,PP=1,CONC=16``.
+After the benchmark completes, CVS builds every host row before emitting one
+subtest for each enforced spec, so one failure does not hide sibling verdicts.
+A missed threshold fails that cell's row but does not skip later cells.
+
+With ``enforce_thresholds`` false, ``evaluate_metric_verdicts`` sets ``status``
+to ``pass`` and emits no threshold subtest. The HTML Result column shows
+Passed. The Note column is one of:
+
+- ``metric produced without a configured threshold``
+- ``threshold enforcement disabled; no threshold asserted``
+- ``<metric>: unavailable or non-finite actual recorded; no threshold asserted``
+
+A spec that is not enforced is labeled ``reference: <kind> <value>`` in the
+gate column. With enforcement on, finite values without a spec still pass, and
+each enforced spec is a single subtest. A non-finite gated actual fails with
+``<metric>: actual must be a finite built-in int or float, got <value>``.
+
+The row also emits one compact JUnit property with ``actuals_by_host`` and
+metric contract ``{"id":"vllm-bare","version":1}``.
 
 Run Deck tables, charts, and highlights use selected registry metrics rather
 than all 56 columns. Historical namespaced vLLM Run Deck artifacts do not match
@@ -936,9 +941,10 @@ eligible for accuracy comparison.
 Results table
 -------------
 
-The summary table emits seven fixed columns — Model, GPU, ISL, OSL, Policy,
-Conc, Host — followed by Req/s, Total tok/s, Mean TTFT, P95 TTFT, Mean TPOT,
-P95 TPOT, P99 ITL, and Goodput.
+The summary table uses ``VLLM_RESULTS_COLUMNS``: Model, GPU, ISL, OSL, Policy,
+Conc, Host, then Req/s, Total tok/s, Mean TTFT (ms), P95 TTFT (ms), Mean TPOT
+(ms), P95 TPOT (ms), P99 ITL (ms), and Goodput (req/s). The GPU column is an
+empty string. The Policy column is the full cell key.
 
 .. _vllm-accuracy:
 
@@ -1074,10 +1080,18 @@ Troubleshooting
 
    * - Message
      - Cause and fix
-   * - Distributed execution requires ``pipeline_parallel_size > 1``
-     - Multi-host ``vllm_distributed`` on the mp backend needs pipeline parallelism. Either raise ``pipeline_parallel_size``, or set ``distributed-executor-backend`` to ``"ray"``.
-   * - ``vllm_distributed requires container.env.NCCL_SOCKET_IFNAME``
-     - Set all three socket-interface variables under ``container.env``.
+   * - ``vllm_distributed requires pipeline_parallel_size>1 unless distributed-executor-backend=ray``
+     - Two or more hosts on ``mp``. Raise ``pipeline_parallel_size``, or set the snake_case key ``distributed_executor_backend`` to ``"ray"``. One host does not raise this.
+   * - ``vllm_distributed requires container.env.NCCL_SOCKET_IFNAME on multi-host clusters``
+     - Set the socket interface. If you set any of the three socket variables, set all of them. A legacy ``ib_netdev`` also satisfies this check.
+   * - ``ib_discovery preflight: requested HCA devices <missing> not found on <host>``
+     - Multi-host only. A name in ``NCCL_IB_HCA`` is absent on that node. Preflight does not check socket-interface names, GID index, or link state, and it does not run for one host.
+   * - ``vllm server did not become ready before timeout``
+     - Readiness polls were exhausted. See ``server_poll_iterations``, ``server_poll_wait_s``, and ``server_warmup_wait_s``, plus the fixed 30-second log precheck.
+   * - ``client did not complete before poll cap``
+     - The benchmark client did not print a serving result before ``client_initial_wait_s`` plus ``client_poll_iterations`` × ``client_poll_wait_s``.
+   * - ``client failed:`` … ``Failed requests:``
+     - Failed requests were more than 1% of successful plus failed requests.
    * - ``Container image not specified in config``
      - ``container.image`` is empty. Note that a variant ``container`` block with no ``image`` overwrites the cluster file's value.
    * - ``runs must be a nonempty explicit list``
@@ -1093,17 +1107,15 @@ Troubleshooting
    * - ``duplicate task id(s)``
      - Two ``accuracy.tasks`` entries share an ``id``.
    * - ``unknown vLLM threshold metric '<metric>'``
-     - The cell key does not begin with ``_`` and does not name one of the 56 registry metrics.
+     - The name is not one of the 56 registry metrics. ``_comment`` and ``_example`` keys are ignored.
    * - ``<metric> threshold kind must be '<direction>', got '<kind>'``
      - ``kind`` does not match the registry direction. Use the required ``min`` or ``max`` value shown in the message.
    * - ``<metric>: actual must be a finite built-in int or float, got <value>``
      - The gated datasource did not produce a valid value. Inspect the benchmark artifact, GPU telemetry, or server metrics for that cell; percentile collection is harness-owned.
-   * - ``NotImplementedError: model.remote=1``
-     - Remote model download is unimplemented. Pre-stage weights and set ``remote: 0``.
-   * - ``ValueError: too many values to unpack``
-     - ``env`` was placed under ``runtime.args``. Move it to the ``container`` top level.
-   * - Extra-key validation error
-     - A misspelled key. Every block except ``container`` forbids unknown keys.
+   * - Unknown key under ``container`` or ``runtime.args``
+     - ``ContainerConfig`` and ``RuntimeArgs`` forbid extra keys. ``env`` belongs on ``container``. ``image_tar``, ``registry``, ``shm_size``, and ``cap_add`` belong on the cluster file. See :doc:`/reference/cluster/cluster-file`.
+   * - ``runtime.name`` is not ``docker``
+     - The vLLM schema accepts only ``docker``.
 
 Related resources
 =================
