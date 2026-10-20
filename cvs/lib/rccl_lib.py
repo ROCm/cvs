@@ -247,6 +247,7 @@ DEFAULT_COLLECTIVES = [
     'all_gather_perf',
     'scatter_perf',
     'gather_perf',
+    'reduce_perf',
     'reduce_scatter_perf',
     'sendrecv_perf',
     'alltoall_perf',

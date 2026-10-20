@@ -235,6 +235,7 @@ The following collectives can be specified in the ``results`` block; each name m
 - ``all_gather_perf``: each rank receives data from all ranks.
 - ``scatter_perf``: root rank distributes shards to all ranks.
 - ``gather_perf``: all ranks send data to a root rank.
+- ``reduce_perf``: all ranks reduce to a root rank.
 - ``reduce_scatter_perf``: reduction followed by scatter.
 - ``sendrecv_perf``: point-to-point pair communication.
 - ``alltoall_perf``: equal-sized all-to-all exchange.
