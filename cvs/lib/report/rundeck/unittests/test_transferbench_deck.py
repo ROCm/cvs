@@ -7,7 +7,6 @@ when a node recorded no charts.
 '''
 
 import copy
-import html
 import unittest
 
 from cvs.lib.report.profile import load_json_profile
@@ -86,7 +85,7 @@ class TestTransferBenchDeck(unittest.TestCase):
         types = [card["type"] for card in self.profile["cards"]]
         self.assertEqual(
             types,
-            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "status_matrix"],
+            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "table"],
         )
         self.assertEqual(self.profile["cards"][1]["bind"], "lifecycle")
         self.assertEqual(self.profile["cards"][2]["bind"], "datasets.status_matrix.overview")
@@ -129,11 +128,11 @@ class TestTransferBenchDeck(unittest.TestCase):
         self.assertIn("transferbench_run_deck_viewer.html", self.html)
 
     def test_status_matrix_shows_missed_bandwidth(self):
-        self.assertIn("status-matrix", self.html)
+        self.assertIn("results-table", self.html)
         self.assertIn("a2a", self.html)
         self.assertIn("node-a", self.html)
         self.assertIn("90.0 GB/s", self.html)
-        self.assertIn(html.escape(self.profile["cards"][-1]["hint"]), self.html)
+        self.assertNotIn("Open a cell", self.html)
 
     def test_bandwidth_card_hides_without_charts(self):
         bare = copy.deepcopy(_TB_RESULTS)

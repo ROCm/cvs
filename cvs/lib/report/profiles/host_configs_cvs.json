@@ -30,11 +30,5 @@
       "dmesg_driver",
       "dmesg_reset"
     ]
-  },
-  "cards": [
-    {
-      "id": "results",
-      "hint": "Columns are host configuration checks. Open a cell for the expected value and what the node reported."
-    }
-  ]
+  }
 }

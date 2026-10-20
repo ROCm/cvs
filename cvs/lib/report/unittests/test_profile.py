@@ -66,10 +66,10 @@ class TestProfile(unittest.TestCase):
         self.assertTrue(profile["interactive_viewer"])
         self.assertEqual(
             [card["type"] for card in profile["cards"]],
-            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "status_matrix"],
+            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "table"],
         )
         self.assertEqual(profile["cards"][3]["when_empty"], "hide")
-        self.assertTrue(profile["cards"][4]["hint"])
+        self.assertEqual(profile["cards"][4]["bind"], "datasets.status_matrix.results_table")
 
     def test_health_profiles_extend_shared_card_stack(self):
         schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
@@ -87,17 +87,17 @@ class TestProfile(unittest.TestCase):
         host_raw = json.loads(profile_json_path("host_configs_cvs").read_text(encoding="utf-8"))
         preflight_raw = json.loads(profile_json_path("preflight_checks").read_text(encoding="utf-8"))
         self.assertEqual(rvs_raw["extends"], "health_status_base")
-        self.assertEqual(rvs_raw["cards"], [{"id": "results", "hint": rvs_raw["cards"][0]["hint"]}])
+        self.assertNotIn("cards", rvs_raw)
         self.assertEqual(transferbench_raw["extends"], "health_status_base")
-        self.assertEqual([card["id"] for card in transferbench_raw["cards"]], ["metrics", "results"])
+        self.assertEqual([card["id"] for card in transferbench_raw["cards"]], ["metrics"])
         self.assertEqual(agfhc_raw["extends"], "health_status_base")
-        self.assertEqual(agfhc_raw["cards"], [{"id": "results", "hint": agfhc_raw["cards"][0]["hint"]}])
+        self.assertEqual([card["id"] for card in agfhc_raw["cards"]], ["results"])
         self.assertEqual(csp_raw["extends"], "health_status_base")
-        self.assertEqual(csp_raw["cards"], [{"id": "results", "hint": csp_raw["cards"][0]["hint"]}])
+        self.assertEqual([card["id"] for card in csp_raw["cards"]], ["results"])
         self.assertEqual(host_raw["extends"], "health_status_base")
-        self.assertEqual(host_raw["cards"], [{"id": "results", "hint": host_raw["cards"][0]["hint"]}])
+        self.assertNotIn("cards", host_raw)
         self.assertEqual(preflight_raw["extends"], "health_status_base")
-        self.assertEqual([card["id"] for card in preflight_raw["cards"]], ["metrics", "results"])
+        self.assertEqual([card["id"] for card in preflight_raw["cards"]], ["metrics"])
 
         rvs = load_json_profile("rvs_cvs")
         transferbench = load_json_profile("transferbench_cvs")
@@ -121,6 +121,15 @@ class TestProfile(unittest.TestCase):
             [card["id"] for card in csp["cards"]],
             ["run-card", "lifecycle", "overview", "metrics", "results"],
         )
+        self.assertEqual(
+            next(card for card in agfhc["cards"] if card["id"] == "results")["columns"],
+            ["Node", "Check", "Result", "Status", "Message"],
+        )
+        self.assertEqual(
+            next(card for card in csp["cards"] if card["id"] == "results")["columns"],
+            ["Node", "Check", "Result", "Status", "Message"],
+        )
+        self.assertNotIn("columns", next(card for card in rvs["cards"] if card["id"] == "results"))
         self.assertEqual(
             [card["id"] for card in host["cards"]],
             ["run-card", "lifecycle", "overview", "metrics", "results"],

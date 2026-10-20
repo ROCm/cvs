@@ -84,6 +84,9 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
   border-top: 1px solid rgba(42, 47, 61, 0.95); }
 .chart-bars { position: absolute; inset: 0; z-index: 1; display: flex; align-items: flex-end;
   justify-content: space-around; padding: 0 0.35rem; gap: 0.35rem; }
+.chart-bars-dense { gap: 2px; padding: 0 0.15rem; justify-content: stretch; }
+.chart-bars-dense .chart-col { border-left: none; max-width: none; }
+.chart-viz-dense .chart-ywrap { padding-bottom: 0; }
 .chart-col { flex: 1 1 0; min-width: 0; max-width: 52px; height: 100%; display: flex; align-items: flex-end;
   justify-content: center; border-left: 1px solid rgba(42, 47, 61, 0.55); }
 .chart-col:first-child { border-left: none; }
@@ -133,6 +136,10 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
 .cell-foot { font-size: 0.65rem; color: var(--muted); margin-top: auto; padding-top: 0.5rem; border-top: 1px solid var(--border); }
 .muted { color: var(--muted); }
 footer.page-foot { text-align: center; color: var(--muted); font-size: 0.75rem; margin-top: 2rem; }
+.to-top { display: block; width: max-content; margin: 0.85rem auto 0; padding: 0.3rem 0.75rem;
+  border: 1px solid var(--border); border-radius: 6px; background: #12151f; color: var(--accent2);
+  text-decoration: none; font-size: 0.8rem; }
+.to-top:hover { border-color: var(--accent); }
 .report-nav { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin-bottom: 1.25rem; padding: 0.75rem 1rem;
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px; font-size: 0.8rem; }
 .report-nav a { color: var(--accent2); text-decoration: none; }
@@ -168,6 +175,11 @@ footer.page-foot { text-align: center; color: var(--muted); font-size: 0.75rem; 
 .sm-links a { color: var(--accent2); text-decoration: none; font-size: 0.72rem; }
 .sm-links a:hover { text-decoration: underline; }
 .sm-hint { font-size: 0.78rem; margin-top: 0.75rem; }
+.rd-pager { display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem;
+  margin-top: 0.75rem; font-size: 0.8rem; color: var(--muted); }
+.rd-pager button { background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer; }
+.rd-pager button:hover { border-color: var(--accent); }
 .overview-split { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
 .overview-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
 .overview-table th, .overview-table td { text-align: left; padding: 0.35rem 0.4rem;
@@ -219,6 +231,7 @@ footer.page-foot { text-align: center; color: var(--muted); font-size: 0.75rem; 
     print-color-adjust: exact; -webkit-print-color-adjust: exact;
   }
   a { color: #06c; }
+  .to-top { display: none; }
 }
 """
         + gate_heatmap_css()

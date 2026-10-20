@@ -5,7 +5,7 @@ import unittest
 from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.lib.report.rundeck.render import render_rundeck_html
-from cvs.lib.report.rundeck.runtime.cards import DeckCardRenderer
+from cvs.lib.report.rundeck.runtime.cards import DeckCardRenderer, _DEFAULT_RENDERER, reset_table_ids
 from cvs.lib.report.rundeck.runtime.theme import report_css
 from cvs.lib.report.rundeck.unittests.test_jaxmaxtext_deck import _flat, _variant
 
@@ -49,6 +49,16 @@ class TestRenderLineChart(unittest.TestCase):
     def test_no_series_data_returns_muted_message(self):
         html_out = self.renderer.render_line_chart({}, self.card, {"charts": {}})
         self.assertEqual(html_out, "<p class='muted'>No series data.</p>")
+
+
+class TestTableIds(unittest.TestCase):
+    def test_ids_restart_for_each_report(self):
+        reset_table_ids()
+        self.assertEqual(_DEFAULT_RENDERER._next_table_id("rd-hm"), "rd-hm-1")
+        self.assertEqual(_DEFAULT_RENDERER._next_table_id("rd-settings"), "rd-settings-2")
+        reset_table_ids()
+        self.assertEqual(_DEFAULT_RENDERER._next_table_id("rd-hm"), "rd-hm-1")
+        reset_table_ids()
 
 
 class TestMetricChartsHeatmapHeading(unittest.TestCase):

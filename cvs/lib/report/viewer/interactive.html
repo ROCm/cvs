@@ -201,6 +201,16 @@ tr.changed td { background: rgba(255,107,53,0.1); }
 .matrix-fail { background: rgba(255,92,106,0.15); color: var(--fail); }
 .matrix-record { background: rgba(107,159,255,0.1); color: var(--record); }
 .matrix-na { color: var(--muted); }
+.rd-pager { display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem;
+  margin-top: 0.75rem; font-size: 0.8rem; color: var(--muted); }
+.rd-pager button { background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer; }
+.rd-pager button:hover { border-color: var(--accent); }
+footer.page-foot { text-align: center; margin-top: 2rem; }
+.to-top { display: block; width: max-content; margin: 0.85rem auto 0; padding: 0.3rem 0.75rem;
+  border: 1px solid var(--border); border-radius: 6px; background: #12151f; color: var(--accent2);
+  text-decoration: none; font-size: 0.8rem; }
+.to-top:hover { border-color: var(--accent); }
 @media (max-width: 640px) {
   body { padding: 0.75rem; }
   .chart-grid { grid-template-columns: 1fr; }
@@ -208,7 +218,7 @@ tr.changed td { background: rgba(255,107,53,0.1); }
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="wrap" id="top">
 <header class="hero">
   <div>
     <h1>__TITLE__</h1>
@@ -391,6 +401,7 @@ tr.changed td { background: rgba(255,107,53,0.1); }
     <table class="data"><thead><tr id="cells-header"></tr></thead><tbody id="rows"></tbody></table>
   </div>
 </section>
+<footer class="page-foot"><a class="to-top" href="#top">Go to top</a></footer>
 </div>
 
 __EMBEDDED_JSON__
@@ -1072,34 +1083,57 @@ function buildOverview() {
   badge.className = 'status-badge status-' + status;
 }
 
-const LINE_DASHES = [[], [7, 4], [3, 3], [10, 4, 2, 4]];
+const LINE_DASHES = [[], [8, 4], [2, 3], [12, 4, 3, 4]];
 const LINE_POINT_STYLES = ['circle', 'rect', 'triangle', 'rectRot'];
-const CHART_COLORS = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#f0c040', '#ff5c6a'];
+const CHART_COLORS = [
+  '#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#f0c040', '#ff5c6a',
+  '#2ec4b6', '#e879f9', '#a3e635', '#818cf8', '#22d3ee', '#f472b6',
+];
 
 function shapeLabel(isl, osl) {
   return shapeLabelFromParts([isl, osl]);
 }
 
-function buildLineDataset(series, index, color) {
-  const dashed = LINE_DASHES[index % LINE_DASHES.length];
+function lineStyle(index) {
+  return {
+    color: CHART_COLORS[index % CHART_COLORS.length],
+    // A repeated color gets the next dash, so line 13 is not the same mark as line 1.
+    dash: LINE_DASHES[Math.floor(index / CHART_COLORS.length) % LINE_DASHES.length],
+    point: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
+  };
+}
+
+function lineLegendLabels(textColor) {
+  return {
+    color: textColor || '#e8eaef',
+    usePointStyle: true,
+    pointStyle: 'line',
+    boxWidth: 28,
+    boxHeight: 6,
+    font: { size: 11 },
+  };
+}
+
+function buildLineDataset(series, index) {
+  const style = lineStyle(index);
   return {
     label: series.label,
     data: series.values != null ? series.values : series.data,
-    borderColor: color,
-    backgroundColor: color,
+    borderColor: style.color,
+    backgroundColor: style.color,
     borderWidth: 2.5,
-    borderDash: dashed,
+    borderDash: style.dash,
     tension: 0.2,
     fill: false,
     pointRadius: 5,
     pointHoverRadius: 7,
-    pointStyle: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
-    pointBackgroundColor: color,
+    pointStyle: style.point,
+    pointBackgroundColor: style.color,
     pointBorderColor: '#1a1d27',
     pointBorderWidth: 2,
     spanGaps: true,
     // Dashed / alternate styles draw on top so overlapping trends stay visible.
-    order: dashed.length ? index : index + 10,
+    order: style.dash.length ? index : index + 10,
   };
 }
 
@@ -1155,7 +1189,11 @@ function makeChart(canvas, type, labels, datasets, unit, title) {
         intersect: false,
       },
       plugins: {
-        legend: { labels: { color: '#e8eaef', boxWidth: 12, font: { size: 11 } } },
+        legend: {
+          labels: type === 'line'
+            ? lineLegendLabels()
+            : { color: '#e8eaef', boxWidth: 12, font: { size: 11 } },
+        },
         title: title ? { display: true, text: title, color: '#9aa3b5', font: { size: 11, weight: '600' }, padding: { bottom: 8 } } : undefined,
         tooltip: {
           backgroundColor: '#2a3142',
@@ -1535,7 +1573,7 @@ function makeInteractivityChart(canvas, datasets, logY, showLabels) {
       interaction: { mode: 'nearest', intersect: true },
       onClick: onInteractivityChartClick,
       plugins: {
-        legend: { labels: { color: '#e8eaef', boxWidth: 12, font: { size: 11 } } },
+        legend: { labels: lineLegendLabels() },
         tooltip: {
           enabled: false,
           external: interactivityExternalTooltip,
@@ -1629,24 +1667,23 @@ function buildInteractivityChart(rows) {
       .sort((a, b) => a.conc - b.conc);
     if (!points.length) return;
 
-    const color = CHART_COLORS[index % CHART_COLORS.length];
-    const dashed = LINE_DASHES[index % LINE_DASHES.length];
+    const style = lineStyle(index);
     datasets.push({
       label: label,
       data: points,
       showLine: points.length > 1,
       tension: 0.15,
-      borderColor: color,
-      backgroundColor: color,
+      borderColor: style.color,
+      backgroundColor: style.color,
       borderWidth: 2.5,
-      borderDash: dashed,
+      borderDash: style.dash,
       pointRadius: 5,
       pointHoverRadius: 7,
-      pointStyle: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
-      pointBackgroundColor: points.map(p => (p.status === 'fail' ? '#ff5c6a' : color)),
+      pointStyle: style.point,
+      pointBackgroundColor: points.map(p => (p.status === 'fail' ? '#ff5c6a' : style.color)),
       pointBorderColor: '#1a1d27',
       pointBorderWidth: 2,
-      order: dashed.length ? index : index + 10,
+      order: style.dash.length ? index : index + 10,
     });
   });
 
@@ -1820,24 +1857,20 @@ function buildStepChart(rows, spec) {
     const pts = parseCurvePoints(stepSpecCurve(c, spec), warmupStepFor(plannedStepsFor(c), warmupPercent()));
     if (!pts.length) return;
     const color = CHART_COLORS[index % CHART_COLORS.length];
-    const dashed = LINE_DASHES[index % LINE_DASHES.length];
     datasets.push({
       label: c.subtitle || c.cell_id || ('combo ' + index),
       data: pts,
       borderColor: color,
       backgroundColor: color,
       borderWidth: 2,
-      borderDash: dashed,
       tension: 0.15,
       fill: false,
       pointRadius: pts.length > 40 ? 0 : 3,
       pointHoverRadius: 5,
-      pointStyle: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
       pointBackgroundColor: color,
       pointBorderColor: '#1a1d27',
       pointBorderWidth: 1,
       spanGaps: true,
-      order: dashed.length ? index : index + 10,
     });
   });
 
@@ -1894,7 +1927,7 @@ function buildMarginCharts(rows) {
       const hit = s.points.find(p => String(p[0]) === String(c));
       return hit ? hit[1] : null;
     }),
-  }, i, CHART_COLORS[i % CHART_COLORS.length]));
+  }, i));
   datasets.push(gateReferenceDataset(labels));
 
   const metricLabel = metricMeta(marginMetricKey).label || 'Gate margin';
@@ -1940,7 +1973,7 @@ function buildComparisonCharts(rows) {
           borderWidth: 1,
         };
       }
-      return buildLineDataset(s, i, color);
+      return buildLineDataset(s, i);
     });
 
     const card = document.createElement('article');
@@ -2132,12 +2165,15 @@ function renderTable(rows) {
   }).join('');
 }
 
+__PAGE_TABLES_JS__
+
 function render() {
   const rows = filteredCells();
   renderTable(rows);
   buildCharts(rows);
   buildHeatmap(rows);
   buildGateMatrix(rows);
+  pageLongTables(document);
 }
 
 function exportCsv() {
