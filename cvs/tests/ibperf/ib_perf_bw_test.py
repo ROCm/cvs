@@ -10,8 +10,10 @@ import re
 import json
 import os
 
+import pytest
 
 from cvs.lib import ibperf_lib, ibperf_reporting
+from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib.rdma_gid_lib import DEFAULT_GID_TYPE
 
 from cvs.lib.utils_lib import *
@@ -60,6 +62,43 @@ def _fail_unmapped_gpus(orch):
     return gpu_nic_dict
 
 
+def _create_orch(cluster_dict, nodes):
+    node_dict = {node: cluster_dict['node_dict'][node] for node in nodes}
+    cfg = OrchestratorConfig.from_configs({**cluster_dict, 'node_dict': node_dict}, {})
+    return OrchestratorFactory.create_orchestrator(log, cfg)
+
+
+@pytest.fixture(scope="module")
+def node_pairing(cluster_dict, config_dict):
+    """Resolve server/client pairs from the cluster and ibperf configuration."""
+    node_list = list(cluster_dict['node_dict'])
+    discovery_orchs = []
+
+    def make_handle(nodes):
+        discovery_orch = _create_orch(cluster_dict, nodes)
+        discovery_orchs.append(discovery_orch)
+        if not discovery_orch.sudo_prefix():
+            raise ValueError('ibperf.vpod_source afm needs passwordless sudo for afmctl')
+        return discovery_orch.all
+
+    try:
+        return ibperf_lib.resolve_ibperf_node_pairing(node_list, config_dict, cluster_dict, phdl_factory=make_handle)
+    finally:
+        for discovery_orch in discovery_orchs:
+            discovery_orch.close()
+
+
+@pytest.fixture(scope="module")
+def orch(cluster_dict, node_pairing):
+    """Orchestrator over the paired nodes only; overrides the suite conftest's even-prefix ``orch``."""
+    node_list = [node for pair in node_pairing['pairs'] for node in pair]
+    log.info('Connecting to %d paired cluster nodes', len(node_list))
+    log.debug('Paired cluster nodes: %s', node_list)
+    o = _create_orch(cluster_dict, node_list)
+    yield o
+    o.close()
+
+
 def can_read_dmesg(orch):
     if all(get_passwordless_sudo_status(orch.all).values()):
         return True
@@ -71,7 +110,7 @@ def _note_run_facts(variant, use_dmabuf, gpu_nic_dict):
     variant.update(dmabuf=use_dmabuf, nic_count=max((len(cards) for cards in gpu_nic_dict.values()), default=None))
 
 
-def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibperf_variant_config):
+def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibperf_variant_config, node_pairing):
     globals.error_list = []
     ib_bw_dict[bw_test] = {}
     scan_dmesg = can_read_dmesg(orch)
@@ -134,6 +173,7 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibper
                 rocm_path=rocm_path,
                 use_dmabuf=use_dmabuf,
                 hip_dev_dict=hip_dev_dict,
+                node_pairs=node_pairing['pairs'],
             )
             ibperf_reporting.record_bw_results(
                 cvs_results_dict,
@@ -156,10 +196,12 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibper
                 )
 
     log.debug('ib_bw_dict: %s', ib_bw_dict)
+    for err in node_pairing['errors']:
+        fail_test(err)
     update_test_result()
 
 
-def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibperf_variant_config):
+def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibperf_variant_config, node_pairing):
     globals.error_list = []
     ib_lat_dict[lat_test] = {}
     scan_dmesg = can_read_dmesg(orch)
@@ -219,6 +261,7 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibp
             rocm_path=rocm_path,
             use_dmabuf=use_dmabuf,
             hip_dev_dict=hip_dev_dict,
+            node_pairs=node_pairing['pairs'],
         )
         ibperf_reporting.record_lat_results(
             cvs_results_dict, lat_test, msg_size, ib_lat_dict[lat_test][msg_size], ibperf_variant_config
@@ -232,6 +275,8 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibp
             )
 
     log.debug('ib_lat_dict: %s', ib_lat_dict)
+    for err in node_pairing['errors']:
+        fail_test(err)
     update_test_result()
 
 

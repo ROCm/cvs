@@ -16,6 +16,8 @@ In the config file, cvs/input/config_file/ibperf/ibperf_config.json, change the 
 
 Perftest must be built with ROCm DMA-BUF support. The tests probe the perftest binary on every node before launching. The `require_dmabuf` config setting defaults to `True` and fails the test if any node lacks support; set it to `False` to run without DMA-BUF on all nodes.
 
+For scale-out pairing across MI4XX vPODs, set `ibperf.pairing_mode` to `inter_vpod`. `intra_vpod` pairs within a vPOD; the default `sequential` uses cluster-file order. `ibperf.vpod_source` defaults to `afm`, which requires passwordless sudo for `afmctl show device --json` and uses the physical pod and virtual pod IDs. Set `ibperf.afmctl_path` to `/usr/sbin/afmctl` when needed. Alternatively, use `vpod_source: "cluster_file"` and set `node_dict[<node>].vpod_id` on every node. GPU instance count follows discovery; mismatched pairs fail and are excluded.
+
 Each NIC uses its PCIe-local GPU. The tests find the HIP ordinal for `--use_rocm` by matching the GPU BDF against KFD topology. Setting `HIP_VISIBLE_DEVICES`, `ROCR_VISIBLE_DEVICES`, `CUDA_VISIBLE_DEVICES`, or `GPU_DEVICE_ORDINAL` in cluster `env_vars` makes the ibperf tests fail.
 
 

@@ -58,20 +58,10 @@ def config_dict(pytestconfig, cluster_dict):
 
 @pytest.fixture(scope="module")
 def orch(cluster_dict):
-    """Suite-local orchestrator over an even number of nodes.
-
-    perftest runs as server/client pairs, so an odd last node is left out of
-    ``orch.all``; the shared ``orch`` fixture cannot trim nodes.
-    """
+    """Suite-local orchestrator over every cluster node for installation and verification."""
     node_dict = cluster_dict['node_dict']
     if len(node_dict) < 2:
         raise ValueError('At least 2 nodes are required to run this test')
-    if len(node_dict) % 2 != 0:
-        dropped = list(node_dict)[-1]
-        log.info(
-            'Odd number of nodes (%d); excluding last node %s to form server/client pairs', len(node_dict), dropped
-        )
-        node_dict = {node: info for node, info in node_dict.items() if node != dropped}
     cfg = OrchestratorConfig.from_configs({**cluster_dict, 'node_dict': node_dict}, {})
     o = OrchestratorFactory.create_orchestrator(log, cfg)
     yield o
