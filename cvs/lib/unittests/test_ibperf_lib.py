@@ -675,10 +675,10 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
         )
         for g in range(8):
             stem = (
-                f'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat '
+                f'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat '
                 f'-d rdma{g} --use_rocm={g} -x 3 -F -p {1516 + g} -s 64'
             )
-            suffix = f' > /tmp/ib_perf_{g}_logs 2>&1 &" >> /tmp/ib_cmds_file.txt'
+            suffix = f'; echo perftest_rc=\\$? ) > /tmp/ib_perf_{g}_logs 2>&1 &" >> /tmp/ib_cmds_file.txt'
             self.assertEqual(calls[g + 1].args[0], [stem + suffix, stem + ' node1' + suffix])
         self.assertEqual({n: set(result[n]) for n in result}, {n: set(range(8)) for n in result})
         self.phdl.prune_nodes.assert_not_called()
@@ -715,8 +715,8 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
                 node_pairs=[('n1', 'n3'), ('n2', 'n4')],
             )
         commands = self.phdl.exec_cmd_list.call_args_list[1].args[0]
-        self.assertIn('-s 64 n1 >', commands[2])
-        self.assertIn('-s 64 n2 >', commands[3])
+        self.assertIn('-s 64 n1;', commands[2])
+        self.assertIn('-s 64 n2;', commands[3])
         self.assertEqual(get_lat.call_args.kwargs['result_nodes'], ['n3', 'n4'])
 
     def test_orphan_and_no_active_pairs(self):
@@ -792,11 +792,11 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
         )
         for g in range(8):
             stem = (
-                f'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw '
+                f'echo "( numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_bw '
                 f'-d rdma{g} --use_rocm={g} -x 3 --report_gbits -b -F -D 60 '
                 f'-p {1516 + g} -s 64 -q 8'
             )
-            suffix = f' > /tmp/ib_perf_{g}_logs 2>&1 &" >> /tmp/ib_cmds_file.txt'
+            suffix = f'; echo perftest_rc=\\$? ) > /tmp/ib_perf_{g}_logs 2>&1 &" >> /tmp/ib_cmds_file.txt'
             self.assertEqual(calls[g + 1].args[0], [stem + suffix, stem + ' node1' + suffix])
         self.assertEqual(
             [c.args[0] for c in self.phdl.exec.call_args_list[:3]],
@@ -814,11 +814,11 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
         for g, call_args in enumerate(self.phdl.exec_cmd_list.call_args_list[1:]):
             commands = call_args.args[0]
             self.assertEqual(len(commands), 4)
-            suffix = f'-q 8 > /tmp/ib_perf_{g}_logs 2>&1 &" >> /tmp/ib_cmds_file.txt'
+            suffix = f'-q 8; echo perftest_rc=\\$? ) > /tmp/ib_perf_{g}_logs 2>&1 &" >> /tmp/ib_cmds_file.txt'
             self.assertTrue(commands[0].endswith(suffix))
             self.assertTrue(commands[2].endswith(suffix))
-            self.assertTrue(commands[1].endswith(suffix.replace('-q 8 >', '-q 8 n1 >')))
-            self.assertTrue(commands[3].endswith(suffix.replace('-q 8 >', '-q 8 n3 >')))
+            self.assertTrue(commands[1].endswith(suffix.replace('-q 8;', '-q 8 n1;')))
+            self.assertTrue(commands[3].endswith(suffix.replace('-q 8;', '-q 8 n3;')))
 
     def test_four_gpu_node(self):
         self.gpu_numa_dict, self.gpu_nic_dict, self.hip_dev_dict = gpu_maps(('node1', 'node2'), 4)
@@ -839,8 +839,8 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
         self.bck_nic_dict = {n: {} for n in nodes}
         self.run_bandwidth(node_pairs=[('n1', 'n3'), ('n2', 'n4')])
         commands = self.phdl.exec_cmd_list.call_args_list[1].args[0]
-        self.assertIn('-q 8 n1 >', commands[2])
-        self.assertIn('-q 8 n2 >', commands[3])
+        self.assertIn('-q 8 n1;', commands[2])
+        self.assertIn('-q 8 n2;', commands[3])
         self.phdl.reset_mock()
         result = self.run_bandwidth(node_pairs=[('n1', 'n2'), ('n3', 'n9')])
         self.phdl.prune_nodes.assert_called_once_with(['n3', 'n4'])
