@@ -24,7 +24,7 @@ from unittest.mock import MagicMock, patch
 from cvs.core.orchestrators.factory import OrchestratorConfig, _resolve_container_lifetime
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.orchestrators.container import ContainerOrchestrator, covered_by_ib_expansion, ib_device_expansion
-from cvs.unittests.support import FAKE_CRED, run_trusted
+from cvs.unittests.support import FAKE_CRED, TMP, run_trusted
 
 
 # Reusable runtime.is_running fixtures (two-host cluster).
@@ -106,6 +106,20 @@ class TestContainerOrchestrator(unittest.TestCase):
         self.assertEqual(runtime.exec_on_head.call_args.args[1], cmd)
         logged = [c.args[0] for c in orch.log.debug.call_args_list if str(c.args[0]).startswith("MPI command: ")]
         self.assertEqual(logged, ["MPI command: mpirun -x HF_TOKEN=<redacted> hostname"])
+
+    def test_distribute_using_mpi_stops_a_timed_out_job_inside_the_container(self):
+        # The job runs in the container, so the stop after a client-side timeout
+        # must go through the container runtime too, not the host shell.
+        orch, runtime = self._make()
+        cmd = f"(trap 'rm -f {TMP}/cvs_mpi_hosts.AbCd1234' EXIT; eval 'mpirun --hostfile {TMP}/cvs_mpi_hosts.AbCd1234 hostname')"
+        timed_out, done = {"10.0.0.1": "ABORT: Timeout Error in Host: 10.0.0.1"}, {"10.0.0.1": ""}
+        runtime.exec_on_head.side_effect = [timed_out, done, done]
+        with patch.object(BaremetalOrchestrator, "build_mpi_cmd", return_value=cmd):
+            orch.distribute_using_mpi("hostname", ["10.0.0.1"], 1, {}, "/opt/ompi")
+        sent = [c.args[1] for c in runtime.exec_on_head.call_args_list]
+        self.assertEqual(sent[0], cmd)
+        self.assertEqual(sent[1], "pkill -TERM -f -- '[c]vs_mpi_hosts[.]AbCd1234'")
+        self.assertEqual(sent[2], 'rm -f "${TMPDIR:-/tmp}/cvs_mpi_hosts.AbCd1234"')
 
     def test_init_creates_runtime_via_factory(self):
         orch, runtime = self._make()

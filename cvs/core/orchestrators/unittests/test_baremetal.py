@@ -494,6 +494,49 @@ class TestBaremetalOrchestratorMpiHostfile(unittest.TestCase):
         self.assertEqual(len(created), 1, created)
         self.assertEqual(self._hostfile_given_to_mpirun(cmd), created)
 
+    def test_distribute_using_mpi_stops_its_job_when_the_client_times_out(self):
+        # exec_on_head's timeout only stops reading, so the job and its hostfile
+        # would stay on the head node. The stop must reach this job alone: not the
+        # shell that runs pkill, and not another run's job.
+        pkill_args = os.path.join(self.scratch, "pkill.args")
+        _write_executable(
+            os.path.join(self.fake_bin, "pkill"),
+            f'#!/bin/sh\nprintf "%s\\n" "$@" > {shlex.quote(pkill_args)}\nexit 1\n',
+        )
+        head = self._use_local_head(path_dir=self.fake_bin)
+        cmd = self._build()
+        other_run = cmd.replace(os.path.basename(self._created_files()[0]), "cvs_mpi_hosts.0therRun")
+        run_on_head = head.exec
+
+        def job_times_out(command, **kwargs):
+            if command == cmd:
+                return {head.host: f"partial output\nABORT: Timeout Error in Host: {head.host}"}
+            return run_on_head(command, **kwargs)
+
+        head.exec = job_times_out
+        with patch.object(self.orch, "build_mpi_cmd", return_value=cmd):
+            result = self.orch.distribute_using_mpi("echo hi", ["10.0.0.1", "10.0.0.2"], 1, {}, self.mpi_dir)
+
+        self.assertIn("ABORT: Timeout Error", result[head.host])
+        self.assertEqual(self._created_files(), [])
+        with open(pkill_args, encoding="utf-8") as stream:
+            args = stream.read().splitlines()
+        self.assertEqual(args[:3], ["-TERM", "-f", "--"])
+        pattern = args[3]
+        self.assertRegex(cmd, pattern)
+        self.assertNotRegex(other_run, pattern)
+        pkill_cmd = next(sent for sent, _ in head.calls if sent.startswith("pkill"))
+        self.assertNotRegex(pkill_cmd, pattern)
+
+    def test_distribute_using_mpi_sends_nothing_more_when_the_job_finishes(self):
+        cmd = self._build()
+        head = self._use_local_head()
+
+        with patch.object(self.orch, "build_mpi_cmd", return_value=cmd):
+            self.orch.distribute_using_mpi("echo hi", ["10.0.0.1", "10.0.0.2"], 1, {}, self.mpi_dir)
+
+        self.assertEqual([sent for sent, _ in head.calls], [cmd])
+
 
 class TestBaremetalOrchestratorMpiHostfileUnderSh(TestBaremetalOrchestratorMpiHostfile):
     """The same tests with the head node's commands run by sh, the way

@@ -5,6 +5,7 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import re
 import shlex
 import uuid
 
@@ -17,6 +18,10 @@ from cvs.lib.utils_lib import get_passwordless_sudo_status
 
 # Exit status of build_mpi_cmd's hostfile-creation command, by the step that failed.
 _HOSTFILE_STEP_FAILED = {2: 'mktemp failed', 3: 'writing the host list failed'}
+# A hostfile's name is this prefix followed by mktemp's random suffix.
+_HOSTFILE_PREFIX = 'cvs_mpi_hosts.'
+# What the parallel handle appends to a host's output when the client-side read timeout fires.
+_TIMEOUT_MARKER = 'ABORT: Timeout Error'
 
 
 class BaremetalOrchestrator(Orchestrator):
@@ -297,7 +302,7 @@ class BaremetalOrchestrator(Orchestrator):
         # call, so no other line of the head node's output can be taken for it.
         marker = f'cvs-mpi-hostfile-{uuid.uuid4().hex}:'
         cmd = (
-            'hf=$(mktemp "${TMPDIR:-/tmp}/cvs_mpi_hosts.XXXXXXXX") || exit 2; '
+            f'hf=$(mktemp "${{TMPDIR:-/tmp}}/{_HOSTFILE_PREFIX}XXXXXXXX") || exit 2; '
             f'printf %s {shlex.quote(host_file_params)} > "$hf" || {{ rm -f "$hf"; exit 3; }}; '
             f'printf "%s%s\\n" {marker} "$hf"'
         )
@@ -386,8 +391,32 @@ class BaremetalOrchestrator(Orchestrator):
 
         # Execute on head node
         result = self.exec_on_head(full_mpi_cmd, timeout=500)  # Default timeout
+        self._stop_mpi_job_after_timeout(full_mpi_cmd, result)
 
         return result
+
+    def _stop_mpi_job_after_timeout(self, full_mpi_cmd, result):
+        """
+        Stop an MPI job whose exec_on_head call hit the client-side timeout.
+
+        That timeout only stops reading output, so the job, and the hostfile it
+        holds, would keep going on the head node. SIGTERM goes only to processes
+        whose command line names this job's hostfile, which lets the job's trap
+        clean up; the hostfile is also removed directly in case a process
+        outlives the signal.
+        """
+        if not any(_TIMEOUT_MARKER in str(output) for output in result.values()):
+            return
+        name = re.search(re.escape(_HOSTFILE_PREFIX) + r'\w+', full_mpi_cmd)
+        if not name:
+            return
+        name = name.group()
+        self.log.warning("MPI job hit the client-side timeout; stopping it on the head node")
+        # Bracketing the first character keeps the pattern from matching the shell running pkill.
+        pattern = f'[{name[0]}]{name[1:]}'.replace('.', '[.]')
+        self.exec_on_head(f'pkill -TERM -f -- {shlex.quote(pattern)}', timeout=30)
+        # Removed in a command of its own: a command line naming the hostfile matches that pattern.
+        self.exec_on_head(f'rm -f "${{TMPDIR:-/tmp}}/{name}"', timeout=30)
 
     def get_mpi_command(self, rank_cmd, mpi_runner_args, env_vars, mpi_install_dir):
         """
