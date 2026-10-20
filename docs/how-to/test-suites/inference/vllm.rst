@@ -78,6 +78,7 @@ In the **configuration file**, set:
 - ``paths.models_dir`` — where the weights live. Make sure this path is also mounted into the container by ``container.runtime.args.volumes``.
 - ``paths.hf_token_file`` — path to your token file.
 - ``server_params.model`` — the model to serve.
+- RDMA volumes — keep the NIC family installed on the nodes. ``_comment_bnxt_mount`` is Broadcom Thor2 (``libbnxt_re-rdmav34.so``). ``_comment_ionic_mounts`` is AMD Pensando Ionic / AINIC; replace ``<changeme-libionic-soname>`` with the host soname filename from ``readlink -f /usr/lib/x86_64-linux-gnu/libionic.so.1``. Delete the other family. ``docker run`` fails if a listed host path is missing.
 
 For a **multinode** configuration, also set:
 
