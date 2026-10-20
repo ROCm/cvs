@@ -19,7 +19,7 @@ Where the command runs
 
 ``env_vars`` in the cluster file is prefixed onto the remote command as ``export`` statements in the host shell. That is separate from ``container.env``, which becomes ``docker -e`` inside a container for suites that start one.
 
-A per-host line such as ``ABORT: Host Unreachable Error`` or ``ABORT: Timeout Error in Host: ...`` is text in that host's output. ``cvs exec`` still exits 0 after printing it. The process exits non-zero when the cluster file cannot be loaded, the SSH client cannot be built, or the exec call itself raises. A remote command that exits non-zero is printed the same way and does not change the process exit code: this command does not read per-host exit codes.
+A per-host line such as ``ABORT: Host Unreachable Error`` or ``ABORT: Timeout Error in Host: ...`` is text in that host's output. ``cvs exec`` still exits 0 after printing it. The process exits non-zero when no cluster file is specified, the cluster file cannot be loaded, required keys are missing (``username``, or ``priv_key_file`` and a non-empty ``node_dict`` for compute targets), the SSH client cannot be built, or the exec call itself raises. A remote command that exits non-zero is printed the same way and does not change the process exit code: this command does not read per-host exit codes.
 
 Execute commands
 ================

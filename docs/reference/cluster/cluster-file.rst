@@ -173,7 +173,7 @@ The following table describes each key in the ``container`` block.
      - Container lifecycle policy: ``no_launch``, ``per_run``, or ``persistent``. See the truth table below.
    * - ``image``
      - (required)
-     - Image tag. Setup fails when this is missing. CVS ``docker pull``s it on any host that does not already have it, after ``image_tar`` or a registry login when you set those.
+     - Image tag. Setup fails when this is missing. If any host does not already have ``image``, CVS runs ``docker pull`` on every host (after ``image_tar`` or a registry login when you set those).
    * - ``name``
      - ``<launch user>_<sanitized image>``
      - Optional. Omit it and CVS builds the name from the user running ``cvs`` plus the image, with every character outside ``[A-Za-z0-9_]`` replaced by ``_``. Set it when two runs share a host, and when ``lifetime`` is ``persistent``.
@@ -182,7 +182,7 @@ The following table describes each key in the ``container`` block.
      - Environment inside the container (``docker -e``). Your keys override those two defaults. This is not cluster ``env_vars``. ``runtime.args.env`` is applied after this map, so the same name there wins.
    * - ``image_tar``
      - (unset)
-     - Path on each node. When set, CVS runs ``docker load`` on hosts that do not already have ``image``, and skips registry login.
+     - Path on each node. When set and any host lacks ``image``, CVS runs ``docker load`` on every host and skips registry login.
    * - ``runtime.name``
      - ``docker``
      - Container runtime. ``docker`` is the working runtime. ``enroot`` is accepted and its setup returns failure.

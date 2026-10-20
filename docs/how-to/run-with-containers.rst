@@ -49,7 +49,7 @@ Replace every ``<changeme>`` placeholder in the copied file. A suite that loads 
 
 - ``username`` and ``priv_key_file``. ``{user-id}`` expands to the user running ``cvs run``. ``cvs exec`` and ``cvs scp`` leave that text literal, so use a real username in a file you pass to those commands.
 - ``node_dict`` keys: real IPs or hostnames. The first key is the orchestrator head.
-- ``container.image``: required. CVS pulls it on hosts that do not have it, after ``image_tar`` or ``runtime.args.registry`` when you set those.
+- ``container.image``: required. If any host lacks the image, CVS loads ``image_tar`` (or logs in with ``runtime.args.registry``) and pulls ``image`` across all hosts.
 - ``container.name``: optional. The default is ``<user running cvs>_<image>``, with characters outside ``[A-Za-z0-9_]`` replaced by ``_``. Pin it for ``lifetime: persistent`` and when two runs share a host.
 - ``container.lifetime``: ``no_launch``, ``per_run``, or ``persistent``. See the lifecycle note below.
 - ``container.env``: variables inside the container (``docker -e``). Cluster ``env_vars`` is a host-shell ``export`` prefix, including on the ``docker`` commands themselves, and is not copied into the container.
