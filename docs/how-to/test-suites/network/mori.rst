@@ -15,7 +15,7 @@ Prerequisites
 
 - A cluster file that lists the nodes for this run. The ``no_of_nodes`` field in the MORI config is not read. Node count is the number of nodes in the cluster file.
 - For the shipped ``orchestrator`` value ``container``: Docker on the hosts, a GPU image that contains the MORI build, and ``/dev/dri`` plus ``/dev/kfd``. This value overrides the cluster file for this suite. Set ``orchestrator`` to ``baremetal`` to run on the host instead.
-- Passwordless sudo on the hosts if you want the dmesg scan. The scan reads host ``dmesg`` even when the benchmarks run in a container. Without sudo, ``test_verify_dmesg`` is skipped.
+- Passwordless sudo on the hosts if you want the dmesg scan. The scan reads host ``dmesg`` on every node even when the benchmarks run in a container. ``test_verify_dmesg`` skips only when ``orch.sudo_prefix()`` is empty (which uses the head node's ``sudo -n true`` result).
 - ``prettytable`` where ``benchmark.py`` runs. In a container, ``test_install_container_packages`` runs ``pip3 install prettytable``. On bare metal that test is skipped, so the host already needs ``prettytable``.
 
 Set up config
@@ -175,7 +175,7 @@ Search the pytest log for ``FAIL -``. The test then ends with ``Following FAILUR
    * - ``could not create log dir``
      - ``mkdir`` of ``log_dir/<timestamp>`` failed on that node.
    * - ``passwordless sudo unavailable on the hosts; dmesg scan needs sudo``
-     - ``test_verify_dmesg`` was skipped.
+     - ``test_verify_dmesg`` was skipped because the head node's ``sudo -n true`` probe returned false (``orch.sudo_prefix()`` is empty).
    * - ``ERROR - Failue pattern``
      - Host dmesg matched a known error. The word ``Failue`` is the text CVS prints.
 

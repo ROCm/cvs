@@ -182,7 +182,7 @@ The number of GPU instances follows GPU discovery. Both nodes of a pair must rep
 
 When GPU and backend-NIC PCI domains overlap, each GPU is paired only with an active NIC in its own domain (nearest bus, then nearest device). A GPU with no eligible NIC is left unmapped. The bandwidth or latency test then fails before perftest with ``No active backend RDMA NIC in the PCI domain of <card>``. If a domain has more GPUs than NICs, a NIC can be shared. That is logged (``shares NIC``) and the test still launches.
 
-``HIP_VISIBLE_DEVICES``, ``ROCR_VISIBLE_DEVICES``, ``CUDA_VISIBLE_DEVICES``, and ``GPU_DEVICE_ORDINAL`` are unset for the perftest launch. If one of them is set in the probe, the test records ``GPU visibility env set on node`` and falls back to the card index for ``--use_rocm``.
+``HIP_VISIBLE_DEVICES``, ``ROCR_VISIBLE_DEVICES``, ``CUDA_VISIBLE_DEVICES``, and ``GPU_DEVICE_ORDINAL`` are unset for the perftest launch. If one of them is set in the probe, the test fails via ``fail_test`` with ``GPU visibility env set on node`` and falls back to the card index for ``--use_rocm`` so the run can continue.
 
 Current behavior
 ================

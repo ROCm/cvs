@@ -14,7 +14,7 @@ The suite checks:
 - That every name in ``env.MORI_RDMA_DEVICES`` appears in ``ibv_devinfo``
 - SHMEM API tests, concurrent put binaries, one IBGDA ``dist_write``, and the fixed I/O matrix
 - Bandwidth and latency against ``expected_results``, for the keys the checker understands
-- Host dmesg over the suite window, when passwordless sudo is available
+- Host dmesg over the suite window, gated on the head node's passwordless sudo probe
 
 .. note::
 
@@ -215,7 +215,7 @@ Current behavior
 
 - Concurrent put and put-immediate accept ``test done!`` and do not check the payload. The signal-thread binary looks for ``PASSED``.
 - ``test_cleanup_stale_containers`` always skips. A ``per_run`` launch removes a same-named container itself.
-- ``test_verify_dmesg`` scans host dmesg from orchestrator creation to the end of that test (second resolution, closed window) with ``verify_dmesg_for_errors``. ``CVS_DMESG_PARSER`` selects node-scraper (default) or ``legacy``. Without passwordless sudo the test skips.
+- ``test_verify_dmesg`` scans host dmesg from orchestrator creation to the end of that test (second resolution, closed window) with ``verify_dmesg_for_errors``. ``CVS_DMESG_PARSER`` selects node-scraper (default) or ``legacy``. The test skips only when ``orch.sudo_prefix()`` is empty (taken from the head node's ``sudo -n true`` probe).
 - A Docker launch also applies orchestrator defaults: ``privileged`` true, ``network`` ``host``, ``ipc`` ``host``, capabilities ``SYS_PTRACE``, ``IPC_LOCK``, and ``SYS_ADMIN``, group ``video``, ulimit ``memlock=-1``, security options ``seccomp=unconfined`` and ``apparmor=unconfined``, and container environment ``GPUS=8`` and ``MULTINODE=true``. ``container.runtime.args.network``, ``ipc``, and ``privileged`` replace those three. ``cap_add``, ``security_opt``, ``group_add``, and ``ulimit`` are appended to the defaults. ``container.env`` updates the container environment. The top-level ``env`` object is only the benchmark command prefix.
 - A failed container launch sets the rest of the benchmark tests to skip (``mori container launch failed``). ``test_teardown`` still runs.
 - I/O waits up to 600 seconds for ``MORI_IO_EXIT_CODE=`` on every host, then kills leftover ``benchmark.py`` and torchrun processes.
