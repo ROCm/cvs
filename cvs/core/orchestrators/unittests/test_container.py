@@ -6,21 +6,25 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 # Unit tests for cvs/core/orchestrators/container.py: ContainerOrchestrator construction
-# (incl. SSH port override and runtime wiring) and the setup_containers / teardown_containers
-# lifetime branching inherited by the rvs_cvs.py orch fixture. Mocks Pssh and RuntimeFactory
-# so tests run with no SSH or container runtime.
+# (incl. SSH port override and runtime wiring), the setup_containers / teardown_containers
+# lifetime branching inherited by the rvs_cvs.py orch fixture, and device passthrough
+# (the default devices plus the per-host InfiniBand expansion). Mocks Pssh and
+# RuntimeFactory so tests run with no SSH or container runtime; the InfiniBand expansion
+# runs in a local shell against temporary directories.
 #
 # The per-lifetime setup/teardown behavior is pinned here so any future change to the
 # no_launch / per_run / persistent contract has a loud canary. Pssh + RuntimeFactory are
 # patched once in setUp (not per method); _make() returns a fresh orch + runtime mock.
 
+import os
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, _resolve_container_lifetime
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
-from cvs.core.orchestrators.container import ContainerOrchestrator
-from cvs.unittests.support import FAKE_CRED
+from cvs.core.orchestrators.container import ContainerOrchestrator, covered_by_ib_expansion, ib_device_expansion
+from cvs.unittests.support import FAKE_CRED, run_trusted
 
 
 # Reusable runtime.is_running fixtures (two-host cluster).
@@ -46,7 +50,7 @@ _RUNNING_PLUS_PROBE_FAILED = {
 }
 
 
-def _make_orch_config(lifetime="per_run"):
+def _make_orch_config(lifetime="per_run", runtime_args=None):
     """Minimal OrchestratorConfig that satisfies ContainerOrchestrator.__init__
     without touching disk or SSH."""
     return OrchestratorConfig(
@@ -60,9 +64,16 @@ def _make_orch_config(lifetime="per_run"):
             "lifetime": lifetime,
             "image": "rocm/cvs:test",
             "name": "cvs_iter_test",
-            "runtime": {"name": "docker", "args": {}},
+            "runtime": {"name": "docker", "args": dict(runtime_args or {})},
         },
     )
+
+
+def _shell_words(shell, expansion):
+    """The words *shell* produces for *expansion* left unquoted, as in the `docker run` line."""
+    script = f'set -- {expansion}; [ "$#" -eq 0 ] || printf "%s\\n" "$@"'
+    result = run_trusted([shell, "-c", script], capture_output=True, text=True, check=True)
+    return result.stdout.splitlines()
 
 
 class TestContainerOrchestrator(unittest.TestCase):
@@ -76,8 +87,8 @@ class TestContainerOrchestrator(unittest.TestCase):
         self.addCleanup(p_pssh.stop)
         self.addCleanup(p_rf.stop)
 
-    def _make(self, lifetime="per_run"):
-        cfg = _make_orch_config(lifetime=lifetime)
+    def _make(self, lifetime="per_run", runtime_args=None):
+        cfg = _make_orch_config(lifetime=lifetime, runtime_args=runtime_args)
         runtime = MagicMock(name="docker_runtime")
         self.mock_rf.create.return_value = runtime
         orch = ContainerOrchestrator(MagicMock(), cfg)
@@ -232,6 +243,46 @@ class TestContainerOrchestrator(unittest.TestCase):
         self.assertEqual(running, ["h_run"])
         self.assertEqual(absent, [])
         self.assertEqual(probe_failed, ["h_gone"])
+
+    # ------------------------------------------------------------------
+    # device passthrough
+    # ------------------------------------------------------------------
+
+    def test_get_devices_defaults_omit_infiniband(self):
+        # A default /dev/infiniband reaches docker even on hosts without RDMA,
+        # where a non-privileged container then fails to start on the missing path.
+        orch, _ = self._make()
+        self.assertEqual(orch.get_devices(), ["/dev/kfd", "/dev/dri"])
+
+    def test_get_devices_appends_configured_devices_without_accumulating(self):
+        # Configured devices follow the defaults, and the defaults are copied:
+        # extending them in place would repeat devices on every later call.
+        orch, _ = self._make(runtime_args={"devices": ["/dev/fuse"]})
+        expected = ["/dev/kfd", "/dev/dri", "/dev/fuse"]
+        self.assertEqual(orch.get_devices(), expected)
+        self.assertEqual(orch.get_devices(), expected)
+
+    def test_get_devices_leaves_configured_infiniband_entries_to_the_expansion(self):
+        # The shipped distributed samples list these; as plain --device flags they
+        # fail a non-privileged launch on a host without /dev/infiniband.
+        devices = [
+            "/dev/infiniband",
+            "/dev/fuse",
+            "/dev/infiniband/rdma_cm",
+            "/dev/infiniband/uverbs0:/dev/infiniband/uverbs0",
+        ]
+        orch, _ = self._make(runtime_args={"devices": devices})
+        self.assertEqual(orch.get_devices(), ["/dev/kfd", "/dev/dri", "/dev/fuse"])
+
+    def test_launch_adds_infiniband_only_through_guarded_expansion(self):
+        # With /dev/infiniband out of the defaults, the per-host expansion is the
+        # only path for IB device nodes; it must still be passed, and guarded.
+        orch, runtime = self._make(lifetime="per_run")
+        runtime.setup_containers.return_value = True
+        self.assertTrue(orch.setup_containers())
+        kwargs = runtime.setup_containers.call_args.kwargs
+        self.assertEqual(kwargs["devices"], ["/dev/kfd", "/dev/dri"])
+        self.assertEqual(kwargs["device_expansion"], ib_device_expansion("/dev/infiniband"))
 
     # ------------------------------------------------------------------
     # setup_sshd single-node guard
@@ -404,6 +455,68 @@ class TestContainerOrchestratorExecForwarding(unittest.TestCase):
         # container path cannot regress it independently of baremetal.
         self.orch.exec_on_head("hostname", detailed=True)
         self.assertIs(self._kwarg(self.runtime.exec_on_head.call_args, "detailed", 3), True)
+
+
+class TestInfinibandDeviceExpansion(unittest.TestCase):
+    """ib_device_expansion() as the host shell expands it in the `docker run` line.
+
+    Runs under bash and under sh (dash on Ubuntu) against temporary directories,
+    so the result never depends on whether the test machine has /dev/infiniband.
+    Regular files stand in for device nodes; the guard only tests existence.
+    """
+
+    SHELLS = ("bash", "sh")
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dev_dir = tmp.name
+
+    def test_missing_dir_expands_to_nothing(self):
+        # Unguarded, the unmatched glob stays literal and docker receives
+        # `--device <dir>/*:<dir>/*`, a path that does not exist.
+        missing = os.path.join(self.dev_dir, "infiniband")
+        for shell in self.SHELLS:
+            with self.subTest(shell=shell):
+                self.assertEqual(_shell_words(shell, ib_device_expansion(missing)), [])
+
+    def test_empty_dir_expands_to_nothing(self):
+        # A `-v /dev/infiniband:/dev/infiniband` mount makes docker create the
+        # directory, empty, on a host without RDMA.
+        for shell in self.SHELLS:
+            with self.subTest(shell=shell):
+                self.assertEqual(_shell_words(shell, ib_device_expansion(self.dev_dir)), [])
+
+    def test_each_entry_becomes_one_device_flag(self):
+        paths = [os.path.join(self.dev_dir, name) for name in ("rdma_cm", "umad0", "uverbs0")]
+        for path in paths:
+            open(path, "w").close()
+        for shell in self.SHELLS:
+            with self.subTest(shell=shell):
+                words = _shell_words(shell, ib_device_expansion(self.dev_dir))
+                self.assertEqual(words[0::2], ["--device"] * len(paths))
+                self.assertCountEqual(words[1::2], [f"{path}:{path}" for path in paths])
+
+
+class TestCoveredByIbExpansion(unittest.TestCase):
+    """Only entries the expansion passes identically may be dropped from --device."""
+
+    def test_rows(self):
+        rows = [
+            ("/dev/infiniband", True),
+            ("/dev/infiniband/rdma_cm", True),
+            ("/dev/infiniband/uverbs0:/dev/infiniband/uverbs0", True),
+            # The expansion maps each node to the same path with default permissions.
+            ("/dev/infiniband/uverbs0:/dev/uverbs0", False),
+            ("/dev/infiniband/rdma_cm:/dev/infiniband/rdma_cm:r", False),
+            # It covers only direct entries of /dev/infiniband.
+            ("/dev/infiniband/by-ibdev/ionic_0", False),
+            ("/dev/infiniband_extra", False),
+            ("/dev/kfd", False),
+        ]
+        for device, expected in rows:
+            with self.subTest(device=device):
+                self.assertIs(covered_by_ib_expansion(device), expected)
 
 
 class TestResolveContainerLifetime(unittest.TestCase):

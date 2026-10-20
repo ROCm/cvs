@@ -8,6 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.scheduler import is_managed_compute
 import getpass
+import os
 import re
 from cvs.core.runtimes import RuntimeFactory
 from cvs.lib.env_lib import redact_secrets
@@ -36,12 +37,36 @@ def sshd_port_listen_ok(output) -> bool:
     return "OK" in (text or "")
 
 
+def ib_device_expansion(dev_dir="/dev/infiniband"):
+    """Shell substitution that emits ``--device <node>:<node>`` for each entry in *dev_dir*.
+
+    The shell on each host expands it when ``docker run`` executes, so every
+    host passes only the RDMA device nodes it has. A glob that matches nothing
+    stays literal, hence the ``-e`` test: without it, a host lacking *dev_dir*
+    would pass the pattern itself as a device path.
+    """
+    return f'$(for dev in {dev_dir}/*; do [ -e "$dev" ] && echo -n "--device $dev:$dev "; done)'
+
+
+def covered_by_ib_expansion(device, dev_dir="/dev/infiniband"):
+    """True when ib_device_expansion() already passes *device* on the hosts that have it.
+
+    That is *dev_dir* itself or an entry directly under it, at the same path in
+    the container and with default permissions. Passed as a plain ``--device``
+    instead, it would fail a non-privileged launch on a host without it.
+    """
+    parts = device.split(":")
+    host = parts[0]
+    if host != dev_dir and os.path.dirname(host) != dev_dir:
+        return False
+    return len(parts) == 1 or (len(parts) == 2 and parts[1] == host)
+
+
 # Default container configuration - matches the original docker command
 DEFAULT_CONTAINER_ARGS = {
     "devices": [
         "/dev/kfd",  # Kernel Fusion Driver (ROCm)
         "/dev/dri",  # Direct Rendering Infrastructure
-        "/dev/infiniband",  # All infiniband devices
     ],
     "capabilities": [
         "SYS_PTRACE",  # Debug processes
@@ -155,7 +180,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         runtime_config = self.container_config.get('runtime', {})
         runtime_args = runtime_config.get('args', {})
         config_devices = runtime_args.get('devices', [])
-        devices.extend(config_devices)
+        devices.extend(dev for dev in config_devices if not covered_by_ib_expansion(dev))
 
         return devices
 
@@ -443,9 +468,6 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         if 'privileged' not in runtime_args:
             runtime_args['privileged'] = self.is_privileged()
 
-        # Add InfiniBand device discovery via shell expansion (per-host)
-        ib_device_expansion = '$(for dev in /dev/infiniband/*; do echo -n "--device $dev:$dev "; done)'
-
         launched = self.runtime.setup_containers(
             modified_config,
             container_name,
@@ -456,7 +478,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             environment=environment,
             groups=groups,
             ulimits=ulimits,
-            device_expansion=ib_device_expansion,
+            device_expansion=ib_device_expansion(),
         )
         return launched
 
