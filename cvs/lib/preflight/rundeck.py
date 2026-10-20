@@ -20,6 +20,7 @@ from cvs.lib.preflight.node_smoke_rows import (
     build_tier1_metric_rows,
     build_tier2_metric_rows,
     build_tier3_metric_rows,
+    unexplained_tier1_nodes,
 )
 
 _STATUSES = ('pass', 'fail', 'na')
@@ -544,6 +545,8 @@ def _tier1_records(results, nodes):
     if _not_run(block):
         return _na_nodes(nodes, _skip_message(block))
     rows = build_tier1_metric_rows(block)
+    tier2_rows = build_tier2_metric_rows(block) if block.get('tier2_perf') else []
+    unexplained = set(unexplained_tier1_nodes(block, tier2_rows))
     node_results = block.get('node_results') or {}
     labels = list(node_results) or [row.get('node') for row in rows if row.get('node')]
     records = {}
@@ -551,7 +554,10 @@ def _tier1_records(results, nodes):
         node_rows = [row for row in rows if row.get('node') == node]
         entry = node_results.get(node) if isinstance(node_results.get(node), dict) else {}
         items = _row_items(node_rows, None)
-        status, items = _apply_node_failure(items, entry.get('status'), entry.get('fail_reasons'))
+        node_status = entry.get('status')
+        if str(node) not in unexplained and _normalize_status(node_status) == 'fail':
+            node_status = 'pass'
+        status, items = _apply_node_failure(items, node_status, entry.get('fail_reasons'))
         records[str(node)] = _record(status, items, _summarize(items, _skip_message(block) if not items else ''))
     return records
 
