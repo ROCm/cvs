@@ -362,21 +362,20 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
         self.assertTrue(check.results["nodeA"]["warnings"])
         self.assertTrue(any("0/18 IFoE stations" in warning for warning in check.results["nodeA"]["warnings"]))
 
-    def test_failed_node_with_partial_mask_is_not_reported_as_degraded_fit(self):
-        # A node that FAILs for any reason must never appear in warned_nodes, or the
-        # "fit for processing" banner would advertise a rejected node as usable.
-        check = self._check(FakePssh(hosts=("nodeA",)), expected_gpus_per_node=2)
-        check.results = {"nodeA": {"status": "PASS", "errors": [], "warnings": []}}
-        check._exec_all = lambda _command: {
-            # GPU0 all-dark -> FAIL via floor; GPU1 partial -> warning.
-            "nodeA": "0000:01:00.0 " + "0" * 18 + "\n0000:02:00.0 " + "f" + "0" * 17
-        }
-        check._evaluate_station_masks()
-        result = check.results["nodeA"]
-        self.assertEqual(result["status"], "FAIL")
-        self.assertTrue(result["warnings"])
-        warned = [node for node, res in check.results.items() if res["status"] == "PASS" and res.get("warnings")]
-        self.assertEqual(warned, [])
+    def test_run_excludes_failed_node_from_warned_nodes(self):
+        # A partial mask raises a warning, but a down enabled-station port makes the
+        # node FAIL in a later phase. run() must not advertise it as degraded-but-fit:
+        # the returned warned_nodes list is the production contract, asserted directly
+        # so that removing the status guard in run() would fail this test.
+        check = self._check(
+            FakePssh(hosts=("nodeA",), station_mask="fff000000fff000000", down_ports_by_host={"nodeA": [0]})
+        )
+        results = check.run()
+
+        self.assertEqual(results["status"], "FAIL")
+        self.assertEqual(results["node_results"]["nodeA"]["status"], "FAIL")
+        self.assertTrue(results["node_results"]["nodeA"]["warnings"])
+        self.assertEqual(results["warned_nodes"], [])
 
     def test_empty_station_mask_fails(self):
         # An un-provisioned UALink fabric reports an empty lane_en_bitmap rather
@@ -678,6 +677,10 @@ class TestNodeHealthConfigContract(unittest.TestCase):
         self.assertEqual(summary["warned_nodes"], [])
         self.assertNotIn("degraded IFoE fabric", summary["summary"])
         self.assertNotIn("DEGRADED IFoE FABRIC", html_report)
+        # The "fit for processing" claim must not appear anywhere for a FAIL node,
+        # including its per-row Issues cell.
+        self.assertNotIn("fit for processing", html_report)
+        self.assertIn("FAIL", html_report)
 
 
 if __name__ == "__main__":

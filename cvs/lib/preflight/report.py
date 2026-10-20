@@ -1524,14 +1524,16 @@ class PreflightReportGenerator(PreflightCheck):
                 )
                 or 'not reported'
             )
+            node_status = result.get('status', 'UNKNOWN')
             errors = result.get('errors') or []
-            warnings = result.get('warnings') or []
+            # A degraded-fabric warning means "fit for processing"; never render it
+            # against a FAIL node, whose errors are the real verdict.
+            warnings = result.get('warnings') or [] if node_status == 'PASS' else []
             issue_items = [f'<li style="color:#721c24;">{html.escape(str(error))}</li>' for error in errors]
             issue_items += [
                 f'<li style="color:#664d03;">&#9888; {html.escape(str(warning))}</li>' for warning in warnings
             ]
             error_html = '—' if not issue_items else '<ul style="margin:0;">' + ''.join(issue_items) + '</ul>'
-            node_status = result.get('status', 'UNKNOWN')
             if node_status == 'PASS' and warnings:
                 status_cell = '<span class="status-pass">PASS</span> <span title="degraded fabric">&#9888; WARN</span>'
             else:

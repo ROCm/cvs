@@ -216,8 +216,16 @@ def _station_mask_min_up_ports(config_dict):
     ifoe = _ifoe_config(config_dict)
     if 'min_up_ports_per_gpu' not in ifoe:
         return DEFAULT_MIN_UP_PORTS_PER_GPU
+    raw = ifoe['min_up_ports_per_gpu']
+    # Reject bool (a bool is an int in Python) and anything that is not an exact
+    # integer; the run path loads config via raw json.load, so int() truncation
+    # of 0.5 or 2.9 would silently weaken or disable the floor.
+    if isinstance(raw, bool):
+        raise ValueError("preflight.connectivity_check.ifoe.min_up_ports_per_gpu must be an integer, not a boolean")
+    if isinstance(raw, float) and not raw.is_integer():
+        raise ValueError("preflight.connectivity_check.ifoe.min_up_ports_per_gpu must be a whole number")
     try:
-        min_up_ports = int(ifoe['min_up_ports_per_gpu'])
+        min_up_ports = int(raw) if not isinstance(raw, str) else int(raw.strip())
     except (TypeError, ValueError):
         raise ValueError("preflight.connectivity_check.ifoe.min_up_ports_per_gpu must be an integer")
     if min_up_ports < 0:

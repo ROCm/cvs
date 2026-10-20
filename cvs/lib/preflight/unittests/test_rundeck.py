@@ -233,6 +233,30 @@ class TestPreflightDeck(unittest.TestCase):
         self.assertEqual(records['n1']['status'], 'pass')
         self.assertIn('degraded fabric', records['n1']['items_summary'])
 
+    def test_health_record_failed_node_reports_error_not_degraded(self):
+        # A FAIL node that also carries a station-mask warning must surface its
+        # error, never the "fit for processing" degraded-fabric text.
+        results = {
+            NODE_HEALTH: {
+                'status': 'FAIL',
+                'node_results': {
+                    'n1': {
+                        'status': 'FAIL',
+                        'errors': ['0000:01:00.0: 0 enabled IFoE ports is below min_up_ports_per_gpu=2'],
+                        'warnings': [
+                            '0000:02:00.0: only 1/18 IFoE stations enabled (2/36 scale-up ports); '
+                            'node is fit for processing but scale-up throughput is reduced'
+                        ],
+                    }
+                },
+            }
+        }
+        records = _health_records(results, ['n1'])
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertIn('below min_up_ports_per_gpu', records['n1']['items_summary'])
+        self.assertNotIn('degraded fabric', records['n1']['items_summary'])
+        self.assertNotIn('fit for processing', records['n1']['items_summary'])
+
     def test_profile_labels_match_check_ids(self):
         profile = load_json_profile('preflight_checks')
         self.assertEqual(profile['lifecycle']['session_labels'], list(CHECK_IDS))
