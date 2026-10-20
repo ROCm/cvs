@@ -126,6 +126,80 @@ class TestDiscoverSocketNetdev(unittest.TestCase):
         self.assertEqual(hcas, ["mlx5_0", "mlx5_1"])
         self.assertEqual(netdev, "ens51f1np1")
 
+    def test_resolves_hostname_before_netdev_lookup(self):
+        from cvs.lib.utils.ib_discovery import _host_to_ipv4_cmd
+
+        host = "crsuse2-m2m-239"
+        ip = "10.1.2.3"
+        orch = _NetdevOrch(
+            [host],
+            {
+                (host, _host_to_ipv4_cmd(host)): ip + "\n",
+                (host, _cmd_for_ip(ip)): "ens21f0np0\n",
+            },
+        )
+        self.assertEqual(discover_socket_netdev_name(orch, master_addr=host), "ens21f0np0")
+
+    def test_skips_loopback_when_hostname_also_resolves_there(self):
+        from cvs.lib.utils.ib_discovery import _host_to_ipv4_cmd
+
+        host = "crsuse2-m2m-045"
+        ip = "10.9.8.7"
+        orch = _NetdevOrch(
+            [host],
+            {
+                (host, _host_to_ipv4_cmd(host)): "127.0.0.1\n" + ip + "\n",
+                (host, _cmd_for_ip(ip)): "ens21f0np0\n",
+                (host, _cmd_for_ip("127.0.0.1")): "lo\n",
+            },
+        )
+        self.assertEqual(discover_socket_netdev_name(orch, master_addr=host), "ens21f0np0")
+
+    def test_empty_getent_routes_to_the_raw_master_name(self):
+        from cvs.lib.utils.ib_discovery import _host_to_ipv4_cmd, _netdev_via_route_cmd
+
+        host = "crsuse2-m2m-239"
+        orch = _NetdevOrch(
+            [host],
+            {
+                (host, _host_to_ipv4_cmd(host)): "\n",
+                (host, _netdev_via_route_cmd(host)): "ens21f0np0\n",
+            },
+        )
+        self.assertEqual(discover_socket_netdev_name(orch, master_addr=host), "ens21f0np0")
+
+    def test_missing_getent_routes_to_the_raw_master_name(self):
+        from cvs.lib.utils.ib_discovery import _netdev_via_route_cmd
+
+        host = "crsuse2-m2m-239"
+        orch = _NetdevOrch(
+            [host],
+            {(host, _netdev_via_route_cmd(host)): "ens21f0np0\n"},
+        )
+        self.assertEqual(discover_socket_netdev_name(orch, master_addr=host), "ens21f0np0")
+
+    def test_unresolved_master_does_not_use_the_first_host_address(self):
+        from cvs.lib.utils.ib_discovery import _host_to_ipv4_cmd, _netdev_via_route_cmd
+
+        h0, h1 = "crsuse2-m2m-010", "crsuse2-m2m-011"
+        master = "crsuse2-m2m-099"
+        h0_ip = "10.4.4.10"
+        orch = _NetdevOrch(
+            [h0, h1],
+            {
+                (h0, _host_to_ipv4_cmd(h0)): h0_ip + "\n",
+                (h1, _host_to_ipv4_cmd(h1)): "10.4.4.11\n",
+                (h0, _host_to_ipv4_cmd(master)): "",
+                (h1, _host_to_ipv4_cmd(master)): "",
+                (h0, _cmd_for_ip(h0_ip)): "lo\n",
+                (h1, _cmd_for_ip("10.4.4.11")): "ens21f0np0\n",
+                (h0, _netdev_via_route_cmd(h0_ip)): "lo\n",
+                (h0, _netdev_via_route_cmd(master)): "ens21f0np0\n",
+                (h1, _netdev_via_route_cmd(master)): "ens21f0np0\n",
+            },
+        )
+        self.assertEqual(discover_socket_netdev_name(orch, master_addr=master), "ens21f0np0")
+
 
 class TestDiscoverIbHcaNames(unittest.TestCase):
     def test_parses_ibv_devinfo_list_output(self):

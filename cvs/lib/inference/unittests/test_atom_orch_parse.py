@@ -442,6 +442,21 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         self.assertEqual(job._vllm_client_argv().count("--disable-tqdm"), 1)
 
+    def test_vllm_client_argv_trust_remote_code_follows_serve_args(self):
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        self.assertNotIn("--trust-remote-code", job._vllm_client_argv())
+        job.serve_args["trust-remote-code"] = True
+        argv = job._vllm_client_argv()
+        self.assertEqual(argv.count("--trust-remote-code"), 1)
+
     def test_client_log_failures_uses_grep_not_tail(self):
         orch = FakeOrch(exec_on_head_return={"node0": ""})
         job = AtomJob(
@@ -817,8 +832,12 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertIn("--pp-size 2", joined)
         self.assertIn("--node-rank 1", joined)
         self.assertIn("--dist-init-addr 10.0.0.1:29501", joined)
-        client = " ".join(job._sglang_client_argv())
-        self.assertIn("sglang.bench_serving", client)
+        client = job._sglang_client_argv()
+        self.assertIn("sglang.bench_serving", " ".join(client))
+        self.assertEqual(client.count("--trust-remote-code"), 1)
+        variant.roles.server.sglang_args = []
+        job.sglang_server_args = []
+        self.assertNotIn("--trust-remote-code", job._sglang_client_argv())
 
     def test_parse_results_scaling_efficiency(self):
         raw = json.loads((_FIXTURES / "vllm_results_sample.json").read_text())
