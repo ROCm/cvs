@@ -60,6 +60,17 @@ def _hide_overflow_rows(row_html, page_size):
     return paged
 
 
+def _cell_html(value):
+    # A path string is escaped text. ANC stores its artifact hrefs as link records
+    # so the same cell can render anchors without trusting raw HTML.
+    if isinstance(value, list) and value and all(isinstance(item, dict) and item.get("href") for item in value):
+        return " · ".join(
+            f"<a href='{html.escape(str(item['href']), quote=True)}'>{html.escape(str(item.get('label') or 'link'))}</a>"
+            for item in value
+        )
+    return html.escape(str(value))
+
+
 def results_table_parts(headers, rows, units=None, align=None):
     """Header cells and body rows. A unit sits beside its header; align is left or right per column."""
     units = list(units or [])
@@ -74,8 +85,7 @@ def results_table_parts(headers, rows, units=None, align=None):
     body = [
         "<tr>"
         + "".join(
-            f"{cell_open[i] if i < len(cell_open) else '<td>'}{html.escape(str(value))}</td>"
-            for i, value in enumerate(row)
+            f"{cell_open[i] if i < len(cell_open) else '<td>'}{_cell_html(value)}</td>" for i, value in enumerate(row)
         )
         + "</tr>"
         for row in rows

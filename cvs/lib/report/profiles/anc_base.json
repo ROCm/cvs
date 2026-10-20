@@ -19,7 +19,7 @@
       "id": "results",
       "title": "Full results",
       "bind": "datasets.status_matrix.results_table",
-      "columns": ["Node", "Check", "Result", "Passed", "Failed", "Status", "Message"]
+      "columns": ["Node", "Check", "Result", "Passed", "Failed", "Status", "Message", "Logs"]
     }
   ]
 }

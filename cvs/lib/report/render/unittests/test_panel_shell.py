@@ -40,6 +40,17 @@ class TestRenderResultsTableHtml(unittest.TestCase):
         out = render_results_table_html(["Test", "BW", "Note"], [["write", 1.5, "x"]], align=["left", "right"])
         self.assertIn("<tr><td class='al-left'>write</td><td class='al-right'>1.5</td><td>x</td></tr>", out)
 
+    def test_link_records_render_as_anchors_and_other_cells_stay_escaped(self):
+        links = [
+            {"label": "errors.json", "href": "n1_errors.json"},
+            {"label": "logs.tar.gz", "href": "a<b>'c\".tar.gz"},
+        ]
+        out = render_results_table_html(["Message", "Logs"], [["<fail>", links]])
+        self.assertIn("<td>&lt;fail&gt;</td>", out)
+        self.assertIn("<a href='n1_errors.json'>errors.json</a>", out)
+        self.assertIn("<a href='a&lt;b&gt;&#x27;c&quot;.tar.gz'>logs.tar.gz</a>", out)
+        self.assertNotIn("<fail>", out)
+
     def test_no_rows_renders_the_empty_message_instead_of_a_table(self):
         self.assertEqual(
             render_results_table_html(["Test"], iter([]), empty_message="No <rows>."),

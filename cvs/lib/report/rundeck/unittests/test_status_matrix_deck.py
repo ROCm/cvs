@@ -43,7 +43,7 @@ class TestStatusMatrixDeck(unittest.TestCase):
         self.assertEqual([c["type"] for c in cards], ["run_card", "table"])
         self.assertEqual(
             cards[1]["columns"],
-            ["Node", "Check", "Result", "Passed", "Failed", "Status", "Message"],
+            ["Node", "Check", "Result", "Passed", "Failed", "Status", "Message", "Logs"],
         )
 
     def test_overall_status_is_fail(self):
@@ -59,10 +59,29 @@ class TestStatusMatrixDeck(unittest.TestCase):
         table = self.payload["datasets"]["status_matrix"]["results_table"]
         self.assertEqual(
             table["headers"],
-            ["Node", "Check", "Result", "Value", "Unit", "Threshold", "Status", "Message", "Passed", "Failed"],
+            [
+                "Node",
+                "Check",
+                "Result",
+                "Value",
+                "Unit",
+                "Threshold",
+                "Status",
+                "Message",
+                "Passed",
+                "Failed",
+                "Logs",
+            ],
         )
         self.assertEqual(table["rows"][0][2], "oblex_remix2")
-        self.assertEqual(table["rows"][0][-2:], ["5", "1"])
+        self.assertEqual(table["rows"][0][-3:-1], ["5", "1"])
+        self.assertEqual(
+            table["rows"][0][-1],
+            [
+                {"label": "errors.json", "href": "n1_test_hbm_lvl1_errors.json"},
+                {"label": "logs.tar.gz", "href": "n1_test_hbm_lvl1_anc_logs.tar.gz"},
+            ],
+        )
         self.assertEqual(self.payload["results_table"], table)
         self.assertEqual(self.payload["run_card_display"][0][0], "Cluster")
         self.assertNotIn("headline_metric", self.payload["report"])
@@ -73,6 +92,8 @@ class TestStatusMatrixDeck(unittest.TestCase):
         self.assertNotIn("<th>Value</th>", self.html)
         self.assertIn("oblex_remix2", self.html)
         self.assertIn("ANC_PDC_DMESG_ERROR", self.html)
+        self.assertIn("<a href='n1_test_hbm_lvl1_errors.json'>errors.json</a>", self.html)
+        self.assertIn("<a href='n1_test_hbm_lvl1_anc_logs.tar.gz'>logs.tar.gz</a>", self.html)
         self.assertNotIn("<details", self.html)
         self.assertNotIn("No per-item detail captured", self.html)
 

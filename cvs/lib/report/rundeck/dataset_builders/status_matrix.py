@@ -75,8 +75,9 @@ The builder also emits ``overview`` and ``metric_charts``:
   A cell with neither still gets one row. Failed rows come first. Heatmaps
   and series stay in ``metric_charts``. When the results card asks for
   Passed and Failed, those counts are appended from the cell's
-  "N PASSED, M FAILED" summary. ANC records named failures only, so a
-  passing item has a count and no row of its own.
+  "N PASSED, M FAILED" summary. When that card also asks for Logs, each row
+  carries the cell's errors.json and logs.tar.gz hrefs. ANC records named
+  failures only, so a passing item has a count and no row of its own.
 
 Grid cells keep the same normalized ``metrics``, ``series``, and ``heatmaps``
 without repeating ``node`` (the grid key is the node).
@@ -361,12 +362,32 @@ def _summary_message(entry, status):
     return _BLANK
 
 
-def _count_columns(profile):
+def _results_columns(profile):
     for card in (profile or {}).get("cards") or []:
         columns = card.get("columns") if isinstance(card, dict) else None
         if isinstance(card, dict) and card.get("id") == "results" and isinstance(columns, list):
-            return [name for name in _COUNT_COLUMNS if name in columns]
+            return columns
     return []
+
+
+def _count_columns(profile):
+    columns = _results_columns(profile)
+    return [name for name in _COUNT_COLUMNS if name in columns]
+
+
+def _logs_column(profile):
+    return "Logs" in _results_columns(profile)
+
+
+def _artifact_links(cell):
+    links = []
+    errors = cell.get("errors_json_href")
+    logs = cell.get("log_tarball_href")
+    if errors:
+        links.append({"label": "errors.json", "href": str(errors)})
+    if logs:
+        links.append({"label": "logs.tar.gz", "href": str(logs)})
+    return links or _BLANK
 
 
 def _item_counts(summary):
@@ -376,11 +397,14 @@ def _item_counts(summary):
     return match.group(1), match.group(2)
 
 
-def _result_row(node, group_name, result, value, unit, threshold, status, message, counts=()):
-    return [str(node), str(group_name), str(result), value, unit, threshold, str(status), message, *counts]
+def _result_row(node, group_name, result, value, unit, threshold, status, message, counts=(), links=None):
+    row = [str(node), str(group_name), str(result), value, unit, threshold, str(status), message, *counts]
+    if links is not None:
+        row.append(links)
+    return row
 
 
-def _cell_result_rows(node, group_name, cell, counts=()):
+def _cell_result_rows(node, group_name, cell, counts=(), links=None):
     status = cell.get("status") or "na"
     metrics = cell.get("metrics") or []
     items = [item for item in (cell.get("items") or []) if isinstance(item, dict)]
@@ -396,6 +420,7 @@ def _cell_result_rows(node, group_name, cell, counts=()):
                 status,
                 _summary_message(cell, status),
                 counts,
+                links,
             )
         ]
     rows = []
@@ -412,6 +437,7 @@ def _cell_result_rows(node, group_name, cell, counts=()):
                 metric.get("status") or status,
                 _blank(summary),
                 counts,
+                links,
             )
         )
     for item in items:
@@ -426,12 +452,13 @@ def _cell_result_rows(node, group_name, cell, counts=()):
                 item.get("status") or status,
                 _blank(item.get("message")),
                 counts,
+                links,
             )
         )
     return rows
 
 
-def _results_table(grid, nodes, groups, count_columns=()):
+def _results_table(grid, nodes, groups, count_columns=(), logs=False):
     rows = []
     for node in nodes:
         for group_name in groups:
@@ -440,11 +467,14 @@ def _results_table(grid, nodes, groups, count_columns=()):
             if count_columns:
                 passed, failed = _item_counts(cell.get("items_summary"))
                 counts = tuple({"Passed": passed, "Failed": failed}[name] for name in count_columns)
-            rows.extend(_cell_result_rows(node, group_name, cell, counts))
+            links = _artifact_links(cell) if logs else None
+            rows.extend(_cell_result_rows(node, group_name, cell, counts, links))
     rows.sort(key=lambda row: _STATUS_RANK.get(row[6], 1))
     headers = list(_RESULTS_HEADERS)
     if count_columns:
         headers.extend(count_columns)
+    if logs:
+        headers.append("Logs")
     return {"headers": headers, "rows": rows}
 
 
@@ -540,5 +570,5 @@ def build_status_matrix_datasets(sources: dict, profile: dict) -> dict:
             "series": chart_series,
             "heatmaps": chart_heatmaps,
         },
-        "results_table": _results_table(grid, node_labels, group_names, _count_columns(profile)),
+        "results_table": _results_table(grid, node_labels, group_names, _count_columns(profile), _logs_column(profile)),
     }
