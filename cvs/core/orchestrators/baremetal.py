@@ -6,6 +6,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 import os
+import shlex
 
 from cvs.core.orchestrators.base import Orchestrator
 from cvs.core.scheduler import is_managed_compute
@@ -269,7 +270,13 @@ class BaremetalOrchestrator(Orchestrator):
 
         Returns:
             Full MPI command string
+
+        Raises:
+            ValueError: If mpi_hosts is empty
         """
+        if not mpi_hosts:
+            raise ValueError("build_mpi_cmd needs at least one host in mpi_hosts")
+
         # Create MPI hostfile
         host_file_params = ''
         for host in mpi_hosts:
@@ -290,7 +297,10 @@ class BaremetalOrchestrator(Orchestrator):
         if failed:
             raise RuntimeError(f"Failed to remove stale MPI hostfile on hosts: {failed}")
 
-        cmd = f'{sudo_prefix}bash -c \'echo "{host_file_params}" > {hosts_file_path}\''
+        # Quoted once for the sudo'd bash and once for the login shell, so host
+        # names are written verbatim rather than parsed by either shell.
+        write_cmd = f'printf %s {shlex.quote(host_file_params)} > {hosts_file_path}'
+        cmd = f'{sudo_prefix}bash -c {shlex.quote(write_cmd)}'
         result = self.exec_on_head(cmd, detailed=True)
         failed = [host for host, res in result.items() if res.get('exit_code') != 0]
         if failed:
