@@ -6,13 +6,13 @@
 Run vLLM LLM inference tests with CVS
 ***************************************
 
-The vLLM suites measure LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file, with one-host fallback when only a single host is present. Packaged distributed recipes and thresholds are calibrated for two hosts; retune them before treating other sizes as pass/fail.
+The vLLM suites measure LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file. One host does not raise an error: the run becomes a single-node serve, and the multi-host flags are left off. Packaged distributed recipes are laid out for two hosts (tensor parallel 8, pipeline parallel 2). Their threshold numbers are zeros, not measured pass/fail limits.
 
 For a mapping-style ``node_dict``, "first cluster host" is the first JSON key
 in insertion order. ``vllm_single`` rewrites ``head_node_dict.mgmt_ip`` to that
 host, so put the intended single-node target first in ``node_dict``.
 
-This page walks through a first run. For the full schema, every metric, and the threshold grammar, see :doc:`/reference/configuration-files/inference/vllm`.
+This page walks through a first run of the packaged Llama 3.3 70B FP8 files. For the full schema, every metric, and the threshold grammar, see :doc:`/reference/configuration-files/inference/vllm`.
 
 Prerequisites
 =============
@@ -21,13 +21,14 @@ In addition to the :ref:`common inference prerequisites <inference-common-prereq
 
 - The container image must provide ``vllm`` on ``PATH``. The suite runs
   ``vllm serve`` and ``vllm bench serve`` inside the container.
-- Stage the model weights before the run. The suite does not download models.
+- Stage the model weights on the host before the run. The suite does not download models.
 
 For a multinode run, also identify:
 
-- The head-node address reachable from every worker.
-- The network interface used for inter-node traffic, for example ``ens51f1np1``.
-  Find it with ``ip -br addr`` on a node.
+- The head-node address reachable from every worker. CVS takes this from the cluster head.
+- The HCA names on every node (``ibv_devinfo -l`` inside the image, or ``/sys/class/infiniband``).
+- The Linux netdev for ``NCCL_SOCKET_IFNAME``, and the frontend interfaces for ``GLOO_SOCKET_IFNAME`` and ``TP_SOCKET_IFNAME``.
+  Find netdevs with ``ip -br addr`` on a node.
 
 .. _vllm-set-up-config:
 
@@ -40,19 +41,23 @@ CVS ships single-node and distributed vLLM configurations. List them:
 
   cvs config list inference/vllm
 
-Copy the one that matches your topology:
+Copy the Llama 3.3 70B FP8 pair that matches your topology. ``threshold_json`` is a filename relative to the config, so put the threshold file in the same directory if you want to edit it. If that sibling is missing, CVS warns and uses the packaged copy.
 
 .. code:: bash
 
   # Single node
   cvs config copy inference/vllm/mi3xx_vllm_llama33-70b_fp8_single.json \
-    --output /tmp/cvs/vllm_singlenode_config.json
+    --output /tmp/cvs/mi3xx_vllm_llama33-70b_fp8_single.json
+  cvs config copy inference/vllm/mi325x_vllm_llama33-70b_fp8_single_threshold.json \
+    --output /tmp/cvs/mi325x_vllm_llama33-70b_fp8_single_threshold.json
 
-  # Multiple nodes
+  # Two-host layout
   cvs config copy inference/vllm/mi3xx_vllm_llama33-70b_fp8_distributed.json \
-    --output /tmp/cvs/vllm_multinode_config.json
+    --output /tmp/cvs/mi3xx_vllm_llama33-70b_fp8_distributed.json
+  cvs config copy inference/vllm/mi325x_vllm_llama33-70b_fp8_distributed_threshold.json \
+    --output /tmp/cvs/mi325x_vllm_llama33-70b_fp8_distributed_threshold.json
 
-You also need a cluster file describing your nodes. Use the container template, since the vLLM suite always runs inside a container:
+You also need a cluster file. Use the container template, since the vLLM suite always runs inside a container:
 
 .. code:: bash
 
@@ -61,33 +66,59 @@ You also need a cluster file describing your nodes. Use the container template, 
 Step 2: Fill in the placeholders
 ================================
 
-Every value marked ``<changeme>`` must be replaced before the run.
+Replace every ``<changeme>`` before the run. ``{user-id}`` is not one of those: it becomes the login name of the ``cvs run`` process, unless the cluster file sets ``username``.
 
-In the **cluster file**, set your SSH user, private key path, and node addresses. See :doc:`/how-to/run-with-containers` for a walkthrough.
+In the **cluster file**, set your SSH user, private key path, and node addresses. Unresolved ``<changeme>`` strings in the cluster file stop startup. The vLLM loader does not apply that same hard-exit to the workload file, except when ``threshold_json`` itself still contains ``<changeme>``. An unreplaced image name or mount fails later, at pull or ``docker run``. See :doc:`/how-to/run-with-containers` for the cluster-file walkthrough.
 
-In the **configuration file**, set:
+In the **Llama single-node file**, replace only these strings:
 
-- ``container.image`` — your vLLM image. Cite the full tag; do not abbreviate it.
-- ``paths.shared_fs`` — the shared filesystem root. The other paths derive from it by default.
-- ``paths.models_dir`` — where the weights live. Make sure this path is also mounted into the container by ``container.runtime.args.volumes``.
-- ``paths.hf_token_file`` — path to your token file.
-- ``server_params.model`` — the model to serve.
-- RDMA volumes — keep the NIC family installed on the nodes. ``_comment_bnxt_mount`` is Broadcom Thor2 (``libbnxt_re-rdmav34.so``). ``_comment_ionic_mounts`` is AMD Pensando Ionic / AINIC; replace ``<changeme-libionic-soname>`` with the host soname filename from ``readlink -f /usr/lib/x86_64-linux-gnu/libionic.so.1``. Delete the other family. ``docker run`` fails if a listed host path is missing.
+.. list-table::
+   :header-rows: 1
+   :widths: 4 6
 
-For a **multinode** configuration, also set:
+   * - Placeholder
+     - What to put there
+   * - ``container.image``
+     - Full image reference that provides ``vllm``. The file ships ``<changeme>``, not a tag.
+   * - ``server_params.model``
+     - Model path **inside the container**. With the packaged mount, that is a path under ``/models``.
+   * - ``<changeme-models-mount>``
+     - Host directory that holds the weights. It is mounted read-only at ``/models``.
+   * - ``<changeme-libionic-soname>``
+     - Filename from ``readlink -f /usr/lib/x86_64-linux-gnu/libionic.so.1`` on the nodes. Delete the Ionic volume lines if the nodes have no Ionic stack. Delete the ``libbnxt_re-rdmav34.so`` line if they have no Broadcom Thor2 library. ``docker run`` fails when a listed host path is missing.
 
-- ``container.env.NCCL_IB_HCA`` — the comma-separated HCA names exposed on every node. The packaged MI3xx configurations use ``rdma0`` through ``rdma7``.
-- ``container.env.NCCL_SOCKET_IFNAME`` — the Linux netdev associated with the selected RNICs.
-- ``container.env.GLOO_SOCKET_IFNAME`` and ``TP_SOCKET_IFNAME`` — generally the frontend/control-plane interface.
-- ``container.env.NCCL_IB_GID_INDEX`` — the common fabric index reported by ``show_gids`` on every selected HCA and node. If ``show_gids`` is unavailable, inspect ``ibv_devinfo -v`` and the HCA's ``gid_attrs`` sysfs entries.
+Leave these paths as they are unless you are changing the layout:
 
-.. tip::
+.. list-table::
+   :header-rows: 1
+   :widths: 3 7
 
-  Leave ``enforce_thresholds`` set to ``false`` for your first run on new
-  hardware. The run reports every finite value produced from the 56-metric
-  registry without gating. Packaged threshold templates intentionally retain
-  the previous 32-metric assertion subset; you may add any other registered
-  metric or remove entries before enabling calibrated thresholds.
+   * - Key
+     - Packaged meaning
+   * - ``paths.shared_fs``
+     - ``/home/{user-id}`` on the nodes. It is not a ``<changeme>``.
+   * - ``paths.models_dir``
+     - ``/models``, the in-container Hugging Face cache. CVS exports it as ``HF_HUB_CACHE`` and checks that the directory contains bytes. It is not the host weight path.
+   * - ``paths.hf_token_file``
+     - ``/home/{user-id}/.hf_token`` after substitution. CVS does not read this file on the machine where you start ``cvs run``. Each node reads it inside the container when the server env script is sourced. The home volume makes the host file visible at the same path. A missing or empty file continues the run with an empty token.
+   * - ``paths.log_dir``
+     - ``/home/{user-id}/LOGS``. The same home volume bind-mounts it into the container. ``lifetime`` is ``per_run``, so teardown runs ``docker rm -f`` and deletes the container writable layer. Files under this host path remain.
+
+The single-node file also runs three lm-eval tasks (``gsm8k_flex``, ``gsm8k_strict``, ``gsm8k_stderr``) after the sweep. Remove the ``accuracy`` block if you do not want that on the first run.
+
+For the **distributed** file, replace the same image, model, models mount, and NIC lines, and also replace:
+
+- ``container.env.NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, ``TP_SOCKET_IFNAME``, and ``NCCL_IB_GID_INDEX`` (each is ``<changeme>``).
+- ``container.env.NCCL_IB_HCA`` if the nodes do not expose ``rdma0`` through ``rdma7``. That value is not a ``<changeme>``; a wrong name fails HCA preflight.
+
+.. _vllm-thresholds-first-run:
+
+Threshold file
+--------------
+
+Both Llama threshold files set every ``value`` to ``0``. That is an uncalibrated placeholder, including ``max`` limits of ``0``. The paired configs set ``enforce_thresholds`` to ``false``, so those zeros are not applied.
+
+The single-node sibling has two cells, ``ISL=1024,OSL=1024,TP=8,PP=1,CONC=16`` and ``ISL=1024,OSL=1024,TP=8,PP=1,CONC=32``. The distributed sibling has one cell, ``ISL=1024,OSL=1024,TP=8,PP=2,CONC=16``. Each cell lists the same 32 metrics. Copy the sibling beside the config before you edit it. Replace the zeros with measured limits before you set ``enforce_thresholds`` to ``true``.
 
 .. _vllm-run-tests:
 
@@ -98,15 +129,15 @@ Step 3: Run the suite
 
   cvs run vllm_single \
     --cluster_file /tmp/cvs/cluster.json \
-    --config_file /tmp/cvs/vllm_singlenode_config.json
+    --config_file /tmp/cvs/mi3xx_vllm_llama33-70b_fp8_single.json
 
-Use ``vllm_distributed`` for one distributed service across the cluster:
+Use ``vllm_distributed`` for one service across the cluster file:
 
 .. code:: bash
 
   cvs run vllm_distributed \
     --cluster_file /tmp/cvs/cluster.json \
-    --config_file /tmp/cvs/vllm_multinode_config.json
+    --config_file /tmp/cvs/mi3xx_vllm_llama33-70b_fp8_distributed.json
 
 .. note::
 
@@ -122,34 +153,118 @@ Follow :doc:`/how-to/run-on-managed-compute` to run vLLM on managed compute.
 Step 4: Read the results
 ========================
 
-Open the HTML report. Each lifecycle stage and benchmark cell is its own row:
+Open the HTML report. Each lifecycle stage and benchmark cell is its own row. The row names are the test functions:
 
-- **Lifecycle rows** — container launch, topology discovery, model fetch, the OpenAI-compatible smoke test, then teardown. These tell you *how far* the run got.
-- **Inference rows** — one per sweep cell, labelled ``<combo>-conc<N>``. Expand the row to see every finite metric plus every configured threshold. With enforcement off, those subtests pass. With enforcement on, each configured threshold is one subtest, and a missed threshold fails that cell's row without skipping later cells. A missing or invalid gated value fails for every datasource, including GPU and Prometheus.
-- **Results table** — the summary is also printed to the console. Metric names are bare (for example, ``output_throughput`` and ``queue_time_p95_ms``).
+.. list-table::
+   :header-rows: 1
+   :widths: 4 6
 
-Per-cell logs land under your configured ``log_dir``::
+   * - Row
+     - What it is
+   * - ``test_launch_container``
+     - Start the container.
+   * - ``test_setup_sshd``
+     - Always skipped. vLLM uses the host network and does not need an inter-container sshd.
+   * - ``test_discover_topology``
+     - HCA preflight. A no-op when the effective topology is one host.
+   * - ``test_model_fetch``
+     - Check that ``paths.models_dir`` (``/models`` in the packaged file) has bytes inside the container.
+   * - ``test_openai_compatible_smoke``
+     - Short-lived server; the OpenAI-compatible API must answer.
+   * - ``test_vllm_inference[<cell>]``
+     - One benchmark cell. ``<cell>`` is the canonical key, for example ``ISL=1024,OSL=1024,TP=8,PP=1,CONC=16``.
+   * - ``test_accuracy_eval[<task id>]``
+     - One lm-eval task, if ``accuracy`` is configured.
+   * - ``test_print_results_table``
+     - Console summary.
+   * - ``test_teardown``
+     - Stop the container.
+
+Expand a benchmark row for the metric table. With ``enforce_thresholds`` false, ``evaluate_metric_verdicts`` sets every recorded metric's ``status`` to ``pass``. The HTML Result column shows **Passed**. No threshold subtest is emitted. The Note column quotes one of these reasons:
+
+- ``metric produced without a configured threshold`` when the cell has no spec for that metric.
+- ``threshold enforcement disabled; no threshold asserted`` when a spec exists and the actual value is finite.
+- ``<metric>: unavailable or non-finite actual recorded; no threshold asserted`` when a spec exists but the actual value is missing or not finite.
+
+A configured gate is shown as ``reference: min 0`` or ``reference: max 0``, not as a failure. With enforcement on, each configured spec becomes one subtest, and a missed threshold fails that cell's row without skipping later cells.
+
+The console summary uses ``VLLM_RESULTS_COLUMNS``: Model, GPU, ISL, OSL, Policy, Conc, Host, then Req/s, Total tok/s, Mean TTFT (ms), P95 TTFT (ms), Mean TPOT (ms), P95 TPOT (ms), P99 ITL (ms), and Goodput (req/s). The GPU column is blank. The Policy column is the full cell key.
+
+Per-cell logs land under ``paths.log_dir``. For the packaged file that is ``/home/<you>/LOGS`` on the host, which is why they are still there after ``docker rm -f``::
 
   <log_dir>/vllm/out-node<rank>/isl<isl>_osl<osl>_conc<conc>/
-    vllm_serve_server.log    <- the server's own log
-    client.log               <- the load generator
-    results                  <- raw benchmark JSON
+    vllm_serve_server.log
+    client.log
+    results
 
 .. important::
 
   When a run fails, read ``vllm_serve_server.log`` on the node, not just the CVS client log. Some faults — GPU exceptions, weight-loading failures, out-of-memory kills — appear only in the server log.
 
-A skipped ``test_setup_sshd`` row is expected. vLLM communicates over the host network and needs no inter-container sshd.
+Packaged time budget
+--------------------
+
+These sleeps are in addition to model load and the benchmark itself. The server path always waits 30 seconds for the log to appear (``_precheck_wait``), then the warmup, then one sleep after every unreadiness poll, including the last one.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 3 4 5
+
+   * - File
+     - Server sleeps before timeout
+     - Client sleeps before timeout
+   * - Llama single
+     - 30 s + ``server_warmup_wait_s`` 330 + 60 × ``server_poll_wait_s`` 60 = 3960 s
+     - ``client_initial_wait_s`` 120 + 90 × ``client_poll_wait_s`` 60 = 5520 s
+   * - Llama distributed
+     - 30 s + warmup 30 + 360 × 10 s = 3660 s
+     - initial 10 s + 540 × 10 s = 5410 s
+
+The errors are:
+
+- ``vllm server did not become ready before timeout``
+- ``client did not complete before poll cap``
+
+A cell also stops when failed requests are more than 1% of completed plus failed requests. The error starts with ``client failed:`` and includes ``Failed requests: <n>/<total> (<percent>)``. At or below 1%, the cell continues and logs a warning.
 
 Going multinode
 ===============
 
-The cluster file determines the host count: ``vllm_distributed`` forms one service from every listed host, or falls back to a single-node run when only one host is present. For distributed runs, configure ``server_params.pipeline_parallel_size`` to match the intended layout and set the HCA, socket-interface, and GID settings under ``container.env``. CVS derives the rendezvous address from the cluster head. Packaged configs use two hosts and ``pipeline_parallel_size`` of 2.
+``vllm_distributed`` with one host calls ``resolve_vllm_topology`` and gets an effective ``single`` topology. That path does not raise. ``vllm serve`` is the single-node command: no ``--node-rank``, ``--master-addr``, ``--master-port``, ``--nnodes``, or ``--distributed-executor-backend``. ``--pipeline-parallel-size`` is added only when pipeline parallel size is greater than 1. Ray is not started.
+
+Two or more hosts on the default ``mp`` backend require pipeline parallel size greater than 1. The JSON key is ``server_params.distributed_executor_backend`` (snake case). The exact error text still uses a hyphen:
+
+.. code:: text
+
+  vllm_distributed requires pipeline_parallel_size>1 unless distributed-executor-backend=ray
+
+Set the value to the lowercase string ``"ray"`` to take the Ray path, or raise ``pipeline_parallel_size``. Other strings are rejected when the config loads.
+
+Multi-host runs also require a socket interface. The exact error is:
+
+.. code:: text
+
+  vllm_distributed requires container.env.NCCL_SOCKET_IFNAME on multi-host clusters
+
+A legacy top-level ``ib_netdev`` also satisfies that check. Set ``GLOO_SOCKET_IFNAME`` and ``TP_SOCKET_IFNAME`` as well: if you set any one of the three, the config load requires all three.
+
+HCA preflight
+-------------
+
+``test_discover_topology`` runs only when the effective host list has two or more hosts. It does not run for ``vllm_single`` or for one-host ``vllm_distributed``.
+
+On a multi-host run it checks:
+
+- Each node has a non-empty HCA list, from ``ibv_devinfo -l``, or from ``/sys/class/infiniband`` when that command is missing or empty.
+- The discovered name lists match across nodes.
+- Every name in ``container.env.NCCL_IB_HCA`` (or a legacy ``ib_hca_devices`` list) is present on every node. A miss fails with ``ib_discovery preflight: requested HCA devices <missing> not found on <host>. Available: <devs>``.
+
+It does not check that the socket-interface names exist, that ``NCCL_IB_GID_INDEX`` is valid, or that the links are up. When ``NCCL_IB_HCA`` is set, preflight does not rewrite it; the container environment keeps the value you wrote.
 
 Using the default backend (mp)
 ------------------------------
 
-If you set nothing else, the suite uses ``mp``. It requires pipeline parallelism across the nodes:
+If you set nothing else, the suite uses ``mp``. Two or more hosts require pipeline parallelism. The JSON key stays snake case:
 
 .. code:: json
 
@@ -165,29 +280,21 @@ If you set nothing else, the suite uses ``mp``. It requires pipeline parallelism
       },
       "server_params": {
         "tensor_parallel_size": 8,
-        "pipeline_parallel_size": 2
+        "pipeline_parallel_size": 2,
+        "distributed_executor_backend": "mp"
       }
     }
 
-CVS launches ``vllm serve`` on every node with the correct rank, adding ``--headless`` to every rank above 0.
+CVS launches ``vllm serve`` on every node with the correct rank, adding ``--headless`` to every rank above 0. The client base URL is always ``http://0.0.0.0`` plus ``server_params.port`` (8888 in the packaged file). You cannot set ``base_url`` in the config; it is a reserved benchmark key.
 
 Using ray
 ---------
 
-Ray is opt-in. Set ``distributed_executor_backend`` in ``server_params``:
+Ray is opt-in. Set the snake_case key ``distributed_executor_backend`` to ``"ray"``:
 
 .. code:: json
 
     {
-      "container": {
-        "env": {
-          "NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
-          "NCCL_SOCKET_IFNAME": "eno0",
-          "GLOO_SOCKET_IFNAME": "eno0",
-          "TP_SOCKET_IFNAME": "eno0",
-          "NCCL_IB_GID_INDEX": "3"
-        }
-      },
       "server_params": {
         "tensor_parallel_size": 8,
         "pipeline_parallel_size": 1,
@@ -195,42 +302,37 @@ Ray is opt-in. Set ``distributed_executor_backend`` in ``server_params``:
       }
     }
 
-CVS then bootstraps a Ray cluster before serving: ``ray start --head`` on rank 0, ``ray start --address=...`` on each worker, and ``ray stop`` at teardown. Only the head node runs ``vllm serve``, so worker nodes produce no server log.
+CVS then bootstraps a Ray cluster before serving: ``ray start --head --port=<dist_init_port>`` on rank 0, ``ray start --address=<head>:<dist_init_port>`` on each worker, and ``ray stop`` at teardown. Only the head node runs ``vllm serve``, so worker nodes produce no server log. ``--pipeline-parallel-size`` is added only when pipeline parallel size is greater than 1.
 
 .. note::
 
-  Ray is not required for multinode — ``mp`` is the default and works across nodes. What ray changes is that it **removes the pipeline-parallelism requirement**, so ``pipeline_parallel_size`` of 1 becomes valid. Use ray when you want pure tensor-parallel serving across nodes; use the default otherwise.
+  Ray is not required for multinode. ``mp`` is the default and works across nodes when pipeline parallel size is greater than 1. Ray removes that requirement, so pipeline parallel size 1 is valid. Use ray for pure tensor-parallel serving across nodes.
 
-  Only the exact lowercase string ``"ray"`` selects it. Other values are rejected by configuration validation.
+  Only the exact lowercase string ``"ray"`` selects it.
 
 Common pitfalls
 ===============
 
-**The run fails immediately with a validation error.** Configuration files are validated before anything launches, and every block except ``container`` rejects unknown keys — so a misspelled key is a hard error rather than a silently ignored setting. Read the message: it names the offending key.
+**The run fails immediately with a validation error.** ``container``, ``paths``, and the top-level config reject unknown keys. ``server_params``, ``benchmark_params``, and sweep overrides accept extra snake_case vLLM options. ``image_tar``, ``registry``, ``shm_size``, and ``cap_add`` belong on the cluster file, not in the vLLM file. See :doc:`/reference/cluster/cluster-file`.
 
-**Distributed topology validation fails.** You configured multiple hosts on the default ``mp`` backend without pipeline parallelism. Either raise ``pipeline_parallel_size``, or switch to ray.
+**Distributed topology validation fails** with ``vllm_distributed requires pipeline_parallel_size>1 unless distributed-executor-backend=ray``. You have two or more hosts on ``mp`` without pipeline parallelism. Raise ``pipeline_parallel_size``, or set ``distributed_executor_backend`` to ``"ray"``.
 
-**"vllm_distributed requires container.env.NCCL_SOCKET_IFNAME".** Set all three socket-interface variables under ``container.env``. The interface cannot be derived reliably from HCA names.
+**"vllm_distributed requires container.env.NCCL_SOCKET_IFNAME on multi-host clusters".** Set the socket interface. If you set any of ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, or ``TP_SOCKET_IFNAME``, set all three.
 
-**"Container image not specified in config".** ``container.image`` is empty. Watch for this specific trap: if your configuration file has a ``container`` block that omits ``image``, it overwrites the cluster file's image with an empty string. Set ``image`` in whichever file defines the block.
+**"Container image not specified in config".** ``container.image`` is empty. The orchestrator logs that line, then ``test_launch_container`` fails because ``setup_containers()`` returned false. The vLLM schema requires ``image``, so omitting the key fails validation instead. An empty string overwrites a cluster-file image. The packaged Llama files use ``<changeme>``, which is not empty and is not a real image until you replace it.
 
-**Container launch crashes with "too many values to unpack".** You placed ``env`` under ``container.runtime.args``. It belongs at the ``container`` top level.
+**"env" under "container.runtime.args".** ``RuntimeArgs`` rejects unknown keys, so ``env`` there fails config load. Put ``env`` on ``container``.
 
 **A threshold fails with "actual must be a finite built-in int or float".** The gated datasource did not produce a valid value. Inspect the raw benchmark artifact, GPU telemetry, or server metrics for that cell. The suite owns benchmark percentile collection; workload configuration cannot override it.
 
-**A Run Deck baseline is incompatible.** vLLM reports identify the bare metric
-contract as ``{"id":"vllm-bare","version":1}``. Historical reports containing
-``client.*``, ``gpu.*``, or ``prom.*`` metric keys cannot be compared. Generate
-a new baseline with the current suite.
+**The sweep is slower than expected.** Cells that differ only in concurrency reuse the running server; changing ISL, OSL, TP, PP, or any server argument forces a restart and a weight reload. Ordering ``runs`` so concurrency varies fastest avoids needless reloads. The packaged single-node file already does that (concurrency 16, then 32).
 
-**The sweep is slower than expected.** Cells that differ only in concurrency reuse the running server; changing ISL, OSL, TP, PP, or any server argument forces a restart and a weight reload. Ordering ``runs`` so concurrency varies fastest avoids needless reloads.
-
-**Using** ``runtime.name: "enroot"``. Enroot is registered but not implemented, and the run fails at container launch. Use ``docker``.
+**"runtime.name" is not "docker".** The vLLM schema accepts only ``docker``.
 
 See also
 ========
 
 - :doc:`/reference/configuration-files/inference/vllm` — full configuration schema, metrics, and thresholds
-- :doc:`/reference/cluster/cluster-file` — cluster file schema
+- :doc:`/reference/cluster/cluster-file` — cluster file schema and orchestrator container keys
 - :doc:`/how-to/run-with-containers` — container backend in depth
 - :doc:`/how-to/test-suites/index` — running other CVS suites
