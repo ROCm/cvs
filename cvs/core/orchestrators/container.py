@@ -769,9 +769,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         self.log.debug(f"MPI command: {redact_secrets(full_mpi_cmd)}")
 
         # Execute on head node
-        result = self.exec_on_head(full_mpi_cmd, timeout=600)
-        self._stop_mpi_job_after_timeout(full_mpi_cmd, result)
-        return result
+        return self.exec_on_head(full_mpi_cmd, timeout=600)
 
     def cleanup(self, hosts):
         """
