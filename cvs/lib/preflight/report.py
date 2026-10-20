@@ -397,10 +397,19 @@ class PreflightReportGenerator(PreflightCheck):
         status = health_results.get('status') or ('FAIL' if failed_nodes or missing_nodes else 'PASS')
         passing_nodes = total_nodes - len(failed_nodes)
         fabric_checks = bool(health_results.get('fabric_checks'))
+        warned_nodes = list(health_results.get('warned_nodes') or [])
+        if not warned_nodes:
+            warned_nodes = sorted(
+                node
+                for node, result in node_results.items()
+                if result.get('status') == 'PASS' and result.get('warnings')
+            )
         summary = f"{passing_nodes}/{total_nodes} nodes passed node-health admission"
         if fabric_checks and membership.get('status') == 'PASS':
             accelerators = membership.get('vpod_accelerators') or []
             summary += f"; AFM vPOD accelerator membership {accelerators}"
+        if warned_nodes:
+            summary += f"; {len(warned_nodes)} node(s) on a degraded IFoE fabric (reduced throughput)"
         if missing_nodes:
             summary += f"; {len(missing_nodes)} declared node(s) were not admitted"
         return {
@@ -408,6 +417,7 @@ class PreflightReportGenerator(PreflightCheck):
             'total_nodes': total_nodes,
             'passing_nodes': passing_nodes,
             'failed_nodes': failed_nodes,
+            'warned_nodes': warned_nodes,
             'missing_nodes': missing_nodes,
             'vpod_accelerators': membership.get('vpod_accelerators') or [],
             'fabric_checks': fabric_checks,
@@ -1466,6 +1476,30 @@ class PreflightReportGenerator(PreflightCheck):
                 + '</ul>'
             )
 
+        degraded_banner = ''
+        degraded_warnings = [
+            (node, warning)
+            for node in sorted(node_results)
+            if node_results[node].get('status') == 'PASS'
+            for warning in (node_results[node].get('warnings') or [])
+        ]
+        if degraded_warnings:
+            degraded_banner = (
+                '<div style="margin:12px 0;padding:16px;border:3px solid #b8860b;'
+                'background:#fff3cd;color:#664d03;border-radius:6px;">'
+                '<p style="margin:0 0 8px 0;font-size:1.15em;font-weight:bold;">'
+                '&#9888; DEGRADED IFoE FABRIC &mdash; FIT FOR PROCESSING, REDUCED THROUGHPUT</p>'
+                '<p style="margin:0 0 8px 0;">One or more admitted nodes have some, but not all, IFoE '
+                'scale-up stations enabled. Local GPU compute is unaffected, but scale-up data transfer '
+                '(multi-GPU collectives) will run below full-fabric throughput.</p>'
+                '<ul style="margin:0;">'
+                + ''.join(
+                    f'<li><code>{html.escape(str(node))}</code>: {html.escape(str(warning))}</li>'
+                    for node, warning in degraded_warnings
+                )
+                + '</ul></div>'
+            )
+
         rows = []
         for node in sorted(node_results):
             result = node_results[node]
@@ -1491,14 +1525,20 @@ class PreflightReportGenerator(PreflightCheck):
                 or 'not reported'
             )
             errors = result.get('errors') or []
-            error_html = (
-                '—'
-                if not errors
-                else '<ul style="margin:0;color:#721c24;">'
-                + ''.join(f'<li>{html.escape(str(error))}</li>' for error in errors)
-                + '</ul>'
-            )
+            warnings = result.get('warnings') or []
+            issue_items = [f'<li style="color:#721c24;">{html.escape(str(error))}</li>' for error in errors]
+            issue_items += [
+                f'<li style="color:#664d03;">&#9888; {html.escape(str(warning))}</li>' for warning in warnings
+            ]
+            error_html = '—' if not issue_items else '<ul style="margin:0;">' + ''.join(issue_items) + '</ul>'
             node_status = result.get('status', 'UNKNOWN')
+            if node_status == 'PASS' and warnings:
+                status_cell = '<span class="status-pass">PASS</span> <span title="degraded fabric">&#9888; WARN</span>'
+            else:
+                status_cell = (
+                    f'<span class="status-{"pass" if node_status == "PASS" else "fail"}">'
+                    f'{html.escape(str(node_status))}</span>'
+                )
             fabric_cells = ''
             if fabric_checks:
                 fabric_cells = (
@@ -1509,7 +1549,7 @@ class PreflightReportGenerator(PreflightCheck):
             rows.append(
                 '<tr>'
                 f'<td><code>{html.escape(str(node))}</code></td>'
-                f'<td><span class="status-{"pass" if node_status == "PASS" else "fail"}">{html.escape(str(node_status))}</span></td>'
+                f'<td>{status_cell}</td>'
                 f'<td>{len(result.get("gpu_inventory") or [])}</td>'
                 f'{fabric_cells}'
                 f'<td>{error_html}</td>'
@@ -1525,6 +1565,7 @@ class PreflightReportGenerator(PreflightCheck):
             <p><span class="{status_class}">{html.escape(str(status))}</span>. This mandatory, read-only gate validates
             AMDGPU/KFD, GPU inventory, and kernel health{'; with fabric checks enabled it also validates AIFM, AFM ACTIVE bare-metal vPOD state, and IFoE station/port coherence' if fabric_checks else ''}.
             vPOD: {vpod_text}.</p>
+            {degraded_banner}
             {coverage_text}
             {membership_error_html}
             <table>

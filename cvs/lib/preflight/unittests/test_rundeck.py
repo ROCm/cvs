@@ -4,7 +4,7 @@ import unittest
 
 import pytest
 
-from cvs.lib.preflight.rundeck import CHECK_IDS, build_preflight_deck, make_meta
+from cvs.lib.preflight.rundeck import CHECK_IDS, NODE_HEALTH, _health_records, build_preflight_deck, make_meta
 from cvs.lib.report.profile import load_json_profile
 from cvs.tests.preflight import preflight_checks
 
@@ -212,6 +212,26 @@ class TestPreflightDeck(unittest.TestCase):
         )
         self.assertIn('node_smoke_tier1', deck['groups'])
         self.assertNotIn('node_smoke_tier2', deck['groups'])
+
+    def test_health_record_surfaces_degraded_fabric_warning(self):
+        results = {
+            NODE_HEALTH: {
+                'status': 'PASS',
+                'node_results': {
+                    'n1': {
+                        'status': 'PASS',
+                        'errors': [],
+                        'warnings': [
+                            '0000:01:00.0: only 1/18 IFoE stations enabled (2/36 scale-up ports); '
+                            'node is fit for processing but scale-up throughput is reduced'
+                        ],
+                    }
+                },
+            }
+        }
+        records = _health_records(results, ['n1'])
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertIn('degraded fabric', records['n1']['items_summary'])
 
     def test_profile_labels_match_check_ids(self):
         profile = load_json_profile('preflight_checks')

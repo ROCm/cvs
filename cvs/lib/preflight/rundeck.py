@@ -352,7 +352,12 @@ def _health_records(results, nodes):
 
     def _summary(entry):
         errors = entry.get('errors') or []
-        return errors[0] if errors else ('pass' if _normalize_status(entry.get('status')) == 'pass' else '')
+        if errors:
+            return errors[0]
+        if _normalize_status(entry.get('status')) != 'pass':
+            return ''
+        warnings = entry.get('warnings') or []
+        return f"degraded fabric: {warnings[0]}" if warnings else 'pass'
 
     def _items(entry):
         return _fail_items(entry.get('errors'), 'node_health')

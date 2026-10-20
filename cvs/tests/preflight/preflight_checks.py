@@ -18,7 +18,7 @@ from cvs.lib.preflight.mtu_check import RdmaMtuCheck, DEFAULT_MIN_NETDEV_MTU, DE
 from cvs.lib.preflight.version_check import RocmVersionCheck
 from cvs.lib.preflight.interface_consistency import InterfaceConsistencyCheck
 from cvs.lib.preflight.ifoe_l2_connectivity import IfoeL2ConnectivityCheck
-from cvs.lib.preflight.scaleup_fabric import NodeHealthCheck
+from cvs.lib.preflight.scaleup_fabric import DEFAULT_MIN_UP_PORTS_PER_GPU, NodeHealthCheck
 from cvs.lib.preflight.transferbench_smoke import TransferBenchSmokeCheck
 from cvs.lib.preflight.node_smoke import (
     NODE_SMOKE_TIER1_LABEL,
@@ -175,7 +175,9 @@ def _ifoe_config(config_dict):
     if not isinstance(config, dict):
         raise ValueError("preflight.connectivity_check.ifoe must be an object")
     unknown = sorted(
-        key for key in set(config) - {'fabric_checks', 'l2ping', 'transferbench'} if not key.startswith('_')
+        key
+        for key in set(config) - {'fabric_checks', 'l2ping', 'transferbench', 'min_up_ports_per_gpu'}
+        if not key.startswith('_')
     )
     if unknown:
         raise ValueError("Unsupported preflight.connectivity_check.ifoe option(s): " + ', '.join(unknown))
@@ -202,6 +204,25 @@ def _node_health_fabric_checks_enabled(config_dict):
     if enabled and not _node_health_enabled(config_dict):
         raise ValueError("preflight.connectivity_check.ifoe.fabric_checks requires node_check.enabled=true")
     return enabled
+
+
+def _station_mask_min_up_ports(config_dict):
+    """Resolve the IFoE station-mask admission floor from the preflight config.
+
+    Defaults to :data:`DEFAULT_MIN_UP_PORTS_PER_GPU` so a node with no enabled
+    IFoE ports (an un-provisioned scale-up fabric) is rejected.  A diagnostic
+    profile may set ``min_up_ports_per_gpu: 0`` to admit such a node on purpose.
+    """
+    ifoe = _ifoe_config(config_dict)
+    if 'min_up_ports_per_gpu' not in ifoe:
+        return DEFAULT_MIN_UP_PORTS_PER_GPU
+    try:
+        min_up_ports = int(ifoe['min_up_ports_per_gpu'])
+    except (TypeError, ValueError):
+        raise ValueError("preflight.connectivity_check.ifoe.min_up_ports_per_gpu must be an integer")
+    if min_up_ports < 0:
+        raise ValueError("preflight.connectivity_check.ifoe.min_up_ports_per_gpu must not be negative")
+    return min_up_ports
 
 
 def _node_health_admission_failed(config_dict):
@@ -563,11 +584,13 @@ def test_node_health(orch, config_dict, cluster_dict, lifecycle=None):
         fabric_checks,
         len(orch.all.reachable_hosts),
     )
+    station_policy = {'min_up_ports_per_gpu': _station_mask_min_up_ports(config_dict)} if fabric_checks else {}
     checker = NodeHealthCheck(
         orch,
         expected_gpus_per_node=gpus_per_node,
         fabric_checks=fabric_checks,
         config_dict=config_dict,
+        **station_policy,
     )
     results = checker.run()
     declared_nodes = sorted(cluster_dict.get('node_dict', {}).keys())
@@ -602,7 +625,30 @@ def test_node_health(orch, config_dict, cluster_dict, lifecycle=None):
         log.info("Mandatory node-health and MI4XX fabric admission PASS; AFM vPOD accelerators=%s", vpod)
     else:
         log.info("Mandatory generic GPU node-health admission PASS")
+    _log_degraded_fabric_banner(results)
     preflight_update_test_result(results)
+
+
+def _log_degraded_fabric_banner(results):
+    """Emit a prominent WARNING when any admitted node runs on a reduced IFoE fabric.
+
+    The node still passes admission (fit for processing), but scale-up throughput
+    is below full fabric, so the warning must be impossible to miss in the log.
+    """
+    warnings_by_node = {
+        node: result['warnings']
+        for node, result in (results.get('node_results') or {}).items()
+        if result.get('status') == 'PASS' and result.get('warnings')
+    }
+    if not warnings_by_node:
+        return
+    log.warning("!" * 78)
+    log.warning("!!  DEGRADED IFoE FABRIC -- node(s) FIT FOR PROCESSING but at REDUCED THROUGHPUT")
+    log.warning("!" * 78)
+    for node, warnings in warnings_by_node.items():
+        for warning in warnings:
+            log.warning("Node %s: %s", node, warning)
+    log.warning("!" * 78)
 
 
 @_timed_stage(ROCM_VERSIONS)

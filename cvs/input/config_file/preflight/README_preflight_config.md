@@ -308,6 +308,18 @@ They now follow this fixed policy:
   - Enables MI4XX-only AIFM/AFM/vPOD, station-mask, and IFoE port admission checks
   - Set to `true` only on MI4XX systems; it remains disabled for MI3XX systems
   - Requires `node_check.enabled: true`
+- **`min_up_ports_per_gpu`** (default: `2`)
+  - Minimum enabled IFoE ports each GPU must report in its station mask; one enabled station carries two ports
+  - The default fails a node whose scale-up fabric is un-provisioned (no enabled stations)
+  - Set to `0` only for a diagnostic run that should admit an un-provisioned fabric
+  - Applies only when `fabric_checks: true`
+
+**Degraded-fabric warning.** When a GPU reports at least one, but not all, IFoE
+stations enabled, the node still **passes** admission (it is fit for processing),
+but preflight emits a prominent warning in the log and a banner in the HTML
+report: local GPU compute is unaffected, yet scale-up data transfer (multi-GPU
+collectives) runs below full-fabric throughput. Only a fully-dark mask (zero
+enabled ports, below `min_up_ports_per_gpu`) fails.
 
 ##### L2 ping (`connectivity_check.ifoe.l2ping`)
 
