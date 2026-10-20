@@ -22,6 +22,7 @@ The following sample shows the ``ibperf_config.json`` structure:
         "ibperf":
         {
           "install_perf_package": "True",
+          "install_system_packages": "False",
           "install_dir": "/home/{user-id}/",
           "rocm_dir": "<changeme>",
           "require_dmabuf": "True",
@@ -59,6 +60,9 @@ Here's an exhaustive list of the available parameters in the IB Perf configurati
    * - ``install_perf_package``
      - True
      - Build and install perftest from source with ROCm GPU support. CVS configures perftest with ``--enable-rocm-dmabuf`` so that ``--use_rocm_dmabuf`` is available, and falls back to a ROCm-only build if that configure fails.
+   * - ``install_system_packages``
+     - False
+     - Run ``sudo apt install`` for the perftest build and runtime packages on every node before the build. Skipped inside Spur/Slurm job steps. When False, no packages are installed and the install test fails if ``numactl``, ``libibverbs``, or ``librdmacm`` is missing on any node. The head node also needs the build tools and the ``libibverbs``/``librdmacm`` development packages.
    * - ``install_dir``
      - ``/home/{user-id}/``
      - Installation directory for performance testing tools
