@@ -2,13 +2,24 @@
   :description: Run ad-hoc shell commands across all AMD Instinct GPU cluster nodes and switches simultaneously using the CVS parallel SSH exec command.
   :keywords: CVS, ROCm, cluster, commands, exec, SSH, ad-hoc, AMD Instinct, GPU, AMD, parallel, Linux, diagnostics
 
-**********************************************************************************
+***********************************************************************************
 Run ad-hoc commands across all Cluster Validation Suite (CVS) cluster nodes via SSH
-**********************************************************************************
+***********************************************************************************
 
 CVS provides an ``exec`` command to execute arbitrary shell commands on all nodes in the cluster simultaneously using parallel SSH. This is useful for gathering system information, running diagnostics, or performing administrative tasks across all cluster nodes at once.
 
 The ``exec`` command uses the same cluster configuration files as other CVS commands and supports both command-line arguments and environment variables for configuration.
+
+Where the command runs
+======================
+
+``cvs exec`` SSHes to the hosts in ``node_dict`` (and to switch trays when you ask for them). It ignores ``orchestrator`` and does not enter a container. Use it to see the host's view of ``docker ps`` during a container run.
+
+``{user-id}`` in ``username`` and ``priv_key_file`` stays as those characters. ``cvs run`` and ``cvs monitor check_cluster_health`` expand the placeholder. Put a literal username and key path in the file you pass here. ``cvs scp`` has the same literal behavior.
+
+``env_vars`` in the cluster file is prefixed onto the remote command as ``export`` statements in the host shell. That is separate from ``container.env``, which becomes ``docker -e`` inside a container for suites that start one.
+
+A per-host line such as ``ABORT: Host Unreachable Error`` or ``ABORT: Timeout Error in Host: ...`` is text in that host's output. ``cvs exec`` still exits 0 after printing it. The process exits non-zero when the cluster file cannot be loaded, the SSH client cannot be built, or the exec call itself raises. A remote command that exits non-zero is printed the same way and does not change the process exit code: this command does not read per-host exit codes.
 
 Execute commands
 ================
@@ -200,7 +211,7 @@ Output schema:
     }
   }
 
-- ``output`` is a flat ``host → string`` map. Error and timeout strings appear as values for unreachable hosts.
+- ``output`` is a flat ``host → string`` map. Unreachable hosts and read timeouts show up as ``ABORT:`` strings in that host's value. Those strings do not change the process exit code.
 - For ``--target all``, compute and switch hosts are merged into the same ``output`` dict.
 
 Pipe directly to ``jq`` for filtering:

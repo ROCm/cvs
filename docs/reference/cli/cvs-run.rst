@@ -2,9 +2,9 @@
   :description: Complete reference for the CVS command-line interface, covering cvs run, cvs exec, cvs scp, cvs list, cvs monitor, and cvs generate commands.
   :keywords: CVS, CLI, cvs run, cvs exec, cvs scp, cvs list, cvs monitor, cvs generate, ROCm, cluster, JSON
 
-**********************************************************
+*********************************************************************
 Cluster Validation Suite (CVS) command-line interface (CLI) reference
-**********************************************************
+*********************************************************************
 
 Top-level commands
 ==================
@@ -171,7 +171,7 @@ Conditionally required options:
    * - Option
      - Description
    * - ``--cluster_file PATH``
-     - Cluster JSON (nodes, SSH credentials, backend). Required unless ``cvs run`` is launched as a Slurm/SPUR job step; then CVS writes ``<run_dir>/cluster_agents.json`` and an optional file supplies extra metadata. See :doc:`/how-to/run-on-managed-compute`.
+     - Cluster JSON: nodes, SSH credentials, and the ``orchestrator`` key. Suites differ on whether they follow that key; see :doc:`/reference/cluster/cluster-file`. Required unless ``cvs run`` is launched as a Slurm/SPUR job step; then CVS writes ``<run_dir>/cluster_agents.json`` and an optional file supplies extra metadata. See :doc:`/how-to/run-on-managed-compute`.
 
 Optional options:
 
