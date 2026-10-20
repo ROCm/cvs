@@ -40,11 +40,10 @@
       "when_empty": "hide"
     },
     {
-      "type": "status_matrix",
+      "type": "table",
       "id": "results",
       "title": "Full results",
-      "bind": "datasets.status_matrix",
-      "hint": "Open a cell for its captured result details and artifact links."
+      "bind": "datasets.status_matrix.results_table"
     }
   ]
 }

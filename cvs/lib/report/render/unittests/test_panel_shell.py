@@ -1,8 +1,26 @@
-'''Unit tests for cvs/lib/report/render/panel_shell.py.'''
+'''Unit tests for the shared results table and its pager.'''
 
 import unittest
 
-from cvs.lib.report.render.panel_shell import render_results_table_html
+from cvs.lib.report.render.panel_shell import paged_table_html, render_results_table_html
+
+
+class TestPagedTable(unittest.TestCase):
+    def test_short_table_has_no_pager(self):
+        html = paged_table_html("rd-sample", "results-table", "<th>Node</th>", ["<tr><td>n1</td></tr>"])
+        self.assertNotIn("rd-pager", html)
+        self.assertIn("n1", html)
+        self.assertIn("<thead>", html)
+
+    def test_long_table_hides_rows_past_the_first_page(self):
+        rows = [f"<tr><td>n{index}</td></tr>" for index in range(26)]
+        html = paged_table_html("rd-sample", "results-table", "<th>Node</th>", rows)
+        self.assertIn("rd-pager", html)
+        self.assertIn("1–25 of 26", html)
+        self.assertIn("<tr hidden><td>n25</td>", html)
+        self.assertNotIn("<tr hidden><td>n0</td>", html)
+        self.assertEqual(html.count("class='rd-pager'"), 1)
+        self.assertEqual(html.count("<script>"), 1)
 
 
 class TestRenderResultsTableHtml(unittest.TestCase):
@@ -21,6 +39,17 @@ class TestRenderResultsTableHtml(unittest.TestCase):
     def test_align_sets_a_class_per_column(self):
         out = render_results_table_html(["Test", "BW", "Note"], [["write", 1.5, "x"]], align=["left", "right"])
         self.assertIn("<tr><td class='al-left'>write</td><td class='al-right'>1.5</td><td>x</td></tr>", out)
+
+    def test_link_records_render_as_anchors_and_other_cells_stay_escaped(self):
+        links = [
+            {"label": "errors.json", "href": "n1_errors.json"},
+            {"label": "logs.tar.gz", "href": "a<b>'c\".tar.gz"},
+        ]
+        out = render_results_table_html(["Message", "Logs"], [["<fail>", links]])
+        self.assertIn("<td>&lt;fail&gt;</td>", out)
+        self.assertIn("<a href='n1_errors.json'>errors.json</a>", out)
+        self.assertIn("<a href='a&lt;b&gt;&#x27;c&quot;.tar.gz'>logs.tar.gz</a>", out)
+        self.assertNotIn("<fail>", out)
 
     def test_no_rows_renders_the_empty_message_instead_of_a_table(self):
         self.assertEqual(

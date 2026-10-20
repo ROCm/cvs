@@ -211,7 +211,82 @@ class TestStatusMatrixCard(unittest.TestCase):
         self.assertIn(".chart-bar-pass", css)
         self.assertIn(".chart-threshold", css)
         self.assertIn(".hm-pass", css)
+        self.assertIn(".rd-pager", css)
         self.assertIn("grid-template-columns: 1fr", css)
+
+    def test_short_results_table_has_no_pager(self):
+        html = self.renderer.render_table({}, {"id": "results"}, {"headers": ["Node"], "rows": [["n1"], ["n2"]]})
+        self.assertNotIn("rd-pager", html)
+        self.assertIn("n1", html)
+        self.assertIn("n2", html)
+
+    def test_long_results_table_pages_every_suite(self):
+        rows = [[f"n{index}"] for index in range(26)]
+        html = self.renderer.render_table({}, {"id": "results"}, {"headers": ["Node"], "rows": rows})
+        self.assertIn("rd-pager", html)
+        self.assertIn("1–25 of 26", html)
+        self.assertIn("Previous", html)
+        self.assertIn("Next", html)
+        self.assertIn("<tr hidden>", html)
+        self.assertIn("n25", html)
+        self.assertNotIn("<tr hidden><td>n0</td>", html)
+
+    def test_table_card_can_drop_columns(self):
+        table = {
+            "headers": ["Node", "Check", "Result", "Value", "Unit", "Threshold", "Status", "Message"],
+            "rows": [["n1", "hbm", "hbm_bw", "—", "—", "—", "fail", "hbm_bw failed"]],
+        }
+        card = {"id": "results", "columns": ["Node", "Check", "Result", "Status", "Message"]}
+        html = self.renderer.render_table({}, card, table)
+        self.assertIn("<th>Message</th>", html)
+        self.assertNotIn("<th>Value</th>", html)
+        self.assertIn("<td>hbm_bw failed</td>", html)
+        self.assertNotIn("<td>—</td>", html)
+
+    def test_long_status_matrix_pages_nodes(self):
+        nodes = [f"n{index}" for index in range(26)]
+        grid = {node: {"check": {"status": "pass", "items": []}} for node in nodes}
+        html = self.renderer.render_status_matrix(
+            {}, {"id": "results"}, {"nodes": nodes, "groups": ["check"], "grid": grid}
+        )
+        self.assertIn("rd-pager", html)
+        self.assertIn("1–25 of 26", html)
+        self.assertIn("n25", html)
+
+    def test_long_gate_matrix_pages(self):
+        rows = [
+            {"label": f"c{index}", "cell_id": str(index), "concurrency": index, "tiers": {"throughput": "pass"}}
+            for index in range(26)
+        ]
+        html = self.renderer.render_gate_matrix(
+            {"report": {"metric_tier_order": ["throughput"]}},
+            {"id": "gates"},
+            rows,
+        )
+        self.assertIn("rd-pager", html)
+        self.assertIn("1–25 of 26", html)
+        self.assertIn("<tr hidden>", html)
+
+    def test_short_gate_matrix_has_no_pager(self):
+        rows = [{"label": "c0", "cell_id": "0", "concurrency": 1, "tiers": {"throughput": "pass"}}]
+        html = self.renderer.render_gate_matrix(
+            {"report": {"metric_tier_order": ["throughput"]}},
+            {"id": "gates"},
+            rows,
+        )
+        self.assertNotIn("rd-pager", html)
+        self.assertIn("c0", html)
+
+    def test_long_overview_table_pages(self):
+        nodes = [{"node": f"n{index}", "pass": 1, "fail": 0, "na": 0} for index in range(26)]
+        html = self.renderer.render_status_overview(
+            {},
+            {"id": "overview"},
+            {"failures_by_node": nodes, "failures_by_group": []},
+        )
+        self.assertIn("rd-pager", html)
+        self.assertIn("1–25 of 26", html)
+        self.assertIn("n25", html)
 
 
 if __name__ == "__main__":

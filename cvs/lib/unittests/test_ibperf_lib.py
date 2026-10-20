@@ -715,8 +715,8 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
                 node_pairs=[('n1', 'n3'), ('n2', 'n4')],
             )
         commands = self.phdl.exec_cmd_list.call_args_list[1].args[0]
-        self.assertIn('-s 64 n1;', commands[2])
-        self.assertIn('-s 64 n2;', commands[3])
+        self.assertIn('-s 64 n1; echo perftest_rc=\\$? ) >', commands[2])
+        self.assertIn('-s 64 n2; echo perftest_rc=\\$? ) >', commands[3])
         self.assertEqual(get_lat.call_args.kwargs['result_nodes'], ['n3', 'n4'])
 
     def test_orphan_and_no_active_pairs(self):
@@ -839,8 +839,8 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
         self.bck_nic_dict = {n: {} for n in nodes}
         self.run_bandwidth(node_pairs=[('n1', 'n3'), ('n2', 'n4')])
         commands = self.phdl.exec_cmd_list.call_args_list[1].args[0]
-        self.assertIn('-q 8 n1;', commands[2])
-        self.assertIn('-q 8 n2;', commands[3])
+        self.assertIn('-q 8 n1; echo perftest_rc=\\$? ) >', commands[2])
+        self.assertIn('-q 8 n2; echo perftest_rc=\\$? ) >', commands[3])
         self.phdl.reset_mock()
         result = self.run_bandwidth(node_pairs=[('n1', 'n2'), ('n3', 'n9')])
         self.phdl.prune_nodes.assert_called_once_with(['n3', 'n4'])

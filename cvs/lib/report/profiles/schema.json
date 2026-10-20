@@ -63,6 +63,12 @@
             "description": "Optional help line. status_matrix shows this instead of the generic item-breakdown hint."
           },
           "when_empty": { "enum": ["hide"] },
+          "columns_from": { "type": "string" },
+          "columns": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Headers to show for a table card. Other headers stay in the dataset and are left out of this card."
+          },
           "heatmap_heading": {
             "type": "boolean",
             "description": "metric_charts: false drops the Heatmaps subheading above the heatmap grid."
@@ -70,8 +76,7 @@
           "max_height": {
             "type": "string",
             "description": "table: CSS max-height; the table scrolls vertically under a sticky header row."
-          },
-          "columns_from": { "type": "string" }
+          }
         }
       }
     },

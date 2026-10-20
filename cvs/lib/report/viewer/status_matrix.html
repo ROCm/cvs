@@ -69,7 +69,6 @@ th { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-
   padding: 0.45rem 0.5rem; font: inherit; display: flex; flex-direction: column; align-items: center; gap: 0.15rem; }
 .cell-btn:hover, .cell-btn.active { outline: 2px solid var(--accent2); outline-offset: -2px; }
 .cell-pass { background: rgba(61,214,140,0.10); } .cell-fail { background: rgba(255,92,106,0.16); } .cell-na { background: transparent; }
-.cell-sum { font-size: 0.72rem; color: var(--muted); max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip { display: inline-block; padding: 0.08rem 0.45rem; border-radius: 999px; font-size: 0.66rem; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.05em; }
 .chip-pass { color: var(--pass); background: rgba(61,214,140,0.14); }
@@ -92,6 +91,16 @@ th { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-
 .details td.msg { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.75rem; word-break: break-word; }
 .details tr.row-fail td { background: rgba(255,92,106,0.06); }
 .empty { color: var(--muted); font-size: 0.85rem; }
+.rd-pager { display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem;
+  margin-top: 0.75rem; font-size: 0.8rem; color: var(--muted); }
+.rd-pager button { background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer; }
+.rd-pager button:hover { border-color: var(--accent); }
+footer.page-foot { text-align: center; margin-top: 2rem; }
+.to-top { display: block; width: max-content; margin: 0.85rem auto 0; padding: 0.3rem 0.75rem;
+  border: 1px solid var(--border); border-radius: 6px; background: #12151f; color: var(--accent2);
+  text-decoration: none; font-size: 0.8rem; }
+.to-top:hover { border-color: var(--accent); }
 @media (max-width: 720px) {
   .toolbar label.filter-search { grid-column: span 1; }
 }
@@ -102,7 +111,7 @@ th { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-
 </style>
 </head>
 <body data-viewer="status-matrix">
-<div class="wrap">
+<div class="wrap" id="top">
 <header class="hero">
   <div>
     <h1>__TITLE__</h1>
@@ -177,6 +186,7 @@ th { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-
   <p id="details-empty" class="empty" hidden>No matching results.</p>
   <div class="hm-wrap"><table class="details" id="details-table"></table></div>
 </section>
+<footer class="page-foot"><a class="to-top" href="#top">Go to top</a></footer>
 </div>
 __EMBEDDED_JSON__
 <script>
@@ -194,7 +204,8 @@ function $(id) { return document.getElementById(id); }
 
 function esc(value) {
   return String(value == null ? "" : value)
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 function num(value) {
@@ -327,10 +338,9 @@ function renderMatrix(matrix) {
       const cell = (grid[node] && grid[node][group]) || {};
       const status = cellStatus(cell);
       const active = nodeFilter === node && groupFilter === group ? " active" : "";
-      const summary = cell.items_summary || "";
       html += "<td class='cell-" + status + "'><button type='button' class='cell-btn" + active + "' data-node='" + esc(node)
-        + "' data-group='" + esc(group) + "' title='" + esc(summary) + "'><span class='chip chip-" + status + "'>"
-        + (status === "na" ? "n/a" : status) + "</span><span class='cell-sum'>" + esc(summary) + "</span></button></td>";
+        + "' data-group='" + esc(group) + "'><span class='chip chip-" + status + "'>"
+        + (status === "na" ? "n/a" : status) + "</span></button></td>";
     });
     html += "</tr>";
   });
@@ -655,9 +665,9 @@ function renderHeatmaps(matrix) {
     const heatTitle = (heat.group && heat.group !== heatName ? heat.group + " · " : "") + heatName + " · " + heat.node;
     let html = "<div class='chart-block'><h3>" + esc(heatTitle) + "</h3>"
       + (note ? "<p class='chart-note'>" + esc(note) + "</p>" : "");
-    html += "<div class='hm-wrap'><table class='hm-table'><tr><th>" + esc(heat.row_label && heat.col_label ? heat.row_label + " \\ " + heat.col_label : "") + "</th>";
+    html += "<div class='hm-wrap'><table class='hm-table'><thead><tr><th>" + esc(heat.row_label && heat.col_label ? heat.row_label + " \\ " + heat.col_label : "") + "</th>";
     cols.forEach(col => { html += "<th>" + esc(col) + "</th>"; });
-    html += "</tr>";
+    html += "</tr></thead><tbody>";
     rows.forEach((rowName, index) => {
       const row = values[index] || [];
       html += "<tr><th>" + esc(rowName) + "</th>";
@@ -673,7 +683,7 @@ function renderHeatmaps(matrix) {
       });
       html += "</tr>";
     });
-    html += "</table></div></div>";
+    html += "</tbody></table></div></div>";
     host.insertAdjacentHTML("beforeend", html);
   });
   $("heatmap-count").textContent = heatmaps.length ? heatmaps.length + " map" + (heatmaps.length === 1 ? "" : "s") : "";
@@ -734,6 +744,8 @@ function renderDetails(matrix) {
     + (hasLinks ? "<th>Logs</th>" : "") + "</tr></thead><tbody>" + body + "</tbody>";
 }
 
+__PAGE_TABLES_JS__
+
 function renderHealth(matrix) {
   destroyCharts();
   renderOverview(matrix);
@@ -741,6 +753,7 @@ function renderHealth(matrix) {
   renderSeries(matrix);
   renderHeatmaps(matrix);
   renderDetails(matrix);
+  pageLongTables(document);
 }
 
 function loadReportData() {

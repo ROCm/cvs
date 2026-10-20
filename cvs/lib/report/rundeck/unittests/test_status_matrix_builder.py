@@ -220,5 +220,121 @@ class TestStatusMatrixBuilder(unittest.TestCase):
         self.assertEqual(out["overall_status"], "pass")
 
 
+class TestResultsTable(unittest.TestCase):
+    def test_metric_item_and_summary_rows(self):
+        results = {
+            "groups": {
+                "gst_single": {
+                    "nodes": {
+                        "node-a": {
+                            "status": "fail",
+                            "items_summary": "1 failure pattern(s)",
+                            "items": [{"name": "scan", "status": "fail", "message": "gst action failed"}],
+                            "metrics": [
+                                {
+                                    "name": "fp8",
+                                    "value": 1299650,
+                                    "unit": "GFLOPS",
+                                    "threshold": 983000,
+                                    "status": "pass",
+                                }
+                            ],
+                            "errors_json_href": "errors.json",
+                            "log_tarball_href": "logs.tar.gz",
+                        }
+                    }
+                },
+                "mem_test": {"nodes": {"node-a": {"status": "pass", "items_summary": "passed", "items": []}}},
+            }
+        }
+        table = build_status_matrix_datasets(_sources(results), {})["results_table"]
+        self.assertEqual(
+            table["headers"],
+            ["Node", "Check", "Result", "Value", "Unit", "Threshold", "Status", "Message"],
+        )
+        by_result = {row[2]: row for row in table["rows"]}
+        self.assertEqual(by_result["fp8"][3:8], ["1299650", "GFLOPS", "983000", "pass", "1 failure pattern(s)"])
+        self.assertEqual(by_result["scan"][6:8], ["fail", "gst action failed"])
+        self.assertEqual(by_result["mem_test"][6:8], ["pass", "passed"])
+        self.assertEqual([row[2] for row in table["rows"] if row[6] == "fail"], ["scan"])
+        self.assertLess(table["rows"].index(by_result["scan"]), table["rows"].index(by_result["fp8"]))
+
+    def test_missing_cell_is_one_summary_row(self):
+        results = {"groups": {"hbm": {"nodes": {"n1": {"status": "pass", "items": []}}}}}
+        table = build_status_matrix_datasets(_sources(results), {})["results_table"]
+        missing = [row for row in table["rows"] if row[0] == "n1" and row[1] == "hbm" and row[6] == "na"]
+        self.assertEqual(missing, [])
+        only = table["rows"][0]
+        self.assertEqual(only[2], "hbm")
+        self.assertEqual(only[6], "pass")
+
+    def test_requested_count_columns_come_from_the_items_summary(self):
+        results = {
+            "groups": {
+                "hbm_lvl1": {
+                    "nodes": {
+                        "node-11": {
+                            "status": "fail",
+                            "items_summary": "Items: 6 Total | 5 PASSED, 1 FAILED",
+                            "items": [{"name": "oblex_remix2", "status": "fail", "message": "PDC Failed"}],
+                        }
+                    }
+                }
+            }
+        }
+        profile = {"cards": [{"id": "results", "columns": ["Node", "Passed", "Failed", "Status"]}]}
+        table = build_status_matrix_datasets(_sources(results), profile)["results_table"]
+        self.assertEqual(table["headers"][-2:], ["Passed", "Failed"])
+        row = table["rows"][0]
+        self.assertEqual(row[2], "oblex_remix2")
+        self.assertEqual(row[6:], ["fail", "PDC Failed", "5", "1"])
+
+    def test_logs_column_carries_artifact_hrefs_only_when_requested(self):
+        results = {
+            "groups": {
+                "hbm_lvl1": {
+                    "nodes": {
+                        "node-11": {
+                            "status": "fail",
+                            "items_summary": "Items: 6 Total | 5 PASSED, 1 FAILED",
+                            "items": [{"name": "oblex_remix2", "status": "fail", "message": "PDC Failed"}],
+                            "errors_json_href": "n1_errors.json",
+                            "log_tarball_href": "n1_logs.tar.gz",
+                        },
+                        "node-12": {"status": "pass", "items_summary": "Items: 6 Total | 6 PASSED, 0 FAILED"},
+                    }
+                }
+            }
+        }
+        without = build_status_matrix_datasets(_sources(results), {})["results_table"]
+        self.assertNotIn("Logs", without["headers"])
+        self.assertTrue(all(len(row) == 8 for row in without["rows"]))
+        profile = {"cards": [{"id": "results", "columns": ["Node", "Message", "Logs"]}]}
+        table = build_status_matrix_datasets(_sources(results), profile)["results_table"]
+        self.assertEqual(table["headers"][-1], "Logs")
+        failed = next(row for row in table["rows"] if row[2] == "oblex_remix2")
+        self.assertEqual(
+            failed[-1],
+            [
+                {"label": "errors.json", "href": "n1_errors.json"},
+                {"label": "logs.tar.gz", "href": "n1_logs.tar.gz"},
+            ],
+        )
+        passed = next(row for row in table["rows"] if row[0] == "node-12")
+        self.assertEqual(passed[-1], "\u2014")
+
+    def test_absent_group_on_a_node_is_not_evaluated(self):
+        results = {
+            "groups": {
+                "a": {"nodes": {"n1": {"status": "pass", "items": []}, "n2": {"status": "pass", "items": []}}},
+                "b": {"nodes": {"n1": {"status": "pass", "items": []}}},
+            }
+        }
+        table = build_status_matrix_datasets(_sources(results), {})["results_table"]
+        absent = next(row for row in table["rows"] if row[0] == "n2" and row[1] == "b")
+        self.assertEqual(absent[6], "na")
+        self.assertEqual(absent[7], "group not on node")
+
+
 if __name__ == "__main__":
     unittest.main()
