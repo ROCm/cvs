@@ -1333,6 +1333,94 @@ class TestRcclLib(unittest.TestCase):
                         self.assertEqual(getattr(job, method)(), rows)
                     self.assertTrue(any('lower than expected bus BW' in msg for msg in rccl_lib.globals.error_list))
 
+    @staticmethod
+    def _bias_rows():
+        """Rows shaped like all_reduce_bias_perf output on a 4-GPU node."""
+        base = {
+            'numCycle': 0,
+            'name': 'AllReduce',
+            'nodes': 1,
+            'ranks': 4,
+            'ranksPerNode': 4,
+            'gpusPerRank': 1,
+            'type': 'float',
+            'redop': 'sum',
+            'wrong': '0',
+        }
+        return [
+            {**base, 'size': 1024, 'inPlace': 0, 'time': 5399.35, 'algBw': 0.000190, 'busBw': 0.000284},
+            {**base, 'size': 1024, 'inPlace': 1, 'time': 5402.10, 'algBw': 0.000189, 'busBw': 0.000283},
+            {**base, 'size': 1048576, 'inPlace': 0, 'time': 5500.00, 'algBw': 0.19, 'busBw': 0.29},
+            {**base, 'size': 1048576, 'inPlace': 1, 'time': 5510.00, 'algBw': 0.19, 'busBw': 0.28},
+        ]
+
+    def _bias_job(self, results):
+        config = {
+            'mpi_params': {'no_of_nodes': 1, 'no_of_local_ranks': 4},
+            'rccl_test_params': {'rccl_tests_dir': '/opt/rccl-tests/build', 'data_types': ['float']},
+            'cvs_params': {
+                'verify_bus_bw': 'True',
+                'verify_bw_dip': 'True',
+                'verify_lat_dip': 'False',
+                'topology_check': 'off',
+                'rccl_result_file': '/shared/rccl.json',
+            },
+            'results': results,
+        }
+        return rccl_lib.RcclJob.from_config(_FakeOrch(), 'all_reduce_bias_perf', config, ['n1'], ['v1'])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_all_reduce_bias_perf_runs_and_verifies_against_its_own_thresholds(self, mock_fail_test):
+        job = self._bias_job({'all_reduce_bias_perf': {'bus_bw': {'1024': '0.0002', '1048576': '0.2'}}})
+        saved = {}
+        job.orch.upload_to_head.side_effect = lambda local, remote: saved.__setitem__(
+            remote, json.loads(Path(local).read_text())
+        )
+        with (
+            patch.object(job, 'prepare'),
+            patch.object(job, 'execute', return_value='# Avg bus bandwidth : 0.14') as mock_execute,
+            patch.object(job, 'read_results', return_value=self._bias_rows()),
+            patch.object(job, 'collect_gpu_info'),
+        ):
+            result = job.run_perf()
+
+        self.assertEqual(result, self._bias_rows())
+        command = mock_execute.call_args.args[0]
+        self.assertTrue(command.startswith('/opt/rccl-tests/build/all_reduce_bias_perf '))
+        self.assertIn('-d float', command)
+        aggregated = saved['/shared/rccl_aggregated.json']
+        self.assertEqual(len(aggregated), 4)
+        self.assertTrue(all(row['name'] == 'AllReduce' for row in aggregated))
+        self.assertEqual(
+            {(row['size'], row['inPlace']) for row in aggregated},
+            {(1024, 0), (1024, 1), (1048576, 0), (1048576, 1)},
+        )
+        self.assertEqual(
+            sorted((verdict['check'], verdict['size'], verdict['status']) for verdict in job.verdicts),
+            [('bus_bw', 1024, 'pass'), ('bus_bw', 1048576, 'pass'), ('bw_dip', 1048576, 'pass')],
+        )
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_all_reduce_bias_perf_does_not_borrow_all_reduce_thresholds(self, mock_fail_test):
+        job = self._bias_job({'all_reduce_perf': {'bus_bw': {'1024': '0.0002'}}})
+        with (
+            patch.object(job, 'prepare'),
+            patch.object(job, 'execute', return_value='# Avg bus bandwidth : 0.14'),
+            patch.object(job, 'read_results', return_value=self._bias_rows()),
+            patch.object(job, 'collect_gpu_info'),
+        ):
+            job.run_perf()
+
+        mock_fail_test.assert_called_once()
+        self.assertIn(
+            'No bus bandwidth thresholds for all_reduce_bias_perf in rccl.results.all_reduce_bias_perf',
+            mock_fail_test.call_args.args[0],
+        )
+        self.assertEqual(len(job.verdicts), 1)
+        self.assertEqual(job.verdicts[0]['check'], 'bus_bw')
+        self.assertEqual(job.verdicts[0]['status'], 'fail')
+
     def test_threshold_config_location_precedence_and_legacy_fallback(self):
         legacy = {'all_reduce_perf': {'bus_bw': {'1024': '100'}}}
         current = {'all_reduce_perf': {'bus_bw': {'1024': '200'}}}
