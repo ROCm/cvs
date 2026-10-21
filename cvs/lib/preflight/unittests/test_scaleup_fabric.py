@@ -357,7 +357,9 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
     def test_uniform_station_mask_policy_is_per_node_not_cluster_wide(self):
         mask_a = "f" * 18
         mask_b = "0" * 17 + "f"
-        check = self._check(FakePssh(hosts=("nodeA", "nodeB")), require_uniform_station_mask=True, min_up_ports_per_gpu=0)
+        check = self._check(
+            FakePssh(hosts=("nodeA", "nodeB")), require_uniform_station_mask=True, min_up_ports_per_gpu=0
+        )
         check.results = {
             "nodeA": {"status": "PASS", "errors": [], "warnings": []},
             "nodeB": {"status": "PASS", "errors": [], "warnings": []},
@@ -373,7 +375,9 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
         self.assertFalse(any("not uniform" in error for error in check.results["nodeB"]["errors"]))
 
     def test_uniform_station_mask_policy_fails_non_uniform_gpus_on_one_node(self):
-        check = self._check(FakePssh(hosts=("nodeA", "nodeB")), require_uniform_station_mask=True, min_up_ports_per_gpu=0)
+        check = self._check(
+            FakePssh(hosts=("nodeA", "nodeB")), require_uniform_station_mask=True, min_up_ports_per_gpu=0
+        )
         check.results = {
             "nodeA": {"status": "PASS", "errors": [], "warnings": []},
             "nodeB": {"status": "PASS", "errors": [], "warnings": []},
@@ -392,7 +396,9 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
         }
         check._evaluate_station_masks()
         self.assertEqual(check.results["nodeA"]["status"], "FAIL")
-        self.assertTrue(any("not uniform across GPUs on this node" in error for error in check.results["nodeA"]["errors"]))
+        self.assertTrue(
+            any("not uniform across GPUs on this node" in error for error in check.results["nodeA"]["errors"])
+        )
         self.assertEqual(check.results["nodeB"]["status"], "PASS")
 
     def test_run_reports_warned_nodes_for_partial_fabric(self):
