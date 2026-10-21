@@ -85,9 +85,7 @@ def collect_deck_sections(payload: dict) -> tuple[list[str], list[tuple[str, str
 def render_series_viewer_body(payload: dict) -> tuple[str, str]:
     """Pre-render series viewer deck sections with the same card renderers as the static HTML."""
     sections, nav_items = collect_deck_sections(payload)
-    links = "".join(
-        f"<a href='#{html.escape(section_id)}'>{html.escape(label)}</a>" for section_id, label in nav_items
-    )
+    links = "".join(f"<a href='#{html.escape(section_id)}'>{html.escape(label)}</a>" for section_id, label in nav_items)
     nav_html = f'<nav class="viewer-nav">{links}</nav>' if links else ""
     return "".join(sections), nav_html
 
