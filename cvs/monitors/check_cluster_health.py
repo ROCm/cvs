@@ -80,12 +80,12 @@ def general_health_checks(
         print(f'ERROR running verify_gpu_pcie_bus_width, due to exception {e}')
     # Check Dmesg for errors
     try:
-        health_dict['dmesg_scan'] = verify_lib.full_dmesg_scan(phdl, start_time_dict=start_time_dict)
+        health_dict['dmesg_scan'] = verify_lib.full_dmesg_scan(phdl)
     except Exception as e:
         print(f'ERROR running full_dmesg_scan, due to exception {e}')
     # Check Dmesg for AMD GPU driver errors
     try:
-        health_dict['driver_errors'] = verify_lib.verify_driver_errors(phdl, start_time_dict=start_time_dict)
+        health_dict['driver_errors'] = verify_lib.verify_driver_errors(phdl)
     except Exception as e:
         print(f'ERROR running verify_driver_errors, due to exception {e}')
     # journlctl scan - bounded to start_time_dict (via --since) when provided,

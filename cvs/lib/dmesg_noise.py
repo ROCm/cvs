@@ -23,6 +23,8 @@ _ZERO_ERROR_FIELD_RE = re.compile(
 # VMware (and other hypervisors) log this for APIC/TSC quirks. It is a provider
 # warning, not a kernel BUG.
 _FIRMWARE_BUG_RE = re.compile(r'\[Firmware Bug\]:', re.I)
+# mlx5 debug dump when syndrome is zero; not an IB completion error.
+_MLX5_BENIGN_DUMP_CQE_RE = re.compile(r'dump CQE: syndrome 0x0\b', re.I)
 
 _RESIDUAL_SIGNAL_RE = re.compile(r'fail|error|fault|hang|reset|bug:|call trace|segfault', re.I)
 
@@ -158,6 +160,8 @@ def uncorrected_mce_status_lines(text):
 def dmesg_line_is_benign(line):
     '''Return True for healthy zero status fields and hypervisor firmware warnings.'''
     text = line or ''
+    if _MLX5_BENIGN_DUMP_CQE_RE.search(text):
+        return True
     if _FIRMWARE_BUG_RE.search(text):
         remainder = _FIRMWARE_BUG_RE.sub(' ', text)
         return _RESIDUAL_SIGNAL_RE.search(remainder) is None

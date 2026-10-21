@@ -29,7 +29,10 @@ err_patterns_dict = {
     'driver': 'Queue preemption failed for queue|Failed to evict process queues|No more SDMA queue to allocate|amdgpu: process pid',
     'hardware': r'hardware error|hardware fail|ras error|(?:uncorrectable|correctable err)(?!.*initialized)'
     r'|EDAC (?:MC\d+: \d+ [CU]E |DEVICE\d+: [CU]E: )',
-    'network': ('NIC Link is Down|link is down|ib_uverb|CQE error|invalid CQE|queue catastrophic|CQ error'),
+    'network': (
+        'NIC Link is Down|link is down|ib_uverb|error cqe|cqe_dump:|'
+        r'(?<!dump )CQE(?!: syndrome 0x0)|queue catastrophic|CQ error'
+    ),
 }
 
 
@@ -118,9 +121,6 @@ def cvs_dmesg_analysis_args():
     return {
         'error_regex': cvs_dmesg_error_regex(),
         'ignore_match_rules': list(_BENIGN_UNKNOWN_DMESG_RULES),
-        # Rely on node-scraper's curated patterns plus CVS error_regex; do not
-        # fail every unclassified kern :err line as "Unknown dmesg error".
-        'check_unknown_dmesg_errors': False,
     }
 
 
@@ -136,17 +136,6 @@ def _node_scraper_event_fails_test(event):
     if not priority or priority in _ERROR_DMESG_PRIORITIES:
         return True
     return False
-
-
-def _dmesg_analysis_args_from_start(start_time_dict=None):
-    """Build analyzer args, optionally bounded to cluster run start time."""
-    analysis_args = cvs_dmesg_analysis_args()
-    if start_time_dict:
-        node0 = list(start_time_dict.keys())[0]
-        start_dt = _parse_cvs_time(start_time_dict[node0])
-        if start_dt:
-            analysis_args['analysis_range_start'] = start_dt
-    return analysis_args
 
 
 def _parse_cvs_time(time_str):
@@ -241,7 +230,11 @@ def _node_scraper_scan(output_dict, analysis_args=None, source_label='Dmesg'):
                 continue
             lines = node_scraper_adapter.event_match_lines([event])
             line = lines[0] if lines else ''
-            if dmesg_noise.dmesg_line_is_benign(line):
+            raw = event.get('match_content')
+            if isinstance(raw, (list, tuple)):
+                raw = ' '.join(str(part) for part in raw if part)
+            raw_text = str(raw or '')
+            if dmesg_noise.dmesg_line_is_benign(raw_text) or dmesg_noise.dmesg_line_is_benign(line):
                 continue
             if not line:
                 continue
@@ -789,7 +782,6 @@ def full_journalctl_scan(phdl, start_time_dict=None):
 
 def full_dmesg_scan(
     phdl,
-    start_time_dict=None,
 ):
     """
     Scan dmesg across nodes for known error patterns and fail on each match.
@@ -804,10 +796,6 @@ def full_dmesg_scan(
       phdl: Host/process handle abstraction that supports:
             - exec(cmd, print_console=False) -> {node: str}
               Executes the given command on all target nodes and returns a map of node to output.
-      start_time_dict: Optional {node: cvs_time_str} (same format as
-            ``full_journalctl_scan`` / ``verify_dmesg_for_errors``). When
-            provided, the node-scraper path only analyzes kernel lines at or
-            after that time instead of the full ring buffer.
 
     Behavior:
       - Runs `dmesg -T` to get human-readable timestamps from kernel logs on each node.
@@ -844,7 +832,7 @@ def full_dmesg_scan(
         )
         err_dict = _node_scraper_scan(
             output_dict,
-            analysis_args=_dmesg_analysis_args_from_start(start_time_dict),
+            analysis_args=cvs_dmesg_analysis_args(),
             source_label='Dmesg',
         )
         _log_kernel_scan_summary('full_dmesg_scan', output_dict, err_dict)
@@ -854,18 +842,9 @@ def full_dmesg_scan(
     err_dict = {}
 
     # Pull human-readable kernel logs and filter out common noise
-    legacy_cmd = "sudo dmesg -T | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never"
-    if start_time_dict:
-        node0 = list(start_time_dict.keys())[0]
-        start_time = start_time_dict[node0].rstrip('\n')
-        pattern = r'([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+\:[0-9]+)'
-        match = re.search(pattern, start_time)
-        if match:
-            legacy_cmd = (
-                f"sudo dmesg -T | sed -n '/{match.group(1)}/,$p' | grep -v initialized "
-                f"| egrep -v 'ALLOWED|DENIED' --color=never"
-            )
-    output_dict = _collect_kernel_log(phdl, legacy_cmd)
+    output_dict = _collect_kernel_log(
+        phdl, "sudo dmesg -T | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never"
+    )
     output_dict = _drop_corrected_mces(output_dict, 'Dmesg')
     for node in output_dict.keys():
         err_dict[node] = []
@@ -886,7 +865,7 @@ def full_dmesg_scan(
     return err_dict
 
 
-def verify_driver_errors(phdl, start_time_dict=None):
+def verify_driver_errors(phdl):
     """
     Scan dmesg for AMDGPU driver-related errors across nodes and fail on detection.
 
@@ -895,8 +874,6 @@ def verify_driver_errors(phdl, start_time_dict=None):
             - exec(cmd, print_console=False) -> {node: str}
               Runs the given command across relevant nodes and returns a mapping
               from node identifier to the command's stdout.
-      start_time_dict: Optional run-start timestamps; when set, limits scanning to
-            kernel lines at or after that time (node-scraper and legacy paths).
 
     Behavior:
       - Executes `dmesg -T` (human-readable timestamps) and filters for lines containing
@@ -925,44 +902,41 @@ def verify_driver_errors(phdl, start_time_dict=None):
         # node-scraper path: parse full dmesg, then report driver-related events
         # (amdgpu match or SW_DRIVER category) to preserve this check's
         # driver-error focus while reusing node-scraper's pattern table.
-        analysis_args = _dmesg_analysis_args_from_start(start_time_dict)
-        range_start = analysis_args.get('analysis_range_start')
-        range_end = analysis_args.get('analysis_range_end')
         err_dict = {}
         output_dict = _collect_kernel_log(
             phdl, "sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never"
         )
         for node in output_dict.keys():
             err_dict[node] = []
-            node_text = output_dict[node]
-            if range_start or range_end:
-                node_text = node_scraper_adapter.filter_dmesg_range(node_text, range_start, range_end)
             events = node_scraper_adapter.parse_dmesg(
-                node_text,
+                output_dict[node],
                 node_name=node,
-                analysis_args=analysis_args,
+                analysis_args=cvs_dmesg_analysis_args(),
             )
-            reported_lines = set()
             for event in events:
-                if not _node_scraper_event_fails_test(event):
-                    continue
                 lines = node_scraper_adapter.event_match_lines([event])
                 line = lines[0] if lines else ''
-                if dmesg_noise.dmesg_line_is_benign(line):
+                raw = event.get('match_content')
+                if isinstance(raw, (list, tuple)):
+                    raw = ' '.join(str(part) for part in raw if part)
+                raw_text = str(raw or '')
+                if dmesg_noise.dmesg_line_is_benign(raw_text) or dmesg_noise.dmesg_line_is_benign(line):
                     continue
-                if 'amdgpu' in line.lower() or event.get('category') == 'SW_DRIVER':
-                    msg = f'ERROR !! amdgpu driver errors detected in dmesg on node {node}: {line}'
-                    fail_test(msg)
-                    err_dict[node].append(line)
-                    reported_lines.add(line)
-            # With check_unknown_dmesg_errors disabled, some amdgpu :err lines are not
-            # emitted as analyzer events; keep the legacy amdgpu+fail/error line rule.
-            for line in node_text.splitlines():
-                if 'amdgpu' not in line.lower():
+                is_driver = (
+                    'amdgpu' in raw_text.lower()
+                    or 'amdgpu' in line.lower()
+                    or event.get('category') == 'SW_DRIVER'
+                )
+                if not is_driver:
                     continue
-                if line in reported_lines:
-                    continue
-                if dmesg_noise.line_indicates_driver_error(line):
+                priority = (event.get('priority') or '').strip().upper()
+                if _node_scraper_event_fails_test(event):
+                    should_fail = True
+                elif priority in ('WARNING', 'WARN') and dmesg_noise.line_indicates_driver_error(raw_text):
+                    should_fail = True
+                else:
+                    should_fail = False
+                if should_fail:
                     msg = f'ERROR !! amdgpu driver errors detected in dmesg on node {node}: {line}'
                     fail_test(msg)
                     err_dict[node].append(line)
@@ -971,18 +945,9 @@ def verify_driver_errors(phdl, start_time_dict=None):
 
     err_dict = {}
     # Collect AMDGPU-related kernel messages filtered for likely error terms
-    legacy_cmd = "sudo dmesg -T | grep -i amdgpu  | egrep -i 'fail|error|reset|hang|traceback' --color=never"
-    if start_time_dict:
-        node0 = list(start_time_dict.keys())[0]
-        start_time = start_time_dict[node0].rstrip('\n')
-        pattern = r'([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+\:[0-9]+)'
-        match = re.search(pattern, start_time)
-        if match:
-            legacy_cmd = (
-                f"sudo dmesg -T | sed -n '/{match.group(1)}/,$p' | grep -i amdgpu "
-                f"| egrep -i 'fail|error|reset|hang|traceback' --color=never"
-            )
-    out_dict = _collect_kernel_log(phdl, legacy_cmd)
+    out_dict = _collect_kernel_log(
+        phdl, "sudo dmesg -T | grep -i amdgpu  | egrep -i 'fail|error|reset|hang|traceback' --color=never"
+    )
     for node in out_dict.keys():
         err_dict[node] = []
 

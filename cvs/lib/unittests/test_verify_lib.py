@@ -372,7 +372,7 @@ class TestBenignUnknownDmesgRules(unittest.TestCase):
             self.assertEqual(result, [])
             mock_fail.assert_not_called()
 
-    def test_unclassified_kernel_errors_do_not_fail_without_pattern(self):
+    def test_unclassified_kernel_errors_warn_instead_of_fail(self):
         for level, msg in (
             ("emerg", "NMI watchdog: Watchdog detected hard LOCKUP on cpu 3"),
             ("err", "blk_update_request: I/O error, dev sda"),
@@ -381,6 +381,13 @@ class TestBenignUnknownDmesgRules(unittest.TestCase):
             result, mock_fail = self._scan(verify_lib.full_dmesg_scan, (level, msg))
             self.assertEqual(result, [], msg)
             mock_fail.assert_not_called()
+
+    def test_mlx5_dump_cqe_syndrome_zero_is_ignored(self):
+        result, mock_fail = self._scan(
+            verify_lib.full_dmesg_scan, ("err", "mlx5_core 0000:03:00.0: dump CQE: syndrome 0x0")
+        )
+        self.assertEqual(result, [])
+        mock_fail.assert_not_called()
 
     def test_unclassified_amdgpu_error_still_fails_driver_check(self):
         result, mock_fail = self._scan(
@@ -423,11 +430,6 @@ class TestDmesgMigrations(unittest.TestCase):
             self.assertIn("message", item)
             self.assertIn("event_category", item)
             self.assertTrue(item["regex"].startswith("(?i)"))
-
-    def test_cvs_dmesg_analysis_args_disable_unknown_catch_all(self):
-        args = verify_lib.cvs_dmesg_analysis_args()
-        self.assertIs(args.get("check_unknown_dmesg_errors"), False)
-        self.assertTrue(args.get("error_regex"))
 
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
@@ -482,20 +484,6 @@ class TestDmesgMigrations(unittest.TestCase):
         mock_fail.assert_called()
 
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
-    def test_full_dmesg_scan_bounds_with_start_time(self, mock_parse):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
-        mock_parse.return_value = []
-        phdl = MagicMock()
-        phdl.exec.return_value = {"node1": "raw"}
-
-        verify_lib.full_dmesg_scan(phdl, start_time_dict={"node1": "Mon Jun  5 08:53:27"})
-
-        analysis_args = mock_parse.call_args.kwargs.get("analysis_args") or mock_parse.call_args[1].get("analysis_args")
-        start = analysis_args.get("analysis_range_start")
-        self.assertIsNotNone(start)
-        self.assertEqual((start.month, start.day, start.hour, start.minute, start.second), (6, 5, 8, 53, 27))
-
-    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
     def test_full_journalctl_scan_bounds_with_since(self, mock_parse):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = []
@@ -515,11 +503,13 @@ class TestDmesgMigrations(unittest.TestCase):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [
             {
+                "priority": "ERROR",
                 "description": "amdgpu Page Fault",
                 "match_content": "amdgpu 0000:01:00.0 page fault",
                 "category": "SW_DRIVER",
             },
             {
+                "priority": "ERROR",
                 "description": "Filesystem corrupted!",
                 "match_content": "EXT4-fs error (device sda1):",
                 "category": "OS",
@@ -594,7 +584,6 @@ BENIGN_DMESG_LINES = [
     "mpt3sas_cm0: CurrentHostPageSize is 0: Setting default host page size to 4k",
     "RAS: Correctable Errors collector initialized.",
     "RAS: Uncorrectable Errors collector initialized.",
-    "mlx5_core 0000:03:00.0: dump CQE: syndrome 0x0",
 ] + EDAC_BENIGN_DMESG_LINES
 
 REAL_FAULT_DMESG_LINES = [

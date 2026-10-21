@@ -32,6 +32,10 @@ class TestDmesgNoise(unittest.TestCase):
         self.assertTrue(dmesg_noise.line_indicates_driver_error(walker))
         self.assertTrue(dmesg_noise.line_indicates_driver_error(mapping))
 
+    def test_mlx5_dump_cqe_syndrome_zero_is_benign(self):
+        line = 'mlx5_core 0000:03:00.0: dump CQE: syndrome 0x0'
+        self.assertTrue(dmesg_noise.dmesg_line_is_benign(line))
+
     def test_firmware_bug_warning_is_benign(self):
         line = (
             '[Firmware Bug]: cpu 0, try to use APIC520 (LVT offset 2) for vector 0xf4, '
