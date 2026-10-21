@@ -59,8 +59,11 @@ viewer.
 Run Deck interactive viewer
 ---------------------------
 
-The interactive viewer charts bus bandwidth, algorithm bandwidth, and time by
-message size, and includes the full results table.
+The interactive viewer adds series and search filters, charts with legend
+swatches and reset zoom, and a paginated full results table.
+
+.. image:: /images/network_rccl_rundeck_viewer_filters.png
+   :alt: RCCL Run Deck interactive viewer filters
 
 .. image:: /images/network_rccl_rundeck_viewer_charts.png
    :alt: RCCL Run Deck interactive viewer bandwidth charts
