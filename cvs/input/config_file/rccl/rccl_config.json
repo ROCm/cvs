@@ -5,7 +5,7 @@
             "no_of_local_ranks": "8",
             "_comment_mpi_pml": "MPI Point-to-Point Messaging Layer: 'auto' (auto-detect UCX support), 'ucx' (force UCX), or 'ob1' (force OpenIB/TCP fallback). This remains in config because it is an MPI launch option, not an env-script setting.",
             "mpi_pml": "auto",
-            "_comment_mpi_dir": "Open MPI install prefix. A trailing /bin is stripped. Used for mpirun and, on Spur/Slurm, OPAL_PREFIX plus OMPI_MCA_* exports — do not put those in the env script.",
+            "_comment_mpi_dir": "Open MPI install prefix. A trailing /bin is stripped. Used for mpirun and, on Spur/Slurm, OPAL_PREFIX plus OMPI_MCA_* exports \u2014 do not put those in the env script.",
             "mpi_dir": "/home/{user-id}/openmpi",
             "_comment_mpi_oob_port": "TCP OOB interface. Bare metal: mpirun --mca btl/oob_tcp_if_include. Managed: OMPI_MCA_btl_tcp_if_include / oob_tcp_if_include generated in rccl_lib.",
             "mpi_oob_port": "eth0",
@@ -14,13 +14,22 @@
             "net_dev_list": "",
             "_comment_net_dev_list": "Leave empty for auto-detection from backend NICs, or set explicitly e.g. bnxt_re0:1,bnxt_re1:1,.."
         },
-
         "_comment_env_script": "RCCL/NCCL/HSA/plugin tuning only. MPI/PMIx/ORTE (OMPI_MCA_*, OPAL_PREFIX, PMIX_MCA_gds, ORTE tmpdir) are set by rccl_lib from mpi_params.",
         "env_source_script": "/home/{user-id}/thor2_env_script.sh",
-
         "rccl_test_params": {
             "_comment_rccl_collective": "rccl-tests binary names in rccl_tests_dir; thresholds (results), report series and sub-test labels are keyed by these names. Optional: all_reduce_bias_perf (requires an RCCL build exporting ncclAllReduceWithBias; its JSON rows report the collective as AllReduce).",
-            "rccl_collective": [ "all_reduce_perf", "all_gather_perf", "scatter_perf", "gather_perf", "reduce_perf", "reduce_scatter_perf", "sendrecv_perf", "alltoall_perf", "alltoallv_perf", "broadcast_perf" ],
+            "rccl_collective": [
+                "all_reduce_perf",
+                "all_gather_perf",
+                "scatter_perf",
+                "gather_perf",
+                "reduce_perf",
+                "reduce_scatter_perf",
+                "sendrecv_perf",
+                "alltoall_perf",
+                "alltoallv_perf",
+                "broadcast_perf"
+            ],
             "rccl_tests_dir": "/home/{user-id}/rccl-tests/build",
             "start_msg_size": "1024",
             "end_msg_size": "16g",
@@ -33,9 +42,10 @@
             "_comment_rccl_test_flags": "Optional rccl-tests binary flags. rccl_timeout = rccl-tests internal timer passed as -T (seconds; omit to not set). output_algo_proto_channels = boolean toggle for rccl-tests' -A 1 algorithm/protocol/channels diagnostic output.",
             "rccl_timeout": "1800",
             "output_algo_proto_channels": false,
-            "data_types": ["float"]
+            "data_types": [
+                "float"
+            ]
         },
-
         "_comment_cvs_params": "Perf writes per-collective files named from rccl_result_file's stem: <stem>_<collective>_<dtype>.json per data type, <stem>_<collective>.json (combined), <stem>_<collective>_aggregated.json and <stem>_<collective>_topology_check.json, so every collective in a suite run is kept. Regression writes <stem>_<collective>[_<case-hash>].json and its topology audit, so every collective and regression parameter combination is kept. Characters outside the unreserved filename set are percent-encoded in collective and data type names; configs with colliding derived perf paths fail before launch. Managed runs require writable shared storage; containers must bind-mount the result directory at the same path.",
         "cvs_params": {
             "cluster_snapshot_debug": "False",
@@ -45,10 +55,10 @@
             "_comment_report_ecc_blocks": "Optional list when report_ecc_delta is True. Only these ECC blocks are captured, compared, and reported (e.g. [\"UMC\", \"XGMI_WAFL\"]). Omit or leave empty for all blocks. An unknown name fails the test. Allowed: UMC, SDMA, GFX, MMHUB, PCIE_BIF, HDP, XGMI_WAFL.",
             "_comment_nic_model": "Selects NIC-keyed results.<nic> thresholds (thor, ainic, connectx). The shipped flat results table is used when no matching NIC/rank key exists.",
             "nic_model": "thor",
-            "_comment_fabric": "scale_out (default) uses results.<nic> then the flat table; scale_up uses only results.scale_up (see mi300x/mi350x_rccl_single_node_config.json).",
-            "fabric": "scale_out",
-            "_comment_verification": "Setting any verify_* flag to True enables that check and can fail the test; set results thresholds for this cluster first.",
+            "_comment_verification": "Setting any verify_* flag to True enables that check and can fail the test. verify_bus_bw is False in this sample because only thor all_reduce float at 8 GiB is guide-backed: entries cover 2-16 nodes at 8 ranks per node (16-128 total ranks). Other NICs and unlisted rank counts fall back to flat examples (compared without slack at bus_bw_tolerance 1.0); a different topology with a listed total rank count resolves to the same entry and must override it. MI300X needs 304, and regression/pairwise reuse the same entries. Set it to True for qualification after checking results for your GPU, NIC and rank count.",
             "verify_bus_bw": "False",
+            "_comment_bus_bw_tolerance": "Fraction in (0, 1] of the reference a measurement must reach; default 0.95. 1.0 enforces the published all_reduce bar exactly. With 1.0 the flat example table is also compared without slack; those values are examples, and verify_bus_bw is off by default.",
+            "bus_bw_tolerance": "1.0",
             "verify_bw_dip": "False",
             "verify_lat_dip": "False",
             "_comment_topology_check": "How CVS reacts when rccl-tests' reported nodes/ranks/ranksPerNode/gpusPerRank disagree with the topology CVS launched. 'warn' (default) logs and records the mismatch; 'strict' fails the test; 'off' disables only the requested-vs-reported comparison. Checks are skipped when all rows omit topology. Use 'strict' once your rccl-tests build reports per-node rank counts correctly (see AIMVT-334).",
@@ -59,21 +69,251 @@
             "pairwise_min_bw": "300",
             "_comment_pairwise_min_bw": "Minimum bus BW in GB/s required for Phase 2 incremental admission (Phase 1 pairwise never gates on bandwidth, matching the original bash tool). Set to 0 to skip the BW check.",
             "pairwise_results_file": "/tmp/rccl_pairwise_results.json",
-            "_comment_pairwise_results_file": "Local JSON file where rccl_pairwise.py persists the Phase 1 pass/fail lists and the Phase 2 final valid/excluded host lists."
+            "_comment_pairwise_results_file": "Local JSON file where rccl_pairwise.py persists the Phase 1 pass/fail lists and the Phase 2 final valid/excluded host lists.",
+            "fabric": "scale_out",
+            "_comment_fabric": "scale_out (default) uses results.<nic> then the flat table; scale_up uses only results.scale_up (see mi300x/mi350x_rccl_single_node_config.json)."
         },
-
         "_comment_regression": "New regression object format using NCCL_* environment variable names. Creates Cartesian product of all combinations. Channel config uses 'min-max' format (e.g., '16-16') or 'default'. Tree algorithm is automatically filtered to only run with all_reduce_perf collective.",
         "regression": {
-            "NCCL_ALGO": [ "Ring", "Tree" ],
-            "NCCL_PROTO": [ "Simple" ],
-            "NCCL_IB_QPS_PER_CONNECTION": [ "1", "2" ],
-            "NCCL_PXN_DISABLE": [ "0", "1" ],
-            "NCCL_MIN_NCHANNELS": [ "8", "16" ],
-            "NCCL_MAX_NCHANNELS": [ "8", "16" ]
+            "NCCL_ALGO": [
+                "Ring",
+                "Tree"
+            ],
+            "NCCL_PROTO": [
+                "Simple"
+            ],
+            "NCCL_IB_QPS_PER_CONNECTION": [
+                "1",
+                "2"
+            ],
+            "NCCL_PXN_DISABLE": [
+                "0",
+                "1"
+            ],
+            "NCCL_MIN_NCHANNELS": [
+                "8",
+                "16"
+            ],
+            "NCCL_MAX_NCHANNELS": [
+                "8",
+                "16"
+            ]
         },
-
-        "_comments_results": "Both perf and regression read results here. These legacy flat examples assume 2 nodes; calibrate for your hardware before setting verify_bus_bw=True. For references tied to NIC, data types and rank count, use results.<nic>.<collective>-<types>-<ranks>.<bytes>.bus_bw (see the RCCL README).",
+        "_comments_results": "Both perf and regression read results here. NIC/rank entries (results.<nic>.<collective>-<data_types>-<total ranks>) take precedence over the legacy flat per-collective table, whose values are generic 2-node examples, not acceptance criteria. Each size entry is {\"bus_bw\": GB/s}; a measurement must reach bus_bw x cvs_params.bus_bw_tolerance. A null entry means no published threshold: with verify_bus_bw=True the collective is logged as not gated. A missing entry, or a configured message size with no result row, fails when verify_bus_bw=True.",
+        "_comments_results_thor": "The published MI350X/MI355X scale-out all_reduce bar is >= 350 GB/s at 8589934592 bytes for 2-16 nodes at 8 ranks per node. The table contains an exact rank key for every total rank count from 16 through 128 in steps of 8; each is enforced exactly because cvs_params.bus_bw_tolerance is 1.0. It applies when nic_model resolves to thor and data_types is [\"float\"]. Since keys use total ranks, another topology with the same rank count also resolves to the entry and must override it. Set every all_reduce entry to 304 for MI300X. The other nine collectives are null at the same rank counts because no bar is published. OPEN: the guide lists both 304 and 350 for MI355X; 350 is shipped pending confirmation. OPEN: the guide's \"8 GB\" is read as 8 GiB = 8589934592 bytes, the size rccl-tests emits with step factor 2. No MI455X/Helios bar is published; other thor platforms must override the all_reduce entries.",
         "results": {
+            "thor": {
+                "all_reduce_perf-float-16": {
+                    "8589934592": {
+                        "bus_bw": "350.00"
+                    }
+                },
+                "all_gather_perf-float-16": null,
+                "scatter_perf-float-16": null,
+                "gather_perf-float-16": null,
+                "reduce_perf-float-16": null,
+                "reduce_scatter_perf-float-16": null,
+                "sendrecv_perf-float-16": null,
+                "alltoall_perf-float-16": null,
+                "alltoallv_perf-float-16": null,
+                "broadcast_perf-float-16": null,
+                "all_reduce_perf-float-24": {
+                    "8589934592": {
+                        "bus_bw": "350.00"
+                    }
+                },
+                "all_gather_perf-float-24": null,
+                "scatter_perf-float-24": null,
+                "gather_perf-float-24": null,
+                "reduce_perf-float-24": null,
+                "reduce_scatter_perf-float-24": null,
+                "sendrecv_perf-float-24": null,
+                "alltoall_perf-float-24": null,
+                "alltoallv_perf-float-24": null,
+                "broadcast_perf-float-24": null,
+                "all_reduce_perf-float-32": {
+                    "8589934592": {
+                        "bus_bw": "350.00"
+                    }
+                },
+                "all_gather_perf-float-32": null,
+                "scatter_perf-float-32": null,
+                "gather_perf-float-32": null,
+                "reduce_perf-float-32": null,
+                "reduce_scatter_perf-float-32": null,
+                "sendrecv_perf-float-32": null,
+                "alltoall_perf-float-32": null,
+                "alltoallv_perf-float-32": null,
+                "broadcast_perf-float-32": null,
+                "all_reduce_perf-float-40": {
+                    "8589934592": {
+                        "bus_bw": "350.00"
+                    }
+                },
+                "all_gather_perf-float-40": null,
+                "scatter_perf-float-40": null,
+                "gather_perf-float-40": null,
+                "reduce_perf-float-40": null,
+                "reduce_scatter_perf-float-40": null,
+                "sendrecv_perf-float-40": null,
+                "alltoall_perf-float-40": null,
+                "alltoallv_perf-float-40": null,
+                "broadcast_perf-float-40": null,
+                "all_reduce_perf-float-48": {
+                    "8589934592": {
+                        "bus_bw": "350.00"
+                    }
+                },
+                "all_gather_perf-float-48": null,
+                "scatter_perf-float-48": null,
+                "gather_perf-float-48": null,
+                "reduce_perf-float-48": null,
+                "reduce_scatter_perf-float-48": null,
+                "sendrecv_perf-float-48": null,
+                "alltoall_perf-float-48": null,
+                "alltoallv_perf-float-48": null,
+                "broadcast_perf-float-48": null,
+                "all_reduce_perf-float-56": {
+                    "8589934592": {
+                        "bus_bw": "350.00"
+                    }
+                },
+                "all_gather_perf-float-56": null,
+                "scatter_perf-float-56": null,
+                "gather_perf-float-56": null,
+                "reduce_perf-float-56": null,
+                "reduce_scatter_perf-float-56": null,
+                "sendrecv_perf-float-56": null,
+                "alltoall_perf-float-56": null,
+                "alltoallv_perf-float-56": null,
+                "broadcast_perf-float-56": null,
+                "all_reduce_perf-float-64": {
+                    "8589934592": {
+                        "bus_bw": "350.00"
+                    }
+                },
+                "all_gather_perf-float-64": null,
+                "scatter_perf-float-64": null,
+                "gather_perf-float-64": null,
+                "reduce_perf-float-64": null,
+                "reduce_scatter_perf-float-64": null,
+                "sendrecv_perf-float-64": null,
+                "alltoall_perf-float-64": null,
+                "alltoallv_perf-float-64": null,
+                "broadcast_perf-float-64": null,
+                "all_reduce_perf-float-72": {
+                    "8589934592": {
+                        "bus_bw": "350.00"
+                    }
+                },
+                "all_gather_perf-float-72": null,
+                "scatter_perf-float-72": null,
+                "gather_perf-float-72": null,
+                "reduce_perf-float-72": null,
+                "reduce_scatter_perf-float-72": null,
+                "sendrecv_perf-float-72": null,
+                "alltoall_perf-float-72": null,
+                "alltoallv_perf-float-72": null,
+                "broadcast_perf-float-72": null,
+                "all_reduce_perf-float-80": {
+                    "8589934592": {
+                        "bus_bw": "350.00"
+                    }
+                },
+                "all_gather_perf-float-80": null,
+                "scatter_perf-float-80": null,
+                "gather_perf-float-80": null,
+                "reduce_perf-float-80": null,
+                "reduce_scatter_perf-float-80": null,
+                "sendrecv_perf-float-80": null,
+                "alltoall_perf-float-80": null,
+                "alltoallv_perf-float-80": null,
+                "broadcast_perf-float-80": null,
+                "all_reduce_perf-float-88": {
+                    "8589934592": {
+                        "bus_bw": "350.00"
+                    }
+                },
+                "all_gather_perf-float-88": null,
+                "scatter_perf-float-88": null,
+                "gather_perf-float-88": null,
+                "reduce_perf-float-88": null,
+                "reduce_scatter_perf-float-88": null,
+                "sendrecv_perf-float-88": null,
+                "alltoall_perf-float-88": null,
+                "alltoallv_perf-float-88": null,
+                "broadcast_perf-float-88": null,
+                "all_reduce_perf-float-96": {
+                    "8589934592": {
+                        "bus_bw": "350.00"
+                    }
+                },
+                "all_gather_perf-float-96": null,
+                "scatter_perf-float-96": null,
+                "gather_perf-float-96": null,
+                "reduce_perf-float-96": null,
+                "reduce_scatter_perf-float-96": null,
+                "sendrecv_perf-float-96": null,
+                "alltoall_perf-float-96": null,
+                "alltoallv_perf-float-96": null,
+                "broadcast_perf-float-96": null,
+                "all_reduce_perf-float-104": {
+                    "8589934592": {
+                        "bus_bw": "350.00"
+                    }
+                },
+                "all_gather_perf-float-104": null,
+                "scatter_perf-float-104": null,
+                "gather_perf-float-104": null,
+                "reduce_perf-float-104": null,
+                "reduce_scatter_perf-float-104": null,
+                "sendrecv_perf-float-104": null,
+                "alltoall_perf-float-104": null,
+                "alltoallv_perf-float-104": null,
+                "broadcast_perf-float-104": null,
+                "all_reduce_perf-float-112": {
+                    "8589934592": {
+                        "bus_bw": "350.00"
+                    }
+                },
+                "all_gather_perf-float-112": null,
+                "scatter_perf-float-112": null,
+                "gather_perf-float-112": null,
+                "reduce_perf-float-112": null,
+                "reduce_scatter_perf-float-112": null,
+                "sendrecv_perf-float-112": null,
+                "alltoall_perf-float-112": null,
+                "alltoallv_perf-float-112": null,
+                "broadcast_perf-float-112": null,
+                "all_reduce_perf-float-120": {
+                    "8589934592": {
+                        "bus_bw": "350.00"
+                    }
+                },
+                "all_gather_perf-float-120": null,
+                "scatter_perf-float-120": null,
+                "gather_perf-float-120": null,
+                "reduce_perf-float-120": null,
+                "reduce_scatter_perf-float-120": null,
+                "sendrecv_perf-float-120": null,
+                "alltoall_perf-float-120": null,
+                "alltoallv_perf-float-120": null,
+                "broadcast_perf-float-120": null,
+                "all_reduce_perf-float-128": {
+                    "8589934592": {
+                        "bus_bw": "350.00"
+                    }
+                },
+                "all_gather_perf-float-128": null,
+                "scatter_perf-float-128": null,
+                "gather_perf-float-128": null,
+                "reduce_perf-float-128": null,
+                "reduce_scatter_perf-float-128": null,
+                "sendrecv_perf-float-128": null,
+                "alltoall_perf-float-128": null,
+                "alltoallv_perf-float-128": null,
+                "broadcast_perf-float-128": null
+            },
             "all_reduce_perf": {
                 "bus_bw": {
                     "8589934592": "330.00",

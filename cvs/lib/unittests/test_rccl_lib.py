@@ -61,6 +61,12 @@ class TestRcclLib(unittest.TestCase):
             return json.load(stream)['rccl']
 
     @staticmethod
+    def _flat_shipped_config():
+        config = TestRcclLib._shipped_config()
+        config['results'] = {k: v for k, v in config['results'].items() if k not in rccl_lib.NIC_TYPES}
+        return config
+
+    @staticmethod
     def _configured_job(config):
         with patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True):
             return rccl_lib.RcclJob.from_config(_FakeOrch(), 'all_reduce_perf', config, ['n1'], ['n1'])
@@ -228,9 +234,9 @@ class TestRcclLib(unittest.TestCase):
             'thor': {'all_reduce_perf-float-8': {'1024': {'bus_bw': '100'}}},
             'all_reduce_perf': {'bus_bw': {'1024': '50'}},
         }
-        self.assertEqual(self._configured_job(config)._expected_results(['float'])['1024']['bus_bw'], '200')
+        self.assertEqual(self._configured_job(config)._expected_results(['float'])['1024']['bus_bw'], 200.0)
         config['cvs_params']['fabric'] = 'scale_out'
-        self.assertEqual(self._configured_job(config)._expected_results(['float'])['1024']['bus_bw'], '100')
+        self.assertEqual(self._configured_job(config)._expected_results(['float'])['1024']['bus_bw'], 100.0)
 
     def test_scale_up_missing_key_ignores_nic_and_flat_references(self):
         config = self._shipped_config()
@@ -333,8 +339,110 @@ class TestRcclLib(unittest.TestCase):
                     self.assertFalse(any('lower than expected' in msg for msg in rccl_lib.globals.error_list))
                     self.assertEqual([(v['check'], v['status']) for v in job.verdicts], [('bus_bw', 'fail')])
 
-    def test_expected_results_transposes_shipped_shape(self):
+    def test_shipped_thor_entries_follow_guide(self):
         config = self._shipped_config()
+        collectives = config['rccl_test_params']['rccl_collective']
+        thor = config['results']['thor']
+        ranks = range(16, 129, 8)
+        self.assertEqual(
+            set(thor),
+            {f'{collective}-float-{rank}' for collective in collectives for rank in ranks},
+        )
+        job = self._configured_job(config)
+        for collective in collectives:
+            with self.subTest(collective=collective):
+                job.test_name = collective
+                key = f'{collective}-float-16'
+                expected = job._expected_results(['float'])
+                if collective == 'all_reduce_perf':
+                    self.assertEqual(thor[key], {'8589934592': {'bus_bw': '350.00'}})
+                    self.assertEqual(expected, {'8589934592': {'bus_bw': 350.0}})
+                    flat = self._configured_job(self._flat_shipped_config())
+                    self.assertNotEqual(expected, flat._expected_results(['float']))
+                else:
+                    self.assertIsNone(thor[key])
+                    self.assertEqual(expected, {})
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_guide_all_reduce_gate_is_absolute(self, mock_fail_test):
+        config = self._shipped_config()
+        self.assertEqual(config['cvs_params']['bus_bw_tolerance'], '1.0')
+        config['cvs_params']['verify_bus_bw'] = 'True'
+        job = self._configured_job(config)
+        expected = job._expected_results(['float'])
+        for bandwidth, failed in ((349.0, True), (332.5, True), (350.0, False)):
+            with self.subTest(bandwidth=bandwidth):
+                mock_fail_test.reset_mock()
+                job._verify_results([{'size': 8589934592, 'inPlace': 1, 'busBw': bandwidth}], expected)
+                if failed:
+                    mock_fail_test.assert_called_once()
+                    self.assertIn('expected bus BW 350.0', mock_fail_test.call_args.args[0])
+                    self.assertIn('(threshold with 0% tolerance: 350.00)', mock_fail_test.call_args.args[0])
+                else:
+                    mock_fail_test.assert_not_called()
+                self.assertEqual(
+                    [(verdict['check'], verdict['status']) for verdict in job.verdicts],
+                    [('bus_bw', 'fail' if failed else 'pass')],
+                )
+                self.assertEqual(job.verdicts[0]['threshold'], 350.0)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_shipped_unpublished_collectives_skip_bus_bw_gate(self, mock_fail_test):
+        config = self._shipped_config()
+        config['cvs_params']['verify_bus_bw'] = 'True'
+        job = self._configured_job(config)
+        rows = [
+            {'size': 8589934592, 'inPlace': 1, 'busBw': 1.0},
+            {'size': 8589934592, 'inPlace': 0, 'busBw': 1.0},
+        ]
+        for collective in config['rccl_test_params']['rccl_collective']:
+            if collective == 'all_reduce_perf':
+                continue
+            with self.subTest(collective=collective):
+                mock_fail_test.reset_mock()
+                job.test_name = collective
+                with self.assertLogs(rccl_lib.log, 'WARNING') as captured:
+                    job._verify_results(rows, job._expected_results(['float']))
+                mock_fail_test.assert_not_called()
+                self.assertIn(f'No published threshold for {collective}; bus_bw not gated', captured.output[0])
+                self.assertEqual(job.verdicts, [])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_null_marker_skips_and_missing_entry_fails(self, mock_fail_test):
+        config = self._shipped_config()
+        config['cvs_params']['verify_bus_bw'] = 'True'
+        references = (
+            ({'thor': {'all_reduce_perf-float-16': None}, 'all_reduce_perf': {'bus_bw': {'1024': '80'}}}, {}),
+            ({'all_reduce_perf': None}, {}),
+            ({'thor': {}}, None),
+            ({'thor': {'all_reduce_perf-float-16': {}}}, None),
+            ({'thor': {'all_reduce_perf-float-16': {'bus_bw': {}}}}, None),
+        )
+        for reference, resolved in references:
+            with self.subTest(reference=reference):
+                mock_fail_test.reset_mock()
+                config['results'] = reference
+                job = self._configured_job(config)
+                expected = job._expected_results(['float'])
+                self.assertEqual(expected, resolved)
+                if expected == {}:
+                    with self.assertLogs(rccl_lib.log, 'WARNING') as captured:
+                        job._verify_results([{'size': 1024, 'inPlace': 1, 'busBw': 1.0}], expected)
+                    self.assertIn('No published threshold for all_reduce_perf; bus_bw not gated', captured.output[0])
+                    mock_fail_test.assert_not_called()
+                    self.assertEqual(job.verdicts, [])
+                else:
+                    job._verify_results([{'size': 1024, 'inPlace': 1, 'busBw': 1.0}], expected)
+                    mock_fail_test.assert_called_once_with(
+                        'No bus bandwidth thresholds for all_reduce_perf in rccl.results.all_reduce_perf'
+                    )
+                    self.assertEqual(
+                        [(verdict['check'], verdict['status'], verdict['size']) for verdict in job.verdicts],
+                        [('bus_bw', 'fail', None)],
+                    )
+
+    def test_expected_results_transposes_shipped_shape(self):
+        config = self._flat_shipped_config()
         job = self._configured_job(config)
         self.assertEqual(
             job._expected_results(['float']),
@@ -437,24 +545,26 @@ class TestRcclLib(unittest.TestCase):
 
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_omitted_dip_flags_are_disabled(self, mock_fail_test):
-        job = self._configured_job(self._shipped_config())
+        job = self._configured_job(self._flat_shipped_config())
         rccl_lib.RcclVerifier(job.test_name, self._taper_results(), job._expected_results(['float'])).check()
         mock_fail_test.assert_not_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
-    def test_enabled_bus_bw_uses_shipped_thresholds(self, mock_fail_test):
-        job = self._configured_job(self._shipped_config())
+    def test_enabled_bus_bw_uses_shipped_flat_thresholds(self, mock_fail_test):
+        job = self._configured_job(self._flat_shipped_config())
         job.cvs_params['verify_bus_bw'] = 'True'
         results = [
             {'size': 8589934592, 'inPlace': 1, 'busBw': 10.0, 'time': 20.0},
+            {'size': 17179869184, 'inPlace': 1, 'busBw': 400.0, 'time': 10.0},
         ]
         job._verify_results(results, job._expected_results(['float']))
         mock_fail_test.assert_called_once()
         self.assertIn('expected bus BW 330.0', mock_fail_test.call_args.args[0])
+        self.assertIn('(threshold with 0% tolerance: 330.00)', mock_fail_test.call_args.args[0])
 
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_dip_flags_enable_their_checks(self, mock_fail_test):
-        job = self._configured_job(self._shipped_config())
+        job = self._configured_job(self._flat_shipped_config())
         expected = job._expected_results(['float'])
         for flag, failure in (
             ('verify_bw_dip', 'BusBW'),
@@ -499,7 +609,7 @@ class TestRcclLib(unittest.TestCase):
         mock_fail_test.assert_not_called()
 
     def test_shipped_collectives_have_numeric_thresholds(self):
-        config = self._shipped_config()
+        config = self._flat_shipped_config()
         job = self._configured_job(config)
         for collective in config['rccl_test_params']['rccl_collective']:
             with self.subTest(collective=collective):
@@ -1856,6 +1966,78 @@ class TestRcclLib(unittest.TestCase):
                         self.assertEqual(getattr(job, method)(), rows)
                     self.assertTrue(any('lower than expected bus BW' in msg for msg in rccl_lib.globals.error_list))
 
+    def test_null_marker_records_no_failure_in_perf_and_regression(self):
+        config = {
+            'mpi_params': {'no_of_nodes': 2, 'no_of_local_ranks': 8},
+            'rccl_test_params': {'data_types': ['float']},
+            'cvs_params': {
+                'nic_model': 'thor',
+                'verify_bus_bw': 'True',
+                'verify_bw_dip': 'False',
+                'verify_lat_dip': 'False',
+                'rccl_result_file': '/shared/rccl.json',
+            },
+            'results': {'thor': {'all_reduce_perf-float-16': None}},
+        }
+        rows = [{'size': 1024, 'inPlace': 1, 'busBw': 1}]
+        for method in ('run_perf', 'run_regression'):
+            with self.subTest(method=method):
+                rccl_lib.globals.error_list = []
+                job = rccl_lib.RcclJob.from_config(_FakeOrch(), 'all_reduce_perf', config, ['n1', 'n2'], ['v1', 'v2'])
+                with (
+                    patch.object(job, 'prepare'),
+                    patch.object(job, 'execute', return_value='# Avg bus bandwidth : 1'),
+                    patch.object(job, 'read_results', return_value=rows),
+                    patch.object(job, '_run_perf_dtype', return_value=(rows, [])),
+                    patch.object(job, 'save_results', return_value=True),
+                    patch.object(job, 'collect_gpu_info'),
+                ):
+                    self.assertEqual(getattr(job, method)(), rows)
+                self.assertEqual(rccl_lib.globals.error_list, [])
+                self.assertEqual(job.verdicts, [])
+
+    def test_missing_configured_size_fails_perf_and_regression(self):
+        config = self._shipped_config()
+        config['cvs_params']['verify_bus_bw'] = 'True'
+        rows = [{'size': size, 'inPlace': 1, 'busBw': 400.0} for size in (1073741824, 2147483648, 4294967296)]
+        for method in ('run_perf', 'run_regression'):
+            with self.subTest(method=method):
+                rccl_lib.globals.error_list = []
+                job = self._configured_job(config)
+                with (
+                    patch.object(job, 'prepare'),
+                    patch.object(job, 'execute', return_value='# Avg bus bandwidth : 400'),
+                    patch.object(job, 'read_results', return_value=rows),
+                    patch.object(job, '_run_perf_dtype', return_value=(rows, [])),
+                    patch.object(job, 'save_results', return_value=True),
+                    patch.object(job, 'collect_gpu_info'),
+                ):
+                    self.assertEqual(getattr(job, method)(), rows)
+                self.assertTrue(
+                    any(
+                        'all_reduce_perf' in message and '8589934592' in message
+                        for message in rccl_lib.globals.error_list
+                    )
+                )
+
+    def test_malformed_nic_reference_reports_one_failure_during_regression(self):
+        config = self._shipped_config()
+        config['results'] = {'thor': {'all_reduce_perf-float-16': 'invalid'}}
+        config['cvs_params']['verify_bus_bw'] = 'True'
+        job = self._configured_job(config)
+        rows = [{'size': 2048, 'inPlace': 1, 'busBw': 10.0}]
+        with (
+            patch.object(rccl_lib.globals, 'error_list', []),
+            patch.object(job, 'prepare'),
+            patch.object(job, 'execute', return_value='RCCL output'),
+            patch.object(job, 'read_results', return_value=rows),
+            patch.object(job, 'collect_gpu_info'),
+            patch.object(job, '_save_topology_checks'),
+        ):
+            job.run_regression()
+            self.assertEqual(len(rccl_lib.globals.error_list), 1)
+            self.assertIn('rccl.results.thor.all_reduce_perf-float-16', rccl_lib.globals.error_list[0])
+
     @staticmethod
     def _bias_rows():
         """Rows shaped like all_reduce_bias_perf output on a 4-GPU node."""
@@ -1967,7 +2149,7 @@ class TestRcclLib(unittest.TestCase):
         job = self._job(_FakeOrch())
         job.cvs_params['nic_model'] = 'Broadcom'
         job.expected_results = {'thor': {'all_reduce_perf-float_half-16': {'1024': {'bus_bw': '100'}}}}
-        self.assertEqual(job._expected_results(['float', 'half']), {'1024': {'bus_bw': '100'}})
+        self.assertEqual(job._expected_results(['float', 'half']), {'1024': {'bus_bw': 100.0}})
         self.assertIsNone(job._expected_results(['float']))
         job.no_of_global_ranks = 8
         self.assertIsNone(job._expected_results(['float', 'half']))
