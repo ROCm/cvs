@@ -234,9 +234,9 @@ class TestRcclLib(unittest.TestCase):
             'thor': {'all_reduce_perf-float-8': {'1024': {'bus_bw': '100'}}},
             'all_reduce_perf': {'bus_bw': {'1024': '50'}},
         }
-        self.assertEqual(self._configured_job(config)._expected_results(['float'])['1024']['bus_bw'], '200')
+        self.assertEqual(self._configured_job(config)._expected_results(['float'])['1024']['bus_bw'], 200.0)
         config['cvs_params']['fabric'] = 'scale_out'
-        self.assertEqual(self._configured_job(config)._expected_results(['float'])['1024']['bus_bw'], '100')
+        self.assertEqual(self._configured_job(config)._expected_results(['float'])['1024']['bus_bw'], 100.0)
 
     def test_scale_up_missing_key_ignores_nic_and_flat_references(self):
         config = self._shipped_config()
@@ -609,7 +609,7 @@ class TestRcclLib(unittest.TestCase):
         mock_fail_test.assert_not_called()
 
     def test_shipped_collectives_have_numeric_thresholds(self):
-        config = self._shipped_config()
+        config = self._flat_shipped_config()
         job = self._configured_job(config)
         for collective in config['rccl_test_params']['rccl_collective']:
             with self.subTest(collective=collective):
@@ -2149,7 +2149,7 @@ class TestRcclLib(unittest.TestCase):
         job = self._job(_FakeOrch())
         job.cvs_params['nic_model'] = 'Broadcom'
         job.expected_results = {'thor': {'all_reduce_perf-float_half-16': {'1024': {'bus_bw': '100'}}}}
-        self.assertEqual(job._expected_results(['float', 'half']), {'1024': {'bus_bw': '100'}})
+        self.assertEqual(job._expected_results(['float', 'half']), {'1024': {'bus_bw': 100.0}})
         self.assertIsNone(job._expected_results(['float']))
         job.no_of_global_ranks = 8
         self.assertIsNone(job._expected_results(['float', 'half']))
