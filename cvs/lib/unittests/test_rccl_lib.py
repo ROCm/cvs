@@ -1935,14 +1935,21 @@ class TestRcclLib(unittest.TestCase):
         ):
             job.run_perf()
 
-        mock_fail_test.assert_called_once()
+        self.assertEqual(mock_fail_test.call_count, 2)
+        fail_messages = [call.args[0] for call in mock_fail_test.call_args_list]
         self.assertIn(
             'No bus bandwidth thresholds for all_reduce_bias_perf in rccl.results.all_reduce_bias_perf',
-            mock_fail_test.call_args.args[0],
+            fail_messages,
         )
-        self.assertEqual(len(job.verdicts), 1)
-        self.assertEqual(job.verdicts[0]['check'], 'bus_bw')
-        self.assertEqual(job.verdicts[0]['status'], 'fail')
+        self.assertIn(
+            'No reference message sizes for BW dip check of all_reduce_bias_perf in rccl.results.all_reduce_bias_perf',
+            fail_messages,
+        )
+        self.assertEqual(len(job.verdicts), 2)
+        self.assertEqual(
+            sorted((verdict['check'], verdict['status']) for verdict in job.verdicts),
+            [('bus_bw', 'fail'), ('bw_dip', 'fail')],
+        )
 
     def test_threshold_config_location_precedence_and_legacy_fallback(self):
         legacy = {'all_reduce_perf': {'bus_bw': {'1024': '100'}}}
@@ -2143,7 +2150,8 @@ class TestRcclTopology(unittest.TestCase):
     def test_invalid_mode_warns_and_defaults_to_warn(self, fail):
         with patch.object(rccl_lib.log, 'warning') as warning:
             job = self._job(cvs_params={'topology_check': 'typo'})
-            self.assertIn('falling back to warn', warning.call_args.args[0])
+            self.assertEqual(warning.call_args.args[3], 'warn')
+            self.assertEqual(warning.call_args.args[2], 'typo')
             job._check_reported_topology([self.row], 'float', 8)
         fail.assert_not_called()
         self.assertEqual(job.topology_checks[0]['mode'], 'warn')
