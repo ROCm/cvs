@@ -15,7 +15,12 @@ from cvs.lib.report.inference_payload import sweep_has_multi_shape_comparison
 from cvs.lib.report.render.cell_card import CellCardConfig, CellCardRenderer
 from cvs.lib.report.render.gate_matrix import GateMatrixRenderer
 from cvs.lib.report.render.loss_chart import SERIES_COLORS
-from cvs.lib.report.render.panel_shell import paged_table_html, render_results_table_html, results_table_parts
+from cvs.lib.report.render.panel_shell import (
+    paged_table_html,
+    render_artifact_links,
+    render_results_table_html,
+    results_table_parts,
+)
 from cvs.lib.report.rundeck.context import is_empty, resolve_bind
 from cvs.lib.report.rundeck.runtime.sweep_charts import SweepChartRenderer
 from cvs.lib.report.rundeck.runtime.theme import render_launch_panel_html
@@ -450,12 +455,8 @@ class DeckCardRenderer:
             or "<p class='muted'>No per-item detail captured.</p>"
         )
 
-        links = []
-        if cell.get("errors_json_href"):
-            links.append(f"<a href='{html.escape(str(cell['errors_json_href']))}'>errors.json</a>")
-        if cell.get("log_tarball_href"):
-            links.append(f"<a href='{html.escape(str(cell['log_tarball_href']))}'>logs.tar.gz</a>")
-        links_html = f"<div class='sm-links'>{''.join(links)}</div>" if links else ""
+        rendered = render_artifact_links(cell)
+        links_html = f"<div class='sm-links'>{rendered}</div>" if rendered else ""
 
         summary_line = f"<div class='sm-summary muted'>{html.escape(str(summary))}</div>" if summary else ""
 

@@ -6,8 +6,9 @@ configured GPU slots, the Tier 1 subprocess list, or the Tier 3 finding map.
 Tier 1 counts one verdict per GPU entry in ``tier1.per_gpu`` plus each node
 operational collector whose key is present.
 
-Tier 2 counts a GEMM or HBM check only when that GPU entry carries the metric or
-its own verdict, and counts local RCCL only when the payload includes it.
+Tier 2 counts a GEMM or HBM check when that metric is on the Tier 2 GPU entry or,
+if Primus stored it there instead, on ``tier1.per_gpu[].details``. Local RCCL
+counts only when the payload includes it.
 
 Tier 3 counts the host/GPU/network groups named in Primus ``checks=`` output.
 ``TIER3_CHECK_CATALOG`` maps a finding's text onto one of those groups; its length
@@ -164,6 +165,43 @@ def _has_number(entry: Any, *keys: str) -> bool:
     return False
 
 
+def tier2_reported_value(check_key: str, tier2_entry: Any, tier2: Any, gpu_idx: int, tier1_details: Any) -> Any:
+    """Return one Tier 2 measurement from the Tier 2 payload or the Tier 1 GPU details."""
+    check_value = None
+    if isinstance(tier2_entry, dict) and check_key in tier2_entry:
+        check_value = tier2_entry.get(check_key)
+    if check_value is None and isinstance(tier2, dict) and isinstance(tier2.get(check_key), list):
+        series = tier2.get(check_key)
+        if gpu_idx < len(series):
+            check_value = series[gpu_idx]
+    if check_value is not None or not isinstance(tier1_details, dict):
+        return check_value
+    if check_key == "large_gemm" and _has_number(tier1_details, "gemm_tflops", "tflops", "large_gemm"):
+        return {"gemm_tflops": tier1_details.get("gemm_tflops", tier1_details.get("tflops"))}
+    if check_key == "hbm_d2d" and _has_number(tier1_details, "hbm_gbs", "gbs", "hbm_d2d"):
+        return {"hbm_gbs": tier1_details.get("hbm_gbs", tier1_details.get("gbs"))}
+    return None
+
+
+def _tier1_details_at(tier1_gpus: List[Dict[str, Any]], gpu_idx: int) -> Dict[str, Any]:
+    if gpu_idx >= len(tier1_gpus) or not isinstance(tier1_gpus[gpu_idx], dict):
+        return {}
+    details = tier1_gpus[gpu_idx].get("details")
+    return details if isinstance(details, dict) else {}
+
+
+def _tier2_detail_width(tier1_gpus: List[Dict[str, Any]]) -> int:
+    """How many leading Tier 1 GPUs carry a GEMM or HBM number in ``details``."""
+    width = 0
+    for idx, _gpu in enumerate(tier1_gpus):
+        details = _tier1_details_at(tier1_gpus, idx)
+        if _has_number(details, "gemm_tflops", "tflops", "large_gemm") or _has_number(
+            details, "hbm_gbs", "gbs", "hbm_d2d"
+        ):
+            width = idx + 1
+    return width
+
+
 def _tier2_point_measured(check_key: str, value: Any, entry: Any) -> bool:
     if _has_own_verdict(value):
         return True
@@ -205,14 +243,21 @@ def count_tier2_tests_from_payload(
     gpus_per_node: Optional[int] = None,
     tier2_enabled: bool = False,
 ) -> int:
-    """Count Tier 2 metrics actually present on one node."""
-    del gpus_per_node
+    """Count Tier 2 metrics actually present on one node.
+
+    When Tier 2 is enabled, GEMM and HBM numbers Primus stored on
+    ``tier1.per_gpu[].details`` count too, so the total matches rows that pass
+    from that fallback. Local RCCL counts when it was measured on a multi-GPU node.
+    """
     if not isinstance(node_payload, dict):
         return 0
+    tier1 = node_payload.get("tier1") if isinstance(node_payload.get("tier1"), dict) else {}
+    tier1_gpus = [entry for entry in (tier1.get("per_gpu") or []) if isinstance(entry, dict)]
     tier2 = node_payload.get("tier2") if isinstance(node_payload.get("tier2"), dict) else {}
+    detail_width = _tier2_detail_width(tier1_gpus) if tier2_enabled else 0
     if not tier2_enabled and not tier2:
         return 0
-    if not tier2:
+    if not tier2 and detail_width == 0:
         return 0
 
     per_gpu = [entry for entry in (tier2.get("per_gpu") or []) if isinstance(entry, dict)]
@@ -220,20 +265,25 @@ def count_tier2_tests_from_payload(
     if width == 0:
         series_lengths = [len(tier2[key]) for key in TIER2_PER_GPU_CHECKS if isinstance(tier2.get(key), list)]
         width = max(series_lengths, default=0)
+    width = max(width, detail_width)
 
     count = 0
     for idx in range(width):
         entry = per_gpu[idx] if idx < len(per_gpu) else {}
+        details = _tier1_details_at(tier1_gpus, idx)
         for check_key in TIER2_PER_GPU_CHECKS:
-            value = entry.get(check_key) if check_key in entry else None
-            if value is None and isinstance(tier2.get(check_key), list) and idx < len(tier2[check_key]):
-                value = tier2[check_key][idx]
+            value = tier2_reported_value(check_key, entry, tier2, idx, details)
             if _tier2_point_measured(check_key, value, entry):
                 count += 1
 
     rccl = tier2.get("rccl") if tier2.get("rccl") is not None else tier2.get(TIER2_RCCL_METRIC)
     rccl_measured = _has_own_verdict(rccl) or _has_number(rccl if isinstance(rccl, dict) else {}, "rccl_gbs", "gbs")
-    if width > 1 and rccl_measured:
+    rccl_population = width
+    if tier2_enabled:
+        rccl_population = max(rccl_population, len(tier1_gpus))
+        if gpus_per_node:
+            rccl_population = max(rccl_population, int(gpus_per_node))
+    if rccl_population > 1 and rccl_measured:
         count += TIER2_RCCL_CHECK
     return count
 
