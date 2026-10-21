@@ -45,6 +45,8 @@
             "_comment_report_ecc_blocks": "Optional list when report_ecc_delta is True. Only these ECC blocks are captured, compared, and reported (e.g. [\"UMC\", \"XGMI_WAFL\"]). Omit or leave empty for all blocks. An unknown name fails the test. Allowed: UMC, SDMA, GFX, MMHUB, PCIE_BIF, HDP, XGMI_WAFL.",
             "_comment_nic_model": "Selects NIC-keyed results.<nic> thresholds (thor, ainic, connectx). The shipped flat results table is used when no matching NIC/rank key exists.",
             "nic_model": "thor",
+            "_comment_fabric": "scale_out (default) uses results.<nic> then the flat table; scale_up uses only results.scale_up (see mi300x/mi350x_rccl_single_node_config.json).",
+            "fabric": "scale_out",
             "_comment_verification": "Setting any verify_* flag to True enables that check and can fail the test; set results thresholds for this cluster first.",
             "verify_bus_bw": "False",
             "verify_bw_dip": "False",

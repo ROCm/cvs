@@ -1,0 +1,53 @@
+{
+    "rccl": {
+        "_comment_platform": "MI350X single-node 8-GPU scale-up (xGMI) all_reduce check against the AMD validation guide bar. Run with rccl_perf on one node; rccl_regression and rccl_pairwise are not intended for this config.",
+        "mpi_params": {
+            "no_of_nodes": "1",
+            "no_of_local_ranks": "8",
+            "_comment_mpi_pml": "Single-node collectives run over xGMI and MPI only bootstraps ranks, so ob1 avoids UCX backend-NIC auto-detection.",
+            "mpi_pml": "ob1",
+            "_comment_mpi_dir": "Open MPI install prefix. A trailing /bin is stripped.",
+            "mpi_dir": "<changeme>",
+            "_comment_mpi_oob_port": "TCP interface used for MPI bootstrap, e.g. the management interface.",
+            "mpi_oob_port": "<changeme>"
+        },
+        "_comment_env_script": "RCCL/HSA tuning script for this platform, or \"none\" to run with rccl-tests defaults.",
+        "env_source_script": "<changeme>",
+        "rccl_test_params": {
+            "rccl_collective": [ "all_reduce_perf" ],
+            "rccl_tests_dir": "<changeme>",
+            "start_msg_size": "1024",
+            "end_msg_size": "16g",
+            "step_function": "2",
+            "threads_per_gpu": "1",
+            "warmup_iterations": "10",
+            "no_of_iterations": "20",
+            "no_of_cycles": "1",
+            "check_iteration_count": "1",
+            "rccl_timeout": "1800",
+            "output_algo_proto_channels": false,
+            "data_types": ["float"]
+        },
+        "cvs_params": {
+            "cluster_snapshot_debug": "False",
+            "_comment_fabric": "scale_up reads only results.scale_up.<collective>-<data_types>-<ranks>; NIC-keyed and flat references are ignored, and a missing key fails when verify_bus_bw is True.",
+            "fabric": "scale_up",
+            "verify_bus_bw": "True",
+            "_comment_bus_bw_tolerance": "1.0 enforces the published bar exactly; the 0.95 default would accept 5% below it.",
+            "bus_bw_tolerance": "1.0",
+            "verify_bw_dip": "False",
+            "verify_lat_dip": "False",
+            "topology_check": "warn",
+            "cvs_exec_timeout": "2400",
+            "rccl_result_file": "{run_dir}/rccl_result_file.json"
+        },
+        "_comments_results": "AMD validation guide bar for MI350X: single-node 8-GPU all_reduce bus BW >= 350 GB/s at 8 GiB (8589934592 bytes), in-place, float. Do not use this as an MI355X gate; the MI355X bar is unresolved (see the RCCL README).",
+        "results": {
+            "scale_up": {
+                "all_reduce_perf-float-8": {
+                    "8589934592": {"bus_bw": "350"}
+                }
+            }
+        }
+    }
+}
