@@ -198,6 +198,22 @@ def _is_tier2_reason(reason):
     return bool(tier2_check_failed_by_primus({"status": parts[1].strip(), "reason": parts[2].strip()}))
 
 
+def _is_tier2_attributed_reason(reason):
+    """True when a node-level ``fail_reasons`` entry belongs on Tier 2, not Tier 1."""
+    if _is_tier2_reason(reason):
+        return True
+    lowered = str(reason).strip().lower()
+    for key in (*TIER2_PER_GPU_CHECKS, TIER2_RCCL_METRIC, "rccl", "gemm", "hbm"):
+        if lowered.startswith(f"{key}:"):
+            return True
+    return False
+
+
+def tier1_unattributed_fail_reasons(result):
+    """Node fail reasons that should surface on Tier 1 when no check row already failed."""
+    return [reason for reason in _node_fail_reasons(result) if not _is_tier2_attributed_reason(reason)]
+
+
 def _slug(text):
     return re.sub(r'_+', '_', re.sub(r'[^0-9a-zA-Z]+', '_', str(text))).strip('_').lower()
 
@@ -557,13 +573,23 @@ def unexplained_tier1_nodes(results, tier2_rows):
 
     ``failed_nodes`` is the verdict of the single invocation, which includes
     ``--tier2-perf``. A GEMM or HBM miss must not be reported as a Tier 1 failure.
-    A node that failed without a Tier 2 row still belongs to Tier 1.
+    A node that failed without a Tier 2 row still belongs to Tier 1. When Primus
+    reports both a Tier 2 miss and another node-level reason, only the Tier 2
+    reasons are dropped from Tier 1 attribution.
     """
-    explained = {row.get('node') for row in tier2_rows if row_is_failure(row)}
+    node_results = results.get('node_results') or {}
     nodes = []
     for node in list(results.get('failed_nodes') or []) + list(results.get('unknown_nodes') or []):
-        if node and node not in explained and node not in nodes:
+        if not node or node in nodes:
+            continue
+        result = node_results.get(node) or {}
+        if tier1_unattributed_fail_reasons(result):
             nodes.append(node)
+            continue
+        node_tier2 = [row for row in tier2_rows if row.get('node') == node]
+        if any(row_is_failure(row) for row in node_tier2):
+            continue
+        nodes.append(node)
     return nodes
 
 

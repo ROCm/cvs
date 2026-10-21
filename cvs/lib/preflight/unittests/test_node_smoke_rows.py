@@ -402,6 +402,31 @@ class TestTierRunnerOutcomes(unittest.TestCase):
         self.assertEqual(tier2_runner_outcome(tier2_rows), "skip")
         self.assertEqual(tier1_runner_outcome(results, tier1_rows, tier2_rows), "fail")
 
+    def test_tier1_runner_fails_when_tier2_miss_and_setup_reason(self):
+        collectors = {key: {"ok": True} for key in TIER1_NODE_OPERATIONAL_COLLECTORS}
+        setup = "could not determine node_smoke status from output"
+        results = {
+            "tier2_perf": True,
+            "gpus_per_node": 1,
+            "total_nodes": 1,
+            "failed_nodes": ["n1"],
+            "unknown_nodes": [],
+            "node_results": {
+                "n1": {
+                    "status": "FAIL",
+                    "fail_reasons": ["large_gemm: 100 < 600", setup],
+                    "node_payload": {
+                        "tier1": {"per_gpu": [{"gpu": 0, "status": "PASS"}], **collectors},
+                        "tier2": {"per_gpu": [{"gpu": 0, "gemm_tflops": 100, "hbm_gbs": 3000}]},
+                    },
+                }
+            },
+        }
+        tier1_rows = build_tier1_metric_rows(results)
+        tier2_rows = build_tier2_metric_rows(results)
+        self.assertEqual(tier2_runner_outcome(tier2_rows), "fail")
+        self.assertEqual(tier1_runner_outcome(results, tier1_rows, tier2_rows), "fail")
+
 
 def _primus_payload(n_gpus=8, gpu_overrides=None, fail_reasons=None, host_limit_reasons=None, nic_issues=None):
     """Payload shaped like Primus dev/preflight-direct-test node_smoke --tier2-perf JSON.

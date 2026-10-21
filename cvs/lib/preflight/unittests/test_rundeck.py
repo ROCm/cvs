@@ -239,6 +239,48 @@ class TestPreflightDeck(unittest.TestCase):
         tier2 = deck['groups']['node_smoke_tier2']['nodes']['n1']
         self.assertEqual(tier2['status'], 'fail')
 
+    def test_tier1_deck_keeps_setup_failure_with_tier2_miss(self):
+        collectors = {
+            'gpu_processes': {'ok': True},
+            'nics': {'expected_count': 1, 'issues': []},
+            'host_limits': {'fail_reasons': []},
+            'gpu_low_level': {'ok': True},
+            'xgmi': {'ok': True},
+            'tooling': {'ok': True},
+            'gpu_visibility': {'fail_reasons': [], 'torch_visible': 1},
+        }
+        setup = 'could not determine node_smoke status from output'
+        deck = build_preflight_deck(
+            {
+                'node_smoke_tier1': {
+                    'status': 'FAIL',
+                    'tier2_perf': True,
+                    'gpus_per_node': 1,
+                    'total_nodes': 1,
+                    'failed_nodes': ['n1'],
+                    'tier2_thresholds': {'gemm_tflops_min': 600, 'hbm_gbs_min': 2000, 'rccl_gbs_min': 100},
+                    'node_results': {
+                        'n1': {
+                            'status': 'FAIL',
+                            'fail_reasons': ['large_gemm: 100 < 600', setup],
+                            'node_payload': {
+                                'tier1': {'per_gpu': [{'gpu': 0, 'status': 'PASS'}], **collectors},
+                                'tier2': {
+                                    'per_gpu': [{'gpu': 0, 'gemm_tflops': 100, 'hbm_gbs': 3000}],
+                                    'rccl': {'status': 'PASS', 'gbs': 200},
+                                },
+                            },
+                        }
+                    },
+                }
+            },
+            {'node_dict': {'n1': {}}},
+        )
+        tier1 = deck['groups']['node_smoke_tier1']['nodes']['n1']
+        self.assertEqual(tier1['status'], 'fail')
+        self.assertTrue(any(item.get('message') == setup for item in tier1['items']))
+        self.assertEqual(deck['groups']['node_smoke_tier2']['nodes']['n1']['status'], 'fail')
+
     def test_tier2_group_omitted_when_perf_disabled(self):
         deck = build_preflight_deck(
             {
