@@ -923,9 +923,7 @@ def verify_driver_errors(phdl):
                 if dmesg_noise.dmesg_line_is_benign(raw_text) or dmesg_noise.dmesg_line_is_benign(line):
                     continue
                 is_driver = (
-                    'amdgpu' in raw_text.lower()
-                    or 'amdgpu' in line.lower()
-                    or event.get('category') == 'SW_DRIVER'
+                    'amdgpu' in raw_text.lower() or 'amdgpu' in line.lower() or event.get('category') == 'SW_DRIVER'
                 )
                 if not is_driver:
                     continue
