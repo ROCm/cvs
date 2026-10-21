@@ -85,6 +85,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - vLLM: a server that exits during startup, or whose launch never created its log, now fails the cell at the next startup check instead of being polled for the whole readiness budget (about 66 minutes by default). A `vllm serve` launch lost in transport is retried up to twice when it left no server log or `server.pid` behind.
 - IB Perf sample config: `duration` is now `10` (was `30`). The bandwidth test reads perftest results about 20 seconds after launch, so 30-second runs were reported as failures; configs copied from the old sample must lower `duration` as well.
 - Container launches pass InfiniBand devices only where the host has them. `/dev/infiniband` is no longer a default device, `/dev/infiniband` entries in `runtime.args.devices` go through the same per-host discovery, and a host without `/dev/infiniband` gets no InfiniBand `--device` flags, so containers with `runtime.args.privileged: false` now start there instead of failing on the missing path.
+- The platform `test_check_dmesg_driver_errors` check no longer fails on err-level `[Firmware Bug]:` lines or zero-valued `WALKER_ERROR`, `MAPPING_ERROR` and `PROTECTION_FAULT_STATUS` lines. Non-zero values still fail.
+
+### Removed
+
+- The legacy dmesg parser. Every dmesg and kernel-journal scan, including the platform `test_check_dmesg_driver_errors` check, now uses AMD node-scraper with the CVS error patterns. `CVS_DMESG_PARSER` is no longer read; remove it from run scripts. The GPU oversubscription warning that only the legacy parser logged is still logged and still does not fail the test.
 
 ## [0.2.0] - 2026-09-23
 

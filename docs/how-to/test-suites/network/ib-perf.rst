@@ -193,19 +193,6 @@ Follow :doc:`/how-to/run-on-managed-compute` to run IB Perf on managed compute. 
 Kernel log (dmesg) scan
 =======================
 
-After each bandwidth and latency run, the suite reads ``dmesg`` on every node from the minute the run started and fails the test if it finds a known error pattern. The end time is not applied (``till_end_flag=True``), so the scan continues through the kernel log collected at the end of that message size. The ``CVS_DMESG_PARSER`` environment variable selects the parser:
-
-- Unset or ``node-scraper`` (default): AMD node-scraper (the ``amd-node-scraper`` package installed with CVS), extended with the CVS error patterns.
-- ``legacy``: the CVS regex patterns only. ``cvs``, ``0``, ``false``, ``off``, and ``no`` also select this parser.
-
-Any other value selects node-scraper. CVS reads the variable on the host that runs ``cvs run``, so set it in that shell:
-
-.. code:: bash
-
-  CVS_DMESG_PARSER=legacy cvs run ib_perf_bw_test \
-    --cluster_file ~/cvs_workspace/cluster.json \
-    --config_file ~/cvs_workspace/ibperf/ibperf_config.json \
-    --workspace ~/cvs_workspace \
-    --capture=tee-sys -vvv
+After each bandwidth and latency run, the suite reads ``dmesg`` on every node from the minute the run started and fails the test if it finds a known error pattern. The end time is not applied (``till_end_flag=True``), so the scan continues through the kernel log collected at the end of that message size. The log is parsed with AMD node-scraper (the ``amd-node-scraper`` package installed with CVS), extended with the CVS error patterns.
 
 If any node lacks passwordless sudo, the scan is skipped and the log says ``SKIPPING the dmesg error check: no passwordless sudo to read dmesg on one or more nodes``. The bandwidth and latency numbers can still pass.

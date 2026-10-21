@@ -115,24 +115,31 @@ def _normalize_event(event: Any) -> Dict[str, Any]:
     }
 
 
+def event_match_text(event):
+    """Return the kernel text an event matched, without its description.
+
+    Benign-line checks must run on this text: node-scraper labels catch-all
+    events "Unknown dmesg error", and that label alone looks like a fault.
+    """
+    match = event.get("match_content")
+    if isinstance(match, (list, tuple)):
+        return " ".join(str(part) for part in match if part)
+    if match is None:
+        return ""
+    return str(match)
+
+
 def event_match_lines(events: List[Dict[str, Any]]) -> List[str]:
     """Flatten normalized events into matched-line strings.
 
-    Preserves the legacy `{node: [lines]}` contract used by CVS dmesg scans:
+    Preserves the `{node: [lines]}` contract used by CVS dmesg scans:
     each detected error becomes a single human-readable line combining the
     error label and the matched text.
     """
     lines: List[str] = []
     for event in events:
-        match = event.get("match_content")
-        if isinstance(match, (list, tuple)):
-            text = " ".join(str(part) for part in match if part)
-        elif match is None:
-            text = ""
-        else:
-            text = str(match)
         description = event.get("description") or ""
-        line = f"{description}: {text}".strip().rstrip(":").strip()
+        line = f"{description}: {event_match_text(event)}".strip().rstrip(":").strip()
         if line:
             lines.append(line)
     return lines

@@ -636,43 +636,15 @@ def _actionable_amdgpu_blob(event):
     amdgpu, or node-scraper tagged the event ``SW_DRIVER``.
     '''
     # Imported here so the rest of this module does not load the analyzer.
-    from cvs.lib.node_scraper_adapter import event_match_lines
+    from cvs.lib.node_scraper_adapter import event_match_lines, event_match_text
 
+    if dmesg_noise.dmesg_line_is_benign(event_match_text(event)):
+        return ''
     lines = event_match_lines([event])
     blob = lines[0] if lines else ''
-    if dmesg_noise.dmesg_line_is_benign(blob):
-        return ''
     if 'amdgpu' not in blob.lower() and event.get('category') != 'SW_DRIVER':
         return ''
     return blob
-
-
-def eval_dmesg_driver(out_dict):
-    '''Return (node_records, fail_messages) for actionable amdgpu fail/error lines.
-
-    Zero-valued status fields such as ``WALKER_ERROR: 0x0`` and
-    ``MAPPING_ERROR: 0x0`` are not driver errors.
-    '''
-    denied_records, denied_messages, rest = _take_denied(
-        out_dict,
-        'CVS_CMD_DENIED',
-        'amdgpu',
-        lambda node: f'Dmesg check could not run on node {node}',
-    )
-    filtered = {}
-    for node, output in rest.items():
-        kept = [line for line in (output or '').splitlines() if dmesg_noise.line_indicates_driver_error(line)]
-        filtered[node] = '\n'.join(kept)
-    records, messages = _must_not_match(
-        filtered,
-        'fail|error',
-        'amdgpu',
-        lambda node: f'Dmesg has amdgpu driver errors on node {node}',
-        'clean',
-    )
-    records.update(denied_records)
-    messages.extend(denied_messages)
-    return records, messages
 
 
 def _hit_record(hits, message):
@@ -726,19 +698,6 @@ def eval_dmesg_driver_events(events_by_node):
     '''Return (node_records, fail_messages) from node-scraper dmesg events.'''
     records, messages, _, _ = eval_dmesg_node_events(events_by_node)
     return records, messages
-
-
-def eval_dmesg_reset(out_dict):
-    '''Return (node_records, fail_messages) for amdgpu reset/hang/traceback lines.'''
-    return _must_not_match_with_denial(
-        out_dict,
-        'CVS_CMD_DENIED',
-        'reset|hang|traceback',
-        'amdgpu',
-        lambda node: f'Dmesg check could not run on node {node}',
-        lambda node: f'Dmesg has amdgpu reset/hang errors on node {node}',
-        'clean',
-    )
 
 
 def eval_dmesg_reset_events(events_by_node):
