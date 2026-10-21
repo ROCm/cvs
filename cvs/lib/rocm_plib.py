@@ -344,12 +344,6 @@ def _format_ecc_report_sections(comparisons):
     return '\n'.join(item['section'] for item in comparisons)
 
 
-def format_ecc_blocks_report(before, after, collective=None, blocks=None):
-    """Build the post-test ECC_BLOCKS INFO table (one section per node)."""
-    comparisons = _ecc_snapshot_comparisons(before, after, collective=collective, blocks=blocks)
-    return _format_ecc_report_sections(comparisons)
-
-
 def _log_ecc_finding(kind, found):
     if kind == 'missing':
         log.warning(
