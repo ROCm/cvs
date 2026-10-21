@@ -30,4 +30,34 @@ See also :doc:`/how-to/test-suites/index` for common ``cvs run`` flags and workf
 Test results
 ============
 
-The sample report for this category is a preflight pytest HTML report. ``cvs run`` writes it under ``<workspace>/cvs_runs/<run_id>/``.
+Sample output snapshots from a health burn-in run.
+
+.. important::
+
+   The numbers in these sample reports and screenshots (bandwidth, GFLOPS,
+   and every other metric) are **illustrative sample values, not final tuned
+   results**. They are shown only to illustrate the report layout.
+
+HTML test report
+----------------
+
+.. image:: /images/health_pytest_summary.png
+   :alt: RVS pytest HTML report summary
+
+Run Deck report
+---------------
+
+The Run Deck dashboard: run overview, measurement charts, heatmaps, and
+detailed results.
+
+.. image:: /images/health_rundeck_summary.png
+   :alt: RVS Run Deck overview
+
+.. image:: /images/health_measurements.png
+   :alt: RVS Run Deck measurement charts
+
+.. image:: /images/health_heatmaps.png
+   :alt: RVS Run Deck heatmaps
+
+.. image:: /images/health_results.png
+   :alt: RVS Run Deck detailed results
