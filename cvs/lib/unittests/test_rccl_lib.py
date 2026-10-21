@@ -1399,7 +1399,7 @@ class TestRcclLib(unittest.TestCase):
         command = mock_execute.call_args.args[0]
         self.assertTrue(command.startswith('/opt/rccl-tests/build/all_reduce_bias_perf '))
         self.assertIn('-d float', command)
-        aggregated = saved['/shared/rccl_aggregated.json']
+        aggregated = saved['/shared/rccl_all_reduce_bias_perf_aggregated.json']
         self.assertEqual(len(aggregated), 4)
         self.assertTrue(all(row['name'] == 'AllReduce' for row in aggregated))
         self.assertEqual(
