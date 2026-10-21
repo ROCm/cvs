@@ -42,7 +42,7 @@ HTML test report
 ----------------
 
 The pytest HTML report lists each RCCL perf test and links to the bundled RCCL
-performance report.
+performance report and RCCL Run Deck.
 
 .. image:: /images/network_rccl_pytest_report.png
    :alt: RCCL pytest HTML test report
@@ -62,3 +62,18 @@ latency across message sizes.
 
 .. image:: /images/network_rccl_perf_results_table.png
    :alt: RCCL performance results table
+
+Run Deck report
+---------------
+
+The Run Deck dashboard: run card, bandwidth charts by message size, and full
+results.
+
+.. image:: /images/network_rccl_rundeck_run_card.png
+   :alt: RCCL Run Deck run card
+
+.. image:: /images/network_rccl_rundeck_bandwidth_charts.png
+   :alt: RCCL Run Deck bus bandwidth charts
+
+.. image:: /images/network_rccl_rundeck_full_results.png
+   :alt: RCCL Run Deck full results table
