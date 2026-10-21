@@ -130,6 +130,63 @@ def _own_status(value):
     return _status_from_value(value, default=None)
 
 
+def _listed_failures(value, *keys):
+    failures = []
+    if not isinstance(value, dict):
+        return failures
+    for key in keys:
+        items = value.get(key)
+        if not isinstance(items, list):
+            continue
+        failures.extend(str(item) for item in items if str(item).strip())
+    return failures
+
+
+def _collector_outcome(value):
+    """Pass/fail for a Tier 1 collector Primus included, or None when it did not run.
+
+    Primus reports some collectors with measurements and an empty ``fail_reasons``
+    or ``issues`` list instead of ``ok``/``status``. A present section with no
+    failures passed. A missing section, an empty object, or ``error: skipped``
+    did not run.
+    """
+    if not isinstance(value, dict) or not value:
+        return None
+    if value.get("error") == "skipped":
+        return "skip", ""
+    verdict = _own_status(value)
+    if verdict:
+        return verdict, ""
+    failures = _listed_failures(value, "fail_reasons", "issues")
+    if failures:
+        return "fail", "; ".join(failures)
+    return "pass", ""
+
+
+def _tier1_gpu_details(tier1, gpu_idx):
+    per_gpu = [entry for entry in ((tier1 or {}).get("per_gpu") or []) if isinstance(entry, dict)]
+    if gpu_idx >= len(per_gpu):
+        return {}
+    details = per_gpu[gpu_idx].get("details")
+    return details if isinstance(details, dict) else {}
+
+
+def _tier2_check_value(check_key, tier2_entry, tier2, gpu_idx, tier1_details):
+    """Measurement for one Tier 2 check, including numbers Primus stored on the GPU."""
+    check_value = tier2_entry.get(check_key) if isinstance(tier2_entry, dict) and check_key in tier2_entry else None
+    if check_value is None and isinstance(tier2, dict) and isinstance(tier2.get(check_key), list):
+        series = tier2.get(check_key)
+        if gpu_idx < len(series):
+            check_value = series[gpu_idx]
+    if check_value is not None or not isinstance(tier1_details, dict):
+        return check_value
+    if check_key == "large_gemm" and _has_number(tier1_details, "gemm_tflops", "tflops", "large_gemm"):
+        return {"gemm_tflops": tier1_details.get("gemm_tflops", tier1_details.get("tflops"))}
+    if check_key == "hbm_d2d" and _has_number(tier1_details, "hbm_gbs", "gbs", "hbm_d2d"):
+        return {"hbm_gbs": tier1_details.get("hbm_gbs", tier1_details.get("gbs"))}
+    return None
+
+
 def _slug(text):
     return re.sub(r'_+', '_', re.sub(r'[^0-9a-zA-Z]+', '_', str(text))).strip('_').lower()
 
@@ -267,13 +324,14 @@ def build_tier1_metric_rows(node_smoke_results):
             rows.append(_row(host, f"{host}/gpu{gpu_idx}", f"GPU {gpu_id}", status, reason=reason))
         for collector in TIER1_NODE_OPERATIONAL_COLLECTORS:
             hits = _reasons_for_key(collector, reasons)
-            verdict = _own_status(tier1.get(collector)) if collector in tier1 else None
+            outcome = _collector_outcome(tier1.get(collector)) if collector in tier1 else None
             if hits:
                 status = "fail"
                 reason = "; ".join(hits)
-            elif verdict:
-                status = verdict
-                reason = ""
+            elif outcome:
+                status, reason = outcome
+                if status == "skip":
+                    reason = reason or _NOT_REPORTED
             else:
                 status = "skip"
                 reason = _NOT_REPORTED
@@ -285,7 +343,8 @@ def build_tier1_metric_rows(node_smoke_results):
 def build_tier2_metric_rows(node_smoke_results):
     """One pytest-html row per Tier 2 GEMM, HBM, and local RCCL check.
 
-    A row passes only when that metric or an explicit verdict is in the payload.
+    A row passes when Primus recorded that metric, including GEMM and HBM numbers
+    stored on the Tier 1 GPU entry. A check with no measurement stays skipped.
     """
     if not node_smoke_results or node_smoke_results.get("skipped"):
         return []
@@ -299,6 +358,7 @@ def build_tier2_metric_rows(node_smoke_results):
     for host, result in sorted(node_results.items()):
         payload = _node_payload(result)
         reasons = _node_fail_reasons(result)
+        tier1 = payload.get("tier1") if isinstance(payload.get("tier1"), dict) else {}
         tier2 = payload.get("tier2") if isinstance(payload.get("tier2"), dict) else {}
         per_gpu = [entry for entry in (tier2.get("per_gpu") or []) if isinstance(entry, dict)]
         n_gpus = _configured_gpu_slots(node_smoke_results, per_gpu)
@@ -310,14 +370,9 @@ def build_tier2_metric_rows(node_smoke_results):
         for gpu_idx in range(n_gpus):
             entry = per_gpu[gpu_idx] if gpu_idx < len(per_gpu) else {}
             gpu_id = _gpu_index(entry, gpu_idx)
+            tier1_details = _tier1_gpu_details(tier1, gpu_idx)
             for check_key in TIER2_PER_GPU_CHECKS:
-                check_value = entry.get(check_key) if check_key in entry else None
-                if (
-                    check_value is None
-                    and isinstance(tier2.get(check_key), list)
-                    and gpu_idx < len(tier2.get(check_key))
-                ):
-                    check_value = tier2[check_key][gpu_idx]
+                check_value = _tier2_check_value(check_key, entry, tier2, gpu_idx, tier1_details)
                 hits = _reasons_for_key(check_key, reasons) or _reasons_for_key(
                     "gemm" if check_key == "large_gemm" else "hbm",
                     reasons,

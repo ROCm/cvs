@@ -89,6 +89,56 @@ class TestNodeSmokeRows(unittest.TestCase):
         self.assertEqual(gemm["actual"], 800)
         self.assertEqual(gemm["unit"], "TFLOPS")
 
+    def test_collected_tier1_sections_pass_without_an_ok_field(self):
+        payload = {
+            "status": "PASS",
+            "tier1": {
+                "per_gpu": [{"gpu": 0, "status": "PASS"}],
+                "nics": {"expected_count": 8, "issues": [], "included_ports": ["rdma0"]},
+                "host_limits": {"fail_reasons": [], "memlock_soft_bytes": 1024},
+                "gpu_visibility": {"fail_reasons": [], "torch_visible": 8},
+                "gpu_processes": {"error": "skipped"},
+            },
+        }
+        results = {"gpus_per_node": 1, "node_results": {"node0": {"status": "PASS", "node_payload": payload}}}
+        rows = {row["metric"]: row for row in build_tier1_metric_rows(results)}
+        self.assertEqual(rows["node0/nics"]["status"], "pass")
+        self.assertEqual(rows["node0/host_limits"]["status"], "pass")
+        self.assertEqual(rows["node0/gpu_visibility"]["status"], "pass")
+        self.assertEqual(rows["node0/gpu_processes"]["status"], "skip")
+        self.assertEqual(rows["node0/xgmi"]["status"], "skip")
+
+    def test_tier1_collector_issues_fail(self):
+        payload = {"tier1": {"nics": {"issues": ["rdma0 down"]}}}
+        results = {"gpus_per_node": 1, "node_results": {"node0": {"status": "FAIL", "node_payload": payload}}}
+        rows = {row["metric"]: row for row in build_tier1_metric_rows(results)}
+        self.assertEqual(rows["node0/nics"]["status"], "fail")
+        self.assertIn("rdma0 down", rows["node0/nics"]["reason"])
+
+    def test_tier2_gemm_and_hbm_pass_from_gpu_details(self):
+        payload = {
+            "tier1": {
+                "per_gpu": [
+                    {"gpu": 0, "status": "PASS", "details": {"gemm_tflops": 761.35, "hbm_gbs": 4531.2}},
+                    {"gpu": 1, "status": "PASS", "details": {}},
+                ]
+            },
+            "tier2": {"rccl": {"status": "PASS", "gbs": 277.6}},
+        }
+        results = {
+            "tier2_perf": True,
+            "gpus_per_node": 2,
+            "node_results": {"node0": {"status": "PASS", "node_payload": payload}},
+        }
+        rows = {row["metric"]: row for row in build_tier2_metric_rows(results)}
+        self.assertEqual(rows["node0/gpu0/large_gemm"]["status"], "pass")
+        self.assertEqual(rows["node0/gpu0/large_gemm"]["actual"], 761.35)
+        self.assertEqual(rows["node0/gpu0/hbm_d2d"]["status"], "pass")
+        self.assertEqual(rows["node0/gpu0/hbm_d2d"]["actual"], 4531.2)
+        self.assertEqual(rows["node0/gpu1/large_gemm"]["status"], "skip")
+        self.assertEqual(rows["node0/gpu1/hbm_d2d"]["status"], "skip")
+        self.assertEqual(rows["node0/local_rccl"]["status"], "pass")
+
     def test_tier1_node_pass_does_not_pass_unreported_checks(self):
         results = {
             "gpus_per_node": 8,
