@@ -539,6 +539,26 @@ def _apply_node_failure(items, node_status, fail_reasons):
     return status, items
 
 
+def _apply_tier1_node_failure(items, entry, node_tier2_rows):
+    """Fold node-level smoke failures into Tier 1 Run Deck items.
+
+    Only unattributed ``fail_reasons`` may fail Tier 1 when every check row passed.
+    A pure Tier 2 GEMM/HBM/RCCL miss is dropped from the fallback and must not
+    fail Tier 1; other node-level reasons stay visible even when Tier 2 also failed.
+    """
+    fail_reasons = tier1_unattributed_fail_reasons(entry)
+    status = _status_from_items(items)
+    if any(item.get('status') == 'fail' for item in items):
+        return 'fail', items
+    if fail_reasons:
+        return 'fail', list(items) + _fail_items(fail_reasons, 'node')
+    if any(row_is_failure(row) for row in node_tier2_rows):
+        return status, items
+    if _normalize_status(entry.get('status')) == 'fail':
+        return 'fail', list(items) + _fail_items(['node smoke failed'], 'node')
+    return status, items
+
+
 def _tier1_records(results, nodes):
     block = _smoke_block(results)
     if block is None:
@@ -555,12 +575,7 @@ def _tier1_records(results, nodes):
         entry = node_results.get(node) if isinstance(node_results.get(node), dict) else {}
         items = _row_items(node_rows, None)
         node_tier2_rows = [row for row in tier2_rows if row.get('node') == node]
-        fail_reasons = tier1_unattributed_fail_reasons(entry)
-        node_status = entry.get('status')
-        if not fail_reasons and _normalize_status(node_status) == 'fail':
-            if any(row_is_failure(row) for row in node_tier2_rows):
-                node_status = 'pass'
-        status, items = _apply_node_failure(items, node_status, fail_reasons)
+        status, items = _apply_tier1_node_failure(items, entry, node_tier2_rows)
         records[str(node)] = _record(status, items, _summarize(items, _skip_message(block) if not items else ''))
     return records
 

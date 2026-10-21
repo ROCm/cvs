@@ -19,6 +19,7 @@ from cvs.lib.preflight.node_smoke_rows import (
     build_tier3_metric_rows,
     tier1_check_catalog,
     tier1_runner_outcome,
+    tier1_unattributed_fail_reasons,
     tier2_check_catalog,
     tier2_runner_outcome,
     tier3_check_catalog_entries,
@@ -401,6 +402,16 @@ class TestTierRunnerOutcomes(unittest.TestCase):
         tier2_rows = build_tier2_metric_rows(results)
         self.assertEqual(tier2_runner_outcome(tier2_rows), "skip")
         self.assertEqual(tier1_runner_outcome(results, tier1_rows, tier2_rows), "fail")
+
+    def test_tier1_unattributed_fail_reasons_drop_only_tier2_entries(self):
+        gemm = "gpu2: FAIL: GEMM TFLOPS 500 < threshold 600"
+        host = "host_limits: ulimit -l = 8012 MiB < 32 GiB"
+        entry = {
+            "status": "FAIL",
+            "fail_reasons": [gemm, "large_gemm: 100 < 600", host],
+            "node_payload": {},
+        }
+        self.assertEqual(tier1_unattributed_fail_reasons(entry), [host])
 
     def test_tier1_runner_fails_when_tier2_miss_and_setup_reason(self):
         collectors = {key: {"ok": True} for key in TIER1_NODE_OPERATIONAL_COLLECTORS}
