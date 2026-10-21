@@ -41,39 +41,29 @@ Sample output snapshots from an RCCL performance run.
 HTML test report
 ----------------
 
-The pytest HTML report lists each RCCL perf test and links to the bundled RCCL
-performance report and RCCL Run Deck.
+The pytest HTML report lists each RCCL perf test and links to the RCCL Run
+Deck.
 
 .. image:: /images/network_rccl_pytest_report.png
    :alt: RCCL pytest HTML test report
 
-RCCL performance report
----------------------
-
-The bundled RCCL performance report summarizes collective bandwidth and
-latency across message sizes.
-
-**Bandwidth graph:**
-
-.. image:: /images/network_rccl_perf_bandwidth_graph.png
-   :alt: RCCL performance bandwidth graph
-
-**Results table:**
-
-.. image:: /images/network_rccl_perf_results_table.png
-   :alt: RCCL performance results table
-
 Run Deck report
 ---------------
 
-The Run Deck dashboard: run card, bandwidth charts by message size, and full
-results.
+The static Run Deck HTML summarizes the run and links to the interactive
+viewer.
 
 .. image:: /images/network_rccl_rundeck_run_card.png
    :alt: RCCL Run Deck run card
 
-.. image:: /images/network_rccl_rundeck_bandwidth_charts.png
-   :alt: RCCL Run Deck bus bandwidth charts
+Run Deck interactive viewer
+---------------------------
+
+The interactive viewer charts bus bandwidth, algorithm bandwidth, and time by
+message size, and includes the full results table.
+
+.. image:: /images/network_rccl_rundeck_viewer_charts.png
+   :alt: RCCL Run Deck interactive viewer bandwidth charts
 
 .. image:: /images/network_rccl_rundeck_full_results.png
-   :alt: RCCL Run Deck full results table
+   :alt: RCCL Run Deck interactive viewer full results table
