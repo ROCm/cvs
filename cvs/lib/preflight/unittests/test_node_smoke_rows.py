@@ -108,6 +108,13 @@ class TestNodeSmokeRows(unittest.TestCase):
         self.assertEqual(rows["node0/gpu_processes"]["status"], "skip")
         self.assertEqual(rows["node0/xgmi"]["status"], "skip")
 
+    def test_tier1_collector_error_fails(self):
+        payload = {"tier1": {"nics": {"error": "collector failed", "expected_count": 8}}}
+        results = {"gpus_per_node": 1, "node_results": {"node0": {"status": "FAIL", "node_payload": payload}}}
+        rows = {row["metric"]: row for row in build_tier1_metric_rows(results)}
+        self.assertEqual(rows["node0/nics"]["status"], "fail")
+        self.assertIn("collector failed", rows["node0/nics"]["reason"])
+
     def test_tier1_collector_issues_fail(self):
         payload = {"tier1": {"nics": {"issues": ["rdma0 down"]}}}
         results = {"gpus_per_node": 1, "node_results": {"node0": {"status": "FAIL", "node_payload": payload}}}
@@ -160,6 +167,27 @@ class TestNodeSmokeRows(unittest.TestCase):
 
     def test_tier2_skipped_without_flag(self):
         results = {"tier2_perf": False, "node_results": {"node0": {"status": "PASS", "node_payload": {}}}}
+        self.assertEqual(build_tier2_metric_rows(results), [])
+
+    def test_tier2_details_stay_hidden_when_tier2_is_disabled(self):
+        results = {
+            "tier2_perf": False,
+            "gpus_per_node": 2,
+            "node_results": {
+                "node0": {
+                    "status": "PASS",
+                    "node_payload": {
+                        "tier1": {
+                            "per_gpu": [
+                                {"gpu": 0, "status": "PASS", "details": {"gemm_tflops": 761.35, "hbm_gbs": 4531.2}},
+                                {"gpu": 1, "status": "PASS", "details": {"gemm_tflops": 750.0, "hbm_gbs": 4400.0}},
+                            ]
+                        },
+                        "tier2": {"rccl": {"status": "PASS", "gbs": 277.6}},
+                    },
+                }
+            },
+        }
         self.assertEqual(build_tier2_metric_rows(results), [])
 
     def test_tier3_pass_requires_reported_groups(self):
