@@ -189,3 +189,45 @@ Run on managed compute
 ~~~~~~~~~~~~~~~~~~~~~~
 
 Follow :doc:`/how-to/run-on-managed-compute` to run these health suites on managed compute.
+
+Test results
+============
+
+Sample output snapshots from health burn-in runs.
+
+.. important::
+
+   The numbers in these sample reports and screenshots (bandwidth, GFLOPS,
+   and every other metric) are **illustrative sample values, not final tuned
+   results**. They are shown only to illustrate the report layout.
+
+HTML test report
+----------------
+
+**RVS pytest summary**
+
+.. image:: /images/health_pytest_summary.png
+   :alt: RVS pytest HTML report summary
+
+**AGFHC pytest summary**
+
+.. image:: /images/health_log_summary.png
+   :alt: AGFHC pytest HTML report summary
+
+Run Deck report
+---------------
+
+The Run Deck dashboard: run overview, measurement charts, heatmaps, and
+detailed results.
+
+.. image:: /images/health_rundeck_summary.png
+   :alt: RVS Run Deck overview
+
+.. image:: /images/health_measurements.png
+   :alt: RVS Run Deck measurement charts
+
+.. image:: /images/health_heatmaps.png
+   :alt: RVS Run Deck heatmaps
+
+.. image:: /images/health_results.png
+   :alt: RVS Run Deck detailed results
