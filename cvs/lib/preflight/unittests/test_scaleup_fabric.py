@@ -354,6 +354,47 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["warnings"], [])
 
+    def test_uniform_station_mask_policy_is_per_node_not_cluster_wide(self):
+        mask_a = "f" * 18
+        mask_b = "0" * 17 + "f"
+        check = self._check(FakePssh(hosts=("nodeA", "nodeB")), require_uniform_station_mask=True, min_up_ports_per_gpu=0)
+        check.results = {
+            "nodeA": {"status": "PASS", "errors": [], "warnings": []},
+            "nodeB": {"status": "PASS", "errors": [], "warnings": []},
+        }
+        check._exec_all = lambda _command: {
+            "nodeA": "\n".join(f"0000:{index + 1:02x}:00.0 {mask_a}" for index in range(4)),
+            "nodeB": "\n".join(f"0000:{index + 1:02x}:00.0 {mask_b}" for index in range(4)),
+        }
+        check._evaluate_station_masks()
+        self.assertEqual(check.results["nodeA"]["status"], "PASS")
+        self.assertEqual(check.results["nodeB"]["status"], "PASS")
+        self.assertFalse(any("not uniform" in error for error in check.results["nodeA"]["errors"]))
+        self.assertFalse(any("not uniform" in error for error in check.results["nodeB"]["errors"]))
+
+    def test_uniform_station_mask_policy_fails_non_uniform_gpus_on_one_node(self):
+        check = self._check(FakePssh(hosts=("nodeA", "nodeB")), require_uniform_station_mask=True, min_up_ports_per_gpu=0)
+        check.results = {
+            "nodeA": {"status": "PASS", "errors": [], "warnings": []},
+            "nodeB": {"status": "PASS", "errors": [], "warnings": []},
+        }
+        uniform = "f" * 18
+        check._exec_all = lambda _command: {
+            "nodeA": "\n".join(
+                [
+                    f"0000:01:00.0 {uniform}",
+                    f"0000:02:00.0 {'f' + '0' * 17}",
+                    f"0000:03:00.0 {uniform}",
+                    f"0000:04:00.0 {uniform}",
+                ]
+            ),
+            "nodeB": "\n".join(f"0000:{index + 1:02x}:00.0 {uniform}" for index in range(4)),
+        }
+        check._evaluate_station_masks()
+        self.assertEqual(check.results["nodeA"]["status"], "FAIL")
+        self.assertTrue(any("not uniform across GPUs on this node" in error for error in check.results["nodeA"]["errors"]))
+        self.assertEqual(check.results["nodeB"]["status"], "PASS")
+
     def test_run_reports_warned_nodes_for_partial_fabric(self):
         check = self._check(FakePssh(hosts=("nodeA",), station_mask="fff000000fff000000"))
         results = check.run()
