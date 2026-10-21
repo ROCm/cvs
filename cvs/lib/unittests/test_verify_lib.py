@@ -1,8 +1,6 @@
 import datetime
 import re
 import shlex
-import shutil
-import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -32,6 +30,12 @@ SCANS = (
         ),
     ),
     ('verify_nic_link_flap', lambda p: verify_lib.verify_nic_link_flap(p)),
+    (
+        'verify_dmesg_during_test',
+        lambda p: verify_lib.verify_dmesg_during_test(
+            p, 'Starting Test x', 'End of Test x', {'node1': 'Mon Jun  5 08:00'}, {'node1': 'Mon Jun  5 09:00'}
+        ),
+    ),
 )
 
 
@@ -136,9 +140,6 @@ class TestKernelLogScanQuietAndSummarized(unittest.TestCase):
         self.assertFalse(
             any('SENTINEL-KERNEL-LOG' in str(arg) for call in handle.log.info.call_args_list for arg in call.args)
         )
-
-
-_HAS_BASH_AND_AWK = shutil.which("bash") and shutil.which("awk")
 
 
 class TestVerifyGpuPcieBusWidth(unittest.TestCase):
@@ -362,248 +363,195 @@ class TestBenignUnknownDmesgRules(unittest.TestCase):
         mock_fail.assert_called_once()
 
 
+START = 'Starting Test all_reduce_perf'
+END = 'End of Test all_reduce_perf'
+WINDOW_TIMES = {
+    'Wed Sep 30 16:00:00': datetime.datetime(2026, 9, 30, 16, 0, tzinfo=datetime.timezone.utc),
+    'Wed Sep 30 16:01:00': datetime.datetime(2026, 9, 30, 16, 1, tzinfo=datetime.timezone.utc),
+}
+
+
+def _kmsg(clock, text, facility='kern', level='err'):
+    return f'{facility:<6}:{level:<6}: 2026-09-30T{clock},000000+00:00 {text}\n'
+
+
+def _marker(clock, marker):
+    return _kmsg(clock, marker, facility='user', level='warn')
+
+
 class TestVerifyDmesgDuringTest(unittest.TestCase):
-    @staticmethod
-    def _run_marker_awk_slice(dmesg_text, start_marker, end_marker):
-        """Run the same awk slice used remotely against in-memory dmesg text."""
-        full_cmd = verify_lib._dmesg_slice_by_markers_cmd(start_marker, end_marker)
-        awk_tail = full_cmd.rsplit(" | awk ", 1)[1]
-        completed = subprocess.run(
-            ["bash", "-c", f"awk {awk_tail}"],
-            input=dmesg_text,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return completed.stdout
-
-    @patch("cvs.lib.verify_lib.log")
-    def test_nonempty_slice_without_start_marker_is_skipped(self, mock_log):
+    def _scan(self, outputs, start_marker=START, end_marker=END):
         phdl = MagicMock()
-        phdl.exec.return_value = {"node1": "unrelated kernel line\n"}
-
-        with patch("cvs.lib.verify_lib.fail_test") as mock_fail:
+        phdl.exec.return_value = outputs
+        with (
+            patch.object(verify_lib, '_parse_cvs_time', side_effect=WINDOW_TIMES.get),
+            patch('cvs.lib.verify_lib.fail_test') as mock_fail,
+            patch.object(verify_lib, 'log') as mock_log,
+        ):
             result = verify_lib.verify_dmesg_during_test(
-                phdl, "Starting Test all_reduce_perf", "End of Test all_reduce_perf"
+                phdl,
+                start_marker,
+                end_marker,
+                {node: 'Wed Sep 30 16:00:00' for node in outputs},
+                {node: 'Wed Sep 30 16:01:00' for node in outputs},
             )
+        failures = [c.args[0] for c in mock_fail.call_args_list]
+        warnings = [c.args[0] % c.args[1:] if len(c.args) > 1 else c.args[0] for c in mock_log.warning.call_args_list]
+        return result, failures, warnings, phdl
 
-        self.assertEqual(result, {"node1": []})
-        mock_fail.assert_not_called()
-        mock_log.warning.assert_called()
-        warn_msg = mock_log.warning.call_args[0][0]
-        self.assertIn("start marker", warn_msg)
-        self.assertIn("not found in slice", warn_msg)
-
-    @patch("cvs.lib.verify_lib.fail_test")
-    def test_slice_command_uses_markers(self, mock_fail_test):
-        phdl = MagicMock()
-        phdl.exec.return_value = {
-            "node1": _iso_dmesg(
-                [
-                    "Starting Test all_reduce_perf",
-                    "amdgpu 0000:05:00.0: amdgpu: [gfxhub] page fault (src_id:0 ring:153 vmid:8 pasid:32770)",
-                    "End of Test all_reduce_perf",
-                ]
-            )
-        }
-
-        result = verify_lib.verify_dmesg_during_test(
-            phdl, "Starting Test all_reduce_perf", "End of Test all_reduce_perf"
+    def test_scans_only_the_marked_window(self):
+        text = (
+            _kmsg('15:59:00', 'amdgpu 0000:05:00.0: amdgpu: GPU hang detected')
+            + _marker('16:00:05', START)
+            + _kmsg('16:00:10', 'amdgpu 0000:05:00.0: amdgpu: GPU reset begin!')
+            + _marker('16:00:20', END)
+            + _kmsg('16:00:30', 'Call Trace:')
         )
+        result, failures, _, phdl = self._scan({'node1': text})
+        self.assertTrue(any('GPU reset begin' in line for line in result['node1']))
+        self.assertFalse(any('GPU hang' in line or 'Call Trace' in line for line in result['node1']))
+        self.assertTrue(failures)
+        cmd = phdl.exec.call_args.args[0]
+        self.assertIn('--time-format iso -x', cmd)
+        self.assertNotIn('awk', cmd)
+        self.assertIs(phdl.exec.call_args.kwargs.get('print_console'), False)
 
-        cmd = phdl.exec.call_args[0][0]
-        self.assertIn("--time-format iso -x", cmd)
-        self.assertIn("grep -E -v", cmd)
-        self.assertNotIn("egrep", cmd)
-        self.assertIn("-v s='Starting Test all_reduce_perf'", cmd)
-        self.assertIn("-v e='End of Test all_reduce_perf'", cmd)
-        self.assertIn("last=buf", cmd)
-        self.assertIn('printf "%s",last', cmd)
-        self.assertTrue(result["node1"])
-        mock_fail_test.assert_called()
-        fail_msg = mock_fail_test.call_args[0][0]
-        self.assertIn("Failure pattern ***", fail_msg)
-        self.assertIn("on node node1", fail_msg)
-        self.assertNotIn("Failue", fail_msg)
+    def test_uses_the_last_marker_pair(self):
+        text = (
+            _marker('16:00:01', START)
+            + _kmsg('16:00:02', 'amdgpu 0000:05:00.0: amdgpu: GPU hang detected')
+            + _marker('16:00:03', END)
+            + _marker('16:00:04', START)
+            + _kmsg('16:00:05', 'ordinary line', level='info')
+            + _marker('16:00:06', END)
+        )
+        result, failures, _, _ = self._scan({'node1': text})
+        self.assertEqual(result, {'node1': []})
+        self.assertEqual(failures, [])
 
-    @unittest.skipUnless(_HAS_BASH_AND_AWK, "requires bash and awk")
-    def test_shell_single_quote_metacharacters_reach_awk_command(self):
-        start_marker = "Starting Test all_reduce's size=$1 `n`"
-        end_marker = "End of Test all_reduce's size=$1 `n`"
+    def test_marker_must_match_the_whole_message(self):
+        start, end = f'{START} NCCL_ALGO=Ring', f'{END} NCCL_ALGO=Ring'
+        text = (
+            _marker('16:00:01', start)
+            + _marker('16:00:02', end)
+            + _marker('16:00:03', f'{start}2')
+            + _kmsg('16:00:04', 'amdgpu 0000:05:00.0: amdgpu: GPU hang detected')
+            + _marker('16:00:05', f'{end}2')
+        )
+        result, failures, _, _ = self._scan({'node1': text}, start, end)
+        self.assertEqual(result, {'node1': []})
+        self.assertEqual(failures, [])
 
-        cmd = verify_lib._dmesg_slice_by_markers_cmd(start_marker, end_marker)
-        self.assertIn(f"-v s={shlex.quote(start_marker)}", cmd)
-        self.assertIn(f"-v e={shlex.quote(end_marker)}", cmd)
+    def test_missing_end_marker_scans_to_end_of_log_and_says_so(self):
+        text = _marker('16:00:01', START) + _kmsg('16:00:02', 'amdgpu 0000:05:00.0: amdgpu: GPU hang detected')
+        result, failures, warnings, _ = self._scan({'node1': text})
+        self.assertTrue(result['node1'])
+        self.assertTrue(failures)
+        end_warnings = [w for w in warnings if END in w]
+        self.assertEqual(len(end_warnings), 1)
+        self.assertIn('scanning', end_warnings[0])
+        self.assertNotIn('skipped', end_warnings[0])
 
-        dmesg_text = f"noise\n{start_marker}\nkernel line\n{end_marker}\nafter\n"
-        sliced = self._run_marker_awk_slice(dmesg_text, start_marker, end_marker)
-        self.assertIn(start_marker, sliced)
-        self.assertIn("kernel line", sliced)
-        self.assertNotIn("noise", sliced)
-        self.assertNotIn("after", sliced)
+    def test_missing_start_marker_falls_back_to_the_clock_window(self):
+        text = (
+            _kmsg('15:59:00', 'amdgpu 0000:05:00.0: amdgpu: GPU hang detected')
+            + _kmsg('16:00:30', 'amdgpu 0000:05:00.0: amdgpu: GPU reset begin!')
+            + _kmsg('16:02:00', 'Call Trace:')
+        )
+        result, failures, warnings, _ = self._scan({'node1': text})
+        self.assertTrue(any('GPU reset begin' in line for line in result['node1']))
+        self.assertFalse(any('GPU hang' in line or 'Call Trace' in line for line in result['node1']))
+        self.assertTrue(failures)
+        self.assertTrue(any(START in w and 'clock window' in w for w in warnings))
 
-    @unittest.skipUnless(_HAS_BASH_AND_AWK, "requires bash and awk")
-    def test_dmesg_write_marker_cmd_preserves_shell_metacharacters(self):
+    def test_only_nodes_without_a_start_marker_fall_back(self):
+        early_fault = _kmsg('16:00:10', 'amdgpu 0000:05:00.0: amdgpu: GPU hang detected')
+        outputs = {
+            'node1': early_fault + _marker('16:00:20', START) + _marker('16:00:30', END),
+            'node2': early_fault,
+        }
+        result, failures, warnings, _ = self._scan(outputs)
+        self.assertEqual(result['node1'], [])
+        self.assertTrue(result['node2'])
+        self.assertTrue(all('node2' in msg for msg in failures))
+        self.assertTrue(any('node2' in w and 'clock window' in w for w in warnings))
+        self.assertFalse(any('node1' in w for w in warnings))
+
+    def test_warning_level_event_in_window_does_not_fail(self):
+        text = (
+            _marker('16:00:01', START)
+            + _kmsg(
+                '16:00:02', 'amdgpu: Runlist is getting oversubscribed. Expect reduced ROCm performance.', level='warn'
+            )
+            + _marker('16:00:03', END)
+        )
+        result, failures, warnings, _ = self._scan({'node1': text})
+        self.assertEqual(result, {'node1': []})
+        self.assertEqual(failures, [])
+        self.assertTrue(any('oversubscribed' in w for w in warnings))
+
+    def test_write_marker_cmd_quotes_marker_and_only_tee_uses_sudo(self):
         marker = """Starting Test all_reduce's size=$1 `n` say "hi\""""
-        cmd = verify_lib.dmesg_write_marker_cmd(marker)
-        self.assertEqual(cmd, f"sudo echo {shlex.quote(marker)} | sudo tee /dev/kmsg")
+        self.assertEqual(verify_lib.dmesg_write_marker_cmd(marker), f'echo {shlex.quote(marker)} | sudo tee /dev/kmsg')
 
-        echo_cmd = cmd.replace("sudo echo ", "echo ", 1).split(" | sudo tee ", 1)[0]
-        completed = subprocess.run(["bash", "-c", echo_cmd], capture_output=True, text=True, check=True)
-        self.assertEqual(completed.stdout, marker + "\n")
 
-    def test_trim_trailing_blank_dmesg_lines(self):
+class TestDmesgDuringTestEnabled(unittest.TestCase):
+    def test_reads_cvs_params_like_other_rccl_flags(self):
+        for value, expected in (('True', True), ('true', True), (' TRUE ', True), ('False', False), (True, True)):
+            with self.subTest(value=value):
+                config = {'cvs_params': {'dmesg_during_test': value}}
+                self.assertIs(verify_lib.dmesg_during_test_enabled(config), expected)
+        self.assertFalse(verify_lib.dmesg_during_test_enabled({}))
+        self.assertFalse(verify_lib.dmesg_during_test_enabled({'cvs_params': {}}))
+
+
+class TestDmesgWindow(unittest.TestCase):
+    def _window(self, use_markers):
+        handle = MagicMock()
+        handle.exec.side_effect = lambda cmd, **kwargs: {'n1': cmd}
+        return verify_lib.DmesgWindow(handle, 'all_reduce_perf NCCL_ALGO=Ring ', use_markers), handle
+
+    def test_markers_bracket_the_test_and_drive_the_marker_scan(self):
+        window, handle = self._window(use_markers=True)
+        with (
+            patch.object(verify_lib, 'verify_dmesg_during_test', return_value={'n1': []}) as marker_scan,
+            patch.object(verify_lib, 'verify_dmesg_for_errors') as clock_scan,
+        ):
+            window.open()
+            result = window.close_and_scan()
+        cmds = [c.args[0] for c in handle.exec.call_args_list]
         self.assertEqual(
-            verify_lib._trim_trailing_blank_dmesg_lines("a\nb\n\n"),
-            "a\nb\n",
-        )
-        self.assertEqual(
-            verify_lib._trim_trailing_blank_dmesg_lines("a\n\nb\n\n"),
-            "a\n\nb\n",
-        )
-
-    @unittest.skipUnless(_HAS_BASH_AND_AWK, "requires bash and awk")
-    def test_awk_slice_has_no_trailing_blank_line(self):
-        dmesg_text = "Starting Test all_reduce_perf\nEnd of Test all_reduce_perf\n"
-        sliced = self._run_marker_awk_slice(dmesg_text, "Starting Test all_reduce_perf", "End of Test all_reduce_perf")
-        self.assertEqual(len(sliced.splitlines()), 2)
-
-    @patch("cvs.lib.verify_lib.log")
-    def test_log_line_count_excludes_trailing_blank(self, mock_log):
-        phdl = MagicMock()
-        phdl.exec.return_value = {
-            "node1": ("Starting Test all_reduce_perf\nEnd of Test all_reduce_perf\n\n"),
-        }
-
-        with patch("cvs.lib.verify_lib.fail_test"):
-            verify_lib.verify_dmesg_during_test(phdl, "Starting Test all_reduce_perf", "End of Test all_reduce_perf")
-
-        self.assertIs(phdl.exec.call_args.kwargs.get("print_console"), False)
-        body_idx = next(
-            i
-            for i, call in enumerate(mock_log.info.call_args_list)
-            if call.args and "dmesg during test (%d lines)" in str(call.args[0])
-        )
-        body_call = mock_log.info.call_args_list[body_idx]
-        self.assertEqual(body_call[0][2], 2)
-        self.assertIn("Starting Test all_reduce_perf", body_call[0][3])
-        self.assertIn("End of Test all_reduce_perf", body_call[0][3])
-        framed = [call.args[0] for call in mock_log.info.call_args_list[body_idx - 3 : body_idx + 2]]
-        self.assertEqual(
-            framed,
+            cmds,
             [
-                verify_lib._DMESG_LOG_SEP,
-                "Host == %s ==",
-                verify_lib._DMESG_LOG_SEP,
-                body_call.args[0],
-                verify_lib._DMESG_LOG_SEP,
+                verify_lib.dmesg_write_marker_cmd('Starting Test all_reduce_perf NCCL_ALGO=Ring'),
+                'date +"%a %b %e %H:%M:%S"',
+                verify_lib.dmesg_write_marker_cmd('End of Test all_reduce_perf NCCL_ALGO=Ring'),
+                'date +"%a %b %e %H:%M:%S"',
             ],
         )
-
-    @unittest.skipUnless(_HAS_BASH_AND_AWK, "requires bash and awk")
-    def test_awk_slice_returns_last_marker_pair_only(self):
-        dmesg_text = (
-            "noise before\n"
-            "Starting Test all_reduce_perf\n"
-            "old run segfault\n"
-            "End of Test all_reduce_perf\n"
-            "Starting Test all_reduce_perf\n"
-            "current run line\n"
-            "End of Test all_reduce_perf\n"
-            "noise after\n"
+        marker_scan.assert_called_once_with(
+            handle,
+            'Starting Test all_reduce_perf NCCL_ALGO=Ring',
+            'End of Test all_reduce_perf NCCL_ALGO=Ring',
+            {'n1': 'date +"%a %b %e %H:%M:%S"'},
+            {'n1': 'date +"%a %b %e %H:%M:%S"'},
         )
-        sliced = self._run_marker_awk_slice(dmesg_text, "Starting Test all_reduce_perf", "End of Test all_reduce_perf")
-        self.assertIn("current run line", sliced)
-        self.assertNotIn("old run segfault", sliced)
-        self.assertNotIn("noise before", sliced)
-        self.assertNotIn("noise after", sliced)
+        clock_scan.assert_not_called()
+        self.assertEqual(result, {'n1': []})
 
-    @unittest.skipUnless(_HAS_BASH_AND_AWK, "requires bash and awk")
-    def test_awk_slice_returns_partial_when_end_marker_missing(self):
-        dmesg_text = (
-            "Starting Test all_reduce_perf\n"
-            "old complete\n"
-            "End of Test all_reduce_perf\n"
-            "Starting Test all_reduce_perf\n"
-            "crash line still in buffer\n"
-        )
-        sliced = self._run_marker_awk_slice(dmesg_text, "Starting Test all_reduce_perf", "End of Test all_reduce_perf")
-        self.assertIn("crash line still in buffer", sliced)
-        self.assertNotIn("old complete", sliced)
-
-    @patch("cvs.lib.verify_lib.log")
-    def test_crash_partial_slice_warns_missing_end(self, mock_log):
-        phdl = MagicMock()
-        phdl.exec.return_value = {
-            "node1": "Starting Test all_reduce_perf\ncrash line still in buffer\n",
-        }
-
-        with patch("cvs.lib.verify_lib.fail_test") as mock_fail:
-            result = verify_lib.verify_dmesg_during_test(
-                phdl, "Starting Test all_reduce_perf", "End of Test all_reduce_perf"
-            )
-
-        self.assertEqual(result, {"node1": []})
-        mock_fail.assert_not_called()
-        mock_log.warning.assert_called()
-
-    @patch("cvs.lib.verify_lib.fail_test")
-    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
-    def test_node_scraper_scans_bounded_slice(self, mock_parse, mock_fail_test):
-        mock_parse.return_value = [
-            {
-                "priority": "ERROR",
-                "category": "SW_DRIVER",
-                "description": "GPU reset",
-                "match_content": "GPU reset begin",
-                "count": 1,
-                "timestamps": [],
-                "source": "dmesg",
-            }
-        ]
-        phdl = MagicMock()
-        phdl.exec.return_value = {
-            "node1": "Starting Test all_reduce_perf\nGPU reset begin\nEnd of Test all_reduce_perf\n"
-        }
-
-        result = verify_lib.verify_dmesg_during_test(
-            phdl, "Starting Test all_reduce_perf", "End of Test all_reduce_perf"
-        )
-
-        self.assertIn("--time-format iso -x", phdl.exec.call_args[0][0])
-        mock_parse.assert_called_once()
-        self.assertEqual(len(result["node1"]), 1)
-        mock_fail_test.assert_called()
-
-    @patch("cvs.lib.verify_lib.log")
-    @patch("cvs.lib.verify_lib.fail_test")
-    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
-    def test_node_scraper_warning_does_not_fail(self, mock_parse, mock_fail_test, mock_log):
-        mock_parse.return_value = [
-            {
-                "priority": "WARNING",
-                "category": "SW_DRIVER",
-                "description": "Runlist oversubscribed",
-                "match_content": "Runlist is getting oversubscribed",
-                "count": 1,
-                "timestamps": [],
-                "source": "dmesg",
-            }
-        ]
-        phdl = MagicMock()
-        phdl.exec.return_value = {
-            "node1": ("Starting Test all_reduce_perf\nRunlist is getting oversubscribed\nEnd of Test all_reduce_perf\n")
-        }
-
-        result = verify_lib.verify_dmesg_during_test(
-            phdl, "Starting Test all_reduce_perf", "End of Test all_reduce_perf"
-        )
-
-        self.assertEqual(result, {"node1": []})
-        mock_fail_test.assert_not_called()
-        mock_log.warning.assert_called()
-        self.assertIn("Runlist is getting oversubscribed", mock_log.warning.call_args[0][0])
-        self.assertEqual(mock_parse.call_args.kwargs["analysis_args"], verify_lib.cvs_dmesg_analysis_args())
+    def test_without_markers_scans_the_bounded_clock_window(self):
+        window, handle = self._window(use_markers=False)
+        with (
+            patch.object(verify_lib, 'verify_dmesg_during_test') as marker_scan,
+            patch.object(verify_lib, 'verify_dmesg_for_errors', return_value={'n1': []}) as clock_scan,
+        ):
+            window.open()
+            window.close_and_scan()
+        marker_scan.assert_not_called()
+        start, end = clock_scan.call_args.args[1:3]
+        self.assertEqual(start, end)
+        self.assertEqual(clock_scan.call_args.kwargs, {'till_end_flag': False})
+        self.assertEqual(handle.exec.call_count, 4)
 
 
 class TestDmesgMigrations(unittest.TestCase):

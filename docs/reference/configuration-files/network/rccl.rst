@@ -218,6 +218,9 @@ Configuration parameters for RCCL suites:
    * - ``report_ecc_blocks``
      - ``[]``
      - Optional block list used when ``report_ecc_delta`` is true. Empty means all blocks.
+   * - ``dmesg_during_test``
+     - ``"False"``
+     - Perf and regression only. Scan each node's dmesg between the ``Starting Test`` and ``End of Test`` markers CVS writes around each test, instead of the clock window taken from the first node. Use it when node clocks are not tightly synchronized. A node whose start marker is no longer in dmesg is scanned over the clock window; a node with no end marker is scanned to the end of dmesg. Skipped without passwordless sudo.
 
 Expected results format
 -----------------------

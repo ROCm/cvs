@@ -64,12 +64,12 @@ class TestRcclSubtests(unittest.TestCase):
             node=SimpleNamespace(nodeid=f'cvs/tests/rccl/{name}.py::test_rccl_perf[all_reduce_perf]', stash={})
         )
 
-    def _run_perf(self, module, regression=False, error=False):
+    def _run_perf(self, module, regression=False, error=False, sudo=False, cvs_params=None):
         request = self._request('rccl_regression' if regression else 'rccl_perf')
         fake = _CapturingSubtests()
         orch = MagicMock()
         with (
-            patch.object(module, 'get_passwordless_sudo_status', return_value={'n0': False}),
+            patch.object(module, 'get_passwordless_sudo_status', return_value={'n0': sudo}),
             patch.object(module, 'rccl_res_dict', {}),
             patch.object(module.rccl_lib.RcclJob, 'from_config') as from_config,
         ):
@@ -80,7 +80,7 @@ class TestRcclSubtests(unittest.TestCase):
                 from_config.return_value.run_perf.side_effect = (
                     lambda: globals.error_list.append('low bandwidth') or self.raw
                 )
-            args = (orch, ['n0'], ['v0'], {'cvs_params': {}}, 'all_reduce_perf')
+            args = (orch, ['n0'], ['v0'], {'cvs_params': cvs_params or {}}, 'all_reduce_perf')
             if regression:
                 args += ({'NCCL_ALGO': 'Ring'},)
             if error:
@@ -107,6 +107,34 @@ class TestRcclSubtests(unittest.TestCase):
         self.assertEqual(fake.failures, ['low bandwidth'])
         self.assertEqual(len(registry.benchmark_metric_rows_for_nodeid(request.node.nodeid)), 2)
         self.assertEqual(from_config.call_args.kwargs['env_overrides'], {'NCCL_ALGO': 'Ring'})
+
+    def test_sudo_runs_bracket_the_job_with_a_dmesg_window(self):
+        for module, regression, label in (
+            (rccl_perf, False, 'all_reduce_perf'),
+            (rccl_regression, True, 'all_reduce_perf NCCL_ALGO=Ring'),
+        ):
+            for flag, use_markers in (('True', True), ('False', False)):
+                with self.subTest(module=module.__name__, flag=flag):
+                    order = []
+
+                    def record(step, module=module):
+                        job = module.rccl_lib.RcclJob.from_config.return_value
+                        ran = job.run_perf.called or job.run_regression.called
+                        order.append(f'{step} {"after" if ran else "before"} job')
+
+                    with patch.object(module, 'DmesgWindow') as window_class:
+                        window_class.return_value.open.side_effect = lambda: record('open')
+                        window_class.return_value.close_and_scan.side_effect = lambda: record('scan')
+                        self._run_perf(module, regression=regression, sudo=True, cvs_params={'dmesg_during_test': flag})
+                    self.assertEqual(window_class.call_args.args[1:], (label, use_markers))
+                    self.assertEqual(order, ['open before job', 'scan after job'])
+
+    def test_runs_without_sudo_skip_the_dmesg_window(self):
+        for module, regression in ((rccl_perf, False), (rccl_regression, True)):
+            with self.subTest(module=module.__name__):
+                with patch.object(module, 'DmesgWindow') as window_class:
+                    self._run_perf(module, regression=regression, cvs_params={'dmesg_during_test': 'True'})
+                window_class.assert_not_called()
 
     def test_pairwise_reports_each_phase_and_node(self):
         request = SimpleNamespace(
