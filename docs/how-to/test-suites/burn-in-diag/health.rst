@@ -37,6 +37,10 @@ For the performance validation, use the reference bandwidth or latency numbers p
 
 Use these scripts to run each health test. These CVS test scripts have two parts: installing the functionality and running the tests.
 
+.. note::
+
+  These health suites honor ``orchestrator`` in the cluster file. With ``container``, the workload runs inside the per-host container (``docker exec``). See :doc:`/how-to/run-with-containers`.
+
 AGFHC
 ~~~~~
 
@@ -180,10 +184,6 @@ Run the RVS test:
        --cluster_file ~/cvs_workspace/cluster.json \
        --config_file ~/cvs_workspace/health/health_config.json \
        --capture=tee-sys -vvv -s
-
-.. note::
-
-  Both ``cvs run install_rvs`` and ``cvs run rvs_cvs`` support running inside a per-host container instead of on the host filesystem. Pass a ``cluster_container.json`` cluster file with ``orchestrator: container`` to route invocations through the container backend. See :doc:`/how-to/run-with-containers`.
 
 Run on managed compute
 ~~~~~~~~~~~~~~~~~~~~~~

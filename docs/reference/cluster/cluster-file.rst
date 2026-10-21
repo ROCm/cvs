@@ -2,11 +2,11 @@
   :description: Reference for the CVS cluster file JSON format, including SSH credentials, node topology, baremetal and container backend selection, and Docker runtime options.
   :keywords: CVS, cluster file, JSON, baremetal, container, Docker, orchestrator, SSH, ROCm, RDMA, node topology
 
-***************************************************************************
+********************************************************************************
 Cluster Validation Suite (CVS) cluster file: configuration and backend selection
-***************************************************************************
+********************************************************************************
 
-In SSH mode, each ``cvs run`` invocation is pointed at a cluster file via ``--cluster_file <path>``. The cluster file declares the SSH credentials, the node list, and the **execution backend** that runs the workload. CVS ships two starter templates:
+In SSH mode, each ``cvs run`` invocation is pointed at a cluster file via ``--cluster_file <path>``. The cluster file declares the SSH credentials, the node list, and an ``orchestrator`` value. Which suites follow that value is in the scope table below. CVS ships two starter templates:
 
 .. note::
 
@@ -24,9 +24,9 @@ In SSH mode, each ``cvs run`` invocation is pointed at a cluster file via ``--cl
      - ROCm, RVS, RCCL, and other workload binaries are installed on the host filesystem.
    * - ``cluster_container.json``
      - ``container``
-     - The workload runs inside a long-lived per-host container; the host only needs Docker, GPUs, and SSH.
+     - A suite that runs its workload in a per-host container. The host needs Docker, GPUs, and SSH. ``per_run`` (the default lifetime) removes that container when the run ends.
 
-Copy the template that matches your cluster shape, edit the placeholders, and pass it to ``cvs run`` and ``cvs exec``. The choice of backend is made entirely in the cluster file. The ``cvs run`` invocation does not change.
+Copy the template that matches the suite you are running, edit the placeholders, and pass it to ``cvs run``. ``cvs exec`` and ``cvs scp`` read the same file for hosts and SSH credentials and ignore ``orchestrator``.
 
 For SSH-mode runs, configure :doc:`/reference/cluster/passwordless-ssh` before running CVS against the cluster.
 
@@ -38,23 +38,23 @@ Backends
 Baremetal
 ---------
 
-Baremetal is the default. Workload commands are sent over SSH to each node and executed directly on the host filesystem. This is the path that has always been used by CVS and is consumed by every existing test suite.
+Baremetal is the default when a suite honors ``orchestrator`` and you leave the key unset. Commands go over SSH and run on the host filesystem.
 
 Container
 ---------
 
-Container mode routes workload commands through a container runtime on each node. CVS uses host SSH to the node, then ``docker exec`` into a long-lived per-host container. Inside the container, an SSH daemon listens on port ``2224`` so that MPI-style workloads can fan out using the in-container SSH transport.
+When a suite runs a container, CVS reaches each node and starts one container there. In SSH mode that reachability is SSH. On a Slurm or SPUR job step it is the per-node HTTP agent (see :doc:`/how-to/run-on-managed-compute`). Later workload commands are ``docker exec`` into that container (``docker exec <name> bash -c <cmd>``). ``per_run``, the default ``container.lifetime``, starts the container at setup and removes it at teardown.
 
-The container backend is currently consumed by ``rvs_cvs`` and ``install_rvs``. The container lifecycle (start, verify, sshd setup, teardown) runs from the test fixture in `cvs/tests/health/rvs_cvs.py <https://github.com/ROCm/cvs/blob/main/cvs/tests/health/rvs_cvs.py>`_.
+``docker exec`` does not use port 2224. CVS starts ``sshd`` inside the container on port 2224 only so ``mpirun`` can SSH to peer containers (``-p 2224``). That step copies ``/host_ssh`` to ``/root/.ssh`` and runs ``/usr/sbin/sshd -p2224``. It is skipped on a single node, and on a Slurm or SPUR job step. The health suites, RCCL, ``host_configs_cvs``, and ``install_ompi`` use the shared fixture, which calls this step. ``preflight_checks`` has its own fixture that does the same. ATOM calls it. vLLM skips it. Aorta, SGLang, xDiT, ``megatron_single``, ``megatron_distributed``, TorchTitan, JAX MaxText, and MORI launch a container without calling it.
 
 Cluster file shape
 ==================
 
-Both templates share the same top-level shape. The ``container`` block and the ``orchestrator`` key are only meaningful in container mode.
+Both templates share the same top-level shape.
 
 .. note::
 
-  In the cluster file, ``{user-id}`` resolves to the current login user at runtime. Replace it with a literal username if you want to pin it. The placeholders ``{xx.xx.xx.xx|hostname-N}`` are example placeholders for real IPs or hostnames.
+  ``{user-id}`` is expanded to the user running CVS (``USER``, then ``LOGNAME``, then ``USERNAME``, then ``root``) when a suite loads the cluster file, and when you run ``cvs monitor check_cluster_health``. ``cvs exec`` and ``cvs scp`` leave the characters ``{user-id}`` as the SSH user and key path. Put a literal username in a file you pass to those two commands. The placeholders ``{xx.xx.xx.xx|hostname-N}`` are examples for real IPs or hostnames.
 
 .. dropdown:: ``cluster_container.json``
 
@@ -111,19 +111,19 @@ The following table describes every key accepted at the top level of the cluster
      - Description
    * - ``orchestrator``
      - ``baremetal``
-     - Execution backend. Set to ``container`` to route workload commands through the container runtime. Honored today only by ``rvs_cvs`` and ``install_rvs``; see the Backends section above.
+     - ``baremetal`` or ``container``. Suites in the scope table either follow it, force ``container``, or ignore it.
    * - ``username``
      - ``{user-id}``
-     - SSH username for all hosts. ``{user-id}`` resolves to the current login user at runtime.
+     - SSH username for all hosts. Expanded for ``cvs run`` and ``cvs monitor check_cluster_health``. Left literal by ``cvs exec`` and ``cvs scp``.
    * - ``priv_key_file``
      - ``/home/{user-id}/.ssh/id_rsa``
-     - Absolute path to the SSH private key used for every host.
+     - Absolute path to the SSH private key used for every host. The same ``{user-id}`` rule as ``username``.
    * - ``head_node_dict.mgmt_ip``
-     - (required)
-     - Head node management IP or hostname (the host where you run the CVS CLI). This can be one of the keys in ``node_dict`` (usually the first node) or a completely separate host that is not in ``node_dict``. See :doc:`/install/install`.
+     - (optional)
+     - Stored and schema-checked. The orchestrator does not SSH here. See "Which host is the head" below.
    * - ``env_vars``
      - ``{}``
-     - Custom environment variables exported on every host before each command. Honored by the legacy parallel-SSH path; ``cvs exec`` does not export this block.
+     - Shell ``export`` prefix on host SSH commands, including ``cvs exec`` and the ``docker`` CLI calls CVS makes over SSH. This is the host shell. It is not passed as ``docker -e``. ``cvs scp`` does not read it. See ``container.env`` below.
    * - ``node_dict``
      - (required)
      - Cluster member nodes keyed by public IP or hostname. Each value is ``{"bmc_ip": "NA", "vpc_ip": "..."}``. ``vpc_ip`` is the address reachable from other nodes; set it equal to the public IP if there is no separate VPC. In scheduler-managed runs CVS adds ``agent_port`` to each node.
@@ -132,9 +132,27 @@ The following table describes every key accepted at the top level of the cluster
      - Written by CVS in scheduler-managed runs only; path to the agent bearer token. Do not set by hand.
    * - ``container``
      - ``{}``
-     - Container backend configuration. Required when ``orchestrator`` is ``container``. See the next section.
+     - Container backend configuration. Required when a suite builds a container orchestrator. See the next section.
 
-CVS's own internal commands -- the Docker CLI calls made by ``DockerRuntime`` (``docker run``/``exec``/``rm``/``ps``/``load``) and the MPI hostfile cleanup in ``BaremetalOrchestrator`` -- automatically detect whether ``sudo`` is needed. Once per run, CVS probes each host with ``sudo -n true`` and caches whether passwordless sudo is available; every subsequent privileged command is then prefixed with ``sudo -n `` or left unprefixed accordingly, for the lifetime of that run. No cluster-file configuration is required.
+Which host is the head
+----------------------
+
+CVS uses three different hosts. Setting one does not change the others.
+
+.. list-table::
+   :widths: 3 7
+   :header-rows: 1
+
+   * - Host
+     - What it is
+   * - Launch host
+     - The machine where you run the ``cvs`` process. It can sit outside ``node_dict``. ``{user-id}`` and the default container name use this process's user. The SSH-key mount is ``/home/<that user>/.ssh`` on each cluster node, not the cluster ``username``.
+   * - Orchestrator head
+     - The first ``node_dict`` key (or, when ``node_dict`` is a list, the first entry's ``mgmt_ip``). ``exec_on_head``, the MPI hostfile, and the sudo answer below all use this host.
+   * - ``head_node_dict.mgmt_ip``
+     - Optional field stored on the config. The orchestrator does not select its SSH head from it. Some suites overwrite it so it matches the host they already chose as the first ``node_dict`` key.
+
+CVS's own privileged commands — the Docker CLI calls (``docker run``, ``exec``, ``rm``, ``ps``, ``load``, ``pull``, ``login``) and the MPI hostfile write — probe ``sudo -n true`` once per orchestrator. The cached answer is the orchestrator head's result, and CVS prefixes every later privileged command on every host with ``sudo -n `` or with nothing. If the nodes disagree, CVS logs a warning and still uses the head's answer. No cluster-file key controls this.
 
 Container block
 ===============
@@ -155,13 +173,19 @@ The following table describes each key in the ``container`` block.
      - Container lifecycle policy: ``no_launch``, ``per_run``, or ``persistent``. See the truth table below.
    * - ``image``
      - (required)
-     - Image with the test dependencies (for example ``rvs``) pre-installed and an ``sshd`` you can start on port ``2224``. Must be present locally on each node or pullable from a reachable registry.
+     - Image tag. Setup fails when this is missing. If any host does not already have ``image``, CVS runs ``docker pull`` on every host (after ``image_tar`` or a registry login when you set those).
    * - ``name``
-     - (required)
-     - Container name on each host. For parallel runs, make this per-iteration unique (for example ``cvs_iter_<run_id>``).
+     - ``<launch user>_<sanitized image>``
+     - Optional. Omit it and CVS builds the name from the user running ``cvs`` plus the image, with every character outside ``[A-Za-z0-9_]`` replaced by ``_``. Set it when two runs share a host, and when ``lifetime`` is ``persistent``.
+   * - ``env``
+     - ``GPUS=8``, ``MULTINODE=true``, plus your keys
+     - Environment inside the container (``docker -e``). Your keys override those two defaults. This is not cluster ``env_vars``. ``runtime.args.env`` is applied after this map, so the same name there wins.
+   * - ``image_tar``
+     - (unset)
+     - Path on each node. When set and any host lacks ``image``, CVS runs ``docker load`` on every host and skips registry login.
    * - ``runtime.name``
      - ``docker``
-     - Container runtime. Today only ``docker`` is implemented. ``enroot`` is registered as a stub and is not yet functional.
+     - Container runtime. ``docker`` is the working runtime. ``enroot`` is accepted and its setup returns failure.
    * - ``runtime.args``
      - ``{}``
      - Backend-specific runtime arguments (see the next section).
@@ -173,6 +197,8 @@ When ``runtime.name`` is ``docker``, the keys below configure the underlying ``d
 
 - List arguments (``volumes``, ``devices``, ``cap_add``, ``security_opt``, ``group_add``, ``ulimit``) **append to** the baked-in defaults.
 - Scalar arguments (``network``, ``ipc``, ``privileged``) **override** the default when set, otherwise inherit it.
+- ``env`` is a map of extra ``docker -e`` flags, applied after ``container.env``.
+- ``registry`` is not a ``docker run`` flag. When ``image_tar`` is unset and ``registry`` is set, CVS runs ``docker login`` on every node before the pull. ``username`` and ``password_file`` are required; ``password_file`` is a path on each node; ``server`` is optional.
 - An empty ``args: {}`` already yields a working RDMA-ready container. The keys below are only needed to extend or override.
 
 The following table lists the supported ``runtime.args`` keys and their defaults.
@@ -195,7 +221,7 @@ The following table lists the supported ``runtime.args`` keys and their defaults
      - ``--privileged``. Required for device passthrough and RDMA.
    * - ``volumes``
      - Appended
-     - List of ``host:container[:ro]`` mounts. The container always also receives ``/home/$user/.ssh:/host_ssh`` injected by the orchestrator.
+     - List of ``host:container[:ro]`` mounts. CVS also mounts ``/home/<user running cvs>/.ssh`` at ``/host_ssh``. That user is the launch-host user, not the cluster ``username``.
    * - ``devices``
      - ``["/dev/kfd", "/dev/dri"]`` (appended)
      - Device passthroughs. CVS also passes through each device node under ``/dev/infiniband``, discovered on each host at launch; a host without ``/dev/infiniband`` gets none. Listed ``/dev/infiniband`` entries are left to that discovery.
@@ -211,6 +237,18 @@ The following table lists the supported ``runtime.args`` keys and their defaults
    * - ``ulimit``
      - ``["memlock=-1"]`` (appended)
      - Per-process resource limits. ``memlock=-1`` is required for RDMA.
+   * - ``env``
+     - (unset)
+     - Extra ``-e`` flags. The same name overrides ``container.env``.
+   * - ``shm_size``
+     - (unset)
+     - ``--shm-size``.
+   * - ``user``
+     - (unset)
+     - ``--user`` inside the container.
+   * - ``registry``
+     - (unset)
+     - ``username``, ``password_file``, and optional ``server`` for ``docker login`` before a pull. Used when ``image_tar`` is unset.
 
 ``lifetime`` truth table
 ========================
@@ -238,7 +276,7 @@ The following table shows what each ``lifetime`` value does during setup and tea
 
 .. note::
 
-  With ``lifetime: persistent``, pin ``container.name`` explicitly. The default ``<user>_<sanitized_image>`` name shifts when you bump the image tag, silently abandoning the previous container's overlay.
+  With ``lifetime: persistent``, pin ``container.name``. The default name is the user running ``cvs``, then ``_``, then the image with characters outside ``[A-Za-z0-9_]`` replaced by ``_``. That name changes when you change the image tag, and the previous container's overlay is left behind.
 
 Prerequisites on each cluster node
 ==================================
@@ -247,13 +285,14 @@ The following prerequisites must be satisfied on every cluster node before using
 
 To use the container backend, every cluster node must have:
 
-- **Docker installed**. The SSH user needs either passwordless ``sudo docker`` or direct Docker access (for example membership in the ``docker`` group) -- CVS probes once per run (``sudo -n true``) and caches which applies, prefixing every subsequent Docker command accordingly.
+- **Docker installed**. The SSH user needs passwordless ``sudo docker`` or direct Docker access (for example membership in the ``docker`` group). CVS probes ``sudo -n true`` once per orchestrator and caches the orchestrator head's answer.
 - **Host driver loaded** so ``/dev/kfd``, ``/dev/dri/*``, and ``/dev/infiniband/*`` (when RDMA is in scope) are present for passthrough.
-- **SSH user home directory accessible**. The orchestrator mounts ``~/.ssh`` as ``/host_ssh`` and copies keys into ``/root/.ssh`` inside the container so that the in-container ``sshd`` on port ``2224`` can authenticate.
-- **Container image** either pre-loaded on every node (``docker load``) or pullable from a reachable registry. The image must contain ``openssh-server`` (for the in-container ``sshd``) and the workload binaries the suite invokes (for example ``/opt/rocm/bin/rvs``).
+- **The launch user's SSH directory** at ``/home/<user running cvs>/.ssh`` when the suite starts in-container sshd. CVS mounts that directory at ``/host_ssh`` and copies it to ``/root/.ssh``. Suites that never call sshd setup do not need ``openssh-server`` in the image.
+- **The image** already loaded, provided as ``image_tar`` on each node, or pullable. A multi-node suite that calls sshd setup needs ``/usr/sbin/sshd`` in the image. The image also needs the binaries that suite runs (for example ``/opt/rocm/bin/rvs`` for ``rvs_cvs``).
 
 Related resources
 =================
 
-- :doc:`/how-to/run-with-containers` - task-oriented walkthrough for running ``rvs_cvs`` in container mode.
-- `cvs/input/cluster_file/README.md <https://github.com/ROCm/cvs/blob/main/cvs/input/cluster_file/README.md>`_ - in-tree reference next to the templates.
+- :doc:`/how-to/run-with-containers` — walkthrough for a container cluster file.
+- :doc:`/how-to/test-suites/burn-in-diag/health` — health suites that follow the cluster ``orchestrator`` key.
+- `cvs/input/cluster_file/README.md <https://github.com/ROCm/cvs/blob/main/cvs/input/cluster_file/README.md>`_ — in-tree reference next to the templates.

@@ -61,12 +61,12 @@ Add the test function name after the suite name:
 Run with containers
 ===================
 
-CVS selects an execution backend in the cluster file:
+The cluster file has an ``orchestrator`` key. Suites differ: some follow it and run the workload inside the container, some start a container and keep their checks on the host, some force a container, and some stay on host SSH. The table is in :doc:`/reference/cluster/cluster-file`.
 
-- **Bare metal** — use when you can install or upgrade the ROCm stack on each host and run tests on the host filesystem.
-- **Container** — use when you cannot install or change ROCm on the hosts, or when you have a Docker image with a pinned ROCm version and framework dependencies (for example PyTorch) that you run on each node.
+- **Bare metal** — commands run on the host filesystem. Use this when the suite follows ``orchestrator`` and the ROCm stack is installed on each host.
+- **Container** — commands for a suite that enters the container run with ``docker exec`` in one container per host. ``per_run`` (the default lifetime) removes that container at the end of the run.
 
-See :doc:`/how-to/run-with-containers` for ``cluster_container.json``, image selection, and container run commands.
+See :doc:`/how-to/run-with-containers` for the cluster file, image, and a health-suite example.
 
 Run on managed compute
 ======================
