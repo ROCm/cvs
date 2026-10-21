@@ -1886,9 +1886,7 @@ class TestRcclTopology(unittest.TestCase):
         row = {key: value for key, value in self.row.items() if key not in rccl_lib.TOPOLOGY_FIELDS}
         saved = self._mock_run([row])
         self.assertEqual(self.job.run_regression(), [row])
-        self.assertEqual(
-            saved['/results/rccl_all_reduce_perf_topology_check.json']['checks'][0]['verdict'], 'skipped'
-        )
+        self.assertEqual(saved['/results/rccl_all_reduce_perf_topology_check.json']['checks'][0]['verdict'], 'skipped')
         fail.assert_not_called()
 
     def test_perf_preserves_checks_when_a_later_launch_fails(self):
@@ -2003,18 +2001,14 @@ class TestRcclTopology(unittest.TestCase):
         self.job.execute.side_effect = RuntimeError('launcher unavailable')
         with self.assertRaisesRegex(RuntimeError, 'launcher unavailable'):
             self.job.run_regression()
-        self.assertEqual(
-            saved['/results/rccl_all_reduce_perf_topology_check.json'], {'mode': 'warn', 'checks': []}
-        )
+        self.assertEqual(saved['/results/rccl_all_reduce_perf_topology_check.json'], {'mode': 'warn', 'checks': []})
 
     def test_regression_failed_launch_saves_skipped_check(self):
         saved = self._mock_run([])
         self.job.execute.return_value = None
         self.assertEqual(self.job.run_regression(), [])
         self.job.read_results.assert_not_called()
-        self.assertEqual(
-            saved['/results/rccl_all_reduce_perf_topology_check.json']['checks'][0]['verdict'], 'skipped'
-        )
+        self.assertEqual(saved['/results/rccl_all_reduce_perf_topology_check.json']['checks'][0]['verdict'], 'skipped')
 
     def test_reused_job_resets_checks_for_each_run(self):
         saved = self._mock_run([self.row])

@@ -738,11 +738,13 @@ class RcclJob:
         artifacts = []
         for collective in collectives:
             combined = self._derived_json_path(self.result_file, collective)
-            artifacts.extend([
-                (combined, f'collective {collective!r} combined results'),
-                (self._derived_json_path(combined, 'aggregated'), f'collective {collective!r} aggregated results'),
-                (self._derived_json_path(combined, 'topology_check'), f'collective {collective!r} topology audit'),
-            ])
+            artifacts.extend(
+                [
+                    (combined, f'collective {collective!r} combined results'),
+                    (self._derived_json_path(combined, 'aggregated'), f'collective {collective!r} aggregated results'),
+                    (self._derived_json_path(combined, 'topology_check'), f'collective {collective!r} topology audit'),
+                ]
+            )
             artifacts.extend(
                 (self._derived_json_path(combined, dtype), f'collective {collective!r} dtype {dtype!r}')
                 for dtype in data_types
