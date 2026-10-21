@@ -1593,6 +1593,12 @@ class PreflightIfoeConfig(BaseModel):
         default=False,
         description="Enable MI4XX AIFM, AFM, vPOD, station-mask, and IFoE port admission",
     )
+    min_up_ports_per_gpu: int = Field(
+        default=2,
+        ge=0,
+        description="Minimum enabled IFoE ports each GPU's station mask must report; "
+        "default 2 (one station) fails an un-provisioned fabric, 0 admits it for diagnostics",
+    )
     l2ping: PreflightL2PingConfig = Field(
         default_factory=PreflightL2PingConfig,
         description="Strict IFoE L2 connectivity admission",
