@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>__TITLE__</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<style>
+:root {
+  --bg: #0f1117; --panel: #1a1d27; --border: #2a2f3d; --text: #e8eaef; --muted: #9aa3b5;
+  --accent: #ff6b35; --accent2: #6b9fff;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif;
+  background: linear-gradient(160deg, #0a0c12 0%, #12151f 40%, #0f1117 100%);
+  color: var(--text); line-height: 1.45; padding: 1.25rem; }
+.wrap { max-width: 1140px; margin: 0 auto; }
+a { color: var(--accent2); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.hero { margin-bottom: 1rem; }
+h1 { font-size: 1.6rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: -0.02em; }
+.subtitle { color: var(--muted); margin: 0; font-size: 0.95rem; }
+.viewer-nav { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin: 0.75rem 0 1rem; padding: 0.65rem 1rem;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; font-size: 0.8rem; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1rem 1.25rem; margin-bottom: 1rem; box-shadow: 0 8px 32px rgba(0,0,0,0.25); }
+.panel h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  margin: 0 0 0.85rem; font-weight: 600; }
+.muted { color: var(--muted); font-size: 0.85rem; }
+.toolbar { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 0.65rem 0.85rem; align-items: end; }
+.toolbar label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.72rem;
+  color: var(--muted); min-width: 0; }
+.toolbar label .filter-label { line-height: 1.2; white-space: nowrap; }
+.toolbar label.filter-search { grid-column: span 2; }
+@media (max-width: 720px) { .toolbar label.filter-search { grid-column: span 1; } }
+.toolbar select, .toolbar input[type="search"] {
+  background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.35rem 0.5rem; width: 100%; min-width: 0; font-size: 0.85rem; }
+.toolbar button { background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.35rem 0.65rem; font-size: 0.85rem; cursor: pointer; white-space: nowrap; }
+.toolbar button:hover { border-color: var(--accent); }
+.toolbar-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end;
+  justify-content: flex-end; }
+.meta-line { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; margin-top: 0.85rem;
+  font-size: 0.85rem; color: var(--muted); }
+.meta-line strong { color: var(--text); font-weight: 600; }
+.chart-canvas-wrap { position: relative; height: 340px; }
+.results-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+th, td { padding: 0.55rem 0.65rem; border-bottom: 1px solid var(--border); text-align: left; }
+th { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.rd-pager { display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem;
+  margin-top: 0.75rem; font-size: 0.8rem; color: var(--muted); }
+.rd-pager button { background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer; }
+.rd-pager button:hover { border-color: var(--accent); }
+footer.page-foot { text-align: center; margin-top: 2rem; }
+.to-top { display: block; width: max-content; margin: 0.85rem auto 0; padding: 0.3rem 0.75rem;
+  border: 1px solid var(--border); border-radius: 6px; background: #12151f; color: var(--accent2);
+  text-decoration: none; font-size: 0.8rem; }
+.to-top:hover { border-color: var(--accent); }
+#load-error { color: #ff5c6a; }
+</style>
+</head>
+<body data-viewer="series">
+<div class="wrap" id="top">
+<header class="hero">
+  <h1>__TITLE__</h1>
+  <p class="subtitle">__SUBTITLE__</p>
+</header>
+<nav class="viewer-nav" id="deck-nav" hidden></nav>
+<div id="load-error" hidden></div>
+<section class="panel" id="filters">
+  <h2>Filters</h2>
+  <div class="toolbar">
+    <label><span class="filter-label" id="f-series-label">Series</span><select id="f-series" aria-label="Filter charts and table by series"><option value="">All</option></select></label>
+    <label class="filter-search"><span class="filter-label">Search table</span><input id="f-search" type="search" placeholder="any column value…"/></label>
+    <div class="toolbar-actions"><button type="button" id="btn-reset-zoom">Reset zoom</button></div>
+  </div>
+  <div class="meta-line" id="meta">Loading…</div>
+</section>
+<div id="deck-sections"></div>
+<footer class="page-foot"><a class="to-top" href="#top">Go to top</a></footer>
+</div>
+__EMBEDDED_JSON__
+<script>
+'use strict';
+const JSON_PATH = __JSON_PATH__;
+
+const LINE_DASHES = [[], [8, 4], [2, 3], [12, 4, 3, 4]];
+const LINE_POINT_STYLES = ['circle', 'rect', 'triangle', 'rectRot'];
+const CHART_COLORS = [
+  '#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#f0c040', '#ff5c6a',
+  '#2ec4b6', '#e879f9', '#a3e635', '#818cf8', '#22d3ee', '#f472b6',
+];
+const chartInstances = [];
+
+function esc(text) {
+  return String(text == null ? '' : text)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function fmtNum(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value == null ? '—' : value);
+  const abs = Math.abs(num);
+  if (abs >= 1000) return num.toFixed(1);
+  if (abs >= 10) return num.toFixed(2);
+  return num.toFixed(3);
+}
+
+function resolveBind(context, bind) {
+  if (!bind) return undefined;
+  if (bind.indexOf('.') < 0) return context ? context[bind] : undefined;
+  return bind.split('.').reduce((obj, key) => (obj != null ? obj[key] : undefined), context);
+}
+
+function lineStyle(index) {
+  return {
+    color: CHART_COLORS[index % CHART_COLORS.length],
+    // A repeated color gets the next dash, so line 13 is not the same mark as line 1.
+    dash: LINE_DASHES[Math.floor(index / CHART_COLORS.length) % LINE_DASHES.length],
+    point: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
+  };
+}
+
+function lineLegendLabels() {
+  return {
+    color: '#e8eaef',
+    usePointStyle: true,
+    pointStyle: 'line',
+    boxWidth: 28,
+    boxHeight: 6,
+    font: { size: 11 },
+    // Point-style legends stroke with pointBorderColor, which matches the panel background; use the line color.
+    generateLabels: chart => Chart.defaults.plugins.legend.labels.generateLabels(chart)
+      .map(item => Object.assign({}, item, { strokeStyle: item.fillStyle })),
+  };
+}
+
+function buildLineDataset(label, data, index) {
+  const style = lineStyle(index);
+  return {
+    label,
+    data,
+    borderColor: style.color,
+    backgroundColor: style.color,
+    borderWidth: 2.5,
+    borderDash: style.dash,
+    tension: 0.2,
+    fill: false,
+    pointRadius: 5,
+    pointHoverRadius: 7,
+    pointStyle: style.point,
+    pointBackgroundColor: style.color,
+    pointBorderColor: '#1a1d27',
+    pointBorderWidth: 2,
+    spanGaps: true,
+    // Dashed / alternate styles draw on top so overlapping trends stay visible.
+    order: style.dash.length ? index : index + 10,
+  };
+}
+
+function collectLineEntries(data, yField) {
+  const raw = ((data && data.charts) || {})[yField];
+  const entries = [];
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    Object.values(raw).forEach(seriesList => {
+      if (Array.isArray(seriesList)) entries.push(...seriesList);
+      else if (seriesList && typeof seriesList === 'object') entries.push(seriesList);
+    });
+  } else if (Array.isArray(raw)) {
+    entries.push(...raw);
+  }
+  return entries.filter(entry => entry && typeof entry === 'object');
+}
+
+// Merge x labels so every series keeps its own order even when collectives sweep different sizes.
+function unionLabels(entries) {
+  const out = [];
+  entries.forEach(entry => {
+    let at = -1;
+    (entry.points || []).forEach(point => {
+      const label = String(point[0]);
+      const found = out.indexOf(label);
+      if (found >= 0) {
+        at = found;
+        return;
+      }
+      at += 1;
+      out.splice(at, 0, label);
+    });
+  });
+  return out;
+}
+
+function makeLineChart(canvas, labels, datasets, unit) {
+  const chart = new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', axis: 'x', intersect: false },
+      plugins: {
+        legend: { labels: lineLegendLabels() },
+        tooltip: {
+          backgroundColor: '#2a3142',
+          borderColor: '#3a4255',
+          borderWidth: 1,
+          titleColor: '#e8eaef',
+          bodyColor: '#c8d0e0',
+          callbacks: {
+            label: ctx => ctx.dataset.label + ': ' + fmtNum(ctx.parsed.y) + (unit ? ' ' + unit : ''),
+          },
+        },
+        zoom: {
+          pan: { enabled: true, mode: 'x' },
+          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+        },
+      },
+      scales: {
+        x: { ticks: { color: '#9aa3b5', maxRotation: 0 }, grid: { color: '#2a2f3d' } },
+        y: {
+          ticks: { color: '#9aa3b5' },
+          grid: { color: '#2a2f3d' },
+          title: unit ? { display: true, text: unit, color: '#9aa3b5', font: { size: 11 } } : undefined,
+        },
+      },
+    },
+  });
+  chartInstances.push(chart);
+  return chart;
+}
+
+function renderLineChartShell(card, data, sectionId) {
+  const yField = (card.series || {}).y_field;
+  if (!collectLineEntries(data, yField).length) return "<p class='muted'>No series data.</p>";
+  return `<div class='chart-canvas-wrap'><canvas id='chart-${esc(sectionId)}'></canvas></div>`;
+}
+
+function drawLineChart(card, data, sectionId) {
+  const seriesCfg = card.series || {};
+  const entries = collectLineEntries(data, seriesCfg.y_field)
+    .sort((a, b) => String(a.label || '').localeCompare(String(b.label || '')));
+  const canvas = document.getElementById('chart-' + sectionId);
+  if (!canvas || !entries.length) return;
+  if (typeof Chart === 'undefined') {
+    canvas.parentNode.innerHTML = "<p class='muted'>Chart.js could not be loaded; see the results table below.</p>";
+    return;
+  }
+  const labels = unionLabels(entries);
+  const datasets = entries.map((entry, index) => {
+    const byLabel = {};
+    (entry.points || []).forEach(point => { byLabel[String(point[0])] = point[1]; });
+    const values = labels.map(label => (label in byLabel ? Number(byLabel[label]) : null));
+    return buildLineDataset(String(entry.label || card.title || seriesCfg.y_field), values, index);
+  });
+  makeLineChart(canvas, labels, datasets, seriesCfg.unit || '');
+}
+
+function renderResultsTable(data) {
+  const table = data && typeof data === 'object' ? data : {};
+  const headers = table.headers || [];
+  const rows = table.rows || [];
+  if (!headers.length) return "<p class='muted'>No results table rows.</p>";
+  const head = `<tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr>`;
+  const body = rows.map(row =>
+    `<tr>${row.map(cell => `<td>${esc(cell == null ? '—' : cell)}</td>`).join('')}</tr>`
+  ).join('');
+  return `<table class='results-table'><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
+function cardSectionId(card) {
+  return card.id || String(card.type).replace(/_/g, '-');
+}
+
+function renderCard(payload, card) {
+  const bind = card.bind || card.type;
+  const data = bind.indexOf('.') >= 0 ? resolveBind(payload, bind) : payload[bind];
+  const sectionId = cardSectionId(card);
+  const title = card.title || sectionId.replace(/-/g, ' ');
+  let body = '';
+  if (card.type === 'line_chart') body = renderLineChartShell(card, data, sectionId);
+  else if (card.type === 'table') body = `<div class='results-wrap' data-results-table='${esc(sectionId)}'></div>`;
+  else body = `<p class='muted'>Unsupported card type: ${esc(card.type)}</p>`;
+  return `<section class='panel' id='${esc(sectionId)}'><h2>${esc(title)}</h2>${body}</section>`;
+}
+
+const resultTables = [];
+const seriesNames = new Set();
+
+function seriesLabels() {
+  return Array.from(seriesNames).sort();
+}
+
+function populateFilters() {
+  const select = document.getElementById('f-series');
+  const firstTable = resultTables[0];
+  const header = firstTable && (firstTable.data.headers || [])[0];
+  if (header) document.getElementById('f-series-label').textContent = header;
+  seriesLabels().forEach(label => {
+    const option = document.createElement('option');
+    option.value = label;
+    option.textContent = label;
+    select.appendChild(option);
+  });
+}
+
+function applyFilters() {
+  const selected = document.getElementById('f-series').value;
+  const query = document.getElementById('f-search').value.trim().toLowerCase();
+  chartInstances.forEach(chart => {
+    chart.data.datasets.forEach((ds, index) => chart.setDatasetVisibility(index, !selected || ds.label === selected));
+    chart.update();
+  });
+  let shown = 0;
+  let total = 0;
+  resultTables.forEach(entry => {
+    const rows = entry.data.rows || [];
+    const matched = rows.filter(row => {
+      if (selected && !row.some(cell => String(cell) === selected)) return false;
+      return !query || row.join(' ').toLowerCase().indexOf(query) !== -1;
+    });
+    shown += matched.length;
+    total += rows.length;
+    entry.wrap.innerHTML = matched.length || !rows.length
+      ? renderResultsTable({ headers: entry.data.headers, rows: matched })
+      : "<p class='muted'>No rows match the current filters.</p>";
+  });
+  pageLongTables(document);
+  document.getElementById('meta').innerHTML = `<span><strong>${shown}</strong> of ${total} result rows</span>`
+    + `<span><strong>${seriesLabels().length}</strong> series</span>`
+    + `<span>Scroll to zoom · drag to pan · Reset zoom restores every chart</span>`;
+}
+
+function renderSeriesDeck(payload) {
+  // The run card is replaced by the filter card in this viewer.
+  const cards = ((payload.deck_profile || {}).cards || []).filter(card => card.type !== 'run_card');
+  const nav = document.getElementById('deck-nav');
+  document.getElementById('deck-sections').innerHTML = cards.map(card => renderCard(payload, card)).join('');
+  const links = ["<a href='#filters'>Filters</a>"].concat(cards.map(card => {
+    const sectionId = cardSectionId(card);
+    return `<a href='#${esc(sectionId)}'>${esc(card.title || sectionId)}</a>`;
+  }));
+  if (JSON_PATH) {
+    links.push(`<a id='run-deck-link' href='${esc(JSON_PATH.replace(/\.json$/i, '.html'))}'>Run deck</a>`);
+  }
+  nav.innerHTML = links.join('');
+  nav.hidden = false;
+  cards.forEach(card => {
+    const data = resolveBind(payload, card.bind || card.type);
+    const sectionId = cardSectionId(card);
+    if (card.type === 'line_chart') {
+      collectLineEntries(data, (card.series || {}).y_field)
+        .forEach(entry => seriesNames.add(String(entry.label || card.title)));
+      drawLineChart(card, data, sectionId);
+    } else if (card.type === 'table') {
+      const wrap = Array.from(document.querySelectorAll('[data-results-table]'))
+        .find(el => el.getAttribute('data-results-table') === sectionId);
+      if (wrap) resultTables.push({ data: data && typeof data === 'object' ? data : {}, wrap });
+    }
+  });
+  populateFilters();
+  ['f-series', 'f-search'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input', applyFilters);
+    el.addEventListener('change', applyFilters);
+  });
+  document.getElementById('btn-reset-zoom').addEventListener('click', () => {
+    chartInstances.forEach(chart => { if (chart.resetZoom) chart.resetZoom(); });
+  });
+  applyFilters();
+}
+
+function loadReportData() {
+  const embedded = document.getElementById('embedded-report-json');
+  if (embedded && embedded.textContent.trim()) {
+    return Promise.resolve(JSON.parse(embedded.textContent));
+  }
+  return fetch(JSON_PATH).then(response => {
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    return response.json();
+  });
+}
+
+__PAGE_TABLES_JS__
+
+loadReportData().then(payload => {
+  renderSeriesDeck(payload);
+}).catch(err => {
+  const box = document.getElementById('load-error');
+  box.hidden = false;
+  box.textContent = 'Failed to load report JSON: ' + err.message;
+});
+</script>
+</body>
+</html>
