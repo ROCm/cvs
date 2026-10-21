@@ -20,6 +20,8 @@ from cvs.lib.preflight.node_smoke_rows import (
     build_tier1_metric_rows,
     build_tier2_metric_rows,
     build_tier3_metric_rows,
+    row_is_failure,
+    tier1_unattributed_fail_reasons,
 )
 
 _STATUSES = ('pass', 'fail', 'na')
@@ -537,6 +539,26 @@ def _apply_node_failure(items, node_status, fail_reasons):
     return status, items
 
 
+def _apply_tier1_node_failure(items, entry, node_tier2_rows):
+    """Fold node-level smoke failures into Tier 1 Run Deck items.
+
+    Only unattributed ``fail_reasons`` may fail Tier 1 when every check row passed.
+    A pure Tier 2 GEMM/HBM/RCCL miss is dropped from the fallback and must not
+    fail Tier 1; other node-level reasons stay visible even when Tier 2 also failed.
+    """
+    fail_reasons = tier1_unattributed_fail_reasons(entry)
+    status = _status_from_items(items)
+    if any(item.get('status') == 'fail' for item in items):
+        return 'fail', items
+    if fail_reasons:
+        return 'fail', list(items) + _fail_items(fail_reasons, 'node')
+    if any(row_is_failure(row) for row in node_tier2_rows):
+        return status, items
+    if _normalize_status(entry.get('status')) == 'fail':
+        return 'fail', list(items) + _fail_items(['node smoke failed'], 'node')
+    return status, items
+
+
 def _tier1_records(results, nodes):
     block = _smoke_block(results)
     if block is None:
@@ -544,6 +566,7 @@ def _tier1_records(results, nodes):
     if _not_run(block):
         return _na_nodes(nodes, _skip_message(block))
     rows = build_tier1_metric_rows(block)
+    tier2_rows = build_tier2_metric_rows(block) if block.get('tier2_perf') else []
     node_results = block.get('node_results') or {}
     labels = list(node_results) or [row.get('node') for row in rows if row.get('node')]
     records = {}
@@ -551,7 +574,8 @@ def _tier1_records(results, nodes):
         node_rows = [row for row in rows if row.get('node') == node]
         entry = node_results.get(node) if isinstance(node_results.get(node), dict) else {}
         items = _row_items(node_rows, None)
-        status, items = _apply_node_failure(items, entry.get('status'), entry.get('fail_reasons'))
+        node_tier2_rows = [row for row in tier2_rows if row.get('node') == node]
+        status, items = _apply_tier1_node_failure(items, entry, node_tier2_rows)
         records[str(node)] = _record(status, items, _summarize(items, _skip_message(block) if not items else ''))
     return records
 

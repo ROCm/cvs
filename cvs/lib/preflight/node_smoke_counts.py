@@ -202,6 +202,22 @@ def _tier2_detail_width(tier1_gpus: List[Dict[str, Any]]) -> int:
     return width
 
 
+# A Primus Tier 2 GEMM/HBM miss turns that GPU's ``tier1.per_gpu`` entry into ``FAIL``
+# with one of these reason prefixes.
+TIER2_REASON_PREFIXES = {"large_gemm": ("gemm tflops",), "hbm_d2d": ("hbm gb/s", "hbm bandwidth")}
+
+
+def tier2_check_failed_by_primus(entry: Any) -> Optional[str]:
+    """Tier 2 check key named by a Primus per-GPU ``FAIL`` reason, else None."""
+    if not isinstance(entry, dict) or str(entry.get("status") or "").strip().upper() != "FAIL":
+        return None
+    reason = str(entry.get("reason") or "").strip().lower()
+    for check_key, prefixes in TIER2_REASON_PREFIXES.items():
+        if reason.startswith(prefixes):
+            return check_key
+    return None
+
+
 def _tier2_point_measured(check_key: str, value: Any, entry: Any) -> bool:
     if _has_own_verdict(value):
         return True
