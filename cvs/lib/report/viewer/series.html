@@ -4,6 +4,8 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>__TITLE__</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
 :root {
   --bg: #0f1117; --panel: #1a1d27; --border: #2a2f3d; --text: #e8eaef; --muted: #9aa3b5;
@@ -31,11 +33,13 @@ h1 { font-size: 1.6rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: -
 .meta-v { font-size: 0.9rem; font-weight: 500; word-break: break-word; }
 .notes { font-size: 0.85rem; color: var(--muted); margin-top: 0.75rem; }
 .muted { color: var(--muted); font-size: 0.85rem; }
-.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
-.chart-panel { background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; }
-.chart-panel h3 { margin: 0 0 0.75rem; font-size: 0.75rem; text-transform: uppercase;
-  letter-spacing: 0.06em; color: var(--muted); }
-.chart-unit { font-size: 0.72rem; color: var(--muted); margin-top: 0.35rem; }
+.chart-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+  margin-bottom: 0.5rem; }
+.chart-hint { font-size: 0.72rem; color: var(--muted); }
+.chart-toolbar button { background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer; font-size: 0.8rem; }
+.chart-toolbar button:hover { border-color: var(--accent); }
+.chart-canvas-wrap { position: relative; height: 340px; }
 .results-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 th, td { padding: 0.55rem 0.65rem; border-bottom: 1px solid var(--border); text-align: left; }
@@ -68,7 +72,14 @@ __EMBEDDED_JSON__
 <script>
 'use strict';
 const JSON_PATH = __JSON_PATH__;
-const DEFAULT_MAX_LINE_CHART_SERIES = 40;
+
+const LINE_DASHES = [[], [8, 4], [2, 3], [12, 4, 3, 4]];
+const LINE_POINT_STYLES = ['circle', 'rect', 'triangle', 'rectRot'];
+const CHART_COLORS = [
+  '#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#f0c040', '#ff5c6a',
+  '#2ec4b6', '#e879f9', '#a3e635', '#818cf8', '#22d3ee', '#f472b6',
+];
+const chartInstances = [];
 
 function esc(text) {
   return String(text == null ? '' : text)
@@ -90,71 +101,122 @@ function resolveBind(context, bind) {
   return bind.split('.').reduce((obj, key) => (obj != null ? obj[key] : undefined), context);
 }
 
-function displayScale(minVal, maxVal) {
-  let domainMin;
-  let domainMax;
-  if (maxVal > minVal) {
-    domainMin = minVal;
-    domainMax = maxVal;
-  } else {
-    const pad = Math.max(Math.abs(maxVal) * 0.08, 1.0);
-    domainMin = maxVal - pad;
-    domainMax = maxVal + pad;
+function lineStyle(index) {
+  return {
+    color: CHART_COLORS[index % CHART_COLORS.length],
+    // A repeated color gets the next dash, so line 13 is not the same mark as line 1.
+    dash: LINE_DASHES[Math.floor(index / CHART_COLORS.length) % LINE_DASHES.length],
+    point: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
+  };
+}
+
+function lineLegendLabels() {
+  return {
+    color: '#e8eaef',
+    usePointStyle: true,
+    pointStyle: 'line',
+    boxWidth: 28,
+    boxHeight: 6,
+    font: { size: 11 },
+  };
+}
+
+function buildLineDataset(label, data, index) {
+  const style = lineStyle(index);
+  return {
+    label,
+    data,
+    borderColor: style.color,
+    backgroundColor: style.color,
+    borderWidth: 2.5,
+    borderDash: style.dash,
+    tension: 0.2,
+    fill: false,
+    pointRadius: 5,
+    pointHoverRadius: 7,
+    pointStyle: style.point,
+    pointBackgroundColor: style.color,
+    pointBorderColor: '#1a1d27',
+    pointBorderWidth: 2,
+    spanGaps: true,
+    // Dashed / alternate styles draw on top so overlapping trends stay visible.
+    order: style.dash.length ? index : index + 10,
+  };
+}
+
+function collectLineEntries(data, yField) {
+  const raw = ((data && data.charts) || {})[yField];
+  const entries = [];
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    Object.values(raw).forEach(seriesList => {
+      if (Array.isArray(seriesList)) entries.push(...seriesList);
+      else if (seriesList && typeof seriesList === 'object') entries.push(seriesList);
+    });
+  } else if (Array.isArray(raw)) {
+    entries.push(...raw);
   }
-  const ticks = [];
-  for (let i = 0; i < 5; i += 1) ticks.push(domainMin + (domainMax - domainMin) * i / 4);
-  return { domainMin, domainMax, ticks };
+  return entries.filter(entry => entry && typeof entry === 'object');
 }
 
-function valuePct(val, domainMin, domainMax) {
-  const span = domainMax - domainMin || 1.0;
-  return Math.max(0, Math.min(100, 100 * (val - domainMin) / span));
-}
-
-function formatXLabel(size, pattern) {
-  try {
-    return String(pattern).replace('{x}', size);
-  } catch (_err) {
-    return String(size);
-  }
-}
-
-function renderSeriesChart(title, points, unit, xLabelPattern) {
-  const normalized = (points || []).filter(p => Array.isArray(p) && p.length >= 2)
-    .map(p => [p[0], p[1]]);
-  if (!normalized.length) return '';
-  const values = normalized.map(([, y]) => Number(y));
-  const { domainMin, domainMax, ticks } = displayScale(Math.min(...values), Math.max(...values));
-  const grid = ticks.map(tick => {
-    const y = 180 - 160 * valuePct(tick, domainMin, domainMax) / 100;
-    return `<line x1='70' x2='570' y1='${y}' y2='${y}' stroke='var(--border)'/>`
-      + `<text x='62' y='${y}' text-anchor='end' dominant-baseline='middle'>${esc(fmtNum(tick))}</text>`;
-  }).join('');
-  const coordinates = [];
-  const markers = [];
-  const labels = [];
-  const labelStep = Math.max(1, Math.floor((normalized.length + 7) / 8));
-  normalized.forEach((pair, index) => {
-    const size = pair[0];
-    const value = Number(pair[1]);
-    const x = 70 + 500 * index / Math.max(1, normalized.length - 1);
-    const y = 180 - 160 * valuePct(value, domainMin, domainMax) / 100;
-    const xlabel = formatXLabel(size, xLabelPattern || '{x}');
-    const tip = esc(`${xlabel}: ${fmtNum(value)} ${unit}`.trim());
-    coordinates.push(`${x},${y}`);
-    markers.push(`<circle cx='${x}' cy='${y}' r='3' fill='var(--accent2)' tabindex='0' role='img' aria-label='${tip}'><title>${tip}</title></circle>`);
-    if (index % labelStep === 0 || index === normalized.length - 1) {
-      labels.push(`<text x='${x}' y='202' text-anchor='middle'>${esc(xlabel)}</text>`);
-    }
+// Merge x labels so every series keeps its own order even when collectives sweep different sizes.
+function unionLabels(entries) {
+  const out = [];
+  entries.forEach(entry => {
+    let at = -1;
+    (entry.points || []).forEach(point => {
+      const label = String(point[0]);
+      const found = out.indexOf(label);
+      if (found >= 0) {
+        at = found;
+        return;
+      }
+      at += 1;
+      out.splice(at, 0, label);
+    });
   });
-  return `<div class='chart-panel'><h3>${esc(title)}</h3>`
-    + `<svg viewBox='0 0 600 220' role='img' aria-label='${esc(title)}' style='width:100%;fill:currentColor;font-size:11px'>`
-    + `${grid}<polyline points='${coordinates.join(' ')}' fill='none' stroke='var(--accent2)' stroke-width='2'/>`
-    + `${markers.join('')}${labels.join('')}</svg>`
-    + `<div class='chart-unit'>${esc(unit)}</div></div>`;
+  return out;
 }
 
-function linkOrText(value, label) {
+function makeLineChart(canvas, labels, datasets, unit) {
+  const chart = new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', axis: 'x', intersect: false },
+      plugins: {
+        legend: { labels: lineLegendLabels() },
+        tooltip: {
+          backgroundColor: '#2a3142',
+          borderColor: '#3a4255',
+          borderWidth: 1,
+          titleColor: '#e8eaef',
+          bodyColor: '#c8d0e0',
+          callbacks: {
+            label: ctx => ctx.dataset.label + ': ' + fmtNum(ctx.parsed.y) + (unit ? ' ' + unit : ''),
+          },
+        },
+        zoom: {
+          pan: { enabled: true, mode: 'x' },
+          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+        },
+      },
+      scales: {
+        x: { ticks: { color: '#9aa3b5', maxRotation: 0 }, grid: { color: '#2a2f3d' } },
+        y: {
+          ticks: { color: '#9aa3b5' },
+          grid: { color: '#2a2f3d' },
+          title: unit ? { display: true, text: unit, color: '#9aa3b5', font: { size: 11 } } : undefined,
+        },
+      },
+    },
+  });
+  chartInstances.push(chart);
+  return chart;
+}
+
+function linkOrText(value) {
   const text = String(value == null ? '—' : value);
   try {
     const url = new URL(text, document.baseURI);
@@ -165,61 +227,46 @@ function linkOrText(value, label) {
   return esc(text);
 }
 
-function renderRunCard(payload, card, data) {
+function renderRunCard(payload, data) {
   const rows = Array.isArray(data) ? data : (payload.run_card_display || []);
   const items = rows.map(row => {
-    const label = row[0];
-    const value = row[1];
-    const isLink = Boolean(row[2]);
-    const inner = isLink ? linkOrText(value, label) : esc(value == null ? '—' : value);
-    return `<div class='meta-item'><span class='meta-k'>${esc(label)}</span><span class='meta-v'>${inner}</span></div>`;
+    const inner = row[2] ? linkOrText(row[1]) : esc(row[1] == null ? '—' : row[1]);
+    return `<div class='meta-item'><span class='meta-k'>${esc(row[0])}</span><span class='meta-v'>${inner}</span></div>`;
   }).join('');
   const notes = payload.run_card_notes ? `<p class='notes'>${esc(payload.run_card_notes)}</p>` : '';
   return `<div class='meta-grid'>${items}</div>${notes}`;
 }
 
-function collectLineEntries(data, yField) {
-  const charts = (data && data.charts) || {};
-  const raw = charts[yField];
-  const entries = [];
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-    Object.values(raw).forEach(seriesList => {
-      if (Array.isArray(seriesList)) entries.push(...seriesList);
-      else if (seriesList && typeof seriesList === 'object') entries.push(seriesList);
-    });
-  } else if (Array.isArray(raw)) {
-    entries.push(...raw);
-  }
-  return entries;
+function renderLineChartShell(card, data, sectionId) {
+  const yField = (card.series || {}).y_field;
+  if (!collectLineEntries(data, yField).length) return "<p class='muted'>No series data.</p>";
+  return `<div class='chart-toolbar'>`
+    + `<span class='chart-hint'>Scroll to zoom · drag to pan · x axis</span>`
+    + `<button type='button' data-reset-zoom='${esc(sectionId)}'>Reset zoom</button></div>`
+    + `<div class='chart-canvas-wrap'><canvas id='chart-${esc(sectionId)}'></canvas></div>`;
 }
 
-function renderLineChart(card, data) {
+function drawLineChart(card, data, sectionId) {
   const seriesCfg = card.series || {};
-  const yField = seriesCfg.y_field || 'bus_bw';
-  const entries = collectLineEntries(data, yField)
-    .filter(entry => entry && typeof entry === 'object')
+  const entries = collectLineEntries(data, seriesCfg.y_field)
     .sort((a, b) => String(a.label || '').localeCompare(String(b.label || '')));
-  if (!entries.length) return "<p class='muted'>No series data.</p>";
-  const maxSeries = seriesCfg.max_series == null ? DEFAULT_MAX_LINE_CHART_SERIES : seriesCfg.max_series;
-  const total = entries.length;
-  const truncated = maxSeries > 0 && total > maxSeries;
-  const slice = truncated ? entries.slice(0, maxSeries) : entries;
-  const unit = seriesCfg.unit || 'GB/s';
-  const xLabel = seriesCfg.x_label || '{x}';
-  const parts = slice.map(entry => renderSeriesChart(
-    String(entry.label || card.title || yField),
-    entry.points || [],
-    unit,
-    xLabel,
-  )).filter(Boolean);
-  if (!parts.length) return "<p class='muted'>No series data.</p>";
-  const banner = truncated
-    ? `<p class='muted'>Showing ${parts.length} of ${total} series charts. Full results remain in the results table and JSON export.</p>`
-    : '';
-  return `${banner}<div class='chart-grid'>${parts.join('')}</div>`;
+  const canvas = document.getElementById('chart-' + sectionId);
+  if (!canvas || !entries.length) return;
+  if (typeof Chart === 'undefined') {
+    canvas.parentNode.innerHTML = "<p class='muted'>Chart.js could not be loaded; see the results table below.</p>";
+    return;
+  }
+  const labels = unionLabels(entries);
+  const datasets = entries.map((entry, index) => {
+    const byLabel = {};
+    (entry.points || []).forEach(point => { byLabel[String(point[0])] = point[1]; });
+    const values = labels.map(label => (label in byLabel ? Number(byLabel[label]) : null));
+    return buildLineDataset(String(entry.label || card.title || seriesCfg.y_field), values, index);
+  });
+  makeLineChart(canvas, labels, datasets, seriesCfg.unit || '');
 }
 
-function renderResultsTable(card, data) {
+function renderResultsTable(data) {
   const table = data && typeof data === 'object' ? data : {};
   const headers = table.headers || [];
   const rows = table.rows || [];
@@ -231,40 +278,45 @@ function renderResultsTable(card, data) {
   return `<table class='results-table'><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }
 
+function cardSectionId(card) {
+  return card.id || String(card.type).replace(/_/g, '-');
+}
+
 function renderCard(payload, card) {
   const bind = card.bind || card.type;
   const data = bind.indexOf('.') >= 0 ? resolveBind(payload, bind) : payload[bind];
-  const cardType = card.type;
-  const sectionId = card.id || String(cardType).replace(/_/g, '-');
+  const sectionId = cardSectionId(card);
   const title = card.title || sectionId.replace(/-/g, ' ');
   let body = '';
-  if (cardType === 'run_card') body = renderRunCard(payload, card, data);
-  else if (cardType === 'line_chart') body = renderLineChart(card, data);
-  else if (cardType === 'table') body = `<div class='results-wrap'>${renderResultsTable(card, data)}</div>`;
-  else body = `<p class='muted'>Unsupported card type: ${esc(cardType)}</p>`;
-  if (!body) return '';
+  if (card.type === 'run_card') body = renderRunCard(payload, data);
+  else if (card.type === 'line_chart') body = renderLineChartShell(card, data, sectionId);
+  else if (card.type === 'table') body = `<div class='results-wrap'>${renderResultsTable(data)}</div>`;
+  else body = `<p class='muted'>Unsupported card type: ${esc(card.type)}</p>`;
   return `<section class='panel' id='${esc(sectionId)}'><h2>${esc(title)}</h2>${body}</section>`;
 }
 
 function renderSeriesDeck(payload) {
-  const profile = payload.deck_profile || {};
-  const cards = profile.cards || [];
+  const cards = (payload.deck_profile || {}).cards || [];
   const nav = document.getElementById('deck-nav');
-  const root = document.getElementById('deck-sections');
-  const links = [];
-  const sections = cards.map(card => {
-    const html = renderCard(payload, card);
-    if (!html) return '';
-    const sectionId = card.id || String(card.type).replace(/_/g, '-');
-    const navTitle = card.title || sectionId;
-    links.push(`<a href='#${esc(sectionId)}'>${esc(navTitle)}</a>`);
-    return html;
-  }).filter(Boolean);
-  root.innerHTML = sections.join('');
+  document.getElementById('deck-sections').innerHTML = cards.map(card => renderCard(payload, card)).join('');
+  const links = cards.map(card => {
+    const sectionId = cardSectionId(card);
+    return `<a href='#${esc(sectionId)}'>${esc(card.title || sectionId)}</a>`;
+  });
   if (links.length) {
     nav.innerHTML = links.join('');
     nav.hidden = false;
   }
+  cards.filter(card => card.type === 'line_chart').forEach(card => {
+    const bind = card.bind || card.type;
+    drawLineChart(card, resolveBind(payload, bind), cardSectionId(card));
+  });
+  document.getElementById('deck-sections').addEventListener('click', event => {
+    const button = event.target.closest('button[data-reset-zoom]');
+    if (!button) return;
+    const chart = chartInstances.find(c => c.canvas.id === 'chart-' + button.getAttribute('data-reset-zoom'));
+    if (chart && chart.resetZoom) chart.resetZoom();
+  });
   pageLongTables(document);
 }
 

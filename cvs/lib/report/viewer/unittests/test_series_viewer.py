@@ -1,5 +1,6 @@
 '''Tests for the series Run Deck viewer.'''
 
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.rundeck.dataset_builders import series  # noqa: F401
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.lib.report.rundeck.unittests.test_rccl_payload import _graph
+from cvs.lib.report.viewer import series as series_viewer
 from cvs.lib.report.viewer.series import write_series_viewer
 
 
@@ -54,7 +56,33 @@ class TestSeriesViewer(unittest.TestCase):
         self.assertIn(chart_title, text)
         self.assertIn("all_reduce_perf", text)
         self.assertNotIn("metricLabels", text)
-        self.assertNotIn("chart.js", text)
+
+    def test_loads_same_chartjs_and_zoom_scripts_as_interactive_viewer(self):
+        interactive = (Path(series_viewer.__file__).with_name("interactive.html")).read_text(encoding="utf-8")
+        text = self._write(title="RCCL")
+        for script in re.findall(r'<script src="[^"]*(?:chart\.umd|chartjs-plugin-zoom)[^"]*"></script>', interactive):
+            self.assertIn(script, text)
+        self.assertEqual(text.count('<script src="https://cdn.jsdelivr.net/npm/'), 2)
+
+    def test_draws_zoomable_chartjs_line_charts_not_static_svg(self):
+        text = self._write(title="RCCL")
+        self.assertIn("new Chart(", text)
+        self.assertIn("pan: { enabled: true, mode: 'x' }", text)
+        self.assertIn("zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }", text)
+        self.assertIn("Reset zoom", text)
+        self.assertIn("resetZoom", text)
+        self.assertIn("borderDash: style.dash", text)
+        self.assertIn("Math.floor(index / CHART_COLORS.length)", text)
+        self.assertNotIn("<polyline", text)
+        self.assertNotIn("renderSeriesChart", text)
+
+    def test_chart_inputs_come_from_card_and_series_dataset(self):
+        text = self._write(title="RCCL")
+        self.assertIn("(card.series || {}).y_field", text)
+        self.assertIn("seriesCfg.unit", text)
+        self.assertIn("data.charts", text)
+        for hardcoded in ("'bus_bw'", "'alg_bw'", "all_reduce_perf"):
+            self.assertNotIn(hardcoded, text)
 
     def test_results_table_is_paged_once_by_shared_pager(self):
         _, payload = self._rccl_payload()

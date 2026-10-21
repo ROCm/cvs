@@ -154,9 +154,10 @@ sweep decks do.
 
 `series` profiles with `interactive_viewer: true` (for example `profiles/rccl.json`)
 use `viewer/series.html` via `write_series_viewer`. The page draws the run card, one
-chart per series for each `line_chart` card, and the results table from the embedded
-payload and `deck_profile.cards`, then applies the shared table pager once and the
-**Go to top** footer.
+Chart.js chart per `line_chart` card (title, unit and `y_field` from the card, one line
+per collective from `datasets.series.charts[y_field]`, x-axis zoom/pan with a **Reset
+zoom** button), and the results table from the embedded payload and `deck_profile.cards`,
+then applies the shared table pager once and the **Go to top** footer.
 
 Health suites can extend `profiles/health_status_base.json` for the shared run
 card, lifecycle timeline, overview, optional measurements (`when_empty: hide`),
