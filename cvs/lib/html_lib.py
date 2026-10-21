@@ -465,6 +465,28 @@ def normalize_bytes(n_bytes, si=False, precision=2):
     return f"{sign}{s} {unit}"
 
 
+def _stale_rccl_reference_hint(act_key, ref_data_dict):
+    """Explain a missing reference key caused by per-data-type RCCL graph series, or return None."""
+    from cvs.lib.rccl_lib import RcclVerifier
+
+    base, dtype = RcclVerifier.split_series_label(act_key)
+    if dtype is not None:
+        if base in ref_data_dict:
+            return (
+                f"{act_key} not found in reference data, which has the plain series {base}: the reference "
+                "predates per-data-type RCCL series and must be regenerated"
+            )
+        return None
+    typed = [key for key in ref_data_dict if key != act_key and RcclVerifier.split_series_label(key)[0] == act_key]
+    if typed:
+        return (
+            f"{act_key} not found in reference data, which has per-data-type series ({', '.join(typed)}): "
+            "the reference and results use different RCCL series schemes; regenerate the reference with the "
+            "same CVS version and data_types"
+        )
+    return None
+
+
 def build_rccl_heatmap(filename, chart_name, title, act_data_json, ref_data_json):
     try:
         with open(act_data_json, 'r') as fp1:
@@ -675,7 +697,8 @@ var data = [
             log.info("%s", collective_name)
             # Skip if reference data doesn't have this collective
             if collective_name not in ref_data_dict:
-                log.warning(f"Warning: {collective_name} not found in reference data, skipping")
+                hint = _stale_rccl_reference_hint(collective_name, ref_data_dict)
+                log.warning(f"Warning: {hint or f'{collective_name} not found in reference data'}, skipping")
                 continue
             for msg_size in act_data_dict[collective_name].keys():
                 norm_msg_size = normalize_bytes(int(msg_size))
@@ -1389,6 +1412,11 @@ def build_rccl_heatmap_table(filename, title, act_data_json, ref_data_json):
         )
         fp.write(html_lines)
         for key_nam in act_data_dict.keys():
+            if key_nam not in ref_data_dict:
+                hint = _stale_rccl_reference_hint(key_nam, ref_data_dict)
+                if hint:
+                    log.warning(f"Warning: {hint}, skipped from table")
+                    continue
             # Handle both 3-part (collective-datatype-gpucount) and 4-part (collective-datatype-gpucount-chconfig) formats
             parts = key_nam.split("-")
             if len(parts) >= 3:

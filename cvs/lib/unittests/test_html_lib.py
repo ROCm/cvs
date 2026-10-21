@@ -556,6 +556,27 @@ class TestBuildRcclHeatmapTable(unittest.TestCase):
             self.assertIn('<th>Msg Size</th>', content)
             self.assertIn('</table>', content)
 
+    def test_stale_per_dtype_reference_warns_to_regenerate(self):
+        """A plain-name reference cannot be matched to per-data-type series; say why instead of a generic miss."""
+        point = {"1048576": {"bus_bw": "245.5", "alg_bw": "122.75", "time": "42.3"}}
+        cases = (
+            ({"all_reduce_perf [type=float]": point}, {"all_reduce_perf": point}, "predates per-data-type"),
+            ({"all_reduce_perf": point}, {"all_reduce_perf [type=float]": point}, "different RCCL series schemes"),
+        )
+        for actual_data, ref_data, expected in cases:
+            with self.subTest(expected=expected):
+                self._create_json_file(self.actual_json_filename, actual_data)
+                self._create_json_file(self.ref_json_filename, ref_data)
+                with self.assertLogs(html_lib.log, level=logging.WARNING) as log_cm:
+                    html_lib.build_rccl_heatmap_table(
+                        self.html_filename, "Stale Reference", self.actual_json_filename, self.ref_json_filename
+                    )
+                output = "\n".join(log_cm.output)
+                self.assertIn(expected, output)
+                self.assertIn("regenerate", output)
+                self.assertNotIn("Invalid key format", output)
+                self.assertNotIn("test keys not found in reference data", output)
+
 
 class TestBuildRcclHeatmap(unittest.TestCase):
     """Test cases for build_rccl_heatmap function."""
@@ -639,6 +660,35 @@ class TestBuildRcclHeatmap(unittest.TestCase):
             content = f.read()
             # Chart name should appear in the output
             self.assertTrue(len(content) > 0)
+
+    def test_stale_per_dtype_reference_warns_to_regenerate(self):
+        """The heatmap names a pre-split reference instead of the generic 'not found' warning."""
+        point = {"1048576": {"bus_bw": 245.5, "alg_bw": 122.75, "time": 42.3}}
+        actual_data = {"all_reduce_perf [type=float]": point, "all_reduce_perf [type=half]": point}
+        self._create_json_file(self.actual_json_filename, actual_data)
+        self._create_json_file(self.ref_json_filename, {"all_reduce_perf": point})
+
+        with self.assertLogs(html_lib.log, level=logging.WARNING) as log_cm:
+            html_lib.build_rccl_heatmap(
+                self.html_filename, "heatmapchart", "Stale Reference", self.actual_json_filename, self.ref_json_filename
+            )
+
+        warnings = [line for line in log_cm.output if "not found in reference data" in line]
+        self.assertEqual(len(warnings), 2)
+        for warning in warnings:
+            self.assertIn("plain series all_reduce_perf", warning)
+            self.assertIn("predates per-data-type RCCL series and must be regenerated", warning)
+
+        self._create_json_file(self.ref_json_filename, {"broadcast_perf": point})
+        with self.assertLogs(html_lib.log, level=logging.WARNING) as log_cm:
+            html_lib.build_rccl_heatmap(
+                self.html_filename,
+                "heatmapchart",
+                "Unrelated Reference",
+                self.actual_json_filename,
+                self.ref_json_filename,
+            )
+        self.assertNotIn("predates", "\n".join(log_cm.output))
 
 
 if __name__ == "__main__":

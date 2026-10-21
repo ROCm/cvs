@@ -71,6 +71,19 @@ class TestRcclLib(unittest.TestCase):
             row['numCycle'] = cycle
         return row
 
+    @staticmethod
+    def _graph_row(size, dtype, in_place, bus_bw, cycle=0, name='AllReduce'):
+        return {
+            'name': name,
+            'size': size,
+            'type': dtype,
+            'inPlace': in_place,
+            'numCycle': cycle,
+            'busBw': bus_bw,
+            'algBw': bus_bw / 2,
+            'time': size / 1024,
+        }
+
     def test_expected_results_transposes_shipped_shape(self):
         config = self._shipped_config()
         job = self._configured_job(config)
@@ -341,13 +354,257 @@ class TestRcclLib(unittest.TestCase):
             job.run_regression()
             self.assertEqual(job.verdicts, [])
 
-    def test_convert_to_graph_dict(self):
-        # Test with sample data
-        result_dict = {
-            'allreduce': [{'size': 1024, 'name': 'allreduce', 'inPlace': 0, 'busBw': 100.0, 'algBw': 90.0, 'time': 1.0}]
-        }
-        result = rccl_lib.convert_to_graph_dict(result_dict)
-        self.assertIsInstance(result, dict)
+    def test_graph_uses_in_place_rows_regardless_of_order(self):
+        out_of_place = self._graph_row(1024, 'float', 0, 1.0)
+        in_place = self._graph_row(1024, 'float', 1, 2.0)
+        for rows in ([out_of_place, in_place], [in_place, out_of_place]):
+            with self.subTest(rows=rows):
+                graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': rows})
+                self.assertEqual(graph['all_reduce_perf'][1024]['bus_bw'], 2.0)
+
+    def test_graph_uses_out_of_place_rows_for_alltoall(self):
+        cases = (
+            ('alltoall_perf', 'AllToAll', 0),
+            ('Phase1 n0 <-> n1', 'AllReduce', 1),
+            ('alltoall_perf', None, 0),
+            ('alltoall_perf-NCCL_ALGO=Ring NCCL_PROTO=Simple', None, 0),
+        )
+        for series, row_name, verified_placement in cases:
+            with self.subTest(series=series, row_name=row_name):
+                rows = [
+                    self._graph_row(1024, 'float', 0, 3.0, name=row_name),
+                    self._graph_row(1024, 'float', 1, 7.0, name=row_name),
+                ]
+                if row_name is None:
+                    for row in rows:
+                        del row['name']
+                graph = rccl_lib.convert_to_graph_dict({series: rows})
+                self.assertEqual(graph[series][1024]['bus_bw'], 3.0 if verified_placement == 0 else 7.0)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_graph_placement_matches_bus_bw_verdicts(self, mock_fail_test):
+        cases = (('all_reduce_perf', 'AllReduce'), ('alltoall_perf', 'AllToAll'))
+        for series, name in cases:
+            with self.subTest(series=series):
+                rows = [
+                    self._graph_row(size, 'float', placement, size / 1024 + 10 * placement, name=name)
+                    for size in (1024, 2048)
+                    for placement in (0, 1)
+                ]
+                verifier = rccl_lib.RcclVerifier(
+                    series, rows, {'1024': {'bus_bw': 0.0}, '2048': {'bus_bw': 0.0}}, {'verify_bus_bw': 'True'}
+                )
+                verifier.check()
+                graph = rccl_lib.convert_to_graph_dict({series: rows})[series]
+                self.assertEqual(
+                    {verdict['size']: verdict['actual'] for verdict in verifier.verdicts},
+                    {size: point['bus_bw'] for size, point in graph.items()},
+                )
+        mock_fail_test.assert_not_called()
+
+    def test_graph_splits_multiple_data_types(self):
+        dtypes = ('float', 'half', 'bfloat16')
+        for series, name, verified_placement in (
+            ('all_reduce_perf', 'AllReduce', 1),
+            ('alltoall_perf', 'AllToAll', 0),
+        ):
+            with self.subTest(series=series):
+                rows = [
+                    self._graph_row(size, dtype, placement, 100 * dtype_index + size / 1024 + 10 * placement, name=name)
+                    for size in (1024, 2048)
+                    for dtype_index, dtype in enumerate(dtypes)
+                    for placement in (0, 1)
+                ]
+                graph = rccl_lib.convert_to_graph_dict({series: rows})
+                self.assertEqual(list(graph), [f'{series} [type={dtype}]' for dtype in dtypes])
+                self.assertNotIn(series, graph)
+                for dtype_index, dtype in enumerate(dtypes):
+                    for size in (1024, 2048):
+                        self.assertEqual(
+                            graph[f'{series} [type={dtype}]'][size]['bus_bw'],
+                            100 * dtype_index + size / 1024 + 10 * verified_placement,
+                        )
+
+    def test_graph_single_dtype_backward_compatible(self):
+        rows = [
+            self._graph_row(size, 'float', placement, size / 1024 + placement)
+            for size in (1024, 2048)
+            for placement in (0, 1)
+        ]
+        graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': rows})
+        self.assertEqual(
+            graph,
+            {
+                'all_reduce_perf': {
+                    1024: {'bus_bw': 2.0, 'alg_bw': 1.0, 'time': 1.0},
+                    2048: {'bus_bw': 3.0, 'alg_bw': 1.5, 'time': 2.0},
+                }
+            },
+        )
+        self.assertIs(type(next(iter(graph['all_reduce_perf']))), int)
+
+        untyped_rows = [{key: value for key, value in row.items() if key != 'type'} for row in rows]
+        self.assertEqual(list(rccl_lib.convert_to_graph_dict({'all_reduce_perf': untyped_rows})), ['all_reduce_perf'])
+
+        regression_series = (
+            'all_reduce_perf-NCCL_ALGO=Ring NCCL_PROTO=Simple NCCL_IB_QPS_PER_CONNECTION=1 NCCL_PXN_DISABLE=0'
+        )
+        regression_graph = rccl_lib.convert_to_graph_dict({regression_series: rows})
+        self.assertEqual(list(regression_graph), [regression_series])
+
+        from cvs.lib import html_lib
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'rccl_results.html'
+            html_lib.build_rccl_result_table(output, regression_graph)
+            content = output.read_text(encoding='utf-8')
+        self.assertIn('Ring', content)
+        self.assertIn('Simple', content)
+        self.assertIn('1024', content)
+
+    def test_graph_averages_cycles_and_sorts_sizes(self):
+        rows = [self._graph_row(2048, 'float', 1, 200.0)] + [
+            self._graph_row(1024, 'float', 1, bus_bw, cycle=cycle) for cycle, bus_bw in enumerate((100.0, 110.0, 120.0))
+        ]
+        rows[1]['time'], rows[2]['time'], rows[3]['time'] = 1.0, 2.0, 3.0
+        graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': rows})
+        self.assertEqual(list(graph), ['all_reduce_perf'])
+        self.assertEqual(list(graph['all_reduce_perf']), [1024, 2048])
+        self.assertEqual(graph['all_reduce_perf'][1024], {'bus_bw': 110.0, 'alg_bw': 55.0, 'time': 2.0})
+
+        rows = [
+            self._graph_row(1024, dtype, 1, bus_bw, cycle=cycle)
+            for cycle, values in enumerate(((100.0, 50.0), (120.0, 70.0)))
+            for dtype, bus_bw in zip(('float', 'half'), values)
+        ]
+        graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': rows})
+        self.assertEqual(graph['all_reduce_perf [type=float]'][1024]['bus_bw'], 110.0)
+        self.assertEqual(graph['all_reduce_perf [type=half]'][1024]['bus_bw'], 60.0)
+
+        rows = [self._graph_row(1024, 'float', 1, bus_bw, cycle=cycle) for cycle, bus_bw in enumerate((100, 110))]
+        for row in rows:
+            row['busBw'] = str(float(row['busBw']))
+            row['algBw'] = str(float(row['algBw']))
+        graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': rows})
+        self.assertEqual(graph['all_reduce_perf'][1024]['bus_bw'], 105.0)
+
+    def test_graph_empty_or_unmatched_series(self):
+        self.assertEqual(rccl_lib.convert_to_graph_dict({'failed': []}), {'failed': {}})
+        self.assertEqual(rccl_lib.convert_to_graph_dict({'failed': None}), {'failed': {}})
+        with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+            graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': [self._graph_row(1024, 'float', 0, 1.0)]})
+        self.assertEqual(graph, {'all_reduce_perf': {}})
+        self.assertIn('all_reduce_perf', captured.output[0])
+        row = self._graph_row(1024, 'float', 1, 1.0)
+        del row['inPlace']
+        self.assertEqual(rccl_lib.convert_to_graph_dict({'all_reduce_perf': [row]}), {'all_reduce_perf': {}})
+
+    def test_graph_drops_non_numeric_metric_rows(self):
+        for field, value in (('busBw', 'N/A'), ('algBw', None), ('time', '')):
+            with self.subTest(field=field, value=value):
+                row = self._graph_row(1024, 'float', 1, 1.0)
+                row[field] = value
+                with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+                    graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': [row]})
+                self.assertEqual(graph, {'all_reduce_perf': {}})
+                self.assertEqual(len(captured.output), 2)
+                self.assertIn('Dropped 1 RCCL rows', captured.output[0])
+                self.assertIn('all_reduce_perf', captured.output[0])
+                self.assertIn('No usable verified-placement RCCL rows for all_reduce_perf', captured.output[1])
+
+    def test_graph_drops_rows_missing_a_metric(self):
+        for field in ('busBw', 'algBw', 'time'):
+            with self.subTest(field=field):
+                row = self._graph_row(1024, 'float', 1, 1.0)
+                del row[field]
+                with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+                    graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': [row]})
+                self.assertEqual(graph, {'all_reduce_perf': {}})
+                self.assertIn('Dropped 1 RCCL rows', captured.output[0])
+
+    def test_graph_averages_good_rows_around_bad_ones(self):
+        good = [self._graph_row(1024, 'float', 1, bus_bw, cycle=cycle) for cycle, bus_bw in enumerate((100.0, 120.0))]
+        bad_value = self._graph_row(1024, 'float', 1, 1.0, cycle=2)
+        bad_value['busBw'] = 'nan-ish'
+        missing = self._graph_row(2048, 'float', 1, 1.0)
+        del missing['time']
+        unchecked_placement = self._graph_row(1024, 'float', 0, 1.0)
+        unchecked_placement['busBw'] = 'ignored'
+        rows = [good[0], bad_value, missing, unchecked_placement, good[1], self._graph_row(2048, 'float', 1, 300.0)]
+        with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+            graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': rows})
+        self.assertEqual(list(graph), ['all_reduce_perf'])
+        self.assertEqual(graph['all_reduce_perf'][1024], {'bus_bw': 110.0, 'alg_bw': 55.0, 'time': 1.0})
+        self.assertEqual(graph['all_reduce_perf'][2048]['bus_bw'], 300.0)
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn('Dropped 2 RCCL rows', captured.output[0])
+
+    def test_split_series_label_inverts_series_label(self):
+        for base in ('all_reduce_perf', 'Phase1 n0 <-> n1', 'all_reduce_perf-NCCL_ALGO=Ring NCCL_PROTO=Simple'):
+            for dtype in ('float', 'bfloat16'):
+                for cycle in (None, 2):
+                    with self.subTest(base=base, dtype=dtype, cycle=cycle):
+                        name = f'{base}{rccl_lib.RcclVerifier._series_label(dtype, cycle)}'
+                        self.assertEqual(rccl_lib.RcclVerifier.split_series_label(name), (base, dtype))
+            with self.subTest(base=base, plain=True):
+                self.assertEqual(rccl_lib.RcclVerifier.split_series_label(base), (base, None))
+
+    def test_graph_matches_aggregated_verification_rows(self):
+        for series, name, verified_placement in (
+            ('all_reduce_perf', 'AllReduce', 1),
+            ('alltoall_perf', 'AllToAll', 0),
+        ):
+            with self.subTest(series=series):
+                raw = [
+                    rccl_lib.RcclTests.model_validate(
+                        {
+                            'numCycle': cycle,
+                            'name': name,
+                            'size': size,
+                            'type': dtype,
+                            'redop': 'sum',
+                            'inPlace': placement,
+                            'busBw': 100 * dtype_index + 20 * cycle + 5 * placement + size / 1024,
+                            'algBw': 50 * dtype_index + 10 * cycle + 3 * placement + size / 2048,
+                            'time': 10 * dtype_index + 2 * cycle + placement + size / 4096,
+                            'wrong': 0,
+                        }
+                    )
+                    for size in (1024, 2048)
+                    for dtype_index, dtype in enumerate(('float', 'half'))
+                    for placement in (0, 1)
+                    for cycle in (0, 1)
+                ]
+                aggregated = rccl_lib.RcclJob.aggregate_results(raw)
+                verification_rows = rccl_lib.RcclJob._verification_results(aggregated, [])
+                graph = rccl_lib.convert_to_graph_dict({series: [row.model_dump() for row in raw]})
+                for row in verification_rows:
+                    if row['inPlace'] != verified_placement:
+                        continue
+                    point = graph[f"{series} [type={row['type']}]"][row['size']]
+                    for graph_metric, row_metric in (('bus_bw', 'busBw'), ('alg_bw', 'algBw'), ('time', 'time')):
+                        self.assertAlmostEqual(point[graph_metric], row[row_metric])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_bus_bw_failure_message_names_dtype(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 80}}
+        rows = [self._graph_row(1024, 'float', 1, 90), self._graph_row(1024, 'half', 1, 10)]
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, {'verify_bus_bw': 'True'})
+        verifier.check()
+        mock_fail_test.assert_called_once()
+        self.assertTrue(mock_fail_test.call_args.args[0].endswith('(threshold with 5% tolerance: 76.00) [type=half]'))
+        self.assertEqual([verdict['status'] for verdict in verifier.verdicts], ['pass', 'fail'])
+
+        mock_fail_test.reset_mock()
+        raw_row = self._graph_row(1024, 'float', 1, 10, cycle=1)
+        rccl_lib.RcclVerifier('all_reduce_perf', [raw_row], expected, {'verify_bus_bw': 'True'}).check()
+        self.assertTrue(mock_fail_test.call_args.args[0].endswith('[type=float]'))
+        self.assertNotIn('cycle=', mock_fail_test.call_args.args[0])
+
+        mock_fail_test.reset_mock()
+        untyped_row = {key: value for key, value in raw_row.items() if key != 'type'}
+        rccl_lib.RcclVerifier('all_reduce_perf', [untyped_row], expected, {'verify_bus_bw': 'True'}).check()
+        self.assertTrue(mock_fail_test.call_args.args[0].endswith('(threshold with 5% tolerance: 76.00)'))
 
     # Tests for new verification functions
 
