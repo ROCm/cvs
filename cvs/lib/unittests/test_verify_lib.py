@@ -490,9 +490,7 @@ class TestDmesgMigrations(unittest.TestCase):
 
         verify_lib.full_dmesg_scan(phdl, start_time_dict={"node1": "Mon Jun  5 08:53:27"})
 
-        analysis_args = mock_parse.call_args.kwargs.get("analysis_args") or mock_parse.call_args[1].get(
-            "analysis_args"
-        )
+        analysis_args = mock_parse.call_args.kwargs.get("analysis_args") or mock_parse.call_args[1].get("analysis_args")
         start = analysis_args.get("analysis_range_start")
         self.assertIsNotNone(start)
         self.assertEqual((start.month, start.day, start.hour, start.minute, start.second), (6, 5, 8, 53, 27))

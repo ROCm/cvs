@@ -29,10 +29,7 @@ err_patterns_dict = {
     'driver': 'Queue preemption failed for queue|Failed to evict process queues|No more SDMA queue to allocate|amdgpu: process pid',
     'hardware': r'hardware error|hardware fail|ras error|(?:uncorrectable|correctable err)(?!.*initialized)'
     r'|EDAC (?:MC\d+: \d+ [CU]E |DEVICE\d+: [CU]E: )',
-    'network': (
-        'NIC Link is Down|link is down|ib_uverb|CQE error|invalid CQE|'
-        'queue catastrophic|CQ error'
-    ),
+    'network': ('NIC Link is Down|link is down|ib_uverb|CQE error|invalid CQE|queue catastrophic|CQ error'),
 }
 
 
@@ -128,9 +125,7 @@ def cvs_dmesg_analysis_args():
 
 
 _NON_FATAL_DMESG_PRIORITIES = frozenset({'WARNING', 'WARN', 'INFO', 'NOTICE', 'DEBUG'})
-_ERROR_DMESG_PRIORITIES = frozenset(
-    {'ERROR', 'ERR', 'CRITICAL', 'CRIT', 'ALERT', 'EMERGENCY', 'EMERG', 'PANIC'}
-)
+_ERROR_DMESG_PRIORITIES = frozenset({'ERROR', 'ERR', 'CRITICAL', 'CRIT', 'ALERT', 'EMERGENCY', 'EMERG', 'PANIC'})
 
 
 def _node_scraper_event_fails_test(event):
