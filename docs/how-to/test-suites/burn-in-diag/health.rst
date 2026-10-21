@@ -204,15 +204,8 @@ Sample output snapshots from health burn-in runs.
 HTML test report
 ----------------
 
-**RVS pytest summary**
-
 .. image:: /images/health_pytest_summary.png
    :alt: RVS pytest HTML report summary
-
-**AGFHC pytest summary**
-
-.. image:: /images/health_log_summary.png
-   :alt: AGFHC pytest HTML report summary
 
 Run Deck report
 ---------------
