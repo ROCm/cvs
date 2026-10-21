@@ -2,7 +2,12 @@
 
 import unittest
 
-from cvs.lib.report.render.panel_shell import paged_table_html, render_results_table_html
+from cvs.lib.report.render.panel_shell import (
+    artifact_link_records,
+    paged_table_html,
+    render_artifact_links,
+    render_results_table_html,
+)
 
 
 class TestPagedTable(unittest.TestCase):
@@ -39,6 +44,32 @@ class TestRenderResultsTableHtml(unittest.TestCase):
     def test_align_sets_a_class_per_column(self):
         out = render_results_table_html(["Test", "BW", "Note"], [["write", 1.5, "x"]], align=["left", "right"])
         self.assertIn("<tr><td class='al-left'>write</td><td class='al-right'>1.5</td><td>x</td></tr>", out)
+
+    def test_artifact_links_share_one_anchor_for_both_surfaces(self):
+        cell = {
+            "errors_json_href": "n1_errors.json",
+            "log_tarball_href": "a<b>'c\".tar.gz",
+        }
+        self.assertEqual(
+            artifact_link_records(cell),
+            [
+                {"label": "errors.json", "href": "n1_errors.json"},
+                {"label": "logs.tar.gz", "href": "a<b>'c\".tar.gz"},
+            ],
+        )
+        self.assertEqual(
+            render_artifact_links(cell),
+            "<a href='n1_errors.json'>errors.json</a><a href='a&lt;b&gt;&#x27;c&quot;.tar.gz'>logs.tar.gz</a>",
+        )
+        self.assertEqual(render_artifact_links({}), "")
+        self.assertEqual(
+            render_artifact_links({"errors_json_href": "only_errors.json", "log_tarball_href": ""}),
+            "<a href='only_errors.json'>errors.json</a>",
+        )
+        self.assertEqual(
+            artifact_link_records({"log_tarball_href": "only_logs.tar.gz"}),
+            [{"label": "logs.tar.gz", "href": "only_logs.tar.gz"}],
+        )
 
     def test_link_records_render_as_anchors_and_other_cells_stay_escaped(self):
         links = [
