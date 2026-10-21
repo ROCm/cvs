@@ -36,7 +36,7 @@
             "data_types": ["float"]
         },
 
-        "_comment_cvs_params": "Perf writes per-data-type files (for example rccl_result_file_float.json), combined results and an aggregated JSON on the head node. Managed runs require writable shared storage; containers must bind-mount the result directory at the same path.",
+        "_comment_cvs_params": "Perf writes per-collective files named from rccl_result_file's stem: <stem>_<collective>_<dtype>.json per data type, <stem>_<collective>.json (combined), <stem>_<collective>_aggregated.json and <stem>_<collective>_topology_check.json, so every collective in a suite run is kept. Regression writes <stem>_<collective>[_<case-hash>].json and its topology audit, so every collective and regression parameter combination is kept. Characters outside the unreserved filename set are percent-encoded in collective and data type names; configs with colliding derived perf paths fail before launch. Managed runs require writable shared storage; containers must bind-mount the result directory at the same path.",
         "cvs_params": {
             "cluster_snapshot_debug": "False",
             "report_ecc_delta": "False",

@@ -6,13 +6,15 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 # Standard libraries
+import hashlib
+import json
 import os
 import re
-import json
 import shlex
 import tempfile
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 # Third party libraries
 import pandas as pd
@@ -632,12 +634,15 @@ class RcclJob:
             if cvs_params_results:
                 log.warning('rccl.cvs_params.results is deprecated; move it to rccl.results')
                 expected_results = cvs_params_results
+        rccl_test_params = config_dict['rccl_test_params'].copy()
+        if 'rccl_collective' not in rccl_test_params and 'rccl_collective' in config_dict:
+            rccl_test_params['rccl_collective'] = config_dict['rccl_collective']
         return cls(
             orch=orch,
             test_name=test_name,
             env_file=config_dict.get('env_source_script', '/dev/null'),
             mpi_params=config_dict['mpi_params'],
-            rccl_test_params=config_dict['rccl_test_params'],
+            rccl_test_params=rccl_test_params,
             cvs_params=config_dict['cvs_params'],
             expected_results=expected_results,
             cluster_node_list=cluster_node_list,
@@ -665,13 +670,101 @@ class RcclJob:
 
     @property
     def result_file(self):
-        """Result path shared by the collective, combined, and aggregated files."""
+        """Configured base path; regression derives per-case paths and perf derives per-collective paths."""
         configured = self.cvs_params.get('rccl_result_file')
         if configured:
             return str(configured)
         from cvs.core.run_layout import RunLayout
 
         return str(RunLayout.get().run_dir / 'rccl_result_file.json')
+
+    @property
+    def perf_result_path(self):
+        """Path for this collective's combined performance results."""
+        return self._derived_json_path(self.result_file, self.test_name)
+
+    @property
+    def regression_result_path(self):
+        """Path for this collective and regression parameter combination."""
+        return self._derived_json_path(self.result_file, *self._regression_name_parts(self.test_name))
+
+    def _regression_name_parts(self, collective):
+        name_parts = [collective]
+        if self.env_overrides:
+            serialized_overrides = json.dumps(self.env_overrides, sort_keys=True, separators=(',', ':'))
+            case_hash = hashlib.sha256(serialized_overrides.encode('utf-8')).hexdigest()[:12]
+            name_parts.append(case_hash)
+        return name_parts
+
+    @property
+    def perf_result_file(self):
+        return str(self.perf_result_path)
+
+    @staticmethod
+    def _derived_json_path(base_path, *name_parts):
+        base_path = Path(base_path)
+        suffix = '_'.join(quote(str(part), safe='') for part in name_parts)
+        return base_path.with_name(f'{base_path.stem}_{suffix}.json')
+
+    def _configured_collectives(self):
+        collectives = self.rccl_test_params.get('rccl_collective', [self.test_name])
+        if isinstance(collectives, str):
+            collectives = [collectives]
+        elif not collectives:
+            collectives = [self.test_name]
+        elif self.test_name not in collectives:
+            collectives = [*collectives, self.test_name]
+        return collectives
+
+    @staticmethod
+    def _check_result_path_collisions(artifacts):
+        paths = {}
+        for path, owner in artifacts:
+            previous_owner = paths.get(path)
+            if previous_owner is not None:
+                raise ValueError(
+                    f'RCCL result path collision at {path}: {previous_owner} and {owner}. '
+                    'Resolve the duplicate output names.'
+                )
+            paths[path] = owner
+
+    def _validate_perf_result_paths(self):
+        collectives = self._configured_collectives()
+
+        data_types = self.rccl_test_params.get('data_types', ['float'])
+        if isinstance(data_types, str):
+            data_types = [data_types]
+
+        artifacts = []
+        for collective in collectives:
+            combined = self._derived_json_path(self.result_file, collective)
+            artifacts.extend(
+                [
+                    (combined, f'collective {collective!r} combined results'),
+                    (self._derived_json_path(combined, 'aggregated'), f'collective {collective!r} aggregated results'),
+                    (self._derived_json_path(combined, 'topology_check'), f'collective {collective!r} topology audit'),
+                ]
+            )
+            artifacts.extend(
+                (self._derived_json_path(combined, dtype), f'collective {collective!r} dtype {dtype!r}')
+                for dtype in data_types
+            )
+        self._check_result_path_collisions(artifacts)
+
+    def _validate_regression_result_paths(self):
+        artifacts = []
+        for collective in self._configured_collectives():
+            result_path = self._derived_json_path(self.result_file, *self._regression_name_parts(collective))
+            artifacts.extend(
+                (
+                    (result_path, f'collective {collective!r} regression results'),
+                    (
+                        self._derived_json_path(result_path, 'topology_check'),
+                        f'collective {collective!r} regression topology audit',
+                    ),
+                )
+            )
+        self._check_result_path_collisions(artifacts)
 
     def _prepare_result_directory(self):
         """Require a result directory CVS can create and read back via download_from_head."""
@@ -960,19 +1053,19 @@ class RcclJob:
 
     def _save_topology_checks(self, result_file):
         """Persist the audit beside the producer results, including checks before an aborted run."""
-        base_path = Path(result_file)
-        path = str(base_path.with_name(f'{base_path.stem}_topology_check.json'))
+        path = str(self._derived_json_path(result_file, 'topology_check'))
         payload = {'mode': self.topology_check_mode, 'checks': self.topology_checks}
         if not self.save_results(path, payload, 'rccl_topology_check'):
             log.error('Failed to save topology checks to %s on head node %s', path, self.head_node)
 
     def run_regression(self):
         self.verdicts = []
+        self._validate_regression_result_paths()
         self.prepare()
         self.topology_checks = []
         params = self.rccl_test_params
         threads = int(params.get('threads_per_gpu', 1))
-        result_file = self.result_file
+        result_file = str(self.regression_result_path)
         binary_cmd = (
             f'{self.rccl_tests_dir}/{self.test_name} '
             f'-b {params.get("start_msg_size", "1024")} '
@@ -1003,18 +1096,19 @@ class RcclJob:
 
     def run_perf(self):
         self.verdicts = []
+        self._validate_perf_result_paths()
         self.prepare()
         self.topology_checks = []
         params = self.rccl_test_params
         data_types = params.get('data_types', ['float'])
-        result_file = self.result_file
-        base_path = Path(result_file)
+        base_path = self.perf_result_path
+        result_file = str(base_path)
         raw_results = []
         validated_results = []
 
         try:
             for dtype in data_types:
-                dtype_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
+                dtype_file = str(self._derived_json_path(base_path, dtype))
                 results, validated = self._run_perf_dtype(dtype, dtype_file)
                 if results is None:
                     return raw_results
@@ -1095,7 +1189,7 @@ class RcclJob:
         try:
             aggregated = self.aggregate_results(validated_results)
             log.info(f'Aggregation passed: {len(aggregated)} RcclTestsAggregated schema validation passed')
-            path = f'{base_path.parent}/{base_path.stem}_aggregated.json'
+            path = str(self._derived_json_path(base_path, 'aggregated'))
             payload = [result.model_dump() for result in aggregated]
             if self.save_results(path, payload, 'aggregated_rccl_results'):
                 log.info(f'Saved aggregated results to {path}')

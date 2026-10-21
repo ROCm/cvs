@@ -139,7 +139,7 @@ Configuration parameters for RCCL suites:
      - RCCL collectives to execute.
    * - ``rccl_result_file``
      - ``"/tmp/rccl_result.json"``
-     - Output file path for RCCL parsed results.
+     - Base path for RCCL result JSON. Perf writes per-collective files named ``<stem>_<collective>[_<dtype>|_aggregated|_topology_check].json`` beside it; regression writes ``<stem>_<collective>[_<case-hash>].json``. The regression hash identifies sorted environment overrides. Characters outside the unreserved filename set are percent-encoded, and colliding derived perf paths fail before launch.
    * - ``start_msg_size``
      - ``"1024"``
      - Start message size for sweep.
