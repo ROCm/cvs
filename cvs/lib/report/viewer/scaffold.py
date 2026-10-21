@@ -10,6 +10,8 @@ from typing import Any, Mapping, Optional
 from cvs.lib.report.artifacts import export_payload
 from cvs.lib.report.viewer.paging import page_tables_js
 
+_TEMPLATE_PATH = Path(__file__).with_name("interactive.html")
+
 
 def _embedded_json_script(payload: Mapping[str, Any]) -> str:
     """Inline JSON so the viewer works when opened via file:// (fetch is blocked)."""
@@ -27,15 +29,13 @@ def write_interactive_viewer(
     subtitle: str = "Interactive sweep explorer (loads sibling JSON sidecar)",
     tier_order: tuple[str, ...] = ("throughput", "record"),
     embed_payload: Optional[Mapping[str, Any]] = None,
-    template_name="interactive.html",
 ) -> Path:
     """Write a static viewer HTML that loads report data embedded or via sibling JSON."""
     out_html = Path(out_html)
     out_html.parent.mkdir(parents=True, exist_ok=True)
-    template_path = Path(__file__).with_name(template_name)
-    template = template_path.read_text(encoding="utf-8")
+    template = _TEMPLATE_PATH.read_text(encoding="utf-8")
     if not template.strip():
-        raise FileNotFoundError(f"Viewer template is empty or missing: {template_path}")
+        raise FileNotFoundError(f"Viewer template is empty or missing: {_TEMPLATE_PATH}")
     tier_js = "[" + ",".join(json.dumps(t) for t in tier_order) + "]"
     embedded = _embedded_json_script(embed_payload) if embed_payload is not None else ""
     doc = (

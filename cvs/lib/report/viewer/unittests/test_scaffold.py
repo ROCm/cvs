@@ -73,26 +73,6 @@ class TestViewerScaffold(unittest.TestCase):
             self.assertNotIn("percentile-block", text)
             self.assertIn('id="overview"', text)
 
-    def test_write_rccl_template_with_embedded_payload(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp) / "rccl_run_deck_viewer.html"
-            write_interactive_viewer(
-                out,
-                json_basename="rccl_run_deck.json",
-                title="RCCL viewer",
-                embed_payload={"run_card_display": [["Collectives", "all_reduce_perf", False]]},
-                template_name="rccl_interactive.html",
-            )
-            text = out.read_text(encoding="utf-8")
-            self.assertIn("RCCL viewer", text)
-            self.assertIn("rccl_run_deck.json", text)
-            self.assertIn('id="embedded-report-json"', text)
-            self.assertIn("all_reduce_perf", text)
-            self.assertIn("chartjs-plugin-zoom@2.0.1", text)
-            self.assertIn("renderCharts", text)
-            self.assertIn("renderTable", text)
-            self.assertNotIn("__EMBEDDED_JSON__", text)
-
     def test_extra_curve_keys_embed_without_throwing(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "suite_viewer.html"

@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>__TITLE__</title>
+<style>
+:root {
+  --bg: #0f1117; --panel: #1a1d27; --border: #2a2f3d; --text: #e8eaef; --muted: #9aa3b5;
+  --accent: #ff6b35; --accent2: #6b9fff;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif;
+  background: linear-gradient(160deg, #0a0c12 0%, #12151f 40%, #0f1117 100%);
+  color: var(--text); line-height: 1.45; padding: 1.25rem; }
+.wrap { max-width: 1140px; margin: 0 auto; }
+a { color: var(--accent2); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.hero { margin-bottom: 1rem; }
+h1 { font-size: 1.6rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: -0.02em; }
+.subtitle { color: var(--muted); margin: 0; font-size: 0.95rem; }
+.viewer-nav { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin: 0.75rem 0 1rem; padding: 0.65rem 1rem;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; font-size: 0.8rem; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1rem 1.25rem; margin-bottom: 1rem; box-shadow: 0 8px 32px rgba(0,0,0,0.25); }
+.panel h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  margin: 0 0 0.85rem; font-weight: 600; }
+.meta-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.75rem 1rem; }
+.meta-item { display: flex; flex-direction: column; gap: 0.15rem; }
+.meta-k { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.meta-v { font-size: 0.9rem; font-weight: 500; word-break: break-word; }
+.notes { font-size: 0.85rem; color: var(--muted); margin-top: 0.75rem; }
+.muted { color: var(--muted); font-size: 0.85rem; }
+.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
+.chart-panel { background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; }
+.chart-panel h3 { margin: 0 0 0.75rem; font-size: 0.75rem; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted); }
+.chart-unit { font-size: 0.72rem; color: var(--muted); margin-top: 0.35rem; }
+.results-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+th, td { padding: 0.55rem 0.65rem; border-bottom: 1px solid var(--border); text-align: left; }
+th { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.rd-pager { display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem;
+  margin-top: 0.75rem; font-size: 0.8rem; color: var(--muted); }
+.rd-pager button { background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer; }
+.rd-pager button:hover { border-color: var(--accent); }
+footer.page-foot { text-align: center; margin-top: 2rem; }
+.to-top { display: block; width: max-content; margin: 0.85rem auto 0; padding: 0.3rem 0.75rem;
+  border: 1px solid var(--border); border-radius: 6px; background: #12151f; color: var(--accent2);
+  text-decoration: none; font-size: 0.8rem; }
+.to-top:hover { border-color: var(--accent); }
+#load-error { color: #ff5c6a; }
+</style>
+</head>
+<body data-viewer="series">
+<div class="wrap" id="top">
+<header class="hero">
+  <h1>__TITLE__</h1>
+  <p class="subtitle">__SUBTITLE__</p>
+</header>
+<nav class="viewer-nav" id="deck-nav" hidden></nav>
+<div id="load-error" hidden></div>
+<div id="deck-sections"></div>
+<footer class="page-foot"><a class="to-top" href="#top">Go to top</a></footer>
+</div>
+__EMBEDDED_JSON__
+<script>
+'use strict';
+const JSON_PATH = __JSON_PATH__;
+const DEFAULT_MAX_LINE_CHART_SERIES = 40;
+
+function esc(text) {
+  return String(text == null ? '' : text)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function fmtNum(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value == null ? '—' : value);
+  const abs = Math.abs(num);
+  if (abs >= 1000) return num.toFixed(1);
+  if (abs >= 10) return num.toFixed(2);
+  return num.toFixed(3);
+}
+
+function resolveBind(context, bind) {
+  if (!bind) return undefined;
+  if (bind.indexOf('.') < 0) return context ? context[bind] : undefined;
+  return bind.split('.').reduce((obj, key) => (obj != null ? obj[key] : undefined), context);
+}
+
+function displayScale(minVal, maxVal) {
+  let domainMin;
+  let domainMax;
+  if (maxVal > minVal) {
+    domainMin = minVal;
+    domainMax = maxVal;
+  } else {
+    const pad = Math.max(Math.abs(maxVal) * 0.08, 1.0);
+    domainMin = maxVal - pad;
+    domainMax = maxVal + pad;
+  }
+  const ticks = [];
+  for (let i = 0; i < 5; i += 1) ticks.push(domainMin + (domainMax - domainMin) * i / 4);
+  return { domainMin, domainMax, ticks };
+}
+
+function valuePct(val, domainMin, domainMax) {
+  const span = domainMax - domainMin || 1.0;
+  return Math.max(0, Math.min(100, 100 * (val - domainMin) / span));
+}
+
+function formatXLabel(size, pattern) {
+  try {
+    return String(pattern).replace('{x}', size);
+  } catch (_err) {
+    return String(size);
+  }
+}
+
+function renderSeriesChart(title, points, unit, xLabelPattern) {
+  const normalized = (points || []).filter(p => Array.isArray(p) && p.length >= 2)
+    .map(p => [p[0], p[1]]);
+  if (!normalized.length) return '';
+  const values = normalized.map(([, y]) => Number(y));
+  const { domainMin, domainMax, ticks } = displayScale(Math.min(...values), Math.max(...values));
+  const grid = ticks.map(tick => {
+    const y = 180 - 160 * valuePct(tick, domainMin, domainMax) / 100;
+    return `<line x1='70' x2='570' y1='${y}' y2='${y}' stroke='var(--border)'/>`
+      + `<text x='62' y='${y}' text-anchor='end' dominant-baseline='middle'>${esc(fmtNum(tick))}</text>`;
+  }).join('');
+  const coordinates = [];
+  const markers = [];
+  const labels = [];
+  const labelStep = Math.max(1, Math.floor((normalized.length + 7) / 8));
+  normalized.forEach((pair, index) => {
+    const size = pair[0];
+    const value = Number(pair[1]);
+    const x = 70 + 500 * index / Math.max(1, normalized.length - 1);
+    const y = 180 - 160 * valuePct(value, domainMin, domainMax) / 100;
+    const xlabel = formatXLabel(size, xLabelPattern || '{x}');
+    const tip = esc(`${xlabel}: ${fmtNum(value)} ${unit}`.trim());
+    coordinates.push(`${x},${y}`);
+    markers.push(`<circle cx='${x}' cy='${y}' r='3' fill='var(--accent2)' tabindex='0' role='img' aria-label='${tip}'><title>${tip}</title></circle>`);
+    if (index % labelStep === 0 || index === normalized.length - 1) {
+      labels.push(`<text x='${x}' y='202' text-anchor='middle'>${esc(xlabel)}</text>`);
+    }
+  });
+  return `<div class='chart-panel'><h3>${esc(title)}</h3>`
+    + `<svg viewBox='0 0 600 220' role='img' aria-label='${esc(title)}' style='width:100%;fill:currentColor;font-size:11px'>`
+    + `${grid}<polyline points='${coordinates.join(' ')}' fill='none' stroke='var(--accent2)' stroke-width='2'/>`
+    + `${markers.join('')}${labels.join('')}</svg>`
+    + `<div class='chart-unit'>${esc(unit)}</div></div>`;
+}
+
+function linkOrText(value, label) {
+  const text = String(value == null ? '—' : value);
+  try {
+    const url = new URL(text, document.baseURI);
+    if (['http:', 'https:', 'file:'].includes(url.protocol)) {
+      return `<a href='${esc(text)}'>${esc(text)}</a>`;
+    }
+  } catch (_err) { /* not a navigable URL */ }
+  return esc(text);
+}
+
+function renderRunCard(payload, card, data) {
+  const rows = Array.isArray(data) ? data : (payload.run_card_display || []);
+  const items = rows.map(row => {
+    const label = row[0];
+    const value = row[1];
+    const isLink = Boolean(row[2]);
+    const inner = isLink ? linkOrText(value, label) : esc(value == null ? '—' : value);
+    return `<div class='meta-item'><span class='meta-k'>${esc(label)}</span><span class='meta-v'>${inner}</span></div>`;
+  }).join('');
+  const notes = payload.run_card_notes ? `<p class='notes'>${esc(payload.run_card_notes)}</p>` : '';
+  return `<div class='meta-grid'>${items}</div>${notes}`;
+}
+
+function collectLineEntries(data, yField) {
+  const charts = (data && data.charts) || {};
+  const raw = charts[yField];
+  const entries = [];
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    Object.values(raw).forEach(seriesList => {
+      if (Array.isArray(seriesList)) entries.push(...seriesList);
+      else if (seriesList && typeof seriesList === 'object') entries.push(seriesList);
+    });
+  } else if (Array.isArray(raw)) {
+    entries.push(...raw);
+  }
+  return entries;
+}
+
+function renderLineChart(card, data) {
+  const seriesCfg = card.series || {};
+  const yField = seriesCfg.y_field || 'bus_bw';
+  const entries = collectLineEntries(data, yField)
+    .filter(entry => entry && typeof entry === 'object')
+    .sort((a, b) => String(a.label || '').localeCompare(String(b.label || '')));
+  if (!entries.length) return "<p class='muted'>No series data.</p>";
+  const maxSeries = seriesCfg.max_series == null ? DEFAULT_MAX_LINE_CHART_SERIES : seriesCfg.max_series;
+  const total = entries.length;
+  const truncated = maxSeries > 0 && total > maxSeries;
+  const slice = truncated ? entries.slice(0, maxSeries) : entries;
+  const unit = seriesCfg.unit || 'GB/s';
+  const xLabel = seriesCfg.x_label || '{x}';
+  const parts = slice.map(entry => renderSeriesChart(
+    String(entry.label || card.title || yField),
+    entry.points || [],
+    unit,
+    xLabel,
+  )).filter(Boolean);
+  if (!parts.length) return "<p class='muted'>No series data.</p>";
+  const banner = truncated
+    ? `<p class='muted'>Showing ${parts.length} of ${total} series charts. Full results remain in the results table and JSON export.</p>`
+    : '';
+  return `${banner}<div class='chart-grid'>${parts.join('')}</div>`;
+}
+
+function renderResultsTable(card, data) {
+  const table = data && typeof data === 'object' ? data : {};
+  const headers = table.headers || [];
+  const rows = table.rows || [];
+  if (!headers.length) return "<p class='muted'>No results table rows.</p>";
+  const head = `<tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr>`;
+  const body = rows.map(row =>
+    `<tr>${row.map(cell => `<td>${esc(cell == null ? '—' : cell)}</td>`).join('')}</tr>`
+  ).join('');
+  return `<table class='results-table'><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
+function renderCard(payload, card) {
+  const bind = card.bind || card.type;
+  const data = bind.indexOf('.') >= 0 ? resolveBind(payload, bind) : payload[bind];
+  const cardType = card.type;
+  const sectionId = card.id || String(cardType).replace(/_/g, '-');
+  const title = card.title || sectionId.replace(/-/g, ' ');
+  let body = '';
+  if (cardType === 'run_card') body = renderRunCard(payload, card, data);
+  else if (cardType === 'line_chart') body = renderLineChart(card, data);
+  else if (cardType === 'table') body = `<div class='results-wrap'>${renderResultsTable(card, data)}</div>`;
+  else body = `<p class='muted'>Unsupported card type: ${esc(cardType)}</p>`;
+  if (!body) return '';
+  return `<section class='panel' id='${esc(sectionId)}'><h2>${esc(title)}</h2>${body}</section>`;
+}
+
+function renderSeriesDeck(payload) {
+  const profile = payload.deck_profile || {};
+  const cards = profile.cards || [];
+  const nav = document.getElementById('deck-nav');
+  const root = document.getElementById('deck-sections');
+  const links = [];
+  const sections = cards.map(card => {
+    const html = renderCard(payload, card);
+    if (!html) return '';
+    const sectionId = card.id || String(card.type).replace(/_/g, '-');
+    const navTitle = card.title || sectionId;
+    links.push(`<a href='#${esc(sectionId)}'>${esc(navTitle)}</a>`);
+    return html;
+  }).filter(Boolean);
+  root.innerHTML = sections.join('');
+  if (links.length) {
+    nav.innerHTML = links.join('');
+    nav.hidden = false;
+  }
+  pageLongTables(document);
+}
+
+function loadReportData() {
+  const embedded = document.getElementById('embedded-report-json');
+  if (embedded && embedded.textContent.trim()) {
+    return Promise.resolve(JSON.parse(embedded.textContent));
+  }
+  return fetch(JSON_PATH).then(response => {
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    return response.json();
+  });
+}
+
+__PAGE_TABLES_JS__
+
+loadReportData().then(payload => {
+  renderSeriesDeck(payload);
+}).catch(err => {
+  const box = document.getElementById('load-error');
+  box.hidden = false;
+  box.textContent = 'Failed to load report JSON: ' + err.message;
+});
+</script>
+</body>
+</html>
