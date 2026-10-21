@@ -314,7 +314,7 @@ class TestFullDmesgScan(unittest.TestCase):
 
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
-    def test_node_scraper_warning_still_fails(self, mock_parse, mock_fail_test):
+    def test_node_scraper_warning_does_not_fail(self, mock_parse, mock_fail_test):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [
             {
@@ -332,8 +332,8 @@ class TestFullDmesgScan(unittest.TestCase):
 
         result = verify_lib.full_dmesg_scan(phdl)
 
-        self.assertTrue(result["node1"])
-        mock_fail_test.assert_called()
+        self.assertEqual(result["node1"], [])
+        mock_fail_test.assert_not_called()
 
     def test_firmware_bug_is_not_a_crash_pattern(self):
         firmware = (
@@ -372,15 +372,22 @@ class TestBenignUnknownDmesgRules(unittest.TestCase):
             self.assertEqual(result, [])
             mock_fail.assert_not_called()
 
-    def test_other_unclassified_kernel_errors_still_fail(self):
+    def test_unclassified_kernel_errors_warn_instead_of_fail(self):
         for level, msg in (
             ("emerg", "NMI watchdog: Watchdog detected hard LOCKUP on cpu 3"),
             ("err", "blk_update_request: I/O error, dev sda"),
             ("err", "nvme nvme0: I/O 123 QID 4 timeout, aborting"),
         ):
             result, mock_fail = self._scan(verify_lib.full_dmesg_scan, (level, msg))
-            self.assertEqual(len(result), 1, msg)
-            mock_fail.assert_called_once()
+            self.assertEqual(result, [], msg)
+            mock_fail.assert_not_called()
+
+    def test_mlx5_dump_cqe_syndrome_zero_is_ignored(self):
+        result, mock_fail = self._scan(
+            verify_lib.full_dmesg_scan, ("err", "mlx5_core 0000:03:00.0: dump CQE: syndrome 0x0")
+        )
+        self.assertEqual(result, [])
+        mock_fail.assert_not_called()
 
     def test_unclassified_amdgpu_error_still_fails_driver_check(self):
         result, mock_fail = self._scan(
@@ -476,9 +483,8 @@ class TestDmesgMigrations(unittest.TestCase):
         self.assertTrue(result["node1"])
         mock_fail.assert_called()
 
-    @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
-    def test_full_journalctl_scan_bounds_with_since(self, mock_parse, mock_fail):
+    def test_full_journalctl_scan_bounds_with_since(self, mock_parse):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = []
         phdl = MagicMock()
@@ -497,11 +503,13 @@ class TestDmesgMigrations(unittest.TestCase):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [
             {
+                "priority": "ERROR",
                 "description": "amdgpu Page Fault",
                 "match_content": "amdgpu 0000:01:00.0 page fault",
                 "category": "SW_DRIVER",
             },
             {
+                "priority": "ERROR",
                 "description": "Filesystem corrupted!",
                 "match_content": "EXT4-fs error (device sda1):",
                 "category": "OS",

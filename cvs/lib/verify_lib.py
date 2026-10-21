@@ -29,7 +29,10 @@ err_patterns_dict = {
     'driver': 'Queue preemption failed for queue|Failed to evict process queues|No more SDMA queue to allocate|amdgpu: process pid',
     'hardware': r'hardware error|hardware fail|ras error|(?:uncorrectable|correctable err)(?!.*initialized)'
     r'|EDAC (?:MC\d+: \d+ [CU]E |DEVICE\d+: [CU]E: )',
-    'network': 'NIC Link is Down|link is down|ib_uverb|CQE|queue catastrophic|CQ error',
+    'network': (
+        'NIC Link is Down|link is down|ib_uverb|error cqe|cqe_dump:|'
+        r'(?<!dump )CQE(?!: syndrome 0x0)|queue catastrophic|CQ error'
+    ),
 }
 
 
@@ -121,6 +124,20 @@ def cvs_dmesg_analysis_args():
     }
 
 
+_NON_FATAL_DMESG_PRIORITIES = frozenset({'WARNING', 'WARN', 'INFO', 'NOTICE', 'DEBUG'})
+_ERROR_DMESG_PRIORITIES = frozenset({'ERROR', 'ERR', 'CRITICAL', 'CRIT', 'ALERT', 'EMERGENCY', 'EMERG', 'PANIC'})
+
+
+def _node_scraper_event_fails_test(event):
+    """Return True when a node-scraper event should call fail_test."""
+    priority = (event.get('priority') or '').strip().upper()
+    if priority in _NON_FATAL_DMESG_PRIORITIES:
+        return False
+    if not priority or priority in _ERROR_DMESG_PRIORITIES:
+        return True
+    return False
+
+
 def _parse_cvs_time(time_str):
     """Convert a `date +"%a %b %e %H:%M"` or `date +"%a %b %e %H:%M:%S"` string
     to a tz-aware datetime.
@@ -201,9 +218,23 @@ def _node_scraper_scan(output_dict, analysis_args=None, source_label='Dmesg'):
         err_dict[node] = []
         events = node_scraper_adapter.parse_dmesg(output_dict[node], node_name=node, analysis_args=analysis_args)
         for event in events:
+            if not _node_scraper_event_fails_test(event):
+                priority = (event.get('priority') or '').strip().upper()
+                if priority in ('WARNING', 'WARN'):
+                    lines = node_scraper_adapter.event_match_lines([event])
+                    if lines:
+                        log.warning(
+                            f'WARN - {lines[0]} seen in {source_label} on node {node} '
+                            f'(warning-level kernel event; not failing test)'
+                        )
+                continue
             lines = node_scraper_adapter.event_match_lines([event])
             line = lines[0] if lines else ''
-            if dmesg_noise.dmesg_line_is_benign(line):
+            raw = event.get('match_content')
+            if isinstance(raw, (list, tuple)):
+                raw = ' '.join(str(part) for part in raw if part)
+            raw_text = str(raw or '')
+            if dmesg_noise.dmesg_line_is_benign(raw_text) or dmesg_noise.dmesg_line_is_benign(line):
                 continue
             if not line:
                 continue
@@ -885,9 +916,25 @@ def verify_driver_errors(phdl):
             for event in events:
                 lines = node_scraper_adapter.event_match_lines([event])
                 line = lines[0] if lines else ''
-                if dmesg_noise.dmesg_line_is_benign(line):
+                raw = event.get('match_content')
+                if isinstance(raw, (list, tuple)):
+                    raw = ' '.join(str(part) for part in raw if part)
+                raw_text = str(raw or '')
+                if dmesg_noise.dmesg_line_is_benign(raw_text) or dmesg_noise.dmesg_line_is_benign(line):
                     continue
-                if 'amdgpu' in line.lower() or event.get('category') == 'SW_DRIVER':
+                is_driver = (
+                    'amdgpu' in raw_text.lower() or 'amdgpu' in line.lower() or event.get('category') == 'SW_DRIVER'
+                )
+                if not is_driver:
+                    continue
+                priority = (event.get('priority') or '').strip().upper()
+                if _node_scraper_event_fails_test(event):
+                    should_fail = True
+                elif priority in ('WARNING', 'WARN') and dmesg_noise.line_indicates_driver_error(raw_text):
+                    should_fail = True
+                else:
+                    should_fail = False
+                if should_fail:
                     msg = f'ERROR !! amdgpu driver errors detected in dmesg on node {node}: {line}'
                     fail_test(msg)
                     err_dict[node].append(line)
