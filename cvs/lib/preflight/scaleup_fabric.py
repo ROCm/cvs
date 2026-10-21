@@ -498,7 +498,6 @@ class NodeHealthCheck(PreflightCheck):
 
     def _evaluate_station_masks(self) -> None:
         outputs = self._exec_all(self.build_station_mask_command())
-        all_masks: Dict[str, str] = {}
         for node, result in self.results.items():
             masks, errors = parse_station_masks(str(outputs.get(node, "")))
             result["station_masks"] = masks
@@ -543,12 +542,10 @@ class NodeHealthCheck(PreflightCheck):
                 )
                 if expected and mask != expected:
                     self._add_error(result, f"{gpu_bdf}: station mask {mask} does not match configured {expected}")
-                all_masks[f"{node}:{gpu_bdf}"] = mask
-        if self.require_uniform_station_mask and all_masks:
-            unique_masks = set(all_masks.values())
-            if len(unique_masks) != 1:
-                for result in self.results.values():
-                    self._add_error(result, "Station masks are not uniform across selected MI4XX GPUs")
+            if self.require_uniform_station_mask and masks:
+                unique_masks = set(masks.values())
+                if len(unique_masks) != 1:
+                    self._add_error(result, "Station masks are not uniform across GPUs on this node")
 
     def _cross_check_port_inventory(self) -> None:
         commands: Dict[str, str] = {}

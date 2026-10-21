@@ -354,6 +354,53 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["warnings"], [])
 
+    def test_uniform_station_mask_policy_is_per_node_not_cluster_wide(self):
+        mask_a = "f" * 18
+        mask_b = "0" * 17 + "f"
+        check = self._check(
+            FakePssh(hosts=("nodeA", "nodeB")), require_uniform_station_mask=True, min_up_ports_per_gpu=0
+        )
+        check.results = {
+            "nodeA": {"status": "PASS", "errors": [], "warnings": []},
+            "nodeB": {"status": "PASS", "errors": [], "warnings": []},
+        }
+        check._exec_all = lambda _command: {
+            "nodeA": "\n".join(f"0000:{index + 1:02x}:00.0 {mask_a}" for index in range(4)),
+            "nodeB": "\n".join(f"0000:{index + 1:02x}:00.0 {mask_b}" for index in range(4)),
+        }
+        check._evaluate_station_masks()
+        self.assertEqual(check.results["nodeA"]["status"], "PASS")
+        self.assertEqual(check.results["nodeB"]["status"], "PASS")
+        self.assertFalse(any("not uniform" in error for error in check.results["nodeA"]["errors"]))
+        self.assertFalse(any("not uniform" in error for error in check.results["nodeB"]["errors"]))
+
+    def test_uniform_station_mask_policy_fails_non_uniform_gpus_on_one_node(self):
+        check = self._check(
+            FakePssh(hosts=("nodeA", "nodeB")), require_uniform_station_mask=True, min_up_ports_per_gpu=0
+        )
+        check.results = {
+            "nodeA": {"status": "PASS", "errors": [], "warnings": []},
+            "nodeB": {"status": "PASS", "errors": [], "warnings": []},
+        }
+        uniform = "f" * 18
+        check._exec_all = lambda _command: {
+            "nodeA": "\n".join(
+                [
+                    f"0000:01:00.0 {uniform}",
+                    f"0000:02:00.0 {'f' + '0' * 17}",
+                    f"0000:03:00.0 {uniform}",
+                    f"0000:04:00.0 {uniform}",
+                ]
+            ),
+            "nodeB": "\n".join(f"0000:{index + 1:02x}:00.0 {uniform}" for index in range(4)),
+        }
+        check._evaluate_station_masks()
+        self.assertEqual(check.results["nodeA"]["status"], "FAIL")
+        self.assertTrue(
+            any("not uniform across GPUs on this node" in error for error in check.results["nodeA"]["errors"])
+        )
+        self.assertEqual(check.results["nodeB"]["status"], "PASS")
+
     def test_run_reports_warned_nodes_for_partial_fabric(self):
         check = self._check(FakePssh(hosts=("nodeA",), station_mask="fff000000fff000000"))
         results = check.run()
@@ -527,6 +574,34 @@ class TestNodeHealthConfigContract(unittest.TestCase):
         self.assertEqual(config.node_check.expected_rocm_version, "7.15.0")
         self.assertTrue(config.connectivity_check.ifoe.fabric_checks)
 
+    def test_schema_accepts_station_policy_knobs(self):
+        config = PreflightConfigFile.model_validate(
+            {
+                "node_check": {
+                    "enabled": True,
+                    "min_up_ports_per_gpu": 1,
+                },
+                "connectivity_check": {
+                    "ifoe": {
+                        "fabric_checks": True,
+                        "reject_partial_stations": False,
+                        "allow_disabled_stations": False,
+                        "require_uniform_station_mask": True,
+                        "agent_process_name": "custom-agent",
+                        "expected_station_masks": {"0000:01:00.1": "f" * 18},
+                    }
+                },
+            }
+        )
+
+        self.assertEqual(config.node_check.min_up_ports_per_gpu, 1)
+        ifoe = config.connectivity_check.ifoe
+        self.assertFalse(ifoe.reject_partial_stations)
+        self.assertFalse(ifoe.allow_disabled_stations)
+        self.assertTrue(ifoe.require_uniform_station_mask)
+        self.assertEqual(ifoe.agent_process_name, "custom-agent")
+        self.assertEqual(ifoe.expected_station_masks["0000:01:00.1"], "f" * 18)
+
         with self.assertRaises(ValidationError):
             PreflightConfigFile.model_validate(
                 {
@@ -592,6 +667,62 @@ class TestNodeHealthConfigContract(unittest.TestCase):
         finally:
             preflight_checks.preflight_results.clear()
             preflight_checks.preflight_results.update(previous_results)
+
+    def test_node_health_accepts_station_policy_from_node_check_and_ifoe(self):
+        from cvs.tests.preflight import preflight_checks
+
+        phdl = MagicMock()
+        phdl.reachable_hosts = ["nodeA"]
+        config = {
+            "node_check": {
+                "enabled": True,
+                "gpus_per_node": 8,
+                "min_up_ports_per_gpu": 2,
+            },
+            "connectivity_check": {
+                "ifoe": {
+                    "fabric_checks": True,
+                    "reject_partial_stations": False,
+                    "agent_process_name": "custom-agent",
+                }
+            },
+        }
+        cluster = {"node_dict": {"nodeA": {}}}
+        checker_results = {
+            "status": "PASS",
+            "fabric_checks": True,
+            "node_results": {"nodeA": {"status": "PASS", "errors": []}},
+            "failed_nodes": [],
+            "vpod_membership": {"status": "PASS", "errors": []},
+            "errors": [],
+        }
+
+        previous_results = dict(preflight_checks.preflight_results)
+        try:
+            with (
+                patch.object(preflight_checks, "NodeHealthCheck") as checker_cls,
+                patch.object(preflight_checks, "preflight_update_test_result"),
+            ):
+                checker_cls.return_value.run.return_value = checker_results
+                preflight_checks.test_node_health(phdl, config, cluster)
+
+            kwargs = checker_cls.call_args.kwargs
+            self.assertEqual(kwargs["min_up_ports_per_gpu"], 2)
+            self.assertFalse(kwargs["reject_partial_stations"])
+            self.assertEqual(kwargs["agent_process_name"], "custom-agent")
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
+
+    def test_ifoe_station_policy_overrides_node_check_min_up_ports(self):
+        from cvs.tests.preflight import preflight_checks
+
+        config = {
+            "node_check": {"enabled": True, "min_up_ports_per_gpu": 1},
+            "connectivity_check": {"ifoe": {"fabric_checks": False, "min_up_ports_per_gpu": 4}},
+        }
+        kwargs = preflight_checks._node_health_station_policy_kwargs(config, fabric_checks=True)
+        self.assertEqual(kwargs["min_up_ports_per_gpu"], 4)
 
     def test_generation_neutral_class_name_preserves_legacy_alias(self):
         self.assertIs(NodeHealthCheck, Mi4xxNodeHealthCheck)
