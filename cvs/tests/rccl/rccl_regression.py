@@ -23,6 +23,31 @@ log = globals.log
 
 
 rccl_res_dict = {}
+_ecc_after_carry = {'blocks': None, 'snapshot': None}
+
+
+def _ecc_snapshot_reusable(snapshot):
+    return bool(snapshot) and all(isinstance(gpus, dict) for gpus in snapshot.values())
+
+
+def _ecc_before_snapshot(phdl, blocks):
+    carry = _ecc_after_carry
+    if carry['blocks'] == blocks and _ecc_snapshot_reusable(carry['snapshot']):
+        snapshot = carry['snapshot']
+        carry['blocks'] = None
+        carry['snapshot'] = None
+        log.debug('ECC_BLOCKS before: reusing previous after snapshot')
+        return snapshot
+    return capture_ecc_blocks_snapshot(phdl, 'before', blocks=blocks)
+
+
+def _remember_ecc_after(blocks, snapshot):
+    if _ecc_snapshot_reusable(snapshot):
+        _ecc_after_carry['blocks'] = blocks
+        _ecc_after_carry['snapshot'] = snapshot
+        return
+    _ecc_after_carry['blocks'] = None
+    _ecc_after_carry['snapshot'] = None
 
 
 def pytest_generate_tests(metafunc):
@@ -194,15 +219,19 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
     Flow:
       1) Capture start time to bound dmesg checks later.
       2) Optionally snapshot cluster metrics before the test (for debugging/compare).
-      3) Build env_overrides dict from all regression parameters.
-      4) Invoke RcclJob.from_config(...).run_regression() with parameters built from config and fixtures.
-      4a) Report each verification verdict as a pytest sub-test and HTML case row.
-      5) Capture end time and verify dmesg for errors between start/end.
-      6) Optionally snapshot metrics again and compare before/after.
-      7) Call update_test_result() to finalize test status.
+      3) Optionally capture ECC_BLOCKS counters before the test. Later cases reuse the previous after snapshot.
+      4) Build env_overrides dict from all regression parameters.
+      5) Invoke RcclJob.from_config(...).run_regression() with parameters built from config and fixtures.
+      5a) Report each verification verdict as a pytest sub-test and HTML case row.
+      6) Optionally capture ECC_BLOCKS after the test, log deltas, and warn on increases.
+      7) Capture end time and verify dmesg for errors between start/end.
+      8) Optionally snapshot metrics again and compare before/after.
+      9) Call update_test_result() to finalize test status.
 
     Notes:
-      - cluster_snapshot_debug controls whether before/after snapshots are taken.
+      - cluster_snapshot_debug controls whether before/after cluster snapshots are taken.
+      - report_ecc_delta (default False) logs a post-test ECC_BLOCKS table (CE/UE/DE before, after, Delta).
+      - report_ecc_blocks (optional list) limits capture/compare to named blocks when report_ecc_delta is True.
     """
 
     globals.error_list = []
@@ -211,8 +240,8 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
     if not can_use_sudo:
         no_sudo_nodes = [node for node, ok in sudo_status.items() if not ok]
         log.warning(
-            "Skipping dmesg markers/verification and sudo-only snapshots because passwordless sudo is unavailable "
-            "on nodes: %s",
+            'Skipping %s because passwordless sudo is unavailable on nodes: %s',
+            skipped_sudo_work(config_dict),
             no_sudo_nodes,
         )
 
@@ -228,6 +257,12 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
         'True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I
     ):
         cluster_dict_before = create_cluster_metrics_snapshot(orch.all)
+
+    report_ecc_delta = ecc_delta_check_enabled(config_dict)
+    ecc_blocks = resolve_ecc_blocks(config_dict) if report_ecc_delta else None
+    ecc_before = {}
+    if can_use_sudo and report_ecc_delta:
+        ecc_before = _ecc_before_snapshot(orch.all, ecc_blocks)
 
     # Build env_overrides from all regression parameters (convert values to strings)
     env_overrides = {k: str(v) for k, v in regression_params.items()}
@@ -246,6 +281,11 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
     log.info("%s", result_dict)
     key_name = f'{rccl_collective}-{params_str}'
     rccl_res_dict[key_name] = result_dict
+
+    if can_use_sudo and report_ecc_delta:
+        ecc_after = capture_ecc_blocks_snapshot(orch.all, 'after', blocks=ecc_blocks)
+        compare_ecc_blocks_snapshots(ecc_before, ecc_after, collective=rccl_collective, blocks=ecc_blocks)
+        _remember_ecc_after(ecc_blocks, ecc_after)
 
     # Scan dmesg between start and end times cluster wide ..
     if can_use_sudo:
