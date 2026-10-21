@@ -31,12 +31,14 @@ _IFOE_PORTS_PER_STATION = 2
 DEFAULT_MIN_UP_PORTS_PER_GPU = _IFOE_PORTS_PER_STATION
 _BDF_RE = re.compile(r"^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$")
 
-_KERNEL_FAILURE_RE = re.compile(
-    r"(?:MES\([^)]*\).*SET_HW_RSRC|hw_init.*failed|Fatal error during GPU init|"
+_KERNEL_FAILURE_PATTERN = (
+    r"MES\([^)]*\).*SET_HW_RSRC|hw_init.*failed|Fatal error during GPU init|"
     r"fw_status\s*0xffffffff|memory training failed|hbm .*test failed|"
-    r"(?:wafl|xgmi).*link training failed|discovery failed|probe with driver amdgpu failed)",
-    re.IGNORECASE,
+    r"(wafl|xgmi).*link training failed|discovery failed|probe with driver amdgpu failed"
 )
+_KERNEL_FAILURE_RE = re.compile(_KERNEL_FAILURE_PATTERN, re.IGNORECASE)
+# Remote ``grep -E`` does not accept ``\s``; keep aligned with ``_KERNEL_FAILURE_PATTERN``.
+_KERNEL_FAILURE_GREP_PATTERN = _KERNEL_FAILURE_PATTERN.replace(r"\s", "[[:space:]]")
 
 
 def _normalise_key(value: Any) -> str:
@@ -366,7 +368,8 @@ class NodeHealthCheck(PreflightCheck):
         return f"pgrep -af -- {shlex.quote(regex)} || true"
 
     def _kernel_command(self) -> str:
-        reader = "journalctl -k -b --no-pager"
+        grep_pattern = shlex.quote(_KERNEL_FAILURE_GREP_PATTERN)
+        reader = f"journalctl -k -b --no-pager | grep -Ei {grep_pattern} || true"
         if self.use_sudo:
             reader = "sudo -n " + reader
         return f"{reader} 2>&1 || true"

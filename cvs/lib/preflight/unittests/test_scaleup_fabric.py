@@ -269,6 +269,19 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
         self.assertIn('[i]nb\\-node\\-agent', command)
         self.assertNotIn("'inb-node-agent'", command)
 
+    def test_kernel_command_filters_journal_on_node_before_transfer(self):
+        without_sudo = self._check(FakePssh(hosts=("nodeA",)))._kernel_command()
+        self.assertIn("journalctl -k -b --no-pager", without_sudo)
+        self.assertIn("grep -Ei", without_sudo)
+        self.assertIn("Fatal error during GPU init", without_sudo)
+        self.assertNotRegex(without_sudo, r"journalctl[^|]*\s-n\s+[0-9]")
+
+        with_sudo = Mi4xxNodeHealthCheck(
+            FakePssh(hosts=("nodeA",)), use_sudo=True, readiness_timeout_seconds=0
+        )._kernel_command()
+        self.assertIn("sudo -n journalctl -k -b --no-pager", with_sudo)
+        self.assertIn("grep -Ei", with_sudo)
+
     def test_station_mask_command_uses_sudo_when_configured(self):
         command = Mi4xxNodeHealthCheck(
             FakePssh(hosts=('nodeA',)), use_sudo=True, readiness_timeout_seconds=0
