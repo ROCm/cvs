@@ -84,6 +84,30 @@ class TestSeriesViewer(unittest.TestCase):
         for hardcoded in ("'bus_bw'", "'alg_bw'", "all_reduce_perf"):
             self.assertNotIn(hardcoded, text)
 
+    def test_filter_card_replaces_run_card_and_owns_search_info_and_zoom_reset(self):
+        _, payload = self._rccl_payload()
+        text = self._write(title="RCCL", embed_payload=payload)
+        self.assertIn('<section class="panel" id="filters">', text)
+        for element_id in ("f-series", "f-search", "btn-reset-zoom", "meta"):
+            self.assertIn(f'id="{element_id}"', text)
+        self.assertIn("card.type !== 'run_card'", text)
+        self.assertNotIn("renderRunCard", text)
+        self.assertNotIn("meta-grid", text)
+        self.assertNotIn("data-reset-zoom", text)
+        self.assertEqual(text.count("Reset zoom</button>"), 1)
+
+    def test_nav_links_back_to_the_static_run_deck(self):
+        text = self._write(title="RCCL")
+        self.assertIn('const JSON_PATH = "rccl_run_deck.json";', text)
+        self.assertIn("id='run-deck-link'", text)
+        self.assertIn("JSON_PATH.replace(/\\.json$/i, '.html')", text)
+        self.assertIn(">Run deck</a>", text)
+
+    def test_legend_swatches_use_the_line_color(self):
+        text = self._write(title="RCCL")
+        self.assertIn("generateLabels", text)
+        self.assertIn("strokeStyle: item.fillStyle", text)
+
     def test_results_table_is_paged_once_by_shared_pager(self):
         _, payload = self._rccl_payload()
         text = self._write(title="RCCL", embed_payload=payload)

@@ -153,11 +153,14 @@ help. The deck nav links the viewer from `summary.viewer_html`, the same way
 sweep decks do.
 
 `series` profiles with `interactive_viewer: true` (for example `profiles/rccl.json`)
-use `viewer/series.html` via `write_series_viewer`. The page draws the run card, one
-Chart.js chart per `line_chart` card (title, unit and `y_field` from the card, one line
-per collective from `datasets.series.charts[y_field]`, x-axis zoom/pan with a **Reset
-zoom** button), and the results table from the embedded payload and `deck_profile.cards`,
-then applies the shared table pager once and the **Go to top** footer.
+use `viewer/series.html` via `write_series_viewer`. The page opens with a filter card
+(series select, table search, row/series counts, and a **Reset zoom** button for every
+chart) in place of the run card, then draws one Chart.js chart per `line_chart` card
+(title, unit and `y_field` from the card, one line per series from
+`datasets.series.charts[y_field]`, x-axis zoom/pan) and the results table from the
+embedded payload and `deck_profile.cards`. The series select filters the charts and the
+table; the search box filters the table. The shared table pager is applied once, and the
+**Go to top** footer is kept.
 
 Health suites can extend `profiles/health_status_base.json` for the shared run
 card, lifecycle timeline, overview, optional measurements (`when_empty: hide`),

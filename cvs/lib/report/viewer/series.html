@@ -27,18 +27,25 @@ h1 { font-size: 1.6rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: -
   padding: 1rem 1.25rem; margin-bottom: 1rem; box-shadow: 0 8px 32px rgba(0,0,0,0.25); }
 .panel h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
   margin: 0 0 0.85rem; font-weight: 600; }
-.meta-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.75rem 1rem; }
-.meta-item { display: flex; flex-direction: column; gap: 0.15rem; }
-.meta-k { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-.meta-v { font-size: 0.9rem; font-weight: 500; word-break: break-word; }
-.notes { font-size: 0.85rem; color: var(--muted); margin-top: 0.75rem; }
 .muted { color: var(--muted); font-size: 0.85rem; }
-.chart-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
-  margin-bottom: 0.5rem; }
-.chart-hint { font-size: 0.72rem; color: var(--muted); }
-.chart-toolbar button { background: #12151f; color: var(--text); border: 1px solid var(--border);
-  border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer; font-size: 0.8rem; }
-.chart-toolbar button:hover { border-color: var(--accent); }
+.toolbar { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 0.65rem 0.85rem; align-items: end; }
+.toolbar label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.72rem;
+  color: var(--muted); min-width: 0; }
+.toolbar label .filter-label { line-height: 1.2; white-space: nowrap; }
+.toolbar label.filter-search { grid-column: span 2; }
+@media (max-width: 720px) { .toolbar label.filter-search { grid-column: span 1; } }
+.toolbar select, .toolbar input[type="search"] {
+  background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.35rem 0.5rem; width: 100%; min-width: 0; font-size: 0.85rem; }
+.toolbar button { background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.35rem 0.65rem; font-size: 0.85rem; cursor: pointer; white-space: nowrap; }
+.toolbar button:hover { border-color: var(--accent); }
+.toolbar-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end;
+  justify-content: flex-end; }
+.meta-line { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; margin-top: 0.85rem;
+  font-size: 0.85rem; color: var(--muted); }
+.meta-line strong { color: var(--text); font-weight: 600; }
 .chart-canvas-wrap { position: relative; height: 340px; }
 .results-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
@@ -65,6 +72,15 @@ footer.page-foot { text-align: center; margin-top: 2rem; }
 </header>
 <nav class="viewer-nav" id="deck-nav" hidden></nav>
 <div id="load-error" hidden></div>
+<section class="panel" id="filters">
+  <h2>Filters</h2>
+  <div class="toolbar">
+    <label><span class="filter-label" id="f-series-label">Series</span><select id="f-series" aria-label="Filter charts and table by series"><option value="">All</option></select></label>
+    <label class="filter-search"><span class="filter-label">Search table</span><input id="f-search" type="search" placeholder="any column value…"/></label>
+    <div class="toolbar-actions"><button type="button" id="btn-reset-zoom">Reset zoom</button></div>
+  </div>
+  <div class="meta-line" id="meta">Loading…</div>
+</section>
 <div id="deck-sections"></div>
 <footer class="page-foot"><a class="to-top" href="#top">Go to top</a></footer>
 </div>
@@ -118,6 +134,9 @@ function lineLegendLabels() {
     boxWidth: 28,
     boxHeight: 6,
     font: { size: 11 },
+    // Point-style legends stroke with pointBorderColor, which matches the panel background; use the line color.
+    generateLabels: chart => Chart.defaults.plugins.legend.labels.generateLabels(chart)
+      .map(item => Object.assign({}, item, { strokeStyle: item.fillStyle })),
   };
 }
 
@@ -216,34 +235,10 @@ function makeLineChart(canvas, labels, datasets, unit) {
   return chart;
 }
 
-function linkOrText(value) {
-  const text = String(value == null ? '—' : value);
-  try {
-    const url = new URL(text, document.baseURI);
-    if (['http:', 'https:', 'file:'].includes(url.protocol)) {
-      return `<a href='${esc(text)}'>${esc(text)}</a>`;
-    }
-  } catch (_err) { /* not a navigable URL */ }
-  return esc(text);
-}
-
-function renderRunCard(payload, data) {
-  const rows = Array.isArray(data) ? data : (payload.run_card_display || []);
-  const items = rows.map(row => {
-    const inner = row[2] ? linkOrText(row[1]) : esc(row[1] == null ? '—' : row[1]);
-    return `<div class='meta-item'><span class='meta-k'>${esc(row[0])}</span><span class='meta-v'>${inner}</span></div>`;
-  }).join('');
-  const notes = payload.run_card_notes ? `<p class='notes'>${esc(payload.run_card_notes)}</p>` : '';
-  return `<div class='meta-grid'>${items}</div>${notes}`;
-}
-
 function renderLineChartShell(card, data, sectionId) {
   const yField = (card.series || {}).y_field;
   if (!collectLineEntries(data, yField).length) return "<p class='muted'>No series data.</p>";
-  return `<div class='chart-toolbar'>`
-    + `<span class='chart-hint'>Scroll to zoom · drag to pan · x axis</span>`
-    + `<button type='button' data-reset-zoom='${esc(sectionId)}'>Reset zoom</button></div>`
-    + `<div class='chart-canvas-wrap'><canvas id='chart-${esc(sectionId)}'></canvas></div>`;
+  return `<div class='chart-canvas-wrap'><canvas id='chart-${esc(sectionId)}'></canvas></div>`;
 }
 
 function drawLineChart(card, data, sectionId) {
@@ -288,36 +283,96 @@ function renderCard(payload, card) {
   const sectionId = cardSectionId(card);
   const title = card.title || sectionId.replace(/-/g, ' ');
   let body = '';
-  if (card.type === 'run_card') body = renderRunCard(payload, data);
-  else if (card.type === 'line_chart') body = renderLineChartShell(card, data, sectionId);
-  else if (card.type === 'table') body = `<div class='results-wrap'>${renderResultsTable(data)}</div>`;
+  if (card.type === 'line_chart') body = renderLineChartShell(card, data, sectionId);
+  else if (card.type === 'table') body = `<div class='results-wrap' data-results-table='${esc(sectionId)}'></div>`;
   else body = `<p class='muted'>Unsupported card type: ${esc(card.type)}</p>`;
   return `<section class='panel' id='${esc(sectionId)}'><h2>${esc(title)}</h2>${body}</section>`;
 }
 
-function renderSeriesDeck(payload) {
-  const cards = (payload.deck_profile || {}).cards || [];
-  const nav = document.getElementById('deck-nav');
-  document.getElementById('deck-sections').innerHTML = cards.map(card => renderCard(payload, card)).join('');
-  const links = cards.map(card => {
-    const sectionId = cardSectionId(card);
-    return `<a href='#${esc(sectionId)}'>${esc(card.title || sectionId)}</a>`;
+const resultTables = [];
+const seriesNames = new Set();
+
+function seriesLabels() {
+  return Array.from(seriesNames).sort();
+}
+
+function populateFilters() {
+  const select = document.getElementById('f-series');
+  const firstTable = resultTables[0];
+  const header = firstTable && (firstTable.data.headers || [])[0];
+  if (header) document.getElementById('f-series-label').textContent = header;
+  seriesLabels().forEach(label => {
+    const option = document.createElement('option');
+    option.value = label;
+    option.textContent = label;
+    select.appendChild(option);
   });
-  if (links.length) {
-    nav.innerHTML = links.join('');
-    nav.hidden = false;
-  }
-  cards.filter(card => card.type === 'line_chart').forEach(card => {
-    const bind = card.bind || card.type;
-    drawLineChart(card, resolveBind(payload, bind), cardSectionId(card));
+}
+
+function applyFilters() {
+  const selected = document.getElementById('f-series').value;
+  const query = document.getElementById('f-search').value.trim().toLowerCase();
+  chartInstances.forEach(chart => {
+    chart.data.datasets.forEach((ds, index) => chart.setDatasetVisibility(index, !selected || ds.label === selected));
+    chart.update();
   });
-  document.getElementById('deck-sections').addEventListener('click', event => {
-    const button = event.target.closest('button[data-reset-zoom]');
-    if (!button) return;
-    const chart = chartInstances.find(c => c.canvas.id === 'chart-' + button.getAttribute('data-reset-zoom'));
-    if (chart && chart.resetZoom) chart.resetZoom();
+  let shown = 0;
+  let total = 0;
+  resultTables.forEach(entry => {
+    const rows = entry.data.rows || [];
+    const matched = rows.filter(row => {
+      if (selected && !row.some(cell => String(cell) === selected)) return false;
+      return !query || row.join(' ').toLowerCase().indexOf(query) !== -1;
+    });
+    shown += matched.length;
+    total += rows.length;
+    entry.wrap.innerHTML = matched.length || !rows.length
+      ? renderResultsTable({ headers: entry.data.headers, rows: matched })
+      : "<p class='muted'>No rows match the current filters.</p>";
   });
   pageLongTables(document);
+  document.getElementById('meta').innerHTML = `<span><strong>${shown}</strong> of ${total} result rows</span>`
+    + `<span><strong>${seriesLabels().length}</strong> series</span>`
+    + `<span>Scroll to zoom · drag to pan · Reset zoom restores every chart</span>`;
+}
+
+function renderSeriesDeck(payload) {
+  // The run card is replaced by the filter card in this viewer.
+  const cards = ((payload.deck_profile || {}).cards || []).filter(card => card.type !== 'run_card');
+  const nav = document.getElementById('deck-nav');
+  document.getElementById('deck-sections').innerHTML = cards.map(card => renderCard(payload, card)).join('');
+  const links = ["<a href='#filters'>Filters</a>"].concat(cards.map(card => {
+    const sectionId = cardSectionId(card);
+    return `<a href='#${esc(sectionId)}'>${esc(card.title || sectionId)}</a>`;
+  }));
+  if (JSON_PATH) {
+    links.push(`<a id='run-deck-link' href='${esc(JSON_PATH.replace(/\.json$/i, '.html'))}'>Run deck</a>`);
+  }
+  nav.innerHTML = links.join('');
+  nav.hidden = false;
+  cards.forEach(card => {
+    const data = resolveBind(payload, card.bind || card.type);
+    const sectionId = cardSectionId(card);
+    if (card.type === 'line_chart') {
+      collectLineEntries(data, (card.series || {}).y_field)
+        .forEach(entry => seriesNames.add(String(entry.label || card.title)));
+      drawLineChart(card, data, sectionId);
+    } else if (card.type === 'table') {
+      const wrap = Array.from(document.querySelectorAll('[data-results-table]'))
+        .find(el => el.getAttribute('data-results-table') === sectionId);
+      if (wrap) resultTables.push({ data: data && typeof data === 'object' ? data : {}, wrap });
+    }
+  });
+  populateFilters();
+  ['f-series', 'f-search'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input', applyFilters);
+    el.addEventListener('change', applyFilters);
+  });
+  document.getElementById('btn-reset-zoom').addEventListener('click', () => {
+    chartInstances.forEach(chart => { if (chart.resetZoom) chart.resetZoom(); });
+  });
+  applyFilters();
 }
 
 function loadReportData() {
