@@ -153,9 +153,10 @@ help. The deck nav links the viewer from `summary.viewer_html`, the same way
 sweep decks do.
 
 `series` profiles with `interactive_viewer: true` (for example `profiles/rccl.json`)
-use `viewer/series.html` via `write_series_viewer`. Deck sections are pre-rendered with
-the same `DeckCardRenderer` card path as the static HTML (`viewer_deck_html` on the JSON
-payload); the page applies the shared table pager and **Go to top** footer.
+use `viewer/series.html` via `write_series_viewer`. The page draws the run card, one
+chart per series for each `line_chart` card, and the results table from the embedded
+payload and `deck_profile.cards`, then applies the shared table pager once and the
+**Go to top** footer.
 
 Health suites can extend `profiles/health_status_base.json` for the shared run
 card, lifecycle timeline, overview, optional measurements (`when_empty: hide`),

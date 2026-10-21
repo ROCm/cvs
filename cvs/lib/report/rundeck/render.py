@@ -29,9 +29,10 @@ def _build_nav(nav_items: list[tuple[str, str]], viewer_name: str | None) -> str
     return f"<nav class='report-nav'>{links}{viewer_nav}</nav>"
 
 
-def collect_deck_sections(payload: dict) -> tuple[list[str], list[tuple[str, str]]]:
-    """Render profile card sections and nav targets (shared by static deck and series viewer)."""
+def render_rundeck_html(payload: dict) -> str:
+    """Profile-driven static Run Deck HTML."""
     reset_table_ids()
+    report = payload.get("report") or {}
     cards = _cards_from_payload(payload)
     sections: list[str] = []
     nav_items: list[tuple[str, str]] = []
@@ -78,22 +79,6 @@ def collect_deck_sections(payload: dict) -> tuple[list[str], list[tuple[str, str
         sections.append(close_gate_matrix_section(pending_gate_section, "") + "</div></section>")
         if pending_gate_nav:
             nav_items.append(pending_gate_nav)
-
-    return sections, nav_items
-
-
-def render_series_viewer_body(payload: dict) -> tuple[str, str]:
-    """Pre-render series viewer deck sections with the same card renderers as the static HTML."""
-    sections, nav_items = collect_deck_sections(payload)
-    links = "".join(f"<a href='#{html.escape(section_id)}'>{html.escape(label)}</a>" for section_id, label in nav_items)
-    nav_html = f'<nav class="viewer-nav">{links}</nav>' if links else ""
-    return "".join(sections), nav_html
-
-
-def render_rundeck_html(payload: dict) -> str:
-    """Profile-driven static Run Deck HTML."""
-    report = payload.get("report") or {}
-    sections, nav_items = collect_deck_sections(payload)
 
     model_label = next((v for lbl, v, _ in payload.get("run_card_display", []) if lbl == "Model"), None)
     if not model_label or str(model_label).strip() in ("—", "-", ""):

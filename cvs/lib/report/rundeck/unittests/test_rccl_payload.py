@@ -76,9 +76,6 @@ class TestRcclRundeckPayload(unittest.TestCase):
         self.assertEqual(doc.count("<polyline "), 6)
         self.assertNotIn("C=1024", doc)
         self.assertIn("<title>RCCL Run Deck &mdash; rccl</title>", doc)
-        self.assertIn("viewer_deck_html", payload)
-        self.assertIn("Bus bandwidth vs message size", payload["viewer_deck_html"])
-        self.assertIn("class='chart-panel'", payload["viewer_deck_html"])
 
 
 if __name__ == "__main__":

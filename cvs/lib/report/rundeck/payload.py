@@ -195,13 +195,6 @@ class RundeckPayloadBuilder:
             profile_for_viewer = self.profile_dict if isinstance(self.profile, dict) else {}
             payload["viewer_config"] = ViewerConfigBuilder(profile_for_viewer, viewer_config).build()
 
-        if self.builder_id == "series" and self.config.interactive_viewer:
-            from cvs.lib.report.rundeck.render import render_series_viewer_body
-
-            deck_html, deck_nav = render_series_viewer_body(payload)
-            payload["viewer_deck_html"] = deck_html
-            payload["viewer_deck_nav"] = deck_nav
-
         return payload
 
     def _build_datasets(self) -> dict[str, Any]:
