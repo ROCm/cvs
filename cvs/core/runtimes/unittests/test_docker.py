@@ -446,6 +446,8 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
 
         def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
             calls.append(cmd)
+            if "docker images" in cmd and "grep" in cmd:
+                return {"host1": {"output": "", "exit_code": 1}}
             return {"host1": {"output": "", "exit_code": 0}}
 
         orchestrator = MagicMock()
@@ -462,11 +464,40 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
 
         self.assertTrue(result)
         login_calls = [c for c in calls if "docker login" in c]
+        pull_calls = [c for c in calls if "docker pull" in c]
         run_calls = [c for c in calls if "docker run" in c]
         self.assertEqual(len(login_calls), 1)
+        self.assertEqual(len(pull_calls), 1)
         self.assertEqual(len(run_calls), 1)
         # Login must happen before the run that needs the pull.
         self.assertLess(calls.index(login_calls[0]), calls.index(run_calls[0]))
+
+    def test_setup_containers_skips_pull_and_login_when_image_present(self):
+        """Regression for AIMVT-443: pre-loaded images must not hit the registry or pull."""
+        calls = []
+
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            calls.append(cmd)
+            if "docker images" in cmd and "grep" in cmd:
+                return {"host1": {"output": "", "exit_code": 0}}
+            return {"host1": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        cfg = _container_config(
+            image="rocm/ufb-private:latest",
+            extra_runtime_args={"registry": {"username": "myuser", "password_file": f"{TMP}/token"}},
+        )
+        result = rt.setup_containers(container_config=cfg, container_name="cvs_iter_test", volumes=[])
+
+        self.assertTrue(result)
+        self.assertFalse(any("docker pull" in c for c in calls))
+        self.assertFalse(any("docker login" in c for c in calls))
+        self.assertTrue(any("docker run" in c for c in calls))
 
     def test_setup_containers_skips_login_when_image_tar_present(self):
         # A tar load never needs a registry pull, so no login should be attempted
