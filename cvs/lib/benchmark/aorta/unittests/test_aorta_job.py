@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import yaml
 
-from cvs.lib import globals
+from cvs.lib import globals, verify_lib
 from cvs.lib.benchmark.aorta.aorta_artifacts import pack_traces
 from cvs.lib.benchmark.aorta.aorta_config_loader import AortaVariantConfig
 from cvs.lib.benchmark.aorta.aorta_job import AortaJob, _expand_aliases, _text, overlay_training_overrides
@@ -619,24 +619,32 @@ class TestAortaJob(unittest.TestCase):
             "node-a": "Wed Sep 23 12:01:00",
             "node-b": "Wed Sep 23 12:02:00",
         }
+
+        def kernel_line(clock, message):
+            stamp = verify_lib._parse_cvs_time(clock).isoformat(timespec="microseconds").replace(".", ",", 1)
+            return f"kern  :err   : {stamp} {message}\n"
+
         outputs = {
-            "node-a": {"exit_code": 0, "output": "GPU reset begin"},
+            "node-a": {
+                "exit_code": 0,
+                "output": kernel_line("Wed Sep 23 11:59:00", "amdgpu: GPU hang before the workload")
+                + kernel_line("Wed Sep 23 12:00:30", "amdgpu: GPU reset begin")
+                + kernel_line("Wed Sep 23 12:01:30", "amdgpu: GPU hang after the window"),
+            },
             "node-b": {"exit_code": 0, "output": "ordinary kernel event"},
         }
-        with (
-            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
-            patch.object(job, "_exec", return_value=ends) as execute,
-        ):
+        with patch.object(job, "_exec", return_value=ends) as execute:
             self.orch.exec_on_host.return_value = outputs
             job.check_kernel_errors()
         self.assertEqual(execute.call_args_list[0].args[0], "date +'%a %b %e %H:%M:%S'")
         self.assertEqual(execute.call_args_list[0].kwargs, {"on_host": True})
-        self.assertEqual(len(globals.error_list), 1)
-        self.assertIn("GPU reset begin", globals.error_list[0])
+        self.assertTrue(globals.error_list)
+        for error in globals.error_list:
+            self.assertIn("node-a", error)
+            self.assertIn("GPU reset begin", error)
         command = self.orch.exec_on_host.call_args.args[0]
-        self.assertIn("Wed Sep 23 12:00", command)
-        self.assertIn("Wed Sep 23 12:01", command)
-        self.assertIn("awk", command)
+        self.assertIn("--time-format iso -x", command)
+        self.assertNotIn("awk", command)
         self.assertEqual(
             self.orch.exec_on_host.call_args.kwargs,
             {"hosts": self.orch.hosts, "timeout": 120, "detailed": True, "print_console": False},
@@ -647,7 +655,6 @@ class TestAortaJob(unittest.TestCase):
         job.kernel_start = {host: "Wed Sep 23 12:00:00" for host in self.orch.hosts}
         ends = {host: "Wed Sep 23 12:01:00" for host in self.orch.hosts}
         with (
-            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
             patch.object(job, "_exec", return_value=ends),
         ):
             self.orch.exec_on_host.side_effect = RuntimeError("node-b unreachable")
@@ -662,7 +669,6 @@ class TestAortaJob(unittest.TestCase):
         job.kernel_start = {host: "Wed Sep 23 12:00:00" for host in self.orch.hosts}
         ends = {host: "Wed Sep 23 12:01:00" for host in self.orch.hosts}
         with (
-            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
             patch.object(job, "_exec", return_value=ends),
         ):
             self.orch.exec_on_host.return_value = {"node-a": {"exit_code": 0, "output": ""}}
@@ -674,7 +680,6 @@ class TestAortaJob(unittest.TestCase):
         job.kernel_start = {host: "Wed Sep 23 12:00:00" for host in self.orch.hosts}
         ends = {host: "Wed Sep 23 12:01:00" for host in self.orch.hosts}
         with (
-            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
             patch.object(job, "_exec", return_value=ends),
         ):
             self.orch.exec_on_host.return_value = {
@@ -691,7 +696,6 @@ class TestAortaJob(unittest.TestCase):
         job.kernel_start = {host: "Wed Sep 23 12:00:00" for host in self.orch.hosts}
         ends = {host: "Wed Sep 23 12:01:00" for host in self.orch.hosts}
         with (
-            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
             patch.object(job, "_exec", return_value=ends),
         ):
             self.orch.exec_on_host.return_value = {host: {"exit_code": 1, "output": ""} for host in self.orch.hosts}
@@ -702,7 +706,6 @@ class TestAortaJob(unittest.TestCase):
             "node-b": {"exit_code": 2, "output": ""},
         }
         with (
-            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
             patch.object(job, "_exec", return_value=ends),
         ):
             with self.assertRaisesRegex(RuntimeError, "failed hosts.*node-b"):

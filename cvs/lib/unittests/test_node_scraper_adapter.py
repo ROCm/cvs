@@ -67,6 +67,17 @@ class TestParseDmesg(unittest.TestCase):
         lines = node_scraper_adapter.event_match_lines(events)
         self.assertTrue(any("Out of memory" in line for line in lines))
 
+    def test_event_match_text_omits_description(self):
+        event = {"description": "Unknown dmesg error", "match_content": "amdgpu: WALKER_ERROR: 0x0"}
+        self.assertEqual(node_scraper_adapter.event_match_text(event), "amdgpu: WALKER_ERROR: 0x0")
+        self.assertEqual(
+            node_scraper_adapter.event_match_text({"description": "d", "match_content": ["a", "", "b"]}), "a b"
+        )
+        self.assertEqual(node_scraper_adapter.event_match_text({"description": "d", "match_content": None}), "")
+        self.assertEqual(
+            node_scraper_adapter.event_match_lines([event]), ["Unknown dmesg error: amdgpu: WALKER_ERROR: 0x0"]
+        )
+
 
 class TestFilterDmesgRange(unittest.TestCase):
     def test_no_bounds_preserve_text(self):

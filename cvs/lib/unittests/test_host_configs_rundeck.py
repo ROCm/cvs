@@ -190,25 +190,21 @@ class TestHostFlags(unittest.TestCase):
         self.assertEqual(dirty['n1']['status'], 'fail')
         self.assertEqual(dirty_messages, ['PCIe ACS not disabled on node n1'])
 
-    def test_dmesg_records_sudo_denial_before_error_patterns(self):
-        denied = 'CVS_CMD_DENIED sudo: a password is required\n'
-        driver, driver_messages = host_configs_rundeck.eval_dmesg_driver({'n1': denied})
-        reset, reset_messages = host_configs_rundeck.eval_dmesg_reset({'n1': denied})
-        self.assertEqual(driver['n1']['status'], 'fail')
-        self.assertEqual(driver_messages, ['Dmesg check could not run on node n1'])
-        self.assertEqual(reset['n1']['status'], 'fail')
-        self.assertEqual(reset_messages, ['Dmesg check could not run on node n1'])
+    @staticmethod
+    def _event(match_content, category='OS'):
+        return {'priority': 'ERROR', 'description': 'x', 'match_content': match_content, 'category': category}
 
     def test_dmesg_driver_and_reset_use_different_patterns(self):
-        driver, driver_messages = host_configs_rundeck.eval_dmesg_driver({'n1': 'amdgpu: ring timeout error\n'})
-        reset, reset_messages = host_configs_rundeck.eval_dmesg_reset({'n1': 'amdgpu: Traceback\n'})
-        hung, hung_messages = host_configs_rundeck.eval_dmesg_reset({'n1': 'amdgpu: GPU reset\n'})
-        self.assertEqual(driver['n1']['status'], 'fail')
-        self.assertEqual(driver_messages, ['Dmesg has amdgpu driver errors on node n1'])
-        self.assertEqual(reset['n1']['status'], 'fail')
-        self.assertEqual(reset_messages, ['Dmesg has amdgpu reset/hang errors on node n1'])
-        self.assertEqual(hung['n1']['status'], 'fail')
-        self.assertEqual(hung_messages, ['Dmesg has amdgpu reset/hang errors on node n1'])
+        cases = (
+            ('amdgpu: ring timeout error', 'fail', 'pass'),
+            ('amdgpu: Traceback', 'pass', 'fail'),
+            ('amdgpu: GPU reset', 'pass', 'fail'),
+        )
+        for line, driver_status, reset_status in cases:
+            with self.subTest(line=line):
+                driver, _, reset, _ = host_configs_rundeck.eval_dmesg_node_events({'n1': [self._event(line)]})
+                self.assertEqual(driver['n1']['status'], driver_status)
+                self.assertEqual(reset['n1']['status'], reset_status)
 
     def test_dmesg_node_events_record_denied_nodes(self):
         driver, driver_messages, reset, reset_messages = host_configs_rundeck.eval_dmesg_node_events(
@@ -222,13 +218,29 @@ class TestHostFlags(unittest.TestCase):
         self.assertEqual(driver_messages, ['Dmesg check could not run on node n2'])
         self.assertEqual(reset_messages, ['Dmesg check could not run on node n2'])
 
+    def test_dmesg_events_ignore_benign_unknown_errors(self):
+        events = [
+            {'priority': 'ERROR', 'description': 'Unknown dmesg error', 'match_content': line, 'category': 'UNKNOWN'}
+            for line in (
+                'amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x0',
+                'amdgpu 0000:03:00.0: amdgpu: [Firmware Bug]: APIC register already in use',
+            )
+        ]
+        driver, driver_messages, reset, reset_messages = host_configs_rundeck.eval_dmesg_node_events({'n1': events})
+        self.assertEqual(driver['n1']['status'], 'pass')
+        self.assertEqual(reset['n1']['status'], 'pass')
+        self.assertEqual(driver_messages + reset_messages, [])
+
     def test_dmesg_driver_ignores_zero_status_fields(self):
-        text = 'amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x0\namdgpu 0000:03:00.0: amdgpu: MAPPING_ERROR: 0x0\n'
-        records, messages = host_configs_rundeck.eval_dmesg_driver({'n236': text})
+        clean = [
+            self._event('amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x0'),
+            self._event('amdgpu 0000:03:00.0: amdgpu: MAPPING_ERROR: 0x0'),
+        ]
+        records, messages = host_configs_rundeck.eval_dmesg_driver_events({'n236': clean})
         self.assertEqual(records['n236']['status'], 'pass')
         self.assertEqual(messages, [])
-        dirty, dirty_messages = host_configs_rundeck.eval_dmesg_driver(
-            {'n236': 'amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x1\n'}
+        dirty, dirty_messages = host_configs_rundeck.eval_dmesg_driver_events(
+            {'n236': [self._event('amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x1')]}
         )
         self.assertEqual(dirty['n236']['status'], 'fail')
         self.assertEqual(dirty_messages, ['Dmesg has amdgpu driver errors on node n236'])

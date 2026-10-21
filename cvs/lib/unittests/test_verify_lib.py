@@ -1,5 +1,4 @@
 import datetime
-import os
 import re
 import unittest
 from unittest.mock import MagicMock, patch
@@ -34,40 +33,39 @@ SCANS = (
 
 
 class TestKernelLogScanQuietAndSummarized(unittest.TestCase):
-    def tearDown(self):
-        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
-
     def test_every_scan_fetches_quietly_and_logs_one_summary(self):
-        for parser in ('legacy', 'node-scraper'):
-            for name, scan in SCANS:
-                with self.subTest(parser=parser, scan=name):
-                    os.environ[verify_lib.DMESG_PARSER_ENV] = parser
-                    phdl = MagicMock()
-                    phdl.exec.return_value = {'node1': 'a\nb\n', 'node2': 'c\n'}
-                    with (
-                        patch('cvs.lib.verify_lib.fail_test'),
-                        patch.object(verify_lib.node_scraper_adapter, 'parse_dmesg', return_value=[]),
-                        patch.object(verify_lib.linux_utils, 'get_nic_ethtool_stats_dict', return_value={}),
-                        patch.object(verify_lib, 'log') as mock_log,
-                    ):
-                        scan(phdl)
-                    self.assertTrue(phdl.exec.call_args_list)
-                    for call in phdl.exec.call_args_list:
-                        self.assertIs(call.kwargs.get('print_console'), False)
-                    self.assertEqual(mock_log.info.call_count, 1)
-                    self.assertEqual(
-                        mock_log.info.call_args.args,
-                        ('kernel-log scan %s: %d host(s), %d line(s) scanned, %d match(es)', name, 2, 3, 0),
-                    )
+        for name, scan in SCANS:
+            with self.subTest(scan=name):
+                phdl = MagicMock()
+                phdl.exec.return_value = {'node1': 'a\nb\n', 'node2': 'c\n'}
+                with (
+                    patch('cvs.lib.verify_lib.fail_test'),
+                    patch.object(verify_lib.node_scraper_adapter, 'parse_dmesg', return_value=[]),
+                    patch.object(verify_lib.linux_utils, 'get_nic_ethtool_stats_dict', return_value={}),
+                    patch.object(verify_lib, 'log') as mock_log,
+                ):
+                    scan(phdl)
+                self.assertTrue(phdl.exec.call_args_list)
+                for call in phdl.exec.call_args_list:
+                    self.assertIs(call.kwargs.get('print_console'), False)
+                self.assertEqual(mock_log.info.call_count, 1)
+                self.assertEqual(
+                    mock_log.info.call_args.args,
+                    ('kernel-log scan %s: %d host(s), %d line(s) scanned, %d match(es)', name, 2, 3, 0),
+                )
 
     def test_summary_counts_matches(self):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = 'legacy'
         phdl = MagicMock()
-        phdl.exec.return_value = {'n1': 'ordinary line\nGPU reset begin\n', 'n2': 'x\n'}
+        phdl.exec.return_value = {
+            'n1': 'kern  :info  : 2026-09-30T16:38:50,000000+00:00 ordinary line\n'
+            'kern  :err   : 2026-09-30T16:38:51,000000+00:00 amdgpu: GPU reset begin\n',
+            'n2': 'kern  :info  : 2026-09-30T16:38:52,000000+00:00 x\n',
+        }
         with patch('cvs.lib.verify_lib.fail_test') as mock_fail, patch.object(verify_lib, 'log') as mock_log:
-            verify_lib.full_dmesg_scan(phdl)
-        self.assertEqual(mock_log.info.call_args.args[1:], ('full_dmesg_scan', 2, 3, 1))
-        mock_fail.assert_called_once()
+            err_dict = verify_lib.full_dmesg_scan(phdl)
+        mock_fail.assert_called()
+        self.assertEqual(err_dict['n2'], [])
+        self.assertEqual(mock_log.info.call_args.args[1:], ('full_dmesg_scan', 2, 3, mock_fail.call_count))
 
     def _run_link_flap(self, dmesg_out):
         stats = {
@@ -131,10 +129,7 @@ class TestKernelLogScanQuietAndSummarized(unittest.TestCase):
             item.exit_code = 0
             client_class.return_value.run_command.return_value = [item]
             with patch('cvs.lib.verify_lib.fail_test'):
-                for parser in ('node-scraper', 'legacy'):
-                    with self.subTest(parser=parser):
-                        os.environ[verify_lib.DMESG_PARSER_ENV] = parser
-                        verify_lib.full_dmesg_scan(handle)
+                verify_lib.full_dmesg_scan(handle)
         self.assertFalse(
             any('SENTINEL-KERNEL-LOG' in str(arg) for call in handle.log.info.call_args_list for arg in call.args)
         )
@@ -247,28 +242,9 @@ class TestVerifyGpuPcieErrors(unittest.TestCase):
 
 
 class TestFullDmesgScan(unittest.TestCase):
-    def tearDown(self):
-        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
-
-    @patch("cvs.lib.verify_lib.fail_test")
-    def test_legacy_path_matches_err_patterns(self, mock_fail_test):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
-        phdl = MagicMock()
-        phdl.exec.return_value = {
-            "node1": "Mar 1 00:00:00 host kernel: amdgpu page fault segfault at 0",
-        }
-
-        result = verify_lib.full_dmesg_scan(phdl)
-
-        # legacy path collects with human-readable `dmesg -T`
-        self.assertIn("dmesg -T", phdl.exec.call_args[0][0])
-        self.assertTrue(result["node1"])
-        mock_fail_test.assert_called()
-
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
     def test_node_scraper_path_uses_adapter(self, mock_parse, mock_fail_test):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [
             {
                 "priority": "ERROR",
@@ -293,29 +269,8 @@ class TestFullDmesgScan(unittest.TestCase):
         mock_fail_test.assert_called()
 
     @patch("cvs.lib.verify_lib.fail_test")
-    def test_legacy_path_ignores_firmware_bug_and_zero_status(self, mock_fail_test):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
-        phdl = MagicMock()
-        phdl.exec.return_value = {
-            "node1": "\n".join(
-                [
-                    "[Firmware Bug]: cpu 0, try to use APIC520 for vector 0xf4, register already in use",
-                    "amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x0",
-                    "amdgpu 0000:03:00.0: amdgpu: MAPPING_ERROR: 0x0",
-                    "amdgpu 0000:03:00.0: amdgpu: VM_L2_PROTECTION_FAULT_STATUS:0x00000000",
-                ]
-            )
-        }
-
-        result = verify_lib.full_dmesg_scan(phdl)
-
-        self.assertEqual(result["node1"], [])
-        mock_fail_test.assert_not_called()
-
-    @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
     def test_node_scraper_warning_does_not_fail(self, mock_parse, mock_fail_test):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [
             {
                 "priority": "WARNING",
@@ -353,11 +308,7 @@ class TestFullDmesgScan(unittest.TestCase):
 
 
 class TestBenignUnknownDmesgRules(unittest.TestCase):
-    def tearDown(self):
-        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
-
     def _scan(self, scan, *lines):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         phdl = MagicMock()
         phdl.exec.return_value = {
             "node1": "".join(f"kern  :{level:<6}: 2026-09-28T19:27:21,000000+00:00 {msg}\n" for level, msg in lines)
@@ -406,9 +357,6 @@ class TestBenignUnknownDmesgRules(unittest.TestCase):
 
 
 class TestDmesgMigrations(unittest.TestCase):
-    def tearDown(self):
-        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
-
     def test_parse_cvs_time(self):
         dt = verify_lib._parse_cvs_time("Mon Jun  5 08:53")
         self.assertIsNotNone(dt)
@@ -434,7 +382,6 @@ class TestDmesgMigrations(unittest.TestCase):
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
     def test_verify_dmesg_for_errors_uses_time_range(self, mock_parse, mock_fail):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [{"description": "GPU Reset", "match_content": "GPU reset begin", "category": "RAS"}]
         phdl = MagicMock()
         phdl.exec.return_value = {"node1": "raw"}
@@ -453,7 +400,6 @@ class TestDmesgMigrations(unittest.TestCase):
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
     def test_verify_dmesg_for_errors_till_end_omits_end(self, mock_parse, mock_fail):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = []
         phdl = MagicMock()
         phdl.exec.return_value = {"node1": "raw"}
@@ -469,7 +415,6 @@ class TestDmesgMigrations(unittest.TestCase):
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
     def test_full_journalctl_scan_node_scraper(self, mock_parse, mock_fail):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [
             {"description": "Out of memory error", "match_content": "Out of memory: killed", "category": "OS"}
         ]
@@ -485,7 +430,6 @@ class TestDmesgMigrations(unittest.TestCase):
 
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
     def test_full_journalctl_scan_bounds_with_since(self, mock_parse):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = []
         phdl = MagicMock()
         phdl.exec.return_value = {"node1": "raw"}
@@ -500,7 +444,6 @@ class TestDmesgMigrations(unittest.TestCase):
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
     def test_verify_driver_errors_filters_to_driver(self, mock_parse, mock_fail):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [
             {
                 "priority": "ERROR",
@@ -602,9 +545,6 @@ REAL_FAULT_DMESG_LINES = [
 
 
 class TestErrPatterns(unittest.TestCase):
-    def tearDown(self):
-        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
-
     def _matching_keys(self, line):
         return [key for key, pattern in verify_lib.err_patterns_dict.items() if re.search(pattern, line, re.I)]
 
@@ -641,32 +581,6 @@ class TestErrPatterns(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertEqual(self._matching_keys(line), ["hardware"])
 
-    @patch("cvs.lib.verify_lib.fail_test")
-    def test_legacy_verify_dmesg_ignores_benign_lines(self, mock_fail_test):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
-        phdl = MagicMock()
-        phdl.exec.return_value = {"node1": "\n".join(BENIGN_DMESG_LINES)}
-
-        result = verify_lib.verify_dmesg_for_errors(
-            phdl, {"node1": "Wed Sep 30 18:05:22"}, {"node1": "Wed Sep 30 18:26:07"}, till_end_flag=False
-        )
-
-        self.assertEqual(result, {"node1": []})
-        mock_fail_test.assert_not_called()
-
-    @patch("cvs.lib.verify_lib.fail_test")
-    def test_legacy_verify_dmesg_flags_real_faults(self, mock_fail_test):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
-        phdl = MagicMock()
-        phdl.exec.return_value = {"node1": "\n".join(BENIGN_DMESG_LINES + REAL_FAULT_DMESG_LINES)}
-
-        result = verify_lib.verify_dmesg_for_errors(
-            phdl, {"node1": "Wed Sep 30 18:05:22"}, {"node1": "Wed Sep 30 18:26:07"}, till_end_flag=False
-        )
-
-        self.assertEqual(set(result["node1"]), set(REAL_FAULT_DMESG_LINES))
-        mock_fail_test.assert_called()
-
     def _cvs_events(self, lines, level):
         dmesg = "".join(
             f"2026-09-30T16:38:51,{i:06d}+00:00 kern  :{level:<6}: {line}\n" for i, line in enumerate(lines)
@@ -688,6 +602,107 @@ class TestErrPatterns(unittest.TestCase):
         self.assertEqual([e["description"] for e in events], ["CVS hardware pattern"])
 
 
+def _iso_dmesg(lines, level='err'):
+    return ''.join(f'kern  :{level:<6}: 2026-09-30T16:38:51,{i:06d}+00:00 {line}\n' for i, line in enumerate(lines))
+
+
+class TestNodeScraperIsTheOnlyParser(unittest.TestCase):
+    WINDOW_START = datetime.datetime(2026, 9, 30, 16, 0, tzinfo=datetime.timezone.utc)
+
+    def _window_scan(self, text):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': text}
+        with (
+            patch.object(verify_lib, '_parse_cvs_time', return_value=self.WINDOW_START),
+            patch('cvs.lib.verify_lib.fail_test') as mock_fail,
+            patch.object(verify_lib, 'log') as mock_log,
+        ):
+            result = verify_lib.verify_dmesg_for_errors(
+                phdl, {'node1': 'Wed Sep 30 16:00:00'}, {'node1': 'Wed Sep 30 17:00:00'}, till_end_flag=True
+            )
+        return result, mock_fail, mock_log, phdl.exec.call_args.args[0]
+
+    def test_every_scan_uses_node_scraper(self):
+        for name, scan in SCANS:
+            if name == 'verify_nic_link_flap':
+                continue
+            with self.subTest(scan=name):
+                phdl = MagicMock()
+                phdl.exec.return_value = {'node1': ''}
+                with (
+                    patch('cvs.lib.verify_lib.fail_test'),
+                    patch.object(verify_lib.node_scraper_adapter, 'parse_dmesg', return_value=[]) as parse,
+                    patch.object(verify_lib, 'log'),
+                ):
+                    scan(phdl)
+                cmd = phdl.exec.call_args.args[0]
+                self.assertNotIn('dmesg -T', cmd)
+                parse.assert_called()
+
+    def test_oversubscription_warns_without_failing(self):
+        text = _iso_dmesg(['amdgpu: Runlist is getting oversubscribed. Expect reduced ROCm performance.'], 'warn')
+        result, mock_fail, mock_log, _ = self._window_scan(text)
+        self.assertEqual(result, {'node1': []})
+        mock_fail.assert_not_called()
+        warnings = [c.args[0] for c in mock_log.warning.call_args_list]
+        self.assertTrue(any('oversubscribed' in w and 'node1' in w for w in warnings), warnings)
+
+    def test_oversubscription_outside_window_is_not_reported(self):
+        text = _iso_dmesg(['amdgpu: Runlist is getting oversubscribed.'], 'warn').replace('T16:38:51', 'T15:10:00')
+        _, mock_fail, mock_log, _ = self._window_scan(text)
+        mock_fail.assert_not_called()
+        self.assertFalse(any('oversubscribed' in c.args[0] for c in mock_log.warning.call_args_list))
+
+    def test_window_scan_ignores_benign_lines(self):
+        result, mock_fail, _, cmd = self._window_scan(_iso_dmesg(BENIGN_DMESG_LINES, 'warn'))
+        self.assertIn('--time-format iso -x', cmd)
+        self.assertEqual(result, {'node1': []})
+        mock_fail.assert_not_called()
+
+    def test_window_scan_flags_every_real_fault(self):
+        for fault in REAL_FAULT_DMESG_LINES:
+            for level in ('err', 'warn', 'info'):
+                with self.subTest(fault=fault, level=level):
+                    result, mock_fail, _, _ = self._window_scan(_iso_dmesg(BENIGN_DMESG_LINES + [fault], level))
+                    self.assertTrue(result['node1'])
+                    mock_fail.assert_called()
+
+    def test_err_level_firmware_bug_and_zero_status_do_not_fail(self):
+        lines = [
+            '[Firmware Bug]: cpu 0, try to use APIC520 for vector 0xf4, register already in use',
+            'amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x0',
+            'amdgpu 0000:03:00.0: amdgpu: MAPPING_ERROR: 0x0',
+            'amdgpu 0000:03:00.0: amdgpu: VM_L2_PROTECTION_FAULT_STATUS:0x00000000',
+        ]
+        for scan in (verify_lib.full_dmesg_scan, verify_lib.verify_driver_errors):
+            with self.subTest(scan=scan.__name__):
+                phdl = MagicMock()
+                phdl.exec.return_value = {'node1': _iso_dmesg(lines)}
+                with patch('cvs.lib.verify_lib.fail_test') as mock_fail:
+                    result = scan(phdl)
+                self.assertEqual(result, {'node1': []})
+                mock_fail.assert_not_called()
+
+    def test_err_level_nonzero_status_fails_driver_check_only(self):
+        expected = {'full_dmesg_scan': False, 'verify_driver_errors': True}
+        for scan in (verify_lib.full_dmesg_scan, verify_lib.verify_driver_errors):
+            with self.subTest(scan=scan.__name__):
+                phdl = MagicMock()
+                phdl.exec.return_value = {'node1': _iso_dmesg(['amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x1'])}
+                with patch('cvs.lib.verify_lib.fail_test') as mock_fail, patch.object(verify_lib, 'log'):
+                    result = scan(phdl)
+                self.assertEqual(bool(result['node1']), expected[scan.__name__])
+                self.assertEqual(mock_fail.called, expected[scan.__name__])
+
+    def test_journalctl_scan_flags_real_fault(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': f'2026-09-30T16:38:51+0000 node1 kernel: {REAL_FAULT_DMESG_LINES[0]}\n'}
+        with patch('cvs.lib.verify_lib.fail_test') as mock_fail:
+            result = verify_lib.full_journalctl_scan(phdl)
+        self.assertTrue(result['node1'])
+        mock_fail.assert_called()
+
+
 class TestVerifyHostLspci(unittest.TestCase):
     def setUp(self):
         self.mock_phdl = MagicMock()
@@ -702,11 +717,7 @@ class TestVerifyHostLspci(unittest.TestCase):
 
 
 class TestCorrectedHostMce(unittest.TestCase):
-    def tearDown(self):
-        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
-
-    def _scan(self, scan, lines, parser='node-scraper', **kwargs):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = parser
+    def _scan(self, scan, lines, **kwargs):
         phdl = MagicMock()
         phdl.exec.return_value = {'node1': mce.text(lines)}
         with patch('cvs.lib.verify_lib.fail_test') as mock_fail, patch.object(verify_lib, 'log') as mock_log:
@@ -750,37 +761,11 @@ class TestCorrectedHostMce(unittest.TestCase):
                 self.assertEqual(len(warnings), 1)
                 self.assertIn('1 corrected host-CPU MCE(s)', warnings[0])
 
-    def test_legacy_full_dmesg_scan(self):
-        for lines, should_fail in (
-            (mce.CE_LINES, False),
-            (mce.UE_LINES, True),
-            (mce.DEFERRED_LINES, True),
-        ):
-            with self.subTest(header=lines[1]):
-                result, failures, warnings, _ = self._scan(verify_lib.full_dmesg_scan, mce.as_dmesg_T(lines), 'legacy')
-                self.assertEqual(bool(failures), should_fail)
-                if not should_fail:
-                    self.assertEqual(result, {'node1': []})
-                    self.assertEqual(len(warnings), 1)
-        for lines, remaining in (
-            (mce.MIXED_CE_UE, mce.UE_LINES),
-            (mce.MIXED_CE_DEFERRED, mce.DEFERRED_LINES),
-            (mce.MIXED_UE_CE, mce.UE_LINES),
-        ):
-            with self.subTest(header=remaining[1], ce_first=lines[1] == mce.CE_LINES[1]):
-                result, failures, _, _ = self._scan(verify_lib.full_dmesg_scan, mce.as_dmesg_T(lines), 'legacy')
-                self.assertTrue(failures)
-                self.assertEqual(set(result['node1']), set(line for line in mce.as_dmesg_T(remaining) if line))
-
     def test_ce_block_followed_by_ghes_line_still_fails(self):
         lines = mce.CE_LINES[:3] + [mce.GHES_LINE] + mce.CE_LINES[3:]
-        _, failures, _, _ = self._scan(verify_lib.full_dmesg_scan, lines)
+        result, failures, _, _ = self._scan(verify_lib.full_dmesg_scan, lines)
         self.assertTrue(failures)
-        result, failures, _, _ = self._scan(verify_lib.full_dmesg_scan, mce.as_dmesg_T(lines), 'legacy')
-        self.assertTrue(failures)
-        self.assertTrue(
-            any('{1}[Hardware Error]:  section_type: general processor error' in line for line in result['node1'])
-        )
+        self.assertTrue(any('Hardware Error' in line for line in result['node1']))
 
     def test_unrelated_error_inside_ce_block_still_fails(self):
         fault = (
@@ -817,35 +802,6 @@ class TestCorrectedHostMce(unittest.TestCase):
                         self.assertEqual(result, {'node1': []})
                         self.assertEqual(len(warnings), 1)
                         self.assertIn('1 corrected host-CPU MCE(s)', warnings[0])
-
-    def test_verify_dmesg_for_errors_legacy(self):
-        kwargs = {
-            'start_time_dict': {'node1': 'Thu Oct 15 06:24:00'},
-            'end_time_dict': {'node1': 'Thu Oct 15 06:25:00'},
-            'till_end_flag': False,
-        }
-        result, failures, warnings, _ = self._scan(
-            verify_lib.verify_dmesg_for_errors, mce.as_dmesg_T(mce.CE_LINES), 'legacy', **kwargs
-        )
-        self.assertEqual(result, {'node1': []})
-        self.assertEqual(failures, [])
-        self.assertEqual(len(warnings), 1)
-        _, failures, _, _ = self._scan(
-            verify_lib.verify_dmesg_for_errors, mce.as_dmesg_T(mce.DEFERRED_LINES), 'legacy', **kwargs
-        )
-        self.assertTrue(failures)
-
-    def test_full_journalctl_scan_legacy_greps_status_rows(self):
-        result, failures, _, command = self._scan(
-            verify_lib.full_journalctl_scan, mce.as_journal_short(mce.CE_LINES[1:3]), 'legacy'
-        )
-        self.assertIn('MC[0-9]+_STATUS', command)
-        self.assertEqual(result, {'node1': []})
-        self.assertEqual(failures, [])
-        _, failures, _, _ = self._scan(
-            verify_lib.full_journalctl_scan, mce.as_journal_short(mce.DEFERRED_LINES[1:3]), 'legacy'
-        )
-        self.assertTrue(failures)
 
     def test_full_journalctl_scan_node_scraper_ignores_ce(self):
         result, failures, warnings, _ = self._scan(
