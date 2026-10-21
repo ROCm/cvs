@@ -62,6 +62,14 @@ class TestRenderResultsTableHtml(unittest.TestCase):
             "<a href='n1_errors.json'>errors.json</a><a href='a&lt;b&gt;&#x27;c&quot;.tar.gz'>logs.tar.gz</a>",
         )
         self.assertEqual(render_artifact_links({}), "")
+        self.assertEqual(
+            render_artifact_links({"errors_json_href": "only_errors.json", "log_tarball_href": ""}),
+            "<a href='only_errors.json'>errors.json</a>",
+        )
+        self.assertEqual(
+            artifact_link_records({"log_tarball_href": "only_logs.tar.gz"}),
+            [{"label": "logs.tar.gz", "href": "only_logs.tar.gz"}],
+        )
 
     def test_link_records_render_as_anchors_and_other_cells_stay_escaped(self):
         links = [
