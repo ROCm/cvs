@@ -180,16 +180,16 @@ class TestPreflightDeck(unittest.TestCase):
         self.assertEqual(tier1['status'], 'pass')
         by_name = {item['name']: item for item in tier1['items']}
         self.assertEqual(by_name['GPU 0']['status'], 'pass')
-        self.assertEqual(by_name['RDMA NICs']['status'], 'na')
-        self.assertEqual(by_name['Host limits']['status'], 'na')
-        self.assertEqual(by_name['GPU visibility']['status'], 'na')
+        self.assertEqual(by_name['RDMA NICs']['status'], 'pass')
+        self.assertEqual(by_name['Host limits']['status'], 'pass')
+        self.assertEqual(by_name['GPU visibility']['status'], 'pass')
         self.assertEqual(by_name['GPU processes']['status'], 'pass')
 
         tier2 = deck['groups']['node_smoke_tier2']['nodes']['n1']
         self.assertEqual(tier2['status'], 'pass')
         tier2_items = {item['name']: item for item in tier2['items']}
         self.assertEqual(tier2_items['Local RCCL all-reduce']['status'], 'pass')
-        self.assertEqual(tier2_items['GPU 0 Large GEMM TFLOPS']['status'], 'na')
+        self.assertEqual(tier2_items['GPU 0 Large GEMM TFLOPS']['status'], 'pass')
         self.assertIn('757.44', tier2_items['GPU 0 Large GEMM TFLOPS']['message'])
         gemm = next(metric for metric in tier2['metrics'] if metric['name'] == 'large_gemm')
         self.assertEqual(gemm['value'], 700.0)

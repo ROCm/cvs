@@ -89,6 +89,58 @@ class TestNodeSmokeCounts(unittest.TestCase):
         single = _sample_tier1_payload(n_gpus=1, tier2=True)
         self.assertEqual(count_tier2_tests_from_payload(single, tier2_enabled=True), TIER2_CHECKS_PER_GPU)
 
+    def test_count_tier2_includes_measurements_stored_on_tier1_gpu_details(self):
+        payload = {
+            "tier1": {
+                "per_gpu": [
+                    {"gpu": idx, "status": "PASS", "details": {"gemm_tflops": 760.0, "hbm_gbs": 4400.0}}
+                    for idx in range(2)
+                ]
+            },
+            "tier2": {"rccl": {"status": "PASS", "gbs": 277.6}},
+        }
+        expected = (TIER2_CHECKS_PER_GPU * 2) + TIER2_RCCL_CHECK
+        self.assertEqual(count_tier2_tests_from_payload(payload, gpus_per_node=2, tier2_enabled=True), expected)
+        partial = {
+            "tier1": {
+                "per_gpu": [
+                    {"gpu": 0, "status": "PASS", "details": {"gemm_tflops": 761.35, "hbm_gbs": 4531.2}},
+                    {"gpu": 1, "status": "PASS", "details": {}},
+                ]
+            },
+            "tier2": {"rccl": {"status": "PASS", "gbs": 277.6}},
+        }
+        self.assertEqual(
+            count_tier2_tests_from_payload(partial, gpus_per_node=2, tier2_enabled=True),
+            TIER2_CHECKS_PER_GPU + TIER2_RCCL_CHECK,
+        )
+        self.assertEqual(count_tier2_tests_from_payload(payload, gpus_per_node=2, tier2_enabled=False), 0)
+        both = _sample_tier1_payload(n_gpus=2, tier2=True)
+        for entry in both["tier1"]["per_gpu"]:
+            entry["details"] = {"gemm_tflops": 760.0, "hbm_gbs": 4400.0}
+        self.assertEqual(
+            count_tier2_tests_from_payload(both, gpus_per_node=2, tier2_enabled=True),
+            (TIER2_CHECKS_PER_GPU * 2) + TIER2_RCCL_CHECK,
+        )
+        results = {
+            "tier2_perf": True,
+            "node_results": {
+                "node0": {"node_payload": payload},
+                "node1": {"node_payload": payload},
+            },
+        }
+        counts = aggregate_node_smoke_test_counts(results, gpus_per_node=2)
+        self.assertEqual(counts["tier2_tests_run"], expected)
+        self.assertEqual(counts["tier2_tests_run_total"], 2 * expected)
+        if not os.path.isfile(_FIXTURE_JSON):
+            return
+        with open(_FIXTURE_JSON, encoding="utf-8") as handle:
+            fixture = json.load(handle)
+        self.assertEqual(
+            count_tier2_tests_from_payload(fixture, gpus_per_node=8, tier2_enabled=True),
+            (TIER2_CHECKS_PER_GPU * 8) + TIER2_RCCL_CHECK,
+        )
+
     def test_aggregate_tier1_tier2_reports_per_node_not_cluster_sum(self):
         payload = _sample_tier1_payload(n_gpus=8, tier2=True)
         results = {
