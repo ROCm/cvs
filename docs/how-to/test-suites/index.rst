@@ -161,6 +161,6 @@ Test output examples
 Sample reports for each category are on that category's page, under **Test results**:
 
 - :doc:`Burn-in / Diag </how-to/test-suites/burn-in-diag/index>` — preflight
-- :doc:`Network </how-to/test-suites/network/index>` — RCCL
+- :doc:`Network </how-to/test-suites/network/index>` — RCCL pytest HTML report and performance report
 - :doc:`Training </how-to/test-suites/training/index>` — pytest HTML report, Run Deck, and interactive viewer
 - :doc:`Inference </how-to/test-suites/inference/index>` — SGLang pytest HTML report

@@ -30,4 +30,35 @@ See also :doc:`/how-to/test-suites/index` for common ``cvs run`` flags and workf
 Test results
 ============
 
-The sample report for this category is an RCCL pytest HTML report. ``cvs run`` writes it under ``<workspace>/cvs_runs/<run_id>/``.
+Sample output snapshots from an RCCL performance run.
+
+.. important::
+
+   The numbers in these sample reports and screenshots (bandwidth, latency, and
+   every other metric) are **illustrative sample values, not final tuned
+   results**. They are shown only to illustrate the report layout.
+
+HTML test report
+----------------
+
+The pytest HTML report lists each RCCL perf test and links to the bundled RCCL
+performance report.
+
+.. image:: /images/network_rccl_pytest_report.png
+   :alt: RCCL pytest HTML test report
+
+RCCL performance report
+---------------------
+
+The bundled RCCL performance report summarizes collective bandwidth and
+latency across message sizes.
+
+**Bandwidth graph:**
+
+.. image:: /images/network_rccl_perf_bandwidth_graph.png
+   :alt: RCCL performance bandwidth graph
+
+**Results table:**
+
+.. image:: /images/network_rccl_perf_results_table.png
+   :alt: RCCL performance results table
