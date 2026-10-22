@@ -70,8 +70,6 @@ The table below maps each supported model to its configuration file and availabl
 
 Single-node configs set ``container.env.MASTER_ADDR`` to ``127.0.0.1``. ``NNODES`` is not in the JSON: the suite sets it from the cluster host count into ``docker run -e``. Distributed configs require ``MASTER_ADDR`` and ``NCCL_IB_HCA`` and add a ``scaling_baseline`` section and ``checkpoint_dir`` to the ``checkpoint`` block. NIC type is not in the JSON: Megatron-LM defaults to ``thor2`` for MI300X/MI325X and ``ainic`` for MI355X from ``gpu_name``.
 
-Leftover files ``mi3xx_megatron_llama_*.json`` and ``mi35x_megatron_llama_single.json`` are nested-schema configs for the legacy ``megatron_llama3_1_*`` suites only. Do not pass them to ``megatron_single`` or ``megatron_distributed``.
-
 Required edits
 ==============
 

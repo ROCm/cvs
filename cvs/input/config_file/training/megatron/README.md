@@ -2,7 +2,7 @@
 
 JSON configs and sibling `*_threshold.json` files for `megatron_single` / `megatron_distributed`.
 
-MI300X and MI325X share `mi3xx_megatron_<model>_{single,distributed}.json`. Set `gpu_name` to `MI300X` or `MI325X` and `threshold_json` to the SKU-specific `mi300x_*_threshold.json` or `mi325x_*_threshold.json`. MI355X ships only Llama 3.1 8B and Llama 3.3 70B single-node files (`mi355x_megatron_llama-3.1-8b_single.json`, `mi355x_megatron_llama-3.3-70b_single.json` plus matching thresholds). Do not pass leftover `mi3xx_megatron_llama_{single,distributed}.json` or `mi35x_megatron_llama_single.json` to the unified suites; those nested files are for `megatron_llama3_1_*` only.
+MI300X and MI325X share `mi3xx_megatron_<model>_{single,distributed}.json`. Set `gpu_name` to `MI300X` or `MI325X` and `threshold_json` to the SKU-specific `mi300x_*_threshold.json` or `mi325x_*_threshold.json`. MI355X ships only Llama 3.1 8B and Llama 3.3 70B single-node files (`mi355x_megatron_llama-3.1-8b_single.json`, `mi355x_megatron_llama-3.3-70b_single.json` plus matching thresholds).
 
 Llama 3.1 8B, Llama 3.3 70B, and DeepSeek V2 Lite support both Megatron-LM and Primus (same JSON; backend is `container.image`). Llama 3.1 405B (`*_llama-3.1-405b_distributed.json`) is distributed-only and Primus-only.
 
