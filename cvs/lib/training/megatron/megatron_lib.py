@@ -29,9 +29,9 @@ err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_bu
 
 
 def _default_nic_type(gpu_name):
-    if re.search(r'MI355', gpu_name or '', re.I):
-        return 'ainic'
-    return 'thor2'
+    if not gpu_name or re.search(r'MI300|MI325', gpu_name, re.I):
+        return 'thor2'
+    return 'ainic'
 
 
 # Ordered fallback chains for parsing Megatron-LM training output.

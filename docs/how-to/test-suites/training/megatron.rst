@@ -84,12 +84,12 @@ The same ordered test stages run for both backends. ``_make_training_job`` in ``
      - Always a no-op (``_needs_local_tokenizer()`` is false; Primus takes HF repo IDs in YAML)
    * - ``test_smoke``
      - Runs the cell from the config ``smoke`` block (default 10 iters) via the Megatron-LM training script under ``/workspace/Megatron-LM``. Skipped when ``smoke.enabled`` is ``false``
-     - Same cell via ``primus-cli direct -- train pretrain --config examples/megatron/configs/{gpu_arch}/{model}-{precision}-pretrain.yaml``. If the MI325X YAML is missing, Primus retries ``MI300X``. Skipped when ``smoke.enabled`` is ``false``
+     - Same cell via ``primus-cli direct -- train pretrain --config examples/megatron/configs/{gpu_arch}/{model}-{precision}-pretrain.yaml``. If the YAML is missing, Primus retries a fallback arch (``MI325X`` → ``MI300X``, ``MI455X`` → ``MI355X``). Skipped when ``smoke.enabled`` is ``false``
    * - ``test_checkpoint``
      - Skipped (``checkpoint test is Primus-only``)
      - Runs only when ``checkpoint.enforce`` is ``true``. Uses ``smoke`` MBS/GBS/precision. Single-node writes under ``{log_dir}/ckpt_primus``. Distributed requires ``checkpoint.checkpoint_dir`` on a shared filesystem
    * - ``test_training[combo]``
-     - Wrapper script + Megatron-LM shell. Distributed also runs ``exec_nic_setup_scripts()`` (Broadcom ``libbnxt_re`` copy when the GPU-derived NIC type is Thor/Broadcom: ``thor2`` on MI300X/MI325X, ``ainic`` on MI355X). After the copy, ``ibv_devinfo`` is matched against the library default HCA prefixes ``bnxt_|rocep``. NCCL/socket/``MASTER_ADDR`` come from ``container.env`` (``docker run -e``); ``NNODES`` is set from the cluster host count into that same env. The wrapper re-exports ``NCCL_IB_GID_INDEX`` after Broadcom NIC setup.
+     - Wrapper script + Megatron-LM shell. Distributed also runs ``exec_nic_setup_scripts()`` (Broadcom ``libbnxt_re`` copy when the GPU-derived NIC type is Thor/Broadcom: ``thor2`` on MI300X/MI325X, ``ainic`` on MI355X/MI400X/MI455X — the copy is skipped on the latter since Helios's Pensando NICs do not use the Broadcom driver). After the copy, ``ibv_devinfo`` is matched against the library default HCA prefixes ``bnxt_|rocep``. NCCL/socket/``MASTER_ADDR`` come from ``container.env`` (``docker run -e``); ``NNODES`` is set from the cluster host count into that same env. The wrapper re-exports ``NCCL_IB_GID_INDEX`` after Broadcom NIC setup.
      - Wrapper script + ``primus-cli``. Same ``docker run -e`` env (including ``NNODES``). The wrapper sets ``NODE_RANK`` per host; it does not re-export ``NNODES`` or NCCL/socket keys. No Broadcom lib copy
    * - ``test_metric`` / ``test_loss_curve``
      - Parse Megatron-LM log metrics

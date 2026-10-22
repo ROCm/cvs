@@ -115,7 +115,7 @@ Available suites
 
        `Config README <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/training/jaxmaxtext/README.md>`_
    * - Megatron
-     - ``input/config_file/training/megatron/`` — MI300X/MI325X share ``mi3xx_megatron_{model}_{single|distributed}.json`` plus SKU ``mi300x_*`` / ``mi325x_*`` threshold files; MI355X ships Llama 3.1 8B and Llama 3.3 70B ``*_single.json`` plus matching ``mi355x_*`` thresholds. ``NNODES`` is not in JSON; ``container.env`` NIC values include examples plus ``<changeme>``.
+     - ``input/config_file/training/megatron/`` — MI300X/MI325X share ``mi3xx_megatron_{model}_{single|distributed}.json`` plus SKU ``mi300x_*`` / ``mi325x_*`` threshold files; MI355X ships Llama 3.1 8B and Llama 3.3 70B ``*_single.json`` plus matching ``mi355x_*`` thresholds; MI455X ships a Llama 3.1 8B ``*_single.json`` plus a matching ``mi455x_*`` threshold file (single-node only, unreleased hardware, ``enforce_thresholds: false``).
      - ``cvs config list training/megatron``
 
        `docs/reference/configuration-files/training/megatron.rst <https://github.com/ROCm/cvs/blob/main/docs/reference/configuration-files/training/megatron.rst>`_

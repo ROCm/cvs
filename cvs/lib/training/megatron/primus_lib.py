@@ -59,6 +59,14 @@ PRIMUS_ITERATION_PATTERNS = {
     'rocm_mem_usage_ratio': r'rocm mem usage/free/total/usage_ratio:\s+[0-9.]+GB/[0-9.]+GB/[0-9.]+GB/([0-9.]+)%',
 }
 
+# EXP config directories are not published for every gpu_name yet. When the
+# primary gpu_arch has no examples/megatron/configs/{gpu_arch}/ YAML, retry
+# once with the listed fallback arch before failing the test.
+PRIMUS_EXP_CONFIG_FALLBACK_ARCH = {
+    'MI325X': 'MI300X',
+    'MI455X': 'MI355X',
+}
+
 PRIMUS_NAN_PATTERNS = [
     r'throughput per GPU \(TFLOP/s/GPU\):\s+[0-9.]+/(?:NaN|Inf)',
     r'lm loss:\s+(?:NaN|Inf)',
@@ -457,8 +465,8 @@ class PrimusTrainingJob:
         out_dict = self.orch.exec(f'test -f {exp_full_path} && echo EXISTS || echo MISSING')
         output = list((out_dict or {}).values())[0] if out_dict else ''
 
-        if 'MISSING' in output and re.search(r'MI325X', self.gpu_arch, re.I):
-            fallback_arch = 'MI300X'
+        fallback_arch = PRIMUS_EXP_CONFIG_FALLBACK_ARCH.get(self.gpu_arch.upper())
+        if 'MISSING' in output and fallback_arch:
             log.warning(
                 'EXP config not found for %s, retrying with fallback arch %s',
                 self.gpu_arch,

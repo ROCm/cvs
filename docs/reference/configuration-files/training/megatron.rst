@@ -6,7 +6,7 @@
 Megatron training configuration files for Cluster Validation Suite (CVS)
 **********************************************************************
 
-JSON configs and sibling ``*_threshold.json`` files for ``megatron_single`` and ``megatron_distributed``. MI300X and MI325X share one config per model and mode (``mi3xx_megatron_{model}_{single|distributed}.json``); set ``gpu_name`` and ``threshold_json`` to the SKU. MI355X ships Llama 3.1 8B and Llama 3.3 70B single-node configs only (``mi355x_megatron_llama-3.1-8b_single.json``, ``mi355x_megatron_llama-3.3-70b_single.json``). Use a ``*_single.json`` file with ``megatron_single`` and a ``*_distributed.json`` file with ``megatron_distributed``. ``threshold_json`` is resolved relative to the config file.
+JSON configs and sibling ``*_threshold.json`` files for ``megatron_single`` and ``megatron_distributed``. MI300X and MI325X share one config per model and mode (``mi3xx_megatron_{model}_{single|distributed}.json``); set ``gpu_name`` and ``threshold_json`` to the SKU. MI355X ships Llama 3.1 8B and Llama 3.3 70B single-node configs only (``mi355x_megatron_llama-3.1-8b_single.json``, ``mi355x_megatron_llama-3.3-70b_single.json``). MI455X ships a Llama 3.1 8B single-node config only (``mi455x_megatron_llama-3.1-8b_single.json``); MI455X is unreleased hardware, so it ships with ``enforce_thresholds: false`` and threshold values carried over from MI355X as placeholders pending recalibration. Use a ``*_single.json`` file with ``megatron_single`` and a ``*_distributed.json`` file with ``megatron_distributed``. ``threshold_json`` is resolved relative to the config file.
 
 See :doc:`/how-to/test-suites/training/megatron` for more information on running these tests.
 
@@ -14,7 +14,7 @@ Use ``cvs config list training/megatron`` to list available templates, or
 ``cvs config copy training/megatron/<name>`` to copy one to your working
 directory. Copy the matching SKU ``*_threshold.json`` into the same directory as
 the suite config (``mi300x_*`` or ``mi325x_*`` for ``mi3xx_`` templates;
-``mi355x_*`` for MI355X).
+``mi355x_*`` for MI355X; ``mi455x_*`` for MI455X).
 
 Backends
 ========
@@ -39,36 +39,41 @@ Llama 3.1 8B, Llama 3.3 70B, and DeepSeek V2 Lite run on **both** Megatron-LM an
 Available configurations
 ========================
 
-MI300X and MI325X share ``mi3xx_megatron_<model>_<mode>.json``. MI355X ships ``mi355x_megatron_llama-3.1-8b_single.json`` and ``mi355x_megatron_llama-3.3-70b_single.json``. Thresholds stay SKU-specific (``mi300x_*_threshold.json``, ``mi325x_*_threshold.json``, ``mi355x_*_threshold.json``) and are selected with ``threshold_json``.
+MI300X and MI325X share ``mi3xx_megatron_<model>_<mode>.json``. MI355X ships ``mi355x_megatron_llama-3.1-8b_single.json`` and ``mi355x_megatron_llama-3.3-70b_single.json``. MI455X ships ``mi455x_megatron_llama-3.1-8b_single.json`` (single-node only). Thresholds stay SKU-specific (``mi300x_*_threshold.json``, ``mi325x_*_threshold.json``, ``mi355x_*_threshold.json``, ``mi455x_*_threshold.json``) and are selected with ``threshold_json``.
 
 The table below maps each supported model to its configuration file and available execution modes.
 
 .. list-table::
-   :widths: 4 3 3 2
+   :widths: 4 3 3 3 2
    :header-rows: 1
 
    * - Model
      - MI300X / MI325X config
      - MI355X config
+     - MI455X config
      - Mode
    * - Llama 3.1 8B
      - ``mi3xx_…``
      - ``mi355x_…`` (single only)
+     - ``mi455x_…`` (single only)
      - single, distributed (Megatron-LM or Primus); MI355X packaged as single-node
    * - Llama 3.3 70B
      - ``mi3xx_…``
      - ``mi355x_…`` (single only)
+     - —
      - single, distributed (Megatron-LM or Primus); MI355X packaged as single-node
    * - DeepSeek V2 Lite
      - ``mi3xx_…``
+     - —
      - —
      - single, distributed (Megatron-LM or Primus)
    * - Llama 3.1 405B
      - ``mi3xx_…``
      - —
+     - —
      - distributed (Primus only)
 
-Single-node configs set ``container.env.MASTER_ADDR`` to ``127.0.0.1``. ``NNODES`` is not in the JSON: the suite sets it from the cluster host count into ``docker run -e``. Distributed configs require ``MASTER_ADDR`` and ``NCCL_IB_HCA`` and add a ``scaling_baseline`` section and ``checkpoint_dir`` to the ``checkpoint`` block. NIC type is not in the JSON: Megatron-LM defaults to ``thor2`` for MI300X/MI325X and ``ainic`` for MI355X from ``gpu_name``.
+Single-node configs set ``container.env.MASTER_ADDR`` to ``127.0.0.1``. ``NNODES`` is not in the JSON: the suite sets it from the cluster host count into ``docker run -e``. Distributed configs require ``MASTER_ADDR`` and ``NCCL_IB_HCA`` and add a ``scaling_baseline`` section and ``checkpoint_dir`` to the ``checkpoint`` block. NIC type is not in the JSON: Megatron-LM defaults to ``thor2`` for MI300X/MI325X and ``ainic`` for MI355X/MI400X/MI455X from ``gpu_name``.
 
 Required edits
 ==============
@@ -77,11 +82,12 @@ Set these before a run (full field tables are under `Common parameters`_):
 
 The following fields must be customized to match your cluster and hardware before invoking any Megatron suite.
 
-* ``gpu_name`` / ``threshold_json`` — on ``mi3xx_`` templates, set ``MI300X`` or ``MI325X`` and the matching SKU threshold filename. ``gpu_name`` must be exactly ``MI300X``, ``MI325X``, or ``MI355X`` after uppercase.
-* ``gpus_per_node`` — number of GPUs available on each node. Packaged templates set ``8``; change it only for systems with a different per-node GPU count.
+* ``gpu_name`` / ``threshold_json`` — on ``mi3xx_`` templates, set ``MI300X`` or ``MI325X`` and the matching SKU threshold filename. ``gpu_name`` must be exactly ``MI300X``, ``MI325X``, ``MI355X``, ``MI400X``, or ``MI455X`` after uppercase.
+* ``gpus_per_node`` — number of GPUs available on each node. Packaged ``mi3xx_``/``mi355x_`` templates set ``8``; MI455X templates set ``4`` (Helios ships 4 GPUs per node). Change it only if your system's per-node GPU count differs from the packaged template.
 * ``container.image`` — Megatron-LM or Primus ROCm image on all nodes.
 * ``train_params.training_iterations`` — default training steps (for example ``"30"``). Each ``sweep.combinations`` body sets ``training_iterations`` (packaged value ``"20"``); that overlay wins for that cell.
 * ``train_params.micro_batch_size`` / ``global_batch_size`` / ``precision`` — required when ``sweep`` is omitted. Packaged files already set them; with a declared sweep the combination key supplies those values for each cell.
+* ``train_params.primus_cli_overrides`` — optional, Primus images only. Extra ``primus-cli train pretrain`` CLI args, appended after the suite's own ``--micro_batch_size``/``--global_batch_size``/``--train_iters``/``--tensor_model_parallel_size``/``--pipeline_model_parallel_size``/checkpoint flags, so it can override any of them. Accepts either a dict of flag name -> value, rendered space-separated as ``--flag value`` (for example ``{"use_backend": "triton"}`` becomes ``--use_backend triton``, matching the style of the suite's own flags), or a pre-formatted raw string (for example ``"--recompute-granularity full"``) for flags that don't fit ``--flag value``. Not a declared schema field — set it like any other ``train_params`` key, or overlay a different value per sweep cell in the combination body. Ignored for non-Primus (Megatron-LM) images.
 * ``paths.hf_token_file`` — Hugging Face token path on the nodes.
 * ``container.env.NCCL_SOCKET_IFNAME`` / ``GLOO_SOCKET_IFNAME`` / ``NCCL_IB_GID_INDEX`` / ``NCCL_DEBUG`` — templates include example values plus ``<changeme>`` (for example ``enp193s0f1np1 <changeme>``, ``3 <changeme>``, ``ERROR <changeme>``). Remove ``<changeme>`` and keep or edit the example. Required on single-node and distributed.
 * ``sweep.runs`` — combination keys to execute (same ``MBS=…,GBS=…,PRECISION=…`` strings as in ``sweep.combinations``). Must be non-empty when ``combinations`` is present.
@@ -102,7 +108,7 @@ These fields appear at the root of every config file.
      - Description
    * - ``gpu_name``
      - ``MI300X`` / ``<changeme>``
-     - GPU architecture string used for logging and Primus YAML path resolution (``examples/megatron/configs/{gpu_name}/``). Loaded as uppercase (``mi300x`` becomes ``MI300X``). Allowed values: ``MI300X``, ``MI325X``, ``MI355X``. Extra tokens fail at load. On ``mi3xx_`` templates this is ``<changeme>`` until you set ``MI300X`` or ``MI325X``.
+     - GPU architecture string used for logging and Primus YAML path resolution (``examples/megatron/configs/{gpu_name}/``). Loaded as uppercase (``mi300x`` becomes ``MI300X``). Allowed values: ``MI300X``, ``MI325X``, ``MI355X``, ``MI400X``, ``MI455X``. Extra tokens fail at load. On ``mi3xx_`` templates this is ``<changeme>`` until you set ``MI300X`` or ``MI325X``. MI400X/MI455X are unreleased Helios-platform SKUs; only a Llama 3.1 8B single-node packaged config exists for MI455X today (see `Available configurations`_).
    * - ``gpus_per_node``
      - ``8``
      - GPUs on each node. World size and tokens/s totals are ``nnodes * gpus_per_node``. Defaults to ``8`` when omitted. Must be at least 1.
@@ -133,7 +139,7 @@ Each model section below shows only the ``train_params`` and ``sweep`` blocks, w
 Llama 3.1 8B
 ------------
 
-Available as ``mi3xx_megatron_llama-3.1-8b_{single,distributed}.json`` (MI300X/MI325X) and ``mi355x_megatron_llama-3.1-8b_single.json`` (MI355X).
+Available as ``mi3xx_megatron_llama-3.1-8b_{single,distributed}.json`` (MI300X/MI325X), ``mi355x_megatron_llama-3.1-8b_single.json`` (MI355X), and ``mi455x_megatron_llama-3.1-8b_single.json`` (MI455X; single-node only, unreleased hardware, ``enforce_thresholds: false`` with placeholder thresholds).
 
 .. dropdown:: ``mi3xx_megatron_llama-3.1-8b_single.json`` (representative)
 
@@ -181,6 +187,48 @@ Available as ``mi3xx_megatron_llama-3.1-8b_{single,distributed}.json`` (MI300X/M
         ]
       }
     }
+
+.. dropdown:: ``mi455x_megatron_llama-3.1-8b_single.json``
+
+  .. code:: json
+
+    {
+      "gpu_name": "MI455X",
+      "gpus_per_node": 4,
+      "enforce_thresholds": false,
+      "threshold_json": "mi455x_megatron_llama-3.1-8b_single_threshold.json",
+      "train_params": {
+        "model_name": "llama3.1_8B",
+        "tokenizer_model": "meta-llama/Llama-3.1-8B",
+        "model_size": "8",
+        "sequence_length": "8192",
+        "recompute": "0",
+        "fsdp": "0",
+        "tensor_parallelism": "1",
+        "pipeline_parallelism": "1",
+        "micro_batch_size": "2",
+        "global_batch_size": "32",
+        "precision": "BF16",
+        "training_iterations": "<changeme>",
+        "primus_cli_overrides": {
+          "mock_data": "True",
+          "enable_primus_turbo": "True",
+          "use_turbo_attention": "True"
+        }
+      },
+      "sweep": {
+        "combinations": {
+          "MBS=2,GBS=32,PRECISION=BF16": {
+            "training_iterations": "20"
+          }
+        },
+        "runs": [
+          "MBS=2,GBS=32,PRECISION=BF16"
+        ]
+      }
+    }
+
+  Differences from the ``mi3xx_`` representative above: ``gpu_name``/``gpus_per_node``/``threshold_json`` are concrete rather than ``<changeme>`` (MI455X ships 4 GPUs per node); ``enforce_thresholds`` is ``false`` since MI455X is unreleased hardware and the threshold file carries placeholder values pending recalibration; ``container.env`` omits ``GPUS_PER_NODE`` (``gpus_per_node`` above is the single source of truth — ``MegatronVariantConfig`` propagates it into ``container.env.GPUS_PER_NODE`` automatically) and omits ``NCCL_IB_HCA``/Broadcom-specific NIC setup since Helios's Pensando NICs skip that path; ``train_params.primus_cli_overrides`` sets Primus-specific run flags for this Primus image; and ``sweep`` is trimmed to a single ``MBS=2,GBS=32,PRECISION=BF16`` cell rather than the full FP8/BF16/MXFP4/MXFP8 matrix. Single-node only — no distributed config is packaged for MI455X. This config is Primus-only: unlike the ``mi3xx_``/``mi355x_`` templates, which support either backend, ``container.image`` here must be a Primus image (name contains ``primus``); it does not support Megatron-LM images.
 
 ``train_params``
 ~~~~~~~~~~~~~~~~
@@ -750,7 +798,7 @@ Controls ``test_smoke``: a small fixed cell (not a ``sweep.runs`` entry) that lo
      - N/A
      - Ordered list of combination keys to execute. Required and non-empty when ``combinations`` is non-empty. Omit ``sweep`` (or leave ``combinations`` empty) to run the implicit ``default`` cell.
 
-Pytest parametrizes ``sweep_name`` from ``sweep.runs``. The suite parses ``micro_batch_size``, ``global_batch_size``, and ``precision`` from each combination key. Additional fields in the combination body override the corresponding ``train_params`` values for that run, including ``training_iterations``, ``tensor_parallelism``, and ``pipeline_parallelism``. If ``sweep`` is omitted or ``combinations`` is empty, one cell named ``default`` trains with ``train_params``; ``micro_batch_size``, ``global_batch_size``, and ``precision`` must be set there. The matching threshold cell is ``default`` and is required when ``enforce_thresholds`` is ``true``.
+Pytest parametrizes ``sweep_name`` from ``sweep.runs``. The suite parses ``micro_batch_size``, ``global_batch_size``, and ``precision`` from each combination key. Additional fields in the combination body override the corresponding ``train_params`` values for that run, including ``training_iterations``, ``tensor_parallelism``, ``pipeline_parallelism``, and (Primus images only) ``primus_cli_overrides``. If ``sweep`` is omitted or ``combinations`` is empty, one cell named ``default`` trains with ``train_params``; ``micro_batch_size``, ``global_batch_size``, and ``precision`` must be set there. The matching threshold cell is ``default`` and is required when ``enforce_thresholds`` is ``true``.
 
 Threshold files
 ---------------
