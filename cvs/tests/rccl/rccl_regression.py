@@ -217,14 +217,14 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
       - request, subtests: pytest reporting fixtures.
 
     Flow:
-      1) Capture start time to bound dmesg checks later.
+      1) Mark the test start in dmesg (marker and timestamp) when sudo is available.
       2) Optionally snapshot cluster metrics before the test (for debugging/compare).
       3) Optionally capture ECC_BLOCKS counters before the test. Later cases reuse the previous after snapshot.
       4) Build env_overrides dict from all regression parameters.
       5) Invoke RcclJob.from_config(...).run_regression() with parameters built from config and fixtures.
       5a) Report each verification verdict as a pytest sub-test and HTML case row.
       6) Optionally capture ECC_BLOCKS after the test, log deltas, and warn on increases.
-      7) Capture end time and verify dmesg for errors between start/end.
+      7) Scan this test's dmesg: kmsg markers when dmesg_during_test, else the clock window.
       8) Optionally snapshot metrics again and compare before/after.
       9) Call update_test_result() to finalize test status.
 
@@ -245,17 +245,15 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
             no_sudo_nodes,
         )
 
+    cvs_params = config_dict.get('cvs_params', {})
     params_str = ' '.join(f'{k}={v}' for k, v in regression_params.items())
+    dmesg_window = None
     if can_use_sudo:
-        orch.all.exec(f'sudo echo "Starting Test {rccl_collective} {params_str}" | sudo tee /dev/kmsg')
-
-    # Minute precision can drop kernel events from the end of the test window.
-    start_time = orch.all.exec('date +"%a %b %e %H:%M:%S"')
+        dmesg_window = DmesgWindow(orch.all, f'{rccl_collective} {params_str}', dmesg_during_test_enabled(config_dict))
+        dmesg_window.open()
 
     # Get cluster snapshot ..
-    if can_use_sudo and re.search(
-        'True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I
-    ):
+    if can_use_sudo and re.search('True', cvs_params.get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_before = create_cluster_metrics_snapshot(orch.all)
 
     report_ecc_delta = ecc_delta_check_enabled(config_dict)
@@ -287,22 +285,11 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
         compare_ecc_blocks_snapshots(ecc_before, ecc_after, collective=rccl_collective, blocks=ecc_blocks)
         _remember_ecc_after(ecc_blocks, ecc_after)
 
-    # Scan dmesg between start and end times cluster wide ..
-    if can_use_sudo:
-        orch.all.exec(f'sudo echo "End of Test {rccl_collective} {params_str}" | sudo tee /dev/kmsg')
-
-    end_time = orch.all.exec('date +"%a %b %e %H:%M:%S"')
-    if can_use_sudo:
-        # Bound dmesg scan to this test's own start..end window (per-test).
-        # till_end_flag=True scans from start_time to the end of the dmesg
-        # buffer, which causes earlier-test kernel events (e.g. a scatter_perf
-        # segfault) to repeatedly fail every subsequent parametrized test.
-        verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=False)
+    if dmesg_window:
+        dmesg_window.close_and_scan()
 
     # Get new cluster snapshot and compare ..
-    if can_use_sudo and re.search(
-        'True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I
-    ):
+    if can_use_sudo and re.search('True', cvs_params.get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_after = create_cluster_metrics_snapshot(orch.all)
         compare_cluster_metrics_snapshots(cluster_dict_before, cluster_dict_after)
 

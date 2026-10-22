@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- RCCL perf and regression: `cvs_params.dmesg_during_test` (default `"False"`) scans each node's dmesg between the `Starting Test` / `End of Test` markers written around each test, instead of the clock window taken from the first node. Nodes whose start marker is gone fall back to the clock window, and nodes without an end marker are scanned to the end of dmesg.
 - ibperf bandwidth/latency tests support vPOD-aware node pairing: `ibperf.pairing_mode` = `sequential` (default, unchanged), `inter_vpod`, or `intra_vpod`. vPODs come from AFM (`afmctl show device --json`, keyed by scale-up fabric physical pod and virtual pod IDs) or from `node_dict[<node>].vpod_id` (`ibperf.vpod_source`).
 - RCCL sample config gates scale-out `all_reduce_perf` at the published MI350X/MI355X acceptance bar for 2–16 nodes at 8 ranks per node: `results.thor` has exact rank keys from `all_reduce_perf-float-16` through `-128`, each requiring busBw ≥ 350 GB/s at 8589934592 bytes. The other collectives are `null` at those rank counts because they have no published bar. MI300X clusters must override each all_reduce entry to 304. `verify_bus_bw` remains `"False"` by default.
 - RCCL `cvs_params.bus_bw_tolerance` (default 0.95): fraction in (0, 1] of the reference bus bandwidth a measurement must reach; an invalid value fails the test. The sample `rccl_config.json` sets 1.0.

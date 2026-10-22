@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import datetime
 import re
+import shlex
 
 from cvs.lib.utils_lib import *
 from cvs.lib.rocm_plib import *
@@ -450,6 +451,15 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
       - Logs one 'kernel-log scan' INFO summary line; the fetched log text itself is not logged.
     """
 
+    analysis_args = _clock_window_analysis_args(start_time_dict, end_time_dict, till_end_flag)
+    output_dict = _collect_kernel_log(phdl, _DMESG_ISO_CMD)
+    err_dict = _node_scraper_scan(output_dict, analysis_args=analysis_args, source_label='Dmesg')
+    _log_kernel_scan_summary('verify_dmesg_for_errors', output_dict, err_dict)
+    return err_dict
+
+
+def _clock_window_analysis_args(start_time_dict, end_time_dict, till_end_flag):
+    """Analysis args bounded by the first node's start (and end) time."""
     node0 = list(start_time_dict.keys())[0]
     analysis_args = cvs_dmesg_analysis_args()
     start_dt = _parse_cvs_time(start_time_dict[node0])
@@ -459,10 +469,132 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
         end_dt = _parse_cvs_time(end_time_dict[node0])
         if end_dt:
             analysis_args['analysis_range_end'] = end_dt
-    output_dict = _collect_kernel_log(phdl, "sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
-    err_dict = _node_scraper_scan(output_dict, analysis_args=analysis_args, source_label='Dmesg')
-    _log_kernel_scan_summary('verify_dmesg_for_errors', output_dict, err_dict)
+    return analysis_args
+
+
+_DMESG_ISO_CMD = "sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never"
+_CVS_DATE_CMD = 'date +"%a %b %e %H:%M:%S"'
+_DMESG_DURING_TEST_LOG_LINE_CAP = 500
+
+
+def dmesg_during_test_enabled(config_dict):
+    return bool(re.search('True', str(config_dict.get('cvs_params', {}).get('dmesg_during_test', 'False')), re.I))
+
+
+def dmesg_write_marker_cmd(marker):
+    """Write marker to /dev/kmsg; shlex.quote keeps $, backticks, and quotes out of shell expansion."""
+    return f"echo {shlex.quote(marker)} | sudo tee /dev/kmsg"
+
+
+def _is_marker_line(line, marker):
+    message = line.rstrip()
+    if not message.endswith(marker):
+        return False
+    # A shorter marker (params NCCL_ALGO=Ring) must not match a longer one (NCCL_ALGO=Ring2).
+    head = message[: -len(marker)]
+    return not head or head[-1].isspace()
+
+
+def _dmesg_marker_window(text, start_marker, end_marker):
+    """Return (window_text, has_end) for the last start marker, or None when it is absent.
+
+    The window runs through the first end marker after that start, or to the end
+    of the log when the test crashed or hung before writing it. Marker text has
+    no run id, so this relies on RCCL tests running one after another; overlapping
+    runs that write the same marker pair would share whichever window came last.
+    """
+    lines = (text or '').splitlines()
+    starts = [i for i, line in enumerate(lines) if _is_marker_line(line, start_marker)]
+    if not starts:
+        return None
+    window = lines[starts[-1] :]
+    for i, line in enumerate(window[1:], start=1):
+        if _is_marker_line(line, end_marker):
+            return '\n'.join(window[: i + 1]) + '\n', True
+    return '\n'.join(window) + '\n', False
+
+
+def verify_dmesg_during_test(phdl, start_marker, end_marker, start_time_dict, end_time_dict):
+    """
+    Scan each node's dmesg between the kmsg start/end markers written around one test.
+
+    Parameters:
+      phdl: handle supporting exec(cmd, print_console=False) -> {node: str}.
+      start_marker, end_marker: exact messages written with dmesg_write_marker_cmd.
+      start_time_dict, end_time_dict: `date +"%a %b %e %H:%M:%S"` output taken next to the markers.
+
+    Behavior:
+      - Each node is bounded by its own markers, so clock skew between nodes does not matter.
+      - A node without the end marker is scanned from its start marker to the end of the log.
+      - A node without the start marker (for example, rotated out of the ring buffer) is
+        scanned over the clock window instead, so no node goes unscanned.
+      - Same matching as verify_dmesg_for_errors: error events call fail_test, warnings only log.
+      - The window text is logged at DEBUG only; INFO gets one 'kernel-log scan' summary line.
+    """
+    output_dict = _collect_kernel_log(phdl, _DMESG_ISO_CMD)
+    marked = {}
+    unmarked = {}
+    for node, text in output_dict.items():
+        found = _dmesg_marker_window(text, start_marker, end_marker)
+        if found is None:
+            log.warning(
+                'node %s: start marker %r not found in dmesg; scanning the clock window instead', node, start_marker
+            )
+            unmarked[node] = text
+            continue
+        window, has_end = found
+        if not has_end:
+            log.warning(
+                'node %s: end marker %r not found; scanning to the end of dmesg (the test may have crashed or hung)',
+                node,
+                end_marker,
+            )
+        marked[node] = window
+        lines = window.splitlines()
+        body = '\n'.join(lines[:_DMESG_DURING_TEST_LOG_LINE_CAP])
+        if len(lines) > _DMESG_DURING_TEST_LOG_LINE_CAP:
+            body = f'{body}\n... (truncated, {len(lines)} lines total)'
+        log.debug('node %s: dmesg during test (%d lines):\n%s', node, len(lines), body)
+
+    err_dict = {node: [] for node in output_dict}
+    if marked:
+        err_dict.update(_node_scraper_scan(marked, analysis_args=cvs_dmesg_analysis_args(), source_label='Dmesg'))
+    if unmarked:
+        analysis_args = _clock_window_analysis_args(start_time_dict, end_time_dict, till_end_flag=False)
+        err_dict.update(_node_scraper_scan(unmarked, analysis_args=analysis_args, source_label='Dmesg'))
+    _log_kernel_scan_summary('verify_dmesg_during_test', output_dict, err_dict)
     return err_dict
+
+
+class DmesgWindow:
+    """Bracket one test with kmsg markers and timestamps, then scan its dmesg.
+
+    use_markers selects verify_dmesg_during_test; otherwise the scan is the
+    clock window from verify_dmesg_for_errors. Markers are written either way so
+    the kernel log shows where each test ran.
+    """
+
+    def __init__(self, handle, label, use_markers):
+        self.handle = handle
+        self.start_marker = f'Starting Test {label}'.strip()
+        self.end_marker = f'End of Test {label}'.strip()
+        self.use_markers = use_markers
+        self.start_time = None
+
+    def open(self):
+        self.handle.exec(dmesg_write_marker_cmd(self.start_marker))
+        # Seconds precision: analysis_range_end is exclusive, so a minute-truncated
+        # time would drop the last minute of the test's window.
+        self.start_time = self.handle.exec(_CVS_DATE_CMD)
+
+    def close_and_scan(self):
+        self.handle.exec(dmesg_write_marker_cmd(self.end_marker))
+        end_time = self.handle.exec(_CVS_DATE_CMD)
+        if self.use_markers:
+            return verify_dmesg_during_test(self.handle, self.start_marker, self.end_marker, self.start_time, end_time)
+        # Bounded to this test: scanning to the end of the buffer would repeat an
+        # earlier test's kernel errors in every later parametrized test.
+        return verify_dmesg_for_errors(self.handle, self.start_time, end_time, till_end_flag=False)
 
 
 def verify_nic_link_flap(phdl):
@@ -689,7 +821,7 @@ def full_dmesg_scan(
     """
 
     output_dict = _collect_kernel_log(
-        phdl, "sudo dmesg --time-format iso -x | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never"
+        phdl, "sudo dmesg --time-format iso -x | grep -v initialized | grep -E -v 'ALLOWED|DENIED' --color=never"
     )
     err_dict = _node_scraper_scan(
         output_dict,
@@ -723,7 +855,9 @@ def verify_driver_errors(phdl):
     """
 
     err_dict = {}
-    output_dict = _collect_kernel_log(phdl, "sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
+    output_dict = _collect_kernel_log(
+        phdl, "sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never"
+    )
     for node in output_dict.keys():
         err_dict[node] = []
         events = node_scraper_adapter.parse_dmesg(
