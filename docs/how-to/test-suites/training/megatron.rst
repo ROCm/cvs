@@ -408,8 +408,6 @@ Located in ``cvs/input/config_file/training/megatron/``. Field-level schema: :do
 
 ``container.env`` NIC fields include example values plus ``<changeme>``. ``NNODES`` is not a JSON field. Every config except Llama 3.1 405B supports Megatron-LM or Primus; 405B is Primus only.
 
-Do not use leftover ``mi3xx_megatron_llama_*.json`` / ``mi35x_megatron_llama_single.json`` files with these suites. Those nested configs belong only to the legacy ``megatron_llama3_1_*`` test modules.
-
 MI300X / MI325X (shared config)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -468,11 +466,3 @@ MI355X
    * - ``mi355x_megatron_llama-3.3-70b_single.json``
      - ``mi355x_megatron_llama-3.3-70b_single_threshold.json``
      - single-node
-
-Legacy suite names
-==================
-
-Earlier releases shipped per-model suite names such as ``megatron_llama3_1_8b_single``,
-``megatron_llama3_1_70b_distributed``, and ``megatron_llama3_1_8b_distributed``.
-These suites are superseded by the unified ``megatron_single`` and ``megatron_distributed``
-suites documented above. Use the unified suites for all new deployments.
