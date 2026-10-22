@@ -20,7 +20,5 @@ Suites do not all follow the key.
      - ``ib_perf_bw_test``, ``install_ibperf_tools``
    * - Forces ``container`` and ignores the cluster key. The workload runs inside the container. vLLM does not start sshd. ATOM does. Aorta, SGLang, xDiT, Megatron (``megatron_single`` / ``megatron_distributed``), TorchTitan, and JAX MaxText launch the container and do not call sshd setup.
      - ``aorta_single``, ``aorta_distributed``, ``vllm_single``, ``vllm_distributed``, ``sglang_single``, ``sglang_distributed``, ``sglang_disagg_distributed``, the ``xdit_*`` suites, ``atom``, ``megatron_single``, ``megatron_distributed``, ``torchtitan_single``, ``torchtitan_distributed``, ``jaxmaxtext_single``, ``jaxmaxtext_distributed``
-   * - Uses its own SSH path and does not build this orchestrator.
-     - ``megatron_llama3_1_8b_single``, ``megatron_llama3_1_8b_distributed``, ``megatron_llama3_1_70b_single``, ``megatron_llama3_1_70b_distributed``
    * - Ignores ``orchestrator``. The command runs on the host over SSH.
      - ``cvs exec``, ``cvs scp``

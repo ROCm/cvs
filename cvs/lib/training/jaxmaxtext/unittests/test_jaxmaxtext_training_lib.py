@@ -7,7 +7,7 @@ Unit tests for cvs/lib/training/jaxmaxtext/jaxmaxtext_training_lib.py::MaxTextTr
 The job talks to the outside world only through an injected orchestrator
 (`orch.exec` / `orch.exec_cmd_list`), so every test builds a job with a
 MagicMock orch and a lightweight SimpleNamespace variant -- no SSH, no
-container, no real sleeps (mirrors test_megatron_training_lib.py).
+container, no real sleeps (mirrors test_primus_lib.py).
 '''
 
 import base64
