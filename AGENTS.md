@@ -105,6 +105,22 @@ Key CVS-specific considerations:
 - **Cross-platform testing**: Validate on Ubuntu (primary supported distro)
 - **Configuration compatibility**: Ensure changes maintain backward compatibility with existing cluster/config files
 
+### Changelog
+
+`CHANGELOG.md` records how each release differs from the previous one. Edit only the `Unreleased` section, and only when users of the last release would see different behavior.
+
+- **Compare against the last release**, not against `main`. There are no release tags; check the release branch, e.g. `git show origin/release/cvs-0.2.0:<path>` or `git ls-tree -r origin/release/cvs-0.2.0`.
+- **Change that has not shipped yet**: if the code being fixed or changed was added after the last release, do not add an entry. Update or remove the existing `Unreleased` entry that introduced it, so the entry describes the end state.
+- **One entry per change**: when the same change spans several suites, search `Unreleased` for an existing entry first. If one exists, extend it to name the other suites; do not add a second entry for the same feature or fix.
+- **Consolidate by area**: several changes to the same suite or feature in one section (for example RCCL thresholds) go in one entry. Extend the existing entry for that area if there is one; otherwise create a new entry.
+- **Internal-only change** (refactors, unit tests, CI, agent docs) with no user-visible effect: no entry.
+- **Pick the section by user impact**: `Added`, `Changed`, `Deprecated` (still works, will be removed), `Removed` (gone now), `Fixed`. Removing a config field, CLI flag or environment variable is `Removed`, and the entry says what users must change.
+- **Never edit released sections** or `docs/release-notes.rst`, which covers a shipped release. They are history, even if they name something since removed.
+- Write entries for someone running CVS: the command, config field or result that changed, not internal function names.
+- **Keep entries short**: one or two sentences saying what changed and what the user must do, if anything. Leave out implementation detail, root-cause narrative and examples; those belong in the PR.
+- **Settings belong in the docs**: name a new feature's config field, but leave its options and usage to the configuration reference. Mention a setting only when existing configs break or behave differently and the user must change it.
+- **No performance numbers**: do not quote bandwidth, latency or throughput bars. Name the config or field that sets the threshold; the values live in the config and the configuration reference.
+
 ## Code Quality Boundaries
 
 ### Unit Testing Standards
