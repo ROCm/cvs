@@ -1,3 +1,5 @@
+:orphan:
+
 .. meta::
   :description: Run AMD Rack Check (ARC) rack-level diagnostic flows and items from CVS controllers.
   :keywords: ARC, AMD Rack Check, CVS, rack, diagnostics, controller

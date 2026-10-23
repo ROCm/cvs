@@ -1,3 +1,5 @@
+:orphan:
+
 .. meta::
   :description: ARC configuration keys for controller-based rack validation in CVS.
   :keywords: ARC, AMD Rack Check, CVS, rack, JSON, controllers
@@ -58,7 +60,7 @@ Configuration keys
    * - ``controller_nodes``
      - List of cluster ``node_dict`` keys to act as rack controllers. Empty selects the first node. Only these hosts are contacted.
    * - ``rack_config``
-     - Absolute path to a rack JSON on every controller. Each file describes its controller's rack.
+     - Absolute path to a rack JSON on every controller. Each file describes its controller's rack. CVS does not generate or distribute these files yet; stage one per controller before the run.
    * - ``spec_mode``
      - ``full`` or ``partial`` rack validation.
    * - ``mock``

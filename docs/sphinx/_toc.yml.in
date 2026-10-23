@@ -44,8 +44,6 @@ subtrees:
             title: Platform tests
           - file: how-to/test-suites/burn-in-diag/health
             title: Health (burn-in) tests
-          - file: how-to/test-suites/burn-in-diag/arc
-            title: ARC (rack-level) tests
           - file: how-to/test-suites/burn-in-diag/preflight
             title: Preflight tests
       - file: how-to/test-suites/network/index
@@ -125,8 +123,6 @@ subtrees:
             title: Platform
           - file: reference/configuration-files/burn-in-diag/health
             title: Health
-          - file: reference/configuration-files/burn-in-diag/arc
-            title: ARC
           - file: reference/configuration-files/burn-in-diag/preflight
             title: Preflight
       - file: reference/configuration-files/network/index
