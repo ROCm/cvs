@@ -63,7 +63,7 @@ stage); single-node configs omit them. Run single-node configs with
 
 The ``mi3xx_*`` configs are **GPU-generic and run on both MI300X and MI325X**
 (both CDNA3). They ship the MI325X batch sizes, so on MI300X (less HBM) a large
-batch may hit **OOM** — lower ``per_device_batch_size`` (the ``BS`` in the sweep
+batch might hit **OOM** — lower ``per_device_batch_size`` (the ``BS`` in the sweep
 key) if you see one. Because threshold targets are platform-specific, each
 ``mi3xx_*`` config ships ``threshold_json`` with a ``<changeme>`` tag: point it at
 the ``mi300x_*`` or ``mi325x_*`` ``_threshold.json`` for your GPU **before
@@ -116,7 +116,7 @@ MI350-class (CDNA4) GPUs.
      - BF16, FP8
 
 Threshold files stay **per-platform** (``mi300x_*_threshold.json`` and
-``mi325x_*_threshold.json``); the ``mi3xx_*`` config selects one via
+``mi325x_*_threshold.json``); the ``mi3xx_*`` config selects one using
 ``threshold_json``.
 
 Config layout

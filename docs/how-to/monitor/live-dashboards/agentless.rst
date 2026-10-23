@@ -27,7 +27,7 @@ Prerequisites
 The following prerequisites are required.
 
 - Docker and Docker Compose v2 on the monitoring host
-- SSH access to cluster nodes (direct or via jump host)
+- SSH access to cluster nodes (direct or through a jump host)
 - ``amd-smi`` on GPU nodes; RDMA tools optional for network views
 
 Docker Compose also starts a **Redis** sidecar for metric snapshots and events (no separate Redis install on the host).
@@ -81,7 +81,7 @@ Keep the following in mind when operating this feature.
 
 - Default metrics interval: 60 seconds (``polling.interval`` in ``cluster.yaml`` or ``POLLING__INTERVAL`` env var). For large fleets (50+ nodes), consider 120 seconds.
 - Host reachability is re-probed every 5 minutes; SSH clients refresh when nodes come back online
-- Stop or restart: ``docker-compose down`` / ``docker-compose restart``
+- Stop or restart: ``docker-compose down`` or ``docker-compose restart``
 - LLDP packages can be installed cluster-wide from the **Configuration** tab
 
 Other deployment options

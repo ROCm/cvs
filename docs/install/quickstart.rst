@@ -2,11 +2,11 @@
   :description: Get started with CVS on ROCm: install on AMD Instinct GPU clusters, configure SSH, and run your first cluster-wide command in minutes.
   :keywords: CVS, ROCm, quickstart, install, exec, AMD Instinct, GPU, AMD, SSH, cluster, Linux, getting started
 
-*******************************************************************************
+*************************************************************************************
 Cluster Validation Suite (CVS) quickstart: install and run your first cluster command
-*******************************************************************************
+*************************************************************************************
 
-This guide gets you from zero to your first cluster-wide ``cvs exec`` in about 15 minutes.
+This guide helps you configure your first cluster-wide ``cvs exec`` in about 15 minutes.
 
 Prerequisites
 =============
@@ -14,15 +14,16 @@ Prerequisites
 The following prerequisites are required before you begin:
 
 - Ubuntu-based Linux on the head node (see :doc:`/install/install` for supported versions).
+
+  .. include:: /_includes/head-node.rst
+
 - :doc:`Passwordless SSH </reference/cluster/passwordless-ssh>` from the head node to every worker.
 - Python 3.10+ and ``python3-venv``.
-
-.. include:: /_includes/head-node.rst
 
 Step 1: Install CVS
 ===================
 
-Clone the repository and install:
+Clone the repository and install CVS:
 
 .. code:: bash
 
@@ -36,7 +37,7 @@ Clone the repository and install:
 Step 2: Copy the cluster file
 =============================
 
-This SSH quickstart needs a ``cluster.json`` that lists your nodes and SSH credentials.
+This SSH quickstart needs a ``cluster.json`` that lists your nodes and SSH credentials:
 
 .. code:: bash
 
@@ -110,8 +111,8 @@ Successful output from each node looks like this:
 
 Every node should report its GPU devices. A node that returns no GPUs or an error indicates a driver or device access issue to resolve before testing.
 
-What to do next
-===============
+Next steps
+==========
 
 CVS is installed and your cluster is connected. The next step is to run a test suite.
 

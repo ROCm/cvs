@@ -7,7 +7,7 @@ active venv):
    :widths: 3 5
 
    * - Command
-     - Installation via
+     - Installation method
    * - ``ls .cvs_venv/bin/cvs`` 
      - Makefile (``make install``) if the command is succesful
    * - ``ls <venv>/bin/cvs`` 
