@@ -282,23 +282,17 @@ ADD_ANC_LOGS_TO_HTML_KEY = "ADD_ANC_LOGS_TO_HTML_REPORTS"
 ANC_HTML_EXTRAS_ATTR = "_anc_html_extras"
 
 
-def _node_label_from_file(cluster_dict, host):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
-    return amdtools_lib.node_label_from_file(cluster_dict, host)
+_node_label_from_file = amdtools_lib.node_label_from_file
 
 
-def _as_bool(value, default=True):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
-    return amdtools_lib.as_bool(value, default)
+_as_bool = amdtools_lib.as_bool
 
 
-def new_run_timestamp():
-    '''Compatibility wrapper for the shared AMD tool helper.'''
-    return amdtools_lib.new_run_timestamp()
+new_run_timestamp = amdtools_lib.new_run_timestamp
 
 
 def resolve_anc_log_folder(test_name, timestamp, node=None):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
+    '''Bind ANC's ``anc_logs`` sub-path to amdtools_lib.resolve_run_log_folder.'''
     return amdtools_lib.resolve_run_log_folder(ANC_LOG_SUBPATH, test_name, timestamp, node)
 
 
@@ -343,7 +337,7 @@ def _install_timeout(anc_cfg):
 
 
 def _download_with_progress_snippet(url, dest, interval=ANC_DOWNLOAD_PROGRESS_INTERVAL):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
+    '''Bind the tool label ``ANC`` to amdtools_lib.download_with_progress_snippet.'''
     return amdtools_lib.download_with_progress_snippet(url, dest, "ANC", interval)
 
 
@@ -373,18 +367,16 @@ SHELL_UNSAFE_CHARS = amdtools_lib.SHELL_UNSAFE_CHARS
 
 
 def _assert_shell_safe(anc_cfg, keys):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
+    '''Bind the tool label ``ANC`` to amdtools_lib.assert_shell_safe (see there for the unsafe-character rationale).'''
     return amdtools_lib.assert_shell_safe(anc_cfg, keys, "ANC")
 
 
 def validate_cluster_username(cluster_dict):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
+    '''Bind the tool label ``ANC`` to amdtools_lib.validate_cluster_username.'''
     return amdtools_lib.validate_cluster_username(cluster_dict, "ANC")
 
 
-def _remote_user_tmp(user):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
-    return amdtools_lib.remote_user_tmp(user)
+_remote_user_tmp = amdtools_lib.remote_user_tmp
 
 
 def _sed_replacement_safe(value):
@@ -407,7 +399,7 @@ def _expected_nodes(cluster_dict):
 
 
 def _fail_unreachable_nodes(cluster_dict, out_dict, action):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
+    '''Bind the tool label ``ANC`` and the cluster file's expected hosts to amdtools_lib.fail_unreachable_nodes.'''
     return amdtools_lib.fail_unreachable_nodes(_expected_nodes(cluster_dict), out_dict, action, "ANC")
 
 
@@ -451,28 +443,20 @@ _URL_VERSION_CANDIDATE_RE = amdtools_lib._URL_VERSION_CANDIDATE_RE
 _VERSION_RE = amdtools_lib._VERSION_RE
 
 
-def is_strict_anc_version(version):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
-    return amdtools_lib.is_strict_version(version)
+is_strict_anc_version = amdtools_lib.is_strict_version
 
 
-def parse_anc_version(version):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
-    return amdtools_lib.parse_version(version)
+parse_anc_version = amdtools_lib.parse_version
 
 
-def compare_anc_versions(left, right):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
-    return amdtools_lib.compare_versions(left, right)
+compare_anc_versions = amdtools_lib.compare_versions
 
 
-def anc_version_satisfies(installed, required):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
-    return amdtools_lib.version_satisfies(installed, required)
+anc_version_satisfies = amdtools_lib.version_satisfies
 
 
 def detect_package_flavour(anc_release_url):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
+    '''Bind the tool label ``ANC`` to amdtools_lib.detect_package_flavour; see there for the release-naming rules.'''
     return amdtools_lib.detect_package_flavour(anc_release_url, "ANC")
 
 
@@ -489,9 +473,7 @@ def detect_package_type(anc_release_url):
     return detect_package_flavour(anc_release_url).pkg_type
 
 
-def parse_version_from_url(anc_release_url):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
-    return amdtools_lib.parse_version_from_url(anc_release_url)
+parse_version_from_url = amdtools_lib.parse_version_from_url
 
 
 def check_version_matches_url(config_dict):
@@ -1123,7 +1105,7 @@ def _install_anc_deb_direct(orch, cluster_dict, config_dict):
 
 
 def _sudo_prefix_snippet(prefix):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
+    '''Bind the tool label ``ANC`` to amdtools_lib.sudo_prefix_snippet.'''
     return amdtools_lib.sudo_prefix_snippet(prefix, "ANC")
 
 
@@ -1586,9 +1568,7 @@ def ensure_anc_ready(orch, cluster_dict, config_dict):
 # =========================================================================
 # Group execution + artifact collection
 # =========================================================================
-def _sanitize_path_component(value):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
-    return amdtools_lib.sanitize_path_component(value)
+_sanitize_path_component = amdtools_lib.sanitize_path_component
 
 
 def _node_label(host, cluster_dict):
@@ -1602,23 +1582,20 @@ def _node_label(host, cluster_dict):
     return _node_label_from_file(cluster_dict, host)
 
 
-def _chown_tree_to_runner(host, root_path):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
-    return amdtools_lib.chown_tree_to_runner(host, root_path)
+_chown_tree_to_runner = amdtools_lib.chown_tree_to_runner
 
 
-def _is_within_directory(directory, target):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
-    return amdtools_lib.is_within_directory(directory, target)
+_is_within_directory = amdtools_lib.is_within_directory
 
 
-def _safe_tar_extract(tf, dest_dir):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
-    return amdtools_lib.safe_tar_extract(tf, dest_dir)
+_safe_tar_extract = amdtools_lib.safe_tar_extract
 
 
 def _pull_log_dir(orch, host, user, log_dir, dest_dir):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
+    '''Pull the ANC log dir with amdtools_lib.pull_remote_dir, then require ``console.log`` in it.
+
+    Returns (console_log_path, failure_reason), as before the helper moved.
+    '''
     extracted_dir, reason = amdtools_lib.pull_remote_dir(orch, host, user, log_dir, dest_dir, "ANC")
     if reason:
         return None, reason
@@ -1753,7 +1730,7 @@ def _evaluate_node(orch, cluster_dict, host, output, test_name, timestamp, unit=
 
 
 def _stash_report_link(request, rel_path, link_name):
-    '''Compatibility wrapper for the shared AMD tool helper.'''
+    '''Bind ANC's HTML-extras attribute to amdtools_lib.stash_report_link.'''
     return amdtools_lib.stash_report_link(request, rel_path, link_name, ANC_HTML_EXTRAS_ATTR)
 
 
