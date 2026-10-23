@@ -25,7 +25,7 @@ Unresolved placeholders fail configuration loading. The previous ``{home}``, ``{
 ``{home-mount-dir}`` and ``{node-dir-name}`` Aorta placeholders should be replaced by explicit
 paths or the shared loader's supported references.
 
-.. list-table:: Main fields
+.. list-table:: 
    :header-rows: 1
    :widths: 30 70
 
@@ -48,7 +48,7 @@ paths or the shared loader's supported references.
    * - ``output_dir``
      - Local CVS output root; default ``aorta_results``. Each invocation gets a unique run subdirectory.
 
-Use storage writable by the container user. Root-squashed NFS may prevent root containers
+Use storage writable by the container user. Root-squashed NFS might prevent root containers
 from writing output. The suite restores repository ownership to each host's login user
 before delegating container teardown to the orchestrator.
 At launch, CVS also resolves each host's numeric ``render`` group ID and adds the
@@ -58,7 +58,7 @@ group-name mapping.
 Workload and launch
 -------------------
 
-.. list-table:: Aorta execution fields
+.. list-table::
    :header-rows: 1
    :widths: 35 65
 

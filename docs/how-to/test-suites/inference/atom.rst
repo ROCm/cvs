@@ -50,6 +50,13 @@ You also need a cluster file. The ATOM suite runs inside a container:
 
   cvs config copy cluster_container.json --output /tmp/cvs/cluster.json
 
+``paths.models_dir`` is ``/models``, the in-container weights mount (usually
+read-only). Keep it as shipped; only customize the host side of the models
+volume. ATOM still defaults ``HF_HUB_CACHE`` to that path for Hub weight
+lookups. SGLang ``bench_serving`` with ``dataset_name=random`` also downloads
+ShareGPT into ``HF_HUB_CACHE``, so Qwen SGLang samples override
+``HF_HUB_CACHE`` and ``HF_HOME`` to ``{paths.shared_fs}/.cache/huggingface``.
+
 Step 2: Fill in the placeholders
 ================================
 
@@ -135,6 +142,12 @@ The ``mtp3`` profile adds speculative decode (``--method mtp`` and ``--num-specu
   Any flag CVS does not recognize is passed straight through to pytest, so options such as ``-vvv`` and ``--capture=tee-sys`` work as usual.
 
 vLLM-ATOM and SGLang stems are still ``cvs run atom``. See :ref:`atom-other-files`.
+
+Smoke one cell with pytest ``-k``, for example ``-k "w1_1k_1k-conc128"``.
+
+After ``git pull``, run ``make install`` before ``source .cvs_venv/bin/activate``.
+On Spur or Slurm, do that on the GPU node inside the job step if login cannot
+create a venv.
 
 Run on managed compute
 ----------------------

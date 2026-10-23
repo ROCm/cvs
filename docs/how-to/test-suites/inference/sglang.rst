@@ -127,7 +127,7 @@ List stages in a suite:
 
 ``test_run_performance_benchmark_test`` is parametrized once per combo in ``sweep.runs``
 (for example ``isl1024-osl1024-c64``). Empty ``runs`` uses every performance cell in the
-threshold file. TP/PP in the combo may differ from the threshold-file key; matching is
+threshold file. TP/PP in the combo might differ from the threshold-file key; matching is
 exact, then unique ``ISL,OSL,CONC``.
 
 Example run:

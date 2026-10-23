@@ -207,7 +207,7 @@ To keep a container running in the background instead of an interactive shell:
 
   docker run -d --name cvs-head --entrypoint bash cvs:local -c "sleep infinity"
 
-Run ``cvs`` via ``docker exec``:
+Run ``cvs`` with ``docker exec``:
 
 .. code:: bash
 

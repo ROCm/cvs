@@ -72,7 +72,7 @@ HTML test report
 
 **Per-metric subtests**
 
-Each ``test_metric`` row expands to show every metric as its own pass / fail /
+Each ``test_metric`` row expands to show every metric as its own pass, fail, or
 skip verdict.
 
 **Per-metric subtests - collapsed:**

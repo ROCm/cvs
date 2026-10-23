@@ -94,7 +94,7 @@ You should see one running container per node with the configured name and image
   cvs exec --cluster_file ~/cvs_workspace/cluster_container.json \
       --cmd "sudo docker ps --filter name=^cvs_container$ --format '{{.Names}} {{.Image}}'"
 
-``cvs exec`` SSHes to each host and ignores ``orchestrator``, so this shows the host's ``docker ps``. A ``per_run`` container is already removed when the suite has finished teardown. Check during the run, or use ``persistent`` / ``no_launch`` if you need the container afterwards.
+``cvs exec`` SSHes to each host and ignores ``orchestrator``, so this shows the host's ``docker ps``. A ``per_run`` container is already removed when the suite has finished teardown. Check during the run, or use ``persistent`` or ``no_launch`` if you need the container afterwards.
 
 ``docker exec`` and port 2224
 ==============================
@@ -130,12 +130,12 @@ Replace ``cvs_container`` with your ``container.name``. ``cvs exec`` runs that o
 Common pitfalls
 ===============
 
-- **Multi-node suite that starts sshd, image without ``/usr/sbin/sshd``.** sshd setup fails. Single-node runs skip that step. Suites that never call it do not need sshd in the image.
-- **Image without the workload binary.** ``rvs_cvs`` runs ``rvs`` inside the container. A missing ``/opt/rocm/bin/rvs`` fails the test.
-- **``lifetime: persistent`` without a pinned ``name``.** The default name follows the image tag. A tag change leaves the previous container in place and starts a new one.
-- **Port 2224 already in use on the host.** Suites that start sshd with ``network: host`` bind 2224 in the host network namespace. Stop the other listener.
-- **Cluster file says ``baremetal`` for a suite that follows the key.** The suite runs on the host. Suites that force ``container`` still start a container; see the scope table.
-- **``{user-id}`` passed to ``cvs exec``.** The SSH user is the literal string ``{user-id}``.
+- Multi-node suite that starts sshd, image without ``/usr/sbin/sshd``. sshd setup fails. Single-node runs skip that step. Suites that never call it do not need sshd in the image.
+- Image without the workload binary. ``rvs_cvs`` runs ``rvs`` inside the container. A missing ``/opt/rocm/bin/rvs`` fails the test.
+- ``lifetime: persistent`` without a pinned ``name``. The default name follows the image tag. A tag change leaves the previous container in place and starts a new one.
+- Port 2224 already in use on the host. Suites that start sshd with ``network: host`` bind 2224 in the host network namespace. Stop the other listener.
+- Cluster file says ``baremetal`` for a suite that follows the key. The suite runs on the host. Suites that force ``container`` still start a container; see the scope table.
+- ``{user-id}`` passed to ``cvs exec``. The SSH user is the literal string ``{user-id}``.
 
 Related resources
 =================

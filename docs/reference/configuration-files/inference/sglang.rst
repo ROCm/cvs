@@ -96,7 +96,7 @@ Threshold files
 ---------------
 
 Performance cells and pass/fail limits are stored separately. Each workload points at its
-threshold file via top-level ``threshold_json`` (a filename beside the config).
+threshold file through top-level ``threshold_json`` (a filename beside the config).
 
 .. list-table::
    :widths: 3 5
@@ -369,7 +369,7 @@ Inference tests
 ===============
 
 ``benchmark_params``
-  Random synthetic load via ``sglang.bench_serving``. ISL/OSL/concurrency cells come from
+  Random synthetic load using ``sglang.bench_serving``. ISL/OSL/concurrency cells come from
   ``sweep.runs`` (or every performance cell in the threshold file if ``runs`` is empty).
   ``input_length`` and ``output_length`` are injected at collection time.
 
@@ -382,7 +382,7 @@ Inference tests
     and MFU calculation inputs.
 
 ``accuracy.tasks`` (``lm_eval_hellaswag``, ``lm_eval_gsm8k``)
-  Accuracy tasks via lm-eval. Thresholds for accuracy metrics are always enforced when configured
+  Accuracy tasks using lm-eval. Thresholds for accuracy metrics are always enforced when configured
   in the threshold file.
 
 .. _sglang-volume-mounts:
@@ -474,5 +474,5 @@ Troubleshooting
   relaunch the server.
 
 **Model access**
-  Set ``paths.hf_token_file`` for HuggingFace models or mount local weights under ``/root/models`` via
+  Set ``paths.hf_token_file`` for HuggingFace models or mount local weights under ``/root/models`` using
   ``volumes``.

@@ -42,7 +42,7 @@ The following suites are available. Every suite runs the same nine stages.
      - FLUX.1 (``run_usp.py``) or FLUX.2 (``flux2_example.py``); one job per cluster node.
    * - ``xdit_flux_dev_distributed``
      - ``xdit_flux_dev_distributed.py``
-     - Unified FLUX.1 / FLUX.2 torchrun across ``nnodes``.
+     - Unified FLUX.1 and FLUX.2 torchrun across ``nnodes``.
    * - ``xdit_wan22_14b_single``
      - ``xdit_wan22_14b_single.py``
      - WAN 2.2 I2V native (``/app/Wan2.2/run.py``); one job per cluster node.
@@ -98,7 +98,7 @@ Follow these steps to set up the xDiT configuration.
    - Set ``gpu_name`` by removing ``<changeme>`` (templates hint ``mi325`` or ``mi355``).
    - On distributed templates, replace every ``<changeme>`` NCCL/socket field and confirm
      the RDMA library bind mounts match the host.
-   - Resolve ``{user-id}`` / ``{home}`` or leave them for CVS to expand.
+   - Resolve ``{user-id}`` and ``{home}`` or leave them for CVS to expand.
    - Keep ``threshold_json`` as the sibling filename unless you point it at your own file.
 
 Shipped config templates:
@@ -109,19 +109,19 @@ Shipped config templates:
 
    * - Config file
      - Use with suite
-   * - ``mi3xx_xdit_flux1_dev_single.json`` / ``mi35x_xdit_flux1_dev_single.json``
+   * - ``mi3xx_xdit_flux1_dev_single.json`` or ``mi35x_xdit_flux1_dev_single.json``
      - ``xdit_flux_dev_single``
-   * - ``mi3xx_xdit_flux1_dev_distributed.json`` / ``mi35x_xdit_flux1_dev_distributed.json``
+   * - ``mi3xx_xdit_flux1_dev_distributed.json`` or ``mi35x_xdit_flux1_dev_distributed.json``
      - ``xdit_flux_dev_distributed``
-   * - ``mi3xx_xdit_flux2_dev_single.json`` / ``mi35x_xdit_flux2_dev_single.json``
+   * - ``mi3xx_xdit_flux2_dev_single.json`` or ``mi35x_xdit_flux2_dev_single.json``
      - ``xdit_flux_dev_single``
-   * - ``mi3xx_xdit_flux2_dev_distributed.json`` / ``mi35x_xdit_flux2_dev_distributed.json``
+   * - ``mi3xx_xdit_flux2_dev_distributed.json`` or ``mi35x_xdit_flux2_dev_distributed.json``
      - ``xdit_flux_dev_distributed``
-   * - ``mi3xx_xdit_wan22_14b_single.json`` / ``mi35x_xdit_wan22_14b_single.json``
+   * - ``mi3xx_xdit_wan22_14b_single.json`` or ``mi35x_xdit_wan22_14b_single.json``
      - ``xdit_wan22_14b_single``
-   * - ``mi3xx_xdit_wan22_14b_diffusers_single.json`` / ``mi35x_xdit_wan22_14b_diffusers_single.json``
+   * - ``mi3xx_xdit_wan22_14b_diffusers_single.json`` or ``mi35x_xdit_wan22_14b_diffusers_single.json``
      - ``xdit_wan22_14b_diffusers_single``
-   * - ``mi3xx_xdit_wan22_14b_diffusers_distributed.json`` / ``mi35x_xdit_wan22_14b_diffusers_distributed.json``
+   * - ``mi3xx_xdit_wan22_14b_diffusers_distributed.json`` or ``mi35x_xdit_wan22_14b_diffusers_distributed.json``
      - ``xdit_wan22_14b_diffusers_distributed``
 
 Each workload has one shared threshold file (``xdit_<workload>_threshold.json``).
@@ -291,7 +291,7 @@ Key stages to watch:
      - ``max_avg_total_time_s``
      - step JSONs, ``video.mp4``
    * - WAN Diffusers
-     - average epoch / pipe time from ``results/timing.json``
+     - average epoch and pipe time from ``results/timing.json``
      - ``max_avg_pipe_time_s``
      - ``results/timing.json``, ``results/video_i2v.mp4``
    * - FLUX

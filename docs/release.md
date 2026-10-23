@@ -10,5 +10,6 @@
 
 | Version | Release date |
 | ------- | ------------ |
+| [0.3.0](https://rocm.docs.amd.com/projects/cvs/en/docs-0.3.0/) | October 28, 2026 |
 | [0.2.0](https://rocm.docs.amd.com/projects/cvs/en/docs-0.2.0/) | September 23, 2026 |
 | [0.1.0](https://rocm.docs.amd.com/projects/cvs/en/docs-0.1.0/) | November 12, 2025 |

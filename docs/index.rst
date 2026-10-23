@@ -23,9 +23,9 @@ The component public repository is located at `https://github.com/ROCm/cvs <http
 
   .. grid-item-card:: How to
 
-    * :doc:`Set up a cluster file <how-to/configure/cluster-config>`
-    * :doc:`Set up test configs <how-to/configure/test-suite-config/index>`
-    * :doc:`Run tests <how-to/test-suites/index>`
+    * :doc:`Configure the cluster file <how-to/configure/cluster-config>`
+    * :doc:`Configure test configuration files <how-to/configure/test-suite-config/index>`
+    * :doc:`Run test suites <how-to/test-suites/index>`
     * :doc:`Run on managed compute <how-to/run-on-managed-compute>`
     * :doc:`Run cluster commands <how-to/execute-cluster-commands>`
     * :doc:`Copy files to cluster nodes <how-to/copy-to-cluster>`
@@ -33,12 +33,12 @@ The component public repository is located at `https://github.com/ROCm/cvs <http
 
   .. grid-item-card:: Reference
 
-    * :doc:`Scalability and parallel SSH performance <reference/cvs-at-scale>`
-    * :doc:`Cluster file <reference/cluster/cluster-file>`
+    * :doc:`Scalability and performance <reference/cvs-at-scale>`
+    * :doc:`CVS cluster file <reference/cluster/cluster-file>`
     * :doc:`Run with containers <how-to/run-with-containers>`
     * :doc:`Passwordless SSH <reference/cluster/passwordless-ssh>`
     * :doc:`Configuration files <reference/configuration-files/index>`
-    * :doc:`CLI reference <reference/cli/cvs-run>`
+    * :doc:`Command-line interface reference <reference/cli/cvs-run>`
 
 To contribute to the documentation, refer to
 `Contributing to ROCm <https://rocm.docs.amd.com/en/latest/contribute/contributing.html>`_.
