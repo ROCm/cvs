@@ -9,8 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- AMD Rack Check (ARC) suites: `arc_installation`, flow and item suites run from per-rack controllers (`arc.controller_nodes`), with ANC-style install, logs under `<run_dir>/arc_logs/`, and Run Deck. Disruptive flows and items are opt-in through `arc.allow_disruptive`. ARC runs print a liveness heartbeat while ARC is alive, so silent items such as `ANCGPUTest` no longer trip `arc.inactivity_timeout`, and `arc.run_timeout` (default 14400 s) stops ARC's process group on the controller when exceeded.
-
 - Run Deck for most suites: health, platform, preflight, ibperf, MORI, ANC, ARC, RCCL, training and inference runs write a Run Deck beside the pytest HTML report. Install suites do not.
 - `cvs run` supports Slurm and SPUR: launch it with `srun` or `spur run`, and supported suites run without passwordless SSH.
 - ibperf bandwidth and latency tests support vPOD-aware node pairing (`ibperf.pairing_mode`).

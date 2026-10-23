@@ -21,9 +21,6 @@ Host validation, GPU burn-in, and preflight checks run before network, training,
    * - Health (burn-in)
      - :doc:`/how-to/test-suites/burn-in-diag/health`
      - :doc:`/reference/configuration-files/burn-in-diag/health`
-   * - ARC (rack-level)
-     - :doc:`/how-to/test-suites/burn-in-diag/arc`
-     - :doc:`/reference/configuration-files/burn-in-diag/arc`
    * - Preflight
      - :doc:`/how-to/test-suites/burn-in-diag/preflight`
      - :doc:`/reference/configuration-files/burn-in-diag/preflight`

@@ -14,7 +14,7 @@ cvs run arc_test_diag test_PingTest --cluster_file cluster.json --config_file ~/
 
 ## Prerequisites and controller model
 
-ARC runs on baremetal only. The runner needs passwordless SSH to every controller. ARC itself needs passwordless sudo for tools that require escalation. Controllers need Python 3.9 or newer. Set `arc.controller_nodes` to keys in the cluster file's `node_dict`; an empty list selects its first key. A single shared `arc.rack_config` path is used on all controllers, and each file describes that controller's own rack. Create a rack JSON with `arc.py --generate <platform> --rack <file>` and check it with `arc.py --rack <file> --validate --spec-mode <mode>`.
+ARC runs on baremetal only. The runner needs passwordless SSH to every controller. ARC itself needs passwordless sudo for tools that require escalation. Controllers need Python 3.9 or newer. Set `arc.controller_nodes` to keys in the cluster file's `node_dict`; an empty list selects its first key. A single shared `arc.rack_config` path is used on all controllers, and each file describes that controller's own rack. CVS does not yet generate these files from the cluster topology or copy them to the controllers: the operator stages one per controller at that path before the run (generation and distribution are planned as a follow-up). Create a rack JSON with `arc.py --generate <platform> --rack <file>` and check it with `arc.py --rack <file> --validate --spec-mode <mode>`.
 
 The cluster file needs no rack schema. Non-controller nodes are never contacted by these suites.
 
