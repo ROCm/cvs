@@ -1,4 +1,12 @@
-'''Structured ARC summary records for the status matrix Run Deck.'''
+'''
+Copyright 2025 Advanced Micro Devices, Inc.
+All rights reserved. This notice is intended as a precaution against inadvertent
+publication and does not imply publication or any waiver of confidentiality.
+The year included in the foregoing notice is the year of creation of the work.
+All code contained here is Property of Advanced Micro Devices, Inc.
+
+Structured ARC summary records for the status matrix Run Deck.
+'''
 
 
 def make_meta(cluster_dict, config_dict, suite_name, timestamp):
