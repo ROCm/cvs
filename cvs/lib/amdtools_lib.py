@@ -1,4 +1,12 @@
-'''Shared install, version, log collection, and reporting helpers for AMD tools.'''
+'''
+Copyright 2025 Advanced Micro Devices, Inc.
+All rights reserved. This notice is intended as a precaution against inadvertent
+publication and does not imply publication or any waiver of confidentiality.
+The year included in the foregoing notice is the year of creation of the work.
+All code contained here is Property of Advanced Micro Devices, Inc.
+
+Shared install, version, log collection, and reporting helpers for AMD tools.
+'''
 
 import os
 import re
@@ -10,16 +18,78 @@ from cvs.lib import globals
 from cvs.lib.utils_lib import fail_test
 
 log = globals.log
+# Default install prefix laid down by the deb/rpm packages and by a legacy tar
+# install of an AMD tool (ANC, ARC, ...). TAR installs may relocate elsewhere
+# via the tool's install-path config key; deb/rpm always use this fixed prefix
+# because their archives bake in absolute locations.
 AMDTOOLS_PREFIX = "/opt/amdtools"
+
+# How often (seconds) the download heartbeat prints partial-file size. Must be
+# comfortably smaller than the tool's install timeout so the heartbeat keeps
+# the channel active well within the inactivity window.
 DOWNLOAD_PROGRESS_INTERVAL = 15
+
+# Characters that make a config value unsafe to interpolate into the remote
+# shell strings the installers build. A single quote breaks single-quoted
+# interpolations; a double quote, backtick, ``$`` or backslash can be expanded
+# or command-substituted inside a DOUBLE-quoted interpolation (e.g. the
+# ``"<prefix>/$name"`` rm target); a newline splits the command. Config is
+# trusted, so rather than shell-escape everywhere we reject these at the
+# boundary and fail fast with a clear message.
 SHELL_UNSAFE_CHARS = ("'", '"', "`", "$", "\\", "\n")
+
+# The AMD tool version grammar, defined once and reused by every extractor so
+# the "what counts as a version" rule cannot drift between them.
+#   VERSION_BODY: a dotted-numeric base (>=2 components, so a lone integer is
+#     not a version) with an OPTIONAL lowercase ``-rc.<n>`` suffix. Lowercase is
+#     deliberate -- an IGNORECASE match would accept ``1.7.0-RC.2`` that the
+#     case-sensitive extractors then read as plain ``1.7.0``, letting a lower RC
+#     silently satisfy the guard.
+#   VERSION_END: a boundary that forbids the match from stopping in the middle
+#     of a longer token. Without it an ATTACHED malformed rc silently truncates
+#     (``1.7.0-rc.bad`` -> ``1.7.0``; ``1.7.0-rc.1foo`` -> ``1.7.0-rc.1``;
+#     ``1.7.0rc1`` -> ``1.7.0``). It rejects a trailing ``.<digit>`` (mid-base),
+#     any alnum (mid-token junk), and a trailing ``-rc`` in ANY case (``-RC`` /
+#     ``-Rc`` too, so an uppercase rc suffix is rejected rather than truncated to
+#     its base). A package revision like the ``-1`` in
+#     ``...-1.7.0-rc.1-1.x86_64.rpm`` is still fine: ``-1`` begins with ``-``
+#     then a digit, which the boundary allows.
 VERSION_BODY = r"\d+\.\d+(?:\.\d+)*(?:-rc\.\d+)?"
 VERSION_BODY_GROUPED = r"(\d+\.\d+(?:\.\d+)*)(?:-rc\.(\d+))?"
 VERSION_END = r"(?!\.\d)(?![0-9A-Za-z])(?![-][rR][cC])"
+
+# Extract the semantic version (``1.4.9`` / ``1.5.5`` / ``1.7.0-rc.1``) from a
+# release URL. The FIRST dotted-numeric run in the filename is the version in
+# every tool naming scheme, legacy and direct alike ("x86_64"/"x64" have no
+# dot-separated triple, so they never start a candidate). The parser anchors the
+# full grammar at that first candidate position (see parse_version_from_url) and
+# does NOT scan onward -- so a malformed first token (e.g. ``1.7.0-rc.bad``) is
+# rejected rather than silently skipped in favour of a later number like the
+# ``2.31`` in a ``-glibc-2.31`` suffix.
 _URL_VERSION_RE = re.compile(VERSION_BODY + VERSION_END)
 _URL_VERSION_CANDIDATE_RE = re.compile(r"\d+\.\d+")
+
+# Match a dotted-numeric release with its optional ``-rc.<n>`` suffix as ONE
+# token (groups: 1 = base, 2 = rc number). The rc is part of the same token, so
+# it is never lost when the version is embedded in text.
 _VERSION_RE = re.compile(VERSION_BODY_GROUPED + VERSION_END)
+
+# AMD tool releases changed their packaging in the 1.5.0 series:
+#   - LEGACY (<= 1.4.x): every flavour ships as an OUTER ``.tar.gz`` whose name
+#     carries a ``-deb-`` / ``-rpm-`` / ``-tar-`` token, e.g.
+#     ``anc-release-helios-nda-1.4.9-deb-linux-x64.tar.gz``. Inside are the real
+#     deb/rpm packages (deb/rpm flavours) or two inner tarballs (tar flavour).
+#   - DIRECT (1.5.0+): the URL points straight at the artifact -- a ``.deb``, a
+#     ``.rpm``, or a ``.tar.gz`` that IS the tree (no inner archives) -- with NO
+#     ``-<flavour>-`` token, e.g. ``anc-release-helios-nda_1.5.5_amd64.deb`` /
+#     ``anc-release-helios-nda-1.5.5-x86_64.tar.gz``.
+# The two are told apart by the presence of the legacy ``-<flavour>-`` token
+# (see detect_package_flavour); a legacy tar's name also ends in ``.tar.gz``, so
+# the token MUST be checked before the extension.
 PackageFlavour = namedtuple("PackageFlavour", ["pkg_type", "is_direct"])
+
+# Substring of a per-node failure reason meaning the tool item does not exist on
+# that node; deck_status maps it to "na" instead of "fail".
 NOT_AVAILABLE_TEXT = "not available on the remote system"
 
 
@@ -31,7 +101,7 @@ def node_label_from_file(cluster_dict, host):
     key) the label is just the host key so the name is not duplicated.
 
     This is the single source of truth for the node label so that the collected
-    ANC log tree uses an identical folder name for the same node across runs. It
+    tool log tree uses an identical folder name for the same node across runs. It
     deliberately does NOT resolve the hostname over SSH so the label stays stable
     and derivable from the cluster file alone.
     '''
@@ -65,7 +135,8 @@ def new_run_timestamp():
 def resolve_run_log_folder(subpath, test_name, timestamp, node=None):
     '''
     Resolve this run's run_dir into an absolute tool log destination directory. The
-    code appends the fixed subpath under run_dir, substituting "<node>"
+    code appends the tool's fixed log subpath (e.g. ANC_LOG_SUBPATH) under
+    run_dir, substituting "<node>"
     (the per-node "<ip>_<hostname>" label), "<test_name>", and "<timestamp>".
 
     run_dir comes from RunLayout (the same directory pytest writes its
@@ -106,7 +177,7 @@ def download_with_progress_snippet(url, dest, label, interval=DOWNLOAD_PROGRESS_
     until the (large) install_timeout elapses.
 
     ``url`` and ``dest`` are single-quoted here; callers validate config values
-    for embedded single quotes (see _assert_shell_safe) before interpolation.
+    for embedded single quotes (see assert_shell_safe) before interpolation.
     '''
     return (
         f"( wget -q --timeout=60 --tries=3 '{url}' -O '{dest}' & "
@@ -125,8 +196,8 @@ def assert_shell_safe(anc_cfg, keys, tool):
     '''
     Reject config values that would break or subvert the remote shell strings.
 
-    The install commands interpolate config values (anc_release_url,
-    ANC_INSTALL_PATH, ...) into the remote command, both inside single quotes
+    The install commands interpolate config values (the release URL, the
+    install path, ...) into the remote command, both inside single quotes
     (which only a ``'`` breaks) and inside double quotes (where ``$``/backtick/
     ``\\`` still expand). A value containing any SHELL_UNSAFE_CHARS is rejected
     here so it can never reach the shell verbatim.
@@ -151,9 +222,9 @@ def validate_cluster_username(cluster_dict, tool):
     Return a problem string if the cluster file's ``username`` is unsafe to
     interpolate into remote shell commands, else None.
 
-    The username comes from the cluster file (not the anc config), so it never
-    passes through _assert_shell_safe, yet it is interpolated into remote
-    commands (e.g. the ``sudo chown <user>`` in _pull_log_dir). A value with a
+    The username comes from the cluster file (not the tool config), so it never
+    passes through assert_shell_safe, yet it is interpolated into remote
+    commands (e.g. the ``sudo chown <user>`` in pull_remote_dir). A value with a
     space would split into two chown args; one with shell metacharacters could
     inject a command under sudo. Validate it at the fixture boundary. An
     empty/missing username is left to the connection layer to report.
@@ -175,8 +246,8 @@ def validate_cluster_username(cluster_dict, tool):
 
 def remote_user_tmp(user):
     '''
-    Return a per-user remote temp DIRECTORY (``/tmp/<user>``) for ANC scratch
-    files, so concurrent users running ANC on the same node do not collide on a
+    Return a per-user remote temp DIRECTORY (``/tmp/<user>``) for tool scratch
+    files, so concurrent users running the tool on the same node do not collide on a
     shared, fixed-name path they cannot overwrite (another user's root/other
     ownership under /tmp/<file> would raise a permission error). Callers are
     responsible for ``mkdir -p`` before writing. The user is sanitised to a
@@ -206,10 +277,10 @@ def fail_unreachable_nodes(expected, out_dict, action, tool):
 
 def is_strict_version(version):
     '''
-    True when ``version`` is ENTIRELY a valid ANC version token (no surrounding
+    True when ``version`` is ENTIRELY a valid tool version token (no surrounding
     text, no trailing garbage): the stripped string fullmatches _VERSION_RE.
 
-    Unlike parse_anc_version (which tolerates surrounding text for reading a
+    Unlike parse_version (which tolerates surrounding text for reading a
     version off node/URL output), this is the strict gate for a USER-configured
     value: ``1.7.0`` / ``1.7.0-rc.1`` pass; ``1.7.0-rc.bad`` / ``release-1.7.0``
     / ``1.7.0-RC.2`` / ``7`` do not. Returns False for blank/None.
@@ -221,7 +292,7 @@ def is_strict_version(version):
 
 def parse_version(version):
     '''
-    Parse an ANC version string into a comparable ``(base_tuple, rc)`` pair.
+    Parse a tool version string into a comparable ``(base_tuple, rc)`` pair.
 
     ``base_tuple`` is the dotted-numeric release (e.g. ``(1, 7, 0)``); ``rc`` is
     the release-candidate number when the version carries a ``-rc.<n>`` suffix,
@@ -248,9 +319,9 @@ def parse_version(version):
 
 def compare_versions(left, right):
     '''
-    Three-way compare two ANC version strings: -1 / 0 / 1 for left <, ==, >.
+    Three-way compare two tool version strings: -1 / 0 / 1 for left <, ==, >.
 
-    Ordering rules (ANC-specific, intentionally NOT semver):
+    Ordering rules (AMD-tool-specific, intentionally NOT semver):
       - Base releases compare numerically, zero-padded to equal length
         (``1.6.0 < 1.7.0 < 1.8.0``).
       - A release candidate is treated as EQUAL to its own base release
@@ -284,7 +355,7 @@ def compare_versions(left, right):
 
 def version_satisfies(installed, required):
     '''
-    True when an ``installed`` ANC version satisfies a ``required`` one, i.e.
+    True when an ``installed`` tool version satisfies a ``required`` one, i.e.
     ``installed >= required`` under compare_versions. Used for the
     precheck-skip (per node) and post-install verification. Returns False on any
     unparseable input (treated as "cannot confirm it satisfies").
@@ -297,7 +368,7 @@ def version_satisfies(installed, required):
 
 def detect_package_flavour(anc_release_url, tool):
     '''
-    Infer the ANC package flavour AND packaging generation from the release name.
+    Infer the tool package flavour AND packaging generation from the release name.
 
     Returns a PackageFlavour(pkg_type, is_direct):
       - pkg_type: one of ``"deb"``, ``"rpm"``, ``"tar"``.
@@ -335,19 +406,19 @@ def detect_package_flavour(anc_release_url, tool):
 
 def parse_version_from_url(anc_release_url):
     '''
-    Extract the semantic version embedded in an ANC release URL, or None.
+    Extract the semantic version embedded in a tool release URL, or None.
 
     Locates the FIRST dotted-numeric candidate in the filename (e.g. ``1.4.9``
     from ``...-1.4.9-deb-linux-x64.tar.gz``, ``1.5.5`` from
     ``...-1.5.5-x86_64.tar.gz`` and ``..._1.5.5_amd64.deb``) and requires the
-    full ANC grammar to match AT that position. Returns None when the URL is
-    empty, carries no candidate, or the first candidate is not a well-formed ANC
+    full version grammar to match AT that position. Returns None when the URL is
+    empty, carries no candidate, or the first candidate is not a well-formed tool
     version -- so a malformed leading token (``anc-1.7.0-rc.bad-glibc-2.31...``)
     is rejected rather than skipped in favour of the later ``2.31``.
 
     Used by the fail-fast config guard to abort (before contacting any node)
-    when the user-supplied ``anc.anc_version`` is GREATER than the archive
-    version (the archive could not satisfy the requested version).
+    when the user-supplied tool version (e.g. ``anc.anc_version``) is GREATER
+    than the archive version (the archive could not satisfy the requested version).
     '''
     if not anc_release_url:
         return None
@@ -437,7 +508,7 @@ def safe_tar_extract(tf, dest_dir):
       - symlink, hardlink, device, and FIFO members are rejected outright.
         Rejecting LINKS is deliberate: it stops the archive from planting a
         symlink that a LATER member then writes through (a chained-symlink
-        sequence ``a -> .``; ``a/c -> ../out``; then ``a/c/pwn``). ANC log
+        sequence ``a -> .``; ``a/c -> ../out``; then ``a/c/pwn``). Tool log
         archives contain no links, so rejecting them costs nothing and closes
         the whole traversal class (device/FIFO rejection likewise prevents a
         node-controlled archive dropping a special file on the controller).
@@ -455,10 +526,12 @@ def safe_tar_extract(tf, dest_dir):
 
 def pull_remote_dir(orch, host, user, log_dir, dest_dir, tool):
     '''
-    Copy the entire tool log directory from the node into dest_dir.
+    Copy the ENTIRE tool log directory from the node into dest_dir.
 
-    Tar the whole directory on the node, download the tarball, and extract it
-    locally so the full tool log tree is preserved.
+    The tool (ANC, ARC, ...) writes every artifact (console.log, journal.log,
+    per-item logs, json summaries, ...) under its "Log directory". Rather than
+    cherry-picking files, tar the whole directory on the node, download the
+    tarball, and extract it locally so the full tool log tree is preserved.
 
     Every orch call is scoped to the single ``host`` (``hosts=[host]``) so each
     node's log tree is pulled independently -- the per-node capture the suite
@@ -466,20 +539,22 @@ def pull_remote_dir(orch, host, user, log_dir, dest_dir, tool):
 
     Returns:
       tuple[str | None, str | None]: (extracted_dir, failure_reason).
-      extracted_dir is the local path to the extracted directory on success;
-      failure_reason is set (and path None) on any collection error.
+      extracted_dir is the local path to the extracted directory on success
+      (the caller looks for console.log etc. inside it); failure_reason is set
+      (and path None) on any collection error.
     '''
     log_dir = log_dir.rstrip("/")
     base = os.path.basename(log_dir)
     parent = os.path.dirname(log_dir)
     # Per-user remote path so concurrent users on the same node do not collide on
-    # a shared /tmp/anc_<base>.tar.gz owned by another user.
+    # a shared /tmp/<tool>_<base>.tar.gz owned by another user.
     user_tmp = remote_user_tmp(user)
     remote_tar = f"{user_tmp}/{tool.lower()}_{base}.tar.gz"
 
-    # The log directory may be root-owned and unreadable by the SSH user. Build
-    # the archive under sudo, then chown it back so SFTP can pull it. `&&` makes
-    # a tar failure abort before exec tries to download a missing file.
+    # The tool ran under sudo, so log_dir (and its parents, e.g. /root/logs) are
+    # root-owned and unreadable by the plain SSH user. Build the archive under
+    # sudo, then chown it back so SFTP can pull it. `&&` so a tar failure aborts
+    # before the (silent-on-nonzero) exec proceeds to download a missing file.
     archive_cmd = (
         f"mkdir -p '{user_tmp}' && sudo tar -czf '{remote_tar}' -C '{parent}' '{base}' "
         f"&& sudo chown '{user}' '{remote_tar}'"
@@ -531,9 +606,9 @@ def pull_remote_dir(orch, host, user, log_dir, dest_dir, tool):
             pass
 
     extracted_dir = os.path.join(dest_dir, base)
-    # The archive may contain root-owned entries. Give
-    # the whole extracted tree back to the user running the test so the logs are
-    # readable/removable without sudo on this box.
+    # The tool archived its logs as root, so entries may carry root ownership.
+    # Give the whole extracted tree back to the user running the test so the logs
+    # are readable/removable without sudo on this box.
     chown_tree_to_runner(host, extracted_dir)
     log.info("Node %s: %s logs copied to %s", host, tool, extracted_dir)
 
@@ -567,9 +642,21 @@ def stash_report_link(request, rel_path, link_name, extras_attr):
 
 
 def replace_tops_and_extract_snippet(archive, prefix):
-    '''Remove only archive-owned top-level folders before extracting.'''
-    # Strip a leading ./ so the archive's top-level names match the install prefix.
-    # Guard again before rm -rf in case a malformed archive yields a path-like name.
+    '''
+    Build a shell snippet that replaces the archive's top-level folders under
+    ``prefix`` and then extracts ``archive`` into it.
+
+    Derive the set of TOP-LEVEL folders the archive ships and ``rm -rf`` each
+    under ``prefix`` so a stale file removed in a new release does not survive as
+    an overlaid leftover; unrelated content under ``prefix`` is left alone.
+    Requires ``$SUDO`` to be set first (see sudo_prefix_snippet).
+
+    Top-level folders are read from the archive listing with a leading ``./``
+    stripped and the ``.``/``..`` entries dropped, so a malicious or corrupt
+    archive name cannot make the cleanup ``rm -rf`` outside the prefix. The loop
+    additionally skips any name that is not a single plain path component
+    (belt-and-braces alongside that filter).
+    '''
     return (
         f"echo 'Determining top-level tool folders...'; "
         f"tops=$( tar -tzf {archive} | sed 's#^\\./##' | awk -F/ '{{print $1}}' | grep -vE '^([.]{{1,2}})?$' | sort -u ); "
@@ -606,17 +693,23 @@ def attach_node_log_tarballs(request, mgr, results, test_name, timestamp, runner
         try:
             with tarfile.open(tar_path, "w:gz") as tf:
                 tf.add(node_dir, arcname=arcname)
-        except Exception as exc:
+        except Exception as exc:  # best-effort; do not fail the test
             log.warning("%s '%s': could not archive logs for node %s: %s", tool, test_name, r.label, exc)
             continue
         link_name = f"{tool} logs: {r.label}" + (" (FAILED)" if r.reason else "")
         try:
+            # track_in_reports=True lists the tarball in the Reports section; the
+            # Reports renderer groups it under its test's verdict and shows it
+            # only for FAILED tests (test_name/passed carry that grouping info).
+            # The per-row link is added separately via stash_report_link.
+            # NOTE: do not pass link_name here — the per-row link is added by
+            # stash_report_link below; passing it would duplicate the row link.
             rel_path = mgr.add_html_to_report(
                 tar_path, request=request, track_in_reports=True, test_name=test_name, passed=not r.reason
             )
             stash_report_link(request, rel_path, link_name, extras_attr)
             if rel_path:
                 hrefs[r.label] = os.path.basename(rel_path)
-        except Exception as exc:
+        except Exception as exc:  # best-effort
             log.warning("%s '%s': could not attach logs for node %s: %s", tool, test_name, r.label, exc)
     return hrefs
