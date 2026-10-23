@@ -3,7 +3,7 @@
 Suites do not all follow the key.
 
 .. list-table::
-   :widths: 4 6
+   :widths: 6 4
    :header-rows: 1
 
    * - What the suite does
