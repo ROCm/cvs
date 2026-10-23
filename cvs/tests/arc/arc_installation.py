@@ -1,4 +1,12 @@
-'''Install and validate ARC on the configured rack controllers.'''
+'''
+Copyright 2025 Advanced Micro Devices, Inc.
+All rights reserved. This notice is intended as a precaution against inadvertent
+publication and does not imply publication or any waiver of confidentiality.
+The year included in the foregoing notice is the year of creation of the work.
+All code contained here is Property of Advanced Micro Devices, Inc.
+
+Install and validate ARC on the configured rack controllers.
+'''
 
 from cvs.lib import arc_lib, globals
 from cvs.lib.utils_lib import fail_test, print_test_output, update_test_result
