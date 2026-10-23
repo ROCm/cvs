@@ -27,7 +27,7 @@ subtrees:
   - file: how-to/configure/cluster-config
     title: Configure the cluster file
   - file: how-to/configure/test-suite-config/index
-    title: Configure test configuration files
+    title: Configure test config files
     subtrees:
     - entries:
       - file: how-to/configure/test-suite-config/pick-config-file

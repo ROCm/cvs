@@ -140,17 +140,32 @@ Pytest HTML report and bundle
      - Default location
      - Notes
    * - Pytest HTML report
-     - ``<run_dir>/<test-file-stem>.html``
-     - For example, ``<workspace>/cvs_runs/<run_id>/rccl_perf.html``. The auto-derived report is self-contained.
+     - ``<run_dir>/``
+       ``<test-file-stem>.html``
+     - For example,
+       ``<workspace>/cvs_runs/<run_id>/rccl_perf.html``.
+       The auto-derived report is self-contained.
    * - Text log
-     - ``<run_dir>/<test-file-stem>.log``
+     - ``<run_dir>/``
+       ``<test-file-stem>.log``
      - Pytest run log.
    * - Attachments
-     - ``<run_dir>/<test-file-stem>_html/``
-     - Per-test "Full Log" pages and a copy of the run log. When the suite supports a Run Deck, this directory also holds the Run Deck HTML and JSON, and might include a summary page or an interactive viewer. The pytest report's **Reports** section links the Run Deck HTML. The other deck files stay in this directory and in the zip. Recreated at the start of each run.
+     - ``<run_dir>/``
+       ``<test-file-stem>_html/``
+     - Per-test "Full Log" pages and a copy of the run log.
+       When the suite supports a Run Deck, this directory
+       also holds the Run Deck HTML and JSON, and might
+       include a summary page or an interactive viewer.
+       The pytest report's **Reports** section links the
+       Run Deck HTML. The other deck files stay in this
+       directory and in the zip. Recreated at the start
+       of each run.
    * - Zip bundle
-     - ``<run_dir>/<test-file-stem>_<YYYY-mm-ddTHHMMSS>.zip``
-     - Contains the report, the attachments directory, and the cluster and config files. Links still work after extraction.
+     - ``<run_dir>/``
+       ``<test-file-stem>_<YYYY-mm-ddTHHMMSS>.zip``
+     - Contains the report, the attachments directory,
+       and the cluster and config files. Links still work
+       after extraction.
 
 ``<run_dir>`` is ``<workspace>/cvs_runs/<run_id>``. ``<run_id>`` is ``local-<YYYYmmdd-HHMMSS>`` outside a scheduler, or the job ID under SPUR or Slurm.
 
