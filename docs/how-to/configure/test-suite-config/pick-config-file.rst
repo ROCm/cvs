@@ -2,22 +2,25 @@
   :description: Choose the right CVS test suite config template for your workload type on AMD Instinct GPU clusters: training, inference, health, or RCCL.
   :keywords: CVS, ROCm, configure, config_file, test suite, AMD Instinct, GPU, AMD, RCCL, training, inference, JSON
 
-***************************************************************************
-Choose the right Cluster Validation Suite (CVS) config template for your workload
-***************************************************************************
+*************************************************************************
+Choose a Cluster Validation Suite (CVS) config template for your workload
+*************************************************************************
 
 For the complete field-by-field schema for each test suite's config file, see :doc:`/reference/configuration-files/index`.
 Use ``cvs config copy <path> --output <dest>`` to copy a template, or ``cvs config list <path>`` to browse templates in a directory.
 
-Platform, health, RCCL, and other diagnostic/network configs use **fixed filenames** (see **Burn-in / Diag** and **Network** below). **Training** and **inference** workloads use the naming patterns in their respective sections.
+Platform, health, RCCL, and other diagnostic/network configs use fixed filenames (see :ref:`burn-in` and :ref:`network`). :ref:`training` and :ref:`inference` workloads use the naming patterns in their respective sections.
 
 Threshold pairs
 ===============
 
-Some training and inference suites ship a matching threshold file for each config: the same basename with ``_threshold`` inserted before ``.json`` (for example ``…_single_threshold.json``). Copy both files and keep them in the same directory. The config references its threshold file via a ``threshold_json`` field.
+Some training and inference suites ship a matching threshold file for each config: the same basename with ``_threshold`` inserted before ``.json`` (for example ``…_single_threshold.json``). 
+Copy both files and keep them in the same directory. The config references its threshold file through a ``threshold_json`` field.
 
-Burn-in / Diag
-==============
+.. _burn-in:
+
+Burn-in and diagnostics
+=======================
 
 The following suites are available for burn-in and diagnostic workloads:
 
@@ -27,7 +30,7 @@ The following suites are available for burn-in and diagnostic workloads:
 
    * - Suite
      - Config location
-     - List / README
+     - List or README
    * - Platform
      - ``input/config_file/platform/host_config.json``
      - ``cvs config list platform``
@@ -40,6 +43,8 @@ The following suites are available for burn-in and diagnostic workloads:
 
        `README_preflight_config.md <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/preflight/README_preflight_config.md>`_
 
+.. _network:
+
 Network
 =======
 
@@ -51,18 +56,20 @@ The following suites are available for network testing:
 
    * - Suite
      - Config location
-     - List / README
+     - List or README
    * - IB Perf
      - ``input/config_file/ibperf/ibperf_config.json``
      - ``cvs config list ibperf``
    * - RCCL
-     - ``input/config_file/rccl/rccl_config.json``
-       ``input/config_file/rccl/mi300x_rccl_single_node_config.json`` and
-       ``input/config_file/rccl/mi350x_rccl_single_node_config.json`` (single-node guide bars)
+     - - ``input/config_file/rccl/rccl_config.json``
+       - ``input/config_file/rccl/mi300x_rccl_single_node_config.json`` (single-node guide bars)
+       - ``input/config_file/rccl/mi350x_rccl_single_node_config.json`` (single-node guide bars)
      - ``cvs config list rccl``
    * - MORI
      - ``input/config_file/mori/mi35x_mori_config.json``
      - ``cvs config list mori``
+
+.. _training:
 
 Training
 ========
@@ -82,9 +89,9 @@ Training workload templates use:
    * - ``{gpu}``
      - Target GPU architecture — for example ``mi300x``, ``mi325x``, ``mi355x``, or ``mi3xx``.
    * - ``{framework}``
-     - Training stack — for example ``jaxmaxtext``, ``megatron``, ``torchtitan``.
+     - Training stack — for example ``jaxmaxtext``, ``megatron``, and ``torchtitan``.
    * - ``{model}``
-     - Model identifier — for example ``llama3_1_70b``, ``llama-3.1-8b``, ``deepseek-v2-lite``.
+     - Model identifier — for example ``llama3_1_70b``, ``llama-3.1-8b``, and ``deepseek-v2-lite``.
    * - ``{mode}``
      - Topology — ``single`` (one node) or ``distributed`` (multi-node).
 
@@ -108,25 +115,38 @@ Available suites
 
    * - Suite
      - Config location
-     - List / README
+     - List or README
    * - JAX MaxText
-     - ``input/config_file/training/jaxmaxtext/`` — ``mi{gpu}_jaxmaxtext_{model}_{single|distributed}.json`` + ``mi{gpu}_jaxmaxtext_{model}_{single|distributed}_threshold.json``
+     - | ``input/config_file/training/jaxmaxtext/``
+       | ``mi{gpu}_jaxmaxtext_{model}_{single|distributed}.json``
+       | ``mi{gpu}_jaxmaxtext_{model}_{single|distributed}_threshold.json``
      - ``cvs config list training/jaxmaxtext``
 
        `Config README <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/training/jaxmaxtext/README.md>`_
    * - Megatron
-     - ``input/config_file/training/megatron/`` — MI300X/MI325X share ``mi3xx_megatron_{model}_{single|distributed}.json`` plus SKU ``mi300x_*`` / ``mi325x_*`` threshold files; MI355X ships Llama 3.1 8B and Llama 3.3 70B ``*_single.json`` plus matching ``mi355x_*`` thresholds. ``NNODES`` is not in JSON; ``container.env`` NIC values include examples plus ``<changeme>``.
+     - | ``input/config_file/training/megatron/``
+       | MI300X/MI325X: ``mi3xx_megatron_{model}_{single|distributed}.json``
+       | plus ``mi300x_*`` / ``mi325x_*`` threshold files
+       | MI355X: Llama 3.1 8B and Llama 3.3 70B ``*_single.json``
+       | plus ``mi355x_*`` thresholds
+       | ``NNODES`` is not in JSON;
+       | ``container.env`` NIC values include examples plus ``<changeme>``
      - ``cvs config list training/megatron``
 
        `docs/reference/configuration-files/training/megatron.rst <https://github.com/ROCm/cvs/blob/main/docs/reference/configuration-files/training/megatron.rst>`_
    * - TorchTitan
-     - ``input/config_file/training/torchtitan/`` — ``mi{gpu}_torchtitan_{model}_{single|distributed}.json`` + ``mi{gpu}_torchtitan_{model}_{single|distributed}_threshold.json``
+     - | ``input/config_file/training/torchtitan/``
+       | ``mi{gpu}_torchtitan_{model}_{single|distributed}.json``
+       | ``mi{gpu}_torchtitan_{model}_{single|distributed}_threshold.json``
      - ``cvs config list training/torchtitan``
 
        :doc:`Schema reference </reference/configuration-files/training/torchtitan>`
    * - Aorta
-     - ``input/config_file/benchmark/aorta/mi3xx_aorta_profile_overlap_2gpu_{single|distributed}.json``
+     - | ``input/config_file/benchmark/aorta/``
+       | ``mi3xx_aorta_profile_overlap_2gpu_{single|distributed}.json``
      - ``cvs config list benchmark/aorta``
+
+.. _inference:
 
 Inference
 =========
@@ -189,20 +209,20 @@ Available suites
 
    * - Suite
      - Config location
-     - List / README
+     - List or README
    * - ATOM
      - ``input/config_file/inference/atom/`` — ``mi{gpu}_atom_{model}_{precision}_{mode}.json`` + ``mi{gpu}_atom_{model}_{precision}_{mode}_threshold.json``
-     - ``cvs config list inference/atom``
-
-       :doc:`How to run </how-to/test-suites/inference/atom>` · :doc:`Config reference </reference/configuration-files/inference/atom>`
+     - - ``cvs config list inference/atom``
+       - :doc:`How-to guide </how-to/test-suites/inference/atom>`
+       - :doc:`Config reference </reference/configuration-files/inference/atom>`
    * - vLLM
      - ``input/config_file/inference/vllm/`` — ``mi3xx_vllm_{model}_{precision}_{single|distributed}.json`` plus sibling ``mi325x_*_threshold.json`` files
-     - ``cvs config list inference/vllm``
-
-       :doc:`How to run </how-to/test-suites/inference/vllm>` · :doc:`Config reference </reference/configuration-files/inference/vllm>`
+     - - ``cvs config list inference/vllm``
+       - :doc:`How-to guide </how-to/test-suites/inference/vllm>`
+       - :doc:`Config reference </reference/configuration-files/inference/vllm>`
    * - SGLang
      - ``input/config_file/inference/sglang/`` — ``mi{gpu}_sglang_{model}_{single|distributed|disaggregated}.json``
-     - ``cvs config list inference/sglang``
+     - - ``cvs config list inference/sglang``
    * - xDiT
      - ``input/config_file/inference/xdit/`` — ``mi{gpu}_pytorch_xdit_{model}_{single|distributed}.json``
-     - ``cvs config list inference/xdit``
+     - - ``cvs config list inference/xdit``

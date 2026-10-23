@@ -69,7 +69,7 @@ read-only). Keep it as shipped; only customize the host side of the models
 volume. ATOM still defaults ``HF_HUB_CACHE`` to that path for Hub weight
 lookups. SGLang ``bench_serving`` with ``dataset_name=random`` also downloads
 ShareGPT into ``HF_HUB_CACHE``, so Qwen SGLang samples override
-``HF_HUB_CACHE`` / ``HF_HOME`` to ``{paths.shared_fs}/.cache/huggingface``.
+``HF_HUB_CACHE`` and ``HF_HOME`` to ``{paths.shared_fs}/.cache/huggingface``.
 
 For multinode PP:
 
@@ -116,7 +116,7 @@ stem — DeepSeek R1 or Qwen FP8):
     --config_profile mtp3 \
     -vvv
 
-vLLM / SGLang parity use the unified serving schema in ``inference/atom/``
+vLLM and SGLang parity use the unified serving schema in ``inference/atom/``
 (for example ``mi3xx_atom_vllm_deepseek-r1_fp8_single.json``) — still run with
 ``cvs run atom``, not ``cvs run vllm`` or ``cvs run sglang``.
 
@@ -195,7 +195,7 @@ true``:
      - Example metrics (bare names in thresholds)
    * - ``throughput``
      - ``output_throughput``, ``per_gpu_throughput``, …
-   * - ``ttft`` / ``tpot``
+   * - ``ttft`` or ``tpot``
      - ``mean_ttft_ms``, ``p99_ttft_ms``, …
    * - ``health``
      - ``success_rate``, ``failed``
@@ -205,7 +205,7 @@ true``:
      - Remaining metrics — logged, not gated
 
 Benchmark artifacts still expose ``client.*`` keys internally; threshold JSON
-uses bare metric names. ATOM may omit tail percentiles even when
+uses bare metric names. ATOM might omit tail percentiles even when
 ``metric_percentiles`` requests them — only present metrics are gated.
 
 Reports and logs
@@ -213,15 +213,15 @@ Reports and logs
 
 - **pytest HTML** — one row per lifecycle stage and per metric tier.
 - **Console tables** — ``test_print_results_table`` prints per-cell throughput and latency.
-- **Run Deck** — ``atom_run_deck.html`` / ``.json`` /
-  ``_viewer.html``. See :ref:`pytest-html-report-and-bundle` for generic Run
+- **Run Deck** — ``atom_run_deck.html``, ``.json``,
+  and ``_viewer.html``. See :ref:`pytest-html-report-and-bundle` for generic Run
   Deck behavior and packaging.
 - **Per-cell logs** — under ``paths.log_dir`` on cluster nodes (server + client logs).
 
 Launcher vs GPU node
 ====================
 
-SSH / jumphost labs: ``cvs run`` and the venv live on the **launcher**. Spur or
+SSH and jumphost labs: ``cvs run`` and the venv live on the **launcher**. Spur or
 Slurm managed labs: ``cvs run`` and ``make install`` run **inside the job step**
 on the GPU node (shared home for ``~/input/`` and reports).
 
@@ -232,7 +232,7 @@ on the GPU node (shared home for ``~/input/`` and reports).
    * - Item
      - SSH launcher
      - GPU node (SSH lab)
-     - GPU node (Spur / Slurm step)
+     - GPU node (Spur or Slurm step)
    * - ``cvs run``, venv, reports
      - Yes
      - No

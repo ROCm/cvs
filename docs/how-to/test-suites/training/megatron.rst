@@ -83,8 +83,8 @@ The same ordered test stages run for both backends. ``_make_training_job`` in ``
      - Downloads ``tokenizer.model`` into ``data_cache_dir`` for DeepSeek/Mixtral. Llama/Qwen skip (HF repo ID is enough)
      - Always a no-op (``_needs_local_tokenizer()`` is false; Primus takes HF repo IDs in YAML)
    * - ``test_smoke``
-     - Runs the cell from the config ``smoke`` block (default 10 iters) via the Megatron-LM training script under ``/workspace/Megatron-LM``. Skipped when ``smoke.enabled`` is ``false``
-     - Same cell via ``primus-cli direct -- train pretrain --config examples/megatron/configs/{gpu_arch}/{model}-{precision}-pretrain.yaml``. If the MI325X YAML is missing, Primus retries ``MI300X``. Skipped when ``smoke.enabled`` is ``false``
+     - Runs the cell from the config ``smoke`` block (default 10 iters) using the Megatron-LM training script under ``/workspace/Megatron-LM``. Skipped when ``smoke.enabled`` is ``false``
+     - Same cell using ``primus-cli direct -- train pretrain --config examples/megatron/configs/{gpu_arch}/{model}-{precision}-pretrain.yaml``. If the MI325X YAML is missing, Primus retries ``MI300X``. Skipped when ``smoke.enabled`` is ``false``
    * - ``test_checkpoint``
      - Skipped (``checkpoint test is Primus-only``)
      - Runs only when ``checkpoint.enforce`` is ``true``. Uses ``smoke`` MBS/GBS/precision. Single-node writes under ``{log_dir}/ckpt_primus``. Distributed requires ``checkpoint.checkpoint_dir`` on a shared filesystem
@@ -254,7 +254,7 @@ Tests run in this pinned order. ``[combo]`` = one row per enabled sweep combo.
      - once
      - Tear the container down
 
-A training failure is isolated to that combo's ``test_training`` row; other combos still run. When a combo's training does not complete, its downstream ``test_metric`` and ``test_loss_curve`` rows are skipped. If an early lifecycle stage fails, all subsequent stages are skipped via ``lifecycle.failed``.
+A training failure is isolated to that combo's ``test_training`` row; other combos still run. When a combo's training does not complete, its downstream ``test_metric`` and ``test_loss_curve`` rows are skipped. If an early lifecycle stage fails, all subsequent stages are skipped using ``lifecycle.failed``.
 
 On a training failure, lingering GPU processes are killed (``stop_training_processes``) so the next combo does not launch on top of them.
 

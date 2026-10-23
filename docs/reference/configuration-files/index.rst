@@ -26,12 +26,12 @@ Test configuration files
 
 Configuration references are grouped by test category. Each page documents parameters and example JSON for suites under ``cvs/input/config_file/``.
 
-- :doc:`Burn-in / Diag </reference/configuration-files/burn-in-diag/index>`
+- :doc:`Burn-in and diagnostics </reference/configuration-files/burn-in-diag/index>`
 - :doc:`Network </reference/configuration-files/network/index>`
 - :doc:`Training </reference/configuration-files/training/index>`
 - :doc:`Inference </reference/configuration-files/inference/index>`
 
-Burn-in / Diag
+Burn-in and diagnostics
 --------------
 
 - :doc:`Platform </reference/configuration-files/burn-in-diag/platform>` — host OS, BIOS, firmware, and PCIe checks

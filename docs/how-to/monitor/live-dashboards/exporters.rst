@@ -1,5 +1,5 @@
 .. meta::
-  :description: Deploy Prometheus exporters on AMD Instinct GPU cluster nodes for live fleet dashboards with Grafana, Loki, and Slurm metrics via CVS.
+  :description: Deploy Prometheus exporters on AMD Instinct GPU cluster nodes for live fleet dashboards with Grafana, Loki, and Slurm metrics using CVS.
   :keywords: CVS, ROCm, metrics_exp, Prometheus, Grafana, exporters, AMD Instinct, GPU, AMD, Loki, InfiniBand, RDMA, monitoring
 
 *******************************************************************************
@@ -26,7 +26,7 @@ Prerequisites
 
 The following prerequisites are required.
 
-- Docker Compose on the Fleet Monitor / monitoring server host
+- Docker Compose on the Fleet Monitor or monitoring server host
 - SSH from the Fleet Monitor server to GPU and control-plane nodes (optional jump host)
 - GPU nodes: ROCm driver, Docker/Podman for the AMD metrics container
 
