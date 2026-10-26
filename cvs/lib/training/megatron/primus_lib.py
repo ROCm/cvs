@@ -25,6 +25,7 @@ import time
 
 from cvs.lib import globals
 from cvs.lib import linux_utils
+from cvs.lib.env_lib import redact_secrets
 from cvs.lib.utils_lib import fail_test
 from cvs.lib.verify_lib import verify_dmesg_for_errors
 
@@ -458,8 +459,8 @@ class PrimusTrainingJob:
     def _start_primus_job(self):
         """Launch the Primus training job (distributed or single-node)."""
         log.info('start primus training job')
-        log.info('%s', self.job_cmd_list)
-        log.info('%s', self.job_cmd)
+        log.info('%s', [redact_secrets(c) for c in self.job_cmd_list])
+        log.info('%s', redact_secrets(self.job_cmd))
 
         exp_full_path = f'{self.primus_root}/{self._exp_config_path()}'
         out_dict = self.orch.exec(f'test -f {exp_full_path} && echo EXISTS || echo MISSING')
