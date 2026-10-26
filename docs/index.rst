@@ -2,9 +2,9 @@
   :description: CVS (Cluster Validation Suite) is a collection of test suites that validate AMD ROCm clusters, from single-node burn-in to distributed training and inference.
   :keywords: CVS, ROCm, AMD, cluster validation, GPU, AMD Instinct, test suites, burn-in, inference, training, RCCL, InfiniBand
 
-********************************************
+*************************************************
 ROCm Cluster Validation Suite (CVS) documentation
-********************************************
+*************************************************
 
 CVS is a collection of test suites that validate AMD ROCm clusters end to end, from single-node burn-in health tests to cluster-wide distributed training and inference.
 CVS runs over SSH from a head node, or on managed compute with no SSH between nodes for orchestrator-based suites. Slurm and SPUR are supported; see :doc:`Run on managed compute <how-to/run-on-managed-compute>`.
