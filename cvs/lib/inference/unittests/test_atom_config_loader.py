@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 
 from cvs.lib.inference.atom.atom_config_loader import (
+    CONTAINER_HF_TOKEN_PATH,
     AtomVariantConfig,
     expand_sweep,
     expand_sweep_parametrize,
@@ -143,6 +144,42 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             thresholds=thresholds,
         )
         block = orchestrator_container_from_variant(variant)
+        self.assertEqual(block["env"]["VLLM_ROCM_USE_AITER"], "1")
+        self.assertIn(f"/home/x/.hf:{CONTAINER_HF_TOKEN_PATH}:ro", block["runtime"]["args"]["volumes"])
+
+    def test_orchestrator_container_strips_hf_token_env(self):
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="legacy_profile", isl="7168", osl="1024")],
+            runs=[Run(combo="legacy_profile", concurrency=64)],
+        )
+        thresholds = {
+            "ISL=7168,OSL=1024,TP=8,PP=1,CONC=64": placeholder_gated_threshold_cell(),
+        }
+        variant = AtomVariantConfig(
+            schema_version=1,
+            framework="atom",
+            gpu_arch="mi3xx",
+            enforce_thresholds=False,
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "openai/gpt-oss-120b", "remote": 0, "precision": "bf16"},
+            container={
+                "name": "c",
+                "image": "img",
+                "runtime": {"name": "docker", "args": {"volumes": ["/home/x:/home/x"]}},
+            },
+            roles={"server": {"env": {"HF_TOKEN": "hf_secret_value", "VLLM_ROCM_USE_AITER": "1"}}},
+            params={"tensor_parallelism": "8"},
+            sweep=sweep,
+            thresholds=thresholds,
+        )
+        block = orchestrator_container_from_variant(variant)
+        self.assertNotIn("HF_TOKEN", block["env"])
+        self.assertNotIn("hf_secret_value", str(block))
         self.assertEqual(block["env"]["VLLM_ROCM_USE_AITER"], "1")
 
     def test_expand_sweep_matches_w1_single(self):
