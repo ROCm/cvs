@@ -91,6 +91,9 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_vllm_gpt-oss-120b_mxfp4``
      - ``_single``
      - GPT-OSS MXFP4 vLLM parity (serving schema)
+   * - ``mi3xx_atom_gpt-oss-120b_mxfp4``
+     - ``_single``
+     - Native GPT-OSS MXFP4; bring-up. The MI325X lab failed before ``/health``. MI355X has not been run, so the stem stays.
    * - ``mi3xx_atom_vllm_deepseek-v4-flash_fp8``
      - ``_single``
      - vLLM parity for V4-Flash FP8 TP8; fp8_e4m3 KV cache and block size 256; bring-up thresholds
