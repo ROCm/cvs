@@ -43,17 +43,17 @@ See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on runni
           "git_install_path": "/home/{user-id}/INSTALL/",
           "git_url": "https://github.com/ROCm/TransferBench.git",
           "git_tag": "v1.67.00",
-          "_comment_rocm_path": "ROCm installation path. Set the placeholder changeme to auto-detect from /opt/rocm or /opt/rocm/core-*",
           "rocm_path": "<changeme>",
-          "_comment_a2asweep_timeout": "Orch.exec timeout seconds for the a2asweep preset. Default 1500 covers the shipped 24-combo sweep plus buffer. Override directly, or omit and derive via a2asweep_combos / a2asweep_sec_per_combo / a2asweep_timeout_buffer.",
+          "env": {},
+          "auto_num_cpu_devices": true,
+          "p2p_preset": "p2p",
+          "scaling_preset": "scaling",
           "a2asweep_timeout": 1500,
           "results":
           {
               "bytes_to_transfer": "268435456",
               "path": "/home/{user-id}/INSTALL/TransferBench",
-              "_comment_gpu_to_gpu_a2a_per_link_min": "Required a2a guide bar (GB/s): every GPU RTotal_i/(N-1) >= 32.9. Legacy alias gpu_to_gpu_a2a_avg is accepted.",
               "gpu_to_gpu_a2a_per_link_min": "32.9",
-              "_comment_gpu_to_gpu_a2a_rtotal": "If set, Run Deck plots raw RTotal with no threshold. Not used for pass/fail.",
               "gpu_to_gpu_a2a_rtotal": "320.0",
               "avg_gpu_to_gpu_p2p_unidir_bw": "33.9",
               "avg_gpu_to_gpu_p2p_bidir_bw": "43.9",
@@ -64,7 +64,6 @@ See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on runni
               "32_cu_rem_read": "48.0",
               "32_cu_rem_write": "48.0",
               "32_cu_rem_copy": "48.0"
-
           }
         },
         "rvs":
@@ -192,76 +191,99 @@ AGFHC
 TransferBench
 -------------
 
+``install_transferbench`` clones ``git_url``, checks out ``git_tag``, and builds on every node. ``transferbench_cvs`` runs ``<path>/TransferBench <preset>`` on every node. ``rocm_path`` set to ``<changeme>`` auto-detects ``/opt/rocm`` or ``/opt/rocm/core-*``.
+
+Top-level ``transferbench`` keys:
+
 .. list-table::
-   :widths: 3 3 5
+   :widths: 3 2 5
    :header-rows: 1
 
-   * - Configuration parameters
-     - Default values
-     - Description
+   * - Key
+     - Packaged value
+     - Meaning
    * - ``path``
-     - ``/opt/amd/transferbench``
-     - Path where TransferBench is installed
+     - ``/home/{user-id}/INSTALL/TransferBench``
+     - Directory that contains the ``TransferBench`` binary. The command is ``<path>/TransferBench``.
    * - ``git_install_path``
      - ``/home/{user-id}/INSTALL/``
-     - Path where the Git repo is installed
+     - Parent directory for the clone. The installer writes ``<git_install_path>/TransferBench``.
    * - ``git_url``
-     - `https://github.com/ROCm/TransferBench.git <https://github.com/ROCm/TransferBench.git>`_
-     - URL for Git repo
+     - ``https://github.com/ROCm/TransferBench.git``
+     - Repository cloned by ``install_transferbench``.
    * - ``git_tag``
      - ``v1.67.00``
-     - Git tag to checkout after cloning TransferBench
+     - Required tag. Install fails when the checkout does not match.
    * - ``rocm_path``
      - ``<changeme>``
-     - Set the path of rocm
+     - ``<changeme>`` auto-detects. Any other value is used only when ``<rocm_path>/lib`` contains ``libamdhip64``.
+   * - ``env``
+     - ``{}``
+     - Extra variables for the TransferBench command. ``NUM_CPU_DEVICES`` set here is kept. Cluster ``env_vars`` are not.
+   * - ``auto_num_cpu_devices``
+     - ``true``
+     - When ``NUM_CPU_DEVICES`` is unset, count NUMA nodes that list CPUs and export that count.
+   * - ``num_cpu_devices``
+     - omitted
+     - Optional explicit CPU NUMA count. Use it when p2p aborts while enumerating empty CPU NUMA nodes.
+   * - ``p2p_preset``
+     - ``p2p``
+     - Preset for ``test_transfer_bench_p2p``.
+   * - ``scaling_preset``
+     - ``scaling``
+     - Preset for ``test_transfer_bench_scaling``.
+   * - ``a2a_preset``, ``healthcheck_preset``, ``a2asweep_preset``, ``schmoo_preset``
+     - omitted
+     - Optional preset names. Omitted keys use ``a2a``, ``healthcheck``, ``a2asweep``, and ``schmoo``.
    * - ``a2asweep_timeout``
      - ``1500``
-     - Orchestrator timeout in seconds for ``test_transfer_bench_a2asweep``. When set, this value wins. When omitted, CVS derives the timeout as ``a2asweep_combos`` × ``a2asweep_sec_per_combo`` + ``a2asweep_timeout_buffer`` (defaults ``24``, ``50``, ``300`` → ``1500``), and never returns less than ``600`` (the former hard-coded 10-minute limit). Raise this on slower nodes or larger custom sweep ranges so a healthy sweep is not aborted mid-run.
+     - Seconds allowed for ``test_transfer_bench_a2asweep``. This value wins when set.
    * - ``a2asweep_combos``
-     - ``24``
-     - Optional. Combo count used only when ``a2asweep_timeout`` is omitted. Matches the default TransferBench a2asweep table size (block size × unroll combinations).
+     - ``24`` when omitted
+     - Combo count used only when ``a2asweep_timeout`` is omitted.
    * - ``a2asweep_sec_per_combo``
-     - ``50``
-     - Optional. Seconds assumed per combo when deriving ``a2asweep_timeout``.
+     - ``50`` when omitted
+     - Seconds per combo used only when ``a2asweep_timeout`` is omitted.
    * - ``a2asweep_timeout_buffer``
-     - ``300``
-     - Optional. Extra seconds added after ``combos`` × ``sec_per_combo`` when deriving ``a2asweep_timeout``.
+     - ``300`` when omitted
+     - Extra seconds added when ``a2asweep_timeout`` is omitted. The derived timeout is at least ``600``.
+
+``results`` keys below are the pass/fail gates, except where the gate column says otherwise. Bandwidths are GB/s.
+
+.. list-table::
+   :widths: 3 2 5
+   :header-rows: 1
+
+   * - Key
+     - Packaged value
+     - Gate
    * - ``bytes_to_transfer``
-     - 268435456
-     - Amount of data to transfer in bytes (256 MB); this is the payload size for bandwidth tests
+     - ``268435456``
+     - Present in the packaged file. The suite does not read it.
+   * - ``path``
+     - same as ``transferbench.path``
+     - Present in the packaged file. The suite does not read it. The binary path is the top-level ``path``.
    * - ``gpu_to_gpu_a2a_per_link_min``
-     - 32.9
-     - Required guide bar for ``test_transfer_bench_a2a`` (GB/s). For each GPU, ``RTotal_i / (N-1)`` must be at least this value (coverage-matrix bar 32.9). Pytest and Run Deck both require this key (or the legacy alias ``gpu_to_gpu_a2a_avg``). Benign VMware provider ``No such file`` lines are ignored by scanning; other provider failures are not.
+     - ``32.9``
+     - Required for ``test_transfer_bench_a2a``. Each GPU's ``RTotal / (N-1)`` must be at least this value. ``gpu_to_gpu_a2a_avg`` is the legacy name.
    * - ``gpu_to_gpu_a2a_rtotal``
-     - 320.0
-     - If present, Run Deck also plots raw per-GPU RTotal series **without** a threshold (annotation only), so chart status cannot disagree with the per-link cell gate. Not used for pass/fail; omitting ``gpu_to_gpu_a2a_per_link_min`` fails a2a in both pytest and Run Deck.
+     - ``320.0``
+     - Recorded when set. Not a pass/fail gate.
    * - ``avg_gpu_to_gpu_p2p_unidir_bw``
-     - 33.9
-     - Average peer-to-peer unidirectional bandwidth (GB/s) between GPU pairs
+     - ``33.9``
+     - Minimum UniDir GPU-to-GPU average for ``test_transfer_bench_p2p``.
    * - ``avg_gpu_to_gpu_p2p_bidir_bw``
-     - 43.9
-     - Average peer-to-peer bidirectional bandwidth (GB/s) between GPU pair
+     - ``43.9``
+     - Minimum BiDir GPU-to-GPU average for ``test_transfer_bench_p2p``.
    * - ``best_gpu0_bw``
-     - 480.0
-     - Best measured bandwidth (GB/s) for GPU 0
-   * - ``32_cu_local_read``
-     - 1650
-     - Local memory read bandwidth (GB/s) using 32 CUs
-   * - ``32_cu_local_write``
-     - 1250.0
-     - Local memory write bandwidth (GB/s) using 32 CUs
-   * - ``32_cu_local_copy``
-     - 1250.0
-     - Local memory copy bandwidth (GB/s) using 32 CUs
-   * - ``32_cu_rem_read``
-     - 48.0
-     - Remote memory read bandwidth (GB/s) using 32 CUs
-   * - ``32_cu_rem_write``
-     - 48.0
-     - Remote memory write bandwidth (GB/s) using 32 CUs
-   * - ``32_cu_rem_copy``
-     - 48.0
-     - Remote memory copy bandwidth (GB/s) using 32 CUs
+     - ``480.0``
+     - Minimum GPU 0 peak for ``test_transfer_bench_scaling``.
+   * - ``32_cu_local_read``, ``32_cu_local_write``, ``32_cu_local_copy``
+     - ``1650``, ``1250.0``, ``1250.0``
+     - Minimum 32-CU local read, write, and copy for ``test_transfer_bench_schmoo``.
+   * - ``32_cu_rem_read``, ``32_cu_rem_write``, ``32_cu_rem_copy``
+     - ``48.0``
+     - Minimum 32-CU remote read, write, and copy for ``test_transfer_bench_schmoo``.
 
 ROCm Validation Suite (RVS)
 ---------------------------
