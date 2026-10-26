@@ -2,8 +2,8 @@
   :description: Configure Aorta benchmark JSON variants and performance thresholds
   :keywords: Aorta, ROCm, RCCL, benchmark, CVS
 
-Aorta benchmark configuration
-=============================
+Aorta benchmark configuration file for Cluster Validation Suite (CVS)
+=====================================================================
 
 Aorta uses JSON variants in ``cvs/input/config_file/benchmark/aorta/``:
 

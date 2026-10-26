@@ -2,9 +2,9 @@
   :description: Run Megatron Llama and DeepSeek training benchmarks with CVS to validate pre-training throughput and correctness on AMD Instinct GPU clusters with ROCm.
   :keywords: CVS, Megatron, training, benchmark, AMD Instinct, ROCm, AMD, GPU, Llama, DeepSeek, distributed, RDMA
 
-*****************************************************
-Run Megatron Llama and DeepSeek training benchmarks
-*****************************************************
+************************************************************
+Run Megatron Llama and DeepSeek training benchmarks with CVS
+************************************************************
 
 Cluster validation that runs Megatron-LM or Primus pre-training on AMD Instinct GPUs (single-node or multi-node) and gates the run on performance and correctness metrics with a PASS/FAIL HTML report.
 

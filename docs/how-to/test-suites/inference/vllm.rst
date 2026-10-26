@@ -2,9 +2,9 @@
   :description: Run vLLM LLM inference tests with CVS on AMD Instinct GPUs, covering single-node and multinode distributed serving with ROCm and InfiniBand.
   :keywords: CVS, vLLM, inference, benchmark, AMD Instinct, ROCm, AMD, GPU, LLM, multinode, InfiniBand, RDMA
 
-***************************************
+****************************************************************
 Run vLLM LLM inference tests with Cluster Validation Suite (CVS)
-***************************************
+****************************************************************
 
 The vLLM suites measure LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file. One host does not raise an error: the run becomes a single-node serve, and the multi-host flags are left off. Packaged distributed recipes are laid out for two hosts (tensor parallel 8, pipeline parallel 2). Their threshold numbers are zeros, not measured pass/fail limits.
 

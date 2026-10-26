@@ -2,9 +2,9 @@
   :description: Run SGLang LLM inference benchmarks with CVS on AMD Instinct GPU clusters, covering single-node, distributed, and disaggregated prefill/decode topologies.
   :keywords: CVS, SGLang, inference, benchmark, AMD Instinct, ROCm, AMD, GPU, LLM, disaggregated, distributed, Llama
 
-**********************************************
+***********************************************************************
 Run SGLang LLM inference benchmarks with Cluster Validation Suite (CVS)
-**********************************************
+***********************************************************************
 
 CVS provides three SGLang suites under ``cvs/tests/inference/sglang/``. Each suite is a
 separate pytest module; pick the one that matches your topology, then point ``--config_file``
