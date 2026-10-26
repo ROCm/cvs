@@ -105,6 +105,22 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         self.assertEqual(result, {"10.0.0.1": "ok", "10.0.0.2": "ok"})
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_exec_cmd_list_delegates_to_all(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        result = orch.exec_cmd_list(["a", "b"], timeout=5, print_console=False)
+        orch.all.exec_cmd_list.assert_called_once_with(["a", "b"], timeout=5, print_console=False)
+        self.assertIs(result, orch.all.exec_cmd_list.return_value)
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_prune_nodes_delegates_to_all(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        result = orch.prune_nodes(["10.0.0.2"])
+        orch.all.prune_nodes.assert_called_once_with(["10.0.0.2"])
+        self.assertIs(result, orch.all.prune_nodes.return_value)
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_distribute_using_mpi_logs_masked_command(self, _mock_pssh):
         log = MagicMock()
         orch = BaremetalOrchestrator(log, _make_orch_config())

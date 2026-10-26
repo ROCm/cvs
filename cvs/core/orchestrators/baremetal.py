@@ -152,6 +152,14 @@ class BaremetalOrchestrator(Orchestrator):
             finally:
                 phandle.destroy_clients()
 
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+        """Run cmd_list[i] on the i-th host."""
+        return self.all.exec_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
+
+    def prune_nodes(self, nodes_to_remove):
+        """Drop hosts from later exec/exec_cmd_list calls; returns the hosts removed."""
+        return self.all.prune_nodes(nodes_to_remove)
+
     def exec_on_host(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
         """Execute directly on the host OS."""
         return self.exec(

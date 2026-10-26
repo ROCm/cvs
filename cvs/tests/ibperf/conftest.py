@@ -64,7 +64,13 @@ def orch(cluster_dict):
         raise ValueError('At least 2 nodes are required to run this test')
     cfg = OrchestratorConfig.from_configs({**cluster_dict, 'node_dict': node_dict}, {})
     o = OrchestratorFactory.create_orchestrator(log, cfg)
+    # No setup_sshd(): perftest pairs connect over TCP without MPI.
+    if o.orchestrator_type == 'container' and not o.setup_containers():
+        o.close()
+        pytest.fail('Failed to launch the ibperf container on every node')
     yield o
+    if o.orchestrator_type == 'container':
+        o.teardown_containers()
     o.close()
 
 

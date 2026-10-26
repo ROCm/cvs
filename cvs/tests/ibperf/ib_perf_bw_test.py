@@ -50,8 +50,8 @@ def pytest_generate_tests(metafunc):
 
 
 def _fail_unmapped_gpus(orch):
-    """Map GPUs to RDMA NICs on orch.all, failing each card left without one before perftest starts."""
-    gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(orch.all, use_sudo=False)
+    """Map GPUs to RDMA NICs on orch, failing each card left without one before perftest starts."""
+    gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(orch, use_sudo=False)
     for node, card_dict in gpu_nic_dict.items():
         for card, nic_info in card_dict.items():
             if not nic_info.get('rdma_dev'):
@@ -95,12 +95,18 @@ def orch(cluster_dict, node_pairing):
     log.info('Connecting to %d paired cluster nodes', len(node_list))
     log.debug('Paired cluster nodes: %s', node_list)
     o = _create_orch(cluster_dict, node_list)
+    # No setup_sshd(): perftest pairs connect over TCP without MPI.
+    if o.orchestrator_type == 'container' and not o.setup_containers():
+        o.close()
+        pytest.fail('Failed to launch the ibperf container on every node')
     yield o
+    if o.orchestrator_type == 'container':
+        o.teardown_containers()
     o.close()
 
 
 def can_read_dmesg(orch):
-    if all(get_passwordless_sudo_status(orch.all).values()):
+    if all(get_passwordless_sudo_status(orch).values()):
         return True
     log.warning('SKIPPING the dmesg error check: no passwordless sudo to read dmesg on one or more nodes')
     return False
@@ -114,10 +120,10 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibper
     globals.error_list = []
     ib_bw_dict[bw_test] = {}
     scan_dmesg = can_read_dmesg(orch)
-    rocm_path = ibperf_lib.detect_rocm_path(orch.all, config_dict.get('rocm_dir', ''))
+    rocm_path = ibperf_lib.detect_rocm_path(orch, config_dict.get('rocm_dir', ''))
     app_path = f'{config_dict["install_dir"]}/perftest/bin'
     use_dmabuf = ibperf_lib.check_perftest_dmabuf(
-        orch.all,
+        orch,
         f'{app_path}/{bw_test}',
         rocm_path=rocm_path,
         require_dmabuf=ibperf_lib.is_dmabuf_required(config_dict),
@@ -128,12 +134,12 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibper
 
     gpu_nic_dict = _fail_unmapped_gpus(orch)
     update_test_result()
-    gpu_numa_dict = linux_utils.get_gpu_numa_dict(orch.all, use_sudo=False)
-    hip_dev_dict = ibperf_lib.get_hip_device_dict(orch.all, gpu_nic_dict)
+    gpu_numa_dict = linux_utils.get_gpu_numa_dict(orch, use_sudo=False)
+    hip_dev_dict = ibperf_lib.get_hip_device_dict(orch, gpu_nic_dict)
     _note_run_facts(ibperf_variant_config, use_dmabuf, gpu_nic_dict)
 
-    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(orch.all, use_sudo=False)
-    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(orch.all)
+    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(orch, use_sudo=False)
+    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(orch)
 
     bck_nic_dict = {}
     for node in rdma_nic_dict.keys():
@@ -143,7 +149,7 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibper
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
     gid_index = ibperf_lib.resolve_gid_index(
-        orch.all,
+        orch,
         ibperf_lib.get_ibperf_rdma_devices(gpu_nic_dict, bck_nic_dict),
         config_dict.get('gid_index'),
         config_dict.get('gid_type', DEFAULT_GID_TYPE),
@@ -152,14 +158,14 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibper
     for msg_size in config_dict['msg_size_list']:
         ib_bw_dict[bw_test][msg_size] = {}
         for qp_count in config_dict['qp_count_list']:
-            start_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
+            start_time = orch.exec('date +"%a %b %e %H:%M"', print_console=False)
             if scan_dmesg:
-                orch.all.exec(
+                orch.exec(
                     f'echo "Starting Test {bw_test} for {msg_size} and QP count {qp_count}" | sudo -n tee /dev/kmsg',
                     print_console=False,
                 )
             ib_bw_dict[bw_test][msg_size][qp_count] = ibperf_lib.run_ib_perf_bw_test(
-                orch.all,
+                orch,
                 bw_test,
                 gpu_numa_dict,
                 gpu_nic_dict,
@@ -183,9 +189,9 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibper
                 ib_bw_dict[bw_test][msg_size][qp_count],
                 ibperf_variant_config,
             )
-            end_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
+            end_time = orch.exec('date +"%a %b %e %H:%M"', print_console=False)
             if scan_dmesg:
-                verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=True)
+                verify_dmesg_for_errors(orch, start_time, end_time, till_end_flag=True)
             if re.search('True', config_dict.get('verify_bw', ''), re.I):
                 ibperf_lib.verify_expected_bw(
                     bw_test,
@@ -205,10 +211,10 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibp
     globals.error_list = []
     ib_lat_dict[lat_test] = {}
     scan_dmesg = can_read_dmesg(orch)
-    rocm_path = ibperf_lib.detect_rocm_path(orch.all, config_dict.get('rocm_dir', ''))
+    rocm_path = ibperf_lib.detect_rocm_path(orch, config_dict.get('rocm_dir', ''))
     app_path = f'{config_dict["install_dir"]}/perftest/bin'
     use_dmabuf = ibperf_lib.check_perftest_dmabuf(
-        orch.all,
+        orch,
         f'{app_path}/{lat_test}',
         rocm_path=rocm_path,
         require_dmabuf=ibperf_lib.is_dmabuf_required(config_dict),
@@ -219,12 +225,12 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibp
 
     gpu_nic_dict = _fail_unmapped_gpus(orch)
     update_test_result()
-    gpu_numa_dict = linux_utils.get_gpu_numa_dict(orch.all, use_sudo=False)
-    hip_dev_dict = ibperf_lib.get_hip_device_dict(orch.all, gpu_nic_dict)
+    gpu_numa_dict = linux_utils.get_gpu_numa_dict(orch, use_sudo=False)
+    hip_dev_dict = ibperf_lib.get_hip_device_dict(orch, gpu_nic_dict)
     _note_run_facts(ibperf_variant_config, use_dmabuf, gpu_nic_dict)
 
-    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(orch.all, use_sudo=False)
-    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(orch.all)
+    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(orch, use_sudo=False)
+    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(orch)
 
     bck_nic_dict = {}
     for node in rdma_nic_dict.keys():
@@ -234,7 +240,7 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibp
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
     gid_index = ibperf_lib.resolve_gid_index(
-        orch.all,
+        orch,
         ibperf_lib.get_ibperf_rdma_devices(gpu_nic_dict, bck_nic_dict),
         config_dict.get('gid_index'),
         config_dict.get('gid_type', DEFAULT_GID_TYPE),
@@ -242,14 +248,14 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibp
     update_test_result()
     for msg_size in config_dict['msg_size_list']:
         ib_lat_dict[lat_test][msg_size] = {}
-        start_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
+        start_time = orch.exec('date +"%a %b %e %H:%M"', print_console=False)
         if scan_dmesg:
-            orch.all.exec(
+            orch.exec(
                 f'echo "Starting Test {lat_test} for {msg_size}" | sudo -n tee /dev/kmsg',
                 print_console=False,
             )
         ib_lat_dict[lat_test][msg_size] = ibperf_lib.run_ib_perf_lat_test(
-            orch.all,
+            orch,
             lat_test,
             gpu_numa_dict,
             gpu_nic_dict,
@@ -266,9 +272,9 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibp
         ibperf_reporting.record_lat_results(
             cvs_results_dict, lat_test, msg_size, ib_lat_dict[lat_test][msg_size], ibperf_variant_config
         )
-        end_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
+        end_time = orch.exec('date +"%a %b %e %H:%M"', print_console=False)
         if scan_dmesg:
-            verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=True)
+            verify_dmesg_for_errors(orch, start_time, end_time, till_end_flag=True)
         if re.search('True', config_dict.get('verify_bw', ''), re.I):
             ibperf_lib.verify_expected_lat(
                 lat_test, msg_size, ib_lat_dict[lat_test][msg_size], config_dict.get('expected_results', {})

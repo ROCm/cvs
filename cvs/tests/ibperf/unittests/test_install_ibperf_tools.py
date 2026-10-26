@@ -26,14 +26,14 @@ class TestInstallIbPerf(unittest.TestCase):
             return {n: '' for n in _NODES}
 
         orch = MagicMock()
-        orch.all.exec.side_effect = all_exec
+        orch.exec.side_effect = all_exec
         config = {'install_perf_package': 'True', 'install_dir': '/shared', **config}
         with patch.object(install_ibperf_tools, 'is_managed_compute', return_value=managed):
             try:
                 install_ibperf_tools.test_install_ib_perf(orch, config)
             finally:
-                self.all_cmds = [c.args[0] for c in orch.all.exec.call_args_list]
-                self.head_cmds = [c.args[0] for c in orch.head.exec.call_args_list]
+                self.all_cmds = [c.args[0] for c in orch.exec.call_args_list]
+                self.head_cmds = [c.args[0] for c in orch.exec_on_head.call_args_list]
 
     def _apt_cmds(self):
         return [c for c in self.all_cmds if 'apt' in c]

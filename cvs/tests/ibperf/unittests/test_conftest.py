@@ -61,6 +61,22 @@ class TestOrchFixture(unittest.TestCase):
             next(gen)
         orch.close.assert_called_once_with()
 
+    @patch('cvs.core.orchestrators.container.RuntimeFactory')
+    @patch('cvs.core.orchestrators.baremetal.MultiProcessParallelHandle')
+    def test_container_mode_launches_runs_inside_and_tears_down(self, _pssh, runtime_factory):
+        runtime = runtime_factory.create.return_value
+        cluster = {**_cluster(['n1', 'n2']), 'orchestrator': 'container', 'container': {'image': 'img', 'name': 'ct'}}
+        gen = conftest.orch.__wrapped__(cluster)
+
+        orch = next(gen)
+        runtime.setup_containers.assert_called_once()
+        orch.exec('rdma link')
+        self.assertEqual(runtime.exec.call_args.args[:2], ('ct', 'rdma link'))
+        runtime.teardown_containers.assert_not_called()
+        with self.assertRaises(StopIteration):
+            next(gen)
+        runtime.teardown_containers.assert_called_once_with('ct')
+
 
 class TestRunDeckFixtures(unittest.TestCase):
     def test_variant_reads_config_and_orch(self):
