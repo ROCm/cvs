@@ -37,8 +37,8 @@ def _amd_smi_json_command(args: str, use_sudo=True) -> str:
     use_sudo defaults to True so existing callers keep ``sudo bash -lc``. Host checks
     on a scheduler job pass False: bare ``sudo`` waits for a password on the HTTP
     agent, and firmware JSON is readable without root. A missing binary prints
-    ``[]`` and exits 0, the same fallback as ``_rocm_smi_showbus_cmd``, so the
-    JSON parser gets an empty payload instead of a failed command.
+    ``[]`` and exits 0, so the JSON parser gets an empty payload instead of a
+    failed command.
     """
     privilege = "sudo " if use_sudo else ""
     return (
@@ -524,28 +524,17 @@ def get_gpu_fw_dict(phdl):
     return d_dict
 
 
-def _rocm_smi_showbus_cmd(use_sudo=True):
-    """rocm-smi bus map. Unprivileged form resolves the binary without a login sudo.
-
-    A missing binary prints ``[]`` and exits 0, matching ``_amd_smi_json_command``.
-    Exit 127 would make ``convert_phdl_json_to_dict`` store ``{}`` and the GPU PCIe
-    check would then KeyError that node while walking every card.
-    """
-    if use_sudo:
-        return 'sudo rocm-smi --loglevel error --showbus --json'
-    return (
-        "bash -lc '"
-        "if command -v rocm-smi >/dev/null 2>&1; then rocm-smi --loglevel error --showbus --json; "
-        "elif [ -x /opt/rocm/bin/rocm-smi ]; then /opt/rocm/bin/rocm-smi --loglevel error --showbus --json; "
-        "else echo \"[]\"; exit 0; fi'"
-    )
-
-
 def get_gpu_pcie_bus_dict(phdl, use_sudo=True):
-    d_dict = convert_phdl_json_to_dict(phdl.exec(_rocm_smi_showbus_cmd(use_sudo)))
-    for node, cards in d_dict.items():
-        if not isinstance(cards, dict):
-            d_dict[node] = {}
+    """Return ``{node: {'card<N>': {'PCI Bus': <bdf>}}}`` from ``amd-smi list``.
+
+    With sudo a missing amd-smi fails the JSON parse, as rocm-smi did. Without
+    sudo the node maps to ``{}``, so callers walking every card never KeyError on it.
+    """
+    cmd = 'sudo amd-smi list --json' if use_sudo else _amd_smi_json_command('list', use_sudo=False)
+    d_dict = convert_phdl_json_to_dict(phdl.exec(cmd))
+    for node, payload in d_dict.items():
+        gpus = [g for g in _iter_amd_smi_gpu_dicts(payload) if isinstance(g, dict) and 'gpu' in g and 'bdf' in g]
+        d_dict[node] = {f"card{gpu['gpu']}": {'PCI Bus': gpu['bdf']} for gpu in gpus}
     return d_dict
 
 
