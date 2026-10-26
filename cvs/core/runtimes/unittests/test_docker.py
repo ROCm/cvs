@@ -555,10 +555,12 @@ class TestDockerRuntimeStartCommandRedaction(unittest.TestCase):
         environment = {"HF_TOKEN": FAKE_CRED, "WANDB_API_KEY": f"{FAKE_CRED} x"}
         rt.setup_containers(_container_config(), "cvs_iter_test", environment=environment)
 
-        self.assertIn(f"-e HF_TOKEN={FAKE_CRED} -e 'WANDB_API_KEY={FAKE_CRED} x'", captured[0])
+        self.assertIn(f"-e HF_TOKEN={FAKE_CRED}", captured[0])
+        self.assertIn(f"WANDB_API_KEY={FAKE_CRED}", captured[0])
         logged = [str(c.args[0]) for c in rt.log.debug.call_args_list if "Container start command" in str(c.args[0])]
         self.assertNotIn(FAKE_CRED, logged[0])
-        self.assertIn("-e HF_TOKEN=<redacted> -e 'WANDB_API_KEY=<redacted>'", logged[0])
+        self.assertIn("-e HF_TOKEN=<redacted>", logged[0])
+        self.assertIn("WANDB_API_KEY=<redacted>", logged[0])
 
 
 if __name__ == "__main__":

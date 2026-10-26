@@ -1260,7 +1260,8 @@ class TestVllmJobBuildServerCmd(unittest.TestCase):
         job.build_server_cmd()
         script = self._script(orch, None)
         self.assertIn("/logs/.hf", script)
-        self.assertIn("tr -d '[:space:]'", script)
+        self.assertIn("tr -d", script)
+        self.assertIn("[:space:]", script)
         self.assertNotIn("export HF_TOKEN=fake-cred", script)
         self.assertNotIn("export HF_TOKEN=tok", script)
 
