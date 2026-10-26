@@ -102,6 +102,7 @@ class SglangDisaggPD:
         self.user_name = user_name
         self.priv_key_file = priv_key_file
         self.model_name = model_name
+        self.gpu_type = gpu_type
         # Callers may pass hf_token. It is discarded so the value cannot reach logs or scripts.
         self.hf_token = ""
         del hf_token
