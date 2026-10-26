@@ -15,6 +15,7 @@ import pytest
 from cvs.lib import ibperf_lib, ibperf_reporting
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib.rdma_gid_lib import DEFAULT_GID_TYPE
+from cvs.tests.ibperf.conftest import IbperfOrch
 
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
@@ -99,7 +100,7 @@ def orch(cluster_dict, node_pairing):
     if o.orchestrator_type == 'container' and not o.setup_containers():
         o.close()
         pytest.fail('Failed to launch the ibperf container on every node')
-    yield o
+    yield IbperfOrch(o)
     if o.orchestrator_type == 'container':
         o.teardown_containers()
     o.close()

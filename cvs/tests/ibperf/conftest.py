@@ -56,6 +56,24 @@ def config_dict(pytestconfig, cluster_dict):
     return d
 
 
+class IbperfOrch:
+    """The orchestrator plus the exec_cmd_list/prune_nodes that ibperf_lib calls on the handle it is given."""
+
+    def __init__(self, orch):
+        self._orch = orch
+
+    def __getattr__(self, name):
+        return getattr(self._orch, name)
+
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+        # ContainerOrchestrator runs these inside the containers; BaremetalOrchestrator has no exec_cmd_list.
+        run = getattr(self._orch, 'exec_cmd_list', None) or self._orch.all.exec_cmd_list
+        return run(cmd_list, timeout=timeout, print_console=print_console)
+
+    def prune_nodes(self, nodes_to_remove):
+        return self._orch.all.prune_nodes(nodes_to_remove)
+
+
 @pytest.fixture(scope="module")
 def orch(cluster_dict):
     """Suite-local orchestrator over every cluster node for installation and verification."""
@@ -68,7 +86,7 @@ def orch(cluster_dict):
     if o.orchestrator_type == 'container' and not o.setup_containers():
         o.close()
         pytest.fail('Failed to launch the ibperf container on every node')
-    yield o
+    yield IbperfOrch(o)
     if o.orchestrator_type == 'container':
         o.teardown_containers()
     o.close()

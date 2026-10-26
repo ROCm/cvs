@@ -32,7 +32,7 @@ class TestOrchFixture(unittest.TestCase):
         create = patcher.start()
         self.addCleanup(patcher.stop)
         gen = conftest.orch.__wrapped__(_cluster(nodes))
-        self.assertIs(next(gen), orch)
+        self.assertIs(next(gen).exec, orch.exec)
         return gen, orch, create.call_args.args[1]
 
     def test_install_orch_covers_nodes_used_by_vpod_pairs_with_odd_count(self):
@@ -72,10 +72,17 @@ class TestOrchFixture(unittest.TestCase):
         runtime.setup_containers.assert_called_once()
         orch.exec('rdma link')
         self.assertEqual(runtime.exec.call_args.args[:2], ('ct', 'rdma link'))
-        runtime.teardown_containers.assert_not_called()
+        orch.exec_cmd_list(['a', 'b'])
+        self.assertEqual(runtime.exec_cmd_list.call_args.args[:2], ('ct', ['a', 'b']))
         with self.assertRaises(StopIteration):
             next(gen)
         runtime.teardown_containers.assert_called_once_with('ct')
+
+    @patch('cvs.core.orchestrators.baremetal.MultiProcessParallelHandle')
+    def test_baremetal_mode_runs_cmd_lists_on_the_host_handle(self, pssh):
+        gen = conftest.orch.__wrapped__(_cluster(['n1', 'n2']))
+        next(gen).exec_cmd_list(['a', 'b'])
+        pssh.return_value.exec_cmd_list.assert_called_once_with(['a', 'b'], timeout=None, print_console=True)
 
 
 class TestRunDeckFixtures(unittest.TestCase):
