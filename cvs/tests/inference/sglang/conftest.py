@@ -41,7 +41,12 @@ except ImportError:
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.inference.sglang.sglang_common import as_node_list, cleanup_sglang_log_dir, resolve_server_node_list
+from cvs.lib.inference.sglang.sglang_common import (
+    as_node_list,
+    cleanup_sglang_log_dir,
+    install_hf_token_log_redaction,
+    resolve_server_node_list,
+)
 from cvs.lib.inference.sglang.sglang_config_loader import (
     SglangSingleVariantConfig,
     flat_expected_from_specs,
@@ -383,13 +388,17 @@ def thresholds_dict(variant_config):
 
 @pytest.fixture(scope="module")
 def hf_token(variant_config):
+    """Confirm ``hf_token_file`` exists. The secret is not read into this process.
+
+    The container loads that file itself when it sources the env script, so the
+    token value never enters pytest output, logs, or the shell command text.
+    """
     path = variant_config.paths.hf_token_file
     if not os.path.isfile(path):
         if variant_config.model.remote == 0:
             return ""
         pytest.skip(f"hf_token file missing: {path}")
-    with open(path, encoding="utf-8") as fp:
-        return fp.read().strip()
+    return ""
 
 
 @pytest.fixture(scope="module")
@@ -494,6 +503,11 @@ def im_obj(
 
 
 # ---------- pytest hooks ----------
+
+
+def pytest_configure(config):
+    del config
+    install_hf_token_log_redaction()
 
 
 def pytest_collection_modifyitems(items):

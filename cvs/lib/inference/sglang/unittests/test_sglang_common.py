@@ -1,5 +1,8 @@
 '''Unit tests for cvs/lib/inference/sglang/sglang_common.py.'''
 
+import io
+import logging
+import shlex
 import unittest
 from unittest import mock
 
@@ -231,6 +234,87 @@ class TestSglangCommonHelpers(unittest.TestCase):
             )
         self.assertEqual(result['status'], 'success')
         self.assertIn('bench', result['results'])
+
+
+class TestHfTokenRedaction(unittest.TestCase):
+    def test_export_line_reads_file_and_omits_secret(self):
+        secret = 'hf_supersecretvalue'
+        line = sglang_common.hf_token_export_line({'hf_token_file': '/home/user/.hf_token', 'HF_TOKEN': secret})
+        self.assertNotIn(secret, line)
+        self.assertIn('/home/user/.hf_token', line)
+        self.assertIn('export HF_TOKEN', line)
+        self.assertNotIn('export HF_TOKEN=', line)
+
+    def test_export_line_empty_without_path(self):
+        self.assertEqual(sglang_common.hf_token_export_line({}), '')
+        self.assertEqual(sglang_common.hf_token_export_line(None), '')
+
+    def test_scrub_drops_token_and_keeps_path(self):
+        secret = 'plain-token-value'
+        cleaned = sglang_common.scrub_sglang_secrets(
+            {
+                'hf_token_file': '/home/user/.hf_token',
+                'HF_TOKEN': secret,
+                'container_config': {'env_dict': {'HUGGING_FACE_HUB_TOKEN': secret, 'NCCL_DEBUG': 'ERROR'}},
+                'add_export_env': [f'HF_TOKEN={secret}', 'export hf_token={secret}', 'SGLANG_USE_AITER=1'],
+            }
+        )
+        blob = str(cleaned)
+        self.assertNotIn(secret, blob)
+        self.assertEqual(cleaned['hf_token_file'], '/home/user/.hf_token')
+        self.assertEqual(cleaned['container_config']['env_dict'], {'NCCL_DEBUG': 'ERROR'})
+        self.assertEqual(cleaned['add_export_env'], ['SGLANG_USE_AITER=1'])
+
+    def test_add_export_env_block_skips_token_assignment(self):
+        secret = 'hf_supersecretvalue'
+        block = sglang_common.add_export_env_block(
+            {'add_export_env': [f'HF_TOKEN={secret}', 'SGLANG_USE_AITER=1']},
+            indent='',
+        )
+        self.assertNotIn(secret, block)
+        self.assertIn('export SGLANG_USE_AITER=1', block)
+
+    def test_logged_env_command_does_not_contain_token(self):
+        secret = 'hf_supersecretvalue'
+        inf = sglang_common.scrub_sglang_secrets({'hf_token_file': '/home/user/.hf_token', 'HF_TOKEN': secret})
+        bp = sglang_common.scrub_sglang_secrets({'add_export_env': [f'HF_TOKEN={secret}', 'SGLANG_USE_AITER=1']})
+        body = sglang_common.hf_token_export_line(inf) + sglang_common.add_export_env_block(bp, indent='')
+        cmd = 'bash -c ' + shlex.quote(f"cat > /tmp/server_env_script.sh <<'EOF'\n{body}EOF\n")
+        self.assertNotIn(secret, body)
+        self.assertNotIn(secret, cmd)
+        self.assertIn('.hf_token', cmd)
+
+    def test_redact_text_keeps_token_file_path(self):
+        secret = 'hf_supersecretvalue'
+        text = (
+            f"cmd = export HF_TOKEN={secret} path=/home/user/.hf_token "
+            f"{{'HF_TOKEN': '{secret}', 'hf_token_file': '/home/user/.hf_token'}}"
+        )
+        redacted = sglang_common.redact_hf_token_text(text)
+        self.assertNotIn(secret, redacted)
+        self.assertIn('/home/user/.hf_token', redacted)
+        self.assertIn('<redacted>', redacted)
+
+    def test_log_filter_redacts_formatted_dict(self):
+        secret = 'hf_supersecretvalue'
+        logger = logging.getLogger('sglang-hf-token-redaction-test')
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+        logger.addFilter(sglang_common.HfTokenLogFilter())
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        logger.addHandler(handler)
+        try:
+            logger.info("cmd = export HF_TOKEN=%s", secret)
+            logger.info("%s", {'HF_TOKEN': 'not-an-hf-prefix', 'hf_token_file': '/home/user/.hf_token'})
+        finally:
+            logger.removeHandler(handler)
+            logger.removeFilter(logger.filters[-1])
+        text = stream.getvalue()
+        self.assertNotIn(secret, text)
+        self.assertNotIn('not-an-hf-prefix', text)
+        self.assertIn('/home/user/.hf_token', text)
+        self.assertIn('<redacted>', text)
 
 
 if __name__ == '__main__':

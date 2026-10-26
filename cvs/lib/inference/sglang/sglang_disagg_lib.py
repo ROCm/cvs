@@ -26,6 +26,9 @@ from cvs.lib.inference.sglang.sglang_common import (
     add_cli_flags_block,
     add_export_env_block,
     collect_sglang_gpu_topology,
+    hf_token_export_line,
+    install_hf_token_log_redaction,
+    scrub_sglang_secrets,
     first_output,
     format_sglang_gpu_topology_lines,
     normalize_hosts,
@@ -85,7 +88,7 @@ class SglangDisaggPD:
             model_name (str): HuggingFace or local model identifier
             inference_config_dict (dict): Cluster and runtime configuration
             benchmark_params_dict (dict): Benchmark workload parameters
-            hf_token (str): HuggingFace access token
+            hf_token (str): ignored. The container reads ``hf_token_file`` so the secret is never logged.
             orch: Required ``ContainerOrchestrator`` instance
             gpu_type (str): GPU type (e.g., mi300, mi325)
             user_name (str): SSH username for remote nodes (optional override)
@@ -94,15 +97,17 @@ class SglangDisaggPD:
         if orch is None:
             raise ValueError("SglangDisaggPD requires orch= (ContainerOrchestrator)")
 
+        install_hf_token_log_redaction()
         self.orch = orch
         self.user_name = user_name
         self.priv_key_file = priv_key_file
         self.model_name = model_name
-        self.hf_token = hf_token
-        self.gpu_type = gpu_type
+        # Callers may pass hf_token. It is discarded so the value cannot reach logs or scripts.
+        self.hf_token = ""
+        del hf_token
 
-        self.inf_dict = inference_config_dict
-        self.bp_dict = benchmark_params_dict
+        self.inf_dict = scrub_sglang_secrets(inference_config_dict)
+        self.bp_dict = scrub_sglang_secrets(benchmark_params_dict)
 
         self.prefill_node_list = normalize_hosts(self.inf_dict['prefill_node_list'])
         self.decode_node_list = normalize_hosts(self.inf_dict['decode_node_list'])
@@ -168,6 +173,7 @@ class SglangDisaggPD:
         timeout: int | None = None,
     ) -> dict:
         """Run ``cmd`` inside the container on ``hosts`` (default: all orch hosts)."""
+        install_hf_token_log_redaction()
         normalized = normalize_hosts(hosts) if hosts is not None else None
         return self.orch.exec(cmd, hosts=normalized, timeout=timeout)
 
@@ -188,6 +194,7 @@ class SglangDisaggPD:
         timeout: int | None = None,
     ) -> dict:
         """Run ``cmd`` on baremetal (``orch.head`` / ``orch.all``), e.g. amd-smi / dmesg."""
+        install_hf_token_log_redaction()
         if hosts is None:
             return self.orch.head.exec(cmd, timeout=timeout)
         normalized = normalize_hosts(hosts)
@@ -334,12 +341,12 @@ class SglangDisaggPD:
             f"export MODEL={self.bp_dict['model']}\n"
             f"export TP={self.bp_dict['tensor_parallelism']}\n"
             f"export PP={self.bp_dict['pipeline_parallelism']}\n"
-            f"export HF_TOKEN={self.hf_token}\n"
+            f"{hf_token_export_line(self.inf_dict)}"
             f"{add_export_env_block(self.bp_dict, indent='')}\n"
         )
         write_cmd = "bash -c " + shlex.quote(
             f"cat > /tmp/prefill_env_script.sh <<'EOF'\n{env_body}EOF\n"
-            "chmod 755 /tmp/prefill_env_script.sh && /tmp/prefill_env_script.sh"
+            "chmod 700 /tmp/prefill_env_script.sh && /tmp/prefill_env_script.sh"
         )
         time.sleep(3)
         self._container_exec(write_cmd, hosts=self.prefill_node_list)
@@ -362,12 +369,12 @@ class SglangDisaggPD:
             f"export MODEL={self.bp_dict['model']}\n"
             f"export TP={self.bp_dict['tensor_parallelism']}\n"
             f"export PP={self.bp_dict['pipeline_parallelism']}\n"
-            f"export HF_TOKEN={self.hf_token}\n"
+            f"{hf_token_export_line(self.inf_dict)}"
             f"{add_export_env_block(self.bp_dict, indent='')}\n"
         )
         write_cmd = "bash -c " + shlex.quote(
             f"cat > /tmp/decode_env_script.sh <<'EOF'\n{env_body}EOF\n"
-            "chmod 755 /tmp/decode_env_script.sh && /tmp/decode_env_script.sh"
+            "chmod 700 /tmp/decode_env_script.sh && /tmp/decode_env_script.sh"
         )
         time.sleep(3)
         self._container_exec(write_cmd, hosts=self.decode_node_list)
@@ -385,11 +392,11 @@ class SglangDisaggPD:
             f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
-            f"export HF_TOKEN={self.hf_token}\n"
+            f"{hf_token_export_line(self.inf_dict)}"
         )
         write_cmd = "bash -c " + shlex.quote(
             f"cat > /tmp/router_env_script.sh <<'EOF'\n{env_body}EOF\n"
-            "chmod 755 /tmp/router_env_script.sh && /tmp/router_env_script.sh"
+            "chmod 700 /tmp/router_env_script.sh && /tmp/router_env_script.sh"
         )
         time.sleep(3)
         self._container_exec(write_cmd, hosts=self.proxy_node)
@@ -407,11 +414,11 @@ class SglangDisaggPD:
             f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
-            f"export HF_TOKEN={self.hf_token}\n"
+            f"{hf_token_export_line(self.inf_dict)}"
         )
         write_cmd = "bash -c " + shlex.quote(
             f"cat > /tmp/benchmark_env_script.sh <<'EOF'\n{env_body}EOF\n"
-            "chmod 755 /tmp/benchmark_env_script.sh && /tmp/benchmark_env_script.sh"
+            "chmod 700 /tmp/benchmark_env_script.sh && /tmp/benchmark_env_script.sh"
         )
         time.sleep(3)
         self._container_exec(write_cmd, hosts=self.benchmark_serv_node)

@@ -24,6 +24,9 @@ from cvs.lib.inference.sglang.sglang_common import (
     add_export_env_block,
     as_node_list,
     first_output,
+    hf_token_export_line,
+    install_hf_token_log_redaction,
+    scrub_sglang_secrets,
     parse_inference_bench_results,
     perf_enforce_thresholds,
     poll_for_inference_completion as poll_for_inference_completion_common,
@@ -56,15 +59,17 @@ class SglangSingle:
         if orch is None:
             raise ValueError("SglangSingle requires orch= (ContainerOrchestrator)")
 
+        install_hf_token_log_redaction()
         self.orch = orch
         self.user_name = user_name
         self.priv_key_file = priv_key_file
         self.model_name = model_name
-        self.hf_token = hf_token
-        self.gpu_type = gpu_type
+        # Callers may pass hf_token. It is discarded so the value cannot reach logs or scripts.
+        self.hf_token = ""
+        del hf_token
 
-        self.inf_dict = inference_config_dict
-        self.bp_dict = benchmark_params_dict
+        self.inf_dict = scrub_sglang_secrets(inference_config_dict)
+        self.bp_dict = scrub_sglang_secrets(benchmark_params_dict)
 
         self.inference_results_dict = {}
         log.info("%s", self.gpu_type)
@@ -119,6 +124,7 @@ class SglangSingle:
 
     def _container_exec(self, cmd: str, *, timeout: int | None = None) -> dict:
         """Run ``cmd`` inside the container."""
+        install_hf_token_log_redaction()
         return self.orch.exec(cmd, timeout=timeout)
 
     def _container_exec_text(self, cmd: str, *, timeout: int | None = None) -> str:
@@ -126,6 +132,7 @@ class SglangSingle:
 
     def _host_exec(self, cmd: str, *, timeout: int | None = None) -> dict:
         """Run ``cmd`` on ``benchmark_serv_node`` (baremetal), e.g. amd-smi / dmesg."""
+        install_hf_token_log_redaction()
         host = self.benchmark_serv_node
         if host == self.orch.head_node and len(self.orch.hosts) == 1:
             return self.orch.head.exec(cmd, timeout=timeout)
@@ -159,12 +166,12 @@ class SglangSingle:
             f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
             f"export MODEL={self.bp_dict['model']}\n"
             f"export TP={self.bp_dict['tensor_parallelism']}\n"
-            f"export HF_TOKEN={self.hf_token}\n"
+            f"{hf_token_export_line(self.inf_dict)}"
             f"{add_export_env_block(self.bp_dict, indent='')}\n"
         )
         write_cmd = "bash -c " + shlex.quote(
             f"cat > /tmp/server_env_script.sh <<'EOF'\n{env_body}EOF\n"
-            "chmod 755 /tmp/server_env_script.sh && /tmp/server_env_script.sh"
+            "chmod 700 /tmp/server_env_script.sh && /tmp/server_env_script.sh"
         )
         time.sleep(3)
         self._container_exec(write_cmd)
