@@ -519,10 +519,41 @@ def placeholder_gated_threshold_cell(
     }
 
 
+CONTAINER_HF_TOKEN_PATH = "/run/secrets/hf_token"
+SECRET_ENV_KEYS = frozenset({"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"})
+
+
+def _without_secret_env(env):
+    if not isinstance(env, dict):
+        return env
+    return {key: value for key, value in env.items() if key not in SECRET_ENV_KEYS}
+
+
+def _append_hf_token_volume(block, host_path):
+    host_path = str(host_path or "").strip()
+    if not host_path:
+        return
+    runtime = block.setdefault("runtime", {})
+    args = runtime.setdefault("args", {})
+    volumes = list(args.get("volumes") or [])
+    mounted = False
+    for entry in volumes:
+        parts = str(entry).split(":")
+        if len(parts) >= 2 and parts[1] == CONTAINER_HF_TOKEN_PATH:
+            mounted = True
+            break
+    if not mounted:
+        volumes.append(f"{host_path}:{CONTAINER_HF_TOKEN_PATH}:ro")
+    args["volumes"] = volumes
+
+
 def orchestrator_container_from_variant(variant: AtomVariantConfig) -> dict[str, Any]:
     """``container`` block for :class:`OrchestratorConfig` (includes server env)."""
     block = variant.container.model_dump()
     server_env = variant.roles.server.env
     if server_env:
         block = {**block, "env": dict(server_env)}
+    if isinstance(block.get("env"), dict):
+        block["env"] = _without_secret_env(block["env"])
+    _append_hf_token_volume(block, variant.paths.hf_token_file)
     return block
