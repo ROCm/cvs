@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "extends": "arc_base",
+  "profile_id": "arc_test_examples_rundeck",
+  "suite_id": "arc_test_examples",
+  "report_basename": "arc_test_examples_run_deck",
+  "title": "ARC Run Deck · Example Flow",
+  "link_name": "ARC Example Flow Run Deck"
+}
