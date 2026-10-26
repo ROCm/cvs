@@ -133,6 +133,8 @@ CVS writes a pytest HTML report after each run. The report includes per-node pas
 Pytest HTML report and bundle
 -----------------------------
 
+Each run produces the following artifacts in the run directory.
+
 .. list-table::
    :header-rows: 1
 

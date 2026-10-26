@@ -2,9 +2,9 @@
   :description: Run CVS preflight and node smoke check tests to validate cluster health, RDMA inventory, and GPU node readiness before performance or training workloads.
   :keywords: CVS, preflight, node smoke, AMD Instinct, ROCm, AMD, GPU, RDMA, InfiniBand, TransferBench, health
 
-********************************************
-Run CVS preflight and node smoke check tests
-********************************************
+******************************************************************************
+Run CVS preflight and node smoke check tests in Cluster Validation Suite (CVS)
+******************************************************************************
 
 Preflight checks validate cluster health and configuration consistency before performance, RCCL, training, or inference workloads. Checks include GPU node health, optional MI4XX fabric admission, IFoE and TransferBench gates, RDMA inventory, and Node Smoke tiers. Node Smoke Tier 1, Tier 2, and Tier 3 run by default.
 
@@ -59,4 +59,4 @@ Run individual Node Smoke tiers:
 Run on managed compute
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Follow :doc:`/how-to/run-on-managed-compute` to run preflight on managed compute.
+See :doc:`/how-to/run-on-managed-compute` for guidance on running these health suites on managed compute.

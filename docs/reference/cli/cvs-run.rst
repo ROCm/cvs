@@ -12,6 +12,8 @@ see the how-to guides linked at the end of each section.
 Top-level commands
 ==================
 
+CVS provides the following top-level commands.
+
 .. list-table::
    :header-rows: 1
    :widths: 20 80
@@ -240,6 +242,8 @@ See :doc:`/how-to/test-suites/index`.
 Run ``cvs monitor`` with no arguments to list available monitors.
 
 Subcommand: ``check_cluster_health``
+
+``check_cluster_health`` accepts the following options.
 
 .. list-table::
    :header-rows: 1

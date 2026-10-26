@@ -64,8 +64,8 @@ Sample output snapshots from a training run.
 .. important::
 
    The numbers in these sample reports and screenshots (throughput, loss, step
-   time, and every other metric) are **illustrative sample values, not final
-   tuned results**. They are shown only to illustrate the report layout.
+   time, and every other metric) are illustrative sample values, not final
+   tuned results. They are shown only to illustrate the report layout.
 
 HTML test report
 ----------------

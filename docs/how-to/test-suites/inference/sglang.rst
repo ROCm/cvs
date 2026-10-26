@@ -3,7 +3,7 @@
   :keywords: CVS, SGLang, inference, benchmark, AMD Instinct, ROCm, AMD, GPU, LLM, disaggregated, distributed, Llama
 
 **********************************************
-Run SGLang LLM inference benchmarks with CVS
+Run SGLang LLM inference benchmarks with Cluster Validation Suite (CVS)
 **********************************************
 
 CVS provides three SGLang suites under ``cvs/tests/inference/sglang/``. Each suite is a
@@ -15,6 +15,8 @@ For the full configuration schema, threshold format, and parameter reference, se
 
 Test suites
 ===========
+
+CVS ships three SGLang suite variants, one per deployment topology.
 
 .. list-table::
    :widths: 2 3 5

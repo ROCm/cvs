@@ -18,7 +18,7 @@ CVS supports these GPUs:
 - AMD Instinct MI325X
 - AMD Instinct MI300X	
 
-CVS supports these Linux distributions:
+CVS supports the following Linux distributions and ROCm versions.
 
 .. list-table::
    :widths: 3 3 4 4

@@ -2,9 +2,9 @@
   :description: Run AGFHC, TransferBench, and RVS health burn-in tests to validate GPU hardware, firmware, and memory bandwidth on AMD Instinct clusters with CVS.
   :keywords: CVS, health, burn-in, AGFHC, RVS, TransferBench, AMD Instinct, ROCm, AMD, GPU, HBM, PCIe
 
-*******************************************************
-Run AGFHC, TransferBench, and RVS health burn-in tests
-*******************************************************
+****************************************************************************************
+Run AGFHC, TransferBench, and RVS health burn-in tests in Cluster Validation Suite (CVS)
+****************************************************************************************
 
 Health burn-in tests run AMD GPU Field Health Check (AGFHC), `TransferBench <https://rocm.docs.amd.com/projects/TransferBench/en/latest/index.html>`_, and `ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmValidationSuite/en/latest/index.html>`_ on every node in the cluster. Use these tests to validate GPU hardware, memory bandwidth, and compute throughput before production workloads.
 
@@ -21,9 +21,32 @@ Set up config
 
 2. Edit paths and any remaining ``<changeme>`` placeholders:
 
-   - Under ``agfhc``: ``path``, ``package_tar_ball``, ``install_dir``, ``env``, ``log_dir``. A ``path`` other than ``/opt/amd/agfhc`` installs with ``./install --rocm-tar -o`` and no sudo; its parent and ``log_dir`` must be writable on the nodes. Update ``env`` when ``path`` changes.
-   - Under ``transferbench``: ``git_install_path``, ``rocm_path`` (or leave ``<changeme>`` to auto-detect). For ``test_transfer_bench_a2a``, set required ``results.gpu_to_gpu_a2a_per_link_min`` (default ``32.9``). For ``test_transfer_bench_a2asweep``, set ``a2asweep_timeout`` (default ``1500``) or omit it to derive the orch timeout from sweep size; see :doc:`/reference/configuration-files/burn-in-diag/health`.
-   - Under ``rvs``: ``git_install_path``, ``path``, ``rocm_path``
+   .. list-table::
+      :header-rows: 1
+      :widths: 20 30 50
+
+      * - Section
+        - Fields to set
+        - Notes
+      * - ``agfhc``
+        - ``path``, ``package_tar_ball``, ``install_dir``,
+          ``env``, ``log_dir``
+        - A ``path`` other than ``/opt/amd/agfhc`` installs with
+          ``./install --rocm-tar -o`` and no sudo; its parent and
+          ``log_dir`` must be writable on the nodes. Update ``env``
+          when ``path`` changes.
+      * - ``transferbench``
+        - ``git_install_path``, ``rocm_path``
+        - Leave ``rocm_path`` as ``<changeme>`` to auto-detect. For
+          ``test_transfer_bench_a2a``, set
+          ``results.gpu_to_gpu_a2a_per_link_min`` (default ``32.9``).
+          For ``test_transfer_bench_a2asweep``, set
+          ``a2asweep_timeout`` (default ``1500``) or omit it to derive
+          the timeout from sweep size. See
+          :doc:`/reference/configuration-files/burn-in-diag/health`.
+      * - ``rvs``
+        - ``git_install_path``, ``path``, ``rocm_path``
+        -
 
 For the complete field reference including install paths and threshold values, see :doc:`/reference/configuration-files/burn-in-diag/health`.
 
@@ -188,4 +211,4 @@ Run the RVS test:
 Run on managed compute
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Follow :doc:`/how-to/run-on-managed-compute` to run these health suites on managed compute.
+See :doc:`/how-to/run-on-managed-compute` for guidance on running these health suites on managed compute.
