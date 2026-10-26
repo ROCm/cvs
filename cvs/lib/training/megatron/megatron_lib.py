@@ -11,6 +11,7 @@ import shlex
 import time
 
 from cvs.lib import globals
+from cvs.lib.env_lib import redact_secrets
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import linux_utils
@@ -605,8 +606,8 @@ class MegatronTrainingJob:
            by build_training_job_cmd() prior to invocation.
         """
         log.info('start training job')
-        log.info('%s', self.job_cmd_list)
-        log.info("%s", self.job_cmd)
+        log.info('%s', [redact_secrets(c) for c in self.job_cmd_list])
+        log.info("%s", redact_secrets(self.job_cmd))
         n = len(self.orch.hosts)
 
         # Create per-node log dirs inside container on all hosts in parallel
