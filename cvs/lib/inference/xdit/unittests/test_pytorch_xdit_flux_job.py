@@ -632,7 +632,8 @@ class TestFluxBenchmarkJob(unittest.TestCase):
         job, _ = _make_flux_job()
         env_args = job._build_env_args()
         self.assertIn("-e CUSTOM=1", env_args)
-        self.assertIn("-e HF_TOKEN=hf_test_token", env_args)
+        self.assertIn('-e HF_TOKEN="$(cat ', env_args)
+        self.assertNotIn("hf_test_token", env_args)
         self.assertIn("-e CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7", env_args)
         self.assertNotIn("NCCL_PROTO", env_args)
 

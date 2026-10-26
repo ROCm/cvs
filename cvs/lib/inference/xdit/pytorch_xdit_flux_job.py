@@ -59,7 +59,8 @@ def as_node_list(value: Any) -> List[str]:
 def _redact_secrets(text: str) -> str:
     if not text:
         return text
-    return re.sub(r"(HF_TOKEN=)[^\s]+", r"\1<redacted>", text)
+    text = re.sub(r"(?i)(HF_TOKEN=)(?:\"[^\"]*\"|'[^']*'|\S+)", r"\1<redacted>", text)
+    return re.sub(r"\bhf_[A-Za-z0-9]{20,}\b", "<redacted>", text)
 
 
 def log_benchmark_failure_excerpt(
@@ -83,10 +84,6 @@ def log_benchmark_failure_excerpt(
     for line in tail:
         log.error("%s", line)
     log.error("=== end benchmark failure excerpt (%s) ===", node)
-
-
-def _secret_str(value: Any) -> str:
-    return "" if value is None else str(value)
 
 
 def _ssh_credential_source(s_phdl) -> Any:
@@ -1081,7 +1078,7 @@ class FluxBenchmarkJob(PytorchXditBenchmarkJob):
         env_dict["HF_HOME"] = "/hf_home"
         env_dict["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(self.nproc_per_node))
         if self.hf_token:
-            env_dict["HF_TOKEN"] = _secret_str(self.hf_token)
+            env_dict["HF_TOKEN"] = self._hf_token_docker_value()
         model_type = resolve_flux_model_type_for_job(
             self.flux_params,
             model_repo=self._resolved_model_repo(),

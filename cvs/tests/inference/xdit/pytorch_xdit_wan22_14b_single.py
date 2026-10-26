@@ -13,7 +13,6 @@ All rights reserved.
 
 import json
 import pytest
-import re
 import shlex
 import socket
 import subprocess
@@ -37,6 +36,7 @@ from cvs.lib.inference.xdit.pytorch_xdit_model_verify import (
     wan_native_hf_snapshot_required_checks,
 )
 from cvs.lib.inference.xdit.pytorch_xdit_wan import WanOutputParser
+from cvs.lib.inference.xdit.pytorch_xdit_flux_job import _redact_secrets
 from cvs.lib.inference.xdit.pytorch_xdit_wan_job import (
     launch_wan_benchmark,
     store_resolved_wan_model_format_from_index,
@@ -112,7 +112,7 @@ class LocalPssh:
         out = (completed.stdout or "") + (completed.stderr or "")
         if print_console:
             log.info(f"cmd = {_redact_secrets(cmd)}")
-            log.info("%s", out)
+            log.info("%s", _redact_secrets(out))
         return {self.host_list[0]: out}
 
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
@@ -129,22 +129,9 @@ class LocalPssh:
             out_str = (completed.stdout or "") + (completed.stderr or "")
             if print_console:
                 log.info(f"cmd = {_redact_secrets(cmd)}")
-                log.info("%s", out_str)
+                log.info("%s", _redact_secrets(out_str))
             out[host] = out_str
         return out
-
-
-def _redact_secrets(s: str) -> str:
-    """
-    Best-effort redaction for secrets that may appear in command strings/logs.
-
-    Currently redacts:
-    - HF_TOKEN=...
-    """
-    if not s:
-        return s
-    # Replace HF_TOKEN=<anything until space> with HF_TOKEN=<redacted>
-    return re.sub(r"(HF_TOKEN=)\S+", r"\1<redacted>", s)
 
 
 # =============================================================================
