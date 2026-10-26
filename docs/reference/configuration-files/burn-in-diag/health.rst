@@ -70,10 +70,10 @@ See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on runni
         {
             "path": "<changeme>/bin",
             "git_install_path": "/home/{user-id}/INSTALL/rvs",
-            "git_url": "https://github.com/ROCm/ROCmValidationSuite.git",
+            "git_url": "https://github.com/ROCm/ROCmValidationSuite.git -b release/rocm-rel-7.2",
             "nfs_install": "True",
-            "_comment_rocm_path": "ROCm installation path.Set to placeholder changeme auto-detect from /opt/rocm or /opt/rocm/core-*",
             "rocm_path": "<changeme>",
+            "rocm_runtime_lib_path": "",
             "config_path_mi300x": "/opt/rocm/share/rocm-validation-suite/conf/MI300X",
             "config_path_default": "/opt/rocm/share/rocm-validation-suite/conf",
             "_comment_rvs_test_level": "RVS test level configuration (0-5). 0: Run individual tests (skip level test), 1-5: Run LEVEL config test if RVS >= 1.3.0, else run individual tests. Default is 4.",
@@ -100,7 +100,7 @@ See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on runni
                     "name": "mem_test",
                     "config_file": "mem.conf",
                     "description": "Memory Test",
-                    "timeout": 10000,
+                    "timeout": 9000,
                     "expected_pass": true,
                     "fail_regex_pattern": "FAIL|\\[ERROR\\s*\\]|RVS-ERROR"
                 },
@@ -108,7 +108,7 @@ See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on runni
                     "name": "gst_single",
                     "config_file": "gst_single.conf",
                     "description": "GPU Stress Test",
-                    "timeout": 18000,
+                    "timeout": 9000,
                     "expected_pass": true,
                     "fail_regex_pattern": "met:\\s*FALSE|RVS-ERROR"
                 },
@@ -288,148 +288,82 @@ Top-level ``transferbench`` keys:
 ROCm Validation Suite (RVS)
 ---------------------------
 
+``install_rvs`` checks for ``rvs`` and ``gst_single.conf``. When either is missing it installs from the package repository, or from the RVS tarball on a managed-compute step and when the package install does not succeed. ``<changeme>`` in ``path`` becomes the detected ROCm path. A leading ``/opt/rocm`` in ``path``, ``config_path_mi300x``, and ``config_path_default`` is rewritten to that path when the value does not already start with it.
+
+``rvs_cvs`` runs ``<path>/rvs -r <rvs_test_level>`` for the level row and ``<path>/rvs -g`` for GPU enumeration. Each module row runs ``<path>/rvs -c`` with the file named by ``config_file``, resolved under ``config_path_mi300x`` or ``config_path_default``.
+
 .. list-table::
    :widths: 3 3 5
    :header-rows: 1
 
-   * - Configuration parameters
-     - Default values
-     - Description
+   * - Key
+     - Packaged value
+     - Meaning
    * - ``path``
      - ``<changeme>/bin``
-     - Path where the RVS test is installed
+     - Directory of the ``rvs`` binary.
    * - ``git_install_path``
      - ``/home/{user-id}/INSTALL/rvs``
-     - Path to installed Git repo
+     - Writable directory for a source or tarball install.
    * - ``git_url``
-     - `https://github.com/ROCm/ROCmValidationSuite.git <https://github.com/ROCm/ROCmValidationSuite.git>`_
-     - URL for Git repo
+     - ``https://github.com/ROCm/ROCmValidationSuite.git -b release/rocm-rel-7.2``
+     - Repository string shipped in the file.
    * - ``nfs_install``
-     - True
-     - Set the flag to install nfs
+     - ``"True"``
+     - Present in the packaged file. The RVS install and run suites do not read it.
    * - ``rocm_path``
      - ``<changeme>``
-     - Set the path of rocm
+     - ``<changeme>`` auto-detects ``/opt/rocm`` or ``/opt/rocm/core-*``.
+   * - ``rocm_runtime_lib_path``
+     - empty
+     - Optional colon-separated directories prepended to ``LD_LIBRARY_PATH`` for every ``rvs`` invocation, including the install library check. Empty keeps the default loader.
    * - ``config_path_mi300x``
-     - ``/opt/rocm/share/`` |br| ``rocm-validation-suite`` |br| ``/conf/MI300X``
-     - Path for Instinct MI300X configuration
+     - ``/opt/rocm/share/rocm-validation-suite/conf/MI300X``
+     - MI300X conf directory. Install rewrites a leading ``/opt/rocm``.
    * - ``config_path_default``
-     - ``/opt/rocm/share/`` |br| ``rocm-validation`` |br| ``-suite/conf``
-     -  Default path for RVS
+     - ``/opt/rocm/share/rocm-validation-suite/conf``
+     - Default conf directory. Install rewrites a leading ``/opt/rocm``.
    * - ``rvs_test_level``
-     - 4
-     - Test level
+     - ``4``
+     - ``0`` runs module rows and skips the level row. ``1``–``5`` run the level row when RVS is 1.3.0 or newer, and skip the module rows.
+
+``tests[]`` supplies the timeout and fail regex for each row. ``level_config`` uses ``fail_regex_patterns`` (a list). Each module entry uses ``fail_regex_pattern`` (one string) and ``config_file``. ``expected_pass`` is ``true`` on every packaged entry.
+
+.. list-table::
+   :widths: 3 3 2 4
+   :header-rows: 1
+
    * - ``name``
-     - ``level_config``
-     - Test name
-   * - ``description``
-     - RVS LEVEL Configuration Test - Runs all modules collectively
-     - Test description
-   * - ``timeout``
-     - 14400
-     - Timeout in secs
-   * - ``expected_pass``
-     - True
-     - Result
-   * - ``fail_regex_pattern``
-     - Values:
-        - ``"met:\\s*FALSE",``
-        - ``"pass:\\s*FALSE",``
-        - ``"\\[ERROR\\s*\\]",``
-        - ``"FAIL",``
-        - ``"ERROR:",``
-        - ``"peqt false",``
-        - ``"RVS-ERROR",``
-        - ``"Missing packages\\s*:\\s*([1-9]\\d*)",``
-        - ``"Version mismatch packages\\s*:\\s*([1-9]\\d*)"``
-     - Regular expressions
-   * - ``name``
-     - ``mem_test``
-     - Test name
-   * - ``config_file``
-     - ``mem_test.conf``
-     - Test config file
-   * - ``description``
-     - Memory test
-     - Test description
-   * - ``timeout``
-     - 10000
-     - Timeout in secs
-   * - ``expected_pass``
-     - True
-     - Result
-   * - ``fail_regex_pattern``
-     - ``FAIL|\\[ERROR\\s*\\]|RVS-ERROR``
-     - Failure expression
-   * - ``name``
-     - ``gst_single``
-     - Test name
-   * - ``config_file``
+     - ``config_file``
+     - Timeout (seconds)
+     - Row
+   * - ``level_config``
+     - none
+     - ``14400``
+     - ``test_rvs_level_config``
+   * - ``mem_test``
+     - ``mem.conf``
+     - ``9000``
+     - ``test_rvs_mem_test``
+   * - ``gst_single``
      - ``gst_single.conf``
-     - Test config file
-   * - ``description``
-     - GPU Stress Test
-     - Test description
-   * - ``timeout``
-     - 18000
-     - Timeout in secs
-   * - ``expected_pass``
-     - True
-     - Result
-   * - ``fail_regex_pattern``
-     - ``met:\\s*FALSE|RVS-ERROR``
-     - Failure expression
-   * - ``name``
-     - ``iet_stress``
-     - Test name
-   * - ``config_file``
+     - ``9000``
+     - ``test_rvs_gst_single``
+   * - ``iet_stress``
      - ``iet_stress.conf``
-     - Test config file
-   * - ``description``
-     - Peak Power Test
-     - Test description
-   * - ``timeout``
-     - 3600
-     - Timeout in secs
-   * - ``expected_pass``
-     - True
-     - Result
-   * - ``fail_regex_pattern``
-     - ``\\[ERROR\\s*\\]|RVS-ERROR``
-     - Failure expression
-   * - ``name``
-     - ``pbqt_single``
-     - Test name
-   * - ``config_file``
+     - ``3600``
+     - ``test_rvs_iet_stress``
+   * - ``pebb_single``
+     - ``pebb_single.conf``
+     - ``3600``
+     - ``test_rvs_pebb_single``
+   * - ``pbqt_single``
      - ``pbqt_single.conf``
-     - Test config file
-   * - ``description``
-     - P2P Benchmark and Qualification Tool
-     - Test description
-   * - ``timeout``
-     - 3600
-     - Timeout in secs
-   * - ``expected_pass``
-     - True
-     - Result
-   * - ``fail_regex_pattern``
-     - ``FAIL|ERROR:|RVS-ERROR``
-     - Failure expression
-   * - ``name``
-     - ``babel_stream``
-     - Test name
-   * - ``config_file``
-     - ``babel_stream.conf``
-     - Test config file
-   * - ``description``
-     - BABEL Benchmark Test
-     - Test description
-   * - ``timeout``
-     - 9000
-     - Timeout in secs
-   * - ``expected_pass``
-     - True
-     - Result
-   * - ``fail_regex_pattern``
-     - ``\\[ERROR\\s*\\]|RVS-ERROR``
-     - Failure expression
+     - ``3600``
+     - ``test_rvs_pbqt_single``
+   * - ``babel_stream``
+     - ``babel.conf``
+     - ``9000``
+     - ``test_rvs_babel_stream``
+
+GPU enumeration has no ``tests[]`` entry. It runs ``rvs -g`` with a 60-second timeout and fails when the output contains ``No supported GPUs available``.

@@ -23,7 +23,7 @@ Set up config
 
    - Under ``agfhc``: ``path``, ``package_tar_ball``, ``install_dir``, ``env``, ``log_dir``. A ``path`` other than ``/opt/amd/agfhc`` installs with ``./install --rocm-tar -o`` and no sudo; its parent and ``log_dir`` must be writable on the nodes. Update ``env`` when ``path`` changes.
    - Under ``transferbench``: see :ref:`health-transferbench`. Leave ``rocm_path`` as ``<changeme>`` to auto-detect ROCm.
-   - Under ``rvs``: ``git_install_path``, ``path``, ``rocm_path``
+   - Under ``rvs``: see :ref:`health-rvs`. Leave ``rocm_path`` and ``path`` placeholders to follow the detected ROCm install.
 
 For the complete field reference including install paths and threshold values, see :doc:`/reference/configuration-files/burn-in-diag/health`.
 
@@ -184,52 +184,77 @@ On a managed-compute step, the nodes need a writable ``git_install_path`` and a 
 
 A missing all-to-all row fails with ``RTotal row not found``. A missing per-link gate fails with ``Missing gpu_to_gpu_a2a_per_link_min``. A p2p run that aborts while enumerating CPU NUMA nodes fails looking for UniDir or BiDir averages. Set ``num_cpu_devices``, or ``env.NUM_CPU_DEVICES``, to the number of NUMA nodes that have CPUs. ``auto_num_cpu_devices`` does that when the key is unset.
 
+.. _health-rvs:
+
 RVS
 ~~~
 
-See the `ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmValidationSuite/en/latest/install/installation.html>`_ docs for more information.
+`ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmValidationSuite/en/latest/index.html>`_ checks GPU presence, memory, and stress on every node. The packaged file sets ``rvs_test_level`` to ``4``. On RVS 1.3.0 or newer that runs the level suite and skips the individual module rows. ``test_rvs_gpu_enumeration`` runs either way.
 
-You can list all available RVS test cases using the CLI:
+In the copied health file, replace or confirm these ``rvs`` values:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 4 6
+
+   * - Key
+     - What to put there
+   * - ``rocm_path``
+     - ``<changeme>`` auto-detects ``/opt/rocm`` or ``/opt/rocm/core-*``. Set a path only when that tree contains ``libamdhip64``.
+   * - ``path``
+     - Directory of the ``rvs`` binary. The packaged value is ``<changeme>/bin``. Install replaces ``<changeme>`` with the detected ROCm path.
+   * - ``git_install_path``
+     - Writable directory used when install builds from the repository. The packaged value is ``/home/{user-id}/INSTALL/rvs``.
+   * - ``rvs_test_level``
+     - ``0`` runs the individual module rows and skips the level row. ``1`` through ``5`` run ``rvs -r <level>`` when RVS is 1.3.0 or newer.
+
+Leave ``config_path_mi300x`` and ``config_path_default`` unless the RVS conf tree is not under the detected ROCm prefix. Install rewrites a leading ``/opt/rocm`` in those paths to the detected prefix.
+
+Install, then run. When ``rvs`` or ``gst_single.conf`` is already on the node, install verifies them and does not rebuild:
 
 .. code:: bash
 
-  cvs list rvs_cvs
+  cvs run install_rvs \
+    --cluster_file ~/cvs_workspace/cluster.json \
+    --config_file ~/cvs_workspace/health/health_config.json
 
-.. code:: text
+  cvs run rvs_cvs \
+    --cluster_file ~/cvs_workspace/cluster.json \
+    --config_file ~/cvs_workspace/health/health_config.json
 
-  Available tests in rvs_cvs:
-    - test_rvs_level_config
-    - test_rvs_gpu_enumeration
-    - test_rvs_gpup_single
-    - test_rvs_mem_test
-    - test_rvs_gst_single
-    - test_rvs_iet_single
-    - test_rvs_pebb_single
-    - test_rvs_pbqt_single
-    - test_rvs_peqt_single
-    - test_rvs_rcqt_single
-    - test_rvs_tst_single
-    - test_rvs_babel_stream
+.. note::
 
-Run the RVS test:
+  ``cvs run`` writes the pytest HTML report described in :ref:`pytest-html-report-and-bundle`.
 
-1. Run the installation:
+Read the results
+^^^^^^^^^^^^^^^^
 
-   .. code:: bash
+.. list-table::
+   :header-rows: 1
+   :widths: 4 6
 
-     cvs run install_rvs \
-       --cluster_file ~/cvs_workspace/cluster.json \
-       --config_file ~/cvs_workspace/health/health_config.json \
-       --capture=tee-sys -vvv -s
+   * - Row
+     - When it runs
+   * - ``test_rvs_level_config``
+     - ``rvs_test_level`` is ``1``–``5`` and RVS is 1.3.0 or newer. Skipped at level ``0``, and on older RVS, with the reason in the row.
+   * - ``test_rvs_gpu_enumeration``
+     - Always. Fails with ``No GPUs detected`` when RVS reports no supported GPUs.
+   * - ``test_rvs_mem_test``
+     - Level ``0``, or RVS older than 1.3.0. Uses ``tests[]`` entry ``mem_test`` and ``mem.conf``.
+   * - ``test_rvs_gst_single``
+     - Same window as memory. Uses ``gst_single`` and ``gst_single.conf``.
+   * - ``test_rvs_iet_stress``
+     - Same window. Uses ``iet_stress`` and ``iet_stress.conf``.
+   * - ``test_rvs_pebb_single``
+     - Same window. Uses ``pebb_single`` and ``pebb_single.conf``.
+   * - ``test_rvs_pbqt_single``
+     - Same window. Uses ``pbqt_single`` and ``pbqt_single.conf``.
+   * - ``test_rvs_babel_stream``
+     - Same window. Uses ``babel_stream`` and ``babel.conf``.
 
-2. Start the RVS test:
+With the packaged level ``4`` and a current RVS, the module rows skip with ``Running LEVEL-4 test instead``. Set ``rvs_test_level`` to ``0`` to run them. A module whose name is missing from ``rvs.tests`` fails with ``Test configuration for <name> not found``. A missing conf file fails with ``Configuration file [<file>] for <name> not found``.
 
-   .. code:: bash
-
-     cvs run rvs_cvs \
-       --cluster_file ~/cvs_workspace/cluster.json \
-       --config_file ~/cvs_workspace/health/health_config.json \
-       --capture=tee-sys -vvv -s
+On a managed-compute step, install does not use apt. It installs the RVS tarball when ``rvs`` or ``gst_single.conf`` is missing. See :ref:`health-managed-compute`.
 
 .. _health-managed-compute:
 
@@ -242,3 +267,7 @@ TransferBench adds these requirements:
 
 - ``git_install_path`` must be writable on every allocated node.
 - Every node must be able to clone ``git_url``.
+
+RVS adds this requirement:
+
+- On a managed-compute step, ``install_rvs`` does not use apt. When ``rvs`` or ``gst_single.conf`` is missing, it installs the RVS tarball. ``git_install_path`` must be writable on every node.
