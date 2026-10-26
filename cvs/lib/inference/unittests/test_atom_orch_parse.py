@@ -202,6 +202,25 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertIn("VLLM_USE_AITER_UNIFIED_ATTENTION", env_cmd)
         self.assertIn("VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4", env_cmd)
 
+    def test_build_server_cmd_reads_mounted_hf_token(self):
+        orch = FakeOrch()
+        variant = _fake_variant(driver="vllm")
+        variant.roles.server.env = {"HF_TOKEN": "hf_secret_value", "CUSTOM_FLAG": "on"}
+        job = AtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="hf_secret_value",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.build_server_cmd()
+        rendered = "\n".join(cmd for cmd, _hosts in orch.commands)
+        self.assertNotIn("hf_secret_value", rendered)
+        self.assertIn("/run/secrets/hf_token", rendered)
+        self.assertIn("CUSTOM_FLAG", rendered)
+
     def test_flatten_serve_args_omits_false_flags(self):
         argv = AtomJob._flatten_serve_args({"enforce-eager": False, "trust-remote-code": True})
         self.assertNotIn("--enforce-eager", argv)
