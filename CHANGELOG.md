@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ATOM keeps the Kimi K2.5 MXFP4 single-node stem (`mi355x_atom_kimi-k2.5-mxfp4`). Thresholds are bring-up. The stem was removed with the MI325X lab ship and has not been run on MI355X.
 - Run Deck for most suites: health, platform, preflight, ibperf, MORI, ANC, RCCL, training and inference runs write a Run Deck beside the pytest HTML report. Install suites do not.
 - `cvs run` supports Slurm and SPUR: launch it with `srun` or `spur run`, and supported suites run without passwordless SSH.
 - ibperf bandwidth and latency tests support vPOD-aware node pairing (`ibperf.pairing_mode`).

@@ -76,6 +76,9 @@ still runs with ``cvs run atom``.
      - ``_single``
      - Native ATOM MI355X, TP4 MXFP4; same Spur/Slurm job-step as V4-Pro;
        bring-up thresholds
+   * - ``mi355x_atom_kimi-k2.5-mxfp4``
+     - ``_single``
+     - Native ATOM MI355X Kimi K2.5 MXFP4; bring-up. Removed with the MI325X lab ship. MI355X has not been run, so the stem stays.
    * - ``mi355x_atom_deepseek-v4-pro``
      - ``_single``
      - Native ATOM MI355X Pro TP8; Spur 355 job-step proven; bring-up thresholds
