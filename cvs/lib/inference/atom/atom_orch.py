@@ -31,7 +31,11 @@ import shlex
 import time
 
 from cvs.lib import globals
-from cvs.lib.inference.atom.atom_config_loader import merge_mxfp4_triton_env
+from cvs.lib.inference.atom.atom_config_loader import (
+    CONTAINER_HF_TOKEN_PATH,
+    SECRET_ENV_KEYS,
+    merge_mxfp4_triton_env,
+)
 from cvs.lib.inference.atom.atom_parsing import sglang_bench_jsonl_to_raw, to_client_metrics
 from cvs.lib.utils.model_query_lib import OpenAIProbe
 
@@ -407,8 +411,11 @@ class AtomJob:
 
     def build_server_cmd(self, *, clear_atom_cache=True):
         self._ensure_multinode_topology()
+        # The token stays in the mounted file. Parallel SSH logs this command, so the
+        # script must read the file inside the container instead of embedding the value.
+        token_path = shlex.quote(CONTAINER_HF_TOKEN_PATH)
         env_lines = [
-            f"export HF_TOKEN={shlex.quote(self.hf_token)}",
+            (f"if [ -f {token_path} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {token_path})\"; fi"),
             f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
         ]
         if self._uses_vllm_serve():
@@ -431,7 +438,7 @@ class AtomJob:
             env_lines.append(f"export GLOO_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
             env_lines.append(f"export TP_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
         for k, v in self.server_env.items():
-            if k in (
+            if k in SECRET_ENV_KEYS or k in (
                 "CVS_GPU_MEMORY_UTIL",
                 "VLLM_GPU_MEMORY_UTIL",
                 "VLLM_ENFORCE_EAGER",
