@@ -1,0 +1,14 @@
+{
+    "topology": {
+        "_comment_description": "Human-readable label for reports.",
+        "description": "Cluster Hardware Topology",
+
+        "_example_probe_timeout": 120,
+        "probe_timeout": 120,
+        "_comment_probe_timeout": "Seconds allowed for the per-node topology probe to return on each node. The probe only reads amd-smi and sysfs, so the default is generous.",
+
+        "_example_use_anc_fallback": false,
+        "use_anc_fallback": false,
+        "_comment_use_anc_fallback": "Reserved: when true, nodes without amd-smi fall back to 'anc.py --device-topology'. Not required when amd-smi is present on every node."
+    }
+}

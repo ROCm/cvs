@@ -7,6 +7,8 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import re
 import json
+import math
+from html import escape as html_escape
 
 from cvs.lib.rocm_plib import *
 
@@ -2861,3 +2863,446 @@ def build_html_env_metrics_table():
 
 def build_html_config_table():
     log.info('Build config table')
+
+
+_TOPO_PCI_SEP = ":"
+
+
+def _topo_pci_domain(bdf):
+    '''PCI domain of a BDF (e.g. "0001:01:00.0" -> "0001").
+
+    The domain is what pairs a GPU with its backend NICs: a GPU at 0001:01:00.0
+    and NICs at 0001:44:00.0 / 0001:48:00.0 share domain "0001".
+    '''
+    if not bdf:
+        return ''
+    return bdf.split(_TOPO_PCI_SEP)[0]
+
+
+def _topo_nics_by_domain(node):
+    '''Group a node's NICs (those with a BDF) by PCI domain -> [nic, ...].'''
+    by_domain = {}
+    for nic in node.get('nics', []):
+        if nic.get('bdf'):
+            by_domain.setdefault(_topo_pci_domain(nic['bdf']), []).append(nic)
+    return by_domain
+
+
+def _topo_gpu_peer_links(node):
+    '''Per-GPU peer link map for a node: {src_bdf: {peer_bdf: (link_type, weight)}}.
+
+    SELF links are dropped; only cross-GPU links remain.
+    '''
+    links = {}
+    for gpu in node.get('gpus', []):
+        src = gpu.get('bdf')
+        links[src] = {}
+        for link in gpu.get('links', []):
+            if (link.get('link_type') or '').upper() == 'SELF':
+                continue
+            links[src][link.get('peer_bdf')] = (link.get('link_type'), link.get('weight'))
+    return links
+
+
+# Entity + link palette. Colours identify entity kind (CPU/GPU/NIC); link TYPE is
+# carried by line style (solid red = XGMI, dashed grey = PCIe) plus a legend, so
+# the XGMI-vs-PCIe distinction never relies on colour alone. Validated for CVD.
+_TOPO_CSS = '''
+:root{--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--line:#e2e1dc;
+--gpu:#2a78d6;--nic:#1baf7a;--cpu:#4a3aa7;--xgmi:#e34948;--pcie:#8a8a8a;}
+*{box-sizing:border-box}
+body{font-family:ui-sans-serif,system-ui,sans-serif;margin:0;background:var(--surface);color:var(--ink);}
+.wrap{max-width:1180px;margin:0 auto;padding:24px;}
+h2{font-size:20px;margin:0 0 4px}.sub{color:var(--ink2);font-size:13px;margin:0 0 16px}
+.sum{background:#eef6ff;padding:8px 12px;border-radius:6px;font-size:13px;margin:0 0 16px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--ink2);margin:10px 0 18px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.dot{width:10px;height:10px;border-radius:3px;display:inline-block}
+.node-card{border:1px solid var(--line);border-radius:10px;margin:0 0 20px;overflow:hidden}
+.node-head{background:#f3f4f6;padding:10px 14px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+.node-head .meta{font-weight:400;color:var(--ink2);font-size:12px}
+.node-body{padding:14px;display:grid;grid-template-columns:1fr;gap:16px}
+@media(min-width:880px){.node-body{grid-template-columns:290px 1fr}}
+.cpu-card{border:1px solid var(--line);border-radius:8px;padding:12px;height:fit-content}
+.cpu-title{font-weight:600;color:var(--cpu);font-size:14px;margin:0 0 2px}
+.cpu-sub{color:var(--ink2);font-size:11px;font-family:ui-monospace,monospace;margin:0 0 10px}
+.numa{border-left:3px solid var(--cpu);background:#f6f5fc;border-radius:4px;padding:7px 10px;margin:8px 0}
+.numa b{font-size:12px}.numa .cl{font-family:ui-monospace,monospace;font-size:11px;color:var(--ink2);display:block;margin-top:2px}
+.fe{display:flex;align-items:center;gap:5px;margin-top:6px;font-size:11px;color:#0b5}
+.fe .dot{background:var(--nic)}
+.kv{display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:1px dotted var(--line)}
+.kv span:last-child{font-family:ui-monospace,monospace;color:var(--ink2)}
+.dimm-list{margin-top:10px;font-size:12px}
+.dimm-list summary{cursor:pointer;color:var(--mem);font-weight:600}
+.dimm{border-left:3px solid var(--mem);background:#fdf3ee;border-radius:4px;padding:5px 9px;margin:6px 0;font-size:11px}
+.dimm .cl{font-family:ui-monospace,monospace;color:var(--ink2)}
+.muted{color:var(--ink2)}
+pre{background:#f6f8fa;padding:12px;overflow:auto;font-size:11px}
+'''
+
+
+def _topo_legend():
+    return (
+        '<div class="legend">'
+        '<span><i class="dot" style="background:var(--cpu)"></i>CPU / NUMA</span>'
+        '<span><i class="dot" style="background:var(--gpu)"></i>GPU</span>'
+        '<span><i class="dot" style="background:var(--nic)"></i>NIC</span>'
+        '<span><svg width="26" height="10"><line x1="0" y1="5" x2="26" y2="5" '
+        'stroke="var(--xgmi)" stroke-width="3"/></svg>XGMI (GPU&harr;GPU)</span>'
+        '<span><svg width="26" height="10"><line x1="0" y1="5" x2="26" y2="5" '
+        'stroke="var(--pcie)" stroke-width="2" stroke-dasharray="4 3"/></svg>PCIe (CPU&harr;GPU)</span>'
+        '</div>'
+    )
+
+
+def _topo_node_meta(node):
+    cpu = node.get('cpu', {})
+    nic_count = len([n for n in node.get('nics', []) if n.get('bdf')])
+    name = node.get('hostname') or node.get('host', '')
+    return (
+        f'{html_escape(name)} &middot; {node.get("gpu_count", 0)} GPUs '
+        f'&middot; {nic_count} NICs &middot; {cpu.get("numa_nodes", "?")} NUMA nodes'
+    )
+
+
+def _topo_dimm_summary(node):
+    '''(total_gb, count, "<type> <speed>") for the populated DIMMs, or (None, 0, "").
+
+    Falls back to the lsmem total when per-DIMM detail is unavailable (no sudo).
+    '''
+    dimms = node.get('dimms', [])
+    if not dimms:
+        total = (node.get('mem_summary') or {}).get('total_online')
+        return (total, 0, '') if total else (None, 0, '')
+    total_gb = 0
+    for dimm in dimms:
+        head = (dimm.get('size') or '').split()
+        if head and head[0].isdigit():
+            total_gb += int(head[0])
+    first = dimms[0]
+    spec = ' '.join(p for p in (first.get('type'), first.get('speed')) if p)
+    return (f'{total_gb} GB' if total_gb else None, len(dimms), spec)
+
+
+def _topo_scale_out_summary(node):
+    '''Compact scale-out fabric label from a node's RDMA records, or None.
+
+    Counts the active data-plane RDMA ports (excluding the front-end/mgmt NIC in
+    PCI domain 0000) and names the fabric (RoCE/IB), line rate and generation --
+    e.g. "8x 400G RoCE (NDR), all ACTIVE". This is the inter-node scale-out
+    capacity, discoverable from the node even though the wiring is not.
+    '''
+    backend = [r for r in node.get('rdma', []) if (r.get('bdf') or '').split(':')[0] != '0000']
+    if not backend:
+        return None
+    active = [r for r in backend if r.get('active')]
+    first = active[0] if active else backend[0]
+    gbps = first.get('gbps')
+    rate = f'{gbps}G' if gbps else (first.get('rate') or '?')
+    fabric = first.get('fabric') or first.get('link_layer') or 'RDMA'
+    gen = f' ({first.get("gen")})' if first.get('gen') else ''
+    state = 'all ACTIVE' if len(active) == len(backend) else f'{len(active)}/{len(backend)} ACTIVE'
+    return f'{len(backend)}&times; {rate} {fabric}{gen}, {state}'
+
+
+def _topo_cpu_panel(node):
+    '''Left panel: CPU identity, memory, NUMA domains (with NVMe), front-end NIC, DIMMs.'''
+    cpu = node.get('cpu', {})
+    front_end = _topo_nics_by_domain(node).get('0000', [])
+    mem_total, dimm_count, dimm_spec = _topo_dimm_summary(node)
+    nvme = node.get('nvme', [])
+    rows = [
+        '<div class="cpu-title">cpu0</div>',
+        f'<div class="cpu-sub">{html_escape(cpu.get("model_name", "CPU"))}</div>',
+        f'<div class="kv"><span>Sockets</span><span>{cpu.get("sockets", "?")}</span></div>',
+        f'<div class="kv"><span>Cores / socket</span><span>{cpu.get("cores_per_socket", "?")}</span></div>',
+        f'<div class="kv"><span>Threads total</span><span>{cpu.get("cpus", "?")}</span></div>',
+        f'<div class="kv"><span>NUMA nodes</span><span>{cpu.get("numa_nodes", "?")}</span></div>',
+    ]
+    if mem_total:
+        detail = f'{dimm_count}&times; {html_escape(dimm_spec)}' if dimm_count else 'total online'
+        rows.append(f'<div class="kv"><span>Memory</span><span>{mem_total} ({detail})</span></div>')
+    if nvme:
+        rows.append(f'<div class="kv"><span>NVMe drives</span><span>{len(nvme)}</span></div>')
+    if node.get('scale_up_mode'):
+        rows.append(
+            f'<div class="kv"><span>Scale-up (GPU)</span>'
+            f'<span>XGMI &middot; {html_escape(node["scale_up_mode"])}</span></div>'
+        )
+    scale_out = _topo_scale_out_summary(node)
+    if scale_out:
+        rows.append(f'<div class="kv"><span>Scale-out (NIC)</span><span>{scale_out}</span></div>')
+
+    # NVMe grouped by the NUMA node its controller reports.
+    nvme_by_numa = {}
+    for drive in nvme:
+        nvme_by_numa.setdefault(str(drive.get('numa_node')), []).append(drive)
+
+    for i, numa in enumerate(node.get('numa', [])):
+        extra = ''
+        if i == 0 and front_end:
+            nic = front_end[0]
+            extra += (
+                f'<span class="fe"><i class="dot"></i>{html_escape(nic["name"])} '
+                f'({html_escape(nic["bdf"])}) &middot; front-end</span>'
+            )
+        # numa["node"] is like "node1"; its index matches the NVMe numa_node.
+        node_idx = numa['node'].replace('node', '')
+        for drive in nvme_by_numa.get(node_idx, []):
+            cap = drive.get('capacity') or ''
+            extra += (
+                f'<span class="fe" style="color:var(--mem)">'
+                f'<i class="dot" style="background:var(--mem)"></i>'
+                f'{html_escape(drive["name"])} {html_escape(cap)} &middot; NVMe</span>'
+            )
+        rows.append(
+            f'<div class="numa"><b>{html_escape(numa["node"])}</b>'
+            f'<span class="cl">cpus={html_escape(numa["cpulist"])}</span>{extra}</div>'
+        )
+
+    # Per-DIMM detail (only when dmidecode succeeded).
+    dimms = node.get('dimms', [])
+    if dimms:
+        dimm_rows = ''.join(
+            f'<div class="dimm"><b>{html_escape(d.get("bank") or d.get("locator") or "DIMM")}</b> '
+            f'{html_escape(d.get("size") or "")} {html_escape(d.get("type") or "")} '
+            f'{html_escape(d.get("speed") or "")} '
+            f'<span class="cl">{html_escape(d.get("manufacturer") or "")}</span></div>'
+            for d in dimms
+        )
+        rows.append(
+            f'<details class="dimm-list"><summary>{len(dimms)} populated DIMM slots</summary>{dimm_rows}</details>'
+        )
+    return '<div class="cpu-card">' + ''.join(rows) + '</div>'
+
+
+def _topo_mesh_svg(node):
+    '''Right panel: CPU block, CPU->GPU PCIe host links, GPU XGMI mesh, backend NICs.'''
+    gpus = node.get('gpus', [])
+    if not gpus:
+        return (
+            '<div class="muted" style="padding:40px;text-align:center;'
+            'border:1px dashed var(--line);border-radius:8px">'
+            'No GPUs on this node (amdgpu driver not loaded). '
+            'CPU and NICs shown on the left.</div>'
+        )
+    links = _topo_gpu_peer_links(node)
+    nics_by_domain = _topo_nics_by_domain(node)
+    width, height = 720, 470
+    cpu_x, cpu_y = 70, height / 2
+    cx, cy, radius = 430, height / 2, 140
+
+    pos = {}
+    count = len(gpus)
+    for i, gpu in enumerate(gpus):
+        ang = -math.pi / 2 + 2 * math.pi * i / max(count, 1)
+        pos[gpu['bdf']] = (cx + radius * math.cos(ang), cy + radius * math.sin(ang))
+
+    svg = [f'<svg viewBox="0 0 {width} {height}" width="100%" style="max-width:{width}px">']
+
+    # CPU -> GPU host PCIe x16 links, behind the nodes.
+    for gpu in gpus:
+        x, y = pos[gpu['bdf']]
+        svg.append(
+            f'<line x1="{cpu_x + 34:.0f}" y1="{cpu_y:.0f}" x2="{x:.0f}" y2="{y:.0f}" '
+            f'stroke="var(--pcie)" stroke-width="1.6" stroke-dasharray="5 4" opacity="0.65"/>'
+        )
+    first_x, first_y = pos[gpus[0]['bdf']]
+    mid_x, mid_y = (cpu_x + 34 + first_x) / 2, (cpu_y + first_y) / 2
+    svg.append(
+        f'<text x="{mid_x:.0f}" y="{mid_y - 4:.0f}" fill="var(--pcie)" font-size="9" '
+        f'text-anchor="middle">PCIe x16</text>'
+    )
+
+    # GPU<->GPU edges: solid red XGMI, dashed grey PCIe. Deduped undirected.
+    drawn = set()
+    for src, peers in links.items():
+        for dst, (link_type, _weight) in peers.items():
+            key = tuple(sorted((src, dst)))
+            if key in drawn or src not in pos or dst not in pos:
+                continue
+            drawn.add(key)
+            x1, y1 = pos[src]
+            x2, y2 = pos[dst]
+            if (link_type or '').upper() == 'XGMI':
+                svg.append(
+                    f'<line x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" '
+                    f'stroke="var(--xgmi)" stroke-width="2.5" opacity="0.85"/>'
+                )
+            else:
+                svg.append(
+                    f'<line x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" '
+                    f'stroke="var(--pcie)" stroke-width="2" stroke-dasharray="5 4"/>'
+                )
+
+    # CPU block.
+    cpu = node.get('cpu', {})
+    svg.append(f'<rect x="{cpu_x - 34:.0f}" y="{cpu_y - 40:.0f}" width="68" height="80" rx="8" fill="var(--cpu)"/>')
+    svg.append(
+        f'<text x="{cpu_x:.0f}" y="{cpu_y - 6:.0f}" text-anchor="middle" fill="#fff" '
+        f'font-size="12" font-weight="600">cpu0</text>'
+    )
+    svg.append(
+        f'<text x="{cpu_x:.0f}" y="{cpu_y + 10:.0f}" text-anchor="middle" fill="#dcd8f5" '
+        f'font-size="8">{cpu.get("cores_per_socket", "?")}C</text>'
+    )
+    svg.append(
+        f'<text x="{cpu_x:.0f}" y="{cpu_y + 22:.0f}" text-anchor="middle" fill="#dcd8f5" '
+        f'font-size="8">{cpu.get("numa_nodes", "?")} NUMA</text>'
+    )
+
+    # GPU circles + their backend NICs (same PCI domain) radiating outward.
+    for gpu in gpus:
+        x, y = pos[gpu['bdf']]
+        domain = _topo_pci_domain(gpu['bdf'])
+        ang = math.atan2(y - cy, x - cx)
+        for j, nic in enumerate(nics_by_domain.get(domain, [])):
+            nx = x + 66 * math.cos(ang)
+            ny = y + 66 * math.sin(ang) + (j - 0.5) * 24
+            svg.append(
+                f'<line x1="{x:.0f}" y1="{y:.0f}" x2="{nx:.0f}" y2="{ny:.0f}" '
+                f'stroke="var(--nic)" stroke-width="1.4" opacity="0.55"/>'
+            )
+            up = nic.get('operstate') == 'up'
+            fill = '#eafaf3' if up else '#f3f4f6'
+            stroke = 'var(--nic)' if up else '#bbb'
+            text_fill = '#0b5' if up else '#999'
+            svg.append(
+                f'<rect x="{nx - 26:.0f}" y="{ny - 9:.0f}" width="58" height="18" rx="4" '
+                f'fill="{fill}" stroke="{stroke}"/>'
+            )
+            svg.append(
+                f'<text x="{nx + 3:.0f}" y="{ny + 4:.0f}" text-anchor="middle" '
+                f'fill="{text_fill}" font-size="8">{html_escape(nic["name"][:9])}</text>'
+            )
+        svg.append(f'<circle cx="{x:.0f}" cy="{y:.0f}" r="27" fill="var(--gpu)"/>')
+        svg.append(
+            f'<text x="{x:.0f}" y="{y - 2:.0f}" text-anchor="middle" fill="#fff" '
+            f'font-size="12" font-weight="600">gpu{gpu.get("gpu_index")}</text>'
+        )
+        svg.append(
+            f'<text x="{x:.0f}" y="{y + 11:.0f}" text-anchor="middle" fill="#dbeafe" '
+            f'font-size="8">{html_escape(domain)}</text>'
+        )
+
+    mode = node.get('scale_up_mode')
+    label = f'Scale-up: XGMI mesh ({len(drawn)} links)'
+    if mode:
+        label += f' &middot; {html_escape(mode)}'
+    svg.append(f'<text x="{cx:.0f}" y="{cy:.0f}" text-anchor="middle" fill="var(--ink2)" font-size="10">{label}</text>')
+    svg.append('</svg>')
+    return ''.join(svg)
+
+
+def _topo_inter_node_section(cluster_dict):
+    '''Render the inter-node (scale-out) fabric section.
+
+    When LLDP resolved node->switch edges, list them grouped by switch. When it
+    did not (the common case -- no lldpd daemon), show a muted note explaining
+    the wiring needs LLDP or ARC, so the empty state is honest rather than silent.
+    '''
+    edges = cluster_dict.get('inter_node_edges', [])
+    if not edges:
+        return (
+            '<h3>Inter-node fabric (scale-out)</h3>'
+            '<div class="muted" style="border:1px dashed var(--line);border-radius:8px;'
+            'padding:14px">Inter-node (scale-out) wiring was not discovered. Node '
+            'uplinks and their rates are shown per node above; mapping them to '
+            'switches needs LLDP on the nodes or ARC rack discovery.</div>'
+        )
+    by_switch = {}
+    for edge in edges:
+        switch = edge.get('via') or edge.get('dst', {}).get('name') or 'unknown'
+        by_switch.setdefault(switch, []).append(edge)
+    rows = []
+    for switch in sorted(by_switch.keys()):
+        links = ''.join(
+            f'<div class="dimm" style="border-left-color:var(--nic)">'
+            f'<b>{html_escape(e.get("src", {}).get("name", ""))}</b> '
+            f'<span class="cl">{html_escape(e.get("src", {}).get("port", ""))}</span> '
+            f'&rarr; {html_escape(e.get("dst", {}).get("port", ""))} '
+            f'<span class="cl">{html_escape(e.get("speed") or "")} '
+            f'{html_escape(e.get("status") or "")}</span></div>'
+            for e in by_switch[switch]
+        )
+        rows.append(
+            f'<details class="dimm-list" open><summary style="color:var(--nic)">'
+            f'ToR switch {html_escape(switch)} &middot; {len(by_switch[switch])} links'
+            f'</summary>{links}</details>'
+        )
+    return '<h3>Inter-node fabric (scale-out)</h3>' + ''.join(rows)
+
+
+def build_topology_graph(filename, cluster_dict):
+    '''Render a cluster topology dict to a standalone, self-contained HTML file.
+
+    cluster_dict is ClusterTopology.to_dict() output. Each node gets a card with
+    a CPU/NUMA panel (model, sockets, cores/threads, NUMA domains with cpulists,
+    front-end NIC) and an SVG diagram: the CPU block, dashed PCIe host links from
+    the CPU to every GPU, the GPU XGMI mesh (solid red XGMI / dashed grey PCIe
+    between GPUs), and each GPU's backend NICs grouped by PCI domain. A node whose
+    driver is down renders its CPU/NIC panel with a no-GPU note instead of a mesh.
+
+    No external assets: the page is pure HTML+SVG so it travels in the pytest-html
+    ZIP bundle and opens offline.
+    '''
+    log.info('Build HTML cluster topology graph: %s', filename)
+    summary = cluster_dict.get('summary', {})
+
+    cards = []
+    for node in cluster_dict.get('nodes', []):
+        cards.append(
+            f'<div class="node-card"><div class="node-head">'
+            f'<span>{html_escape(node.get("host", ""))}</span>'
+            f'<span class="meta">{_topo_node_meta(node)}</span></div>'
+            f'<div class="node-body">{_topo_cpu_panel(node)}{_topo_mesh_svg(node)}</div></div>'
+        )
+
+    scale_up_mode = summary.get('scale_up_mode') or 'n/a'
+    summary_line = (
+        'Nodes: {node_count} (reachable {reachable_node_count}, '
+        'unreachable {unreachable_node_count}) &nbsp;|&nbsp; Racks: {rack_count} '
+        '&nbsp;|&nbsp; GPUs: {total_gpus} &nbsp;|&nbsp; XGMI links: {xgmi_edge_count} '
+        '&nbsp;|&nbsp; DIMMs: {total_dimms} &nbsp;|&nbsp; NVMe: {total_nvme} '
+        '&nbsp;|&nbsp; Scale-up: {scale_up_mode} '
+        '&nbsp;|&nbsp; Scale-out NICs: {scale_out_nic_count} '
+        '&nbsp;|&nbsp; Switches: {switch_count}'
+    ).format(
+        node_count=summary.get('node_count', 0),
+        reachable_node_count=summary.get('reachable_node_count', 0),
+        unreachable_node_count=summary.get('unreachable_node_count', 0),
+        rack_count=summary.get('rack_count', 0),
+        total_gpus=summary.get('total_gpus', 0),
+        xgmi_edge_count=summary.get('xgmi_edge_count', 0),
+        total_dimms=summary.get('total_dimms', 0),
+        total_nvme=summary.get('total_nvme', 0),
+        scale_up_mode=html_escape(scale_up_mode),
+        scale_out_nic_count=summary.get('scale_out_nic_count', 0),
+        switch_count=summary.get('switch_count', 0),
+    )
+
+    inter_section = _topo_inter_node_section(cluster_dict)
+
+    with open(filename, 'w') as fp:
+        fp.write('<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8"/>\n')
+        fp.write('<title>CVS Cluster Topology</title>\n')
+        fp.write(f'<style>{_TOPO_CSS}</style>\n')
+        fp.write('</head>\n<body>\n<div class="wrap">\n')
+        fp.write('<h2>CVS Cluster Topology</h2>\n')
+        fp.write(
+            '<p class="sub">Per node: CPU/NUMA, the GPU XGMI mesh (scale-up), '
+            'CPU&harr;GPU PCIe host links, backend NICs, DIMMs and NVMe. '
+            'Inter-node (scale-out) wiring below.</p>\n'
+        )
+        fp.write(f'<div class="sum">{summary_line}</div>\n')
+        fp.write(_topo_legend() + '\n')
+        fp.write(''.join(cards))
+        fp.write(inter_section)
+        fp.write('<h3>Raw topology JSON</h3>\n<pre id="json-display"></pre>\n')
+        fp.write(
+            '<script>document.getElementById("json-display").textContent = '
+            + 'JSON.stringify('
+            + json.dumps(cluster_dict)
+            + ', null, 2);</script>\n'
+        )
+        fp.write('</div>\n</body>\n</html>\n')

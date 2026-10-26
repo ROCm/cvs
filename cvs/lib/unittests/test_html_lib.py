@@ -691,5 +691,256 @@ class TestBuildRcclHeatmap(unittest.TestCase):
         self.assertNotIn("predates", "\n".join(log_cm.output))
 
 
+class TestBuildTopologyGraph(unittest.TestCase):
+    """Tests for the cluster topology HTML renderer (demo_d layout)."""
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(delete=False, mode="w+", encoding="utf-8", suffix=".html")
+        self.filename = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.close()
+        if os.path.exists(self.filename):
+            os.remove(self.filename)
+
+    def _gpu(self, bdf, index, peers):
+        """GPU record with a SELF link plus one XGMI link per (peer_index, peer_bdf)."""
+        links = [{"peer_bdf": bdf, "peer_gpu": index, "link_type": "SELF", "link_status": "ENABLED"}]
+        for peer_index, peer_bdf in peers:
+            links.append(
+                {
+                    "peer_bdf": peer_bdf,
+                    "peer_gpu": peer_index,
+                    "link_type": "XGMI",
+                    "weight": 15,
+                    "num_hops": 1,
+                    "link_status": "ENABLED",
+                }
+            )
+        return {"bdf": bdf, "gpu_index": index, "uuid": None, "links": links}
+
+    def _gpu_node(self):
+        return {
+            "host": "testnode-rck-g02-h21-7.example",
+            "hostname": "testnode-rck-g02-h21-7",
+            "reachable": True,
+            "gpu_count": 2,
+            "cpu": {
+                "model_name": "AMD Eng Sample",
+                "cpus": "256",
+                "cores_per_socket": "128",
+                "sockets": "1",
+                "numa_nodes": "38",
+            },
+            "numa": [{"node": "node0", "cpulist": "0-63,128-191"}, {"node": "node1", "cpulist": "64-127,192-254"}],
+            "nics": [
+                {"name": "enp4s0np0", "bdf": "0000:04:00.0", "numa_node": "0", "operstate": "up"},
+                {"name": "enP1p68s0", "bdf": "0001:44:00.0", "numa_node": "-1", "operstate": "up"},
+                {"name": "enP1p72s0", "bdf": "0001:48:00.0", "numa_node": "-1", "operstate": "down"},
+            ],
+            "dimms": [
+                {
+                    "locator": "DIMM 0",
+                    "bank": "P0 CHANNEL A",
+                    "size": "128 GB",
+                    "type": "DDR5",
+                    "speed": "8000 MT/s",
+                    "manufacturer": "Samsung",
+                    "part_number": "M321",
+                    "rank": "2",
+                },
+                {
+                    "locator": "DIMM 0",
+                    "bank": "P0 CHANNEL B",
+                    "size": "128 GB",
+                    "type": "DDR5",
+                    "speed": "8000 MT/s",
+                    "manufacturer": "Samsung",
+                    "part_number": "M321",
+                    "rank": "2",
+                },
+            ],
+            "mem_summary": {},
+            "nvme": [
+                {"name": "nvme0n1", "capacity": "3.8 TB", "numa_node": "1", "model": "SDS6BA138"},
+            ],
+            "scale_up_mode": "SPX/NPS1",
+            "rdma": [
+                {
+                    "bdf": "0000:04:00.0",
+                    "netdev": "enp4s0np0",
+                    "gbps": 100,
+                    "rate": "100 Gb/sec (4X EDR)",
+                    "fabric": "RoCE",
+                    "gen": "EDR",
+                    "state": "4: ACTIVE",
+                    "active": True,
+                },
+                {
+                    "bdf": "0001:44:00.0",
+                    "netdev": "enP1p68s0",
+                    "gbps": 400,
+                    "rate": "400 Gb/sec (4X NDR)",
+                    "fabric": "RoCE",
+                    "gen": "NDR",
+                    "state": "4: ACTIVE",
+                    "active": True,
+                },
+                {
+                    "bdf": "0002:44:00.0",
+                    "netdev": "enP2p68s0",
+                    "gbps": 400,
+                    "rate": "400 Gb/sec (4X NDR)",
+                    "fabric": "RoCE",
+                    "gen": "NDR",
+                    "state": "4: ACTIVE",
+                    "active": True,
+                },
+            ],
+            "lldp": {},
+            "gpus": [
+                self._gpu("0001:01:00.0", 0, [(1, "0002:01:00.0")]),
+                self._gpu("0002:01:00.0", 1, [(0, "0001:01:00.0")]),
+            ],
+        }
+
+    def _no_gpu_node(self):
+        return {
+            "host": "testnode-rck-g02-j19-7.example",
+            "hostname": "testnode-rck-g02-j19-7",
+            "reachable": True,
+            "gpu_count": 0,
+            "cpu": {"model_name": "AMD Eng Sample", "cpus": "64", "numa_nodes": "2"},
+            "numa": [{"node": "node0", "cpulist": "0-63"}],
+            "nics": [{"name": "nic0", "bdf": "0000:04:00.0", "numa_node": "0", "operstate": "up"}],
+            "gpus": [],
+        }
+
+    def _render(self, cluster):
+        html_lib.build_topology_graph(self.filename, cluster)
+        with open(self.filename) as fp:
+            return fp.read()
+
+    def test_pci_domain_and_nic_grouping(self):
+        self.assertEqual(html_lib._topo_pci_domain("0001:01:00.0"), "0001")
+        self.assertEqual(html_lib._topo_pci_domain(""), "")
+        by_domain = html_lib._topo_nics_by_domain(self._gpu_node())
+        # Both backend NICs share domain 0001 with gpu0; the front-end NIC is 0000.
+        self.assertEqual({n["name"] for n in by_domain["0001"]}, {"enP1p68s0", "enP1p72s0"})
+        self.assertEqual([n["name"] for n in by_domain["0000"]], ["enp4s0np0"])
+
+    def test_peer_links_drop_self(self):
+        links = html_lib._topo_gpu_peer_links(self._gpu_node())
+        self.assertEqual(set(links["0001:01:00.0"].keys()), {"0002:01:00.0"})
+        self.assertEqual(links["0001:01:00.0"]["0002:01:00.0"], ("XGMI", 15))
+
+    def test_gpu_node_renders_cpu_mesh_and_links(self):
+        content = self._render({"nodes": [self._gpu_node()], "summary": {"total_gpus": 2, "xgmi_edge_count": 1}})
+        # CPU / NUMA panel
+        self.assertIn("cpu0", content)
+        self.assertIn("cpus=0-63,128-191", content)
+        self.assertIn("front-end", content)
+        # Mesh: GPUs, XGMI edge, PCIe host link, backend NIC
+        self.assertIn("gpu0", content)
+        self.assertIn("gpu1", content)
+        self.assertIn("Scale-up: XGMI mesh (1 links)", content)
+        self.assertIn("PCIe x16", content)
+        self.assertIn("enP1p68s0", content)
+        # No external assets.
+        self.assertNotIn("http://", content)
+        self.assertNotIn("https://", content)
+        self.assertNotIn("cdn.", content)
+
+    def test_dimms_and_nvme_rendered(self):
+        content = self._render({"nodes": [self._gpu_node()], "summary": {"total_dimms": 2, "total_nvme": 1}})
+        # Memory summary (2x 128 GB = 256 GB), per-DIMM detail, and NVMe on NUMA.
+        self.assertIn("256 GB", content)
+        self.assertIn("DDR5", content)
+        self.assertIn("8000 MT/s", content)
+        self.assertIn("populated DIMM slots", content)
+        self.assertIn("P0 CHANNEL A", content)
+        self.assertIn("nvme0n1", content)
+        self.assertIn("3.8 TB", content)
+        self.assertIn("DIMMs: 2", content)
+        self.assertIn("NVMe: 1", content)
+
+    def test_lsmem_fallback_when_no_dmidecode_dimms(self):
+        node = self._gpu_node()
+        node["dimms"] = []
+        node["mem_summary"] = {"total_online": "512G"}
+        content = self._render({"nodes": [node], "summary": {}})
+        self.assertIn("512G", content)
+        self.assertNotIn("populated DIMM slots", content)
+
+    def test_down_nic_styled_but_present(self):
+        content = self._render({"nodes": [self._gpu_node()], "summary": {}})
+        self.assertIn("enP1p72s0", content)  # the down backend NIC still shows
+
+    def test_no_gpu_node_shows_fallback_not_mesh(self):
+        content = self._render({"nodes": [self._no_gpu_node()], "summary": {}})
+        self.assertIn("amdgpu driver not loaded", content)
+        self.assertIn("cpus=0-63", content)  # CPU panel still rendered
+        # The mesh SVG label (distinct from the intro paragraph) must be absent.
+        self.assertNotIn("Scale-up: XGMI mesh (", content)
+
+    def test_multi_node_summary_and_cards(self):
+        cluster = {
+            "nodes": [self._gpu_node(), self._no_gpu_node()],
+            "summary": {
+                "node_count": 2,
+                "reachable_node_count": 2,
+                "unreachable_node_count": 0,
+                "rack_count": 1,
+                "total_gpus": 2,
+                "xgmi_edge_count": 1,
+            },
+        }
+        content = self._render(cluster)
+        self.assertIn("GPUs: 2", content)
+        self.assertIn("XGMI links: 1", content)
+        self.assertIn("testnode-rck-g02-h21-7", content)
+        self.assertIn("testnode-rck-g02-j19-7", content)
+
+    def test_scale_up_and_scale_out_labels(self):
+        content = self._render(
+            {"nodes": [self._gpu_node()], "summary": {"scale_up_mode": "SPX/NPS1", "scale_out_nic_count": 2}}
+        )
+        # Scale-up: mesh label + CPU-panel row with the partition mode.
+        self.assertIn("Scale-up: XGMI mesh", content)
+        self.assertIn("SPX/NPS1", content)
+        # Scale-out: per-node fabric line (2 backend NICs, front-end excluded).
+        self.assertIn("Scale-out (NIC)", content)
+        self.assertIn("RoCE", content)
+        self.assertIn("2&times; 400G", content)
+        self.assertIn("Scale-out NICs: 2", content)
+
+    def test_inter_node_absent_shows_graceful_note(self):
+        content = self._render({"nodes": [self._gpu_node()], "summary": {}, "inter_node_edges": []})
+        self.assertIn("Inter-node fabric (scale-out)", content)
+        self.assertIn("was not discovered", content)
+        self.assertIn("LLDP", content)
+
+    def test_inter_node_edges_render_switch_grouping(self):
+        cluster = {
+            "nodes": [self._gpu_node()],
+            "summary": {"switch_count": 1},
+            "inter_node_edges": [
+                {
+                    "src": {"name": "testnode-rck-g02-h21-7", "port": "enP1p68s0"},
+                    "dst": {"name": "tor-g02-1", "port": "Eth1/5"},
+                    "role": "data",
+                    "via": "tor-g02-1",
+                    "speed": "400 Gb/sec (4X NDR)",
+                    "status": "4: ACTIVE",
+                    "family": "scale_out",
+                }
+            ],
+        }
+        content = self._render(cluster)
+        self.assertIn("ToR switch tor-g02-1", content)
+        self.assertIn("Eth1/5", content)
+        self.assertNotIn("was not discovered", content)
+
+
 if __name__ == "__main__":
     unittest.main()

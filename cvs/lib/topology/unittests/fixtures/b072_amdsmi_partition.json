@@ -1,0 +1,134 @@
+{
+    "current_partition": [
+        {
+            "gpu_id": 0,
+            "memory": "NPS1",
+            "accelerator_type": "SPX",
+            "accelerator_profile_index": 0,
+            "partition_id": "0"
+        },
+        {
+            "gpu_id": 1,
+            "memory": "NPS1",
+            "accelerator_type": "SPX",
+            "accelerator_profile_index": 0,
+            "partition_id": "0"
+        },
+        {
+            "gpu_id": 2,
+            "memory": "NPS1",
+            "accelerator_type": "SPX",
+            "accelerator_profile_index": 0,
+            "partition_id": "0"
+        },
+        {
+            "gpu_id": 3,
+            "memory": "NPS1",
+            "accelerator_type": "SPX",
+            "accelerator_profile_index": 0,
+            "partition_id": "0"
+        }
+    ],
+    "memory_partition": [
+        {
+            "gpu_id": 0,
+            "memory_partition_caps": "N/A",
+            "current_memory_partition": "NPS1"
+        },
+        {
+            "gpu_id": 1,
+            "memory_partition_caps": "N/A",
+            "current_memory_partition": "NPS1"
+        },
+        {
+            "gpu_id": 2,
+            "memory_partition_caps": "N/A",
+            "current_memory_partition": "NPS1"
+        },
+        {
+            "gpu_id": 3,
+            "memory_partition_caps": "N/A",
+            "current_memory_partition": "NPS1"
+        }
+    ],
+    "partition_profiles": [
+        {
+            "gpu_id": 0,
+            "profile_index": "N/A",
+            "memory_partition_caps": "N/A",
+            "accelerator_type": "N/A",
+            "partition_id": "0",
+            "num_partitions": "N/A",
+            "num_resources": "N/A",
+            "resource_index": "N/A",
+            "resource_type": "N/A",
+            "resource_instances": "N/A",
+            "resources_shared": "N/A"
+        },
+        {
+            "gpu_id": 1,
+            "profile_index": "N/A",
+            "memory_partition_caps": "N/A",
+            "accelerator_type": "N/A",
+            "partition_id": "0",
+            "num_partitions": "N/A",
+            "num_resources": "N/A",
+            "resource_index": "N/A",
+            "resource_type": "N/A",
+            "resource_instances": "N/A",
+            "resources_shared": "N/A"
+        },
+        {
+            "gpu_id": 2,
+            "profile_index": "N/A",
+            "memory_partition_caps": "N/A",
+            "accelerator_type": "N/A",
+            "partition_id": "0",
+            "num_partitions": "N/A",
+            "num_resources": "N/A",
+            "resource_index": "N/A",
+            "resource_type": "N/A",
+            "resource_instances": "N/A",
+            "resources_shared": "N/A"
+        },
+        {
+            "gpu_id": 3,
+            "profile_index": "N/A",
+            "memory_partition_caps": "N/A",
+            "accelerator_type": "N/A",
+            "partition_id": "0",
+            "num_partitions": "N/A",
+            "num_resources": "N/A",
+            "resource_index": "N/A",
+            "resource_type": "N/A",
+            "resource_instances": "N/A",
+            "resources_shared": "N/A"
+        }
+    ],
+    "partition_resources": [
+        {
+            "resource_index": "N/A",
+            "resource_type": "N/A",
+            "resource_instances": "N/A",
+            "resources_shared": "N/A"
+        },
+        {
+            "resource_index": "N/A",
+            "resource_type": "N/A",
+            "resource_instances": "N/A",
+            "resources_shared": "N/A"
+        },
+        {
+            "resource_index": "N/A",
+            "resource_type": "N/A",
+            "resource_instances": "N/A",
+            "resources_shared": "N/A"
+        },
+        {
+            "resource_index": "N/A",
+            "resource_type": "N/A",
+            "resource_instances": "N/A",
+            "resources_shared": "N/A"
+        }
+    ]
+}

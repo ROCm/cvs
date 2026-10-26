@@ -1,0 +1,45 @@
+[
+    {
+        "gpu": 0,
+        "bdf": "0001:01:00.0",
+        "uuid": "af0075c1-0000-1000-805d-d6772a5d2eec",
+        "kfd_id": 56179,
+        "node_id": 2,
+        "partition_id": 0
+    },
+    {
+        "gpu": 1,
+        "bdf": "0002:01:00.0",
+        "uuid": "3b0075c1-0000-1000-80bd-0a01505671f9",
+        "kfd_id": 9367,
+        "node_id": 3,
+        "partition_id": 0
+    },
+    {
+        "gpu": 2,
+        "bdf": "0003:01:00.0",
+        "uuid": "ac0075c1-0000-1000-80fe-e26d4815f536",
+        "kfd_id": 45514,
+        "node_id": 4,
+        "partition_id": 0
+    },
+    {
+        "gpu": 3,
+        "bdf": "0004:01:00.0",
+        "uuid": "340075c1-0000-1000-804f-747b52d3232b",
+        "kfd_id": 39772,
+        "node_id": 5,
+        "partition_id": 0
+    }
+]
+[
+    {
+        "ai_nic": 0,
+        "bdf": "0000:01:00.0",
+        "permanent_address": "04:90:81:00:00:00",
+        "product_name": "N/A",
+        "part_number": "N/A",
+        "serial_number": "N/A",
+        "vendor_name": "AMD Pensando Systems, Inc."
+    }
+]

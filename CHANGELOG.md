@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `cvs run topology_discover` probes every node for its hardware topology (GPU XGMI mesh, CPU/NUMA/NIC/DIMM/NVMe) and classifies its fabrics: scale-up (the GPU XGMI mesh plus `amd-smi` partition mode) and scale-out (backend RDMA NICs with fabric type, rate and state). It stitches a cluster graph grouped by rack and chassis, writes `cluster_topology.json` under the run directory, and links a graphical "Cluster Topology" view in the HTML report. Inter-node (scale-out) wiring is filled from LLDP when available and otherwise reported as not discovered. Configured by `topology/topology_config.json`.
 - Run Deck for most suites: health, platform, preflight, ibperf, MORI, ANC, RCCL, training and inference runs write a Run Deck beside the pytest HTML report. Install suites do not.
 - `cvs run` supports Slurm and SPUR: launch it with `srun` or `spur run`, and supported suites run without passwordless SSH.
 - ibperf bandwidth and latency tests support vPOD-aware node pairing (`ibperf.pairing_mode`).

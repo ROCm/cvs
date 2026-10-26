@@ -24,6 +24,9 @@ Host validation, GPU burn-in, and preflight checks run before network, training,
    * - Preflight
      - :doc:`/how-to/test-suites/burn-in-diag/preflight`
      - :doc:`/reference/configuration-files/burn-in-diag/preflight`
+   * - Topology
+     - :doc:`/how-to/test-suites/burn-in-diag/topology`
+     - :doc:`/reference/configuration-files/burn-in-diag/topology`
 
 See also :doc:`/how-to/test-suites/index` for common ``cvs run`` flags and workflow.
 
