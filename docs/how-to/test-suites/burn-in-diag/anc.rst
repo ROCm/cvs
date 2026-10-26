@@ -24,7 +24,7 @@ Set up config
 2. Replace every ``<changeme>`` placeholder:
 
    - ``anc_release_url`` — URL of the ANC release archive to download and install
-   - ``anc_version`` — minimum required ANC version (the version in ``anc_release_url`` must be >= this). Install is skipped only when **all** expected nodes already satisfy it; if any node is below the minimum, the installer runs across all nodes.
+   - ``anc_version`` — minimum required ANC version (the version in ``anc_release_url`` must be >= this). Install is skipped only when all expected nodes already satisfy it; if any node is below the minimum, the installer runs across all nodes.
 
 3. Optionally set ``ANC_INSTALL_PATH`` for relocatable **tar** installs. Deb and rpm packages ignore this key and always install under ``/opt/amdtools``.
 
@@ -126,7 +126,22 @@ Run a single GPU group:
 Individual items
 ~~~~~~~~~~~~~~~~
 
-Individual ANC items are exposed as per-family suites, each item its own ``test_<item>`` function run as ``sudo ./anc.py -i <item>``: ``anc_test_computerocker`` (24), ``anc_test_memrocker`` (10), ``anc_test_oblex`` (8), ``anc_test_gemm`` (3), ``anc_test_xgmi`` (3), ``anc_test_ualink`` (3), ``anc_test_pcie`` (3), ``anc_test_babel`` (2), and ``anc_test_basic`` (18 one-off items such as ``test_ampttk``, ``test_hdrt``, ``test_no_op``, ``test_sdma_bidi_peak``). ``cvs list anc_test_<family>`` reports a suite's items; the per-family lists live in ``cvs/lib/anc_lib.py``.
+Individual ANC items are exposed as per-family suites, each item its own
+``test_<item>`` function run as ``sudo ./anc.py -i <item>``:
+
+- ``anc_test_computerocker`` (24 items)
+- ``anc_test_memrocker`` (10 items)
+- ``anc_test_oblex`` (8 items)
+- ``anc_test_gemm`` (3 items)
+- ``anc_test_xgmi`` (3 items)
+- ``anc_test_ualink`` (3 items)
+- ``anc_test_pcie`` (3 items)
+- ``anc_test_babel`` (2 items)
+- ``anc_test_basic`` (18 one-off items: ``test_ampttk``, ``test_hdrt``,
+  ``test_no_op``, ``test_sdma_bidi_peak``, and others)
+
+``cvs list anc_test_<family>`` reports a suite's items; the per-family lists
+live in ``cvs/lib/anc_lib.py``.
 
 Run a whole item family:
 
@@ -148,7 +163,7 @@ Run a single item:
 Run on managed compute
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Follow :doc:`/how-to/run-on-managed-compute` to run ANC on managed compute.
+See :doc:`/how-to/run-on-managed-compute` for guidance on running ANC on managed compute.
 
 Pass and fail
 =============

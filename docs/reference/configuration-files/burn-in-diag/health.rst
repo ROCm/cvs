@@ -159,9 +159,12 @@ The following parameters are available in the health configuration file.
 
 AGFHC
 -----
+
 .. |br| raw:: html
 
     <br />
+
+AGFHC configuration parameters and their defaults are listed below.
 
 .. list-table::
    :widths: 3 3 5
@@ -191,6 +194,8 @@ AGFHC
 
 TransferBench
 -------------
+
+TransferBench configuration parameters and their defaults are listed below.
 
 .. list-table::
    :widths: 3 3 5
@@ -265,6 +270,8 @@ TransferBench
 
 ROCm Validation Suite (RVS)
 ---------------------------
+
+RVS configuration parameters and their defaults are listed below.
 
 .. list-table::
    :widths: 3 3 5

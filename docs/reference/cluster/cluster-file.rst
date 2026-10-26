@@ -12,6 +12,8 @@ In SSH mode, each ``cvs run`` invocation is pointed at a cluster file using ``--
 
   Under a Slurm or SPUR job step ``--cluster_file`` is optional. See :doc:`/how-to/run-on-managed-compute`.
 
+CVS ships two starter templates for the cluster file.
+
 .. list-table::
    :widths: 3 2 6
    :header-rows: 1

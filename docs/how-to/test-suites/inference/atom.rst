@@ -2,9 +2,9 @@
   :description: Run ATOM LLM inference benchmarks with CVS on AMD Instinct GPUs for single-node and multinode pipeline-parallel deployments using ROCm.
   :keywords: CVS, ATOM, inference, benchmark, AMD Instinct, ROCm, AMD, GPU, LLM, multinode, pipeline parallel, DeepSeek
 
-******************************************
-Run ATOM LLM inference benchmarks with CVS
-******************************************
+*********************************************************************
+Run ATOM LLM inference benchmarks with Cluster Validation Suite (CVS)
+*********************************************************************
 
 The ATOM suite benchmarks LLM serving on AMD Instinct GPUs using the ATOM stack
 (``atom.entrypoints.openai_server`` + ``atom.benchmarks.benchmark_serving`` on
@@ -26,16 +26,23 @@ In addition to the :ref:`common inference prerequisites <inference-common-prereq
 - When ``model.remote`` is ``0``, place the weights at ``paths.models_dir``.
 - For multinode pipeline parallelism, mount the shared log path on every node.
 
-Step 1: Copy config and cluster files
-=====================================
+Run ATOM tests
+==============
 
-List shipped ATOM configs:
+Copy a config template, fill in your cluster details and model paths, then
+run the suite. CVS produces a pytest HTML report and a Run Deck with
+per-cell results and bandwidth charts.
+
+Copy config and cluster files
+------------------------------
+
+List the shipped ATOM configs to find the template for your GPU and model:
 
 .. code:: bash
 
   cvs config list inference/atom
 
-Copy each variant into its **own subdirectory** so only one ``*threshold.json``
+Copy each variant into its own subdirectory so only one ``*threshold.json``
 sits beside the config you pass to ``--config_file``:
 
 .. code:: bash
@@ -52,40 +59,40 @@ sits beside the config you pass to ``--config_file``:
 Config stems use ``mi3xx_*`` (gfx942) or ``mi355x_*`` (gfx950). Threshold
 files use ``mi325x_*`` or ``mi355x_*`` — match the platform you calibrated on.
 
-Step 2: Edit placeholders
-=========================
+Edit placeholders
+-----------------
 
-Replace cluster node IPs and trim ``node_dict`` to one host for single-node runs
-(two hosts for distributed PP). In the config, set at minimum:
+Replace cluster node IPs and trim ``node_dict`` to one host for single-node
+runs (two hosts for distributed PP). In the config, set at minimum:
 
 - ``container.image`` — your ATOM ROCm image.
-- ``container.runtime.args.volumes`` — replace ``<changeme-models-mount>`` with the
-  host models directory (for example ``/it-share-prj2-1/models`` on prj2 lab nodes).
+- ``container.runtime.args.volumes`` — replace ``<changeme-models-mount>`` with
+  the host models directory (for example ``/it-share-prj2-1/models``).
 - ``paths.shared_fs``, ``paths.log_dir``, ``paths.hf_token_file``.
 - ``model.id`` — model under test.
 
-``paths.models_dir`` is ``/models``, the in-container weights mount (usually
-read-only). Keep it as shipped; only customize the host side of the models
-volume. ATOM still defaults ``HF_HUB_CACHE`` to that path for Hub weight
-lookups. SGLang ``bench_serving`` with ``dataset_name=random`` also downloads
-ShareGPT into ``HF_HUB_CACHE``, so Qwen SGLang samples override
-``HF_HUB_CACHE`` and ``HF_HOME`` to ``{paths.shared_fs}/.cache/huggingface``.
+``paths.models_dir`` is ``/models``, the in-container weights mount. Keep it
+as shipped and customize only the host side of the models volume. ATOM
+defaults ``HF_HUB_CACHE`` to that path for Hub weight lookups. SGLang
+``bench_serving`` with ``dataset_name=random`` downloads ShareGPT into
+``HF_HUB_CACHE``; Qwen SGLang samples override ``HF_HUB_CACHE`` and
+``HF_HOME`` to ``{paths.shared_fs}/.cache/huggingface``.
 
-For multinode PP:
+For multinode PP, also set:
 
-- Keep the number of hosts in ``node_dict`` equal to ``params.nnodes``.
-- Set ``params.master_addr`` to the head-node address reachable from every node.
-- Verify automatic fabric discovery or set ``roles.server.ib_hca_devices`` and
-  ``roles.server.ib_netdev`` explicitly. The netdev must be a network interface,
-  not an ``mlx5_*`` HCA device name.
+- ``params.nnodes`` — number of hosts; keep ``node_dict`` the same length.
+- ``params.master_addr`` — head-node address reachable from every node.
+- ``roles.server.ib_hca_devices`` and ``roles.server.ib_netdev`` — verify
+  automatic fabric discovery or set these explicitly. The netdev must be a
+  network interface name, not an ``mlx5_*`` HCA device name.
 
 .. tip::
 
-  Leave ``enforce_thresholds: false`` on first lab runs until thresholds are
-  calibrated for your hardware. MI355X shipped stems often ship record-only.
+  Leave ``enforce_thresholds: false`` on first runs until thresholds are
+  calibrated for your hardware. MI355X shipped stems are often record-only.
 
-Step 3: Run the suite
-=====================
+Run the suite
+-------------
 
 Single-node W1 (``driver=atom``):
 
@@ -105,8 +112,7 @@ Multinode PP (``driver=vllm_atom``):
     --config_file ~/input/config_file/inference/atom/distributed/mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json \
     --html ~/cvs_results/atom-w1-distributed.html --self-contained-html -vvv
 
-MTP-3 speculative decode (``schema_version: 2`` profile on a native single-node
-stem — DeepSeek R1 or Qwen FP8):
+MTP-3 speculative decode (``schema_version: 2`` profile):
 
 .. code:: bash
 
@@ -116,20 +122,22 @@ stem — DeepSeek R1 or Qwen FP8):
     --config_profile mtp3 \
     -vvv
 
-vLLM and SGLang parity use the unified serving schema in ``inference/atom/``
-(for example ``mi3xx_atom_vllm_deepseek-r1_fp8_single.json``) — still run with
-``cvs run atom``, not ``cvs run vllm`` or ``cvs run sglang``.
+vLLM and SGLang parity configs live in ``inference/atom/`` (for example
+``mi3xx_atom_vllm_deepseek-r1_fp8_single.json``) and run with ``cvs run atom``,
+not ``cvs run vllm`` or ``cvs run sglang``.
 
-Smoke one cell with pytest ``-k``, for example ``-k "w1_1k_1k-conc128"``.
+To smoke-test a single sweep cell, pass ``-k``, for example
+``-k "w1_1k_1k-conc128"``.
 
-After ``git pull``, run ``make install`` before ``source .cvs_venv/bin/activate``.
-On Spur or Slurm, do that on the GPU node inside the job step if login cannot
-create a venv.
+After ``git pull``, run ``make install`` before
+``source .cvs_venv/bin/activate``. On SPUR or Slurm, run ``make install``
+on the GPU node inside the job step if the login node cannot create a venv.
 
 Run on managed compute
-----------------------
+~~~~~~~~~~~~~~~~~~~~~~
 
-Follow :doc:`/how-to/run-on-managed-compute` to run ATOM on managed compute.
+Follow :doc:`/how-to/run-on-managed-compute` to run ATOM as a Slurm or SPUR
+job step.
 
 Test lifecycle
 ==============

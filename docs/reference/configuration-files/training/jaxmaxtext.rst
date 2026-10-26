@@ -363,6 +363,8 @@ structured ``train_params.xla_flags`` map. The vars are grouped for readability:
 ``train_params``
 ================
 
+Training parameter fields and their descriptions are listed below.
+
 .. list-table::
    :widths: 3 3 5
    :header-rows: 1

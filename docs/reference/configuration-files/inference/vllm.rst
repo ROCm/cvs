@@ -444,6 +444,8 @@ Per-cell artifacts land in::
 Model
 =====
 
+Model configuration keys and their defaults are listed below.
+
 .. list-table::
    :widths: 3 2 5
    :header-rows: 1
@@ -1073,6 +1075,8 @@ Gate them in the threshold file's top-level ``accuracy`` block, keyed by the tas
 
 Troubleshooting
 ===============
+
+Common error messages and their causes and fixes are listed below.
 
 .. list-table::
    :widths: 5 5

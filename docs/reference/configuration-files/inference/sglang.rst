@@ -228,6 +228,8 @@ Example: single-node template
 General ``config`` parameters
 =============================
 
+General configuration parameters and their descriptions are listed below.
+
 .. list-table::
    :widths: 3 3 5
    :header-rows: 1
@@ -329,6 +331,8 @@ Uses the multi-node network env fields above. The loader drops any configured ro
 
 ``benchmark_params`` / model settings
 =====================================
+
+Benchmark and model configuration parameters are listed below.
 
 .. list-table::
    :widths: 3 3 5

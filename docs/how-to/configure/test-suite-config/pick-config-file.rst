@@ -80,6 +80,8 @@ Training workload templates use:
 
   {gpu}_{framework}_{model}_{mode}.json
 
+Each segment in the filename has a defined meaning.
+
 .. list-table::
    :header-rows: 1
    :widths: 18 82
@@ -108,6 +110,8 @@ Example filenames
 
 Available suites
 ----------------
+
+Training suites and their config template paths are listed below.
 
 .. list-table::
    :header-rows: 1
@@ -166,6 +170,8 @@ Inference templates use one of two filename patterns:
 
 Use the second form when precision (``fp8``, ``mxfp4``, ``bf16``, and similar) is a separate token after the model name.
 
+Each segment in the filename has a defined meaning.
+
 .. list-table::
    :header-rows: 1
    :widths: 18 82
@@ -208,6 +214,8 @@ With ``{precision}``:
 
 Available suites
 ----------------
+
+Inference suites and their config template paths are listed below.
 
 .. list-table::
    :header-rows: 1

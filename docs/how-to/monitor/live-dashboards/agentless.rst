@@ -2,11 +2,11 @@
   :description: Run live AMD Instinct GPU cluster dashboards using the CVS Cluster Monitor over SSH without installing exporters or agents on GPU nodes.
   :keywords: CVS, ROCm, cluster-mon, dashboard, SSH, agentless, AMD Instinct, GPU, AMD, RDMA, Docker, InfiniBand, monitoring
 
-***********************************************************************************
-Agentless SSH live dashboards with the Cluster Validation Suite (CVS) Cluster Monitor
-***********************************************************************************
+*****************************************************************************************
+Run agentless SSH live dashboards with the Cluster Validation Suite (CVS) Cluster Monitor
+*****************************************************************************************
 
-The **CVS Cluster Monitor** (``cvs/monitors/cluster-mon/``) is a live dashboard that polls the cluster over SSH. It does not install exporters on GPU nodes — collectors run ``amd-smi``, RDMA, and log queries remotely on a configurable interval.
+The CVS Cluster Monitor (``cvs/monitors/cluster-mon/``) is a live dashboard that polls the cluster over SSH. It does not install exporters on GPU nodes — collectors run ``amd-smi``, RDMA, and log queries remotely on a configurable interval.
 
 Use this when you want real-time GPU/NIC views, heatmaps, topology, and logs without deploying Prometheus exporters on every host.
 
@@ -26,9 +26,9 @@ Prerequisites
 
 The following prerequisites are required.
 
-- Docker and Docker Compose v2 on the monitoring host
+- Docker Engine 20.10 or later with Compose v2 on the monitoring host
 - SSH access to cluster nodes (direct or through a jump host)
-- ``amd-smi`` on GPU nodes; RDMA tools optional for network views
+- ``amd-smi`` on GPU nodes (AMD MI300/MI325 or later); RDMA tools optional for network views
 
 Docker Compose also starts a **Redis** sidecar for metric snapshots and events (no separate Redis install on the host).
 
@@ -62,7 +62,7 @@ Quick start (Docker)
 
 4. Open the dashboard at ``http://<monitor-host>:8005`` (host port **8005** maps to the app inside the container on port 8001).
 
-5. Optional — change settings without rebuilding: open the **Configuration** tab, upload SSH keys if needed, edit nodes or jump-host settings, then **Save Configuration and Start Monitoring**.
+5. (Optional) Change settings without rebuilding: open the **Configuration** tab, upload SSH keys if needed, edit nodes or jump-host settings, then **Save Configuration and Start Monitoring**.
 
 Verify deployment
 =================
@@ -80,13 +80,17 @@ Operational notes
 Keep the following in mind when operating this feature.
 
 - Default metrics interval: 60 seconds (``polling.interval`` in ``cluster.yaml`` or ``POLLING__INTERVAL`` env var). For large fleets (50+ nodes), consider 120 seconds.
-- Host reachability is re-probed every 5 minutes; SSH clients refresh when nodes come back online
-- Stop or restart: ``docker-compose down`` or ``docker-compose restart``
-- LLDP packages can be installed cluster-wide from the **Configuration** tab
+- Host reachability is re-probed every 5 minutes; SSH clients refresh when nodes come back online.
+- Stop or restart: ``docker-compose down`` or ``docker-compose restart``.
+- LLDP packages can be installed cluster-wide from the **Configuration** tab.
 
 Other deployment options
 ========================
 
-``cvs/monitors/cluster-mon/DEPLOYMENT.md`` covers bare-metal (Python backend + React frontend), Nginx reverse proxy, systemd, resource limits, upgrades, and troubleshooting. Note: prefer ``docker-compose`` and port **8005** on the host — some older examples in that file reference port 8001 on the host.
+`cvs/monitors/cluster-mon/DEPLOYMENT.md <https://github.com/ROCm/cvs/blob/main/cvs/monitors/cluster-mon/DEPLOYMENT.md>`_ covers bare-metal (Python backend + React frontend), Nginx reverse proxy, systemd, resource limits, upgrades, and troubleshooting. 
 
-For Prometheus/Grafana-based monitoring with exporters installed on nodes, see :doc:`/how-to/monitor/live-dashboards/exporters`.
+.. note:: 
+  
+  You should use ``docker-compose`` and port **8005** on the host — some older examples in that file reference port 8001 on the host.
+
+For Prometheus-/Grafana-based monitoring with exporters installed on nodes, see :doc:`/how-to/monitor/live-dashboards/exporters`.

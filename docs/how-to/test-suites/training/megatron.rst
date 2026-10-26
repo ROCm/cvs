@@ -386,7 +386,7 @@ Reports and logs
 - **Full log** — each test row links to its own captured log.
 - **Training logs** — Megatron-LM writes ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``. Primus writes ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``. Folder names use the sanitized combo ID (see the table below).
 
-Log path fields:
+Each placeholder in the log path resolves as follows.
 
 .. list-table::
    :header-rows: 1
@@ -452,6 +452,8 @@ One ``mi3xx_`` config per model and mode. Set ``gpu_name`` to ``MI300X`` or ``MI
 
 MI355X
 ~~~~~~
+
+MI355X ships Llama 3.1 8B and Llama 3.3 70B configs for single-node runs.
 
 .. list-table::
    :header-rows: 1
