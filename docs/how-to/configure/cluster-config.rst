@@ -29,7 +29,7 @@ You can create ``cluster.json`` in either of these ways:
 Copy a cluster file template
 ============================
 
-CVS ships cluster templates under ``cvs/input/``. Copy them with ``cvs config copy``:
+CVS ships cluster templates under `cvs/input/ <https://github.com/ROCm/cvs/tree/main/cvs/input/>`_. Copy them with ``cvs config copy``:
 
 .. code:: bash
 

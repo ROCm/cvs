@@ -404,7 +404,7 @@ Each placeholder in the log path resolves as follows.
 Config and threshold files
 ==========================
 
-Located in ``cvs/input/config_file/training/megatron/``. Field-level schema: :doc:`/reference/configuration-files/training/megatron`.
+Located in `cvs/input/config_file/training/megatron/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/training/megatron/>`_. Field-level schema: :doc:`/reference/configuration-files/training/megatron`.
 
 ``container.env`` NIC fields include example values plus ``<changeme>``. ``NNODES`` is not a JSON field. Every config except Llama 3.1 405B supports Megatron-LM or Primus; 405B is Primus only.
 

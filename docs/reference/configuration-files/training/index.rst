@@ -6,7 +6,7 @@
 Cluster Validation Suite (CVS) training test configuration schemas
 ******************************************************************
 
-JSON configuration schemas for distributed training benchmarks under ``cvs/input/config_file/training/``.
+JSON configuration schemas for distributed training benchmarks under `cvs/input/config_file/training/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/training/>`_.
 
 - :doc:`JAX MaxText </reference/configuration-files/training/jaxmaxtext>` — MaxText pre-training (single-node and distributed)
 - :doc:`Megatron </reference/configuration-files/training/megatron>` — Llama and DeepSeek, single-node and distributed

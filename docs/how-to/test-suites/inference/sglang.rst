@@ -6,9 +6,9 @@
 Run SGLang LLM inference benchmarks with Cluster Validation Suite (CVS)
 ***********************************************************************
 
-CVS provides three SGLang suites under ``cvs/tests/inference/sglang/``. Each suite is a
+CVS provides three SGLang suites under `cvs/tests/inference/sglang/ <https://github.com/ROCm/cvs/tree/main/cvs/tests/inference/sglang/>`_. Each suite is a
 separate pytest module; pick the one that matches your topology, then point ``--config_file``
-at a template from ``cvs/input/config_file/inference/sglang/``.
+at a template from `cvs/input/config_file/inference/sglang/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/inference/sglang/>`_.
 
 For the full configuration schema, threshold format, and parameter reference, see
 :doc:`/reference/configuration-files/inference/sglang`.

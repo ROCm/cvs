@@ -24,7 +24,7 @@ keys use abbreviations (for example ``TP=``, ``PP=``).
 File layout
 ===========
 
-Shipped files live under ``cvs/input/config_file/inference/atom/``:
+Shipped files live under `cvs/input/config_file/inference/atom/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/inference/atom/>`_:
 
 .. code:: text
 
@@ -168,7 +168,7 @@ Keys prefixed with ``_`` (for example ``_comment``) are ignored by the loader.
 Cluster and lab setup
 =====================
 
-**Cluster file:** ``cvs/input/cluster_file/atom_cluster.json``. Edit
+**Cluster file:** `cvs/input/cluster_file/atom_cluster.json <https://github.com/ROCm/cvs/blob/main/cvs/input/cluster_file/atom_cluster.json>`_. Edit
 ``node_dict`` so host count matches ``params.nnodes``.
 
 .. list-table::

@@ -6,7 +6,7 @@
 Run agentless SSH live dashboards with the Cluster Validation Suite (CVS) Cluster Monitor
 *****************************************************************************************
 
-The CVS Cluster Monitor (``cvs/monitors/cluster-mon/``) is a live dashboard that polls the cluster over SSH. It does not install exporters on GPU nodes — collectors run ``amd-smi``, RDMA, and log queries remotely on a configurable interval.
+The CVS Cluster Monitor (`cvs/monitors/cluster-mon/ <https://github.com/ROCm/cvs/tree/main/cvs/monitors/cluster-mon/>`_) is a live dashboard that polls the cluster over SSH. It does not install exporters on GPU nodes — collectors run ``amd-smi``, RDMA, and log queries remotely on a configurable interval.
 
 Use this when you want real-time GPU/NIC views, heatmaps, topology, and logs without deploying Prometheus exporters on every host.
 
@@ -35,7 +35,7 @@ Docker Compose also starts a **Redis** sidecar for metric snapshots and events (
 Quick start (Docker)
 ====================
 
-1. From your CVS checkout, go to ``cvs/monitors/cluster-mon/``.
+1. From your CVS checkout, go to `cvs/monitors/cluster-mon/ <https://github.com/ROCm/cvs/tree/main/cvs/monitors/cluster-mon/>`_.
 
 2. Prepare configuration under ``config/``:
 
@@ -44,7 +44,7 @@ Quick start (Docker)
      cp config/cluster.yaml.example config/cluster.yaml
      cp config/nodes.txt.example config/nodes.txt
 
-   Edit ``cluster.yaml`` (SSH user, key path, polling interval, optional jump host) and ``nodes.txt`` (one host per line). See ``cvs/monitors/cluster-mon/README.md`` for the full schema.
+   Edit ``cluster.yaml`` (SSH user, key path, polling interval, optional jump host) and ``nodes.txt`` (one host per line). See `cvs/monitors/cluster-mon/README.md <https://github.com/ROCm/cvs/blob/main/cvs/monitors/cluster-mon/README.md>`_ for the full schema.
 
 3. Build and deploy (recommended):
 

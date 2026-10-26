@@ -6,9 +6,9 @@
 Run xDiT diffusion inference tests with Cluster Validation Suite (CVS)
 **************************************************
 
-CVS provides five xDiT suites under ``cvs/tests/inference/xdit/``. Each suite is a
+CVS provides five xDiT suites under `cvs/tests/inference/xdit/ <https://github.com/ROCm/cvs/tree/main/cvs/tests/inference/xdit/>`_. Each suite is a
 separate pytest module; pick the one that matches your topology and launcher, then point
-``--config_file`` at a template from ``cvs/input/config_file/inference/xdit/``.
+``--config_file`` at a template from `cvs/input/config_file/inference/xdit/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/inference/xdit/>`_.
 
 - **Single-node** suites run one independent docker+torchrun job on **every** node in
   the cluster file (full model on each node).
@@ -130,9 +130,9 @@ GPU keys inside it (``mi300x``, ``mi325``, ``mi350``, ``mi355``, ``auto``) selec
 
 .. note::
 
-  FLUX.2 configs bind-mount ``cvs/lib/inference/xdit/scripts/flux2_example.py`` when the
+  FLUX.2 configs bind-mount `cvs/lib/inference/xdit/scripts/flux2_example.py <https://github.com/ROCm/cvs/blob/main/cvs/lib/inference/xdit/scripts/flux2_example.py>`_ when the
   image does not ship ``/benchmark/flux2_example.py``. WAN Diffusers suites mount
-  ``cvs/lib/inference/xdit/scripts/wan_i2v_example.py``. Adjust the host side of those
+  `cvs/lib/inference/xdit/scripts/wan_i2v_example.py <https://github.com/ROCm/cvs/blob/main/cvs/lib/inference/xdit/scripts/wan_i2v_example.py>`_. Adjust the host side of those
   volume entries to your CVS checkout.
 
   ``mi3xx`` distributed templates ship Broadcom bnxt RDMA mounts and ``rdma*`` HCA names.

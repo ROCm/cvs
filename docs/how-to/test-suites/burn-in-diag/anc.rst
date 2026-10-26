@@ -141,7 +141,7 @@ Individual ANC items are exposed as per-family suites, each item its own
   ``test_no_op``, ``test_sdma_bidi_peak``, and others)
 
 ``cvs list anc_test_<family>`` reports a suite's items; the per-family lists
-live in ``cvs/lib/anc_lib.py``.
+live in `cvs/lib/anc_lib.py <https://github.com/ROCm/cvs/blob/main/cvs/lib/anc_lib.py>`_.
 
 Run a whole item family:
 

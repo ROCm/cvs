@@ -5,7 +5,7 @@
 Aorta benchmark configuration file for Cluster Validation Suite (CVS)
 =====================================================================
 
-Aorta uses JSON variants in ``cvs/input/config_file/benchmark/aorta/``:
+Aorta uses JSON variants in `cvs/input/config_file/benchmark/aorta/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/benchmark/aorta/>`_:
 
 * ``mi3xx_aorta_profile_overlap_2gpu_single.json``
 * ``mi3xx_aorta_profile_overlap_2gpu_distributed.json``
