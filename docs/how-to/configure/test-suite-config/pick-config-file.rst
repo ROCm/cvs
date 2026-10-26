@@ -191,7 +191,7 @@ Available suites
      - Config location
      - List / README
    * - ATOM
-     - ``input/config_file/inference/atom/`` — ``mi{gpu}_atom_{model}_{precision}_{mode}.json`` + ``mi{gpu}_atom_{model}_{precision}_{mode}_threshold.json``
+     - ``input/config_file/inference/atom/`` — ``mi3xx_atom_…`` and ``mi355x_atom_…`` configs. ``mi3xx_*`` configs pair with ``mi325x_*_threshold.json`` siblings; ``mi355x_*`` configs pair with ``mi355x_*_threshold.json``. Native Qwen thresholds omit ``_single`` in the filename.
      - ``cvs config list inference/atom``
 
        :doc:`How to run </how-to/test-suites/inference/atom>` · :doc:`Config reference </reference/configuration-files/inference/atom>`
