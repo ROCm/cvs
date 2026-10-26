@@ -15,7 +15,7 @@ Replace every ``<changeme>`` value before running — CVS exits with an error if
 Browse and copy templates
 =========================
 
-CVS ships templates under ``cvs/input/config_file/``. Use ``cvs config`` to discover what is available and copy files into your workspace before editing them.
+CVS ships templates under `cvs/input/config_file/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/>`_. Use ``cvs config`` to discover what is available and copy files into your workspace before editing them.
 
 ``list-dirs`` — browse directories grouped by category (start here when you are not sure what exists):
 

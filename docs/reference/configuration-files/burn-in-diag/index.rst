@@ -6,7 +6,7 @@
 Cluster Validation Suite (CVS) burn-in and diagnostic test configuration schemas
 ********************************************************************************
 
-JSON configuration schemas for host validation, GPU burn-in, and preflight under ``cvs/input/config_file/``.
+JSON configuration schemas for host validation, GPU burn-in, and preflight under `cvs/input/config_file/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/>`_.
 
 - :doc:`Platform </reference/configuration-files/burn-in-diag/platform>` — host OS, BIOS, firmware, and PCIe checks
 - :doc:`Health </reference/configuration-files/burn-in-diag/health>` — AGFHC, TransferBench, and RVS burn-in configs

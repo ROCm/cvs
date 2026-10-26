@@ -6,7 +6,7 @@
 View live AMD Instinct GPU cluster dashboards with Cluster Validation Suite (CVS)
 *********************************************************************************
 
-Live dashboards keep GPU and network metrics visible while workloads run—real-time views and historical trends in Grafana or the CVS Cluster Monitor UI. CVS ships two approaches under ``cvs/monitors/``.
+Live dashboards keep GPU and network metrics visible while workloads run—real-time views and historical trends in Grafana or the CVS Cluster Monitor UI. CVS ships two approaches under `cvs/monitors/ <https://github.com/ROCm/cvs/tree/main/cvs/monitors/>`_.
 
 .. list-table::
    :header-rows: 1

@@ -6,9 +6,9 @@
 ANC (AMD Node Check) configuration file reference
 *************************************************
 
-AMD Node Check (ANC) suites install the ANC tool on every node, then run CPU or GPU diagnostic groups. Shared logic lives in ``cvs/lib/anc_lib.py``; group names come from ``CPU_GROUPS`` and ``GPU_GROUPS``.
+AMD Node Check (ANC) suites install the ANC tool on every node, then run CPU or GPU diagnostic groups. Shared logic lives in `cvs/lib/anc_lib.py <https://github.com/ROCm/cvs/blob/main/cvs/lib/anc_lib.py>`_; group names come from ``CPU_GROUPS`` and ``GPU_GROUPS``.
 
-Configuration file location: ``cvs/input/config_file/anc/anc_config.json``
+Configuration file location: `cvs/input/config_file/anc/anc_config.json <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/anc/anc_config.json>`_
 
 For the suite overview, install flavours, and artifact layout, see
 `cvs/tests/anc/README.md <https://github.com/ROCm/cvs/blob/main/cvs/tests/anc/README.md>`_

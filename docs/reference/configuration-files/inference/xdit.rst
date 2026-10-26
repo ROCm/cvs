@@ -6,8 +6,8 @@
 xDiT inference benchmark configuration for Cluster Validation Suite (CVS)
 *************************************************************************
 
-CVS ships five xDiT suites under ``cvs/tests/inference/xdit/``. Each suite reads a JSON
-file from ``cvs/input/config_file/inference/xdit/``. Latency and CLIPScore limits live in a
+CVS ships five xDiT suites under `cvs/tests/inference/xdit/ <https://github.com/ROCm/cvs/tree/main/cvs/tests/inference/xdit/>`_. Each suite reads a JSON
+file from `cvs/input/config_file/inference/xdit/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/inference/xdit/>`_. Latency and CLIPScore limits live in a
 sibling threshold file named by top-level ``threshold_json``. ``mi3xx_*`` and ``mi35x_*``
 templates for the same workload share that file.
 

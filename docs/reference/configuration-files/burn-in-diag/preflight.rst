@@ -14,7 +14,7 @@ Tier 1**, **Tier 2**, and **Tier 3** Primus checks. The Node Smoke tiers run
 by default. Set ``connectivity_mode`` to ``"skip"`` (and ``tier2_perf`` to
 ``false`` for Tier 2) to disable one.
 
-Configuration file location: ``cvs/input/config_file/preflight/preflight_config.json``
+Configuration file location: `cvs/input/config_file/preflight/preflight_config.json <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/preflight/preflight_config.json>`_
 
 For the full parameter reference, examples, and troubleshooting, see
 `README_preflight_config.md <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/preflight/README_preflight_config.md>`_

@@ -32,6 +32,39 @@ Copy the template that matches the suite you are running, edit the placeholders,
 
 For SSH-mode runs, configure :doc:`/reference/cluster/passwordless-ssh` before running CVS against the cluster.
 
+Prerequisites on each cluster node
+==================================
+
+Every cluster node must meet the following requirements before using the
+container backend.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 78
+
+   * - Requirement
+     - Details
+   * - Docker installed
+     - The SSH user needs passwordless ``sudo docker`` or direct Docker
+       access (for example, membership in the ``docker`` group). CVS
+       probes ``sudo -n true`` once per orchestrator and caches the result.
+   * - Host ROCm driver loaded
+     - ``/dev/kfd`` and ``/dev/dri/*`` must be present for GPU passthrough.
+       ``/dev/infiniband/*`` is also required when the suite uses RDMA.
+   * - SSH directory accessible
+     - Required only when the suite starts in-container sshd (multinode
+       MPI suites). CVS mounts ``/home/<cvs-user>/.ssh`` at ``/host_ssh``
+       inside the container and copies it to ``/root/.ssh``. Single-node
+       suites and managed-compute runs skip sshd setup entirely and do not
+       need this directory or ``openssh-server`` in the image.
+   * - Container image available
+     - The image must be pre-loaded on each node, provided as ``image_tar``
+       in the cluster file, or pullable from a reachable registry. Multinode
+       suites that call sshd setup require ``/usr/sbin/sshd`` in the image.
+       The image must also provide the binaries the suite runs (for example
+       ``/opt/rocm/bin/rvs`` for ``rvs_cvs``).
+
+
 Backends
 ========
 
@@ -279,18 +312,6 @@ The following table shows what each ``lifetime`` value does during setup and tea
 .. note::
 
   With ``lifetime: persistent``, pin ``container.name``. The default name is the user running ``cvs``, then ``_``, then the image with characters outside ``[A-Za-z0-9_]`` replaced by ``_``. That name changes when you change the image tag, and the previous container's overlay is left behind.
-
-Prerequisites on each cluster node
-==================================
-
-The following prerequisites must be satisfied on every cluster node before using the container backend.
-
-To use the container backend, every cluster node must have:
-
-- **Docker installed**. The SSH user needs passwordless ``sudo docker`` or direct Docker access (for example membership in the ``docker`` group). CVS probes ``sudo -n true`` once per orchestrator and caches the orchestrator head's answer.
-- **Host driver loaded** so ``/dev/kfd``, ``/dev/dri/*``, and ``/dev/infiniband/*`` (when RDMA is in scope) are present for passthrough.
-- **The launch user's SSH directory** at ``/home/<user running cvs>/.ssh`` when the suite starts in-container sshd. CVS mounts that directory at ``/host_ssh`` and copies it to ``/root/.ssh``. Suites that never call sshd setup do not need ``openssh-server`` in the image.
-- **The image** already loaded, provided as ``image_tar`` on each node, or pullable. A multi-node suite that calls sshd setup needs ``/usr/sbin/sshd`` in the image. The image also needs the binaries that suite runs (for example ``/opt/rocm/bin/rvs`` for ``rvs_cvs``).
 
 Related resources
 =================

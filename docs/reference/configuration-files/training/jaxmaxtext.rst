@@ -48,7 +48,7 @@ Use ``cvs config list training/jaxmaxtext`` to list available templates, or
 
 The suite/lifecycle reference is in
 :doc:`/how-to/test-suites/training/jaxmaxtext`. The config files themselves live in
-``cvs/input/config_file/training/jaxmaxtext/`` (each config plus a sibling
+`cvs/input/config_file/training/jaxmaxtext/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/training/jaxmaxtext/>`_ (each config plus a sibling
 ``_threshold.json``); this page documents every block and the threshold format.
 
 Available configurations

@@ -24,7 +24,7 @@ The cluster file is shared across all test suites and must be configured once pe
 Test configuration files
 ========================
 
-Configuration references are grouped by test category. Each page documents parameters and example JSON for suites under ``cvs/input/config_file/``.
+Configuration references are grouped by test category. Each page documents parameters and example JSON for suites under `cvs/input/config_file/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/>`_.
 
 - :doc:`Burn-in and diagnostics </reference/configuration-files/burn-in-diag/index>`
 - :doc:`Network </reference/configuration-files/network/index>`

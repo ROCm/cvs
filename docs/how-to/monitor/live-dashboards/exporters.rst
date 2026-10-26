@@ -6,7 +6,7 @@
 Deploy live GPU fleet dashboards with Cluster Validation Suite (CVS) Prometheus exporters
 *****************************************************************************************
 
-The GPU Fleet and Control Plane Monitor (``cvs/monitors/metrics_exp/``) deploys exporters on cluster nodes and stores time-series metrics in Prometheus, with Grafana dashboards and Loki log aggregation.
+The GPU Fleet and Control Plane Monitor (`cvs/monitors/metrics_exp/ <https://github.com/ROCm/cvs/tree/main/cvs/monitors/metrics_exp/>`_) deploys exporters on cluster nodes and stores time-series metrics in Prometheus, with Grafana dashboards and Loki log aggregation.
 
 Use this for long-running fleet visibility at scale (hundreds to 1000+ nodes), Slurm or Kubernetes control-plane metrics, and retention-based trending.
 
@@ -43,7 +43,7 @@ Deploy the monitoring stack
 
      cp .env.example .env
 
-2. Build and start the stack from ``cvs/monitors/metrics_exp/``:
+2. Build and start the stack from `cvs/monitors/metrics_exp/ <https://github.com/ROCm/cvs/tree/main/cvs/monitors/metrics_exp/>`_:
 
    .. code:: bash
 

@@ -6,7 +6,7 @@
 Cluster Validation Suite (CVS) network test configuration schemas
 **********************************************************
 
-JSON configuration schemas for interconnect and collective communication suites under ``cvs/input/config_file/``.
+JSON configuration schemas for interconnect and collective communication suites under `cvs/input/config_file/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/>`_.
 
 - :doc:`InfiniBand (IB Perf) </reference/configuration-files/network/ib>` — IB bandwidth and latency benchmarks
 - :doc:`RCCL </reference/configuration-files/network/rccl>` — multi-node collective communication performance

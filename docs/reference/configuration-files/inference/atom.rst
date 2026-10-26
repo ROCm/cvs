@@ -79,7 +79,7 @@ A failed stage skips later stages with ``a prior lifecycle stage failed``. Teard
 File layout
 ===========
 
-Shipped files live under ``cvs/input/config_file/inference/atom/``.
+Shipped files live under `cvs/input/config_file/inference/atom/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/inference/atom/>`_:
 
 Config stems use ``mi3xx_*`` (gfx942) or ``mi355x_*`` (gfx950). ``mi3xx_*`` configs name an ``mi325x_*`` threshold file. ``mi355x_*`` configs name an ``mi355x_*`` threshold file. ``threshold_json`` is that filename, resolved next to the config. It is not passed through placeholder substitution. A missing sibling falls back to the packaged file of the same name, with a warning. A config that omits ``threshold_json`` requires exactly one ``*threshold.json`` in the same directory.
 
