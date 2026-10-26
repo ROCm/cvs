@@ -63,7 +63,7 @@ class TestInstallIbPerf(unittest.TestCase):
 
     def test_opt_in_runs_apt_except_in_managed_job_step(self):
         self._run({'install_system_packages': 'true'})
-        self.assertIn('sudo apt install -y numactl', self._apt_cmds())
+        self.assertIn('sudo apt install -y numactl lshw', self._apt_cmds())
         self.assertNotIn(install_ibperf_tools.RUNTIME_DEPS_CHECK, self.all_cmds)
 
         self._run({'install_system_packages': 'True'}, managed=True)

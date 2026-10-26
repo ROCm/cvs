@@ -56,7 +56,7 @@ def test_install_ib_perf(orch, config_dict):
             )
             orch.exec('sudo apt install -y libibumad-dev', print_console=False)
             orch.exec('sudo apt install -y libpci-dev', print_console=False)
-            orch.exec('sudo apt install -y numactl', print_console=False)
+            orch.exec('sudo apt install -y numactl lshw', print_console=False)
         else:
             if managed:
                 hint = 'install them outside the job step, e.g. in the node image or before allocation'
