@@ -1,5 +1,6 @@
 """Unit tests for pytorch_xdit_wan_job."""
 
+import shlex
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -529,7 +530,8 @@ class TestWanBenchmarkJob(unittest.TestCase):
         job, _ = _make_wan_job()
         env_args = job._build_env_args()
         self.assertIn("-e CUSTOM=1", env_args)
-        self.assertIn("-e HF_TOKEN=hf_test_token", env_args)
+        self.assertIn(f'-e HF_TOKEN="$(cat {shlex.quote(job.hf_token_path)})"', env_args)
+        self.assertNotIn("hf_test_token", env_args)
         self.assertIn("-e CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7", env_args)
         self.assertNotIn("NCCL_PROTO", env_args)
         self.assertNotIn(WAN_XFUSER_PYPACKAGES_ENV, env_args)
@@ -670,8 +672,14 @@ class TestWanBenchmarkJob(unittest.TestCase):
         self.assertEqual(len(plan.docker_cmds), 1)
         self.assertEqual(phdl.exec_cmd_list.call_count, 1)
         phdl.exec.assert_called()
-        benchmark_call = phdl.exec.call_args_list[-1]
+        benchmark_calls = [call for call in phdl.exec.call_args_list if call.args and "docker run" in str(call.args[0])]
+        self.assertEqual(len(benchmark_calls), 1)
+        benchmark_call = benchmark_calls[0]
         self.assertTrue(benchmark_call.kwargs.get("detailed"))
+        self.assertIn(
+            f"rm -f {shlex.quote(job.hf_token_path)}",
+            [str(call.args[0]) for call in phdl.exec.call_args_list if call.args],
+        )
         self.assertEqual(
             benchmark_call.kwargs.get("timeout"),
             resolve_wan_benchmark_timeout(distributed=False),

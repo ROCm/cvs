@@ -35,6 +35,7 @@ from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
     resolve_server_nodes,
     log_benchmark_failure_excerpt,
     _exec_cmd_list_on_nodes,
+    _redact_secrets,
 )
 
 from cvs.lib.inference.xdit.pytorch_xdit_benchmark_job import (
@@ -121,10 +122,6 @@ WAN_CORE_FATAL_OUTPUT_PATTERNS = (
     r"\bChildFailedError\b",
     r"\bOSError:\b",
 )
-
-
-def _secret_str(value: Any) -> str:
-    return "" if value is None else str(value)
 
 
 def _optional_int(value: Any, default: int) -> int:
@@ -746,7 +743,7 @@ def summarize_wan_benchmark_log(output: str, *, max_lines: int = 8) -> str:
     if not lines:
         return "docker benchmark log was empty"
     tail = lines[-max_lines:]
-    return " | ".join(line.strip() for line in tail)
+    return _redact_secrets(" | ".join(line.strip() for line in tail))
 
 
 def build_wan_output_cleanup_cmd(output_base_dir: str, *, use_sudo: bool = True) -> str:
@@ -840,7 +837,7 @@ class WanBenchmarkJob(PytorchXditBenchmarkJob):
         env_dict["OMP_NUM_THREADS"] = "16"
         env_dict["HF_HOME"] = "/hf_home"
         if self.hf_token:
-            env_dict["HF_TOKEN"] = _secret_str(self.hf_token)
+            env_dict["HF_TOKEN"] = self._hf_token_docker_value()
         return " ".join(f"-e {key}={value}" for key, value in env_dict.items())
 
     def _build_torchrun_cmd(
@@ -959,7 +956,7 @@ class WanBenchmarkJob(PytorchXditBenchmarkJob):
                 print_console=False,
             )
         except Exception as exc:
-            log.warning("Failed to clean up ranked WAN docker containers: %s", exc)
+            log.warning("Failed to clean up ranked WAN docker containers: %s", _redact_secrets(str(exc)))
 
     def _handle_benchmark_exec_exception(
         self,
@@ -973,10 +970,10 @@ class WanBenchmarkJob(PytorchXditBenchmarkJob):
                 "Benchmark docker exec failed (%s) but rank-0 logs indicate success; "
                 "treating run as success (likely container exit hang after inference). "
                 "Validate artifacts from shared output path in parse step.",
-                exc,
+                _redact_secrets(str(exc)),
             )
             return [], True
-        errors = [f"Benchmark execution failed with exception: {exc}"]
+        errors = [f"Benchmark execution failed with exception: {_redact_secrets(str(exc))}"]
         rank0_log = self._rank0_benchmark_log(plan, results)
         if rank0_log:
             log_benchmark_failure_excerpt(plan.node_order[0], rank0_log)

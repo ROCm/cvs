@@ -1,3 +1,4 @@
+import shlex
 import threading
 import unittest
 from unittest.mock import MagicMock, patch
@@ -29,6 +30,7 @@ from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
     _exec_cmd_list_on_nodes,
     _exec_result_exit_code,
     _exec_result_output,
+    _redact_secrets,
 )
 
 _FLUX_BENCHMARK_PARAMS = {
@@ -632,9 +634,26 @@ class TestFluxBenchmarkJob(unittest.TestCase):
         job, _ = _make_flux_job()
         env_args = job._build_env_args()
         self.assertIn("-e CUSTOM=1", env_args)
-        self.assertIn("-e HF_TOKEN=hf_test_token", env_args)
+        self.assertIn(f'-e HF_TOKEN="$(cat {shlex.quote(job.hf_token_path)})"', env_args)
+        self.assertNotIn("hf_test_token", env_args)
         self.assertIn("-e CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7", env_args)
         self.assertNotIn("NCCL_PROTO", env_args)
+
+    def test_docker_cmd_wraps_token_file_and_hides_long_token(self):
+        job, _ = _make_flux_job()
+        token = "hf_" + ("a" * 32)
+        job.hf_token = token
+        cmd = job._build_docker_cmd(
+            node_rank=0,
+            host_output_dir="/tmp/out",
+            master_addr="10.0.0.1",
+            master_port=29500,
+        )
+        path = shlex.quote(job.hf_token_path)
+        self.assertIn(f'-e HF_TOKEN="$(cat {path})"', cmd)
+        self.assertIn(f"chmod 600 {path} && ", cmd)
+        self.assertIn(f"; rm -f {path}", cmd)
+        self.assertNotIn(token, cmd)
 
     def test_build_env_args_distributed_includes_nccl(self):
         cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
@@ -755,8 +774,14 @@ class TestFluxBenchmarkJob(unittest.TestCase):
         self.assertEqual(len(plan.docker_cmds), 1)
         self.assertEqual(phdl.exec_cmd_list.call_count, 1)
         phdl.exec.assert_called()
-        benchmark_call = phdl.exec.call_args_list[-1]
+        benchmark_calls = [call for call in phdl.exec.call_args_list if call.args and "docker run" in str(call.args[0])]
+        self.assertEqual(len(benchmark_calls), 1)
+        benchmark_call = benchmark_calls[0]
         self.assertTrue(benchmark_call.kwargs.get("detailed"))
+        self.assertIn(
+            f"rm -f {shlex.quote(job.hf_token_path)}",
+            [str(call.args[0]) for call in phdl.exec.call_args_list if call.args],
+        )
         self.assertIn("Initialized process group", results["10.0.0.1"])
 
     def test_run_fails_on_nonzero_exit_without_traceback(self):
@@ -818,6 +843,22 @@ class TestExecCmdListOnNodes(unittest.TestCase):
 
         self.assertEqual(results, {"10.0.0.1": "ok", "10.0.0.2": "ok"})
         phdl.exec_cmd_list.assert_called_once()
+
+
+class TestRedactSecrets(unittest.TestCase):
+    def test_redacts_double_quoted_hf_token(self):
+        token = "hf_" + ("A" * 24)
+        self.assertEqual(_redact_secrets(f'env HF_TOKEN="{token}" done'), "env HF_TOKEN=<redacted> done")
+
+    def test_redacts_single_quoted_hf_token(self):
+        token = "hf_" + ("B" * 24)
+        self.assertEqual(_redact_secrets(f"env HF_TOKEN='{token}' done"), "env HF_TOKEN=<redacted> done")
+
+    def test_redacts_long_bare_hf_token(self):
+        token = "hf_" + ("c" * 20)
+        redacted = _redact_secrets(f"downloaded with {token} from hub")
+        self.assertEqual(redacted, "downloaded with <redacted> from hub")
+        self.assertNotIn(token, redacted)
 
 
 class TestPhdlConnectionKwargs(unittest.TestCase):
