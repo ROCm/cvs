@@ -12,7 +12,7 @@ The suite checks:
 
 - Container or bare-metal launch, from ``orchestrator`` and ``container``
 - That every name in ``env.MORI_RDMA_DEVICES`` appears in ``ibv_devinfo``
-- SHMEM API tests, concurrent put binaries, one IBGDA ``dist_write``, and the fixed I/O matrix
+- SHMEM API tests and the fixed I/O matrix
 - Bandwidth and latency against ``expected_results``, for the keys the checker understands
 - Host dmesg over the suite window, gated on the head node's passwordless sudo probe
 
@@ -125,7 +125,7 @@ The MORI config's ``container`` object is deep-merged over the cluster file's ``
      - Exported on every benchmark command. This is separate from ``container.env``. ``MORI_RDMA_DEVICES`` is the device list checked in ``ibv_devinfo``. ``LD_LIBRARY_PATH`` may append ``$LD_LIBRARY_PATH``. ``NCCL_SOCKET_IFNAME`` and ``GLOO_SOCKET_IFNAME`` are exported the same way.
    * - ``mori_dir``
      - ``<changeme>``
-     - Working directory. I/O runs ``<mori_dir>/tests/python/io/benchmark.py``. IBGDA and the put binaries run under ``<mori_dir>/build/examples/``. Required.
+     - Working directory. SHMEM runs ``<mori_dir>/tests/python/shmem/test_api.py`` and I/O runs ``<mori_dir>/tests/python/io/benchmark.py``. Required.
    * - ``master_addr``
      - ``<changeme>``
      - Torchrun node rank 0 and the I/O initiator. It must be one of the cluster hosts. Omitted, the cluster head node is used.
@@ -146,6 +146,7 @@ Shipped keys the checker does not read
 =======================================
 
 - ``no_of_nodes`` is in the shipped file and is not read. The node list is the cluster file.
+- ``expected_results.ibgda_write`` is in the shipped file and is not read. The IBGDA write test does not run.
 - ``gpu_name`` is not used as a threshold or a device filter.
 - ``_example_options_orchestrator``, ``_example_env``, and ``_example_mori_dir`` are not applied. ``_example_mori_dir`` (``/sgl-workspace/mori``) is an illustration in the file, not the path the suite opens.
 - There is no ``nic_type``, ``oob_port``, ``mori_device_list``, ``torchlib_dir``, or ``container_config`` key. Devices are ``env.MORI_RDMA_DEVICES``. The out-of-band interface is whatever you export in ``env``.
@@ -153,7 +154,7 @@ Shipped keys the checker does not read
 ``expected_results``
 ====================
 
-The checker looks up three top-level names: ``ibgda_write``, ``io_read``, and ``io_write``. A missing case key does not fail the test. That case runs and is not gated.
+The checker looks up two top-level names: ``io_read`` and ``io_write``. A missing case key does not fail the test. That case runs and is not gated.
 
 I/O
 ---
@@ -197,23 +198,9 @@ The I/O matrix is fixed. Each case sweeps 8 bytes, doubling, up to the buffer si
 
 A size that is in ``expected_results`` but never appears in the table is not a failure. Only a printed row is compared. The shipped numbers are what the checker uses for those keys. Replace them for your fabric. The suite has no second threshold table.
 
-IBGDA write
------------
-
-``test_ibgda_write_test`` always runs ``dist_write`` as ``-np 2 -c 2 -t 256 -b 2 -e 4m -f 2 -q 4 -n 1``. The case key is exactly:
-
-.. code:: text
-
-  PROCS:2,CTAS:2,THREADS:256,QP_COUNT:4
-
-The sweep is 2 bytes, doubling, through 4 MiB (4194304). The checker compares the ``bw(GB)`` column to ``max_bw`` and fails when the measured value is lower (``IBGDA Mori BW less than expected``). The shipped sample gates 2097152 and 4194304 bytes at ``max_bw`` 46.0.
-
-``avg_lat`` under ``ibgda_write`` is in the shipped sample and is not read. Those latency numbers do not gate the run.
-
 Current behavior
 ================
 
-- Concurrent put and put-immediate accept ``test done!`` and do not check the payload. The signal-thread binary looks for ``PASSED``.
 - ``test_cleanup_stale_containers`` always skips. A ``per_run`` launch removes a same-named container itself.
 - ``test_verify_dmesg`` scans host dmesg from orchestrator creation to the end of that test (second resolution, closed window) with ``verify_dmesg_for_errors``. The test skips only when ``orch.sudo_prefix()`` is empty (taken from the head node's ``sudo -n true`` probe).
 - A Docker launch also applies orchestrator defaults: ``privileged`` true, ``network`` ``host``, ``ipc`` ``host``, capabilities ``SYS_PTRACE``, ``IPC_LOCK``, and ``SYS_ADMIN``, group ``video``, ulimit ``memlock=-1``, security options ``seccomp=unconfined`` and ``apparmor=unconfined``, and container environment ``GPUS=8`` and ``MULTINODE=true``. ``container.runtime.args.network``, ``ipc``, and ``privileged`` replace those three. ``cap_add``, ``security_opt``, ``group_add``, and ``ulimit`` are appended to the defaults. ``container.env`` updates the container environment. The top-level ``env`` object is only the benchmark command prefix.
