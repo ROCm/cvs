@@ -2,32 +2,39 @@
     "ibperf":
     {
        "install_perf_package": "True",
+       "_comment_install_perf_package": "String \"True\" or \"False\" (not a JSON boolean). True: install_ibperf_tools clones perftest from GitHub into install_dir and builds it with ROCm on the head node. False: skip the build and use the perftest already in <install_dir>/perftest.",
        "install_system_packages": "False",
-       "_comment_install_system_packages": "Set True to sudo apt install the perftest build and runtime packages on every node (skipped in Spur/Slurm job steps). Install fails if numactl, lshw, rdma, libibverbs or librdmacm is missing on any node, after apt when True. Install always fails on a node without amd-smi (PATH or /opt/rocm/bin), which apt never installs.",
+       "_comment_install_system_packages": "String \"True\" or \"False\"; used only when install_perf_package is True. True: sudo apt install the perftest build and runtime packages, lshw and iproute2 on every node (skipped in SPUR/Slurm job steps; in a container, needs sudo in the image). Either way, install fails if numactl, lshw, rdma, libibverbs or librdmacm is missing on any node (after apt when True). Install always fails on a node without amd-smi (PATH or /opt/rocm/bin), which apt never installs.",
        "install_dir": "/home/{user-id}/",
+       "_comment_install_dir": "Directory shared by every node at the same path; perftest is built on the head node and run from <install_dir>/perftest/bin on every node. {user-id} becomes the cluster file username.",
        "rocm_dir": "<changeme>",
-       "_comment_rocm_dir": "ROCm installation path. Set to auto-detect from /opt/rocm or /opt/rocm/core-* if left as changeme",
+       "_comment_rocm_dir": "ROCm install path on every node, such as /opt/rocm. Set a path, or \"\" to auto-detect /opt/rocm/core-* and then /opt/rocm. A path without lib/libamdhip64.so falls back to auto-detect.",
        "require_dmabuf": "True",
-       "_comment_require_dmabuf": "Fail before launching if perftest on any node lacks --use_rocm_dmabuf. Set False to run without DMA-BUF (recorded in results).",
+       "_comment_require_dmabuf": "True/1/yes/on (default) or False/0/no/off. True: fail before launching if perftest on any node lacks --use_rocm_dmabuf. False: run without DMA-BUF (recorded in results).",
        "pairing_mode": "sequential",
        "_comment_pairing_mode": "Server/client node pairing: sequential (cluster file order), inter_vpod (each pair spans two vPODs - scale-out), intra_vpod (pairs within one vPOD)",
        "vpod_source": "afm",
        "_comment_vpod_source": "vPOD discovery for inter_vpod/intra_vpod: afm (sudo -n afmctl show device --json; vPOD = scaleup_fabric physical_pod.id + virtual_pod.id) or cluster_file (node_dict[<node>].vpod_id)",
        "afmctl_path": "afmctl",
-       "_comment_afmctl_path": "afmctl binary run through passwordless sudo -n (MI4XX: /usr/sbin/afmctl)",
+       "_comment_afmctl_path": "afmctl binary run through passwordless sudo -n; often /usr/sbin/afmctl. A bare name is looked up on PATH.",
        "qp_count_list": [ "8", "16" ],
+       "_comment_qp_count_list": "Queue-pair counts (perftest -q) for bandwidth tests; each bandwidth test runs once per message size per QP count. Latency tests ignore it.",
        "ib_bw_test_list": [ "ib_write_bw", "ib_send_bw"],
        "_comment_ib_bw_test_list": "Bandwidth tests to run. Supported: ib_write_bw, ib_read_bw, ib_send_bw. Omit the key to run all three; [] skips bandwidth tests.",
        "ib_lat_test_list": [ "ib_write_lat", "ib_send_lat", "ib_read_lat" ],
        "_comment_ib_lat_test_list": "Latency tests to run. Supported: ib_write_lat, ib_read_lat, ib_send_lat. Omit the key to run ib_write_lat and ib_send_lat; [] skips latency tests.",
        "msg_size_list": [ 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536 ],
+       "_comment_msg_size_list": "Message sizes in bytes (perftest -s), swept by every bandwidth and latency test.",
        "gid_index": "3",
-       "_comment_gid_index": "GID index passed to perftest -x. Set to 'auto' (or remove) to pick the lowest index usable on every NIC used: gid_type with an IPv4-mapped address on RoCE, any populated GID (normally 0) on InfiniBand. Validated against gid_type on every node/NIC before perftest launches.",
+       "_comment_gid_index": "GID index passed to perftest -x; the same index must be valid on every NIC used. Set to 'auto' (or remove) to pick the lowest index usable on every NIC: gid_type with an IPv4-mapped address on RoCE, any populated GID (normally 0) on InfiniBand. To find it on RoCE, run show_gids, or ibv_devinfo -v -d <dev> and read the GID table, and pick the RoCE v2 entry whose address is the NIC's IPv4 (::ffff:a.b.c.d); sysfs has the same table in /sys/class/infiniband/<dev>/ports/1/gids/<n> and gid_attrs/types/<n>. Validated against gid_type on every node/NIC before perftest launches.",
        "gid_type": "RoCE v2",
-       "_comment_gid_type": "Expected sysfs GID type for gid_index; 'any' disables the type check. Not enforced on InfiniBand link layers.",
+       "_comment_gid_type": "Expected sysfs GID type for gid_index: RoCE v2 (default) or IB/RoCE v1; 'any' disables the type check. Not enforced on InfiniBand link layers.",
        "port_no": "1516",
+       "_comment_port_no": "First TCP port; each GPU uses the next one. Clients must reach their server on port_no up to port_no + GPU count - 1.",
        "duration": "10",
+       "_comment_duration": "Seconds each bandwidth run lasts (perftest -D). Latency tests ignore it.",
        "verify_bw": "True",
+       "_comment_verify_bw": "String \"True\" or \"False\". True: fail a GPU that misses its expected_results threshold, for bandwidth and latency. False: record results without gating.",
        "expected_results": {
            "ib_write_bw": {
                "8192": {
@@ -35,6 +42,7 @@
                    "16": "200.0"
                }
            }
-       }
+       },
+       "_comment_expected_results": "Bandwidth: <test>.<msg_size>.<qp_count> = minimum bidirectional Gbps per GPU. Latency: <test>.<msg_size> = maximum average usec per GPU. Checked only when verify_bw is \"True\"; sizes and tests without an entry are not gated. Replace the sample numbers for your fabric."
     }
 }
