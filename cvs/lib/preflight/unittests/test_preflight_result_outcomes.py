@@ -3,6 +3,7 @@
 import os
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -155,6 +156,51 @@ class TestTimedPreflightChecksSurfaceOutcomes(unittest.TestCase):
                 preflight_checks.test_gid_consistency(orch, config)
 
         self.assertIn('nodeA', str(ctx.exception))
+
+
+class TestPreflightReportOverallVerdict(unittest.TestCase):
+    """The report row must fail when the summary overall status is FAIL."""
+
+    def setUp(self):
+        preflight_checks.globals.error_list.clear()
+        self.previous_results = dict(preflight_checks.preflight_results)
+        preflight_checks.preflight_results.clear()
+        self.request = SimpleNamespace(config=SimpleNamespace())
+
+    def tearDown(self):
+        preflight_checks.preflight_results.clear()
+        preflight_checks.preflight_results.update(self.previous_results)
+
+    def test_passing_summary_keeps_report_row_passing(self):
+        config = {'node_check': {'enabled': False}, 'reporting': {'generate_html_report': False}}
+        self.assertIsNone(preflight_checks.test_generate_preflight_report(MagicMock(), config, self.request))
+        self.assertEqual(preflight_checks.preflight_results['summary']['overall_status'], 'PASS')
+
+    def test_failing_summary_fails_report_row(self):
+        config = {'node_check': {'enabled': False}, 'reporting': {'generate_html_report': False}}
+        preflight_checks.preflight_results['rdma_connectivity'] = {
+            'mode': 'basic',
+            'total_pairs': 2,
+            'successful_pairs': 1,
+            'failed_pairs': 1,
+        }
+        with self.assertRaises(pytest.fail.Exception) as ctx:
+            preflight_checks.test_generate_preflight_report(MagicMock(), config, self.request)
+        message = str(ctx.exception)
+        self.assertIn('overall status is FAIL', message)
+        self.assertIn('Rdma Connectivity', message)
+        self.assertEqual(preflight_checks.preflight_results['summary']['overall_status'], 'FAIL')
+
+    def test_node_health_gate_still_fails_before_the_overall_message(self):
+        config = {'node_check': {'enabled': True}, 'reporting': {'generate_html_report': False}}
+        preflight_checks.preflight_results['node_health'] = {
+            'status': 'FAIL',
+            'failed_nodes': ['nodeA'],
+            'node_results': {'nodeA': {'status': 'FAIL'}},
+        }
+        with self.assertRaises(pytest.fail.Exception) as ctx:
+            preflight_checks.test_generate_preflight_report(MagicMock(), config, self.request)
+        self.assertIn('Mandatory node-health admission gate failed', str(ctx.exception))
 
 
 if __name__ == "__main__":
