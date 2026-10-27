@@ -11,7 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Run Deck for most suites: health, platform, preflight, ibperf, MORI, ANC, ARC, RCCL, training and inference runs write a Run Deck beside the pytest HTML report. Install suites do not.
 - `cvs run` supports Slurm and SPUR: launch it with `srun` or `spur run`, and supported suites run without passwordless SSH.
-- ibperf bandwidth and latency tests support vPOD-aware node pairing (`ibperf.pairing_mode`).
+- ibperf:
+  - vPOD-aware node pairing (`ibperf.pairing_mode`).
+  - With `"orchestrator": "container"`, the install and test suites run inside the container. See the IB Perf page for the container settings they need.
 - RCCL:
   - Scale-up bandwidth references (`cvs_params.fabric`).
   - Bus-bandwidth tolerance (`cvs_params.bus_bw_tolerance`, default `0.95`).
@@ -28,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ibperf:
   - A node with no partner in the discovered NIC set fails and is excluded, instead of running as a server with no client.
   - Each node's perftest binary must support ROCm DMA-BUF, unless `ibperf.require_dmabuf` is `"False"`.
+  - The install suite no longer runs `apt` on every node. Set `ibperf.install_system_packages` to `"True"` to install the build and runtime packages; otherwise it fails when `numactl`, `libibverbs` or `librdmacm` is missing.
+  - The tests follow `ib_bw_test_list` and `ib_lat_test_list`. With the shipped sample, `ib_read_bw` no longer runs and `ib_read_lat` does.
+  - Each GPU uses an active backend NIC in its own PCI domain when GPU and NIC domains overlap. A GPU with none fails the test before perftest starts.
+  - `ibperf.gid_index` and `ibperf.gid_type` are checked on every NIC before perftest starts; a mismatch fails the test.
 - RCCL:
   - Perf, regression and pairwise run through the orchestrator, so they also run with the container backend.
   - Result files default to the run directory, and each run checks that the directory is shared before launching. Container runs need it mounted at the same host and container path.
@@ -49,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Runs on nodes with fewer than 8 GPUs instead of failing with `KeyError: 'card4'`.
   - `verify_bw` now enforces `expected_results`; previously tests passed regardless of measured bandwidth. Configs with `verify_bw` set to `"True"` may now fail; re-baseline thresholds for your cluster.
   - The sample config sets `duration` to `10` (was `30`), which caused failures; lower it in configs copied from the old sample.
+  - Latency tests run the perftest latency binaries; previously each latency case ran a bandwidth binary.
+  - `--use_rocm` selects the GPU local to each NIC, instead of the GPU with the same card number.
+  - A perftest process that exits non-zero fails the test.
 - RCCL:
   - Perf and regression thresholds and dip checks read the configured top-level `rccl.results` table, and regression reads its collectives from `rccl_test_params`.
   - NIC- and rank-keyed `results` entries are validated like flat entries, and invalid values fail with their config path.
