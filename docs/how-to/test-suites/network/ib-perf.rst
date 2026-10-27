@@ -191,13 +191,13 @@ Follow :doc:`/how-to/run-on-managed-compute` to run IB Perf on managed compute. 
 Run in containers
 =================
 
-Follow :doc:`/how-to/run-with-containers` and set ``"orchestrator": "container"`` in the cluster file. The install and test suites start the container on every node in their first step, or attach to the one already running, and run the perftest build, perftest, and the GPU and NIC checks inside it. With ``persistent`` the container keeps running after the test suite; remove it yourself. AFM vPOD discovery stays on the host.
+Follow :doc:`/how-to/run-with-containers` and set ``"orchestrator": "container"`` in the cluster file. The install and test suites start the container on every node in their first step, or attach to the one already running, and run the perftest build, perftest, and the GPU and NIC checks inside it. With ``persistent`` the container keeps running after the test suite; remove it yourself. The dmesg scan and AFM vPOD discovery stay on the host, so the dmesg scan needs passwordless sudo on the hosts, as on baremetal.
 
 IB Perf needs these container settings:
 
 - ``container.lifetime`` ``persistent``. The install and test suites are separate runs, and a ``per_run`` container is removed between them with anything installed in it.
 - ``install_dir`` on a volume in ``container.runtime.args.volumes`` that every node shares, mounted at the same path in the container. The build runs in the head node's container and every node runs the result.
-- An image with ROCm at ``rocm_dir``, ``rocm-smi``, ``lshw``, ``rdma``, ``numactl``, ``libibverbs``, and ``librdmacm``, or ``install_system_packages`` set to ``True`` with ``sudo`` in the image. Without ``sudo`` in the image, the dmesg scan is skipped.
+- An image with ROCm at ``rocm_dir``, ``rocm-smi``, ``lshw``, ``rdma``, ``numactl``, ``libibverbs``, and ``librdmacm``, or ``install_system_packages`` set to ``True`` with ``sudo`` in the image.
 
 .. _ib-perf-dmesg-scan:
 

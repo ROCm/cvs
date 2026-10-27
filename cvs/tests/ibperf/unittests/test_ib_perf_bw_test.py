@@ -147,7 +147,24 @@ class TestIbBwPerf(unittest.TestCase):
         linux_utils.get_backend_nic_dict.assert_called_once_with(orch, use_sudo=False)
         self.assertIs(ibperf_lib.run_ib_perf_bw_test.call_args.args[0], orch)
         self.assertEqual(ibperf_lib.run_ib_perf_bw_test.call_args.kwargs['node_pairs'], _PAIRING['pairs'])
-        self.assertIs(verify_dmesg.call_args.args[0], orch)
+        self.assertIs(verify_dmesg.call_args.args[0], orch.all)
+
+    @patch.object(ib_perf_bw_test, 'update_test_result')
+    @patch.object(ib_perf_bw_test, 'get_passwordless_sudo_status', return_value={'n1': True, 'n2': True})
+    @patch.object(ib_perf_bw_test, 'verify_dmesg_for_errors')
+    @patch.object(ib_perf_bw_test, 'ibperf_lib')
+    @patch.object(ib_perf_bw_test, 'linux_utils')
+    def test_perftest_runs_through_orch_and_dmesg_window_on_the_host(
+        self, linux_utils, ibperf_lib, verify_dmesg, sudo, _
+    ):
+        linux_utils.get_active_rdma_nic_dict.return_value = {}
+        orch = MagicMock()
+        ib_perf_bw_test.test_ib_bw_perf(orch, 'ib_write_bw', _CONFIG, MagicMock(), {}, {}, _PAIRING)
+        self.assertIs(ibperf_lib.run_ib_perf_bw_test.call_args.args[0], orch)
+        sudo.assert_called_once_with(orch.all)
+        host_cmds = [c.args[0] for c in orch.all.exec.call_args_list]
+        self.assertEqual(sum(c.startswith('date ') for c in host_cmds), 2)
+        self.assertTrue(any('/dev/kmsg' in c for c in host_cmds))
 
     @patch.object(ib_perf_bw_test, 'update_test_result')
     @patch.object(ib_perf_bw_test, 'get_passwordless_sudo_status', return_value={'n1': True, 'n2': False})
@@ -160,7 +177,7 @@ class TestIbBwPerf(unittest.TestCase):
         with self.assertLogs(ib_perf_bw_test.log, 'WARNING') as logs:
             ib_perf_bw_test.test_ib_bw_perf(orch, 'ib_write_bw', _CONFIG, MagicMock(), {}, {}, _PAIRING)
         verify_dmesg.assert_not_called()
-        self.assertFalse(any('/dev/kmsg' in c.args[0] for c in orch.exec.call_args_list))
+        self.assertFalse(any('/dev/kmsg' in c.args[0] for c in orch.all.exec.call_args_list))
         self.assertIn("SKIPPING the dmesg error check", logs.output[0])
 
     @patch.object(ib_perf_bw_test, 'update_test_result')

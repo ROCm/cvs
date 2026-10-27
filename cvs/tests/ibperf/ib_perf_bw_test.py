@@ -96,8 +96,9 @@ def orch(cluster_dict, node_pairing, lifecycle):
     log.info('Connecting to %d paired cluster nodes', len(node_list))
     log.debug('Paired cluster nodes: %s', node_list)
     o = _create_orch(cluster_dict, node_list)
-    yield IbperfOrch(o)
-    close_orch(o, lifecycle)
+    view = IbperfOrch(o)
+    yield view
+    close_orch(view, lifecycle)
 
 
 def test_launch_containers(orch, lifecycle):
@@ -105,7 +106,7 @@ def test_launch_containers(orch, lifecycle):
 
 
 def can_read_dmesg(orch):
-    if all(get_passwordless_sudo_status(orch).values()):
+    if all(get_passwordless_sudo_status(orch.all).values()):
         return True
     log.warning('SKIPPING the dmesg error check: no passwordless sudo to read dmesg on one or more nodes')
     return False
@@ -157,9 +158,9 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibper
     for msg_size in config_dict['msg_size_list']:
         ib_bw_dict[bw_test][msg_size] = {}
         for qp_count in config_dict['qp_count_list']:
-            start_time = orch.exec('date +"%a %b %e %H:%M"', print_console=False)
+            start_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
             if scan_dmesg:
-                orch.exec(
+                orch.all.exec(
                     f'echo "Starting Test {bw_test} for {msg_size} and QP count {qp_count}" | sudo -n tee /dev/kmsg',
                     print_console=False,
                 )
@@ -188,9 +189,9 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibper
                 ib_bw_dict[bw_test][msg_size][qp_count],
                 ibperf_variant_config,
             )
-            end_time = orch.exec('date +"%a %b %e %H:%M"', print_console=False)
+            end_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
             if scan_dmesg:
-                verify_dmesg_for_errors(orch, start_time, end_time, till_end_flag=True)
+                verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=True)
             if re.search('True', config_dict.get('verify_bw', ''), re.I):
                 ibperf_lib.verify_expected_bw(
                     bw_test,
@@ -247,9 +248,9 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibp
     update_test_result()
     for msg_size in config_dict['msg_size_list']:
         ib_lat_dict[lat_test][msg_size] = {}
-        start_time = orch.exec('date +"%a %b %e %H:%M"', print_console=False)
+        start_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
         if scan_dmesg:
-            orch.exec(
+            orch.all.exec(
                 f'echo "Starting Test {lat_test} for {msg_size}" | sudo -n tee /dev/kmsg',
                 print_console=False,
             )
@@ -271,9 +272,9 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibp
         ibperf_reporting.record_lat_results(
             cvs_results_dict, lat_test, msg_size, ib_lat_dict[lat_test][msg_size], ibperf_variant_config
         )
-        end_time = orch.exec('date +"%a %b %e %H:%M"', print_console=False)
+        end_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
         if scan_dmesg:
-            verify_dmesg_for_errors(orch, start_time, end_time, till_end_flag=True)
+            verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=True)
         if re.search('True', config_dict.get('verify_bw', ''), re.I):
             ibperf_lib.verify_expected_lat(
                 lat_test, msg_size, ib_lat_dict[lat_test][msg_size], config_dict.get('expected_results', {})

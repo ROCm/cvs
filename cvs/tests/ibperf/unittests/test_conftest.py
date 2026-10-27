@@ -77,10 +77,39 @@ class TestOrchFixture(unittest.TestCase):
         self.assertEqual(runtime.exec.call_args.args[:2], ('ct', 'rdma link'))
         orch.exec_cmd_list(['a', 'b'])
         self.assertEqual(runtime.exec_cmd_list.call_args.args[:2], ('ct', ['a', 'b']))
+        orch.exec_on_head('make')
+        self.assertEqual(runtime.exec_on_head.call_args.args[:2], ('ct', 'make'))
         conftest.teardown_containers(orch, lifecycle)
         with self.assertRaises(StopIteration):
             next(gen)
         runtime.teardown_containers.assert_called_once_with('ct')
+
+    @patch('cvs.core.orchestrators.baremetal.get_passwordless_sudo_status', return_value={'n1': True, 'n2': True})
+    @patch('cvs.core.orchestrators.container.RuntimeFactory')
+    @patch('cvs.core.orchestrators.baremetal.MultiProcessParallelHandle')
+    def test_per_run_teardown_also_removes_the_container_on_pruned_nodes(self, pssh, _runtime_factory, _sudo):
+        pssh.return_value.prune_nodes.return_value = ['n2']
+        cluster = {**_cluster(['n1', 'n2']), 'orchestrator': 'container', 'container': {'image': 'img', 'name': 'ct'}}
+        lifecycle = conftest.lifecycle.__wrapped__()
+        orch = next(conftest.orch.__wrapped__(cluster, lifecycle))
+        conftest.launch_containers(orch, lifecycle)
+
+        orch.prune_nodes(['n2'])
+        conftest.teardown_containers(orch, lifecycle)
+        self.assertEqual(pssh.call_args.args[1], ['n2'])
+        pssh.return_value.exec.assert_any_call(
+            'sudo -n docker rm -f ct 2>/dev/null || true',
+            timeout=None,
+            detailed=False,
+            print_console=True,
+            inactivity_timeout=None,
+        )
+
+    def test_exec_on_head_without_a_launched_container_raises(self):
+        orch = conftest.IbperfOrch(MagicMock(orchestrator_type='container', container_id=None))
+        with self.assertRaisesRegex(RuntimeError, 'No containers running'):
+            orch.exec_on_head('mkdir -p /shared')
+        orch._orch.exec_on_head.assert_not_called()
 
     def test_failed_launch_skips_later_tests_and_leak_guard_tears_down(self):
         orch = MagicMock(orchestrator_type='container')
