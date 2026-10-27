@@ -1804,14 +1804,21 @@ def test_generate_preflight_report(orch, config_dict, request):
 
     preflight_results['summary'] = summary
 
-    # Log summary to console. FAIL and BLOCKED are errors; the logger has no fail level.
+    # FAIL and BLOCKED are errors. WARNING does not fail the run, but it is not a pass.
     log.info("=== PREFLIGHT CHECK SUMMARY ===")
     for check_name, check_summary in summary['checks'].items():
         status = check_summary['status']
-        status_icon = "✅" if status == 'PASS' else "❌"
+        if status == 'PASS':
+            status_icon = "✅"
+        elif status == 'WARNING':
+            status_icon = "⚠️"
+        else:
+            status_icon = "❌"
         line = f"{status_icon} {preflight_check_display_name(check_name)}: {status} - {check_summary['summary']}"
         if status in ('FAIL', 'BLOCKED'):
             log.error(line)
+        elif status == 'WARNING':
+            log.warning(line)
         else:
             log.info(line)
 
