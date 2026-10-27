@@ -14,8 +14,8 @@ summary line and an HTML report path.
 
 .. image:: /images/failed.png
 
-One or more tests failed. The short test summary lists each failure with the
-parametrization that triggered it and the specific threshold that was not met.
+One or more tests failed. The short test summary lists each failing test with
+the parametrization that triggered it and the assertion that failed.
 
 .. image:: /images/stop.png
 

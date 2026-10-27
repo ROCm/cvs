@@ -6,7 +6,7 @@
 Cluster Validation Suite (CVS) quickstart: install and run your first cluster command
 *************************************************************************************
 
-This guide helps you configure your first cluster-wide ``cvs exec`` in about 15 minutes.
+This guide helps you run your first cluster-wide ``cvs exec`` in about 15 minutes.
 
 Prerequisites
 =============

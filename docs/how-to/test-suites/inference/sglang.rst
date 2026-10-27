@@ -6,9 +6,9 @@
 Run SGLang LLM inference benchmarks with Cluster Validation Suite (CVS)
 ***********************************************************************
 
-CVS provides three SGLang suites under `cvs/tests/inference/sglang/ <https://github.com/ROCm/cvs/tree/main/cvs/tests/inference/sglang/>`_. Each suite is a
+CVS provides three SGLang suites under |cvs-tests-inference-sglang|_. Each suite is a
 separate pytest module; pick the one that matches your topology, then point ``--config_file``
-at a template from `cvs/input/config_file/inference/sglang/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/inference/sglang/>`_.
+at a template from |cvs-input-config-file-inference-sglang|_.
 
 For the full configuration schema, threshold format, and parameter reference, see
 :doc:`/reference/configuration-files/inference/sglang`.
@@ -251,3 +251,10 @@ Key lifecycle stages to watch:
 - **Teardown** — ``test_teardown`` stops containers even when a prior stage failed.
 
 Logs are written under ``paths.log_dir`` from the config (default ``/home/{user-id}/LOGS/sglang``).
+
+
+.. |cvs-tests-inference-sglang| replace:: ``cvs/tests/inference/sglang/``
+.. _cvs-tests-inference-sglang: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/tests/inference/sglang/
+
+.. |cvs-input-config-file-inference-sglang| replace:: ``cvs/input/config_file/inference/sglang/``
+.. _cvs-input-config-file-inference-sglang: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/inference/sglang/

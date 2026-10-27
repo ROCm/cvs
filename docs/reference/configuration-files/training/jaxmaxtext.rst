@@ -48,7 +48,7 @@ Use ``cvs config list training/jaxmaxtext`` to list available templates, or
 
 The suite/lifecycle reference is in
 :doc:`/how-to/test-suites/training/jaxmaxtext`. The config files themselves live in
-`cvs/input/config_file/training/jaxmaxtext/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/training/jaxmaxtext/>`_ (each config plus a sibling
+|cvs-input-config-file-training-jaxmaxtext|_ (each config plus a sibling
 ``_threshold.json``); this page documents every block and the threshold format.
 
 Available configurations
@@ -799,3 +799,7 @@ To start gating a metric currently marked ``info``: replace ``"kind": "info"``
 with ``min`` / ``max`` / etc. and set a calibrated ``value``. Checkpoint I/O
 timings (``checkpoint_save_seconds`` / ``checkpoint_load_seconds``) are gated by
 the ``checkpoint_resume`` block, not the threshold file.
+
+
+.. |cvs-input-config-file-training-jaxmaxtext| replace:: ``cvs/input/config_file/training/jaxmaxtext/``
+.. _cvs-input-config-file-training-jaxmaxtext: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/training/jaxmaxtext/

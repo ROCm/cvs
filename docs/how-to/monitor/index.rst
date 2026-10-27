@@ -11,7 +11,14 @@ CVS provides three monitoring paths:
 - :doc:`Health reports </how-to/monitor/health-reports/index>` — run ``cvs monitor check_cluster_health`` for a point-in-time HTML health report over SSH (no agents on nodes).
 - :doc:`Live dashboards </how-to/monitor/live-dashboards/index>` — real-time and historical metrics while workloads run.
 
-  - :doc:`Agentless (SSH) </how-to/monitor/live-dashboards/agentless>` — CVS Cluster Monitor dashboard (`cvs/monitors/cluster-mon/ <https://github.com/ROCm/cvs/tree/main/cvs/monitors/cluster-mon/>`_)
-  - :doc:`Agent (Exporters) </how-to/monitor/live-dashboards/exporters>` — Prometheus/Grafana fleet monitor (`cvs/monitors/metrics_exp/ <https://github.com/ROCm/cvs/tree/main/cvs/monitors/metrics_exp/>`_)
+  - :doc:`Agentless (SSH) </how-to/monitor/live-dashboards/agentless>` — CVS Cluster Monitor dashboard (|cvs-monitors-cluster-mon|_)
+  - :doc:`Agent (Exporters) </how-to/monitor/live-dashboards/exporters>` — Prometheus/Grafana fleet monitor (|cvs-monitors-metrics-exp|_)
 
 Choose health reports for preflight validation or triage snapshots. Choose live dashboards for ongoing visibility during training or inference campaigns.
+
+
+.. |cvs-monitors-cluster-mon| replace:: ``cvs/monitors/cluster-mon/``
+.. _cvs-monitors-cluster-mon: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/monitors/cluster-mon/
+
+.. |cvs-monitors-metrics-exp| replace:: ``cvs/monitors/metrics_exp/``
+.. _cvs-monitors-metrics-exp: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/monitors/metrics_exp/

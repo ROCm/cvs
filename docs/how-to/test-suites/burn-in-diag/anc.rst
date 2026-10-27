@@ -141,7 +141,7 @@ Individual ANC items are exposed as per-family suites, each item its own
   ``test_no_op``, ``test_sdma_bidi_peak``, and others)
 
 ``cvs list anc_test_<family>`` reports a suite's items; the per-family lists
-live in `cvs/lib/anc_lib.py <https://github.com/ROCm/cvs/blob/main/cvs/lib/anc_lib.py>`_.
+live in |cvs-lib-anc-lib-py|_.
 
 Run a whole item family:
 
@@ -172,3 +172,7 @@ A node passes only when ANC started (a ``Log directory`` line is present), ``con
 
 Logs land under ``<run_dir>/anc_logs/<ip>_<hostname>/<test_name>/<timestamp>/``.
 ``cvs run`` also writes the pytest HTML report and text log described in :ref:`pytest-html-report-and-bundle`.
+
+
+.. |cvs-lib-anc-lib-py| replace:: ``cvs/lib/anc_lib.py``
+.. _cvs-lib-anc-lib-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/lib/anc_lib.py

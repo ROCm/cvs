@@ -24,7 +24,7 @@ keys use abbreviations (for example ``TP=``, ``PP=``).
 File layout
 ===========
 
-Shipped files live under `cvs/input/config_file/inference/atom/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/inference/atom/>`_:
+Shipped files live under |cvs-input-config-file-inference-atom|_:
 
 .. code:: text
 
@@ -168,7 +168,7 @@ Keys prefixed with ``_`` (for example ``_comment``) are ignored by the loader.
 Cluster and lab setup
 =====================
 
-**Cluster file:** `cvs/input/cluster_file/atom_cluster.json <https://github.com/ROCm/cvs/blob/main/cvs/input/cluster_file/atom_cluster.json>`_. Edit
+**Cluster file:** |cvs-input-cluster-file-atom-cluster-json|_. Edit
 ``node_dict`` so host count matches ``params.nnodes``.
 
 .. list-table::
@@ -441,3 +441,10 @@ Related resources
 - :doc:`/reference/cluster/cluster-file` — cluster file schema
 - :mod:`cvs.lib.inference.atom.atom_config_loader` — loader and ``cell_key``
 - :mod:`cvs.lib.inference.atom.atom_parsing` — metric tiers and parsing
+
+
+.. |cvs-input-config-file-inference-atom| replace:: ``cvs/input/config_file/inference/atom/``
+.. _cvs-input-config-file-inference-atom: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/inference/atom/
+
+.. |cvs-input-cluster-file-atom-cluster-json| replace:: ``cvs/input/cluster_file/atom_cluster.json``
+.. _cvs-input-cluster-file-atom-cluster-json: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/input/cluster_file/atom_cluster.json

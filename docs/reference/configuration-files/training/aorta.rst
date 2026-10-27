@@ -5,7 +5,7 @@
 Aorta benchmark configuration file for Cluster Validation Suite (CVS)
 =====================================================================
 
-Aorta uses JSON variants in `cvs/input/config_file/benchmark/aorta/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/benchmark/aorta/>`_:
+Aorta uses JSON variants in |cvs-input-config-file-benchmark-aorta|_:
 
 * ``mi3xx_aorta_profile_overlap_2gpu_single.json``
 * ``mi3xx_aorta_profile_overlap_2gpu_distributed.json``
@@ -156,3 +156,7 @@ artifacts after execution failures.
 
 Runtime and transport support comes from the shared orchestrator. The Enroot runtime in
 this checkout is not implemented; this migration does not add that backend.
+
+
+.. |cvs-input-config-file-benchmark-aorta| replace:: ``cvs/input/config_file/benchmark/aorta/``
+.. _cvs-input-config-file-benchmark-aorta: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/benchmark/aorta/

@@ -7,7 +7,7 @@ SGLang inference benchmark configuration for Cluster Validation Suite (CVS)
 *************************************************************************
 
 CVS ships three SGLang inference suites for AMD MI30x and MI35x clusters. Each suite reads a JSON
-configuration file from `cvs/input/config_file/inference/sglang/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/inference/sglang/>`_ and a matching
+configuration file from |cvs-input-config-file-inference-sglang|_ and a matching
 threshold file referenced by top-level ``threshold_json``. Hosts come from ``cluster.json``
 ``node_dict`` order. Role lists in the workload JSON are ignored.
 
@@ -19,13 +19,13 @@ threshold file referenced by top-level ``threshold_json``. Hosts come from ``clu
      - Test module
      - Topology
    * - ``sglang_single``
-     - `cvs/tests/inference/sglang/sglang_single.py <https://github.com/ROCm/cvs/blob/main/cvs/tests/inference/sglang/sglang_single.py>`_
+     - |cvs-tests-inference-sglang-single-py|_
      - One unified ``sglang.launch_server`` on the first ``cluster.json`` host (TP across local GPUs). Extra hosts are ignored.
    * - ``sglang_distributed``
-     - `cvs/tests/inference/sglang/sglang_distributed.py <https://github.com/ROCm/cvs/blob/main/cvs/tests/inference/sglang/sglang_distributed.py>`_
+     - |cvs-tests-inference-sglang-distributed-py|_
      - One unified multi-node server. The first ``server_params.nnodes`` hosts are the ranks. Rank 0 is the benchmark node.
    * - ``sglang_disagg_distributed``
-     - `cvs/tests/inference/sglang/sglang_disagg_distributed.py <https://github.com/ROCm/cvs/blob/main/cvs/tests/inference/sglang/sglang_disagg_distributed.py>`_
+     - |cvs-tests-inference-sglang-disagg-distributed-py|_
      - Disaggregated prefill/decode. The first even ``nnodes`` hosts split into equal prefill and decode groups. Rank 0 is prefill coordinator, proxy, and benchmark. Rank 1 is decode coordinator.
 
 See :doc:`/how-to/test-suites/inference/sglang`  for more information on running these tests.
@@ -56,7 +56,7 @@ Copy a template locally:
 Configuration files
 ===================
 
-All SGLang templates live under `cvs/input/config_file/inference/sglang/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/inference/sglang/>`_.
+All SGLang templates live under |cvs-input-config-file-inference-sglang|_.
 
 Model and topology templates
 ----------------------------
@@ -480,3 +480,16 @@ Troubleshooting
 **Model access**
   Set ``paths.hf_token_file`` for HuggingFace models or mount local weights under ``/root/models`` using
   ``volumes``.
+
+
+.. |cvs-input-config-file-inference-sglang| replace:: ``cvs/input/config_file/inference/sglang/``
+.. _cvs-input-config-file-inference-sglang: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/inference/sglang/
+
+.. |cvs-tests-inference-sglang-single-py| replace:: ``cvs/tests/inference/sglang/sglang_single.py``
+.. _cvs-tests-inference-sglang-single-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/tests/inference/sglang/sglang_single.py
+
+.. |cvs-tests-inference-sglang-distributed-py| replace:: ``cvs/tests/inference/sglang/sglang_distributed.py``
+.. _cvs-tests-inference-sglang-distributed-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/tests/inference/sglang/sglang_distributed.py
+
+.. |cvs-tests-inference-sglang-disagg-distributed-py| replace:: ``cvs/tests/inference/sglang/sglang_disagg_distributed.py``
+.. _cvs-tests-inference-sglang-disagg-distributed-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/tests/inference/sglang/sglang_disagg_distributed.py

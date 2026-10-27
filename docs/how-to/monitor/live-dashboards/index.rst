@@ -6,7 +6,7 @@
 View live AMD Instinct GPU cluster dashboards with Cluster Validation Suite (CVS)
 *********************************************************************************
 
-Live dashboards keep GPU and network metrics visible while workloads run—real-time views and historical trends in Grafana or the CVS Cluster Monitor UI. CVS ships two approaches under `cvs/monitors/ <https://github.com/ROCm/cvs/tree/main/cvs/monitors/>`_.
+Live dashboards keep GPU and network metrics visible while workloads run—real-time views and historical trends in Grafana or the CVS Cluster Monitor UI. CVS ships two approaches under |cvs-monitors|_.
 
 .. list-table::
    :header-rows: 1
@@ -25,3 +25,7 @@ Live dashboards keep GPU and network metrics visible while workloads run—real-
 Both support jump hosts and parallel SSH. Choose agentless when you can't install services on compute nodes; choose exporters when you need Prometheus retention, alerting, and multi-week trends.
 
 For a one-time HTML health report (no dashboard), use :doc:`/how-to/monitor/health-reports/index`.
+
+
+.. |cvs-monitors| replace:: ``cvs/monitors/``
+.. _cvs-monitors: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/monitors/
