@@ -576,6 +576,24 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertIn("atom server early failure", str(ctx.exception))
         self.assertNotIn("did not become ready before timeout", str(ctx.exception))
 
+    def test_server_failure_scrubs_hf_token(self):
+        secret = "hf_supersecretvalue"
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="atom"),
+            hf_token="",
+            isl="1024",
+            osl="1024",
+            concurrency=1,
+            num_prompts=1,
+        )
+        text = f"Engine core initialization failed HF_TOKEN={secret} path=/home/x/.hf_token"
+        with self.assertRaises(RuntimeError) as ctx:
+            job._raise_if_atom_server_log_failed("node0", text)
+        self.assertNotIn(secret, str(ctx.exception))
+        self.assertIn(".hf_token", str(ctx.exception))
+        self.assertIn("<redacted>", str(ctx.exception))
+
     def test_distributed_start_server_targets_each_host(self):
         orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
         job = AtomJob(
