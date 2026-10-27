@@ -6,7 +6,7 @@
 TorchTitan training configuration files for Cluster Validation Suite (CVS)
 ************************************************************************
 
-TorchTitan configs live under `cvs/input/config_file/training/torchtitan/ <https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/training/torchtitan/>`_. Each config has a sibling ``*_threshold.json`` referenced by ``threshold_json``. One config file can hold multiple precision sweeps (BF16, FP8, MXFP8, MXFP4) for the same model.
+TorchTitan configs live under |cvs-input-config-file-training-torchtitan|_. Each config has a sibling ``*_threshold.json`` referenced by ``threshold_json``. One config file can hold multiple precision sweeps (BF16, FP8, MXFP8, MXFP4) for the same model.
 
 Keys prefixed with ``_`` (for example ``_scaling_baseline_comment``) are inline comments and are ignored by the loader.
 
@@ -314,3 +314,7 @@ Threshold files map each sweep combo to per-metric pass/fail limits. Cell keys u
 Threshold kinds: ``min`` (actual ≥ value), ``max`` (actual ≤ value), ``min_ratio`` (actual / reference ≥ value).
 
 How to run: :doc:`/how-to/test-suites/training/torchtitan`.
+
+
+.. |cvs-input-config-file-training-torchtitan| replace:: ``cvs/input/config_file/training/torchtitan/``
+.. _cvs-input-config-file-training-torchtitan: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/training/torchtitan/

@@ -29,7 +29,7 @@ You can create ``cluster.json`` in either of these ways:
 Copy a cluster file template
 ============================
 
-CVS ships cluster templates under `cvs/input/ <https://github.com/ROCm/cvs/tree/main/cvs/input/>`_. Copy them with ``cvs config copy``:
+CVS ships cluster templates under |cvs-input|_. Copy them with ``cvs config copy``:
 
 .. code:: bash
 
@@ -68,3 +68,7 @@ Next steps
 
 - :doc:`/how-to/configure/test-suite-config/index` — copy and edit a test suite config file. Every test suite requires its own config with cluster-specific values before you can run it.
 - :doc:`/how-to/test-suites/index` — run a test suite against the cluster.
+
+
+.. |cvs-input| replace:: ``cvs/input/``
+.. _cvs-input: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/

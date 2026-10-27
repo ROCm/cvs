@@ -142,18 +142,15 @@ Each run produces the following artifacts in the run directory.
      - Default location
      - Notes
    * - Pytest HTML report
-     - ``<run_dir>/``
-       ``<test-file-stem>.html``
+     - ``<run_dir>/<test-file-stem>.html``
      - For example,
        ``<workspace>/cvs_runs/<run_id>/rccl_perf.html``.
        The auto-derived report is self-contained.
    * - Text log
-     - ``<run_dir>/``
-       ``<test-file-stem>.log``
+     - ``<run_dir>/<test-file-stem>.log``
      - Pytest run log.
    * - Attachments
-     - ``<run_dir>/``
-       ``<test-file-stem>_html/``
+     - ``<run_dir>/<test-file-stem>_html/``
      - Per-test "Full Log" pages and a copy of the run log.
        When the suite supports a Run Deck, this directory
        also holds the Run Deck HTML and JSON, and might
@@ -163,8 +160,7 @@ Each run produces the following artifacts in the run directory.
        directory and in the zip. Recreated at the start
        of each run.
    * - Zip bundle
-     - ``<run_dir>/``
-       ``<test-file-stem>_<YYYY-mm-ddTHHMMSS>.zip``
+     - ``<run_dir>/<test-file-stem>_<YYYY-mm-ddTHHMMSS>.zip``
      - Contains the report, the attachments directory,
        and the cluster and config files. Links still work
        after extraction.

@@ -391,81 +391,52 @@ CVS then bootstraps a Ray cluster before serving: ``ray start --head --port=<dis
 Troubleshooting
 ===============
 
-Validation error on startup
-----------------------------
+.. list-table::
+   :header-rows: 1
+   :widths: 38 62
 
-``container``, ``paths``, and the top-level config reject unknown keys.
-``server_params``, ``benchmark_params``, and sweep overrides accept extra
-snake_case vLLM options. Keys such as ``image_tar``, ``registry``,
-``shm_size``, and ``cap_add`` belong on the cluster file, not in the vLLM
-config. See :doc:`/reference/cluster/cluster-file`.
-
-Distributed topology validation fails
---------------------------------------
-
-.. code-block:: text
-
-  vllm_distributed requires pipeline_parallel_size>1 unless distributed-executor-backend=ray
-
-You have two or more hosts on ``mp`` without pipeline parallelism. Raise
-``pipeline_parallel_size``, or set ``distributed_executor_backend`` to
-``"ray"``.
-
-Missing NCCL socket interface
-------------------------------
-
-.. code-block:: text
-
-  vllm_distributed requires container.env.NCCL_SOCKET_IFNAME on multi-host clusters
-
-Set the socket interface. If you set any of ``NCCL_SOCKET_IFNAME``,
-``GLOO_SOCKET_IFNAME``, or ``TP_SOCKET_IFNAME``, set all three.
-
-Container image not specified
-------------------------------
-
-.. code-block:: text
-
-  Container image not specified in config
-
-``container.image`` is empty. The orchestrator logs this, then
-``test_launch_container`` fails because ``setup_containers()`` returned
-false. The vLLM schema requires ``image``, so omitting the key fails
-validation instead. An empty string overwrites a cluster-file image. The
-packaged Llama files ship ``<changeme>``—not a real image until you
-replace it.
-
-``env`` placed under ``container.runtime.args``
-------------------------------------------------
-
-``RuntimeArgs`` rejects unknown keys, so ``env`` there fails config load.
-Move ``env`` to ``container``, not ``container.runtime.args``.
-
-Threshold fails with non-finite actual
----------------------------------------
-
-.. code-block:: text
-
-  actual must be a finite built-in int or float
-
-The gated datasource did not produce a valid value for that metric. Inspect
-the raw benchmark artifact, GPU telemetry, or server metrics for that cell.
-The suite owns benchmark percentile collection; workload configuration
-cannot override it.
-
-Sweep is slower than expected
-------------------------------
-
-Cells that differ only in concurrency reuse the running server. Changing
-ISL, OSL, TP, PP, or any server argument forces a restart and a weight
-reload. Order ``runs`` so concurrency varies fastest to avoid needless
-reloads. The packaged single-node file already does this (concurrency 16,
-then 32).
-
-``runtime.name`` is not ``docker``
-------------------------------------
-
-The vLLM schema accepts only ``"docker"`` as the runtime name.
+   * - Problem
+     - Cause and fix
+   * - Validation error on startup
+     - ``container``, ``paths``, and the top-level config reject unknown
+       keys. ``server_params``, ``benchmark_params``, and sweep overrides
+       accept extra snake_case vLLM options. Keys such as ``image_tar``,
+       ``registry``, ``shm_size``, and ``cap_add`` belong on the cluster
+       file, not in the vLLM config. See :doc:`/reference/cluster/cluster-file`.
+   * - ``vllm_distributed requires pipeline_parallel_size>1 unless
+       distributed-executor-backend=ray``
+     - Two or more hosts are configured on ``mp`` without pipeline
+       parallelism. Raise ``pipeline_parallel_size``, or set
+       ``distributed_executor_backend`` to ``"ray"``.
+   * - ``vllm_distributed requires container.env.NCCL_SOCKET_IFNAME on
+       multi-host clusters``
+     - Set the socket interface. If you set any of
+       ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, or
+       ``TP_SOCKET_IFNAME``, set all three.
+   * - ``Container image not specified in config``
+     - ``container.image`` is empty. The orchestrator logs this, then
+       ``test_launch_container`` fails because ``setup_containers()``
+       returned false. The vLLM schema requires ``image``, so omitting
+       the key fails validation instead. An empty string overwrites a
+       cluster-file image. The packaged Llama files ship ``<changeme>``
+       — not a real image until you replace it.
+   * - ``env`` placed under ``container.runtime.args``
+     - ``RuntimeArgs`` rejects unknown keys, so placing ``env`` there
+       fails config load. Move ``env`` to ``container``, not
+       ``container.runtime.args``.
+   * - ``actual must be a finite built-in int or float``
+     - The gated datasource did not produce a valid value for that
+       metric. Inspect the raw benchmark artifact, GPU telemetry, or
+       server metrics for that cell. The suite owns benchmark percentile
+       collection; workload configuration cannot override it.
+   * - Sweep is slower than expected
+     - Cells that differ only in concurrency reuse the running server.
+       Changing ISL, OSL, TP, PP, or any server argument forces a
+       restart and a weight reload. Order ``runs`` so concurrency varies
+       fastest to avoid needless reloads. The packaged single-node file
+       already does this (concurrency 16, then 32).
+   * - ``runtime.name`` is not ``docker``
+     - The vLLM schema accepts only ``"docker"`` as the runtime name.
 
 Related resources
 =================

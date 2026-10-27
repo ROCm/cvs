@@ -6,7 +6,7 @@
 Deploy live GPU fleet dashboards with Cluster Validation Suite (CVS) Prometheus exporters
 *****************************************************************************************
 
-The GPU Fleet and Control Plane Monitor (`cvs/monitors/metrics_exp/ <https://github.com/ROCm/cvs/tree/main/cvs/monitors/metrics_exp/>`_) deploys exporters on cluster nodes and stores time-series metrics in Prometheus, with Grafana dashboards and Loki log aggregation.
+The GPU Fleet and Control Plane Monitor (|cvs-monitors-metrics-exp|_) deploys exporters on cluster nodes and stores time-series metrics in Prometheus, with Grafana dashboards and Loki log aggregation.
 
 Use this for long-running fleet visibility at scale (hundreds to 1000+ nodes), Slurm or Kubernetes control-plane metrics, and retention-based trending.
 
@@ -26,7 +26,7 @@ Prerequisites
 
 The following prerequisites are required:
 
-- Docker Engine 23.0 or later with Compose v2 (``docker compose``) on the Fleet Monitor or monitoring server host
+- Docker Engine 20.10 or later with Compose v2 (``docker compose``) on the Fleet Monitor or monitoring server host
 - SSH from the Fleet Monitor server to GPU and control-plane nodes (optional jump host)
 - GPU nodes: ROCm driver (``/dev/kfd`` and ``/dev/dri`` present), Docker or
   Podman (for the AMD Device Metrics Exporter container), Python 3 (for the
@@ -37,32 +37,45 @@ The following prerequisites are required:
 Deploy the monitoring stack
 ===========================
 
-1. Copy the example environment file and edit it to set passwords and retention settings:
+1. Go to the stack directory in your CVS checkout:
+
+   .. code:: bash
+
+     cd cvs/monitors/metrics_exp
+
+2. Copy the example environment file and edit it to set passwords and retention settings:
 
    .. code:: bash
 
      cp .env.example .env
 
-2. Build and start the stack from `cvs/monitors/metrics_exp/ <https://github.com/ROCm/cvs/tree/main/cvs/monitors/metrics_exp/>`_:
+3. Build and start the stack:
 
    .. code:: bash
 
      docker compose build --no-cache
      docker compose up -d
 
-3. Open Fleet Monitor at ``http://<server>:30080``.
+4. Open Fleet Monitor at ``http://<server>:30080``.
 
-4. Go to **Monitoring Servers**, add a server, and select **Install Stack** to deploy Prometheus, Grafana, Loki, and the pre-built dashboards.
+5. Go to **Monitoring Servers**, add a server, and select **Install Stack** to deploy Prometheus, Grafana, Loki, and the pre-built dashboards.
 
-5. Go to **Node Groups**, add your GPU nodes, upload the SSH key, select **Verify Connectivity**, then select **Install** to deploy the exporters on every node in the group.
+6. Go to **Node Groups**, add your GPU nodes, upload the SSH key, select **Verify Connectivity**, then select **Install** to deploy the exporters on every node in the group.
 
-6. (Optional) Go to **Control Node Groups**, add your Slurm or Kubernetes control-plane nodes, and select **Install**.
+7. (Optional) Go to **Control Node Groups**, add your Slurm or Kubernetes control-plane nodes, and select **Install**.
 
-7. Open Grafana at ``http://<monitoring-server>:30030`` and sign in with the default credentials (username ``admin``, password ``admin``).
+8. Open Grafana at ``http://<monitoring-server>:30030`` and sign in with the default credentials (username ``admin``, password ``admin``).
 
 Dashboards
 ==========
 
-Pre-provisioned folders include GPU Fleet Monitoring (utilization, thermal/power, health, RDMA, logs) and Control Plane Monitoring (Slurm and Kubernetes). See `cvs/monitors/metrics_exp/README.md <https://github.com/ROCm/cvs/blob/main/cvs/monitors/metrics_exp/README.md>`_ for metrics catalog, storage planning, firewall ports, and debugging.
+Pre-provisioned folders include GPU Fleet Monitoring (utilization, thermal/power, health, RDMA, logs) and Control Plane Monitoring (Slurm and Kubernetes). See |cvs-monitors-metrics-exp-readme|_ for metrics catalog, storage planning, firewall ports, and debugging.
 
 For a lightweight SSH-only dashboard without node agents, see :doc:`/how-to/monitor/live-dashboards/agentless`.
+
+
+.. |cvs-monitors-metrics-exp| replace:: ``cvs/monitors/metrics_exp/``
+.. _cvs-monitors-metrics-exp: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/monitors/metrics_exp/
+
+.. |cvs-monitors-metrics-exp-readme| replace:: ``cvs/monitors/metrics_exp/README.md``
+.. _cvs-monitors-metrics-exp-readme: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/monitors/metrics_exp/README.md

@@ -6,12 +6,12 @@
 ANC (AMD Node Check) configuration file reference
 *************************************************
 
-AMD Node Check (ANC) suites install the ANC tool on every node, then run CPU or GPU diagnostic groups. Shared logic lives in `cvs/lib/anc_lib.py <https://github.com/ROCm/cvs/blob/main/cvs/lib/anc_lib.py>`_; group names come from ``CPU_GROUPS`` and ``GPU_GROUPS``.
+AMD Node Check (ANC) suites install the ANC tool on every node, then run CPU or GPU diagnostic groups. Shared logic lives in |cvs-lib-anc-lib-py|_; group names come from ``CPU_GROUPS`` and ``GPU_GROUPS``.
 
-Configuration file location: `cvs/input/config_file/anc/anc_config.json <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/anc/anc_config.json>`_
+Configuration file location: |cvs-input-config-file-anc-anc-config-json|_
 
 For the suite overview, install flavours, and artifact layout, see
-`cvs/tests/anc/README.md <https://github.com/ROCm/cvs/blob/main/cvs/tests/anc/README.md>`_
+|cvs-tests-anc-readme|_
 in the repository.
 
 Run ANC
@@ -102,4 +102,14 @@ Related resources
 
 - :doc:`/how-to/test-suites/burn-in-diag/anc` — ``cvs run`` examples and group lists
 - :doc:`/reference/cluster/cluster-file` — Cluster topology and SSH
-- `cvs/tests/anc/README.md <https://github.com/ROCm/cvs/blob/main/cvs/tests/anc/README.md>`_ — Install flavours, pass/fail criteria, and artifact layout
+- |cvs-tests-anc-readme|_ — Install flavours, pass/fail criteria, and artifact layout
+
+
+.. |cvs-lib-anc-lib-py| replace:: ``cvs/lib/anc_lib.py``
+.. _cvs-lib-anc-lib-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/lib/anc_lib.py
+
+.. |cvs-input-config-file-anc-anc-config-json| replace:: ``cvs/input/config_file/anc/anc_config.json``
+.. _cvs-input-config-file-anc-anc-config-json: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/input/config_file/anc/anc_config.json
+
+.. |cvs-tests-anc-readme| replace:: ``cvs/tests/anc/README.md``
+.. _cvs-tests-anc-readme: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/tests/anc/README.md

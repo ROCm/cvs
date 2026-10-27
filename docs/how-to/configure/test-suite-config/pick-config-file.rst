@@ -41,7 +41,7 @@ The following suites are available for burn-in and diagnostic workloads:
      - ``input/config_file/preflight/preflight_config.json``
      - ``cvs config list preflight``
 
-       `README_preflight_config.md <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/preflight/README_preflight_config.md>`_
+       `README_preflight_config.md <https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/input/config_file/preflight/README_preflight_config.md>`_
 
 .. _network:
 
@@ -126,7 +126,7 @@ Training suites and their config template paths are listed below.
        | ``mi{gpu}_jaxmaxtext_{model}_{single|distributed}_threshold.json``
      - ``cvs config list training/jaxmaxtext``
 
-       `Config README <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/training/jaxmaxtext/README.md>`_
+       `Config README <https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/input/config_file/training/jaxmaxtext/README.md>`_
    * - Megatron
      - - ``input/config_file/training/megatron/``
        - MI300X/MI325X:

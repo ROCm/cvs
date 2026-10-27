@@ -52,11 +52,10 @@ container backend.
      - ``/dev/kfd`` and ``/dev/dri/*`` must be present for GPU passthrough.
        ``/dev/infiniband/*`` is also required when the suite uses RDMA.
    * - SSH directory accessible
-     - Required only when the suite starts in-container sshd (multinode
-       MPI suites). CVS mounts ``/home/<cvs-user>/.ssh`` at ``/host_ssh``
-       inside the container and copies it to ``/root/.ssh``. Single-node
-       suites and managed-compute runs skip sshd setup entirely and do not
-       need this directory or ``openssh-server`` in the image.
+     - Required only when the suite starts in-container sshd. CVS mounts
+       ``/home/<cvs-user>/.ssh`` at ``/host_ssh`` inside the container and
+       copies it to ``/root/.ssh``. Suites that never call sshd setup do
+       not need this directory or ``openssh-server`` in the image.
    * - Container image available
      - The image must be pre-loaded on each node, provided as ``image_tar``
        in the cluster file, or pullable from a reachable registry. Multinode
@@ -192,7 +191,7 @@ CVS's own privileged commands — the Docker CLI calls (``docker run``, ``exec``
 Container block
 ===============
 
-The ``container`` block configures the container backend. It is consumed by the ``ContainerOrchestrator`` defined in `cvs/core/orchestrators/container.py <https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/container.py>`_.
+The ``container`` block configures the container backend. It is consumed by the ``ContainerOrchestrator`` defined in |cvs-core-orchestrators-container-py|_.
 
 The following table describes each key in the ``container`` block.
 
@@ -228,7 +227,7 @@ The following table describes each key in the ``container`` block.
 Docker ``runtime.args`` reference
 =================================
 
-When ``runtime.name`` is ``docker``, the keys below configure the underlying ``docker run`` command. Defaults are merged from ``DEFAULT_CONTAINER_ARGS`` in `cvs/core/orchestrators/container.py <https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/container.py>`_:
+When ``runtime.name`` is ``docker``, the keys below configure the underlying ``docker run`` command. Defaults are merged from ``DEFAULT_CONTAINER_ARGS`` in |cvs-core-orchestrators-container-py|_:
 
 - List arguments (``volumes``, ``devices``, ``cap_add``, ``security_opt``, ``group_add``, ``ulimit``) **append to** the baked-in defaults.
 - Scalar arguments (``network``, ``ipc``, ``privileged``) **override** the default when set, otherwise inherit it.
@@ -288,7 +287,7 @@ The following table lists the supported ``runtime.args`` keys and their defaults
 ``lifetime`` truth table
 ========================
 
-``setup_containers`` and ``teardown_containers`` branch on ``container.lifetime``. The behavior below is pinned by the per-lifetime unit tests in `cvs/core/orchestrators/unittests/test_container.py <https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/unittests/test_container.py>`_.
+``setup_containers`` and ``teardown_containers`` branch on ``container.lifetime``. The behavior below is pinned by the per-lifetime unit tests in |cvs-core-orchestrators-unittests-test-container-py|_.
 
 The following table shows what each ``lifetime`` value does during setup and teardown.
 
@@ -318,4 +317,14 @@ Related resources
 
 - :doc:`/how-to/run-with-containers` — walkthrough for a container cluster file.
 - :doc:`/how-to/test-suites/burn-in-diag/health` — health suites that follow the cluster ``orchestrator`` key.
-- `cvs/input/cluster_file/README.md <https://github.com/ROCm/cvs/blob/main/cvs/input/cluster_file/README.md>`_ — in-tree reference next to the templates.
+- |cvs-input-cluster-file-readme|_ — in-tree reference next to the templates.
+
+
+.. |cvs-core-orchestrators-container-py| replace:: ``cvs/core/orchestrators/container.py``
+.. _cvs-core-orchestrators-container-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/core/orchestrators/container.py
+
+.. |cvs-core-orchestrators-unittests-test-container-py| replace:: ``cvs/core/orchestrators/unittests/test_container.py``
+.. _cvs-core-orchestrators-unittests-test-container-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/core/orchestrators/unittests/test_container.py
+
+.. |cvs-input-cluster-file-readme| replace:: ``cvs/input/cluster_file/README.md``
+.. _cvs-input-cluster-file-readme: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/input/cluster_file/README.md

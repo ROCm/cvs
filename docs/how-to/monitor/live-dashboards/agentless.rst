@@ -6,7 +6,7 @@
 Run agentless SSH live dashboards with the Cluster Validation Suite (CVS) Cluster Monitor
 *****************************************************************************************
 
-The CVS Cluster Monitor (`cvs/monitors/cluster-mon/ <https://github.com/ROCm/cvs/tree/main/cvs/monitors/cluster-mon/>`_) is a live dashboard that polls the cluster over SSH. It does not install exporters on GPU nodes — collectors run ``amd-smi``, RDMA, and log queries remotely on a configurable interval.
+The CVS Cluster Monitor (|cvs-monitors-cluster-mon|_) is a live dashboard that polls the cluster over SSH. It does not install exporters on GPU nodes — collectors run ``amd-smi``, RDMA, and log queries remotely on a configurable interval.
 
 Use this when you want real-time GPU/NIC views, heatmaps, topology, and logs without deploying Prometheus exporters on every host.
 
@@ -28,14 +28,14 @@ The following prerequisites are required.
 
 - Docker Engine 20.10 or later with Compose v2 on the monitoring host
 - SSH access to cluster nodes (direct or through a jump host)
-- ``amd-smi`` on GPU nodes (AMD MI300/MI325 or later); RDMA tools optional for network views
+- ``amd-smi`` on GPU nodes (AMD MI300/MI325); RDMA tools optional for network views
 
 Docker Compose also starts a **Redis** sidecar for metric snapshots and events (no separate Redis install on the host).
 
 Quick start (Docker)
 ====================
 
-1. From your CVS checkout, go to `cvs/monitors/cluster-mon/ <https://github.com/ROCm/cvs/tree/main/cvs/monitors/cluster-mon/>`_.
+1. From your CVS checkout, go to |cvs-monitors-cluster-mon|_.
 
 2. Prepare configuration under ``config/``:
 
@@ -44,7 +44,7 @@ Quick start (Docker)
      cp config/cluster.yaml.example config/cluster.yaml
      cp config/nodes.txt.example config/nodes.txt
 
-   Edit ``cluster.yaml`` (SSH user, key path, polling interval, optional jump host) and ``nodes.txt`` (one host per line). See `cvs/monitors/cluster-mon/README.md <https://github.com/ROCm/cvs/blob/main/cvs/monitors/cluster-mon/README.md>`_ for the full schema.
+   Edit ``cluster.yaml`` (SSH user, key path, polling interval, optional jump host) and ``nodes.txt`` (one host per line). See |cvs-monitors-cluster-mon-readme|_ for the full schema.
 
 3. Build and deploy (recommended):
 
@@ -52,13 +52,13 @@ Quick start (Docker)
 
      ./full-rebuild.sh
 
-   The script builds the image, runs ``docker-compose up -d``, seeds config from the examples if missing, and triggers a config reload so monitoring starts automatically.
+   The script builds the image, runs ``docker compose up -d``, seeds config from the examples if missing, and triggers a config reload so monitoring starts automatically.
 
    Alternatively, after editing ``config/`` manually:
 
    .. code:: bash
 
-     docker-compose up -d --build
+     docker compose up -d --build
 
 4. Open the dashboard at ``http://<monitor-host>:8005`` (host port **8005** maps to the app inside the container on port 8001).
 
@@ -87,10 +87,20 @@ Keep the following in mind when operating this feature.
 Other deployment options
 ========================
 
-`cvs/monitors/cluster-mon/DEPLOYMENT.md <https://github.com/ROCm/cvs/blob/main/cvs/monitors/cluster-mon/DEPLOYMENT.md>`_ covers bare-metal (Python backend + React frontend), Nginx reverse proxy, systemd, resource limits, upgrades, and troubleshooting. 
+|cvs-monitors-cluster-mon-deployment|_ covers bare-metal (Python backend + React frontend), Nginx reverse proxy, systemd, resource limits, upgrades, and troubleshooting.
 
 .. note:: 
   
   You should use ``docker-compose`` and port **8005** on the host — some older examples in that file reference port 8001 on the host.
 
 To monitor with Prometheus and Grafana using exporters installed on nodes, see :doc:`/how-to/monitor/live-dashboards/exporters`.
+
+
+.. |cvs-monitors-cluster-mon| replace:: ``cvs/monitors/cluster-mon/``
+.. _cvs-monitors-cluster-mon: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/monitors/cluster-mon/
+
+.. |cvs-monitors-cluster-mon-readme| replace:: ``cvs/monitors/cluster-mon/README.md``
+.. _cvs-monitors-cluster-mon-readme: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/monitors/cluster-mon/README.md
+
+.. |cvs-monitors-cluster-mon-deployment| replace:: ``cvs/monitors/cluster-mon/DEPLOYMENT.md``
+.. _cvs-monitors-cluster-mon-deployment: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/monitors/cluster-mon/DEPLOYMENT.md
