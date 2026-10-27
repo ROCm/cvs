@@ -73,6 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- MORI: the C++ example tests (`test_concurrent_put_threads`, `test_concurrent_put_imm_threads`, `test_concurrent_put_signal_thread` and `test_ibgda_write_test`) no longer run, and `expected_results.ibgda_write` is not read.
 - The legacy dmesg parser. Every dmesg and kernel-journal scan, including the platform `test_check_dmesg_driver_errors` check, now uses AMD node-scraper. `CVS_DMESG_PARSER` is no longer read; remove it from run scripts.
 
 ## [0.2.0] - 2026-09-23
