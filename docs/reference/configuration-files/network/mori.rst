@@ -12,7 +12,7 @@ The suite checks:
 
 - Container or bare-metal launch, from ``orchestrator`` and ``container``
 - That every name in ``env.MORI_RDMA_DEVICES`` appears in ``ibv_devinfo``
-- SHMEM API tests and the fixed I/O matrix
+- The fixed I/O matrix
 - Bandwidth and latency against ``expected_results``, for the keys the checker understands
 - Host dmesg over the suite window, gated on the head node's passwordless sudo probe
 
@@ -125,7 +125,7 @@ The MORI config's ``container`` object is deep-merged over the cluster file's ``
      - Exported on every benchmark command. This is separate from ``container.env``. ``MORI_RDMA_DEVICES`` is the device list checked in ``ibv_devinfo``. ``LD_LIBRARY_PATH`` may append ``$LD_LIBRARY_PATH``. ``NCCL_SOCKET_IFNAME`` and ``GLOO_SOCKET_IFNAME`` are exported the same way.
    * - ``mori_dir``
      - ``<changeme>``
-     - Working directory. SHMEM runs ``<mori_dir>/tests/python/shmem/test_api.py`` and I/O runs ``<mori_dir>/tests/python/io/benchmark.py``. Required.
+     - Working directory. I/O runs ``<mori_dir>/tests/python/io/benchmark.py``. Required.
    * - ``master_addr``
      - ``<changeme>``
      - Torchrun node rank 0 and the I/O initiator. It must be one of the cluster hosts. Omitted, the cluster head node is used.

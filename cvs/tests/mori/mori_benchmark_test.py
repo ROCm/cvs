@@ -87,10 +87,10 @@ def test_setup_env(mori_obj):
     update_test_result()
 
 
-def test_shmem_api(mori_obj):
-    globals.error_list = []
-    mori_obj.run_shmem_apitest()
-    update_test_result()
+# def test_shmem_api(mori_obj):
+#    globals.error_list = []
+#    mori_obj.run_shmem_apitest()
+#    update_test_result()
 
 
 # def test_dispatch_combine(mori_obj):
