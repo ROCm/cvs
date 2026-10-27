@@ -8,14 +8,24 @@
 Run AMD Rack Check (ARC) rack tests
 ***********************************
 
-ARC runs one controller per rack against a rack JSON. CVS installs ARC on the controllers, runs selected flows or items, and collects the full ARC log session into the CVS run directory. Non-controller nodes are not contacted.
+ARC runs from one controller per rack. CVS builds each rack's ARC rack file from the cluster file, installs ARC on the controllers, runs selected flows or items, and collects the full ARC log session into the CVS run directory. Non-controller nodes are not contacted.
 
 Set up
 ======
 
-Use baremetal orchestration, passwordless SSH to each controller, passwordless sudo for ARC's tools, and Python 3.9 or newer. Generate each controller's rack JSON with ``arc.py --generate <platform> --rack <file>``, then check it with ``arc.py --rack <file> --validate --spec-mode <mode>``. Each controller has its own rack description at the same configured path.
+Use baremetal orchestration, passwordless SSH to each controller, passwordless sudo for ARC's tools, and Python 3.9 or newer.
 
-Copy ``arc/arc_config.json`` with ``cvs config copy`` and replace both ``<changeme>`` values. ``arc.controller_nodes`` lists keys from the cluster file's ``node_dict``; an empty list selects its first key. ``arc.rack_config`` is the path on each controller. The cluster file needs no rack-specific fields. See :doc:`/reference/configuration-files/burn-in-diag/arc` for all settings.
+Describe the racks in a rack-aware cluster file. Copy the sample, or generate it from address ranges and add racks or switch and BMC details later. See :doc:`/reference/cluster/rack-cluster-file` for both:
+
+.. code:: bash
+
+   cvs generate rack_cluster_json --username <user> --key_file ~/.ssh/id_rsa \
+     --output_json_file ~/cluster_rack.json \
+     --rack0 --id rack-01 --platform HeliosP --computes 10.0.0.1-18
+
+Tag each compute node in ``node_dict`` with its ``rack_id``, and list each rack's nodes in tray order: on Helios, the compute in U9 first and the one in U33 last. ARC's scale-up tests depend on that order. For each rack, set ``platform`` under ``racks.<rack_id>``. Add switch, BMC, and RMC addresses and their logins only if you have access to them; without them, set ``arc.spec_mode`` to ``partial``. See :ref:`Rack inventory in the cluster file <arc-rack-inventory>` for every field and the slot order.
+
+Copy ``arc/arc_config.json`` with ``cvs config copy`` and replace ``arc_release_url``. Leave ``arc.rack_config`` empty to have CVS generate the rack files. See :doc:`/reference/configuration-files/burn-in-diag/arc` for all settings.
 
 Run tests
 =========
@@ -23,9 +33,9 @@ Run tests
 .. code:: bash
 
    cvs list arc_test_diag
-   cvs run arc_installation --cluster_file cluster.json --config_file arc_config.json
-   cvs run arc_test_examples test_example_pass --cluster_file cluster.json --config_file arc_config.json
-   cvs run arc_test_diag test_PingTest --cluster_file cluster.json --config_file arc_config.json
+   cvs run arc_installation --cluster_file cluster_rack.json --config_file arc_config.json
+   cvs run arc_test_examples test_example_pass --cluster_file cluster_rack.json --config_file arc_config.json
+   cvs run arc_test_diag test_PingTest --cluster_file cluster_rack.json --config_file arc_config.json
 
 The eight generated suites are ``arc_test_examples``, ``arc_test_flows``, ``arc_test_disruptive_flows``, ``arc_test_diag``, ``arc_test_telemetry``, ``arc_test_anc``, ``arc_test_workload``, and ``arc_test_disruptive``. The example suite is an integration self-test; ``example_failure`` fails by design. Diagnostic flows ``diags_lvl1`` and ``diags_lvl2`` clear AMC log stores as PRE/POST conditions. Content missing on a platform reports n/a and fails its test.
 

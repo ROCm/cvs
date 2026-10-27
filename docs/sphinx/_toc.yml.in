@@ -109,6 +109,8 @@ subtrees:
     title: Passwordless SSH
   - file: reference/cluster/cluster-file
     title: Cluster file
+  - file: reference/cluster/rack-cluster-file
+    title: Rack-aware cluster file
   - file: how-to/run-with-containers
     title: Run with containers
   - file: reference/configuration-files/index

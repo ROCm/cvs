@@ -294,5 +294,6 @@ Related resources
 =================
 
 - :doc:`/how-to/run-with-containers` — walkthrough for a container cluster file.
+- :doc:`/reference/cluster/rack-cluster-file` — add a ``racks`` block for ARC suites and ``cvs exec --target switches``.
 - :doc:`/how-to/test-suites/burn-in-diag/health` — health suites that follow the cluster ``orchestrator`` key.
 - `cvs/input/cluster_file/README.md <https://github.com/ROCm/cvs/blob/main/cvs/input/cluster_file/README.md>`_ — in-tree reference next to the templates.

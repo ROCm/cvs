@@ -26,7 +26,7 @@ from cvs.lib.utils_lib import (
     resolve_test_config_placeholders,
 )
 from cvs.lib import globals
-from cvs.lib import arc_lib
+from cvs.lib import arc_lib, arc_rack_lib
 
 log = globals.log
 
@@ -92,7 +92,7 @@ def cluster_dict(cluster_file):
         cluster_dict = json.load(json_file)
 
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info("ARC cluster config: %s", cluster_dict)
+    log.info("ARC cluster config: %s", arc_rack_lib.redacted(cluster_dict))
     return cluster_dict
 
 

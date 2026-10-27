@@ -19,6 +19,7 @@ from unittest.mock import Mock, patch
 
 from cvs.lib import arc_lib
 from cvs.lib.report.profile import load_json_profile
+from cvs.unittests.support import FAKE_CRED, TMP, run_trusted
 
 
 CLUSTER = {"username": "runner", "node_dict": {"rack-a": {}, "node-only": {}}}
@@ -446,6 +447,218 @@ class TestReadinessAndValidation(unittest.TestCase):
             arc_lib.validate_rack_config(orch, CLUSTER, config())
         fail.assert_called_once()
         self.assertIn("unreachable", fail.call_args.args[0])
+
+
+RACK_CLUSTER = {
+    "username": "runner",
+    "priv_key_file": "/home/runner/.ssh/id_rsa",
+    "node_dict": {
+        "node-a": {"rack_id": "rack-01"},
+        "node-b": {"rack_id": "rack-01"},
+        "node-c": {"rack_id": "rack-02"},
+    },
+    "racks": {
+        "bmc_user": "root",
+        "bmc_password": FAKE_CRED,
+        "rack-01": {"platform": "HeliosR"},
+        "rack-02": {"platform": "HeliosP", "arc_controller": "node-c"},
+    },
+}
+TEMPLATE = {
+    "platform_id": "HeliosR",
+    "serial_number": "",
+    "rack": {
+        "compute": [
+            {"serial_number": "", "interfaces": {"eth1": {"hostname": "", "username": ""}}, "tray_id": tray}
+            for tray in range(2)
+        ]
+    },
+}
+
+
+def generating():
+    return config(rack_config="", controller_nodes=[])
+
+
+def template_output(template=TEMPLATE):
+    return f"noise\n{arc_lib.TEMPLATE_BEGIN}\n{json.dumps(template)}\n{arc_lib.TEMPLATE_END}\n"
+
+
+class UploadingOrch(RecordingOrch):
+    def __init__(self, outputs, upload_result=None):
+        super().__init__(outputs)
+        self.uploaded = {}
+        self.upload_result = upload_result
+        self.all = SimpleNamespace(upload_file_list=self._upload)
+
+    def _upload(self, node_path_map):
+        for host, (local, remote) in node_path_map.items():
+            with open(local, encoding="utf-8") as fh:
+                self.uploaded[host] = (json.load(fh), remote, os.stat(local).st_mode & 0o777)
+        if self.upload_result is not None:
+            return self.upload_result
+        return {host: f"{host}: SUCCESS" for host in node_path_map}
+
+
+class TestGeneratedRackConfig(unittest.TestCase):
+    def test_controllers_come_from_racks(self):
+        self.assertEqual(
+            arc_lib.resolve_controllers(RACK_CLUSTER, config(controller_nodes=["node-b"])), ["node-a", "node-c"]
+        )
+
+    def test_generation_validates_racks_not_rack_config(self):
+        self.assertEqual(arc_lib.validate_arc_config(generating(), RACK_CLUSTER), [])
+        cluster = json.loads(json.dumps(RACK_CLUSTER))
+        cluster["racks"]["rack-01"].pop("platform")
+        self.assertTrue(any("platform" in p for p in arc_lib.validate_arc_config(generating(), cluster)))
+        self.assertTrue(any("no racks block" in p for p in arc_lib.validate_arc_config(generating(), CLUSTER)))
+
+    def test_override_with_racks_still_checks_controllers(self):
+        cluster = json.loads(json.dumps(RACK_CLUSTER))
+        cluster["racks"]["rack-01"]["arc_controller"] = "ghost"
+        cluster["racks"]["rack-02"].pop("platform")
+        problems = arc_lib.validate_arc_config(config(), cluster)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ghost", problems[0])
+
+    def test_rack_config_path(self):
+        self.assertEqual(arc_lib.rack_config_path(RACK_CLUSTER, generating()), f"{TMP}/runner/arc_rack/rack.json")
+        self.assertEqual(arc_lib.rack_config_path(RACK_CLUSTER, config(rack_config=" /r.json ")), "/r.json")
+
+    def test_template_command_runs_and_parses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_arc = os.path.join(tmp, "arc.py")
+            with open(fake_arc, "w", encoding="utf-8") as fh:
+                fh.write(
+                    "import json, sys\n"
+                    "args = sys.argv[1:]\n"
+                    "print('Generated template')\n"
+                    "json.dump({'platform_id': args[args.index('--generate') + 1]}, open(args[args.index('--rack') + 1], 'w'))\n"
+                )
+            rack_dir = os.path.join(tmp, "arc_rack")
+            result = run_trusted(
+                ["bash", "-c", arc_lib.build_template_command(fake_arc, rack_dir, "HeliosR")],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(arc_lib.parse_template_output(result.stdout), {"platform_id": "HeliosR"})
+            self.assertEqual(os.listdir(rack_dir), [])
+            self.assertEqual(os.stat(rack_dir).st_mode & 0o777, 0o700)
+
+    def test_template_command_reports_arc_errors_and_symlinks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_arc = os.path.join(tmp, "arc.py")
+            with open(fake_arc, "w", encoding="utf-8") as fh:
+                fh.write("import sys\nprint('unknown platform')\nsys.exit(2)\n")
+            result = run_trusted(
+                ["bash", "-c", arc_lib.build_template_command(fake_arc, os.path.join(tmp, "d"), "Nope")],
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("unknown platform", result.stdout)
+            self.assertIsNone(arc_lib.parse_template_output(result.stdout))
+            os.symlink(tmp, os.path.join(tmp, "link"))
+            result = run_trusted(
+                ["bash", "-c", arc_lib.build_template_command(fake_arc, os.path.join(tmp, "link"), "Nope")],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotIn("unknown platform", result.stdout)
+
+    def test_parse_template_rejects_bad_json(self):
+        with self.assertRaises(ValueError):
+            arc_lib.parse_template_output(f"{arc_lib.TEMPLATE_BEGIN}\n{{bad\n{arc_lib.TEMPLATE_END}\n")
+
+    def test_stage_uploads_each_rack_to_its_controller(self):
+        orch = UploadingOrch(
+            [
+                {"node-a": template_output()},
+                {"node-c": template_output()},
+                {"node-a": "ARC_RACK_STAGED", "node-c": "ARC_RACK_STAGED"},
+            ]
+        )
+        with patch.object(arc_lib, "fail_test") as fail:
+            self.assertTrue(arc_lib.stage_rack_configs(orch, RACK_CLUSTER, generating(), "/opt/arc/arc.py"))
+        fail.assert_not_called()
+        self.assertIn("--generate 'HeliosR'", orch.calls[0][0])
+        self.assertEqual(orch.calls[0][1]["hosts"], ["node-a"])
+        self.assertIn("--generate 'HeliosP'", orch.calls[1][0])
+        data, remote, mode = orch.uploaded["node-a"]
+        self.assertEqual(remote, f"{TMP}/runner/arc_rack/rack.json")
+        self.assertEqual(mode, 0o600)
+        self.assertEqual(data["serial_number"], "rack-01")
+        self.assertEqual(
+            [slot["serial_number"] for slot in data["rack"]["compute"]], ["rack-01-compute-0", "rack-01-compute-1"]
+        )
+        self.assertEqual(orch.uploaded["node-c"][0]["rack"]["compute"][0]["interfaces"]["eth1"]["hostname"], "node-c")
+        self.assertIn(f"chmod 600 '{TMP}/runner/arc_rack/rack.json'", orch.calls[2][0])
+
+    def test_stage_stops_on_template_failure(self):
+        orch = UploadingOrch([{"node-a": "bad platform"}, {}])
+        with patch.object(arc_lib, "fail_test") as fail:
+            self.assertFalse(arc_lib.stage_rack_configs(orch, RACK_CLUSTER, generating(), "/opt/arc/arc.py"))
+        self.assertEqual(orch.uploaded, {})
+        messages = " ".join(call.args[0] for call in fail.call_args_list)
+        self.assertIn("bad platform", messages)
+        self.assertIn("node-c", messages)
+
+    def test_stage_reports_overflow_and_upload_failure(self):
+        cluster = json.loads(json.dumps(RACK_CLUSTER))
+        cluster["node_dict"]["node-x"] = {"rack_id": "rack-01"}
+        orch = UploadingOrch([{"node-a": template_output()}, {"node-c": template_output()}])
+        with patch.object(arc_lib, "fail_test") as fail:
+            self.assertFalse(arc_lib.stage_rack_configs(orch, cluster, generating(), "/opt/arc/arc.py"))
+        self.assertIn("3 compute entries", fail.call_args.args[0])
+
+        orch = UploadingOrch(
+            [{"node-a": template_output()}, {"node-c": template_output()}],
+            upload_result={"node-a": "node-a: SUCCESS", "node-c": "node-c: FAILED - denied"},
+        )
+        with patch.object(arc_lib, "fail_test") as fail:
+            self.assertFalse(arc_lib.stage_rack_configs(orch, RACK_CLUSTER, generating(), "/opt/arc/arc.py"))
+        self.assertIn("denied", fail.call_args.args[0])
+
+    def test_ensure_ready_stages_before_checking(self):
+        previous = (arc_lib._ARC_READY, arc_lib._ARC_INSTALL_PATHS)
+        self.addCleanup(lambda: setattr(arc_lib, "_ARC_READY", previous[0]))
+        self.addCleanup(lambda: setattr(arc_lib, "_ARC_INSTALL_PATHS", previous[1]))
+        arc_lib._ARC_READY = False
+        paths = arc_lib.ArcPaths("/opt", "/opt/arc", "/opt/arc/arc.py")
+        with (
+            patch.object(arc_lib, "_arc_installed", return_value=True),
+            patch.object(arc_lib, "resolve_arc_install_location", return_value=paths),
+            patch.object(arc_lib, "stage_rack_configs", return_value=True) as stage,
+            patch.object(arc_lib, "check_rack_config_present", return_value=True) as check,
+        ):
+            arc_lib.ensure_arc_ready(Mock(), RACK_CLUSTER, generating())
+        stage.assert_called_once()
+        self.assertEqual(stage.call_args.args[3], "/opt/arc/arc.py")
+        check.assert_called_once()
+        self.assertTrue(arc_lib._ARC_READY)
+
+        arc_lib._ARC_READY = False
+        with (
+            patch.object(arc_lib, "_arc_installed", return_value=True),
+            patch.object(arc_lib, "resolve_arc_install_location", return_value=None),
+            patch.object(arc_lib, "stage_rack_configs") as stage,
+            patch.object(arc_lib, "check_rack_config_present") as check,
+            patch.object(arc_lib, "update_test_result"),
+        ):
+            arc_lib.ensure_arc_ready(Mock(), RACK_CLUSTER, generating())
+        stage.assert_not_called()
+        check.assert_not_called()
+        self.assertFalse(arc_lib._ARC_READY)
+
+    def test_validate_and_run_use_generated_path(self):
+        orch = RecordingOrch([{"node-a": "CVS_ARC_EXIT_CODE=0", "node-c": "CVS_ARC_EXIT_CODE=0"}])
+        with (
+            patch.object(arc_lib, "ensure_arc_ready"),
+            patch.object(arc_lib, "print_test_output"),
+            patch.object(arc_lib, "update_test_result"),
+        ):
+            arc_lib.validate_rack_config(orch, RACK_CLUSTER, generating())
+        self.assertIn(f"--rack '{TMP}/runner/arc_rack/rack.json'", orch.calls[0][0])
+        self.assertEqual(orch.calls[0][1]["hosts"], ["node-a", "node-c"])
 
 
 class TestDisruptiveSkipReason(unittest.TestCase):

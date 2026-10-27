@@ -19,7 +19,7 @@
 
     "_node_comment": " Change to your node IPs. The Public IPs of the nodes will be the keys of the node_dict.",
     "_vpc_comment": "If your cluster has a dedicated VPC IP that is reachable from other nodes in the cluster, set it to that (or) else set the same as the main host IP/Name",
-    "_rack_id_comment": "rack_id associates each compute node with a rack entry in the 'racks' block below.",
+    "_rack_id_comment": "rack_id associates each compute node with a rack entry in the 'racks' block below. For ARC, list each rack's nodes in tray order (Helios: the compute in U9 first, U33 last); the position becomes the ARC tray_id.",
     "node_dict": {
         "10.0.0.1": {
             "bmc_ip": "10.0.1.1",
@@ -113,12 +113,21 @@
         }
     },
 
-    "_racks_comment": "Rack block.",
+    "_racks_comment": "Rack block. cvs exec --target switches reads switch_trays and the switch_ssh_* login. ARC suites also read platform and the device lists to generate one ARC rack file per rack. Every device list is optional: omit it when that device is not reachable.",
     "racks": {
         "switch_ssh_user": "admin",
         "switch_ssh_password": "password",
+        "_bmc_comment": "Optional. One BMC login used for every BMC listed in this file (compute bmc_ip, switch_bmc, rmc, power_shelves). Required with rmc or power_shelves. Omit when BMC access is not available.",
+        "bmc_user": "<changeme>",
+        "bmc_password": "<changeme>",
         "rack-01": {
+            "_platform_comment": "ARC platform name: HeliosP, HeliosR, or HeliosM. Required for ARC rack file generation.",
             "platform": "HeliosP",
+            "_switch_model_comment": "Optional. Scale-up switch model when the platform allows more than one. Needed only with switch_trays.",
+            "switch_model": "CelesticaPolarisSwitch",
+            "_arc_controller_comment": "Optional. Host that runs ARC for this rack. Omit to use the first node_dict entry with this rack_id.",
+            "arc_controller": "10.0.0.1",
+            "_switch_trays_comment": "Optional. Scale-up switch host addresses in tray order (Helios: U19 first, U24 last). Omit when switch SSH is not available.",
             "switch_trays": [
                 "10.0.2.1",
                 "10.0.2.2",
@@ -126,6 +135,32 @@
                 "10.0.2.4",
                 "10.0.2.5",
                 "10.0.2.6"
+            ],
+            "_switch_bmc_comment": "Optional. Scale-up switch BMC addresses, same order and length as switch_trays. Omit when BMC access is not available.",
+            "switch_bmc": [
+                "10.0.3.1",
+                "10.0.3.2",
+                "10.0.3.3",
+                "10.0.3.4",
+                "10.0.3.5",
+                "10.0.3.6"
+            ],
+            "_rmc_comment": "Optional. Rack management controller addresses, in tray order (HeliosM has four RSCMs). Omit when the RMC is not reachable.",
+            "rmc": [
+                "10.0.4.1"
+            ],
+            "_front_end_switches_comment": "Optional. Front-end switch host addresses, in tray order. Omit when you are not running front-end switch diagnostics.",
+            "front_end_switches": [
+                "10.0.5.1"
+            ],
+            "_back_end_switches_comment": "Optional. Back-end switch host addresses, in tray order. Omit when you are not running back-end switch diagnostics.",
+            "back_end_switches": [
+                "10.0.6.1",
+                "10.0.6.2",
+                "10.0.6.3",
+                "10.0.6.4",
+                "10.0.6.5",
+                "10.0.6.6"
             ]
         }
     }
