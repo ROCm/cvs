@@ -64,9 +64,14 @@ def _make_job(hosts=None, **training_overrides):
     variant = SimpleNamespace(
         training=_training(**training_overrides),
         model=SimpleNamespace(id="llama3.3-70b"),
-        paths=SimpleNamespace(log_dir="/logs", models_dir="/models", temp_dir="/tmp/tester/jaxmaxtext"),
+        paths=SimpleNamespace(
+            log_dir="/logs",
+            models_dir="/models",
+            temp_dir="/tmp/tester/jaxmaxtext",
+            hf_token_file="/secrets/.hf_token",
+        ),
     )
-    return MaxTextTrainingJob(orch, variant, hf_token="dummy"), orch
+    return MaxTextTrainingJob(orch, variant), orch
 
 
 def _wire_container_exec(orch, script="/workspace/maxtext/src/MaxText/train.py"):
@@ -353,6 +358,9 @@ class SetupTokenizerTests(unittest.TestCase):
         self.assertIn("hf download", joined)
         self.assertNotIn("huggingface-cli", joined)
         self.assertIn("org/model", joined)
+        # Token is read from the file inside the container, not embedded.
+        self.assertIn("/secrets/.hf_token", joined)
+        self.assertIn('export HF_TOKEN="$(tr -d', joined)
 
     def test_skips_download_when_dataset_is_synthetic(self):
         job, orch = _make_job(
@@ -402,15 +410,19 @@ class BuildTrainingCmdTests(unittest.TestCase):
         cmds = orch.exec_cmd_list.call_args.args[0]
         self.assertIn("JAX_COORDINATOR_IP=10.0.0.5", cmds[0])
 
-    def test_launcher_sets_creds_and_per_node_only(self):
-        # The launcher exports credentials + per-node/dynamic vars; the common
-        # env (NCCL/NVTE/XLA_FLAGS/JAX_COORDINATOR_PORT) is set on the container
-        # via docker -e, so it is NOT written into the launcher.
+    def test_launcher_reads_token_from_file_not_embedded(self):
+        # The launcher sets HF_TOKEN by reading the token FILE inside the container
+        # (the secret never enters the logged command), plus per-node/dynamic vars.
+        # The common env (NCCL/NVTE/XLA_FLAGS/JAX_COORDINATOR_PORT) is set on the
+        # container via docker -e, so it is NOT written into the launcher.
         job, orch = _make_job(hosts=["10.0.0.5", "10.0.0.6"])
         _wire_container_exec(orch)
         job.build_training_cmd()
         cmds = orch.exec_cmd_list.call_args.args[0]
-        self.assertIn("HF_TOKEN=", cmds[0])
+        # HF_TOKEN is read from the file, not assigned a literal value.
+        self.assertIn("/secrets/.hf_token", cmds[0])
+        self.assertIn('export HF_TOKEN="$(tr -d', cmds[0])
+        self.assertNotIn("export HF_TOKEN=hf", cmds[0])
         self.assertIn("PYTHONPATH=", cmds[0])
         self.assertIn("JAX_COORDINATOR_IP=10.0.0.5", cmds[1])  # first host, on every rank
         self.assertNotIn("JAX_COORDINATOR_PORT", cmds[0])  # comes from container env (docker -e)
@@ -511,7 +523,7 @@ class WriteMaxtextYamlTests(unittest.TestCase):
         # run YAML, the poll/timeout budget, and completion -- not the base steps.
         base, _ = _make_job()
         sweep = SimpleNamespace(name="BS=2,PRECISION=BF16,SL=8192", maxtext_overrides={"steps": 7})
-        job = MaxTextTrainingJob(base.orch, base.variant, hf_token="dummy", sweep=sweep)
+        job = MaxTextTrainingJob(base.orch, base.variant, sweep=sweep)
         self.assertEqual(job.steps, 7)  # base training.steps is 3
         self.assertEqual(job._poll_count, 70)
         job._write_maxtext_yaml()
@@ -535,7 +547,7 @@ class WriteMaxtextYamlTests(unittest.TestCase):
                 "quantization": "",
             },
         )
-        job = MaxTextTrainingJob(base.orch, base.variant, hf_token="dummy", sweep=sweep)
+        job = MaxTextTrainingJob(base.orch, base.variant, sweep=sweep)
         self.assertEqual(job.steps, 5)
         self.assertEqual(job._poll_count, 50)
         job._write_maxtext_yaml()
