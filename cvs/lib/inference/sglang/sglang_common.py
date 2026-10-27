@@ -251,22 +251,41 @@ class HfTokenLogFilter(logging.Filter):
     """Redact Hugging Face tokens from any log record emitted during SGLang runs."""
 
     def filter(self, record):
-        try:
-            rendered = record.getMessage()
-        except (TypeError, ValueError):
-            rendered = str(record.msg)
-        record.msg = redact_hf_token_text(rendered)
-        record.args = ()
+        _redact_hf_token_record(record)
         return True
 
 
-def install_hf_token_log_redaction():
-    """Install token redaction on the root logger and its current handlers.
+def _redact_hf_token_record(record):
+    try:
+        rendered = record.getMessage()
+    except (TypeError, ValueError):
+        rendered = str(record.msg)
+    record.msg = redact_hf_token_text(rendered)
+    record.args = ()
+    return record
 
-    Child-logger records reach the root handlers without passing through the
-    root logger's own filters, so each handler needs the filter too. Call again
-    after pytest attaches log handlers.
+
+def _install_hf_token_record_factory():
+    """Install an idempotent record factory that redacts before handlers see a record."""
+    current = logging.getLogRecordFactory()
+    if getattr(current, '_cvs_hf_token_redaction', False):
+        return
+
+    def factory(*args, **kwargs):
+        return _redact_hf_token_record(current(*args, **kwargs))
+
+    factory._cvs_hf_token_redaction = True
+    logging.setLogRecordFactory(factory)
+
+
+def install_hf_token_log_redaction():
+    """Install token redaction before handlers and on current root handlers.
+
+    The record factory handles child logger records and handlers added after
+    this call. Handler filters remain as defense for records created before the
+    factory was installed.
     """
+    _install_hf_token_record_factory()
     root = logging.getLogger()
     filt = next((existing for existing in root.filters if isinstance(existing, HfTokenLogFilter)), None)
     if filt is None:

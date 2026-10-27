@@ -449,6 +449,26 @@ class TestHfTokenRedaction(unittest.TestCase):
         self.assertIn('/home/user/.hf_token', text)
         self.assertIn('<redacted>', text)
 
+    def test_record_factory_redacts_child_logger_with_late_handler(self):
+        secret = 'hf_supersecretvalue'
+        prior_factory = logging.getLogRecordFactory()
+        logging.setLogRecordFactory(logging.LogRecord)
+        logger = logging.getLogger('sglang-hf-token-late-handler-test')
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        try:
+            sglang_common.install_hf_token_log_redaction()
+            logger.addHandler(handler)
+            logger.info('cmd = export HF_TOKEN=%s', secret)
+        finally:
+            logger.removeHandler(handler)
+            logging.setLogRecordFactory(prior_factory)
+        text = stream.getvalue()
+        self.assertNotIn(secret, text)
+        self.assertIn('HF_TOKEN=<redacted>', text)
+
 
 if __name__ == '__main__':
     unittest.main()
