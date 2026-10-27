@@ -200,7 +200,7 @@ IB Perf needs these container settings:
 
 - ``container.lifetime`` ``persistent``. The install and test suites are separate runs, and a ``per_run`` container is removed between them with anything installed in it.
 - ``install_dir`` on a volume in ``container.runtime.args.volumes`` that every node shares, mounted at the same path in the container. The build runs in the head node's container and every node runs the result.
-- An image with ROCm at ``rocm_dir`` and ``rocm-smi``, even when ``install_system_packages`` is ``True``. The install suite never installs either, and it fails on a node without ``rocm-smi``. The image also needs ``lshw``, ``rdma``, ``numactl``, ``libibverbs``, and ``librdmacm``, unless ``install_system_packages`` is ``True`` and the image has ``sudo``. The install still fails if apt does not provide them.
+- An image with ROCm at ``rocm_dir`` and ``amd-smi``, even when ``install_system_packages`` is ``True``. The install suite never installs either, and it fails on a node without ``amd-smi``. The image also needs ``lshw``, ``rdma``, ``numactl``, ``libibverbs``, and ``librdmacm``, unless ``install_system_packages`` is ``True`` and the image has ``sudo``. The install still fails if apt does not provide them.
 
 .. _ib-perf-dmesg-scan:
 
