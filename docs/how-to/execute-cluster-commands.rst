@@ -81,7 +81,7 @@ By default ``cvs exec`` runs on every host in ``node_dict`` (compute nodes). Use
 Rack-aware cluster file
 =======================
 
-``--target switches`` and ``--target all`` require a ``racks`` block in the cluster file that lists the switch tray IPs and (optionally) per-rack SSH credentials. Copy the rack template with ``cvs config copy cluster_rack.json --output ~/cvs_workspace/cluster_rack.json``.
+``--target switches`` and ``--target all`` require a ``racks`` block in the cluster file that lists the switch tray IPs and (optionally) per-rack SSH credentials. Copy the rack template with ``cvs config copy cluster_rack.json --output ~/cvs_workspace/cluster_rack.json``, or generate one; see :doc:`/reference/cluster/rack-cluster-file`.
 
 If ``--target switches`` is used with a plain cluster file (no ``racks`` block), CVS prints a warning and exits without executing any command.
 
@@ -303,4 +303,4 @@ Next steps
 
 - :doc:`/how-to/copy-to-cluster` — copy files or directories to all cluster nodes in parallel using ``cvs scp``.
 - :doc:`/how-to/test-suites/index` — run a test suite against the cluster.
-- :doc:`/reference/cluster/cluster-file` — full cluster file schema including the ``racks`` block required for ``--target switches``.
+- :doc:`/reference/cluster/cluster-file` — full cluster file schema.

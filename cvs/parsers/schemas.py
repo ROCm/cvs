@@ -263,23 +263,55 @@ class RackConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    platform: Optional[str] = Field(default=None, description="ARC platform name, e.g. 'HeliosP' or 'HeliosR'")
+    platform: Optional[str] = Field(
+        default=None,
+        description="Optional ARC platform name, e.g. 'HeliosP', 'HeliosR', or 'HeliosM'. Set only when generating an ARC rack file.",
+    )
+    switch_model: Optional[str] = Field(
+        default=None,
+        description="Optional scale-up switch model when the platform allows more than one. Omit when switch diagnostics are not run.",
+    )
     arc_controller: Optional[str] = Field(
         default=None,
-        description="IP of the ARC controller node. Defaults to first sorted node_dict entry with matching rack_id.",
+        description="Optional host that runs ARC for this rack. Omit to use the first node_dict entry written with this rack_id.",
     )
     switch_trays: List[str] = Field(
         default_factory=list,
-        description="IPs of switch trays in this rack",
+        description="Optional scale-up switch host addresses, in tray order. Omit when switch SSH is not available.",
     )
-    rmc: Optional[str] = Field(default=None, description="IP of the Rack Management Controller")
+    switch_bmc: List[str] = Field(
+        default_factory=list,
+        description="Optional scale-up switch BMC addresses, same order and length as switch_trays. Omit when BMC access is not available.",
+    )
+    rmc: List[str] = Field(
+        default_factory=list,
+        description="Optional rack management controller addresses, in tray order. A single address is accepted.",
+    )
+    front_end_switches: List[str] = Field(
+        default_factory=list,
+        description="Optional front-end switch host addresses, in tray order. Omit when front-end switch diagnostics are not run.",
+    )
+    back_end_switches: List[str] = Field(
+        default_factory=list,
+        description="Optional back-end switch host addresses, in tray order. Omit when back-end switch diagnostics are not run.",
+    )
+    power_shelves: List[str] = Field(
+        default_factory=list,
+        description="Optional power shelf addresses, in tray order (HeliosM).",
+    )
+
+    @field_validator('rmc', mode='before')
+    @classmethod
+    def coerce_single_rmc(cls, v):
+        """Accept the earlier single-address form."""
+        return [v] if isinstance(v, str) else v
 
 
 class RacksBlock(BaseModel):
     """
     Schema for the top-level 'racks' field in cluster.json.
 
-    Holds optional global switch credentials and one RackConfig entry per rack
+    Holds optional global switch and BMC credentials and one RackConfig entry per rack
     (keyed by rack ID, e.g. 'rack-01'). Extra keys (rack IDs) are accepted via
     extra='allow' and retrieved via get_racks().
 
@@ -302,10 +334,18 @@ class RacksBlock(BaseModel):
         default=None,
         description="Path to SSH private key for all switch trays. Takes priority over switch_ssh_password when set.",
     )
+    bmc_user: Optional[str] = Field(
+        default=None,
+        description="Login for every BMC in the file: compute bmc_ip, switch_bmc, rmc, and power_shelves.",
+    )
+    bmc_password: Optional[str] = Field(
+        default=None,
+        description="Password for bmc_user.",
+    )
 
     def get_racks(self) -> Dict[str, RackConfig]:
         """Return only the rack entries, excluding credential fields."""
-        skip = {'switch_ssh_user', 'switch_ssh_password', 'switch_ssh_key_file'}
+        skip = {'switch_ssh_user', 'switch_ssh_password', 'switch_ssh_key_file', 'bmc_user', 'bmc_password'}
         result = {}
         for key, value in (self.__pydantic_extra__ or {}).items():
             if key not in skip and isinstance(value, dict):

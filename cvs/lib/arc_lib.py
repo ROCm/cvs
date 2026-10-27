@@ -12,9 +12,11 @@ import json
 import os
 import posixpath
 import re
+import shutil
+import tempfile
 from collections import namedtuple
 
-from cvs.lib import amdtools_lib, anc_rundeck, arc_rundeck, globals
+from cvs.lib import amdtools_lib, anc_rundeck, arc_rack_lib, arc_rundeck, globals
 from cvs.lib.amdtools_lib import pull_remote_dir
 from cvs.lib.run_config_paths import resolve_runner_results_base
 from cvs.lib.utils_lib import fail_test, print_test_output, update_test_result
@@ -26,6 +28,10 @@ ARC_BIN = f"{ARC_DIR}/arc.py"
 ARC_INSTALL_PATH_KEY = "ARC_INSTALL_PATH"
 CONTROLLER_NODES_KEY = "controller_nodes"
 RACK_CONFIG_KEY = "rack_config"
+GENERATED_RACK_SUBDIR = "arc_rack"
+GENERATED_RACK_FILE = "rack.json"
+TEMPLATE_BEGIN = "CVS_ARC_TEMPLATE_BEGIN"
+TEMPLATE_END = "CVS_ARC_TEMPLATE_END"
 SPEC_MODE_KEY = "spec_mode"
 MOCK_KEY = "mock"
 CONTINUE_ON_FAILURE_KEY = "continue_on_failure"
@@ -153,12 +159,36 @@ _ARC_INSTALL_PATHS = None
 
 
 def resolve_controllers(cluster_dict, config_dict):
-    '''Return configured controller host keys, defaulting to the first node.'''
+    '''
+    Return controller host keys: one per rack in the cluster file's racks block.
+
+    Without a racks block, fall back to the deprecated arc.controller_nodes,
+    then to the first node.
+    '''
+    if arc_rack_lib.rack_entries(cluster_dict):
+        return list(arc_rack_lib.rack_controllers(cluster_dict))
     nodes = list((cluster_dict.get("node_dict") or {}).keys())
     raw = (config_dict.get("arc") or {}).get(CONTROLLER_NODES_KEY) or []
     if isinstance(raw, str):
         raw = [raw]
     return list(raw) if raw else nodes[:1]
+
+
+def generates_rack_config(config_dict):
+    '''True when CVS builds each rack's file because arc.rack_config is empty.'''
+    return not str((config_dict.get("arc") or {}).get(RACK_CONFIG_KEY) or "").strip()
+
+
+def generated_rack_dir(cluster_dict):
+    '''Private controller directory that holds the generated rack file.'''
+    return f"{amdtools_lib.remote_user_tmp(cluster_dict.get('username', ''))}/{GENERATED_RACK_SUBDIR}"
+
+
+def rack_config_path(cluster_dict, config_dict):
+    '''Return the rack file path ARC reads on every controller.'''
+    if generates_rack_config(config_dict):
+        return f"{generated_rack_dir(cluster_dict)}/{GENERATED_RACK_FILE}"
+    return str(config_dict["arc"][RACK_CONFIG_KEY]).strip()
 
 
 def resolve_arc_install_prefix(config_dict, pkg_type):
@@ -242,13 +272,18 @@ def validate_arc_config(config_dict, cluster_dict):
     nodes = cluster_dict.get("node_dict") or {}
     if not nodes:
         problems.append("cluster node_dict must contain a controller")
-    for host in resolve_controllers(cluster_dict, config_dict):
-        if host not in nodes:
-            problems.append(f"arc.controller_nodes host {host!r} is not in node_dict")
-    rack = cfg.get(RACK_CONFIG_KEY)
-    if not rack or not str(rack).strip():
-        problems.append("arc.rack_config must be set")
+    has_racks = bool(arc_rack_lib.rack_entries(cluster_dict))
+    if has_racks and cfg.get(CONTROLLER_NODES_KEY):
+        log.warning("arc.controller_nodes is ignored: the cluster file's racks block chooses one controller per rack")
+    if not has_racks:
+        for host in resolve_controllers(cluster_dict, config_dict):
+            if host not in nodes:
+                problems.append(f"arc.controller_nodes host {host!r} is not in node_dict")
+    if generates_rack_config(config_dict):
+        problems.extend(arc_rack_lib.validate_racks(cluster_dict))
     else:
+        if has_racks:
+            problems.extend(arc_rack_lib.validate_rack_controllers(cluster_dict))
         try:
             amdtools_lib.assert_shell_safe(cfg, (RACK_CONFIG_KEY,), "ARC")
         except ValueError as exc:
@@ -414,10 +449,110 @@ def resolve_arc_install_location(orch, cluster_dict, config_dict):
     return paths
 
 
+def build_template_command(arc_bin, rack_dir, platform):
+    '''
+    Build the controller command that prints ARC's empty template for platform.
+
+    rack_dir lives under the shared /tmp, so the command refuses a directory
+    (or parent) another user owns or a symlink, before credentials land in it.
+    '''
+    template = f"{rack_dir}/template.json"
+    parent = posixpath.dirname(rack_dir)
+    return (
+        f"umask 077; mkdir -p '{rack_dir}' && test -O '{parent}' && test ! -L '{rack_dir}' && test -O '{rack_dir}' "
+        f"&& chmod 700 '{rack_dir}' && rm -f '{template}' "
+        f"&& {{ gen=$(python3 '{arc_bin}' --generate '{platform}' --rack '{template}' 2>&1) || {{ echo \"$gen\"; false; }}; }} "
+        f"&& echo {TEMPLATE_BEGIN} && cat '{template}' && echo && echo {TEMPLATE_END}; rm -f '{template}'"
+    )
+
+
+def parse_template_output(output):
+    '''
+    Return the template JSON printed between the sentinels, else None.
+
+    Raises:
+        ValueError: when the sentinels are present but the JSON is malformed.
+    '''
+    match = re.search(rf"^{TEMPLATE_BEGIN}\s*$(.*?)^{TEMPLATE_END}\s*$", output or "", re.S | re.M)
+    return json.loads(match.group(1)) if match else None
+
+
+def _fetch_rack_templates(orch, cluster_dict, controllers, arc_bin):
+    '''Return {controller: ARC template} for each rack's platform, failing the rest.'''
+    racks = arc_rack_lib.rack_entries(cluster_dict)
+    rack_dir = generated_rack_dir(cluster_dict)
+    by_platform = {}
+    for host, rack_id in controllers.items():
+        by_platform.setdefault(racks[rack_id]["platform"], []).append(host)
+    templates = {}
+    for platform, hosts in by_platform.items():
+        out = orch.exec(build_template_command(arc_bin, rack_dir, platform), hosts=hosts, timeout=120)
+        for host in hosts:
+            output = out.get(host)
+            if output is None:
+                fail_test(f"ARC rack template for {platform} on {host}: node produced no output")
+                continue
+            try:
+                template = parse_template_output(output)
+            except ValueError as exc:
+                fail_test(f"ARC rack template for {platform} on {host} is not valid JSON: {exc}")
+                continue
+            if template is None:
+                fail_test(f"ARC could not generate a {platform} rack template on {host}: {output.strip()}")
+                continue
+            templates[host] = template
+    return templates
+
+
+def stage_rack_configs(orch, cluster_dict, config_dict, arc_bin):
+    '''
+    Generate each rack's ARC file from the cluster file and copy it to that rack's controller.
+
+    Every controller gets its own rack's file at the same path, so one ARC
+    command line serves all controllers.
+    '''
+    controllers = arc_rack_lib.rack_controllers(cluster_dict)
+    remote = rack_config_path(cluster_dict, config_dict)
+    templates = _fetch_rack_templates(orch, cluster_dict, controllers, arc_bin)
+    if len(templates) != len(controllers):
+        return False
+    uploads = {}
+    staging = tempfile.mkdtemp(prefix="cvs_arc_rack_")
+    try:
+        for index, (host, template) in enumerate(templates.items()):
+            try:
+                data = arc_rack_lib.fill_rack_template(template, cluster_dict, controllers[host])
+            except ValueError as exc:
+                fail_test(str(exc))
+                continue
+            local = os.path.join(staging, f"rack_{index}.json")
+            with os.fdopen(os.open(local, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as fh:
+                json.dump(data, fh, indent=2)
+            uploads[host] = (local, remote)
+        if len(uploads) != len(controllers):
+            return False
+        results = orch.all.upload_file_list(uploads) or {}
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    failed = [host for host in uploads if "SUCCESS" not in (results.get(host) or "")]
+    for host in failed:
+        fail_test(f"Could not copy the generated ARC rack file to {host}: {results.get(host) or 'no result'}")
+    if failed:
+        return False
+    out = orch.exec(f"chmod 600 '{remote}' && echo ARC_RACK_STAGED", hosts=list(uploads), timeout=60)
+    unstaged = [host for host in uploads if "ARC_RACK_STAGED" not in (out.get(host) or "")]
+    for host in unstaged:
+        fail_test(f"Could not restrict permissions on the generated ARC rack file {remote} on {host}")
+    for host in uploads:
+        if host not in unstaged:
+            log.info("Node %s: generated ARC rack file for rack %s at %s", host, controllers[host], remote)
+    return not unstaged
+
+
 def check_rack_config_present(orch, cluster_dict, config_dict):
-    '''Check each controller's rack JSON at the configured common path.'''
+    '''Check each controller's rack JSON at the common path.'''
     controllers = resolve_controllers(cluster_dict, config_dict)
-    rack = config_dict["arc"][RACK_CONFIG_KEY]
+    rack = rack_config_path(cluster_dict, config_dict)
     out = orch.exec(f"test -f '{rack}' && echo ARC_RACK_PRESENT || true", hosts=controllers, timeout=60)
     missing = [host for host in controllers if "ARC_RACK_PRESENT" not in (out.get(host) or "")]
     for host in missing:
@@ -440,7 +575,7 @@ def _arc_installed(orch, cluster_dict, config_dict):
 
 
 def ensure_arc_ready(orch, cluster_dict, config_dict):
-    '''Install ARC once per session, then verify the binary and rack JSON.'''
+    '''Install ARC once per session, stage generated rack files, then verify the binary and rack JSON.'''
     global _ARC_READY
     if _ARC_READY:
         return
@@ -448,7 +583,14 @@ def ensure_arc_ready(orch, cluster_dict, config_dict):
         install_arc(orch, cluster_dict, config_dict)
     globals.error_list = []
     paths = resolve_arc_install_location(orch, cluster_dict, config_dict)
-    rack_present = check_rack_config_present(orch, cluster_dict, config_dict)
+    if generates_rack_config(config_dict):
+        rack_present = (
+            paths is not None
+            and stage_rack_configs(orch, cluster_dict, config_dict, paths.arc_bin)
+            and check_rack_config_present(orch, cluster_dict, config_dict)
+        )
+    else:
+        rack_present = check_rack_config_present(orch, cluster_dict, config_dict)
     if paths is None or not rack_present:
         update_test_result()
         return
@@ -464,7 +606,7 @@ def validate_rack_config(orch, cluster_dict, config_dict):
     arc_bin = (_ARC_INSTALL_PATHS or resolve_arc_paths_from_config(config_dict)).arc_bin
     timestamp = amdtools_lib.new_run_timestamp()
     cmd = (
-        f"python3 '{arc_bin}' --rack '{cfg[RACK_CONFIG_KEY]}' --validate "
+        f"python3 '{arc_bin}' --rack '{rack_config_path(cluster_dict, config_dict)}' --validate "
         f"--spec-mode {cfg.get(SPEC_MODE_KEY, DEFAULT_SPEC_MODE)} "
         f"-o \"{REMOTE_LOG_ROOT}/validate/{timestamp}\"; rc=$?; echo; echo \"{EXIT_SENTINEL}=$rc\""
     )
@@ -737,7 +879,7 @@ def run_arc_selection(orch, cluster_dict, config_dict, selection, test_name, uni
     invocation = build_arc_invocation(
         arc_bin,
         selection,
-        cfg[RACK_CONFIG_KEY],
+        rack_config_path(cluster_dict, config_dict),
         cfg.get(SPEC_MODE_KEY, DEFAULT_SPEC_MODE),
         amdtools_lib.as_bool(cfg.get(MOCK_KEY), default=False),
         amdtools_lib.as_bool(cfg.get(CONTINUE_ON_FAILURE_KEY), default=False),

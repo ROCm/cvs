@@ -8,7 +8,35 @@ from pathlib import Path
 
 from cvs.lib.benchmark.aorta.aorta_config_loader import AortaVariantConfig
 from cvs.lib.benchmark.aorta.unittests.fixtures import variant_dict
-from cvs.parsers.schemas import PreflightConfigFile, validate_config_file
+from cvs.parsers.schemas import PreflightConfigFile, RacksBlock, validate_config_file
+from cvs.unittests.support import FAKE_CRED
+
+
+class TestRacksBlock(unittest.TestCase):
+    def test_credentials_are_not_racks(self):
+        block = RacksBlock.model_validate(
+            {
+                "switch_ssh_user": "admin",
+                "bmc_user": "root",
+                "bmc_password": FAKE_CRED,
+                "_racks_comment": "ignored",
+                "rack-01": {"platform": "HeliosM", "rmc": ["a", "b"], "power_shelves": ["p0"]},
+            }
+        )
+        self.assertEqual(block.bmc_user, "root")
+        self.assertEqual(list(block.get_racks()), ["rack-01"])
+        rack = block.get_racks()["rack-01"]
+        self.assertEqual((rack.rmc, rack.power_shelves), (["a", "b"], ["p0"]))
+
+    def test_single_rmc_string_becomes_a_list(self):
+        rack = RacksBlock.model_validate({"rack-01": {"rmc": "10.0.4.1"}}).get_racks()["rack-01"]
+        self.assertEqual(rack.rmc, ["10.0.4.1"])
+
+    def test_shipped_rack_sample_parses(self):
+        path = Path(__file__).resolve().parents[2] / "input" / "cluster_file" / "cluster_rack.json"
+        racks = RacksBlock.model_validate(json.loads(path.read_text())["racks"]).get_racks()
+        self.assertEqual(racks["rack-01"].platform, "HeliosP")
+        self.assertEqual(len(racks["rack-01"].back_end_switches), 6)
 
 
 class TestAortaConfigDispatch(unittest.TestCase):

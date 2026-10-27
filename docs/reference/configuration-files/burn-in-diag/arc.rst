@@ -8,7 +8,9 @@
 ARC (AMD Rack Check) configuration file reference
 ***************************************************
 
-The sample file is ``cvs/input/config_file/arc/arc_config.json``. Replace both ``<changeme>`` values before running. Unresolved placeholders stop the run at startup.
+ARC reads two files: ``arc_config.json`` for ARC settings, and the cluster file's ``racks`` block for each rack's inventory. CVS builds one ARC rack file per rack from that block, see `Rack inventory in the cluster file`_.
+
+The sample file is ``cvs/input/config_file/arc/arc_config.json``. Replace the ``<changeme>`` value before running. Unresolved placeholders stop the run at startup.
 
 .. dropdown:: ``arc_config.json`` (example)
 
@@ -24,7 +26,7 @@ The sample file is ``cvs/input/config_file/arc/arc_config.json``. Replace both `
           "arc_release_url": "<changeme>",
           "ARC_INSTALL_PATH": "",
           "controller_nodes": [],
-          "rack_config": "<changeme>",
+          "rack_config": "",
           "spec_mode": "full",
           "mock": "False",
           "continue_on_failure": "False",
@@ -58,9 +60,9 @@ Configuration keys
    * - ``ARC_INSTALL_PATH``
      - Tar-only prefix. Blank uses ``/opt/amdtools``; deb/rpm packages use their fixed ``/opt/amdtools/arc`` location.
    * - ``controller_nodes``
-     - List of cluster ``node_dict`` keys to act as rack controllers. Empty selects the first node. Only these hosts are contacted.
+     - Deprecated. Used only when the cluster file has no ``racks`` block: a list of ``node_dict`` keys to act as controllers, empty for the first node. Set ``racks.<rack_id>.arc_controller`` instead.
    * - ``rack_config``
-     - Absolute path to a rack JSON on every controller. Each file describes its controller's rack. CVS does not generate or distribute these files yet; stage one per controller before the run.
+     - Optional. Path to a rack JSON you staged on every controller, at the same path on each. When set, CVS uses it and does not generate rack files. Leave empty to generate them from the cluster file.
    * - ``spec_mode``
      - ``full`` or ``partial`` rack validation.
    * - ``mock``
@@ -84,6 +86,90 @@ Processes ARC starts as root through ``sudo``, in a separate session, or on tray
 Install location and controllers
 ================================
 
-Deb and rpm packages install at ``/opt/amdtools/arc``. Tar packages extract under ``ARC_INSTALL_PATH`` (default ``/opt/amdtools``), giving ``<prefix>/arc/arc.py``. The download is staged in a private temp directory and cleaned afterward. Controllers must have passwordless SSH and passwordless sudo for ARC tools. The cluster-file schema is unchanged.
+Deb and rpm packages install at ``/opt/amdtools/arc``. Tar packages extract under ``ARC_INSTALL_PATH`` (default ``/opt/amdtools``), giving ``<prefix>/arc/arc.py``. The download is staged in a private temp directory and cleaned afterward. Controllers must have passwordless SSH and passwordless sudo for ARC tools.
+
+Each rack has one controller: ``racks.<rack_id>.arc_controller``, or the first ``node_dict`` entry with that ``rack_id`` when it is not set. Only controllers are contacted.
+
+.. _arc-rack-inventory:
+
+Rack inventory in the cluster file
+==================================
+
+ARC needs a rack file that names each tray's addresses and logins. Instead of writing one per rack, describe the racks in the cluster file. CVS starts from the ARC template for each rack's ``platform``, fills it from the fields below, validates it on that rack's controller, and runs ARC against it. To create or update the file, see :doc:`/reference/cluster/rack-cluster-file`.
+
+.. dropdown:: ``racks`` block (example)
+
+   .. code:: json
+
+      {
+        "node_dict": {
+          "10.0.0.1": {"bmc_ip": "10.0.1.1", "vpc_ip": "10.0.0.1", "rack_id": "rack-01"},
+          "10.0.0.2": {"bmc_ip": "10.0.1.2", "vpc_ip": "10.0.0.2", "rack_id": "rack-01"}
+        },
+        "racks": {
+          "switch_ssh_user": "admin",
+          "switch_ssh_password": "<changeme>",
+          "bmc_user": "<changeme>",
+          "bmc_password": "<changeme>",
+          "rack-01": {
+            "platform": "HeliosP",
+            "switch_model": "CelesticaPolarisSwitch",
+            "switch_trays": ["10.0.2.1", "10.0.2.2", "10.0.2.3", "10.0.2.4", "10.0.2.5", "10.0.2.6"],
+            "switch_bmc": ["10.0.3.1", "10.0.3.2", "10.0.3.3", "10.0.3.4", "10.0.3.5", "10.0.3.6"],
+            "rmc": ["10.0.4.1"]
+          }
+        }
+      }
+
+Only ``platform`` and the compute nodes are required. Leave out any device list for hardware you cannot reach, and set ``arc.spec_mode`` to ``partial``: ``full`` requires every device the platform declares. Content that needs a missing device cannot run.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Field
+     - Meaning
+   * - ``node_dict`` entries with a ``rack_id``
+     - Compute trays of that rack, **in tray order**. ``vpc_ip`` (or the node key when it is not set) becomes the tray's address as the controller reaches it, ``bmc_ip`` its BMC (``NA`` leaves it out), and the cluster file's ``username`` and ``priv_key_file`` (or ``password``) its login. ARC checks that ``priv_key_file`` exists on the controller.
+   * - ``racks.bmc_user``, ``racks.bmc_password``
+     - One login for every BMC in the file: compute ``bmc_ip``, ``switch_bmc``, ``rmc``, and ``power_shelves``. Required when ``rmc`` or ``power_shelves`` is set. Without it, CVS leaves every BMC out.
+   * - ``racks.switch_ssh_user``, ``racks.switch_ssh_password``, ``racks.switch_ssh_key_file``
+     - Login for every switch host. ``cvs exec --target switches`` uses the same login.
+   * - ``platform``
+     - ARC platform: ``HeliosP``, ``HeliosR``, or ``HeliosM``.
+   * - ``arc_controller``
+     - Host that runs ARC for this rack. Default: the first ``node_dict`` entry with this ``rack_id``.
+   * - ``switch_model``
+     - Scale-up switch model, needed with ``switch_trays`` when the platform accepts more than one.
+   * - ``switch_trays``
+     - Scale-up switch host addresses, in tray order.
+   * - ``switch_bmc``
+     - Scale-up switch BMC addresses, in the same order as ``switch_trays``.
+   * - ``rmc``
+     - Rack management controller addresses, in tray order. HeliosM has four.
+   * - ``front_end_switches``, ``back_end_switches``
+     - Front-end and back-end switch host addresses, in tray order.
+   * - ``power_shelves``
+     - HeliosM only. Power shelf addresses, in tray order.
+
+Tray order
+----------
+
+The position of a device in its list is its ARC tray number, and ARC ties each tray number to one slot in the rack. Scale-up tests derive accelerator IDs, MAC addresses, and switch ports from it, so a node listed out of order fails those tests or reports faults against the wrong tray. List devices in the order of their slots:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Device
+     - Order on HeliosP, HeliosR, and HeliosM
+   * - Compute trays
+     - U9 to U17, then U25 to U33 (18 trays)
+   * - Scale-up switches
+     - U19 to U24
+
+For other device types, run ``arc.py --generate <platform> --id-location`` on a controller. It lists each type's slots in tray order with their row and position.
+
+Serial numbers are generated from the rack and slot, for example ``rack-01-compute-0``. A list longer than the platform's slots, or a field still set to ``<changeme>``, stops the run before ARC starts.
 
 For suite commands and disruptive content, see :doc:`/how-to/test-suites/burn-in-diag/arc`.

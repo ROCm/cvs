@@ -1,22 +1,26 @@
 # AMD Rack Check (ARC) suites
 
-ARC validates rack topology and runs flows and items from **one controller per rack**. CVS installs ARC and collects its logs through the configured controller hosts.
+ARC validates rack topology and runs flows and items from **one controller per rack**. CVS builds each rack's ARC rack file from the cluster file, installs ARC, and collects its logs through the controllers.
 
 ## Quick start
 
 ```bash
+cvs config copy cluster_rack.json --output ~/cluster_rack.json
+# Set node_dict, rack_id per node (in tray order), and racks.<rack_id>.platform.
 cvs config copy arc/arc_config.json --output ~/arc_config.json
-# Replace arc_release_url and rack_config, then set controller_nodes if needed.
+# Replace arc_release_url; leave rack_config empty to generate rack files.
 cvs list arc_test_diag
-cvs run arc_installation --cluster_file cluster.json --config_file ~/arc_config.json
-cvs run arc_test_diag test_PingTest --cluster_file cluster.json --config_file ~/arc_config.json
+cvs run arc_installation --cluster_file ~/cluster_rack.json --config_file ~/arc_config.json
+cvs run arc_test_diag test_PingTest --cluster_file ~/cluster_rack.json --config_file ~/arc_config.json
 ```
 
 ## Prerequisites and controller model
 
-ARC runs on baremetal only. The runner needs passwordless SSH to every controller. ARC itself needs passwordless sudo for tools that require escalation. Controllers need Python 3.9 or newer. Set `arc.controller_nodes` to keys in the cluster file's `node_dict`; an empty list selects its first key. A single shared `arc.rack_config` path is used on all controllers, and each file describes that controller's own rack. CVS does not yet generate these files from the cluster topology or copy them to the controllers: the operator stages one per controller at that path before the run (generation and distribution are planned as a follow-up). Create a rack JSON with `arc.py --generate <platform> --rack <file>` and check it with `arc.py --rack <file> --validate --spec-mode <mode>`.
+ARC runs on baremetal only. The runner needs passwordless SSH to every controller. ARC itself needs passwordless sudo for tools that require escalation. Controllers need Python 3.9 or newer.
 
-The cluster file needs no rack schema. Non-controller nodes are never contacted by these suites.
+Each rack in the cluster file's `racks` block gets one controller: `arc_controller`, or the first `node_dict` entry with that `rack_id`. CVS fills the ARC template for the rack's `platform` with that rack's compute nodes, plus any switch, BMC, and RMC addresses you list, and validates it on the controller. List each rack's compute nodes in tray order (Helios: U9 first, U33 last), because ARC derives scale-up MACs and switch ports from the tray number. Without switch or BMC access, leave those lists out and set `arc.spec_mode` to `partial`. Setting `arc.rack_config` skips generation and uses a rack JSON you staged at that path on every controller. `arc.controller_nodes` is deprecated and applies only when the cluster file has no `racks` block.
+
+Non-controller nodes are never contacted by these suites.
 
 ## Installation and configuration
 
