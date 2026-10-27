@@ -35,6 +35,22 @@ def _default_nic_type(gpu_name):
     return 'thor2'
 
 
+def _hf_token_export_line(token_file):
+    """Shell line that exports ``HF_TOKEN`` by reading ``token_file`` on the
+    node the command runs on (as SGLang/vLLM/jaxmaxtext do).
+
+    Embedding HF_TOKEN's value directly in a shell command would print it,
+    because the orchestrator logs the full command. A missing or empty file
+    yields an empty HF_TOKEN; a gated download then fails fast rather than
+    continuing with a blank token.
+    """
+    path = str(token_file or '').strip()
+    if not path:
+        return 'export HF_TOKEN=; '
+    quoted = shlex.quote(path)
+    return f"if [ -f {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; else export HF_TOKEN=; fi; "
+
+
 # Ordered fallback chains for parsing Megatron-LM training output.
 # Each chain is tried in order; first non-empty match wins. Seeded with
 # [new, old] so newer Megatron output (e.g. `throughput per GPU
@@ -226,7 +242,6 @@ class MegatronTrainingJob:
         self,
         orch,
         variant_config,
-        hf_token,
         micro_batch_size,
         global_batch_size,
         precision=None,
@@ -242,7 +257,6 @@ class MegatronTrainingJob:
         Args:
           orch: Orchestrator handle for container and host command execution.
           variant_config: MegatronVariantConfig holding container, config, train_params, sweep.
-          hf_token: Hugging Face token passed to the job environment.
           batch_size: Global batch size for this sweep cell (overrides train_params).
           micro_batch_size: Micro batch size for this sweep cell (overrides train_params).
           precision: Optional precision override for this sweep cell. When None, falls
@@ -254,7 +268,6 @@ class MegatronTrainingJob:
 
         self.orch = orch
         self.model_name = variant_config.train_params["model_name"]
-        self.hf_token = hf_token
         self.tune_model_params = tune_model_params
 
         self.job_cmd = ''
@@ -306,6 +319,8 @@ class MegatronTrainingJob:
         self.rocm_path = detect_rocm_path(self.orch, tdict['rocm_dir'])
         self.megatron_root = tdict['megatron_root']
         self.training_scripts = tdict['training_scripts']
+
+        self.hf_token_file = tdict['hf_token_file']
 
         pdict = dict(variant_config.train_params)
         pdict.update(sweep_overrides or {})
@@ -414,8 +429,7 @@ class MegatronTrainingJob:
         local_dir = f'{self.data_cache_dir}/{self.model_name}'
         log.info('Downloading tokenizer.model for %s into %s', self.model_name, local_dir)
         self.orch.exec(
-            f'export HF_TOKEN={shlex.quote(self.hf_token)}; '
-            f'huggingface-cli download {self.tokenizer_model} '
+            _hf_token_export_line(self.hf_token_file) + f'huggingface-cli download {self.tokenizer_model} '
             f'--include "tokenizer.model" '
             f'--local-dir {local_dir}'
         )
@@ -536,7 +550,7 @@ class MegatronTrainingJob:
             cmd
             + f'cd {self.megatron_root}; export MOCK_DATA=1; '
             + f'export IMAGE={self.container_image}; '
-            + f'export HF_TOKEN="{self.hf_token}"; '
+            + _hf_token_export_line(self.hf_token_file)
             + f'export DATA_CACHE_PATH={self.data_cache_dir}; '
             + f'export TOKENIZER_MODEL={self.local_tokenizer_path if self.local_tokenizer_path else self.tokenizer_model}; '
             + f'export LD_LIBRARY_PATH=/usr/local/lib/:{self.rocm_path}/lib:$LD_LIBRARY_PATH; '

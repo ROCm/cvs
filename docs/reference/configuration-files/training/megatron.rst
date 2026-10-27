@@ -525,7 +525,7 @@ Host paths used by the job. They must be volume-mounted into the container (typi
      - Description
    * - ``hf_token_file``
      - ``/home/{user-id}/.hf_token``
-     - Path to a Hugging Face token file for gated models and datasets.
+     - Path to a Hugging Face token file for gated models and datasets. Each node reads it inside the container when the job starts; CVS does not read it on the machine running ``cvs run``. A missing or empty file exports an empty ``HF_TOKEN`` and the run continues.
    * - ``log_dir``
      - ``/home/{user-id}/LOGS/megatron``
      - Host path where per-node training logs are written. Megatron-LM writes ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``; Primus writes ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``. On disk ``<combo_id>`` is the sanitized combination key (see `Backends`_).
