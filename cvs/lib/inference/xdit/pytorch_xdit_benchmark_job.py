@@ -210,6 +210,8 @@ class PytorchXditBenchmarkJob(ABC):
                 pass
             self._publish_hf_token_file(local_path)
         except Exception as exc:
+            # A partial upload can leave the file on a node before this exception.
+            self._remove_staged_hf_token()
             return f"Failed to stage HF token file: {exc}"
         finally:
             try:
@@ -217,6 +219,21 @@ class PytorchXditBenchmarkJob(ABC):
             except OSError:
                 pass
         return None
+
+    def _remove_staged_hf_token(self):
+        # The shell `rm` in the docker wrapper does not run when upload fails or the SSH channel dies.
+        from cvs.lib.inference.xdit.pytorch_xdit_flux_job import _exec_on_nodes, _redact_secrets
+
+        path = shlex.quote(self.hf_token_path)
+        try:
+            _exec_on_nodes(
+                self.s_phdl,
+                self.server_nodes,
+                f"rm -f {path}",
+                print_console=False,
+            )
+        except Exception as exc:
+            log.warning("Failed to remove staged HF token file: %s", _redact_secrets(str(exc)))
 
     def _publish_hf_token_file(self, local_path):
         upload = getattr(self.s_phdl, "upload_file", None)
@@ -237,6 +254,9 @@ class PytorchXditBenchmarkJob(ABC):
             )
             scoped.upload_file(local_path, self.hf_token_path)
             return
+        # LocalPssh runs the docker command on this machine and has no upload_file.
+        if type(self.s_phdl).__name__ != "LocalPssh":
+            raise RuntimeError("Cannot stage HF token: execution handle has no upload_file")
         os.makedirs(os.path.dirname(self.hf_token_path), exist_ok=True)
         shutil.copyfile(local_path, self.hf_token_path)
         try:
@@ -448,45 +468,52 @@ class PytorchXditBenchmarkJob(ABC):
         if plan.docker_cmds:
             log.debug("Docker command (sample): %s", _redact_secrets(plan.docker_cmds[0]))
 
-        stage_err = self._stage_hf_token()
-        if stage_err:
-            errors.append(stage_err)
-            return {}, plan, errors
-
-        results: Dict[str, str] = {}
-        raw_results: Dict[str, Any] = {}
-        exec_error: Optional[Exception] = None
+        had_token = self.hf_token is not None and bool(str(self.hf_token))
+        staged = False
         try:
-            raw_results = _exec_cmd_list_on_nodes(
-                self.s_phdl,
-                plan.node_order,
-                plan.docker_cmds,
-                timeout=effective_timeout,
-                detailed=True,
-            )
-            results = _normalize_exec_results(raw_results, plan.node_order)
-        except Exception as exc:
-            exec_error = exc
-            log.warning("Benchmark docker exec ended with exception: %s", _redact_secrets(str(exc)))
-            results = _normalize_exec_results(raw_results, plan.node_order)
+            stage_err = self._stage_hf_token()
+            if stage_err:
+                errors.append(stage_err)
+                return {}, plan, errors
+            staged = had_token
 
-        if exec_error is not None:
-            exec_errors, treat_as_success = self._handle_benchmark_exec_exception(exec_error, plan, results)
-            if treat_as_success:
-                return results, plan, []
-            errors.extend(exec_errors)
-            return results, plan, errors
+            results: Dict[str, str] = {}
+            raw_results: Dict[str, Any] = {}
+            exec_error: Optional[Exception] = None
+            try:
+                raw_results = _exec_cmd_list_on_nodes(
+                    self.s_phdl,
+                    plan.node_order,
+                    plan.docker_cmds,
+                    timeout=effective_timeout,
+                    detailed=True,
+                )
+                results = _normalize_exec_results(raw_results, plan.node_order)
+            except Exception as exc:
+                exec_error = exc
+                log.warning("Benchmark docker exec ended with exception: %s", _redact_secrets(str(exc)))
+                results = _normalize_exec_results(raw_results, plan.node_order)
 
-        dist_err = self._verify_distributed_output(plan, results)
-        if dist_err:
-            errors.append(dist_err)
+            if exec_error is not None:
+                exec_errors, treat_as_success = self._handle_benchmark_exec_exception(exec_error, plan, results)
+                if treat_as_success:
+                    return results, plan, []
+                errors.extend(exec_errors)
+                return results, plan, errors
 
-        failed_nodes, extra_errors = self._collect_benchmark_failures(raw_results, plan)
-        errors.extend(extra_errors)
-        if failed_nodes:
-            errors.append(f"Benchmark failed on {len(failed_nodes)} node(s): {', '.join(failed_nodes)}")
+            dist_err = self._verify_distributed_output(plan, results)
+            if dist_err:
+                errors.append(dist_err)
 
-        return results or {}, plan, errors
+            failed_nodes, extra_errors = self._collect_benchmark_failures(raw_results, plan)
+            errors.extend(extra_errors)
+            if failed_nodes:
+                errors.append(f"Benchmark failed on {len(failed_nodes)} node(s): {', '.join(failed_nodes)}")
+
+            return results or {}, plan, errors
+        finally:
+            if staged:
+                self._remove_staged_hf_token()
 
     def store_output_dir_hint(self, plan: BenchmarkLaunchPlan) -> None:
         if plan.primary_output_dir:
