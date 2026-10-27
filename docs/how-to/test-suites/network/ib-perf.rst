@@ -18,7 +18,7 @@ Prerequisites
 - A cluster file with at least two nodes. One node cannot form a server/client pair.
 - SSH key access from the machine where you run ``cvs``, as in your cluster file.
 - A ROCm install visible on the nodes. Set ``rocm_dir`` in the config below, or leave it empty to auto-detect.
-- ``numactl``, ``libibverbs``, and ``librdmacm`` on every node. The install suite can ``apt install`` build and runtime packages when ``install_system_packages`` is ``True``. That install is skipped inside a Spur or Slurm job step.
+- ``numactl``, ``lshw``, the ``rdma`` command, ``libibverbs``, and ``librdmacm`` on every node. The install suite can ``apt install`` build and runtime packages when ``install_system_packages`` is ``True``. That install is skipped inside a Spur or Slurm job step.
 - Passwordless sudo on the nodes if you use AFM vPOD discovery (``sudo -n afmctl``) or the dmesg scan (``sudo dmesg``). Without sudo, dmesg is skipped and AFM pairing stops.
 - ``install_dir`` as a path that is the same on every node. The install suite clones and builds perftest on the head node, then every node runs ``<install_dir>/perftest/bin/<tool>``.
 
@@ -159,7 +159,7 @@ Search the pytest log for ``FAIL -``. The test then ends with ``Following FAILUR
    * - ``ibperf.vpod_source afm needs passwordless sudo for afmctl``
      - AFM mode could not run ``sudo -n afmctl``.
    * - ``perftest runtime dependencies missing on node``
-     - ``numactl``, ``libibverbs``, or ``librdmacm`` is missing and ``install_system_packages`` is not installing them.
+     - ``numactl``, ``lshw``, ``rdma``, ``libibverbs``, or ``librdmacm`` is missing and ``install_system_packages`` is not installing them.
    * - ``ib_write_bw not showing expected use_rocm output``
      - The in-tree binary ``<install_dir>/perftest/ib_write_bw`` did not advertise GPUDirect RDMA. The perf tests invoke ``<install_dir>/perftest/bin/<tool>``.
    * - ``lacks ROCm DMA-BUF support``
@@ -197,7 +197,7 @@ IB Perf needs these container settings:
 
 - ``container.lifetime`` ``persistent``. The install and test suites are separate runs, and a ``per_run`` container is removed between them with anything installed in it.
 - ``install_dir`` on a volume in ``container.runtime.args.volumes`` that every node shares, mounted at the same path in the container. The build runs in the head node's container and every node runs the result.
-- An image with ROCm at ``rocm_dir``, ``rocm-smi``, ``lshw``, ``rdma``, ``numactl``, ``libibverbs``, and ``librdmacm``, or ``install_system_packages`` set to ``True`` with ``sudo`` in the image.
+- An image with ROCm at ``rocm_dir`` and ``rocm-smi``. It also needs ``lshw``, ``rdma``, ``numactl``, ``libibverbs``, and ``librdmacm``, unless ``install_system_packages`` is ``True`` and the image has ``sudo``.
 
 .. _ib-perf-dmesg-scan:
 

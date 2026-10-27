@@ -53,6 +53,14 @@ class TestInstallIbPerf(unittest.TestCase):
         self.assertNotIn('node n1', str(ctx.exception))
         self.assertFalse(any('make' in c for c in self.head_cmds))
 
+    def test_missing_nic_discovery_tools_fail_install(self):
+        self.assertIn('MISSING:lshw', install_ibperf_tools.RUNTIME_DEPS_CHECK)
+        self.assertIn('MISSING:rdma', install_ibperf_tools.RUNTIME_DEPS_CHECK)
+        with self.assertRaises(BaseException) as ctx:
+            self._run({'install_system_packages': 'False'}, {'n1': 'MISSING:lshw\nMISSING:rdma\n'})
+        self.assertIn('node n1: lshw, rdma;', str(ctx.exception))
+        self.assertFalse(any('make' in c for c in self.head_cmds))
+
     def test_missing_runtime_deps_in_job_step_say_install_outside_step(self):
         for flag in ('False', 'True'):
             with self.subTest(flag=flag):
@@ -63,7 +71,7 @@ class TestInstallIbPerf(unittest.TestCase):
 
     def test_opt_in_runs_apt_except_in_managed_job_step(self):
         self._run({'install_system_packages': 'true'})
-        self.assertIn('sudo apt install -y numactl lshw', self._apt_cmds())
+        self.assertIn('sudo apt install -y numactl lshw iproute2', self._apt_cmds())
         self.assertNotIn(install_ibperf_tools.RUNTIME_DEPS_CHECK, self.all_cmds)
 
         self._run({'install_system_packages': 'True'}, managed=True)

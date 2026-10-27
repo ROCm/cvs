@@ -26,6 +26,8 @@ rccl_res_dict = {}
 
 RUNTIME_DEPS_CHECK = (
     'command -v numactl >/dev/null || echo MISSING:numactl; '
+    '{ command -v lshw >/dev/null || [ -x /usr/sbin/lshw ]; } || echo MISSING:lshw; '
+    'command -v rdma >/dev/null || echo MISSING:rdma; '
     '/sbin/ldconfig -p | grep -q libibverbs.so.1 || echo MISSING:libibverbs; '
     '/sbin/ldconfig -p | grep -q librdmacm.so.1 || echo MISSING:librdmacm'
 )
@@ -61,7 +63,7 @@ def test_install_ib_perf(orch, config_dict):
             )
             orch.exec('sudo apt install -y libibumad-dev', print_console=False)
             orch.exec('sudo apt install -y libpci-dev', print_console=False)
-            orch.exec('sudo apt install -y numactl lshw', print_console=False)
+            orch.exec('sudo apt install -y numactl lshw iproute2', print_console=False)
         else:
             if managed:
                 hint = 'install them outside the job step, e.g. in the node image or before allocation'
