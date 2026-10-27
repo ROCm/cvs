@@ -73,4 +73,4 @@ Run the platform host check suite:
 Run on managed compute
 ~~~~~~~~~~~~~~~~~~~~~~
 
-See :doc:`/how-to/run-on-managed-compute` for guidance on running these health suites on managed compute.
+See :doc:`/how-to/run-on-managed-compute` for guidance on running these platform tests on managed compute.

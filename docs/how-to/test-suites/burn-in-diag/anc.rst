@@ -47,7 +47,7 @@ List the install suite and the CPU and GPU group suites:
 Install ANC
 ~~~~~~~~~~~
 
-Every CPU and GPU group and individual-item run installs ANC as a session-cached pre-task, so a separate install step is optional. Run ``anc_installation`` when you want to install or refresh ANC without running a validation group:
+Every CPU group, GPU group, and individual-item run installs ANC as a session-cached pre-task, so a separate install step is optional. Run ``anc_installation`` when you want to install or refresh ANC without running a validation group:
 
 .. code:: bash
 

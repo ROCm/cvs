@@ -13,7 +13,7 @@ Use this for long-running fleet visibility at scale (hundreds to 1000+ nodes), S
 Architecture
 ============
 
-The stack is composed of the following components.
+The stack is composed of the following components:
 
 - **Fleet Monitor UI** (port 30080): Manage monitoring servers, GPU node groups, and control-plane groups; install exporters over SSH
 - **Monitoring server**: Prometheus (30090), Grafana (30030), Loki (30100)
@@ -24,7 +24,7 @@ The stack is composed of the following components.
 Prerequisites
 =============
 
-The following prerequisites are required.
+The following prerequisites are required:
 
 - Docker Engine 23.0 or later with Compose v2 (``docker compose``) on the Fleet Monitor or monitoring server host
 - SSH from the Fleet Monitor server to GPU and control-plane nodes (optional jump host)

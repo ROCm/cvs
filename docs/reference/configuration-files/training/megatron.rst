@@ -34,7 +34,7 @@ Llama 3.1 8B, Llama 3.3 70B, and DeepSeek V2 Lite run on **both** Megatron-LM an
   - ``{user-id}`` will be resolved to the cluster username (or the local OS user as fallback). You can also set this value yourself.
   - Keys prefixed with ``_`` (for example ``_checkpoint_comment``) are inline comments and are ignored by the loader.
   - ``sweep.runs`` is required when ``sweep.combinations`` is non-empty. It must be a non-empty subset of (or equal to) those keys; an empty ``runs`` list is a load error. Omitting ``sweep`` entirely (or using empty ``combinations``) runs one implicit ``default`` cell; ``train_params.micro_batch_size``, ``global_batch_size``, and ``precision`` are then required.
-  - Each key in ``sweep.combinations`` must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``. The suite parses those three values from the key; do not repeat them in the combination body. The body might overlay extras such as ``training_iterations``, ``tensor_parallelism``, and ``pipeline_parallelism``.
+  - Each key in ``sweep.combinations`` must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``. The suite parses those three values from the key; do not repeat them in the combination body. The body can overlay extras such as ``training_iterations``, ``tensor_parallelism``, and ``pipeline_parallelism``.
 
 Available configurations
 ========================
@@ -755,7 +755,7 @@ Pytest parametrizes ``sweep_name`` from ``sweep.runs``. The suite parses ``micro
 Threshold files
 ---------------
 
-Each suite JSON names a sibling file in ``threshold_json``. With a declared ``sweep``, top-level cell keys must be the same ``MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>`` strings as ``sweep.runs`` (unused ``combinations`` keys are not required). With no ``sweep`` (generic / implicit ``default`` run), the threshold cell is the literal key ``default`` — not an ``MBS=…`` string built from ``train_params``. A missing or extra cell fails load when ``enforce_thresholds`` is ``true``. When it is ``false``, the ``default`` cell can be omitted: the loader warns and ``test_metric`` is record-only.
+Each suite JSON names a sibling file in ``threshold_json``. With a declared ``sweep``, top-level cell keys must be the same ``MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>`` strings as ``sweep.runs`` (unused ``combinations`` keys are not required). With no ``sweep`` (generic or implicit ``default`` run), the threshold cell is the literal key ``default`` — not an ``MBS=…`` string built from ``train_params``. A missing or extra cell fails load when ``enforce_thresholds`` is ``true``. When it is ``false``, the ``default`` cell can be omitted: the loader warns and ``test_metric`` is record-only.
 
 A metric is gated only when ``enforce_thresholds`` is ``true`` and the cell has a numeric spec:
 
