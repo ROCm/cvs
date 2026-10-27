@@ -32,6 +32,9 @@ RUNTIME_DEPS_CHECK = (
     '/sbin/ldconfig -p | grep -q librdmacm.so.1 || echo MISSING:librdmacm'
 )
 
+# Same lookup as rocm_plib._rocm_smi_showbus_cmd; without the tool GPU discovery maps no cards.
+GPU_TOOL_CHECK = '{ command -v rocm-smi >/dev/null || [ -x /opt/rocm/bin/rocm-smi ]; } || echo MISSING:rocm-smi'
+
 
 def test_launch_containers(orch, lifecycle):
     launch_containers(orch, lifecycle)
@@ -49,7 +52,14 @@ def test_install_ib_perf(orch, config_dict):
         if install_system_packages and managed:
             log.warning('Managed Spur/Slurm step: skipping apt install of perftest dependencies')
             install_system_packages = False
+        for node, out in orch.exec(GPU_TOOL_CHECK, print_console=False).items():
+            if 'MISSING:rocm-smi' in out:
+                fail_test(
+                    f'rocm-smi not found on node {node} (PATH or /opt/rocm/bin); GPU discovery needs it, '
+                    'and install_system_packages does not install it'
+                )
         if install_system_packages:
+            update_test_result()
             orch.exec('sudo apt update -y', timeout=200, print_console=False)
             orch.exec(
                 'sudo apt install -y git build-essential autoconf automake libtool pkg-config',

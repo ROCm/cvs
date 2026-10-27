@@ -3,6 +3,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from cvs.lib import rocm_plib
 from cvs.tests.ibperf import install_ibperf_tools
 
 _NODES = ('n1', 'n2')
@@ -15,12 +16,15 @@ class TestInstallIbPerf(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def _run(self, config, deps_out=None, managed=False):
+    def _run(self, config, deps_out=None, managed=False, gpu_tool_out=None):
         deps_out = deps_out or {}
+        gpu_tool_out = gpu_tool_out or {}
 
         def all_exec(cmd, **_kwargs):
             if cmd == install_ibperf_tools.RUNTIME_DEPS_CHECK:
                 return {n: deps_out.get(n, '') for n in _NODES}
+            if cmd == install_ibperf_tools.GPU_TOOL_CHECK:
+                return {n: gpu_tool_out.get(n, '') for n in _NODES}
             if 'ib_write_bw -h' in cmd:
                 return {n: 'GPUDirect RDMA' for n in _NODES}
             return {n: '' for n in _NODES}
@@ -61,6 +65,30 @@ class TestInstallIbPerf(unittest.TestCase):
         self.assertIn('node n1: lshw, rdma;', str(ctx.exception))
         self.assertFalse(any('make' in c for c in self.head_cmds))
 
+    def test_gpu_tool_check_uses_gpu_discovery_lookup(self):
+        check = install_ibperf_tools.GPU_TOOL_CHECK
+        self.assertIn('command -v rocm-smi', check)
+        self.assertIn('[ -x /opt/rocm/bin/rocm-smi ]', check)
+        self.assertIn('/opt/rocm/bin/rocm-smi', rocm_plib._rocm_smi_showbus_cmd(use_sudo=False))
+
+    def test_missing_gpu_tool_fails_naming_node_whether_or_not_apt_runs(self):
+        for flag, managed in (('False', False), ('True', False), ('True', True)):
+            with self.subTest(flag=flag, managed=managed):
+                with self.assertRaises(BaseException) as ctx:
+                    self._run(
+                        {'install_system_packages': flag}, managed=managed, gpu_tool_out={'n2': 'MISSING:rocm-smi\n'}
+                    )
+                self.assertIn('rocm-smi not found on node n2 (PATH or /opt/rocm/bin)', str(ctx.exception))
+                self.assertNotIn('node n1', str(ctx.exception))
+                self.assertEqual(self._apt_cmds(), [])
+                self.assertFalse(any('make' in c for c in self.head_cmds))
+
+    def test_missing_gpu_tool_and_runtime_deps_are_both_reported(self):
+        with self.assertRaises(BaseException) as ctx:
+            self._run({}, {'n1': 'MISSING:numactl\n'}, gpu_tool_out={'n1': 'MISSING:rocm-smi\n'})
+        self.assertIn('rocm-smi not found on node n1', str(ctx.exception))
+        self.assertIn('node n1: numactl;', str(ctx.exception))
+
     def test_missing_runtime_deps_in_job_step_say_install_outside_step(self):
         for flag in ('False', 'True'):
             with self.subTest(flag=flag):
@@ -73,6 +101,9 @@ class TestInstallIbPerf(unittest.TestCase):
         self._run({'install_system_packages': 'true'})
         self.assertIn('sudo apt install -y numactl lshw iproute2', self._apt_cmds())
         self.assertNotIn(install_ibperf_tools.RUNTIME_DEPS_CHECK, self.all_cmds)
+        self.assertLess(
+            self.all_cmds.index(install_ibperf_tools.GPU_TOOL_CHECK), self.all_cmds.index('sudo apt update -y')
+        )
 
         self._run({'install_system_packages': 'True'}, managed=True)
         self.assertEqual(self._apt_cmds(), [])
