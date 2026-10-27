@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import json
 import re
+from types import SimpleNamespace
 
 import pytest
 
@@ -75,21 +76,55 @@ class IbperfOrch:
 
 
 @pytest.fixture(scope="module")
-def orch(cluster_dict):
+def lifecycle():
+    """Per-module container state: ``failed`` skips the tests after a failed launch,
+    ``torn_down`` stops the orch fixture's leak guard once test_teardown_containers ran."""
+    return SimpleNamespace(failed=False, torn_down=False)
+
+
+@pytest.fixture(autouse=True)
+def skip_after_failed_launch(request, lifecycle):
+    if lifecycle.failed and request.node.name != 'test_teardown_containers':
+        pytest.skip('ibperf container launch failed')
+
+
+def launch_containers(orch, lifecycle):
+    """No setup_sshd(): perftest pairs connect over TCP without MPI."""
+    if orch.orchestrator_type != 'container':
+        pytest.skip('baremetal orchestrator: no container to launch')
+    lifecycle.failed = True
+    if not orch.setup_containers():
+        pytest.fail('setup_containers() returned False')
+    lifecycle.failed = False
+
+
+def teardown_containers(orch, lifecycle):
+    lifecycle.torn_down = True
+    if orch.orchestrator_type != 'container':
+        pytest.skip('baremetal orchestrator: no container to tear down')
+    if not orch.teardown_containers():
+        pytest.fail('teardown_containers() returned False')
+
+
+def close_orch(o, lifecycle):
+    try:
+        if o.orchestrator_type == 'container' and not lifecycle.torn_down:
+            log.info('orch fixture leak-guard: tearing down containers (test_teardown_containers did not run)')
+            o.teardown_containers()
+    finally:
+        o.close()
+
+
+@pytest.fixture(scope="module")
+def orch(cluster_dict, lifecycle):
     """Suite-local orchestrator over every cluster node for installation and verification."""
     node_dict = cluster_dict['node_dict']
     if len(node_dict) < 2:
         raise ValueError('At least 2 nodes are required to run this test')
     cfg = OrchestratorConfig.from_configs({**cluster_dict, 'node_dict': node_dict}, {})
     o = OrchestratorFactory.create_orchestrator(log, cfg)
-    # No setup_sshd(): perftest pairs connect over TCP without MPI.
-    if o.orchestrator_type == 'container' and not o.setup_containers():
-        o.close()
-        pytest.fail('Failed to launch the ibperf container on every node')
     yield IbperfOrch(o)
-    if o.orchestrator_type == 'container':
-        o.teardown_containers()
-    o.close()
+    close_orch(o, lifecycle)
 
 
 @pytest.fixture(scope="module")

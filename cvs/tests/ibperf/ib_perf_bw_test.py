@@ -15,7 +15,7 @@ import pytest
 from cvs.lib import ibperf_lib, ibperf_reporting
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib.rdma_gid_lib import DEFAULT_GID_TYPE
-from cvs.tests.ibperf.conftest import IbperfOrch
+from cvs.tests.ibperf.conftest import IbperfOrch, close_orch, launch_containers, teardown_containers
 
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
@@ -90,20 +90,18 @@ def node_pairing(cluster_dict, config_dict):
 
 
 @pytest.fixture(scope="module")
-def orch(cluster_dict, node_pairing):
+def orch(cluster_dict, node_pairing, lifecycle):
     """Orchestrator over the paired nodes only; overrides the suite conftest's even-prefix ``orch``."""
     node_list = [node for pair in node_pairing['pairs'] for node in pair]
     log.info('Connecting to %d paired cluster nodes', len(node_list))
     log.debug('Paired cluster nodes: %s', node_list)
     o = _create_orch(cluster_dict, node_list)
-    # No setup_sshd(): perftest pairs connect over TCP without MPI.
-    if o.orchestrator_type == 'container' and not o.setup_containers():
-        o.close()
-        pytest.fail('Failed to launch the ibperf container on every node')
     yield IbperfOrch(o)
-    if o.orchestrator_type == 'container':
-        o.teardown_containers()
-    o.close()
+    close_orch(o, lifecycle)
+
+
+def test_launch_containers(orch, lifecycle):
+    launch_containers(orch, lifecycle)
 
 
 def can_read_dmesg(orch):
@@ -300,3 +298,7 @@ def test_build_ib_lat_perf_chart():
     except ValueError as exc:
         fail_test(str(exc))
     update_test_result()
+
+
+def test_teardown_containers(orch, lifecycle):
+    teardown_containers(orch, lifecycle)

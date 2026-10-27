@@ -209,7 +209,9 @@ class TestPairingFixtures(unittest.TestCase):
 
     @patch.object(ib_perf_bw_test.OrchestratorFactory, 'create_orchestrator')
     def test_orch_covers_only_paired_nodes(self, create):
-        gen = ib_perf_bw_test.orch.__wrapped__(self._CLUSTER, {'pairs': [('n3', 'n1')], 'errors': []})
+        gen = ib_perf_bw_test.orch.__wrapped__(
+            self._CLUSTER, {'pairs': [('n3', 'n1')], 'errors': []}, SimpleNamespace(torn_down=False)
+        )
         self.assertIs(next(gen).exec, create.return_value.exec)
         self.assertEqual(list(create.call_args.args[1].node_dict), ['n3', 'n1'])
         with self.assertRaises(StopIteration):

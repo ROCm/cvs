@@ -15,6 +15,7 @@ from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
 from cvs.lib import globals
+from cvs.tests.ibperf.conftest import launch_containers, teardown_containers
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +29,10 @@ RUNTIME_DEPS_CHECK = (
     '/sbin/ldconfig -p | grep -q libibverbs.so.1 || echo MISSING:libibverbs; '
     '/sbin/ldconfig -p | grep -q librdmacm.so.1 || echo MISSING:librdmacm'
 )
+
+
+def test_launch_containers(orch, lifecycle):
+    launch_containers(orch, lifecycle)
 
 
 def test_install_ib_perf(orch, config_dict):
@@ -94,3 +99,7 @@ def test_install_ib_perf(orch, config_dict):
     else:
         log.info('Skipping perftest installation (install_perf_package is not true)')
     update_test_result()
+
+
+def test_teardown_containers(orch, lifecycle):
+    teardown_containers(orch, lifecycle)
