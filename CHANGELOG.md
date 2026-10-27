@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The sample config gates scale-out `all_reduce_perf` at the published MI350X/MI355X acceptance bar in `results.thor`; MI300X clusters must override those entries. `verify_bus_bw` remains `"False"` by default.
   - Single-node 8-GPU guide configs `mi300x_rccl_single_node_config.json` and `mi350x_rccl_single_node_config.json`.
 - Platform `test_check_be_nic_link_speed` checks backend NIC link speed against `nic_link_speed` (default `400000` Mb/s). Existing configs fail on NICs running at another speed, or on a node with fewer backend NICs unless `nic_link_interfaces` is set.
+- Platform host config `fw_dict` includes `PLDM_BUNDLE`. Set it to the version reported by `amd-smi firmware` before the GPU firmware check; the check looks up every firmware ID `amd-smi` reports.
 
 ### Changed
 
