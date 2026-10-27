@@ -5,6 +5,7 @@ All rights reserved.
 
 import json
 import os
+import shlex
 
 import pytest
 
@@ -118,6 +119,15 @@ def lifecycle():
     return InferenceLifecycle()
 
 
+def _require_hf_token_on_nodes(orch, path):
+    # ``test -s`` alone is true for the empty directory docker creates when the file is missing.
+    quoted = shlex.quote(path)
+    out = orch.exec_on_host(f"test -f {quoted} && test -s {quoted}", detailed=True, timeout=30)
+    missing = sorted(host for host, result in out.items() if result.get("exit_code") != 0)
+    if missing:
+        pytest.fail(f"HF token file missing or empty on {missing}: {path}")
+
+
 @pytest.fixture(scope="module")
 def orch(cluster_dict, variant_config, lifecycle):
     # also injects roles.server.env — do not replace with .container.model_dump()
@@ -128,8 +138,9 @@ def orch(cluster_dict, variant_config, lifecycle):
     }
     cfg = OrchestratorConfig.from_configs(cluster_dict, testsuite_config)
     o = OrchestratorFactory.create_orchestrator(log, cfg)
-    yield o
     try:
+        _require_hf_token_on_nodes(o, variant_config.paths.hf_token_file)
+        yield o
         if not lifecycle.torn_down:
             log.info("orch fixture leak-guard: tearing down ATOM containers")
             o.teardown_containers()
