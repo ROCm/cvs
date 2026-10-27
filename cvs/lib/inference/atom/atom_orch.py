@@ -600,7 +600,7 @@ class AtomJob:
             if rank > 0 and self.nnodes > 1:
                 continue
             rank_log = self._rank_server_log(rank) if self.distributed else self.server_log
-            out = self.orch.exec(
+            out = self._exec_all(
                 f"grep -qiE {shlex.quote(pattern)} {shlex.quote(rank_log)}",
                 detailed=True,
                 hosts=[host],
@@ -614,7 +614,7 @@ class AtomJob:
         label = self._framework_coordinator_label()
         for rank, host in enumerate(self.orch.hosts):
             rank_log = self._rank_server_log(rank) if self.distributed else self.server_log
-            out = self.orch.exec(f"tail -30 {shlex.quote(rank_log)}", hosts=[host])
+            out = self._exec_all(f"tail -30 {shlex.quote(rank_log)}", hosts=[host])
             for h, output in (out or {}).items():
                 if emit_tail:
                     for line in (output or "").splitlines():
@@ -622,7 +622,7 @@ class AtomJob:
                 if self.EARLY_FAILURE_RE.search(output or ""):
                     detail = redact_hf_token_text((output or "")[-500:])
                     raise RuntimeError(f"{label} server early failure on {h} (rank {rank}): {detail}")
-            out = self.orch.exec(
+            out = self._exec_all(
                 f"grep -m1 -iE {shlex.quote(self.FATAL_LOG_RE.pattern)} {shlex.quote(rank_log)}",
                 detailed=True,
                 hosts=[host],
@@ -705,7 +705,7 @@ class AtomJob:
             f"echo {shlex.quote(b64)} | base64 -d > {shlex.quote(probe_path)} && "
             f"python3 {shlex.quote(probe_path)}"
         )
-        out = self.orch.exec_on_head("bash -c " + shlex.quote(cmd))
+        out = self._exec_client("bash -c " + shlex.quote(cmd))
         raw = next(iter(out.values()), None) if out else None
         if not raw or not str(raw).strip():
             raise RuntimeError(redact_hf_token_text(f"OpenAI-compatible probe produced no output: {out!r}"))
