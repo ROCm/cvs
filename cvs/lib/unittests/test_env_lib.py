@@ -81,6 +81,21 @@ class TestRedactSecrets(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertRedacted(text, expected)
 
+    def test_masks_values_containing_quote_characters(self):
+        # shlex.quote splits a value containing ' into adjacent quoted fragments; the secret sits after the split.
+        value = f"x'\"{FAKE_CRED} y"
+        nested = f"export SECRET={shlex.quote(value)}; run"
+        for text, expected in (
+            (build_env_prefix({"HF_TOKEN": value}) + " ; run", "export HF_TOKEN=<redacted> ; run"),
+            (f'export API_KEY="x\\"{FAKE_CRED} y"; run', "export API_KEY=<redacted>; run"),
+            (f"run --hf-token {shlex.quote(value)} --y", "run --hf-token <redacted> --y"),
+            (f"run --token={shlex.quote(value)} --y", "run --token=<redacted> --y"),
+            (f"docker run -e {shlex.quote('HF_TOKEN=' + value)} img", "docker run -e 'HF_TOKEN=<redacted>' img"),
+            (f"bash -c {shlex.quote(nested)}", f"bash -c {shlex.quote('export SECRET=<redacted>; run')}"),
+        ):
+            with self.subTest(text=text):
+                self.assertRedacted(text, expected)
+
     def test_masks_vllm_env_script_written_through_docker_exec(self):
         env_script = f"export HF_TOKEN={FAKE_CRED}\nexport HF_HUB_CACHE=/models\n"
         inner = f"printf '%s' {shlex.quote(env_script)} > {TMP}/server_env_script.sh"
