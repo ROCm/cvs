@@ -59,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preflight:
   - Node Smoke rows pass or fail only for checks Primus reported, and a tier failure stays in the HTML report when the rows do not show it.
   - Failure messages name the hosts that failed, not config sections such as `vpod_membership`.
+  - The preflight report pytest row fails when the summary overall status is FAIL. It previously passed after logging a warning.
 - vLLM:
   - DeepSeek V4 sample configs no longer set `HF_HUB_OFFLINE` or `TRANSFORMERS_OFFLINE`, which broke accuracy tasks.
   - Suites accept the `spec_decode_*` statistics that `vllm bench serve` reports, instead of failing the sweep.
