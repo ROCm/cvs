@@ -2,7 +2,11 @@
 
 import io
 import logging
+import os
 import shlex
+import shutil
+import subprocess
+import tempfile
 import unittest
 from unittest import mock
 
@@ -248,6 +252,135 @@ class TestHfTokenRedaction(unittest.TestCase):
     def test_export_line_empty_without_path(self):
         self.assertEqual(sglang_common.hf_token_export_line({}), '')
         self.assertEqual(sglang_common.hf_token_export_line(None), '')
+
+    def test_hub_model_export_line_fails_closed(self):
+        secret = 'hf_supersecretvalue'
+        line = sglang_common.hf_token_export_line(
+            {'hf_token_file': '/home/user/.hf_token', 'HF_TOKEN': secret},
+            'meta-llama/Llama-3.1-70B-Instruct',
+        )
+        self.assertNotIn(secret, line)
+        self.assertIn('[ ! -s /home/user/.hf_token ]', line)
+        self.assertIn('[ ! -r /home/user/.hf_token ]', line)
+        self.assertIn('exit 1', line)
+        self.assertIn('[ -z "$HF_TOKEN" ]', line)
+        self.assertIn('export HF_TOKEN', line)
+        self.assertNotIn('export HF_TOKEN=', line)
+
+    def test_local_model_export_line_stays_optional(self):
+        line = sglang_common.hf_token_export_line(
+            {'hf_token_file': '/root/models/.hf_token'},
+            '/root/models/DeepSeek-R1-0528',
+        )
+        self.assertNotIn('exit 1', line)
+        self.assertIn('[ -s /root/models/.hf_token ]', line)
+
+    def test_hub_model_without_token_path_exits(self):
+        line = sglang_common.hf_token_export_line({}, 'meta-llama/Llama-3.1-70B-Instruct')
+        self.assertIn('exit 1', line)
+        self.assertIn('hf_token_file is unset', line)
+
+    def test_model_needs_hf_token(self):
+        self.assertTrue(sglang_common.model_needs_hf_token('meta-llama/Llama-3.1-70B-Instruct'))
+        self.assertFalse(sglang_common.model_needs_hf_token('/root/models/DeepSeek-R1-0528'))
+        self.assertFalse(sglang_common.model_needs_hf_token(''))
+        self.assertFalse(sglang_common.model_needs_hf_token(None))
+
+    def test_sourced_hub_token_script_blocks_launch(self):
+        bash = shutil.which('bash')
+        if bash is None:
+            self.fail('bash is required to check the sourced token script')
+        hub = 'meta-llama/Llama-3.1-70B-Instruct'
+        secret = 'hf_supersecretvalue'
+        script = sglang_common.hf_token_export_line({'hf_token_file': '.hf_token'}, hub)
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            self._assert_source_blocks(bash, tmp, script)
+            with open(os.path.join(tmp, '.hf_token'), 'w', encoding='utf-8'):
+                pass
+            self._assert_source_blocks(bash, tmp, script)
+            with open(os.path.join(tmp, '.hf_token'), 'w', encoding='utf-8') as handle:
+                handle.write(' \n\t ')
+            self._assert_source_blocks(bash, tmp, script)
+            with open(os.path.join(tmp, '.hf_token'), 'w', encoding='utf-8') as handle:
+                handle.write(secret + '\n')
+            subprocess.run([bash, '-c', 'chmod 000 .hf_token'], cwd=tmp, check=True)
+            try:
+                readable = subprocess.run([bash, '-c', 'test -r .hf_token'], cwd=tmp, check=False)
+                if readable.returncode != 0:
+                    self._assert_source_blocks(bash, tmp, script)
+                else:
+                    # drvfs still reports mode 000 as readable. [ ! -r ] is what
+                    # rejects that file when the filesystem enforces the mode.
+                    self.assertIn('[ ! -r ', script)
+            finally:
+                subprocess.run([bash, '-c', 'chmod 644 .hf_token'], cwd=tmp, check=False)
+            with open(os.path.join(tmp, '.hf_token'), 'w', encoding='utf-8') as handle:
+                handle.write('  ' + secret + ' \n')
+            proc = self._source_script(bash, tmp, script)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn('LAUNCHED', proc.stdout)
+            self.assertEqual(proc.stdout.splitlines()[0], secret)
+            self.assertNotIn(secret, script)
+
+    def test_sourced_local_model_script_allows_missing_token(self):
+        bash = shutil.which('bash')
+        if bash is None:
+            self.fail('bash is required to check the sourced token script')
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            proc = self._source_script(
+                bash,
+                tmp,
+                sglang_common.hf_token_export_line(
+                    {'hf_token_file': '.hf_token'},
+                    '/root/models/DeepSeek-R1-0528',
+                ),
+            )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn('LAUNCHED', proc.stdout)
+        self.assertIn('UNSET', proc.stdout)
+
+    def test_record_container_exec_failure(self):
+        with mock.patch.object(sglang_common, 'fail_test') as fail:
+            sglang_common.record_container_exec_failure(
+                {'node-a': {'exit_code': 1, 'output': 'HF token file missing, empty, or unreadable: .hf_token'}},
+                'SGLang env script failed inside the container',
+            )
+        fail.assert_called_once()
+        message = fail.call_args.args[0]
+        self.assertIn('node-a', message)
+        self.assertIn('exit 1', message)
+        self.assertIn('missing, empty, or unreadable', message)
+        with mock.patch.object(sglang_common, 'fail_test') as fail:
+            sglang_common.record_container_exec_failure({'node-a': {'exit_code': 0, 'output': ''}}, 'ok')
+        fail.assert_not_called()
+
+    def _source_script(self, bash, cwd, script):
+        # The launch shell has no set -e. exit from the sourced script is what
+        # stops the following command. Keep the launch body in a file so a
+        # Windows bash stub cannot expand $HF_TOKEN before bash runs it.
+        with open(os.path.join(cwd, 'env.sh'), 'w', encoding='utf-8', newline='\n') as handle:
+            handle.write(script)
+        launch = (
+            'source ./env.sh\n'
+            'if [ -n "${HF_TOKEN+x}" ]; then printf %s "$HF_TOKEN"; else echo UNSET; fi\n'
+            'echo\n'
+            'echo LAUNCHED\n'
+        )
+        with open(os.path.join(cwd, 'launch.sh'), 'w', encoding='utf-8', newline='\n') as handle:
+            handle.write(launch)
+        return subprocess.run(
+            [bash, 'launch.sh'],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def _assert_source_blocks(self, bash, cwd, script):
+        proc = self._source_script(bash, cwd, script)
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn('LAUNCHED', proc.stdout)
+        self.assertNotIn('hf_supersecretvalue', proc.stdout + proc.stderr)
 
     def test_scrub_drops_token_and_keeps_path(self):
         secret = 'plain-token-value'

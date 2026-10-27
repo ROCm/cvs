@@ -26,6 +26,7 @@ from cvs.lib.inference.sglang.sglang_common import (
     first_output,
     hf_token_export_line,
     install_hf_token_log_redaction,
+    record_container_exec_failure,
     scrub_sglang_secrets,
     parse_inference_bench_results,
     perf_enforce_thresholds,
@@ -123,10 +124,10 @@ class SglangSingle:
         """HTTP client target when smoke/bench/lm-eval run inside the same container."""
         return resolve_client_host(self.inf_dict, unified_server=True)
 
-    def _container_exec(self, cmd: str, *, timeout: int | None = None) -> dict:
+    def _container_exec(self, cmd: str, *, timeout: int | None = None, detailed=False) -> dict:
         """Run ``cmd`` inside the container."""
         install_hf_token_log_redaction()
-        return self.orch.exec(cmd, timeout=timeout)
+        return self.orch.exec(cmd, timeout=timeout, detailed=detailed)
 
     def _container_exec_text(self, cmd: str, *, timeout: int | None = None) -> str:
         return first_output(self._container_exec(cmd, timeout=timeout))
@@ -167,7 +168,7 @@ class SglangSingle:
             f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
             f"export MODEL={self.bp_dict['model']}\n"
             f"export TP={self.bp_dict['tensor_parallelism']}\n"
-            f"{hf_token_export_line(self.inf_dict)}"
+            f"{hf_token_export_line(self.inf_dict, self.bp_dict.get('model'))}"
             f"{add_export_env_block(self.bp_dict, indent='')}\n"
         )
         write_cmd = "bash -c " + shlex.quote(
@@ -175,7 +176,10 @@ class SglangSingle:
             "chmod 700 /tmp/server_env_script.sh && /tmp/server_env_script.sh"
         )
         time.sleep(3)
-        self._container_exec(write_cmd)
+        record_container_exec_failure(
+            self._container_exec(write_cmd, detailed=True),
+            'SGLang env script failed inside the container',
+        )
         time.sleep(5)
 
     def launch_server(self, dtype='auto', kv_cache_dtype='auto') -> None:
@@ -196,13 +200,17 @@ class SglangSingle:
             f"    --log-level {self.inf_dict['log_level']}\n"
         )
         start_cmd = "bash -c " + shlex.quote(
+            "set -e\n"
             f"cat > /tmp/server_launch_script.sh <<'EOF'\n{launch_body}EOF\n"
             f"chmod 755 /tmp/server_launch_script.sh\n"
             f"mkdir -p {self.log_dir}/server_node\n"
             f"source /tmp/server_env_script.sh\n"
             f"nohup /tmp/server_launch_script.sh > {self.server_log_path} 2>&1 &"
         )
-        self._container_exec(start_cmd)
+        record_container_exec_failure(
+            self._container_exec(start_cmd, detailed=True),
+            'SGLang server launch failed inside the container',
+        )
         time.sleep(5)
 
     def poll_for_server_ready(self, no_of_iterations=16) -> None:
@@ -259,6 +267,7 @@ class SglangSingle:
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
         self._bench_num_prompts = int(i_dict['num_prompts'])
         inner = (
+            "set -e\n"
             f"mkdir -p {self.log_dir}/benchmark_node\n"
             f"source /tmp/server_env_script.sh\n"
             f"export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}}\n"

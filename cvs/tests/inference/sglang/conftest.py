@@ -388,10 +388,13 @@ def thresholds_dict(variant_config):
 
 @pytest.fixture(scope="module")
 def hf_token(variant_config):
-    """Confirm ``hf_token_file`` exists. The secret is not read into this process.
+    """Do not read the secret into this process.
 
-    The container loads that file itself when it sources the env script, so the
-    token value never enters pytest output, logs, or the shell command text.
+    The container loads ``hf_token_file`` when it sources the env script. For a
+    non-absolute model id that script exits non-zero on each node when the file
+    is missing, empty, or unreadable, and the launch shell stops before
+    ``nohup``. The token value never enters pytest output, logs, or the shell
+    command text.
     """
     path = variant_config.paths.hf_token_file
     if not os.path.isfile(path):

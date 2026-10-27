@@ -176,17 +176,66 @@ def scrub_sglang_secrets(value):
     return value
 
 
-def hf_token_export_line(inf_dict):
+def model_needs_hf_token(model_id):
+    """Hub ids are fetched inside the container. An absolute path is a local weight dir."""
+    model = str(model_id or '').strip()
+    return bool(model) and not model.startswith('/')
+
+
+def hf_token_export_line(inf_dict, model_id=''):
     """Shell that loads ``HF_TOKEN`` from ``hf_token_file`` at source time.
 
     The secret stays in the file. It is not written into the env script or into
     the command string that parallel SSH logs.
+
+    For a non-absolute model id the snippet ``exit``s when the file is missing,
+    empty, or unreadable. Sourcing that ``exit`` stops the launch shell before
+    ``nohup``. An absolute model path does not require a token.
     """
     path = str((inf_dict or {}).get('hf_token_file') or '').strip()
+    if model_needs_hf_token(model_id):
+        if not path:
+            return (
+                "echo 'HF token file is required for a Hugging Face model id but hf_token_file is unset' >&2\nexit 1\n"
+            )
+        quoted = shlex.quote(path)
+        return (
+            f"if [ ! -s {quoted} ] || [ ! -r {quoted} ]; then\n"
+            f"  echo 'HF token file missing, empty, or unreadable:' {quoted} >&2\n"
+            f"  exit 1\n"
+            f"fi\n"
+            f"HF_TOKEN=$(tr -d '[:space:]' < {quoted}) || exit 1\n"
+            f"if [ -z \"$HF_TOKEN\" ]; then\n"
+            f"  echo 'HF token file is empty:' {quoted} >&2\n"
+            f"  exit 1\n"
+            f"fi\n"
+            f"export HF_TOKEN\n"
+        )
     if not path:
         return ''
     quoted = shlex.quote(path)
     return f"if [ -s {quoted} ]; then\n  HF_TOKEN=$(tr -d '[:space:]' < {quoted})\n  export HF_TOKEN\nfi\n"
+
+
+def record_container_exec_failure(out_dict, message):
+    """Record a failure when a detailed container command did not exit 0.
+
+    ``orch.exec`` returns per-host output and does not raise on a non-zero status.
+    """
+    if not out_dict:
+        fail_test(f'{message}: no command result')
+        return
+    for node, result in out_dict.items():
+        if not isinstance(result, dict):
+            fail_test(f'{message} on {node}: missing exit status')
+            continue
+        code = result.get('exit_code')
+        if code != 0:
+            detail = str(result.get('output') or '').strip()
+            if detail:
+                fail_test(f'{message} on {node} (exit {code}): {detail}')
+            else:
+                fail_test(f'{message} on {node} (exit {code})')
 
 
 def redact_hf_token_text(text):
