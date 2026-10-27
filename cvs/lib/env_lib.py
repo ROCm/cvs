@@ -28,13 +28,18 @@ _LOCATION_WORDS = {"FILE", "PATH", "DIR"}
 
 _ASSIGNMENT = re.compile(r"(?<![A-Za-z0-9_])(?P<name>[A-Za-z_][A-Za-z0-9_]*)=")
 
-# One shell word: shlex-quoted inside an outer single-quoted string ('"'"'a b'"'"'),
-# ANSI-C quoted ($'a b'), single-quoted, double-quoted, or bare. Bare words keep
-# backslash escapes (a\ b) and stop at quotes, whitespace and shell operators so an
-# outer quote is never consumed.
-_VALUE_PATTERN = r"(?:'\"'\"'[^\n]*?'\"'\"'|\$'(?:[^'\\\n]|\\.)*'|'[^']*'|\"[^\"]*\"|(?:\\.|[^\s'\";&|<>()\\])+)"
+# One fragment of a shell word: shlex-quoted inside an outer single-quoted string
+# ('"'"'a b'"'"'), ANSI-C quoted ($'a b'), single-quoted, double-quoted, or one bare
+# character. Bare characters keep backslash escapes (a\ b) and exclude quotes,
+# whitespace and shell operators so an outer quote is never consumed.
+_FRAGMENT_PATTERN = (
+    r"(?:'\"'\"'[^\n]*?'\"'\"'|\$'(?:[^'\\\n]|\\.)*'|'[^']*'|\"(?:[^\"\\]|\\.)*\"|\\.|[^\s'\";&|<>()\\])"
+)
+# A shell word is adjacent fragments: shlex.quote("a'b") is 'a'"'"'b', one word.
+_VALUE_PATTERN = rf"(?:{_FRAGMENT_PATTERN})+"
 _VALUE = re.compile(_VALUE_PATTERN)
-# NAME=value as one quoted word (docker's -e 'HF_TOKEN=a b'): the value runs to the closing quote.
+# NAME=value as one quoted word (docker's -e 'HF_TOKEN=a b'): the value runs to the closing quote
+# and on through any fragments joined to it.
 _UNTIL_QUOTE = {"'": re.compile(r"[^'\n]*'"), '"': re.compile(r'[^"\n]*"')}
 
 _SECRET_FLAG = re.compile(
@@ -64,6 +69,10 @@ def _redact_assignments(text):
         quoted = _UNTIL_QUOTE[before].match(text, value_start) if before in _UNTIL_QUOTE else None
         if quoted:
             value_end = quoted.end() - 1
+            joined = _VALUE.match(text, quoted.end())
+            if joined:
+                # Keep the word's closing quote so the logged command stays balanced.
+                value_end = joined.end() - (text[joined.end() - 1] == before)
         else:
             bare = _VALUE.match(text, value_start)
             value_end = bare.end() if bare else value_start
