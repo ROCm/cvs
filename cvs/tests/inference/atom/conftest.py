@@ -15,8 +15,8 @@ from cvs.lib.inference.utils.inference_suite_lifecycle import (
     sort_lifecycle_items,
 )
 from cvs.lib.inference.atom.atom_config_loader import (
+    atom_container_block,
     load_variant,
-    orchestrator_container_from_variant,
     resolved_atom_image_pin,
 )
 from cvs.lib.inference.atom.atom_dmesg import capture_dmesg_timestamp
@@ -88,16 +88,6 @@ LIFECYCLE_RANK = {
 }
 
 
-def _deep_merge(base, override):
-    """Recursively merge ``override`` onto ``base`` (dicts merged key-wise; scalars/lists replaced)."""
-    if not (isinstance(base, dict) and isinstance(override, dict)):
-        return override
-    out = dict(base)
-    for k, v in override.items():
-        out[k] = _deep_merge(base[k], v) if k in base else v
-    return out
-
-
 @pytest.fixture(scope="module", autouse=True)
 def _capture_dmesg_start(orch, variant_config, lifecycle):
     if variant_config.platform.dmesg_scan:
@@ -130,11 +120,8 @@ def lifecycle():
 
 @pytest.fixture(scope="module")
 def orch(cluster_dict, variant_config, lifecycle):
-    container_block = _deep_merge(
-        cluster_dict.get("container", {}),
-        # also injects roles.server.env — do not replace with .container.model_dump()
-        orchestrator_container_from_variant(variant_config),
-    )
+    # also injects roles.server.env — do not replace with .container.model_dump()
+    container_block = atom_container_block(cluster_dict.get("container", {}), variant_config)
     testsuite_config = {
         "orchestrator": "container",
         "container": container_block,
