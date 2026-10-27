@@ -31,21 +31,23 @@ _ECC_NUM_COL_W = 9
 _ECC_SMI_TIMEOUT = 60
 
 
-def _amd_smi_json_command(args: str, use_sudo=True) -> str:
+def _amd_smi_json_command(args: str, use_sudo=True, strict=False) -> str:
     """Build a portable amd-smi JSON command for nodes with different install paths.
 
     use_sudo defaults to True so existing callers keep ``sudo bash -lc``. Host checks
     on a scheduler job pass False: bare ``sudo`` waits for a password on the HTTP
     agent, and firmware JSON is readable without root. A missing binary prints
     ``[]`` and exits 0, so the JSON parser gets an empty payload instead of a
-    failed command.
+    failed command. With ``strict`` it prints an error and exits 127 with no JSON
+    instead, so the caller's JSON parse fails.
     """
     privilege = "sudo " if use_sudo else ""
+    missing = "echo \"amd-smi not found\" >&2; exit 127" if strict else "echo \"[]\"; exit 0"
     return (
         f"{privilege}bash -lc '"
         "if command -v amd-smi >/dev/null 2>&1; then AMD_SMI=$(command -v amd-smi); "
         "elif [ -x /opt/rocm/bin/amd-smi ]; then AMD_SMI=/opt/rocm/bin/amd-smi; "
-        "else echo \"[]\"; exit 0; fi; "
+        f"else {missing}; fi; "
         "\"${AMD_SMI}\" "
         f"{args} --json'"
     )
@@ -527,11 +529,11 @@ def get_gpu_fw_dict(phdl):
 def get_gpu_pcie_bus_dict(phdl, use_sudo=True):
     """Return ``{node: {'card<N>': {'PCI Bus': <bdf>}}}`` from ``amd-smi list``.
 
-    With sudo a missing amd-smi fails the JSON parse, as rocm-smi did. Without
-    sudo the node maps to ``{}``, so callers walking every card never KeyError on it.
+    amd-smi is found on PATH or at /opt/rocm/bin. With sudo a node that has neither
+    fails the JSON parse, as rocm-smi did. Without sudo it maps to ``{}``, so callers
+    walking every card never KeyError on it.
     """
-    cmd = 'sudo amd-smi list --json' if use_sudo else _amd_smi_json_command('list', use_sudo=False)
-    d_dict = convert_phdl_json_to_dict(phdl.exec(cmd))
+    d_dict = convert_phdl_json_to_dict(phdl.exec(_amd_smi_json_command('list', use_sudo, strict=use_sudo)))
     for node, payload in d_dict.items():
         gpus = [g for g in _iter_amd_smi_gpu_dicts(payload) if isinstance(g, dict) and 'gpu' in g and 'bdf' in g]
         d_dict[node] = {f"card{gpu['gpu']}": {'PCI Bus': gpu['bdf']} for gpu in gpus}
