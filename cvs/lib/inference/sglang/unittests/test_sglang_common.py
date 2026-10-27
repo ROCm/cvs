@@ -388,8 +388,14 @@ class TestHfTokenRedaction(unittest.TestCase):
             {
                 'hf_token_file': '/home/user/.hf_token',
                 'HF_TOKEN': secret,
+                'Hf_Token': secret,
                 'container_config': {'env_dict': {'HUGGING_FACE_HUB_TOKEN': secret, 'NCCL_DEBUG': 'ERROR'}},
-                'add_export_env': [f'HF_TOKEN={secret}', 'export hf_token={secret}', 'SGLANG_USE_AITER=1'],
+                'add_export_env': [
+                    f'HF_TOKEN={secret}',
+                    f'export hf_token={secret}',
+                    f'hugging_face_hub_token={secret}',
+                    'SGLANG_USE_AITER=1',
+                ],
             }
         )
         blob = str(cleaned)
@@ -406,6 +412,12 @@ class TestHfTokenRedaction(unittest.TestCase):
         )
         self.assertNotIn(secret, block)
         self.assertIn('export SGLANG_USE_AITER=1', block)
+        mixed = sglang_common.add_export_env_block(
+            {'add_export_env': [f'hugging_face_hub_token={secret}', f'Hf_Token={secret}', 'SGLANG_USE_AITER=1']},
+            indent='',
+        )
+        self.assertNotIn(secret, mixed)
+        self.assertEqual(mixed, 'export SGLANG_USE_AITER=1')
 
     def test_logged_env_command_does_not_contain_token(self):
         secret = 'hf_supersecretvalue'
@@ -427,6 +439,8 @@ class TestHfTokenRedaction(unittest.TestCase):
         self.assertNotIn(secret, redacted)
         self.assertIn('/home/user/.hf_token', redacted)
         self.assertIn('<redacted>', redacted)
+        command_sub = "HF_TOKEN=$(tr -d '[:space:]' < /home/user/.hf_token)"
+        self.assertEqual(sglang_common.redact_hf_token_text(command_sub), command_sub)
 
     def test_log_filter_redacts_formatted_dict(self):
         secret = 'hf_supersecretvalue'

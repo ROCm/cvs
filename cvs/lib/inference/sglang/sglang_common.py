@@ -121,17 +121,18 @@ def _normalize_cli_flags(raw: Any) -> list[str]:
 
 
 _SECRET_ENV_KEYS = frozenset(
-    {
+    key.casefold()
+    for key in (
         'HF_TOKEN',
         'HUGGING_FACE_HUB_TOKEN',
         'HUGGINGFACE_HUB_TOKEN',
         'hf_token',
-    }
+    )
 )
 
 _SECRET_ASSIGN_RE = re.compile(
     r"(?i)((?:HF_TOKEN|HUGGING_FACE_HUB_TOKEN|HUGGINGFACE_HUB_TOKEN|hf_token)\s*=\s*)"
-    r"(?:'[^']*'|\"[^\"]*\"|\S+)"
+    r"(?:'[^']*'|\"[^\"]*\"|(?!\$\()\S+)"
 )
 _SECRET_MAPPING_RE = re.compile(
     r"""(?i)(['"])(HF_TOKEN|HUGGING_FACE_HUB_TOKEN|HUGGINGFACE_HUB_TOKEN|hf_token)\1(\s*:\s*)(['"])[^'"]*\4"""
@@ -150,7 +151,7 @@ def _secret_assignment_key(text):
 
 def is_secret_env_assignment(text):
     """True when ``text`` assigns a Hugging Face token env var."""
-    return _secret_assignment_key(text) in _SECRET_ENV_KEYS
+    return _secret_assignment_key(text).casefold() in _SECRET_ENV_KEYS
 
 
 def scrub_sglang_secrets(value):
@@ -162,7 +163,7 @@ def scrub_sglang_secrets(value):
     if isinstance(value, dict):
         cleaned = {}
         for key, item in value.items():
-            if str(key) in _SECRET_ENV_KEYS:
+            if str(key).casefold() in _SECRET_ENV_KEYS:
                 continue
             cleaned[key] = scrub_sglang_secrets(item)
         return cleaned
