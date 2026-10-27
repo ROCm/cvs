@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - vLLM configs that set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` in `container.env` now fail to load; set `paths.hf_token_file` instead, on a path mounted in the container on each node.
+- ATOM reads the Hugging Face token from `paths.hf_token_file` and mounts that file read-only in the container. The file must exist and be non-empty on every node. `HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, and `HUGGINGFACE_HUB_TOKEN` in the container environment are dropped.
 - ibperf:
   - A node with no partner in the discovered NIC set fails and is excluded, instead of running as a server with no client.
   - Each node's perftest binary must support ROCm DMA-BUF, unless `ibperf.require_dmabuf` is `"False"`.

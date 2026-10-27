@@ -586,9 +586,20 @@ def orchestrator_container_from_variant(variant: AtomVariantConfig) -> dict[str,
 def atom_container_block(cluster_container, variant):
     """Merge cluster and variant container config, then bind the token file.
 
+    Secret env keys are removed after the merge. Stripping the variant first
+    would leave a token set in the cluster ``container.env`` or in
+    ``runtime.args.env``, and both of those become ``docker -e`` flags.
     The token volume is appended after the merge. Putting it on the variant
     block first would replace cluster fallback volumes, because list values
     are replaced rather than concatenated.
     """
     merged = _deep_merge(cluster_container or {}, orchestrator_container_from_variant(variant))
+    blocks = [merged]
+    runtime = merged.get("runtime") if isinstance(merged, dict) else None
+    args = runtime.get("args") if isinstance(runtime, dict) else None
+    if isinstance(args, dict):
+        blocks.append(args)
+    for block in blocks:
+        if isinstance(block, dict) and isinstance(block.get("env"), dict):
+            block["env"] = _without_secret_env(block["env"])
     return bind_hf_token_volume(merged, variant.paths.hf_token_file)

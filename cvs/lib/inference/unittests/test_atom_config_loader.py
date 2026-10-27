@@ -253,6 +253,72 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             ["/cluster:/cluster", f"/home/x/.hf:{CONTAINER_HF_TOKEN_PATH}:ro"],
         )
 
+    def _token_mount_variant(self, container):
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="legacy_profile", isl="7168", osl="1024")],
+            runs=[Run(combo="legacy_profile", concurrency=64)],
+        )
+        thresholds = {
+            "ISL=7168,OSL=1024,TP=8,PP=1,CONC=64": placeholder_gated_threshold_cell(),
+        }
+        return AtomVariantConfig(
+            schema_version=1,
+            framework="atom",
+            gpu_arch="mi3xx",
+            enforce_thresholds=False,
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "openai/gpt-oss-120b", "remote": 0, "precision": "bf16"},
+            container=container,
+            params={"tensor_parallelism": "8"},
+            sweep=sweep,
+            thresholds=thresholds,
+        )
+
+    def test_merged_container_strips_cluster_env_token(self):
+        variant = self._token_mount_variant(
+            {
+                "name": "c",
+                "image": "img",
+                "runtime": {"name": "docker", "args": {}},
+            }
+        )
+        cluster = {
+            "env": {"HF_TOKEN": "from-cluster", "KEEP_ME": "1"},
+            "runtime": {"name": "docker", "args": {"volumes": ["/cluster:/cluster"]}},
+        }
+        block = atom_container_block(cluster, variant)
+        self.assertNotIn("HF_TOKEN", block["env"])
+        self.assertNotIn("from-cluster", str(block))
+        self.assertEqual(block["env"]["KEEP_ME"], "1")
+
+    def test_merged_container_strips_runtime_args_env_token(self):
+        variant = self._token_mount_variant(
+            {
+                "name": "c",
+                "image": "img",
+                "runtime": {
+                    "name": "docker",
+                    "args": {
+                        "env": {
+                            "HF_TOKEN": "from-runtime-args",
+                            "HUGGINGFACE_HUB_TOKEN": "from-runtime-alias",
+                            "KEEP_FLAG": "1",
+                        }
+                    },
+                },
+            }
+        )
+        block = atom_container_block({}, variant)
+        self.assertEqual(block["runtime"]["args"]["env"], {"KEEP_FLAG": "1"})
+        rendered = str(block)
+        self.assertNotIn("from-runtime-args", rendered)
+        self.assertNotIn("from-runtime-alias", rendered)
+
     def test_expand_sweep_matches_w1_single(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_single.json")

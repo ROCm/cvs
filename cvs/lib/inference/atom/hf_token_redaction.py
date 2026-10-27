@@ -16,8 +16,9 @@ _SECRET_ASSIGN_RE = re.compile(
 _SECRET_MAPPING_RE = re.compile(
     r"""(?i)(['"])(HF_TOKEN|HUGGING_FACE_HUB_TOKEN|HUGGINGFACE_HUB_TOKEN|hf_token)\1(\s*:\s*)(['"])[^'"]*\4"""
 )
-# ``hf_`` plus 8 or more alphanumerics. ``.hf_token`` stays because ``token`` is shorter.
-_HF_VALUE_RE = re.compile(r"\bhf_[A-Za-z0-9]{8,}\b")
+# Real hub tokens are much longer than package names such as ``hf_transfer``.
+# ``.hf_token`` stays because ``token`` is only 5 characters.
+_HF_VALUE_RE = re.compile(r"\bhf_[A-Za-z0-9]{30,}\b")
 
 
 def redact_hf_token_text(text):

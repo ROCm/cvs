@@ -27,6 +27,17 @@ class TestRedactHfTokenText(unittest.TestCase):
         self.assertEqual(redact_hf_token_text(""), "")
         self.assertIsNone(redact_hf_token_text(None))
 
+    def test_leaves_hf_transfer_package_name(self):
+        text = "No module named 'hf_transfer'"
+        self.assertEqual(redact_hf_token_text(text), text)
+
+    def test_redacts_long_hf_value(self):
+        raw_value = "hf_" + ("a" * 34)
+        redacted = redact_hf_token_text(f"saw {raw_value} in /home/user/.hf_token")
+        self.assertNotIn(raw_value, redacted)
+        self.assertIn("/home/user/.hf_token", redacted)
+        self.assertIn("<redacted>", redacted)
+
 
 class TestHfTokenLogFilter(unittest.TestCase):
     def test_log_filter_redacts_formatted_message(self):
