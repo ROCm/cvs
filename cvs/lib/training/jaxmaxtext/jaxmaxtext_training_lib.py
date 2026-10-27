@@ -43,6 +43,23 @@ log = globals.log
 _TB_COLLECT_TIMEOUT_S = 120
 _TB_COLLECT_MAX_BYTES = 200 * 1024 * 1024
 
+
+def _hf_token_export(token_file):
+    """Shell line that exports ``HF_TOKEN`` by reading ``token_file`` *inside the
+    container* (as SGLang/vLLM do).
+
+    The secret stays in the file and never appears in the command string, which
+    the orchestrator logs. A missing or empty file yields an empty ``HF_TOKEN``
+    (a gated HF download then fails fast rather than continuing with a blank
+    token).
+    """
+    path = str(token_file or "").strip()
+    if not path:
+        return "export HF_TOKEN="
+    quoted = shlex.quote(path)
+    return f"if [ -f {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; else export HF_TOKEN=; fi"
+
+
 # Bound lazily to cvs.lib.verify_lib.verify_dmesg_for_errors on first use so this
 # module stays importable without the broader utils stack that verify_lib pulls
 # in (rocm_plib, node_scraper, pytest, ...). Tests patch this symbol directly.
@@ -139,10 +156,9 @@ class MaxTextTrainingJob:
     owned here.
     """
 
-    def __init__(self, orch, variant, hf_token, sweep=None):
+    def __init__(self, orch, variant, sweep=None):
         self.orch = orch
         self.variant = variant
-        self.hf_token = hf_token
         self.training = variant.training
 
         # Per-sweep run: merge the sweep's maxtext overrides onto the base config,
@@ -542,10 +558,10 @@ class MaxTextTrainingJob:
             log.info("tokenizer.hf_model_id not set, skipping download")
             return
 
-        # Credentials inline: this stage runs before setup_training_env() writes
-        # the env script, so sourcing that file here would fail.
+        # Read the token from its file inside the container so the secret never
+        # enters the (logged) command string.
         dl_cmd = (
-            f"export HF_TOKEN={shlex.quote(self.hf_token)} && "
+            f"{_hf_token_export(self.variant.paths.hf_token_file)} && "
             f"export HF_HOME={shlex.quote(self.variant.paths.models_dir)} && "
             f"hf download {shlex.quote(hf_model)} --local-dir {shlex.quote(tok.tokenizer_path)}"
         )
@@ -578,7 +594,7 @@ class MaxTextTrainingJob:
         for i in range(self.num_nodes):
             launcher_lines = [
                 "#!/bin/bash",
-                f"export HF_TOKEN={shlex.quote(self.hf_token)}",
+                _hf_token_export(self.variant.paths.hf_token_file),
                 f"export HF_HOME={shlex.quote(self.variant.paths.models_dir)}",
                 "export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH",
                 f"export JAX_COORDINATOR_IP={shlex.quote(coordinator_ip)}",
