@@ -78,7 +78,7 @@ Fill in the placeholders
 -------------------------
 
 Replace every ``<changeme>`` before the run. ``{user-id}`` is not a
-``<changeme>``: it substitutes to the login name of the ``cvs run`` process
+``<changeme>``: it is replaced with the login name of the ``cvs run`` process
 unless the cluster file sets ``username``.
 
 In the **cluster file**, set your SSH user, private key path, and node

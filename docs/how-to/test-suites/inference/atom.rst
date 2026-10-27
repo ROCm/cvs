@@ -229,7 +229,7 @@ Reports and logs
 Launcher vs GPU node
 ====================
 
-SSH and jumphost labs: ``cvs run`` and the venv live on the **launcher**. Spur or
+SSH and jumphost labs: ``cvs run`` and the venv live on the **launcher**. SPUR or
 Slurm managed labs: ``cvs run`` and ``make install`` run **inside the job step**
 on the GPU node (shared home for ``~/input/`` and reports).
 
@@ -240,7 +240,7 @@ on the GPU node (shared home for ``~/input/`` and reports).
    * - Item
      - SSH launcher
      - GPU node (SSH lab)
-     - GPU node (Spur or Slurm step)
+     - GPU node (SPUR or Slurm step)
    * - ``cvs run``, venv, reports
      - Yes
      - No

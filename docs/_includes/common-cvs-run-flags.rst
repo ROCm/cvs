@@ -4,7 +4,7 @@
 
 **Conditionally required**
 
-- ``--cluster_file``: Cluster JSON with node list, SSH credentials, and execution backend. Required unless ``cvs run`` is launched as a Slurm/SPUR job step (see :doc:`/how-to/run-on-managed-compute` for more info). Read more at :doc:`/reference/cluster/cluster-file`.
+- ``--cluster_file``: Cluster JSON with node list, SSH credentials, and execution backend. Read more at :doc:`/reference/cluster/cluster-file`. Required unless ``cvs run`` is launched as a Slurm/SPUR job step (see :doc:`/how-to/run-on-managed-compute`). 
 
 **Optional**
 

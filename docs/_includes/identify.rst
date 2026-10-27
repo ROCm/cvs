@@ -9,7 +9,7 @@ active venv):
    * - Command
      - Installation method
    * - ``ls .cvs_venv/bin/cvs`` 
-     - Makefile (``make install``) if the command is succesful
+     - Makefile (``make install``) if the command is successful
    * - ``ls <venv>/bin/cvs`` 
      - pip into a virtual environment if the command succeeds for a venv you created
    * - ``docker images cvs`` 

@@ -122,7 +122,7 @@ The MORI config's ``container`` object is deep-merged over the cluster file's ``
      - Extra ``host:container`` mounts, appended after ``/home/<user running cvs>/.ssh:/host_ssh``. Add a mount here when the image needs a host library.
    * - ``env``
      - See the sample
-     - Exported on every benchmark command. This is separate from ``container.env``. ``MORI_RDMA_DEVICES`` is the device list checked in ``ibv_devinfo``. ``LD_LIBRARY_PATH`` might append ``$LD_LIBRARY_PATH``. ``NCCL_SOCKET_IFNAME`` and ``GLOO_SOCKET_IFNAME`` are exported the same way.
+     - Exported on every benchmark command. This is separate from ``container.env``. ``MORI_RDMA_DEVICES`` is the device list checked in ``ibv_devinfo``. ``LD_LIBRARY_PATH`` can append ``$LD_LIBRARY_PATH``. ``NCCL_SOCKET_IFNAME`` and ``GLOO_SOCKET_IFNAME`` are exported the same way.
    * - ``mori_dir``
      - ``<changeme>``
      - Working directory. I/O runs ``<mori_dir>/tests/python/io/benchmark.py``. IBGDA and the put binaries run under ``<mori_dir>/build/examples/``. Required.

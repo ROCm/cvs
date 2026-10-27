@@ -6,7 +6,7 @@
 Cluster Validation Suite (CVS) cluster file: configuration and backend selection
 ********************************************************************************
 
-In SSH mode, each ``cvs run`` invocation is pointed at a cluster file using ``--cluster_file <path>``. The cluster file declares the SSH credentials, the node list, and an ``orchestrator`` value. Which suites follow that value is in the scope table below. CVS ships two starter templates:
+In SSH mode, each ``cvs run`` invocation is pointed at a cluster file using ``--cluster_file <path>``. The cluster file declares the SSH credentials, the node list, and an ``orchestrator`` value. Which suites follow that value is in the scope table below.
 
 .. note::
 

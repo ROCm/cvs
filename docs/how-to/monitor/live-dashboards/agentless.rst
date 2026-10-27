@@ -93,4 +93,4 @@ Other deployment options
   
   You should use ``docker-compose`` and port **8005** on the host — some older examples in that file reference port 8001 on the host.
 
-For Prometheus-/Grafana-based monitoring with exporters installed on nodes, see :doc:`/how-to/monitor/live-dashboards/exporters`.
+To monitor with Prometheus and Grafana using exporters installed on nodes, see :doc:`/how-to/monitor/live-dashboards/exporters`.
