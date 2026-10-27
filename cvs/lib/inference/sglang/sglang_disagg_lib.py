@@ -26,6 +26,10 @@ from cvs.lib.inference.sglang.sglang_common import (
     add_cli_flags_block,
     add_export_env_block,
     collect_sglang_gpu_topology,
+    hf_token_export_line,
+    install_hf_token_log_redaction,
+    record_container_exec_failure,
+    scrub_sglang_secrets,
     first_output,
     format_sglang_gpu_topology_lines,
     normalize_hosts,
@@ -85,7 +89,7 @@ class SglangDisaggPD:
             model_name (str): HuggingFace or local model identifier
             inference_config_dict (dict): Cluster and runtime configuration
             benchmark_params_dict (dict): Benchmark workload parameters
-            hf_token (str): HuggingFace access token
+            hf_token (str): ignored. The container reads ``hf_token_file`` so the secret is never logged.
             orch: Required ``ContainerOrchestrator`` instance
             gpu_type (str): GPU type (e.g., mi300, mi325)
             user_name (str): SSH username for remote nodes (optional override)
@@ -94,15 +98,18 @@ class SglangDisaggPD:
         if orch is None:
             raise ValueError("SglangDisaggPD requires orch= (ContainerOrchestrator)")
 
+        install_hf_token_log_redaction()
         self.orch = orch
         self.user_name = user_name
         self.priv_key_file = priv_key_file
         self.model_name = model_name
-        self.hf_token = hf_token
         self.gpu_type = gpu_type
+        # Callers may pass hf_token. It is discarded so the value cannot reach logs or scripts.
+        self.hf_token = ""
+        del hf_token
 
-        self.inf_dict = inference_config_dict
-        self.bp_dict = benchmark_params_dict
+        self.inf_dict = scrub_sglang_secrets(inference_config_dict)
+        self.bp_dict = scrub_sglang_secrets(benchmark_params_dict)
 
         self.prefill_node_list = normalize_hosts(self.inf_dict['prefill_node_list'])
         self.decode_node_list = normalize_hosts(self.inf_dict['decode_node_list'])
@@ -166,10 +173,12 @@ class SglangDisaggPD:
         *,
         hosts=None,
         timeout: int | None = None,
+        detailed=False,
     ) -> dict:
         """Run ``cmd`` inside the container on ``hosts`` (default: all orch hosts)."""
+        install_hf_token_log_redaction()
         normalized = normalize_hosts(hosts) if hosts is not None else None
-        return self.orch.exec(cmd, hosts=normalized, timeout=timeout)
+        return self.orch.exec(cmd, hosts=normalized, timeout=timeout, detailed=detailed)
 
     def _container_exec_text(
         self,
@@ -188,6 +197,7 @@ class SglangDisaggPD:
         timeout: int | None = None,
     ) -> dict:
         """Run ``cmd`` on baremetal (``orch.head`` / ``orch.all``), e.g. amd-smi / dmesg."""
+        install_hf_token_log_redaction()
         if hosts is None:
             return self.orch.head.exec(cmd, timeout=timeout)
         normalized = normalize_hosts(hosts)
@@ -334,15 +344,18 @@ class SglangDisaggPD:
             f"export MODEL={self.bp_dict['model']}\n"
             f"export TP={self.bp_dict['tensor_parallelism']}\n"
             f"export PP={self.bp_dict['pipeline_parallelism']}\n"
-            f"export HF_TOKEN={self.hf_token}\n"
+            f"{hf_token_export_line(self.inf_dict, self.bp_dict.get('model'))}"
             f"{add_export_env_block(self.bp_dict, indent='')}\n"
         )
         write_cmd = "bash -c " + shlex.quote(
             f"cat > /tmp/prefill_env_script.sh <<'EOF'\n{env_body}EOF\n"
-            "chmod 755 /tmp/prefill_env_script.sh && /tmp/prefill_env_script.sh"
+            "chmod 700 /tmp/prefill_env_script.sh && /tmp/prefill_env_script.sh"
         )
         time.sleep(3)
-        self._container_exec(write_cmd, hosts=self.prefill_node_list)
+        record_container_exec_failure(
+            self._container_exec(write_cmd, hosts=self.prefill_node_list, detailed=True),
+            'SGLang prefill env script failed inside the container',
+        )
 
     def setup_decode_container_env(
         self,
@@ -362,15 +375,18 @@ class SglangDisaggPD:
             f"export MODEL={self.bp_dict['model']}\n"
             f"export TP={self.bp_dict['tensor_parallelism']}\n"
             f"export PP={self.bp_dict['pipeline_parallelism']}\n"
-            f"export HF_TOKEN={self.hf_token}\n"
+            f"{hf_token_export_line(self.inf_dict, self.bp_dict.get('model'))}"
             f"{add_export_env_block(self.bp_dict, indent='')}\n"
         )
         write_cmd = "bash -c " + shlex.quote(
             f"cat > /tmp/decode_env_script.sh <<'EOF'\n{env_body}EOF\n"
-            "chmod 755 /tmp/decode_env_script.sh && /tmp/decode_env_script.sh"
+            "chmod 700 /tmp/decode_env_script.sh && /tmp/decode_env_script.sh"
         )
         time.sleep(3)
-        self._container_exec(write_cmd, hosts=self.decode_node_list)
+        record_container_exec_failure(
+            self._container_exec(write_cmd, hosts=self.decode_node_list, detailed=True),
+            'SGLang decode env script failed inside the container',
+        )
 
     def setup_proxy_router_container_env(
         self,
@@ -385,14 +401,17 @@ class SglangDisaggPD:
             f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
-            f"export HF_TOKEN={self.hf_token}\n"
+            f"{hf_token_export_line(self.inf_dict, self.bp_dict.get('model'))}"
         )
         write_cmd = "bash -c " + shlex.quote(
             f"cat > /tmp/router_env_script.sh <<'EOF'\n{env_body}EOF\n"
-            "chmod 755 /tmp/router_env_script.sh && /tmp/router_env_script.sh"
+            "chmod 700 /tmp/router_env_script.sh && /tmp/router_env_script.sh"
         )
         time.sleep(3)
-        self._container_exec(write_cmd, hosts=self.proxy_node)
+        record_container_exec_failure(
+            self._container_exec(write_cmd, hosts=self.proxy_node, detailed=True),
+            'SGLang router env script failed inside the container',
+        )
 
     def setup_benchmark_serv_container_env(
         self,
@@ -407,14 +426,17 @@ class SglangDisaggPD:
             f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
             f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
-            f"export HF_TOKEN={self.hf_token}\n"
+            f"{hf_token_export_line(self.inf_dict, self.bp_dict.get('model'))}"
         )
         write_cmd = "bash -c " + shlex.quote(
             f"cat > /tmp/benchmark_env_script.sh <<'EOF'\n{env_body}EOF\n"
-            "chmod 755 /tmp/benchmark_env_script.sh && /tmp/benchmark_env_script.sh"
+            "chmod 700 /tmp/benchmark_env_script.sh && /tmp/benchmark_env_script.sh"
         )
         time.sleep(3)
-        self._container_exec(write_cmd, hosts=self.benchmark_serv_node)
+        record_container_exec_failure(
+            self._container_exec(write_cmd, hosts=self.benchmark_serv_node, detailed=True),
+            'SGLang benchmark env script failed inside the container',
+        )
         time.sleep(5)
 
     def run_test_rmsnorm(self, max_jobs=192):
@@ -522,13 +544,17 @@ class SglangDisaggPD:
         for i in range(0, int(self.prefill_nnodes)):
             node = prefill_node_list[i]
             start_cmd = "bash -c " + shlex.quote(
+                "set -e\n"
                 f"chmod 755 /tmp/prefill_launch_script.sh\n"
                 f"mkdir -p {self.log_dir}/prefill_node{i}\n"
                 f"source /tmp/prefill_env_script.sh\n"
                 f"nohup /tmp/prefill_launch_script.sh > "
                 f"{self.log_dir}/prefill_node{i}/prefill_server.log 2>&1 &"
             )
-            self._container_exec(start_cmd, hosts=[node])
+            record_container_exec_failure(
+                self._container_exec(start_cmd, hosts=[node], detailed=True),
+                'SGLang prefill launch failed inside the container',
+            )
         time.sleep(5)
 
     def launch_decode_servers(self, dtype='auto', kv_cache_dtype='auto'):
@@ -594,13 +620,17 @@ class SglangDisaggPD:
         for i in range(0, int(self.decode_nnodes)):
             node = decode_node_list[i]
             start_cmd = "bash -c " + shlex.quote(
+                "set -e\n"
                 f"chmod 755 /tmp/decode_launch_script.sh\n"
                 f"mkdir -p {self.log_dir}/decode_node{i}\n"
                 f"source /tmp/decode_env_script.sh\n"
                 f"nohup bash /tmp/decode_launch_script.sh > "
                 f"{self.log_dir}/decode_node{i}/decode_server.log 2>&1 &"
             )
-            self._container_exec(start_cmd, hosts=[node])
+            record_container_exec_failure(
+                self._container_exec(start_cmd, hosts=[node], detailed=True),
+                'SGLang decode launch failed inside the container',
+            )
 
     def poll_and_check_server_ready(
         self,
@@ -674,13 +704,17 @@ class SglangDisaggPD:
         log.info('Launch Proxy Router script on Proxy Router nodes')
         log.info('#================ * * * =========================#')
         start_cmd = "bash -c " + shlex.quote(
+            "set -e\n"
             f"chmod 755 /tmp/proxy_router_launch_script.sh\n"
             f"mkdir -p {self.log_dir}/proxy_router_node\n"
             f"source /tmp/router_env_script.sh\n"
             f"nohup bash /tmp/proxy_router_launch_script.sh > "
             f"{self.log_dir}/proxy_router_node/proxy_router.log 2>&1 &"
         )
-        self._container_exec(start_cmd, hosts=self.proxy_node)
+        record_container_exec_failure(
+            self._container_exec(start_cmd, hosts=self.proxy_node, detailed=True),
+            'SGLang proxy router launch failed inside the container',
+        )
         log.info('Waiting 120 secs after launching proxy router script')
         time.sleep(120)
 
@@ -710,6 +744,7 @@ class SglangDisaggPD:
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
         self._bench_num_prompts = int(i_dict['num_prompts'])
         inner = (
+            "set -e\n"
             f"mkdir -p {self.log_dir}/benchmark_node\n"
             f"source /tmp/benchmark_env_script.sh\n"
             f"export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}}\n"
