@@ -2,9 +2,9 @@
   :description: Run xDiT diffusion inference tests for FLUX.1, FLUX.2, and WAN 2.2 workloads on AMD Instinct GPU clusters with CVS and ROCm.
   :keywords: CVS, xDiT, inference, AMD Instinct, ROCm, AMD, GPU, FLUX, WAN, diffusion, distributed, PyTorch, CLIPScore
 
-**************************************************
+**********************************************************************
 Run xDiT diffusion inference tests with Cluster Validation Suite (CVS)
-**************************************************
+**********************************************************************
 
 CVS provides five xDiT suites under |cvs-tests-inference-xdit|_. Each suite is a
 separate pytest module; pick the one that matches your topology and launcher, then point
