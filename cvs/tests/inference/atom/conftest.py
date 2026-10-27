@@ -20,6 +20,7 @@ from cvs.lib.inference.atom.atom_config_loader import (
     resolved_atom_image_pin,
 )
 from cvs.lib.inference.atom.atom_dmesg import capture_dmesg_timestamp
+from cvs.lib.inference.atom.hf_token_redaction import install_hf_token_log_redaction
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
 log = globals.log
@@ -168,6 +169,11 @@ def server_session():
 @pytest.fixture(scope="module")
 def inf_res_dict():
     return {}
+
+
+def pytest_configure(config):
+    del config
+    install_hf_token_log_redaction()
 
 
 def pytest_collection_modifyitems(items):
