@@ -15,6 +15,7 @@ import pytest
 from cvs.lib import ibperf_lib, ibperf_reporting
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib.rdma_gid_lib import DEFAULT_GID_TYPE
+from cvs.tests.ibperf.conftest import IbperfOrch, close_orch, launch_containers, teardown_containers
 
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
@@ -50,8 +51,8 @@ def pytest_generate_tests(metafunc):
 
 
 def _fail_unmapped_gpus(orch):
-    """Map GPUs to RDMA NICs on orch.all, failing each card left without one before perftest starts."""
-    gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(orch.all, use_sudo=False)
+    """Map GPUs to RDMA NICs on orch, failing each card left without one before perftest starts."""
+    gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(orch, use_sudo=False)
     for node, card_dict in gpu_nic_dict.items():
         for card, nic_info in card_dict.items():
             if not nic_info.get('rdma_dev'):
@@ -89,14 +90,19 @@ def node_pairing(cluster_dict, config_dict):
 
 
 @pytest.fixture(scope="module")
-def orch(cluster_dict, node_pairing):
+def orch(cluster_dict, node_pairing, lifecycle):
     """Orchestrator over the paired nodes only; overrides the suite conftest's even-prefix ``orch``."""
     node_list = [node for pair in node_pairing['pairs'] for node in pair]
     log.info('Connecting to %d paired cluster nodes', len(node_list))
     log.debug('Paired cluster nodes: %s', node_list)
     o = _create_orch(cluster_dict, node_list)
-    yield o
-    o.close()
+    view = IbperfOrch(o)
+    yield view
+    close_orch(view, lifecycle)
+
+
+def test_launch_containers(orch, lifecycle):
+    launch_containers(orch, lifecycle)
 
 
 def can_read_dmesg(orch):
@@ -114,10 +120,10 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibper
     globals.error_list = []
     ib_bw_dict[bw_test] = {}
     scan_dmesg = can_read_dmesg(orch)
-    rocm_path = ibperf_lib.detect_rocm_path(orch.all, config_dict.get('rocm_dir', ''))
+    rocm_path = ibperf_lib.detect_rocm_path(orch, config_dict.get('rocm_dir', ''))
     app_path = f'{config_dict["install_dir"]}/perftest/bin'
     use_dmabuf = ibperf_lib.check_perftest_dmabuf(
-        orch.all,
+        orch,
         f'{app_path}/{bw_test}',
         rocm_path=rocm_path,
         require_dmabuf=ibperf_lib.is_dmabuf_required(config_dict),
@@ -128,12 +134,12 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibper
 
     gpu_nic_dict = _fail_unmapped_gpus(orch)
     update_test_result()
-    gpu_numa_dict = linux_utils.get_gpu_numa_dict(orch.all, use_sudo=False)
-    hip_dev_dict = ibperf_lib.get_hip_device_dict(orch.all, gpu_nic_dict)
+    gpu_numa_dict = linux_utils.get_gpu_numa_dict(orch, use_sudo=False)
+    hip_dev_dict = ibperf_lib.get_hip_device_dict(orch, gpu_nic_dict)
     _note_run_facts(ibperf_variant_config, use_dmabuf, gpu_nic_dict)
 
-    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(orch.all, use_sudo=False)
-    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(orch.all)
+    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(orch, use_sudo=False)
+    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(orch)
 
     bck_nic_dict = {}
     for node in rdma_nic_dict.keys():
@@ -143,7 +149,7 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibper
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
     gid_index = ibperf_lib.resolve_gid_index(
-        orch.all,
+        orch,
         ibperf_lib.get_ibperf_rdma_devices(gpu_nic_dict, bck_nic_dict),
         config_dict.get('gid_index'),
         config_dict.get('gid_type', DEFAULT_GID_TYPE),
@@ -159,7 +165,7 @@ def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibper
                     print_console=False,
                 )
             ib_bw_dict[bw_test][msg_size][qp_count] = ibperf_lib.run_ib_perf_bw_test(
-                orch.all,
+                orch,
                 bw_test,
                 gpu_numa_dict,
                 gpu_nic_dict,
@@ -205,10 +211,10 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibp
     globals.error_list = []
     ib_lat_dict[lat_test] = {}
     scan_dmesg = can_read_dmesg(orch)
-    rocm_path = ibperf_lib.detect_rocm_path(orch.all, config_dict.get('rocm_dir', ''))
+    rocm_path = ibperf_lib.detect_rocm_path(orch, config_dict.get('rocm_dir', ''))
     app_path = f'{config_dict["install_dir"]}/perftest/bin'
     use_dmabuf = ibperf_lib.check_perftest_dmabuf(
-        orch.all,
+        orch,
         f'{app_path}/{lat_test}',
         rocm_path=rocm_path,
         require_dmabuf=ibperf_lib.is_dmabuf_required(config_dict),
@@ -219,12 +225,12 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibp
 
     gpu_nic_dict = _fail_unmapped_gpus(orch)
     update_test_result()
-    gpu_numa_dict = linux_utils.get_gpu_numa_dict(orch.all, use_sudo=False)
-    hip_dev_dict = ibperf_lib.get_hip_device_dict(orch.all, gpu_nic_dict)
+    gpu_numa_dict = linux_utils.get_gpu_numa_dict(orch, use_sudo=False)
+    hip_dev_dict = ibperf_lib.get_hip_device_dict(orch, gpu_nic_dict)
     _note_run_facts(ibperf_variant_config, use_dmabuf, gpu_nic_dict)
 
-    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(orch.all, use_sudo=False)
-    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(orch.all)
+    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(orch, use_sudo=False)
+    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(orch)
 
     bck_nic_dict = {}
     for node in rdma_nic_dict.keys():
@@ -234,7 +240,7 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibp
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
     gid_index = ibperf_lib.resolve_gid_index(
-        orch.all,
+        orch,
         ibperf_lib.get_ibperf_rdma_devices(gpu_nic_dict, bck_nic_dict),
         config_dict.get('gid_index'),
         config_dict.get('gid_type', DEFAULT_GID_TYPE),
@@ -249,7 +255,7 @@ def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibp
                 print_console=False,
             )
         ib_lat_dict[lat_test][msg_size] = ibperf_lib.run_ib_perf_lat_test(
-            orch.all,
+            orch,
             lat_test,
             gpu_numa_dict,
             gpu_nic_dict,
@@ -293,3 +299,7 @@ def test_build_ib_lat_perf_chart():
     except ValueError as exc:
         fail_test(str(exc))
     update_test_result()
+
+
+def test_teardown_containers(orch, lifecycle):
+    teardown_containers(orch, lifecycle)
