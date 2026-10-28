@@ -731,6 +731,24 @@ class TestIfoeFirmware(unittest.TestCase):
         self.assertEqual(records['n1']['status'], 'pass')
         self.assertEqual(messages, [])
 
+    def test_partial_device_missing_firmware_fails_inventory(self):
+        # Second BDF block reports no firmware line: the node has 2 devices but only
+        # 1 version, so it must fail rather than pass on the first device's value.
+        text = _IFOE_DEVICE + 'BDF                              : 0004:01:00.1\n  Status:\n'
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'incomplete')
+        self.assertIn('missing for 1 of 2 device(s)', messages[0])
+
+    def test_partial_device_missing_firmware_fails_exact_match(self):
+        # The same gap must fail in exact-match mode, not pass because the present
+        # device happens to match the expected version.
+        text = _IFOE_DEVICE + 'BDF                              : 0004:01:00.1\n  Status:\n'
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '0.14.15')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'incomplete')
+        self.assertIn('missing for 1 of 2 device(s)', messages[0])
+
 
 class TestIfoeKmod(unittest.TestCase):
     def test_compare_match_passes(self):

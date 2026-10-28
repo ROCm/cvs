@@ -78,7 +78,11 @@ _IFF_UP = 0x1
 # Emitted by the host_configs_cvs IFoE commands when neither afmctl nor the ifoe
 # kernel module is present, so a non-MI4XX node reports NA instead of failing.
 CVS_IFOE_ABSENT = 'CVS_IFOE_ABSENT'
-# ``afmctl show device`` prints one ``Firmware version : X`` per device block.
+# ``afmctl show device`` prints one ``BDF : X`` header then one ``Firmware version``
+# per device block. The BDF count is the device count: every reported device must
+# carry a firmware version, so a block missing its version fails rather than passing
+# on the other blocks' values alone.
+_IFOE_BDF_RE = re.compile(r'^\s*BDF\s*:\s*\S+', re.I | re.M)
 # Line-anchored so a banner or tool-version line that merely mentions the words
 # cannot be counted as a device and trip the divergence check.
 _IFOE_FW_RE = re.compile(r'^\s*Firmware\s+version\s*:\s*(\S+)', re.I | re.M)
@@ -324,19 +328,22 @@ def _na_record(summary='not applicable'):
     return build_node_record('na', [], summary)
 
 
-def _eval_ifoe_version(out_dict, expected, detect_re, format_re, item_name, label):
+def _eval_ifoe_version(out_dict, expected, detect_re, format_re, item_name, label, count_re=None):
     '''Shared IFoE firmware/kmod evaluation.
 
     Per node:
       - absent sentinel in output -> ``na`` record, no fail message.
       - denial token in output -> fail (the privileged read was refused).
+      - ``count_re`` set and more devices than detected versions -> fail (a reported
+        device is missing its version).
       - ``expected`` set -> every detected value must equal it, else fail.
       - ``expected`` blank -> inventory mode: pass only when every detected value is a
         well-formed version (``format_re``); a missing or garbled value fails.
 
     ``afmctl show device`` reports one version per device, so every match on a node
     is checked and a divergence between devices fails rather than passing on the
-    first value alone.
+    first value alone. When ``count_re`` matches the per-device header, a device whose
+    version line is absent fails rather than passing on the other devices' values.
     '''
     records = {}
     messages = []
@@ -357,6 +364,15 @@ def _eval_ifoe_version(out_dict, expected, detect_re, format_re, item_name, labe
             messages.append(message)
             records[str(node)] = _fail_record(item_name, message, 'unavailable')
             continue
+        if count_re is not None:
+            device_count = len(count_re.findall(text))
+            if device_count > len(detected):
+                message = (
+                    f'{label} missing for {device_count - len(detected)} of {device_count} device(s) on node {node}'
+                )
+                messages.append(message)
+                records[str(node)] = _fail_record(item_name, message, 'incomplete')
+                continue
         unique = list(dict.fromkeys(detected))
         if len(unique) > 1:
             joined = ', '.join(unique)
@@ -384,7 +400,13 @@ def _eval_ifoe_version(out_dict, expected, detect_re, format_re, item_name, labe
 def eval_ifoe_firmware(out_dict, expected):
     '''Return (node_records, fail_messages) for the IFoE/AFM device firmware version.'''
     return _eval_ifoe_version(
-        out_dict, expected, _IFOE_FW_RE, _IFOE_FW_FORMAT_RE, 'ifoe_fw_version', 'IFoE firmware version'
+        out_dict,
+        expected,
+        _IFOE_FW_RE,
+        _IFOE_FW_FORMAT_RE,
+        'ifoe_fw_version',
+        'IFoE firmware version',
+        count_re=_IFOE_BDF_RE,
     )
 
 

@@ -121,6 +121,11 @@ class TestCheckIfoeSwDetails(unittest.TestCase):
         self.assertIn('/sys/module/ifoe', fw_cmd)
         self.assertIn('/sys/module/ifoe', kmod_cmd)
         self.assertIn('CVS_CMD_DENIED', fw_cmd)
+        # Tool path resolved to an absolute location so sudo's secure_path cannot
+        # drop a tool that is on the user PATH but outside secure_path.
+        self.assertIn('command -v afmctl', fw_cmd)
+        self.assertIn('sudo -n "$_afm"', fw_cmd)
+        self.assertIn('command -v modinfo', kmod_cmd)
         self.assertEqual(globals.error_list, [])
 
     def test_both_rows_pass(self):

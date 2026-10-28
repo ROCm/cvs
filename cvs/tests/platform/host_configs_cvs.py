@@ -327,30 +327,42 @@ def test_check_gpu_fw_version(orch, config_dict, host_res_dict, cluster_dict, li
     update_test_result()
 
 
+def _resolve_tool(var, tool, fallback):
+    '''Resolve ``tool`` to an absolute path in ``var``, falling back to ``fallback``.
+
+    ``sudo -n`` runs with its own ``secure_path``, so a tool that is on the SSH
+    user's PATH but outside ``secure_path`` (for example afmctl in /usr/sbin) must be
+    passed to sudo by its resolved absolute path, not by basename. The path is
+    captured from ``command -v`` (which prints the resolved location, not the tool's
+    output) and required to be absolute before use.
+    '''
+    return (
+        f'{var}="$(command -v {tool} 2>/dev/null || echo {fallback})"; '
+        f'case "${var}" in /*) ;; *) echo CVS_IFOE_ABSENT; exit 0 ;; esac; '
+    )
+
+
 # The ifoe kernel module loaded is the single "IFoE present on this node" signal
 # for both checks. When it is absent the node is not an IFoE compute tray, so both
 # commands emit CVS_IFOE_ABSENT and the evals record NA instead of failing. When it
 # is loaded, afmctl is expected; the privileged read goes through the shared
 # _read_or_denied wrapper so a refused ``sudo -n`` becomes CVS_CMD_DENIED (recorded
 # as a denial) rather than empty output mis-read as "could not be read".
-# afmctl may print an authorization banner, so select its path with a guarded
-# ``command -v`` (output discarded) rather than a command substitution that would
-# capture the banner into the sudo argument.
 _IFOE_FW_READER = 'sudo -n "$_afm" show device'
 _IFOE_FW_CMD = (
     'if [ -d /sys/module/ifoe ]; then '
-    'if command -v afmctl >/dev/null 2>&1; then _afm=afmctl; else _afm=/opt/amd/afm/bin/afmctl; fi; '
+    + _resolve_tool('_afm', 'afmctl', '/opt/amd/afm/bin/afmctl')
     + linux_utils._read_or_denied(_IFOE_FW_READER)
     + '; else echo CVS_IFOE_ABSENT; fi'
 )
 # modinfo reports the on-disk .ko metadata whether or not the module is loaded, so
 # gate on the loaded state first. A loaded module with no version line yields empty
 # output (a recorded "could not be read"), not NA. modinfo lives in /usr/sbin, which
-# a non-login ssh PATH may omit, so fall back to an absolute path like the afmctl read.
+# a non-login ssh PATH may omit, so resolve its absolute path the same way.
 _IFOE_KMOD_CMD = (
     'if [ -d /sys/module/ifoe ]; then '
-    'if command -v modinfo >/dev/null 2>&1; then _mi=modinfo; else _mi=/usr/sbin/modinfo; fi; '
-    '"$_mi" ifoe 2>/dev/null | grep -E \'^(version|srcversion):\' || true; '
+    + _resolve_tool('_mi', 'modinfo', '/usr/sbin/modinfo')
+    + '"$_mi" ifoe 2>/dev/null | grep -E \'^(version|srcversion):\' || true; '
     'else echo CVS_IFOE_ABSENT; fi'
 )
 
