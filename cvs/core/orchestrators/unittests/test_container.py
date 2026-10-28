@@ -18,7 +18,10 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, _resolve_container_lifetime
+from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.orchestrators.container import ContainerOrchestrator
+
+FAKE_CRED = "fake-cred"
 
 
 # Reusable runtime.is_running fixtures (two-host cluster).
@@ -84,6 +87,15 @@ class TestContainerOrchestrator(unittest.TestCase):
     # ------------------------------------------------------------------
     # construction
     # ------------------------------------------------------------------
+
+    def test_distribute_using_mpi_logs_masked_command(self):
+        orch, runtime = self._make()
+        cmd = f"mpirun -x HF_TOKEN={FAKE_CRED} hostname"
+        with patch.object(BaremetalOrchestrator, "build_mpi_cmd", return_value=cmd):
+            orch.distribute_using_mpi("hostname", ["10.0.0.1"], 1, {"HF_TOKEN": FAKE_CRED}, "/opt/ompi")
+        self.assertEqual(runtime.exec_on_head.call_args.args[1], cmd)
+        logged = [c.args[0] for c in orch.log.debug.call_args_list if str(c.args[0]).startswith("MPI command: ")]
+        self.assertEqual(logged, ["MPI command: mpirun -x HF_TOKEN=<redacted> hostname"])
 
     def test_init_creates_runtime_via_factory(self):
         orch, runtime = self._make()

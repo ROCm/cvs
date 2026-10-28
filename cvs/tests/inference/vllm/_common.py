@@ -195,13 +195,12 @@ def _record_junit_metrics(node, actuals_by_host):
     node.user_properties = properties
 
 
-def test_openai_compatible_smoke(orch, variant_config, hf_token, vllm_targets, lifecycle, request):
+def test_openai_compatible_smoke(orch, variant_config, vllm_targets, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     job = VllmJob(
         orch=orch,
         variant=variant_config,
-        hf_token=hf_token,
         isl=_SMOKE_ISL,
         osl=_SMOKE_OSL,
         concurrency=1,
@@ -226,7 +225,7 @@ def test_openai_compatible_smoke(orch, variant_config, hf_token, vllm_targets, l
     log.info("OpenAI-compatible smoke results:\n%s", "\n".join(summary))
 
 
-def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_res_dict, lifecycle, request):
+def test_vllm_inference(orch, variant_config, vllm_targets, run, inf_res_dict, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     isl = run.cell.isl
@@ -239,7 +238,6 @@ def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_r
         job = VllmJob(
             orch=orch,
             variant=variant_config,
-            hf_token=hf_token,
             isl=isl,
             osl=osl,
             concurrency=run.cell.concurrency,

@@ -119,7 +119,6 @@ class VllmJob:
         self,
         orch,
         variant,
-        hf_token,
         isl,
         osl,
         concurrency,
@@ -130,7 +129,6 @@ class VllmJob:
     ):
         self.orch = orch
         self.variant = variant
-        self.hf_token = hf_token
         self.isl = str(isl)
         self.osl = str(osl)
         self.concurrency = str(concurrency)
@@ -183,6 +181,7 @@ class VllmJob:
         }
         self.server_env = {}
         self.models_dir = variant.paths.models_dir
+        self.hf_token_file = variant.paths.hf_token_file
         self.ib_netdev = None if variant.container.socket_env_configured else variant.ib_netdev
 
         self.out_dir = f"{self.log_dir}/{self.log_subdir}/out-node0/isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
@@ -284,9 +283,15 @@ class VllmJob:
     # ---------- server side ----------
 
     def build_server_cmd(self):
-        """Write the server environment and create per-rank output directories."""
+        """Write the server environment and create per-rank output directories.
+
+        HF_TOKEN is read from paths.hf_token_file inside the container when the
+        script is sourced, so the token never appears in a logged command. A
+        missing or empty file leaves it empty: vLLM serves pre-staged models.
+        """
+        token_file = shlex.quote(self.hf_token_file)
         env_lines = [
-            f"export HF_TOKEN={shlex.quote(self.hf_token)}",
+            f"if [ -s {token_file} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {token_file})\"; else export HF_TOKEN=; fi",
             f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
         ]
         if self.ib_hcas:

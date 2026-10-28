@@ -3,8 +3,12 @@ from unittest.mock import patch, MagicMock
 
 from pssh.exceptions import Timeout
 
+from cvs.lib.env_lib import build_env_prefix
 from cvs.lib.parallel.http_transport import HttpTransport
 from cvs.lib.parallel.phandle import ParallelHandle  # Test basic ParallelHandle class directly
+
+FAKE_CRED = "fake-cred"
+DUMMY_ENV = {"HF_TOKEN": FAKE_CRED, "PATH": "/opt/bin:$PATH"}
 
 
 class TestParallelHandleExec(unittest.TestCase):
@@ -1530,6 +1534,64 @@ class TestParallelHandleHttpTransport(unittest.TestCase):
         client.copy_remote_file.assert_not_called()
         transport.client_for_hosts.assert_called_once_with(['h2'])
         subset.destroy.assert_called_once_with()
+
+
+def _logged_messages(mock_log):
+    messages = []
+    for level in ("debug", "info", "warning", "error"):
+        for call in getattr(mock_log, level).call_args_list:
+            if call.args:
+                messages.append(str(call.args[0]) % call.args[1:] if len(call.args) > 1 else str(call.args[0]))
+    return messages
+
+
+class TestParallelHandleLogRedaction(unittest.TestCase):
+    """Command log lines mask secrets; the command sent to the hosts is unchanged."""
+
+    def setUp(self):
+        patcher = patch("cvs.lib.parallel.phandle.ParallelSSHClient")
+        self.mock_client = MagicMock()
+        patcher.start().return_value = self.mock_client
+        self.addCleanup(patcher.stop)
+        self.mock_log = MagicMock()
+        with patch("cvs.lib.parallel.phandle.global_log", self.mock_log):
+            self.handle = ParallelHandle(None, ["host1"], user="user", pkey="k", env_vars=DUMMY_ENV)
+        self.handle.log = self.mock_log
+        self.mock_client.run_command.return_value = [
+            MagicMock(host="host1", stdout=["done"], stderr=[], exception=None)
+        ]
+
+    def assertLogsMasked(self, masked):
+        messages = _logged_messages(self.mock_log)
+        self.assertFalse([m for m in messages if FAKE_CRED in m])
+        self.assertTrue(any(masked in m for m in messages))
+
+    def test_constructor_env_log(self):
+        self.assertLogsMasked("Environ vars: export HF_TOKEN=<redacted> ; export PATH=/opt/bin:$PATH")
+        self.assertEqual(self.handle.env_prefix, build_env_prefix(DUMMY_ENV))
+
+    def test_exec(self):
+        cmd = f"docker exec c bash -c 'export API_KEY={FAKE_CRED}; run'"
+        for kwargs in ({}, {"timeout": 10}):
+            with self.subTest(kwargs=kwargs):
+                self.mock_log.reset_mock()
+                self.handle.exec(cmd, **kwargs)
+                self.assertEqual(
+                    self.mock_client.run_command.call_args.args, (f"{build_env_prefix(DUMMY_ENV)} ; {cmd}",)
+                )
+                self.assertLogsMasked(
+                    "cmd = export HF_TOKEN=<redacted> ; export PATH=/opt/bin:$PATH ; docker exec c bash -c 'export API_KEY=<redacted>; run'"
+                )
+
+    def test_exec_cmd_list(self):
+        cmd_list = [f"export PASSWORD={FAKE_CRED}; run"]
+        self.mock_log.reset_mock()
+        self.handle.exec_cmd_list(cmd_list)
+        self.assertEqual(
+            self.mock_client.run_command.call_args.kwargs["host_args"],
+            [f"{build_env_prefix(DUMMY_ENV)} ; {cmd_list[0]}"],
+        )
+        self.assertLogsMasked("export PASSWORD=<redacted>; run")
 
 
 if __name__ == "__main__":
