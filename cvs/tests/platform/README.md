@@ -1,5 +1,5 @@
 Host OS config checks, BIOS checks, Firmware/Driver checks, Network config checks
-The host check scripts, which can validate anything on host side like new model load balancing enable, PCIE checks, kernel version, rocm version and so on.
+The host check scripts, which can validate anything on host side like new model load balancing enable, PCIE checks, kernel version, rocm version, IFoE/AFM device firmware and ifoe kernel module version and so on.
 
 
 # How to run the tests

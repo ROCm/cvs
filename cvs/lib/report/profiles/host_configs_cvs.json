@@ -28,7 +28,9 @@
       "nic_link",
       "pci_acs",
       "dmesg_driver",
-      "dmesg_reset"
+      "dmesg_reset",
+      "ifoe_fw",
+      "ifoe_kmod"
     ]
   }
 }

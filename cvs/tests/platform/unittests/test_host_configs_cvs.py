@@ -95,5 +95,79 @@ class TestCheckBeNicPcieSpeedWidth(unittest.TestCase):
         self.assertEqual(globals.error_list, [])
 
 
+def _orch_fw_kmod(fw_out, kmod_out):
+    '''Orchestrator whose exec returns fw output on the first call, kmod on the second.
+
+    test_check_ifoe_sw_details runs the firmware command then the kmod command.
+    '''
+    orch = MagicMock()
+    orch.hosts = list(fw_out)
+    orch.all.exec.side_effect = [fw_out, kmod_out]
+    return orch
+
+
+class TestCheckIfoeSwDetails(unittest.TestCase):
+    def setUp(self):
+        globals.error_list = []
+
+    def test_issues_both_commands(self):
+        orch = _orch_fw_kmod({'n1': 'Firmware version : 0.14.15\n'}, {'n1': 'version:        1.0.0\n'})
+        suite.test_check_ifoe_sw_details(orch, {}, {}, {}, None)
+        fw_cmd, kmod_cmd = (call.args[0] for call in orch.all.exec.call_args_list)
+        self.assertIn('afmctl', fw_cmd)
+        self.assertIn('show device', fw_cmd)
+        self.assertIn('modinfo', kmod_cmd)
+        # Both gated on the loaded module; firmware routed through the denial wrapper.
+        self.assertIn('/sys/module/ifoe', fw_cmd)
+        self.assertIn('/sys/module/ifoe', kmod_cmd)
+        self.assertIn('CVS_CMD_DENIED', fw_cmd)
+        self.assertEqual(globals.error_list, [])
+
+    def test_both_rows_pass(self):
+        orch = _orch_fw_kmod({'n1': 'Firmware version : 0.14.15\n'}, {'n1': 'version:        1.0.0\n'})
+        host_res_dict = {}
+        suite.test_check_ifoe_sw_details(orch, {}, host_res_dict, {}, None)
+        self.assertEqual(host_res_dict['groups']['ifoe_fw']['nodes']['n1']['status'], 'pass')
+        self.assertEqual(host_res_dict['groups']['ifoe_kmod']['nodes']['n1']['status'], 'pass')
+        self.assertEqual(globals.error_list, [])
+
+    def test_absent_node_records_na_for_both(self):
+        orch = _orch_fw_kmod({'n1': 'CVS_IFOE_ABSENT\n'}, {'n1': 'CVS_IFOE_ABSENT\n'})
+        host_res_dict = {}
+        suite.test_check_ifoe_sw_details(orch, {}, host_res_dict, {}, None)
+        self.assertEqual(host_res_dict['groups']['ifoe_fw']['nodes']['n1']['status'], 'na')
+        self.assertEqual(host_res_dict['groups']['ifoe_kmod']['nodes']['n1']['status'], 'na')
+        self.assertEqual(globals.error_list, [])
+
+    def test_denied_firmware_fails_as_denial(self):
+        orch = _orch_fw_kmod({'n1': 'CVS_CMD_DENIED sudo: a password is required\n'}, {'n1': 'version:        1.0.0\n'})
+        host_res_dict = {}
+        with self.assertRaises(Failed):
+            suite.test_check_ifoe_sw_details(orch, {}, host_res_dict, {}, None)
+        node = host_res_dict['groups']['ifoe_fw']['nodes']['n1']
+        self.assertEqual(node['status'], 'fail')
+        self.assertEqual(node['items_summary'], 'denied')
+
+    def test_firmware_failure_still_records_kmod_row(self):
+        # A firmware mismatch must not stop the kmod row from being captured.
+        orch = _orch_fw_kmod({'n1': 'Firmware version : 0.14.15\n'}, {'n1': 'version:        1.0.0\n'})
+        config = {'ifoe_fw_version': '0.14.16'}
+        host_res_dict = {}
+        with self.assertRaises(Failed):
+            suite.test_check_ifoe_sw_details(orch, config, host_res_dict, {}, None)
+        self.assertEqual(host_res_dict['groups']['ifoe_fw']['nodes']['n1']['status'], 'fail')
+        self.assertEqual(host_res_dict['groups']['ifoe_kmod']['nodes']['n1']['status'], 'pass')
+        self.assertTrue(any('n1' in message for message in globals.error_list))
+
+    def test_kmod_mismatch_fails(self):
+        orch = _orch_fw_kmod({'n1': 'Firmware version : 0.14.15\n'}, {'n1': 'version:        1.0.0\n'})
+        config = {'ifoe_kmod_version': '2.0.0'}
+        host_res_dict = {}
+        with self.assertRaises(Failed):
+            suite.test_check_ifoe_sw_details(orch, config, host_res_dict, {}, None)
+        self.assertEqual(host_res_dict['groups']['ifoe_kmod']['nodes']['n1']['status'], 'fail')
+        self.assertTrue(any('n1' in message for message in globals.error_list))
+
+
 if __name__ == '__main__':
     unittest.main()
