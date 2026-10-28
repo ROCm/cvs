@@ -77,7 +77,7 @@ Supported bandwidth names are ``ib_write_bw``, ``ib_read_bw``, and ``ib_send_bw`
 Parameters
 ==========
 
-``verify_bw`` is on when the value contains ``true`` in any case. ``require_dmabuf`` accepts ``true`` / ``1`` / ``yes`` / ``on`` and ``false`` / ``0`` / ``no`` / ``off``. Any other ``require_dmabuf`` value is treated as true.
+Write ``install_perf_package``, ``install_system_packages``, and ``verify_bw`` as strings (``"True"`` or ``"False"``). A JSON ``true`` or ``false`` there stops the run with a ``TypeError``. They are on when the string contains ``true`` in any case. ``require_dmabuf`` also accepts JSON booleans, and the strings ``true`` / ``1`` / ``yes`` / ``on`` and ``false`` / ``0`` / ``no`` / ``off``. Any other ``require_dmabuf`` value is treated as true.
 
 .. list-table::
    :widths: 3 3 5
@@ -91,16 +91,16 @@ Parameters
      - ``True`` clones, configures, and installs perftest on the head node. ``False`` skips that work.
    * - ``install_system_packages``
      - ``False``
-     - ``True`` runs ``sudo apt install`` for the perftest build and runtime packages on every node before the build. Skipped inside Spur/Slurm job steps. The install test fails if ``numactl``, ``lshw``, ``rdma``, ``libibverbs``, or ``librdmacm`` is missing, after the apt install when true. It always fails on a node without ``amd-smi`` on ``PATH`` or at ``/opt/rocm/bin``, which apt never installs. The head node also needs the build tools and the ``libibverbs`` / ``librdmacm`` development packages when you install from source.
+     - Used only when ``install_perf_package`` is true. ``True`` runs ``sudo apt install`` for the perftest build and runtime packages, ``lshw``, and ``iproute2`` on every node before the build. Skipped inside SPUR/Slurm job steps. The install test fails if ``numactl``, ``lshw``, ``rdma``, ``libibverbs``, or ``librdmacm`` is missing, after the apt install when true. It always fails on a node without ``amd-smi`` on ``PATH`` or at ``/opt/rocm/bin``, which apt never installs. The head node also needs the build tools and the ``libibverbs`` / ``librdmacm`` development packages when you install from source.
    * - ``install_dir``
      - The perf tests error (the key is required there)
-     - Directory for the perftest checkout. Tests run ``<install_dir>/perftest/bin/<tool>``. The install check looks at ``<install_dir>/perftest/ib_write_bw``.
+     - Directory for the perftest checkout, on storage shared by every node at the same path. Tests run ``<install_dir>/perftest/bin/<tool>``. The install check looks at ``<install_dir>/perftest/ib_write_bw``.
    * - ``rocm_dir``
      - Auto-detect
-     - ROCm prefix passed to perftest ``--with-rocm`` and prepended to ``LD_LIBRARY_PATH``. ``""`` auto-detects ``/opt/rocm/core-*``, then ``/opt/rocm``. The shipped ``<changeme>`` never reaches auto-detect.
+     - ROCm prefix passed to perftest ``--with-rocm`` and put first on ``LD_LIBRARY_PATH`` for the probe and every perftest launch. ``""`` auto-detects ``/opt/rocm/core-*``, then ``/opt/rocm``. A path without ``lib/libamdhip64.so`` logs a warning and auto-detects. If nothing is found, ``/opt/rocm`` is used. The shipped ``<changeme>`` stops the run before auto-detect.
    * - ``require_dmabuf``
      - True
-     - Fail before launch if any node's binary was built without ``--use_rocm_dmabuf``. ``False`` runs without DMA-BUF and records ``dmabuf=off``. Configure tries ``--enable-rocm --enable-rocm-dmabuf``, then retries without DMA-BUF.
+     - Fail before launch if any node's binary was built without ``--use_rocm_dmabuf``. ``False`` runs without DMA-BUF and records ``dmabuf=off``. Configure tries ``--enable-rocm --enable-rocm-dmabuf``, then retries without DMA-BUF. If the DMA-BUF configure fails, the install suite logs a warning, builds without it, and still passes. The bandwidth and latency tests then fail while ``require_dmabuf`` is true.
    * - ``pairing_mode``
      - ``sequential``
      - ``sequential`` pairs cluster-file order. ``inter_vpod`` pairs across vPODs. ``intra_vpod`` pairs inside one vPOD.
@@ -141,7 +141,7 @@ Parameters
      - Nothing is gated
      - Thresholds. Shape and direction are below.
 
-``expected_results.<bw_test>.<msg_size>.<qp_count>`` is the minimum bandwidth in Gbps for each GPU instance. The test fails if any instance is below it. An equal value passes.
+``expected_results.<bw_test>.<msg_size>.<qp_count>`` is the minimum bandwidth in Gbps for each GPU instance. The test fails if any instance is below it. An equal value passes. Bandwidth runs are bidirectional (perftest ``-b``), so the value is the sum of both directions.
 
 ``expected_results.<lat_test>.<msg_size>`` is the maximum average latency in microseconds (perftest ``t_avg``) for each GPU instance. The test fails if any instance is above it. A latency entry must be a number. A QP object under a latency test fails with ``must be a latency in usec``.
 
@@ -154,6 +154,8 @@ The shipped sample gates only ``ib_write_bw`` at 8192 bytes for QP counts 8 and 
 For ``ib_read_lat``, only the client side of each pair has results. An empty server result is skipped. Other latency tests fail a node that returns no rows.
 
 The failure lines are ``Actual BW <bw> Gbps less than the expected BW <threshold> Gbps`` and ``Actual latency <t_avg> us greater than the expected latency <threshold> us``, including the node and GPU index.
+
+.. _ib-vpod-pairing:
 
 vPOD-aware pairing
 ==================
@@ -182,12 +184,4 @@ The number of GPU instances follows GPU discovery. Both nodes of a pair must rep
 
 When GPU and backend-NIC PCI domains overlap, each GPU is paired only with an active NIC in its own domain (nearest bus, then nearest device). A GPU with no eligible NIC is left unmapped. The bandwidth or latency test then fails before perftest with ``No active backend RDMA NIC in the PCI domain of <card>``. If a domain has more GPUs than NICs, a NIC can be shared. That is logged (``shares NIC``) and the test still launches.
 
-``HIP_VISIBLE_DEVICES``, ``ROCR_VISIBLE_DEVICES``, ``CUDA_VISIBLE_DEVICES``, and ``GPU_DEVICE_ORDINAL`` are unset for the perftest launch. If one of them is set in the probe, the test fails via ``fail_test`` with ``GPU visibility env set on node`` and falls back to the card index for ``--use_rocm`` so the run can continue.
-
-Current behavior
-================
-
-- Perftest command lines and the in-memory results live for one ``cvs run`` process. ``test_build_ib_bw_perf_chart`` and ``test_build_ib_lat_perf_chart`` write ``ib_bw_pps_perf.xlsx`` and ``ib_lat_perf.xlsx`` in the current directory. A later process does not see the measurements.
-- The latency chart fails with ``No latency results for <test>`` when that test is present and has no rows.
-- Node-local logs ``/tmp/ib_perf_<gpu-index>_logs`` are removed at the start of every message size.
-- Outlier marks in the HTML run deck do not fail the pytest test. Threshold misses do, when ``verify_bw`` is on and a threshold exists for that point.
+``HIP_VISIBLE_DEVICES``, ``ROCR_VISIBLE_DEVICES``, ``CUDA_VISIBLE_DEVICES``, and ``GPU_DEVICE_ORDINAL`` are cleared for the HIP device probe and for every perftest launch, so values set by a scheduler or in the cluster file ``env_vars`` do not change which GPU each perftest uses.
