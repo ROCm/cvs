@@ -1,12 +1,12 @@
 .. meta::
-  :description: Run CVS MORI RDMA benchmark tests to measure put, write, and I/O throughput over InfiniBand fabric on AMD Instinct GPU cluster nodes.
+  :description: Run CVS MORI RDMA benchmark tests to measure I/O throughput over InfiniBand fabric on AMD Instinct GPU cluster nodes.
   :keywords: CVS, MORI, RDMA, InfiniBand, AMD Instinct, ROCm, AMD, GPU, benchmark, network, IB, throughput
 
 ***********************************************
 Run CVS MORI RDMA benchmark tests
 ***********************************************
 
-MORI tests measure RDMA put, write, and I/O throughput using the MORI tree on the nodes. I/O cases run between nodes with ``torchrun``. The IBGDA write case runs inside each node with ``mpiexec``. Run MORI to validate raw RDMA performance before training or inference workloads.
+MORI tests measure RDMA I/O throughput using the MORI tree on the nodes. I/O cases run between nodes with ``torchrun``. Run MORI to validate raw RDMA performance before training or inference workloads.
 
 .. _mori-set-up-config:
 
@@ -32,7 +32,7 @@ Set up config
    - ``container.image`` — image that contains the MORI build
    - ``env.NCCL_SOCKET_IFNAME`` and ``env.GLOO_SOCKET_IFNAME`` — interface name exported into the benchmark
    - ``env.MORI_RDMA_DEVICES`` — comma-separated RDMA device names, checked against ``ibv_devinfo``
-   - ``mori_dir`` — directory of the MORI tree (``tests/python/io/benchmark.py`` and ``build/examples/``)
+   - ``mori_dir`` — directory of the MORI tree (``tests/python/io/benchmark.py``)
    - ``master_addr`` — a host from the cluster file. That host is torchrun node rank 0 and the I/O initiator
 
    ``{user-id}`` in ``log_dir`` and in the home volume becomes the cluster file ``username`` (then ``$USER``, then ``root``). A leftover ``<changeme>`` exits at startup with ``Unresolved placeholder found in test config``.
@@ -65,11 +65,6 @@ The suite runs in this order:
   test_setup_ibv_devices
   test_install_container_packages        (skipped on bare metal)
   test_setup_env
-  test_shmem_api
-  test_concurrent_put_threads
-  test_concurrent_put_imm_threads
-  test_concurrent_put_signal_thread
-  test_ibgda_write_test
   test_io_read[131072-256-1]
   test_io_read[131072-256-8]
   test_io_read[4194304-128-1]
@@ -127,7 +122,6 @@ MORI does not write a spreadsheet.
 Benchmark logs are on the hosts under ``log_dir``, in a new directory named ``YYYYMMDD_HHMMSS``:
 
 - ``io_<op>_<buffer>_<batch>_<qp>_node<rank>.log`` for each I/O case. Rank 0 is ``master_addr``.
-- ``<name>_$(hostname).log`` for the SHMEM, concurrent-put, and IBGDA tests.
 
 The shipped config mounts ``/home/{user-id}`` into the container and sets ``log_dir`` under that home, so a ``per_run`` container can exit and the logs remain on the host. ``test_teardown`` removes a ``per_run`` container. ``persistent`` and ``no_launch`` leave it running.
 
@@ -152,14 +146,6 @@ Search the pytest log for ``FAIL -``. The test then ends with ``Following FAILUR
      - ``env.MORI_RDMA_DEVICES`` is missing or empty.
    * - ``MORI device <name> not showing up in ibv_devinfo``
      - That device name is not a substring of ``ibv_devinfo`` on that node.
-   * - ``shmem test_api.py did not run properly`` or ``no PASSED``
-     - ``pytest tests/python/shmem/test_api.py`` did not print ``PASSED``. A line containing ``FAIL`` also fails the test.
-   * - ``concurrent_put_thread did not run properly``
-     - The put and put-immediate binaries must print ``PASSED`` or ``test done!``. They do not check payload data. The signal-thread binary must print ``PASSED``.
-   * - ``dist_write did not complete properly``
-     - IBGDA output had no ``Index`` / ``Size`` header.
-   * - ``IBGDA Mori BW less than expected``
-     - The ``bw(GB)`` column was under ``expected_results.ibgda_write`` ``max_bw`` for that byte size. ``avg_lat`` in that block is not compared.
    * - ``master_addr <addr> is not one of the cluster hosts``
      - ``master_addr`` is not in the cluster file node list.
    * - ``MORI IO benchmark did not finish within 600s``
@@ -179,7 +165,7 @@ Search the pytest log for ``FAIL -``. The test then ends with ``Following FAILUR
    * - ``ERROR - Failue pattern``
      - Host dmesg matched a known error. The word ``Failue`` is the text CVS prints.
 
-``test_cleanup_stale_containers`` always skips. Stale same-named containers are removed by a ``per_run`` launch. Dispatch and combine tests are not in this suite.
+``test_cleanup_stale_containers`` always skips. Stale same-named containers are removed by a ``per_run`` launch. SHMEM API, dispatch and combine, concurrent-put, and IBGDA write tests are not in this suite.
 
 Run on managed compute
 ======================

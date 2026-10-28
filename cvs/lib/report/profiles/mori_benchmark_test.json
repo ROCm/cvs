@@ -5,7 +5,7 @@
   "metric_contract": {"id": "mori-network-performance", "version": 1},
   "report_basename": "mori_benchmark_test_run_deck",
   "title": "Mori Benchmark Run Deck",
-  "subtitle": "Torch IO and IBGDA network performance across message sizes",
+  "subtitle": "Torch IO network performance across message sizes",
   "footer": "CVS Mori · render-only · does not affect validation gates",
   "link_name": "Mori Benchmark Run Deck",
   "dataset_builder": "status_matrix",
@@ -37,7 +37,7 @@
     {
       "type": "metric_charts",
       "id": "charts",
-      "title": "MORI-IO and IBGDA by message size",
+      "title": "MORI-IO by message size",
       "bind": "datasets.status_matrix.metric_charts"
     },
     {
