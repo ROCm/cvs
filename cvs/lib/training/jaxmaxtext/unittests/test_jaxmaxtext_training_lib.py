@@ -87,12 +87,27 @@ def _make_job(hosts=None, **training_overrides):
 
 
 def _wire_container_exec(orch, script="/workspace/maxtext/src/MaxText/train.py"):
-    """Answer the in-container train-script probe ``build_training_cmd`` runs."""
+    """Answer the in-container probes ``build_training_cmd`` runs: the HF token
+    file check (reports the file present) and the train-script probe."""
 
     def _side(cmd, *a, **k):
         text = str(cmd)
+        if "test -s" in text:
+            return {h: "__HF_TOKEN_OK__" for h in orch.hosts}
         if "train.py" in text:
             return {h: script for h in orch.hosts}
+        return {}
+
+    orch.exec.side_effect = _side
+
+
+def _wire_token_file(orch, present=True):
+    """Answer only the HF token file check (`test -s`): present -> OK, else MISSING."""
+    marker = "__HF_TOKEN_OK__" if present else "__HF_TOKEN_MISSING__"
+
+    def _side(cmd, *a, **k):
+        if "test -s" in str(cmd):
+            return {h: marker for h in orch.hosts}
         return {}
 
     orch.exec.side_effect = _side
@@ -347,6 +362,7 @@ class SetupTokenizerTests(unittest.TestCase):
 
     def test_downloads_when_model_id_set(self):
         job, orch = _make_job(tokenizer=SimpleNamespace(hf_model_id="org/model", tokenizer_path="/models/tok"))
+        _wire_token_file(orch, present=True)
         job.setup_tokenizer()
         joined = " ".join(str(c.args[0]) for c in orch.exec.call_args_list)
         self.assertIn("hf download", joined)
@@ -355,6 +371,14 @@ class SetupTokenizerTests(unittest.TestCase):
         # Token is read from the file inside the container, not embedded.
         self.assertIn("/secrets/.hf_token", joined)
         self.assertIn('export HF_TOKEN="$(tr -d', joined)
+
+    def test_download_fails_fast_when_token_file_unmapped(self):
+        # Token file not readable inside the container -> fail with a clear error
+        # instead of exporting an empty token and failing later on auth.
+        job, orch = _make_job(tokenizer=SimpleNamespace(hf_model_id="org/model", tokenizer_path="/models/tok"))
+        _wire_token_file(orch, present=False)
+        with self.assertRaisesRegex(RuntimeError, "token file .* not mounted|missing, empty, or not mounted"):
+            job.setup_tokenizer()
 
     def test_skips_download_when_dataset_is_synthetic(self):
         job, orch = _make_job(
@@ -421,6 +445,14 @@ class BuildTrainingCmdTests(unittest.TestCase):
         self.assertIn("JAX_COORDINATOR_IP=10.0.0.5", cmds[1])  # first host, on every rank
         self.assertNotIn("JAX_COORDINATOR_PORT", cmds[0])  # comes from container env (docker -e)
         self.assertNotIn("NCCL_", cmds[0])
+
+    def test_launcher_fails_fast_when_token_file_unmapped(self):
+        # Non-synthetic run whose token file is not mounted in the container must
+        # fail before launch, not silently run with an empty token.
+        job, orch = _make_job(hosts=["10.0.0.5", "10.0.0.6"])
+        _wire_token_file(orch, present=False)
+        with self.assertRaisesRegex(RuntimeError, "token file .* not mounted|missing, empty, or not mounted"):
+            job.build_training_cmd()
 
     def test_launcher_uses_custom_maxtext_root(self):
         # cd + PYTHONPATH follow training.maxtext_root so a branch checkout in
