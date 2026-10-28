@@ -327,17 +327,21 @@ def test_check_gpu_fw_version(orch, config_dict, host_res_dict, cluster_dict, li
     update_test_result()
 
 
-def _resolve_tool(var, tool, fallback):
-    '''Resolve ``tool`` to an absolute path in ``var``, falling back to ``fallback``.
+def _resolve_tool(var, tool, fallbacks):
+    '''Resolve ``tool`` to an absolute path in ``var``, trying ``fallbacks`` in order.
 
     ``sudo -n`` runs with its own ``secure_path``, so a tool that is on the SSH
     user's PATH but outside ``secure_path`` (for example afmctl in /usr/sbin) must be
     passed to sudo by its resolved absolute path, not by basename. The path is
     captured from ``command -v`` (which prints the resolved location, not the tool's
-    output) and required to be absolute before use.
+    output); when the non-login PATH omits the tool's directory, each known install
+    path in ``fallbacks`` is probed with ``-x``. An unresolved tool is reported as NA.
     '''
+    candidates = ' '.join(fallbacks)
     return (
-        f'{var}="$(command -v {tool} 2>/dev/null || echo {fallback})"; '
+        f'{var}="$(command -v {tool} 2>/dev/null)"; '
+        f'[ -n "${var}" ] || for _cvs_c in {candidates}; do '
+        f'[ -x "$_cvs_c" ] && {{ {var}="$_cvs_c"; break; }}; done; '
         f'case "${var}" in /*) ;; *) echo CVS_IFOE_ABSENT; exit 0 ;; esac; '
     )
 
@@ -351,7 +355,7 @@ def _resolve_tool(var, tool, fallback):
 _IFOE_FW_READER = 'sudo -n "$_afm" show device'
 _IFOE_FW_CMD = (
     'if [ -d /sys/module/ifoe ]; then '
-    + _resolve_tool('_afm', 'afmctl', '/opt/amd/afm/bin/afmctl')
+    + _resolve_tool('_afm', 'afmctl', ['/usr/sbin/afmctl', '/opt/amd/afm/bin/afmctl'])
     + linux_utils._read_or_denied(_IFOE_FW_READER)
     + '; else echo CVS_IFOE_ABSENT; fi'
 )
@@ -361,7 +365,7 @@ _IFOE_FW_CMD = (
 # a non-login ssh PATH may omit, so resolve its absolute path the same way.
 _IFOE_KMOD_CMD = (
     'if [ -d /sys/module/ifoe ]; then '
-    + _resolve_tool('_mi', 'modinfo', '/usr/sbin/modinfo')
+    + _resolve_tool('_mi', 'modinfo', ['/usr/sbin/modinfo', '/sbin/modinfo'])
     + '"$_mi" ifoe 2>/dev/null | grep -E \'^(version|srcversion):\' || true; '
     'else echo CVS_IFOE_ABSENT; fi'
 )
