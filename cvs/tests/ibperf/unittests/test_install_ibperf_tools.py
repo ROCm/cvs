@@ -98,7 +98,7 @@ class TestInstallIbPerf(unittest.TestCase):
             stub = os.path.join(bindir, 'rdma')
             with open(stub, 'w') as fp:
                 fp.write('#!/bin/sh\n')
-            os.chmod(stub, 0o755)
+            os.chmod(stub, 0o700)
             result = run_trusted(
                 ['/bin/bash', '-c', install_ibperf_tools.RUNTIME_DEPS_CHECK],
                 capture_output=True,
