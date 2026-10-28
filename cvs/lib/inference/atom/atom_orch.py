@@ -419,9 +419,16 @@ class AtomJob:
         self._ensure_multinode_topology()
         # The token stays in the mounted file. Parallel SSH logs this command, so the
         # script must read the file inside the container instead of embedding the value.
+        # no_launch and older persistent containers can pass the host file check without
+        # this mount. Skipping the export would start the server with HF_TOKEN unset.
         token_path = shlex.quote(CONTAINER_HF_TOKEN_PATH)
         env_lines = [
-            (f"if [ -f {token_path} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {token_path})\"; fi"),
+            (
+                f"if [ -f {token_path} ] && [ -s {token_path} ]; then "
+                f"export HF_TOKEN=\"$(tr -d '[:space:]' < {token_path})\"; "
+                f"else echo \"HF token file missing or empty in container: {token_path}; server failed to start\" >&2; "
+                "return 1; fi"
+            ),
             f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
         ]
         if self._uses_vllm_serve():

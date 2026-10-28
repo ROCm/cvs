@@ -219,6 +219,8 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         rendered = "\n".join(cmd for cmd, _hosts in orch.commands)
         self.assertNotIn("hf_secret_value", rendered)
         self.assertIn("/run/secrets/hf_token", rendered)
+        self.assertIn("return 1", rendered)
+        self.assertIn("server failed to start", rendered)
         self.assertIn("CUSTOM_FLAG", rendered)
 
     def test_flatten_serve_args_omits_false_flags(self):
