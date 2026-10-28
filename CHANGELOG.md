@@ -75,6 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TorchTitan no longer writes the Hugging Face token into tokenizer-download or training commands. Each node reads `paths.hf_token_file` inside the container when that command runs. If that file is missing, empty, or not mounted, the stage fails and later stages are skipped.
 - Megatron and Primus no longer write the Hugging Face token into training, tokenizer-download, or job-launch commands. Each node reads `paths.hf_token_file` inside the container when that command runs. If that file is missing, empty, or not mounted, Megatron fails the test and the remaining training stages are skipped. Primus exports an empty `HF_TOKEN` and the run continues.
 - jaxmaxtext no longer writes the Hugging Face token into the per-node launcher script or tokenizer-download command. Each node reads `paths.hf_token_file` inside the container when that command runs. If that file is missing, empty, or not mounted, the stage fails and later stages are skipped.
+- The health TransferBench `healthcheck` test fails when TransferBench reports a failed sub-test or exits with an error. It previously passed, and only the Run Deck showed the failure.
 - ibperf:
   - Runs on nodes with fewer than 8 GPUs instead of failing with `KeyError: 'card4'`.
   - `verify_bw` now enforces `expected_results`; previously tests passed regardless of measured bandwidth. Configs with `verify_bw` set to `"True"` may now fail; re-baseline thresholds for your cluster.
