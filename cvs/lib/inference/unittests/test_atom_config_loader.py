@@ -13,7 +13,10 @@ import unittest
 from pathlib import Path
 
 from cvs.lib.inference.atom.atom_config_loader import (
+    CONTAINER_HF_TOKEN_PATH,
     AtomVariantConfig,
+    atom_container_block,
+    bind_hf_token_volume,
     expand_sweep,
     expand_sweep_parametrize,
     gpu_arch_from_config_path,
@@ -144,6 +147,177 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         )
         block = orchestrator_container_from_variant(variant)
         self.assertEqual(block["env"]["VLLM_ROCM_USE_AITER"], "1")
+        self.assertEqual(block["runtime"]["args"]["volumes"], ["/home/x:/home/x"])
+
+    def test_orchestrator_container_strips_hf_token_env(self):
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="legacy_profile", isl="7168", osl="1024")],
+            runs=[Run(combo="legacy_profile", concurrency=64)],
+        )
+        thresholds = {
+            "ISL=7168,OSL=1024,TP=8,PP=1,CONC=64": placeholder_gated_threshold_cell(),
+        }
+        variant = AtomVariantConfig(
+            schema_version=1,
+            framework="atom",
+            gpu_arch="mi3xx",
+            enforce_thresholds=False,
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "openai/gpt-oss-120b", "remote": 0, "precision": "bf16"},
+            container={
+                "name": "c",
+                "image": "img",
+                "runtime": {"name": "docker", "args": {"volumes": ["/home/x:/home/x"]}},
+            },
+            roles={
+                "server": {
+                    "env": {
+                        "HF_TOKEN": "hf_secret_value",
+                        "HUGGINGFACE_HUB_TOKEN": "hf_alias_secret",
+                        "VLLM_ROCM_USE_AITER": "1",
+                    }
+                }
+            },
+            params={"tensor_parallelism": "8"},
+            sweep=sweep,
+            thresholds=thresholds,
+        )
+        block = orchestrator_container_from_variant(variant)
+        self.assertNotIn("HF_TOKEN", block["env"])
+        self.assertNotIn("HUGGINGFACE_HUB_TOKEN", block["env"])
+        self.assertNotIn("hf_secret_value", str(block))
+        self.assertNotIn("hf_alias_secret", str(block))
+        self.assertEqual(block["env"]["VLLM_ROCM_USE_AITER"], "1")
+
+    def test_bind_hf_token_volume_rewrites_writable_mount(self):
+        block = {
+            "runtime": {
+                "args": {
+                    "volumes": [
+                        "/cluster/data:/data",
+                        "/host/token:/run/secrets/hf_token",
+                        "/host/token-ro:/run/secrets/hf_token:ro",
+                    ]
+                }
+            }
+        }
+        bind_hf_token_volume(block, "/home/x/.hf")
+        self.assertEqual(
+            block["runtime"]["args"]["volumes"],
+            [
+                "/cluster/data:/data",
+                f"/host/token:{CONTAINER_HF_TOKEN_PATH}:ro",
+                f"/host/token-ro:{CONTAINER_HF_TOKEN_PATH}:ro",
+            ],
+        )
+
+    def test_merged_container_keeps_cluster_volumes(self):
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="legacy_profile", isl="7168", osl="1024")],
+            runs=[Run(combo="legacy_profile", concurrency=64)],
+        )
+        thresholds = {
+            "ISL=7168,OSL=1024,TP=8,PP=1,CONC=64": placeholder_gated_threshold_cell(),
+        }
+        variant = AtomVariantConfig(
+            schema_version=1,
+            framework="atom",
+            gpu_arch="mi3xx",
+            enforce_thresholds=False,
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "openai/gpt-oss-120b", "remote": 0, "precision": "bf16"},
+            container={
+                "name": "c",
+                "image": "img",
+                "runtime": {"name": "docker", "args": {}},
+            },
+            params={"tensor_parallelism": "8"},
+            sweep=sweep,
+            thresholds=thresholds,
+        )
+        cluster = {"runtime": {"name": "docker", "args": {"volumes": ["/cluster:/cluster"]}}}
+        block = atom_container_block(cluster, variant)
+        volumes = block["runtime"]["args"]["volumes"]
+        self.assertEqual(
+            volumes,
+            ["/cluster:/cluster", f"/home/x/.hf:{CONTAINER_HF_TOKEN_PATH}:ro"],
+        )
+
+    def _token_mount_variant(self, container):
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="legacy_profile", isl="7168", osl="1024")],
+            runs=[Run(combo="legacy_profile", concurrency=64)],
+        )
+        thresholds = {
+            "ISL=7168,OSL=1024,TP=8,PP=1,CONC=64": placeholder_gated_threshold_cell(),
+        }
+        return AtomVariantConfig(
+            schema_version=1,
+            framework="atom",
+            gpu_arch="mi3xx",
+            enforce_thresholds=False,
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "openai/gpt-oss-120b", "remote": 0, "precision": "bf16"},
+            container=container,
+            params={"tensor_parallelism": "8"},
+            sweep=sweep,
+            thresholds=thresholds,
+        )
+
+    def test_merged_container_strips_cluster_env_token(self):
+        variant = self._token_mount_variant(
+            {
+                "name": "c",
+                "image": "img",
+                "runtime": {"name": "docker", "args": {}},
+            }
+        )
+        cluster = {
+            "env": {"HF_TOKEN": "from-cluster", "KEEP_ME": "1"},
+            "runtime": {"name": "docker", "args": {"volumes": ["/cluster:/cluster"]}},
+        }
+        block = atom_container_block(cluster, variant)
+        self.assertNotIn("HF_TOKEN", block["env"])
+        self.assertNotIn("from-cluster", str(block))
+        self.assertEqual(block["env"]["KEEP_ME"], "1")
+
+    def test_merged_container_strips_runtime_args_env_token(self):
+        variant = self._token_mount_variant(
+            {
+                "name": "c",
+                "image": "img",
+                "runtime": {
+                    "name": "docker",
+                    "args": {
+                        "env": {
+                            "HF_TOKEN": "from-runtime-args",
+                            "HUGGINGFACE_HUB_TOKEN": "from-runtime-alias",
+                            "KEEP_FLAG": "1",
+                        }
+                    },
+                },
+            }
+        )
+        block = atom_container_block({}, variant)
+        self.assertEqual(block["runtime"]["args"]["env"], {"KEEP_FLAG": "1"})
+        rendered = str(block)
+        self.assertNotIn("from-runtime-args", rendered)
+        self.assertNotIn("from-runtime-alias", rendered)
 
     def test_expand_sweep_matches_w1_single(self):
         root = Path(__file__).resolve().parents[3]
