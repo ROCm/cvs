@@ -27,10 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - vLLM configs that set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` in `container.env` now fail to load; set `paths.hf_token_file` instead, on a path mounted in the container on each node.
+- ibperf, the platform host config GPU PCIe checks and the cluster health monitor use `amd-smi` instead of `rocm-smi` for GPU discovery, so ROCm images without `rocm-smi` work. `amd-smi` must be on the node.
 - ibperf:
   - A node with no partner in the discovered NIC set fails and is excluded, instead of running as a server with no client.
   - Each node's perftest binary must support ROCm DMA-BUF, unless `ibperf.require_dmabuf` is `"False"`.
-  - The install suite no longer runs `apt` on every node. Set `ibperf.install_system_packages` to `"True"` to install the build and runtime packages. Install fails before the build when `numactl`, `lshw`, `rdma`, `libibverbs` or `librdmacm` is still missing, including after `apt`. It always fails on a node without `rocm-smi`, which GPU discovery needs and `apt` never installs.
+  - The install suite no longer runs `apt` on every node. Set `ibperf.install_system_packages` to `"True"` to install the build and runtime packages. Install fails before the build when `numactl`, `lshw`, `rdma`, `libibverbs` or `librdmacm` is still missing, including after `apt`. It always fails on a node without `amd-smi`, which GPU discovery needs and `apt` never installs.
   - The tests follow `ib_bw_test_list` and `ib_lat_test_list`. With the shipped sample, `ib_read_bw` no longer runs and `ib_read_lat` does.
   - Each GPU uses an active backend NIC in its own PCI domain when GPU and NIC domains overlap. A GPU with none fails the test before perftest starts.
   - `ibperf.gid_index` and `ibperf.gid_type` are checked on every NIC before perftest starts; a mismatch fails the test.
