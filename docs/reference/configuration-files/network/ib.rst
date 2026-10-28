@@ -91,7 +91,7 @@ Parameters
      - ``True`` clones, configures, and installs perftest on the head node. ``False`` skips that work.
    * - ``install_system_packages``
      - ``False``
-     - ``True`` runs ``sudo apt install`` for the perftest build and runtime packages on every node before the build. Skipped inside Spur/Slurm job steps. When false, the install test fails if ``numactl``, ``libibverbs``, or ``librdmacm`` is missing. The head node also needs the build tools and the ``libibverbs`` / ``librdmacm`` development packages when you install from source.
+     - ``True`` runs ``sudo apt install`` for the perftest build and runtime packages on every node before the build. Skipped inside Spur/Slurm job steps. The install test fails if ``numactl``, ``lshw``, ``rdma``, ``libibverbs``, or ``librdmacm`` is missing, after the apt install when true. It always fails on a node without ``rocm-smi`` on ``PATH`` or at ``/opt/rocm/bin``, which apt never installs. The head node also needs the build tools and the ``libibverbs`` / ``librdmacm`` development packages when you install from source.
    * - ``install_dir``
      - The perf tests error (the key is required there)
      - Directory for the perftest checkout. Tests run ``<install_dir>/perftest/bin/<tool>``. The install check looks at ``<install_dir>/perftest/ib_write_bw``.

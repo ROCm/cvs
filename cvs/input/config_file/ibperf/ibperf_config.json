@@ -3,7 +3,7 @@
     {
        "install_perf_package": "True",
        "install_system_packages": "False",
-       "_comment_install_system_packages": "Set True to sudo apt install the perftest build and runtime packages on every node (skipped in Spur/Slurm job steps). When False, install fails if numactl, libibverbs or librdmacm is missing on any node.",
+       "_comment_install_system_packages": "Set True to sudo apt install the perftest build and runtime packages on every node (skipped in Spur/Slurm job steps). Install fails if numactl, lshw, rdma, libibverbs or librdmacm is missing on any node, after apt when True. Install always fails on a node without rocm-smi (PATH or /opt/rocm/bin), which apt never installs.",
        "install_dir": "/home/{user-id}/",
        "rocm_dir": "<changeme>",
        "_comment_rocm_dir": "ROCm installation path. Set to auto-detect from /opt/rocm or /opt/rocm/core-* if left as changeme",

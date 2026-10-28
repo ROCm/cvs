@@ -31,8 +31,8 @@ class TestOrchFixture(unittest.TestCase):
         patcher = patch.object(conftest.OrchestratorFactory, 'create_orchestrator', return_value=orch)
         create = patcher.start()
         self.addCleanup(patcher.stop)
-        gen = conftest.orch.__wrapped__(_cluster(nodes))
-        self.assertIs(next(gen), orch)
+        gen = conftest.orch.__wrapped__(_cluster(nodes), conftest.lifecycle.__wrapped__())
+        self.assertIs(next(gen).exec, orch.exec)
         return gen, orch, create.call_args.args[1]
 
     def test_install_orch_covers_nodes_used_by_vpod_pairs_with_odd_count(self):
@@ -60,6 +60,88 @@ class TestOrchFixture(unittest.TestCase):
         with self.assertRaises(StopIteration):
             next(gen)
         orch.close.assert_called_once_with()
+
+    @patch('cvs.core.orchestrators.container.RuntimeFactory')
+    @patch('cvs.core.orchestrators.baremetal.MultiProcessParallelHandle')
+    def test_container_mode_launch_runs_inside_then_teardown(self, _pssh, runtime_factory):
+        runtime = runtime_factory.create.return_value
+        cluster = {**_cluster(['n1', 'n2']), 'orchestrator': 'container', 'container': {'image': 'img', 'name': 'ct'}}
+        lifecycle = conftest.lifecycle.__wrapped__()
+        gen = conftest.orch.__wrapped__(cluster, lifecycle)
+
+        orch = next(gen)
+        runtime.setup_containers.assert_not_called()
+        conftest.launch_containers(orch, lifecycle)
+        runtime.setup_containers.assert_called_once()
+        orch.exec('rdma link')
+        self.assertEqual(runtime.exec.call_args.args[:2], ('ct', 'rdma link'))
+        orch.exec_cmd_list(['a', 'b'])
+        self.assertEqual(runtime.exec_cmd_list.call_args.args[:2], ('ct', ['a', 'b']))
+        orch.exec_on_head('make')
+        self.assertEqual(runtime.exec_on_head.call_args.args[:2], ('ct', 'make'))
+        conftest.teardown_containers(orch, lifecycle)
+        with self.assertRaises(StopIteration):
+            next(gen)
+        runtime.teardown_containers.assert_called_once_with('ct')
+
+    @patch('cvs.core.orchestrators.baremetal.get_passwordless_sudo_status', return_value={'n1': True, 'n2': True})
+    @patch('cvs.core.orchestrators.container.RuntimeFactory')
+    @patch('cvs.core.orchestrators.baremetal.MultiProcessParallelHandle')
+    def test_per_run_teardown_also_removes_the_container_on_pruned_nodes(self, pssh, _runtime_factory, _sudo):
+        pssh.return_value.prune_nodes.return_value = ['n2']
+        cluster = {**_cluster(['n1', 'n2']), 'orchestrator': 'container', 'container': {'image': 'img', 'name': 'ct'}}
+        lifecycle = conftest.lifecycle.__wrapped__()
+        orch = next(conftest.orch.__wrapped__(cluster, lifecycle))
+        conftest.launch_containers(orch, lifecycle)
+
+        orch.prune_nodes(['n2'])
+        conftest.teardown_containers(orch, lifecycle)
+        self.assertEqual(pssh.call_args.args[1], ['n2'])
+        pssh.return_value.exec.assert_any_call(
+            'sudo -n docker rm -f ct 2>/dev/null || true',
+            timeout=None,
+            detailed=False,
+            print_console=True,
+            inactivity_timeout=None,
+        )
+
+    def test_exec_on_head_without_a_launched_container_raises(self):
+        orch = conftest.IbperfOrch(MagicMock(orchestrator_type='container', container_id=None))
+        with self.assertRaisesRegex(RuntimeError, 'No containers running'):
+            orch.exec_on_head('mkdir -p /shared')
+        orch._orch.exec_on_head.assert_not_called()
+
+    def test_failed_launch_skips_later_tests_and_leak_guard_tears_down(self):
+        orch = MagicMock(orchestrator_type='container')
+        orch.setup_containers.return_value = False
+        patcher = patch.object(conftest.OrchestratorFactory, 'create_orchestrator', return_value=orch)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        lifecycle = conftest.lifecycle.__wrapped__()
+        gen = conftest.orch.__wrapped__(_cluster(['n1', 'n2']), lifecycle)
+
+        with self.assertRaises(pytest.fail.Exception):
+            conftest.launch_containers(next(gen), lifecycle)
+        with self.assertRaises(pytest.skip.Exception):
+            conftest.skip_after_failed_launch.__wrapped__(
+                SimpleNamespace(node=SimpleNamespace(name='test_install_ib_perf')), lifecycle
+            )
+        conftest.skip_after_failed_launch.__wrapped__(
+            SimpleNamespace(node=SimpleNamespace(name='test_teardown_containers')), lifecycle
+        )
+        with self.assertRaises(StopIteration):
+            next(gen)
+        orch.teardown_containers.assert_called_once_with()
+        orch.close.assert_called_once_with()
+
+    @patch('cvs.core.orchestrators.baremetal.MultiProcessParallelHandle')
+    def test_baremetal_mode_skips_launch_and_runs_cmd_lists_on_the_host_handle(self, pssh):
+        lifecycle = conftest.lifecycle.__wrapped__()
+        orch = next(conftest.orch.__wrapped__(_cluster(['n1', 'n2']), lifecycle))
+        with self.assertRaises(pytest.skip.Exception):
+            conftest.launch_containers(orch, lifecycle)
+        orch.exec_cmd_list(['a', 'b'])
+        pssh.return_value.exec_cmd_list.assert_called_once_with(['a', 'b'], timeout=None, print_console=True)
 
 
 class TestRunDeckFixtures(unittest.TestCase):

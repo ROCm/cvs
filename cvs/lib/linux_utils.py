@@ -9,6 +9,10 @@ import re
 from cvs.lib import rocm_plib
 from cvs.lib.utils_lib import *
 
+# Some distros install rdma as /usr/sbin/rdma, which is off a non-root PATH.
+RDMA_BIN = '"$(command -v rdma || echo /usr/sbin/rdma)"'
+RDMA_LINK_CMD = f'{RDMA_BIN} link'
+
 
 def _lshw_network_cmd(use_sudo=True):
     """lshw businfo. The unprivileged form calls /usr/sbin/lshw, which is off the default PATH."""
@@ -203,8 +207,9 @@ def get_rdma_nic_dict(phdl):
     output into a nested dictionary of RDMA NIC information.
 
     Expected behavior:
-      - phdl.exec('sudo rdma link') should return a dict mapping each node identifier
-        to the command's stdout as a single multiline string.
+      - phdl.exec(RDMA_LINK_CMD), which runs `rdma link` from PATH or /usr/sbin/rdma, should
+        return a dict mapping each node identifier to the command's stdout as a single
+        multiline string.
       - For each node, the function parses lines starting with 'link' that look like:
           link <rdma_dev>/<port> state <STATE> physical_state <PHYS_STATE> netdev <NETDEV>
         Example:
@@ -237,7 +242,7 @@ def get_rdma_nic_dict(phdl):
     rdma_dict = {}
 
     # Run 'rdma link' across node(s); expect a dict: { node_name: "<multiline stdout>", ... }
-    out_dict = phdl.exec('rdma link')
+    out_dict = phdl.exec(RDMA_LINK_CMD)
     # gid_dict_t = phdl.exec('sudo show_gids | grep -i v2 --color=never')
     for node in out_dict.keys():
         rdma_dict[node] = {}
@@ -268,8 +273,9 @@ def get_active_rdma_nic_dict(phdl):
     ACTIVE Interfaces
 
     Expected behavior:
-      - phdl.exec('sudo rdma link') should return a dict mapping each node identifier
-        to the command's stdout as a single multiline string.
+      - phdl.exec(RDMA_LINK_CMD), which runs `rdma link` from PATH or /usr/sbin/rdma, should
+        return a dict mapping each node identifier to the command's stdout as a single
+        multiline string.
       - For each node, the function parses lines starting with 'link' that look like:
           link <rdma_dev>/<port> state <STATE> physical_state <PHYS_STATE> netdev <NETDEV>
         Example:
@@ -300,7 +306,7 @@ def get_active_rdma_nic_dict(phdl):
     """
 
     rdma_dict = {}
-    out_dict = phdl.exec('rdma link')
+    out_dict = phdl.exec(RDMA_LINK_CMD)
     # gid_dict_t = phdl.exec('sudo show_gids | grep -i v2 --color=never')
     for node in out_dict.keys():
         rdma_dict[node] = {}

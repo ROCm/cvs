@@ -478,23 +478,23 @@ class TestConfigurePerftest(unittest.TestCase):
 
     def test_dmabuf_configure_succeeds(self):
         shdl = MagicMock()
-        shdl.exec.return_value = {'node1': {'output': 'ok', 'exit_code': 0}}
+        shdl.exec_on_head.return_value = {'node1': {'output': 'ok', 'exit_code': 0}}
 
         result = ibperf_lib.configure_perftest(shdl, '/opt/ibperf', '/opt/rocm')
 
         self.assertTrue(result)
-        shdl.exec.assert_called_once()
+        shdl.exec_on_head.assert_called_once()
         self.assertEqual(
-            shdl.exec.call_args.args[0],
+            shdl.exec_on_head.call_args.args[0],
             ibperf_lib.get_perftest_configure_cmd('/opt/ibperf', '/opt/rocm', rocm_dmabuf=True),
         )
-        self.assertEqual(shdl.exec.call_args.kwargs['timeout'], 200)
-        self.assertTrue(shdl.exec.call_args.kwargs['detailed'])
+        self.assertEqual(shdl.exec_on_head.call_args.kwargs['timeout'], 200)
+        self.assertTrue(shdl.exec_on_head.call_args.kwargs['detailed'])
         self.assertEqual(globals.error_list, [])
 
     def test_falls_back_when_dmabuf_configure_fails(self):
         shdl = MagicMock()
-        shdl.exec.side_effect = [
+        shdl.exec_on_head.side_effect = [
             {'node1': {'output': 'configure: error: hsa_amd_portable_export_dmabuf not found', 'exit_code': 1}},
             {'node1': {'output': 'ok', 'exit_code': 0}},
         ]
@@ -503,8 +503,8 @@ class TestConfigurePerftest(unittest.TestCase):
             result = ibperf_lib.configure_perftest(shdl, '/opt/ibperf', '/opt/rocm')
 
         self.assertFalse(result)
-        self.assertEqual(shdl.exec.call_count, 2)
-        fallback_cmd = shdl.exec.call_args_list[1].args[0]
+        self.assertEqual(shdl.exec_on_head.call_count, 2)
+        fallback_cmd = shdl.exec_on_head.call_args_list[1].args[0]
         self.assertNotIn('--enable-rocm-dmabuf', fallback_cmd)
         self.assertEqual(
             fallback_cmd,
@@ -517,7 +517,7 @@ class TestConfigurePerftest(unittest.TestCase):
         failure = {
             'node1': {'output': 'line1\nline2\nconfigure: error: cannot include hip/hip_runtime_api.h', 'exit_code': 1}
         }
-        shdl.exec.side_effect = [failure, failure]
+        shdl.exec_on_head.side_effect = [failure, failure]
 
         result = ibperf_lib.configure_perftest(shdl, '/opt/ibperf', '/opt/rocm')
 
@@ -528,7 +528,7 @@ class TestConfigurePerftest(unittest.TestCase):
 
     def test_aborted_exec_treated_as_failure(self):
         shdl = MagicMock()
-        shdl.exec.side_effect = [
+        shdl.exec_on_head.side_effect = [
             {'node1': {'output': '', 'exit_code': -1}},
             {'node1': {'output': 'ok', 'exit_code': 0}},
         ]
@@ -536,7 +536,7 @@ class TestConfigurePerftest(unittest.TestCase):
         result = ibperf_lib.configure_perftest(shdl, '/opt/ibperf', '/opt/rocm')
 
         self.assertFalse(result)
-        self.assertNotIn('--enable-rocm-dmabuf', shdl.exec.call_args_list[1].args[0])
+        self.assertNotIn('--enable-rocm-dmabuf', shdl.exec_on_head.call_args_list[1].args[0])
 
 
 class TestReadLatencyResults(unittest.TestCase):
