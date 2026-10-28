@@ -745,7 +745,7 @@ class TestHeliosCaptureEndToEnd(unittest.TestCase):
                 netdevs.append(netdev)
         lshw_lines.append('usb@1:1.1         enxaa5bd15c64f9  network        Ethernet interface')
         output = {
-            'rocm-smi': json.dumps({f'card{i - 1}': {'PCI Bus': f'000{i}:01:00.0'} for i in range(1, 5)}),
+            'amd-smi': json.dumps([{'gpu': i - 1, 'bdf': f'000{i}:01:00.0'} for i in range(1, 5)]),
             'lshw': '\n'.join(lshw_lines),
             '/sys/class/infiniband': '\n'.join(netdevs),
             linux_utils.RDMA_LINK_CMD: '\n'.join(rdma_lines),

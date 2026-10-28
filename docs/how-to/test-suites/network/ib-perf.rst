@@ -18,7 +18,7 @@ Prerequisites
 - A cluster file with at least two nodes. One node cannot form a server/client pair.
 - SSH key access from the machine where you run ``cvs``, as in your cluster file.
 - A ROCm install visible on the nodes. Set ``rocm_dir`` in the config below, or leave it empty to auto-detect.
-- ``rocm-smi`` on every node, on ``PATH`` or at ``/opt/rocm/bin``. GPU discovery uses it. ``install_system_packages`` never installs it, and the install suite fails on a node without it.
+- ``amd-smi`` on every node, on ``PATH`` or at ``/opt/rocm/bin``. GPU discovery uses it. ``install_system_packages`` never installs it, and the install suite fails on a node without it.
 - ``numactl``, ``lshw``, the ``rdma`` command, ``libibverbs``, and ``librdmacm`` on every node. The install suite can ``apt install`` build and runtime packages when ``install_system_packages`` is ``True``. That install is skipped inside a Spur or Slurm job step.
 - Passwordless sudo on the nodes if you use AFM vPOD discovery (``sudo -n afmctl``) or the dmesg scan (``sudo dmesg``). Without sudo, dmesg is skipped and AFM pairing stops.
 - ``install_dir`` as a path that is the same on every node. The install suite clones and builds perftest on the head node, then every node runs ``<install_dir>/perftest/bin/<tool>``.
@@ -161,8 +161,8 @@ Search the pytest log for ``FAIL -``. The test then ends with ``Following FAILUR
      - AFM mode could not run ``sudo -n afmctl``.
    * - ``perftest runtime dependencies missing on node``
      - ``numactl``, ``lshw``, ``rdma``, ``libibverbs``, or ``librdmacm`` is missing. Either ``install_system_packages`` is not installing them, or the apt install did not provide them.
-   * - ``rocm-smi not found on node``
-     - ``rocm-smi`` is neither on ``PATH`` nor at ``/opt/rocm/bin``. Without it GPU discovery finds no cards. Install ROCm with ``rocm-smi`` on that node or in the image.
+   * - ``amd-smi not found on node``
+     - ``amd-smi`` is neither on ``PATH`` nor at ``/opt/rocm/bin``. Without it GPU discovery finds no cards. Install ROCm with ``amd-smi`` on that node or in the image.
    * - ``ib_write_bw not showing expected use_rocm output``
      - The in-tree binary ``<install_dir>/perftest/ib_write_bw`` did not advertise GPUDirect RDMA. The perf tests invoke ``<install_dir>/perftest/bin/<tool>``.
    * - ``lacks ROCm DMA-BUF support``
@@ -200,7 +200,7 @@ IB Perf needs these container settings:
 
 - ``container.lifetime`` ``persistent``. The install and test suites are separate runs, and a ``per_run`` container is removed between them with anything installed in it.
 - ``install_dir`` on a volume in ``container.runtime.args.volumes`` that every node shares, mounted at the same path in the container. The build runs in the head node's container and every node runs the result.
-- An image with ROCm at ``rocm_dir`` and ``rocm-smi``, even when ``install_system_packages`` is ``True``. The install suite never installs either, and it fails on a node without ``rocm-smi``. The image also needs ``lshw``, ``rdma``, ``numactl``, ``libibverbs``, and ``librdmacm``, unless ``install_system_packages`` is ``True`` and the image has ``sudo``. The install still fails if apt does not provide them.
+- An image with ROCm at ``rocm_dir`` and ``amd-smi``, even when ``install_system_packages`` is ``True``. The install suite never installs either, and it fails on a node without ``amd-smi``. The image also needs ``lshw``, ``rdma``, ``numactl``, ``libibverbs``, and ``librdmacm``, unless ``install_system_packages`` is ``True`` and the image has ``sudo``. The install still fails if apt does not provide them.
 
 .. _ib-perf-dmesg-scan:
 

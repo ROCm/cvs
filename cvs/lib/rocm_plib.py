@@ -31,21 +31,23 @@ _ECC_NUM_COL_W = 9
 _ECC_SMI_TIMEOUT = 60
 
 
-def _amd_smi_json_command(args: str, use_sudo=True) -> str:
+def _amd_smi_json_command(args: str, use_sudo=True, strict=False) -> str:
     """Build a portable amd-smi JSON command for nodes with different install paths.
 
     use_sudo defaults to True so existing callers keep ``sudo bash -lc``. Host checks
     on a scheduler job pass False: bare ``sudo`` waits for a password on the HTTP
     agent, and firmware JSON is readable without root. A missing binary prints
-    ``[]`` and exits 0, the same fallback as ``_rocm_smi_showbus_cmd``, so the
-    JSON parser gets an empty payload instead of a failed command.
+    ``[]`` and exits 0, so the JSON parser gets an empty payload instead of a
+    failed command. With ``strict`` it prints an error and exits 127 with no JSON
+    instead, so the caller's JSON parse fails.
     """
     privilege = "sudo " if use_sudo else ""
+    missing = "echo \"amd-smi not found\" >&2; exit 127" if strict else "echo \"[]\"; exit 0"
     return (
         f"{privilege}bash -lc '"
         "if command -v amd-smi >/dev/null 2>&1; then AMD_SMI=$(command -v amd-smi); "
         "elif [ -x /opt/rocm/bin/amd-smi ]; then AMD_SMI=/opt/rocm/bin/amd-smi; "
-        "else echo \"[]\"; exit 0; fi; "
+        f"else {missing}; fi; "
         "\"${AMD_SMI}\" "
         f"{args} --json'"
     )
@@ -524,28 +526,17 @@ def get_gpu_fw_dict(phdl):
     return d_dict
 
 
-def _rocm_smi_showbus_cmd(use_sudo=True):
-    """rocm-smi bus map. Unprivileged form resolves the binary without a login sudo.
-
-    A missing binary prints ``[]`` and exits 0, matching ``_amd_smi_json_command``.
-    Exit 127 would make ``convert_phdl_json_to_dict`` store ``{}`` and the GPU PCIe
-    check would then KeyError that node while walking every card.
-    """
-    if use_sudo:
-        return 'sudo rocm-smi --loglevel error --showbus --json'
-    return (
-        "bash -lc '"
-        "if command -v rocm-smi >/dev/null 2>&1; then rocm-smi --loglevel error --showbus --json; "
-        "elif [ -x /opt/rocm/bin/rocm-smi ]; then /opt/rocm/bin/rocm-smi --loglevel error --showbus --json; "
-        "else echo \"[]\"; exit 0; fi'"
-    )
-
-
 def get_gpu_pcie_bus_dict(phdl, use_sudo=True):
-    d_dict = convert_phdl_json_to_dict(phdl.exec(_rocm_smi_showbus_cmd(use_sudo)))
-    for node, cards in d_dict.items():
-        if not isinstance(cards, dict):
-            d_dict[node] = {}
+    """Return ``{node: {'card<N>': {'PCI Bus': <bdf>}}}`` from ``amd-smi list``.
+
+    amd-smi is found on PATH or at /opt/rocm/bin. With sudo a node that has neither
+    fails the JSON parse, as rocm-smi did. Without sudo it maps to ``{}``, so callers
+    walking every card never KeyError on it.
+    """
+    d_dict = convert_phdl_json_to_dict(phdl.exec(_amd_smi_json_command('list', use_sudo, strict=use_sudo)))
+    for node, payload in d_dict.items():
+        gpus = [g for g in _iter_amd_smi_gpu_dicts(payload) if isinstance(g, dict) and 'gpu' in g and 'bdf' in g]
+        d_dict[node] = {f"card{gpu['gpu']}": {'PCI Bus': gpu['bdf']} for gpu in gpus}
     return d_dict
 
 

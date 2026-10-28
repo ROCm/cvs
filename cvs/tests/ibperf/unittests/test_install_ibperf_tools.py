@@ -70,26 +70,26 @@ class TestInstallIbPerf(unittest.TestCase):
 
     def test_gpu_tool_check_uses_gpu_discovery_lookup(self):
         check = install_ibperf_tools.GPU_TOOL_CHECK
-        self.assertIn('command -v rocm-smi', check)
-        self.assertIn('[ -x /opt/rocm/bin/rocm-smi ]', check)
-        self.assertIn('/opt/rocm/bin/rocm-smi', rocm_plib._rocm_smi_showbus_cmd(use_sudo=False))
+        self.assertIn('command -v amd-smi', check)
+        self.assertIn('[ -x /opt/rocm/bin/amd-smi ]', check)
+        self.assertIn('/opt/rocm/bin/amd-smi', rocm_plib._amd_smi_json_command('list', use_sudo=False))
 
     def test_missing_gpu_tool_fails_naming_node_whether_or_not_apt_runs(self):
         for flag, managed in (('False', False), ('True', False), ('True', True)):
             with self.subTest(flag=flag, managed=managed):
                 with self.assertRaises(BaseException) as ctx:
                     self._run(
-                        {'install_system_packages': flag}, managed=managed, gpu_tool_out={'n2': 'MISSING:rocm-smi\n'}
+                        {'install_system_packages': flag}, managed=managed, gpu_tool_out={'n2': 'MISSING:amd-smi\n'}
                     )
-                self.assertIn('rocm-smi not found on node n2 (PATH or /opt/rocm/bin)', str(ctx.exception))
+                self.assertIn('amd-smi not found on node n2 (PATH or /opt/rocm/bin)', str(ctx.exception))
                 self.assertNotIn('node n1', str(ctx.exception))
                 self.assertEqual(self._apt_cmds(), [])
                 self.assertFalse(any('make' in c for c in self.head_cmds))
 
     def test_missing_gpu_tool_and_runtime_deps_are_both_reported(self):
         with self.assertRaises(BaseException) as ctx:
-            self._run({}, {'n1': 'MISSING:numactl\n'}, gpu_tool_out={'n1': 'MISSING:rocm-smi\n'})
-        self.assertIn('rocm-smi not found on node n1', str(ctx.exception))
+            self._run({}, {'n1': 'MISSING:numactl\n'}, gpu_tool_out={'n1': 'MISSING:amd-smi\n'})
+        self.assertIn('amd-smi not found on node n1', str(ctx.exception))
         self.assertIn('node n1: numactl;', str(ctx.exception))
 
     def test_rdma_check_uses_nic_discovery_lookup(self):
