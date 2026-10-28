@@ -31,8 +31,10 @@ In addition to the :ref:`common training prerequisites <training-common-prerequi
   tokenizer download or training command runs. CVS does not read the file on
   the machine running ``cvs run``. The path must be mounted into the container.
   The packaged ``/home/{user-id}/.hf_token`` path works when that home directory
-  is bind-mounted. A missing or empty file exports an empty ``HF_TOKEN`` and
-  the run continues. The nodes need network access to download the tokenizer.
+  is bind-mounted. If the file is not visible inside the container, Megatron
+  fails that stage and sets ``lifecycle.failed``, so later stages are skipped.
+  Primus exports an empty ``HF_TOKEN`` and the run continues. The nodes need
+  network access to download the tokenizer.
   Gated models such as LLaMA and DeepSeek also need access granted on
   huggingface.co.
 - For a distributed run, use a shared filesystem reachable from every node for
@@ -259,7 +261,9 @@ Tests run in this pinned order. ``[combo]`` = one row per enabled sweep combo.
      - once
      - Tear the container down
 
-A training failure is isolated to that combo's ``test_training`` row; other combos still run. When a combo's training does not complete, its downstream ``test_metric`` and ``test_loss_curve`` rows are skipped. If an early lifecycle stage fails, all subsequent stages are skipped via ``lifecycle.failed``.
+A training failure is isolated to that combo's ``test_training`` row; other combos still run. When a combo's training does not complete, its downstream ``test_metric`` and ``test_loss_curve`` rows are skipped. If an early lifecycle stage fails, all subsequent stages are skipped via ``lifecycle.failed``. ``test_teardown`` still runs.
+
+On Megatron, a token file that is missing, empty, or not mounted inside the container is one of those early failures. DeepSeek and Mixtral fail in ``test_download_tokenizer``; other models fail in ``test_smoke``. If ``smoke.enabled`` is ``false``, the same check runs in ``test_training`` instead: that combo fails without setting ``lifecycle.failed``, its metric and loss-curve rows are skipped, and other combos still run. Primus exports an empty ``HF_TOKEN`` and does not fail the suite when the file is not visible.
 
 On a training failure, lingering GPU processes are killed (``stop_training_processes``) so the next combo does not launch on top of them.
 

@@ -41,13 +41,52 @@ def _hf_token_export_line(token_file):
 
     Embedding HF_TOKEN's value directly in a shell command would print it,
     because the orchestrator logs the full command. A missing or empty file
-    exports an empty HF_TOKEN and the run continues.
+    fails the shell command instead of continuing with an empty token.
     """
     path = str(token_file or '').strip()
     if not path:
-        return 'export HF_TOKEN=; '
+        return "echo 'paths.hf_token_file is not configured' >&2; exit 1; "
     quoted = shlex.quote(path)
-    return f"if [ -f {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; else export HF_TOKEN=; fi; "
+    return (
+        f"if [ -s {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; "
+        f"else echo 'HF token file is missing or not mounted inside the container' >&2; exit 1; fi; "
+    )
+
+
+def _require_hf_token_file(orch, token_file):
+    """Fail the test when token_file is missing or empty inside the container.
+
+    The training command reads the file on the node, so a path that is not
+    mounted into the container must stop the test before the job is launched.
+    """
+    path = str(token_file or '').strip()
+    if not path:
+        msg = (
+            'paths.hf_token_file is not configured. Megatron reads the token inside the '
+            'container on each node and fails the test when the file is missing.'
+        )
+        fail_test(msg)
+        raise FileNotFoundError(msg)
+    quoted = shlex.quote(path)
+    result = orch.exec(f'test -s {quoted}', detailed=True, timeout=30) or {}
+    missing = []
+    seen = set()
+    for host, info in result.items():
+        seen.add(str(host))
+        code = info.get('exit_code') if isinstance(info, dict) else None
+        if code != 0:
+            missing.append(str(host))
+    for host in getattr(orch, 'hosts', None) or []:
+        if str(host) not in seen:
+            missing.append(str(host))
+    if not result or missing:
+        where = ', '.join(missing) if missing else 'no node returned a result'
+        msg = (
+            f'HF token file {path} is missing, empty, or not mounted inside the container on {where}. '
+            'Megatron fails the test here. Mount paths.hf_token_file into the container on each node.'
+        )
+        fail_test(msg)
+        raise FileNotFoundError(msg)
 
 
 # Ordered fallback chains for parsing Megatron-LM training output.
@@ -427,6 +466,7 @@ class MegatronTrainingJob:
 
         local_dir = f'{self.data_cache_dir}/{self.model_name}'
         log.info('Downloading tokenizer.model for %s into %s', self.model_name, local_dir)
+        _require_hf_token_file(self.orch, self.hf_token_file)
         self.orch.exec(
             _hf_token_export_line(self.hf_token_file) + f'huggingface-cli download {self.tokenizer_model} '
             f'--include "tokenizer.model" '
@@ -619,6 +659,7 @@ class MegatronTrainingJob:
            by build_training_job_cmd() prior to invocation.
         """
         log.info('start training job')
+        _require_hf_token_file(self.orch, self.hf_token_file)
         log.info('%s', [redact_secrets(c) for c in self.job_cmd_list])
         log.info("%s", redact_secrets(self.job_cmd))
         n = len(self.orch.hosts)
