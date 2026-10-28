@@ -98,7 +98,7 @@ class TestRdmaLookup(unittest.TestCase):
             stub = os.path.join(bindir, 'rdma')
             with open(stub, 'w') as fp:
                 fp.write('#!/bin/sh\necho "link stub0/1 state ACTIVE physical_state LINK_UP netdev eth9 args:$*"\n')
-            os.chmod(stub, 0o755)
+            os.chmod(stub, 0o700)
 
             def exec_locally(cmd):
                 result = run_trusted(['/bin/bash', '-c', cmd], capture_output=True, text=True, env={'PATH': bindir})
