@@ -131,6 +131,10 @@ class TestCheckIfoeSwDetails(unittest.TestCase):
         self.assertIn('/opt/amd/afm/bin/afmctl', fw_cmd)
         self.assertIn('command -v modinfo', kmod_cmd)
         self.assertIn('/usr/sbin/modinfo', kmod_cmd)
+        # An unresolved reader on a loaded-module node is a read failure, not the
+        # absent-module sentinel that would record NA.
+        self.assertIn('CVS_IFOE_READER_MISSING', fw_cmd)
+        self.assertIn('CVS_IFOE_READER_MISSING', kmod_cmd)
         self.assertEqual(globals.error_list, [])
 
     def test_both_rows_pass(self):

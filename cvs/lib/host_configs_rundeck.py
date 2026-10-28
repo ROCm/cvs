@@ -75,9 +75,13 @@ _SPEED_UNKNOWN = (-1, 4294967295)
 _NIC_LINK_RE = re.compile(r'^\s*(\S+)[ \t]+speed=(\S*)[ \t]+operstate=(\S*)[ \t]+flags=(\S*)\s*$')
 _IFF_UP = 0x1
 
-# Emitted by the host_configs_cvs IFoE commands when neither afmctl nor the ifoe
-# kernel module is present, so a non-MI4XX node reports NA instead of failing.
+# Emitted by the host_configs_cvs IFoE commands when the ifoe kernel module is not
+# loaded, so a non-MI4XX node reports NA instead of failing.
 CVS_IFOE_ABSENT = 'CVS_IFOE_ABSENT'
+# Emitted when the module is loaded (an IFoE node) but the reader binary (afmctl /
+# modinfo) could not be resolved. This is a read failure, not an absent module, so
+# the check fails as unreadable rather than silently recording NA.
+CVS_IFOE_READER_MISSING = 'CVS_IFOE_READER_MISSING'
 # ``afmctl show device`` prints one ``BDF : X`` header then one ``Firmware version``
 # per device block. The BDF count is the device count: every reported device must
 # carry a firmware version, so a block missing its version fails rather than passing
@@ -334,6 +338,7 @@ def _eval_ifoe_version(out_dict, expected, detect_re, format_re, item_name, labe
     Per node:
       - absent sentinel in output -> ``na`` record, no fail message.
       - denial token in output -> fail (the privileged read was refused).
+      - reader-missing marker in output -> fail (module loaded but reader not found).
       - ``count_re`` set and more devices than detected versions -> fail (a reported
         device is missing its version).
       - ``expected`` set -> every detected value must equal it, else fail.
@@ -357,6 +362,11 @@ def _eval_ifoe_version(out_dict, expected, detect_re, format_re, item_name, labe
             message = f'{label} could not be read on node {node}'
             messages.append(message)
             records[str(node)] = _fail_record(item_name, message, 'denied')
+            continue
+        if CVS_IFOE_READER_MISSING in text:
+            message = f'{label} reader not found on node {node}'
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'unavailable')
             continue
         detected = detect_re.findall(text)
         if not detected:

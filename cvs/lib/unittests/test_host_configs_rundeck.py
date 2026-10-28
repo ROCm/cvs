@@ -708,6 +708,15 @@ class TestIfoeFirmware(unittest.TestCase):
         self.assertEqual(records['n1']['status'], 'fail')
         self.assertEqual(messages, ['IFoE firmware version could not be read on node n1'])
 
+    def test_reader_missing_fails_even_with_expected_version(self):
+        # The module is loaded (past the gate) but afmctl could not be resolved: this
+        # is a read failure, not an absent module, so it must fail rather than record
+        # NA and silently skip the configured-version check.
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': 'CVS_IFOE_READER_MISSING\n'}, '0.24.2')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'unavailable')
+        self.assertEqual(messages, ['IFoE firmware version reader not found on node n1'])
+
     def test_multi_device_all_matching_passes(self):
         text = _IFOE_DEVICE + 'BDF : 0004:01:00.1\n    Firmware version : 0.14.15\n'
         records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '0.14.15')
@@ -767,6 +776,12 @@ class TestIfoeKmod(unittest.TestCase):
         records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'CVS_IFOE_ABSENT\n'}, '')
         self.assertEqual(records['n1']['status'], 'na')
         self.assertEqual(messages, [])
+
+    def test_reader_missing_fails_not_na(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'CVS_IFOE_READER_MISSING\n'}, '1.0.0')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'unavailable')
+        self.assertEqual(messages, ['IFoE kmod version reader not found on node n1'])
 
     def test_compare_mismatch_fails(self):
         records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'version:        1.0.0\n'}, '2.0.0')

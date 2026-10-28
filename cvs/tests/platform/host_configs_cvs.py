@@ -335,21 +335,23 @@ def _resolve_tool(var, tool, fallbacks):
     passed to sudo by its resolved absolute path, not by basename. The path is
     captured from ``command -v`` (which prints the resolved location, not the tool's
     output); when the non-login PATH omits the tool's directory, each known install
-    path in ``fallbacks`` is probed with ``-x``. An unresolved tool is reported as NA.
+    path in ``fallbacks`` is probed with ``-x``. This runs only after the module-
+    presence gate, so an unresolved tool on a loaded-module node is a read failure
+    (``CVS_IFOE_READER_MISSING``), not the absent-module sentinel.
     '''
     candidates = ' '.join(fallbacks)
     return (
         f'{var}="$(command -v {tool} 2>/dev/null)"; '
         f'[ -n "${var}" ] || for _cvs_c in {candidates}; do '
         f'[ -x "$_cvs_c" ] && {{ {var}="$_cvs_c"; break; }}; done; '
-        f'case "${var}" in /*) ;; *) echo CVS_IFOE_ABSENT; exit 0 ;; esac; '
+        f'case "${var}" in /*) ;; *) echo CVS_IFOE_READER_MISSING; exit 0 ;; esac; '
     )
 
 
-# The ifoe kernel module loaded is the single "IFoE present on this node" signal
-# for both checks. When it is absent the node is not an IFoE compute tray, so both
-# commands emit CVS_IFOE_ABSENT and the evals record NA instead of failing. When it
-# is loaded, afmctl is expected; the privileged read goes through the shared
+# The ifoe kernel module loaded is the single "IFoE present on this node" signal for
+# both checks. When it is absent the node is not an IFoE compute tray, so the outer
+# branch emits CVS_IFOE_ABSENT and the evals record NA instead of failing. When it is
+# loaded, afmctl is expected; the privileged read goes through the shared
 # _read_or_denied wrapper so a refused ``sudo -n`` becomes CVS_CMD_DENIED (recorded
 # as a denial) rather than empty output mis-read as "could not be read".
 _IFOE_FW_READER = 'sudo -n "$_afm" show device'
