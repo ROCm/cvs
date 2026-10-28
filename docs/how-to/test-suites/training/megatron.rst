@@ -27,9 +27,14 @@ In addition to the :ref:`common training prerequisites <training-common-prerequi
 - A Megatron-LM image must provide Megatron-LM at ``/workspace/Megatron-LM``. A
   Primus image, whose name contains ``primus``, uses the in-image YAML under
   ``examples/megatron/configs/{gpu_arch}/``.
-- A Hugging Face token file at ``paths.hf_token_file``. The nodes need network
-  access to download the tokenizer. Gated models such as LLaMA and DeepSeek also
-  need access granted on huggingface.co.
+- ``paths.hf_token_file`` is read inside the container on each node when the
+  tokenizer download or training command runs. CVS does not read the file on
+  the machine running ``cvs run``. The path must be mounted into the container.
+  The packaged ``/home/{user-id}/.hf_token`` path works when that home directory
+  is bind-mounted. A missing or empty file exports an empty ``HF_TOKEN`` and
+  the run continues. The nodes need network access to download the tokenizer.
+  Gated models such as LLaMA and DeepSeek also need access granted on
+  huggingface.co.
 - For a distributed run, use a shared filesystem reachable from every node for
   ``paths.data_cache_dir``, logs, and scripts.
 

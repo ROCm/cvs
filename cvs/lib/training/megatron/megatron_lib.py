@@ -41,8 +41,7 @@ def _hf_token_export_line(token_file):
 
     Embedding HF_TOKEN's value directly in a shell command would print it,
     because the orchestrator logs the full command. A missing or empty file
-    yields an empty HF_TOKEN; a gated download then fails fast rather than
-    continuing with a blank token.
+    exports an empty HF_TOKEN and the run continues.
     """
     path = str(token_file or '').strip()
     if not path:
