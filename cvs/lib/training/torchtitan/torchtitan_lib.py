@@ -16,6 +16,7 @@ import shlex
 import time
 
 from cvs.lib import globals
+from cvs.lib.env_lib import redact_secrets
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import linux_utils
@@ -129,6 +130,59 @@ def detect_rocm_path(orch, config_rocm_path):
     return '/opt/rocm'
 
 
+def _hf_token_export_line(token_file):
+    """Shell line that exports ``HF_TOKEN`` by reading ``token_file`` on the node.
+
+    Embedding the token value in a shell command would print it, because the
+    orchestrator logs the full command. A missing or empty file fails the
+    shell command instead of continuing with an empty token.
+    """
+    path = str(token_file or '').strip()
+    if not path:
+        return "echo 'paths.hf_token_file is not configured' >&2; exit 1; "
+    quoted = shlex.quote(path)
+    return (
+        f"if [ -s {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; "
+        f"else echo 'HF token file is missing or not mounted inside the container' >&2; exit 1; fi; "
+    )
+
+
+def _require_hf_token_file(orch, token_file):
+    """Fail the test when token_file is missing or empty inside the container.
+
+    The training command reads the file on the node, so a path that is not
+    mounted into the container must stop the test before the job is launched.
+    """
+    path = str(token_file or '').strip()
+    if not path:
+        msg = (
+            'paths.hf_token_file is not configured. TorchTitan reads the token inside the '
+            'container on each node and fails the test when the file is missing.'
+        )
+        fail_test(msg)
+        raise FileNotFoundError(msg)
+    quoted = shlex.quote(path)
+    result = orch.exec(f'test -s {quoted}', detailed=True, timeout=30) or {}
+    missing = []
+    seen = set()
+    for host, info in result.items():
+        seen.add(str(host))
+        code = info.get('exit_code') if isinstance(info, dict) else None
+        if code != 0:
+            missing.append(str(host))
+    for host in getattr(orch, 'hosts', None) or []:
+        if str(host) not in seen:
+            missing.append(str(host))
+    if not result or missing:
+        where = ', '.join(missing) if missing else 'no node returned a result'
+        msg = (
+            f'HF token file {path} is missing, empty, or not mounted inside the container on {where}. '
+            'TorchTitan fails the test here. Mount paths.hf_token_file into the container on each node.'
+        )
+        fail_test(msg)
+        raise FileNotFoundError(msg)
+
+
 class TorchTitanTrainingJob:
     """
     Orchestrates a TorchTitan training job across one or more nodes.
@@ -143,7 +197,6 @@ class TorchTitanTrainingJob:
         self,
         orch,
         variant_config,
-        hf_token,
         micro_batch_size=None,
         global_batch_size=None,
         precision='',
@@ -156,7 +209,6 @@ class TorchTitanTrainingJob:
     ):
         self.orch = orch
         self.variant_config = variant_config
-        self.hf_token = hf_token
         self.distributed_training = distributed_training
         self.tune_model_params = tune_model_params
         self.run_label = run_label
@@ -334,10 +386,11 @@ class TorchTitanTrainingJob:
 
         log.info(f'Downloading HF assets for {self.tokenizer_path} to {local_dir}')
 
+        _require_hf_token_file(self.orch, self.hf_token_file)
         download_cmd = (
             f'cd {self.torchtitan_root}; '
-            f'export HF_TOKEN={self.hf_token}; '
-            f'python scripts/download_hf_assets.py --repo_id {self.tokenizer_path} '
+            + _hf_token_export_line(self.hf_token_file)
+            + f'python scripts/download_hf_assets.py --repo_id {self.tokenizer_path} '
             f'--local_dir {local_dir} --all'
         )
 
@@ -436,7 +489,7 @@ class TorchTitanTrainingJob:
         """Build torchrun commands for training."""
         # Base environment setup
         cmd = f'cd {self.torchtitan_root}; '
-        cmd += f'export HF_TOKEN={self.hf_token}; '
+        cmd += _hf_token_export_line(self.hf_token_file)
         cmd += 'export HSA_FORCE_FINE_GRAIN_PCIE=1; '
         cmd += 'export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True; '
         # Add TorchTitan to PYTHONPATH so it can be imported as a module
@@ -516,6 +569,11 @@ class TorchTitanTrainingJob:
 
     def start_training_job(self, timeout=500):
         """Launch the training job."""
+        _require_hf_token_file(self.orch, self.hf_token_file)
+        if self.distributed_training:
+            log.info('%s', [redact_secrets(c) for c in self.job_cmd_list])
+        else:
+            log.info('%s', redact_secrets(self.job_cmd))
         # Capture start time for dmesg verification
         self.training_start_time = self.orch.exec('date')
 
