@@ -71,6 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Failure messages name the hosts that failed, not config sections such as `vpod_membership`.
   - The preflight report pytest row fails when the summary overall status is FAIL. It previously passed after logging a warning.
   - A failed or blocked check in the preflight summary, and the line that an overall failure was detected, are logged at error level. A warning check, such as unreachable nodes or a TransferBench skip-budget warning, is logged at warning level. Those lines were previously info, and the overall-failure line was a warning.
+  - A check marked skipped, including one recorded with status SKIPPED and no skipped flag, is not scored as a pass. A check that tested no nodes is an error, and that error fails the preflight report.
 - vLLM:
   - DeepSeek V4 sample configs no longer set `HF_HUB_OFFLINE` or `TRANSFORMERS_OFFLINE`, which broke accuracy tasks.
   - Suites accept the `spec_decode_*` statistics that `vllm bench serve` reports, instead of failing the sweep.
