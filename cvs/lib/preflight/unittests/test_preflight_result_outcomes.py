@@ -184,12 +184,55 @@ class TestPreflightReportOverallVerdict(unittest.TestCase):
             'successful_pairs': 1,
             'failed_pairs': 1,
         }
-        with self.assertRaises(pytest.fail.Exception) as ctx:
+        with (
+            patch.object(preflight_checks.log, 'error') as error,
+            patch.object(preflight_checks.log, 'info') as info,
+            self.assertRaises(pytest.fail.Exception) as ctx,
+        ):
             preflight_checks.test_generate_preflight_report(MagicMock(), config, self.request)
         message = str(ctx.exception)
         self.assertIn('overall status is FAIL', message)
         self.assertIn('Rdma Connectivity', message)
         self.assertEqual(preflight_checks.preflight_results['summary']['overall_status'], 'FAIL')
+        error_lines = [str(call.args[0]) for call in error.call_args_list if call.args]
+        info_lines = [str(call.args[0]) for call in info.call_args_list if call.args]
+        self.assertTrue(any('Rdma Connectivity: FAIL' in line for line in error_lines))
+        self.assertTrue(any('Overall Status: FAIL' in line for line in error_lines))
+        self.assertTrue(any('One or more preflight checks detected issues' in line for line in error_lines))
+        self.assertFalse(any('Rdma Connectivity: FAIL' in line for line in info_lines))
+
+    def test_blocked_check_is_logged_at_error(self):
+        config = {'node_check': {'enabled': False}, 'reporting': {'generate_html_report': False}}
+        preflight_checks.preflight_results['rdma_connectivity'] = {
+            'blocked': True,
+            'message': 'RDMA connectivity blocked by mandatory admission',
+        }
+        with (
+            patch.object(preflight_checks.log, 'error') as error,
+            self.assertRaises(pytest.fail.Exception) as ctx,
+        ):
+            preflight_checks.test_generate_preflight_report(MagicMock(), config, self.request)
+        self.assertIn('Rdma Connectivity', str(ctx.exception))
+        error_lines = [str(call.args[0]) for call in error.call_args_list if call.args]
+        self.assertTrue(any('Rdma Connectivity: BLOCKED' in line for line in error_lines))
+
+    def test_warning_check_is_logged_at_warning(self):
+        config = {'node_check': {'enabled': False}, 'reporting': {'generate_html_report': False}}
+        preflight_checks.preflight_results['node_reachability'] = {
+            'total_nodes': 2,
+            'reachable_nodes': 1,
+            'unreachable_nodes': ['nodeB'],
+        }
+        with (
+            patch.object(preflight_checks.log, 'warning') as warning,
+            patch.object(preflight_checks.log, 'info') as info,
+        ):
+            self.assertIsNone(preflight_checks.test_generate_preflight_report(MagicMock(), config, self.request))
+        self.assertEqual(preflight_checks.preflight_results['summary']['overall_status'], 'PASS')
+        warning_lines = [str(call.args[0]) for call in warning.call_args_list if call.args]
+        info_lines = [str(call.args[0]) for call in info.call_args_list if call.args]
+        self.assertTrue(any('Ssh Reachability: WARNING' in line for line in warning_lines))
+        self.assertFalse(any('Ssh Reachability: WARNING' in line for line in info_lines))
 
     def test_node_health_gate_still_fails_before_the_overall_message(self):
         config = {'node_check': {'enabled': True}, 'reporting': {'generate_html_report': False}}
