@@ -34,6 +34,60 @@ def _default_nic_type(gpu_name):
     return 'thor2'
 
 
+def _hf_token_export_line(token_file):
+    """Shell line that exports ``HF_TOKEN`` by reading ``token_file`` on the
+    node the command runs on (as SGLang/vLLM/jaxmaxtext do).
+
+    Embedding HF_TOKEN's value directly in a shell command would print it,
+    because the orchestrator logs the full command. A missing or empty file
+    fails the shell command instead of continuing with an empty token.
+    """
+    path = str(token_file or '').strip()
+    if not path:
+        return "echo 'paths.hf_token_file is not configured' >&2; exit 1; "
+    quoted = shlex.quote(path)
+    return (
+        f"if [ -s {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; "
+        f"else echo 'HF token file is missing or not mounted inside the container' >&2; exit 1; fi; "
+    )
+
+
+def _require_hf_token_file(orch, token_file):
+    """Fail the test when token_file is missing or empty inside the container.
+
+    The training command reads the file on the node, so a path that is not
+    mounted into the container must stop the test before the job is launched.
+    """
+    path = str(token_file or '').strip()
+    if not path:
+        msg = (
+            'paths.hf_token_file is not configured. Megatron reads the token inside the '
+            'container on each node and fails the test when the file is missing.'
+        )
+        fail_test(msg)
+        raise FileNotFoundError(msg)
+    quoted = shlex.quote(path)
+    result = orch.exec(f'test -s {quoted}', detailed=True, timeout=30) or {}
+    missing = []
+    seen = set()
+    for host, info in result.items():
+        seen.add(str(host))
+        code = info.get('exit_code') if isinstance(info, dict) else None
+        if code != 0:
+            missing.append(str(host))
+    for host in getattr(orch, 'hosts', None) or []:
+        if str(host) not in seen:
+            missing.append(str(host))
+    if not result or missing:
+        where = ', '.join(missing) if missing else 'no node returned a result'
+        msg = (
+            f'HF token file {path} is missing, empty, or not mounted inside the container on {where}. '
+            'Megatron fails the test here. Mount paths.hf_token_file into the container on each node.'
+        )
+        fail_test(msg)
+        raise FileNotFoundError(msg)
+
+
 # Ordered fallback chains for parsing Megatron-LM training output.
 # Each chain is tried in order; first non-empty match wins. Seeded with
 # [new, old] so newer Megatron output (e.g. `throughput per GPU
@@ -225,7 +279,6 @@ class MegatronTrainingJob:
         self,
         orch,
         variant_config,
-        hf_token,
         micro_batch_size,
         global_batch_size,
         precision=None,
@@ -241,7 +294,6 @@ class MegatronTrainingJob:
         Args:
           orch: Orchestrator handle for container and host command execution.
           variant_config: MegatronVariantConfig holding container, config, train_params, sweep.
-          hf_token: Hugging Face token passed to the job environment.
           batch_size: Global batch size for this sweep cell (overrides train_params).
           micro_batch_size: Micro batch size for this sweep cell (overrides train_params).
           precision: Optional precision override for this sweep cell. When None, falls
@@ -253,7 +305,6 @@ class MegatronTrainingJob:
 
         self.orch = orch
         self.model_name = variant_config.train_params["model_name"]
-        self.hf_token = hf_token
         self.tune_model_params = tune_model_params
 
         self.job_cmd = ''
@@ -304,6 +355,7 @@ class MegatronTrainingJob:
         self.rocm_path = detect_rocm_path(self.orch, tdict['rocm_dir'])
         self.megatron_root = tdict['megatron_root']
         self.training_scripts = tdict['training_scripts']
+        self.hf_token_file = tdict['hf_token_file']
 
         pdict = dict(variant_config.train_params)
         pdict.update(sweep_overrides or {})
@@ -410,9 +462,9 @@ class MegatronTrainingJob:
 
         local_dir = f'{self.data_cache_dir}/{self.model_name}'
         log.info('Downloading tokenizer.model for %s into %s', self.model_name, local_dir)
+        _require_hf_token_file(self.orch, self.hf_token_file)
         self.orch.exec(
-            f'export HF_TOKEN={shlex.quote(self.hf_token)}; '
-            f'huggingface-cli download {self.tokenizer_model} '
+            _hf_token_export_line(self.hf_token_file) + f'huggingface-cli download {self.tokenizer_model} '
             f'--include "tokenizer.model" '
             f'--local-dir {local_dir}'
         )
@@ -533,7 +585,7 @@ class MegatronTrainingJob:
             cmd
             + f'cd {self.megatron_root}; export MOCK_DATA=1; '
             + f'export IMAGE={self.container_image}; '
-            + f'export HF_TOKEN="{self.hf_token}"; '
+            + _hf_token_export_line(self.hf_token_file)
             + f'export DATA_CACHE_PATH={self.data_cache_dir}; '
             + f'export TOKENIZER_MODEL={self.local_tokenizer_path if self.local_tokenizer_path else self.tokenizer_model}; '
             + f'export LD_LIBRARY_PATH=/usr/local/lib/:{self.rocm_path}/lib:$LD_LIBRARY_PATH; '
@@ -603,6 +655,7 @@ class MegatronTrainingJob:
            by build_training_job_cmd() prior to invocation.
         """
         log.info('start training job')
+        _require_hf_token_file(self.orch, self.hf_token_file)
         log.info('%s', self.job_cmd_list)
         log.info("%s", self.job_cmd)
         n = len(self.orch.hosts)
