@@ -1,10 +1,13 @@
 """Unit tests for the ibperf perftest install."""
 
+import os
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from cvs.lib import rocm_plib
+from cvs.lib import linux_utils, rocm_plib
 from cvs.tests.ibperf import install_ibperf_tools
+from cvs.unittests.support import run_trusted
 
 _NODES = ('n1', 'n2')
 
@@ -89,6 +92,28 @@ class TestInstallIbPerf(unittest.TestCase):
         self.assertIn('rocm-smi not found on node n1', str(ctx.exception))
         self.assertIn('node n1: numactl;', str(ctx.exception))
 
+    def test_rdma_check_uses_nic_discovery_lookup(self):
+        self.assertIn(f'[ -x {linux_utils.RDMA_BIN} ] || echo MISSING:rdma', install_ibperf_tools.RUNTIME_DEPS_CHECK)
+        with tempfile.TemporaryDirectory() as bindir:
+            stub = os.path.join(bindir, 'rdma')
+            with open(stub, 'w') as fp:
+                fp.write('#!/bin/sh\n')
+            os.chmod(stub, 0o755)
+            result = run_trusted(
+                ['/bin/bash', '-c', install_ibperf_tools.RUNTIME_DEPS_CHECK],
+                capture_output=True,
+                text=True,
+                env={'PATH': f'{bindir}:/usr/bin:/bin'},
+            )
+        self.assertNotIn('MISSING:rdma', result.stdout)
+
+    def test_deps_still_missing_after_apt_fail_before_build(self):
+        with self.assertRaises(BaseException) as ctx:
+            self._run({'install_system_packages': 'True'}, {'n1': 'MISSING:rdma\n'})
+        self.assertIn('node n1: rdma; apt install did not provide them', str(ctx.exception))
+        self.assertIn('sudo apt install -y numactl lshw iproute2', self._apt_cmds())
+        self.assertFalse(any('make' in c for c in self.head_cmds))
+
     def test_missing_runtime_deps_in_job_step_say_install_outside_step(self):
         for flag in ('False', 'True'):
             with self.subTest(flag=flag):
@@ -100,7 +125,10 @@ class TestInstallIbPerf(unittest.TestCase):
     def test_opt_in_runs_apt_except_in_managed_job_step(self):
         self._run({'install_system_packages': 'true'})
         self.assertIn('sudo apt install -y numactl lshw iproute2', self._apt_cmds())
-        self.assertNotIn(install_ibperf_tools.RUNTIME_DEPS_CHECK, self.all_cmds)
+        self.assertGreater(
+            self.all_cmds.index(install_ibperf_tools.RUNTIME_DEPS_CHECK),
+            self.all_cmds.index('sudo apt install -y numactl lshw iproute2'),
+        )
         self.assertLess(
             self.all_cmds.index(install_ibperf_tools.GPU_TOOL_CHECK), self.all_cmds.index('sudo apt update -y')
         )

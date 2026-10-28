@@ -55,7 +55,7 @@ link rdma1/1 state ACTIVE physical_state LINK_UP netdev tw-eth1"""
         result = linux_utils.get_rdma_nic_dict(mock_phdl)
 
         # Verify the function was called with correct command
-        mock_phdl.exec.assert_called_once_with('rdma link')
+        mock_phdl.exec.assert_called_once_with(linux_utils.RDMA_LINK_CMD)
 
         # Verify all RDMA devices are parsed
         self.assertIn('node1', result)
@@ -90,6 +90,42 @@ link bnxt_re1/1 state ACTIVE physical_state LINK_UP netdev ens27np1"""
         self.assertEqual(len(result['node2']), 2)
         self.assertEqual(result['node2']['bnxt_re0']['eth_device'], 'ens26np0')
         self.assertEqual(result['node2']['bnxt_re1']['eth_device'], 'ens27np1')
+
+
+class TestRdmaLookup(unittest.TestCase):
+    def test_rdma_link_runs_the_binary_found_on_path(self):
+        with tempfile.TemporaryDirectory() as bindir:
+            stub = os.path.join(bindir, 'rdma')
+            with open(stub, 'w') as fp:
+                fp.write('#!/bin/sh\necho "link stub0/1 state ACTIVE physical_state LINK_UP netdev eth9 args:$*"\n')
+            os.chmod(stub, 0o755)
+
+            def exec_locally(cmd):
+                result = run_trusted(['/bin/bash', '-c', cmd], capture_output=True, text=True, env={'PATH': bindir})
+                return {'n1': result.stdout}
+
+            phdl = MagicMock()
+            phdl.exec.side_effect = exec_locally
+            self.assertEqual(linux_utils.get_active_rdma_nic_dict(phdl)['n1']['stub0']['eth_device'], 'eth9')
+            self.assertIn('args:link', exec_locally(linux_utils.RDMA_LINK_CMD)['n1'])
+
+    def test_rdma_lookup_falls_back_to_usr_sbin_when_not_on_path(self):
+        with tempfile.TemporaryDirectory() as empty_path:
+            result = run_trusted(
+                ['/bin/bash', '-c', f'printf %s {linux_utils.RDMA_BIN}'],
+                capture_output=True,
+                text=True,
+                env={'PATH': empty_path},
+            )
+        self.assertEqual(result.stdout, '/usr/sbin/rdma')
+
+    def test_both_rdma_link_readers_use_the_lookup(self):
+        for reader in (linux_utils.get_rdma_nic_dict, linux_utils.get_active_rdma_nic_dict):
+            with self.subTest(reader=reader.__name__):
+                phdl = MagicMock()
+                phdl.exec.return_value = {'n1': ''}
+                reader(phdl)
+                phdl.exec.assert_called_once_with(linux_utils.RDMA_LINK_CMD)
 
 
 class TestGetActiveRdmaNicDict(unittest.TestCase):
@@ -712,7 +748,7 @@ class TestHeliosCaptureEndToEnd(unittest.TestCase):
             'rocm-smi': json.dumps({f'card{i - 1}': {'PCI Bus': f'000{i}:01:00.0'} for i in range(1, 5)}),
             'lshw': '\n'.join(lshw_lines),
             '/sys/class/infiniband': '\n'.join(netdevs),
-            'rdma link': '\n'.join(rdma_lines),
+            linux_utils.RDMA_LINK_CMD: '\n'.join(rdma_lines),
         }
 
         def fake_exec(cmd, *args, **kwargs):

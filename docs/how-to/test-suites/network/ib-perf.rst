@@ -160,7 +160,7 @@ Search the pytest log for ``FAIL -``. The test then ends with ``Following FAILUR
    * - ``ibperf.vpod_source afm needs passwordless sudo for afmctl``
      - AFM mode could not run ``sudo -n afmctl``.
    * - ``perftest runtime dependencies missing on node``
-     - ``numactl``, ``lshw``, ``rdma``, ``libibverbs``, or ``librdmacm`` is missing and ``install_system_packages`` is not installing them.
+     - ``numactl``, ``lshw``, ``rdma``, ``libibverbs``, or ``librdmacm`` is missing. Either ``install_system_packages`` is not installing them, or the apt install did not provide them.
    * - ``rocm-smi not found on node``
      - ``rocm-smi`` is neither on ``PATH`` nor at ``/opt/rocm/bin``. Without it GPU discovery finds no cards. Install ROCm with ``rocm-smi`` on that node or in the image.
    * - ``ib_write_bw not showing expected use_rocm output``
@@ -200,7 +200,7 @@ IB Perf needs these container settings:
 
 - ``container.lifetime`` ``persistent``. The install and test suites are separate runs, and a ``per_run`` container is removed between them with anything installed in it.
 - ``install_dir`` on a volume in ``container.runtime.args.volumes`` that every node shares, mounted at the same path in the container. The build runs in the head node's container and every node runs the result.
-- An image with ROCm at ``rocm_dir`` and ``rocm-smi``, even when ``install_system_packages`` is ``True``. The install suite never installs either, and it fails on a node without ``rocm-smi``. The image also needs ``lshw``, ``rdma``, ``numactl``, ``libibverbs``, and ``librdmacm``, unless ``install_system_packages`` is ``True`` and the image has ``sudo``.
+- An image with ROCm at ``rocm_dir`` and ``rocm-smi``, even when ``install_system_packages`` is ``True``. The install suite never installs either, and it fails on a node without ``rocm-smi``. The image also needs ``lshw``, ``rdma``, ``numactl``, ``libibverbs``, and ``librdmacm``, unless ``install_system_packages`` is ``True`` and the image has ``sudo``. The install still fails if apt does not provide them.
 
 .. _ib-perf-dmesg-scan:
 

@@ -10,7 +10,7 @@ import re
 
 
 from cvs.core.scheduler import is_managed_compute
-from cvs.lib import ibperf_lib
+from cvs.lib import ibperf_lib, linux_utils
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -27,7 +27,7 @@ rccl_res_dict = {}
 RUNTIME_DEPS_CHECK = (
     'command -v numactl >/dev/null || echo MISSING:numactl; '
     '{ command -v lshw >/dev/null || [ -x /usr/sbin/lshw ]; } || echo MISSING:lshw; '
-    'command -v rdma >/dev/null || echo MISSING:rdma; '
+    f'[ -x {linux_utils.RDMA_BIN} ] || echo MISSING:rdma; '
     '/sbin/ldconfig -p | grep -q libibverbs.so.1 || echo MISSING:libibverbs; '
     '/sbin/ldconfig -p | grep -q librdmacm.so.1 || echo MISSING:librdmacm'
 )
@@ -74,16 +74,16 @@ def test_install_ib_perf(orch, config_dict):
             orch.exec('sudo apt install -y libibumad-dev', print_console=False)
             orch.exec('sudo apt install -y libpci-dev', print_console=False)
             orch.exec('sudo apt install -y numactl lshw iproute2', print_console=False)
+            hint = 'apt install did not provide them; apt output is not logged, so rerun the apt install on that node'
+        elif managed:
+            hint = 'install them outside the job step, e.g. in the node image or before allocation'
         else:
-            if managed:
-                hint = 'install them outside the job step, e.g. in the node image or before allocation'
-            else:
-                hint = 'install them or set install_system_packages to True'
-            for node, out in orch.exec(RUNTIME_DEPS_CHECK, print_console=False).items():
-                missing = re.findall(r'MISSING:(\S+)', out)
-                if missing:
-                    fail_test(f'perftest runtime dependencies missing on node {node}: {", ".join(missing)}; {hint}')
-            update_test_result()
+            hint = 'install them or set install_system_packages to True'
+        for node, out in orch.exec(RUNTIME_DEPS_CHECK, print_console=False).items():
+            missing = re.findall(r'MISSING:(\S+)', out)
+            if missing:
+                fail_test(f'perftest runtime dependencies missing on node {node}: {", ".join(missing)}; {hint}')
+        update_test_result()
         orch.exec_on_head(f'cd {install_dir}; git clone https://github.com/linux-rdma/perftest', print_console=False)
         orch.exec_on_head(f'cd {install_dir}/perftest; ./autogen.sh', timeout=100, print_console=False)
         rocm_path = ibperf_lib.detect_rocm_path(orch, config_dict.get('rocm_dir', '<changeme>'))
