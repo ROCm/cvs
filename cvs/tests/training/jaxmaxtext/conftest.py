@@ -185,15 +185,6 @@ def orch(cluster_dict, variant_config, lifecycle):
 
 
 @pytest.fixture(scope="module")
-def hf_token(variant_config):
-    path = variant_config.paths.hf_token_file
-    if not os.path.isfile(path):
-        pytest.skip(f"hf_token file missing: {path}")
-    with open(path) as fp:
-        return fp.read().strip()
-
-
-@pytest.fixture(scope="module")
 def training_res_dict():
     return {}
 
