@@ -42,7 +42,7 @@ See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on runni
           "path": "/home/{user-id}/INSTALL/TransferBench",
           "git_install_path": "/home/{user-id}/INSTALL/",
           "git_url": "https://github.com/ROCm/TransferBench.git",
-          "git_tag": "v1.67.00",
+          "git_tag": "v1.71.01",
           "_comment_rocm_path": "ROCm installation path. Set the placeholder changeme to auto-detect from /opt/rocm or /opt/rocm/core-*",
           "rocm_path": "<changeme>",
           "_comment_a2asweep_timeout": "Orch.exec timeout seconds for the a2asweep preset. Default 1500 covers the shipped 24-combo sweep plus buffer. Override directly, or omit and derive via a2asweep_combos / a2asweep_sec_per_combo / a2asweep_timeout_buffer.",
@@ -209,7 +209,7 @@ TransferBench
      - `https://github.com/ROCm/TransferBench.git <https://github.com/ROCm/TransferBench.git>`_
      - URL for Git repo
    * - ``git_tag``
-     - ``v1.67.00``
+     - ``v1.71.01``
      - Git tag to checkout after cloning TransferBench
    * - ``rocm_path``
      - ``<changeme>``
