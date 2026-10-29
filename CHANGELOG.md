@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - vLLM configs that set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` (any case) in `container.env` now fail to load with `ContainerEnvTokenError`, because `container.env` values become `docker run -e` arguments; set `paths.hf_token_file` instead. The vLLM server now reads that file inside the container on each node, so it must be on a mounted path.
 - Logged command lines show `<redacted>` in place of the values of token, password, secret and API-key variables and flags; the commands sent to nodes are unchanged.
 
+### Fixed
+
+- Megatron and Primus no longer write the Hugging Face token into training, tokenizer-download, or job-launch commands. Each node reads `paths.hf_token_file` inside the container when that command runs. Megatron fails the test before launch when that file is missing, empty, or not mounted, and the remaining training stages are skipped. Primus exports an empty `HF_TOKEN` and the run continues.
+
 ## [0.2.0] - 2026-09-23
 
 ### Added
