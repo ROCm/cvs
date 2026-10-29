@@ -96,15 +96,6 @@ def variant_config(pytestconfig, cluster_dict):
     return load_training_variant(config_file, cluster_dict)
 
 
-@pytest.fixture(scope="module")
-def hf_token(variant_config):
-    path = variant_config.paths.hf_token_file
-    if not os.path.isfile(path):
-        pytest.skip(f"hf_token file missing: {path}")
-    with open(path) as fp:
-        return fp.read().strip()
-
-
 class _Lifecycle:
     """Cross-test state for the lifecycle-as-tests model.
 

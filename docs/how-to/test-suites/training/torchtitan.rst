@@ -22,7 +22,14 @@ In addition to the :ref:`common training prerequisites <training-common-prerequi
 
 - The container image must provide TorchTitan at ``torchtitan_root``. The
   shipped default is ``/workspace/torchtitan``.
-- A Hugging Face token file at ``hf_token_file`` for the tokenizer download.
+- ``paths.hf_token_file`` is read inside the container on each node when the
+  tokenizer download or training command runs. CVS does not read the file on
+  the machine running ``cvs run``. The path must be mounted into the container.
+  The packaged ``/home/{user-id}/.hf_token`` path works when that home directory
+  is bind-mounted. Tokenizer download always runs, so a missing, empty, or
+  unmounted file fails ``test_download_tokenizer`` and sets ``lifecycle.failed``.
+  Later stages are skipped, and ``test_teardown`` still runs. A run that selects
+  only ``test_training`` fails that combo and still runs the other combos.
   The nodes need network access to reach Hugging Face.
 
 .. _torchtitan-set-up-config:

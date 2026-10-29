@@ -8,7 +8,12 @@ import unittest
 from unittest.mock import MagicMock, patch
 import re
 
-from cvs.lib.training.torchtitan.torchtitan_lib import TorchTitanTrainingJob
+from cvs.lib.training.torchtitan.torchtitan_lib import (
+    TorchTitanTrainingJob,
+    _hf_token_export_line,
+    _redact_logged_text,
+    _require_hf_token_file,
+)
 from cvs.unittests.support import FAKE_CRED
 
 FAKE_CRED_FILE = '/test/.hf_token'
@@ -41,7 +46,10 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
             'micro_batch_size': '2',
             'global_batch_size': '32',
         }
-        self.mock_variant_config.gpu_arch = 'MI355X'
+        self.mock_variant_config.train_params = self.mock_variant_config.model_params
+        self.mock_variant_config.job_config_dict.return_value = self.mock_variant_config.config
+        self.mock_variant_config.gpu_name = 'MI355X'
+        self.mock_variant_config.gpus_per_node = 8
 
     @patch('cvs.lib.training.torchtitan.torchtitan_lib.detect_rocm_path')
     def test_log_path_consistency_single_node(self, mock_detect_rocm):
@@ -52,7 +60,6 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         job = TorchTitanTrainingJob(
             orch=self.mock_orch,
             variant_config=self.mock_variant_config,
-            hf_token=FAKE_CRED,
             run_label='test_combo_123',
             distributed_training=False,
         )
@@ -93,7 +100,6 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         job = TorchTitanTrainingJob(
             orch=self.mock_orch,
             variant_config=self.mock_variant_config,
-            hf_token=FAKE_CRED,
             run_label='llama3_1_8b-mi355-bs48-mbs6-bf16',
             distributed_training=True,
         )
@@ -144,7 +150,6 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         job = TorchTitanTrainingJob(
             orch=self.mock_orch,
             variant_config=self.mock_variant_config,
-            hf_token=FAKE_CRED,
             run_label='combo:with/special\\chars!',
             distributed_training=False,
         )
@@ -168,7 +173,6 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         job = TorchTitanTrainingJob(
             orch=self.mock_orch,
             variant_config=self.mock_variant_config,
-            hf_token=FAKE_CRED,
             run_label=None,
             distributed_training=False,
         )
@@ -186,7 +190,6 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         single = TorchTitanTrainingJob(
             orch=self.mock_orch,
             variant_config=self.mock_variant_config,
-            hf_token=FAKE_CRED,
             run_label='gpus4',
             distributed_training=False,
         )
@@ -194,11 +197,12 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         self.assertEqual(single.world_size, 4)
         single.build_training_job_cmd()
         self.assertIn('--nproc_per_node 4', single.job_cmd)
+        self.assertIn(FAKE_CRED_FILE, single.job_cmd)
+        self.assertIn("export HF_TOKEN=\"$(tr -d '[:space:]'", single.job_cmd)
 
         distributed = TorchTitanTrainingJob(
             orch=self.mock_orch,
             variant_config=self.mock_variant_config,
-            hf_token=FAKE_CRED,
             run_label='gpus4-dist',
             distributed_training=True,
             tune_model_params=False,
@@ -213,7 +217,6 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         job = TorchTitanTrainingJob(
             orch=self.mock_orch,
             variant_config=self.mock_variant_config,
-            hf_token=FAKE_CRED,
             global_batch_size='48',
             run_label='step-time',
             distributed_training=False,
@@ -288,3 +291,223 @@ class TestDistributedConfigStructure(unittest.TestCase):
                     train_params,
                     f"{config_file}: train_params should not contain nested multi_node structure",
                 )
+
+
+class TestHfTokenFile(unittest.TestCase):
+    """The token stays on the node. Launch commands read the file, they do not embed it."""
+
+    def test_export_line_reads_the_file_inside_the_container(self):
+        line = _hf_token_export_line('/home/user/.hf_token')
+        self.assertIn('[ -s /home/user/.hf_token ]', line)
+        self.assertIn("export HF_TOKEN=\"$(tr -d '[:space:]' < /home/user/.hf_token)\"", line)
+        self.assertIn('exit 1', line)
+        spaced = _hf_token_export_line('/home/user/my token')
+        self.assertIn("'/home/user/my token'", spaced)
+
+    def test_export_line_fails_when_the_path_is_unset(self):
+        line = _hf_token_export_line('  ')
+        self.assertIn('paths.hf_token_file is not configured', line)
+        self.assertIn('exit 1', line)
+
+    def test_require_raises_when_the_path_is_unset(self):
+        with patch('cvs.lib.training.torchtitan.torchtitan_lib.fail_test') as fail:
+            with self.assertRaises(FileNotFoundError):
+                _require_hf_token_file(MagicMock(), '')
+        fail.assert_called_once()
+
+    def test_require_raises_when_the_file_is_missing_on_a_host(self):
+        orch = MagicMock()
+        orch.hosts = ['n0', 'n1']
+        orch.exec.return_value = {'n0': {'exit_code': 0}, 'n1': {'exit_code': 1}}
+        with patch('cvs.lib.training.torchtitan.torchtitan_lib.fail_test') as fail:
+            with self.assertRaises(FileNotFoundError):
+                _require_hf_token_file(orch, '/home/user/.hf_token')
+        fail.assert_called_once()
+        command = orch.exec.call_args.args[0]
+        self.assertIn('test -s', command)
+        self.assertIn('/home/user/.hf_token', command)
+        self.assertTrue(orch.exec.call_args.kwargs.get('detailed'))
+
+    def test_require_raises_when_a_host_does_not_return(self):
+        orch = MagicMock()
+        orch.hosts = ['n0', 'n1']
+        orch.exec.return_value = {'n0': {'exit_code': 0}}
+        with patch('cvs.lib.training.torchtitan.torchtitan_lib.fail_test') as fail:
+            with self.assertRaises(FileNotFoundError):
+                _require_hf_token_file(orch, '/home/user/.hf_token')
+        fail.assert_called_once()
+
+    def test_require_passes_when_every_host_has_the_file(self):
+        orch = MagicMock()
+        orch.hosts = ['n0']
+        orch.exec.return_value = {'n0': {'exit_code': 0}}
+        with patch('cvs.lib.training.torchtitan.torchtitan_lib.fail_test') as fail:
+            _require_hf_token_file(orch, '/home/user/.hf_token')
+        fail.assert_not_called()
+
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.detect_rocm_path')
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.log')
+    def test_start_logs_redacted_command_and_launches_the_original(self, mock_log, mock_detect):
+        mock_detect.return_value = '/opt/rocm'
+        orch = MagicMock()
+        orch.hosts = ['n0']
+        command_secret = 'hf_' + ('a' * 34)
+        launch_secret = 'hf_' + ('e' * 34)
+        download_secret = 'hf_' + ('f' * 34)
+
+        def _exec(cmd, **kwargs):
+            if str(cmd).startswith('test -s'):
+                return {'n0': {'exit_code': 0}}
+            if 'download_hf_assets.py' in str(cmd):
+                return {'n0': f'error: Invalid credentials for token {download_secret}'}
+            if str(cmd).startswith('bash -c'):
+                return {'n0': f'launch failed for token {launch_secret}'}
+            return {'n0': ''}
+
+        orch.exec.side_effect = _exec
+        config = {
+            'log_dir': '/test/logs',
+            'scripts_dir': '/test/scripts',
+            'data_cache_dir': '/test/cache',
+            'hf_token_file': FAKE_CRED_FILE,
+            'torchtitan_root': '/workspace/torchtitan',
+            'training_iterations': '10',
+        }
+        variant = MagicMock()
+        variant.job_config_dict.return_value = config
+        variant.train_params = {'model_name': 'llama3_1_8b'}
+        variant.gpu_name = 'MI355X'
+        variant.gpus_per_node = 8
+        job = TorchTitanTrainingJob(
+            orch=orch,
+            variant_config=variant,
+            run_label='token',
+            distributed_training=False,
+        )
+        job.job_cmd = _hf_token_export_line(FAKE_CRED_FILE) + f'echo token {command_secret}'
+        job.download_hf_assets()
+        job.start_training_job()
+        logged = ' '.join(
+            str(arg) for call in mock_log.info.call_args_list + mock_log.warning.call_args_list for arg in call.args
+        )
+        preview = next(
+            str(arg) for call in mock_log.info.call_args_list for arg in call.args if 'echo token' in str(arg)
+        )
+        self.assertIn(FAKE_CRED_FILE, preview)
+        self.assertIn('HF_TOKEN=<redacted>', preview)
+        self.assertNotIn('tr -d', preview)
+        self.assertNotIn(command_secret, preview)
+        launch_call = next(call for call in orch.exec.call_args_list if str(call.args[0]).startswith('bash -c'))
+        self.assertIn(command_secret, launch_call.args[0])
+        self.assertIn('tr -d', launch_call.args[0])
+        self.assertFalse(launch_call.kwargs.get('print_console', True))
+        download_call = next(call for call in orch.exec.call_args_list if 'download_hf_assets.py' in str(call.args[0]))
+        self.assertNotIn(download_secret, download_call.args[0])
+        self.assertNotIn(command_secret, logged)
+        self.assertNotIn(launch_secret, logged)
+        self.assertNotIn(download_secret, logged)
+
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.time.sleep')
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.detect_rocm_path')
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.log')
+    def test_wrapper_write_logs_redacted_output(self, mock_log, mock_detect, _sleep):
+        mock_detect.return_value = '/opt/rocm'
+        bare = 'hf_' + ('d' * 34)
+        orch = MagicMock()
+        orch.hosts = ['n0']
+
+        def _exec(cmd, **kwargs):
+            if str(cmd).startswith('test -s'):
+                return {'n0': {'exit_code': 0}}
+            if 'WRAPPER_EOF' in str(cmd):
+                return {'n0': f'wrote token {bare}'}
+            return {'n0': ''}
+
+        orch.exec.side_effect = _exec
+        variant = MagicMock()
+        variant.job_config_dict.return_value = {
+            'log_dir': '/test/logs',
+            'scripts_dir': '/test/scripts',
+            'data_cache_dir': '/test/cache',
+            'hf_token_file': FAKE_CRED_FILE,
+            'torchtitan_root': '/workspace/torchtitan',
+            'training_iterations': '10',
+        }
+        variant.train_params = {'model_name': 'llama3_1_8b'}
+        variant.gpu_name = 'MI355X'
+        variant.gpus_per_node = 8
+        job = TorchTitanTrainingJob(
+            orch=orch,
+            variant_config=variant,
+            run_label='wrapper',
+            distributed_training=True,
+        )
+        job.job_cmd_list = [
+            "cat > /test/scripts/distributed_wrapper_script_0.sh << 'WRAPPER_EOF'\nexport HF_TOKEN=x\nWRAPPER_EOF\n"
+        ]
+        job.start_training_job()
+        write_call = next(call for call in orch.exec.call_args_list if 'WRAPPER_EOF' in str(call.args[0]))
+        self.assertFalse(write_call.kwargs.get('print_console', True))
+        logged = ' '.join(str(arg) for call in mock_log.info.call_args_list for arg in call.args)
+        self.assertIn('<redacted>', logged)
+        self.assertNotIn(bare, logged)
+
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.detect_rocm_path')
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.log')
+    def test_download_logs_redacted_output(self, mock_log, mock_detect):
+        mock_detect.return_value = '/opt/rocm'
+        orch = MagicMock()
+        orch.hosts = ['n0']
+
+        bare = 'hf_' + ('b' * 34)
+
+        def _exec(cmd, **kwargs):
+            if str(cmd).startswith('test -s'):
+                return {'n0': {'exit_code': 0}}
+            return {'n0': f'error: Invalid credentials for token {bare} HF_TOKEN={FAKE_CRED} hf_transfer'}
+
+        orch.exec.side_effect = _exec
+        variant = MagicMock()
+        variant.job_config_dict.return_value = {
+            'log_dir': '/test/logs',
+            'scripts_dir': '/test/scripts',
+            'data_cache_dir': '/test/cache',
+            'hf_token_file': FAKE_CRED_FILE,
+            'torchtitan_root': '/workspace/torchtitan',
+            'training_iterations': '10',
+        }
+        variant.train_params = {'model_name': 'llama3_1_8b'}
+        variant.gpu_name = 'MI355X'
+        variant.gpus_per_node = 8
+        job = TorchTitanTrainingJob(
+            orch=orch,
+            variant_config=variant,
+            run_label='download',
+            distributed_training=False,
+        )
+        job.download_hf_assets()
+        download_call = orch.exec.call_args_list[-1]
+        self.assertIn('download_hf_assets.py', download_call.args[0])
+        self.assertIn('tr -d', download_call.args[0])
+        self.assertNotIn(bare, download_call.args[0])
+        self.assertNotIn(FAKE_CRED, download_call.args[0])
+        self.assertFalse(download_call.kwargs.get('print_console', True))
+        command_logs = [str(arg) for call in mock_log.info.call_args_list for arg in call.args]
+        preview = next(entry for entry in command_logs if 'download_hf_assets.py' in entry)
+        self.assertIn('HF_TOKEN=<redacted>', preview)
+        self.assertNotIn('tr -d', preview)
+        logged = ' '.join(
+            str(arg) for call in mock_log.info.call_args_list + mock_log.warning.call_args_list for arg in call.args
+        )
+        self.assertIn('HF_TOKEN=<redacted>', logged)
+        self.assertIn('token <redacted>', logged)
+        self.assertIn('hf_transfer', logged)
+        self.assertNotIn(FAKE_CRED, logged)
+        self.assertNotIn(bare, logged)
+
+    def test_redact_logged_text_masks_a_bare_hub_token(self):
+        bare = 'hf_' + ('c' * 34)
+        redacted = _redact_logged_text(f'Invalid credentials for token {bare} and .hf_token')
+        self.assertIn('token <redacted>', redacted)
+        self.assertIn('.hf_token', redacted)
+        self.assertNotIn(bare, redacted)
