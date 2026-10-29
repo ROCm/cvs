@@ -76,7 +76,10 @@ See :doc:`/how-to/test-suites/burn-in-diag/platform` for more information on run
               "TA_XGMI": "<changeme>",
               "_example_TA_XGMI": "20.00.00.14",
               "PM": "<changeme>",
-              "_example_PM": "07.85.11.01"
+              "_example_PM": "07.85.11.01",
+              "PLDM_BUNDLE": "<changeme>",
+              "_example_PLDM_BUNDLE": "01.25.06.08
+   
             }
         }
       }       
@@ -165,4 +168,7 @@ The following parameters are available in the platform configuration file. Set e
    * - ``PM``
      - ``07.85.11.01``
      - Power Management firmware
+   * - ``PLDM_BUNDLE``
+     - ``01.25.06.08``
+     - PLDM firmware bundle reported by ``amd-smi firmware``
 

@@ -60,7 +60,9 @@
            "TA_XGMI": "<changeme>",
            "_example_TA_XGMI": "20.00.00.14",
            "PM": "<changeme>",
-           "_example_PM": "07.85.11.01"
+           "_example_PM": "07.85.11.01",
+           "PLDM_BUNDLE": "<changeme>",
+           "_example_PLDM_BUNDLE": "01.25.06.08"	   
        }
     }
 

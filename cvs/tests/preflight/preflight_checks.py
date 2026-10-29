@@ -1804,15 +1804,29 @@ def test_generate_preflight_report(orch, config_dict, request):
 
     preflight_results['summary'] = summary
 
-    # Log summary to console
+    # FAIL and BLOCKED are errors. WARNING does not fail the run, but it is not a pass.
     log.info("=== PREFLIGHT CHECK SUMMARY ===")
     for check_name, check_summary in summary['checks'].items():
-        status_icon = "✅" if check_summary['status'] == 'PASS' else "❌"
-        log.info(
-            f"{status_icon} {preflight_check_display_name(check_name)}: {check_summary['status']} - {check_summary['summary']}"
-        )
+        status = check_summary['status']
+        if status == 'PASS':
+            status_icon = "✅"
+        elif status == 'WARNING':
+            status_icon = "⚠️"
+        else:
+            status_icon = "❌"
+        line = f"{status_icon} {preflight_check_display_name(check_name)}: {status} - {check_summary['summary']}"
+        if status in ('FAIL', 'BLOCKED'):
+            log.error(line)
+        elif status == 'WARNING':
+            log.warning(line)
+        else:
+            log.info(line)
 
-    log.info(f"\nOverall Status: {summary['overall_status']}")
+    overall_line = f"\nOverall Status: {summary['overall_status']}"
+    if summary['overall_status'] == 'FAIL':
+        log.error(overall_line)
+    else:
+        log.info(overall_line)
 
     if summary['recommendations']:
         log.info("\nRecommendations:")
@@ -1862,18 +1876,23 @@ def test_generate_preflight_report(orch, config_dict, request):
             log.warning(f"Failed to add preflight report to bundle: {e}")
             log.info(f"Preflight report available at: {html_report_path}")
 
-    # A mandatory node-health admission failure is deliberately reported only after
-    # report artifacts are written, so downstream checks can be marked
-    # BLOCKED with actionable diagnostics rather than disappearing from the
-    # preflight output.
+    # Publish before the row fails so the Run Deck matches the written report.
+    # Node-health stays its own failure: downstream checks are marked BLOCKED
+    # with diagnostics instead of disappearing from that report.
+    preflight_update_test_result()
+
     node_health_results = preflight_results.get('node_health') or {}
     if _node_health_enabled(config_dict) and node_health_results.get('status') != 'PASS':
         pytest.fail("Mandatory node-health admission gate failed; see preflight report")
 
-    # Report overall status but don't fail generic/report-only preflight profiles.
     if summary['overall_status'] == 'FAIL':
-        log.warning("One or more preflight checks detected issues - see detailed results above")
-        log.info("Preflight report generated successfully - review HTML report for detailed analysis")
-    else:
-        log.info("All preflight checks passed - cluster is ready for performance testing")
-    preflight_update_test_result()
+        failed_checks = [
+            preflight_check_display_name(name)
+            for name, check in summary['checks'].items()
+            if check.get('status') in ('FAIL', 'BLOCKED')
+        ]
+        detail = f" ({', '.join(failed_checks)})" if failed_checks else ""
+        log.error("One or more preflight checks detected issues - see detailed results above")
+        pytest.fail(f"Preflight overall status is FAIL{detail}; see preflight report")
+
+    log.info("All preflight checks passed - cluster is ready for performance testing")

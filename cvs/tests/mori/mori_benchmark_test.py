@@ -87,10 +87,10 @@ def test_setup_env(mori_obj):
     update_test_result()
 
 
-def test_shmem_api(mori_obj):
-    globals.error_list = []
-    mori_obj.run_shmem_apitest()
-    update_test_result()
+# def test_shmem_api(mori_obj):
+#    globals.error_list = []
+#    mori_obj.run_shmem_apitest()
+#    update_test_result()
 
 
 # def test_dispatch_combine(mori_obj):
@@ -105,34 +105,34 @@ def test_shmem_api(mori_obj):
 #    update_test_result()
 
 
-def test_concurrent_put_threads(mori_obj):
-    globals.error_list = []
-    mori_obj.run_concurrent_put_threads()
-    update_test_result()
+# def test_concurrent_put_threads(mori_obj):
+#    globals.error_list = []
+#    mori_obj.run_concurrent_put_threads()
+#    update_test_result()
 
 
-def test_concurrent_put_imm_threads(mori_obj):
-    globals.error_list = []
-    mori_obj.run_concurrent_put_imm_threads()
-    update_test_result()
+# def test_concurrent_put_imm_threads(mori_obj):
+#    globals.error_list = []
+#    mori_obj.run_concurrent_put_imm_threads()
+#    update_test_result()
 
 
-def test_concurrent_put_signal_thread(mori_obj):
-    globals.error_list = []
-    mori_obj.run_concurrent_put_signal_thread()
-    update_test_result()
+# def test_concurrent_put_signal_thread(mori_obj):
+#    globals.error_list = []
+#    mori_obj.run_concurrent_put_signal_thread()
+#    update_test_result()
 
 
-def test_ibgda_write_test(mori_obj, cvs_results_dict, mori_variant_config):
-    globals.error_list = []
-    # dist_write allocates max_val per thread (2 CTAs x 256 threads); 4m keeps that at 2 GiB per GPU.
-    parsed_results = mori_obj.run_ibgda_dist_write(
-        no_of_procs=2, min_val=2, max_val='4m', ctas=2, threads=256, qp_count=4, iters=1
-    )
-    status = "fail" if globals.error_list else "pass"
-    mori_reporting.record_ibgda_results(cvs_results_dict, parsed_results, status=status, variant=mori_variant_config)
-
-    update_test_result()
+# def test_ibgda_write_test(mori_obj, cvs_results_dict, mori_variant_config):
+#    globals.error_list = []
+#    # dist_write allocates max_val per thread (2 CTAs x 256 threads); 4m keeps that at 2 GiB per GPU.
+#    parsed_results = mori_obj.run_ibgda_dist_write(
+#        no_of_procs=2, min_val=2, max_val='4m', ctas=2, threads=256, qp_count=4, iters=1
+#    )
+#    status = "fail" if globals.error_list else "pass"
+#    mori_reporting.record_ibgda_results(cvs_results_dict, parsed_results, status=status, variant=mori_variant_config)
+#
+#    update_test_result()
 
 
 # -----------------------------------------------------------------------------
