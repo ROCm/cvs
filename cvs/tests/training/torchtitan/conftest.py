@@ -6,7 +6,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 import json
-import os
 
 import pytest
 
@@ -50,15 +49,6 @@ def variant_config(pytestconfig, cluster_dict):
     if not config_file:
         pytest.fail("--config_file is required")
     return load_training_variant(config_file, cluster_dict)
-
-
-@pytest.fixture(scope="module")
-def hf_token(variant_config):
-    path = variant_config.paths.hf_token_file
-    if not os.path.isfile(path):
-        pytest.skip(f"hf_token file missing: {path}")
-    with open(path) as fp:
-        return fp.read().strip()
 
 
 class _Lifecycle:

@@ -5,7 +5,7 @@ Unit tests for env_lib.build_env_prefix using Python's built-in unittest framewo
 """
 
 import unittest
-from cvs.lib.env_lib import build_env_prefix
+from cvs.lib.env_lib import build_env_prefix, redact_secrets
 
 
 class TestBuildEnvPrefix(unittest.TestCase):
@@ -60,6 +60,18 @@ class TestBuildEnvPrefix(unittest.TestCase):
 
         # Must be fully quoted to prevent execution
         self.assertEqual(result, "export FOO='$(rm -rf /)'")
+
+
+class TestRedactSecrets(unittest.TestCase):
+    def test_masks_token_assignment(self):
+        self.assertEqual(redact_secrets('export HF_TOKEN=fake-cred'), 'export HF_TOKEN=<redacted>')
+
+    def test_leaves_token_file_path(self):
+        text = 'export HF_TOKEN_FILE=/home/user/.hf_token'
+        self.assertEqual(redact_secrets(text), text)
+
+    def test_empty_text(self):
+        self.assertEqual(redact_secrets(''), '')
 
 
 if __name__ == "__main__":

@@ -5,6 +5,12 @@ All notable changes to ROCm Cluster Validation Suite (CVS) are documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- TorchTitan no longer writes the Hugging Face token into tokenizer-download or training commands. Each node reads `paths.hf_token_file` inside the container when that command runs. If that file is missing, empty, or not mounted, the stage fails and later stages are skipped.
+
 ## [0.2.0] - 2026-09-23
 
 ### Added
