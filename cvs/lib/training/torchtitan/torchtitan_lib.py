@@ -595,9 +595,9 @@ class TorchTitanTrainingJob:
         """Launch the training job."""
         _require_hf_token_file(self.orch, self.hf_token_file)
         if self.distributed_training:
-            log.info('%s', [_redact_logged_text(c) for c in self.job_cmd_list])
+            log.info('Prepared distributed training launch command(s)')
         else:
-            log.info('%s', _redact_logged_text(self.job_cmd))
+            log.info('Prepared single-node training launch command')
         # Capture start time for dmesg verification
         self.training_start_time = self.orch.exec('date')
 
