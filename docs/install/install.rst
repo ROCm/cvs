@@ -18,7 +18,7 @@ CVS supports these GPUs:
 - AMD Instinct MI325X
 - AMD Instinct MI300X	
 
-CVS supports these Linux distributions:
+CVS supports the following Linux distributions and ROCm versions.
 
 .. list-table::
    :widths: 3 3 4 4
@@ -207,7 +207,7 @@ To keep a container running in the background instead of an interactive shell:
 
   docker run -d --name cvs-head --entrypoint bash cvs:local -c "sleep infinity"
 
-Run ``cvs`` via ``docker exec``:
+Run ``cvs`` with ``docker exec``:
 
 .. code:: bash
 

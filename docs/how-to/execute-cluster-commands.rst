@@ -3,7 +3,7 @@
   :keywords: CVS, ROCm, cluster, commands, exec, SSH, ad-hoc, AMD Instinct, GPU, AMD, parallel, Linux, diagnostics
 
 ***********************************************************************************
-Run ad-hoc commands across all Cluster Validation Suite (CVS) cluster nodes via SSH
+Run ad-hoc commands across all Cluster Validation Suite (CVS) cluster nodes over SSH
 ***********************************************************************************
 
 CVS provides an ``exec`` command to execute arbitrary shell commands on all nodes in the cluster simultaneously using parallel SSH. This is useful for gathering system information, running diagnostics, or performing administrative tasks across all cluster nodes at once.
@@ -47,7 +47,7 @@ The ``exec`` command supports these options:
 - ``--timeout``: Per-node command output timeout in seconds (default: ``30``). Controls how long to wait for each host's stdout after the SSH connection is established.
 - ``--connect-timeout``: Per-node SSH connection timeout in seconds (default: ``15``). Unreachable hosts fail fast after this many seconds regardless of ``--timeout``.
 - ``--json``: Emit results as a single JSON object instead of human-readable text. Useful for scripting and piping to ``jq``.
-- ``--verbose`` / ``-v``: Show internal SSH diagnostics (``SocketDisconnectError``, ``AuthenticationError``, pruning messages). Suppressed by default to keep output clean.
+- ``--verbose`` or ``-v``: Show internal SSH diagnostics (``SocketDisconnectError``, ``AuthenticationError``, pruning messages). Suppressed by default to keep output clean.
 
 Target scope
 ============
@@ -287,11 +287,11 @@ If SSH connections hang or time out:
 
 - Reduce ``--connect-timeout`` (default ``15`` s) to fail unreachable hosts faster
 - Reduce ``--timeout`` (default ``30`` s) if commands should complete quickly
-- Confirm network reachability to all target hosts before running (for example, via sshuttle or VPN)
+- Confirm network reachability to all target hosts before running (for example, using sshuttle or a VPN)
 
 If the output contains unexpected SSH diagnostic messages:
 
-- These are suppressed by default; they appear only when ``--verbose`` / ``-v`` is passed
+- These are suppressed by default; they appear only when ``--verbose`` or ``-v`` is passed
 - If they still appear, check that the root logger level has not been overridden elsewhere
 
 .. tip::

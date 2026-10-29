@@ -7,7 +7,7 @@ SGLang inference benchmark configuration for Cluster Validation Suite (CVS)
 *************************************************************************
 
 CVS ships three SGLang inference suites for AMD MI30x and MI35x clusters. Each suite reads a JSON
-configuration file from ``cvs/input/config_file/inference/sglang/`` and a matching
+configuration file from |cvs-input-config-file-inference-sglang|_ and a matching
 threshold file referenced by top-level ``threshold_json``. Hosts come from ``cluster.json``
 ``node_dict`` order. Role lists in the workload JSON are ignored.
 
@@ -19,13 +19,13 @@ threshold file referenced by top-level ``threshold_json``. Hosts come from ``clu
      - Test module
      - Topology
    * - ``sglang_single``
-     - ``cvs/tests/inference/sglang/sglang_single.py``
+     - |cvs-tests-inference-sglang-single-py|_
      - One unified ``sglang.launch_server`` on the first ``cluster.json`` host (TP across local GPUs). Extra hosts are ignored.
    * - ``sglang_distributed``
-     - ``cvs/tests/inference/sglang/sglang_distributed.py``
+     - |cvs-tests-inference-sglang-distributed-py|_
      - One unified multi-node server. The first ``server_params.nnodes`` hosts are the ranks. Rank 0 is the benchmark node.
    * - ``sglang_disagg_distributed``
-     - ``cvs/tests/inference/sglang/sglang_disagg_distributed.py``
+     - |cvs-tests-inference-sglang-disagg-distributed-py|_
      - Disaggregated prefill/decode. The first even ``nnodes`` hosts split into equal prefill and decode groups. Rank 0 is prefill coordinator, proxy, and benchmark. Rank 1 is decode coordinator.
 
 See :doc:`/how-to/test-suites/inference/sglang`  for more information on running these tests.
@@ -56,7 +56,7 @@ Copy a template locally:
 Configuration files
 ===================
 
-All SGLang templates live under ``cvs/input/config_file/inference/sglang/``.
+All SGLang templates live under |cvs-input-config-file-inference-sglang|_.
 
 Model and topology templates
 ----------------------------
@@ -96,7 +96,7 @@ Threshold files
 ---------------
 
 Performance cells and pass/fail limits are stored separately. Each workload points at its
-threshold file via top-level ``threshold_json`` (a filename beside the config).
+threshold file through top-level ``threshold_json`` (a filename beside the config).
 
 .. list-table::
    :widths: 3 5
@@ -228,6 +228,8 @@ Example: single-node template
 General ``config`` parameters
 =============================
 
+General configuration parameters and their descriptions are listed below.
+
 .. list-table::
    :widths: 3 3 5
    :header-rows: 1
@@ -330,6 +332,8 @@ Uses the multi-node network env fields above. The loader drops any configured ro
 ``benchmark_params`` / model settings
 =====================================
 
+Benchmark and model configuration parameters are listed below.
+
 .. list-table::
    :widths: 3 3 5
    :header-rows: 1
@@ -369,7 +373,7 @@ Inference tests
 ===============
 
 ``benchmark_params``
-  Random synthetic load via ``sglang.bench_serving``. ISL/OSL/concurrency cells come from
+  Random synthetic load using ``sglang.bench_serving``. ISL/OSL/concurrency cells come from
   ``sweep.runs`` (or every performance cell in the threshold file if ``runs`` is empty).
   ``input_length`` and ``output_length`` are injected at collection time.
 
@@ -382,7 +386,7 @@ Inference tests
     and MFU calculation inputs.
 
 ``accuracy.tasks`` (``lm_eval_hellaswag``, ``lm_eval_gsm8k``)
-  Accuracy tasks via lm-eval. Thresholds for accuracy metrics are always enforced when configured
+  Accuracy tasks using lm-eval. Thresholds for accuracy metrics are always enforced when configured
   in the threshold file.
 
 .. _sglang-volume-mounts:
@@ -474,5 +478,18 @@ Troubleshooting
   relaunch the server.
 
 **Model access**
-  Set ``paths.hf_token_file`` for HuggingFace models or mount local weights under ``/root/models`` via
+  Set ``paths.hf_token_file`` for HuggingFace models or mount local weights under ``/root/models`` using
   ``volumes``.
+
+
+.. |cvs-input-config-file-inference-sglang| replace:: ``cvs/input/config_file/inference/sglang/``
+.. _cvs-input-config-file-inference-sglang: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/inference/sglang/
+
+.. |cvs-tests-inference-sglang-single-py| replace:: ``cvs/tests/inference/sglang/sglang_single.py``
+.. _cvs-tests-inference-sglang-single-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/tests/inference/sglang/sglang_single.py
+
+.. |cvs-tests-inference-sglang-distributed-py| replace:: ``cvs/tests/inference/sglang/sglang_distributed.py``
+.. _cvs-tests-inference-sglang-distributed-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/tests/inference/sglang/sglang_distributed.py
+
+.. |cvs-tests-inference-sglang-disagg-distributed-py| replace:: ``cvs/tests/inference/sglang/sglang_disagg_distributed.py``
+.. _cvs-tests-inference-sglang-disagg-distributed-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/tests/inference/sglang/sglang_disagg_distributed.py

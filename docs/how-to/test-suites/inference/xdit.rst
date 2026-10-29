@@ -2,13 +2,13 @@
   :description: Run xDiT diffusion inference tests for FLUX.1, FLUX.2, and WAN 2.2 workloads on AMD Instinct GPU clusters with CVS and ROCm.
   :keywords: CVS, xDiT, inference, AMD Instinct, ROCm, AMD, GPU, FLUX, WAN, diffusion, distributed, PyTorch, CLIPScore
 
-**************************************************
-Run xDiT diffusion inference tests with CVS
-**************************************************
+**********************************************************************
+Run xDiT diffusion inference tests with Cluster Validation Suite (CVS)
+**********************************************************************
 
-CVS provides five xDiT suites under ``cvs/tests/inference/xdit/``. Each suite is a
+CVS provides five xDiT suites under |cvs-tests-inference-xdit|_. Each suite is a
 separate pytest module; pick the one that matches your topology and launcher, then point
-``--config_file`` at a template from ``cvs/input/config_file/inference/xdit/``.
+``--config_file`` at a template from |cvs-input-config-file-inference-xdit|_.
 
 - **Single-node** suites run one independent docker+torchrun job on **every** node in
   the cluster file (full model on each node).
@@ -42,7 +42,7 @@ The following suites are available. Every suite runs the same nine stages.
      - FLUX.1 (``run_usp.py``) or FLUX.2 (``flux2_example.py``); one job per cluster node.
    * - ``xdit_flux_dev_distributed``
      - ``xdit_flux_dev_distributed.py``
-     - Unified FLUX.1 / FLUX.2 torchrun across ``nnodes``.
+     - Unified FLUX.1 and FLUX.2 torchrun across ``nnodes``.
    * - ``xdit_wan22_14b_single``
      - ``xdit_wan22_14b_single.py``
      - WAN 2.2 I2V native (``/app/Wan2.2/run.py``); one job per cluster node.
@@ -98,10 +98,10 @@ Follow these steps to set up the xDiT configuration.
    - Set ``gpu_name`` by removing ``<changeme>`` (templates hint ``mi325`` or ``mi355``).
    - On distributed templates, replace every ``<changeme>`` NCCL/socket field and confirm
      the RDMA library bind mounts match the host.
-   - Resolve ``{user-id}`` / ``{home}`` or leave them for CVS to expand.
+   - Resolve ``{user-id}`` and ``{home}`` or leave them for CVS to expand.
    - Keep ``threshold_json`` as the sibling filename unless you point it at your own file.
 
-Shipped config templates:
+Shipped config templates and the suites they target:
 
 .. list-table::
    :widths: 4 3
@@ -109,19 +109,19 @@ Shipped config templates:
 
    * - Config file
      - Use with suite
-   * - ``mi3xx_xdit_flux1_dev_single.json`` / ``mi35x_xdit_flux1_dev_single.json``
+   * - ``mi3xx_xdit_flux1_dev_single.json`` or ``mi35x_xdit_flux1_dev_single.json``
      - ``xdit_flux_dev_single``
-   * - ``mi3xx_xdit_flux1_dev_distributed.json`` / ``mi35x_xdit_flux1_dev_distributed.json``
+   * - ``mi3xx_xdit_flux1_dev_distributed.json`` or ``mi35x_xdit_flux1_dev_distributed.json``
      - ``xdit_flux_dev_distributed``
-   * - ``mi3xx_xdit_flux2_dev_single.json`` / ``mi35x_xdit_flux2_dev_single.json``
+   * - ``mi3xx_xdit_flux2_dev_single.json`` or ``mi35x_xdit_flux2_dev_single.json``
      - ``xdit_flux_dev_single``
-   * - ``mi3xx_xdit_flux2_dev_distributed.json`` / ``mi35x_xdit_flux2_dev_distributed.json``
+   * - ``mi3xx_xdit_flux2_dev_distributed.json`` or ``mi35x_xdit_flux2_dev_distributed.json``
      - ``xdit_flux_dev_distributed``
-   * - ``mi3xx_xdit_wan22_14b_single.json`` / ``mi35x_xdit_wan22_14b_single.json``
+   * - ``mi3xx_xdit_wan22_14b_single.json`` or ``mi35x_xdit_wan22_14b_single.json``
      - ``xdit_wan22_14b_single``
-   * - ``mi3xx_xdit_wan22_14b_diffusers_single.json`` / ``mi35x_xdit_wan22_14b_diffusers_single.json``
+   * - ``mi3xx_xdit_wan22_14b_diffusers_single.json`` or ``mi35x_xdit_wan22_14b_diffusers_single.json``
      - ``xdit_wan22_14b_diffusers_single``
-   * - ``mi3xx_xdit_wan22_14b_diffusers_distributed.json`` / ``mi35x_xdit_wan22_14b_diffusers_distributed.json``
+   * - ``mi3xx_xdit_wan22_14b_diffusers_distributed.json`` or ``mi35x_xdit_wan22_14b_diffusers_distributed.json``
      - ``xdit_wan22_14b_diffusers_distributed``
 
 Each workload has one shared threshold file (``xdit_<workload>_threshold.json``).
@@ -130,9 +130,9 @@ GPU keys inside it (``mi300x``, ``mi325``, ``mi350``, ``mi355``, ``auto``) selec
 
 .. note::
 
-  FLUX.2 configs bind-mount ``cvs/lib/inference/xdit/scripts/flux2_example.py`` when the
+  FLUX.2 configs bind-mount |cvs-lib-inference-xdit-scripts-flux2-example-py|_ when the
   image does not ship ``/benchmark/flux2_example.py``. WAN Diffusers suites mount
-  ``cvs/lib/inference/xdit/scripts/wan_i2v_example.py``. Adjust the host side of those
+  |cvs-lib-inference-xdit-scripts-wan-i2v-example-py|_. Adjust the host side of those
   volume entries to your CVS checkout.
 
   ``mi3xx`` distributed templates ship Broadcom bnxt RDMA mounts and ``rdma*`` HCA names.
@@ -246,33 +246,61 @@ other ID, including MI300X, selects ``mi300x``. Lookup then uses that key, or ``
 when the threshold file has no entry for it. ``test_print_results`` prints PASS or FAIL for each host. With
 ``enforce_thresholds`` set to ``false``, the same row is RECORDED and does not fail the stage.
 
-Key stages to watch:
+Each stage corresponds to a test function in the HTML report.
 
-- **Launch** — ``test_launch_container`` starts the named container. Container setup may
-  run ``docker system prune`` unless ``CVS_SKIP_DOCKER_SYSTEM_PRUNE=1``.
-- **Prerequisites** — ``test_verify_prerequisites`` requires ``/dev/kfd`` and ``torchrun``
-  inside the container on every participating node.
-- **Model** — ``test_verify_model`` checks the staged weights and that the CLIP checkpoint
-  is already in the container cache. A missing cache or host path fails the stage. The
-  suite does not download weights. ``enforce_thresholds: false`` does not skip a missing
-  CLIP model.
-- **Parallelism** — ``test_verify_parallelism``.
-- **Benchmark** — ``test_run_benchmark``.
-- **Parse** — ``test_parse_thresholds`` compares the average latency to the threshold file.
-  FLUX.1 requires ``num_repetitions``, and ``timing.json`` must contain that many
-  ``pipe_time`` samples. Native WAN requires ``num_benchmark_steps``, and that many
-  ``rank0_step*.json`` files must be present.
-- **CLIP score** — ``test_clip_score`` scores the saved media inside the benchmark
-  container. FLUX scores ``flux_*.png`` and ``flux2_*.png`` (``clip_score`` against
-  ``min_clip_score``). WAN samples 8 frames from ``video.mp4`` (native) or
-  ``video_i2v.mp4`` (Diffusers) and gates ``mean_frame_clip_score`` against
-  ``min_mean_frame_clip_score``. The default model is ``openai/clip-vit-base-patch32``.
-  Prompts longer than its 77-token context are truncated, and ``results/clipscore.json``
-  sets ``prompt_truncated`` when that happens. WAN needs ``imageio`` with ``imageio-ffmpeg``,
-  OpenCV, or ``torchvision`` in the container to decode the MP4. The shipped floor of 20 is
-  an unvalidated placeholder. ``enforce_thresholds: false`` records a score that misses
-  that floor and does not fail the stage. It does not skip a missing CLIP checkpoint.
-- **Teardown** — ``test_teardown`` stops the container.
+.. list-table::
+   :header-rows: 1
+   :widths: 16 30 54
+
+   * - Stage
+     - Test function
+     - Notes
+   * - Launch
+     - ``test_launch_container``
+     - Starts the named container. Setup may run ``docker system prune``
+       unless ``CVS_SKIP_DOCKER_SYSTEM_PRUNE=1``.
+   * - Prerequisites
+     - ``test_verify_prerequisites``
+     - Requires ``/dev/kfd`` and ``torchrun`` inside the container on every
+       participating node.
+   * - Model
+     - ``test_verify_model``
+     - Checks staged weights and that the CLIP checkpoint is in the
+       container cache. A missing cache or host path fails the stage. The
+       suite does not download weights. ``enforce_thresholds: false`` does
+       not skip a missing CLIP checkpoint.
+   * - Parallelism
+     - ``test_verify_parallelism``
+     -
+   * - Benchmark
+     - ``test_run_benchmark``
+     -
+   * - Parse
+     - ``test_parse_thresholds``
+     - Compares average latency to the threshold file. FLUX.1 requires
+       ``num_repetitions`` and that ``timing.json`` contains that many
+       ``pipe_time`` samples. Native WAN requires ``num_benchmark_steps``
+       and that many ``rank0_step*.json`` files.
+   * - CLIP score
+     - ``test_clip_score``
+     - Scores saved media inside the benchmark container. FLUX scores
+       ``flux_*.png`` and ``flux2_*.png`` (``clip_score`` against
+       ``min_clip_score``). WAN samples 8 frames from ``video.mp4``
+       (native) or ``video_i2v.mp4`` (Diffusers) and gates
+       ``mean_frame_clip_score`` against ``min_mean_frame_clip_score``.
+       Uses ``openai/clip-vit-base-patch32``; prompts longer than 77
+       tokens are truncated (``results/clipscore.json`` sets
+       ``prompt_truncated``). WAN requires ``imageio`` with
+       ``imageio-ffmpeg``, OpenCV, or ``torchvision`` to decode the MP4.
+       The shipped floor of 20 is an unvalidated placeholder.
+       ``enforce_thresholds: false`` records a score that misses the floor
+       without failing the stage, but does not skip a missing CLIP
+       checkpoint.
+   * - Teardown
+     - ``test_teardown``
+     - Stops the container.
+
+The metrics, threshold keys, and output artifacts for each benchmark family are listed below.
 
 .. list-table::
    :widths: 2 3 3 3
@@ -291,7 +319,7 @@ Key stages to watch:
      - ``max_avg_total_time_s``
      - step JSONs, ``video.mp4``
    * - WAN Diffusers
-     - average epoch / pipe time from ``results/timing.json``
+     - average epoch and pipe time from ``results/timing.json``
      - ``max_avg_pipe_time_s``
      - ``results/timing.json``, ``results/video_i2v.mp4``
    * - FLUX
@@ -310,3 +338,16 @@ Key stages to watch:
 Single-node output dirs use the node hostname, for example
 ``${paths.log_dir}/flux_<hostname>_outputs`` or ``wan_22_<hostname>_outputs``.
 Distributed runs write to the rank-0 hostname directory.
+
+
+.. |cvs-tests-inference-xdit| replace:: ``cvs/tests/inference/xdit/``
+.. _cvs-tests-inference-xdit: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/tests/inference/xdit/
+
+.. |cvs-input-config-file-inference-xdit| replace:: ``cvs/input/config_file/inference/xdit/``
+.. _cvs-input-config-file-inference-xdit: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/inference/xdit/
+
+.. |cvs-lib-inference-xdit-scripts-flux2-example-py| replace:: ``cvs/lib/inference/xdit/scripts/flux2_example.py``
+.. _cvs-lib-inference-xdit-scripts-flux2-example-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/lib/inference/xdit/scripts/flux2_example.py
+
+.. |cvs-lib-inference-xdit-scripts-wan-i2v-example-py| replace:: ``cvs/lib/inference/xdit/scripts/wan_i2v_example.py``
+.. _cvs-lib-inference-xdit-scripts-wan-i2v-example-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/lib/inference/xdit/scripts/wan_i2v_example.py

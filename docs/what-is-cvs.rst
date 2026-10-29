@@ -2,11 +2,19 @@
   :description: CVS is a collection of test suites that qualify AMD ROCm GPU clusters for production, covering health, networking, training, and inference workloads.
   :keywords: CVS, ROCm, cluster validation, AMD, GPU, test suite, qualification, burn-in, InfiniBand, RCCL, preflight, SSH
 
+************************************************
 What is Cluster Validation Suite (CVS) for ROCm?
-=================================================
+************************************************
 
 CVS is a collection of test suites that validate AMD ROCm clusters.
 Use CVS to verify GPU cluster health, GPU/CPU node health, host OS configuration, and NIC (network interface card) validation.
+
+.. note::
+
+   CVS has been validated on Ubuntu-based Linux distribution clusters.
+
+CVS test suites
+===============
 
 Here are the tests available in CVS:
 
@@ -31,6 +39,9 @@ Here are the tests available in CVS:
   - Flux.1 text-to-image generation tests validate distributed image generation using xDiT with Ulysses and Ring parallelization.
   - WAN 2.2 image-to-video generation tests validate 81-frame video generation with distributed inference.
 
+Utility commands
+================
+
 In addition to test suites, CVS provides cluster utility commands:
 
 - :doc:`cvs exec <how-to/execute-cluster-commands>` runs any shell command across all cluster nodes simultaneously over parallel SSH, returning per-node output for quick ad-hoc diagnostics.
@@ -38,13 +49,18 @@ In addition to test suites, CVS provides cluster utility commands:
 
 CVS can also run test workloads through a :doc:`per-host Docker container backend <how-to/run-with-containers>` instead of directly on the host filesystem. Use the container backend when you want to validate the same image you ship to production, or to keep the host footprint to Docker, the GPU driver, and SSH only.
 
+Health monitoring
+=================
+
 You can :doc:`monitor cluster health <how-to/monitor/index>` in two ways:
 
 - :doc:`Health reports <how-to/monitor/health-reports/index>`: Run the Cluster Health Checker to generate a self-contained HTML report covering GPU/NIC counters, RAS errors, PCIe/XGMI status, and ``dmesg`` signatures. Use this for point-in-time snapshots before or after test campaigns.
 - :doc:`Live dashboards <how-to/monitor/live-dashboards/index>`: Stream real-time GPU and cluster metrics to Grafana using either an agentless SSH-based collector or Prometheus exporters installed on the cluster nodes.
 
-CVS uses the open-source PyTest framework to run the tests and generate reports. You can launch CVS from a head node or any Linux management station that has connectivity to the cluster nodes via SSH. The single node tests run cluster-wide in parallel using the open-source parallel-SSH Python modules to optimize their running time. On Slurm or SPUR clusters, ``cvs run`` can instead be launched as a job step, where per-node HTTP agents replace SSH for orchestrator-based suites; see :doc:`/how-to/run-on-managed-compute`.
+Run test suites and generate reports
+====================================
 
-.. note::
+CVS uses the open-source PyTest framework to run the tests and generate reports. You can launch CVS from a head node or any Linux management station that has connectivity to the cluster nodes through SSH.
+The single node tests run cluster-wide in parallel using the open-source parallel-SSH Python modules to optimize their running time.
+On Slurm or SPUR clusters, ``cvs run`` can instead be launched as a job step, where per-node HTTP agents replace SSH for orchestrator-based suites; see :doc:`/how-to/run-on-managed-compute`.
 
-   CVS has been validated on Ubuntu-based Linux distribution clusters.

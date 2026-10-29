@@ -242,7 +242,7 @@ One host never hits these rules. ``resolve_vllm_topology`` returns mode ``single
   vllm_distributed requires pipeline_parallel_size>1 unless distributed-executor-backend=ray
   vllm_distributed requires container.env.NCCL_SOCKET_IFNAME on multi-host clusters
 
-The first message names the flag with hyphens. The JSON key you set is ``distributed_executor_backend``. A legacy top-level ``ib_netdev`` also satisfies the socket-interface check. If ``container.env`` sets any of ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, or ``TP_SOCKET_IFNAME``, it must set all three, and none of them may be empty.
+The first message names the flag with hyphens. The JSON key you set is ``distributed_executor_backend``. A legacy top-level ``ib_netdev`` also satisfies the socket-interface check. If ``container.env`` sets any of ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, or ``TP_SOCKET_IFNAME``, it must set all three, and none of them can be empty.
 
 Multinode prerequisites
 -----------------------
@@ -443,6 +443,8 @@ Per-cell artifacts land in::
 
 Model
 =====
+
+Model configuration keys and their defaults are listed below.
 
 .. list-table::
    :widths: 3 2 5
@@ -810,7 +812,7 @@ cells. ``mi455x_vllm_deepseek-v4-flash_fp8_single_threshold.json`` is the
 exception: six cells, each gating only ``failed`` at ``0``, and the paired
 config sets ``enforce_thresholds`` to true. All 56 registry metrics remain
 supported, and every finite produced value is reported whether or not it has
-a threshold spec. You may add any other registered metric or remove any
+a threshold spec. You can add any other registered metric or remove any
 packaged entry.
 
 Metrics
@@ -1073,6 +1075,8 @@ Gate them in the threshold file's top-level ``accuracy`` block, keyed by the tas
 
 Troubleshooting
 ===============
+
+Common error messages and their causes and fixes are listed below.
 
 .. list-table::
    :widths: 5 5

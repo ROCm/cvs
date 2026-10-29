@@ -24,14 +24,14 @@ The cluster file is shared across all test suites and must be configured once pe
 Test configuration files
 ========================
 
-Configuration references are grouped by test category. Each page documents parameters and example JSON for suites under ``cvs/input/config_file/``.
+Configuration references are grouped by test category. Each page documents parameters and example JSON for suites under |cvs-input-config-file|_.
 
-- :doc:`Burn-in / Diag </reference/configuration-files/burn-in-diag/index>`
+- :doc:`Burn-in and diagnostics </reference/configuration-files/burn-in-diag/index>`
 - :doc:`Network </reference/configuration-files/network/index>`
 - :doc:`Training </reference/configuration-files/training/index>`
 - :doc:`Inference </reference/configuration-files/inference/index>`
 
-Burn-in / Diag
+Burn-in and diagnostics
 --------------
 
 - :doc:`Platform </reference/configuration-files/burn-in-diag/platform>` — host OS, BIOS, firmware, and PCIe checks
@@ -60,3 +60,7 @@ Inference
 - :doc:`vLLM Inference </reference/configuration-files/inference/vllm>` — vLLM serving throughput and latency
 - :doc:`SGLang Inference </reference/configuration-files/inference/sglang>` — single-node, distributed, and disaggregated LLM serving
 - :doc:`xDiT Inference </reference/configuration-files/inference/xdit>` — FLUX.1/FLUX.2 text-to-image and WAN 2.2 image-to-video
+
+
+.. |cvs-input-config-file| replace:: ``cvs/input/config_file/``
+.. _cvs-input-config-file: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/

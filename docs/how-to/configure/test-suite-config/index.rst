@@ -15,7 +15,7 @@ Replace every ``<changeme>`` value before running — CVS exits with an error if
 Browse and copy templates
 =========================
 
-CVS ships templates under ``cvs/input/config_file/``. Use ``cvs config`` to discover what is available and copy files into your workspace before editing them.
+CVS ships templates under |cvs-input-config-file|_. Use ``cvs config`` to discover what is available and copy files into your workspace before editing them.
 
 ``list-dirs`` — browse directories grouped by category (start here when you are not sure what exists):
 
@@ -53,3 +53,7 @@ Next steps
 
 - :doc:`/how-to/test-suites/index` — run a test suite. Each suite's page includes a **Set up config** section with the copy command and the fields you must edit.
 - :doc:`/reference/configuration-files/index` — full field-by-field schema for every test suite config file.
+
+
+.. |cvs-input-config-file| replace:: ``cvs/input/config_file/``
+.. _cvs-input-config-file: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/

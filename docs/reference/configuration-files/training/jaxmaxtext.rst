@@ -48,7 +48,7 @@ Use ``cvs config list training/jaxmaxtext`` to list available templates, or
 
 The suite/lifecycle reference is in
 :doc:`/how-to/test-suites/training/jaxmaxtext`. The config files themselves live in
-``cvs/input/config_file/training/jaxmaxtext/`` (each config plus a sibling
+|cvs-input-config-file-training-jaxmaxtext|_ (each config plus a sibling
 ``_threshold.json``); this page documents every block and the threshold format.
 
 Available configurations
@@ -63,7 +63,7 @@ stage); single-node configs omit them. Run single-node configs with
 
 The ``mi3xx_*`` configs are **GPU-generic and run on both MI300X and MI325X**
 (both CDNA3). They ship the MI325X batch sizes, so on MI300X (less HBM) a large
-batch may hit **OOM** — lower ``per_device_batch_size`` (the ``BS`` in the sweep
+batch might hit **OOM** — lower ``per_device_batch_size`` (the ``BS`` in the sweep
 key) if you see one. Because threshold targets are platform-specific, each
 ``mi3xx_*`` config ships ``threshold_json`` with a ``<changeme>`` tag: point it at
 the ``mi300x_*`` or ``mi325x_*`` ``_threshold.json`` for your GPU **before
@@ -116,7 +116,7 @@ MI350-class (CDNA4) GPUs.
      - BF16, FP8
 
 Threshold files stay **per-platform** (``mi300x_*_threshold.json`` and
-``mi325x_*_threshold.json``); the ``mi3xx_*`` config selects one via
+``mi325x_*_threshold.json``); the ``mi3xx_*`` config selects one using
 ``threshold_json``.
 
 Config layout
@@ -362,6 +362,8 @@ structured ``train_params.xla_flags`` map. The vars are grouped for readability:
 
 ``train_params``
 ================
+
+Training parameter fields and their descriptions are listed below.
 
 .. list-table::
    :widths: 3 3 5
@@ -797,3 +799,7 @@ To start gating a metric currently marked ``info``: replace ``"kind": "info"``
 with ``min`` / ``max`` / etc. and set a calibrated ``value``. Checkpoint I/O
 timings (``checkpoint_save_seconds`` / ``checkpoint_load_seconds``) are gated by
 the ``checkpoint_resume`` block, not the threshold file.
+
+
+.. |cvs-input-config-file-training-jaxmaxtext| replace:: ``cvs/input/config_file/training/jaxmaxtext/``
+.. _cvs-input-config-file-training-jaxmaxtext: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/training/jaxmaxtext/

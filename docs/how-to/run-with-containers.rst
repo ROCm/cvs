@@ -94,7 +94,7 @@ You should see one running container per node with the configured name and image
   cvs exec --cluster_file ~/cvs_workspace/cluster_container.json \
       --cmd "sudo docker ps --filter name=^cvs_container$ --format '{{.Names}} {{.Image}}'"
 
-``cvs exec`` SSHes to each host and ignores ``orchestrator``, so this shows the host's ``docker ps``. A ``per_run`` container is already removed when the suite has finished teardown. Check during the run, or use ``persistent`` / ``no_launch`` if you need the container afterwards.
+``cvs exec`` SSHes to each host and ignores ``orchestrator``, so this shows the host's ``docker ps``. A ``per_run`` container is already removed when the suite has finished teardown. Check during the run, or use ``persistent`` or ``no_launch`` if you need the container afterwards.
 
 ``docker exec`` and port 2224
 ==============================
@@ -130,18 +130,35 @@ Replace ``cvs_container`` with your ``container.name``. ``cvs exec`` runs that o
 Common pitfalls
 ===============
 
-- **Multi-node suite that starts sshd, image without ``/usr/sbin/sshd``.** sshd setup fails. Single-node runs skip that step. Suites that never call it do not need sshd in the image.
-- **Image without the workload binary.** ``rvs_cvs`` runs ``rvs`` inside the container. A missing ``/opt/rocm/bin/rvs`` fails the test.
-- **``lifetime: persistent`` without a pinned ``name``.** The default name follows the image tag. A tag change leaves the previous container in place and starts a new one.
-- **Port 2224 already in use on the host.** Suites that start sshd with ``network: host`` bind 2224 in the host network namespace. Stop the other listener.
-- **Cluster file says ``baremetal`` for a suite that follows the key.** The suite runs on the host. Suites that force ``container`` still start a container; see the scope table.
-- **``{user-id}`` passed to ``cvs exec``.** The SSH user is the literal string ``{user-id}``.
+- Running a multi-node suite that starts sshd against an image without
+  ``/usr/sbin/sshd`` fails at the sshd setup stage. Single-node runs skip
+  that step, and suites that never call sshd setup do not require it in the
+  image.
+- An image that is missing the workload binary fails the test. For example,
+  ``rvs_cvs`` runs ``rvs`` inside the container, so ``/opt/rocm/bin/rvs``
+  must be present.
+- Using ``lifetime: persistent`` without a pinned ``name`` causes the
+  container name to follow the image tag. When the tag changes, the previous
+  container stays running and a new one is started alongside it.
+- If port 2224 is already in use on the host, suites that start sshd with
+  ``network: host`` will fail to bind it. Stop the conflicting listener before
+  running the suite.
+- Setting ``orchestrator: baremetal`` in the cluster file for a suite that
+  honors that key causes the suite to run on the host instead of in a
+  container. Suites that force ``container`` ignore the key and always start a
+  container; see the scope table.
+- Passing ``{user-id}`` to ``cvs exec`` uses the literal string
+  ``{user-id}`` as the SSH username rather than substituting the current user.
 
 Related resources
 =================
 
 - :doc:`/reference/cluster/cluster-file` — cluster file schema, container block, and ``runtime.args`` table.
 - :doc:`/how-to/test-suites/burn-in-diag/health` — AGFHC, TransferBench, and RVS, which follow the cluster key.
-- `cvs/input/cluster_file/README.md <https://github.com/ROCm/cvs/blob/main/cvs/input/cluster_file/README.md>`_ — in-tree reference next to the templates.
+- |cvs-input-cluster-file-readme|_ — in-tree reference next to the templates.
 - :doc:`/how-to/test-suites/index` — how to invoke a suite.
 - :doc:`/how-to/execute-cluster-commands` — ``cvs exec``.
+
+
+.. |cvs-input-cluster-file-readme| replace:: ``cvs/input/cluster_file/README.md``
+.. _cvs-input-cluster-file-readme: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/input/cluster_file/README.md

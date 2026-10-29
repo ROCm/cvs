@@ -8,7 +8,7 @@ Generate AMD Instinct GPU cluster health reports with Cluster Validation Suite (
 
 Health reports run ``cvs monitor check_cluster_health`` from the head node. CVS SSHs to each compute node, collects GPU/NIC counters and logs, and writes a self-contained HTML report. No agents or exporters are installed on the cluster.
 
-The monitor identifies hardware degradation (RAS, PCIe/XGMI, RDMA counters via AMD SMI) and software failures (``dmesg`` and ``journalctl`` signatures). Use it before a test campaign, after a change, or to snapshot counters while workloads run and compare deltas across nodes.
+The monitor identifies hardware degradation (RAS, PCIe/XGMI, RDMA counters through AMD SMI) and software failures (``dmesg`` and ``journalctl`` signatures). Use it before a test campaign, after a change, or to snapshot counters while workloads run and compare deltas across nodes.
 
 Generate a health report
 ========================
@@ -35,7 +35,7 @@ Generate a health report
       * - Option
         - Description
       * - ``--cluster_file PATH``
-        - Cluster JSON (same file as ``cvs run`` / ``cvs exec``). Takes precedence over ``CLUSTER_FILE``.
+        - Cluster JSON (same file as ``cvs run`` or ``cvs exec``). Takes precedence over ``CLUSTER_FILE``.
       * - ``--iterations N``
         - Number of sampling iterations
       * - ``--time_between_iters SECONDS``
@@ -70,10 +70,13 @@ Review the health report
 The report includes GPU and NIC snapshots, historic error logs, and per-iteration deltas for triage. Anomalies are highlighted in tables (PCIe, RDMA, GPU errors, cable issues, kernel logs).
 
 .. image:: ../../../images/rdma.png
+   :alt: RDMA counter table in the CVS cluster health HTML report, showing per-node RDMA statistics
 
 .. image:: ../../../images/pcie.png
+   :alt: PCIe status table in the CVS cluster health HTML report, showing per-node PCIe link status
 
 .. image:: ../../../images/journlctl.png
+   :alt: journalctl kernel log entries in the CVS cluster health HTML report, highlighting error signatures
 
 Metrics are collected with AMD SMI, ``ethtool``, and ``rdma`` utilities on each node. See the `AMD SMI CLI reference <https://rocm.docs.amd.com/projects/amdsmi/en/latest/how-to/amdsmi-cli-tool.html#commands>`_ for field definitions.
 

@@ -25,19 +25,19 @@ subtrees:
 - caption: How to
   entries:
   - file: how-to/configure/cluster-config
-    title: Set up cluster file
+    title: Configure the cluster file
   - file: how-to/configure/test-suite-config/index
-    title: Set up test configs
+    title: Configure test config files
     subtrees:
     - entries:
       - file: how-to/configure/test-suite-config/pick-config-file
-        title: Choose config template
+        title: Choose a config template
   - file: how-to/test-suites/index
-    title: Run tests
+    title: Run test suites
     subtrees:
     - entries:
       - file: how-to/test-suites/burn-in-diag/index
-        title: Burn-in / Diag tests
+        title: Burn-in and diagnostics tests
         subtrees:
         - entries:
           - file: how-to/test-suites/burn-in-diag/platform
@@ -85,15 +85,15 @@ subtrees:
   - file: how-to/execute-cluster-commands
     title: Run cluster commands
   - file: how-to/copy-to-cluster
-    title: Copy to cluster
+    title: Copy files to cluster nodes
   - file: how-to/monitor/index
     title: Monitor cluster health
     subtrees:
     - entries:
       - file: how-to/monitor/health-reports/index
-        title: Health reports
+        title: Generate health reports
       - file: how-to/monitor/live-dashboards/index
-        title: Live dashboards
+        title: Use live dashboards
         subtrees:
         - entries:
           - file: how-to/monitor/live-dashboards/agentless
@@ -108,7 +108,7 @@ subtrees:
   - file: reference/cluster/passwordless-ssh
     title: Passwordless SSH
   - file: reference/cluster/cluster-file
-    title: Cluster file
+    title: CVS cluster file
   - file: how-to/run-with-containers
     title: Run with containers
   - file: reference/configuration-files/index
@@ -116,7 +116,7 @@ subtrees:
     subtrees:
     - entries:
       - file: reference/configuration-files/burn-in-diag/index
-        title: Burn-in / Diag
+        title: Burn-in and diagnostics
         subtrees:
         - entries:
           - file: reference/configuration-files/burn-in-diag/platform
@@ -160,7 +160,7 @@ subtrees:
           - file: reference/configuration-files/inference/xdit
             title: xDiT
   - file: reference/cli/cvs-run
-    title: CLI reference
+    title: Command-line interface reference
 
 - caption: About
   entries:

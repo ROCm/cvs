@@ -6,11 +6,13 @@
 Cluster Validation Suite (CVS) cluster file: configuration and backend selection
 ********************************************************************************
 
-In SSH mode, each ``cvs run`` invocation is pointed at a cluster file via ``--cluster_file <path>``. The cluster file declares the SSH credentials, the node list, and an ``orchestrator`` value. Which suites follow that value is in the scope table below. CVS ships two starter templates:
+In SSH mode, each ``cvs run`` invocation is pointed at a cluster file using ``--cluster_file <path>``. The cluster file declares the SSH credentials, the node list, and an ``orchestrator`` value. Which suites follow that value is in the scope table below.
 
 .. note::
 
   Under a Slurm or SPUR job step ``--cluster_file`` is optional. See :doc:`/how-to/run-on-managed-compute`.
+
+CVS ships two starter templates for the cluster file.
 
 .. list-table::
    :widths: 3 2 6
@@ -29,6 +31,38 @@ In SSH mode, each ``cvs run`` invocation is pointed at a cluster file via ``--cl
 Copy the template that matches the suite you are running, edit the placeholders, and pass it to ``cvs run``. ``cvs exec`` and ``cvs scp`` read the same file for hosts and SSH credentials and ignore ``orchestrator``.
 
 For SSH-mode runs, configure :doc:`/reference/cluster/passwordless-ssh` before running CVS against the cluster.
+
+Prerequisites on each cluster node
+==================================
+
+Every cluster node must meet the following requirements before using the
+container backend.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 78
+
+   * - Requirement
+     - Details
+   * - Docker installed
+     - The SSH user needs passwordless ``sudo docker`` or direct Docker
+       access (for example, membership in the ``docker`` group). CVS
+       probes ``sudo -n true`` once per orchestrator and caches the result.
+   * - Host ROCm driver loaded
+     - ``/dev/kfd`` and ``/dev/dri/*`` must be present for GPU passthrough.
+       ``/dev/infiniband/*`` is also required when the suite uses RDMA.
+   * - SSH directory accessible
+     - Required only when the suite starts in-container sshd. CVS mounts
+       ``/home/<cvs-user>/.ssh`` at ``/host_ssh`` inside the container and
+       copies it to ``/root/.ssh``. Suites that never call sshd setup do
+       not need this directory or ``openssh-server`` in the image.
+   * - Container image available
+     - The image must be pre-loaded on each node, provided as ``image_tar``
+       in the cluster file, or pullable from a reachable registry. Multinode
+       suites that call sshd setup require ``/usr/sbin/sshd`` in the image.
+       The image must also provide the binaries the suite runs (for example
+       ``/opt/rocm/bin/rvs`` for ``rvs_cvs``).
+
 
 Backends
 ========
@@ -157,7 +191,7 @@ CVS's own privileged commands — the Docker CLI calls (``docker run``, ``exec``
 Container block
 ===============
 
-The ``container`` block configures the container backend. It is consumed by the ``ContainerOrchestrator`` defined in `cvs/core/orchestrators/container.py <https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/container.py>`_.
+The ``container`` block configures the container backend. It is consumed by the ``ContainerOrchestrator`` defined in |cvs-core-orchestrators-container-py|_.
 
 The following table describes each key in the ``container`` block.
 
@@ -193,7 +227,7 @@ The following table describes each key in the ``container`` block.
 Docker ``runtime.args`` reference
 =================================
 
-When ``runtime.name`` is ``docker``, the keys below configure the underlying ``docker run`` command. Defaults are merged from ``DEFAULT_CONTAINER_ARGS`` in `cvs/core/orchestrators/container.py <https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/container.py>`_:
+When ``runtime.name`` is ``docker``, the keys below configure the underlying ``docker run`` command. Defaults are merged from ``DEFAULT_CONTAINER_ARGS`` in |cvs-core-orchestrators-container-py|_:
 
 - List arguments (``volumes``, ``devices``, ``cap_add``, ``security_opt``, ``group_add``, ``ulimit``) **append to** the baked-in defaults.
 - Scalar arguments (``network``, ``ipc``, ``privileged``) **override** the default when set, otherwise inherit it.
@@ -253,7 +287,7 @@ The following table lists the supported ``runtime.args`` keys and their defaults
 ``lifetime`` truth table
 ========================
 
-``setup_containers`` and ``teardown_containers`` branch on ``container.lifetime``. The behavior below is pinned by the per-lifetime unit tests in `cvs/core/orchestrators/unittests/test_container.py <https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/unittests/test_container.py>`_.
+``setup_containers`` and ``teardown_containers`` branch on ``container.lifetime``. The behavior below is pinned by the per-lifetime unit tests in |cvs-core-orchestrators-unittests-test-container-py|_.
 
 The following table shows what each ``lifetime`` value does during setup and teardown.
 
@@ -278,21 +312,19 @@ The following table shows what each ``lifetime`` value does during setup and tea
 
   With ``lifetime: persistent``, pin ``container.name``. The default name is the user running ``cvs``, then ``_``, then the image with characters outside ``[A-Za-z0-9_]`` replaced by ``_``. That name changes when you change the image tag, and the previous container's overlay is left behind.
 
-Prerequisites on each cluster node
-==================================
-
-The following prerequisites must be satisfied on every cluster node before using the container backend.
-
-To use the container backend, every cluster node must have:
-
-- **Docker installed**. The SSH user needs passwordless ``sudo docker`` or direct Docker access (for example membership in the ``docker`` group). CVS probes ``sudo -n true`` once per orchestrator and caches the orchestrator head's answer.
-- **Host driver loaded** so ``/dev/kfd``, ``/dev/dri/*``, and ``/dev/infiniband/*`` (when RDMA is in scope) are present for passthrough.
-- **The launch user's SSH directory** at ``/home/<user running cvs>/.ssh`` when the suite starts in-container sshd. CVS mounts that directory at ``/host_ssh`` and copies it to ``/root/.ssh``. Suites that never call sshd setup do not need ``openssh-server`` in the image.
-- **The image** already loaded, provided as ``image_tar`` on each node, or pullable. A multi-node suite that calls sshd setup needs ``/usr/sbin/sshd`` in the image. The image also needs the binaries that suite runs (for example ``/opt/rocm/bin/rvs`` for ``rvs_cvs``).
-
 Related resources
 =================
 
 - :doc:`/how-to/run-with-containers` — walkthrough for a container cluster file.
 - :doc:`/how-to/test-suites/burn-in-diag/health` — health suites that follow the cluster ``orchestrator`` key.
-- `cvs/input/cluster_file/README.md <https://github.com/ROCm/cvs/blob/main/cvs/input/cluster_file/README.md>`_ — in-tree reference next to the templates.
+- |cvs-input-cluster-file-readme|_ — in-tree reference next to the templates.
+
+
+.. |cvs-core-orchestrators-container-py| replace:: ``cvs/core/orchestrators/container.py``
+.. _cvs-core-orchestrators-container-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/core/orchestrators/container.py
+
+.. |cvs-core-orchestrators-unittests-test-container-py| replace:: ``cvs/core/orchestrators/unittests/test_container.py``
+.. _cvs-core-orchestrators-unittests-test-container-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/core/orchestrators/unittests/test_container.py
+
+.. |cvs-input-cluster-file-readme| replace:: ``cvs/input/cluster_file/README.md``
+.. _cvs-input-cluster-file-readme: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/input/cluster_file/README.md

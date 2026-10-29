@@ -2,11 +2,11 @@
   :description: Run JAX MaxText training benchmarks with CVS on AMD Instinct GPUs for single-node and distributed LLM pre-training performance validation with ROCm.
   :keywords: CVS, JAX, MaxText, training, benchmark, AMD Instinct, ROCm, AMD, GPU, distributed, RDMA, Llama
 
-**************************************************
-Run JAX MaxText training benchmarks with CVS
-**************************************************
+*****************************************************************
+Run JAX MaxText training benchmarks with CVS on AMD Instinct GPUs
+*****************************************************************
 
-JAX training in CVS is **jaxmaxtext**. The legacy ``jax_llama3_1_*`` suites have
+JAX training in CVS is ``jaxmaxtext``. The legacy ``jax_llama3_1_*`` suites have
 been removed. Use ``jaxmaxtext_single`` with a single-node config and
 ``jaxmaxtext_distributed`` with a distributed config; the mode is inferred from
 the config (distributed configs carry the NCCL RDMA device-selection vars in
@@ -54,7 +54,7 @@ Set up config
    OOMs, lower ``per_device_batch_size`` (the ``BS`` in the sweep key) — the ``mi3xx_*`` configs
    ship the larger MI325X batch sizes.
 
-Full parameter list: :doc:`/reference/configuration-files/training/jaxmaxtext`.
+See :doc:`/reference/configuration-files/training/jaxmaxtext` for the full parameter list.
 
 .. _jax-run-tests:
 

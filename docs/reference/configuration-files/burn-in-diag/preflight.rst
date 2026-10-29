@@ -14,10 +14,10 @@ Tier 1**, **Tier 2**, and **Tier 3** Primus checks. The Node Smoke tiers run
 by default. Set ``connectivity_mode`` to ``"skip"`` (and ``tier2_perf`` to
 ``false`` for Tier 2) to disable one.
 
-Configuration file location: ``cvs/input/config_file/preflight/preflight_config.json``
+Configuration file location: |cvs-input-config-file-preflight-preflight-config-json|_
 
 For the full parameter reference, examples, and troubleshooting, see
-`README_preflight_config.md <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/preflight/README_preflight_config.md>`_
+`README_preflight_config.md <https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/input/config_file/preflight/README_preflight_config.md>`_
 in the repository.
 
 Run preflight checks
@@ -176,4 +176,11 @@ Related resources
 =================
 
 - :doc:`/reference/cluster/cluster-file` — Cluster topology and SSH
-- `cvs/tests/preflight/README.md <https://github.com/ROCm/cvs/blob/main/cvs/tests/preflight/README.md>`_ — Test suite overview and architecture
+- |cvs-tests-preflight-readme|_ — Test suite overview and architecture
+
+
+.. |cvs-input-config-file-preflight-preflight-config-json| replace:: ``cvs/input/config_file/preflight/preflight_config.json``
+.. _cvs-input-config-file-preflight-preflight-config-json: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/input/config_file/preflight/preflight_config.json
+
+.. |cvs-tests-preflight-readme| replace:: ``cvs/tests/preflight/README.md``
+.. _cvs-tests-preflight-readme: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/tests/preflight/README.md

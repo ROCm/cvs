@@ -2,19 +2,21 @@
   :description: Run SGLang LLM inference benchmarks with CVS on AMD Instinct GPU clusters, covering single-node, distributed, and disaggregated prefill/decode topologies.
   :keywords: CVS, SGLang, inference, benchmark, AMD Instinct, ROCm, AMD, GPU, LLM, disaggregated, distributed, Llama
 
-**********************************************
-Run SGLang LLM inference benchmarks with CVS
-**********************************************
+***********************************************************************
+Run SGLang LLM inference benchmarks with Cluster Validation Suite (CVS)
+***********************************************************************
 
-CVS provides three SGLang suites under ``cvs/tests/inference/sglang/``. Each suite is a
+CVS provides three SGLang suites under |cvs-tests-inference-sglang|_. Each suite is a
 separate pytest module; pick the one that matches your topology, then point ``--config_file``
-at a template from ``cvs/input/config_file/inference/sglang/``.
+at a template from |cvs-input-config-file-inference-sglang|_.
 
 For the full configuration schema, threshold format, and parameter reference, see
 :doc:`/reference/configuration-files/inference/sglang`.
 
 Test suites
 ===========
+
+CVS ships three SGLang suite variants, one per deployment topology.
 
 .. list-table::
    :widths: 2 3 5
@@ -127,7 +129,7 @@ List stages in a suite:
 
 ``test_run_performance_benchmark_test`` is parametrized once per combo in ``sweep.runs``
 (for example ``isl1024-osl1024-c64``). Empty ``runs`` uses every performance cell in the
-threshold file. TP/PP in the combo may differ from the threshold-file key; matching is
+threshold file. TP/PP in the combo might differ from the threshold-file key; matching is
 exact, then unique ``ISL,OSL,CONC``.
 
 Example run:
@@ -249,3 +251,10 @@ Key lifecycle stages to watch:
 - **Teardown** — ``test_teardown`` stops containers even when a prior stage failed.
 
 Logs are written under ``paths.log_dir`` from the config (default ``/home/{user-id}/LOGS/sglang``).
+
+
+.. |cvs-tests-inference-sglang| replace:: ``cvs/tests/inference/sglang/``
+.. _cvs-tests-inference-sglang: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/tests/inference/sglang/
+
+.. |cvs-input-config-file-inference-sglang| replace:: ``cvs/input/config_file/inference/sglang/``
+.. _cvs-input-config-file-inference-sglang: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/inference/sglang/

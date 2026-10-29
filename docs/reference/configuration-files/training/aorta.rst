@@ -2,10 +2,10 @@
   :description: Configure Aorta benchmark JSON variants and performance thresholds
   :keywords: Aorta, ROCm, RCCL, benchmark, CVS
 
-Aorta benchmark configuration
-=============================
+Aorta benchmark configuration file for Cluster Validation Suite (CVS)
+=====================================================================
 
-Aorta uses JSON variants in ``cvs/input/config_file/benchmark/aorta/``:
+Aorta uses JSON variants in |cvs-input-config-file-benchmark-aorta|_:
 
 * ``mi3xx_aorta_profile_overlap_2gpu_single.json``
 * ``mi3xx_aorta_profile_overlap_2gpu_distributed.json``
@@ -25,7 +25,7 @@ Unresolved placeholders fail configuration loading. The previous ``{home}``, ``{
 ``{home-mount-dir}`` and ``{node-dir-name}`` Aorta placeholders should be replaced by explicit
 paths or the shared loader's supported references.
 
-.. list-table:: Main fields
+.. list-table:: 
    :header-rows: 1
    :widths: 30 70
 
@@ -48,7 +48,7 @@ paths or the shared loader's supported references.
    * - ``output_dir``
      - Local CVS output root; default ``aorta_results``. Each invocation gets a unique run subdirectory.
 
-Use storage writable by the container user. Root-squashed NFS may prevent root containers
+Use storage writable by the container user. Root-squashed NFS might prevent root containers
 from writing output. The suite restores repository ownership to each host's login user
 before delegating container teardown to the orchestrator.
 At launch, CVS also resolves each host's numeric ``render`` group ID and adds the
@@ -58,7 +58,7 @@ group-name mapping.
 Workload and launch
 -------------------
 
-.. list-table:: Aorta execution fields
+.. list-table::
    :header-rows: 1
    :widths: 35 65
 
@@ -156,3 +156,7 @@ artifacts after execution failures.
 
 Runtime and transport support comes from the shared orchestrator. The Enroot runtime in
 this checkout is not implemented; this migration does not add that backend.
+
+
+.. |cvs-input-config-file-benchmark-aorta| replace:: ``cvs/input/config_file/benchmark/aorta/``
+.. _cvs-input-config-file-benchmark-aorta: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/benchmark/aorta/

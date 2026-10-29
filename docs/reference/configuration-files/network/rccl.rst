@@ -389,7 +389,7 @@ it instead takes a CUDA-style code path that additionally requires
 ``NCCL_CUMEM_ENABLE`` defaults to ``0`` on ROCm/RCCL, that condition is never
 met, so RCCL silently falls through to a plain (non-DMA-BUF) ``ibv_reg_mr_iova2``
 call on a raw GPU device pointer. Without a peer-memory kernel module,
-``bnxt_re``'s driver cannot pin that pointer via ``get_user_pages`` and rejects
+``bnxt_re``'s driver cannot pin that pointer using ``get_user_pages`` and rejects
 it with ``EFAULT`` ("Bad address").
 
 **Fix:** Set ``NCCL_CUMEM_ENABLE=1`` (alongside ``NCCL_DMABUF_ENABLE=1``) in the

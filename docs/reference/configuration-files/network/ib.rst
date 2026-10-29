@@ -184,4 +184,9 @@ The number of GPU instances follows GPU discovery. Both nodes of a pair must rep
 
 When GPU and backend-NIC PCI domains overlap, each GPU is paired only with an active NIC in its own domain (nearest bus, then nearest device). A GPU with no eligible NIC is left unmapped. The bandwidth or latency test then fails before perftest with ``No active backend RDMA NIC in the PCI domain of <card>``. If a domain has more GPUs than NICs, a NIC can be shared. That is logged (``shares NIC``) and the test still launches.
 
+
+- Perftest command lines and the in-memory results live for one ``cvs run`` process. ``test_build_ib_bw_perf_chart`` and ``test_build_ib_lat_perf_chart`` write ``ib_bw_pps_perf.xlsx`` and ``ib_lat_perf.xlsx`` in the current directory. A later process does not see the measurements.
+- The latency chart fails with ``No latency results for <test>`` when that test is present and has no rows.
+- Node-local logs ``/tmp/ib_perf_<gpu-index>_logs`` are removed at the start of every message size.
+- Outlier marks in the HTML run deck do not fail the pytest test. Threshold misses do, when ``verify_bw`` is on and a threshold exists for that point.
 ``HIP_VISIBLE_DEVICES``, ``ROCR_VISIBLE_DEVICES``, ``CUDA_VISIBLE_DEVICES``, and ``GPU_DEVICE_ORDINAL`` are cleared for the HIP device probe and for every perftest launch, so values set by a scheduler or in the cluster file ``env_vars`` do not change which GPU each perftest uses.

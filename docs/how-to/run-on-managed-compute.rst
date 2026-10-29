@@ -183,7 +183,7 @@ other listed errors are printed as ``Error:`` messages by ``cvs run``.
      - Fix
    * - ``Error: --cluster_file is required outside a scheduler-managed run``
      - No job step, or ``CVS_SCHEDULER=bare_metal``.
-     - Launch with ``srun`` / ``spur run``, or pass ``--cluster_file``.
+     - Launch with ``srun`` or ``spur run``, or pass ``--cluster_file``.
    * - ``Error: A scheduler-managed run must set an explicit workspace on shared storage: pass --workspace or set CVS_WORKSPACE. ...``
      - No ``--workspace`` or ``CVS_WORKSPACE``.
      - Set one to writable shared storage.
