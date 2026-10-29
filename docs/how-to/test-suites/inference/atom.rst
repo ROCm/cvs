@@ -112,7 +112,8 @@ Multinode PP (``driver=vllm_atom``):
     --config_file ~/input/config_file/inference/atom/distributed/mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json \
     --html ~/cvs_results/atom-w1-distributed.html --self-contained-html -vvv
 
-MTP-3 speculative decode (``schema_version: 2`` profile):
+MTP-3 speculative decode (``schema_version: 2`` profile on a native
+single-node stem — DeepSeek R1 or Qwen FP8):
 
 .. code:: bash
 
@@ -121,6 +122,9 @@ MTP-3 speculative decode (``schema_version: 2`` profile):
     --config_file "$SINGLE_DIR/mi3xx_atom_deepseek-r1_fp8_single.json" \
     --config_profile mtp3 \
     -vvv
+
+Serving-schema configs (``*_vllm_*``, ``*_sglang_*``) do not accept
+``--config_profile``.
 
 vLLM and SGLang parity configs live in ``inference/atom/`` (for example
 ``mi3xx_atom_vllm_deepseek-r1_fp8_single.json``) and run with ``cvs run atom``,
