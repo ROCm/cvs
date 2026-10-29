@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.
+- The health sample config installs TransferBench `v1.71.01` (was `v1.67.00`), which fixes timing and DMA measurement errors in the older release. TransferBench results can differ from earlier runs; configs that set `transferbench.git_tag` keep their version.
 
 ### Fixed
 
