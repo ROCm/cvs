@@ -48,6 +48,12 @@ _SECRET_FLAG = re.compile(
     re.IGNORECASE,
 )
 
+# A Hugging Face hub token can appear by itself in command output, not just in a
+# NAME=value assignment, e.g. "Invalid credentials for token hf_abc...". Package
+# names such as hf_transfer and short strings such as .hf_token stay below the
+# length floor.
+_HF_BARE_TOKEN = re.compile(r"(?<![A-Za-z0-9_])hf_[A-Za-z0-9]{30,}\b")
+
 
 def _is_secret_name(name):
     words = name.upper().split("_")
@@ -95,7 +101,9 @@ def redact_secrets(text):
       - NAME=value where NAME has TOKEN, PASSWORD, PASSWD, SECRET or API_KEY as a
         whole "_"-separated word and its last word is not FILE, PATH or DIR
         (case-insensitive);
-      - the flags --token, --hf-token/--hf_token, --password and --api-key/--api_key.
+      - the flags --token, --hf-token/--hf_token, --password and --api-key/--api_key;
+      - a bare Hugging Face hub token (``hf_`` followed by 30+ word characters),
+        which can appear on its own in error output instead of in an assignment.
 
     Use the result only for log output; always execute the original string.
     Non-string and empty input is returned unchanged. Runs in time linear in len(text).
@@ -106,6 +114,8 @@ def redact_secrets(text):
         text = _redact_assignments(text)
     if "--" in text:
         text = _SECRET_FLAG.sub(lambda m: f"{m['flag']}{m['sep']}{REDACTED}", text)
+    if "hf_" in text:
+        text = _HF_BARE_TOKEN.sub(REDACTED, text)
     return text
 
 

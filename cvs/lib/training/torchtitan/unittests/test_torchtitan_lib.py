@@ -343,3 +343,114 @@ class TestHfTokenFile(unittest.TestCase):
         self.assertNotIn(command_secret, logged)
         self.assertNotIn(launch_secret, logged)
         self.assertNotIn(download_secret, logged)
+
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.detect_rocm_path')
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.log')
+    def test_distributed_launch_hides_token_values(self, mock_log, mock_detect):
+        """The distributed 'bash <wrapper script>' launch must not print its raw stdout/stderr."""
+        mock_detect.return_value = '/opt/rocm'
+        orch = MagicMock()
+        orch.hosts = ['n0', 'n1']
+        launch_secret = 'hf_' + ('d' * 34)
+
+        def _exec(cmd, **kwargs):
+            if str(cmd).startswith('test -s'):
+                return {'n0': {'exit_code': 0}, 'n1': {'exit_code': 0}}
+            if str(cmd).startswith('bash ') and 'distributed_wrapper_script' in str(cmd):
+                return {'n0': f'launch failed for token {launch_secret}'}
+            return {'n0': '', 'n1': ''}
+
+        orch.exec.side_effect = _exec
+        variant = MagicMock()
+        variant.job_config_dict.return_value = {
+            'log_dir': '/test/logs',
+            'scripts_dir': '/test/scripts',
+            'data_cache_dir': '/test/cache',
+            'hf_token_file': FAKE_CRED_FILE,
+            'torchtitan_root': '/workspace/torchtitan',
+            'training_iterations': '10',
+            'nnodes': '2',
+            'master_address': '127.0.0.1',
+        }
+        variant.train_params = {'model_name': 'llama3_1_8b'}
+        variant.gpu_name = 'MI355X'
+        job = TorchTitanTrainingJob(
+            orch=orch,
+            variant_config=variant,
+            run_label='token-dist',
+            distributed_training=True,
+        )
+        job.build_training_job_cmd()
+        job.start_training_job()
+
+        launch_calls = [
+            call
+            for call in orch.exec.call_args_list
+            if str(call.args[0]).startswith('bash ') and 'distributed_wrapper_script' in str(call.args[0])
+        ]
+        self.assertTrue(launch_calls)
+        for call in launch_calls:
+            self.assertFalse(call.kwargs.get('print_console', True))
+        logged = ' '.join(
+            str(arg) for call in mock_log.info.call_args_list + mock_log.warning.call_args_list for arg in call.args
+        )
+        self.assertNotIn(launch_secret, logged)
+
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.detect_rocm_path')
+    def test_read_last_node_log_redacts_bare_token(self, mock_detect):
+        """Callers store this text in reports; a failed node can leave a bare hub token on it."""
+        mock_detect.return_value = '/opt/rocm'
+        orch = MagicMock()
+        orch.hosts = ['n0', 'n1']
+        bare = 'hf_' + ('b' * 34)
+        orch.exec.return_value = {'n1': f'step: 1 | loss: 0.5\nInvalid credentials for token {bare}'}
+        variant = MagicMock()
+        variant.job_config_dict.return_value = {
+            'log_dir': '/test/logs',
+            'scripts_dir': '/test/scripts',
+            'data_cache_dir': '/test/cache',
+            'hf_token_file': FAKE_CRED_FILE,
+            'torchtitan_root': '/workspace/torchtitan',
+            'training_iterations': '10',
+        }
+        variant.train_params = {'model_name': 'llama3_1_8b'}
+        variant.gpu_name = 'MI355X'
+        job = TorchTitanTrainingJob(orch=orch, variant_config=variant, run_label='tail', distributed_training=False)
+
+        text = job._read_last_node_log()
+
+        self.assertNotIn(bare, text)
+        self.assertIn('step: 1 | loss: 0.5', text)
+        self.assertFalse(orch.exec.call_args.kwargs.get('print_console', True))
+
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.detect_rocm_path')
+    def test_log_reads_do_not_print_raw_output(self, mock_detect):
+        """get_training_results_dict, scan_for_training_errors, and poll_for_training_completion
+        all cat/tail the training log, which can contain a bare hub token on failure."""
+        mock_detect.return_value = '/opt/rocm'
+        orch = MagicMock()
+        orch.hosts = ['n0']
+        orch.exec.return_value = {'n0': 'step: 1 | tps: 100.0 | loss: 0.5'}
+        variant = MagicMock()
+        variant.job_config_dict.return_value = {
+            'log_dir': '/test/logs',
+            'scripts_dir': '/test/scripts',
+            'data_cache_dir': '/test/cache',
+            'hf_token_file': FAKE_CRED_FILE,
+            'torchtitan_root': '/workspace/torchtitan',
+            'training_iterations': '1',
+        }
+        variant.train_params = {'model_name': 'llama3_1_8b'}
+        variant.gpu_name = 'MI355X'
+        job = TorchTitanTrainingJob(orch=orch, variant_config=variant, run_label='reads', distributed_training=False)
+
+        job.get_training_results_dict()
+        job.scan_for_training_errors()
+        job.poll_for_training_completion(time_between_iters=0)
+
+        cat_calls = [c for c in orch.exec.call_args_list if str(c.args[0]).startswith('cat ')]
+        tail_calls = [c for c in orch.exec.call_args_list if str(c.args[0]).startswith('tail ')]
+        self.assertTrue(cat_calls)
+        self.assertTrue(tail_calls)
+        for call in cat_calls + tail_calls:
+            self.assertFalse(call.kwargs.get('print_console', True))

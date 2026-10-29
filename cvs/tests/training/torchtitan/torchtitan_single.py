@@ -553,7 +553,7 @@ def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle,
         pytest.skip(f"no log dir recorded for combo '{sweep_name}'")
 
     log_path = f"{combo_log_dir}/out-node0/training.log"
-    out_dict = orch.exec(f"cat {log_path}")
+    out_dict = orch.exec(f"cat {log_path}", print_console=False)
     log_text = list(out_dict.values())[-1] or ""
 
     lc = variant_config.loss_curve

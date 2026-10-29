@@ -585,7 +585,7 @@ def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle,
     n = len(orch.hosts)
     last_host = orch.hosts[-1]
     log_path = f"{combo_log_dir}/out-node{n - 1}/training.log"
-    out_dict = orch.exec(f"cat {log_path}", hosts=[last_host])
+    out_dict = orch.exec(f"cat {log_path}", hosts=[last_host], print_console=False)
     log_text = out_dict.get(last_host) or ""
 
     lc = variant_config.loss_curve

@@ -78,6 +78,13 @@ class TestRedactSecrets(unittest.TestCase):
     def test_empty_text(self):
         self.assertEqual(redact_secrets(''), '')
 
+    def test_masks_bare_hub_token(self):
+        bare = 'hf_' + ('c' * 34)
+        redacted = redact_secrets(f'Invalid credentials for token {bare} and .hf_token')
+        self.assertIn('token <redacted>', redacted)
+        self.assertIn('.hf_token', redacted)
+        self.assertNotIn(bare, redacted)
+
     def assertRedacted(self, text, expected):
         result = redact_secrets(text)
         self.assertEqual(result, expected)

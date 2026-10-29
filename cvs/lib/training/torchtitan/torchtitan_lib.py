@@ -116,21 +116,17 @@ def detect_rocm_path(orch, config_rocm_path):
     return '/opt/rocm'
 
 
-# Hub tokens are `hf_` plus a long id. Package names such as `hf_transfer` are
-# shorter, and `.hf_token` is only five characters, so those stay.
-_HF_BARE_TOKEN = re.compile(r'\bhf_[A-Za-z0-9]{30,}\b')
-
-
 def _redact_logged_text(text):
     """Mask secret assignments and bare Hugging Face hub tokens in logged text.
 
-    ``redact_secrets`` masks ``HF_TOKEN=`` assignments and ``--token`` flags.
-    Download output can also print the token by itself, as in
-    ``Invalid credentials for token hf_...``.
+    ``redact_secrets`` masks ``HF_TOKEN=`` assignments, ``--token`` flags, and a
+    bare hub token such as ``Invalid credentials for token hf_...``. This wrapper
+    only normalizes non-string/empty input to ``''``, since callers log the
+    result directly.
     """
     if not isinstance(text, str) or not text:
         return ''
-    return _HF_BARE_TOKEN.sub('<redacted>', redact_secrets(text))
+    return redact_secrets(text)
 
 
 def _hf_token_export_line(token_file):
@@ -586,8 +582,10 @@ class TorchTitanTrainingJob:
         if self.distributed_training:
             for i, cmd in enumerate(self.job_cmd_list):
                 log.info('Writing wrapper script for node %s', i)
-                # The orchestrator masks this command text. Its stdout and stderr
-                # are not masked, so keep them off the console and log them redacted.
+                # phandle.exec logs this command text through redact_secrets (which
+                # also masks a bare hf_ token). Its stdout and stderr are not
+                # covered by that, so keep them off the console and log them
+                # redacted here.
                 out_dict = self.orch.exec(cmd, print_console=False) or {}
                 for node, output in out_dict.items():
                     text = output if isinstance(output, str) else ''
@@ -600,7 +598,14 @@ class TorchTitanTrainingJob:
             for i in range(self.nnodes):
                 script_path = f'{self.scripts_dir}/distributed_wrapper_script_{i}.sh'
                 log.info(f'Launching training on node {i}')
-                self.orch.exec(f'bash {script_path}', hosts=[list(self.orch.hosts)[i]])
+                out_dict = (
+                    self.orch.exec(f'bash {script_path}', hosts=[list(self.orch.hosts)[i]], print_console=False) or {}
+                )
+                for node, output in out_dict.items():
+                    text = output if isinstance(output, str) else ''
+                    redacted = _redact_logged_text(text)
+                    if redacted.strip():
+                        log.info('Distributed launch on %s:\n%s', node, redacted)
                 time.sleep(1)
         else:
             log.info('Launching single-node training')
@@ -622,7 +627,10 @@ class TorchTitanTrainingJob:
 
         all_results = {}
         for log_file in log_files:
-            out_dict = self.orch.exec(f'cat {log_file}')
+            # Training logs can contain a bare hub token on failure (e.g. a 401
+            # response). Only the parsed numeric metrics are kept; keep the raw
+            # text off the console and out of the orchestrator's log.
+            out_dict = self.orch.exec(f'cat {log_file}', print_console=False)
             for host, output in out_dict.items():
                 if output:
                     parsed = _parse_training_results(output)
@@ -641,7 +649,9 @@ class TorchTitanTrainingJob:
             log_files = [f'{self.combo_log_dir}/out-node0/training.log']
 
         for log_file in log_files:
-            out_dict = self.orch.exec(f'tail -1000 {log_file}')
+            # Only the error-pattern match matters here; keep the raw tail,
+            # which can contain a bare hub token on failure, off the console.
+            out_dict = self.orch.exec(f'tail -1000 {log_file}', print_console=False)
             for host, output in out_dict.items():
                 if not output:
                     continue
@@ -659,7 +669,9 @@ class TorchTitanTrainingJob:
             time.sleep(time_between_iters)
             log.info(f'Polling iteration {iteration + 1}/{max_iters}')
 
-            out_dict = self.orch.exec(f'tail -500 {log_file}')
+            # Only the completion/NaN checks matter here; keep the raw tail,
+            # which can contain a bare hub token on failure, off the console.
+            out_dict = self.orch.exec(f'tail -500 {log_file}', print_console=False)
             for host, output in out_dict.items():
                 if output and _is_training_complete(output, self.iterations):
                     log.info(f'Training completed on {host}')
@@ -801,15 +813,20 @@ class TorchTitanTrainingJob:
     def _read_last_node_log(self, tail_lines=0):
         """Read the training log from the last node and return its output.
 
+        Callers store this text in the results dict and attach it to the pytest-html
+        report as the "Training Log (tail)" extra, so it is redacted here before it
+        is returned: a failed download or launch can leave a bare hub token on the
+        last lines of the log.
+
         Args:
             tail_lines (int): If > 0, only the last N lines of the log are read.
 
         Returns:
-            str: Log text from the last node.
+            str: Redacted log text from the last node.
         """
         n = len(self.orch.hosts)
         last_host = self.orch.hosts[-1]
         tail_suffix = f' | tail -{tail_lines}' if tail_lines > 0 else ''
         log_path = f'{self.combo_log_dir}/out-node{n - 1}/training.log'
-        out_dict = self.orch.exec(f'cat {log_path}{tail_suffix}', hosts=[last_host])
-        return out_dict.get(last_host) or ''
+        out_dict = self.orch.exec(f'cat {log_path}{tail_suffix}', hosts=[last_host], print_console=False)
+        return _redact_logged_text(out_dict.get(last_host) or '')
