@@ -11,8 +11,10 @@ import re
 from cvs.lib.training.torchtitan.torchtitan_lib import (
     TorchTitanTrainingJob,
     _hf_token_export_line,
+    _redact_logged_text,
     _require_hf_token_file,
 )
+from cvs.unittests.support import FAKE_CRED
 
 FAKE_CRED_FILE = '/test/.hf_token'
 
@@ -349,7 +351,20 @@ class TestHfTokenFile(unittest.TestCase):
         mock_detect.return_value = '/opt/rocm'
         orch = MagicMock()
         orch.hosts = ['n0']
-        orch.exec.return_value = {'n0': {'exit_code': 0, 'stdout': ''}}
+        command_secret = 'hf_' + ('a' * 34)
+        launch_secret = 'hf_' + ('e' * 34)
+        download_secret = 'hf_' + ('f' * 34)
+
+        def _exec(cmd, **kwargs):
+            if str(cmd).startswith('test -s'):
+                return {'n0': {'exit_code': 0}}
+            if 'download_hf_assets.py' in str(cmd):
+                return {'n0': f'error: Invalid credentials for token {download_secret}'}
+            if str(cmd).startswith('bash -c'):
+                return {'n0': f'launch failed for token {launch_secret}'}
+            return {'n0': ''}
+
+        orch.exec.side_effect = _exec
         config = {
             'log_dir': '/test/logs',
             'scripts_dir': '/test/scripts',
@@ -369,12 +384,130 @@ class TestHfTokenFile(unittest.TestCase):
             run_label='token',
             distributed_training=False,
         )
-        job.job_cmd = _hf_token_export_line(FAKE_CRED_FILE) + 'echo train'
+        job.job_cmd = _hf_token_export_line(FAKE_CRED_FILE) + f'echo token {command_secret}'
+        job.download_hf_assets()
         job.start_training_job()
-        logged = mock_log.info.call_args_list[0].args[1]
-        self.assertIn(FAKE_CRED_FILE, logged)
+        logged = ' '.join(
+            str(arg) for call in mock_log.info.call_args_list + mock_log.warning.call_args_list for arg in call.args
+        )
+        preview = next(
+            str(arg) for call in mock_log.info.call_args_list for arg in call.args if 'echo token' in str(arg)
+        )
+        self.assertIn(FAKE_CRED_FILE, preview)
+        self.assertIn('HF_TOKEN=<redacted>', preview)
+        self.assertNotIn('tr -d', preview)
+        self.assertNotIn(command_secret, preview)
+        launch_call = next(call for call in orch.exec.call_args_list if str(call.args[0]).startswith('bash -c'))
+        self.assertIn(command_secret, launch_call.args[0])
+        self.assertIn('tr -d', launch_call.args[0])
+        self.assertFalse(launch_call.kwargs.get('print_console', True))
+        download_call = next(call for call in orch.exec.call_args_list if 'download_hf_assets.py' in str(call.args[0]))
+        self.assertNotIn(download_secret, download_call.args[0])
+        self.assertNotIn(command_secret, logged)
+        self.assertNotIn(launch_secret, logged)
+        self.assertNotIn(download_secret, logged)
+
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.time.sleep')
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.detect_rocm_path')
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.log')
+    def test_wrapper_write_logs_redacted_output(self, mock_log, mock_detect, _sleep):
+        mock_detect.return_value = '/opt/rocm'
+        bare = 'hf_' + ('d' * 34)
+        orch = MagicMock()
+        orch.hosts = ['n0']
+
+        def _exec(cmd, **kwargs):
+            if str(cmd).startswith('test -s'):
+                return {'n0': {'exit_code': 0}}
+            if 'WRAPPER_EOF' in str(cmd):
+                return {'n0': f'wrote token {bare}'}
+            return {'n0': ''}
+
+        orch.exec.side_effect = _exec
+        variant = MagicMock()
+        variant.job_config_dict.return_value = {
+            'log_dir': '/test/logs',
+            'scripts_dir': '/test/scripts',
+            'data_cache_dir': '/test/cache',
+            'hf_token_file': FAKE_CRED_FILE,
+            'torchtitan_root': '/workspace/torchtitan',
+            'training_iterations': '10',
+        }
+        variant.train_params = {'model_name': 'llama3_1_8b'}
+        variant.gpu_name = 'MI355X'
+        variant.gpus_per_node = 8
+        job = TorchTitanTrainingJob(
+            orch=orch,
+            variant_config=variant,
+            run_label='wrapper',
+            distributed_training=True,
+        )
+        job.job_cmd_list = [
+            "cat > /test/scripts/distributed_wrapper_script_0.sh << 'WRAPPER_EOF'\nexport HF_TOKEN=x\nWRAPPER_EOF\n"
+        ]
+        job.start_training_job()
+        write_call = next(call for call in orch.exec.call_args_list if 'WRAPPER_EOF' in str(call.args[0]))
+        self.assertFalse(write_call.kwargs.get('print_console', True))
+        logged = ' '.join(str(arg) for call in mock_log.info.call_args_list for arg in call.args)
+        self.assertIn('<redacted>', logged)
+        self.assertNotIn(bare, logged)
+
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.detect_rocm_path')
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.log')
+    def test_download_logs_redacted_output(self, mock_log, mock_detect):
+        mock_detect.return_value = '/opt/rocm'
+        orch = MagicMock()
+        orch.hosts = ['n0']
+
+        bare = 'hf_' + ('b' * 34)
+
+        def _exec(cmd, **kwargs):
+            if str(cmd).startswith('test -s'):
+                return {'n0': {'exit_code': 0}}
+            return {'n0': f'error: Invalid credentials for token {bare} HF_TOKEN={FAKE_CRED} hf_transfer'}
+
+        orch.exec.side_effect = _exec
+        variant = MagicMock()
+        variant.job_config_dict.return_value = {
+            'log_dir': '/test/logs',
+            'scripts_dir': '/test/scripts',
+            'data_cache_dir': '/test/cache',
+            'hf_token_file': FAKE_CRED_FILE,
+            'torchtitan_root': '/workspace/torchtitan',
+            'training_iterations': '10',
+        }
+        variant.train_params = {'model_name': 'llama3_1_8b'}
+        variant.gpu_name = 'MI355X'
+        variant.gpus_per_node = 8
+        job = TorchTitanTrainingJob(
+            orch=orch,
+            variant_config=variant,
+            run_label='download',
+            distributed_training=False,
+        )
+        job.download_hf_assets()
+        download_call = orch.exec.call_args_list[-1]
+        self.assertIn('download_hf_assets.py', download_call.args[0])
+        self.assertIn('tr -d', download_call.args[0])
+        self.assertNotIn(bare, download_call.args[0])
+        self.assertNotIn(FAKE_CRED, download_call.args[0])
+        self.assertFalse(download_call.kwargs.get('print_console', True))
+        command_logs = [str(arg) for call in mock_log.info.call_args_list for arg in call.args]
+        preview = next(entry for entry in command_logs if 'download_hf_assets.py' in entry)
+        self.assertIn('HF_TOKEN=<redacted>', preview)
+        self.assertNotIn('tr -d', preview)
+        logged = ' '.join(
+            str(arg) for call in mock_log.info.call_args_list + mock_log.warning.call_args_list for arg in call.args
+        )
         self.assertIn('HF_TOKEN=<redacted>', logged)
-        self.assertNotIn('tr -d', logged)
-        launched = orch.exec.call_args_list[-1].args[0]
-        self.assertIn('tr -d', launched)
-        self.assertIn(FAKE_CRED_FILE, launched)
+        self.assertIn('token <redacted>', logged)
+        self.assertIn('hf_transfer', logged)
+        self.assertNotIn(FAKE_CRED, logged)
+        self.assertNotIn(bare, logged)
+
+    def test_redact_logged_text_masks_a_bare_hub_token(self):
+        bare = 'hf_' + ('c' * 34)
+        redacted = _redact_logged_text(f'Invalid credentials for token {bare} and .hf_token')
+        self.assertIn('token <redacted>', redacted)
+        self.assertIn('.hf_token', redacted)
+        self.assertNotIn(bare, redacted)

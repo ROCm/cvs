@@ -130,6 +130,23 @@ def detect_rocm_path(orch, config_rocm_path):
     return '/opt/rocm'
 
 
+# Hub tokens are `hf_` plus a long id. Package names such as `hf_transfer` are
+# shorter, and `.hf_token` is only five characters, so those stay.
+_HF_BARE_TOKEN = re.compile(r'\bhf_[A-Za-z0-9]{30,}\b')
+
+
+def _redact_logged_text(text):
+    """Mask secret assignments and bare Hugging Face hub tokens in logged text.
+
+    ``redact_secrets`` masks ``HF_TOKEN=`` assignments and ``--token`` flags.
+    Download output can also print the token by itself, as in
+    ``Invalid credentials for token hf_...``.
+    """
+    if not isinstance(text, str) or not text:
+        return ''
+    return _HF_BARE_TOKEN.sub('<redacted>', redact_secrets(text))
+
+
 def _hf_token_export_line(token_file):
     """Shell line that exports ``HF_TOKEN`` by reading ``token_file`` on the node.
 
@@ -394,10 +411,17 @@ class TorchTitanTrainingJob:
             f'--local_dir {local_dir} --all'
         )
 
-        out_dict = self.orch.exec(download_cmd)
+        # The training-command preview does not cover this command. Log it
+        # redacted, and keep orch.exec from writing stdout and stderr as-is.
+        log.info('%s', _redact_logged_text(download_cmd))
+        out_dict = self.orch.exec(download_cmd, print_console=False) or {}
         for node, output in out_dict.items():
-            if 'error' in (output or '').lower():
-                log.warning(f'Potential download error on {node}: {output}')
+            text = output if isinstance(output, str) else ''
+            redacted = _redact_logged_text(text)
+            if redacted.strip():
+                log.info('HF asset download on %s:\n%s', node, redacted)
+            if 'error' in text.lower():
+                log.warning('Potential download error on %s: %s', node, redacted)
 
     def exec_nic_setup_scripts(self):
         """Setup NICs for distributed training (Broadcom/Thor only)."""
@@ -571,16 +595,23 @@ class TorchTitanTrainingJob:
         """Launch the training job."""
         _require_hf_token_file(self.orch, self.hf_token_file)
         if self.distributed_training:
-            log.info('%s', [redact_secrets(c) for c in self.job_cmd_list])
+            log.info('%s', [_redact_logged_text(c) for c in self.job_cmd_list])
         else:
-            log.info('%s', redact_secrets(self.job_cmd))
+            log.info('%s', _redact_logged_text(self.job_cmd))
         # Capture start time for dmesg verification
         self.training_start_time = self.orch.exec('date')
 
         if self.distributed_training:
             for i, cmd in enumerate(self.job_cmd_list):
-                log.info(f'Writing wrapper script for node {i}')
-                self.orch.exec(cmd)
+                log.info('Writing wrapper script for node %s', i)
+                # The orchestrator masks this command text. Its stdout and stderr
+                # are not masked, so keep them off the console and log them redacted.
+                out_dict = self.orch.exec(cmd, print_console=False) or {}
+                for node, output in out_dict.items():
+                    text = output if isinstance(output, str) else ''
+                    redacted = _redact_logged_text(text)
+                    if redacted.strip():
+                        log.info('Wrapper script write on %s:\n%s', node, redacted)
 
             time.sleep(2)
 
@@ -591,7 +622,14 @@ class TorchTitanTrainingJob:
                 time.sleep(1)
         else:
             log.info('Launching single-node training')
-            self.orch.exec(f'bash -c {shlex.quote(self.job_cmd)}')
+            # The log.info of job_cmd above is a second copy of the command.
+            # This exec's stdout and stderr are a different stream.
+            out_dict = self.orch.exec(f'bash -c {shlex.quote(self.job_cmd)}', print_console=False) or {}
+            for node, output in out_dict.items():
+                text = output if isinstance(output, str) else ''
+                redacted = _redact_logged_text(text)
+                if redacted.strip():
+                    log.info('Single-node launch on %s:\n%s', node, redacted)
 
     def get_training_results_dict(self):
         """Parse rank-0 training metrics. The gate reads the last logged step.
