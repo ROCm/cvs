@@ -26,7 +26,7 @@ from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import (
     needs_hf_tokenizer,
 )
 from cvs.lib.utils.log_poller import LogPoller
-from cvs.unittests.support import FAKE_CRED, TMP
+from cvs.unittests.support import TMP
 
 
 def _training(**overrides):
@@ -76,18 +76,38 @@ def _make_job(hosts=None, **training_overrides):
     variant = SimpleNamespace(
         training=_training(**training_overrides),
         model=SimpleNamespace(id="llama3.3-70b"),
-        paths=SimpleNamespace(log_dir="/logs", models_dir="/models", temp_dir=f"{TMP}/tester/jaxmaxtext"),
+        paths=SimpleNamespace(
+            log_dir="/logs",
+            models_dir="/models",
+            temp_dir=f"{TMP}/tester/jaxmaxtext",
+            hf_token_file="/secrets/.hf_token",
+        ),
     )
-    return MaxTextTrainingJob(orch, variant, hf_token=FAKE_CRED), orch
+    return MaxTextTrainingJob(orch, variant), orch
 
 
 def _wire_container_exec(orch, script="/workspace/maxtext/src/MaxText/train.py"):
-    """Answer the in-container train-script probe ``build_training_cmd`` runs."""
+    """Answer the in-container probes ``build_training_cmd`` runs: the HF token
+    file check (reports the file present) and the train-script probe."""
 
     def _side(cmd, *a, **k):
         text = str(cmd)
+        if "test -s" in text:
+            return {h: "__HF_TOKEN_OK__" for h in orch.hosts}
         if "train.py" in text:
             return {h: script for h in orch.hosts}
+        return {}
+
+    orch.exec.side_effect = _side
+
+
+def _wire_token_file(orch, present=True):
+    """Answer only the HF token file check (`test -s`): present -> OK, else MISSING."""
+    marker = "__HF_TOKEN_OK__" if present else "__HF_TOKEN_MISSING__"
+
+    def _side(cmd, *a, **k):
+        if "test -s" in str(cmd):
+            return {h: marker for h in orch.hosts}
         return {}
 
     orch.exec.side_effect = _side
@@ -342,11 +362,23 @@ class SetupTokenizerTests(unittest.TestCase):
 
     def test_downloads_when_model_id_set(self):
         job, orch = _make_job(tokenizer=SimpleNamespace(hf_model_id="org/model", tokenizer_path="/models/tok"))
+        _wire_token_file(orch, present=True)
         job.setup_tokenizer()
         joined = " ".join(str(c.args[0]) for c in orch.exec.call_args_list)
         self.assertIn("hf download", joined)
         self.assertNotIn("huggingface-cli", joined)
         self.assertIn("org/model", joined)
+        # Token is read from the file inside the container, not embedded.
+        self.assertIn("/secrets/.hf_token", joined)
+        self.assertIn('export HF_TOKEN="$(tr -d', joined)
+
+    def test_download_fails_fast_when_token_file_unmapped(self):
+        # Token file not readable inside the container -> fail with a clear error
+        # instead of exporting an empty token and failing later on auth.
+        job, orch = _make_job(tokenizer=SimpleNamespace(hf_model_id="org/model", tokenizer_path="/models/tok"))
+        _wire_token_file(orch, present=False)
+        with self.assertRaisesRegex(RuntimeError, "token file .* not mounted|missing, empty, or not mounted"):
+            job.setup_tokenizer()
 
     def test_skips_download_when_dataset_is_synthetic(self):
         job, orch = _make_job(
@@ -396,19 +428,31 @@ class BuildTrainingCmdTests(unittest.TestCase):
         cmds = orch.exec_cmd_list.call_args.args[0]
         self.assertIn("JAX_COORDINATOR_IP=10.0.0.5", cmds[0])
 
-    def test_launcher_sets_creds_and_per_node_only(self):
-        # The launcher exports credentials + per-node/dynamic vars; the common
-        # env (NCCL/NVTE/XLA_FLAGS/JAX_COORDINATOR_PORT) is set on the container
-        # via docker -e, so it is NOT written into the launcher.
+    def test_launcher_reads_token_from_file_not_embedded(self):
+        # The launcher sets HF_TOKEN by reading the token FILE inside the container
+        # (the secret never enters the logged command), plus per-node/dynamic vars.
+        # The common env (NCCL/NVTE/XLA_FLAGS/JAX_COORDINATOR_PORT) comes from
+        # docker -e, so it is NOT written into the launcher.
         job, orch = _make_job(hosts=["10.0.0.5", "10.0.0.6"])
         _wire_container_exec(orch)
         job.build_training_cmd()
         cmds = orch.exec_cmd_list.call_args.args[0]
-        self.assertIn("HF_TOKEN=", cmds[0])
+        # HF_TOKEN is read from the file, not assigned a literal value.
+        self.assertIn("/secrets/.hf_token", cmds[0])
+        self.assertIn('export HF_TOKEN="$(tr -d', cmds[0])
+        self.assertNotIn("export HF_TOKEN=hf", cmds[0])
         self.assertIn("PYTHONPATH=", cmds[0])
         self.assertIn("JAX_COORDINATOR_IP=10.0.0.5", cmds[1])  # first host, on every rank
         self.assertNotIn("JAX_COORDINATOR_PORT", cmds[0])  # comes from container env (docker -e)
         self.assertNotIn("NCCL_", cmds[0])
+
+    def test_launcher_fails_fast_when_token_file_unmapped(self):
+        # Non-synthetic run whose token file is not mounted in the container must
+        # fail before launch, not silently run with an empty token.
+        job, orch = _make_job(hosts=["10.0.0.5", "10.0.0.6"])
+        _wire_token_file(orch, present=False)
+        with self.assertRaisesRegex(RuntimeError, "token file .* not mounted|missing, empty, or not mounted"):
+            job.build_training_cmd()
 
     def test_launcher_uses_custom_maxtext_root(self):
         # cd + PYTHONPATH follow training.maxtext_root so a branch checkout in
@@ -505,7 +549,7 @@ class WriteMaxtextYamlTests(unittest.TestCase):
         # run YAML, the poll/timeout budget, and completion -- not the base steps.
         base, _ = _make_job()
         sweep = SimpleNamespace(name="BS=2,PRECISION=BF16,SL=8192", maxtext_overrides={"steps": 7})
-        job = MaxTextTrainingJob(base.orch, base.variant, hf_token=FAKE_CRED, sweep=sweep)
+        job = MaxTextTrainingJob(base.orch, base.variant, sweep=sweep)
         self.assertEqual(job.steps, 7)  # base training.steps is 3
         self.assertEqual(job._poll_count, 70)
         job._write_maxtext_yaml()
@@ -529,7 +573,7 @@ class WriteMaxtextYamlTests(unittest.TestCase):
                 "quantization": "",
             },
         )
-        job = MaxTextTrainingJob(base.orch, base.variant, hf_token=FAKE_CRED, sweep=sweep)
+        job = MaxTextTrainingJob(base.orch, base.variant, sweep=sweep)
         self.assertEqual(job.steps, 5)
         self.assertEqual(job._poll_count, 50)
         job._write_maxtext_yaml()
