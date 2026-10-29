@@ -149,10 +149,7 @@ def _decoder_layer_split_flags(total_layers, stages):
     if n == 2:
         first = total // 2
         last = total - first
-        return (
-            f' --decoder_first_pipeline_num_layers {first}'
-            f' --decoder_last_pipeline_num_layers {last}'
-        )
+        return f' --decoder_first_pipeline_num_layers {first} --decoder_last_pipeline_num_layers {last}'
 
     ideal = total / n
     candidates = []
@@ -171,10 +168,7 @@ def _decoder_layer_split_flags(total_layers, stages):
         return ""
 
     _, chosen = min(candidates)
-    return (
-        f' --decoder_first_pipeline_num_layers {chosen}'
-        f' --decoder_last_pipeline_num_layers {chosen}'
-    )
+    return f' --decoder_first_pipeline_num_layers {chosen} --decoder_last_pipeline_num_layers {chosen}'
 
 
 def _auto_primus_405_layer_split_flags(model_size, nnodes, primus_cli_overrides):
