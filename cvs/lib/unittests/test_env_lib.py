@@ -12,6 +12,7 @@ from cvs.lib.env_lib import build_env_prefix, redact_secrets
 FAKE_CRED = "fake-cred"
 TMP = "/tmp"
 
+
 class TestBuildEnvPrefix(unittest.TestCase):
     def test_empty_env_vars(self):
         self.assertEqual(build_env_prefix({}), "")
