@@ -60,14 +60,13 @@ class PingReachabilityCheck(PreflightCheck):
         Execute ICMP ping reachability checks for every configured node.
 
         Returns:
-            dict: Per-node results ``{node: {status, target, errors}}``.
+            dict: Per-node results ``{node: {status, errors}}``.
         """
         self.results = {}
         for node, target in self.node_ip_map.items():
             reachable, output = self._ping_one(target)
             self.results[node] = {
                 'status': 'PASS' if reachable else 'FAIL',
-                'target': target,
                 'errors': [] if reachable else [f"ping to {target} failed: {output.strip()[-500:]}"],
             }
         return self.results
