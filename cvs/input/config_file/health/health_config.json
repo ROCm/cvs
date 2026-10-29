@@ -20,7 +20,7 @@
         "path": "/home/{user-id}/INSTALL/TransferBench",
         "git_install_path": "/home/{user-id}/INSTALL/",
         "git_url": "https://github.com/ROCm/TransferBench.git",
-        "git_tag": "v1.67.00",
+        "git_tag": "v1.71.01",
         "_comment_rocm_path": "ROCm installation path. Set the placeholder changeme to auto-detect from /opt/rocm or /opt/rocm/core-*",
         "rocm_path": "<changeme>",
         "_comment_num_cpu_devices": "Optional. Limits TransferBench CPU endpoints to populated NUMA nodes. On Helios-R / Venice (38 NUMA nodes reported, only 0-1 have CPUs) set 2. When omitted, CVS auto-detects from NUMA nodes with a non-empty cpulist.",

@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cvs run` writes a self-contained pytest HTML report and a text log under `<workspace>/cvs_runs/<run_id>/` by default; `--no-html` and `--no-log-file` suppress them.
 - Generic ANC install and log helpers moved to `cvs/lib/amdtools_lib.py`; `anc_lib` names unchanged.
 - Logged command lines show `<redacted>` in place of the values of token, password, secret and API-key variables and flags; the commands sent to nodes are unchanged.
+- The health sample config installs TransferBench `v1.71.01` (was `v1.67.00`), which fixes timing and DMA measurement errors in the older release. TransferBench results can differ from earlier runs; configs that set `transferbench.git_tag` keep their version.
 
 ### Fixed
 
