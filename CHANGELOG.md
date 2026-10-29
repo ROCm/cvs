@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- TorchTitan no longer writes the Hugging Face token into tokenizer-download or training commands. Each node reads `paths.hf_token_file` inside the container when that command runs. If that file is missing, empty, or not mounted, the stage fails and later stages are skipped.
+
 ### Changed
 
 - vLLM configs that set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` (any case) in `container.env` now fail to load with `ContainerEnvTokenError`, because `container.env` values become `docker run -e` arguments; set `paths.hf_token_file` instead. The vLLM server now reads that file inside the container on each node, so it must be on a mounted path.

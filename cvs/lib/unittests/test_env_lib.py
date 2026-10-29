@@ -68,6 +68,23 @@ class TestBuildEnvPrefix(unittest.TestCase):
 
 
 class TestRedactSecrets(unittest.TestCase):
+    def test_masks_token_assignment(self):
+        self.assertEqual(redact_secrets('export HF_TOKEN=fake-cred'), 'export HF_TOKEN=<redacted>')
+
+    def test_leaves_token_file_path(self):
+        text = 'export HF_TOKEN_FILE=/home/user/.hf_token'
+        self.assertEqual(redact_secrets(text), text)
+
+    def test_empty_text(self):
+        self.assertEqual(redact_secrets(''), '')
+
+    def test_masks_bare_hub_token(self):
+        bare = 'hf_' + ('c' * 34)
+        redacted = redact_secrets(f'Invalid credentials for token {bare} and .hf_token')
+        self.assertIn('token <redacted>', redacted)
+        self.assertIn('.hf_token', redacted)
+        self.assertNotIn(bare, redacted)
+
     def assertRedacted(self, text, expected):
         result = redact_secrets(text)
         self.assertEqual(result, expected)

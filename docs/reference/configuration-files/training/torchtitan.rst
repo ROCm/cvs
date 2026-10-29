@@ -89,7 +89,7 @@ Cluster-specific edits
      - Your TorchTitan ROCm image tag, accessible on all nodes.
    * - ``config``
      - ``hf_token_file``
-     - Path to your Hugging Face token file on the nodes.
+     - Path to your Hugging Face token file, as seen inside the container. CVS does not read it on the machine running ``cvs run``.
    * - ``config``
      - ``log_dir`` / ``scripts_dir`` / ``data_cache_dir``
      - Replace ``{user-id}`` with your username.
@@ -168,7 +168,7 @@ Top-level fields
      - Description
    * - ``hf_token_file``
      - ``/home/{user-id}/.hf_token``
-     - Hugging Face access token file path.
+     - Hugging Face access token file, as seen inside the container. Each node reads it when the tokenizer download or training command runs. CVS does not read the file on the machine running ``cvs run``. The packaged home path works when that directory is bind-mounted. A missing, empty, or unmounted file fails ``test_download_tokenizer`` and sets ``lifecycle.failed``, so later stages are skipped. ``test_teardown`` still runs.
    * - ``log_dir``
      - ``/home/{user-id}/LOGS/torchtitan``
      - Training log output directory.
