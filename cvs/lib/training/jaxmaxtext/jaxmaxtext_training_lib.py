@@ -97,6 +97,22 @@ def _sanitize(name):
 _SCRATCH_FALLBACK = "/tmp/cvs/jaxmaxtext"
 
 
+def _hf_token_export(token_file):
+    """Shell line that exports ``HF_TOKEN`` by reading ``token_file`` *inside the
+    container* (as SGLang/vLLM do).
+
+    The secret stays in the file and never appears in the command string, which
+    the orchestrator logs. A missing or empty file yields an empty ``HF_TOKEN``
+    (a gated HF download then fails fast rather than continuing with a blank
+    token).
+    """
+    path = str(token_file or "").strip()
+    if not path:
+        return "export HF_TOKEN="
+    quoted = shlex.quote(path)
+    return f"if [ -f {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; else export HF_TOKEN=; fi"
+
+
 def needs_hf_tokenizer(training) -> bool:
     """Return True unless every configured run uses ``dataset_type=synthetic``.
 
@@ -128,10 +144,9 @@ class MaxTextTrainingJob:
     owned here.
     """
 
-    def __init__(self, orch, variant, hf_token, sweep=None):
+    def __init__(self, orch, variant, sweep=None):
         self.orch = orch
         self.variant = variant
-        self.hf_token = hf_token
         self.training = variant.training
 
         # Per-sweep run: merge the sweep's maxtext overrides onto the base config,
@@ -418,6 +433,37 @@ class MaxTextTrainingJob:
             raise RuntimeError(f"{what} failed on: {'; '.join(failed)}")
         return outputs
 
+    def _require_hf_token_file(self, context):
+        """Fail fast when the HF token file is needed but not readable inside the
+        container.
+
+        ``paths.hf_token_file`` is read *inside* the container at run time, so it
+        must sit on a bind-mounted path. When it does not, the in-container read
+        silently yields an empty ``HF_TOKEN`` and the gated HuggingFace request
+        fails later with an opaque auth/download error. This turns that into an
+        explicit failure naming the path and the offending node(s).
+        """
+        token_file = str(getattr(self.variant.paths, "hf_token_file", "") or "").strip()
+        if not token_file:
+            raise RuntimeError(
+                f"paths.hf_token_file is not set, but {context} needs a HuggingFace token; "
+                "set it to a path bind-mounted into the container on every node"
+            )
+        probe = f"test -s {shlex.quote(token_file)} && echo __HF_TOKEN_OK__ || echo __HF_TOKEN_MISSING__"
+        out = self.orch.exec("bash -c " + shlex.quote(probe)) or {}
+        missing = []
+        for host in self.orch.hosts:
+            raw = out.get(host, "")
+            text = raw if isinstance(raw, str) else (raw.get("output", "") if isinstance(raw, dict) else "")
+            if "__HF_TOKEN_OK__" not in (text or ""):
+                missing.append(host)
+        if missing:
+            raise RuntimeError(
+                f"HuggingFace token file {token_file} is missing, empty, or not mounted "
+                f"inside the container on node(s) {missing} (needed for {context}); set "
+                "paths.hf_token_file to a path bind-mounted into the container on every node"
+            )
+
     # ---------- tokenizer ----------
 
     def setup_tokenizer(self):
@@ -437,10 +483,14 @@ class MaxTextTrainingJob:
             log.info("tokenizer.hf_model_id not set, skipping download")
             return
 
-        # Credentials inline: this stage runs before setup_training_env() writes
-        # the env script, so sourcing that file here would fail.
+        self._require_hf_token_file("tokenizer download")
+
+        # The HF token is read from its file inside the container (never embedded
+        # in this command, which the orchestrator logs). This stage runs before
+        # setup_training_env() writes the env script, so sourcing that here would
+        # fail.
         dl_cmd = (
-            f"export HF_TOKEN={shlex.quote(self.hf_token)} && "
+            f"{_hf_token_export(self.variant.paths.hf_token_file)} && "
             f"export HF_HOME={shlex.quote(self.variant.paths.models_dir)} && "
             f"hf download {shlex.quote(hf_model)} --local-dir {shlex.quote(tok.tokenizer_path)}"
         )
@@ -458,6 +508,11 @@ class MaxTextTrainingJob:
         ``orch.exec_cmd_list`` call where ``cmd_list[i]`` runs on ``hosts[i]`` --
         so rank i's launcher only ever lands on host i.
         """
+        # The launcher reads the HF token from its file inside the container; verify
+        # that file is mounted before launching so a non-synthetic run fails fast
+        # here rather than with an opaque auth error mid-training.
+        if needs_hf_tokenizer(self.training):
+            self._require_hf_token_file("training launch")
         scratch = self._get_scratch_dir()
         train_script = self._resolve_train_script()
         # Train from the SAME tree that checkout_maxtext_branch() operates on so a
@@ -473,7 +528,7 @@ class MaxTextTrainingJob:
         for i in range(self.num_nodes):
             launcher_lines = [
                 "#!/bin/bash",
-                f"export HF_TOKEN={shlex.quote(self.hf_token)}",
+                _hf_token_export(self.variant.paths.hf_token_file),
                 f"export HF_HOME={shlex.quote(self.variant.paths.models_dir)}",
                 "export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH",
                 f"export JAX_COORDINATOR_IP={shlex.quote(coordinator_ip)}",

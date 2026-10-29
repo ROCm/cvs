@@ -30,6 +30,22 @@ from cvs.lib.verify_lib import verify_dmesg_for_errors
 
 log = globals.log
 
+
+def _hf_token_export_line(token_file):
+    """Shell line that exports ``HF_TOKEN`` by reading ``token_file`` on the
+    node the command runs on (as SGLang/vLLM/jaxmaxtext do).
+
+    Embedding HF_TOKEN's value directly in a shell command would print it,
+    because the orchestrator logs the full command. A missing or empty file
+    exports an empty HF_TOKEN and the run continues.
+    """
+    path = str(token_file or '').strip()
+    if not path:
+        return 'export HF_TOKEN=; '
+    quoted = shlex.quote(path)
+    return f"if [ -s {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; else export HF_TOKEN=; fi; "
+
+
 # ---------------------------------------------------------------------------
 # Primus-Megatron log patterns
 # ---------------------------------------------------------------------------
@@ -133,7 +149,6 @@ class PrimusTrainingJob:
         self,
         orch,
         variant_config,
-        hf_token,
         micro_batch_size,
         global_batch_size,
         precision=None,
@@ -145,7 +160,6 @@ class PrimusTrainingJob:
     ):
         self.orch = orch
         self.model_name = variant_config.train_params['model_name']
-        self.hf_token = hf_token
         self.tune_model_params = tune_model_params
         self.distributed_training = distributed_training
 
@@ -194,6 +208,7 @@ class PrimusTrainingJob:
         self.primus_root = tdict['primus_root']
         self.primus_cli = tdict['primus_cli']
         self.gpu_arch = variant_config.gpu_name
+        self.hf_token_file = tdict['hf_token_file']
 
         pdict = dict(variant_config.train_params)
         pdict.update(sweep_overrides or {})
@@ -368,7 +383,7 @@ class PrimusTrainingJob:
         exp_path = self._exp_config_path()
         log.info('Primus EXP config path: %s', exp_path)
 
-        env_exports = f'export HF_TOKEN="{self.hf_token}"; export LOG_DIR={self.log_dir}; '
+        env_exports = _hf_token_export_line(self.hf_token_file) + f'export LOG_DIR={self.log_dir}; '
 
         if re.search(r'MI3(00|25)X', self.gpu_arch, re.I):
             env_exports += 'export PRIMUS_TURBO_ATTN_V3_ATOMIC_FP32=1; export NVTE_CK_IS_V3_ATOMIC_FP32=1; '

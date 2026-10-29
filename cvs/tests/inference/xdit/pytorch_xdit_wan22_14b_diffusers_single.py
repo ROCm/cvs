@@ -10,7 +10,6 @@ All rights reserved.
 
 import json
 import pytest
-import re
 import shlex
 import socket
 import subprocess
@@ -35,6 +34,7 @@ from cvs.lib.inference.xdit.pytorch_xdit_wan_i2v import (
     WanI2vOutputParser,
     log_results_summary,
 )
+from cvs.lib.inference.xdit.pytorch_xdit_flux_job import _redact_secrets
 from cvs.lib.inference.xdit.pytorch_xdit_wan_job import (
     build_wan_output_cleanup_cmd,
     launch_wan_benchmark,
@@ -92,7 +92,7 @@ class LocalPssh:
         out = (completed.stdout or "") + (completed.stderr or "")
         if print_console:
             log.info("cmd = %s", _redact_secrets(cmd))
-            log.info("%s", out)
+            log.info("%s", _redact_secrets(out))
         return {self.host_list[0]: out}
 
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
@@ -108,15 +108,9 @@ class LocalPssh:
             out_str = (completed.stdout or "") + (completed.stderr or "")
             if print_console:
                 log.info("cmd = %s", _redact_secrets(cmd))
-                log.info("%s", out_str)
+                log.info("%s", _redact_secrets(out_str))
             out[host] = out_str
         return out
-
-
-def _redact_secrets(s: str) -> str:
-    if not s:
-        return s
-    return re.sub(r"(HF_TOKEN=)\S+", r"\1<redacted>", s)
 
 
 @pytest.fixture(scope="module")

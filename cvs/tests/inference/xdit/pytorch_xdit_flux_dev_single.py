@@ -10,7 +10,6 @@ All rights reserved.
 
 import json
 import pytest
-import re
 import socket
 import shlex
 import subprocess
@@ -37,6 +36,7 @@ from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
     store_resolved_flux_model_type_from_index,
     ensure_flux2_chat_template_on_host,
     resolve_flux_model_type,
+    _redact_secrets,
 )
 
 log = globals.log
@@ -61,19 +61,6 @@ class _SecretValue:
 
     def __repr__(self) -> str:  # pytest failure display
         return "<redacted>"
-
-
-def _redact_secrets(s: str) -> str:
-    """
-    Best-effort redaction for secrets that may appear in command strings/logs.
-
-    Currently redacts:
-    - HF_TOKEN=...
-    """
-    if not s:
-        return s
-    # Replace HF_TOKEN=<anything until space> with HF_TOKEN=<redacted>
-    return re.sub(r"(HF_TOKEN=)[^\s]+", r"\1<redacted>", s)
 
 
 def _is_local_target(target: str) -> bool:
@@ -143,7 +130,7 @@ class LocalPssh:
         out = (completed.stdout or "") + (completed.stderr or "")
         if print_console:
             log.info(f"cmd = {_redact_secrets(cmd)}")
-            log.info("%s", out)
+            log.info("%s", _redact_secrets(out))
         return {self.host_list[0]: out}
 
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
@@ -160,7 +147,7 @@ class LocalPssh:
             out_str = (completed.stdout or "") + (completed.stderr or "")
             if print_console:
                 log.info(f"cmd = {_redact_secrets(cmd)}")
-                log.info("%s", out_str)
+                log.info("%s", _redact_secrets(out_str))
             out[host] = out_str
         return out
 

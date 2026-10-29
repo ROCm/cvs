@@ -256,6 +256,20 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
         self.assertIn('SGLANG_USE_AITER=1', params['add_export_env'])
         self.assertIn('FROM_RUNTIME=1', params['add_export_env'])
 
+    def test_hf_token_value_is_stripped_from_loaded_views(self):
+        secret = 'hf_supersecretvalue'
+        self.raw['container']['runtime']['args']['env']['HF_TOKEN'] = secret
+        self.raw['params']['add_export_env'].append(f'export HF_TOKEN={secret}')
+        inference, params, server = loader._unified_runtime_views(self.raw, self.thresholds)
+        blob = str({'inference': inference, 'params': params, 'server': server})
+        self.assertNotIn(secret, blob)
+        self.assertNotIn('HF_TOKEN', server['env'])
+        self.assertEqual(inference['hf_token_file'], '/home/user/.hf_token')
+        self.assertIn('SGLANG_USE_AITER=1', params['add_export_env'])
+        self.assertIn('FROM_RUNTIME=1', params['add_export_env'])
+        container = {'env': dict(server['env'])}
+        self.assertNotIn(secret, str(loader.scrub_sglang_secrets(container)))
+
     def test_duplicate_accuracy_task_ids_raise(self):
         self.raw['accuracy']['tasks'].append(
             {

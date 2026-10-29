@@ -83,7 +83,7 @@ The following fields must be customized to match your cluster and hardware befor
 * ``container.image`` — Megatron-LM or Primus ROCm image on all nodes.
 * ``train_params.training_iterations`` — default training steps (for example ``"30"``). Each ``sweep.combinations`` body sets ``training_iterations`` (packaged value ``"20"``); that overlay wins for that cell.
 * ``train_params.micro_batch_size`` / ``global_batch_size`` / ``precision`` — required when ``sweep`` is omitted. Packaged files already set them; with a declared sweep the combination key supplies those values for each cell.
-* ``paths.hf_token_file`` — Hugging Face token path on the nodes.
+* ``paths.hf_token_file`` — Hugging Face token file, read inside the container on each node when the tokenizer download or training command runs. CVS does not read it on the machine running ``cvs run``. The path must be mounted into the container. Megatron fails that stage and sets ``lifecycle.failed`` when the file is missing, empty, or not mounted, so later stages are skipped. Primus exports an empty ``HF_TOKEN`` and the run continues.
 * ``container.env.NCCL_SOCKET_IFNAME`` / ``GLOO_SOCKET_IFNAME`` / ``NCCL_IB_GID_INDEX`` / ``NCCL_DEBUG`` — templates include example values plus ``<changeme>`` (for example ``enp193s0f1np1 <changeme>``, ``3 <changeme>``, ``ERROR <changeme>``). Remove ``<changeme>`` and keep or edit the example. Required on single-node and distributed.
 * ``sweep.runs`` — combination keys to execute (same ``MBS=…,GBS=…,PRECISION=…`` strings as in ``sweep.combinations``). Must be non-empty when ``combinations`` is present.
 * Do not set ``NNODES`` in JSON.
@@ -495,7 +495,7 @@ Host paths used by the job. They must be volume-mounted into the container (typi
      - Description
    * - ``hf_token_file``
      - ``/home/{user-id}/.hf_token``
-     - Path to a Hugging Face token file for gated models and datasets.
+     - Path to a Hugging Face token file for gated models and datasets, as seen inside the container. CVS does not read the file on the machine running ``cvs run``. Each node reads it when the tokenizer download or training command runs. The packaged ``/home/{user-id}/.hf_token`` path works when that home directory is bind-mounted. Megatron fails that stage and sets ``lifecycle.failed`` when the file is missing, empty, or not mounted, so later stages are skipped. Primus exports an empty ``HF_TOKEN`` and the run continues.
    * - ``log_dir``
      - ``/home/{user-id}/LOGS/megatron``
      - Host path where per-node training logs are written. Megatron-LM writes ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``; Primus writes ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``. On disk ``<combo_id>`` is the sanitized combination key (see `Backends`_).

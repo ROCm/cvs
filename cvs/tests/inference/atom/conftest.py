@@ -15,11 +15,12 @@ from cvs.lib.inference.utils.inference_suite_lifecycle import (
     sort_lifecycle_items,
 )
 from cvs.lib.inference.atom.atom_config_loader import (
+    atom_container_block,
     load_variant,
-    orchestrator_container_from_variant,
     resolved_atom_image_pin,
 )
 from cvs.lib.inference.atom.atom_dmesg import capture_dmesg_timestamp
+from cvs.lib.inference.atom.hf_token_redaction import install_hf_token_log_redaction
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
 log = globals.log
@@ -87,16 +88,6 @@ LIFECYCLE_RANK = {
 }
 
 
-def _deep_merge(base, override):
-    """Recursively merge ``override`` onto ``base`` (dicts merged key-wise; scalars/lists replaced)."""
-    if not (isinstance(base, dict) and isinstance(override, dict)):
-        return override
-    out = dict(base)
-    for k, v in override.items():
-        out[k] = _deep_merge(base[k], v) if k in base else v
-    return out
-
-
 @pytest.fixture(scope="module", autouse=True)
 def _capture_dmesg_start(orch, variant_config, lifecycle):
     if variant_config.platform.dmesg_scan:
@@ -129,11 +120,8 @@ def lifecycle():
 
 @pytest.fixture(scope="module")
 def orch(cluster_dict, variant_config, lifecycle):
-    container_block = _deep_merge(
-        cluster_dict.get("container", {}),
-        # also injects roles.server.env — do not replace with .container.model_dump()
-        orchestrator_container_from_variant(variant_config),
-    )
+    # also injects roles.server.env — do not replace with .container.model_dump()
+    container_block = atom_container_block(cluster_dict.get("container", {}), variant_config)
     testsuite_config = {
         "orchestrator": "container",
         "container": container_block,
@@ -152,10 +140,11 @@ def orch(cluster_dict, variant_config, lifecycle):
 @pytest.fixture(scope="module")
 def hf_token(variant_config):
     path = variant_config.paths.hf_token_file
-    if not os.path.isfile(path):
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
         pytest.skip(f"hf_token file missing: {path}")
-    with open(path) as fp:
-        return fp.read().strip()
+    # The container reads the bind mount. Returning the file contents would put
+    # the secret in pytest failure reports.
+    return ""
 
 
 @pytest.fixture(scope="module")
@@ -167,6 +156,11 @@ def server_session():
 @pytest.fixture(scope="module")
 def inf_res_dict():
     return {}
+
+
+def pytest_configure(config):
+    del config
+    install_hf_token_log_redaction()
 
 
 def pytest_collection_modifyitems(items):

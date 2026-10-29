@@ -200,13 +200,13 @@ def launch_container(orch, variant_config, lifecycle, request):
     # container (no-op unless training.maxtext_branch is set). Do it here, once,
     # so every downstream stage runs against the requested code.
     try:
-        MaxTextTrainingJob(orch, variant_config, hf_token="").checkout_maxtext_branch()
+        MaxTextTrainingJob(orch, variant_config).checkout_maxtext_branch()
     except Exception as e:  # noqa: BLE001
         lifecycle.failed = True
         pytest.fail(f"MaxText branch checkout failed: {e}")
 
 
-def setup_rdma(orch, variant_config, hf_token, lifecycle, request):
+def setup_rdma(orch, variant_config, lifecycle, request):
     """Distributed-only: copy RDMA library into container (thor2 NIC only)."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -215,12 +215,12 @@ def setup_rdma(orch, variant_config, hf_token, lifecycle, request):
     if not variant_config.training.nic_type or "thor" not in variant_config.training.nic_type.lower():
         pytest.skip(f"nic_type={variant_config.training.nic_type}: RDMA lib copy not needed")
     t = time.monotonic()
-    job = MaxTextTrainingJob(orch, variant_config, hf_token)
+    job = MaxTextTrainingJob(orch, variant_config)
     job.setup_rdma_lib()
     lifecycle.record(request.node.nodeid, "rdma_setup", time.monotonic() - t)
 
 
-def setup_tokenizer(orch, variant_config, hf_token, lifecycle, request):
+def setup_tokenizer(orch, variant_config, lifecycle, request):
     """Download HF tokenizer into models dir (skipped for synthetic data)."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -232,7 +232,7 @@ def setup_tokenizer(orch, variant_config, hf_token, lifecycle, request):
         log.info("skipping tokenizer setup: %s", reason)
         pytest.skip(reason)
     t = time.monotonic()
-    job = MaxTextTrainingJob(orch, variant_config, hf_token)
+    job = MaxTextTrainingJob(orch, variant_config)
     job.setup_tokenizer()
     lifecycle.record(request.node.nodeid, "tokenizer_setup", time.monotonic() - t)
 
@@ -246,7 +246,7 @@ _SMOKE_BATCH = 1
 _SMOKE_SEQLEN = 2048
 
 
-def smoke(orch, variant_config, hf_token, lifecycle, request):
+def smoke(orch, variant_config, lifecycle, request):
     """Smoke test: the model loads and runs _SMOKE_STEPS steps without any
     error_pattern firing.
 
@@ -285,7 +285,7 @@ def smoke(orch, variant_config, hf_token, lifecycle, request):
         },
     )
 
-    job = MaxTextTrainingJob(orch, smoke_variant, hf_token, sweep=smoke_sweep)
+    job = MaxTextTrainingJob(orch, smoke_variant, sweep=smoke_sweep)
     t = time.monotonic()
     try:
         job.setup_training_env()
@@ -315,7 +315,7 @@ def smoke(orch, variant_config, hf_token, lifecycle, request):
     )
 
 
-def training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, lifecycle, request):
+def training_run(orch, variant_config, sweep_name, training_res_dict, lifecycle, request):
     """Per sweep: build the command, train, poll, parse results.
 
     Runs once per enabled sweep with that sweep's maxtext overrides. A failure is
@@ -327,7 +327,7 @@ def training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, 
         pytest.skip("a prior lifecycle stage failed")
 
     sweep = _find_sweep(variant_config, sweep_name)
-    job = MaxTextTrainingJob(orch, variant_config, hf_token, sweep=sweep)
+    job = MaxTextTrainingJob(orch, variant_config, sweep=sweep)
     try:
         job.setup_training_env()
         job.build_training_cmd()
@@ -399,7 +399,7 @@ def _latest_checkpoint_step_path(orch, ckpt_dir):
     return f"{ckpt_dir}/{max(steps)}"
 
 
-def checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecycle, request):
+def checkpoint_resume(orch, variant_config, training_res_dict, lifecycle, request):
     """Opt-in: checkpoint save + resume + I/O timing (one sweep, two phases).
 
     Phase 1 trains `steps_before_ckpt` steps with checkpointing on (a checkpoint
@@ -442,7 +442,7 @@ def checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecyc
         ov.update(extra_overrides or {})
         ov["steps"] = total_steps
         sweep = SimpleNamespace(name="CKPT", maxtext_overrides=ov)
-        return MaxTextTrainingJob(orch, v, hf_token, sweep=sweep)
+        return MaxTextTrainingJob(orch, v, sweep=sweep)
 
     # Phase 1: train + SAVE (checkpointing on, sync so the save flushes). Clean any
     # stale CKPT output first so Phase 2 can only restore THIS run's checkpoint.
