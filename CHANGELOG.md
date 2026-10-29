@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - ibperf: when a node pair is excluded, the remaining pairs no longer wait out the perftest timeouts or report extra failures for the excluded nodes.
+- The health sample config's TransferBench schmoo `32_cu_local_copy` threshold is lowered so healthy MI300X nodes pass; configs copied from the old sample still fail and must lower `32_cu_local_copy`.
 
 ### Removed
 
