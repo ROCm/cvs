@@ -579,9 +579,14 @@ def resolve_anc_paths_from_config(config_dict):
     actually lives; absent that, the default prefix is used. (A deb/rpm URL still
     yields a concrete pkg_type above, so ANC_INSTALL_PATH stays ignored there.)
     '''
-    url = config_dict.get("anc", {}).get("anc_release_url") or ""
+    # Coerce to string up front and use that coerced value everywhere below: a
+    # non-string config value (e.g. JSON anc_release_url: 123) must not reach
+    # detect_package_type, whose rsplit() would raise AttributeError and abort
+    # readiness even when ANC is installed and no URL is needed. Its real
+    # validation happens on the install path; here it only picks the pkg flavour.
+    url = str(config_dict.get("anc", {}).get("anc_release_url") or "").strip()
     try:
-        pkg_type = detect_package_type(url) if url and str(url).strip() else ""
+        pkg_type = detect_package_type(url) if url else ""
     except ValueError:
         pkg_type = ""
     if not pkg_type:
@@ -631,7 +636,7 @@ def node_release_versions(orch, anc_bin=ANC_BIN):
       ``anc-release-*`` plugin line, or None when ANC is absent, the node is
       unreachable to the parse, or the output carries no such line.
     '''
-    out_dict = orch.exec(f"{anc_bin} --content-list 2>&1 || true", timeout=120)
+    out_dict = orch.exec(f"'{anc_bin}' --content-list 2>&1 || true", timeout=120)
     print_test_output(log, out_dict)
     return {host: parse_release_version_from_content_list(output) for host, output in out_dict.items()}
 
@@ -689,7 +694,7 @@ def node_installed_versions(orch, anc_bin=ANC_BIN):
         return direct
 
     # Only the hosts with no anc-release-* line need the legacy --version probe.
-    out_dict = orch.exec(f"{anc_bin} --version 2>&1 || true", timeout=60)
+    out_dict = orch.exec(f"'{anc_bin}' --version 2>&1 || true", timeout=60)
     print_test_output(log, out_dict)
     resolved = dict(direct)
     for host in legacy_hosts:

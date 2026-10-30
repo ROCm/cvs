@@ -111,6 +111,12 @@ class TestResolveAncPathsFromConfig(unittest.TestCase):
         cfg = {"anc": {"ANC_INSTALL_PATH": ""}}
         self.assertEqual(anc_lib.resolve_anc_paths_from_config(cfg).anc_bin, anc_lib.ANC_BIN)
 
+    def test_non_string_url_does_not_crash(self):
+        # A non-string anc_release_url (e.g. JSON number) must not raise; it is
+        # coerced before flavour detection and only validated on the install path.
+        cfg = {"anc": {"anc_release_url": 123, "ANC_INSTALL_PATH": "/home/u/my/anc"}}
+        self.assertEqual(anc_lib.resolve_anc_paths_from_config(cfg).anc_bin, "/home/u/my/anc/anc/anc.py")
+
 
 class TestSudoPrefixSnippet(unittest.TestCase):
     '''_sudo_prefix_snippet: emits a shell probe that selects sudo by writability.'''
@@ -140,7 +146,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
         orch = FakeOrch()
         with patch.object(anc_lib, "print_test_output"):
             result = anc_lib.node_version_matches(orch, "1.4.9", anc_bin="/home/u/my/anc/anc/anc.py")
-        self.assertIn("/home/u/my/anc/anc/anc.py --version", orch.cmd)
+        self.assertIn("'/home/u/my/anc/anc/anc.py' --version", orch.cmd)
         self.assertTrue(result["node1"])
 
     def test_direct_uses_content_list(self):
@@ -162,8 +168,30 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
         orch = FakeOrch()
         with patch.object(anc_lib, "print_test_output"):
             result = anc_lib.node_version_matches(orch, "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
-        self.assertIn("/opt/amdtools/anc/anc.py --content-list", orch.cmd)
+        self.assertIn("'/opt/amdtools/anc/anc.py' --content-list", orch.cmd)
         self.assertTrue(result["node1"])
+
+    def test_spaced_prefix_anc_bin_is_quoted(self):
+        # A prefix with a space must stay one shell argument: both the
+        # content-list and the --version fallback probes single-quote anc_bin, so
+        # the path is not split and the installed version is read (not read as
+        # absent). Regression for the unquoted-probe split.
+        cmds = []
+
+        class FakeOrch:
+            def exec(self, cmd, timeout=None):
+                cmds.append(cmd)
+                # content-list yields no anc-release-* line -> falls back to --version.
+                if "--content-list" in cmd:
+                    return {"node1": "no release line here\n"}
+                return {"node1": "Release Version: 1.4.9\n"}
+
+        anc_bin = "/home/u/anc install/anc/anc.py"
+        with patch.object(anc_lib, "print_test_output"):
+            result = anc_lib.node_version_matches(FakeOrch(), "1.4.9", anc_bin=anc_bin)
+        self.assertTrue(result["node1"])
+        for cmd in cmds:
+            self.assertIn(f"'{anc_bin}'", cmd)
 
     def test_direct_mismatch_is_false(self):
         # Installed 1.5.4 does NOT satisfy a request for 1.5.5 (installed < required).
