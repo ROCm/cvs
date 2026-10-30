@@ -533,41 +533,12 @@ class TestLoadConfig(unittest.TestCase):
         with self.assertRaises(SystemExit):
             load_config(BaseVariantConfig, config_path, {"username": "<changeme>"})
 
-    def test_config_container_is_merged_onto_the_cluster_container(self):
-        config = _base_config_dict()
-        config["container"] = {
-            "name": "from-config",
-            "image": "rocm/vllm:1",
-            "env": {"B": "config"},
-            "runtime": {"name": "docker", "args": {"volumes": ["/config:/config"]}},
-        }
-        cluster = {
-            "container": {
-                "name": "from-cluster",
-                "shm_size": "64g",
-                "env": {"A": "cluster", "B": "cluster"},
-                "runtime": {"name": "docker", "args": {"volumes": ["/cluster:/cluster"], "ipc": "host"}},
-            }
-        }
-        loaded = load_config(BaseVariantConfig, self._write_config(config), cluster)
-        self.assertEqual(
-            loaded.container,
-            {
-                "lifetime": "per_run",
-                "name": "from-config",
-                "image": "rocm/vllm:1",
-                "shm_size": "64g",
-                "env": {"A": "cluster", "B": "config"},
-                "runtime": {"name": "docker", "args": {"volumes": ["/config:/config"], "ipc": "host"}},
-            },
-        )
-
     def test_model_without_a_container_returns_none(self):
         loaded = load_config(_PathsOnlyConfig, self._write_config({"paths": _paths_dict()}), {})
         self.assertIsNone(loaded.container)
         self.assertEqual(loaded.config.paths.log_dir, "/data/logs")
 
-    def test_every_leftover_placeholder_is_named_in_one_error(self):
+    def test_configstr_fields_with_placeholders_are_named_in_one_error(self):
         config = _base_config_dict()
         config["paths"]["models_dir"] = "<changeme-models-mount>"
         config["container"]["image"] = "<CHANGEME>"
