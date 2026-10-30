@@ -33,7 +33,7 @@ Run the three ANC suites in order: install first, then CPU and GPU diagnostics.
     --cluster_file cluster.json \
     --config_file cvs/input/config_file/anc/anc_config.json
 
-Replace ``<changeme>`` in ``anc_release_url`` before running. An unresolved placeholder aborts the run before any node is contacted.
+``anc_release_url`` is optional: set it only when ANC must be downloaded and installed. When ANC is already installed, each suite runs against the installed version without a URL. The URL, ``anc_version``, and ``ANC_INSTALL_PATH`` are each validated only at the point they are used, not before the run.
 
 Sample configuration
 ====================
@@ -54,7 +54,7 @@ Keys prefixed with ``_comment`` are documentation only and ignored at runtime.
         "inactivity_timeout": 900,
         "install_timeout": 1800,
         "anc_version": "1.7.3",
-        "anc_release_url": "<changeme>",
+        "anc_release_url": "",
         "ANC_INSTALL_PATH": "",
         "print_all_to_console": "True",
         "ADD_ANC_LOGS_TO_HTML_REPORTS": "False"
@@ -77,11 +77,11 @@ The following table describes each key in the ``anc`` configuration block.
    * - ``install_timeout``
      - Download and install inactivity timeout in seconds (default ``1800``), used only by ``anc_installation`` / the install pre-task. Not a total budget: a progress heartbeat keeps a slow download alive; a genuine stall still fails.
    * - ``anc_version``
-     - Minimum required ANC version. Install is skipped only when **every** expected node already satisfies it (installed >= requested); if any node is below the minimum, the installer runs across all nodes (already-satisfying nodes are reinstalled). After installing, every node is post-verified to satisfy the version; a release candidate counts as its base release (``1.7.0-rc.1`` satisfies ``1.7.0``). When set, the version in ``anc_release_url`` must be >= this value (the archive must be able to satisfy the request).
+     - Optional minimum ANC version. When unset, each suite runs against whatever version is installed. When set, a node below it triggers an install **only if** ``anc_release_url`` can satisfy it (its version >= ``anc_version``); otherwise the ``anc_installation`` suite fails, while normal group/item suites log the shortfall and proceed with the installed version. A release candidate counts as its base release (``1.7.0-rc.1`` is treated as ``1.7.0``); the rc number is never compared. Validated (must be a dotted release like ``1.7.0``) only when it is compared.
    * - ``anc_release_url``
-     - URL of the ANC release archive. Packaging is auto-detected from the filename: **legacy (≤1.4.x)** outer tarballs include a ``-deb-`` / ``-rpm-`` / ``-tar-`` token; **direct (1.5.0+)** URLs point at a ``.deb`` / ``.rpm`` / ``.tar.gz`` with no flavour token.
+     - **Optional** URL of the ANC release archive, used only when ANC must be installed (absent on a node, or below ``anc_version`` with a URL new enough to upgrade). Leave blank when ANC is preinstalled. Packaging is auto-detected from the filename: **legacy (≤1.4.x)** outer tarballs include a ``-deb-`` / ``-rpm-`` / ``-tar-`` token; **direct (1.5.0+)** URLs point at a ``.deb`` / ``.rpm`` / ``.tar.gz`` with no flavour token. Parsed and shell-safety-checked only on the install path.
    * - ``ANC_INSTALL_PATH``
-     - **Tar installs only:** relocatable prefix (entrypoint ``<prefix>/anc/anc.py``). Deb/rpm packages ignore this key and install under ``/opt/amdtools``. Leave blank to keep the default ``/opt/amdtools``.
+     - **Tar installs only:** relocatable prefix (entrypoint ``<prefix>/anc/anc.py``), also where each suite probes for an existing install when set. Deb/rpm packages ignore this key and install under ``/opt/amdtools``. Validated (shell-safe, non-root) when the prefix is resolved for use. Leave blank to keep the default ``/opt/amdtools``.
    * - ``print_all_to_console``
      - ``True`` echoes ANC group output to the console; ``False`` suppresses it (install and ldconfig diagnostics still print).
    * - ``ADD_ANC_LOGS_TO_HTML_REPORTS``

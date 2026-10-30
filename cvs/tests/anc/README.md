@@ -161,7 +161,7 @@ The ANC config lives at `cvs/input/config_file/anc/anc_config.json`:
         "inactivity_timeout": 900,
         "install_timeout": 1800,
         "anc_version": "1.7.3",
-        "anc_release_url": "<changeme>",
+        "anc_release_url": "",
         "ANC_INSTALL_PATH": "",
         "print_all_to_console": "True",
         "ADD_ANC_LOGS_TO_HTML_REPORTS": "False"
@@ -169,9 +169,13 @@ The ANC config lives at `cvs/input/config_file/anc/anc_config.json`:
 }
 ```
 
-`anc_release_url` ships as the `<changeme>` placeholder and **must** be replaced
-before running; an unresolved `<changeme>` aborts the run up front (the standard
-config resolver hard-exits on it, before any node is contacted).
+`anc_release_url` is **optional**: set it only when ANC must be downloaded and
+installed. Every suite checks whether ANC is already installed (at
+`ANC_INSTALL_PATH` when set, else `/opt/amdtools`) and, when it is, runs against
+the installed version without needing a URL. The URL, `anc_version`, and
+`ANC_INSTALL_PATH` are each validated only at the point they are used — when ANC
+is actually downloaded, when the version is compared, or when the install prefix
+is resolved — not up front.
 
 Each key is documented inline in the shipped config via a matching
 `_comment_<key>` sibling (keys prefixed with `_comment` are ignored at runtime).
@@ -180,9 +184,9 @@ Each key is documented inline in the shipped config via a matching
 | --- | --- |
 | `inactivity_timeout` | Per-group **inactivity** timeout in seconds (default 900 = 15 min). Applies to ANC group runs only, not install. A group is aborted only after this many seconds with **no new ANC output**; there is no total wall-clock cap, so a group that keeps producing progress runs as long as it needs. (Replaces the old `test_timeout` total-budget cap, which killed healthy, actively-running groups.) |
 | `install_timeout` | Package download+install **inactivity** timeout in seconds (default 1800 = 30 min), used only by `anc_installation` / the install pre-task. It is a per-read (no-output) timeout, not a total budget: the download emits a periodic progress heartbeat so a slow link never trips it, while a genuine stall still fails. Independent of `inactivity_timeout`. |
-| `anc_version` | Minimum required ANC version. The install pre-task skips (re)install **only when every expected node already satisfies** it (installed ≥ requested); if any node is below the minimum, the installer runs on **all** nodes, so already-satisfying nodes in a mixed cluster are reinstalled. After installing it post-verifies every node satisfies the version. A release candidate counts as its base release (`1.7.0-rc.1` satisfies `1.7.0`), and rc-vs-rc of the same base compares by number. When set, the version in `anc_release_url` must be **≥** `anc_version` (the archive must be able to satisfy the request) or the run aborts before contacting any node. The installed version is read per node, with each node's packaging generation **auto-detected from its own output**: `anc.py --content-list` (the `anc-release-*` plugin's version column) when that line is present (**direct 1.5.0+**), falling back to `anc.py --version` for **legacy ≤1.4.x** (whose `--version` reports the release version; 1.5.0+ does not). |
-| `anc_release_url` | ANC release archive URL (used by `anc_installation`). Both packaging generations are auto-detected from the filename: **legacy (≤1.4.x)** outer tarballs carry a `-deb-`/`-rpm-`/`-tar-` token (e.g. `anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz`); **direct (1.5.0+)** URLs point straight at a `.deb`/`.rpm`/`.tar.gz` with no flavour token (e.g. `anc-release-helios-nda-1.5.5-x86_64.tar.gz`). The download/unpack is staged in a private temp dir on each node and removed after install (success or failure). deb/rpm install to `/opt/amdtools/anc`; tar installs to `ANC_INSTALL_PATH` (default `/opt/amdtools`). |
-| `ANC_INSTALL_PATH` | **Tar installs only:** relocatable prefix ANC is extracted into (its `anc/` dir, tool folders, and content live under here), giving `<prefix>/anc/anc.py`. A leading `~` is expanded and the `{home}`/`{user-id}` placeholders are resolved during config load. The value is validated up front: shell-metacharacters (`'`, `"`, `` ` ``, `$`, `\`, newline) and a prefix that resolves to filesystem root (`/`, `//`) are rejected before any node is contacted. deb/rpm packages carry absolute locations baked into their archive and **ignore** this key. Leave blank or omit to keep the default `/opt/amdtools`. |
+| `anc_version` | Optional minimum ANC version. When unset, each suite runs against whatever version is installed. When set, nodes below it trigger an install **only if `anc_release_url` can satisfy it** (its version ≥ `anc_version`); otherwise the install suite (`anc_installation`) fails, while normal group/item suites log the shortfall and proceed with the installed version. A release candidate counts as its base release (`1.7.0-rc.1` is treated as `1.7.0`); the rc number is never compared. The installed version is read per node, with each node's packaging generation **auto-detected from its own output**: `anc.py --content-list` (the `anc-release-*` plugin's version column) when that line is present (**direct 1.5.0+**), falling back to `anc.py --version` for **legacy ≤1.4.x** (whose `--version` reports the release version; 1.5.0+ does not). The value is validated (must be a dotted release like `1.7.0`) only when it is compared. |
+| `anc_release_url` | **Optional** ANC release archive URL, used only when ANC must be installed (absent on a node, or below `anc_version` with a URL new enough to upgrade). Leave blank when ANC is preinstalled. Both packaging generations are auto-detected from the filename: **legacy (≤1.4.x)** outer tarballs carry a `-deb-`/`-rpm-`/`-tar-` token (e.g. `anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz`); **direct (1.5.0+)** URLs point straight at a `.deb`/`.rpm`/`.tar.gz` with no flavour token (e.g. `anc-release-helios-nda-1.5.5-x86_64.tar.gz`). The URL is parsed and shell-safety-checked only on the install path. The download/unpack is staged in a private temp dir on each node and removed after install (success or failure). deb/rpm install to `/opt/amdtools/anc`; tar installs to `ANC_INSTALL_PATH` (default `/opt/amdtools`). |
+| `ANC_INSTALL_PATH` | **Tar installs only:** relocatable prefix ANC is extracted into (its `anc/` dir, tool folders, and content live under here), giving `<prefix>/anc/anc.py`. A leading `~` is expanded and the `{home}`/`{user-id}` placeholders are resolved during config load. The value is validated when the install prefix is resolved for use: shell-metacharacters (`'`, `"`, `` ` ``, `$`, `\`, newline) and a prefix that resolves to filesystem root (`/`, `//`) are rejected. deb/rpm packages carry absolute locations baked into their archive and **ignore** this key. Leave blank or omit to keep the default `/opt/amdtools`. |
 | `print_all_to_console` | `True` echoes ANC group output to console; `False` suppresses it (diagnostics still print). |
 | `ADD_ANC_LOGS_TO_HTML_REPORTS` | Governs the per-node **ANC logs** tarball links. `True` always bundles each node's collected log tree (one `.tar.gz` + link per node) into the pytest-html report zip. `False` (default) bundles them **only when the test fails**. The per-node `errors.json` links appear regardless of this flag. |
 
@@ -200,8 +204,10 @@ them.
 
 ## 3. Install ANC on the target nodes
 
-Every ANC validation suite installs ANC as a pre-task, so a separate install
-step is **optional**. Run `anc_installation` on its own when you want to
+Every ANC validation suite readies ANC as a pre-task: it runs against the version
+already installed on each node and installs only when a node has no ANC (or is
+below `anc_version` with a URL new enough to upgrade), so a separate install step
+is **optional**. Run `anc_installation` on its own when you want to
 install/refresh ANC without running a validation group. deb/rpm always install to
 `/opt/amdtools/anc`; **tar** installs to `ANC_INSTALL_PATH` (default
 `/opt/amdtools`), giving the entrypoint `<prefix>/anc/anc.py`. You can install it
@@ -219,10 +225,14 @@ cvs run anc_installation \
   --config_file cvs/input/config_file/anc/anc_config.json
 ```
 
-This downloads the `anc_release_url` archive, installs ANC on every target node
-(the flavour — deb/rpm/tar — and generation — legacy/direct — are auto-detected
-from the filename; deb/rpm land in `/opt/amdtools/anc`, tar in
-`ANC_INSTALL_PATH`), and validates the install.
+When a node needs ANC installed (absent, or below `anc_version` with a URL new
+enough to upgrade), this downloads the `anc_release_url` archive and installs ANC
+on every target node (the flavour — deb/rpm/tar — and generation —
+legacy/direct — are auto-detected from the filename; deb/rpm land in
+`/opt/amdtools/anc`, tar in `ANC_INSTALL_PATH`), then validates the install. The
+`anc_installation` suite runs in strict mode: if an install is required but
+`anc_release_url` is missing or cannot satisfy `anc_version`, or an attempted
+install fails, the test fails.
 
 ### Option B - manually on a target node
 
@@ -234,8 +244,9 @@ node. The examples below use `/opt/amdtools` as the prefix; substitute your
 > (shipped default `1.7.3`). The two blocks below illustrate the two packaging
 > **layouts** — the legacy `≤1.4.x` two-tarball form and the direct `1.5.0+`
 > single-tree form; the legacy `1.4.9` URL is format-only (it is below the
-> default minimum, so a suite run would reinstall over it). Use the direct
-> `1.7.3` command for a current manual install, or point the URL at any release
+> default minimum, so `anc_installation` would fail against it and the group
+> suites would proceed with the installed version). Use the direct `1.7.3`
+> command for a current manual install, or point the URL at any release
 > `≥ anc_version`.
 
 **Legacy (≤1.4.x) tar — packaging-format example only** — the outer archive
