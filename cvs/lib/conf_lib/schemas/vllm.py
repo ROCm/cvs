@@ -5,70 +5,97 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, create_model, model_validator
+from pydantic import AfterValidator, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
-from cvs.lib.inference.utils.vllm_metrics import METRIC_REGISTRY, validate_threshold_spec
-from cvs.lib.utils.config_loader import substitute_config
+from cvs.lib.inference.utils.vllm_metrics import validate_threshold_spec
+from cvs.lib.conf_lib.config_blocks import (
+    PLACEHOLDER_MESSAGE,
+    ConfigStr,
+    ContainerSpec,
+    Paths,
+    RuntimeArgs,
+    RuntimeSpec,
+    ThresholdFile,
+    _Allow,
+    _Forbid,
+    has_placeholder,
+    placeholders_rejected,
+)
 
-GATED_GPU_METRICS = {definition.name for definition in METRIC_REGISTRY if definition.datasource == "gpu"}
-GATED_PROM_METRICS = {definition.name for definition in METRIC_REGISTRY if definition.datasource == "prometheus"}
 _CELL_RE = re.compile(
     r"^ISL=(?P<isl>[1-9]\d*),OSL=(?P<osl>[1-9]\d*),TP=(?P<tp>[1-9]\d*),PP=(?P<pp>[1-9]\d*),CONC=(?P<concurrency>[1-9]\d*)$"
 )
-_METADATA_PREFIXES = ("_comment", "_example")
 _SOCKET_ENV = {"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"}
 _HF_TOKEN_ENV = {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"}
 _SERVER_RESERVED = {"master_addr", "master_port", "nnodes", "node_rank", "headless"}
 
 
-class _Forbid(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+def _reject_option_placeholder(value, info):
+    if not placeholders_rejected(info):
+        return value
+    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    if has_placeholder(text):
+        raise ValueError(PLACEHOLDER_MESSAGE)
+    return value
 
 
-class _Options(BaseModel):
+OptionValue = Annotated[Any, AfterValidator(_reject_option_placeholder)]
+
+
+class _Options(_Allow):
     """Strict at the section boundary, flexible only for upstream CLI options."""
 
-    model_config = ConfigDict(extra="allow")
+    __pydantic_extra__: Dict[str, OptionValue]
 
-    def extra_options(self) -> Dict[str, Any]:
+    def extra_options(self):
         return dict(self.model_extra or {})
 
 
-VllmThresholdSpec = create_model(
-    "VllmThresholdSpec",
-    __base__=_Forbid,
-    kind=(Any, ...),
-    value=(Any, ...),
-)
-
-
 def _validate_vllm_thresholds(thresholds):
-    for cell_key, cell in thresholds.items():
-        if cell_key == "accuracy":
-            continue
-        if not isinstance(cell, dict):
-            raise ValueError(f"vLLM threshold cell {cell_key!r} must be an object")
-        for metric, raw_spec in cell.items():
-            if metric.startswith(_METADATA_PREFIXES):
-                continue
-            spec = VllmThresholdSpec.model_validate(raw_spec).model_dump()
-            validate_threshold_spec(metric, spec)
+    """Check every cell spec and return the thresholds without comment keys.
+
+    The report code reads ``variant.thresholds`` as plain dicts, so the specs
+    are returned as written rather than as ``ThresholdSpec`` models.
+    """
+    cells = ThresholdFile.model_validate(thresholds).cells()
+    for cell_key, cell in cells.items():
+        for metric, spec in cell.items():
+            if "optional" in spec.model_fields_set:
+                raise ValueError(f"{cell_key}.{metric}: vLLM thresholds do not support optional")
+            validate_threshold_spec(metric, spec.model_dump())
+    cleaned = {cell_key: {metric: thresholds[cell_key][metric] for metric in cell} for cell_key, cell in cells.items()}
+    if "accuracy" in thresholds:
+        cleaned["accuracy"] = thresholds["accuracy"]
+    return cleaned
 
 
-class RuntimeArgs(_Forbid):
+class VllmRuntimeArgs(RuntimeArgs):
+    model_config = ConfigDict(extra="forbid")
+
     network: str = "host"
     ipc: str = "host"
     privileged: bool = True
-    volumes: List[str] = Field(default_factory=list)
+    volumes: List[ConfigStr] = Field(default_factory=list)
     devices: List[str] = Field(default_factory=list)
 
+    # container.env is the one env block, so the Hugging Face token check
+    # cannot be bypassed through docker run -e arguments built from here.
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_env(cls, data):
+        if isinstance(data, dict) and "env" in data:
+            raise ValueError("vLLM does not read runtime.args.env; set these variables in container.env")
+        return data
 
-class Runtime(_Forbid):
+
+class VllmRuntime(RuntimeSpec):
+    model_config = ConfigDict(extra="forbid")
+
     name: Literal["docker"] = "docker"
-    args: RuntimeArgs = Field(default_factory=RuntimeArgs)
+    args: VllmRuntimeArgs = Field(default_factory=VllmRuntimeArgs)
 
 
 class ContainerEnvTokenError(Exception):
@@ -79,12 +106,8 @@ class ContainerEnvTokenError(Exception):
     """
 
 
-class ContainerConfig(_Forbid):
-    lifetime: Literal["no_launch", "per_run", "persistent"] = "per_run"
-    name: str
-    image: str
-    env: Dict[str, str] = Field(default_factory=dict)
-    runtime: Runtime = Field(default_factory=Runtime)
+class VllmContainerSpec(ContainerSpec):
+    runtime: VllmRuntime = Field(default_factory=VllmRuntime)
 
     @model_validator(mode="before")
     @classmethod
@@ -123,18 +146,11 @@ class ContainerConfig(_Forbid):
         return bool(_SOCKET_ENV & set(self.env))
 
 
-class Paths(_Forbid):
-    shared_fs: str
-    models_dir: str
-    log_dir: str
-    hf_token_file: str
-
-
 class ServerParams(_Options):
     """Harness fields plus arbitrary vLLM ``serve`` flags in snake_case."""
 
     backend: Literal["vllm"] = "vllm"
-    model: str
+    model: ConfigStr
     tensor_parallel_size: int
     pipeline_parallel_size: int = 1
     port: int = 8888
@@ -197,7 +213,7 @@ _BENCHMARK_RESERVED = {
 _OPTION_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
-def _validate_cli_option_map(options: Dict[str, Any], *, section: str) -> None:
+def _validate_cli_option_map(options, *, section):
     for name, value in options.items():
         if not _OPTION_NAME_RE.fullmatch(name):
             raise ValueError(f"{section} option names must be snake_case: {name!r}")
@@ -212,7 +228,7 @@ def _validate_cli_option_map(options: Dict[str, Any], *, section: str) -> None:
                 raise ValueError(f"{section}.{name} must be JSON serializable") from exc
 
 
-def serialize_cli_options(options: Dict[str, Any]) -> List[str]:
+def serialize_cli_options(options):
     """Serialize generic snake-case option maps for vLLM command lines."""
     _validate_cli_option_map(options, section="option")
     argv = []
@@ -241,7 +257,7 @@ class RunCell:
     concurrency: int
 
     @classmethod
-    def parse(cls, value: str) -> RunCell:
+    def parse(cls, value):
         match = _CELL_RE.fullmatch(value)
         if not match:
             raise ValueError("run cell must be canonical ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>")
@@ -255,60 +271,42 @@ class ResolvedRun:
     benchmark_params: Dict[str, Any]
 
 
-def _strip_metadata(value: Any) -> Any:
-    """Remove local comments at schema boundaries without touching option payloads."""
-    if not isinstance(value, dict):
-        return value
-    cleaned = {key: item for key, item in value.items() if not key.startswith(_METADATA_PREFIXES)}
-    for section in ("paths", "container", "runtime", "args", "accuracy"):
-        if isinstance(cleaned.get(section), dict):
-            cleaned[section] = _strip_metadata(cleaned[section])
-    if isinstance(cleaned.get("tasks"), list):
-        cleaned["tasks"] = [
-            {key: item for key, item in task.items() if not key.startswith(_METADATA_PREFIXES)}
-            if isinstance(task, dict)
-            else task
-            for task in cleaned["tasks"]
-        ]
-    for section in ("server_params", "benchmark_params"):
-        if isinstance(cleaned.get(section), dict):
-            cleaned[section] = {
-                key: item for key, item in cleaned[section].items() if not key.startswith(_METADATA_PREFIXES)
-            }
-    if isinstance(cleaned.get("sweeps"), dict):
-        cleaned["sweeps"] = {
-            key: {
-                option: option_value
-                for option, option_value in values.items()
-                if not option.startswith(_METADATA_PREFIXES)
-            }
-            if isinstance(values, dict)
-            else values
-            for key, values in cleaned["sweeps"].items()
-            if not key.startswith(_METADATA_PREFIXES)
-        }
-    return cleaned
-
-
 class VariantConfig(_Forbid):
     enforce_thresholds: bool = True
     threshold_json: str
     ib_hca_devices: Union[Literal["auto"], List[str], None] = "auto"
     ib_netdev: Optional[str] = None
     paths: Paths
-    container: ContainerConfig
+    container: VllmContainerSpec
     server_params: ServerParams
     benchmark_params: BenchmarkParams = Field(default_factory=BenchmarkParams)
-    sweeps: Dict[str, Dict[str, Any]]
+    sweeps: Dict[str, Dict[str, OptionValue]]
     runs: List[str]
     thresholds: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
     _effective_topology: Any = PrivateAttr(default=None)
     _run_cells: Dict[str, RunCell] = PrivateAttr(default_factory=dict)
 
+    @field_validator("sweeps", mode="before")
+    @classmethod
+    def _drop_sweep_comments(cls, value):
+        if not isinstance(value, dict):
+            return value
+        return {
+            key: {name: item for name, item in entry.items() if not name.startswith("_")}
+            if isinstance(entry, dict)
+            else entry
+            for key, entry in value.items()
+            if not key.startswith("_")
+        }
+
+    @field_validator("thresholds")
+    @classmethod
+    def _check_thresholds(cls, value):
+        return _validate_vllm_thresholds(value)
+
     @model_validator(mode="after")
     def _validate_runs_and_thresholds(self):
-        _validate_vllm_thresholds(self.thresholds)
         if not self.runs:
             raise ValueError("runs must be a nonempty explicit list")
         parsed = {key: RunCell.parse(key) for key in self.sweeps}
@@ -347,25 +345,25 @@ class VariantConfig(_Forbid):
         return self
 
     @property
-    def model_id(self) -> str:
+    def model_id(self):
         return self.server_params.model
 
-    def bind_effective_topology(self, topology) -> None:
+    def bind_effective_topology(self, topology):
         self._effective_topology = topology
 
-    def cell(self, key: str) -> RunCell:
+    def cell(self, key):
         return self._run_cells[key]
 
-    def expected_cells(self) -> List[str]:
+    def expected_cells(self):
         return list(self.runs)
 
-    def cell_key(self, isl, osl, concurrency, **_unused) -> str:
+    def cell_key(self, isl, osl, concurrency, **_unused):
         return (
             f"ISL={isl},OSL={osl},TP={self.server_params.tensor_parallel_size},"
             f"PP={self.server_params.pipeline_parallel_size},CONC={concurrency}"
         )
 
-    def resolved_runs(self) -> List[ResolvedRun]:
+    def resolved_runs(self):
         base = self.benchmark_params.model_dump()
         extras = self.benchmark_params.extra_options()
         resolved = []
@@ -380,11 +378,3 @@ class VariantConfig(_Forbid):
             )
             resolved.append(ResolvedRun(cell=self.cell(key), benchmark_params=values))
         return resolved
-
-
-def load_variant(config_path, cluster_dict):
-    """Load a vLLM config, threshold file, placeholders, and selected runs."""
-    raw, thresholds = substitute_config(config_path, cluster_dict)
-    raw = _strip_metadata(raw)
-    raw["thresholds"] = thresholds
-    return VariantConfig(**raw)

@@ -8,7 +8,8 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.inference.utils.vllm_config_loader import load_variant
+from cvs.lib.conf_lib.loader import load_config
+from cvs.lib.conf_lib.schemas.vllm import VariantConfig
 from cvs.lib.inference.utils.vllm_metrics import (
     METRIC_REGISTRY,
     VLLM_RESULTS_COLUMNS,
@@ -42,7 +43,7 @@ def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file:
         return
-    variant = load_variant(config_file, {})
+    variant = load_config(VariantConfig, config_file, {}).config
     runs = variant.resolved_runs()
     ids = [run.cell.key for run in runs]
     if "accuracy_task" in metafunc.fixturenames:
