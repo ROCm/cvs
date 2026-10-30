@@ -194,7 +194,8 @@ def run_transferbench(orch, config_dict, preset, timeout, extra_env=None, lifecy
     cmd = build_transferbench_command(path, rocm_path, preset, env, sudo_prefix=_payload_sudo_prefix(orch))
     log.info('TransferBench command: %s', cmd)
     with timed_stage(lifecycle, stage or preset):
-        return orch.exec(cmd, timeout=timeout, detailed=detailed)
+        # The sharded SSH handle can only print string results, so detailed callers log the output themselves.
+        return orch.exec(cmd, timeout=timeout, detailed=detailed, print_console=not detailed)
 
 
 def _tb_output_excerpt(out, tail=6000):
@@ -466,8 +467,14 @@ def parse_tb_schmoo_bw(out_dict, exp_dict):
 _TB_HEALTHCHECK_FAIL_RE = re.compile(r'(?m)^[ \t]*Testing\s+(.+?)\s*\.{2,}\s*FAIL(?:\s*\((\d+)\s+test\(s\)\))?')
 
 
-def parse_tb_healthcheck(results):
-    """Fail on a non-zero TransferBench healthcheck exit code, naming failed sub-tests from the output."""
+def parse_tb_healthcheck(results, expected_hosts=()):
+    """Fail on a non-zero TransferBench healthcheck exit code, naming failed sub-tests from the output.
+
+    Sharded SSH runs omit hosts pruned as unreachable earlier, so every expected host must have a result.
+    """
+    for node in expected_hosts:
+        if node not in results:
+            fail_test(f"TransferBench healthcheck returned no result for node {node}")
     for node, res in results.items():
         output = res.get('output') or ''
         failed = _TB_HEALTHCHECK_FAIL_RE.findall(output)
@@ -556,7 +563,7 @@ def test_transfer_bench_healthcheck(
     out_dict = {node: res.get('output') or '' for node, res in results.items()}
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
-    parse_tb_healthcheck(results)
+    parse_tb_healthcheck(results, orch.hosts)
     _capture_tb_rundeck(
         transferbench_res_dict,
         cluster_dict,
