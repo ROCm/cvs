@@ -1,0 +1,552 @@
+{
+  "_comment": "CVS inference HW/SW support matrix (STUB). One file for all inference frameworks. Deny-list semantics: an entry lists only what is UNSUPPORTED; anything not listed (including future GPU archs) is allowed. For inference, precision is usually baked into the checkpoint (HF id), so the model key identifies a checkpoint and unsupported_gpu_arch is the primary gate. All deny lists are left EMPTY for the team to fill; each row's HF id / TP / precision / ISL-OSL and any known arch restriction are preserved in notes. Set required_rocm_max_version to gate a deprecated checkpoint on newer ROCm. See design2_single_support_matrix_datafile.md.",
+  "schema_version": 1,
+  "category": "inference",
+  "known_arch_tokens": ["mi300x", "mi325x", "mi350x", "mi355x"],
+  "enforce_default": true,
+  "frameworks": {
+    "sglang": {
+      "models": {
+        "llama-3.1-70b-instruct": {
+          "aliases": ["meta-llama/Llama-3.1-70B-Instruct"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, BF16, ISL/OSL=1K/1K."
+        },
+        "gpt-oss-120b": {
+          "aliases": ["openai/gpt-oss-120b"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=4, MXFP4, ISL/OSL=8K/1K."
+        },
+        "glm-5.1": {
+          "aliases": ["zai-org/GLM-5.1"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, BF16, ISL/OSL=1K/8K."
+        },
+        "glm-5.1-fp8": {
+          "aliases": ["zai-org/GLM-5.1-FP8"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, FP8, ISL/OSL=1K/4K."
+        },
+        "deepseek-v4-pro": {
+          "aliases": ["deepseek-ai/DeepSeek-V4-Pro"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, FP4+FP8, ISL/OSL=5000/1024."
+        },
+        "deepseek-v4-flash": {
+          "aliases": ["deepseek-ai/DeepSeek-V4-Flash"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=4, FP4+FP8, ISL/OSL=1K/1K."
+        },
+        "kimi-k2.6-thinking": {
+          "aliases": ["uniquealexx/Kimi-K2.6-Thinking-200x"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=4, INT4, ISL/OSL=1K/1K."
+        },
+        "glm-5-mxfp4": {
+          "aliases": ["amd/GLM-5-MXFP4"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, MXFP4, ISL/OSL=1K/1K."
+        },
+        "kimi-k2.5-mxfp4": {
+          "aliases": ["amd/Kimi-K2.5-MXFP4"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=4, MXFP4, ISL/OSL=1K/1K."
+        },
+        "qwen3.5-397b-a17b": {
+          "aliases": ["Qwen/Qwen3.5-397B-A17B"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, BF16, ISL/OSL=1K/1K."
+        },
+        "glm-5.2-fp8": {
+          "aliases": ["zai-org/GLM-5.2-FP8"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, FP8, ISL/OSL=1K/1K."
+        },
+        "glm-5.2": {
+          "aliases": ["zai-org/GLM-5.2"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, BF16, ISL/OSL=1K/1K."
+        },
+        "kimi-k2.7-code": {
+          "aliases": ["moonshotai/Kimi-K2.7-Code"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, BF16, ISL/OSL=1K/1K."
+        },
+        "minimax-m3": {
+          "aliases": ["MiniMaxAI/MiniMax-M3"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "BF16, ISL/OSL=1K/1K."
+        },
+        "qwen3.5-397b-a17b-mxfp4": {
+          "aliases": ["amd/Qwen3.5-397B-A17B-MXFP4"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, MXFP4, ISL/OSL=1K/1K."
+        },
+        "mistral-large-3": {
+          "aliases": ["mistralai/Mistral-Large-3-675B-Instruct-2512"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, FP8, ISL/OSL=1K/1K."
+        },
+        "deepseek-r1-0528-mxfp4": {
+          "aliases": ["amd/DeepSeek-R1-0528-MXFP4"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, MXFP4, ISL/OSL=1K/1K."
+        },
+        "mimo-v2.5-pro": {
+          "aliases": ["XiaomiMiMo/MiMo-V2.5-Pro"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, BF16, ISL/OSL=1K/1K."
+        }
+      }
+    },
+    "vllm": {
+      "models": {
+        "llama-3.3-70b-fp8": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "Throughput Llama 3.3 70B FP8, TP=8, ISL/OSL=1K/1K."
+        },
+        "gpt-oss-120b": {
+          "aliases": ["openai/gpt-oss-120b"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=4, MXFP4, ISL/OSL=8K/1K."
+        },
+        "glm-5.1": {
+          "aliases": ["zai-org/GLM-5.1"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, BF16, ISL/OSL=1K/8K."
+        },
+        "glm-5.1-fp8": {
+          "aliases": ["zai-org/GLM-5.1-FP8"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, FP8, ISL/OSL=1K/4K."
+        },
+        "deepseek-v4-pro": {
+          "aliases": ["deepseek-ai/DeepSeek-V4-Pro"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, FP8, ISL/OSL=5000/1024."
+        },
+        "deepseek-v4-flash": {
+          "aliases": ["deepseek-ai/DeepSeek-V4-Flash"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=4, FP8, ISL/OSL=1K/1K."
+        },
+        "kimi-k2.6-thinking": {
+          "aliases": ["uniquealexx/Kimi-K2.6-Thinking-200x"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=4, MXFP4, ISL/OSL=1K/1K."
+        },
+        "glm-5-mxfp4": {
+          "aliases": ["amd/GLM-5-MXFP4"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, MXFP4, ISL/OSL=1K/1K."
+        },
+        "kimi-k2.5-w4a8": {
+          "aliases": ["amd/Kimi-K2.5-W4A8"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=4, W4A8, ISL/OSL=1K/1K."
+        },
+        "qwen3.5-397b-a17b": {
+          "aliases": ["Qwen/Qwen3.5-397B-A17B"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, BF16, ISL/OSL=1K/1K."
+        },
+        "glm-5.2-fp8": {
+          "aliases": ["zai-org/GLM-5.2-FP8"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, FP8, ISL/OSL=1K/1K."
+        },
+        "glm-5.2": {
+          "aliases": ["zai-org/GLM-5.2"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, BF16, ISL/OSL=1K/1K."
+        },
+        "kimi-k2.7-code": {
+          "aliases": ["moonshotai/Kimi-K2.7-Code"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, MXFP4, ISL/OSL=1K/1K."
+        },
+        "minimax-m3": {
+          "aliases": ["MiniMaxAI/MiniMax-M3"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "BF16, ISL/OSL=1K/1K."
+        },
+        "qwen3.5-397b-a17b-mxfp4": {
+          "aliases": ["amd/Qwen3.5-397B-A17B-MXFP4"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, MXFP4, ISL/OSL=1K/1K."
+        },
+        "mistral-large-3": {
+          "aliases": ["mistralai/Mistral-Large-3-675B-Instruct-2512"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, FP8, ISL/OSL=1K/1K."
+        },
+        "deepseek-r1-0528-mxfp4": {
+          "aliases": ["amd/DeepSeek-R1-0528-MXFP4"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, MXFP4, ISL/OSL=1K/1K."
+        },
+        "mimo-v2.5-pro": {
+          "aliases": ["XiaomiMiMo/MiMo-V2.5-Pro"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, FP8, ISL/OSL=1K/1K."
+        }
+      }
+    },
+    "xdit": {
+      "models": {
+        "wan2.1-t2v-14b": {
+          "aliases": ["Wan-AI/Wan2.1-T2V-14B-720P-Diffusers"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "14B DiT, 40 heads; --dit_fsdp --t5_fsdp. Workload label listed as Wan2.1-T2V-1.3B."
+        },
+        "wan2.2-t2v-a14b": {
+          "aliases": ["Wan-AI/Wan2.2-T2V-A14B-Diffusers"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "~14B-class (A14B) T2V; heads from Hub config.json. Workload label Wan2.2-TI2V-5B."
+        },
+        "wan2.2-i2v-a14b": {
+          "aliases": ["Wan-AI/Wan2.2-I2V-A14B-Diffusers"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "I2V DiT + image conditioning. Workload label Wan2.2-I2V-5B."
+        },
+        "hunyuanvideo": {
+          "aliases": ["tencent/HunyuanVideo"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "HunyuanVideo T2V stack; SP + encoder flags per recipe."
+        },
+        "hunyuanvideo-1.5": {
+          "aliases": ["tencent/HunyuanVideo-1.5"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "HunyuanVideo 1.5 T2V stack; SP + encoder flags per recipe."
+        },
+        "ltx-2": {
+          "aliases": ["Lightricks/LTX-2", "Lightricks/LTX-Video-2B-0.9.6-Dev-04-25"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "LTX-2 T2V; adjust frames/steps to frozen card."
+        },
+        "flux.1-dev": {
+          "aliases": ["black-forest-labs/FLUX.1-dev"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "FLUX.1 MMDiT T2I; AMD xDiT FLUX recipe."
+        },
+        "flux.2-dev": {
+          "aliases": ["black-forest-labs/FLUX.2-dev"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "FLUX.2 T2I."
+        },
+        "flux.2-klein-9b": {
+          "aliases": ["black-forest-labs/FLUX.2-klein-9B"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "FLUX.2 klein T2I."
+        },
+        "flux.1-kontext-dev": {
+          "aliases": ["black-forest-labs/FLUX.1-Kontext-dev"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "Kontext = reference image + text (editing/context)."
+        },
+        "qwen-image-2512": {
+          "aliases": ["Qwen/Qwen-Image-2512", "Qwen/Qwen2.5-VL-7B-Instruct"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "Qwen-Image T2I (MMDiT + VLM/VAE stack); vision model."
+        },
+        "qwen-image-edit-2511": {
+          "aliases": ["Qwen/Qwen-Image-Edit-2511", "Qwen/Qwen2.5-VL-72B-Instruct"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "Edit = source image + instruction; vision model."
+        },
+        "stable-diffusion-3.5-large": {
+          "aliases": ["stabilityai/stable-diffusion-3.5-large"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "SD3.x T2I (CLIP+T5-style encoders); cfg_parallel/SP mix per SD3 notes."
+        },
+        "z-image-turbo": {
+          "aliases": ["Tongyi-MAI/Z-Image-Turbo"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "Turbo T2I (few-step distilled)."
+        }
+      }
+    },
+    "atom": {
+      "models": {
+        "deepseek-r1-0528-fp8": {
+          "aliases": ["deepseek-ai/DeepSeek-R1-0528"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "FP8, ISL/OSL=1K/1K."
+        },
+        "gpt-oss-120b": {
+          "aliases": ["openai/gpt-oss-120b"],
+          "unsupported_gpu_arch": ["mi300x", "mi325x"],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "MI355X, ATOM-vLLM, ISL/OSL=8K/1K; no SGLang recipe. MXFP4 is gfx950-only, so MI300X/MI325X are denied; MI350X stays allowed."
+        },
+        "qwen3.5-397b-a17b-fp8": {
+          "aliases": ["amd/Qwen3.5-397B-A17B-FP8"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "MI355X, TP=8, FP8, ISL/OSL=1K/8K. Arch hint: MI355X."
+        },
+        "glm-5.1-fp8": {
+          "aliases": ["zai-org/GLM-5.1-FP8"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, FP8, ISL/OSL=1K/4K; vLLM only (no native or atom-sglang recipe)."
+        },
+        "deepseek-v4-pro": {
+          "aliases": ["deepseek-ai/DeepSeek-V4-Pro"],
+          "unsupported_gpu_arch": ["mi300x", "mi325x"],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, FP4/MXFP4, ISL/OSL=1K/1K. FP4/MXFP4 is gfx950-only, so MI300X/MI325X are denied; MI350X stays allowed."
+        },
+        "deepseek-v4-flash": {
+          "aliases": ["deepseek-ai/DeepSeek-V4-Flash"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, FP8 KV, ISL/OSL=1K/1K. Arch hint: MI355X for FP8 KV."
+        },
+        "kimi-k2-thinking-mxfp4": {
+          "aliases": ["amd/Kimi-K2-Thinking-MXFP4"],
+          "unsupported_gpu_arch": ["mi300x", "mi325x"],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "MXFP4, ISL/OSL=1K/1K. MXFP4 is gfx950-only, so MI300X/MI325X are denied; MI350X stays allowed."
+        },
+        "kimi-k2.5-mxfp4": {
+          "aliases": ["amd/Kimi-K2.5-MXFP4", "amd/Kimi-K2.5-MXFP4-AttnFP8"],
+          "unsupported_gpu_arch": ["mi300x", "mi325x"],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=4, MXFP4 (native) / MXFP4-AttnFP8 (vLLM), ISL/OSL=1K/1K. MXFP4 is gfx950-only, so MI300X/MI325X are denied; MI350X stays allowed."
+        },
+        "qwen3.5-397b-a17b": {
+          "aliases": ["Qwen/Qwen3.5-397B-A17B"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "MI355X, TP=8, FP8, ISL/OSL=1K/1K. Arch hint: MI355X."
+        },
+        "glm-5.2-fp8": {
+          "aliases": ["zai-org/GLM-5.2-FP8"],
+          "unsupported_gpu_arch": ["mi355x"],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, FP8, ISL/OSL=1K/1K. MI300X/MI308X TP8 validated; MI355 FP8 NOT validated in atom repo recipe, so MI355X is denied (reverse case). MI325X/MI350X unconfirmed."
+        },
+        "glm-5.2-mxfp4": {
+          "aliases": ["amd/GLM-5.2-MXFP4"],
+          "unsupported_gpu_arch": ["mi300x", "mi325x"],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, MXFP4, ISL/OSL=1K/1K. MXFP4 is gfx950-only, so MI300X/MI325X are denied; MI350X stays allowed."
+        },
+        "kimi-k2.7-code-mxfp4": {
+          "aliases": ["moonshotai/Kimi-K2.7-Code"],
+          "unsupported_gpu_arch": ["mi300x", "mi325x"],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=4, MXFP4, ISL/OSL=1K/1K. MXFP4 is gfx950-only, so MI300X/MI325X are denied; MI350X stays allowed."
+        },
+        "minimax-m3-mxfp4": {
+          "aliases": ["amd/MiniMax-M3-MXFP4"],
+          "unsupported_gpu_arch": ["mi300x", "mi325x"],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=4, MXFP4, ISL/OSL=1K/1K. MXFP4 is gfx950-only, so MI300X/MI325X are denied; MI350X stays allowed."
+        },
+        "qwen3.5-397b-a17b-mxfp4": {
+          "aliases": ["amd/Qwen3.5-397B-A17B-MXFP4"],
+          "unsupported_gpu_arch": ["mi300x", "mi325x"],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, MXFP4, ISL/OSL=1K/1K; vLLM. MXFP4 is gfx950-only, so MI300X/MI325X are denied; MI350X stays allowed."
+        },
+        "deepseek-r1-0528-mxfp4": {
+          "aliases": ["amd/DeepSeek-R1-0528-MXFP4"],
+          "unsupported_gpu_arch": ["mi300x", "mi325x"],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, MXFP4, ISL/OSL=1K/1K. MXFP4 is gfx950-only, so MI300X/MI325X are denied; MI350X stays allowed."
+        },
+        "mimo-v2.5-pro": {
+          "aliases": ["XiaomiMiMo/MiMo-V2.5-Pro"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "TP=8, BF16, ISL/OSL=1K/1K. Arch hint: MI355X."
+        }
+      }
+    }
+  }
+}
