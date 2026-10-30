@@ -3,7 +3,6 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 '''
 
-import json
 from pathlib import Path
 
 import pytest
@@ -11,8 +10,8 @@ import pytest
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
 from cvs.lib.inference.vllm_topology import resolve_vllm_topology, scope_vllm_cluster
-from cvs.lib.inference.utils.vllm_config_loader import load_variant
 from cvs.lib.inference.utils.vllm_metrics import VLLM_RESULTS_COLUMNS
+from cvs.lib.inference.utils.vllm_schema import VariantConfig
 from cvs.lib.report.benchmark_metric_registry import (
     benchmark_metric_columns_for_nodeid,
     benchmark_metric_rows_from_item,
@@ -26,7 +25,7 @@ from cvs.lib.report.render.perf_metric_table import (
     render_benchmark_metrics_html,
 )
 from cvs.lib.report.subtest_reports import called_from_subtest_context, is_subtest_report
-from cvs.lib.utils_lib import resolve_cluster_config_placeholders
+from cvs.lib.utils.config_loader import load_config
 from cvs.tests.inference.vllm._shared import validate_vllm_execution_mode
 
 log = globals.log
@@ -68,39 +67,20 @@ def _attach_metric_panel(report, rows) -> None:
     stamp_benchmark_metric_rows_on_report(report, rows)
 
 
-def _deep_merge(base, override):
-    """Recursively merge `override` onto `base` (dicts merged key-wise, scalars/lists replaced).
-
-    Protects cluster-set SCALAR and DICT container keys (e.g. shm_size, an env
-    map) from being wiped by a top-level replace: they survive unless the variant
-    overrides that same key. List keys (e.g. runtime.args, volume mounts) are
-    REPLACED here, not unioned -- the cluster's list values are recombined with
-    the variant's additively further downstream, in container.py's getters.
-    """
-    if not (isinstance(base, dict) and isinstance(override, dict)):
-        return override
-    out = dict(base)
-    for k, v in override.items():
-        out[k] = _deep_merge(base[k], v) if k in base else v
-    return out
-
-
 @pytest.fixture(scope="module")
-def cluster_dict(pytestconfig):
+def loaded_config(pytestconfig):
     cluster_file = pytestconfig.getoption("cluster_file")
     if not cluster_file:
         pytest.fail("--cluster_file is required")
-    with open(cluster_file) as fp:
-        d = json.load(fp)
-    return resolve_cluster_config_placeholders(d)
-
-
-@pytest.fixture(scope="module")
-def variant_config(pytestconfig, cluster_dict):
     config_file = pytestconfig.getoption("config_file")
     if not config_file:
         pytest.fail("--config_file is required")
-    return load_variant(config_file, cluster_dict)
+    return load_config(VariantConfig, config_file, cluster_file)
+
+
+@pytest.fixture(scope="module")
+def variant_config(loaded_config):
+    return loaded_config.config
 
 
 class _Lifecycle:
@@ -134,7 +114,7 @@ def lifecycle():
 
 
 @pytest.fixture(scope="module")
-def orch(cluster_dict, variant_config, lifecycle, vllm_mode):
+def orch(loaded_config, lifecycle, vllm_mode):
     """Construct a ContainerOrchestrator and own ONLY its teardown safety net.
 
     The actual launch/sshd happen in test_launch_container / test_setup_sshd
@@ -143,19 +123,12 @@ def orch(cluster_dict, variant_config, lifecycle, vllm_mode):
     the container is still torn down here. When test_teardown ran successfully
     it sets lifecycle.torn_down, so the finalizer no-ops (no double teardown).
     """
-    # OrchestratorConfig.from_configs does a top-level dict.update, so a bare variant
-    # container block would wipe the cluster file's container settings. Deep-merge the
-    # variant ONTO the cluster block so cluster-set scalar/dict keys survive, with the
-    # variant winning on conflicting keys. (List keys like runtime.args are replaced
-    # here but recombined additively downstream in container.py's getters.)
-    suite_cluster = scope_vllm_cluster(vllm_mode, cluster_dict)
-    container_block = _deep_merge(
-        suite_cluster.get("container", {}),
-        variant_config.container.model_dump(),
-    )
+    # from_configs replaces top-level keys, so the container block passed here must
+    # already hold the cluster's container settings; load_config merged them.
+    suite_cluster = scope_vllm_cluster(vllm_mode, loaded_config.cluster)
     testsuite_config = {
         "orchestrator": "container",
-        "container": container_block,
+        "container": loaded_config.container,
     }
     cfg = OrchestratorConfig.from_configs(suite_cluster, testsuite_config)
     o = OrchestratorFactory.create_orchestrator(log, cfg)

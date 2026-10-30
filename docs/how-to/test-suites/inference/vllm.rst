@@ -68,7 +68,7 @@ Step 2: Fill in the placeholders
 
 Replace every ``<changeme>`` before the run. ``{user-id}`` is not one of those: it becomes the login name of the ``cvs run`` process, unless the cluster file sets ``username``.
 
-In the **cluster file**, set your SSH user, private key path, and node addresses. Unresolved ``<changeme>`` strings in the cluster file stop startup. The vLLM loader does not apply that same hard-exit to the workload file, except when ``threshold_json`` itself still contains ``<changeme>``. An unreplaced image name or mount fails later, at pull or ``docker run``. See :doc:`/how-to/run-with-containers` for the cluster-file walkthrough.
+In the **cluster file**, set your SSH user, private key path, and node addresses. Unresolved ``<changeme>`` strings in the cluster file stop startup. A ``<changeme>`` or ``<changeme-...>`` left in the workload file fails test collection, and the error names every field that still has one. See :doc:`/how-to/run-with-containers` for the cluster-file walkthrough.
 
 In the **Llama single-node file**, replace only these strings:
 
@@ -313,15 +313,15 @@ CVS then bootstraps a Ray cluster before serving: ``ray start --head --port=<dis
 Common pitfalls
 ===============
 
-**The run fails immediately with a validation error.** ``container``, ``paths``, and the top-level config reject unknown keys. ``server_params``, ``benchmark_params``, and sweep overrides accept extra snake_case vLLM options. ``image_tar``, ``registry``, ``shm_size``, and ``cap_add`` belong on the cluster file, not in the vLLM file. See :doc:`/reference/cluster/cluster-file`.
+**The run fails immediately with a validation error.** ``container``, ``paths``, and the top-level config reject unknown keys. ``server_params``, ``benchmark_params``, and sweep overrides accept extra snake_case vLLM options. ``image_tar`` belongs on the cluster file, not in the vLLM file. Keys that start with ``_`` are comments and are ignored. See :doc:`/reference/cluster/cluster-file`.
 
 **Distributed topology validation fails** with ``vllm_distributed requires pipeline_parallel_size>1 unless distributed-executor-backend=ray``. You have two or more hosts on ``mp`` without pipeline parallelism. Raise ``pipeline_parallel_size``, or set ``distributed_executor_backend`` to ``"ray"``.
 
 **"vllm_distributed requires container.env.NCCL_SOCKET_IFNAME on multi-host clusters".** Set the socket interface. If you set any of ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, or ``TP_SOCKET_IFNAME``, set all three.
 
-**"Container image not specified in config".** ``container.image`` is empty. The orchestrator logs that line, then ``test_launch_container`` fails because ``setup_containers()`` returned false. The vLLM schema requires ``image``, so omitting the key fails validation instead. An empty string overwrites a cluster-file image. The packaged Llama files use ``<changeme>``, which is not empty and is not a real image until you replace it.
+**"Container image not specified in config".** ``container.image`` is empty. The orchestrator logs that line, then ``test_launch_container`` fails because ``setup_containers()`` returned false. The vLLM schema requires ``image``, so omitting the key fails validation instead. An empty string overwrites a cluster-file image.
 
-**"env" under "container.runtime.args".** ``RuntimeArgs`` rejects unknown keys, so ``env`` there fails config load. Put ``env`` on ``container``.
+**"env" under "container.runtime.args".** ``env`` under ``runtime.args`` fails config load. Put ``env`` on ``container``.
 
 **A threshold fails with "actual must be a finite built-in int or float".** The gated datasource did not produce a valid value. Inspect the raw benchmark artifact, GPU telemetry, or server metrics for that cell. The suite owns benchmark percentile collection; workload configuration cannot override it.
 
