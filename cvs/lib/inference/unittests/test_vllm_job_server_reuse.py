@@ -14,7 +14,7 @@ Unit tests for cvs.lib.inference.vllm_job.VllmJob server-command construction:
 import json
 import unittest
 import unittest.mock as mock
-from cvs.lib.inference.utils.vllm_config_loader import VariantConfig, serialize_cli_options
+from cvs.lib.conf_lib.schemas.vllm import VariantConfig, serialize_cli_options
 from cvs.lib.inference.vllm_job import VllmJob
 from cvs.unittests.support import TMP
 

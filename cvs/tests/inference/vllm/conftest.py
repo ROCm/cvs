@@ -11,7 +11,8 @@ from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFacto
 from cvs.lib import globals
 from cvs.lib.inference.vllm_topology import resolve_vllm_topology, scope_vllm_cluster
 from cvs.lib.inference.utils.vllm_metrics import VLLM_RESULTS_COLUMNS
-from cvs.lib.inference.utils.vllm_schema import VariantConfig
+from cvs.lib.conf_lib.loader import load_config
+from cvs.lib.conf_lib.schemas.vllm import VariantConfig
 from cvs.lib.report.benchmark_metric_registry import (
     benchmark_metric_columns_for_nodeid,
     benchmark_metric_rows_from_item,
@@ -25,7 +26,6 @@ from cvs.lib.report.render.perf_metric_table import (
     render_benchmark_metrics_html,
 )
 from cvs.lib.report.subtest_reports import called_from_subtest_context, is_subtest_report
-from cvs.lib.utils.config_loader import load_config
 from cvs.tests.inference.vllm._shared import validate_vllm_execution_mode
 
 log = globals.log

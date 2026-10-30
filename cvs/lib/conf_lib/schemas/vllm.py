@@ -11,7 +11,7 @@ from pydantic import AfterValidator, ConfigDict, Field, PrivateAttr, field_valid
 
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
 from cvs.lib.inference.utils.vllm_metrics import validate_threshold_spec
-from cvs.lib.utils.config_blocks import (
+from cvs.lib.conf_lib.config_blocks import (
     PLACEHOLDER_MESSAGE,
     ConfigStr,
     ContainerSpec,
