@@ -271,6 +271,19 @@ class TestParseTbHealthcheck(unittest.TestCase):
         fail_test.assert_called_once()
         self.assertIn('exited with code 2', fail_test.call_args.args[0])
 
+    def test_expected_host_without_result_fails(self):
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_healthcheck(
+                {'nodeA': {'output': HEALTHCHECK_ALL_PASS, 'exit_code': 0}}, expected_hosts=['nodeA', 'nodeB']
+            )
+        fail_test.assert_called_once()
+        self.assertIn('no result for node nodeB', fail_test.call_args.args[0])
+
+    def test_no_results_fails_every_expected_host(self):
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_healthcheck({}, expected_hosts=['nodeA', 'nodeB'])
+        self.assertEqual(fail_test.call_count, 2)
+
     def test_generic_scan_misses_healthcheck_failure(self):
         from cvs.lib import utils_lib
 
@@ -291,6 +304,7 @@ class TestParseTbHealthcheck(unittest.TestCase):
                 detailed=True,
             )
         self.assertTrue(orch.exec.call_args.kwargs['detailed'])
+        self.assertFalse(orch.exec.call_args.kwargs['print_console'])
 
 
 if __name__ == '__main__':
