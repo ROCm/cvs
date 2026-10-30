@@ -113,9 +113,12 @@ Logs for both backends use per-node files: ``<log_dir>/{megatron-logs|primus-log
 For Primus 405B distributed runs, CVS auto-adds
 ``--decoder_first_pipeline_num_layers`` and
 ``--decoder_last_pipeline_num_layers`` only when 126 layers are not evenly
-divisible by node count. Example: for 4 nodes, it appends ``31`` and ``31``
-so middle stages get ``32`` and ``32``. If you set either decoder split flag
-in ``train_params.primus_cli_overrides``, your value is used as-is.
+divisible by ``train_params.pipeline_parallelism`` (pipeline stage count).
+Example: with ``pipeline_parallelism=4``, it appends ``31`` and ``31`` so
+middle stages get ``32`` and ``32``. ``pipeline_parallelism`` may differ from
+cluster node count when data parallelism is greater than 1. If you set either
+decoder split flag in ``train_params.primus_cli_overrides``, your value is
+used as-is.
 
 .. _megatron-run-tests:
 
@@ -482,3 +485,4 @@ MI355X
    * - ``mi355x_megatron_llama-3.3-70b_single.json``
      - ``mi355x_megatron_llama-3.3-70b_single_threshold.json``
      - single-node
+

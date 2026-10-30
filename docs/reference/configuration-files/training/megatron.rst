@@ -421,13 +421,17 @@ Llama 3.1 405B
 Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X; distributed only). Unlike the other models, 405B runs on **Primus only**: ``container.image`` must contain ``primus``. Megatron-LM does not support 405B.
 
 For Primus 405B, when total decoder layers (126) are not evenly divisible by
-the pipeline stage count (node count), CVS automatically appends
+``train_params.pipeline_parallelism`` (pipeline stage count), CVS
+automatically appends
 ``--decoder_first_pipeline_num_layers`` and
 ``--decoder_last_pipeline_num_layers`` to keep middle stages evenly split.
-Example: with 4 nodes, CVS appends ``31`` and ``31`` so the middle stages get
-``32`` and ``32``. If layers are already evenly divisible, those flags are not
-added. User-provided decoder split flags in ``primus_cli_overrides`` take
-precedence.
+Example: with ``pipeline_parallelism=4``, CVS appends ``31`` and ``31`` so the
+middle stages get ``32`` and ``32``. ``pipeline_parallelism`` may differ from
+node count when data parallelism is greater than 1. If layers are already
+evenly divisible, those flags are not added. If no integer first/last split is
+possible for the configured pipeline stage count, the test fails and asks you
+to set both flags explicitly in ``primus_cli_overrides``. User-provided decoder
+split flags in ``primus_cli_overrides`` take precedence.
 
 .. dropdown:: ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (representative)
 
@@ -792,3 +796,4 @@ A metric is gated only when ``enforce_thresholds`` is ``true`` and the cell has 
      - if true, Megatron ``test_metric`` skips the metric when it is missing or None; a present value is still gated by ``kind``.
 
 Tracked metrics (namespace ``training.*``): ``throughput_per_gpu``, ``tokens_per_gpu``, ``elapsed_time_per_iteration``, ``mem_usage`` (Megatron-LM ``mem usages:``; Primus does not emit it; packaged specs set ``optional: true``), and on distributed configs ``scaling_efficiency_pct`` (``kind: info`` and ``optional: true`` in packaged files).
+

@@ -165,13 +165,13 @@ def _decoder_layer_split_flags(total_layers, stages):
         candidates.append((abs(first_last - ideal), first_last))
 
     if not candidates:
-        return ""
+        return None
 
     _, chosen = min(candidates)
     return f' --decoder_first_pipeline_num_layers {chosen} --decoder_last_pipeline_num_layers {chosen}'
 
 
-def _auto_primus_405_layer_split_flags(model_size, nnodes, primus_cli_overrides):
+def _auto_primus_405_layer_split_flags(model_size, pipeline_stages, primus_cli_overrides):
     """Auto-add 405B decoder first/last layer flags unless user set them."""
     size_text = str(model_size or "").strip()
     if size_text != "405":
@@ -179,7 +179,16 @@ def _auto_primus_405_layer_split_flags(model_size, nnodes, primus_cli_overrides)
     overrides = str(primus_cli_overrides or "")
     if "--decoder_first_pipeline_num_layers" in overrides or "--decoder_last_pipeline_num_layers" in overrides:
         return ""
-    return _decoder_layer_split_flags(total_layers=126, stages=nnodes)
+    split_flags = _decoder_layer_split_flags(total_layers=126, stages=pipeline_stages)
+    if split_flags is None:
+        stages_text = str(pipeline_stages)
+        raise ValueError(
+            "Unable to derive integer 405B decoder first/last pipeline layer split for "
+            f"pipeline_parallelism={stages_text}. "
+            "Set --decoder_first_pipeline_num_layers and "
+            "--decoder_last_pipeline_num_layers in train_params.primus_cli_overrides."
+        )
+    return split_flags
 
 
 def _parse_step_losses(log_text):
@@ -478,11 +487,15 @@ class PrimusTrainingJob:
             batch_args += f' --load {self.checkpoint_dir}/checkpoints'
             if self.distributed_training:
                 batch_args += ' --auto_detect_ckpt_format'
-        batch_args += _auto_primus_405_layer_split_flags(
-            model_size=self.model_size,
-            nnodes=self.nnodes,
-            primus_cli_overrides=self.primus_cli_overrides,
-        )
+        try:
+            batch_args += _auto_primus_405_layer_split_flags(
+                model_size=self.model_size,
+                pipeline_stages=self.pipeline_parallelism,
+                primus_cli_overrides=self.primus_cli_overrides,
+            )
+        except ValueError as err:
+            fail_test(str(err))
+            raise
         if self.primus_cli_overrides:
             batch_args += f' {self.primus_cli_overrides}'
 
