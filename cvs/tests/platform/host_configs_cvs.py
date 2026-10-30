@@ -597,7 +597,10 @@ def test_check_gpu_pcie_speed_width(orch, config_dict, host_res_dict, cluster_di
     # and all nodes have same PCI Bus number
     with timed_stage(lifecycle, host_configs_rundeck.GPU_PCIE):
         out_dict = get_gpu_pcie_bus_dict(orch.all, use_sudo=False)
-        for card_no in host_configs_rundeck.pcie_card_list(out_dict):
+        card_list = host_configs_rundeck.pcie_card_list(out_dict)
+        if not card_list:
+            fail_test('No GPU PCIe bus ids reported by any node (rocm-smi/amd-smi missing or returned no GPUs)')
+        for card_no in card_list:
             cmd_list, present = _link_cmds_for_card(out_dict, card_no, 'PCI Bus', records)
             pci_dict = orch.all.exec_cmd_list(cmd_list)
             pci_dict = {node: pci_dict[node] for node in present}

@@ -79,6 +79,35 @@ class TestCheckBeNicLinkSpeed(unittest.TestCase):
         self.assertEqual(globals.error_list, [])
 
 
+class TestCheckGpuPcieSpeedWidth(unittest.TestCase):
+    def setUp(self):
+        globals.error_list = []
+
+    def test_fails_when_no_tool_reports_a_bus_map(self):
+        orch = _orch({'n1': '[]', 'n2': '[]'})
+        config = {'gpu_pcie_speed': '32', 'gpu_pcie_width': '16'}
+        host_res_dict = {}
+        with self.assertRaises(Failed) as ctx:
+            suite.test_check_gpu_pcie_speed_width(orch, config, host_res_dict, {}, None)
+        self.assertIn('No GPU PCIe bus ids reported', str(ctx.exception))
+        orch.all.exec_cmd_list.assert_not_called()
+
+    def test_passes_when_link_matches_expected_speed_and_width(self):
+        orch = _orch({'n1': '{"card0": {"PCI Bus": "0000:05:00.0"}}'})
+        orch.all.exec_cmd_list.return_value = {'n1': 'LnkSta: Speed 32GT/s, Width x16'}
+        config = {'gpu_pcie_speed': '32', 'gpu_pcie_width': '16'}
+        suite.test_check_gpu_pcie_speed_width(orch, config, {}, {}, None)
+        self.assertEqual(globals.error_list, [])
+
+    def test_fails_when_link_is_downgraded(self):
+        orch = _orch({'n1': '{"card0": {"PCI Bus": "0000:05:00.0"}}'})
+        orch.all.exec_cmd_list.return_value = {'n1': 'LnkSta: Speed 16GT/s (downgraded), Width x16'}
+        config = {'gpu_pcie_speed': '32', 'gpu_pcie_width': '16'}
+        with self.assertRaises(Failed):
+            suite.test_check_gpu_pcie_speed_width(orch, config, {}, {}, None)
+        self.assertTrue(any('downgrade' in message for message in globals.error_list))
+
+
 class TestCheckBeNicPcieSpeedWidth(unittest.TestCase):
     def setUp(self):
         globals.error_list = []

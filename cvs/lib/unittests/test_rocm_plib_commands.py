@@ -1,5 +1,6 @@
 '''Command shape for the unprivileged amd-smi / rocm-smi readers used by host checks.'''
 
+import json
 import unittest
 from unittest.mock import MagicMock
 
@@ -28,9 +29,12 @@ class TestAmdSmiJsonCommand(unittest.TestCase):
         cmd = rocm_plib._rocm_smi_showbus_cmd(use_sudo=False)
         self.assertNotIn('sudo', cmd)
         self.assertIn('/opt/rocm/bin/rocm-smi', cmd)
+        self.assertIn('amd-smi static --json', cmd)
+        self.assertIn('/opt/rocm/bin/amd-smi', cmd)
         self.assertIn('echo "[]"', cmd)
         self.assertIn('exit 0', cmd)
         self.assertNotIn('exit 127', cmd)
+        self.assertLess(cmd.index('rocm-smi'), cmd.index('amd-smi'))
 
     def test_showbus_empty_list_becomes_empty_card_map(self):
         phdl = MagicMock()
@@ -41,6 +45,34 @@ class TestAmdSmiJsonCommand(unittest.TestCase):
         result = rocm_plib.get_gpu_pcie_bus_dict(phdl, use_sudo=False)
         self.assertEqual(result['n1'], {})
         self.assertEqual(result['n2']['card0']['PCI Bus'], '0000:03:00.0')
+
+    def test_showbus_normalizes_amd_smi_static_payload(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            'n1': json.dumps(
+                {
+                    'gpu_data': [
+                        {'gpu': 0, 'bus': {'bdf': '0001:04:00.0'}},
+                        {'gpu': 1, 'bus': {'bdf': '0001:04:00.1'}},
+                    ]
+                }
+            ),
+        }
+        result = rocm_plib.get_gpu_pcie_bus_dict(phdl, use_sudo=False)
+        self.assertEqual(result['n1']['card0']['PCI Bus'], '0001:04:00.0')
+        self.assertEqual(result['n1']['card1']['PCI Bus'], '0001:04:00.1')
+
+    def test_showbus_normalizes_bare_amd_smi_list_payload(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'n1': json.dumps([{'gpu': 3, 'bus': {'bdf': '0002:04:00.1'}}])}
+        result = rocm_plib.get_gpu_pcie_bus_dict(phdl, use_sudo=False)
+        self.assertEqual(result['n1']['card3']['PCI Bus'], '0002:04:00.1')
+
+    def test_showbus_amd_smi_entry_missing_bdf_is_skipped(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'n1': json.dumps({'gpu_data': [{'gpu': 0, 'bus': 'N/A'}]})}
+        result = rocm_plib.get_gpu_pcie_bus_dict(phdl, use_sudo=False)
+        self.assertEqual(result['n1'], {})
 
     def test_firmware_reader_forwards_use_sudo(self):
         phdl = MagicMock()

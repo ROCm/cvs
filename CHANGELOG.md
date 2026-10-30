@@ -78,6 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IB topology discovery recognizes AMD Pollara (Ionic) HCA names such as `ionic_0`.
 - Containers with `runtime.args.privileged: false` start on hosts without `/dev/infiniband`; InfiniBand devices are passed only where the host has them.
 - The platform `test_check_dmesg_driver_errors` check no longer fails on err-level `[Firmware Bug]:` lines or zero-valued `WALKER_ERROR`, `MAPPING_ERROR` and `PROTECTION_FAULT_STATUS` lines. Non-zero values still fail.
+- Platform `test_check_gpu_pcie_speed_width` now reads the GPU PCIe bus map from `amd-smi` on hosts that ship it but not `rocm-smi` (such as ROCm 10.1); it previously reported PASSED without checking any GPU, since the bus-map command silently returned none. The check also now fails outright when no node reports any GPU bus id, instead of silently passing.
 
 ### Removed
 

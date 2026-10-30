@@ -525,9 +525,10 @@ def get_gpu_fw_dict(phdl):
 
 
 def _rocm_smi_showbus_cmd(use_sudo=True):
-    """rocm-smi bus map. Unprivileged form resolves the binary without a login sudo.
+    """GPU bus map: rocm-smi when present, amd-smi on ROCm 10.1+ hosts that dropped it.
 
-    A missing binary prints ``[]`` and exits 0, matching ``_amd_smi_json_command``.
+    rocm-smi stays the preferred path so older platforms are unaffected. A host with
+    neither binary prints ``[]`` and exits 0, matching ``_amd_smi_json_command``.
     Exit 127 would make ``convert_phdl_json_to_dict`` store ``{}`` and the GPU PCIe
     check would then KeyError that node while walking every card.
     """
@@ -537,15 +538,37 @@ def _rocm_smi_showbus_cmd(use_sudo=True):
         "bash -lc '"
         "if command -v rocm-smi >/dev/null 2>&1; then rocm-smi --loglevel error --showbus --json; "
         "elif [ -x /opt/rocm/bin/rocm-smi ]; then /opt/rocm/bin/rocm-smi --loglevel error --showbus --json; "
+        "elif command -v amd-smi >/dev/null 2>&1; then amd-smi static --json; "
+        "elif [ -x /opt/rocm/bin/amd-smi ]; then /opt/rocm/bin/amd-smi static --json; "
         "else echo \"[]\"; exit 0; fi'"
     )
 
 
+def _normalize_bus_cards(payload):
+    """rocm-smi already reports ``{"card0": {"PCI Bus": "<bdf>"}, ...}``.
+
+    amd-smi's ``static --json`` has no notion of "card"; it reports a flat,
+    PCI-order ``gpu`` index per die with the bus id nested under ``bus.bdf``.
+    Normalize that shape into the same ``cardN -> {"PCI Bus": ...}`` contract so
+    ``pcie_card_list``, ``absorb_gpu_pcie``, and the NIC-pairing/NUMA readers in
+    ``linux_utils.py`` that consume ``get_gpu_pcie_bus_dict`` keep working unchanged.
+    """
+    if isinstance(payload, dict) and 'gpu_data' not in payload:
+        return payload
+    cards = {}
+    for gpu_dict in _iter_amd_smi_gpu_dicts(payload):
+        idx = gpu_dict.get('gpu')
+        bus = gpu_dict.get('bus')
+        bdf = bus.get('bdf') if isinstance(bus, dict) else None
+        if idx is not None and bdf:
+            cards[f'card{idx}'] = {'PCI Bus': bdf}
+    return cards
+
+
 def get_gpu_pcie_bus_dict(phdl, use_sudo=True):
     d_dict = convert_phdl_json_to_dict(phdl.exec(_rocm_smi_showbus_cmd(use_sudo)))
-    for node, cards in d_dict.items():
-        if not isinstance(cards, dict):
-            d_dict[node] = {}
+    for node, payload in d_dict.items():
+        d_dict[node] = _normalize_bus_cards(payload)
     return d_dict
 
 
