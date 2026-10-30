@@ -30,11 +30,11 @@ CVS supports the following Linux distributions and ROCm versions.
      - Python version (tested on)
    * - Ubuntu 24.04.4
      - 6.8 [GA], 6.14 [HWE]
-     - 10.0.0
+     - 10.1.0
      - 3.12
    * - Ubuntu 22.04.5
      - 5.15 [GA], 6.8 [HWE]
-     - 10.0.0
+     - 10.1.0
      - 3.10
 
 Install CVS
