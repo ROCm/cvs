@@ -4,13 +4,13 @@ All rights reserved.
 
 Framework-agnostic config machinery shared by every CVS suite.
 
-Holds the generic half of what used to be one monolithic loader: the
-container/paths/model/image schema, the 3-pass placeholder substitution, the
-`enforce_thresholds` gate carried on `BaseVariantConfig`, and the
-`substitute_config` helper that reads a variant `config.json` + sibling
-`*threshold.json` and resolves placeholders. A per-framework module subclasses
-`BaseVariantConfig` and adds its own `Params`/`Sweep`/`cell_key` (see
-`cvs.lib.inference.utils.vllm_config_loader` for the vllm flavour).
+Holds the 3-pass placeholder substitution, the `enforce_thresholds` gate
+carried on `BaseVariantConfig`, and the `substitute_config` helper that reads
+a variant `config.json` + sibling `*threshold.json` and resolves placeholders.
+The schema blocks live in `cvs.lib.conf_lib.config_blocks` and are re-exported
+here; `cvs.lib.conf_lib.loader.load_config` builds on `substitute_config`.
+A per-framework module subclasses `BaseVariantConfig` or composes the blocks
+directly and adds its own params, sweep and `cell_key`.
 
 3-pass placeholder substitution:
   1. cluster placeholders (`{user-id}`) anywhere
@@ -21,8 +21,8 @@ A loaded variant's `container` field (`lifetime`, `name`, `image`, `runtime`)
 matches the dict shape that `cvs.core.orchestrators.factory.OrchestratorConfig`
 already understands. `runtime` is a nested `RuntimeSpec`, not a flat dict;
 `container.model_dump()` serialises it to the `runtime: {name, args}` shape the
-factory consumes (the vllm conftest does exactly this before building the
-orchestrator). The loaded variant also carries a `thresholds` field with the
+factory consumes; `load_config` merges that dump onto the cluster file's
+container block. The loaded variant also carries a `thresholds` field with the
 parsed threshold contents.
 
 `model.remote=1` raises NotImplementedError for suites other than xDiT.
@@ -39,53 +39,20 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
 from typing_extensions import Literal
+
+from cvs.lib.conf_lib.config_blocks import (  # noqa: F401 - re-exported for suite loaders
+    ContainerSpec,
+    ModelSpec,
+    Paths,
+    RuntimeSpec,
+    _Allow,
+    _Forbid,
+)
 
 
 # ---------- pydantic models (generic) ----------
-
-
-class _Forbid(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class _Allow(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-
-class Paths(_Forbid):
-    shared_fs: str
-    models_dir: str
-    log_dir: str
-    hf_token_file: str
-    # Host-user-namespaced scratch (jaxmaxtext launchers/yml). Optional so
-    # inference configs that omit it still load; jaxmaxtext configs set it to
-    # /tmp/{user-id}/jaxmaxtext so container-root /tmp/root is never used.
-    temp_dir: str = ""
-
-
-class ModelSpec(_Forbid):
-    id: str
-    remote: Literal[0, 1]
-    precision: str = ""
-
-
-class RuntimeSpec(_Allow):
-    name: str
-    args: Dict[str, Any] = Field(default_factory=dict)
-
-
-class ContainerSpec(_Forbid):
-    lifetime: Literal["no_launch", "per_run", "persistent"] = "per_run"
-    name: str
-    image: str
-    runtime: RuntimeSpec
-    # Environment variables passed to the container at `docker run` time (as
-    # `-e KEY=VALUE`, merged with the orchestrator defaults). The container
-    # orchestrator reads `container_config['env']`; carrying it on the spec means
-    # `container.model_dump()` forwards it verbatim to the runtime.
-    env: Dict[str, str] = Field(default_factory=dict)
 
 
 class BaseVariantConfig(_Forbid):
