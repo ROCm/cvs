@@ -1,15 +1,13 @@
-import json
+'''Unit tests for the vLLM config rules in cvs.lib.inference.utils.vllm_schema.'''
+
 import unittest
-from pathlib import Path
 
 from pydantic import ValidationError
 
-from cvs.lib.inference.utils.vllm_config_loader import (
+from cvs.lib.inference.utils.vllm_schema import (
     ContainerEnvTokenError,
     RunCell,
     VariantConfig,
-    _strip_metadata,
-    load_variant,
     serialize_cli_options,
 )
 from cvs.unittests.support import FAKE_CRED
@@ -17,11 +15,6 @@ from cvs.unittests.support import FAKE_CRED
 
 CELL = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
 FAKE_CRED_FILE = "/home/test/.hf_token"
-
-
-def _packaged_configs():
-    root = Path(__file__).resolve().parents[3] / "input" / "config_file" / "inference" / "vllm"
-    return sorted(path for path in root.glob("*.json") if not path.name.endswith("threshold.json"))
 
 
 def _config(**overrides):
@@ -51,6 +44,12 @@ def _config(**overrides):
     return value
 
 
+def _with_args(args):
+    config = _config()
+    config["container"]["runtime"]["args"] = args
+    return config
+
+
 class TestRunCell(unittest.TestCase):
     def test_parses_only_canonical_cell_keys(self):
         cell = RunCell.parse(CELL)
@@ -66,7 +65,7 @@ class TestRunCell(unittest.TestCase):
                     RunCell.parse(invalid)
 
 
-class TestVllmConfigContract(unittest.TestCase):
+class TestRuns(unittest.TestCase):
     def test_resolves_selected_run_with_cell_overrides(self):
         variant = VariantConfig(**_config())
         (run,) = variant.resolved_runs()
@@ -93,9 +92,8 @@ class TestVllmConfigContract(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "missing threshold"):
             VariantConfig(**_config(enforce_thresholds=True))
 
-    def test_record_only_mode_allows_unmeasured_selected_cells(self):
-        self.assertEqual(VariantConfig(**_config()).expected_cells(), [CELL])
 
+class TestContainer(unittest.TestCase):
     def test_accepts_complete_container_network_environment(self):
         config = _config()
         config["container"]["env"] = {
@@ -135,43 +133,34 @@ class TestVllmConfigContract(unittest.TestCase):
                     self.assertIn("paths.hf_token_file", str(ctx.exception))
                     self.assertNotIn(FAKE_CRED, repr(ctx.exception.args))
 
-    def test_other_container_errors_keep_their_input(self):
-        config = _config()
-        config["container"]["env"] = {"NCCL_SOCKET_IFNAME": "eno0"}
-        with self.assertRaises(ValidationError) as ctx:
-            VariantConfig(**config)
-        self.assertIn("input_value", str(ctx.exception))
-
-    def test_preserves_runtime_environment_without_model_policy(self):
-        for env in (
-            {"VLLM_ROCM_USE_AITER": "0", "VLLM_ROCM_USE_AITER_MHA": "0"},
-            {"VLLM_ROCM_USE_AITER": "1", "VLLM_ROCM_USE_AITER_MHA": "0"},
-            {"CUSTOM_RUNTIME_OPTION": "custom value"},
-        ):
-            with self.subTest(env=env):
-                config = _config()
-                config["container"]["env"] = env
-                variant = VariantConfig(**config)
-                self.assertEqual(variant.container.env, env)
+    def test_runtime_args_accept_docker_keys_but_not_env(self):
+        variant = VariantConfig(**_with_args({"shm_size": "64g", "cap_add": ["SYS_PTRACE"], "ulimit": ["memlock=-1"]}))
+        self.assertEqual(variant.container.model_dump()["runtime"]["args"]["shm_size"], "64g")
+        for args in ({"env": {"NCCL_DEBUG": "INFO"}}, {"unknown_flag": True}):
+            with self.subTest(args=args):
+                with self.assertRaises(ValidationError):
+                    VariantConfig(**_with_args(args))
 
 
-class TestMetadataAndOptionSerialization(unittest.TestCase):
-    def test_strips_local_comments_but_preserves_option_payload(self):
-        value = _strip_metadata(
-            {
-                "_comment": "root",
-                "server_params": {
-                    "_comment": "server",
-                    "json_arg": {"_comment": "upstream payload"},
-                },
-                "sweeps": {CELL: {"_comment": "cell", "json_arg": {"_comment": "upstream payload"}}},
-                "accuracy": {"tasks": [{"_comment": "task", "id": "gsm8k", "task": "gsm8k"}]},
-            }
+class TestCommentKeysAndOptions(unittest.TestCase):
+    def test_comment_keys_are_ignored_but_option_payloads_keep_theirs(self):
+        config = _config(
+            _comment="root",
+            server_params={
+                "_comment": "server",
+                "model": "/models/x",
+                "tensor_parallel_size": 8,
+                "pipeline_parallel_size": 2,
+                "json_arg": {"_comment": "upstream payload"},
+            },
+            sweeps={"_comment": "cells", CELL: {"_comment": "cell", "json_arg": {"_comment": "upstream payload"}}},
+            accuracy={"_comment": "accuracy", "tasks": [{"_comment": "task", "id": "gsm8k", "task": "gsm8k"}]},
         )
-        self.assertNotIn("_comment", value)
-        self.assertEqual(value["server_params"]["json_arg"], {"_comment": "upstream payload"})
-        self.assertEqual(value["sweeps"][CELL]["json_arg"], {"_comment": "upstream payload"})
-        self.assertNotIn("_comment", value["accuracy"]["tasks"][0])
+        config["container"]["runtime"]["args"] = {"_comment_mounts": "notes", "volumes": ["/data:/data"]}
+        variant = VariantConfig(**config)
+        self.assertEqual(variant.server_params.extra_options(), {"json_arg": {"_comment": "upstream payload"}})
+        self.assertEqual(variant.sweeps, {CELL: {"json_arg": {"_comment": "upstream payload"}}})
+        self.assertEqual(variant.accuracy.tasks[0].id, "gsm8k")
 
     def test_serializes_documented_value_shapes(self):
         options = {
@@ -214,24 +203,50 @@ class TestMetadataAndOptionSerialization(unittest.TestCase):
             VariantConfig(**_config(benchmark_params={"num_prompts": 25, "percentile_metrics": "ttft"}))
 
 
-class TestPackagedVllmCatalog(unittest.TestCase):
-    def test_shipped_configs_resolve_their_declared_contract(self):
-        configs = _packaged_configs()
-        self.assertTrue(configs, "No packaged vLLM configs found")
-        for path in configs:
-            with self.subTest(config=path.name):
-                raw = json.loads(path.read_text())
-                threshold_path = path.parent / raw["threshold_json"]
-                self.assertTrue(threshold_path.is_file(), f"Missing packaged threshold file: {threshold_path}")
-                variant = load_variant(path, {"username": "test"})
-                runs = variant.resolved_runs()
-                self.assertTrue(runs)
-                self.assertEqual([run.cell.key for run in runs], variant.runs)
-                self.assertTrue(set(variant.runs) <= set(variant.sweeps))
-                self.assertTrue(set(variant.thresholds) - {"accuracy"} <= set(variant.sweeps))
-                for run in runs:
-                    self.assertEqual(run.cell.tp, variant.server_params.tensor_parallel_size)
-                    self.assertEqual(run.cell.pp, variant.server_params.pipeline_parallel_size)
+class TestThresholds(unittest.TestCase):
+    def _variant(self, thresholds, enforce=False):
+        return VariantConfig(**_config(enforce_thresholds=enforce, thresholds=thresholds))
+
+    def test_partial_and_empty_cells_load_with_enforcement_off_and_on(self):
+        for thresholds in ({CELL: {"output_throughput": {"kind": "min", "value": 0}}}, {CELL: {}}):
+            for enforce in (False, True):
+                with self.subTest(thresholds=thresholds, enforce=enforce):
+                    self.assertEqual(self._variant(thresholds, enforce=enforce).thresholds, thresholds)
+
+    def test_enforcement_still_requires_selected_run_cell(self):
+        self._variant({}, enforce=False)
+        with self.assertRaisesRegex(ValidationError, "missing threshold coverage"):
+            self._variant({}, enforce=True)
+
+    def test_underscore_metrics_are_ignored_and_other_unknown_metrics_rejected(self):
+        spec = {"kind": "min", "value": 0}
+        variant = self._variant({CELL: {"_comment": "calibrate", "_typo": spec, "_": spec, "output_throughput": spec}})
+        self.assertEqual(variant.thresholds, {CELL: {"output_throughput": spec}})
+        with self.assertRaisesRegex(ValidationError, "unknown vLLM threshold metric 'notes'"):
+            self._variant({CELL: {"notes": spec}})
+
+    def test_rejects_specs_outside_the_vllm_direction_rule(self):
+        for metric, spec in (
+            ("output_throughput", {"kind": "max", "value": 1}),
+            ("mean_ttft_ms", {"kind": "min", "value": 1}),
+            ("output_throughput", {"kind": "min_tok_s", "value": 1}),
+            ("output_throughput", {"kind": "within", "value": 1, "tolerance_pct": 5}),
+            ("output_throughput", {"kind": "min", "value": 1, "optional": False}),
+            ("output_throughput", {"kind": "min", "value": 1, "unit": "tok/s"}),
+            ("output_throughput", {"kind": "min", "value": "1"}),
+            ("client.output_throughput", {"kind": "min", "value": 1}),
+        ):
+            with self.subTest(metric=metric, spec=spec):
+                with self.assertRaises(ValidationError):
+                    self._variant({CELL: {metric: spec}})
+
+    def test_accuracy_thresholds_are_not_metric_cells(self):
+        accuracy = {"gsm8k": {"gsm8k.exact_match__strict-match": {"kind": "min", "value": 0, "tolerance_pct": 5}}}
+        cell = {"output_throughput": {"kind": "min", "value": 0}}
+        variant = self._variant({CELL: cell, "accuracy": accuracy}, enforce=True)
+        self.assertEqual(variant.thresholds["accuracy"], accuracy)
+        with self.assertRaisesRegex(ValidationError, "threshold cells"):
+            self._variant({CELL: cell, "accuracy": accuracy, "acuracy": {}}, enforce=True)
 
 
 if __name__ == "__main__":

@@ -127,6 +127,9 @@ A vLLM configuration file has these top-level keys:
   ``false`` is rejected on those extra options. The harness booleans
   ``benchmark_params.ignore_eos`` and ``trust_remote_code`` do accept ``false``.
   Use an option's negative form instead of ``false`` for any other flag.
+  Keys that start with ``_`` are comments and are ignored, except inside
+  ``container.env`` and option values. A ``<changeme>`` or ``<changeme-...>``
+  left in any value fails config load, and the error names every such field.
 
 Placeholder substitution
 ------------------------
@@ -289,7 +292,7 @@ The vLLM ``container`` block selects the image, the container name, the lifetime
 Container block keys
 --------------------
 
-``ContainerConfig`` accepts only these keys. Anything else, including ``image_tar``, is a validation error.
+``container`` accepts only these keys. Anything else, including ``image_tar``, is a validation error.
 
 .. list-table::
    :widths: 3 2 5
@@ -312,21 +315,23 @@ Container block keys
      - The only value the vLLM schema accepts.
    * - ``runtime.args``
      - see below
-     - Only ``network``, ``ipc``, ``privileged``, ``volumes``, and ``devices``.
+     - The Docker keys under :ref:`vllm-runtime-args`. ``env`` is rejected.
    * - ``env``
      - ``{}``
      - Environment variables passed as ``docker run -e``. **On** ``container``, not under ``runtime.args``. ``HF_TOKEN`` and ``HUGGING_FACE_HUB_TOKEN`` are rejected; set ``paths.hf_token_file`` instead.
 
-``image_tar``, ``runtime.args.registry``, ``runtime.args.shm_size``, and ``runtime.args.cap_add`` are not fields of this model. Putting them in the vLLM file fails config load. Set those on the cluster file's ``container`` block. The vLLM conftest deep-merges the variant onto that block and keeps cluster keys the variant does not set. The orchestrator still emits them: ``image_tar`` loads an image, ``registry`` logs in before a pull, ``shm_size`` becomes ``--shm-size``, and ``cap_add`` appends to the orchestrator's default capabilities. See :doc:`/reference/cluster/cluster-file` for the orchestrator container keys that page documents.
+``image_tar`` is not a field of this model; set it on the cluster file's ``container`` block. ``runtime.args`` keys such as ``registry``, ``shm_size``, and ``cap_add`` can be set in either file. CVS deep-merges the vLLM ``container`` block onto the cluster file's block and keeps cluster keys the vLLM file does not set. The orchestrator emits them: ``image_tar`` loads an image, ``registry`` logs in before a pull, ``shm_size`` becomes ``--shm-size``, and ``cap_add`` appends to the orchestrator's default capabilities. See :doc:`/reference/cluster/cluster-file` for the orchestrator container keys that page documents.
 
 .. warning::
 
-  Put ``env`` on ``container``. ``RuntimeArgs`` forbids unknown keys, so ``env`` under ``runtime.args`` is rejected before launch.
+  Put ``env`` on ``container``. ``env`` under ``runtime.args`` is rejected at config load.
+
+.. _vllm-runtime-args:
 
 Runtime arguments
 -----------------
 
-``RuntimeArgs`` accepts only the keys below. Schema defaults are ``network`` ``host``, ``ipc`` ``host``, ``privileged`` true, and empty ``volumes`` and ``devices``. The orchestrator then appends its own mounts and devices; you cannot drop those defaults from the vLLM file.
+``runtime.args`` accepts only the keys below. Schema defaults are ``network`` ``host``, ``ipc`` ``host``, ``privileged`` true, and empty ``volumes`` and ``devices``. The orchestrator then appends its own mounts and devices; you cannot drop those defaults from the vLLM file.
 
 .. list-table::
    :widths: 3 7
@@ -344,6 +349,14 @@ Runtime arguments
      - ``--ipc``. Schema default ``host``.
    * - ``privileged``
      - ``--privileged`` when true. Schema default true.
+   * - ``cap_add``, ``security_opt``, ``group_add``, ``ulimit``
+     - Lists appended to the orchestrator's default capabilities, security options, groups, and ulimits.
+   * - ``user``
+     - ``--user``.
+   * - ``shm_size``
+     - ``--shm-size``.
+   * - ``registry``
+     - Registry login before a pull. See `Registry authentication`_.
 
 The assembled command is:
 
@@ -355,7 +368,7 @@ The container is a long-lived sidecar; every workload command runs through ``doc
 
 .. note::
 
-  ``--gpus`` is deliberately never emitted. GPU access on AMD hardware comes from the ``/dev/kfd`` and ``/dev/dri`` device mounts plus the ``video`` group, which the orchestrator adds. Capabilities, security options, groups, ulimits, shared-memory size, registry login, and image-tar load are orchestrator behavior. Set them in the cluster file, not in the vLLM schema. ``runtime.args.shm_size`` in the vLLM file is rejected; the same key on the cluster file is emitted as ``--shm-size``.
+  ``--gpus`` is deliberately never emitted. GPU access on AMD hardware comes from the ``/dev/kfd`` and ``/dev/dri`` device mounts plus the ``video`` group, which the orchestrator adds. Image-tar load is orchestrator behavior; set ``image_tar`` in the cluster file.
 
 Container lifetime
 ------------------
@@ -386,7 +399,7 @@ The ``lifetime`` key controls when the container is started and stopped relative
 Registry authentication
 -----------------------
 
-``runtime.args.registry`` and top-level ``image_tar`` are rejected in the vLLM file. Set them on the cluster file's ``container`` block if you need a private pull or a ``docker load``. The orchestrator then does the following. ``username`` and ``password_file`` are required; ``server`` defaults to Docker Hub. The password is read from a file on each remote host. There is no inline password key, and the login is kept out of the logs. Login is skipped when ``image_tar`` is set, because a tar load does not pull.
+Set ``runtime.args.registry`` in either file, and ``image_tar`` on the cluster file's ``container`` block, if you need a private pull or a ``docker load``. The orchestrator then does the following. ``username`` and ``password_file`` are required; ``server`` defaults to Docker Hub. The password is read from a file on each remote host. There is no inline password key, and the login is kept out of the logs. Login is skipped when ``image_tar`` is set, because a tar load does not pull.
 
 Image resolution order at launch:
 
@@ -406,7 +419,7 @@ The variant's ``container`` block is deep-merged **onto** the cluster file's blo
 
 .. warning::
 
-  A loaded vLLM ``container`` block always contributes ``lifetime``, ``name``, and ``image``. ``name`` and ``image`` are required, so omitting them fails validation. An empty ``image`` string overwrites a cluster-file image. The orchestrator then logs ``Container image not specified in config`` and ``test_launch_container`` fails because ``setup_containers()`` returned false. Set ``image`` in the vLLM file. The packaged Llama files use ``<changeme>`` there.
+  A loaded vLLM ``container`` block always contributes ``lifetime``, ``name``, and ``image``. ``name`` and ``image`` are required, so omitting them fails validation. An empty ``image`` string overwrites a cluster-file image. The orchestrator then logs ``Container image not specified in config`` and ``test_launch_container`` fails because ``setup_containers()`` returned false. Set ``image`` in the vLLM file. The packaged files ship ``<changeme>`` there, which fails config load until you replace it.
 
 .. _vllm-paths:
 
@@ -775,12 +788,11 @@ Sweep specs are strict at load time regardless of enforcement:
 - ``kind`` must equal the registry direction, exactly ``min`` or ``max``.
 - ``value`` must be a finite JSON number. Booleans, strings, null, arrays,
   objects, NaN, and infinity are rejected.
-- Cell-level keys beginning with ``_comment`` or ``_example`` are metadata and
-  are ignored by metric validation; all other keys must name a registered
-  metric.
+- Cell-level keys beginning with ``_`` are comments and are ignored; all
+  other keys must name a registered metric.
 - Prefixed names (``client.*``, ``gpu.*``, ``prom.*``), unknown names, legacy
   kinds (including ``min_tok_s`` and ``max_ms``), references, tolerances,
-  units, ``info``, and extra fields are rejected.
+  units, ``info``, ``optional``, and extra fields are rejected.
 
 ``min`` fails below its value and passes at or above it. ``max`` fails above
 its value and passes at or below it. A gated actual that is missing, null,
@@ -1107,13 +1119,15 @@ Troubleshooting
    * - ``duplicate task id(s)``
      - Two ``accuracy.tasks`` entries share an ``id``.
    * - ``unknown vLLM threshold metric '<metric>'``
-     - The name is not one of the 56 registry metrics. ``_comment`` and ``_example`` keys are ignored.
+     - The name is not one of the 56 registry metrics. Keys beginning with ``_`` are ignored.
    * - ``<metric> threshold kind must be '<direction>', got '<kind>'``
      - ``kind`` does not match the registry direction. Use the required ``min`` or ``max`` value shown in the message.
    * - ``<metric>: actual must be a finite built-in int or float, got <value>``
      - The gated datasource did not produce a valid value. Inspect the benchmark artifact, GPU telemetry, or server metrics for that cell; percentile collection is harness-owned.
    * - Unknown key under ``container`` or ``runtime.args``
-     - ``ContainerConfig`` and ``RuntimeArgs`` forbid extra keys. ``env`` belongs on ``container``. ``image_tar``, ``registry``, ``shm_size``, and ``cap_add`` belong on the cluster file. See :doc:`/reference/cluster/cluster-file`.
+     - ``container`` and ``runtime.args`` forbid keys they do not define. ``env`` belongs on ``container``, and ``image_tar`` on the cluster file. See :doc:`/reference/cluster/cluster-file`.
+   * - ``<field>: still a <changeme> placeholder; replace it with the value for your setup``
+     - A template value was not replaced. The error lists every such field.
    * - ``runtime.name`` is not ``docker``
      - The vLLM schema accepts only ``docker``.
 
