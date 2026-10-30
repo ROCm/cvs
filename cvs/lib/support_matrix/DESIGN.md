@@ -14,12 +14,15 @@ Concrete examples from the request:
 - MXFP4 is not supported on MI300/MI325 → must not be allowed to run.
 - Latest models will not run on older ROCm releases → must fail fast.
 
-Two independent checks:
+Three independent checks:
 - **Check-A (HW / GPU):** is the GPU present on the execution nodes supported for
   this workload?
 - **Check-B (SW / ROCm):** is the ROCm version — *where the workload actually
   runs* (inside the container for the docker orchestrator) — new enough for this
   workload?
+- **Check-C (sweep param):** is the specific sweep-param value about to run (e.g.
+  `precision=mxfp4`) supported on the detected arch? Driven by
+  `unsupported_sweep_params` and evaluated per sweep cell.
 
 Goals:
 - One **generic, shared library** that gates both suites; the library is **never
@@ -121,7 +124,13 @@ Add an optional, non-breaking block to each workload config:
   },
   "required_rocm_min_version": "7.0",
   "required_rocm_max_version": null,
-  "notes": "MXFP4 requires gfx950 (MI350/MI355); unsupported on MI300/MI325."
+  "unsupported_sweep_params": {
+    "precision": {
+      "mxfp4": ["mi300x", "mi325x"],
+      "mxfp8": ["mi300x", "mi325x"]
+    }
+  },
+  "notes": "MXFP4/MXFP8 require gfx950 (MI350/MI355); unsupported on MI300/MI325."
 }
 ```
 
@@ -138,6 +147,13 @@ Semantics:
   be `>=` this. **Absent → Check-B skipped**, and the detected ROCm is reported as
   a warning that `required_rocm_min_version` was not specified (design req #4).
 - `required_rocm_max_version` (optional): upper bound for deprecations.
+- `unsupported_sweep_params.<param>.<value>` (Check-C, per sweep param): the list
+  of archs on which that sweep-param value is **not** supported — a deny-list, the
+  same shape as Design-2. If the run requests `precision=mxfp4` and the detected
+  arch is in `unsupported_sweep_params.precision.mxfp4`, the workload is stopped. A
+  value or param not listed imposes no constraint; `{}` means no per-sweep gating.
+  The `param → value → [archs]` shape extends to any future sweep param (`seqlen`,
+  `tp`, `ep`, ...) with no schema change.
 
 Arch tokens are canonical (`mi300x, mi325x, mi350x, mi355x`) with an alias/gfx
 table (`mi325`→`mi325x`, `mi350x/mi355x`→`gfx950`, `mi300x/mi325x`→`gfx942`) kept
@@ -148,20 +164,21 @@ A pydantic `SupportMatrix` model (in `cvs/parsers/schemas.py`, consistent with t
 existing "single source of truth") validates the block early and rejects unknown
 arch tokens / malformed versions with a clear path, exactly like other configs.
 
-## 4.1 Future: precision / sweep-param support per arch
+## 4.1 Precision / sweep-param support per arch
 
-Precision (MXFP4 / FP8 / BF16) is becoming a **sweep parameter** in the training
-configs, not a top-level or filename token. A later iteration will extend
-`support_matrix` so support can be declared **per sweep-param value per arch** —
-e.g. BF16 on mi300x/mi325x/mi355x but MXFP4 only on mi355x — mirroring the tracker
-rows where batch/precision vary per GPU column.
+Precision (MXFP4 / FP8 / BF16) is a **sweep parameter** in the training configs,
+not a top-level or filename token, so support can vary cell-to-cell within one
+config. The `unsupported_sweep_params` block above handles this: it declares, per
+param value, the archs on which that value is not supported — e.g. BF16 allowed on
+mi300x/mi325x/mi355x but MXFP4 denied on mi300x/mi325x — mirroring the tracker rows
+where precision support varies per GPU column.
 
-The v1 block above gates at the **config (workload) granularity**. The extension
-adds an optional per-sweep-cell map (keyed by the sweep key, or by a param such as
-`precision`) whose entries carry their own `supported_arch` /
-`required_rocm_min_version`, evaluated for the specific cell about to run. This
-stays data-driven and backward compatible: configs without the per-cell map keep
-the config-level behaviour, and the library still reads data only (req #8).
+Evaluation granularity: the `gpu` and `required_rocm_*` rules gate at the
+**config (workload)** level, while `unsupported_sweep_params` is evaluated for the
+**specific sweep cell about to run** (the gate reads the cell's `precision`, etc.).
+A config whose `unsupported_sweep_params` is `{}` keeps config-level behaviour
+only. This stays data-driven and backward compatible, and the library still reads
+data only (req #8).
 
 ## 5. Check-A vs the two proposed methods (answering design req #6)
 
@@ -235,6 +252,9 @@ same `orch` handle the suites already have:
      `RocmVersionCheck._extract_rocm_version`),
   3. fallback `hipconfig --version`.
   Optionally also report the **host** ROCm for context.
+- **Check-C (sweep param):** needs no extra probing — it compares the sweep cell's
+  param value (read from the config, e.g. `precision`) against the detected arch
+  from Check-A, using `unsupported_sweep_params`.
 
 Version compare: parse `major.minor[.patch][-build]` into a tuple, ignore build
 suffix for ordering; `"7.0" >= "7.0"` and `"6.4.1" < "7.0"`. No new deps
@@ -314,7 +334,7 @@ Every library function/class ships with unit tests in
 
 ## 11. Edge cases, risks, backward-compat
 
-- **No block present** → both checks skip with warnings; nothing breaks.
+- **No block present** → all checks skip with warnings; nothing breaks.
 - **Detection fails** (no rocm-smi / no amd-smi in image) → treat as a warning,
   not a hard stop, unless a strict mode is set, to avoid false negatives bricking
   valid runs.
