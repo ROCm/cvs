@@ -2,7 +2,7 @@
 Copyright 2026 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Unit tests for cvs.lib.utils.config_blocks.
+Unit tests for cvs.lib.conf_lib.config_blocks.
 '''
 
 import math
@@ -10,7 +10,7 @@ import unittest
 
 from pydantic import ValidationError
 
-from cvs.lib.utils.config_blocks import ContainerSpec, Paths, RuntimeArgs, ThresholdFile
+from cvs.lib.conf_lib.config_blocks import ContainerSpec, Paths, RuntimeArgs, ThresholdFile
 
 
 def _container(**overrides):
