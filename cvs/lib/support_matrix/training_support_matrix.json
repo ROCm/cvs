@@ -1,0 +1,197 @@
+{
+  "_comment": "CVS training HW/SW support matrix. One file for all training frameworks. Deny-list semantics: an entry lists only what is UNSUPPORTED; anything not listed (including future GPU archs) is allowed. Every model block keeps the full field template (empty unsupported_gpu_arch, empty required_rocm_max_version, empty unsupported_sweep_params) so entries are discoverable and easy to fill. Set required_rocm_max_version when a model is deprecated to gate newer ROCm. See design2_single_support_matrix_datafile.md. Batch/GBS/tok-s are performance values (NOT support signals) and are intentionally not stored here.",
+  "schema_version": 1,
+  "category": "training",
+  "known_arch_tokens": ["mi300x", "mi325x", "mi350x", "mi355x"],
+  "enforce_default": true,
+  "frameworks": {
+    "jaxmaxtext": {
+      "models": {
+        "deepseek-v2-lite": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {}
+        },
+        "llama-3.1-8b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {
+            "precision": {
+              "mxfp8": ["mi300x", "mi325x"],
+              "mxfp4": ["mi300x", "mi325x"]
+            }
+          }
+        },
+        "llama-3.3-70b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {
+            "precision": {
+              "fp8": ["mi300x"]
+            }
+          }
+        },
+        "llama-3.1-405b": {
+          "unsupported_gpu_arch": ["mi300x"],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {}
+        },
+        "mixtral-8x22b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "coverage TBD - BF16 SeqLen=4096 not yet characterised per GPU."
+        },
+        "qwen2.5-72b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {}
+        },
+        "qwen3-30b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {}
+        },
+        "gpt-oss-20b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {}
+        }
+      }
+    },
+    "megatron": {
+      "models": {
+        "deepseek-v2-lite": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {}
+        },
+        "llama-3.1-8b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {
+            "precision": {
+              "mxfp8": ["mi300x", "mi325x"],
+              "mxfp4": ["mi300x", "mi325x"]
+            }
+          }
+        },
+        "llama-3.3-70b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {
+            "precision": {
+              "fp8": ["mi300x"]
+            }
+          }
+        },
+        "llama-3.1-405b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "coverage TBD - BF16/FP8 SeqLen=8192 sweep combo not yet figured out."
+        },
+        "mixtral-8x22b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "coverage TBD - BF16 SeqLen=4096 sweep combo not yet figured out."
+        },
+        "qwen2.5-72b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {}
+        },
+        "qwen3-30b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {}
+        },
+        "gpt-oss-20b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {}
+        }
+      }
+    },
+    "torchtitan": {
+      "models": {
+        "llama-3.1-8b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {}
+        },
+        "llama-3.1-70b": {
+          "aliases": ["meta-llama/Llama-3.1-70B"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "FP8 4-node run characterised on all three; BF16 (FSDP+TP, 1 node) coverage TBD."
+        },
+        "llama-3.3-70b": {
+          "aliases": ["meta-llama/Llama-3.3-70B-Instruct"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "FP8 SeqLen=8192 characterised on all three; BF16 parity run coverage TBD."
+        },
+        "deepseek-v3-16b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "7.0",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {}
+        },
+        "deepseek-v2-lite": {
+          "aliases": ["deepseek-ai/DeepSeek-V2-Lite"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "coverage TBD - pretrain proxy (1 node, SeqLen=4096, BF16, EP=8) not yet characterised."
+        },
+        "llama-3.1-405b": {
+          "aliases": ["meta-llama/Llama-3.1-405B"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "coverage TBD - 8-node FP8 extreme scale-out and BF16 sweep combo not yet figured out."
+        },
+        "mixtral-8x22b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "coverage TBD - BF16 SeqLen=4096 sweep combo not yet figured out."
+        },
+        "qwen3-32b": {
+          "aliases": ["Qwen/Qwen3-32B"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_sweep_params": {},
+          "notes": "coverage TBD - pretrain SeqLen=4096 not yet characterised."
+        }
+      }
+    }
+  }
+}
