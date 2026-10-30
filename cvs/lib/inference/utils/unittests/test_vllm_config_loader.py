@@ -31,7 +31,7 @@ class TestShippedTemplates(unittest.TestCase):
             with self.subTest(config=template.name):
                 load_variant(write_filled_config(template, self.tmp), {"username": "test"})
 
-    def test_unfilled_template_lists_every_placeholder_in_one_error(self):
+    def test_unfilled_distributed_template_names_the_placeholders_it_checks(self):
         with self.assertRaises(ConfigError) as ctx:
             load_variant(DISTRIBUTED_TEMPLATE, {"username": "test"})
         self.assertEqual(
@@ -64,7 +64,7 @@ class TestShippedTemplates(unittest.TestCase):
 
 
 class TestContainerForOrchestrator(unittest.TestCase):
-    def test_merged_container_has_only_keys_docker_reads(self):
+    def test_cluster_env_volumes_and_shm_size_merge_without_aliasing(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             (tmp / "threshold.json").write_text("{}")
@@ -75,34 +75,42 @@ class TestContainerForOrchestrator(unittest.TestCase):
                 "container": {
                     "name": "vllm",
                     "image": "rocm/vllm:1",
-                    "env": {"NCCL_DEBUG": "INFO"},
-                    "runtime": {"name": "docker", "args": {"volumes": ["/models:/models:ro"]}},
+                    "env": {"B": "config"},
+                    "runtime": {"name": "docker", "args": {"volumes": ["/config:/config"]}},
                 },
                 "server_params": {"model": "/models/m", "tensor_parallel_size": 8},
                 "sweeps": {CELL: {}},
                 "runs": [CELL],
             }
             (tmp / "config.json").write_text(json.dumps(config))
-            loaded = load_config(VariantConfig, tmp / "config.json", {})
-        self.assertEqual(
-            loaded.container,
-            {
-                "lifetime": "per_run",
-                "name": "vllm",
-                "image": "rocm/vllm:1",
-                "env": {"NCCL_DEBUG": "INFO"},
-                "runtime": {
-                    "name": "docker",
-                    "args": {
-                        "network": "host",
-                        "ipc": "host",
-                        "privileged": True,
-                        "volumes": ["/models:/models:ro"],
-                        "devices": [],
+            cluster = {
+                "container": {
+                    "name": "from-cluster",
+                    "env": {"A": "cluster", "B": "cluster"},
+                    "runtime": {
+                        "name": "docker",
+                        "args": {
+                            "volumes": ["/cluster:/cluster"],
+                            "shm_size": "64g",
+                            "registry": {"username": "user", "password_file": "/home/x/registry"},
+                        },
                     },
-                },
-            },
-        )
+                }
+            }
+            loaded = load_config(VariantConfig, tmp / "config.json", cluster)
+        self.assertEqual(loaded.container["name"], "vllm")
+        self.assertEqual(loaded.container["env"], {"A": "cluster", "B": "config"})
+        self.assertEqual(loaded.container["runtime"]["args"]["volumes"], ["/config:/config"])
+        self.assertEqual(loaded.container["runtime"]["args"]["shm_size"], "64g")
+        loaded.container["env"]["A"] = "mutated"
+        loaded.container["runtime"]["args"]["volumes"].append("/extra")
+        loaded.container["runtime"]["args"]["shm_size"] = "1g"
+        loaded.container["runtime"]["args"]["registry"]["username"] = "mutated"
+        cluster_container = loaded.cluster["container"]
+        self.assertEqual(cluster_container["env"]["A"], "cluster")
+        self.assertEqual(cluster_container["runtime"]["args"]["volumes"], ["/cluster:/cluster"])
+        self.assertEqual(cluster_container["runtime"]["args"]["shm_size"], "64g")
+        self.assertEqual(cluster_container["runtime"]["args"]["registry"]["username"], "user")
 
 
 if __name__ == "__main__":
