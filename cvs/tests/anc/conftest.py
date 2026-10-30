@@ -28,7 +28,6 @@ from cvs.lib.utils_lib import (
     resolve_test_config_placeholders,
 )
 from cvs.lib import globals
-from cvs.lib import anc_lib
 
 log = globals.log
 
@@ -99,7 +98,7 @@ def cluster_dict(cluster_file):
 
 
 @pytest.fixture(scope="module")
-def config_dict(config_file, cluster_dict, pytestconfig):
+def config_dict(config_file, cluster_dict):
     '''
     Load and resolve the ANC test configuration from JSON.
 
@@ -107,35 +106,21 @@ def config_dict(config_file, cluster_dict, pytestconfig):
     (e.g. a "{home}/logs" value -> "/home/<user>/logs").
 
     Any field still left at the ``<changeme>`` placeholder is caught up front by
-    resolve_test_config_placeholders (which hard-exits with a clear message), so
-    it is not re-checked here. This fixture additionally fails the run before any
-    ANC command runs on:
-
-      - a configured anc_version that is invalid or GREATER than the version
-        parsed from anc_release_url -- the archive must be able to satisfy the
-        request, so the rule is anc_version <= url_version (a lower requested
-        version is fine; aborts before any node is contacted).
+    resolve_test_config_placeholders (which hard-exits with a clear message). This
+    fixture does NOT eagerly validate the ANC URL, version, or install path: each
+    is validated only at the point it is actually used (anc_release_url when ANC
+    must be downloaded/installed, anc_version when it is compared, ANC_INSTALL_PATH
+    when the install prefix is resolved), so a run against already-installed ANC
+    needs no URL and a bad value fails the specific test that depends on it.
 
     Collected ANC logs and the pytest HTML/log reports all land under this run's
     run_dir (resolved by RunLayout), so there is no artifact-path config to check.
-
-    Failing here (fixture setup) means a bad config costs seconds, not a full
-    suite run on the nodes.
     '''
     with open(config_file) as json_file:
         config_dict = json.load(json_file)
 
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
     log.info("ANC test config: %s", config_dict)
-
-    suite_name = getattr(pytestconfig, "_suite_name", "") or ""
-    if suite_name.startswith("anc") and "anc" in config_dict:
-        problems = anc_lib.validate_anc_config(config_dict, cluster_dict)
-        if problems:
-            pytest.fail(
-                "ANC config error (fix before running): " + "; ".join(problems),
-                pytrace=False,
-            )
 
     return config_dict
 

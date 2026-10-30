@@ -476,98 +476,35 @@ def detect_package_type(anc_release_url):
 parse_version_from_url = amdtools_lib.parse_version_from_url
 
 
-def check_version_matches_url(config_dict):
+def _configured_anc_version(anc_cfg):
     '''
-    Return a problem string if config ``anc.anc_version`` is GREATER than the
-    version parsed from ``anc.anc_release_url``, else None.
+    Return the configured ``anc.anc_version``, or None when it is unset.
 
-    The requested ``anc_version`` must be satisfiable by the archive the URL
-    points at, so the rule is ``anc_version <= url_version`` under
-    compare_anc_versions (ANC ordering: a release candidate is equal to its base
-    release, rc-vs-rc compares by number). A URL that is newer than the
-    requested version is fine (the install simply provides a version that
-    satisfies the request); only a URL OLDER than the request is a config error.
-
-    Only enforced when BOTH a version is configured and one can be parsed from
-    the URL; an omitted version or an unparseable URL yields None (no opinion).
-    "Omitted" means ONLY ``None`` or a blank/whitespace string -- a present but
-    non-blank value such as ``0`` is NOT treated as omitted (that would let it
-    bypass validation and silently disable install verification); it reaches the
-    strict check and is reported. A configured version that is present but not a
-    STRICT ANC version token (e.g. ``0``, ``1.7.0-rc.bad`` or ``release-1.7.0``)
-    IS a problem and is reported so the run fails fast instead of contacting
-    nodes with a bad config -- the strict check is required because the
-    comparator tolerates surrounding text and would otherwise silently read
-    ``release-1.7.0`` as ``1.7.0``.
-    Applies to legacy and direct packaging alike so a user cannot point a run at
-    an archive that cannot satisfy the version they asked for.
+    "Unset" is ONLY None or a blank/whitespace string -- a present but falsy
+    value such as ``0`` / ``False`` / ``"0"`` is returned as-is (set), so it
+    reaches the strict-token check rather than silently disabling version
+    comparison.
     '''
-    anc_cfg = config_dict.get("anc", {}) or {}
-    configured = anc_cfg.get("anc_version")
-    url = anc_cfg.get("anc_release_url")
-    if configured is None or (isinstance(configured, str) and not configured.strip()):
+    version = anc_cfg.get("anc_version")
+    if version is None or (isinstance(version, str) and not version.strip()):
         return None
-    if not is_strict_anc_version(configured):
-        return (
-            f"config anc.anc_version ({configured}) is not a valid ANC version; "
-            f"expected a dotted release like 1.7.0 or 1.7.0-rc.1"
-        )
-    url_version = parse_version_from_url(url)
+    return version
+
+
+def _url_too_old(anc_cfg, anc_version):
+    '''
+    Decide whether ``anc.anc_release_url`` is too old to satisfy ``anc_version``.
+
+    Returns (too_old, url_version): ``too_old`` is True ONLY when the URL carries
+    a parseable version strictly LESS than ``anc_version`` (under
+    compare_anc_versions, where a release candidate equals its base). When the
+    URL has no parseable version, (False, None) is returned -- no opinion, let the
+    install proceed. ``anc_version`` must already be a strict valid token.
+    '''
+    url_version = parse_version_from_url(anc_cfg.get("anc_release_url"))
     if not url_version:
-        return None
-    if compare_anc_versions(str(configured).strip(), url_version) > 0:
-        return (
-            f"config anc.anc_version ({configured}) is newer than the version in "
-            f"anc.anc_release_url ({url_version}); the archive cannot provide the "
-            f"requested version -- lower anc_version or point the URL at a newer archive"
-        )
-    return None
-
-
-def validate_anc_config(config_dict, cluster_dict):
-    '''
-    Collect all fail-fast ANC config problems, before any node is contacted.
-
-    Returns a list of human-readable problem strings (empty when the config is
-    usable). The caller (the ANC conftest fixture) aborts the run if non-empty,
-    so a bad config costs seconds instead of a partial run on the cluster. The
-    ``<changeme>`` placeholder is caught even earlier by the standard resolver;
-    this covers the checks that resolver does not:
-
-      - anc.anc_release_url present and non-blank (an empty URL would otherwise
-        crash install_anc with an uncaught error);
-      - anc.anc_version, when set, is a valid version token and is <= the
-        version in the URL (the archive must be able to satisfy the request);
-      - anc.ANC_INSTALL_PATH resolves to a safe, non-root prefix (the shell-safe
-        + non-root guards in resolve_anc_install_prefix are surfaced here as a
-        clean message rather than a mid-run traceback);
-      - the cluster username is safe to interpolate into remote commands.
-    '''
-    problems = []
-
-    anc_cfg = config_dict.get("anc", {}) or {}
-    url = anc_cfg.get("anc_release_url")
-    if not url or not str(url).strip():
-        problems.append("config anc.anc_release_url is not set; set it to the ANC release archive URL")
-
-    version_problem = check_version_matches_url(config_dict)
-    if version_problem:
-        problems.append(version_problem)
-
-    # Pre-resolve the install prefix so a shell-unsafe or root-resolving
-    # ANC_INSTALL_PATH aborts here with a clear message instead of raising a raw
-    # traceback deep in install / group-run. Only meaningful for tar URLs, but
-    # resolving unconditionally is harmless (deb/rpm ignore the key).
-    try:
-        resolve_anc_paths_from_config(config_dict)
-    except ValueError as exc:
-        problems.append(str(exc))
-
-    username_problem = validate_cluster_username(cluster_dict)
-    if username_problem:
-        problems.append(username_problem)
-
-    return problems
+        return False, None
+    return compare_anc_versions(url_version, str(anc_version).strip()) < 0, url_version
 
 
 # Install paths for one run: the prefix ANC is extracted under, plus the derived
@@ -631,16 +568,31 @@ def resolve_anc_paths(config_dict, pkg_type):
 def resolve_anc_paths_from_config(config_dict):
     '''
     Resolve AncPaths from config alone, detecting the package flavour from
-    anc.anc_release_url. Used by run-time consumers (version check, group run,
+    anc.anc_release_url. Used by run-time consumers (version probe, group run,
     ldconfig-independent path lookups) that need the live install location
-    without re-passing pkg_type. Falls back to the default prefix if the URL is
-    missing or its flavour cannot be determined.
+    without re-passing pkg_type.
+
+    When the URL yields a concrete flavour, that flavour decides the prefix
+    (deb/rpm -> default; tar -> honour anc.ANC_INSTALL_PATH). When the URL is
+    blank or its flavour cannot be determined, a configured ANC_INSTALL_PATH is
+    treated as a tar relocation so the probe and group-run paths hit where ANC
+    actually lives; absent that, the default prefix is used. (A deb/rpm URL still
+    yields a concrete pkg_type above, so ANC_INSTALL_PATH stays ignored there.)
     '''
-    url = config_dict.get("anc", {}).get("anc_release_url") or ""
+    # Coerce to string up front and use that coerced value everywhere below: a
+    # non-string config value (e.g. JSON anc_release_url: 123) must not reach
+    # detect_package_type, whose rsplit() would raise AttributeError and abort
+    # readiness even when ANC is installed and no URL is needed. Its real
+    # validation happens on the install path; here it only picks the pkg flavour.
+    url = str(config_dict.get("anc", {}).get("anc_release_url") or "").strip()
     try:
-        pkg_type = detect_package_type(url) if url and str(url).strip() else ""
+        pkg_type = detect_package_type(url) if url else ""
     except ValueError:
         pkg_type = ""
+    if not pkg_type:
+        raw = config_dict.get("anc", {}).get(ANC_INSTALL_PATH_KEY)
+        if raw and str(raw).strip():
+            pkg_type = "tar"
     return resolve_anc_paths(config_dict, pkg_type)
 
 
@@ -684,7 +636,7 @@ def node_release_versions(orch, anc_bin=ANC_BIN):
       ``anc-release-*`` plugin line, or None when ANC is absent, the node is
       unreachable to the parse, or the output carries no such line.
     '''
-    out_dict = orch.exec(f"{anc_bin} --content-list 2>&1 || true", timeout=120)
+    out_dict = orch.exec(f"'{anc_bin}' --content-list 2>&1 || true", timeout=120)
     print_test_output(log, out_dict)
     return {host: parse_release_version_from_content_list(output) for host, output in out_dict.items()}
 
@@ -742,7 +694,7 @@ def node_installed_versions(orch, anc_bin=ANC_BIN):
         return direct
 
     # Only the hosts with no anc-release-* line need the legacy --version probe.
-    out_dict = orch.exec(f"{anc_bin} --version 2>&1 || true", timeout=60)
+    out_dict = orch.exec(f"'{anc_bin}' --version 2>&1 || true", timeout=60)
     print_test_output(log, out_dict)
     resolved = dict(direct)
     for host in legacy_hosts:
@@ -756,9 +708,9 @@ def node_version_matches(orch, expected_version, anc_bin=ANC_BIN):
 
     A node satisfies the expected version when its installed version is
     ``>= expected_version`` under compare_anc_versions (ANC ordering: a release
-    candidate is treated as equal to its base release, and rc-vs-rc of the same
-    base compares by rc number). This lets a newer install satisfy an older
-    request and lets an installed ``1.7.0-rc.1`` satisfy a requested ``1.7.0``.
+    candidate is treated as exactly its base release and the rc number is never
+    compared). This lets a newer install satisfy an older request and lets an
+    installed ``1.7.0-rc.1`` satisfy a requested ``1.7.0``.
 
     The installed version is read via node_installed_versions, which detects
     each node's packaging generation from its own output (``--content-list``
@@ -780,72 +732,210 @@ def node_version_matches(orch, expected_version, anc_bin=ANC_BIN):
     }
 
 
-def install_anc(orch, cluster_dict, config_dict):
+def install_anc(orch, cluster_dict, config_dict, strict=False):
     '''
-    Install ANC on all nodes, dispatching by release-archive flavour.
+    Drive the ANC install / readiness decision across all expected nodes, and
+    report the outcome exactly once via update_test_result.
 
-    The packaging kind is inferred from the ``anc_release_url`` archive name
-    (``-deb-`` / ``-rpm-`` / ``-tar-``) and the matching installer is invoked.
-    When ``anc_version`` is set in config, a precheck runs first: install is
-    skipped ONLY if every expected node already SATISFIES that version
-    (installed >= requested). If any node is below it, the installer runs on all
-    nodes (already-satisfying nodes are reinstalled). After installing, the same
-    satisfies-check runs as the final step to confirm every node satisfies the
-    target version. The installed version is read per node with the packaging
-    generation auto-detected from each node's own output (``anc.py
-    --content-list`` for DIRECT 1.5.0+, falling back to ``anc.py --version`` for
-    legacy <=1.4.x) -- see node_version_matches.
+    All ANC config is validated at the point it is used here, never eagerly: the
+    release URL is parsed only when ANC must actually be downloaded, anc_version
+    is token-checked only when it is compared, and ANC_INSTALL_PATH is validated
+    when the install prefix is resolved. The run proceeds against whatever ANC is
+    already installed whenever an install is neither required nor possible.
 
-    Node coverage: ``orch.exec`` returns only reachable hosts, so any expected
-    node (from ``cluster_dict["node_dict"]``) that is unreachable is treated as
-    a failed install rather than silently passing.
+    ``strict`` selects the install suite's stricter policy (True, from
+    ``test_download_install_anc_on_nodes``) vs. the normal group/item policy
+    (False, from ``ensure_anc_ready``):
 
-    Reports pass/fail via fail_test / update_test_result (call from a test).
+      - Some expected node has NO ANC installed:
+          * anc_release_url set    -> install from it on all nodes. In strict
+            mode, if anc_version is set and the URL's version is older than it,
+            FAIL before installing (the archive cannot satisfy the request).
+          * anc_release_url blank   -> FAIL (both modes): nothing to install from.
+      - All nodes have ANC installed:
+          * anc_version unset       -> proceed with the installed version.
+          * anc_version satisfied   -> proceed.
+          * some node below it:
+              - URL version >= anc_version -> install/upgrade on all nodes.
+              - URL too old to satisfy     -> strict FAILs; normal proceeds with
+                the installed version.
+              - URL blank                  -> strict FAILs; normal proceeds with
+                the installed version.
+      - Whenever an install is actually attempted and it (download / install /
+        post-verify) fails, FAIL in both modes.
+
+    Node coverage: ``orch.exec`` returns only reachable hosts, so an unreachable
+    expected node reports no version and is treated as not-installed (the absent
+    branch), never a silent pass.
     '''
     globals.error_list = []
 
     anc_cfg = config_dict["anc"]
-    # Values interpolated into remote shell strings by the sub-installers; reject
-    # unsafe characters up front (config is trusted, boundary check). Both the
-    # release URL and the relocatable install prefix reach the shell, so both are
-    # guarded here (the prefix is re-checked at its resolve chokepoint too).
+    expected = _expected_nodes(cluster_dict)
+    # An empty node set must never report success: with no expected hosts the
+    # absent/below lists below are both empty and the decision would fall through
+    # to a silent pass without checking anything.
+    if not expected:
+        fail_test("ANC install/readiness check has no expected nodes; cluster node_dict is empty")
+        update_test_result()
+        return
+
+    # The cluster username is interpolated into remote shell commands later this
+    # session (the sudo chown in the log pull, per-user scratch dirs), so reject an
+    # unsafe value here -- the single readiness chokepoint every ANC test reaches.
+    username_problem = validate_cluster_username(cluster_dict)
+    if username_problem:
+        fail_test(username_problem)
+        update_test_result()
+        return
+
+    # Resolve the on-node anc.py location (validates ANC_INSTALL_PATH shell-safe /
+    # non-root at its resolve chokepoint); a bad path fails here rather than deep
+    # in the install.
+    try:
+        paths = resolve_anc_paths_from_config(config_dict)
+    except ValueError as exc:
+        fail_test(str(exc))
+        update_test_result()
+        return
+    log.info("ANC install location for this run: anc.py -> %s", paths.anc_bin)
+
+    # Read + print the installed version on every expected node up front so the
+    # discovered version is visible regardless of the decision taken below.
+    installed = node_installed_versions(orch, anc_bin=paths.anc_bin)
+    for host in expected:
+        version = installed.get(host)
+        if version:
+            log.info("Node %s: ANC version %s installed at %s", host, version, paths.anc_bin)
+        else:
+            log.info("Node %s: ANC not installed at %s", host, paths.anc_bin)
+
+    # anc_version is validated ONLY here, where it is compared; an invalid token
+    # fails the test with a clear message instead of silently reading as its base.
+    anc_version = _configured_anc_version(anc_cfg)
+    if anc_version is not None and not is_strict_anc_version(anc_version):
+        fail_test(
+            f"config anc.anc_version ({anc_version}) is not a valid ANC version; "
+            f"expected a dotted release like 1.7.0 or 1.7.0-rc.1"
+        )
+        update_test_result()
+        return
+
+    url = anc_cfg.get("anc_release_url")
+    has_url = bool(url and str(url).strip())
+    absent = [host for host in expected if not installed.get(host)]
+
+    if absent:
+        if not has_url:
+            fail_test(f"ANC not installed on {', '.join(absent)} and no anc_release_url provided to install from")
+            update_test_result()
+            return
+        if strict and anc_version is not None:
+            too_old, url_version = _url_too_old(anc_cfg, anc_version)
+            if too_old:
+                fail_test(
+                    f"anc.anc_release_url version ({url_version}) is too old to satisfy requested "
+                    f"anc_version ({anc_version}); point the URL at a newer archive or lower anc_version"
+                )
+                update_test_result()
+                return
+        _run_anc_install(orch, cluster_dict, config_dict, paths, anc_version, expected)
+        update_test_result()
+        return
+
+    # Every expected node has ANC installed.
+    if anc_version is None:
+        log.info("ANC installed on all nodes and no anc_version configured; proceeding with the installed version")
+        update_test_result()
+        return
+
+    below = [host for host in expected if not anc_version_satisfies(installed.get(host) or "", anc_version)]
+    if not below:
+        log.info("All nodes already satisfy ANC %s (installed >= requested); skipping install", anc_version)
+        update_test_result()
+        return
+
+    if has_url:
+        too_old, url_version = _url_too_old(anc_cfg, anc_version)
+        if not too_old:
+            log.info("ANC upgrade required on %s (installed < %s); installing from URL", ", ".join(below), anc_version)
+            _run_anc_install(orch, cluster_dict, config_dict, paths, anc_version, expected)
+            update_test_result()
+            return
+        if strict:
+            fail_test(
+                f"installed ANC version on {', '.join(below)} is below requested anc_version ({anc_version}) "
+                f"and anc.anc_release_url ({url_version}) is too old to upgrade"
+            )
+            update_test_result()
+            return
+        _proceed_with_installed(below, installed, anc_version)
+        update_test_result()
+        return
+
+    if strict:
+        fail_test(
+            f"installed ANC version on {', '.join(below)} is below requested anc_version ({anc_version}) "
+            f"and no anc_release_url to upgrade"
+        )
+        update_test_result()
+        return
+    _proceed_with_installed(below, installed, anc_version)
+    update_test_result()
+
+
+def _proceed_with_installed(below, installed, anc_version):
+    '''
+    Log that a NON-strict test proceeds with the installed ANC version on nodes
+    whose version is below ``anc_version`` when no usable URL exists to upgrade.
+
+    Normal group/item tests must not fail merely because the installed version is
+    below the requested one when it cannot be upgraded; they run against whatever
+    is present. ``below`` lists those hosts; ``installed`` maps host -> version.
+    '''
+    for host in below:
+        log.warning(
+            "Node %s: installed ANC version %s is below requested anc_version %s and there is no usable "
+            "anc_release_url to upgrade; proceeding with the installed version",
+            host,
+            installed.get(host) or "unknown",
+            anc_version,
+        )
+
+
+def _run_anc_install(orch, cluster_dict, config_dict, paths, anc_version, expected):
+    '''
+    Download + install ANC from anc.anc_release_url on all nodes, then (when
+    ``anc_version`` is set) post-verify every node now satisfies it.
+
+    The release URL is parsed here (the install point of use): its shell-safety
+    is asserted, its flavour / generation detected, and the matching sub-installer
+    invoked. The sub-installers record their own failures via fail_test; this
+    function and the caller own no duplicate reporting -- the caller issues the
+    single update_test_result. ``paths`` is the resolved on-node install location
+    the post-verify queries.
+    '''
+    anc_cfg = config_dict["anc"]
+    # The release URL and the relocatable install prefix both reach the remote
+    # shell; reject unsafe characters at the boundary (config is trusted). Only
+    # runs on the install path, where a URL is actually used.
     _assert_shell_safe(anc_cfg, ("anc_release_url", ANC_INSTALL_PATH_KEY))
-    anc_version = anc_cfg.get("anc_version")
     anc_release_url = anc_cfg["anc_release_url"]
-    flavour = detect_package_flavour(anc_release_url)
+    try:
+        flavour = detect_package_flavour(anc_release_url)
+    except ValueError as exc:
+        fail_test(f"cannot install ANC: {exc}")
+        return
     pkg_type = flavour.pkg_type
     log.info(
         "ANC package detected from archive: type=%s, layout=%s",
         pkg_type,
         "direct (1.5.0+)" if flavour.is_direct else "legacy (<=1.4.x)",
     )
-
-    # Per-install paths: tar honours a relocated anc.ANC_INSTALL_PATH; deb/rpm
-    # always resolve to the fixed default prefix. The version prechecks and
-    # post-verify below query anc.py at this resolved location so a relocated
-    # tar install is detected/verified where it actually lives.
-    paths = resolve_anc_paths(config_dict, pkg_type)
     log.info("ANC install prefix for this run: %s (anc.py -> %s)", paths.prefix, paths.anc_bin)
 
-    expected = _expected_nodes(cluster_dict)
-
-    # Precheck: skip install only when EVERY expected node already SATISFIES the
-    # target version (installed >= requested). A missing (unreachable) node
-    # yields matches.get(host) == None -> falsy, so we never skip on incomplete
-    # coverage.
-    if anc_version:
-        log.info("ANC precheck: expecting version >= %s", anc_version)
-        matches = node_version_matches(orch, anc_version, anc_bin=paths.anc_bin)
-        if expected and all(matches.get(host) for host in expected):
-            log.info(
-                "All nodes already satisfy ANC %s (installed >= requested); skipping install",
-                anc_version,
-            )
-            update_test_result()
-            return
-
     # The sub-installers only record failures via fail_test (they do NOT report
-    # the result themselves); install_anc is the single owner of
+    # the result themselves); the caller is the single owner of
     # update_test_result so the whole install is reported exactly once. Each
     # sub-installer also flags any expected node missing from its output.
     if pkg_type == "deb":
@@ -865,14 +955,13 @@ def install_anc(orch, cluster_dict, config_dict):
             _install_anc_tar(orch, cluster_dict, config_dict)
     else:
         fail_test(f"ANC '{pkg_type}' package installation is not yet supported")
-        update_test_result()
         return
 
     # Final verification: confirm the target version is now on all expected
     # nodes. Skip it if the install phase already recorded failures (a bad
     # install can't pass version verification, and this keeps the failure
     # detail focused).
-    if anc_version and not globals.error_list:
+    if anc_version is not None and not globals.error_list:
         log.info("ANC final verification: expecting version >= %s", anc_version)
         matches = node_version_matches(orch, anc_version, anc_bin=paths.anc_bin)
         for host in expected:
@@ -884,8 +973,6 @@ def install_anc(orch, cluster_dict, config_dict):
                 log.info("Node %s: ANC version %s confirmed", host, anc_version)
             else:
                 fail_test(f"ANC version verification failed on {host}: expected {anc_version} at '{paths.anc_bin}'")
-
-    update_test_result()
 
 
 def _install_anc_rpm(orch, cluster_dict, config_dict):
@@ -1496,45 +1583,22 @@ def resolve_anc_install_location(orch, cluster_dict, config_dict):
     return paths
 
 
-def _anc_installed(orch, cluster_dict, config_dict):
-    '''
-    Report whether ANC is already installed on every expected node.
-
-    "Installed" is judged at the per-install anc.py location (a relocated tar
-    prefix when configured, else the default), so a run configured for a new
-    prefix does not treat a leftover install at the old location as present.
-    When ``anc.anc_version`` is set, "installed" means every node reports a
-    satisfying version there (each node's generation is auto-detected via
-    node_version_matches); otherwise it means that anc.py is present on every
-    node.
-    '''
-    expected = _expected_nodes(cluster_dict)
-    if not expected:
-        return False
-
-    paths = resolve_anc_paths_from_config(config_dict)
-
-    anc_version = config_dict.get("anc", {}).get("anc_version")
-    if anc_version:
-        matches = node_version_matches(orch, anc_version, anc_bin=paths.anc_bin)
-        return all(matches.get(host) for host in expected)
-
-    out_dict = orch.exec(f"test -f '{paths.anc_bin}' && echo ANC_PRESENT || true", timeout=60)
-    return all("ANC_PRESENT" in (out_dict.get(host) or "") for host in expected)
-
-
 def ensure_anc_ready(orch, cluster_dict, config_dict):
     '''
     Ensure ANC is installed and ROCm libs are resolvable before a group runs.
 
-    Idempotent and session-cached: the first call installs ANC (unless already
-    present, per ``_anc_installed``) and runs ``ensure_rocm_ldconfig``; later
-    calls in the same pytest session return immediately. Each ANC group test
-    calls this first so a single-group run self-installs while a full-suite run
-    pays the setup cost once.
+    Idempotent and session-cached: the first call drives the non-strict install /
+    readiness flow (install_anc with strict=False) and runs
+    ``ensure_rocm_ldconfig``; later calls in the same pytest session return
+    immediately. Each ANC group test calls this first so a single-group run
+    self-installs while a full-suite run pays the setup cost once.
 
-    Install / ldconfig failures propagate as pytest failures (via their own
-    ``update_test_result``), which aborts the calling group test.
+    install_anc owns the whole decision: it installs only when a node is missing
+    ANC or is below a configured anc_version with a usable anc_release_url, and
+    otherwise proceeds against the already-installed version. Its single
+    ``update_test_result`` raises a pytest failure (aborting this group test)
+    when ANC is absent and uninstallable or an attempted install fails, so a
+    failed install never reaches ldconfig.
 
     After install + ldconfig succeed, the on-node install location is resolved
     and cached (resolve_anc_install_location) so every group in the session runs
@@ -1545,11 +1609,7 @@ def ensure_anc_ready(orch, cluster_dict, config_dict):
         log.info("ANC already ensured this session; skipping install/ldconfig")
         return
 
-    if _anc_installed(orch, cluster_dict, config_dict):
-        log.info("ANC already installed on all nodes; skipping install")
-    else:
-        log.info("ANC not present on all nodes; installing")
-        install_anc(orch, cluster_dict, config_dict)
+    install_anc(orch, cluster_dict, config_dict, strict=False)
 
     ensure_rocm_ldconfig(orch, cluster_dict)
 
