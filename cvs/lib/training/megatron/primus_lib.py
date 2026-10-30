@@ -25,10 +25,27 @@ import time
 
 from cvs.lib import globals
 from cvs.lib import linux_utils
+from cvs.lib.env_lib import redact_secrets
 from cvs.lib.utils_lib import fail_test
 from cvs.lib.verify_lib import verify_dmesg_for_errors
 
 log = globals.log
+
+
+def _hf_token_export_line(token_file):
+    """Shell line that exports ``HF_TOKEN`` by reading ``token_file`` on the
+    node the command runs on (as SGLang/vLLM/jaxmaxtext do).
+
+    Embedding HF_TOKEN's value directly in a shell command would print it,
+    because the orchestrator logs the full command. A missing or empty file
+    exports an empty HF_TOKEN and the run continues.
+    """
+    path = str(token_file or '').strip()
+    if not path:
+        return 'export HF_TOKEN=; '
+    quoted = shlex.quote(path)
+    return f"if [ -f {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; else export HF_TOKEN=; fi; "
+
 
 # ---------------------------------------------------------------------------
 # Primus-Megatron log patterns
@@ -105,6 +122,75 @@ def _parse_mean_from_iterations(log_text, pattern, skip_warmup=True):
     return str(sum(values) / len(values))
 
 
+def _format_primus_cli_overrides(overrides):
+    """Normalize primus_cli_overrides into a CLI arg string.
+
+    Accepts a pre-formatted string (used as-is) or a dict rendered as
+    ``--flag value`` pairs in insertion order.
+    """
+    if isinstance(overrides, dict):
+        return ' '.join(f'--{key} {value}' for key, value in overrides.items())
+    return str(overrides or '')
+
+
+def _decoder_layer_split_flags(total_layers, stages):
+    """Return first/last decoder-layer flags with an integer middle split.
+
+    For pipeline stages > 2, pick equal first/last layer counts that are as
+    close as possible to uniform split while keeping
+    (total_layers - first - last) divisible across middle stages.
+    """
+    n = int(stages)
+    total = int(total_layers)
+    if n < 2 or total <= 0:
+        return ""
+    if total % n == 0:
+        return ""
+    if n == 2:
+        first = total // 2
+        last = total - first
+        return f' --decoder_first_pipeline_num_layers {first} --decoder_last_pipeline_num_layers {last}'
+
+    ideal = total / n
+    candidates = []
+    for first_last in range(1, total):
+        middle_total = total - (2 * first_last)
+        if middle_total <= 0:
+            continue
+        if middle_total % (n - 2) != 0:
+            continue
+        middle_each = middle_total // (n - 2)
+        if middle_each <= 0:
+            continue
+        candidates.append((abs(first_last - ideal), first_last))
+
+    if not candidates:
+        return None
+
+    _, chosen = min(candidates)
+    return f' --decoder_first_pipeline_num_layers {chosen} --decoder_last_pipeline_num_layers {chosen}'
+
+
+def _auto_primus_405_layer_split_flags(model_size, pipeline_stages, primus_cli_overrides):
+    """Auto-add 405B decoder first/last layer flags unless user set them."""
+    size_text = str(model_size or "").strip()
+    if size_text != "405":
+        return ""
+    overrides = str(primus_cli_overrides or "")
+    if "--decoder_first_pipeline_num_layers" in overrides or "--decoder_last_pipeline_num_layers" in overrides:
+        return ""
+    split_flags = _decoder_layer_split_flags(total_layers=126, stages=pipeline_stages)
+    if split_flags is None:
+        stages_text = str(pipeline_stages)
+        raise ValueError(
+            "Unable to derive integer 405B decoder first/last pipeline layer split for "
+            f"pipeline_parallelism={stages_text}. "
+            "Set --decoder_first_pipeline_num_layers and "
+            "--decoder_last_pipeline_num_layers in train_params.primus_cli_overrides."
+        )
+    return split_flags
+
+
 def _parse_step_losses(log_text):
     """Return {step: lm_loss} from a Primus training log.
 
@@ -133,7 +219,6 @@ class PrimusTrainingJob:
         self,
         orch,
         variant_config,
-        hf_token,
         micro_batch_size,
         global_batch_size,
         precision=None,
@@ -145,7 +230,6 @@ class PrimusTrainingJob:
     ):
         self.orch = orch
         self.model_name = variant_config.train_params['model_name']
-        self.hf_token = hf_token
         self.tune_model_params = tune_model_params
         self.distributed_training = distributed_training
 
@@ -195,6 +279,8 @@ class PrimusTrainingJob:
         self.primus_cli = tdict['primus_cli']
         self.gpu_arch = variant_config.gpu_name
 
+        self.hf_token_file = tdict['hf_token_file']
+
         pdict = dict(variant_config.train_params)
         pdict.update(sweep_overrides or {})
         pdict['micro_batch_size'] = micro_batch_size
@@ -209,14 +295,18 @@ class PrimusTrainingJob:
         pdict.setdefault('training_iterations', 10)
         pdict.setdefault('tensor_parallelism', '1')
         pdict.setdefault('pipeline_parallelism', '1')
+        pdict.setdefault('primus_cli_overrides', '')
+        pdict.setdefault('model_size', '70')
 
         self.tokenizer_model = pdict['tokenizer_model']
+        self.model_size = pdict['model_size']
         self.precision = pdict['precision']
         self.micro_batch_size = pdict['micro_batch_size']
         self.global_batch_size = pdict['global_batch_size']
         self.iterations = int(pdict['training_iterations'])
         self.tensor_parallelism = pdict['tensor_parallelism']
         self.pipeline_parallelism = pdict['pipeline_parallelism']
+        self.primus_cli_overrides = _format_primus_cli_overrides(pdict['primus_cli_overrides'])
 
         raw_label = run_label or f"{self.model_name}_mbs{micro_batch_size}_gbs{global_batch_size}_{self.precision}"
         self.run_label = re.sub(r'[^A-Za-z0-9._-]', '_', str(raw_label))
@@ -368,7 +458,7 @@ class PrimusTrainingJob:
         exp_path = self._exp_config_path()
         log.info('Primus EXP config path: %s', exp_path)
 
-        env_exports = f'export HF_TOKEN="{self.hf_token}"; export LOG_DIR={self.log_dir}; '
+        env_exports = _hf_token_export_line(self.hf_token_file) + f'export LOG_DIR={self.log_dir}; '
 
         if re.search(r'MI3(00|25)X', self.gpu_arch, re.I):
             env_exports += 'export PRIMUS_TURBO_ATTN_V3_ATOMIC_FP32=1; export NVTE_CK_IS_V3_ATOMIC_FP32=1; '
@@ -397,6 +487,17 @@ class PrimusTrainingJob:
             batch_args += f' --load {self.checkpoint_dir}/checkpoints'
             if self.distributed_training:
                 batch_args += ' --auto_detect_ckpt_format'
+        try:
+            batch_args += _auto_primus_405_layer_split_flags(
+                model_size=self.model_size,
+                pipeline_stages=self.pipeline_parallelism,
+                primus_cli_overrides=self.primus_cli_overrides,
+            )
+        except ValueError as err:
+            fail_test(str(err))
+            raise
+        if self.primus_cli_overrides:
+            batch_args += f' {self.primus_cli_overrides}'
 
         if self.distributed_training:
             for i in range(len(self.orch.hosts)):
@@ -428,8 +529,8 @@ class PrimusTrainingJob:
     def _start_primus_job(self):
         """Launch the Primus training job (distributed or single-node)."""
         log.info('start primus training job')
-        log.info('%s', self.job_cmd_list)
-        log.info('%s', self.job_cmd)
+        log.info('%s', [redact_secrets(c) for c in self.job_cmd_list])
+        log.info('%s', redact_secrets(self.job_cmd))
 
         exp_full_path = f'{self.primus_root}/{self._exp_config_path()}'
         out_dict = self.orch.exec(f'test -f {exp_full_path} && echo EXISTS || echo MISSING')

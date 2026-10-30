@@ -50,7 +50,9 @@
     "micro_batch_size": "4",
     "global_batch_size": "128",
     "precision": "BF16",
-    "training_iterations": "<changeme>"
+    "training_iterations": "<changeme>",
+    "_primus_cli_overrides_comment": "Optional Primus-only extra CLI args. Set as a raw string (for example \"--use_backend triton\") or override per sweep combination with the same key.",
+    "primus_cli_overrides": {}
   },
   "_smoke_comment": "test_smoke loads the model and runs a small fixed cell without metric gating. enabled=false skips it.",
   "smoke": {

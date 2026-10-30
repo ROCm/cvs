@@ -27,9 +27,16 @@ In addition to the :ref:`common training prerequisites <training-common-prerequi
 - A Megatron-LM image must provide Megatron-LM at ``/workspace/Megatron-LM``. A
   Primus image, whose name contains ``primus``, uses the in-image YAML under
   ``examples/megatron/configs/{gpu_arch}/``.
-- A Hugging Face token file at ``paths.hf_token_file``. The nodes need network
-  access to download the tokenizer. Gated models such as LLaMA and DeepSeek also
-  need access granted on huggingface.co.
+- ``paths.hf_token_file`` is read inside the container on each node when the
+  tokenizer download or training command runs. CVS does not read the file on
+  the machine running ``cvs run``. The path must be mounted into the container.
+  The packaged ``/home/{user-id}/.hf_token`` path works when that home directory
+  is bind-mounted. If the file is not visible inside the container, Megatron
+  fails that stage and sets ``lifecycle.failed``, so later stages are skipped.
+  Primus exports an empty ``HF_TOKEN`` and the run continues. The nodes need
+  network access to download the tokenizer.
+  Gated models such as LLaMA and DeepSeek also need access granted on
+  huggingface.co.
 - For a distributed run, use a shared filesystem reachable from every node for
   ``paths.data_cache_dir``, logs, and scripts.
 
@@ -54,7 +61,7 @@ Follow these steps to set up the training configuration.
      cvs config copy training/megatron/mi300x_megatron_llama-3.1-8b_single_threshold.json --output ~/cvs_workspace/training/megatron/mi300x_megatron_llama-3.1-8b_single_threshold.json
      # or mi325x_megatron_llama-3.1-8b_single_threshold.json for MI325X
 
-3. Replace every ``<changeme>`` with cluster-specific values. For MI300X/MI325X shared templates, set ``gpu_name`` to ``MI300X`` or ``MI325X`` and ``threshold_json`` to the matching ``mi300x_*`` or ``mi325x_*`` threshold file. Also set ``container.image`` and the ``container.env`` NIC fields (templates ship example interface/HCA/GID/debug strings that still contain ``<changeme>`` — keep or edit the example and remove the placeholder). Packaged ``sweep.combinations`` cells already set ``training_iterations`` to ``"20"`` (that overlay wins over ``train_params.training_iterations``). Change the overlay per combo if needed. Do not add ``NNODES``; the suite sets it from the cluster host count at ``docker run``. Distributed configs also need ``MASTER_ADDR``, ``NCCL_IB_HCA``, and a shared ``paths.data_cache_dir``.
+3. Replace every ``<changeme>`` with cluster-specific values. For MI300X/MI325X shared templates, set ``gpu_name`` to ``MI300X`` or ``MI325X`` and ``threshold_json`` to the matching ``mi300x_*`` or ``mi325x_*`` threshold file. Also set ``container.image`` and the ``container.env`` NIC fields (templates ship example interface/HCA/GID/debug strings that still contain ``<changeme>`` — keep or edit the example and remove the placeholder). Packaged ``sweep.combinations`` cells already set ``training_iterations`` to ``"20"`` (that overlay wins over ``train_params.training_iterations``). Change the overlay per combo if needed. ``train_params.primus_cli_overrides`` is optional and only applies to Primus runs (string or key/value map). Do not add ``NNODES``; the suite sets it from the cluster host count at ``docker run``. Distributed configs also need ``MASTER_ADDR``, ``NCCL_IB_HCA``, and a shared ``paths.data_cache_dir``.
 4. Change any other parameters relevant to your testing requirements.
 
 The same folder also has DeepSeek V2 Lite (single and distributed; Megatron-LM or Primus) and Llama 3.1 405B (distributed, **Primus only**). See `Config and threshold files`_ for the full inventory.
@@ -102,6 +109,16 @@ The same ordered test stages run for both backends. ``_make_training_job`` in ``
      - Same
 
 Logs for both backends use per-node files: ``<log_dir>/{megatron-logs|primus-logs}/<combo_id>/out-node<N>/training.log``. On disk ``<combo_id>`` is the sweep key with ``=`` and ``,`` replaced by ``_`` (for example ``MBS_4_GBS_128_PRECISION_FP8``).
+
+For Primus 405B distributed runs, CVS auto-adds
+``--decoder_first_pipeline_num_layers`` and
+``--decoder_last_pipeline_num_layers`` only when 126 layers are not evenly
+divisible by ``train_params.pipeline_parallelism`` (pipeline stage count).
+Example: with ``pipeline_parallelism=4``, it appends ``31`` and ``31`` so
+middle stages get ``32`` and ``32``. ``pipeline_parallelism`` may differ from
+cluster node count when data parallelism is greater than 1. If you set either
+decoder split flag in ``train_params.primus_cli_overrides``, your value is
+used as-is.
 
 .. _megatron-run-tests:
 
@@ -254,7 +271,9 @@ Tests run in this pinned order. ``[combo]`` = one row per enabled sweep combo.
      - once
      - Tear the container down
 
-A training failure is isolated to that combo's ``test_training`` row; other combos still run. When a combo's training does not complete, its downstream ``test_metric`` and ``test_loss_curve`` rows are skipped. If an early lifecycle stage fails, all subsequent stages are skipped using ``lifecycle.failed``.
+A training failure is isolated to that combo's ``test_training`` row; other combos still run. When a combo's training does not complete, its downstream ``test_metric`` and ``test_loss_curve`` rows are skipped. If an early lifecycle stage fails, all subsequent stages are skipped using ``lifecycle.failed``. ``test_teardown`` still runs.
+
+On Megatron, a token file that is missing, empty, or not mounted inside the container is one of those early failures. DeepSeek and Mixtral fail in ``test_download_tokenizer``; other models fail in ``test_smoke``. If ``smoke.enabled`` is ``false``, the same check runs in ``test_training`` instead: that combo fails without setting ``lifecycle.failed``, its metric and loss-curve rows are skipped, and other combos still run. Primus exports an empty ``HF_TOKEN`` and does not fail the suite when the file is not visible.
 
 On a training failure, lingering GPU processes are killed (``stop_training_processes``) so the next combo does not launch on top of them.
 

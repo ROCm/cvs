@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Single-node 8-GPU guide configs `mi300x_rccl_single_node_config.json` and `mi350x_rccl_single_node_config.json`.
 - Platform `test_check_be_nic_link_speed` checks backend NIC link speed against `nic_link_speed` (default `400000` Mb/s). Existing configs fail on NICs running at another speed, or on a node with fewer backend NICs unless `nic_link_interfaces` is set.
 - Platform host config `fw_dict` includes `PLDM_BUNDLE`. Set it to the version reported by `amd-smi firmware` before the GPU firmware check; the check looks up every firmware ID `amd-smi` reports.
+- Primus Megatron configs accept `train_params.primus_cli_overrides` as either a raw CLI string or a JSON object rendered as `--key value` pairs. Primus 405B auto-splits decoder first/last pipeline layers from `train_params.pipeline_parallelism` when needed.
 
 ### Changed
 
@@ -53,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Aorta script mode (the `aorta_single` default) now applies `training_overrides`; previously runs silently used the YAML values. The applied config is saved as `effective_config.yaml`.
 - Kernel-log health checks no longer echo each node's full dmesg or journal into the run log and HTML report. Each scan logs one summary line, and detected errors are still reported.
+- Megatron and Primus no longer write the Hugging Face token into training, tokenizer-download, or job-launch commands. Each node reads `paths.hf_token_file` inside the container when that command runs. If that file is missing, empty, or not mounted, Megatron fails the test and the remaining training stages are skipped. Primus exports an empty `HF_TOKEN` and the run continues.
 - ibperf:
   - Runs on nodes with fewer than 8 GPUs instead of failing with `KeyError: 'card4'`.
   - `verify_bw` now enforces `expected_results`; previously tests passed regardless of measured bandwidth. Configs with `verify_bw` set to `"True"` may now fail; re-baseline thresholds for your cluster.
