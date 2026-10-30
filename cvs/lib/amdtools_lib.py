@@ -70,8 +70,10 @@ _URL_VERSION_RE = re.compile(VERSION_BODY + VERSION_END)
 _URL_VERSION_CANDIDATE_RE = re.compile(r"\d+\.\d+")
 
 # Match a dotted-numeric release with its optional ``-rc.<n>`` suffix as ONE
-# token (groups: 1 = base, 2 = rc number). The rc is part of the same token, so
-# it is never lost when the version is embedded in text.
+# token (groups: 1 = base, 2 = rc number). Matching the rc as part of the same
+# token means an rc-form version is recognised rather than falling through to
+# None -- but the rc number is DISCARDED: a release candidate is treated as
+# exactly its base release everywhere (see parse_version / compare_versions).
 _VERSION_RE = re.compile(VERSION_BODY_GROUPED + VERSION_END)
 
 # AMD tool releases changed their packaging in the 1.5.0 series:
@@ -283,7 +285,9 @@ def is_strict_version(version):
     Unlike parse_version (which tolerates surrounding text for reading a
     version off node/URL output), this is the strict gate for a USER-configured
     value: ``1.7.0`` / ``1.7.0-rc.1`` pass; ``1.7.0-rc.bad`` / ``release-1.7.0``
-    / ``1.7.0-RC.2`` / ``7`` do not. Returns False for blank/None.
+    / ``1.7.0-RC.2`` / ``7`` do not. An rc-form token is accepted (it means its
+    base release -- the rc number is ignored downstream, see parse_version).
+    Returns False for blank/None.
     '''
     if not version:
         return False
@@ -292,19 +296,20 @@ def is_strict_version(version):
 
 def parse_version(version):
     '''
-    Parse a tool version string into a comparable ``(base_tuple, rc)`` pair.
+    Parse a tool version string into its comparable base-release tuple.
 
-    ``base_tuple`` is the dotted-numeric release (e.g. ``(1, 7, 0)``); ``rc`` is
-    the release-candidate number when the version carries a ``-rc.<n>`` suffix,
-    else None (a final/base release). Returns None when no dotted-numeric version
-    is present -- a bare integer does NOT qualify. Surrounding text is tolerated:
-    the first ``X.Y[.Z...]`` token (with any attached ``-rc.<n>``) is read.
+    Returns the dotted-numeric release (e.g. ``(1, 7, 0)``). Any ``-rc`` or
+    ``-rc.<n>`` suffix is STRIPPED and ignored -- a release candidate is treated
+    as exactly its base release, so the rc number is never carried or compared.
+    Returns None when no dotted-numeric version is present -- a bare integer does
+    NOT qualify. Surrounding text is tolerated: the first ``X.Y[.Z...]`` token
+    (with any attached ``-rc.<n>``) is read and reduced to its base.
 
     Examples:
-      "1.7.0"                -> ((1, 7, 0), None)
-      "1.7.0-rc.1"           -> ((1, 7, 0), 1)
-      "ANC 1.7.0-rc.1 build" -> ((1, 7, 0), 1)
-      "1.4.9"                -> ((1, 4, 9), None)
+      "1.7.0"                -> (1, 7, 0)
+      "1.7.0-rc.1"           -> (1, 7, 0)
+      "ANC 1.7.0-rc.1 build" -> (1, 7, 0)
+      "1.4.9"                -> (1, 4, 9)
       "7"                    -> None
     '''
     if not version:
@@ -312,9 +317,7 @@ def parse_version(version):
     match = _VERSION_RE.search(str(version))
     if not match:
         return None
-    base = tuple(int(part) for part in match.group(1).split("."))
-    rc = int(match.group(2)) if match.group(2) is not None else None
-    return (base, rc)
+    return tuple(int(part) for part in match.group(1).split("."))
 
 
 def compare_versions(left, right):
@@ -322,35 +325,27 @@ def compare_versions(left, right):
     Three-way compare two tool version strings: -1 / 0 / 1 for left <, ==, >.
 
     Ordering rules (AMD-tool-specific, intentionally NOT semver):
-      - Base releases compare numerically, zero-padded to equal length
-        (``1.6.0 < 1.7.0 < 1.8.0``).
-      - A release candidate is treated as EQUAL to its own base release
-        (``1.7.0-rc.1 == 1.7.0``) so an installed rc satisfies a request for the
-        matching base and vice versa.
-      - EXCEPT two candidates of the SAME base compare by rc number
-        (``1.7.0-rc.1 < 1.7.0-rc.2 < 1.7.0-rc.10``).
+      - Only the base release is compared, numerically and zero-padded to equal
+        length (``1.6.0 < 1.7.0 < 1.8.0``).
+      - A release candidate is treated as EXACTLY its base release: any ``-rc.<n>``
+        suffix is stripped before comparing and the rc number is NEVER compared.
+        So ``1.7.0-rc.1 == 1.7.0`` and ``1.7.0-rc.1 == 1.7.0-rc.2`` (both reduce
+        to ``1.7.0``).
 
     Raises ValueError if either string carries no parseable version, so callers
     can surface a clear config error rather than compare silently wrong.
     '''
-    lv = parse_version(left)
-    rv = parse_version(right)
-    if lv is None or rv is None:
+    l_base = parse_version(left)
+    r_base = parse_version(right)
+    if l_base is None or r_base is None:
         raise ValueError(f"unparseable version: {left!r} vs {right!r}")
-    (l_base, l_rc), (r_base, r_rc) = lv, rv
 
     width = max(len(l_base), len(r_base))
     l_padded = l_base + (0,) * (width - len(l_base))
     r_padded = r_base + (0,) * (width - len(r_base))
-    if l_padded != r_padded:
-        return -1 if l_padded < r_padded else 1
-
-    # Same base: rc ranks equal to base, but rc-vs-rc compares by number.
-    if l_rc is not None and r_rc is not None:
-        if l_rc == r_rc:
-            return 0
-        return -1 if l_rc < r_rc else 1
-    return 0
+    if l_padded == r_padded:
+        return 0
+    return -1 if l_padded < r_padded else 1
 
 
 def version_satisfies(installed, required):

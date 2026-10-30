@@ -23,9 +23,18 @@ class TestVersionsAndConfig(unittest.TestCase):
     def test_version_api_and_url_names(self):
         self.assertTrue(amdtools_lib.is_strict_version("1.8.1-rc.2"))
         self.assertFalse(amdtools_lib.is_strict_version("1.8.1-RC.2"))
-        self.assertEqual(amdtools_lib.parse_version("arc 1.8.1-rc.2"), ((1, 8, 1), 2))
+        self.assertFalse(amdtools_lib.is_strict_version("1.8.1-rc.bad"))
+        # rc suffix is stripped to its base: parse_version returns just the base tuple.
+        self.assertEqual(amdtools_lib.parse_version("arc 1.8.1-rc.2"), (1, 8, 1))
+        self.assertEqual(amdtools_lib.parse_version("1.8.1"), (1, 8, 1))
+        self.assertIsNone(amdtools_lib.parse_version("7"))
         self.assertEqual(amdtools_lib.compare_versions("1.8.1", "1.8.0"), 1)
+        # An rc compares EQUAL to its base, and rc-vs-rc of the same base is equal.
+        self.assertEqual(amdtools_lib.compare_versions("1.8.1-rc.1", "1.8.1"), 0)
+        self.assertEqual(amdtools_lib.compare_versions("1.8.1-rc.1", "1.8.1-rc.2"), 0)
+        self.assertEqual(amdtools_lib.compare_versions("1.6.0", "1.7.0"), -1)
         self.assertTrue(amdtools_lib.version_satisfies("1.8.1", "1.8.1-rc.2"))
+        self.assertTrue(amdtools_lib.version_satisfies("1.8.1-rc.1", "1.8.1-rc.2"))
         for name in (
             "arc-tool-heliosr-1.8.1.tar.gz",
             "arc-tool-heliosr_1.8.1_amd64.deb",

@@ -21,12 +21,12 @@ Set up config
 
      cvs config copy anc/anc_config.json --output ~/cvs_workspace/anc/anc_config.json
 
-2. Replace every ``<changeme>`` placeholder:
+2. Optionally set the install-related keys (all three are optional):
 
-   - ``anc_release_url`` — URL of the ANC release archive to download and install
-   - ``anc_version`` — minimum required ANC version (the version in ``anc_release_url`` must be >= this). Install is skipped only when **all** expected nodes already satisfy it; if any node is below the minimum, the installer runs across all nodes.
+   - ``anc_release_url`` — URL of the ANC release archive to download and install. Set it only when ANC must be installed (absent on a node, or below ``anc_version`` with a URL new enough to upgrade); leave blank when ANC is preinstalled.
+   - ``anc_version`` — optional minimum ANC version. When set, a node below it is upgraded only if ``anc_release_url`` can satisfy it; otherwise the ``anc_installation`` suite fails, while the group/item suites proceed with the installed version.
 
-3. Optionally set ``ANC_INSTALL_PATH`` for relocatable **tar** installs. Deb and rpm packages ignore this key and always install under ``/opt/amdtools``.
+3. Optionally set ``ANC_INSTALL_PATH`` for relocatable **tar** installs; each suite also probes this path for an existing install. Deb and rpm packages ignore this key and always install under ``/opt/amdtools``.
 
 For the complete field reference including release URL, install path, and log collection options, see :doc:`/reference/configuration-files/burn-in-diag/anc`.
 
