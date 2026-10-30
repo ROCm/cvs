@@ -82,6 +82,7 @@ The following fields must be customized to match your cluster and hardware befor
 * ``container.image`` — Megatron-LM or Primus ROCm image on all nodes.
 * ``train_params.training_iterations`` — default training steps (for example ``"30"``). Each ``sweep.combinations`` body sets ``training_iterations`` (packaged value ``"20"``); that overlay wins for that cell.
 * ``train_params.micro_batch_size`` / ``global_batch_size`` / ``precision`` — required when ``sweep`` is omitted. Packaged files already set them; with a declared sweep the combination key supplies those values for each cell.
+* ``train_params.primus_cli_overrides`` — optional Primus-only extra ``primus-cli`` args. Set as a raw string (for example ``"--use_backend triton"``) or as a JSON object rendered to ``--key value`` pairs.
 * ``paths.hf_token_file`` — Hugging Face token file, read inside the container on each node when the tokenizer download or training command runs. CVS does not read it on the machine running ``cvs run``. The path must be mounted into the container. If the file is not visible inside the container, Megatron fails that stage and sets ``lifecycle.failed``, so later stages are skipped. Primus exports an empty ``HF_TOKEN`` and the run continues.
 * ``container.env.NCCL_SOCKET_IFNAME`` / ``GLOO_SOCKET_IFNAME`` / ``NCCL_IB_GID_INDEX`` / ``NCCL_DEBUG`` — templates include example values plus ``<changeme>`` (for example ``enp193s0f1np1 <changeme>``, ``3 <changeme>``, ``ERROR <changeme>``). Remove ``<changeme>`` and keep or edit the example. Required on single-node and distributed.
 * ``sweep.runs`` — combination keys to execute (same ``MBS=…,GBS=…,PRECISION=…`` strings as in ``sweep.combinations``). Must be non-empty when ``combinations`` is present.
@@ -419,6 +420,19 @@ Llama 3.1 405B
 
 Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X; distributed only). Unlike the other models, 405B runs on **Primus only**: ``container.image`` must contain ``primus``. Megatron-LM does not support 405B.
 
+For Primus 405B, when total decoder layers (126) are not evenly divisible by
+``train_params.pipeline_parallelism`` (pipeline stage count), CVS
+automatically appends
+``--decoder_first_pipeline_num_layers`` and
+``--decoder_last_pipeline_num_layers`` to keep middle stages evenly split.
+Example: with ``pipeline_parallelism=4``, CVS appends ``31`` and ``31`` so the
+middle stages get ``32`` and ``32``. ``pipeline_parallelism`` may differ from
+node count when data parallelism is greater than 1. If layers are already
+evenly divisible, those flags are not added. If no integer first/last split is
+possible for the configured pipeline stage count, the test fails and asks you
+to set both flags explicitly in ``primus_cli_overrides``. User-provided decoder
+split flags in ``primus_cli_overrides`` take precedence.
+
 .. dropdown:: ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (representative)
 
   .. code:: json
@@ -504,6 +518,11 @@ Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X; 
    * - ``training_iterations``
      - ``<changeme>``
      - Training steps.
+   * - ``primus_cli_overrides``
+     - ``{}``
+     - Optional Primus-only extra CLI args appended to ``primus-cli direct``.
+       Accepts either a raw string (for example ``"--use_backend triton"``)
+       or an object rendered as ``--key value`` pairs.
 
 
 Common parameters
@@ -777,3 +796,4 @@ A metric is gated only when ``enforce_thresholds`` is ``true`` and the cell has 
      - if true, Megatron ``test_metric`` skips the metric when it is missing or None; a present value is still gated by ``kind``.
 
 Tracked metrics (namespace ``training.*``): ``throughput_per_gpu``, ``tokens_per_gpu``, ``elapsed_time_per_iteration``, ``mem_usage`` (Megatron-LM ``mem usages:``; Primus does not emit it; packaged specs set ``optional: true``), and on distributed configs ``scaling_efficiency_pct`` (``kind: info`` and ``optional: true`` in packaged files).
+
