@@ -60,7 +60,7 @@ See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on runni
               "best_gpu0_bw": "480.0",
               "32_cu_local_read": "1650",
               "32_cu_local_write": "1250.0",
-              "32_cu_local_copy": "1250.0",
+              "32_cu_local_copy": "800.0",
               "32_cu_rem_read": "48.0",
               "32_cu_rem_write": "48.0",
               "32_cu_rem_copy": "48.0"
@@ -251,7 +251,7 @@ TransferBench
      - 1250.0
      - Local memory write bandwidth (GB/s) using 32 CUs
    * - ``32_cu_local_copy``
-     - 1250.0
+     - 800.0
      - Local memory copy bandwidth (GB/s) using 32 CUs
    * - ``32_cu_rem_read``
      - 48.0
