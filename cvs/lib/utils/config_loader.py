@@ -33,6 +33,7 @@ xDiT uses it as an opt-in for runtime Hugging Face snapshot download.
 
 from __future__ import annotations
 
+import copy
 import getpass
 import json
 import re
@@ -286,7 +287,8 @@ def load_config(model_cls, config_path, cluster):
     cluster file's container block with the config's `container.model_dump()`
     merged onto it, the config winning on shared keys, or None when the model
     has no container. Cluster list values such as volumes are replaced here;
-    the container orchestrator adds its own defaults to them.
+    the container orchestrator adds its own defaults to them. The merged
+    container is a copy, so changing it does not change the cluster.
     """
     if not isinstance(cluster, dict):
         with open(cluster) as fp:
@@ -300,5 +302,8 @@ def load_config(model_cls, config_path, cluster):
     except ValidationError as exc:
         raise ConfigError(config_path, _problem_lines(exc)) from None
     spec = getattr(config, "container", None)
-    container = None if spec is None else _deep_merge(cluster.get("container") or {}, spec.model_dump())
+    if spec is None:
+        container = None
+    else:
+        container = copy.deepcopy(_deep_merge(cluster.get("container") or {}, spec.model_dump()))
     return LoadedConfig(config, cluster, container)
