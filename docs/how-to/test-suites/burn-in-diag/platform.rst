@@ -60,6 +60,7 @@ You can list all available host check test cases using the CLI:
     - test_check_be_nic_link_speed
     - test_check_pci_acs
     - test_check_dmesg_driver_errors
+    - test_check_ifoe_sw_details
 
 Run the platform host check suite:
 

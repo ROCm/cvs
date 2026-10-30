@@ -656,5 +656,153 @@ class TestRecordGroup(unittest.TestCase):
         self.assertEqual(results['groups']['iommu_pt']['nodes']['n1']['status'], 'pass')
 
 
+_IFOE_DEVICE = (
+    'BDF                              : 0001:01:00.1\n  Status:\n    Firmware version               : 0.14.15\n'
+)
+
+
+class TestIfoeFirmware(unittest.TestCase):
+    def test_compare_match_passes(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _IFOE_DEVICE}, '0.14.15')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n1']['items_summary'], '0.14.15')
+        self.assertEqual(messages, [])
+
+    def test_compare_mismatch_fails_with_detected(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _IFOE_DEVICE}, '0.14.16')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], '0.14.15')
+        self.assertEqual(
+            messages,
+            ['Installed IFoE firmware version 0.14.15 not matching expected version 0.14.16 on node n1'],
+        )
+
+    def test_inventory_wellformed_passes(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _IFOE_DEVICE}, '')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n1']['items_summary'], '0.14.15')
+        self.assertEqual(messages, [])
+
+    def test_inventory_garbled_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': 'Firmware version : not-a-version!!\n'}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'malformed')
+        self.assertIn('not a well-formed version', messages[0])
+
+    def test_absent_node_is_na_without_failure(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': 'CVS_IFOE_ABSENT\n'}, '0.14.15')
+        self.assertEqual(records['n1']['status'], 'na')
+        self.assertEqual(records['n1']['items_summary'], 'not applicable')
+        self.assertEqual(messages, [])
+
+    def test_denied_sudo_fails_as_denial(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware(
+            {'n1': 'CVS_CMD_DENIED sudo: a password is required\n'}, ''
+        )
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'denied')
+        self.assertEqual(messages, ['IFoE firmware version could not be read on node n1'])
+
+    def test_unreadable_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': ''}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['IFoE firmware version could not be read on node n1'])
+
+    def test_reader_missing_fails_even_with_expected_version(self):
+        # The module is loaded (past the gate) but afmctl could not be resolved: this
+        # is a read failure, not an absent module, so it must fail rather than record
+        # NA and silently skip the configured-version check.
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': 'CVS_IFOE_READER_MISSING\n'}, '0.24.2')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'unavailable')
+        self.assertEqual(messages, ['IFoE firmware version reader not found on node n1'])
+
+    def test_multi_device_all_matching_passes(self):
+        text = _IFOE_DEVICE + 'BDF : 0004:01:00.1\n    Firmware version : 0.14.15\n'
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '0.14.15')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(messages, [])
+
+    def test_multi_device_divergent_fails(self):
+        text = _IFOE_DEVICE + 'BDF : 0004:01:00.1\n    Firmware version : 0.14.16\n'
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'divergent')
+        self.assertIn('differs across devices', messages[0])
+        self.assertIn('0.14.15', messages[0])
+        self.assertIn('0.14.16', messages[0])
+
+    def test_banner_mentioning_firmware_is_not_a_device(self):
+        # A non-device line that merely contains the words must not count as a second
+        # device and trip the divergence check (regex is line-anchored).
+        text = 'AFM tool - Firmware version : 9.9.9 build\n' + _IFOE_DEVICE
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '0.14.15')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(messages, [])
+
+    def test_partial_device_missing_firmware_fails_inventory(self):
+        # Second BDF block reports no firmware line: the node has 2 devices but only
+        # 1 version, so it must fail rather than pass on the first device's value.
+        text = _IFOE_DEVICE + 'BDF                              : 0004:01:00.1\n  Status:\n'
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'incomplete')
+        self.assertIn('missing for 1 of 2 device(s)', messages[0])
+
+    def test_partial_device_missing_firmware_fails_exact_match(self):
+        # The same gap must fail in exact-match mode, not pass because the present
+        # device happens to match the expected version.
+        text = _IFOE_DEVICE + 'BDF                              : 0004:01:00.1\n  Status:\n'
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '0.14.15')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'incomplete')
+        self.assertIn('missing for 1 of 2 device(s)', messages[0])
+
+
+class TestIfoeKmod(unittest.TestCase):
+    def test_compare_match_passes(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'version:        1.0.0\n'}, '1.0.0')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(messages, [])
+
+    def test_inventory_wellformed_passes(self):
+        text = 'version:        1.0.0-5\nsrcversion:     ABCDEF0123456789\n'
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': text}, '')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n1']['items_summary'], '1.0.0-5')
+        self.assertEqual(messages, [])
+
+    def test_absent_node_is_na(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'CVS_IFOE_ABSENT\n'}, '')
+        self.assertEqual(records['n1']['status'], 'na')
+        self.assertEqual(messages, [])
+
+    def test_reader_missing_fails_not_na(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'CVS_IFOE_READER_MISSING\n'}, '1.0.0')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'unavailable')
+        self.assertEqual(messages, ['IFoE kmod version reader not found on node n1'])
+
+    def test_compare_mismatch_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'version:        1.0.0\n'}, '2.0.0')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], '1.0.0')
+        self.assertEqual(
+            messages,
+            ['Installed IFoE kmod version 1.0.0 not matching expected version 2.0.0 on node n1'],
+        )
+
+    def test_inventory_garbled_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'version:        @@@bad!!!\n'}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'malformed')
+        self.assertIn('not a well-formed version', messages[0])
+
+    def test_missing_version_line_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'srcversion: ABCDEF\n'}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['IFoE kmod version could not be read on node n1'])
+
+
 if __name__ == '__main__':
     unittest.main()
