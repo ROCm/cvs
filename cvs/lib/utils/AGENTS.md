@@ -7,14 +7,42 @@ Inference-only symbols belong in `cvs/lib/inference/utils/`; single-framework sy
 
 ## Files
 
+### `config_blocks.py`
+
+The schema blocks every suite composes. `config_loader.py` re-exports `_Forbid`, `_Allow`,
+`Paths`, `ModelSpec`, `RuntimeSpec` and `ContainerSpec`, so existing imports keep working.
+
+- `_Forbid` / `_Allow` drop every `_`-prefixed key at the model's own level (a `mode="before"`
+  validator). Free-form maps (`env`, `RuntimeSpec.args`, CLI option values) are not walked.
+- `ConfigStr` rejects `<changeme>` and `<changeme-...>` (case-insensitive) only when validated
+  with `context={"placeholders": "reject"}`. With no context it is a plain `str`, so suites that
+  validate a template directly keep working. Applied to `Paths` fields and `ContainerSpec`
+  `name`, `image` and `env` values.
+- `RuntimeArgs` (`_Allow`) types the `runtime.args` keys the Docker runtime reads; its dump
+  omits unset keys. Not wired into `RuntimeSpec`: suites opt in by subclassing it.
+- `ThresholdSpec` is a union on `kind`; `ThresholdFile` is the cells plus free-form `accuracy`.
+  The verdict engine does not read them yet.
+
 ### `config_loader.py`
+
+#### `load_config(model_cls, config_path, cluster) -> LoadedConfig(config, cluster, container)`
+
+- `cluster`: path or dict, resolved with `resolve_cluster_config_placeholders` (a cluster
+  `<changeme>` still exits). The cluster is not schema-validated.
+- Runs `substitute_config`, attaches `thresholds` when the model has that field, and validates
+  with `context={"placeholders": "reject"}`. There is no switch to allow placeholders.
+- `ValidationError` becomes `ConfigError` (a `ValueError`) with one `loc: msg` line per error,
+  built from `errors(include_input=False)`; never put input values in a message.
+- `container`: cluster `container` with `config.container.model_dump()` deep-merged on top
+  (dicts by key, lists and scalars replaced, config wins); `None` when the model has none.
+- Must not import `cvs.core` (the orchestrator factory imports this package).
 
 #### Schema classes
 
 | Class | Models | Extra keys |
 |---|---|---|
-| `_Forbid` | Base: extra keys forbidden | — |
-| `_Allow` | Base: extra keys allowed | — |
+| `_Forbid` | Base: extra keys forbidden, `_` keys dropped | — |
+| `_Allow` | Base: extra keys allowed, `_` keys dropped | — |
 | `Paths` | Shared filesystem paths | `_Forbid` |
 | `ModelSpec` | Model identity and fetch mode | `_Forbid` |
 | `RuntimeSpec` | Orchestrator runtime (name + open-ended args) | `_Allow` |
@@ -241,9 +269,10 @@ Contract for new suite authors:
 `_check_remote_not_implemented` always fires first — do not add a base validator that
 assumes a valid config before this check passes.
 
-**`load_variant`:** always delegate to `substitute_config` — never reimplement file-read
-or substitution. After calling `substitute_config`, attach `thresholds`, then build
-`YourVariantConfig(**raw)`.
+**`load_variant`:** call `load_config(YourVariantConfig, config_path, cluster)` — never
+reimplement file-read, substitution, placeholder checks or the container merge. Older
+loaders still call `substitute_config`, attach `thresholds`, and build
+`YourVariantConfig(**raw)`; they do not reject `<changeme>`.
 
 ---
 

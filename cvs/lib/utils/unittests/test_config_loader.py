@@ -24,12 +24,16 @@ from pydantic import ValidationError
 
 from cvs.lib.utils.config_loader import (
     BaseVariantConfig,
+    ConfigError,
     ContainerSpec,
     ModelSpec,
     Paths,
     _find_packaged_threshold,
+    _Forbid,
+    load_config,
     substitute_config,
 )
+from cvs.unittests.support import FAKE_CRED
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -492,6 +496,96 @@ class TestSubstituteConfigPlaceholders(unittest.TestCase):
             config_path = self._write_files(tmp_dir, cfg_base)
             raw, _ = substitute_config(config_path, {})
             self.assertEqual(raw["paths"]["log_dir"], "/logs/{unknown-token}/run")
+
+
+class _PathsOnlyConfig(_Forbid):
+    threshold_json: str = ""
+    paths: Paths
+
+
+class TestLoadConfig(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        (self.tmp / "threshold.json").write_text(json.dumps({"_comment": "notes", "cell": {"m": {}}}))
+
+    def _write_config(self, config):
+        config = dict(config, threshold_json=str(self.tmp / "threshold.json"))
+        path = self.tmp / "config.json"
+        path.write_text(json.dumps(config))
+        return path
+
+    def test_cluster_file_and_cluster_dict_load_the_same_config(self):
+        config_path = self._write_config(_base_config_dict())
+        cluster = {"username": "jdoe", "priv_key_file": "/home/{user-id}/.ssh/id_rsa"}
+        cluster_path = self.tmp / "cluster.json"
+        cluster_path.write_text(json.dumps(cluster))
+        from_dict = load_config(BaseVariantConfig, config_path, cluster)
+        from_path = load_config(BaseVariantConfig, config_path, str(cluster_path))
+        self.assertEqual(from_path.cluster, from_dict.cluster)
+        self.assertNotIn("{user-id}", from_path.cluster["priv_key_file"])
+        self.assertEqual(from_path.config.thresholds, {"cell": {"m": {}}})
+        self.assertEqual(from_path.container, from_dict.container)
+
+    def test_changeme_in_the_cluster_file_still_exits(self):
+        config_path = self._write_config(_base_config_dict())
+        with self.assertRaises(SystemExit):
+            load_config(BaseVariantConfig, config_path, {"username": "<changeme>"})
+
+    def test_config_container_is_merged_onto_the_cluster_container(self):
+        config = _base_config_dict()
+        config["container"] = {
+            "name": "from-config",
+            "image": "rocm/vllm:1",
+            "env": {"B": "config"},
+            "runtime": {"name": "docker", "args": {"volumes": ["/config:/config"]}},
+        }
+        cluster = {
+            "container": {
+                "name": "from-cluster",
+                "shm_size": "64g",
+                "env": {"A": "cluster", "B": "cluster"},
+                "runtime": {"name": "docker", "args": {"volumes": ["/cluster:/cluster"], "ipc": "host"}},
+            }
+        }
+        loaded = load_config(BaseVariantConfig, self._write_config(config), cluster)
+        self.assertEqual(
+            loaded.container,
+            {
+                "lifetime": "per_run",
+                "name": "from-config",
+                "image": "rocm/vllm:1",
+                "shm_size": "64g",
+                "env": {"A": "cluster", "B": "config"},
+                "runtime": {"name": "docker", "args": {"volumes": ["/config:/config"], "ipc": "host"}},
+            },
+        )
+
+    def test_model_without_a_container_returns_none(self):
+        loaded = load_config(_PathsOnlyConfig, self._write_config({"paths": _paths_dict()}), {})
+        self.assertIsNone(loaded.container)
+        self.assertEqual(loaded.config.paths.log_dir, "/data/logs")
+
+    def test_every_leftover_placeholder_is_named_in_one_error(self):
+        config = _base_config_dict()
+        config["paths"]["models_dir"] = "<changeme-models-mount>"
+        config["container"]["image"] = "<CHANGEME>"
+        config["container"]["env"] = {"NCCL_SOCKET_IFNAME": "<changeme>", "NCCL_DEBUG": "INFO"}
+        with self.assertRaises(ConfigError) as ctx:
+            load_config(BaseVariantConfig, self._write_config(config), {})
+        named = sorted(problem.split(":", 1)[0] for problem in ctx.exception.problems)
+        self.assertEqual(named, ["container.env.NCCL_SOCKET_IFNAME", "container.image", "paths.models_dir"])
+
+    def test_errors_name_fields_without_echoing_their_values(self):
+        config = _base_config_dict()
+        config["paths"]["token"] = FAKE_CRED
+        config["container"]["env"] = {"HF_HOME": ["not", FAKE_CRED]}
+        with self.assertRaises(ConfigError) as ctx:
+            load_config(BaseVariantConfig, self._write_config(config), {})
+        self.assertIn("paths.token", str(ctx.exception))
+        self.assertIn("container.env.HF_HOME", str(ctx.exception))
+        self.assertNotIn(FAKE_CRED, str(ctx.exception))
 
 
 if __name__ == "__main__":
