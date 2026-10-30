@@ -16,7 +16,7 @@ import unittest
 from unittest import mock
 
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
-from cvs.lib.inference.utils.vllm_config_loader import VariantConfig
+from cvs.lib.conf_lib.schemas.vllm import VariantConfig
 from cvs.lib.inference.vllm_job import VllmJob
 from cvs.unittests.support import FAKE_CRED, TMP, run_trusted
 

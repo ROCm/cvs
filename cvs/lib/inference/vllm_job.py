@@ -41,7 +41,7 @@ import time
 from typing import Optional
 
 from cvs.lib import globals
-from cvs.lib.inference.utils.vllm_config_loader import serialize_cli_options
+from cvs.lib.conf_lib.schemas.vllm import serialize_cli_options
 from cvs.lib.inference.utils.vllm_metrics import project_vllm_metrics
 from cvs.lib.utils.model_query_lib import OpenAIProbe
 
