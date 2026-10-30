@@ -78,11 +78,14 @@ See :doc:`/how-to/test-suites/burn-in-diag/platform` for more information on run
               "PM": "<changeme>",
               "_example_PM": "07.85.11.01",
               "PLDM_BUNDLE": "<changeme>",
-              "_example_PLDM_BUNDLE": "01.25.06.08
-   
-            }
+              "_example_PLDM_BUNDLE": "01.25.06.08"
+            },
+          "ifoe_fw_version": "",
+          "_example_ifoe_fw_version": "0.14.15",
+          "ifoe_kmod_version": "",
+          "_example_ifoe_kmod_version": "1.0.0"
         }
-      }       
+      }
 
 Parameters
 ==========
@@ -171,4 +174,10 @@ The following parameters are available in the platform configuration file. Set e
    * - ``PLDM_BUNDLE``
      - ``01.25.06.08``
      - PLDM firmware bundle reported by ``amd-smi firmware``
+   * - ``ifoe_fw_version``
+     - ``""`` (report-only)
+     - Expected IFoE/AFM device firmware version from ``afmctl show device``. Applies to MI4XX IFoE compute trays; other nodes report NA. Leave blank to record the detected version; set a value to require an exact match
+   * - ``ifoe_kmod_version``
+     - ``""`` (report-only)
+     - Expected ``ifoe`` kernel module version from ``modinfo ifoe``. Applies to MI4XX IFoE compute trays; other nodes report NA. Leave blank to record the detected version; set a value to require an exact match
 

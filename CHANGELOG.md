@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Single-node 8-GPU guide configs `mi300x_rccl_single_node_config.json` and `mi350x_rccl_single_node_config.json`.
 - Platform `test_check_be_nic_link_speed` checks backend NIC link speed against `nic_link_speed` (default `400000` Mb/s). Existing configs fail on NICs running at another speed, or on a node with fewer backend NICs unless `nic_link_interfaces` is set.
 - Platform host config `fw_dict` includes `PLDM_BUNDLE`. Set it to the version reported by `amd-smi firmware` before the GPU firmware check; the check looks up every firmware ID `amd-smi` reports.
+- Platform `test_check_ifoe_sw_details` reports the host IFoE/AFM device firmware (`afmctl show device`) and `ifoe` kernel module (`modinfo ifoe`) versions per node. Set the optional `ifoe_fw_version` / `ifoe_kmod_version` to require an exact match; leave them blank to record the detected version. Nodes without IFoE report NA.
 - Primus Megatron configs accept `train_params.primus_cli_overrides` as either a raw CLI string or a JSON object rendered as `--key value` pairs. Primus 405B auto-splits decoder first/last pipeline layers from `train_params.pipeline_parallelism` when needed.
 
 ### Changed

@@ -40,6 +40,8 @@ NIC_LINK = 'nic_link'
 PCI_ACS = 'pci_acs'
 DMESG_DRIVER = 'dmesg_driver'
 DMESG_RESET = 'dmesg_reset'
+IFOE_FW = 'ifoe_fw'
+IFOE_KMOD = 'ifoe_kmod'
 CHECK_IDS = (
     OS_RELEASE,
     KERNEL_VERSION,
@@ -57,6 +59,8 @@ CHECK_IDS = (
     PCI_ACS,
     DMESG_DRIVER,
     DMESG_RESET,
+    IFOE_FW,
+    IFOE_KMOD,
 )
 
 _OS_ACTUAL_RE = re.compile(r'VERSION="(([0-9.\-_A-Z]+)\s+)', re.I)
@@ -70,6 +74,28 @@ DEFAULT_NIC_LINK_SPEED = 400000
 _SPEED_UNKNOWN = (-1, 4294967295)
 _NIC_LINK_RE = re.compile(r'^\s*(\S+)[ \t]+speed=(\S*)[ \t]+operstate=(\S*)[ \t]+flags=(\S*)\s*$')
 _IFF_UP = 0x1
+
+# Emitted by the host_configs_cvs IFoE commands when the ifoe kernel module is not
+# loaded, so a non-MI4XX node reports NA instead of failing.
+CVS_IFOE_ABSENT = 'CVS_IFOE_ABSENT'
+# Emitted when the module is loaded (an IFoE node) but the reader binary (afmctl /
+# modinfo) could not be resolved. This is a read failure, not an absent module, so
+# the check fails as unreadable rather than silently recording NA.
+CVS_IFOE_READER_MISSING = 'CVS_IFOE_READER_MISSING'
+# ``afmctl show device`` prints one ``BDF : X`` header then one ``Firmware version``
+# per device block. The BDF count is the device count: every reported device must
+# carry a firmware version, so a block missing its version fails rather than passing
+# on the other blocks' values alone.
+_IFOE_BDF_RE = re.compile(r'^\s*BDF\s*:\s*\S+', re.I | re.M)
+# Line-anchored so a banner or tool-version line that merely mentions the words
+# cannot be counted as a device and trip the divergence check.
+_IFOE_FW_RE = re.compile(r'^\s*Firmware\s+version\s*:\s*(\S+)', re.I | re.M)
+# ``modinfo ifoe`` prints a ``version:`` line (dotted/dash build string).
+_IFOE_KMOD_RE = re.compile(r'^version:\s*(\S+)', re.I | re.M)
+# A well-formed firmware version is dotted digits (e.g. 0.14.15); reject garbled data.
+_IFOE_FW_FORMAT_RE = re.compile(r'^\d+(?:\.\d+)+$')
+# A well-formed kmod version token: alphanumerics with dots/dashes/underscores, no spaces.
+_IFOE_KMOD_FORMAT_RE = re.compile(r'^[0-9A-Za-z][0-9A-Za-z._-]*$')
 
 
 def make_meta(cluster_dict, suite_name, version=None):
@@ -300,6 +326,105 @@ def eval_firmware(out_dict, fw_dict):
         else:
             records[str(node)] = _pass_record('firmware matched')
     return records, messages
+
+
+def _na_record(summary='not applicable'):
+    return build_node_record('na', [], summary)
+
+
+def _eval_ifoe_version(out_dict, expected, detect_re, format_re, item_name, label, count_re=None):
+    '''Shared IFoE firmware/kmod evaluation.
+
+    Per node:
+      - absent sentinel in output -> ``na`` record, no fail message.
+      - denial token in output -> fail (the privileged read was refused).
+      - reader-missing marker in output -> fail (module loaded but reader not found).
+      - ``count_re`` set and more devices than detected versions -> fail (a reported
+        device is missing its version).
+      - ``expected`` set -> every detected value must equal it, else fail.
+      - ``expected`` blank -> inventory mode: pass only when every detected value is a
+        well-formed version (``format_re``); a missing or garbled value fails.
+
+    ``afmctl show device`` reports one version per device, so every match on a node
+    is checked and a divergence between devices fails rather than passing on the
+    first value alone. When ``count_re`` matches the per-device header, a device whose
+    version line is absent fails rather than passing on the other devices' values.
+    '''
+    records = {}
+    messages = []
+    want = str(expected).strip() if expected not in (None, '') else ''
+    for node, output in out_dict.items():
+        text = str(output or '')
+        if CVS_IFOE_ABSENT in text:
+            records[str(node)] = _na_record()
+            continue
+        if 'CVS_CMD_DENIED' in text:
+            message = f'{label} could not be read on node {node}'
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'denied')
+            continue
+        if CVS_IFOE_READER_MISSING in text:
+            message = f'{label} reader not found on node {node}'
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'unavailable')
+            continue
+        detected = detect_re.findall(text)
+        if not detected:
+            message = f'{label} could not be read on node {node}'
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'unavailable')
+            continue
+        if count_re is not None:
+            device_count = len(count_re.findall(text))
+            if device_count > len(detected):
+                message = (
+                    f'{label} missing for {device_count - len(detected)} of {device_count} device(s) on node {node}'
+                )
+                messages.append(message)
+                records[str(node)] = _fail_record(item_name, message, 'incomplete')
+                continue
+        unique = list(dict.fromkeys(detected))
+        if len(unique) > 1:
+            joined = ', '.join(unique)
+            message = f'{label} differs across devices on node {node}: {joined}'
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'divergent')
+            continue
+        value = unique[0]
+        if want:
+            if value == want:
+                records[str(node)] = _pass_record(value)
+            else:
+                message = f'Installed {label} {value} not matching expected version {want} on node {node}'
+                messages.append(message)
+                records[str(node)] = _fail_record(item_name, message, value)
+        elif format_re.match(value):
+            records[str(node)] = _pass_record(value)
+        else:
+            message = f'{label} {value!r} on node {node} is not a well-formed version'
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'malformed')
+    return records, messages
+
+
+def eval_ifoe_firmware(out_dict, expected):
+    '''Return (node_records, fail_messages) for the IFoE/AFM device firmware version.'''
+    return _eval_ifoe_version(
+        out_dict,
+        expected,
+        _IFOE_FW_RE,
+        _IFOE_FW_FORMAT_RE,
+        'ifoe_fw_version',
+        'IFoE firmware version',
+        count_re=_IFOE_BDF_RE,
+    )
+
+
+def eval_ifoe_kmod(out_dict, expected):
+    '''Return (node_records, fail_messages) for the ifoe kernel module version.'''
+    return _eval_ifoe_version(
+        out_dict, expected, _IFOE_KMOD_RE, _IFOE_KMOD_FORMAT_RE, 'ifoe_kmod_version', 'IFoE kmod version'
+    )
 
 
 def eval_pci_realloc(out_dict, expected):
