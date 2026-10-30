@@ -4,13 +4,14 @@ All rights reserved.
 
 Framework-agnostic config machinery shared by every CVS suite.
 
-Holds the generic half of what used to be one monolithic loader: the
-container/paths/model/image schema, the 3-pass placeholder substitution, the
-`enforce_thresholds` gate carried on `BaseVariantConfig`, and the
-`substitute_config` helper that reads a variant `config.json` + sibling
-`*threshold.json` and resolves placeholders. A per-framework module subclasses
-`BaseVariantConfig` and adds its own `Params`/`Sweep`/`cell_key` (see
-`cvs.lib.inference.utils.vllm_config_loader` for the vllm flavour).
+Holds `load_config`, which turns a config file and a cluster file into a
+validated config, the resolved cluster, and the merged container block; the
+3-pass placeholder substitution; the `enforce_thresholds` gate carried on
+`BaseVariantConfig`; and the `substitute_config` helper that reads a variant
+`config.json` + sibling `*threshold.json` and resolves placeholders. The
+schema blocks live in `cvs.lib.utils.config_blocks` and are re-exported here.
+A per-framework module subclasses `BaseVariantConfig` or composes the blocks
+directly and adds its own params, sweep and `cell_key`.
 
 3-pass placeholder substitution:
   1. cluster placeholders (`{user-id}`) anywhere
@@ -21,8 +22,8 @@ A loaded variant's `container` field (`lifetime`, `name`, `image`, `runtime`)
 matches the dict shape that `cvs.core.orchestrators.factory.OrchestratorConfig`
 already understands. `runtime` is a nested `RuntimeSpec`, not a flat dict;
 `container.model_dump()` serialises it to the `runtime: {name, args}` shape the
-factory consumes (the vllm conftest does exactly this before building the
-orchestrator). The loaded variant also carries a `thresholds` field with the
+factory consumes; `load_config` merges that dump onto the cluster file's
+container block. The loaded variant also carries a `thresholds` field with the
 parsed threshold contents.
 
 `model.remote=1` raises NotImplementedError for suites other than xDiT.
@@ -36,56 +37,25 @@ import getpass
 import json
 import re
 import warnings
+from collections import namedtuple
 from pathlib import Path
 from typing import Any, Dict
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 from typing_extensions import Literal
+
+from cvs.lib.utils.config_blocks import (  # noqa: F401 - re-exported for suite loaders
+    ContainerSpec,
+    ModelSpec,
+    Paths,
+    RuntimeSpec,
+    _Allow,
+    _Forbid,
+)
+from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
 
 # ---------- pydantic models (generic) ----------
-
-
-class _Forbid(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class _Allow(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-
-class Paths(_Forbid):
-    shared_fs: str
-    models_dir: str
-    log_dir: str
-    hf_token_file: str
-    # Host-user-namespaced scratch (jaxmaxtext launchers/yml). Optional so
-    # inference configs that omit it still load; jaxmaxtext configs set it to
-    # /tmp/{user-id}/jaxmaxtext so container-root /tmp/root is never used.
-    temp_dir: str = ""
-
-
-class ModelSpec(_Forbid):
-    id: str
-    remote: Literal[0, 1]
-    precision: str = ""
-
-
-class RuntimeSpec(_Allow):
-    name: str
-    args: Dict[str, Any] = Field(default_factory=dict)
-
-
-class ContainerSpec(_Forbid):
-    lifetime: Literal["no_launch", "per_run", "persistent"] = "per_run"
-    name: str
-    image: str
-    runtime: RuntimeSpec
-    # Environment variables passed to the container at `docker run` time (as
-    # `-e KEY=VALUE`, merged with the orchestrator defaults). The container
-    # orchestrator reads `container_config['env']`; carrying it on the spec means
-    # `container.model_dump()` forwards it verbatim to the runtime.
-    env: Dict[str, str] = Field(default_factory=dict)
 
 
 class BaseVariantConfig(_Forbid):
@@ -270,3 +240,65 @@ def substitute_config(config_path, cluster_dict):
     thresholds = {k: v for k, v in thresholds.items() if not k.startswith("_")}
 
     return raw, thresholds
+
+
+class ConfigError(ValueError):
+    """A config file that does not match its suite's schema.
+
+    The message has one ``location: problem`` line per error and never the
+    offending values, which can be credentials.
+    """
+
+    def __init__(self, config_path, problems):
+        self.problems = problems
+        super().__init__(f"{config_path} is not a valid config:\n" + "\n".join(f"  {p}" for p in problems))
+
+
+LoadedConfig = namedtuple("LoadedConfig", "config cluster container")
+
+
+def _deep_merge(base, override):
+    """Merge `override` onto `base`: dicts merge by key, lists and scalars are replaced."""
+    if not (isinstance(base, dict) and isinstance(override, dict)):
+        return override
+    out = dict(base)
+    for k, v in override.items():
+        out[k] = _deep_merge(base[k], v) if k in base else v
+    return out
+
+
+def _problem_lines(exc):
+    lines = []
+    for error in exc.errors(include_input=False):
+        location = ".".join(str(part) for part in error["loc"]) or "(config)"
+        lines.append(f"{location}: {error['msg'].removeprefix('Value error, ')}")
+    return lines
+
+
+def load_config(model_cls, config_path, cluster):
+    """Load and validate a suite config against its cluster.
+
+    `cluster` is a cluster file path or an already-parsed cluster dict. A
+    `<changeme>` left in the cluster file exits, as for every suite; one left in
+    the config raises `ConfigError` listing each field that still has one.
+
+    Returns `LoadedConfig(config, cluster, container)`. `container` is the
+    cluster file's container block with the config's `container.model_dump()`
+    merged onto it, the config winning on shared keys, or None when the model
+    has no container. Cluster list values such as volumes are replaced here;
+    the container orchestrator adds its own defaults to them.
+    """
+    if not isinstance(cluster, dict):
+        with open(cluster) as fp:
+            cluster = json.load(fp)
+    cluster = resolve_cluster_config_placeholders(cluster)
+    raw, thresholds = substitute_config(config_path, cluster)
+    if "thresholds" in model_cls.model_fields:
+        raw["thresholds"] = thresholds
+    try:
+        config = model_cls.model_validate(raw, context={"placeholders": "reject"})
+    except ValidationError as exc:
+        raise ConfigError(config_path, _problem_lines(exc)) from None
+    spec = getattr(config, "container", None)
+    container = None if spec is None else _deep_merge(cluster.get("container") or {}, spec.model_dump())
+    return LoadedConfig(config, cluster, container)
