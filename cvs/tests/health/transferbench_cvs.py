@@ -184,7 +184,7 @@ def build_transferbench_command(path, rocm_path, preset, extra_env=None, sudo_pr
     return f'{sudo_prefix}bash -c {shlex.quote(inner)}'
 
 
-def run_transferbench(orch, config_dict, preset, timeout, extra_env=None, lifecycle=None, stage=None):
+def run_transferbench(orch, config_dict, preset, timeout, extra_env=None, lifecycle=None, stage=None, detailed=False):
     """Resolve ROCm/env and execute one TransferBench preset on all orch hosts."""
     path = config_dict['path']
     rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
@@ -194,7 +194,8 @@ def run_transferbench(orch, config_dict, preset, timeout, extra_env=None, lifecy
     cmd = build_transferbench_command(path, rocm_path, preset, env, sudo_prefix=_payload_sudo_prefix(orch))
     log.info('TransferBench command: %s', cmd)
     with timed_stage(lifecycle, stage or preset):
-        return orch.exec(cmd, timeout=timeout)
+        # The sharded SSH handle can only print string results, so detailed callers log the output themselves.
+        return orch.exec(cmd, timeout=timeout, detailed=detailed, print_console=not detailed)
 
 
 def _tb_output_excerpt(out, tail=6000):
@@ -462,6 +463,30 @@ def parse_tb_schmoo_bw(out_dict, exp_dict):
             )
 
 
+# e.g. "Testing all-to-all XGMI copies             ........FAIL (56 test(s))"
+_TB_HEALTHCHECK_FAIL_RE = re.compile(r'(?m)^[ \t]*Testing\s+(.+?)\s*\.{2,}\s*FAIL(?:\s*\((\d+)\s+test\(s\)\))?')
+
+
+def parse_tb_healthcheck(results, expected_hosts=()):
+    """Fail on a non-zero TransferBench healthcheck exit code, naming failed sub-tests from the output.
+
+    Sharded SSH runs omit hosts pruned as unreachable earlier, so every expected host must have a result.
+    """
+    for node in expected_hosts:
+        if node not in results:
+            fail_test(f"TransferBench healthcheck returned no result for node {node}")
+    for node, res in results.items():
+        output = res.get('output') or ''
+        failed = _TB_HEALTHCHECK_FAIL_RE.findall(output)
+        for name, count in failed:
+            fail_test(f"TransferBench healthcheck '{name.strip()}' FAIL ({count or '?'} test(s)) on node {node}")
+        if res.get('exit_code') != 0 and not failed:
+            fail_test(
+                f"TransferBench healthcheck exited with code {res.get('exit_code')} on node {node}. "
+                f"Output: {_tb_output_excerpt(output)}"
+            )
+
+
 def _capture_tb_rundeck(res_dict, cluster_dict, recorder, *args):
     """Best-effort: a reporting problem must not change the TransferBench pass/fail."""
     if res_dict is None:
@@ -532,9 +557,13 @@ def test_transfer_bench_healthcheck(
     globals.error_list = []
     log.info('Testcase Run TransferBench healthcheck')
     preset = config_dict.get('healthcheck_preset') or 'healthcheck'
-    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 3), lifecycle=lifecycle, stage='healthcheck')
+    results = run_transferbench(
+        orch, config_dict, preset, timeout=(60 * 3), lifecycle=lifecycle, stage='healthcheck', detailed=True
+    )
+    out_dict = {node: res.get('output') or '' for node, res in results.items()}
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
+    parse_tb_healthcheck(results, orch.hosts)
     _capture_tb_rundeck(
         transferbench_res_dict,
         cluster_dict,
