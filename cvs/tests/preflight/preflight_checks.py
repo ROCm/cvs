@@ -1804,7 +1804,7 @@ def test_generate_preflight_report(orch, config_dict, request):
 
     preflight_results['summary'] = summary
 
-    # FAIL and BLOCKED are errors. WARNING does not fail the run, but it is not a pass.
+    # FAIL, BLOCKED, and ERROR are errors. WARNING does not fail the run, but it is not a pass.
     log.info("=== PREFLIGHT CHECK SUMMARY ===")
     for check_name, check_summary in summary['checks'].items():
         status = check_summary['status']
@@ -1815,7 +1815,7 @@ def test_generate_preflight_report(orch, config_dict, request):
         else:
             status_icon = "❌"
         line = f"{status_icon} {preflight_check_display_name(check_name)}: {status} - {check_summary['summary']}"
-        if status in ('FAIL', 'BLOCKED'):
+        if status in ('FAIL', 'BLOCKED', 'ERROR'):
             log.error(line)
         elif status == 'WARNING':
             log.warning(line)
@@ -1889,7 +1889,7 @@ def test_generate_preflight_report(orch, config_dict, request):
         failed_checks = [
             preflight_check_display_name(name)
             for name, check in summary['checks'].items()
-            if check.get('status') in ('FAIL', 'BLOCKED')
+            if check.get('status') in ('FAIL', 'BLOCKED', 'ERROR')
         ]
         detail = f" ({', '.join(failed_checks)})" if failed_checks else ""
         log.error("One or more preflight checks detected issues - see detailed results above")
