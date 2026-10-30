@@ -54,7 +54,7 @@ Follow these steps to set up the training configuration.
      cvs config copy training/megatron/mi300x_megatron_llama-3.1-8b_single_threshold.json --output ~/cvs_workspace/training/megatron/mi300x_megatron_llama-3.1-8b_single_threshold.json
      # or mi325x_megatron_llama-3.1-8b_single_threshold.json for MI325X
 
-3. Replace every ``<changeme>`` with cluster-specific values. For MI300X/MI325X shared templates, set ``gpu_name`` to ``MI300X`` or ``MI325X`` and ``threshold_json`` to the matching ``mi300x_*`` or ``mi325x_*`` threshold file. Also set ``container.image`` and the ``container.env`` NIC fields (templates ship example interface/HCA/GID/debug strings that still contain ``<changeme>`` — keep or edit the example and remove the placeholder). Packaged ``sweep.combinations`` cells already set ``training_iterations`` to ``"20"`` (that overlay wins over ``train_params.training_iterations``). Change the overlay per combo if needed. Do not add ``NNODES``; the suite sets it from the cluster host count at ``docker run``. Distributed configs also need ``MASTER_ADDR``, ``NCCL_IB_HCA``, and a shared ``paths.data_cache_dir``.
+3. Replace every ``<changeme>`` with cluster-specific values. For MI300X/MI325X shared templates, set ``gpu_name`` to ``MI300X`` or ``MI325X`` and ``threshold_json`` to the matching ``mi300x_*`` or ``mi325x_*`` threshold file. Also set ``container.image`` and the ``container.env`` NIC fields (templates ship example interface/HCA/GID/debug strings that still contain ``<changeme>`` — keep or edit the example and remove the placeholder). Packaged ``sweep.combinations`` cells already set ``training_iterations`` to ``"20"`` (that overlay wins over ``train_params.training_iterations``). Change the overlay per combo if needed. ``train_params.primus_cli_overrides`` is optional and only applies to Primus runs (string or key/value map). Do not add ``NNODES``; the suite sets it from the cluster host count at ``docker run``. Distributed configs also need ``MASTER_ADDR``, ``NCCL_IB_HCA``, and a shared ``paths.data_cache_dir``.
 4. Change any other parameters relevant to your testing requirements.
 
 The same folder also has DeepSeek V2 Lite (single and distributed; Megatron-LM or Primus) and Llama 3.1 405B (distributed, **Primus only**). See `Config and threshold files`_ for the full inventory.
@@ -102,6 +102,16 @@ The same ordered test stages run for both backends. ``_make_training_job`` in ``
      - Same
 
 Logs for both backends use per-node files: ``<log_dir>/{megatron-logs|primus-logs}/<combo_id>/out-node<N>/training.log``. On disk ``<combo_id>`` is the sweep key with ``=`` and ``,`` replaced by ``_`` (for example ``MBS_4_GBS_128_PRECISION_FP8``).
+
+For Primus 405B distributed runs, CVS auto-adds
+``--decoder_first_pipeline_num_layers`` and
+``--decoder_last_pipeline_num_layers`` only when 126 layers are not evenly
+divisible by ``train_params.pipeline_parallelism`` (pipeline stage count).
+Example: with ``pipeline_parallelism=4``, it appends ``31`` and ``31`` so
+middle stages get ``32`` and ``32``. ``pipeline_parallelism`` may differ from
+cluster node count when data parallelism is greater than 1. If you set either
+decoder split flag in ``train_params.primus_cli_overrides``, your value is
+used as-is.
 
 .. _megatron-run-tests:
 

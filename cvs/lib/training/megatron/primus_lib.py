@@ -105,6 +105,75 @@ def _parse_mean_from_iterations(log_text, pattern, skip_warmup=True):
     return str(sum(values) / len(values))
 
 
+def _format_primus_cli_overrides(overrides):
+    """Normalize primus_cli_overrides into a CLI arg string.
+
+    Accepts a pre-formatted string (used as-is) or a dict rendered as
+    ``--flag value`` pairs in insertion order.
+    """
+    if isinstance(overrides, dict):
+        return ' '.join(f'--{key} {value}' for key, value in overrides.items())
+    return str(overrides or '')
+
+
+def _decoder_layer_split_flags(total_layers, stages):
+    """Return first/last decoder-layer flags with an integer middle split.
+
+    For pipeline stages > 2, pick equal first/last layer counts that are as
+    close as possible to uniform split while keeping
+    (total_layers - first - last) divisible across middle stages.
+    """
+    n = int(stages)
+    total = int(total_layers)
+    if n < 2 or total <= 0:
+        return ""
+    if total % n == 0:
+        return ""
+    if n == 2:
+        first = total // 2
+        last = total - first
+        return f' --decoder_first_pipeline_num_layers {first} --decoder_last_pipeline_num_layers {last}'
+
+    ideal = total / n
+    candidates = []
+    for first_last in range(1, total):
+        middle_total = total - (2 * first_last)
+        if middle_total <= 0:
+            continue
+        if middle_total % (n - 2) != 0:
+            continue
+        middle_each = middle_total // (n - 2)
+        if middle_each <= 0:
+            continue
+        candidates.append((abs(first_last - ideal), first_last))
+
+    if not candidates:
+        return None
+
+    _, chosen = min(candidates)
+    return f' --decoder_first_pipeline_num_layers {chosen} --decoder_last_pipeline_num_layers {chosen}'
+
+
+def _auto_primus_405_layer_split_flags(model_size, pipeline_stages, primus_cli_overrides):
+    """Auto-add 405B decoder first/last layer flags unless user set them."""
+    size_text = str(model_size or "").strip()
+    if size_text != "405":
+        return ""
+    overrides = str(primus_cli_overrides or "")
+    if "--decoder_first_pipeline_num_layers" in overrides or "--decoder_last_pipeline_num_layers" in overrides:
+        return ""
+    split_flags = _decoder_layer_split_flags(total_layers=126, stages=pipeline_stages)
+    if split_flags is None:
+        stages_text = str(pipeline_stages)
+        raise ValueError(
+            "Unable to derive integer 405B decoder first/last pipeline layer split for "
+            f"pipeline_parallelism={stages_text}. "
+            "Set --decoder_first_pipeline_num_layers and "
+            "--decoder_last_pipeline_num_layers in train_params.primus_cli_overrides."
+        )
+    return split_flags
+
+
 def _parse_step_losses(log_text):
     """Return {step: lm_loss} from a Primus training log.
 
@@ -209,14 +278,18 @@ class PrimusTrainingJob:
         pdict.setdefault('training_iterations', 10)
         pdict.setdefault('tensor_parallelism', '1')
         pdict.setdefault('pipeline_parallelism', '1')
+        pdict.setdefault('primus_cli_overrides', '')
+        pdict.setdefault('model_size', '70')
 
         self.tokenizer_model = pdict['tokenizer_model']
+        self.model_size = pdict['model_size']
         self.precision = pdict['precision']
         self.micro_batch_size = pdict['micro_batch_size']
         self.global_batch_size = pdict['global_batch_size']
         self.iterations = int(pdict['training_iterations'])
         self.tensor_parallelism = pdict['tensor_parallelism']
         self.pipeline_parallelism = pdict['pipeline_parallelism']
+        self.primus_cli_overrides = _format_primus_cli_overrides(pdict['primus_cli_overrides'])
 
         raw_label = run_label or f"{self.model_name}_mbs{micro_batch_size}_gbs{global_batch_size}_{self.precision}"
         self.run_label = re.sub(r'[^A-Za-z0-9._-]', '_', str(raw_label))
@@ -397,6 +470,17 @@ class PrimusTrainingJob:
             batch_args += f' --load {self.checkpoint_dir}/checkpoints'
             if self.distributed_training:
                 batch_args += ' --auto_detect_ckpt_format'
+        try:
+            batch_args += _auto_primus_405_layer_split_flags(
+                model_size=self.model_size,
+                pipeline_stages=self.pipeline_parallelism,
+                primus_cli_overrides=self.primus_cli_overrides,
+            )
+        except ValueError as err:
+            fail_test(str(err))
+            raise
+        if self.primus_cli_overrides:
+            batch_args += f' {self.primus_cli_overrides}'
 
         if self.distributed_training:
             for i in range(len(self.orch.hosts)):
