@@ -1,6 +1,6 @@
 # HW/SW Support-Matrix Gate — Design Plan
 
-Status: proposal (design only — no implementation yet); decisions in §12 locked to recommended defaults
+Status: proposal (design only — no implementation yet); decisions in §12 locked to recommended defaults; amended per the filename-convention review (see §2.1)
 Branch: `solaiys/dtni-hwsw-support-matrix-check`
 Scope: Inference and Training workload suites run through CVS.
 
@@ -58,9 +58,34 @@ Non-goals:
   and `resolve_test_config_placeholders()` (`cvs/lib/utils_lib.py`) is the shared
   early entry most suites already call (it hard-exits on unresolved `<changeme>`).
 
-Gaps: there is no declared `(framework, model, precision) → {supported arch,
-ROCm range}` data, precision (MXFP4/FP8) is only encoded in **filenames**, and
-there is no single gate that stops an unsupported run.
+Gaps: there is no declared `(supported arch, ROCm range)` data attached to a
+workload, and there is no single gate that stops an unsupported run. Precision
+(MXFP4/FP8) is **not a structured field** in any suite today — it appears in some
+config *filenames* by convention but may be absent, so it cannot be relied on.
+
+## 2.1 Config filenames are not a reliable signal (researched)
+
+The gate **must not parse the config filename** to learn the framework, GPU,
+model, or precision. Findings from the repo:
+
+- Filenames are **free-form**. Nothing in the loaders, the `cvs config`
+  discovery, or the pytest metadata parses them for semantics; `cvs config
+  copy/list` and the HTML metadata use the name only for display.
+- The **one exception** is ATOM: `gpu_arch_from_config_path()`
+  (`cvs/lib/inference/atom/atom_config_loader.py`) requires `{gpu}_atom_*.json`,
+  but **only as a fallback** when the config omits an explicit `gpu_arch` field.
+  Every other suite ignores the filename.
+- The docs describe naming *patterns* (`mi3xx_sglang_`, `mi3xx_vllm_…_fp8_…`) as a
+  human identification convention, not a contract the code enforces.
+- The authoritative, structured signals that already exist are: training configs'
+  `gpu_name` field, ATOM's `gpu_arch` field, and **runtime detection** of the GPU
+  (`rocm-smi`) and ROCm (`amd-smi` / `/opt/rocm/.info/version`).
+
+Consequence for this design: the gate's decision depends only on (a) the
+per-config `support_matrix` block the author writes and (b) values detected at
+runtime. The report tag is built from the suite name plus the detected arch/ROCm
+(and the block's `notes`); no framework/model/precision string is read from the
+filename or required for the gate to work.
 
 ## 3. The coverage data (from the DTNI Validation Tracker)
 
@@ -74,8 +99,10 @@ sheets (matrix sheets ignored), each row is a workload identified by
 
 Takeaways that drive the data model:
 - The **unit of support is a workload** (framework + model + precision), which is
-  exactly what one CVS config file represents (and encodes in its filename, e.g.
-  `mi3xx_vllm_kimi-k27-code_mxfp4_single.json`).
+  exactly what one CVS config file represents. The workload identity lives in the
+  config's *contents* and its author-declared `support_matrix` block — **not** in
+  the filename, which is free-form (see §2.1). A name like
+  `mi3xx_vllm_kimi-k27-code_mxfp4_single.json` is a human convention only.
 - `—` / `-` in a GPU column means **unsupported** on that arch.
 - So each config's supported arch set = the GPUs with a non-`—` entry in its
   tracker row; MXFP4 workloads carry `required_rocm_min_version` from the ROCm
@@ -120,6 +147,21 @@ family, and so a new GPU generation is a data edit, not a code edit.
 A pydantic `SupportMatrix` model (in `cvs/parsers/schemas.py`, consistent with the
 existing "single source of truth") validates the block early and rejects unknown
 arch tokens / malformed versions with a clear path, exactly like other configs.
+
+## 4.1 Future: precision / sweep-param support per arch
+
+Precision (MXFP4 / FP8 / BF16) is becoming a **sweep parameter** in the training
+configs, not a top-level or filename token. A later iteration will extend
+`support_matrix` so support can be declared **per sweep-param value per arch** —
+e.g. BF16 on mi300x/mi325x/mi355x but MXFP4 only on mi355x — mirroring the tracker
+rows where batch/precision vary per GPU column.
+
+The v1 block above gates at the **config (workload) granularity**. The extension
+adds an optional per-sweep-cell map (keyed by the sweep key, or by a param such as
+`precision`) whose entries carry their own `supported_arch` /
+`required_rocm_min_version`, evaluated for the specific cell about to run. This
+stays data-driven and backward compatible: configs without the per-cell map keep
+the config-level behaviour, and the library still reads data only (req #8).
 
 ## 5. Check-A vs the two proposed methods (answering design req #6)
 
@@ -236,8 +278,10 @@ Each suite change is a thin 2–3 line stage that delegates to the shared lib.
   `CVS_SUPPORT_MATRIX`), so a user can disable gating and "just print the warning
   and continue" (design req #6). Default = `enforce`.
 - On **violation + enforce**: log a distinctive tagged line
-  `CVS SUPPORT-MATRIX: UNSUPPORTED <framework>/<model>/<precision> on
-  <arch>/ROCm <ver> — <reason>`, record a prominent row in the HTML report /
+  `CVS SUPPORT-MATRIX: UNSUPPORTED <suite> on <arch>/ROCm <ver> — <reason>`,
+  where `<reason>` is the block's `notes`; the workload is identified by the suite
+  name and the detected values, never parsed from the filename. Record a prominent
+  row in the HTML report /
   Run Deck, set `lifecycle.failed`, and `fail_test(...)` the stage → the workload
   stages skip. (Prefer this over `pytest.exit()` so the report/zip still finalize;
   `pytest.exit()` remains an option if a truly immediate process exit is wanted.)
@@ -280,8 +324,9 @@ Every library function/class ships with unit tests in
   table in data; unknown arch rejected at validation time with a clear message.
 - **Multi-node / disagg** → detect on every participating node; if nodes disagree
   on arch/ROCm, that itself is a violation (report per node).
-- **Filename-encoded precision** stays only a transcription aid; the structured
-  block is authoritative.
+- **Filenames are free-form and are never parsed by the gate** (see §2.1). The
+  structured `support_matrix` block is the sole authority for the decision; the tag
+  identifies the workload by suite name and detected values.
 
 ## 12. Decisions (resolved — recommended defaults)
 
@@ -299,3 +344,8 @@ otherwise.
 4. On **detection failure** (no `rocm-smi` / no `amd-smi` in the image): default is
    **warn-and-continue**, so a probe gap never bricks an otherwise-valid run. A
    strict mode can be added later.
+5. The gate **never parses the config filename**. The decision uses only the
+   author-declared `support_matrix` block plus runtime-detected arch/ROCm; the tag
+   identifies the workload by suite name and detected values. ATOM keeps its
+   existing `{gpu}_atom_*.json` fallback for its own `gpu_arch` field — unchanged
+   and independent of this gate.
