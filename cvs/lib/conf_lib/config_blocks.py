@@ -11,7 +11,7 @@ reaches the suite unchanged.
 Shipped configs are templates: ``<changeme>`` and ``<changeme-...>`` mark the
 values a user fills in for their setup. A ``ConfigStr`` field rejects them only
 when validated with ``context={"placeholders": "reject"}``, which
-``config_loader.load_config`` always passes.
+``cvs.lib.conf_lib.loader.load_config`` always passes.
 '''
 
 from __future__ import annotations
