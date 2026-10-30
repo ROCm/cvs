@@ -327,6 +327,85 @@ def test_check_gpu_fw_version(orch, config_dict, host_res_dict, cluster_dict, li
     update_test_result()
 
 
+def _resolve_tool(var, tool, fallbacks):
+    '''Resolve ``tool`` to an absolute path in ``var``, trying ``fallbacks`` in order.
+
+    ``sudo -n`` runs with its own ``secure_path``, so a tool that is on the SSH
+    user's PATH but outside ``secure_path`` (for example afmctl in /usr/sbin) must be
+    passed to sudo by its resolved absolute path, not by basename. The path is
+    captured from ``command -v`` (which prints the resolved location, not the tool's
+    output); when the non-login PATH omits the tool's directory, each known install
+    path in ``fallbacks`` is probed with ``-x``. This runs only after the module-
+    presence gate, so an unresolved tool on a loaded-module node is a read failure
+    (``CVS_IFOE_READER_MISSING``), not the absent-module sentinel.
+    '''
+    candidates = ' '.join(fallbacks)
+    return (
+        f'{var}="$(command -v {tool} 2>/dev/null)"; '
+        f'[ -n "${var}" ] || for _cvs_c in {candidates}; do '
+        f'[ -x "$_cvs_c" ] && {{ {var}="$_cvs_c"; break; }}; done; '
+        f'case "${var}" in /*) ;; *) echo CVS_IFOE_READER_MISSING; exit 0 ;; esac; '
+    )
+
+
+# The ifoe kernel module loaded is the single "IFoE present on this node" signal for
+# both checks. When it is absent the node is not an IFoE compute tray, so the outer
+# branch emits CVS_IFOE_ABSENT and the evals record NA instead of failing. When it is
+# loaded, afmctl is expected; the privileged read goes through the shared
+# _read_or_denied wrapper so a refused ``sudo -n`` becomes CVS_CMD_DENIED (recorded
+# as a denial) rather than empty output mis-read as "could not be read".
+_IFOE_FW_READER = 'sudo -n "$_afm" show device'
+_IFOE_FW_CMD = (
+    'if [ -d /sys/module/ifoe ]; then '
+    + _resolve_tool('_afm', 'afmctl', ['/usr/sbin/afmctl', '/opt/amd/afm/bin/afmctl'])
+    + linux_utils._read_or_denied(_IFOE_FW_READER)
+    + '; else echo CVS_IFOE_ABSENT; fi'
+)
+# modinfo reports the on-disk .ko metadata whether or not the module is loaded, so
+# gate on the loaded state first. A loaded module with no version line yields empty
+# output (a recorded "could not be read"), not NA. modinfo lives in /usr/sbin, which
+# a non-login ssh PATH may omit, so resolve its absolute path the same way.
+_IFOE_KMOD_CMD = (
+    'if [ -d /sys/module/ifoe ]; then '
+    + _resolve_tool('_mi', 'modinfo', ['/usr/sbin/modinfo', '/sbin/modinfo'])
+    + '"$_mi" ifoe 2>/dev/null | grep -E \'^(version|srcversion):\' || true; '
+    'else echo CVS_IFOE_ABSENT; fi'
+)
+
+
+def test_check_ifoe_sw_details(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
+    """
+    Report and validate the host IFoE software details on each node.
+
+    Collects two per-node attributes, each recorded as its own Run Deck row:
+      - IFoE/AFM device firmware version from ``afmctl show device``.
+      - ``ifoe`` kernel module version from ``modinfo ifoe``.
+
+    Validation is hybrid for both: when the matching config key
+    (``ifoe_fw_version`` / ``ifoe_kmod_version``) is set the detected version must
+    equal it, otherwise the detected version is recorded and passes only when it is
+    a well-formed version string. A node without IFoE (``/sys/module/ifoe`` absent)
+    reports NA and does not fail. Both rows are captured before the single pass/fail
+    verdict, so one attribute failing still records the other.
+    """
+    globals.error_list = []
+    log.info('Testcase check IFoE software details (firmware, kmod version)')
+
+    with timed_stage(lifecycle, host_configs_rundeck.IFOE_FW):
+        fw_out = orch.all.exec(_IFOE_FW_CMD)
+    fw_records, fw_messages = host_configs_rundeck.eval_ifoe_firmware(fw_out, config_dict.get('ifoe_fw_version'))
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.IFOE_FW, fw_records)
+
+    with timed_stage(lifecycle, host_configs_rundeck.IFOE_KMOD):
+        kmod_out = orch.all.exec(_IFOE_KMOD_CMD)
+    kmod_records, kmod_messages = host_configs_rundeck.eval_ifoe_kmod(kmod_out, config_dict.get('ifoe_kmod_version'))
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.IFOE_KMOD, kmod_records)
+
+    _fail_messages(fw_messages)
+    _fail_messages(kmod_messages)
+    update_test_result()
+
+
 def test_check_pci_realloc(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Verify that the kernel command line contains the expected PCI realloc flag.
