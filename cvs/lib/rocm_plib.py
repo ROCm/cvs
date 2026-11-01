@@ -526,17 +526,53 @@ def get_gpu_fw_dict(phdl):
     return d_dict
 
 
-def get_gpu_pcie_bus_dict(phdl, use_sudo=True):
-    """Return ``{node: {'card<N>': {'PCI Bus': <bdf>}}}`` from ``amd-smi list``.
+def _gpu_pcie_bus_cmd(use_sudo=True, strict=False):
+    """GPU bus map: rocm-smi when present, amd-smi list on hosts that dropped it.
 
-    amd-smi is found on PATH or at /opt/rocm/bin. With sudo a node that has neither
-    fails the JSON parse, as rocm-smi did. Without sudo it maps to ``{}``, so callers
-    walking every card never KeyError on it.
+    rocm-smi's ``--showbus --json`` schema has been frozen for years, so it stays
+    the preferred source wherever the binary exists; only a host with neither tool
+    falls through to the ``strict``/empty-list handling ``_amd_smi_json_command``
+    already uses for a missing amd-smi, for the same reasons given there.
     """
-    d_dict = convert_phdl_json_to_dict(phdl.exec(_amd_smi_json_command('list', use_sudo, strict=use_sudo)))
+    privilege = "sudo " if use_sudo else ""
+    missing = "echo \"rocm-smi/amd-smi not found\" >&2; exit 127" if strict else "echo \"[]\"; exit 0"
+    return (
+        f"{privilege}bash -lc '"
+        "if command -v rocm-smi >/dev/null 2>&1; then rocm-smi --loglevel error --showbus --json; "
+        "elif [ -x /opt/rocm/bin/rocm-smi ]; then /opt/rocm/bin/rocm-smi --loglevel error --showbus --json; "
+        "elif command -v amd-smi >/dev/null 2>&1; then AMD_SMI=$(command -v amd-smi); \"${AMD_SMI}\" list --json; "
+        "elif [ -x /opt/rocm/bin/amd-smi ]; then /opt/rocm/bin/amd-smi list --json; "
+        f"else {missing}; fi'"
+    )
+
+
+def _normalize_bus_cards(payload):
+    """rocm-smi already reports ``{"card0": {"PCI Bus": "<bdf>"}, ...}``.
+
+    ``amd-smi list --json`` has no notion of "card"; it reports a flat list of
+    ``{gpu, bdf, ...}`` entries. Normalize that shape into the same
+    ``cardN -> {"PCI Bus": ...}`` contract so ``pcie_card_list``, ``absorb_gpu_pcie``,
+    and the NIC-pairing/NUMA readers in ``linux_utils.py`` that consume
+    ``get_gpu_pcie_bus_dict`` keep working unchanged either way.
+    """
+    if isinstance(payload, dict) and 'gpu_data' not in payload:
+        return payload
+    gpus = [g for g in _iter_amd_smi_gpu_dicts(payload) if isinstance(g, dict) and 'gpu' in g and 'bdf' in g]
+    return {f"card{gpu['gpu']}": {'PCI Bus': gpu['bdf']} for gpu in gpus}
+
+
+def get_gpu_pcie_bus_dict(phdl, use_sudo=True):
+    """Return ``{node: {'card<N>': {'PCI Bus': <bdf>}}}``.
+
+    rocm-smi's own card-keyed JSON is used as-is wherever the binary is present;
+    ``amd-smi list``'s flat ``{gpu, bdf}`` entries are normalized into the same
+    shape on hosts that dropped rocm-smi. With sudo, a node with neither tool fails
+    the JSON parse instead of silently reporting zero GPUs; without sudo it maps to
+    ``{}`` so callers walking every card never KeyError on it.
+    """
+    d_dict = convert_phdl_json_to_dict(phdl.exec(_gpu_pcie_bus_cmd(use_sudo, strict=use_sudo)))
     for node, payload in d_dict.items():
-        gpus = [g for g in _iter_amd_smi_gpu_dicts(payload) if isinstance(g, dict) and 'gpu' in g and 'bdf' in g]
-        d_dict[node] = {f"card{gpu['gpu']}": {'PCI Bus': gpu['bdf']} for gpu in gpus}
+        d_dict[node] = _normalize_bus_cards(payload)
     return d_dict
 
 
