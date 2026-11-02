@@ -630,14 +630,14 @@ def get_perftest_configure_cmd(install_dir, rocm_path, rocm_dmabuf=True):
     return cmd
 
 
-def configure_perftest(shdl, install_dir, rocm_path):
+def configure_perftest(orch, install_dir, rocm_path):
     """
     Configure perftest with ROCm DMA-BUF support, falling back to a ROCm-only
     configure when the DMA-BUF configure fails (e.g. a ROCm without
     hsa_amd_portable_export_dmabuf).
 
     Args:
-        shdl: Pssh handle for the build (head) node.
+        orch: Orchestrator; the build runs on its head node.
         install_dir (str): Directory containing the perftest checkout.
         rocm_path (str): ROCm installation path.
 
@@ -646,7 +646,7 @@ def configure_perftest(shdl, install_dir, rocm_path):
     """
     cmd = get_perftest_configure_cmd(install_dir, rocm_path, rocm_dmabuf=True)
     log.info('Configuring perftest: %s', cmd)
-    out_dict = shdl.exec(cmd, timeout=200, print_console=False, detailed=True)
+    out_dict = orch.exec_on_head(cmd, timeout=200, print_console=False, detailed=True)
     failed = [node for node, res in out_dict.items() if res.get('exit_code') != 0]
     if not failed:
         log.info('perftest configured with ROCm DMA-BUF support')
@@ -662,7 +662,7 @@ def configure_perftest(shdl, install_dir, rocm_path):
 
     cmd = get_perftest_configure_cmd(install_dir, rocm_path, rocm_dmabuf=False)
     log.info('Configuring perftest: %s', cmd)
-    out_dict = shdl.exec(cmd, timeout=200, print_console=False, detailed=True)
+    out_dict = orch.exec_on_head(cmd, timeout=200, print_console=False, detailed=True)
     for node, res in out_dict.items():
         if res.get('exit_code') != 0:
             tail = ' | '.join(res.get('output', '').splitlines()[-5:])

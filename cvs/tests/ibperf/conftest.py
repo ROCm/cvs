@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import json
 import re
+from types import SimpleNamespace
 
 import pytest
 
@@ -56,16 +57,94 @@ def config_dict(pytestconfig, cluster_dict):
     return d
 
 
+class IbperfOrch:
+    """The orchestrator plus the exec_cmd_list/prune_nodes that ibperf_lib calls on the handle it is given."""
+
+    def __init__(self, orch):
+        self._orch = orch
+        self.pruned = []
+
+    def __getattr__(self, name):
+        return getattr(self._orch, name)
+
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+        # ContainerOrchestrator runs these inside the containers; BaremetalOrchestrator has no exec_cmd_list.
+        run = getattr(self._orch, 'exec_cmd_list', None) or self._orch.all.exec_cmd_list
+        return run(cmd_list, timeout=timeout, print_console=print_console)
+
+    def exec_on_head(self, cmd, timeout=None, detailed=False, print_console=True):
+        # ContainerOrchestrator.exec_on_head does not check for a launched container; exec() does.
+        if self._orch.orchestrator_type == 'container' and self._orch.container_id is None:
+            raise RuntimeError("No containers running. Call setup_containers() first.")
+        return self._orch.exec_on_head(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+
+    def prune_nodes(self, nodes_to_remove):
+        removed = self._orch.all.prune_nodes(nodes_to_remove)
+        self.pruned.extend(removed)
+        return removed
+
+
 @pytest.fixture(scope="module")
-def orch(cluster_dict):
+def lifecycle():
+    """Per-module container state: ``failed`` skips the tests after a failed launch,
+    ``torn_down`` stops the orch fixture's leak guard once test_teardown_containers ran."""
+    return SimpleNamespace(failed=False, torn_down=False)
+
+
+@pytest.fixture(autouse=True)
+def skip_after_failed_launch(request, lifecycle):
+    if lifecycle.failed and request.node.name != 'test_teardown_containers':
+        pytest.skip('ibperf container launch failed')
+
+
+def launch_containers(orch, lifecycle):
+    """No setup_sshd(): perftest pairs connect over TCP without MPI."""
+    if orch.orchestrator_type != 'container':
+        pytest.skip('baremetal orchestrator: no container to launch')
+    lifecycle.failed = True
+    if not orch.setup_containers():
+        pytest.fail('setup_containers() returned False')
+    lifecycle.failed = False
+
+
+def remove_pruned_containers(orch):
+    """per_run teardown removes containers through the host handle, which no longer reaches pruned nodes."""
+    if orch.container_config.get('lifetime', 'per_run') == 'per_run' and orch.pruned and orch.container_id:
+        orch.exec_on_host(
+            f'{orch.sudo_prefix()}docker rm -f {orch.container_id} 2>/dev/null || true', hosts=orch.pruned
+        )
+
+
+def teardown_containers(orch, lifecycle):
+    lifecycle.torn_down = True
+    if orch.orchestrator_type != 'container':
+        pytest.skip('baremetal orchestrator: no container to tear down')
+    remove_pruned_containers(orch)
+    if not orch.teardown_containers():
+        pytest.fail('teardown_containers() returned False')
+
+
+def close_orch(o, lifecycle):
+    try:
+        if o.orchestrator_type == 'container' and not lifecycle.torn_down:
+            log.info('orch fixture leak-guard: tearing down containers (test_teardown_containers did not run)')
+            remove_pruned_containers(o)
+            o.teardown_containers()
+    finally:
+        o.close()
+
+
+@pytest.fixture(scope="module")
+def orch(cluster_dict, lifecycle):
     """Suite-local orchestrator over every cluster node for installation and verification."""
     node_dict = cluster_dict['node_dict']
     if len(node_dict) < 2:
         raise ValueError('At least 2 nodes are required to run this test')
     cfg = OrchestratorConfig.from_configs({**cluster_dict, 'node_dict': node_dict}, {})
     o = OrchestratorFactory.create_orchestrator(log, cfg)
-    yield o
-    o.close()
+    view = IbperfOrch(o)
+    yield view
+    close_orch(view, lifecycle)
 
 
 @pytest.fixture(scope="module")
