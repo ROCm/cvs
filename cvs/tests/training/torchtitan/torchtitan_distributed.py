@@ -31,7 +31,7 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
-from cvs.lib.training.torchtitan.torchtitan_lib import TorchTitanTrainingJob
+from cvs.lib.training.torchtitan.torchtitan_lib import TorchTitanTrainingJob, _redact_logged_text
 from cvs.lib.training.torchtitan.primus_lib import PrimusTorchTitanTrainingJob
 from cvs.lib.training.torchtitan.utils.checkpoint_io import log_checkpoint_io_times, parse_checkpoint_io_seconds
 from cvs.lib.training.torchtitan.utils.convergence import (
@@ -114,7 +114,7 @@ def test_backend_nic_speed(orch, lifecycle, request):
     log.info("backend NIC link speed check PASSED")
 
 
-def test_setup_rdma(orch, variant_config, hf_token, lifecycle, request):
+def test_setup_rdma(orch, variant_config, lifecycle, request):
     """Stage 2: copy RDMA lib into container (thor2 NIC) and verify ibv_devinfo."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -122,7 +122,6 @@ def test_setup_rdma(orch, variant_config, hf_token, lifecycle, request):
     tt_obj = _make_training_job(
         orch,
         variant_config,
-        hf_token=hf_token,
         micro_batch_size="1",
         global_batch_size="1",
         precision="BF16",
@@ -142,7 +141,7 @@ def test_setup_rdma(orch, variant_config, hf_token, lifecycle, request):
     log.info("test_setup_rdma: RDMA setup complete")
 
 
-def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
+def test_download_tokenizer(orch, variant_config, lifecycle, request):
     """Stage 3: download the tokenizer model once if the model family requires it."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -150,7 +149,6 @@ def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
     tt_obj = _make_training_job(
         orch,
         variant_config,
-        hf_token=hf_token,
         micro_batch_size="1",
         global_batch_size="1",
         precision="BF16",
@@ -179,7 +177,7 @@ def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
     log.info("test_download_tokenizer: tokenizer ready at %s", lifecycle.tokenizer_path)
 
 
-def test_smoke(orch, variant_config, hf_token, lifecycle, request):
+def test_smoke(orch, variant_config, lifecycle, request):
     """Stage 4: smoke-test — model loads and runs smoke.iters steps without error.
 
     Knobs come from the top-level ``smoke`` block (defaults: 10 iters, MBS 1,
@@ -201,7 +199,6 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
     tt_obj = _make_training_job(
         orch,
         variant_config,
-        hf_token=hf_token,
         micro_batch_size=mbs,
         global_batch_size=gbs,
         precision=precision,
@@ -230,7 +227,7 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
     log.info("smoke PASSED | iters=%s mbs=%s gbs=%s precision=%s", iters, mbs, gbs, precision)
 
 
-def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
+def test_checkpoint(orch, variant_config, lifecycle, request):
     """Stage 5: checkpoint save + resume — verify step counter and loss continuity (distributed).
 
     Two phases:
@@ -271,7 +268,6 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
             job = _make_training_job(
                 orch,
                 variant_config,
-                hf_token=hf_token,
                 micro_batch_size=mbs,
                 global_batch_size=gbs,
                 precision=precision,
@@ -337,7 +333,6 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
         tt_obj = _make_training_job(
             orch,
             variant_config,
-            hf_token=hf_token,
             micro_batch_size=mbs,
             global_batch_size=gbs,
             precision=precision,
@@ -443,7 +438,7 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
         lifecycle.record(request.node.nodeid, "checkpoint", time.monotonic() - started)
 
 
-def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, lifecycle, request):
+def test_training(orch, variant_config, sweep_name, train_res_dict, lifecycle, request):
     """Stage 6 (parametrized): run one sweep combo inside the shared container.
 
     stop_training_processes() runs in a finally block after every combo so GPU
@@ -458,7 +453,6 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
     tt_obj = _make_training_job(
         orch,
         variant_config,
-        hf_token=hf_token,
         micro_batch_size=combo.micro_batch_size,
         global_batch_size=combo.global_batch_size,
         precision=combo.precision,
@@ -661,8 +655,8 @@ def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle,
 
     rank0 = orch.hosts[0]
     log_path = f"{combo_log_dir}/out-node0/training.log"
-    out_dict = orch.exec(f"cat {log_path}", hosts=[rank0])
-    log_text = out_dict.get(rank0) or ""
+    out_dict = orch.exec(f"cat {log_path}", hosts=[rank0], print_console=False)
+    log_text = _redact_logged_text(out_dict.get(rank0) or "")
 
     lc = variant_config.loss_curve
     combo = variant_config.sweep.combinations[sweep_name]
