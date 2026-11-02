@@ -11,6 +11,7 @@ import re
 from cvs.lib.training.torchtitan.torchtitan_lib import (
     TorchTitanTrainingJob,
     _hf_token_export_line,
+    _hf_token_nonempty_check,
     _redact_logged_text,
     _require_hf_token_file,
 )
@@ -296,11 +297,19 @@ class TestHfTokenFile(unittest.TestCase):
 
     def test_export_line_reads_the_file_inside_the_container(self):
         line = _hf_token_export_line('/home/user/.hf_token')
-        self.assertIn('[ -s /home/user/.hf_token ]', line)
-        self.assertIn("export HF_TOKEN=\"$(tr -d '[:space:]' < /home/user/.hf_token)\"", line)
+        self.assertIn("stripped=$(tr -d '[:space:]' < /home/user/.hf_token)", line)
+        self.assertIn('if [ -n "$stripped" ]', line)
+        self.assertIn('export HF_TOKEN="$stripped"', line)
+        self.assertNotIn('[ -s ', line)
         self.assertIn('exit 1', line)
         spaced = _hf_token_export_line('/home/user/my token')
         self.assertIn("'/home/user/my token'", spaced)
+
+    def test_nonempty_check_rejects_whitespace_only_contents(self):
+        check = _hf_token_nonempty_check("'/home/user/.hf_token'")
+        self.assertIn("tr -d '[:space:]'", check)
+        self.assertIn('test -n', check)
+        self.assertNotIn('test -s', check)
 
     def test_export_line_fails_when_the_path_is_unset(self):
         line = _hf_token_export_line('  ')
@@ -322,7 +331,9 @@ class TestHfTokenFile(unittest.TestCase):
                 _require_hf_token_file(orch, '/home/user/.hf_token')
         fail.assert_called_once()
         command = orch.exec.call_args.args[0]
-        self.assertIn('test -s', command)
+        self.assertIn('test -n', command)
+        self.assertIn("tr -d '[:space:]'", command)
+        self.assertNotIn('test -s', command)
         self.assertIn('/home/user/.hf_token', command)
         self.assertTrue(orch.exec.call_args.kwargs.get('detailed'))
 
@@ -354,13 +365,13 @@ class TestHfTokenFile(unittest.TestCase):
         download_secret = 'hf_' + ('f' * 34)
 
         def _exec(cmd, **kwargs):
-            if str(cmd).startswith('test -s'):
-                return {'n0': {'exit_code': 0}}
+            if str(cmd).startswith('test -n'):
+                return {'n0': {'exit_code': 0, 'output': ''}}
             if 'download_hf_assets.py' in str(cmd):
-                return {'n0': f'error: Invalid credentials for token {download_secret}'}
+                return {'n0': {'exit_code': 0, 'output': f'error: Invalid credentials for token {download_secret}'}}
             if str(cmd).startswith('bash -c'):
-                return {'n0': f'launch failed for token {launch_secret}'}
-            return {'n0': ''}
+                return {'n0': {'exit_code': 0, 'output': f'launch failed for token {launch_secret}'}}
+            return {'n0': {'exit_code': 0, 'output': ''}}
 
         orch.exec.side_effect = _exec
         variant = MagicMock()
@@ -388,14 +399,15 @@ class TestHfTokenFile(unittest.TestCase):
             str(arg) for call in mock_log.info.call_args_list + mock_log.warning.call_args_list for arg in call.args
         )
         self.assertIn('Prepared single-node training launch command', logged)
-        self.assertNotIn('tr -d', logged)
         self.assertNotIn(command_secret, logged)
         launch_call = next(call for call in orch.exec.call_args_list if str(call.args[0]).startswith('bash -c'))
         self.assertIn(command_secret, launch_call.args[0])
         self.assertIn('tr -d', launch_call.args[0])
         self.assertFalse(launch_call.kwargs.get('print_console', True))
+        self.assertTrue(launch_call.kwargs.get('detailed'))
         download_call = next(call for call in orch.exec.call_args_list if 'download_hf_assets.py' in str(call.args[0]))
         self.assertNotIn(download_secret, download_call.args[0])
+        self.assertTrue(download_call.kwargs.get('detailed'))
         self.assertNotIn(launch_secret, logged)
         self.assertNotIn(download_secret, logged)
 
@@ -409,11 +421,13 @@ class TestHfTokenFile(unittest.TestCase):
         orch.hosts = ['n0']
 
         def _exec(cmd, **kwargs):
-            if str(cmd).startswith('test -s'):
-                return {'n0': {'exit_code': 0}}
+            if str(cmd).startswith('test -n'):
+                return {'n0': {'exit_code': 0, 'output': ''}}
             if 'WRAPPER_EOF' in str(cmd):
                 return {'n0': f'wrote token {bare}'}
-            return {'n0': ''}
+            if str(cmd).startswith('bash '):
+                return {'n0': {'exit_code': 0, 'output': ''}}
+            return {'n0': {'exit_code': 0, 'output': ''}}
 
         orch.exec.side_effect = _exec
         variant = MagicMock()
@@ -440,6 +454,9 @@ class TestHfTokenFile(unittest.TestCase):
         job.start_training_job()
         write_call = next(call for call in orch.exec.call_args_list if 'WRAPPER_EOF' in str(call.args[0]))
         self.assertFalse(write_call.kwargs.get('print_console', True))
+        launch_call = next(call for call in orch.exec.call_args_list if str(call.args[0]).startswith('bash '))
+        self.assertFalse(launch_call.kwargs.get('print_console', True))
+        self.assertTrue(launch_call.kwargs.get('detailed'))
         logged = ' '.join(str(arg) for call in mock_log.info.call_args_list for arg in call.args)
         self.assertIn('<redacted>', logged)
         self.assertNotIn(bare, logged)
@@ -453,9 +470,14 @@ class TestHfTokenFile(unittest.TestCase):
         bare = 'hf_' + ('b' * 34)
 
         def _exec(cmd, **kwargs):
-            if str(cmd).startswith('test -s'):
-                return {'n0': {'exit_code': 0}}
-            return {'n0': f'error: Invalid credentials for token {bare} HF_TOKEN={FAKE_CRED} hf_transfer'}
+            if str(cmd).startswith('test -n'):
+                return {'n0': {'exit_code': 0, 'output': ''}}
+            return {
+                'n0': {
+                    'exit_code': 0,
+                    'output': f'error: Invalid credentials for token {bare} HF_TOKEN={FAKE_CRED} hf_transfer',
+                }
+            }
 
         orch.exec.side_effect = _exec
         variant = MagicMock()
@@ -483,10 +505,12 @@ class TestHfTokenFile(unittest.TestCase):
         self.assertNotIn(bare, download_call.args[0])
         self.assertNotIn(FAKE_CRED, download_call.args[0])
         self.assertFalse(download_call.kwargs.get('print_console', True))
+        self.assertTrue(download_call.kwargs.get('detailed'))
         command_logs = [str(arg) for call in mock_log.info.call_args_list for arg in call.args]
         preview = next(entry for entry in command_logs if 'download_hf_assets.py' in entry)
         self.assertIn('HF_TOKEN=<redacted>', preview)
-        self.assertNotIn('tr -d', preview)
+        self.assertIn("stripped=$(tr -d '[:space:]'", preview)
+        self.assertNotIn(FAKE_CRED, preview)
         logged = ' '.join(
             str(arg) for call in mock_log.info.call_args_list + mock_log.warning.call_args_list for arg in call.args
         )
@@ -495,6 +519,82 @@ class TestHfTokenFile(unittest.TestCase):
         self.assertIn('hf_transfer', logged)
         self.assertNotIn(FAKE_CRED, logged)
         self.assertNotIn(bare, logged)
+
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.detect_rocm_path')
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.fail_test')
+    def test_download_non_zero_exit_fails_without_the_word_error(self, fail, mock_detect):
+        mock_detect.return_value = '/opt/rocm'
+        orch = MagicMock()
+        orch.hosts = ['n0']
+
+        def _exec(cmd, **kwargs):
+            if str(cmd).startswith('test -n'):
+                return {'n0': {'exit_code': 0, 'output': ''}}
+            return {
+                'n0': {
+                    'exit_code': 1,
+                    'output': 'HF token file is missing, empty, or not mounted inside the container',
+                }
+            }
+
+        orch.exec.side_effect = _exec
+        variant = MagicMock()
+        variant.job_config_dict.return_value = {
+            'log_dir': '/test/logs',
+            'scripts_dir': '/test/scripts',
+            'data_cache_dir': '/test/cache',
+            'hf_token_file': FAKE_CRED_FILE,
+            'torchtitan_root': '/workspace/torchtitan',
+            'training_iterations': '10',
+        }
+        variant.train_params = {'model_name': 'llama3_1_8b'}
+        variant.gpu_name = 'MI355X'
+        variant.gpus_per_node = 8
+        job = TorchTitanTrainingJob(
+            orch=orch, variant_config=variant, run_label='download-fail', distributed_training=False
+        )
+        with self.assertRaises(RuntimeError):
+            job.download_hf_assets()
+        fail.assert_called()
+        download_call = next(call for call in orch.exec.call_args_list if 'download_hf_assets.py' in str(call.args[0]))
+        self.assertTrue(download_call.kwargs.get('detailed'))
+
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.time.sleep')
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.detect_rocm_path')
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.log')
+    def test_training_log_reads_hide_a_bare_token(self, mock_log, mock_detect, _sleep):
+        mock_detect.return_value = '/opt/rocm'
+        bare = 'hf_' + ('b' * 34)
+        orch = MagicMock()
+        orch.hosts = ['n0']
+        orch.exec.return_value = {'n0': f'step: 10 | loss: 0.5\nInvalid credentials for token {bare}'}
+        variant = MagicMock()
+        variant.job_config_dict.return_value = {
+            'log_dir': '/test/logs',
+            'scripts_dir': '/test/scripts',
+            'data_cache_dir': '/test/cache',
+            'hf_token_file': FAKE_CRED_FILE,
+            'torchtitan_root': '/workspace/torchtitan',
+            'training_iterations': '10',
+        }
+        variant.train_params = {'model_name': 'llama3_1_8b'}
+        variant.gpu_name = 'MI355X'
+        variant.gpus_per_node = 8
+        job = TorchTitanTrainingJob(orch=orch, variant_config=variant, run_label='logs', distributed_training=False)
+
+        tail = job._read_last_node_log(tail_lines=50)
+        job.scan_for_training_errors()
+        job.poll_for_training_completion(time_between_iters=0)
+
+        self.assertNotIn(bare, tail)
+        self.assertIn('step: 10', tail)
+        logged = ' '.join(str(arg) for call in mock_log.info.call_args_list for arg in call.args)
+        self.assertNotIn(bare, logged)
+        self.assertIn('<redacted>', logged)
+        for call in orch.exec.call_args_list:
+            command = str(call.args[0])
+            if command.startswith('cat ') or command.startswith('tail '):
+                self.assertFalse(call.kwargs.get('print_console', True))
 
     def test_redact_logged_text_masks_a_bare_hub_token(self):
         bare = 'hf_' + ('c' * 34)

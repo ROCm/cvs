@@ -30,7 +30,7 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
-from cvs.lib.training.torchtitan.torchtitan_lib import TorchTitanTrainingJob
+from cvs.lib.training.torchtitan.torchtitan_lib import TorchTitanTrainingJob, _redact_logged_text
 from cvs.lib.training.torchtitan.primus_lib import PrimusTorchTitanTrainingJob
 from cvs.lib.training.torchtitan.utils.checkpoint_io import log_checkpoint_io_times, parse_checkpoint_io_seconds
 from cvs.lib.training.torchtitan.utils.convergence import (
@@ -621,8 +621,8 @@ def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle,
         pytest.skip(f"no log dir recorded for combo '{sweep_name}'")
 
     log_path = f"{combo_log_dir}/out-node0/training.log"
-    out_dict = orch.exec(f"cat {log_path}")
-    log_text = list(out_dict.values())[-1] or ""
+    out_dict = orch.exec(f"cat {log_path}", print_console=False)
+    log_text = _redact_logged_text(list(out_dict.values())[-1] or "")
 
     lc = variant_config.loss_curve
     combo = variant_config.sweep.combinations[sweep_name]

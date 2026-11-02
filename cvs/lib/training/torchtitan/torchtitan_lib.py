@@ -152,16 +152,26 @@ def _hf_token_export_line(token_file):
 
     Embedding the token value in a shell command would print it, because the
     orchestrator logs the full command. A missing or empty file fails the
-    shell command instead of continuing with an empty token.
+    shell command instead of continuing with an empty token. ``test -s`` is
+    not enough: a newline-only file is non-empty, and stripping it would
+    export an empty token.
     """
     path = str(token_file or '').strip()
     if not path:
         return "echo 'paths.hf_token_file is not configured' >&2; exit 1; "
     quoted = shlex.quote(path)
+    # `stripped`, not `token`: redact_secrets treats a token= assignment as a
+    # secret and would split the command substitution in the logged command.
     return (
-        f"if [ -s {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; "
-        f"else echo 'HF token file is missing or not mounted inside the container' >&2; exit 1; fi; "
+        f"stripped=$(tr -d '[:space:]' < {quoted}); "
+        'if [ -n "$stripped" ]; then export HF_TOKEN="$stripped"; '
+        "else echo 'HF token file is missing, empty, or not mounted inside the container' >&2; exit 1; fi; "
     )
+
+
+def _hf_token_nonempty_check(quoted_path):
+    """Shell test that succeeds only when the file contains a non-whitespace token."""
+    return f"test -n \"$(tr -d '[:space:]' < {quoted_path})\""
 
 
 def _require_hf_token_file(orch, token_file):
@@ -179,7 +189,7 @@ def _require_hf_token_file(orch, token_file):
         fail_test(msg)
         raise FileNotFoundError(msg)
     quoted = shlex.quote(path)
-    result = orch.exec(f'test -s {quoted}', detailed=True, timeout=30) or {}
+    result = orch.exec(_hf_token_nonempty_check(quoted), detailed=True, timeout=30) or {}
     missing = []
     seen = set()
     for host, info in result.items():
@@ -198,6 +208,60 @@ def _require_hf_token_file(orch, token_file):
         )
         fail_test(msg)
         raise FileNotFoundError(msg)
+
+
+def _exec_text_and_code(info):
+    if isinstance(info, dict):
+        return info.get('output') or '', info.get('exit_code')
+    if isinstance(info, str):
+        return info, None
+    return '', None
+
+
+def _log_exec_and_fail(orch, out_dict, what, hosts=None):
+    """Log redacted command output and fail when a host does not exit 0.
+
+    Callers pass ``print_console=False``, so this is the only place the output
+    is written. ``exit 1`` from the token shell line does not fail the test
+    unless the exit code is checked.
+    """
+    failed = []
+    seen = set()
+    for host, info in (out_dict or {}).items():
+        seen.add(str(host))
+        text, code = _exec_text_and_code(info)
+        redacted = _redact_logged_text(text)
+        if redacted.strip():
+            log.info('%s on %s:\n%s', what, host, redacted)
+        if 'error' in text.lower():
+            log.warning('Potential %s error on %s: %s', what, host, redacted)
+        if code != 0:
+            failed.append(str(host))
+    expected = [str(host) for host in hosts] if hosts is not None else []
+    for host in expected:
+        if host not in seen:
+            failed.append(host)
+    if not out_dict or failed:
+        where = ', '.join(failed) if failed else 'no node returned a result'
+        msg = f'{what} failed on {where}'
+        fail_test(msg)
+        raise RuntimeError(msg)
+
+
+def _log_redacted_exec(out_dict):
+    """Return ``{host: text}`` and write each host's output with secrets masked.
+
+    Training logs can contain a bare hub token. ``print_console=False`` keeps
+    phandle from writing the raw stream; this writes the masked text instead.
+    """
+    texts = {}
+    for host, info in (out_dict or {}).items():
+        text, _code = _exec_text_and_code(info)
+        redacted = _redact_logged_text(text)
+        texts[host] = redacted
+        if redacted.strip():
+            log.info('Training log on %s:\n%s', host, redacted)
+    return texts
 
 
 class TorchTitanTrainingJob:
@@ -413,15 +477,11 @@ class TorchTitanTrainingJob:
 
         # The training-command preview does not cover this command. Log it
         # redacted, and keep orch.exec from writing stdout and stderr as-is.
+        # detailed=True is required: the token line exits 1 without printing
+        # the word "error", so a text search would let that stage pass.
         log.info('%s', _redact_logged_text(download_cmd))
-        out_dict = self.orch.exec(download_cmd, print_console=False) or {}
-        for node, output in out_dict.items():
-            text = output if isinstance(output, str) else ''
-            redacted = _redact_logged_text(text)
-            if redacted.strip():
-                log.info('HF asset download on %s:\n%s', node, redacted)
-            if 'error' in text.lower():
-                log.warning('Potential download error on %s: %s', node, redacted)
+        out_dict = self.orch.exec(download_cmd, print_console=False, detailed=True) or {}
+        _log_exec_and_fail(self.orch, out_dict, 'HF asset download', hosts=self.orch.hosts)
 
     def exec_nic_setup_scripts(self):
         """Setup NICs for distributed training (Broadcom/Thor only)."""
@@ -617,19 +677,17 @@ class TorchTitanTrainingJob:
 
             for i in range(self.nnodes):
                 script_path = f'{self.scripts_dir}/distributed_wrapper_script_{i}.sh'
-                log.info(f'Launching training on node {i}')
-                self.orch.exec(f'bash {script_path}', hosts=[list(self.orch.hosts)[i]])
+                host = list(self.orch.hosts)[i]
+                log.info('Launching training on node %s', i)
+                out_dict = self.orch.exec(f'bash {script_path}', hosts=[host], print_console=False, detailed=True) or {}
+                _log_exec_and_fail(self.orch, out_dict, 'Distributed launch', hosts=[host])
                 time.sleep(1)
         else:
             log.info('Launching single-node training')
             # stdout and stderr of this exec are a different stream from the
             # command text, so keep them off the console and log them redacted.
-            out_dict = self.orch.exec(f'bash -c {shlex.quote(self.job_cmd)}', print_console=False) or {}
-            for node, output in out_dict.items():
-                text = output if isinstance(output, str) else ''
-                redacted = _redact_logged_text(text)
-                if redacted.strip():
-                    log.info('Single-node launch on %s:\n%s', node, redacted)
+            out_dict = self.orch.exec(f'bash -c {shlex.quote(self.job_cmd)}', print_console=False, detailed=True) or {}
+            _log_exec_and_fail(self.orch, out_dict, 'Single-node launch', hosts=self.orch.hosts)
 
     def get_training_results_dict(self):
         """Parse rank-0 training metrics. The gate reads the last logged step.
@@ -658,8 +716,8 @@ class TorchTitanTrainingJob:
             log_files = [f'{self.combo_log_dir}/out-node0/training.log']
 
         for log_file in log_files:
-            out_dict = self.orch.exec(f'tail -1000 {log_file}')
-            for host, output in out_dict.items():
+            out_dict = self.orch.exec(f'tail -1000 {log_file}', print_console=False) or {}
+            for host, output in _log_redacted_exec(out_dict).items():
                 if not output:
                     continue
                 for err_type, pattern in training_err_dict.items():
@@ -676,8 +734,8 @@ class TorchTitanTrainingJob:
             time.sleep(time_between_iters)
             log.info(f'Polling iteration {iteration + 1}/{max_iters}')
 
-            out_dict = self.orch.exec(f'tail -500 {log_file}')
-            for host, output in out_dict.items():
+            out_dict = self.orch.exec(f'tail -500 {log_file}', print_console=False) or {}
+            for host, output in _log_redacted_exec(out_dict).items():
                 if output and _is_training_complete(output, self.iterations):
                     log.info(f'Training completed on {host}')
                     return
@@ -818,15 +876,19 @@ class TorchTitanTrainingJob:
     def _read_last_node_log(self, tail_lines=0):
         """Read the rank-0 training log (node 0).
 
+        Callers store this text and attach it to the pytest-html report, so it
+        is redacted before it is returned. A failed download or launch can leave
+        a bare hub token on the last lines.
+
         Args:
             tail_lines (int): If > 0, only the last N lines of the log are read.
 
         Returns:
-            str: Log text from node 0.
+            str: Redacted log text from node 0.
         """
         # Rank 0 emits the step metrics line; that process is node 0.
         rank0 = self.orch.hosts[0]
         tail_suffix = f' | tail -{tail_lines}' if tail_lines > 0 else ''
         log_path = f'{self.combo_log_dir}/out-node0/training.log'
-        out_dict = self.orch.exec(f'cat {log_path}{tail_suffix}', hosts=[rank0])
-        return out_dict.get(rank0) or ''
+        out_dict = self.orch.exec(f'cat {log_path}{tail_suffix}', hosts=[rank0], print_console=False) or {}
+        return _log_redacted_exec(out_dict).get(rank0) or ''
