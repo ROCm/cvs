@@ -4,7 +4,7 @@
        "install_perf_package": "True",
        "_comment_install_perf_package": "String \"True\" or \"False\" (not a JSON boolean). True: install_ibperf_tools clones perftest from GitHub into install_dir and builds it with ROCm on the head node. False: skip the build and use the perftest already in <install_dir>/perftest.",
        "install_system_packages": "False",
-       "_comment_install_system_packages": "String \"True\" or \"False\"; used only when install_perf_package is True. True: sudo apt install the perftest build and runtime packages, lshw and iproute2 on every node (skipped in SPUR/Slurm job steps; in a container, needs sudo in the image). Either way, install fails if numactl, lshw, rdma, libibverbs or librdmacm is missing on any node (after apt when True). Install always fails on a node without amd-smi (PATH or /opt/rocm/bin), which apt never installs.",
+       "_comment_install_system_packages": "String \"True\" or \"False\"; used only when install_perf_package is True. True: sudo apt install the perftest build and runtime packages, lshw and iproute2 on every node (skipped in SPUR/Slurm job steps; in a container, needs sudo in the image). Either way, install fails if numactl, lshw, rdma, libibverbs or librdmacm is missing on any node (after apt when True). On a node without amd-smi (PATH or /opt/rocm/bin), True also installs amd-smi-lib from the node's ROCm apt repository; install fails if amd-smi is still missing.",
        "install_dir": "/home/{user-id}/",
        "_comment_install_dir": "Directory shared by every node at the same path; perftest is built on the head node and run from <install_dir>/perftest/bin on every node. {user-id} becomes the cluster file username.",
        "rocm_dir": "<changeme>",
