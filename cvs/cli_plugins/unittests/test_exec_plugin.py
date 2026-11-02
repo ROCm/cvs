@@ -415,11 +415,11 @@ class TestRunOnHosts(unittest.TestCase):
     @patch("cvs.cli_plugins.exec_plugin.Pssh")
     def test_success_returns_true(self, MockPssh):
         mock_pssh = MagicMock()
-        mock_pssh.exec.return_value = {"10.0.0.2": "XSJICHRISTO01"}
+        mock_pssh.exec.return_value = {"10.0.0.2": "AMDSERVER01"}
         MockPssh.return_value = mock_pssh
         ok, output = self._call()
         self.assertTrue(ok)
-        self.assertEqual(output, {"10.0.0.2": "XSJICHRISTO01"})
+        self.assertEqual(output, {"10.0.0.2": "AMDSERVER01"})
 
     @patch("cvs.cli_plugins.exec_plugin.Pssh")
     def test_timeout_passed_to_exec(self, MockPssh):
