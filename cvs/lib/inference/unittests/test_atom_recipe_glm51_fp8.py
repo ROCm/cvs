@@ -37,6 +37,18 @@ class TestAtomRecipeGlm51Fp8(unittest.TestCase):
             self.assertIn(cell, variant.thresholds)
         self.assertFalse(variant.enforce_thresholds)
 
+    def test_vllm_distributed_keeps_tp8_and_pp2(self):
+        variant = _load("mi3xx_atom_vllm_glm-5.1_fp8_distributed.json")
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.model.id, "zai-org/GLM-5.1-FP8")
+        self.assertEqual(variant.params.tensor_parallelism, "8")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertFalse(variant.enforce_thresholds)
+        for cell in variant.expected_cells():
+            self.assertIn(",PP=2,", cell)
+            self.assertIn(cell, variant.thresholds)
+
 
 if __name__ == "__main__":
     unittest.main()
