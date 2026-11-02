@@ -18,7 +18,7 @@ Prerequisites
 - A cluster file with at least two nodes. One node cannot form a server/client pair.
 - SSH key access from the machine where you run ``cvs``, as in your cluster file.
 - A ROCm install on every node. Set ``rocm_dir`` in the config below, or ``""`` to auto-detect.
-- ``amd-smi`` on every node, on ``PATH`` or at ``/opt/rocm/bin``. GPU discovery uses it. ``install_system_packages`` never installs it, and the install suite fails on a node without it.
+- ``amd-smi`` on every node, on ``PATH`` or at ``/opt/rocm/bin``. GPU discovery uses it. When it is missing and ``install_system_packages`` is ``True``, the install suite installs ``amd-smi-lib`` from the node's ROCm apt repository. The install suite fails on a node still without it.
 - On every node: ``numactl``, ``libibverbs``, ``librdmacm``, ``lshw``, and the ``rdma`` command. The install suite can ``apt install`` the perftest build and runtime packages, ``lshw``, and ``iproute2`` (for ``rdma``) when ``install_system_packages`` is ``True``. That install is skipped inside a SPUR or Slurm job step.
 - On the head node, when ``install_perf_package`` is ``True``: ``git``, ``build-essential``, the autotools build chain, ``pkg-config``, the ``libibverbs``, ``librdmacm``, ``libibumad``, and ``libpci`` development packages (the set ``install_system_packages`` installs), and access to ``https://github.com/linux-rdma/perftest``.
 - Each backend NIC has a network interface (on InfiniBand, an IPoIB interface). Ports without one are not used.
@@ -137,7 +137,7 @@ IB Perf needs these container settings:
 
 - ``container.lifetime`` ``persistent``. The install and test suites are separate runs, and a ``per_run`` container is removed between them with anything installed in it.
 - ``install_dir`` on a volume in ``container.runtime.args.volumes`` that every node shares, mounted at the same path in the container. The build runs in the head node's container and every node runs the result.
-- An image with ROCm at ``rocm_dir`` and ``amd-smi``, even when ``install_system_packages`` is ``True``. The install suite never installs either, and it fails on a node without ``amd-smi``. The image also needs ``lshw``, ``rdma`` (from ``iproute2``), ``numactl``, ``libibverbs``, and ``librdmacm``, unless ``install_system_packages`` is ``True`` and the image has ``sudo``. ``install_ibperf_tools`` fails when any of them is still missing, with or without apt.
+- An image with ROCm at ``rocm_dir``, which the install suite never installs. The image also needs ``amd-smi``, unless ``install_system_packages`` is ``True``, the image has ``sudo``, and its apt sources include the ROCm repository, so the install suite can install ``amd-smi-lib``. It fails on a node still without ``amd-smi``. The image also needs ``lshw``, ``rdma`` (from ``iproute2``), ``numactl``, ``libibverbs``, and ``librdmacm``, unless ``install_system_packages`` is ``True`` and the image has ``sudo``. ``install_ibperf_tools`` fails when any of them is still missing, with or without apt.
 
 What a pass produces
 ====================
@@ -173,7 +173,7 @@ Search the pytest log for ``FAIL -``. The test then ends with ``Following FAILUR
    * - ``perftest runtime dependencies missing on node``
      - ``numactl``, ``lshw``, ``rdma``, ``libibverbs``, or ``librdmacm`` is missing. Either ``install_system_packages`` is not installing them, or the apt install did not provide them.
    * - ``amd-smi not found on node``
-     - ``amd-smi`` is neither on ``PATH`` nor at ``/opt/rocm/bin``. Without it GPU discovery finds no cards. Install ROCm with ``amd-smi`` on that node or in the image.
+     - ``amd-smi`` is neither on ``PATH`` nor at ``/opt/rocm/bin``. Without it GPU discovery finds no cards. Install ROCm with ``amd-smi`` on that node or in the image, or set ``install_system_packages`` to ``True`` where the node's apt sources include the ROCm repository.
    * - ``ib_write_bw not showing expected use_rocm output``
      - The in-tree binary ``<install_dir>/perftest/ib_write_bw`` did not advertise GPUDirect RDMA. The perf tests invoke ``<install_dir>/perftest/bin/<tool>``.
    * - ``lacks ROCm DMA-BUF support``

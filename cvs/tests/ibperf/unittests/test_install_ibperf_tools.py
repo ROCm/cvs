@@ -19,11 +19,13 @@ class TestInstallIbPerf(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def _run(self, config, deps_out=None, managed=False, gpu_tool_out=None):
+    def _run(self, config, deps_out=None, managed=False, gpu_tool_out=None, apt_provides_gpu_tool=False):
         deps_out = deps_out or {}
-        gpu_tool_out = gpu_tool_out or {}
+        gpu_tool_out = dict(gpu_tool_out or {})
 
         def all_exec(cmd, **_kwargs):
+            if cmd == install_ibperf_tools.GPU_TOOL_INSTALL and apt_provides_gpu_tool:
+                gpu_tool_out.clear()
             if cmd == install_ibperf_tools.RUNTIME_DEPS_CHECK:
                 return {n: deps_out.get(n, '') for n in _NODES}
             if cmd == install_ibperf_tools.GPU_TOOL_CHECK:
@@ -68,23 +70,42 @@ class TestInstallIbPerf(unittest.TestCase):
         self.assertIn('node n1: lshw, rdma;', str(ctx.exception))
         self.assertFalse(any('make' in c for c in self.head_cmds))
 
-    def test_gpu_tool_check_uses_gpu_discovery_lookup(self):
-        check = install_ibperf_tools.GPU_TOOL_CHECK
-        self.assertIn('command -v amd-smi', check)
-        self.assertIn('[ -x /opt/rocm/bin/amd-smi ]', check)
+    def test_gpu_tool_check_and_install_use_gpu_discovery_lookup(self):
+        present = install_ibperf_tools.GPU_TOOL_PRESENT
+        self.assertIn('command -v amd-smi', present)
+        self.assertIn('[ -x /opt/rocm/bin/amd-smi ]', present)
         self.assertIn('/opt/rocm/bin/amd-smi', rocm_plib._amd_smi_json_command('list', use_sudo=False))
+        self.assertEqual(install_ibperf_tools.GPU_TOOL_CHECK, f'{present} || echo MISSING:amd-smi')
+        self.assertEqual(install_ibperf_tools.GPU_TOOL_INSTALL, f'{present} || sudo apt install -y amd-smi-lib')
 
-    def test_missing_gpu_tool_fails_naming_node_whether_or_not_apt_runs(self):
-        for flag, managed in (('False', False), ('True', False), ('True', True)):
+    def test_missing_gpu_tool_installed_by_apt_lets_build_run(self):
+        self._run(
+            {'install_system_packages': 'True'}, gpu_tool_out={'n2': 'MISSING:amd-smi\n'}, apt_provides_gpu_tool=True
+        )
+        self.assertIn('cd /shared/perftest; make install', self.head_cmds)
+
+    def test_missing_gpu_tool_without_apt_fails_naming_node(self):
+        for flag, managed, hint in (
+            ('False', False, 'install them or set install_system_packages to True'),
+            ('True', True, 'install them outside the job step'),
+        ):
             with self.subTest(flag=flag, managed=managed):
                 with self.assertRaises(BaseException) as ctx:
                     self._run(
                         {'install_system_packages': flag}, managed=managed, gpu_tool_out={'n2': 'MISSING:amd-smi\n'}
                     )
                 self.assertIn('amd-smi not found on node n2 (PATH or /opt/rocm/bin)', str(ctx.exception))
+                self.assertIn(hint, str(ctx.exception))
                 self.assertNotIn('node n1', str(ctx.exception))
                 self.assertEqual(self._apt_cmds(), [])
                 self.assertFalse(any('make' in c for c in self.head_cmds))
+
+    def test_gpu_tool_still_missing_after_apt_fails_before_build(self):
+        with self.assertRaises(BaseException) as ctx:
+            self._run({'install_system_packages': 'True'}, gpu_tool_out={'n2': 'MISSING:amd-smi\n'})
+        self.assertIn('amd-smi not found on node n2', str(ctx.exception))
+        self.assertIn('apt install did not provide them', str(ctx.exception))
+        self.assertFalse(any('make' in c for c in self.head_cmds))
 
     def test_missing_gpu_tool_and_runtime_deps_are_both_reported(self):
         with self.assertRaises(BaseException) as ctx:
@@ -130,7 +151,11 @@ class TestInstallIbPerf(unittest.TestCase):
             self.all_cmds.index('sudo apt install -y numactl lshw iproute2'),
         )
         self.assertLess(
-            self.all_cmds.index(install_ibperf_tools.GPU_TOOL_CHECK), self.all_cmds.index('sudo apt update -y')
+            self.all_cmds.index('sudo apt update -y'), self.all_cmds.index(install_ibperf_tools.GPU_TOOL_INSTALL)
+        )
+        self.assertLess(
+            self.all_cmds.index(install_ibperf_tools.GPU_TOOL_INSTALL),
+            self.all_cmds.index(install_ibperf_tools.GPU_TOOL_CHECK),
         )
 
         self._run({'install_system_packages': 'True'}, managed=True)

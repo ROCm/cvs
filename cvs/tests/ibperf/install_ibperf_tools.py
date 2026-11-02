@@ -33,7 +33,10 @@ RUNTIME_DEPS_CHECK = (
 )
 
 # Same lookup as rocm_plib._amd_smi_json_command; without the tool GPU discovery maps no cards.
-GPU_TOOL_CHECK = '{ command -v amd-smi >/dev/null || [ -x /opt/rocm/bin/amd-smi ]; } || echo MISSING:amd-smi'
+GPU_TOOL_PRESENT = '{ command -v amd-smi >/dev/null || [ -x /opt/rocm/bin/amd-smi ]; }'
+GPU_TOOL_CHECK = f'{GPU_TOOL_PRESENT} || echo MISSING:amd-smi'
+# amd-smi-lib comes from the host's ROCm apt repo; installing only when absent never upgrades a present amd-smi.
+GPU_TOOL_INSTALL = f'{GPU_TOOL_PRESENT} || sudo apt install -y amd-smi-lib'
 
 
 def test_launch_containers(orch, lifecycle):
@@ -52,12 +55,6 @@ def test_install_ib_perf(orch, config_dict):
         if install_system_packages and managed:
             log.warning('Managed Spur/Slurm step: skipping apt install of perftest dependencies')
             install_system_packages = False
-        for node, out in orch.exec(GPU_TOOL_CHECK, print_console=False).items():
-            if 'MISSING:amd-smi' in out:
-                fail_test(
-                    f'amd-smi not found on node {node} (PATH or /opt/rocm/bin); GPU discovery needs it, '
-                    'and install_system_packages does not install it'
-                )
         if install_system_packages:
             update_test_result()
             orch.exec('sudo apt update -y', timeout=200, print_console=False)
@@ -74,11 +71,15 @@ def test_install_ib_perf(orch, config_dict):
             orch.exec('sudo apt install -y libibumad-dev', print_console=False)
             orch.exec('sudo apt install -y libpci-dev', print_console=False)
             orch.exec('sudo apt install -y numactl lshw iproute2', print_console=False)
+            orch.exec(GPU_TOOL_INSTALL, timeout=200, print_console=False)
             hint = 'apt install did not provide them; apt output is not logged, so rerun the apt install on that node'
         elif managed:
             hint = 'install them outside the job step, e.g. in the node image or before allocation'
         else:
             hint = 'install them or set install_system_packages to True'
+        for node, out in orch.exec(GPU_TOOL_CHECK, print_console=False).items():
+            if 'MISSING:amd-smi' in out:
+                fail_test(f'amd-smi not found on node {node} (PATH or /opt/rocm/bin); GPU discovery needs it; {hint}')
         for node, out in orch.exec(RUNTIME_DEPS_CHECK, print_console=False).items():
             missing = re.findall(r'MISSING:(\S+)', out)
             if missing:
