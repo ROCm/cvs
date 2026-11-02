@@ -234,5 +234,78 @@ class TestParseTbA2aBw(unittest.TestCase):
         self.assertIn('gpu_to_gpu_a2a_per_link_min', fail_test.call_args.args[0])
 
 
+HEALTHCHECK_ONE_FAIL = """\
+Testing HBM performance [READ]             ........PASS
+Testing bidirectional host<->device copies ........PASS
+Testing all-to-all XGMI copies             ........FAIL (56 test(s))
+"""
+
+HEALTHCHECK_ALL_PASS = HEALTHCHECK_ONE_FAIL.replace('FAIL (56 test(s))', 'PASS')
+
+# VERBOSE=1 prints the verdict on its own line, so no "Testing ....FAIL" line exists.
+HEALTHCHECK_VERBOSE_FAIL = """\
+Testing all-to-all XGMI copies
+   GPU 00 to GPU 01: : Measured  40.17 Limit  43.65
+FAIL (56 test(s))
+"""
+
+
+class TestParseTbHealthcheck(unittest.TestCase):
+    def test_all_pass_does_not_fail(self):
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_healthcheck({'nodeA': {'output': HEALTHCHECK_ALL_PASS, 'exit_code': 0}})
+        fail_test.assert_not_called()
+
+    def test_failed_subtest_is_named(self):
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_healthcheck({'nodeA': {'output': HEALTHCHECK_ONE_FAIL, 'exit_code': 2}})
+        fail_test.assert_called_once()
+        message = fail_test.call_args.args[0]
+        self.assertIn('all-to-all XGMI copies', message)
+        self.assertIn('56 test(s)', message)
+        self.assertIn('nodeA', message)
+
+    def test_nonzero_exit_without_fail_line_fails(self):
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_healthcheck({'nodeA': {'output': HEALTHCHECK_VERBOSE_FAIL, 'exit_code': 2}})
+        fail_test.assert_called_once()
+        self.assertIn('exited with code 2', fail_test.call_args.args[0])
+
+    def test_expected_host_without_result_fails(self):
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_healthcheck(
+                {'nodeA': {'output': HEALTHCHECK_ALL_PASS, 'exit_code': 0}}, expected_hosts=['nodeA', 'nodeB']
+            )
+        fail_test.assert_called_once()
+        self.assertIn('no result for node nodeB', fail_test.call_args.args[0])
+
+    def test_no_results_fails_every_expected_host(self):
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_healthcheck({}, expected_hosts=['nodeA', 'nodeB'])
+        self.assertEqual(fail_test.call_count, 2)
+
+    def test_generic_scan_misses_healthcheck_failure(self):
+        from cvs.lib import utils_lib
+
+        with patch('cvs.lib.utils_lib.fail_test') as fail_test:
+            utils_lib.scan_test_results({'nodeA': HEALTHCHECK_ONE_FAIL})
+        fail_test.assert_not_called()
+
+    def test_run_transferbench_requests_detailed_results(self):
+        orch = MagicMock()
+        orch.orchestrator_type = 'baremetal'
+        orch.sudo_prefix.return_value = 'sudo -n '
+        with patch.object(tb, 'detect_rocm_path', return_value='/opt/rocm'):
+            tb.run_transferbench(
+                orch,
+                {'path': '/tb', 'rocm_path': '/opt/rocm', 'num_cpu_devices': 2},
+                'healthcheck',
+                timeout=30,
+                detailed=True,
+            )
+        self.assertTrue(orch.exec.call_args.kwargs['detailed'])
+        self.assertFalse(orch.exec.call_args.kwargs['print_console'])
+
+
 if __name__ == '__main__':
     unittest.main()
