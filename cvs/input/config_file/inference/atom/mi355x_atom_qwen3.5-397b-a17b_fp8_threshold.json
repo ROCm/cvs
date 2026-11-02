@@ -560,27 +560,27 @@
       "ISL=128,OSL=32,TP=8,PP=1,CONC=1": {
         "total_token_throughput": {
           "kind": "min_tok_s",
-          "value": 0
+          "value": 602.17
         },
         "output_throughput": {
           "kind": "min_tok_s",
-          "value": 0
+          "value": 118.42
         },
         "per_gpu_throughput": {
           "kind": "min_tok_s",
-          "value": 0
+          "value": 75.27
         },
         "output_tput_per_gpu": {
           "kind": "min_tok_s",
-          "value": 0
+          "value": 14.8
         },
         "mean_ttft_ms": {
           "kind": "max_ms",
-          "value": 1000000
+          "value": 158.38
         },
         "median_ttft_ms": {
           "kind": "max_ms",
-          "value": 1000000
+          "value": 157.97
         },
         "p90_ttft_ms": {
           "kind": "max_ms",
@@ -592,15 +592,15 @@
         },
         "p99_ttft_ms": {
           "kind": "max_ms",
-          "value": 1000000
+          "value": 175.37
         },
         "mean_tpot_ms": {
           "kind": "max_ms",
-          "value": 1000000
+          "value": 3.0
         },
         "median_tpot_ms": {
           "kind": "max_ms",
-          "value": 1000000
+          "value": 2.98
         },
         "p90_tpot_ms": {
           "kind": "max_ms",
@@ -612,15 +612,15 @@
         },
         "p99_tpot_ms": {
           "kind": "max_ms",
-          "value": 1000000
+          "value": 3.67
         },
         "mean_itl_ms": {
           "kind": "max_ms",
-          "value": 1000000
+          "value": 8.63
         },
         "median_itl_ms": {
           "kind": "max_ms",
-          "value": 1000000
+          "value": 9.0
         },
         "p95_itl_ms": {
           "kind": "max_ms",
@@ -628,15 +628,15 @@
         },
         "p99_itl_ms": {
           "kind": "max_ms",
-          "value": 1000000
+          "value": 14.23
         },
         "mean_e2el_ms": {
           "kind": "max_ms",
-          "value": 1000000
+          "value": 241.15
         },
         "median_e2el_ms": {
           "kind": "max_ms",
-          "value": 1000000
+          "value": 240.46
         },
         "p90_e2el_ms": {
           "kind": "max_ms",
@@ -648,15 +648,15 @@
         },
         "p99_e2el_ms": {
           "kind": "max_ms",
-          "value": 1000000
+          "value": 270.01
         },
         "success_rate": {
           "kind": "min",
-          "value": 0
+          "value": 1
         },
         "failed": {
           "kind": "max",
-          "value": 1000000000
+          "value": 0
         }
       },
       "accuracy": {
@@ -666,7 +666,12 @@
             "value": 0.0
           }
         },
-        "gsm8k_strict": {}
+        "gsm8k_strict": {
+          "gsm8k.exact_match__strict-match": {
+            "kind": "min",
+            "value": 0.0
+          }
+        }
       },
       "mtp_quality": {
         "mtp.acceptance_rate": {
@@ -683,5 +688,6 @@
         }
       }
     }
-  }
+  },
+  "_comment": "mtp3 short cell and GSM8K recorded from the finished MI355X Spur runs. enforce_thresholds stays false."
 }
