@@ -243,8 +243,8 @@ node. The examples below use `/opt/amdtools` as the prefix; substitute your
 > **Install a version that satisfies the configured `anc_version` minimum**
 > (shipped default `1.7.3`). Point the URL at any release `≥ anc_version`.
 
-**Tar install** — the `.tar.gz` *is* the tree; a single untar into the prefix
-lays down `anc/` and the tool folders:
+**Tar install (direct 1.5.0+ packages)** — the `.tar.gz` *is* the tree; a single
+untar into the prefix lays down `anc/` and the tool folders:
 
 ```bash
 STAGE=$(mktemp -d)
@@ -256,6 +256,13 @@ wget -q "https://<anc-artifact-host-url>/anc-release-package.tar.gz" \
 sudo mkdir -p /opt/amdtools
 sudo tar -xzf anc.tar.gz -C /opt/amdtools
 ```
+
+> **Legacy (≤1.4.x) releases** (reachable only by lowering or clearing
+> `anc_version`) ship the tool and content as *inner* archives inside the outer
+> tarball (and legacy deb/rpm likewise need unpacking first), so a single untar
+> is not enough — extract the inner `anc-tool*.tar.gz` and `anc-content*.tar.gz`
+> into the prefix as well. Prefer `anc_installation`, which auto-detects and
+> handles both packaging layouts.
 
 > For a relocated tar prefix, `anc_installation` also rewrites the content
 > YAMLs' absolute `exe_path` entries from `/opt/amdtools` to the new prefix — do
