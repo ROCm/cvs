@@ -12,8 +12,20 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import time
 import logging
+import os
 
 log = logging.getLogger(__name__)
+
+
+def _runner_cache_dir():
+    """Return the per-user root for runner scratch and output.
+
+    Paths under the user's home avoid the shared-directory symlink risk. Only
+    absolute XDG_CACHE_HOME values are used, per the XDG Base Directory spec.
+    """
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    base = Path(xdg) if xdg and os.path.isabs(xdg) else Path.home() / ".cache"
+    return base / "cvs" / "runners"
 
 
 class RunStatus(Enum):
@@ -32,6 +44,9 @@ class RunConfig:
     Base configuration for all runners.
 
     Specific runners should extend this with their own config dataclasses.
+    work_dir and output_dir default to per-user cache paths. Construction does
+    not create them; runners should call mkdir(mode=0o700, parents=True,
+    exist_ok=True) before writing.
     """
 
     # Cluster configuration
@@ -42,8 +57,8 @@ class RunConfig:
 
     # Execution settings
     timeout_seconds: int = 3600  # 1 hour default
-    work_dir: Path = field(default_factory=lambda: Path("/tmp"))
-    output_dir: Path = field(default_factory=lambda: Path("/tmp/benchmark_output"))
+    work_dir: Path = field(default_factory=lambda: _runner_cache_dir() / "work")
+    output_dir: Path = field(default_factory=lambda: _runner_cache_dir() / "benchmark_output")
 
     # Additional environment variables
     env_vars: Dict[str, str] = field(default_factory=dict)
