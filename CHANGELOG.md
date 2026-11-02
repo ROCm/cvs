@@ -55,6 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Runs on nodes with fewer than 8 GPUs instead of failing with `KeyError: 'card4'`.
   - `verify_bw` now enforces `expected_results`; previously tests passed regardless of measured bandwidth. Configs with `verify_bw` set to `"True"` may now fail; re-baseline thresholds for your cluster.
   - The sample config sets `duration` to `10` (was `30`), which caused failures; lower it in configs copied from the old sample.
+- The health sample config's TransferBench schmoo `32_cu_local_copy` threshold is lowered so healthy MI300X nodes pass; configs copied from the old sample still fail and must lower `32_cu_local_copy`.
 - RCCL:
   - Perf and regression thresholds and dip checks read the configured top-level `rccl.results` table, and regression reads its collectives from `rccl_test_params`.
   - NIC- and rank-keyed `results` entries are validated like flat entries, and invalid values fail with their config path.
