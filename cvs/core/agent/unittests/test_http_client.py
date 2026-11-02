@@ -681,8 +681,7 @@ class TestConnectionPool(HttpClientTestBase):
 
 class TestCreateAppIntegration(HttpClientTestBase):
     async def test_run_command_posts_json_accepted_by_create_app(self):
-        agent_dir = Path(self.tmp.name) / "agent"
-        agent_dir.mkdir()
+        agent_dir = RunLayout.get().agent_dir
         (agent_dir / messages.AUTH_TOKEN_FILENAME).write_text(AUTH_FIXTURE + "\n")
         app = create_app(
             agent_dir=agent_dir,
@@ -704,6 +703,29 @@ class TestCreateAppIntegration(HttpClientTestBase):
         self.assertEqual(outputs[0].exit_code, 0)
         self.assertEqual(outputs[0].stdout, ["hello"])
         self.assertFalse(outputs[0].timed_out)
+
+    async def test_file_mode_run_command_is_accepted_by_create_app(self):
+        agent_dir = RunLayout.get().agent_dir
+        (agent_dir / messages.AUTH_TOKEN_FILENAME).write_text(AUTH_FIXTURE + "\n")
+        app = create_app(
+            agent_dir=agent_dir,
+            world_rank=0,
+            world_size=1,
+            own_hostname="rank0-host",
+            own_port=9000,
+        )
+        async with app.router.lifespan_context(app):
+            client = ParallelHTTPClient(
+                {"local": "http://testserver"}, AUTH_FIXTURE, transport=httpx.ASGITransport(app=app)
+            )
+            try:
+                outputs = await client.run_command("echo hello", output_mode=messages.ExecOutputMode.FILE)
+            finally:
+                await client.destroy()
+        self.assertEqual(len(outputs), 1)
+        self.assertIsNone(outputs[0].exception)
+        self.assertEqual(outputs[0].exit_code, 0)
+        self.assertEqual(outputs[0].stdout, ["hello"])
 
 
 class TestHostOutput(unittest.TestCase):

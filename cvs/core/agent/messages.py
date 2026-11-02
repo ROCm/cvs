@@ -60,11 +60,11 @@ class ExecOutputMode(str, Enum):
 class ExecRequest(BaseModel):
     cmd: str
     env: dict[str, str]
-    cwd: Path
+    cwd: Path  # must resolve inside the run directory (agent_dir's parent); otherwise the agent rejects it
     timeout: int | None  # some tests / benchmarks are long running require None timeout
     inactivity_timeout: int | None  # None disables the inactivity bound
-    cmd_id: str
-    out_path: Path | None  # directory for cmd_id.stdout/cmd_id.stderr; required when output_mode is FILE
+    cmd_id: str = Field(pattern=r"^[A-Za-z0-9_-]+$")  # becomes a filename under out_path; no separators or dots
+    out_path: Path | None  # FILE output directory; must resolve inside the run directory
     output_mode: ExecOutputMode
 
     @model_validator(mode="after")
