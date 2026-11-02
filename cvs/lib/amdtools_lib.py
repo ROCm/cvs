@@ -79,12 +79,12 @@ _VERSION_RE = re.compile(VERSION_BODY_GROUPED + VERSION_END)
 # AMD tool releases changed their packaging in the 1.5.0 series:
 #   - LEGACY (<= 1.4.x): every flavour ships as an OUTER ``.tar.gz`` whose name
 #     carries a ``-deb-`` / ``-rpm-`` / ``-tar-`` token, e.g.
-#     ``anc-release-helios-nda-1.4.9-deb-linux-x64.tar.gz``. Inside are the real
+#     ``<packagename>-<version>-deb-linux-x64.tar.gz``. Inside are the real
 #     deb/rpm packages (deb/rpm flavours) or two inner tarballs (tar flavour).
 #   - DIRECT (1.5.0+): the URL points straight at the artifact -- a ``.deb``, a
 #     ``.rpm``, or a ``.tar.gz`` that IS the tree (no inner archives) -- with NO
-#     ``-<flavour>-`` token, e.g. ``anc-release-helios-nda_1.5.5_amd64.deb`` /
-#     ``anc-release-helios-nda-1.5.5-x86_64.tar.gz``.
+#     ``-<flavour>-`` token, e.g. ``<packagename>-<version>_amd64.deb`` /
+#     ``<packagename>-<version>-x86_64.tar.gz``.
 # The two are told apart by the presence of the legacy ``-<flavour>-`` token
 # (see detect_package_flavour); a legacy tar's name also ends in ``.tar.gz``, so
 # the token MUST be checked before the extension.

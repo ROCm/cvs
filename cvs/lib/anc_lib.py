@@ -406,12 +406,12 @@ def _fail_unreachable_nodes(cluster_dict, out_dict, action):
 # ANC changed its release packaging in the 1.5.0 series:
 #   - LEGACY (<= 1.4.x): every flavour ships as an OUTER ``.tar.gz`` whose name
 #     carries a ``-deb-`` / ``-rpm-`` / ``-tar-`` token, e.g.
-#     ``anc-release-helios-nda-1.4.9-deb-linux-x64.tar.gz``. Inside are the real
+#     ``<packagename>-<version>-deb-linux-x64.tar.gz``. Inside are the real
 #     deb/rpm packages (deb/rpm flavours) or two inner tarballs (tar flavour).
 #   - DIRECT (1.5.0+): the URL points straight at the artifact -- a ``.deb``, a
 #     ``.rpm``, or a ``.tar.gz`` that IS the tree (no inner archives) -- with NO
-#     ``-<flavour>-`` token, e.g. ``anc-release-helios-nda_1.5.5_amd64.deb`` /
-#     ``anc-release-helios-nda-1.5.5-x86_64.tar.gz``.
+#     ``-<flavour>-`` token, e.g. ``<packagename>-<version>_amd64.deb`` /
+#     ``<packagename>-<version>-x86_64.tar.gz``.
 # The two are told apart by the presence of the legacy ``-<flavour>-`` token
 # (see detect_package_flavour); a legacy tar's name also ends in ``.tar.gz``, so
 # the token MUST be checked before the extension.
@@ -598,7 +598,7 @@ def resolve_anc_paths_from_config(config_dict):
 
 # The release-content plugin line in ``anc.py --content-list`` output (DIRECT
 # 1.5.0+ packaging only), e.g.
-#   "  anc-release-helios-nda    1.5.5   Helios NDA Release"
+#   "  anc-release-<product>    <version>   <product> Release"
 # The plugin name starts with ``anc-release-`` and its MIDDLE column is the
 # release version, which tracks the archive version. Legacy (<=1.4.x)
 # --content-list has no version column and no anc-release-* plugin at all, so

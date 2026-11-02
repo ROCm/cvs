@@ -185,7 +185,7 @@ Each key is documented inline in the shipped config via a matching
 | `inactivity_timeout` | Per-group **inactivity** timeout in seconds (default 900 = 15 min). Applies to ANC group runs only, not install. A group is aborted only after this many seconds with **no new ANC output**; there is no total wall-clock cap, so a group that keeps producing progress runs as long as it needs. (Replaces the old `test_timeout` total-budget cap, which killed healthy, actively-running groups.) |
 | `install_timeout` | Package download+install **inactivity** timeout in seconds (default 1800 = 30 min), used only by `anc_installation` / the install pre-task. It is a per-read (no-output) timeout, not a total budget: the download emits a periodic progress heartbeat so a slow link never trips it, while a genuine stall still fails. Independent of `inactivity_timeout`. |
 | `anc_version` | Optional minimum ANC version. When unset, each suite runs against whatever version is installed. When set, nodes below it trigger an install **only if `anc_release_url` can satisfy it** (its version ≥ `anc_version`); otherwise the install suite (`anc_installation`) fails, while normal group/item suites log the shortfall and proceed with the installed version. A release candidate counts as its base release (`1.7.0-rc.1` is treated as `1.7.0`); the rc number is never compared. The installed version is read per node, with each node's packaging generation **auto-detected from its own output**: `anc.py --content-list` (the `anc-release-*` plugin's version column) when that line is present (**direct 1.5.0+**), falling back to `anc.py --version` for **legacy ≤1.4.x** (whose `--version` reports the release version; 1.5.0+ does not). The value is validated (must be a dotted release like `1.7.0`) only when it is compared. |
-| `anc_release_url` | **Optional** ANC release archive URL, used only when ANC must be installed (absent on a node, or below `anc_version` with a URL new enough to upgrade). Leave blank when ANC is preinstalled. Both packaging generations are auto-detected from the filename: **legacy (≤1.4.x)** outer tarballs carry a `-deb-`/`-rpm-`/`-tar-` token (e.g. `anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz`); **direct (1.5.0+)** URLs point straight at a `.deb`/`.rpm`/`.tar.gz` with no flavour token (e.g. `anc-release-helios-nda-1.5.5-x86_64.tar.gz`). The URL is parsed and shell-safety-checked only on the install path. The download/unpack is staged in a private temp dir on each node and removed after install (success or failure). deb/rpm install to `/opt/amdtools/anc`; tar installs to `ANC_INSTALL_PATH` (default `/opt/amdtools`). |
+| `anc_release_url` | **Optional** ANC release archive URL, used only when ANC must be installed (absent on a node, or below `anc_version` with a URL new enough to upgrade). Leave blank when ANC is preinstalled. Both packaging generations are auto-detected from the filename: **legacy (≤1.4.x)** outer tarballs carry a `-deb-`/`-rpm-`/`-tar-` token (e.g. `<packagename>-<version>-tar-linux-x64.tar.gz`); **direct (1.5.0+)** URLs point straight at a `.deb`/`.rpm`/`.tar.gz` with no flavour token (e.g. `<packagename>-<version>-x86_64.tar.gz`). The URL is parsed and shell-safety-checked only on the install path. The download/unpack is staged in a private temp dir on each node and removed after install (success or failure). deb/rpm install to `/opt/amdtools/anc`; tar installs to `ANC_INSTALL_PATH` (default `/opt/amdtools`). |
 | `ANC_INSTALL_PATH` | **Tar installs only:** relocatable prefix ANC is extracted into (its `anc/` dir, tool folders, and content live under here), giving `<prefix>/anc/anc.py`. A leading `~` is expanded and the `{home}`/`{user-id}` placeholders are resolved during config load. The value is validated when the install prefix is resolved for use: shell-metacharacters (`'`, `"`, `` ` ``, `$`, `\`, newline) and a prefix that resolves to filesystem root (`/`, `//`) are rejected. deb/rpm packages carry absolute locations baked into their archive and **ignore** this key. Leave blank or omit to keep the default `/opt/amdtools`. |
 | `print_all_to_console` | `True` echoes ANC group output to console; `False` suppresses it (diagnostics still print). |
 | `ADD_ANC_LOGS_TO_HTML_REPORTS` | Governs the per-node **ANC logs** tarball links. `True` always bundles each node's collected log tree (one `.tar.gz` + link per node) into the pytest-html report zip. `False` (default) bundles them **only when the test fails**. The per-node `errors.json` links appear regardless of this flag. |
@@ -241,56 +241,35 @@ node. The examples below use `/opt/amdtools` as the prefix; substitute your
 `ANC_INSTALL_PATH` for a relocated tar install.
 
 > **Install a version that satisfies the configured `anc_version` minimum**
-> (shipped default `1.7.3`). The two blocks below illustrate the two packaging
-> **layouts** — the legacy `≤1.4.x` two-tarball form and the direct `1.5.0+`
-> single-tree form; the legacy `1.4.9` URL is format-only (it is below the
-> default minimum, so `anc_installation` would fail against it and the group
-> suites would proceed with the installed version). Use the direct `1.7.3`
-> command for a current manual install, or point the URL at any release
-> `≥ anc_version`.
+> (shipped default `1.7.3`). Point the URL at any release `≥ anc_version`.
 
-**Legacy (≤1.4.x) tar — packaging-format example only** — the outer archive
-holds two inner `anc-tool` and `anc-content` tarballs; extract both into the
-prefix so the layout matches the deb/rpm packages:
-
-```bash
-STAGE=$(mktemp -d)              # private staging dir, only for the download/unpack
-trap 'rm -rf "$STAGE"' EXIT     # auto-remove it on exit (success or failure)
-cd "$STAGE"
-
-# Download and extract the ANC release
-wget -q "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.4.9/anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz" \
-  -O outer.tar.gz
-tar -xzf outer.tar.gz
-
-# Extract the tool and content archives into /opt/amdtools (needs sudo).
-# Replace the top-level folders the release ships so no stale files linger.
-sudo mkdir -p /opt/amdtools
-sudo tar -xzf anc-tool*.tar.gz    -C /opt/amdtools
-sudo tar -xzf anc-content*.tar.gz -C /opt/amdtools
-```
-
-**Direct (1.5.0+) tar — current install** — the `.tar.gz` *is* the tree (no
-inner archives); a single untar into the prefix lays down `anc/` and the tool
-folders. This `1.7.3` command satisfies the shipped `anc_version` default:
+**Tar install (direct 1.5.0+ packages)** — the `.tar.gz` *is* the tree; a single
+untar into the prefix lays down `anc/` and the tool folders:
 
 ```bash
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 cd "$STAGE"
 
-wget -q "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.7.3/anc-release-helios-nda-1.7.3-x86_64.tar.gz" \
+wget -q "https://<anc-artifact-host-url>/anc-release-package.tar.gz" \
   -O anc.tar.gz
 sudo mkdir -p /opt/amdtools
 sudo tar -xzf anc.tar.gz -C /opt/amdtools
 ```
 
+> **Legacy (≤1.4.x) releases** (reachable only by lowering or clearing
+> `anc_version`) ship the tool and content as *inner* archives inside the outer
+> tarball (and legacy deb/rpm likewise need unpacking first), so a single untar
+> is not enough — extract the inner `anc-tool*.tar.gz` and `anc-content*.tar.gz`
+> into the prefix as well. Prefer `anc_installation`, which auto-detects and
+> handles both packaging layouts.
+
 > For a relocated tar prefix, `anc_installation` also rewrites the content
 > YAMLs' absolute `exe_path` entries from `/opt/amdtools` to the new prefix — do
 > the same if you relocate a manual install.
 
-For the **deb**/**rpm** flavours, install the extracted (legacy) or downloaded
-(direct) `anc*.deb` / `anc*.rpm` packages instead (`sudo dpkg -i` /
+For the **deb**/**rpm** flavours, install the downloaded
+`anc*.deb` / `anc*.rpm` packages instead (`sudo dpkg -i` /
 `sudo dnf install`); they lay ANC down under `/opt/amdtools/anc` directly. This
 is the sequence performed by [`anc_installation.py`](anc_installation.py) (which
 delegates to `cvs/lib/anc_lib.py`).

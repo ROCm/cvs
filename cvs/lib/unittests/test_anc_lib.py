@@ -153,7 +153,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
         content_out = (
             "Available content plugins (2):\n"
             "  Name                      Version Description\n"
-            "  anc-release-helios-nda    1.5.5   Helios NDA Release\n"
+            "  anc-release-rack-nda    1.5.5   Rack NDA Release\n"
             "  base                      1.0.0   Base ANC items\n"
         )
 
@@ -195,7 +195,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
 
     def test_direct_mismatch_is_false(self):
         # Installed 1.5.4 does NOT satisfy a request for 1.5.5 (installed < required).
-        content_out = "  anc-release-helios-nda    1.5.4   Helios NDA Release\n"
+        content_out = "  anc-release-rack-nda    1.5.4   Rack NDA Release\n"
 
         class FakeOrch:
             def exec(self, cmd, timeout=None):
@@ -207,7 +207,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
 
     def test_direct_higher_installed_satisfies(self):
         # Installed 1.6.0 satisfies a request for 1.5.5 (installed >= required).
-        content_out = "  anc-release-helios-nda    1.6.0   Helios NDA Release\n"
+        content_out = "  anc-release-rack-nda    1.6.0   Rack NDA Release\n"
 
         class FakeOrch:
             def exec(self, cmd, timeout=None):
@@ -219,7 +219,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
 
     def test_direct_installed_rc_satisfies_base_request(self):
         # Installed 1.7.0-rc.1 satisfies a request for base 1.7.0 (rc == base).
-        content_out = "  anc-release-helios-nda    1.7.0-rc.1 Helios NDA Release\n"
+        content_out = "  anc-release-rack-nda    1.7.0-rc.1 Rack NDA Release\n"
 
         class FakeOrch:
             def exec(self, cmd, timeout=None):
@@ -232,7 +232,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
     def test_direct_installed_rc1_satisfies_rc2_same_base(self):
         # rc is treated as its base: installed 1.7.0-rc.1 satisfies 1.7.0-rc.2
         # (both reduce to 1.7.0, so the rc number is never compared).
-        content_out = "  anc-release-helios-nda    1.7.0-rc.1 Helios NDA Release\n"
+        content_out = "  anc-release-rack-nda    1.7.0-rc.1 Rack NDA Release\n"
 
         class FakeOrch:
             def exec(self, cmd, timeout=None):
@@ -248,7 +248,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
         def exec_impl(cmd, timeout=None):
             if "--content-list" in cmd:
                 return {"node1": "Available content plugins (2):\n  base - Base items\n"}
-            return {"node1": "Release Name: helios-nda\nRelease Version: 1.4.10\n"}
+            return {"node1": "Release Name: rack-nda\nRelease Version: 1.4.10\n"}
 
         class FakeOrch:
             def exec(self, cmd, timeout=None):
@@ -267,7 +267,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
         def exec_impl(cmd, timeout=None):
             cmds.append(cmd)
             if "--content-list" in cmd:
-                return {"node1": "  anc-release-helios-nda    1.6.0   Helios NDA Release\n"}
+                return {"node1": "  anc-release-rack-nda    1.6.0   Rack NDA Release\n"}
             return {"node1": "Framework Version: 0.9.9"}
 
         class FakeOrch:
@@ -360,7 +360,7 @@ class TestParseReleaseVersionFromContentList(unittest.TestCase):
             "Start Time: 2026-08-07 12:08:45\n"
             "Available content plugins (5):\n"
             "  Name                      Version Description\n"
-            "  anc-release-helios-nda    1.5.5   Helios NDA Release\n"
+            "  anc-release-rack-nda    1.5.5   Rack NDA Release\n"
             "  base                      1.0.0   Base ANC items\n"
             "Program exiting with return code ANC_SUCCESS [0]\n"
         )
@@ -371,7 +371,7 @@ class TestParseReleaseVersionFromContentList(unittest.TestCase):
         out = (
             "Available content plugins (4):\n"
             "  base - Base ANC items and utilities...\n"
-            "  helios_nda - Helios NDA Test Content\n"
+            "  rack_nda - Rack NDA Test Content\n"
         )
         self.assertIsNone(anc_lib.parse_release_version_from_content_list(out))
 
@@ -384,7 +384,7 @@ class TestParseReleaseVersionFromContentList(unittest.TestCase):
         self.assertIsNone(anc_lib.parse_release_version_from_content_list(None))
 
     def test_two_part_version(self):
-        out = "  anc-release-venice-nda    2.0   Venice NDA Release\n"
+        out = "  anc-release-cpu-nda    2.0   CPU NDA Release\n"
         self.assertEqual(anc_lib.parse_release_version_from_content_list(out), "2.0")
 
     def test_rc_version_from_real_node_output(self):
@@ -394,16 +394,16 @@ class TestParseReleaseVersionFromContentList(unittest.TestCase):
             "Log Directory: /home/testuser/logs/anc_20260923-074313\n\n"
             "Available content plugins (6):\n"
             "  Name                      Version Description\n"
-            "  ainic-nda                 1.0.0   NDA Test Content for AMD AINIC\n"
-            "  anc-release-helios-nda    1.7.0-rc.1 Helios NDA Release\n"
+            "  nic-nda                 1.0.0   NDA Test Content for AMD AINIC\n"
+            "  anc-release-rack-nda    1.7.0-rc.1 Rack NDA Release\n"
             "  base                      1.1.0   Base ANC items and utilities available for all test plans\n"
-            "  helios-nda                1.0.3   Helios NDA Test Content\n"
+            "  rack-nda                1.0.3   Rack NDA Test Content\n"
             "Program exiting with return code ANC_SUCCESS [0]\n"
         )
         self.assertEqual(anc_lib.parse_release_version_from_content_list(out), "1.7.0-rc.1")
 
     def test_malformed_rc_in_column_is_rejected(self):
-        out = "  anc-release-helios-nda    1.7.0-rc.bad   Helios NDA Release\n"
+        out = "  anc-release-rack-nda    1.7.0-rc.bad   Rack NDA Release\n"
         self.assertIsNone(anc_lib.parse_release_version_from_content_list(out))
 
 
@@ -412,7 +412,7 @@ class TestParseVersionFromVersionOutput(unittest.TestCase):
     record, never an unrelated number from stdout/stderr.'''
 
     def test_reads_release_version_line(self):
-        out = "Release Name: helios-nda\nRelease Version: 1.4.9\n"
+        out = "Release Name: rack-nda\nRelease Version: 1.4.9\n"
         self.assertEqual(anc_lib._parse_version_from_version_output(out), "1.4.9")
 
     def test_label_is_case_insensitive_token_is_not(self):
@@ -440,40 +440,40 @@ class TestDetectPackageFlavour(unittest.TestCase):
     '''detect_package_flavour: flavour + legacy/direct generation from the name.'''
 
     def test_legacy_tar_token(self):
-        url = "http://x/anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz"
+        url = "http://x/anc-release-rack-nda-1.4.9-tar-linux-x64.tar.gz"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("tar", False))
 
     def test_legacy_deb_token(self):
-        url = "http://x/anc-release-helios-nda-1.4.9-deb-linux-x64.tar.gz"
+        url = "http://x/anc-release-rack-nda-1.4.9-deb-linux-x64.tar.gz"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("deb", False))
 
     def test_legacy_rpm_token(self):
-        url = "http://x/anc-release-helios-nda-1.4.9-rpm-linux-x64.tar.gz"
+        url = "http://x/anc-release-rack-nda-1.4.9-rpm-linux-x64.tar.gz"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("rpm", False))
 
     def test_legacy_dot_token_tar(self):
         # Trailing "-tar." before the extension is legacy, NOT a direct tar.
-        url = "http://x/anc-release-helios-nda-1.4.9-tar.tar.gz"
+        url = "http://x/anc-release-rack-nda-1.4.9-tar.tar.gz"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("tar", False))
 
     def test_legacy_dot_token_deb(self):
-        url = "http://x/anc-release-helios-nda-1.4.9-deb.tar.gz"
+        url = "http://x/anc-release-rack-nda-1.4.9-deb.tar.gz"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("deb", False))
 
     def test_direct_deb(self):
-        url = "http://x/anc-release-helios-nda_1.5.5_amd64.deb"
+        url = "http://x/anc-release-rack-nda_1.5.5_amd64.deb"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("deb", True))
 
     def test_direct_rpm(self):
-        url = "http://x/anc-release-helios-nda-1.5.5-1.x86_64.rpm"
+        url = "http://x/anc-release-rack-nda-1.5.5-1.x86_64.rpm"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("rpm", True))
 
     def test_direct_tar(self):
-        url = "http://x/anc-release-helios-nda-1.5.5-x86_64.tar.gz"
+        url = "http://x/anc-release-rack-nda-1.5.5-x86_64.tar.gz"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("tar", True))
 
     def test_direct_tgz(self):
-        url = "http://x/anc-release-helios-nda-1.5.5-x86_64.tgz"
+        url = "http://x/anc-release-rack-nda-1.5.5-x86_64.tgz"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("tar", True))
 
     def test_unrecognised_raises(self):
@@ -492,19 +492,19 @@ class TestParseVersionFromUrl(unittest.TestCase):
 
     def test_legacy_url(self):
         self.assertEqual(
-            anc_lib.parse_version_from_url("http://x/anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz"),
+            anc_lib.parse_version_from_url("http://x/anc-release-rack-nda-1.4.9-tar-linux-x64.tar.gz"),
             "1.4.9",
         )
 
     def test_direct_tar_url(self):
         self.assertEqual(
-            anc_lib.parse_version_from_url("http://x/anc-release-helios-nda-1.5.5-x86_64.tar.gz"),
+            anc_lib.parse_version_from_url("http://x/anc-release-rack-nda-1.5.5-x86_64.tar.gz"),
             "1.5.5",
         )
 
     def test_direct_deb_url(self):
         self.assertEqual(
-            anc_lib.parse_version_from_url("http://x/anc-release-helios-nda_1.5.5_amd64.deb"),
+            anc_lib.parse_version_from_url("http://x/anc-release-rack-nda_1.5.5_amd64.deb"),
             "1.5.5",
         )
 
@@ -517,7 +517,7 @@ class TestParseVersionFromUrl(unittest.TestCase):
     def test_rc_url_keeps_suffix(self):
         # The rc suffix is part of the version; the trailing package revision is not.
         self.assertEqual(
-            anc_lib.parse_version_from_url("http://x/anc-release-helios-nda-1.7.0-rc.1-1.x86_64.rpm"),
+            anc_lib.parse_version_from_url("http://x/anc-release-rack-nda-1.7.0-rc.1-1.x86_64.rpm"),
             "1.7.0-rc.1",
         )
 
@@ -612,17 +612,17 @@ class TestDirectInstallers(unittest.TestCase):
         return {"anc": {"anc_release_url": url, "ANC_INSTALL_PATH": install_path}}
 
     def test_deb_direct_command_shape(self):
-        cfg = self._cfg("http://x/anc-release-helios-nda_1.5.5_amd64.deb")
+        cfg = self._cfg("http://x/anc-release-rack-nda_1.5.5_amd64.deb")
         orch = _RecordingOrch({"node1": "ANC_INSTALL_SUCCESS"})
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
             anc_lib._install_anc_deb_direct(orch, self.CLUSTER, cfg)
         self.assertIn("dpkg -i --force-depends ./anc.deb", orch.cmd)
-        self.assertIn("anc-release-helios-nda_1.5.5_amd64.deb", orch.cmd)
+        self.assertIn("anc-release-rack-nda_1.5.5_amd64.deb", orch.cmd)
         # No outer-tarball extraction for a direct package.
         self.assertNotIn("outer.tar.gz", orch.cmd)
 
     def test_rpm_direct_command_shape(self):
-        cfg = self._cfg("http://x/anc-release-helios-nda-1.5.5-1.x86_64.rpm")
+        cfg = self._cfg("http://x/anc-release-rack-nda-1.5.5-1.x86_64.rpm")
         orch = _RecordingOrch({"node1": "ANC_INSTALL_SUCCESS"})
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
             anc_lib._install_anc_rpm_direct(orch, self.CLUSTER, cfg)
@@ -630,7 +630,7 @@ class TestDirectInstallers(unittest.TestCase):
         self.assertNotIn("outer.tar.gz", orch.cmd)
 
     def test_tar_direct_default_prefix_no_rewrite(self):
-        cfg = self._cfg("http://x/anc-release-helios-nda-1.5.5-x86_64.tar.gz")
+        cfg = self._cfg("http://x/anc-release-rack-nda-1.5.5-x86_64.tar.gz")
         orch = _RecordingOrch({"node1": "ANC_INSTALL_SUCCESS"})
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "_validate_exe_paths"):
             anc_lib._install_anc_tar_direct(orch, self.CLUSTER, cfg)
@@ -642,7 +642,7 @@ class TestDirectInstallers(unittest.TestCase):
         self.assertNotIn("Rewriting exe_path", orch.cmd)
 
     def test_tar_direct_relocated_rewrites_exe_path(self):
-        cfg = self._cfg("http://x/anc-release-helios-nda-1.5.5-x86_64.tar.gz", install_path="/home/u/anc")
+        cfg = self._cfg("http://x/anc-release-rack-nda-1.5.5-x86_64.tar.gz", install_path="/home/u/anc")
         orch = _RecordingOrch({"node1": "ANC_INSTALL_SUCCESS"})
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "_validate_exe_paths"):
             anc_lib._install_anc_tar_direct(orch, self.CLUSTER, cfg)
@@ -1186,7 +1186,7 @@ class TestInstallAncVersionGating(unittest.TestCase):
 
     @staticmethod
     def _content(version):
-        return f"  anc-release-helios-nda    {version}   Helios NDA Release\n" if version else ""
+        return f"  anc-release-rack-nda    {version}   Rack NDA Release\n" if version else ""
 
     def _orch(self, state):
         content = self._content
