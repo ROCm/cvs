@@ -109,7 +109,7 @@ def test_backend_nic_speed(orch, lifecycle, request):
     log.info("backend NIC link speed check PASSED")
 
 
-def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
+def test_download_tokenizer(orch, variant_config, lifecycle, request):
     """Stage 2: download the tokenizer model once if the model family requires it."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -117,7 +117,6 @@ def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
     tt_obj = _make_training_job(
         orch,
         variant_config,
-        hf_token=hf_token,
         micro_batch_size="1",
         global_batch_size="1",
         precision="BF16",
@@ -146,7 +145,7 @@ def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
     log.info("test_download_tokenizer: tokenizer ready at %s", lifecycle.tokenizer_path)
 
 
-def test_smoke(orch, variant_config, hf_token, lifecycle, request):
+def test_smoke(orch, variant_config, lifecycle, request):
     """Stage 3: smoke-test — model loads and runs smoke.iters steps without error.
 
     Knobs come from the top-level ``smoke`` block (defaults: 10 iters, MBS 1,
@@ -168,7 +167,6 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
     tt_obj = _make_training_job(
         orch,
         variant_config,
-        hf_token=hf_token,
         micro_batch_size=mbs,
         global_batch_size=gbs,
         precision=precision,
@@ -197,7 +195,7 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
     log.info("smoke PASSED | iters=%s mbs=%s gbs=%s precision=%s", iters, mbs, gbs, precision)
 
 
-def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
+def test_checkpoint(orch, variant_config, lifecycle, request):
     """Stage 4: checkpoint save + resume — verify step counter and loss continuity.
 
     Two phases:
@@ -238,7 +236,6 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
             job = _make_training_job(
                 orch,
                 variant_config,
-                hf_token=hf_token,
                 micro_batch_size=mbs,
                 global_batch_size=gbs,
                 precision=precision,
@@ -304,7 +301,6 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
         tt_obj = _make_training_job(
             orch,
             variant_config,
-            hf_token=hf_token,
             micro_batch_size=mbs,
             global_batch_size=gbs,
             precision=precision,
@@ -409,7 +405,7 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
         lifecycle.record(request.node.nodeid, "checkpoint", time.monotonic() - started)
 
 
-def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, lifecycle, request):
+def test_training(orch, variant_config, sweep_name, train_res_dict, lifecycle, request):
     """Stage 5 (parametrized): run one sweep combo inside the shared container.
 
     stop_training_processes() runs in a finally block after every combo so GPU
@@ -424,7 +420,6 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
     tt_obj = _make_training_job(
         orch,
         variant_config,
-        hf_token=hf_token,
         micro_batch_size=combo.micro_batch_size,
         global_batch_size=combo.global_batch_size,
         precision=combo.precision,
