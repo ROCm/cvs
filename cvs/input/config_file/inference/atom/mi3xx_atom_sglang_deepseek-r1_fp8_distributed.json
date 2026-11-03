@@ -1,6 +1,5 @@
 {
   "_comment": "DeepSeek-R1-0528 FP8 distributed SGLang PP=2 across two nodes.",
-  "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_sglang_deepseek-r1_fp8_distributed_threshold.json",
   "paths": {
@@ -10,7 +9,9 @@
     "hf_token_file": "{shared_fs}/.hf_token"
   },
   "model": {
-    "id": "deepseek-ai/DeepSeek-R1-0528"
+    "id": "deepseek-ai/DeepSeek-R1-0528",
+    "remote": 0,
+    "precision": "fp8"
   },
   "container": {
     "lifetime": "per_run",
@@ -98,6 +99,13 @@
     "ISL=128,OSL=32,TP=8,PP=2,CONC=1": {}
   },
   "runs": [],
+  "platform": {
+    "gpu_metrics_poll": true
+  },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
   "accuracy": {
     "tasks": [
       {

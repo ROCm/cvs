@@ -942,7 +942,7 @@ class TransferBenchSmokeCheck(PreflightCheck):
         """
         cmd = self._amd_smi_fabric_command()
         self.log_info(f'Querying pod membership: {cmd}')
-        out_dict = self.phdl.exec(cmd, timeout=min(60, self.ssh_timeout), print_console=False)
+        out_dict = self.orch.all.exec(cmd, timeout=min(60, self.ssh_timeout), print_console=False)
         per_node: Dict[str, Dict[str, Any]] = {}
         for node, output in out_dict.items():
             payload: Any
@@ -995,17 +995,17 @@ class TransferBenchSmokeCheck(PreflightCheck):
     # ------------------------------------------------------------------
 
     def _resolve_master_node(self) -> Optional[str]:
-        if self.master_node and self.master_node in self.phdl.reachable_hosts:
+        if self.master_node and self.master_node in self.orch.all.reachable_hosts:
             return self.master_node
-        if self.phdl.reachable_hosts:
-            return sorted(self.phdl.reachable_hosts)[0]
+        if self.orch.all.reachable_hosts:
+            return sorted(self.orch.all.reachable_hosts)[0]
         return None
 
     def _dispatch_per_node(self) -> Dict[str, Dict[str, Any]]:
         """One independent smoketest per node, all in parallel."""
         cmd = self.build_command(rank=0, num_ranks=1, master_addr='127.0.0.1')
         self.log_info(f"Dispatching per-node smoketest: {cmd}")
-        out_dict = self.phdl.exec(cmd, timeout=self.ssh_timeout, print_console=False)
+        out_dict = self.orch.all.exec(cmd, timeout=self.ssh_timeout, print_console=False)
         return {node: {'command': cmd, 'output': output} for node, output in out_dict.items()}
 
     def _dispatch_multi_rank(self) -> Dict[str, Dict[str, Any]]:
@@ -1016,7 +1016,7 @@ class TransferBenchSmokeCheck(PreflightCheck):
         ``exec_cmd_list`` call so all ranks start in parallel and the
         preset's socket-comm bootstrap can complete.
         """
-        hosts = list(self.phdl.reachable_hosts)
+        hosts = list(self.orch.all.reachable_hosts)
         if not hosts:
             return {}
         master = self._resolve_master_node()
@@ -1039,7 +1039,7 @@ class TransferBenchSmokeCheck(PreflightCheck):
             self.build_command(rank=rank_by_host[h], num_ranks=num_ranks, master_addr=master) for h in hosts
         ]
         self.log_info(f'Dispatching multi-rank smoketest (num_ranks={num_ranks}, master={master})')
-        out_dict = self.phdl.exec_cmd_list(cmd_by_reachable, timeout=self.ssh_timeout, print_console=False)
+        out_dict = self.orch.all.exec_cmd_list(cmd_by_reachable, timeout=self.ssh_timeout, print_console=False)
         for h, output in out_dict.items():
             if h not in per_node:
                 per_node[h] = {'command': '', 'output': output}
@@ -1086,7 +1086,7 @@ class TransferBenchSmokeCheck(PreflightCheck):
             'errors': [],
         }
 
-        hosts = list(self.phdl.reachable_hosts)
+        hosts = list(self.orch.all.reachable_hosts)
         if not hosts:
             self.results['status'] = 'FAIL'
             self.results['errors'].append('No reachable hosts available for TransferBench smoketest')

@@ -12,8 +12,8 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # Pinned invariants:
 #   - User-supplied runtime.args.volumes must NOT be double-listed.
 #   - --gpus all must NEVER be emitted: CVS is AMD-only and AMD GPU access
-#     comes from the auto-injected --device /dev/kfd /dev/dri /dev/infiniband
-#     in DEFAULT_CONTAINER_ARGS. The flag is NVIDIA/CDI-specific and breaks
+#     comes from the auto-injected --device /dev/kfd /dev/dri in
+#     DEFAULT_CONTAINER_ARGS. The flag is NVIDIA/CDI-specific and breaks
 #     AMD-only docker without the AMD container toolkit.
 #   - Every privileged command is built from a single deterministic
 #     orchestrator.sudo_prefix() prefix -- never the old `cmd || sudo -n cmd`
@@ -27,6 +27,7 @@ from unittest.mock import MagicMock, patch
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.core.runtimes.docker import DockerRuntime
+from cvs.unittests.support import FAKE_CRED, TMP
 
 
 def _make_runtime(captured, sudo_prefix=""):
@@ -109,6 +110,183 @@ class TestDockerRuntimeSetupContainers(unittest.TestCase):
             f"User volume '/foo:/bar' must appear exactly once in:\n{cmd}",
         )
 
+    def test_user_runtime_arg_sets_docker_user_flag(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={"user": "root"}),
+            container_name="cvs_iter_test",
+        )
+        self.assertEqual(shlex.split(captured[0]).count("--user"), 1)
+        self.assertIn("--user root", captured[0])
+
+    def test_shm_size_runtime_arg_sets_docker_flag(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={"shm_size": "17G"}),
+            container_name="cvs_iter_test",
+        )
+        tokens = shlex.split(captured[0])
+        self.assertEqual(tokens.count("--shm-size"), 1)
+        self.assertIn("17G", tokens)
+
+    def test_shm_size_runtime_arg_with_spaces_is_quoted(self):
+        # A value with no special characters (like "17G") round-trips even
+        # without quoting, so it can't prove shlex.quote() is actually called --
+        # a value containing a space must still render as one shell token.
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={"shm_size": "17 G"}),
+            container_name="cvs_iter_test",
+        )
+        tokens = shlex.split(captured[0])
+        self.assertIn("17 G", tokens)
+        self.assertNotIn("G", tokens)
+
+    def test_shm_size_runtime_arg_is_opt_in(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={}),
+            container_name="cvs_iter_test",
+        )
+        self.assertNotIn("--shm-size", shlex.split(captured[0]))
+
+    def test_user_runtime_arg_is_opt_in(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={}),
+            container_name="cvs_iter_test",
+        )
+        self.assertNotIn("--user", shlex.split(captured[0]))
+
+    def test_user_runtime_arg_accepts_uid_zero(self):
+        # user=0 (root's numeric UID) is falsy in Python; a bare `if user:`
+        # would silently drop it, so this pins `if user is not None:`.
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={"user": 0}),
+            container_name="cvs_iter_test",
+        )
+        self.assertEqual(shlex.split(captured[0]).count("--user"), 1)
+        self.assertIn("--user 0", captured[0])
+
+    def test_env_runtime_args_render_every_entry(self):
+        # runtime.args.env is a dict; iterating it directly yields keys only,
+        # so this pins the `.items()` fix and covers more than one entry.
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={"env": {"FOO": "bar", "BAZ": "qux"}}),
+            container_name="cvs_iter_test",
+        )
+        cmd = captured[0]
+        self.assertIn("-e FOO=bar", cmd)
+        self.assertIn("-e BAZ=qux", cmd)
+
+    def test_env_values_with_spaces_are_quoted(self):
+        # A config value containing a space must not be split into separate
+        # shell tokens: {"A": "a b"} must render as one -e argument, not
+        # '-e A=a' followed by a bare 'b' token.
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(env={"A": "a b"}),
+            container_name="cvs_iter_test",
+        )
+        cmd = captured[0]
+        tokens = shlex.split(cmd)
+        self.assertIn("A=a b", tokens)
+        self.assertNotIn("b", tokens)
+
+    def test_env_values_with_shell_metacharacters_do_not_execute(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(env={"A": "$(touch /tmp/pwned)"}),
+            container_name="cvs_iter_test",
+        )
+        cmd = captured[0]
+        tokens = shlex.split(cmd)
+        self.assertIn("A=$(touch /tmp/pwned)", tokens)
+
+    def test_volume_values_with_spaces_are_quoted(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(),
+            container_name="cvs_iter_test",
+            volumes=["/home/u ser:/workspace"],
+        )
+        cmd = captured[0]
+        tokens = shlex.split(cmd)
+        self.assertIn("/home/u ser:/workspace", tokens)
+
+    def test_runtime_args_devices_with_spaces_are_quoted(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={"devices": ["/dev/my dev"]}),
+            container_name="cvs_iter_test",
+        )
+        cmd = captured[0]
+        tokens = shlex.split(cmd)
+        self.assertIn("/dev/my dev", tokens)
+
+    def test_last_setup_error_records_image_and_hosts_on_startup_failure(self):
+        # A failed `docker run` must leave enough detail behind (image, failed
+        # hosts, reason) for a caller to build a useful failure message instead
+        # of the generic "container setup failed".
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            if "docker run" in cmd:
+                return {"host1": {"output": "", "exit_code": 0}, "host2": {"output": "no space left", "exit_code": 1}}
+            return {"host1": {"output": "", "exit_code": 0}, "host2": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1", "host2"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        result = rt.setup_containers(container_config=_container_config(), container_name="cvs_iter_test")
+
+        self.assertFalse(result)
+        self.assertEqual(rt.last_setup_error["image"], "img:test")
+        self.assertEqual(rt.last_setup_error["failed_hosts"], ["host2"])
+        self.assertIn("container startup failed", rt.last_setup_error["reason"])
+
+    def test_last_setup_error_records_image_pull_failure(self):
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            if "docker pull" in cmd:
+                return {"host1": {"output": "manifest unknown", "exit_code": 1}}
+            if "docker images" in cmd:
+                return {"host1": {"output": "", "exit_code": 1}}
+            return {"host1": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        result = rt.setup_containers(container_config=_container_config(), container_name="cvs_iter_test")
+
+        self.assertFalse(result)
+        self.assertEqual(rt.last_setup_error["failed_hosts"], ["host1"])
+        self.assertIn("image pull failed", rt.last_setup_error["reason"])
+
+    def test_last_setup_error_cleared_on_success(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.last_setup_error = {"image": "stale", "failed_hosts": ["host1"], "reason": "stale"}
+        result = rt.setup_containers(container_config=_container_config(), container_name="cvs_iter_test")
+        self.assertTrue(result)
+        self.assertIsNone(rt.last_setup_error)
+
     def test_cmd_never_contains_gpus_all(self):
         # CVS is AMD-only. The rendered docker run cmd must never contain
         # '--gpus all', regardless of any container_config knob a future caller
@@ -116,8 +294,8 @@ class TestDockerRuntimeSetupContainers(unittest.TestCase):
         #   1. minimal config, no GPU-related keys
         #   2. legacy config that sets gpu_passthrough=True (must be ignored)
         #   3. config with extra runtime args
-        # AMD GPU access is provided by --device /dev/kfd /dev/dri /dev/infiniband
-        # via DEFAULT_CONTAINER_ARGS -- not by --gpus all.
+        # AMD GPU access is provided by --device /dev/kfd /dev/dri via
+        # DEFAULT_CONTAINER_ARGS -- not by --gpus all.
         for label, cfg in [
             ("minimal", _container_config()),
             ("legacy_gpu_passthrough_true", _container_config(gpu_passthrough=True)),
@@ -197,7 +375,7 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
         rt = _make_runtime(captured)
         self.assertFalse(rt.registry_login({}))
         self.assertFalse(rt.registry_login({"username": "u"}))
-        self.assertFalse(rt.registry_login({"password_file": "/tmp/pw"}))
+        self.assertFalse(rt.registry_login({"password_file": f"{TMP}/pw"}))
 
     def test_registry_login_sudo_prefix_covers_entire_pipeline(self):
         # Regression test: `docker login` is the SECOND stage of the
@@ -216,7 +394,7 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
         orchestrator.sudo_prefix.return_value = "sudo -n "
         rt = DockerRuntime(MagicMock(), orchestrator)
 
-        rt.registry_login({"username": "u", "password_file": "/tmp/pw"})
+        rt.registry_login({"username": "u", "password_file": f"{TMP}/pw"})
 
         self.assertEqual(len(login_cmds), 1)
         cmd = login_cmds[0]
@@ -243,12 +421,13 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
         orchestrator.sudo_prefix.return_value = ""
         rt = DockerRuntime(MagicMock(), orchestrator)
 
-        result = rt.registry_login({"username": "myuser", "password_file": "/home/myuser/.docker_token"})
+        cred_file = "/home/myuser/.docker_token"
+        result = rt.registry_login({"username": "myuser", "password_file": cred_file})
 
         self.assertTrue(result)
         self.assertEqual(len(login_cmds), 1)
         cmd = login_cmds[0]
-        self.assertIn("cat /home/myuser/.docker_token", cmd)
+        self.assertIn(f"cat {cred_file}", cmd)
         self.assertIn("--password-stdin", cmd)
         self.assertIn("--username myuser", cmd)
         self.assertNotIn("--password ", cmd)
@@ -260,13 +439,15 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
         orchestrator.sudo_prefix.return_value = ""
         rt = DockerRuntime(MagicMock(), orchestrator)
 
-        self.assertFalse(rt.registry_login({"username": "u", "password_file": "/tmp/pw"}))
+        self.assertFalse(rt.registry_login({"username": "u", "password_file": f"{TMP}/pw"}))
 
     def test_setup_containers_logs_in_before_pull_when_registry_configured(self):
         calls = []
 
         def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
             calls.append(cmd)
+            if "docker images" in cmd and "grep" in cmd:
+                return {"host1": {"output": "", "exit_code": 1}}
             return {"host1": {"output": "", "exit_code": 0}}
 
         orchestrator = MagicMock()
@@ -277,17 +458,46 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
 
         cfg = _container_config(
             image="rocm/ufb-private:latest",
-            extra_runtime_args={"registry": {"username": "myuser", "password_file": "/tmp/token"}},
+            extra_runtime_args={"registry": {"username": "myuser", "password_file": f"{TMP}/token"}},
         )
         result = rt.setup_containers(container_config=cfg, container_name="cvs_iter_test", volumes=[])
 
         self.assertTrue(result)
         login_calls = [c for c in calls if "docker login" in c]
+        pull_calls = [c for c in calls if "docker pull" in c]
         run_calls = [c for c in calls if "docker run" in c]
         self.assertEqual(len(login_calls), 1)
+        self.assertEqual(len(pull_calls), 1)
         self.assertEqual(len(run_calls), 1)
         # Login must happen before the run that needs the pull.
         self.assertLess(calls.index(login_calls[0]), calls.index(run_calls[0]))
+
+    def test_setup_containers_skips_pull_and_login_when_image_present(self):
+        """Regression for AIMVT-443: pre-loaded images must not hit the registry or pull."""
+        calls = []
+
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            calls.append(cmd)
+            if "docker images" in cmd and "grep" in cmd:
+                return {"host1": {"output": "", "exit_code": 0}}
+            return {"host1": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        cfg = _container_config(
+            image="rocm/ufb-private:latest",
+            extra_runtime_args={"registry": {"username": "myuser", "password_file": f"{TMP}/token"}},
+        )
+        result = rt.setup_containers(container_config=cfg, container_name="cvs_iter_test", volumes=[])
+
+        self.assertTrue(result)
+        self.assertFalse(any("docker pull" in c for c in calls))
+        self.assertFalse(any("docker login" in c for c in calls))
+        self.assertTrue(any("docker run" in c for c in calls))
 
     def test_setup_containers_skips_login_when_image_tar_present(self):
         # A tar load never needs a registry pull, so no login should be attempted
@@ -305,8 +515,8 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
         rt = DockerRuntime(MagicMock(), orchestrator)
 
         cfg = _container_config(
-            extra_runtime_args={"registry": {"username": "myuser", "password_file": "/tmp/token"}},
-            image_tar="/tmp/image.tar",
+            extra_runtime_args={"registry": {"username": "myuser", "password_file": f"{TMP}/token"}},
+            image_tar=f"{TMP}/image.tar",
         )
         rt.setup_containers(container_config=cfg, container_name="cvs_iter_test", volumes=[])
 
@@ -542,6 +752,21 @@ class TestDockerRuntimeExecSubsetHandleCleanup(unittest.TestCase):
                         rt.exec("cvs_iter_test", "sleep 300", hosts=["host1"], timeout=1)
 
                 mock_pssh.destroy_clients.assert_called_once_with()
+
+
+class TestDockerRuntimeStartCommandRedaction(unittest.TestCase):
+    """The logged `docker run` masks secret env values; the executed command keeps them."""
+
+    def test_start_command_log(self):
+        captured = []
+        rt = _make_runtime(captured)
+        environment = {"HF_TOKEN": FAKE_CRED, "WANDB_API_KEY": f"{FAKE_CRED} x"}
+        rt.setup_containers(_container_config(), "cvs_iter_test", environment=environment)
+
+        self.assertIn(f"-e HF_TOKEN={FAKE_CRED} -e 'WANDB_API_KEY={FAKE_CRED} x'", captured[0])
+        logged = [str(c.args[0]) for c in rt.log.debug.call_args_list if "Container start command" in str(c.args[0])]
+        self.assertNotIn(FAKE_CRED, logged[0])
+        self.assertIn("-e HF_TOKEN=<redacted> -e 'WANDB_API_KEY=<redacted>'", logged[0])
 
 
 if __name__ == "__main__":

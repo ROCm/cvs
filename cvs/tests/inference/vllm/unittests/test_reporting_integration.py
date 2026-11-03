@@ -1,12 +1,29 @@
 '''Pytest-html and JUnit integration coverage for vLLM metric subtests.'''
 
-import subprocess
+import html
+import json
+import re
 import sys
 import tempfile
 import textwrap
 import unittest
-import xml.etree.ElementTree as element_tree
 from pathlib import Path
+
+from cvs.unittests.support import parse_trusted_xml, run_trusted
+
+
+def _html_tests(html_text):
+    match = re.search(r'data-jsonblob="([^"]*)"', html_text)
+    data = json.loads(html.unescape(match.group(1)))
+    return data["tests"]
+
+
+def _metric_names(entry):
+    names = []
+    for extra in entry.get("extras") or []:
+        content = str(extra.get("content") or "")
+        names.extend(re.findall(r"col-testId'>([^<]+)", content))
+    return names
 
 
 class TestVllmReportingIntegration(unittest.TestCase):
@@ -17,9 +34,7 @@ class TestVllmReportingIntegration(unittest.TestCase):
 
             import pytest
 
-            from cvs.tests.inference.vllm._common import (
-                test_verify_cell_metrics as verify_cell_metrics,
-            )
+            from cvs.tests.inference.vllm._common import _verify_cell_metrics
 
             CELL = "ISL=128,OSL=128,TP=1,PP=1,CONC=1"
 
@@ -41,27 +56,18 @@ class TestVllmReportingIntegration(unittest.TestCase):
                     enforce_thresholds=True,
                     thresholds={
                         CELL: {
-                            "output_throughput": {"kind": "min", "value": 1}
+                            "output_throughput": {"kind": "min", "value": 1},
+                            "mean_ttft_ms": {"kind": "max", "value": 1},
                         }
                     },
                 )
 
             @pytest.fixture
-            def inf_res_dict(run, variant_config):
-                key = (
-                    variant_config.model_id,
-                    "",
-                    "128",
-                    "128",
-                    CELL,
-                    1,
-                )
+            def host_dict():
                 return {
-                    key: {
-                        "head": {
-                            "output_throughput": 2.0,
-                            "mean_ttft_ms": 3.0,
-                        }
+                    "head": {
+                        "output_throughput": 2.0,
+                        "mean_ttft_ms": 3.0,
                     }
                 }
 
@@ -69,17 +75,17 @@ class TestVllmReportingIntegration(unittest.TestCase):
             def lifecycle():
                 return SimpleNamespace(record=lambda *args: None)
 
-            def test_verify_cell_metrics(
+            def test_vllm_inference(
+                host_dict,
                 run,
-                inf_res_dict,
                 variant_config,
                 lifecycle,
                 request,
                 subtests,
             ):
-                verify_cell_metrics(
+                _verify_cell_metrics(
+                    host_dict,
                     run,
-                    inf_res_dict,
                     variant_config,
                     lifecycle,
                     request,
@@ -93,7 +99,7 @@ class TestVllmReportingIntegration(unittest.TestCase):
             html_path = root / "report.html"
             xml_path = root / "report.xml"
             test_path.write_text(source)
-            completed = subprocess.run(
+            completed = run_trusted(
                 [
                     sys.executable,
                     "-m",
@@ -113,15 +119,23 @@ class TestVllmReportingIntegration(unittest.TestCase):
 
             self.assertEqual(
                 completed.returncode,
-                0,
+                1,
                 f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
             )
             html = html_path.read_text()
-            xml_root = element_tree.parse(xml_path).getroot()
+            xml_root = parse_trusted_xml(xml_path).getroot()
 
         self.assertIn("output_throughput", html)
         self.assertIn("mean_ttft_ms", html)
         self.assertNotIn("client.output_throughput", html)
+        tests = _html_tests(html)
+        self.assertEqual(len(tests), 1)
+        self.assertIn("::test_vllm_inference", next(iter(tests)))
+        entries = next(iter(tests.values()))
+        self.assertEqual(len(entries), 1)
+        names = _metric_names(entries[0])
+        self.assertEqual(names, ["output_throughput", "mean_ttft_ms"])
+        self.assertEqual(len(names), len(set(names)))
         properties = [
             prop for prop in xml_root.findall(".//property") if prop.attrib.get("name") == "cvs_vllm_metrics_v1"
         ]
@@ -131,6 +145,112 @@ class TestVllmReportingIntegration(unittest.TestCase):
         self.assertIn('"actuals_by_host":{"head":', value)
         self.assertIn('"output_throughput":2.0', value)
         self.assertNotIn("client.", value)
+
+    def test_record_only_subtests_pass_once(self):
+        source = textwrap.dedent(
+            '''
+            from types import SimpleNamespace
+
+            import pytest
+
+            from cvs.tests.inference.vllm._common import _verify_cell_metrics
+
+            CELL = "ISL=128,OSL=128,TP=1,PP=1,CONC=1"
+
+            @pytest.fixture
+            def run():
+                return SimpleNamespace(
+                    cell=SimpleNamespace(
+                        key=CELL,
+                        isl=128,
+                        osl=128,
+                        concurrency=1,
+                    )
+                )
+
+            @pytest.fixture
+            def variant_config():
+                return SimpleNamespace(
+                    model_id="model",
+                    enforce_thresholds=False,
+                    thresholds={
+                        CELL: {
+                            "output_throughput": {"kind": "min", "value": 100}
+                        }
+                    },
+                )
+
+            @pytest.fixture
+            def host_dict():
+                return {
+                    "head": {
+                        "output_throughput": 2.0,
+                        "mean_ttft_ms": 3.0,
+                    }
+                }
+
+            @pytest.fixture
+            def lifecycle():
+                return SimpleNamespace(record=lambda *args: None)
+
+            def test_vllm_inference(
+                host_dict,
+                run,
+                variant_config,
+                lifecycle,
+                request,
+                subtests,
+            ):
+                _verify_cell_metrics(
+                    host_dict,
+                    run,
+                    variant_config,
+                    lifecycle,
+                    request,
+                    subtests,
+                )
+            '''
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            test_path = root / "test_vllm_record_only.py"
+            html_path = root / "report.html"
+            test_path.write_text(source)
+            completed = run_trusted(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    str(test_path),
+                    "-p",
+                    "cvs.tests.inference.vllm.conftest",
+                    f"--html={html_path}",
+                    "--self-contained-html",
+                    "-q",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                completed.returncode,
+                0,
+                f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
+            )
+            report = html_path.read_text()
+
+        tests = _html_tests(report)
+        self.assertEqual(len(tests), 1)
+        entries = next(iter(tests.values()))
+        self.assertEqual(len(entries), 1)
+        result = entries[0]["resultsTableRow"][0]
+        self.assertIn("Passed", result)
+        self.assertNotIn("Skipped", result)
+        content = "".join(str(extra.get("content") or "") for extra in entries[0].get("extras") or [])
+        self.assertEqual(content.count(">Passed<"), 2)
+        self.assertNotIn("Recorded", content)
+        names = _metric_names(entries[0])
+        self.assertEqual(names, ["output_throughput", "mean_ttft_ms"])
 
 
 if __name__ == "__main__":

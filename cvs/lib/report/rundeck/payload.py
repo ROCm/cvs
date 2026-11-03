@@ -20,6 +20,7 @@ from cvs.lib.report.profile import DeckProfile
 from cvs.lib.report.rundeck.config_adapter import resolve_report_config
 from cvs.lib.report.rundeck.dataset_builders.registry import build_datasets
 from cvs.lib.report.rundeck.dataset_builders.sweep import select_inline_cells
+from cvs.lib.report.rundeck.dataset_builders import training_sweep as _training_sweep  # noqa: F401
 from cvs.lib.report.types import InferenceReportConfig
 
 
@@ -49,6 +50,53 @@ class RundeckPayloadBuilder:
         )
         self.config = resolve_report_config(ctx.profile)
 
+    @staticmethod
+    def _training_mode_label(variant_config, suite_stem):
+        """Actual run mode for a training deck subtitle: distributed / single-node."""
+        distributed = getattr(getattr(variant_config, "training", None), "distributed", None)
+        if distributed is True:
+            return "distributed"
+        if distributed is False:
+            return "single-node"
+        stem = str(suite_stem or "")
+        if stem.endswith("_distributed"):
+            return "distributed"
+        if stem.endswith("_single"):
+            return "single-node"
+        return "single-node & distributed"
+
+    def _resolve_subtitle(self, variant_config):
+        """Substitute a ``{mode}`` token in the profile subtitle with the run mode."""
+        subtitle = self.config.subtitle or ""
+        if "{mode}" not in subtitle:
+            return subtitle
+        store = getattr(self.ctx, "store", None)
+        suite_stem = store.get("suite_stem") if isinstance(store, dict) else None
+        return subtitle.replace("{mode}", self._training_mode_label(variant_config, suite_stem))
+
+    def _report_block(self, variant_config):
+        report = {
+            "title": self.config.title,
+            "subtitle": self._resolve_subtitle(variant_config),
+            "footer": self.config.footer,
+        }
+        if self.builder_id == "status_matrix":
+            labels = (self.profile_dict.get("lifecycle") or {}).get("session_labels")
+            if labels:
+                report["session_lifecycle_labels"] = list(labels)
+            return report
+        report.update(
+            {
+                "metric_tier_order": self.config.metric_tier_order,
+                "headline_metric": self.config.headline_metric,
+                "sweep_ttft_metric": self.config.sweep_ttft_metric,
+                "session_lifecycle_labels": self.config.session_lifecycle_labels,
+                "cell_lifecycle_labels": self.config.cell_lifecycle_labels,
+                "expand_lifecycle_labels": self.config.expand_lifecycle_labels,
+            }
+        )
+        return report
+
     def build(self) -> dict[str, Any]:
         datasets = self._build_datasets()
         prov = self._provenance()
@@ -60,7 +108,14 @@ class RundeckPayloadBuilder:
             prov,
         )
 
-        sweep_data = datasets.get("sweep") or {}
+        # A non-sweep builder reports its own top-line verdict via
+        # overall_status; everything else it renders is bound from its own
+        # datasets.<builder> node (see the profile cards). The sweep builder
+        # leaves overall_status here and keeps its existing fields below, so
+        # sweep behaviour is unchanged. training_sweep reuses those sweep fields.
+        active_data = datasets.get(self.builder_id) or {}
+
+        sweep_data = datasets.get("sweep") or datasets.get("training_sweep") or {}
         cells = sweep_data.get("all_cells") or sweep_data.get("cells") or []
         panels = ComparisonPanelBuilder(
             self.config,
@@ -76,34 +131,40 @@ class RundeckPayloadBuilder:
 
         lifecycle = LifecycleAggregator.aggregate(lifecycle_report, self.config.session_lifecycle_labels)
         accuracy_metrics = extract_accuracy_from_lifecycle(lifecycle_report)
+        # A status-matrix run has no sweep cells. The inference run card and an
+        # empty results table would hide the node checks under datasets.
+        # A suite hook (MORI, ibperf) already built its own run card; health and
+        # ANC have none, so they use the node-check summary.
+        if self.builder_id == "status_matrix":
+            if not (self.profile_dict.get("hooks") or {}).get("run_card_display"):
+                run_card_display = active_data.get("run_card_display") or run_card_display
+            results_table = active_data.get("results_table") or {}
+            sweep_fields = {}
+        else:
+            results_table = sweep_data.get("results_table") or datasets.get("series", {}).get("results_table") or {}
+            sweep_fields = {
+                "cells": cells,
+                "chart_series": sweep_data.get("chart_series") or {},
+                "chart_config": sweep_data.get("chart_config") or [],
+                "sweep_summaries": sweep_data.get("sweep_summaries") or [],
+                "gate_matrix": sweep_data.get("gate_matrix") or [],
+            }
 
         payload = {
             "schema_version": 1,
             "suite_id": self.config.suite_id,
             "generated_at": generated_at,
             "cvs_version": self.ctx.cvs_version,
-            "overall_status": sweep_data.get("overall_status") or ("record" if self.builder_id != "sweep" else "na"),
-            "report": {
-                "title": self.config.title,
-                "subtitle": self.config.subtitle,
-                "footer": self.config.footer,
-                "metric_tier_order": self.config.metric_tier_order,
-                "headline_metric": self.config.headline_metric,
-                "sweep_ttft_metric": self.config.sweep_ttft_metric,
-                "session_lifecycle_labels": self.config.session_lifecycle_labels,
-                "cell_lifecycle_labels": self.config.cell_lifecycle_labels,
-            },
+            "overall_status": active_data.get("overall_status")
+            or ("record" if self.builder_id not in ("sweep", "training_sweep") else "na"),
+            "report": self._report_block(variant_config),
             "run_card_display": run_card_display,
             "run_card_notes": run_card_notes,
             "provenance": prov,
             "lifecycle": lifecycle,
             "accuracy": accuracy_metrics,
-            "cells": cells,
-            "chart_series": sweep_data.get("chart_series") or {},
-            "chart_config": sweep_data.get("chart_config") or [],
-            "sweep_summaries": sweep_data.get("sweep_summaries") or [],
-            "gate_matrix": sweep_data.get("gate_matrix") or [],
-            "results_table": sweep_data.get("results_table") or datasets.get("series", {}).get("results_table") or {},
+            **sweep_fields,
+            "results_table": results_table,
             "panels": panels,
             "datasets": datasets,
             "deck_profile": self.profile_dict or {"cards": default_deck_cards()},
@@ -115,11 +176,24 @@ class RundeckPayloadBuilder:
         if isinstance(self.profile, dict) and self.profile.get("cards"):
             payload["deck_profile"] = self.profile
 
-        if self.builder_id == "sweep":
+        if self.builder_id in ("sweep", "training_sweep"):
             from cvs.lib.report.rundeck.viewer_config import ViewerConfigBuilder
 
+            viewer_config = self.config
+            if self.builder_id == "training_sweep":
+                from cvs.lib.report.training_cells import (
+                    hide_training_scaling_efficiency,
+                    without_scaling_efficiency,
+                )
+
+                if hide_training_scaling_efficiency(
+                    variant_config,
+                    lifecycle_report,
+                    self.sources.get("suite_stem") or self.sources.get("suite_name"),
+                ):
+                    viewer_config = without_scaling_efficiency(self.config)
             profile_for_viewer = self.profile_dict if isinstance(self.profile, dict) else {}
-            payload["viewer_config"] = ViewerConfigBuilder(profile_for_viewer, self.config).build()
+            payload["viewer_config"] = ViewerConfigBuilder(profile_for_viewer, viewer_config).build()
 
         return payload
 
@@ -148,6 +222,7 @@ class RundeckPayloadBuilder:
             "inf_res_dict": store.get("inf_res_dict") or store.get("cvs_results_dict") or {},
             "variant": store.get("variant_config"),
             "variant_config": store.get("variant_config"),
+            "suite_stem": store.get("suite_stem") or store.get("suite_name"),
             "lifecycle_report": lifecycle,
             "lifecycle": lifecycle,
             "reference": store.get("reference_results") or store.get("golden_results"),

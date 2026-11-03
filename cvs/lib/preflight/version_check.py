@@ -63,7 +63,7 @@ class RocmVersionCheck(PreflightCheck):
         fi
         """
         self.results = {}
-        out_dict = self.phdl.exec(cmd)
+        out_dict = self.orch.all.exec(cmd)
 
         for node, output in out_dict.items():
             version = self._extract_rocm_version(output)

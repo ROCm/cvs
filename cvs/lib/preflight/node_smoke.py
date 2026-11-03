@@ -229,10 +229,13 @@ def build_remote_node_smoke_command(
         env_lines.append(f"export NCCL_IB_GID_INDEX={int(nccl_ib_gid_index)}")
 
     primus_cli = f"{primus_q}/runner/primus-cli"
+    # Primus writes <dump>/smoke/<short hostname>.json for every node into the same
+    # (usually shared) dump path, so read this node's own file. Taking the first
+    # *.json would hand every node the payload of whichever host sorts first.
     json_cat = (
         f"echo '{_JSON_BEGIN}'; "
-        f"json=$(ls -1 {dump_q}/smoke/*.json 2>/dev/null | head -1); "
-        f'if [ -n "$json" ]; then cat "$json"; fi; '
+        f"h=$(hostname); json={dump_q}/smoke/\"${{h%%.*}}\".json; "
+        f'if [ -f "$json" ]; then cat "$json"; fi; '
         f"echo '{_JSON_END}'"
     )
 
@@ -306,7 +309,7 @@ class NodeSmokeCheck(PreflightCheck):
 
         tier1 = NODE_SMOKE_TIER1_SECTION
         legacy = LEGACY_NODE_SMOKE_SECTION
-        self.mode = _normalize_mode(get_preflight_nested(cfg, tier1, legacy, "connectivity_mode", "skip"))
+        self.mode = _normalize_mode(get_preflight_nested(cfg, tier1, legacy, "connectivity_mode", "run"))
         self.primus_dir = get_preflight_nested(cfg, tier1, legacy, "primus_dir", "")
         self.venv_activate = get_preflight_nested(cfg, tier1, legacy, "venv_activate", "")
         self.gpus_per_node = int(get_preflight_nested(cfg, tier1, legacy, "gpus_per_node", 8))
@@ -361,7 +364,9 @@ class NodeSmokeCheck(PreflightCheck):
             get_preflight_nested(cfg, tier1, legacy, "auto_setup", True), default=True
         )
 
-        self.tier2_perf = _config_flag_enabled(get_preflight_nested(cfg, tier1, legacy, "tier2_perf", False))
+        self.tier2_perf = _config_flag_enabled(
+            get_preflight_nested(cfg, tier1, legacy, "tier2_perf", True), default=True
+        )
         self.gemm_tflops_min = float(get_preflight_nested(cfg, tier1, legacy, "gemm_tflops_min", 600.0))
         self.hbm_gbs_min = float(get_preflight_nested(cfg, tier1, legacy, "hbm_gbs_min", 2000.0))
         self.rccl_gbs_min = float(get_preflight_nested(cfg, tier1, legacy, "rccl_gbs_min", 100.0))
@@ -422,7 +427,7 @@ class NodeSmokeCheck(PreflightCheck):
                 "node_results": {},
             }
 
-        hosts = [h for h in self.node_list if h in self.phdl.reachable_hosts]
+        hosts = [h for h in self.node_list if h in self.orch.all.reachable_hosts]
         if not hosts:
             return {
                 "mode": self.mode,
@@ -436,7 +441,7 @@ class NodeSmokeCheck(PreflightCheck):
             from cvs.lib.preflight.primus_setup import PrimusSetup
 
             setup = PrimusSetup(
-                self.phdl,
+                self.orch,
                 hosts,
                 self.config_dict,
                 config_section=NODE_SMOKE_TIER1_SECTION,
@@ -471,7 +476,7 @@ class NodeSmokeCheck(PreflightCheck):
         )
 
         commands: List[str] = []
-        for h in self.phdl.reachable_hosts:
+        for h in self.orch.all.reachable_hosts:
             if h not in hosts_set:
                 commands.append("true")
             else:
@@ -493,7 +498,7 @@ class NodeSmokeCheck(PreflightCheck):
                     )
                 )
 
-        out_dict = self.phdl.exec_cmd_list(commands, timeout=self._effective_ssh_timeout())
+        out_dict = self.orch.all.exec_cmd_list(commands, timeout=self._effective_ssh_timeout())
 
         node_results: Dict[str, Any] = {}
         for host, output in out_dict.items():

@@ -25,6 +25,7 @@ from cvs.core.agent.messages import (
     ShutdownRequest,
     parse_message,
 )
+from cvs.unittests.support import TMP
 
 
 class TestRegisterRequest(unittest.TestCase):
@@ -48,7 +49,7 @@ class TestExecRequest(unittest.TestCase):
         kwargs = dict(
             cmd="echo hi",
             env={},
-            cwd=Path("/tmp"),
+            cwd=Path(TMP),
             timeout=None,
             inactivity_timeout=None,
             cmd_id="abc123",
@@ -81,8 +82,8 @@ class TestExecRequest(unittest.TestCase):
             ExecRequest(**self._base_kwargs(output_mode=ExecOutputMode.FILE, out_path=None))
 
     def test_file_mode_accepts_out_path(self):
-        req = ExecRequest(**self._base_kwargs(output_mode=ExecOutputMode.FILE, out_path=Path("/tmp/out")))
-        self.assertEqual(req.out_path, Path("/tmp/out"))
+        req = ExecRequest(**self._base_kwargs(output_mode=ExecOutputMode.FILE, out_path=Path(f"{TMP}/out")))
+        self.assertEqual(req.out_path, Path(f"{TMP}/out"))
 
     def test_round_trip_json(self):
         req = ExecRequest(**self._base_kwargs(timeout=30))
@@ -117,12 +118,12 @@ class TestExecResponse(unittest.TestCase):
             exit_code=0,
             stdout=["...tail..."],
             stderr=[],
-            stdout_path=Path("/tmp/out/abc123.stdout"),
-            stderr_path=Path("/tmp/out/abc123.stderr"),
+            stdout_path=Path(f"{TMP}/out/abc123.stdout"),
+            stderr_path=Path(f"{TMP}/out/abc123.stderr"),
             truncated=None,
             timed_out=False,
         )
-        self.assertEqual(resp.stdout_path, Path("/tmp/out/abc123.stdout"))
+        self.assertEqual(resp.stdout_path, Path(f"{TMP}/out/abc123.stdout"))
 
     def test_exit_code_only_response(self):
         resp = ExecResponse(

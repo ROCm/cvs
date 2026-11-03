@@ -38,6 +38,7 @@ from cvs.lib.utils.gpu import (
     _RECORD_SEP,
     GpuPollerHandle,
     _mean,
+    _poller_script,
     agg_readings,
     capture_gpu_metrics,
     start_gpu_poller,
@@ -47,6 +48,7 @@ from cvs.lib.utils.gpu import (
     parse_energy,
     parse_gpu_metrics,
 )
+from cvs.unittests.support import TMP
 
 # ---------------------------------------------------------------------------
 # Shared fixtures — amd-smi JSON schema (one GPU entry)
@@ -579,7 +581,7 @@ class TestCaptureGpuMetrics(unittest.TestCase):
         self.assertEqual(set(out.keys()), set(ALL_KEYS))
         mock_parse.assert_called_once_with([_full_gpu_entry()])
         # Pin the exact command string sent to amd-smi (host-side, no sudo needed).
-        orch.exec_on_head.assert_called_once_with("amd-smi metric --json", print_console=False)
+        orch.exec_on_head.assert_called_once_with("amd-smi metric --usage --mem-usage --json", print_console=False)
         # Verify parse result is actually returned, not silently discarded.
         self.assertEqual(out["gpu.gfx_activity"], 30)
         self.assertIsNotNone(out["gpu.total_vram"])
@@ -792,16 +794,6 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
 
         return _exec
 
-    def test_nodes_none_calls_exec_on_head(self):
-        """nodes=None must call orch.exec_on_head (regression guard)."""
-        orch = MagicMock()
-        orch.exec_on_head.return_value = {"host0": self._make_gpu_json(1000)}
-        from cvs.lib.utils.gpu import capture_gpu_metrics
-
-        result = capture_gpu_metrics(orch, nodes=None)
-        orch.exec_on_head.assert_called_once_with("amd-smi metric --json", print_console=False)
-        self.assertEqual(result["gpu.used_vram"], 1000)
-
     def test_nodes_provided_calls_orch_exec_with_hosts_not_exec_on_head(self):
         """nodes provided: orch.exec(cmd, hosts=...) is called, orch.exec_on_head is NOT."""
         orch = MagicMock()
@@ -813,8 +805,12 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
             nodes=[("prefill-0", ["prefill-host"]), ("decode-0", ["decode-host"])],
         )
         orch.exec_on_head.assert_not_called()
-        orch.exec.assert_any_call("amd-smi metric --json", hosts=["prefill-host"], print_console=False)
-        orch.exec.assert_any_call("amd-smi metric --json", hosts=["decode-host"], print_console=False)
+        orch.exec.assert_any_call(
+            "amd-smi metric --usage --mem-usage --json", hosts=["prefill-host"], print_console=False
+        )
+        orch.exec.assert_any_call(
+            "amd-smi metric --usage --mem-usage --json", hosts=["decode-host"], print_console=False
+        )
 
     def test_nodes_vram_summed_across_nodes(self):
         """VRAM from all nodes is summed in the merged result."""
@@ -910,11 +906,11 @@ def _poller_file_text(*chunks: str) -> str:
 
 class TestGpuPollerHandle(unittest.TestCase):
     def test_fields(self):
-        handle = GpuPollerHandle(run_id="r1", marker="cvs_gpu_poll_r1", nodes=None, paths="/tmp/cvs_gpu_poll_r1.log")
+        handle = GpuPollerHandle(run_id="r1", marker="cvs_gpu_poll_r1", nodes=None, paths=f"{TMP}/cvs_gpu_poll_r1.log")
         self.assertEqual(handle.run_id, "r1")
         self.assertEqual(handle.marker, "cvs_gpu_poll_r1")
         self.assertIsNone(handle.nodes)
-        self.assertEqual(handle.paths, "/tmp/cvs_gpu_poll_r1.log")
+        self.assertEqual(handle.paths, f"{TMP}/cvs_gpu_poll_r1.log")
 
 
 class TestStartGpuPollerSingleNode(unittest.TestCase):
@@ -978,6 +974,9 @@ class TestStartGpuPollerSingleNode(unittest.TestCase):
         self.assertIn("nohup", all_cmds)
         self.assertIn(_RECORD_SEP, all_cmds)
 
+    def test_poller_script_runs_scoped_amd_smi_command(self):
+        self.assertIn("amd-smi metric --usage --mem-usage --json >> ", _poller_script("m", 15, 1))
+
     def test_default_hard_cap_yields_960_iterations(self):
         """hard_cap_s=14400, poll_interval_s=15 -> 14400 // 15 == 960."""
         orch = MagicMock()
@@ -1025,7 +1024,7 @@ class TestStopAndCollectGpuPollerSingleNode(unittest.TestCase):
     """nodes=None: pkill via exec_on_head, read-back via exec_on_head cat."""
 
     def _handle(self):
-        return GpuPollerHandle(run_id="r1", marker="cvs_gpu_poll_r1", nodes=None, paths="/tmp/cvs_gpu_poll_r1.log")
+        return GpuPollerHandle(run_id="r1", marker="cvs_gpu_poll_r1", nodes=None, paths=f"{TMP}/cvs_gpu_poll_r1.log")
 
     def test_pkill_contains_marker(self):
         orch = MagicMock()
@@ -1143,7 +1142,7 @@ class TestStopAndCollectGpuPollerMultiNode(unittest.TestCase):
             run_id="r1",
             marker="cvs_gpu_poll_r1",
             nodes=nodes,
-            paths={h: "/tmp/cvs_gpu_poll_r1.log" for h in nodes},
+            paths={h: f"{TMP}/cvs_gpu_poll_r1.log" for h in nodes},
         )
 
     def test_round_alignment_longer_host_extends_not_truncates(self):

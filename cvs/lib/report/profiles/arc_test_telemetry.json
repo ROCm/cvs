@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "extends": "arc_base",
+  "profile_id": "arc_test_telemetry_rundeck",
+  "suite_id": "arc_test_telemetry",
+  "report_basename": "arc_test_telemetry_run_deck",
+  "title": "ARC Run Deck · Telemetry Item",
+  "link_name": "ARC Telemetry Item Run Deck"
+}

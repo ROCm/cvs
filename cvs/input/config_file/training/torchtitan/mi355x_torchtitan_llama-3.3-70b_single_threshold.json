@@ -13,6 +13,26 @@
     "training.loss": {
       "kind": "max",
       "value": 15.0
+    },
+    "training.steps_to_target": {
+      "kind": "info",
+      "value": 10,
+      "optional": true
+    },
+    "training.time_to_target_seconds": {
+      "kind": "info",
+      "value": 2500,
+      "optional": true
+    },
+    "training.step_time_p50_ms": {
+      "kind": "info",
+      "value": 2500,
+      "optional": true
+    },
+    "training.step_time_p95_ms": {
+      "kind": "info",
+      "value": 1500,
+      "optional": true
     }
   },
   "MBS=1,GBS=8,PRECISION=FP8": {
@@ -28,6 +48,26 @@
     "training.loss": {
       "kind": "max",
       "value": 15.0
+    },
+    "training.steps_to_target": {
+      "kind": "info",
+      "value": 10,
+      "optional": true
+    },
+    "training.time_to_target_seconds": {
+      "kind": "info",
+      "value": 2500,
+      "optional": true
+    },
+    "training.step_time_p50_ms": {
+      "kind": "info",
+      "value": 2500,
+      "optional": true
+    },
+    "training.step_time_p95_ms": {
+      "kind": "info",
+      "value": 1500,
+      "optional": true
     }
   },
   "MBS=1,GBS=8,PRECISION=MXFP8": {
@@ -43,6 +83,26 @@
     "training.loss": {
       "kind": "max",
       "value": 15.0
+    },
+    "training.steps_to_target": {
+      "kind": "info",
+      "value": 10,
+      "optional": true
+    },
+    "training.time_to_target_seconds": {
+      "kind": "info",
+      "value": 2500,
+      "optional": true
+    },
+    "training.step_time_p50_ms": {
+      "kind": "info",
+      "value": 2500,
+      "optional": true
+    },
+    "training.step_time_p95_ms": {
+      "kind": "info",
+      "value": 1500,
+      "optional": true
     }
   }
 }

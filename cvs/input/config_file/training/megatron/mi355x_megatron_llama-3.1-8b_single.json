@@ -1,6 +1,7 @@
 {
   "gpu_name": "MI355X",
   "enforce_thresholds": true,
+  "gpus_per_node": 8,
   "threshold_json": "mi355x_megatron_llama-3.1-8b_single_threshold.json",
   "paths": {
     "hf_token_file": "/home/{user-id}/.hf_token",
@@ -46,7 +47,12 @@
     "fsdp": "0",
     "tensor_parallelism": "1",
     "pipeline_parallelism": "1",
-    "training_iterations": "<changeme>"
+    "micro_batch_size": "4",
+    "global_batch_size": "128",
+    "precision": "BF16",
+    "training_iterations": "<changeme>",
+    "_primus_cli_overrides_comment": "Optional Primus-only extra CLI args. Set as a raw string (for example \"--use_backend triton\") or override per sweep combination with the same key.",
+    "primus_cli_overrides": {}
   },
   "_smoke_comment": "test_smoke loads the model and runs a small fixed cell without metric gating. enabled=false skips it.",
   "smoke": {
@@ -76,7 +82,7 @@
     "resume_iters": 25,
     "loss_rtol": 0.05
   },
-  "_sweep_comment": "combination key is MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>. Body overlays train_params; packaged cells set training_iterations (for example 20).",
+  "_sweep_comment": "combination key is MBS=<mbs>,GBS=<gbs>,PRECISION=<precision> for that cell (body may overlay extras such as training_iterations). Omit sweep to run one default cell from train_params.",
   "sweep": {
     "combinations": {
       "MBS=4,GBS=128,PRECISION=FP8": {
@@ -100,3 +106,4 @@
     ]
   }
 }
+

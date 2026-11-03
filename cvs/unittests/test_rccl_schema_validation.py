@@ -2,7 +2,7 @@ import unittest
 
 from pydantic import ValidationError
 
-from cvs.schema.rccl import RcclTests
+from cvs.schema.rccl import RcclTests, RcclTestsMultinodeRaw
 
 
 class TestRcclSchemaValidation(unittest.TestCase):
@@ -38,6 +38,67 @@ class TestRcclSchemaValidation(unittest.TestCase):
         with self.assertRaises(ValidationError) as ctx2:
             RcclTests.model_validate(payload2)
         self.assertIn("SEVERE DATA CORRUPTION", str(ctx2.exception))
+
+    def test_multinode_topology_round_trips(self):
+        topology = {'nodes': 2, 'ranks': 16, 'ranksPerNode': 8, 'gpusPerRank': 1}
+        payload = {**self._base_payload(), **topology, 'wrong': '0'}
+        parsed = RcclTestsMultinodeRaw.model_validate(payload)
+        for key, value in topology.items():
+            self.assertEqual(parsed.model_dump()[key], value)
+
+    def test_inconsistent_rank_identity_fails(self):
+        payload = {**self._base_payload(), 'nodes': 2, 'ranks': 2, 'ranksPerNode': 2, 'gpusPerRank': 8, 'wrong': '0'}
+        with self.assertRaisesRegex(ValidationError, 'must equal nodes'):
+            RcclTestsMultinodeRaw.model_validate(payload)
+
+    def test_schema_accepts_captured_global_local_rank_label_swap(self):
+        """Values captured from a real multi-node run where the launcher's requested rank/node counts and rccl-tests' reported values were swapped."""
+        payload = {
+            'numCycle': 0,
+            'name': 'AllReduce',
+            'nodes': 1,
+            'ranks': 2,
+            'ranksPerNode': 2,
+            'gpusPerRank': 8,
+            'size': 8,
+            'type': 'float',
+            'redop': 'sum',
+            'inPlace': 0,
+            'time': 65.3309,
+            'algBw': 0.000122,
+            'busBw': 0.00023,
+            'wrong': '0',
+        }
+        parsed = RcclTestsMultinodeRaw.model_validate(payload)
+        self.assertEqual(parsed.model_dump(), {**payload, 'wrong': 0})
+
+    def test_all_reduce_bias_row_validates_as_allreduce(self):
+        """rccl-tests registers all_reduce_bias_perf as AllReduce."""
+        payload = {
+            'numCycle': 0,
+            'name': 'AllReduce',
+            'nodes': 1,
+            'ranks': 4,
+            'ranksPerNode': 4,
+            'gpusPerRank': 1,
+            'size': 1024,
+            'type': 'float',
+            'redop': 'sum',
+            'inPlace': 0,
+            'time': 5399.35,
+            'algBw': 0.000190,
+            'busBw': 0.000284,
+            'wrong': '0',
+        }
+        parsed = RcclTestsMultinodeRaw.model_validate(payload)
+        self.assertEqual(parsed.model_dump(), {**payload, 'wrong': 0})
+
+    def test_unreported_bias_collective_name_is_rejected(self):
+        """The schema accepts reported collective names, not binary names."""
+        for name in ('AllReduceBias', 'all_reduce_bias_perf'):
+            with self.subTest(name=name):
+                with self.assertRaises(ValidationError):
+                    RcclTests.model_validate({**self._base_payload(), 'name': name, 'wrong': 0})
 
 
 if __name__ == "__main__":

@@ -1,14 +1,14 @@
 .. meta::
-  :description: Configure the variables in the Megatron training configuration files
-  :keywords: training, ROCm, install, cvs, Megatron,
+  :description: Reference for CVS Megatron training configuration files, covering Llama and DeepSeek single-node and distributed training on AMD GPU clusters with ROCm.
+  :keywords: CVS, Megatron, training, ROCm, GPU, AMD, distributed, JSON, configuration, Llama, DeepSeek, InfiniBand, benchmark
 
-*************************************
-Megatron training configuration files
-*************************************
+**********************************************************************
+Megatron training configuration files for Cluster Validation Suite (CVS)
+**********************************************************************
 
 JSON configs and sibling ``*_threshold.json`` files for ``megatron_single`` and ``megatron_distributed``. MI300X and MI325X share one config per model and mode (``mi3xx_megatron_{model}_{single|distributed}.json``); set ``gpu_name`` and ``threshold_json`` to the SKU. MI355X ships Llama 3.1 8B and Llama 3.3 70B single-node configs only (``mi355x_megatron_llama-3.1-8b_single.json``, ``mi355x_megatron_llama-3.3-70b_single.json``). Use a ``*_single.json`` file with ``megatron_single`` and a ``*_distributed.json`` file with ``megatron_distributed``. ``threshold_json`` is resolved relative to the config file.
 
-How to run the suites: :doc:`/how-to/test-suites/training/megatron`.
+See :doc:`/how-to/test-suites/training/megatron` for more information on running these tests.
 
 Use ``cvs config list training/megatron`` to list available templates, or
 ``cvs config copy training/megatron/<name>`` to copy one to your working
@@ -33,13 +33,15 @@ Llama 3.1 8B, Llama 3.3 70B, and DeepSeek V2 Lite run on **both** Megatron-LM an
   - Parameters with the ``<changeme>`` value must have that value modified to your specifications. Unresolved placeholders cause a hard exit at load time.
   - ``{user-id}`` will be resolved to the cluster username (or the local OS user as fallback). You can also set this value yourself.
   - Keys prefixed with ``_`` (for example ``_checkpoint_comment``) are inline comments and are ignored by the loader.
-  - ``sweep.runs`` is required when ``sweep.combinations`` is non-empty. It must be a subset of (or equal to) those keys. Omitting ``sweep`` entirely (or using empty ``combinations``) runs one implicit ``default`` cell from ``train_params``.
-  - Each key in ``sweep.combinations`` must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``. The suite parses those three values from the key; do not repeat them in the combination body.
+  - ``sweep.runs`` is required when ``sweep.combinations`` is non-empty. It must be a non-empty subset of (or equal to) those keys; an empty ``runs`` list is a load error. Omitting ``sweep`` entirely (or using empty ``combinations``) runs one implicit ``default`` cell; ``train_params.micro_batch_size``, ``global_batch_size``, and ``precision`` are then required.
+  - Each key in ``sweep.combinations`` must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``. The suite parses those three values from the key; do not repeat them in the combination body. The body may overlay extras such as ``training_iterations``, ``tensor_parallelism``, and ``pipeline_parallelism``.
 
 Available configurations
 ========================
 
 MI300X and MI325X share ``mi3xx_megatron_<model>_<mode>.json``. MI355X ships ``mi355x_megatron_llama-3.1-8b_single.json`` and ``mi355x_megatron_llama-3.3-70b_single.json``. Thresholds stay SKU-specific (``mi300x_*_threshold.json``, ``mi325x_*_threshold.json``, ``mi355x_*_threshold.json``) and are selected with ``threshold_json``.
+
+The table below maps each supported model to its configuration file and available execution modes.
 
 .. list-table::
    :widths: 4 3 3 2
@@ -68,21 +70,24 @@ MI300X and MI325X share ``mi3xx_megatron_<model>_<mode>.json``. MI355X ships ``m
 
 Single-node configs set ``container.env.MASTER_ADDR`` to ``127.0.0.1``. ``NNODES`` is not in the JSON: the suite sets it from the cluster host count into ``docker run -e``. Distributed configs require ``MASTER_ADDR`` and ``NCCL_IB_HCA`` and add a ``scaling_baseline`` section and ``checkpoint_dir`` to the ``checkpoint`` block. NIC type is not in the JSON: Megatron-LM defaults to ``thor2`` for MI300X/MI325X and ``ainic`` for MI355X from ``gpu_name``.
 
-Leftover files ``mi3xx_megatron_llama_*.json`` and ``mi35x_megatron_llama_single.json`` are nested-schema configs for the legacy ``megatron_llama3_1_*`` suites only. Do not pass them to ``megatron_single`` or ``megatron_distributed``.
-
 Required edits
 ==============
 
 Set these before a run (full field tables are under `Common parameters`_):
 
+The following fields must be customized to match your cluster and hardware before invoking any Megatron suite.
+
 * ``gpu_name`` / ``threshold_json`` — on ``mi3xx_`` templates, set ``MI300X`` or ``MI325X`` and the matching SKU threshold filename. ``gpu_name`` must be exactly ``MI300X``, ``MI325X``, or ``MI355X`` after uppercase.
+* ``gpus_per_node`` — number of GPUs available on each node. Packaged templates set ``8``; change it only for systems with a different per-node GPU count.
 * ``container.image`` — Megatron-LM or Primus ROCm image on all nodes.
 * ``train_params.training_iterations`` — default training steps (for example ``"30"``). Each ``sweep.combinations`` body sets ``training_iterations`` (packaged value ``"20"``); that overlay wins for that cell.
-* ``paths.hf_token_file`` — Hugging Face token path on the nodes.
+* ``train_params.micro_batch_size`` / ``global_batch_size`` / ``precision`` — required when ``sweep`` is omitted. Packaged files already set them; with a declared sweep the combination key supplies those values for each cell.
+* ``train_params.primus_cli_overrides`` — optional Primus-only extra ``primus-cli`` args. Set as a raw string (for example ``"--use_backend triton"``) or as a JSON object rendered to ``--key value`` pairs.
+* ``paths.hf_token_file`` — Hugging Face token file, read inside the container on each node when the tokenizer download or training command runs. CVS does not read it on the machine running ``cvs run``. The path must be mounted into the container. If the file is not visible inside the container, Megatron fails that stage and sets ``lifecycle.failed``, so later stages are skipped. Primus exports an empty ``HF_TOKEN`` and the run continues.
 * ``container.env.NCCL_SOCKET_IFNAME`` / ``GLOO_SOCKET_IFNAME`` / ``NCCL_IB_GID_INDEX`` / ``NCCL_DEBUG`` — templates include example values plus ``<changeme>`` (for example ``enp193s0f1np1 <changeme>``, ``3 <changeme>``, ``ERROR <changeme>``). Remove ``<changeme>`` and keep or edit the example. Required on single-node and distributed.
-* ``sweep.runs`` — combination keys to execute (same ``MBS=…,GBS=…,PRECISION=…`` strings as in ``sweep.combinations``).
+* ``sweep.runs`` — combination keys to execute (same ``MBS=…,GBS=…,PRECISION=…`` strings as in ``sweep.combinations``). Must be non-empty when ``combinations`` is present.
 * Do not set ``NNODES`` in JSON.
-* **Distributed only:** ``container.env.MASTER_ADDR``, ``container.env.NCCL_IB_HCA`` (example HCA list plus ``<changeme>``). ``paths.data_cache_dir`` must be a shared filesystem. When ``checkpoint.enforce`` is ``true``, also set ``checkpoint.checkpoint_dir`` and replace the last ``<changeme>:<changeme>`` volume with that shared path.
+* **Distributed only:** ``container.env.MASTER_ADDR``, ``container.env.NCCL_IB_HCA`` (example HCA list plus ``<changeme>``). Set ``paths.data_cache_dir`` to a shared filesystem (not node-local home) and bind-mount it in ``container.runtime.args.volumes``. When ``checkpoint.enforce`` is ``true``, also set ``checkpoint.checkpoint_dir`` and replace the last ``<changeme>:<changeme>`` volume with that shared path.
 
 Top-level fields
 ================
@@ -99,6 +104,9 @@ These fields appear at the root of every config file.
    * - ``gpu_name``
      - ``MI300X`` / ``<changeme>``
      - GPU architecture string used for logging and Primus YAML path resolution (``examples/megatron/configs/{gpu_name}/``). Loaded as uppercase (``mi300x`` becomes ``MI300X``). Allowed values: ``MI300X``, ``MI325X``, ``MI355X``. Extra tokens fail at load. On ``mi3xx_`` templates this is ``<changeme>`` until you set ``MI300X`` or ``MI325X``.
+   * - ``gpus_per_node``
+     - ``8``
+     - GPUs on each node. World size and tokens/s totals are ``nnodes * gpus_per_node``. Defaults to ``8`` when omitted. Must be at least 1.
    * - ``paths``
      - see `Common parameters`_
      - Host paths: ``hf_token_file``, ``log_dir``, ``scripts_dir``, ``data_cache_dir``.
@@ -107,7 +115,7 @@ These fields appear at the root of every config file.
      - Image, runtime mounts, and ``container.env``. Packaged files keep this block immediately after ``paths``.
    * - ``train_params``
      - see per-model tables
-     - Model knobs plus ``training_iterations``. With a ``sweep``, MBS/GBS/precision live on the combination key. With no ``sweep``, optional ``micro_batch_size``, ``global_batch_size``, and ``precision`` here feed the implicit ``default`` cell.
+     - Model knobs plus ``training_iterations``. Packaged files also set ``micro_batch_size``, ``global_batch_size``, and ``precision`` (used when ``sweep`` is omitted). With a declared ``sweep``, those three values for each cell come from the combination key. With no ``sweep``, those three ``train_params`` keys are required for the implicit ``default`` cell.
    * - ``verify_network_errors``
      - omitted (single) / ``True`` (distributed)
      - Compare RDMA and ethtool error counters before and after training. Single-node templates omit it (schema/lib default ``False``).
@@ -135,6 +143,7 @@ Available as ``mi3xx_megatron_llama-3.1-8b_{single,distributed}.json`` (MI300X/M
     {
       "gpu_name": "<changeme>",
       "enforce_thresholds": true,
+      "gpus_per_node": 8,
       "threshold_json": "<changeme>",
       "train_params": {
         "model_name": "llama3.1_8B",
@@ -145,6 +154,9 @@ Available as ``mi3xx_megatron_llama-3.1-8b_{single,distributed}.json`` (MI300X/M
         "fsdp": "0",
         "tensor_parallelism": "1",
         "pipeline_parallelism": "1",
+        "micro_batch_size": "4",
+        "global_batch_size": "128",
+        "precision": "BF16",
         "training_iterations": "<changeme>"
       },
       "sweep": {
@@ -193,12 +205,27 @@ Available as ``mi3xx_megatron_llama-3.1-8b_{single,distributed}.json`` (MI300X/M
    * - ``sequence_length``
      - ``8192``
      - Maximum context length.
+   * - ``recompute``
+     - ``0``
+     - Activation recompute flag passed to the training backend. ``1`` trades extra compute for lower activation memory.
+   * - ``fsdp``
+     - ``0``
+     - FSDP flag passed to the training backend.
    * - ``tensor_parallelism``
      - ``1``
      - Fits on a single GPU; no tensor splitting needed.
    * - ``pipeline_parallelism``
      - ``1``
      - Single pipeline stage.
+   * - ``micro_batch_size``
+     - ``4``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``global_batch_size``
+     - ``128``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``precision``
+     - ``BF16``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
    * - ``training_iterations``
      - ``<changeme>``
      - Training steps (same field on every model).
@@ -216,6 +243,7 @@ Available as ``mi3xx_megatron_llama-3.3-70b_{single,distributed}.json`` (MI300X/
     {
       "gpu_name": "<changeme>",
       "enforce_thresholds": true,
+      "gpus_per_node": 8,
       "threshold_json": "<changeme>",
       "train_params": {
         "model_name": "llama3.3_70B",
@@ -226,6 +254,9 @@ Available as ``mi3xx_megatron_llama-3.3-70b_{single,distributed}.json`` (MI300X/
         "fsdp": "0",
         "tensor_parallelism": "8",
         "pipeline_parallelism": "1",
+        "micro_batch_size": "3",
+        "global_batch_size": "96",
+        "precision": "BF16",
         "training_iterations": "<changeme>"
       },
       "sweep": {
@@ -266,12 +297,27 @@ Available as ``mi3xx_megatron_llama-3.3-70b_{single,distributed}.json`` (MI300X/
    * - ``sequence_length``
      - ``8192``
      - Maximum context length.
+   * - ``recompute``
+     - ``0``
+     - Activation recompute flag passed to the training backend. ``1`` trades extra compute for lower activation memory.
+   * - ``fsdp``
+     - ``0``
+     - FSDP flag passed to the training backend.
    * - ``tensor_parallelism``
      - ``8``
      - Splits the model across all 8 GPUs on the node.
    * - ``pipeline_parallelism``
      - ``1``
      - Single pipeline stage.
+   * - ``micro_batch_size``
+     - ``3``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``global_batch_size``
+     - ``96``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``precision``
+     - ``BF16``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
    * - ``training_iterations``
      - ``<changeme>``
      - Training steps (same field on every model).
@@ -289,6 +335,7 @@ Available as ``mi3xx_megatron_deepseek-v2-lite_{single,distributed}.json`` (MI30
     {
       "gpu_name": "<changeme>",
       "enforce_thresholds": true,
+      "gpus_per_node": 8,
       "threshold_json": "<changeme>",
       "train_params": {
         "model_name": "deepseek_v2_lite",
@@ -299,6 +346,9 @@ Available as ``mi3xx_megatron_deepseek-v2-lite_{single,distributed}.json`` (MI30
         "fsdp": "0",
         "tensor_parallelism": "1",
         "pipeline_parallelism": "1",
+        "micro_batch_size": "4",
+        "global_batch_size": "128",
+        "precision": "BF16",
         "training_iterations": "<changeme>"
       },
       "sweep": {
@@ -339,12 +389,27 @@ Available as ``mi3xx_megatron_deepseek-v2-lite_{single,distributed}.json`` (MI30
    * - ``sequence_length``
      - ``4096``
      - Shorter context than Llama due to DeepSeek V2's attention architecture.
+   * - ``recompute``
+     - ``0``
+     - Activation recompute flag passed to the training backend. ``1`` trades extra compute for lower activation memory.
+   * - ``fsdp``
+     - ``0``
+     - FSDP flag passed to the training backend.
    * - ``tensor_parallelism``
      - ``1``
      - Fits on a single GPU.
    * - ``pipeline_parallelism``
      - ``1``
      - Single pipeline stage.
+   * - ``micro_batch_size``
+     - ``4``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``global_batch_size``
+     - ``128``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``precision``
+     - ``BF16``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
    * - ``training_iterations``
      - ``<changeme>``
      - Training steps (same field on every model).
@@ -355,6 +420,19 @@ Llama 3.1 405B
 
 Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X; distributed only). Unlike the other models, 405B runs on **Primus only**: ``container.image`` must contain ``primus``. Megatron-LM does not support 405B.
 
+For Primus 405B, when total decoder layers (126) are not evenly divisible by
+``train_params.pipeline_parallelism`` (pipeline stage count), CVS
+automatically appends
+``--decoder_first_pipeline_num_layers`` and
+``--decoder_last_pipeline_num_layers`` to keep middle stages evenly split.
+Example: with ``pipeline_parallelism=4``, CVS appends ``31`` and ``31`` so the
+middle stages get ``32`` and ``32``. ``pipeline_parallelism`` may differ from
+node count when data parallelism is greater than 1. If layers are already
+evenly divisible, those flags are not added. If no integer first/last split is
+possible for the configured pipeline stage count, the test fails and asks you
+to set both flags explicitly in ``primus_cli_overrides``. User-provided decoder
+split flags in ``primus_cli_overrides`` take precedence.
+
 .. dropdown:: ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (representative)
 
   .. code:: json
@@ -362,6 +440,7 @@ Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X; 
     {
       "gpu_name": "<changeme>",
       "enforce_thresholds": true,
+      "gpus_per_node": 8,
       "threshold_json": "<changeme>",
       "train_params": {
         "model_name": "llama3.1_405B",
@@ -372,6 +451,9 @@ Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X; 
         "fsdp": "0",
         "tensor_parallelism": "8",
         "pipeline_parallelism": "4",
+        "micro_batch_size": "1",
+        "global_batch_size": "64",
+        "precision": "BF16",
         "training_iterations": "<changeme>"
       },
       "sweep": {
@@ -412,15 +494,35 @@ Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X; 
    * - ``sequence_length``
      - ``8192``
      - Maximum context length.
+   * - ``recompute``
+     - ``0``
+     - Activation recompute flag passed to the training backend. ``1`` trades extra compute for lower activation memory.
+   * - ``fsdp``
+     - ``0``
+     - FSDP flag passed to the training backend.
    * - ``tensor_parallelism``
      - ``8``
      - Splits across all 8 GPUs per node.
    * - ``pipeline_parallelism``
      - ``4``
      - Splits the model across 4 pipeline stages (requires at least 4 nodes).
+   * - ``micro_batch_size``
+     - ``1``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``global_batch_size``
+     - ``64``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``precision``
+     - ``BF16``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
    * - ``training_iterations``
      - ``<changeme>``
      - Training steps.
+   * - ``primus_cli_overrides``
+     - ``{}``
+     - Optional Primus-only extra CLI args appended to ``primus-cli direct``.
+       Accepts either a raw string (for example ``"--use_backend triton"``)
+       or an object rendered as ``--key value`` pairs.
 
 
 Common parameters
@@ -442,7 +544,7 @@ Host paths used by the job. They must be volume-mounted into the container (typi
      - Description
    * - ``hf_token_file``
      - ``/home/{user-id}/.hf_token``
-     - Path to a Hugging Face token file for gated models and datasets.
+     - Path to a Hugging Face token file for gated models and datasets, as seen inside the container. CVS does not read the file on the machine running ``cvs run``. Each node reads it when the tokenizer download or training command runs. The packaged ``/home/{user-id}/.hf_token`` path works when that home directory is bind-mounted. If the file is not visible inside the container, Megatron fails that stage and sets ``lifecycle.failed``, so later stages are skipped. Primus exports an empty ``HF_TOKEN`` and the run continues.
    * - ``log_dir``
      - ``/home/{user-id}/LOGS/megatron``
      - Host path where per-node training logs are written. Megatron-LM writes ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``; Primus writes ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``. On disk ``<combo_id>`` is the sanitized combination key (see `Backends`_).
@@ -451,7 +553,7 @@ Host paths used by the job. They must be volume-mounted into the container (typi
      - Host path where the lib writes per-rank wrapper scripts.
    * - ``data_cache_dir``
      - ``/home/{user-id}/cache``
-     - Dataset and tokenizer cache directory. On distributed runs this path must be a shared filesystem.
+     - Dataset and tokenizer cache. Megatron ``MOCK_DATA=1`` writes ``MockGPTDataset-*-document_index.npy`` (and related index files) here; every rank then loads them. On **distributed** runs the path must be a shared filesystem visible on every node. The packaged ``/home/{user-id}/cache`` value is node-local once ``/home/{user-id}`` is bind-mounted, so replace it with NFS (or similar) and add that path to ``container.runtime.args.volumes``. Single-node can keep the home-directory default.
    * - ``rocm_dir``
      - ``""``
      - ROCm installation path inside the container. Leave empty for auto-detection.
@@ -520,7 +622,7 @@ These values are passed into the container as ``docker run -e`` flags and also f
      - Required for ROCm GPU and InfiniBand device access.
    * - ``runtime.args.volumes``
      - *(see below)*
-     - List of ``host:container`` bind mounts. At minimum, mount the user home directory (``/home/{user-id}:/home/{user-id}``) so ``log_dir``, ``scripts_dir``, and ``data_cache_dir`` are accessible inside the container. Distributed configs also require ``/dev/infiniband:/dev/infiniband`` and the Broadcom driver library mount. The last entry (``<changeme>:<changeme>``) is the shared filesystem bind mount for ``checkpoint.checkpoint_dir`` — replace both sides with the same shared path (e.g. ``/mnt/shared/ckpt:/mnt/shared/ckpt``). Required only when ``checkpoint.enforce`` is ``true``; the loader skips this entry when ``enforce`` is ``false``.
+     - List of ``host:container`` bind mounts. At minimum, mount the user home directory (``/home/{user-id}:/home/{user-id}``) so ``log_dir`` and ``scripts_dir`` are accessible inside the container. Distributed configs also require ``/dev/infiniband:/dev/infiniband`` and the Broadcom driver library mount. If ``paths.data_cache_dir`` is not under that home mount, add it as its own ``host:container`` entry so every node sees the same cache. The last entry (``<changeme>:<changeme>``) is the shared filesystem bind mount for ``checkpoint.checkpoint_dir`` — replace both sides with the same shared path (e.g. ``/mnt/shared/ckpt:/mnt/shared/ckpt``). Required only when ``checkpoint.enforce`` is ``true``; the loader skips this entry when ``enforce`` is ``false``.
    * - ``runtime.args.devices``
      - ``/dev/kfd``, ``/dev/dri``
      - GPU device nodes to expose. Distributed configs also add ``/dev/infiniband/rdma_cm``.
@@ -665,14 +767,14 @@ Controls ``test_smoke``: a small fixed cell (not a ``sweep.runs`` entry) that lo
      - Per-cell step count. Overrides ``train_params.training_iterations`` for that run. Other ``train_params`` keys may also appear in the body.
    * - ``runs``
      - N/A
-     - Ordered list of combination keys to execute. Required when ``combinations`` is non-empty. Omit ``sweep`` (or leave ``combinations`` empty) to run the implicit ``default`` cell.
+     - Ordered list of combination keys to execute. Required and non-empty when ``combinations`` is non-empty. Omit ``sweep`` (or leave ``combinations`` empty) to run the implicit ``default`` cell.
 
-Pytest parametrizes ``sweep_name`` from ``sweep.runs``. The suite parses ``micro_batch_size``, ``global_batch_size``, and ``precision`` from each combination key. Additional fields in the combination body override the corresponding ``train_params`` values for that run, including ``training_iterations``. If ``sweep`` is omitted or ``combinations`` is empty, one cell named ``default`` trains with base ``train_params`` (MBS ``2``, GBS ``128``, precision ``BF16`` unless those keys are set in ``train_params``). The matching threshold cell is ``default`` and is required when ``enforce_thresholds`` is ``true``.
+Pytest parametrizes ``sweep_name`` from ``sweep.runs``. The suite parses ``micro_batch_size``, ``global_batch_size``, and ``precision`` from each combination key. Additional fields in the combination body override the corresponding ``train_params`` values for that run, including ``training_iterations``, ``tensor_parallelism``, and ``pipeline_parallelism``. If ``sweep`` is omitted or ``combinations`` is empty, one cell named ``default`` trains with ``train_params``; ``micro_batch_size``, ``global_batch_size``, and ``precision`` must be set there. The matching threshold cell is ``default`` and is required when ``enforce_thresholds`` is ``true``.
 
 Threshold files
 ---------------
 
-Each suite JSON names a sibling file in ``threshold_json``. With a declared ``sweep``, top-level cell keys must be the same ``MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>`` strings as ``sweep.combinations``. With no ``sweep`` (generic / implicit ``default`` run), the threshold cell is the literal key ``default`` — not an ``MBS=…`` string built from ``train_params``. A missing or extra cell fails load when ``enforce_thresholds`` is ``true``. When it is ``false``, the ``default`` cell may be omitted: the loader warns and ``test_metric`` is record-only.
+Each suite JSON names a sibling file in ``threshold_json``. With a declared ``sweep``, top-level cell keys must be the same ``MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>`` strings as ``sweep.runs`` (unused ``combinations`` keys are not required). With no ``sweep`` (generic / implicit ``default`` run), the threshold cell is the literal key ``default`` — not an ``MBS=…`` string built from ``train_params``. A missing or extra cell fails load when ``enforce_thresholds`` is ``true``. When it is ``false``, the ``default`` cell may be omitted: the loader warns and ``test_metric`` is record-only.
 
 A metric is gated only when ``enforce_thresholds`` is ``true`` and the cell has a numeric spec:
 
@@ -694,3 +796,4 @@ A metric is gated only when ``enforce_thresholds`` is ``true`` and the cell has 
      - if true, Megatron ``test_metric`` skips the metric when it is missing or None; a present value is still gated by ``kind``.
 
 Tracked metrics (namespace ``training.*``): ``throughput_per_gpu``, ``tokens_per_gpu``, ``elapsed_time_per_iteration``, ``mem_usage`` (Megatron-LM ``mem usages:``; Primus does not emit it; packaged specs set ``optional: true``), and on distributed configs ``scaling_efficiency_pct`` (``kind: info`` and ``optional: true`` in packaged files).
+

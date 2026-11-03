@@ -6,7 +6,7 @@ import math
 from types import SimpleNamespace
 
 from cvs.lib.inference.utils.vllm_metrics import metric_verdict as vllm_metric_verdict
-from cvs.lib.report.cell_build import bar_pct, build_cell_record, resolve_pytest_nodeids_for_cell
+from cvs.lib.report.cell_build import bar_pct, build_all_cells, build_cell_record, resolve_pytest_nodeids_for_cell
 from cvs.lib.report.formatting import pytest_row_href
 from cvs.lib.report.testing.fixtures import generic_inference_report_config, generic_variant
 
@@ -147,6 +147,25 @@ class TestCellBuild(unittest.TestCase):
                 metric = cell["metrics"][0]
                 self.assertEqual(metric["status"], "fail")
                 self.assertIsNone(metric["bar_pct"])
+
+    def test_build_all_cells_orders_by_shape_then_concurrency(self):
+        variant = generic_variant()
+        variant.enforce_thresholds = False
+        inf_res = {}
+        for isl, osl, conc in (("8192", "1024", 4), ("128", "32", 16), ("128", "32", 1), ("1024", "128", 2)):
+            inf_res[("org/example-model", "mi300x", isl, osl, "default", conc)] = {
+                "10.0.0.1": {"client.output_throughput": 1.0}
+            }
+        cells = build_all_cells(
+            generic_inference_report_config(),
+            variant_config=variant,
+            inf_res_dict=inf_res,
+            lifecycle_report={},
+        )
+        self.assertEqual(
+            [(c["isl"], c["osl"], c["concurrency"]) for c in cells],
+            [("128", "32", 1), ("128", "32", 16), ("1024", "128", 2), ("8192", "1024", 4)],
+        )
 
 
 if __name__ == "__main__":

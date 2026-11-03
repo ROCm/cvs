@@ -2,6 +2,9 @@ import unittest
 from unittest.mock import patch, MagicMock
 from cvs.lib.parallel.phandle_sharder import ParallelHandleSharder
 from cvs.lib.parallel.config import ParallelConfig
+from cvs.unittests.support import TMP
+
+FAKE_CRED = 'fake-cred'
 
 
 class TestParallelHandleSharder(unittest.TestCase):
@@ -52,20 +55,20 @@ class TestParallelHandleSharderMethods(unittest.TestCase):
     def test_create_payloads_exec_mode(self):
         """Test creating payloads for exec mode."""
         host_chunks = [["host1", "host2"], ["host3", "host4"]]
-        shard_init_kwargs = {'user': 'testuser', 'password': 'testpass'}
+        shard_init_kwargs = {'user': 'testuser', 'password': FAKE_CRED}
 
         payloads = self.sharder.create_payloads('exec', host_chunks, shard_init_kwargs, cmd='echo hello', timeout=30)
 
         expected = [
             {
                 'operation': 'exec',
-                'init': {'user': 'testuser', 'password': 'testpass', 'host_list': ['host1', 'host2']},
+                'init': {'user': 'testuser', 'password': FAKE_CRED, 'host_list': ['host1', 'host2']},
                 'cmd': 'echo hello',
                 'timeout': 30,
             },
             {
                 'operation': 'exec',
-                'init': {'user': 'testuser', 'password': 'testpass', 'host_list': ['host3', 'host4']},
+                'init': {'user': 'testuser', 'password': FAKE_CRED, 'host_list': ['host3', 'host4']},
                 'cmd': 'echo hello',
                 'timeout': 30,
             },
@@ -270,7 +273,7 @@ class TestParallelHandleShardWorker(unittest.TestCase):
             'operation': 'upload_file',
             'init': {'log': None, 'host_list': ['host1'], 'user': 'test'},
             'local_file': 'test.txt',
-            'remote_file': '/tmp/test.txt',
+            'remote_file': f'{TMP}/test.txt',
             'recurse': False,
         }
 
@@ -281,7 +284,7 @@ class TestParallelHandleShardWorker(unittest.TestCase):
 
         # Verify direct operation call
         mock_shard.upload_file.assert_called_once_with(
-            local_file='test.txt', remote_file='/tmp/test.txt', recurse=False
+            local_file='test.txt', remote_file=f'{TMP}/test.txt', recurse=False
         )
 
     @patch('cvs.lib.parallel.phandle_sharder.ParallelHandle')
@@ -296,7 +299,7 @@ class TestParallelHandleShardWorker(unittest.TestCase):
         payload = {
             'operation': 'download_file',
             'init': {'log': None, 'host_list': ['host1'], 'user': 'test'},
-            'remote_file': '/tmp/test.txt',
+            'remote_file': f'{TMP}/test.txt',
             'local_file': 'test.txt',
             'recurse': False,
         }
@@ -308,7 +311,7 @@ class TestParallelHandleShardWorker(unittest.TestCase):
 
         # Verify direct operation call
         mock_shard.download_file.assert_called_once_with(
-            remote_file='/tmp/test.txt', local_file='test.txt', recurse=False
+            remote_file=f'{TMP}/test.txt', local_file='test.txt', recurse=False
         )
 
     @patch('cvs.lib.parallel.phandle_sharder.ParallelHandle')

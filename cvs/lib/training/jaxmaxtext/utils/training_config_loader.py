@@ -323,17 +323,19 @@ _NCCL_IB_DEVICE_KEY = "NCCL_IB_HCA"
 def _build_xla_flags_env(xla_flags):
     """Build the ``XLA_FLAGS`` value from a structured ``xla_flags`` map.
 
-    Joins ``{k: v}`` into ``--k=v --k=v ...`` and wraps the whole thing in double
-    quotes so it survives as ONE ``docker run -e XLA_FLAGS="..."`` token: the
-    orchestrator emits ``-e KEY=VALUE`` unquoted and the command is evaluated by a
-    remote shell, so an unquoted spaced value would split into separate tokens.
+    Joins ``{k: v}`` into ``--k=v --k=v ...``. The value is returned WITHOUT
+    surrounding quotes: the container runtime renders each variable as
+    ``shlex.quote(f"{key}={value}")`` -- one already safely-quoted ``docker run
+    -e`` token -- so the spaced value survives as a single token on its own.
+    Adding literal quotes here leaks them into the container, and JAX then rejects
+    XLA_FLAGS because the value no longer starts with ``--`` (it treats the quoted
+    string as a filename).
     Returns ``""`` for an empty map -- the caller then omits ``XLA_FLAGS`` entirely
     rather than exporting an empty one that would clobber XLA's own defaults.
     """
     if not xla_flags:
         return ""
-    joined = " ".join(f"--{k}={v}" for k, v in xla_flags.items())
-    return f'"{joined}"'
+    return " ".join(f"--{k}={v}" for k, v in xla_flags.items())
 
 
 def _fp8_quantization(gpu_name):

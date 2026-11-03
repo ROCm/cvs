@@ -15,12 +15,14 @@ from unittest.mock import patch
 
 from cvs.lib.inference.atom.atom_orch import AtomJob
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
+from cvs.lib.inference.utils.vllm_benchmark_scripts import clamped_bench_random_range_ratio_str
 
 _HERE = Path(__file__).parent
 _FIXTURES = _HERE / "fixtures"
 _ISL = 7168
 _OSL = 1024
 _TP = 8
+FAKE_CRED = "fake-cred"
 # Prefill fabric so build_server_cmd skips lazy IB discovery in FakeOrch tests.
 _PREFILLED_FABRIC = {"ib_hcas": ["mlx5_0"], "ib_netdev": "eth0"}
 
@@ -76,7 +78,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(exec_return={"node0": json.dumps(raw)}),
             variant=_fake_variant(driver="vllm"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl=_ISL,
             osl=_OSL,
             concurrency=64,
@@ -96,7 +98,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(exec_return={"node0": json.dumps(raw)}),
             variant=_fake_variant(driver="atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -111,7 +113,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(exec_return={"node0": json.dumps(raw)}),
             variant=_fake_variant(driver="atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -126,7 +128,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=orch,
             variant=_fake_variant(driver="atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -142,7 +144,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(exec_return={"node0": ""}),
             variant=_fake_variant(driver="atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -155,7 +157,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(exec_return={"node0": "not-json"}),
             variant=_fake_variant(driver="atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -188,7 +190,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=orch,
             variant=variant,
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -199,6 +201,27 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         env_cmd = orch.commands[0][0]
         self.assertIn("VLLM_USE_AITER_UNIFIED_ATTENTION", env_cmd)
         self.assertIn("VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4", env_cmd)
+
+    def test_build_server_cmd_reads_mounted_hf_token(self):
+        orch = FakeOrch()
+        variant = _fake_variant(driver="vllm")
+        variant.roles.server.env = {"HF_TOKEN": "hf_secret_value", "CUSTOM_FLAG": "on"}
+        job = AtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="hf_secret_value",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.build_server_cmd()
+        rendered = "\n".join(cmd for cmd, _hosts in orch.commands)
+        self.assertNotIn("hf_secret_value", rendered)
+        self.assertIn("/run/secrets/hf_token", rendered)
+        self.assertIn("return 1", rendered)
+        self.assertIn("server failed to start", rendered)
+        self.assertIn("CUSTOM_FLAG", rendered)
 
     def test_flatten_serve_args_omits_false_flags(self):
         argv = AtomJob._flatten_serve_args({"enforce-eager": False, "trust-remote-code": True})
@@ -217,7 +240,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=orch,
             variant=variant,
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -234,10 +257,11 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         orch = FakeOrch()
         variant = _fake_variant(driver="atom")
         variant.model.precision = "mxfp4"
+        variant.gpu_arch = "mi3xx"
         job = AtomJob(
             orch=orch,
             variant=variant,
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -248,11 +272,30 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertIn("ATOM_USE_TRITON_MOE=1", env_cmd)
         self.assertIn("ATOM_USE_TRITON_GEMM=1", env_cmd)
 
+    def test_build_server_cmd_skips_mxfp4_triton_env_on_mi355x(self):
+        orch = FakeOrch()
+        variant = _fake_variant(driver="atom")
+        variant.model.precision = "mxfp4"
+        variant.gpu_arch = "mi355x"
+        job = AtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token=FAKE_CRED,
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.build_server_cmd()
+        env_cmd = orch.commands[0][0]
+        self.assertNotIn("ATOM_USE_TRITON_MOE", env_cmd)
+        self.assertNotIn("ATOM_USE_TRITON_GEMM", env_cmd)
+
     def test_client_log_failures_traceback(self):
         job = AtomJob(
             orch=FakeOrch(exec_return={"node0": "Traceback (most recent call last):\n  boom"}),
             variant=_fake_variant(driver="atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -266,7 +309,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(exec_return={"node0": "error: argument --foo: invalid choice"}),
             variant=_fake_variant(driver="atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -278,7 +321,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(exec_return={"node0": "Failed requests: 3\n"}),
             variant=_fake_variant(driver="atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -293,7 +336,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(exec_return={"node0": "Failed requests: 1\n"}),
             variant=_fake_variant(driver="atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -307,7 +350,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(exec_return={"node0": "Failed requests: 99\n"}),
             variant=_fake_variant(driver="vllm_atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=32,
@@ -335,7 +378,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=SeqOrch(),
             variant=_fake_variant(driver="vllm_atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="8192",
             osl="1024",
             concurrency=32,
@@ -354,7 +397,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(),
             variant=_fake_variant(driver="vllm_atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -362,11 +405,44 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         self.assertIn("--disable-tqdm", job._vllm_client_argv())
 
-    def test_vllm_argv_uses_python_module_cli(self):
+    def test_vllm_client_argv_clamps_range_ratio_that_exceeds_model_length(self):
         job = AtomJob(
             orch=FakeOrch(),
             variant=_fake_variant(driver="vllm_atom"),
             hf_token="tok",
+            isl="1024",
+            osl="8192",
+            concurrency=32,
+            num_prompts=1000,
+        )
+        job.max_model_length = "12288"
+        job.random_range_ratio = "0.8"
+        expected, was_clamped = clamped_bench_random_range_ratio_str("0.8", "1024", "8192", "12288")
+        self.assertTrue(was_clamped)
+        argv = job._vllm_client_argv()
+        self.assertEqual(argv[argv.index("--random-range-ratio") + 1], expected)
+        self.assertLessEqual((1024 + 8192) * (1.0 + float(expected)), 12288 + 1e-6)
+
+    def test_vllm_client_argv_keeps_range_ratio_when_it_fits(self):
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="128",
+            osl="32",
+            concurrency=1,
+            num_prompts=8,
+        )
+        job.max_model_length = "12288"
+        job.random_range_ratio = "0.8"
+        argv = job._vllm_client_argv()
+        self.assertEqual(argv[argv.index("--random-range-ratio") + 1], "0.8")
+
+    def test_vllm_argv_uses_python_module_cli(self):
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -379,7 +455,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(),
             variant=_fake_variant(driver="vllm_atom", bench_extra_args="--disable-tqdm"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -392,7 +468,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=orch,
             variant=_fake_variant(driver="vllm_atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -409,7 +485,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=orch,
             variant=_fake_variant(driver="sglang"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -424,7 +500,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=orch,
             variant=_fake_variant(driver="vllm_atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -438,7 +514,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(),
             variant=_fake_variant(driver="atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -465,6 +541,15 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         self.assertTrue(job.EARLY_FAILURE_RE.search(missing_vllm))
         self.assertTrue(job.FATAL_LOG_RE.search(missing_vllm))
+        ignored_optional = (
+            "[2026-09-10 18:47:23] Ignore import error when loading "
+            "sglang.srt.multimodal.processors.mimo_v2: No module named 'torchcodec'"
+        )
+        self.assertFalse(job.EARLY_FAILURE_RE.search(ignored_optional))
+        self.assertFalse(job.FATAL_LOG_RE.search(ignored_optional))
+        hip_assert = "AssertionError: extra_buffer needs CUDA/MUSA/NPU (FLA)."
+        self.assertTrue(job.EARLY_FAILURE_RE.search(hip_assert))
+        self.assertTrue(job.FATAL_LOG_RE.search(hip_assert))
 
     def test_wait_ready_aborts_on_safetensors_engine_crash(self):
         crash = (
@@ -477,7 +562,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=orch,
             variant=_fake_variant(driver="atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="5000",
             osl="1024",
             concurrency=16,
@@ -493,12 +578,30 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertIn("atom server early failure", str(ctx.exception))
         self.assertNotIn("did not become ready before timeout", str(ctx.exception))
 
+    def test_server_failure_scrubs_hf_token(self):
+        secret = "hf_supersecretvalue"
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="atom"),
+            hf_token="",
+            isl="1024",
+            osl="1024",
+            concurrency=1,
+            num_prompts=1,
+        )
+        text = f"Engine core initialization failed HF_TOKEN={secret} path=/home/x/.hf_token"
+        with self.assertRaises(RuntimeError) as ctx:
+            job._raise_if_atom_server_log_failed("node0", text)
+        self.assertNotIn(secret, str(ctx.exception))
+        self.assertIn(".hf_token", str(ctx.exception))
+        self.assertIn("<redacted>", str(ctx.exception))
+
     def test_distributed_start_server_targets_each_host(self):
         orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
         job = AtomJob(
             orch=orch,
             variant=_fake_variant(driver="atom", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -521,7 +624,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=orch,
             variant=variant,
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -542,7 +645,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=orch,
             variant=variant,
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -561,7 +664,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(hosts=["10.0.0.1"]),
             variant=_fake_variant(driver="atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="128",
             osl="32",
             concurrency=1,
@@ -576,7 +679,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(hosts=["10.0.0.1"]),
             variant=variant,
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="128",
             osl="32",
             concurrency=1,
@@ -589,7 +692,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(hosts=["10.0.0.1"]),
             variant=_fake_variant(driver="atom"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="128",
             osl="32",
             concurrency=1,
@@ -606,7 +709,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(hosts=["10.0.0.1"]),
             variant=variant,
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="128",
             osl="32",
             concurrency=1,
@@ -631,7 +734,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=orch,
             variant=variant,
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -653,7 +756,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=orch,
             variant=_fake_variant(driver="atom", nnodes="2", pipeline_parallel_size="2"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -668,7 +771,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=orch,
             variant=_fake_variant(driver="sglang", nnodes="1"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -697,7 +800,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=FakeOrch(exec_on_head_return={"head": payload}),
             variant=_fake_variant(driver="sglang"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -714,7 +817,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=orch,
             variant=variant,
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -741,7 +844,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job = AtomJob(
             orch=orch,
             variant=variant,
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -765,7 +868,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
                 nnodes="2",
                 scaling_baseline_output_throughput="100",
             ),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -800,7 +903,7 @@ class TestATOMAtomBuildServerCmd(unittest.TestCase):
                         pipeline_parallel_size="2",
                         master_addr="10.0.0.1",
                     ),
-                    hf_token="tok",
+                    hf_token=FAKE_CRED,
                     isl="1024",
                     osl="1024",
                     concurrency=128,
@@ -826,7 +929,7 @@ class TestATOMAtomBuildServerCmd(unittest.TestCase):
                 pipeline_parallel_size="2",
                 master_addr="10.0.0.1",
             ),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -842,7 +945,7 @@ class TestATOMAtomBuildServerCmd(unittest.TestCase):
         job_single = AtomJob(
             orch=orch_single,
             variant=_fake_variant(driver="vllm"),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -851,6 +954,39 @@ class TestATOMAtomBuildServerCmd(unittest.TestCase):
         job_single.build_server_cmd()
         script_single = self._env_script(orch_single)
         self.assertNotIn("SOCKET_IFNAME", script_single)
+
+    def test_server_env_ib_vars_override_discovered_fabric(self):
+        orch = FakeOrch()
+        variant = _fake_variant(
+            driver="vllm_atom",
+            nnodes="2",
+            pipeline_parallel_size="2",
+            master_addr="10.0.0.1",
+        )
+        variant.roles.server.env = {
+            "NCCL_IB_HCA": "ionic_0,ionic_1",
+            "NCCL_SOCKET_IFNAME": "ens3",
+            "GLOO_SOCKET_IFNAME": "ens3",
+            "GLOO_TCP_IFNAME": "ens3",
+        }
+        job = AtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+            **_PREFILLED_FABRIC,
+        )
+        job.build_server_cmd()
+        script = self._env_script(orch)
+        self.assertIn("export NCCL_IB_HCA=ionic_0,ionic_1", script)
+        self.assertNotIn("mlx5_0", script)
+        self.assertIn("export NCCL_SOCKET_IFNAME=ens3", script)
+        self.assertIn("export GLOO_SOCKET_IFNAME=ens3", script)
+        self.assertIn("export GLOO_TCP_IFNAME=ens3", script)
+        self.assertIn("export TP_SOCKET_IFNAME=eth0", script)
 
     @patch("cvs.lib.utils.ib_discovery.resolve_multinode_fabric")
     def test_build_server_cmd_resolves_topology_when_lifecycle_skipped(self, mock_resolve):
@@ -866,7 +1002,7 @@ class TestATOMAtomBuildServerCmd(unittest.TestCase):
                 ib_netdev="auto",
                 ib_hca_devices="auto",
             ),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="1024",
             osl="1024",
             concurrency=128,
@@ -924,7 +1060,7 @@ class TestATOMAtomIsReady(unittest.TestCase):
                 pipeline_parallel_size="2",
                 master_addr=head,
             ),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="512",
             osl="512",
             concurrency=16,
@@ -946,7 +1082,7 @@ class TestATOMAtomIsReady(unittest.TestCase):
                 pipeline_parallel_size="2",
                 master_addr=head,
             ),
-            hf_token="tok",
+            hf_token=FAKE_CRED,
             isl="512",
             osl="512",
             concurrency=16,

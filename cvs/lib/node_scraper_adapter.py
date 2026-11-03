@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from nodescraper.models import SystemInfo
 from nodescraper.plugins.inband.dmesg.analyzer_args import DmesgAnalyzerArgs
+from nodescraper.plugins.inband.dmesg.dmesg_analyzer import DmesgAnalyzer
 from nodescraper.plugins.inband.dmesg.dmesg_plugin import DmesgPlugin
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,17 @@ EVENT_KEYS = (
     "timestamps",
     "source",
 )
+
+
+def filter_dmesg_range(dmesg_content, analysis_range_start=None, analysis_range_end=None):
+    """Return lines in the node-scraper analysis window, or the original text without bounds.
+
+    Lines without an ISO timestamp are dropped when a bound is supplied, as in
+    DmesgAnalyzer.filter_dmesg.
+    """
+    if not (analysis_range_start or analysis_range_end):
+        return dmesg_content or ''
+    return DmesgAnalyzer.filter_dmesg(dmesg_content or '', analysis_range_start, analysis_range_end)
 
 
 def parse_dmesg(
@@ -103,24 +115,31 @@ def _normalize_event(event: Any) -> Dict[str, Any]:
     }
 
 
+def event_match_text(event):
+    """Return the kernel text an event matched, without its description.
+
+    Benign-line checks must run on this text: node-scraper labels catch-all
+    events "Unknown dmesg error", and that label alone looks like a fault.
+    """
+    match = event.get("match_content")
+    if isinstance(match, (list, tuple)):
+        return " ".join(str(part) for part in match if part)
+    if match is None:
+        return ""
+    return str(match)
+
+
 def event_match_lines(events: List[Dict[str, Any]]) -> List[str]:
     """Flatten normalized events into matched-line strings.
 
-    Preserves the legacy `{node: [lines]}` contract used by CVS dmesg scans:
+    Preserves the `{node: [lines]}` contract used by CVS dmesg scans:
     each detected error becomes a single human-readable line combining the
     error label and the matched text.
     """
     lines: List[str] = []
     for event in events:
-        match = event.get("match_content")
-        if isinstance(match, (list, tuple)):
-            text = " ".join(str(part) for part in match if part)
-        elif match is None:
-            text = ""
-        else:
-            text = str(match)
         description = event.get("description") or ""
-        line = f"{description}: {text}".strip().rstrip(":").strip()
+        line = f"{description}: {event_match_text(event)}".strip().rstrip(":").strip()
         if line:
             lines.append(line)
     return lines

@@ -20,6 +20,7 @@ _CELL_RE = re.compile(
 )
 _METADATA_PREFIXES = ("_comment", "_example")
 _SOCKET_ENV = {"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"}
+_HF_TOKEN_ENV = {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"}
 _SERVER_RESERVED = {"master_addr", "master_port", "nnodes", "node_rank", "headless"}
 
 
@@ -70,12 +71,32 @@ class Runtime(_Forbid):
     args: RuntimeArgs = Field(default_factory=RuntimeArgs)
 
 
+class ContainerEnvTokenError(Exception):
+    """A Hugging Face token name in container.env.
+
+    Not a ValueError, so pydantic raises it as is instead of wrapping it in a
+    ValidationError whose str(), errors() and json() would carry the token value.
+    """
+
+
 class ContainerConfig(_Forbid):
     lifetime: Literal["no_launch", "per_run", "persistent"] = "per_run"
     name: str
     image: str
     env: Dict[str, str] = Field(default_factory=dict)
     runtime: Runtime = Field(default_factory=Runtime)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_hf_token_env(cls, data):
+        env = data.get("env") if isinstance(data, dict) else None
+        tokens = sorted(name for name in env or {} if str(name).upper() in _HF_TOKEN_ENV)
+        if tokens:
+            raise ContainerEnvTokenError(
+                f"container.env must not set {tokens}: container.env values become docker run -e arguments. "
+                "Put the Hugging Face token in the file named by paths.hf_token_file instead."
+            )
+        return data
 
     @model_validator(mode="after")
     def _validate_network_env(self):

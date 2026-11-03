@@ -33,6 +33,24 @@ sudo apt install python3-venv
    make installtest
    ```
 
+   This installs `requirements-test.txt` alongside CVS. Its `jsonschema`
+   dependency validates the RCCL Run Deck JSON profile against its schema in
+   unit tests; it is not required by end-user installs.
+
+4. Enable the repository git hooks (run once per fresh clone):
+   ```bash
+   make hooks
+   ```
+
+   This points `core.hooksPath` at `.githooks/`, enabling:
+   - `commit-msg` - checks the message has a title, a blank 2nd line, a body,
+     and a trailing `Signed-off-by` (warns, without blocking, on lines over 80
+     characters).
+   - `pre-commit` - warns on trailing whitespace in staged changes.
+
+   Git never auto-installs repository hooks, so each clone must run `make hooks`
+   once. Bypass the hooks for a single commit with `git commit --no-verify`.
+
 ## Running Tests
 
 Before submitting changes, ensure all tests pass:
@@ -163,6 +181,7 @@ This creates a source distribution in the `dist/` directory.
 ## Available Make Targets
 
 - `make help` - Show all available targets
+- `make hooks` - Enable the repo git hooks (commit-msg format + trailing-space warn)
 - `make test-venv` - Create test virtual environment
 - `make installtest` - Install package in development mode
 - `make test` - Run all tests

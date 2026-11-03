@@ -7,7 +7,6 @@ from unittest.mock import patch
 
 import cvs.lib.utils_lib as utils_lib
 from cvs.core.run_layout import RunLayout
-from cvs.parsers.schemas import AortaBenchmarkConfigFile
 
 
 class TestUtilsLib(unittest.TestCase):
@@ -28,6 +27,29 @@ class TestUtilsLib(unittest.TestCase):
         out_dict = {
             'host1': 'Transfer 0: DST 0: CPU 2 on rank 0 cannot allocate memory due to process memory policy/cpuset'
         }
+        utils_lib.scan_test_results(out_dict)
+        mock_fail_test.assert_called()
+
+    @patch('cvs.lib.utils_lib.fail_test')
+    def test_scan_test_results_ignores_benign_vmware_provider_warning(self, mock_fail_test):
+        out_dict = {
+            'host1': (
+                'RTotal 326.1 325.0 326.4 324.7 324.8 326.3 324.6 326.7\n'
+                'Failed to open VMware provider: No such file or directory\n'
+            )
+        }
+        utils_lib.scan_test_results(out_dict)
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.utils_lib.fail_test')
+    def test_scan_test_results_still_fails_real_no_such_file(self, mock_fail_test):
+        out_dict = {'host1': 'bash: /opt/missing/TransferBench: No such file or directory'}
+        utils_lib.scan_test_results(out_dict)
+        mock_fail_test.assert_called()
+
+    @patch('cvs.lib.utils_lib.fail_test')
+    def test_scan_test_results_still_fails_non_vmware_provider_warning(self, mock_fail_test):
+        out_dict = {'host1': 'Failed to open ionic provider: No such file or directory'}
         utils_lib.scan_test_results(out_dict)
         mock_fail_test.assert_called()
 
@@ -65,25 +87,38 @@ class TestUtilsLib(unittest.TestCase):
             self.assertIn('OK', cmd, msg=label)
             self.assertIn('MISSING', cmd, msg=label)
 
+    def test_omit_doc_config_keys_drops_examples_and_comments(self):
+        raw = {
+            'os_version': '<changeme>',
+            '_example_os_version': 'Ubuntu 24.04.1 LTS',
+            '_comment': 'docs',
+            'fw_dict': {'CP_MEC1': '<changeme>', '_example_CP_MEC1': '32945'},
+            'notes': ['_keep', {'_comment': 'x', 'gpu_count': '<changeme>'}],
+        }
+        self.assertEqual(
+            utils_lib.omit_doc_config_keys(raw),
+            {
+                'os_version': '<changeme>',
+                'fw_dict': {'CP_MEC1': '<changeme>'},
+                'notes': ['_keep', {'gpu_count': '<changeme>'}],
+            },
+        )
 
-class TestResolveTestConfigPlaceholdersAorta(unittest.TestCase):
-    """Aorta benchmark YAML uses the same resolver as other CVS test suites (see tests/benchmark/test_aorta.py)."""
+
+class TestResolveTestConfigPlaceholdersPaths(unittest.TestCase):
+    """Path substitution is independent of a suite-specific config schema."""
 
     def test_user_id_resolves_in_aorta_path(self):
         raw = {"aorta_path": "/scratch/users/{user-id}/aorta"}
         cluster = {"username": "jdoe", "home_mount_dir_name": "home", "node_dir_name": "root"}
         resolved = utils_lib.resolve_test_config_placeholders(raw, cluster)
         self.assertEqual(resolved["aorta_path"], "/scratch/users/jdoe/aorta")
-        cfg = AortaBenchmarkConfigFile.model_validate(resolved)
-        self.assertEqual(cfg.aorta_path, "/scratch/users/jdoe/aorta")
 
     def test_explicit_aorta_path_unchanged(self):
         raw = {"aorta_path": "/opt/my-aorta"}
         cluster = {"username": "jdoe", "home_mount_dir_name": "home", "node_dir_name": "root"}
         resolved = utils_lib.resolve_test_config_placeholders(raw, cluster)
         self.assertEqual(resolved["aorta_path"], "/opt/my-aorta")
-        cfg = AortaBenchmarkConfigFile.model_validate(resolved)
-        self.assertEqual(cfg.aorta_path, "/opt/my-aorta")
 
 
 class TestResolveRunDirPlaceholder(unittest.TestCase):

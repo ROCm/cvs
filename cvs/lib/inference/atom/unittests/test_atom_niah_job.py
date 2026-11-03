@@ -8,12 +8,13 @@ from unittest.mock import MagicMock
 from cvs.lib.inference.atom.atom_niah_job import run_niah_cell
 from cvs.lib.inference.utils.long_context_accuracy_config import LongContextAccCell
 from cvs.lib.utils.model_query_lib import LongContextNiahBenchmark
+from cvs.unittests.support import TMP
 
 
 def _variant():
     params = SimpleNamespace(port_no="8000", base_url="http://0.0.0.0")
     model = SimpleNamespace(id="moonshotai/Kimi-K2.7-Code")
-    paths = SimpleNamespace(log_dir="/tmp/logs")
+    paths = SimpleNamespace(log_dir=f"{TMP}/logs")
     return SimpleNamespace(params=params, model=model, paths=paths)
 
 
@@ -51,7 +52,7 @@ class TestAtomNiahJob(unittest.TestCase):
             variant=_variant(),
             cell=cell,
             expected_pass_rate=0.0,
-            output_dir="/tmp/logs/long_context_accuracy",
+            output_dir=f"{TMP}/logs/long_context_accuracy",
         )
 
         self.assertIn("source /tmp/server_env_script.sh &&", captured["cmd"])
@@ -78,7 +79,7 @@ class TestAtomNiahJob(unittest.TestCase):
             variant=_variant(),
             cell=cell,
             expected_pass_rate=0.0,
-            output_dir="/tmp/logs/long_context_accuracy",
+            output_dir=f"{TMP}/logs/long_context_accuracy",
         )
 
         self.assertAlmostEqual(actuals["accuracy.niah_pass_rate__niah_8k"], 0.25)
@@ -94,7 +95,7 @@ class TestAtomNiahJob(unittest.TestCase):
                 variant=_variant(),
                 cell=cell,
                 expected_pass_rate=0.75,
-                output_dir="/tmp/logs/long_context_accuracy",
+                output_dir=f"{TMP}/logs/long_context_accuracy",
             )
 
 

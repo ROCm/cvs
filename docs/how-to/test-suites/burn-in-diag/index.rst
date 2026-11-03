@@ -1,12 +1,12 @@
 .. meta::
-  :description: Run burn-in and diagnostic CVS test suites
-  :keywords: CVS, platform, health, preflight, ANC, burn-in, diag
+  :description: Run CVS burn-in and diagnostic test suites to validate GPU cluster health before network, training, or inference workloads on AMD Instinct hardware.
+  :keywords: CVS, burn-in, diagnostic, GPU, AMD Instinct, ROCm, AMD, health, AGFHC, RVS, TransferBench, preflight
 
-********************
-Burn-in / Diag tests
-********************
+*******************************************************************
+Run Cluster Validation Suite (CVS) burn-in and diagnostic test suites
+*******************************************************************
 
-Host validation, GPU burn-in, preflight checks, and AMD Node Check (ANC) diagnostics run before network, training, or inference workloads.
+Host validation, GPU burn-in, and preflight checks run before network, training, or inference workloads.
 
 .. list-table::
    :header-rows: 1
@@ -24,8 +24,40 @@ Host validation, GPU burn-in, preflight checks, and AMD Node Check (ANC) diagnos
    * - Preflight
      - :doc:`/how-to/test-suites/burn-in-diag/preflight`
      - :doc:`/reference/configuration-files/burn-in-diag/preflight`
-   * - ANC (AMD Node Check)
-     - :doc:`/how-to/test-suites/burn-in-diag/anc`
-     - :doc:`/reference/configuration-files/burn-in-diag/anc`
 
-See also :doc:`/how-to/run-tests/index` for common ``cvs run`` flags and workflow.
+See also :doc:`/how-to/test-suites/index` for common ``cvs run`` flags and workflow.
+
+Test results
+============
+
+Sample output snapshots from a health burn-in run.
+
+.. important::
+
+   The numbers in these sample reports and screenshots (bandwidth, GFLOPS,
+   and every other metric) are **illustrative sample values, not final tuned
+   results**. They are shown only to illustrate the report layout.
+
+HTML test report
+----------------
+
+.. image:: /images/health_pytest_summary.png
+   :alt: RVS pytest HTML report summary
+
+Run Deck report
+---------------
+
+The Run Deck dashboard: run overview, measurement charts, heatmaps, and
+detailed results.
+
+.. image:: /images/health_rundeck_summary.png
+   :alt: RVS Run Deck overview
+
+.. image:: /images/health_measurements.png
+   :alt: RVS Run Deck measurement charts
+
+.. image:: /images/health_heatmaps.png
+   :alt: RVS Run Deck heatmaps
+
+.. image:: /images/health_results.png
+   :alt: RVS Run Deck detailed results

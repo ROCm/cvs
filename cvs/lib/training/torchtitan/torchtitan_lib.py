@@ -16,9 +16,15 @@ import shlex
 import time
 
 from cvs.lib import globals
+from cvs.lib.env_lib import redact_secrets
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import linux_utils
+from cvs.lib.training.torchtitan.utils.iteration_metrics import (
+    derive_step_time_stats,
+    parse_iteration_metrics,
+    summarize_step_metrics,
+)
 from cvs.lib.training.torchtitan.utils.model_registry import (
     TORCHTITAN_MODELS,
     PRECISION_FLAGS,
@@ -26,6 +32,15 @@ from cvs.lib.training.torchtitan.utils.model_registry import (
 )
 
 log = globals.log
+
+
+def _positive_int(value, default):
+    """Use ``value`` when it is a positive int; otherwise ``default``."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return number if number > 0 else default
 
 
 training_err_dict = {
@@ -115,6 +130,76 @@ def detect_rocm_path(orch, config_rocm_path):
     return '/opt/rocm'
 
 
+# Hub tokens are `hf_` plus a long id. Package names such as `hf_transfer` are
+# shorter, and `.hf_token` is only five characters, so those stay.
+_HF_BARE_TOKEN = re.compile(r'\bhf_[A-Za-z0-9]{30,}\b')
+
+
+def _redact_logged_text(text):
+    """Mask secret assignments and bare Hugging Face hub tokens in logged text.
+
+    ``redact_secrets`` masks ``HF_TOKEN=`` assignments and ``--token`` flags.
+    Download output can also print the token by itself, as in
+    ``Invalid credentials for token hf_...``.
+    """
+    if not isinstance(text, str) or not text:
+        return ''
+    return _HF_BARE_TOKEN.sub('<redacted>', redact_secrets(text))
+
+
+def _hf_token_export_line(token_file):
+    """Shell line that exports ``HF_TOKEN`` by reading ``token_file`` on the node.
+
+    Embedding the token value in a shell command would print it, because the
+    orchestrator logs the full command. A missing or empty file fails the
+    shell command instead of continuing with an empty token.
+    """
+    path = str(token_file or '').strip()
+    if not path:
+        return "echo 'paths.hf_token_file is not configured' >&2; exit 1; "
+    quoted = shlex.quote(path)
+    return (
+        f"if [ -s {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; "
+        f"else echo 'HF token file is missing or not mounted inside the container' >&2; exit 1; fi; "
+    )
+
+
+def _require_hf_token_file(orch, token_file):
+    """Fail the test when token_file is missing or empty inside the container.
+
+    The training command reads the file on the node, so a path that is not
+    mounted into the container must stop the test before the job is launched.
+    """
+    path = str(token_file or '').strip()
+    if not path:
+        msg = (
+            'paths.hf_token_file is not configured. TorchTitan reads the token inside the '
+            'container on each node and fails the test when the file is missing.'
+        )
+        fail_test(msg)
+        raise FileNotFoundError(msg)
+    quoted = shlex.quote(path)
+    result = orch.exec(f'test -s {quoted}', detailed=True, timeout=30) or {}
+    missing = []
+    seen = set()
+    for host, info in result.items():
+        seen.add(str(host))
+        code = info.get('exit_code') if isinstance(info, dict) else None
+        if code != 0:
+            missing.append(str(host))
+    for host in getattr(orch, 'hosts', None) or []:
+        if str(host) not in seen:
+            missing.append(str(host))
+    if not result or missing:
+        where = ', '.join(missing) if missing else 'no node returned a result'
+        msg = (
+            f'HF token file {path} is missing, empty, or not mounted inside the container on {where}. '
+            'TorchTitan fails the test here. Mount paths.hf_token_file into the container on each node.'
+        )
+        fail_test(msg)
+        raise FileNotFoundError(msg)
+
+
 class TorchTitanTrainingJob:
     """
     Orchestrates a TorchTitan training job across one or more nodes.
@@ -129,7 +214,6 @@ class TorchTitanTrainingJob:
         self,
         orch,
         variant_config,
-        hf_token,
         micro_batch_size=None,
         global_batch_size=None,
         precision='',
@@ -142,7 +226,6 @@ class TorchTitanTrainingJob:
     ):
         self.orch = orch
         self.variant_config = variant_config
-        self.hf_token = hf_token
         self.distributed_training = distributed_training
         self.tune_model_params = tune_model_params
         self.run_label = run_label
@@ -170,6 +253,10 @@ class TorchTitanTrainingJob:
         self.torchtitan_root = self.config.get('torchtitan_root', '/workspace/Primus/third_party/torchtitan')
         self.iterations = int(self.config.get('training_iterations', 30))
         self.nnodes = len(self.orch.hosts)
+        self.gpus_per_node = _positive_int(getattr(variant_config, "gpus_per_node", None), 8)
+        # Single-node torchrun is one node even if the orchestrator host list is longer.
+        rank_nodes = self.nnodes if self.distributed_training else 1
+        self.world_size = rank_nodes * self.gpus_per_node
         self.nic_type = self.config.get('nic_type', 'thor2')
         self.hca_id_pattern = self.config.get('hca_id_pattern', 'bnxt_|rocep')
         self.nccl_ib_hca = self.config.get('nccl_ib_hca', '')
@@ -287,12 +374,12 @@ class TorchTitanTrainingJob:
 
         # Adjust batch size for distributed if needed
         if self.tune_model_params and self.distributed_training:
-            gpus_per_node = 8
-            total_gpus = self.nnodes * gpus_per_node
-            if int(self.global_batch_size) > 32:
-                if int(self.global_batch_size) % 32 == 0:
-                    per_gpu_batch_size = int(self.global_batch_size) / 32
-                    self.global_batch_size = str(int(per_gpu_batch_size * total_gpus))
+            # Packaged global batch sizes were built for a 4-node cluster.
+            baseline_gpus = 4 * self.gpus_per_node
+            if int(self.global_batch_size) > baseline_gpus:
+                if int(self.global_batch_size) % baseline_gpus == 0:
+                    per_gpu_batch_size = int(self.global_batch_size) / baseline_gpus
+                    self.global_batch_size = str(int(per_gpu_batch_size * self.world_size))
 
     def run_pretraining_tasks(self):
         """Snapshot network stats before training (distributed only)."""
@@ -316,17 +403,25 @@ class TorchTitanTrainingJob:
 
         log.info(f'Downloading HF assets for {self.tokenizer_path} to {local_dir}')
 
+        _require_hf_token_file(self.orch, self.hf_token_file)
         download_cmd = (
             f'cd {self.torchtitan_root}; '
-            f'export HF_TOKEN={self.hf_token}; '
-            f'python scripts/download_hf_assets.py --repo_id {self.tokenizer_path} '
+            + _hf_token_export_line(self.hf_token_file)
+            + f'python scripts/download_hf_assets.py --repo_id {self.tokenizer_path} '
             f'--local_dir {local_dir} --all'
         )
 
-        out_dict = self.orch.exec(download_cmd)
+        # The training-command preview does not cover this command. Log it
+        # redacted, and keep orch.exec from writing stdout and stderr as-is.
+        log.info('%s', _redact_logged_text(download_cmd))
+        out_dict = self.orch.exec(download_cmd, print_console=False) or {}
         for node, output in out_dict.items():
-            if 'error' in (output or '').lower():
-                log.warning(f'Potential download error on {node}: {output}')
+            text = output if isinstance(output, str) else ''
+            redacted = _redact_logged_text(text)
+            if redacted.strip():
+                log.info('HF asset download on %s:\n%s', node, redacted)
+            if 'error' in text.lower():
+                log.warning('Potential download error on %s: %s', node, redacted)
 
     def exec_nic_setup_scripts(self):
         """Setup NICs for distributed training (Broadcom/Thor only)."""
@@ -418,7 +513,7 @@ class TorchTitanTrainingJob:
         """Build torchrun commands for training."""
         # Base environment setup
         cmd = f'cd {self.torchtitan_root}; '
-        cmd += f'export HF_TOKEN={self.hf_token}; '
+        cmd += _hf_token_export_line(self.hf_token_file)
         cmd += 'export HSA_FORCE_FINE_GRAIN_PCIE=1; '
         cmd += 'export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True; '
         # Add TorchTitan to PYTHONPATH so it can be imported as a module
@@ -441,7 +536,7 @@ class TorchTitanTrainingJob:
             cmd += f'export NCCL_DEBUG={self.nccl_debug}; '
             cmd += f'export NCCL_IB_GID_INDEX={self.nccl_ib_gid_index}; '
 
-        nproc_per_node = 8
+        nproc_per_node = self.gpus_per_node
 
         if self.distributed_training:
             for i in range(self.nnodes):
@@ -498,13 +593,25 @@ class TorchTitanTrainingJob:
 
     def start_training_job(self, timeout=500):
         """Launch the training job."""
+        _require_hf_token_file(self.orch, self.hf_token_file)
+        if self.distributed_training:
+            log.info('Prepared distributed training launch command(s)')
+        else:
+            log.info('Prepared single-node training launch command')
         # Capture start time for dmesg verification
         self.training_start_time = self.orch.exec('date')
 
         if self.distributed_training:
             for i, cmd in enumerate(self.job_cmd_list):
-                log.info(f'Writing wrapper script for node {i}')
-                self.orch.exec(cmd)
+                log.info('Writing wrapper script for node %s', i)
+                # The orchestrator masks this command text. Its stdout and stderr
+                # are not masked, so keep them off the console and log them redacted.
+                out_dict = self.orch.exec(cmd, print_console=False) or {}
+                for node, output in out_dict.items():
+                    text = output if isinstance(output, str) else ''
+                    redacted = _redact_logged_text(text)
+                    if redacted.strip():
+                        log.info('Wrapper script write on %s:\n%s', node, redacted)
 
             time.sleep(2)
 
@@ -515,27 +622,33 @@ class TorchTitanTrainingJob:
                 time.sleep(1)
         else:
             log.info('Launching single-node training')
-            self.orch.exec(f'bash -c {shlex.quote(self.job_cmd)}')
+            # The log.info of job_cmd above is a second copy of the command.
+            # This exec's stdout and stderr are a different stream.
+            out_dict = self.orch.exec(f'bash -c {shlex.quote(self.job_cmd)}', print_console=False) or {}
+            for node, output in out_dict.items():
+                text = output if isinstance(output, str) else ''
+                redacted = _redact_logged_text(text)
+                if redacted.strip():
+                    log.info('Single-node launch on %s:\n%s', node, redacted)
 
     def get_training_results_dict(self):
-        """Parse training results from logs."""
-        if self.distributed_training:
-            log_files = [f'{self.combo_log_dir}/out-node{i}/training.log' for i in range(self.nnodes)]
-        else:
-            log_files = [f'{self.combo_log_dir}/out-node0/training.log']
+        """Parse rank-0 training metrics. The gate reads the last logged step.
 
-        all_results = {}
-        for log_file in log_files:
-            out_dict = self.orch.exec(f'cat {log_file}')
-            for host, output in out_dict.items():
-                if output:
-                    parsed = _parse_training_results(output)
-                    for metric, values in parsed.items():
-                        if metric not in all_results:
-                            all_results[metric] = []
-                        all_results[metric].extend(values)
-
-        return all_results
+        TorchTitan prints the ``step:`` line from rank 0, which is node 0.
+        When that line is absent, fall back to the older whole-log regex.
+        Both paths leave the last match in ``values[-1]``.
+        """
+        log_text = self._read_last_node_log()
+        rows = parse_iteration_metrics(
+            log_text,
+            seq_length=self.sequence_length,
+            global_batch_size=self.global_batch_size,
+            world_size=self.world_size,
+        )
+        summarized = summarize_step_metrics(rows) or _parse_training_results(log_text)
+        # P50/P95 must be on this dict: test_metric runs before test_loss_curve.
+        summarized.update(derive_step_time_stats(rows))
+        return summarized
 
     def scan_for_training_errors(self):
         """Scan training logs for known error patterns."""
@@ -703,17 +816,17 @@ class TorchTitanTrainingJob:
         return losses
 
     def _read_last_node_log(self, tail_lines=0):
-        """Read the training log from the last node and return its output.
+        """Read the rank-0 training log (node 0).
 
         Args:
             tail_lines (int): If > 0, only the last N lines of the log are read.
 
         Returns:
-            str: Log text from the last node.
+            str: Log text from node 0.
         """
-        n = len(self.orch.hosts)
-        last_host = self.orch.hosts[-1]
+        # Rank 0 emits the step metrics line; that process is node 0.
+        rank0 = self.orch.hosts[0]
         tail_suffix = f' | tail -{tail_lines}' if tail_lines > 0 else ''
-        log_path = f'{self.combo_log_dir}/out-node{n - 1}/training.log'
-        out_dict = self.orch.exec(f'cat {log_path}{tail_suffix}', hosts=[last_host])
-        return out_dict.get(last_host) or ''
+        log_path = f'{self.combo_log_dir}/out-node0/training.log'
+        out_dict = self.orch.exec(f'cat {log_path}{tail_suffix}', hosts=[rank0])
+        return out_dict.get(rank0) or ''

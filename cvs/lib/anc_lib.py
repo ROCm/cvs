@@ -6,6 +6,7 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 
 Shared ANC (AMD Node Check) machinery for the ANC CVS suites.
+Generic install and log helpers live in cvs.lib.amdtools_lib.
 
 This module holds the logic reused across the ANC suites so each suite file
 stays thin:
@@ -16,32 +17,36 @@ stays thin:
     (1.5.0+) URLs that point straight at a ``.deb`` / ``.rpm`` / ``.tar.gz``.
     An optional version precheck / post-verify is driven by
     ``config["anc"]["anc_version"]``.
-  - Group execution (``run_anc_groups``): run one or more ANC groups in a
-    single ``anc.py -g <groups...>`` invocation on all nodes, collect the
-    per-run artifacts, and judge pass/fail from the final ANC return code.
+  - Group/item execution (``run_anc_groups`` / ``run_anc_items``): run one or
+    more ANC groups (``anc.py -g``) or individual items (``anc.py -i``) in a
+    single invocation on all nodes, collect the per-run artifacts, and judge
+    pass/fail from the final ANC return code. Both are thin wrappers over the
+    shared ``run_anc_selection`` core.
   - Setup guard (``ensure_anc_ready``): session-cached install + ldconfig that
-    each group test calls first, so a single-group run self-installs and a
+    each group/item test calls first, so a single run self-installs and a
     full-suite run pays the setup cost once.
 
 The CPU/GPU group sets consumed by the ``anc_test_cpu`` / ``anc_test_gpu``
-suites live here (``CPU_GROUPS`` / ``GPU_GROUPS``). The per-group test
-functions in those two suite files are GENERATED from these lists by
-build_tools/gen_anc_suites.py (``make gen-anc-suites``); do not hand-edit them.
+suites live here (``CPU_GROUPS`` / ``GPU_GROUPS``; the DIMM/UMC groups are part
+of ``CPU_GROUPS`` because ANC reports them under the CPU device), as do the
+per-family individual-item lists (``COMPUTEROCKER_ITEMS``, ``MEMROCKER_ITEMS``,
+``OBLEX_ITEMS``, ``GEMM_ITEMS``, ``XGMI_ITEMS``, ``UALINK_ITEMS``,
+``PCIE_ITEMS``, ``BABEL_ITEMS``, ``BASIC_ITEMS``) consumed by the
+``anc_test_<family>`` suites. The per-group/per-item test functions in those
+suite files are GENERATED from these lists by build_tools/gen_anc_suites.py
+(``make gen-anc-suites``); do not hand-edit them.
 '''
 
 import os
 import re
-import tarfile
 from collections import namedtuple
-from datetime import datetime
 
-from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
     fail_test,
     update_test_result,
     print_test_output,
 )
-from cvs.lib import globals
+from cvs.lib import globals, amdtools_lib
 from cvs.lib.run_config_paths import resolve_runner_results_base
 
 log = globals.log
@@ -51,7 +56,7 @@ log = globals.log
 # install. TAR installs may relocate elsewhere via config anc.ANC_INSTALL_PATH
 # (see resolve_anc_install_prefix); deb/rpm always use this fixed prefix because
 # their archives bake in absolute locations.
-ANC_TOOLS_PREFIX = "/opt/amdtools"
+ANC_TOOLS_PREFIX = amdtools_lib.AMDTOOLS_PREFIX
 # ANC directory and entrypoint at the DEFAULT prefix. Per-install paths (which
 # honour a relocated tar prefix) come from resolve_anc_paths, not these; these
 # remain the deb/rpm layout and the fallback when no relocation is configured.
@@ -71,22 +76,15 @@ RESOURCES_DIR = os.path.join(
 )
 
 # --- Group sets ----------------------------------------------------------
-# CPU validation groups run in a single anc.py -g invocation.
+# CPU validation groups run in a single anc.py -g invocation. The DIMM/UMC
+# groups are reported by ANC under the CPU device, so they live here too.
 CPU_GROUPS = [
-    "ampttk_full",
-    "cachewalker_full",
-    "cpu_all",
     "cpu_content_check",
     "cpu_mfg_l10",
-    "cpu_sanity",
-    "difect_full",
-    "fpdeluge_full",
-    "hdrt_full",
-    "maxcorestim_full",
-    "memtest_full",
-    "miidct_full",
-    "mithac_full",
     "weighted_sanity",
+    "dimm_content_check",
+    "dimm_mfg_l10",
+    "dimm_weighted_sanity",
 ]
 
 # GPU validation groups run in a single anc.py -g invocation.
@@ -98,6 +96,116 @@ GPU_GROUPS = [
     "hbm_lvl3",
     "hbm_lvl4",
     "hbm_lvl5",
+]
+
+# Individual ANC items, each run on its own with a single anc.py -i invocation.
+# Unlike the group sets above -- which bundle many items under one named group --
+# these are the leaf items ANC exposes via ``anc.py --item-list``, each wired as
+# its own CVS test. They are split into per-family suites (anc_test_computerocker,
+# anc_test_memrocker, ...) so a user can run a whole tool/subsystem family at
+# once, with a single one still runnable by its ``test_<item>`` function name.
+# BASIC_ITEMS is the catch-all for one-off items that do not belong to a family.
+COMPUTEROCKER_ITEMS = [
+    "computerocker_dist001_000",
+    "computerocker_dist001_001",
+    "computerocker_dist001_002",
+    "computerocker_dist001_003",
+    "computerocker_dist001_004",
+    "computerocker_dist001_005",
+    "computerocker_dist001_006",
+    "computerocker_dist001_007",
+    "computerocker_dist001_008",
+    "computerocker_dist001_009",
+    "computerocker_dist001_010",
+    "computerocker_dist002_000",
+    "computerocker_dist002_001",
+    "computerocker_dist002_002",
+    "computerocker_dist002_003",
+    "computerocker_dist002_004",
+    "computerocker_dist002_005",
+    "computerocker_dist002_006",
+    "computerocker_dist002_007",
+    "computerocker_dist002_008",
+    "computerocker_dist002_009",
+    "computerocker_msa001_001",
+    "computerocker_msa001_002",
+    "computerocker_msa001_003",
+]
+
+MEMROCKER_ITEMS = [
+    "memrocker_1002_6",
+    "memrocker_2_2",
+    "memrocker_3_1",
+    "memrocker_405_16",
+    "memrocker_405_17",
+    "memrocker_405_18",
+    "memrocker_405_20",
+    "memrocker_407_2",
+    "memrocker_700_1",
+    "memrocker_700_2",
+]
+
+OBLEX_ITEMS = [
+    "oblex_ds",
+    "oblex_ds_ntd",
+    "oblex_metronome",
+    "oblex_opt",
+    "oblex_remix2",
+    "oblex_s16",
+    "oblex_s16_ds",
+    "oblex_trad",
+]
+
+GEMM_ITEMS = [
+    "gemm_bf16_trig",
+    "gemm_fp16_trig",
+    "gemm_fp8_trig",
+]
+
+XGMI_ITEMS = [
+    "xgmi_cpu_rx_margin",
+    "xgmi_gpu_rx_margin",
+    "xgmi_link_status",
+]
+
+UALINK_ITEMS = [
+    "ualink_gpu_rx_margin",
+    "ualink_nic_rx_margin",
+    "ualink_status",
+]
+
+PCIE_ITEMS = [
+    "pcie_gpu_rx_margin",
+    "pcie_link_status",
+    "pcie_nic_rx_margin",
+]
+
+BABEL_ITEMS = [
+    "babel_modinit_read",
+    "babel_modinit_triad",
+]
+
+# Catch-all for one-off items that do not belong to a dedicated family above
+# (includes sdma_bidi_peak alongside the other standalone transfer/stress items).
+BASIC_ITEMS = [
+    "ampttk",
+    "cachewalker",
+    "cpu_bidi_peak",
+    "difect",
+    "fpdeluge",
+    "gfx_bidi_peak",
+    "hdrt",
+    "maxcorestim",
+    "maxiostim",
+    "memblock",
+    "memripper",
+    "memtest",
+    "miidct",
+    "mithac",
+    "no_op",
+    "sdma_bidi_peak",
+    "sprites",
+    "umcinfo",
 ]
 
 # --- Artifact / return-code parsing --------------------------------------
@@ -114,14 +222,29 @@ ANC_RETURN_CODE_RE = re.compile(r"return code\s+(\S+)\s*\[(-?\d+)\]")
 # run summary; surfaced verbatim so the CVS result shows the pass/fail counts.
 ANC_ITEMS_SUMMARY_RE = re.compile(r"^\s*Items:\s*\d+\s*Total\b.*$", re.MULTILINE)
 
-# ANC reports an unknown group both as a FATAL line and a dedicated return code:
-#   "FATAL: Group 'foo' not found"
-#   "Program exiting with return code ANC_PROG_NOT_FOUND [13]"
-# Either is sufficient to conclude the requested group is not installed on that
-# node; matching both covers print_all_to_console on (raw FATAL line streams
-# back) and off (only console.log is collected, which carries the return code).
-ANC_GROUP_NOT_FOUND_RE = re.compile(r"FATAL:\s*Group\s+'([^']*)'\s+not found", re.IGNORECASE)
-ANC_PROG_NOT_FOUND_NAME = "ANC_PROG_NOT_FOUND"
+# ANC reports an unknown group/item as a FATAL line naming the SELECTION KIND:
+#   "FATAL: Group 'foo' not found"   (a -g run)
+#   "FATAL: Item 'foo' not found"    (a -i run)
+# and exits ANC_PROG_NOT_FOUND [13]. The not-available verdict is keyed off the
+# kind-scoped FATAL line (see anc_not_found_re) rather than that return code,
+# because ANC ALSO exits ANC_PROG_NOT_FOUND when a leaf item inside an
+# otherwise-present group is missing -- keying off the code would mislabel that
+# genuine group failure as "not available". The FATAL line is written to
+# console.log, which is always collected, so the scoped matcher is reliable even
+# when print_all_to_console is off.
+
+
+def anc_not_found_re(unit):
+    '''
+    Compiled "FATAL: <Kind> '<name>' not found" matcher scoped to ``unit``.
+
+    ``unit`` is "group" or "item"; the returned regex matches only that kind's
+    FATAL line (``Group`` / ``Item``), so a group run is not misclassified as
+    "not available" by an item's not-found line and vice versa.
+    '''
+    kind = "Group" if unit == "group" else "Item"
+    return re.compile(rf"FATAL:\s*{kind}\s+'([^']*)'\s+not found", re.IGNORECASE)
+
 
 # console.log is the only artifact we must have (holds the verdict). Everything
 # else is pulled best-effort as part of the whole-directory copy.
@@ -138,187 +261,44 @@ ERRORS_JSON = "errors.json"
 # diagnostics always print. Default: print everything.
 PRINT_ALL_TO_CONSOLE_KEY = "print_all_to_console"
 
-# config anc.log_folder_path is the single user-supplied PREFIX directory for all
-# ANC artifacts (collected logs AND the HTML report). The fixed layout appended
-# under it is owned by the code (below), not the config: the config just says
-# "where should the tree live", and CVS lays down the
-# "<kind>/<node>/<test_name>/<timestamp>" structure inside it. Keeping the suffix
-# here (not in the shipped config) means every run gets an identical, predictable
-# tree and users cannot accidentally break the layout.
-#
-# The HTML report derives from this same prefix (ANC_HTML_SUBPATH), so there is
-# no separate html_report_path config key. Point the report elsewhere with an
-# explicit --html on the command line.
+# The collected ANC log tree lands under this run's run_dir (resolved by
+# RunLayout, the same directory pytest writes its --html/--log-file into). The
+# fixed layout appended under run_dir is owned by the code: CVS lays down the
+# "anc_logs/<node>/<test_name>/<timestamp>" structure so every run gets an
+# identical, predictable tree users cannot accidentally break.
 #
 # Tokens filled in at resolve time:
 #   "<node>"      -> the per-node "<ip>_<hostname>" label ("<node>" first so a
 #                    multi-node run groups every test/timestamp under each node).
 #   "<test_name>" -> the suite's test name (e.g. test_cpu).
 #   "<timestamp>" -> a per-run stamp so repeated runs never overwrite each other.
-LOG_FOLDER_PATH_KEY = "log_folder_path"
 ANC_LOG_SUBPATH = "anc_logs/<node>/<test_name>/<timestamp>"
-ANC_HTML_SUBPATH = "html_reports/<node>/<test_name>/<timestamp>"
 
 # config anc.ADD_ANC_LOGS_TO_HTML_REPORTS controls whether the collected ANC
 # log tree is bundled into the pytest-html report zip. When True, always attach.
 # When False (default), attach ONLY when the test failed (so passing runs stay
 # lean but failures always carry their evidence).
 ADD_ANC_LOGS_TO_HTML_KEY = "ADD_ANC_LOGS_TO_HTML_REPORTS"
-
-# config anc.COLLECT_HTML_REPORTS ("True" by default) makes the ANC suites
-# generate a pytest-html report even when no --html is passed on the command
-# line. The report is written under anc.log_folder_path (via ANC_HTML_SUBPATH).
-# Because pytest-html creates ONE report per session before any SSH connection
-# exists, "<node>" here resolves to the FIRST node in the cluster file's
-# node_dict (label built from the cluster file alone, no SSH). An explicit --html
-# on the command line always wins over this.
-COLLECT_HTML_REPORTS_KEY = "COLLECT_HTML_REPORTS"
+ANC_HTML_EXTRAS_ATTR = "_anc_html_extras"
 
 
-def _node_label_from_file(cluster_dict, host):
-    '''
-    Build the artifact folder label for a node using ONLY the cluster file (no
-    SSH). When the node has a usable vpc_ip that differs from the host key the
-    label is "<ip>_<hostkey>"; when vpc_ip is missing/"NA" (or equals the host
-    key) the label is just the host key so the name is not duplicated.
-
-    This is the single source of truth for the node label so that every
-    artifact tree (HTML report AND collected ANC logs) uses an identical folder
-    name for the same node. It deliberately does NOT resolve the hostname over
-    SSH: the session HTML report is created before any node connection exists, so
-    a file-only label is the only value both paths can share.
-    '''
-    info = (cluster_dict.get("node_dict", {}) or {}).get(host, {}) or {}
-    ip = info.get("vpc_ip")
-    if not ip or ip == "NA":
-        log.info("Node %s: vpc_ip not available in cluster file; using host name only for the node label", host)
-        label = _sanitize_path_component(f"{host}")
-    elif ip == host:
-        label = _sanitize_path_component(f"{host}")
-    else:
-        label = _sanitize_path_component(f"{ip}_{host}")
-    log.info("Node %s: node == %s", host, label)
-    return label
+_node_label_from_file = amdtools_lib.node_label_from_file
 
 
-def cluster_node_label_from_file(cluster_dict):
-    '''
-    Build the node label for the FIRST node using only the cluster file (no SSH).
-    Used for the session-level HTML report path, which must be resolved before any
-    node connection exists. Returns "unknown_node" when the cluster file has no
-    node_dict entries. Delegates to _node_label_from_file so the label matches the
-    per-node ANC-log folder exactly.
-    '''
-    node_dict = cluster_dict.get("node_dict", {}) or {}
-    hosts = list(node_dict.keys())
-    if not hosts:
-        return "unknown_node"
-    return _node_label_from_file(cluster_dict, hosts[0])
+_as_bool = amdtools_lib.as_bool
 
 
-def _prefix_problem(config_dict, key):
-    '''
-    Return a human-readable problem string if config anc.<key> is not a usable
-    path prefix (missing or blank), else None.
-
-    The ``<changeme>`` placeholder is caught earlier and globally by the standard
-    config resolver (_resolve_placeholders_in_dict hard-exits on it), so it does
-    not need handling here. Used both by the fail-fast fixture check
-    (validate_anc_path_prefixes) and by _resolve_prefix so the two agree on what
-    "unset" means.
-    '''
-    prefix = config_dict.get("anc", {}).get(key)
-    if not prefix or not str(prefix).strip():
-        return f"config anc.{key} is unset; set it to the directory prefix where ANC artifacts should be written"
-    return None
+new_run_timestamp = amdtools_lib.new_run_timestamp
 
 
-def validate_anc_path_prefixes(config_dict):
-    '''
-    Validate the ANC path prefix up front, before any ANC command runs. Returns a
-    list of problem strings (empty when set).
-
-    Only anc.log_folder_path is checked here, for the MISSING/BLANK case: it is
-    the single prefix for all ANC artifacts (collected logs and the derived HTML
-    report). The ``<changeme>`` placeholder is caught earlier by the standard
-    config resolver, so only the empty/unset case remains for this check.
-    '''
-    return [p for p in (_prefix_problem(config_dict, LOG_FOLDER_PATH_KEY),) if p]
-
-
-def _resolve_prefix(config_dict, key):
-    '''
-    Read a user-supplied prefix directory from config anc.<key> and normalise it.
-
-    The prefix is a plain filesystem path (leading "~" expanded); "{home}"/
-    "{user-id}" tokens are already substituted by the config placeholder pass in
-    the ANC conftest, and only the fixed suffix the code owns carries
-    "<node>"/"<test_name>"/"<timestamp>". A missing or blank prefix RAISES
-    ValueError so a bad config can never silently resolve to a garbage path. The
-    fail-fast fixture (validate_anc_path_prefixes) normally catches this first;
-    this raise is the last-line guard for any direct caller.
-    '''
-    problem = _prefix_problem(config_dict, key)
-    if problem:
-        raise ValueError(problem)
-    # expanduser only expands a LEADING ~ (a mid-path ~ is a literal dir name,
-    # not a home reference, and must not expand); it is a no-op otherwise.
-    return os.path.expanduser(str(config_dict["anc"][key]).strip())
-
-
-def resolve_anc_html_report_path(config_dict, cluster_dict, test_name, timestamp):
-    '''
-    Resolve the auto-collected pytest-html report path from the SAME prefix as the
-    collected logs (config anc.log_folder_path). The code appends the fixed
-    ANC_HTML_SUBPATH under the prefix, substituting "<node>" (first cluster node's
-    label, from the file only), "<test_name>", and "<timestamp>". The resolved
-    directory holds the report file "<test_name>.html". Point the report elsewhere
-    with an explicit --html on the command line.
-    '''
-    prefix = _resolve_prefix(config_dict, LOG_FOLDER_PATH_KEY)
-    node = cluster_node_label_from_file(cluster_dict)
-    suffix = ANC_HTML_SUBPATH.replace("<node>", node)
-    suffix = suffix.replace("<test_name>", test_name)
-    suffix = suffix.replace("<timestamp>", timestamp)
-    path = os.path.abspath(os.path.join(prefix, suffix))
-    return os.path.join(path, f"{test_name}.html")
-
-
-def _as_bool(value, default=True):
-    '''Interpret a config value (str/bool/None) as a boolean.'''
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() in ("true", "1", "yes", "on")
-
-
-def new_run_timestamp():
-    '''Return a filesystem-safe timestamp (YYYYmmdd-HHMMSS) for a run folder.'''
-    return datetime.now().strftime("%Y%m%d-%H%M%S")
-
-
-def resolve_anc_log_folder(config_dict, test_name, timestamp, node=None):
-    '''
-    Resolve config anc.log_folder_path (a user-supplied prefix directory) into an
-    absolute destination directory. The code appends the fixed ANC_LOG_SUBPATH
-    under the prefix, substituting "<node>" (the per-node "<ip>_<hostname>"
-    label), "<test_name>", and "<timestamp>".
-
-    When ``node`` is None the "<node>" token is left intact (used for the
-    run-start banner, which shows the pattern before any node is known).
-    '''
-    prefix = _resolve_prefix(config_dict, LOG_FOLDER_PATH_KEY)
-    suffix = ANC_LOG_SUBPATH.replace("<test_name>", test_name)
-    suffix = suffix.replace("<timestamp>", timestamp)
-    if node is not None:
-        suffix = suffix.replace("<node>", node)
-    return os.path.abspath(os.path.join(prefix, suffix))
+def resolve_anc_log_folder(test_name, timestamp, node=None):
+    '''Bind ANC's ``anc_logs`` sub-path to amdtools_lib.resolve_run_log_folder.'''
+    return amdtools_lib.resolve_run_log_folder(ANC_LOG_SUBPATH, test_name, timestamp, node)
 
 
 # ANC group runs use an INACTIVITY timeout, not a total wall-clock cap: the run
 # is aborted only after this many seconds with NO new ANC output. A group that
-# keeps printing progress runs as long as it needs (long groups like cpu_all can
+# keeps printing progress runs as long as it needs (long groups like cpu_mfg_l10 can
 # legitimately exceed any fixed total budget). The old total-budget key
 # (test_timeout) capped healthy, actively-running groups and is no longer used.
 # Override via config["anc"]["inactivity_timeout"].
@@ -348,7 +328,7 @@ INSTALL_TIMEOUT_KEY = "install_timeout"
 # How often (seconds) the download heartbeat prints partial-file size. Must be
 # comfortably smaller than DEFAULT_ANC_INSTALL_TIMEOUT so the heartbeat keeps
 # the channel active well within the inactivity window.
-ANC_DOWNLOAD_PROGRESS_INTERVAL = 15
+ANC_DOWNLOAD_PROGRESS_INTERVAL = amdtools_lib.DOWNLOAD_PROGRESS_INTERVAL
 
 
 def _install_timeout(anc_cfg):
@@ -357,38 +337,8 @@ def _install_timeout(anc_cfg):
 
 
 def _download_with_progress_snippet(url, dest, interval=ANC_DOWNLOAD_PROGRESS_INTERVAL):
-    '''
-    Build a shell snippet that downloads ``url`` to ``dest`` while emitting a
-    periodic progress line, and exits non-zero if the download fails.
-
-    ``wget -q`` is silent for the entire (potentially multi-minute) download,
-    which would trip the exec's inactivity timeout on a slow link. Instead run
-    wget in the background and, every ``interval`` seconds, echo the partial
-    file size so the SSH channel keeps producing output while bytes flow. The
-    whole thing is wrapped in a subshell whose exit status is wget's (via
-    ``wait``), so it composes with the surrounding ``set -e && ...`` chain: a
-    failed download aborts the install exactly as a plain ``wget && `` would.
-
-    Because the heartbeat keeps the SSH channel active, the exec's inactivity
-    timeout no longer catches a hung download. wget's own ``--timeout`` /
-    ``--tries`` do that instead: a stalled read aborts after a few minutes,
-    wget exits non-zero, and the ``set -e`` chain fails rather than hanging
-    until the (large) install_timeout elapses.
-
-    ``url`` and ``dest`` are single-quoted here; callers validate config values
-    for embedded single quotes (see _assert_shell_safe) before interpolation.
-    '''
-    return (
-        f"( wget -q --timeout=60 --tries=3 '{url}' -O '{dest}' & "
-        f"wpid=$!; "
-        f"while kill -0 $wpid 2>/dev/null; do "
-        f"sleep {interval}; "
-        f"if [ -f '{dest}' ]; then "
-        f"echo \"ANC download progress: $(du -h '{dest}' 2>/dev/null | cut -f1) downloaded\"; "
-        f"fi; "
-        f"done; "
-        f"wait $wpid )"
-    )
+    '''Bind the tool label ``ANC`` to amdtools_lib.download_with_progress_snippet.'''
+    return amdtools_lib.download_with_progress_snippet(url, dest, "ANC", interval)
 
 
 # --- ROCm shared-library resolution --------------------------------------
@@ -413,71 +363,20 @@ LDCONFIG_TARGET_LIB = "librocblas"
 # ``"<prefix>/$name"`` rm target); a newline splits the command. Config is
 # trusted, so rather than shell-escape everywhere we reject these at the
 # boundary and fail fast with a clear message.
-SHELL_UNSAFE_CHARS = ("'", '"', "`", "$", "\\", "\n")
+SHELL_UNSAFE_CHARS = amdtools_lib.SHELL_UNSAFE_CHARS
 
 
 def _assert_shell_safe(anc_cfg, keys):
-    '''
-    Reject config values that would break or subvert the remote shell strings.
-
-    The install commands interpolate config values (anc_release_url,
-    ANC_INSTALL_PATH, ...) into the remote command, both inside single quotes
-    (which only a ``'`` breaks) and inside double quotes (where ``$``/backtick/
-    ``\\`` still expand). A value containing any SHELL_UNSAFE_CHARS is rejected
-    here so it can never reach the shell verbatim.
-    '''
-    for key in keys:
-        value = anc_cfg.get(key)
-        if value is None:
-            continue
-        text = str(value)
-        bad = [c for c in SHELL_UNSAFE_CHARS if c in text]
-        if bad:
-            shown = ", ".join(repr(c) for c in bad)
-            raise ValueError(
-                f"ANC config value {key}={value!r} contains unsafe shell "
-                f"character(s) {shown}, which are not supported (they would break "
-                f"or subvert the remote shell command). Remove them from the value."
-            )
+    '''Bind the tool label ``ANC`` to amdtools_lib.assert_shell_safe (see there for the unsafe-character rationale).'''
+    return amdtools_lib.assert_shell_safe(anc_cfg, keys, "ANC")
 
 
 def validate_cluster_username(cluster_dict):
-    '''
-    Return a problem string if the cluster file's ``username`` is unsafe to
-    interpolate into remote shell commands, else None.
-
-    The username comes from the cluster file (not the anc config), so it never
-    passes through _assert_shell_safe, yet it is interpolated into remote
-    commands (e.g. the ``sudo chown <user>`` in _pull_log_dir). A value with a
-    space would split into two chown args; one with shell metacharacters could
-    inject a command under sudo. Validate it at the fixture boundary. An
-    empty/missing username is left to the connection layer to report.
-    '''
-    username = cluster_dict.get("username")
-    if username is None or not str(username).strip():
-        return None
-    text = str(username)
-    bad = [c for c in SHELL_UNSAFE_CHARS + (" ", "\t") if c in text]
-    if bad:
-        shown = ", ".join(repr(c) for c in bad)
-        return (
-            f"cluster file username={username!r} contains unsafe character(s) {shown}; "
-            f"ANC interpolates the username into remote shell commands (e.g. chown), "
-            f"so it must be a plain user name"
-        )
-    return None
+    '''Bind the tool label ``ANC`` to amdtools_lib.validate_cluster_username.'''
+    return amdtools_lib.validate_cluster_username(cluster_dict, "ANC")
 
 
-def _remote_user_tmp(user):
-    '''
-    Return a per-user remote temp DIRECTORY (``/tmp/<user>``) for ANC scratch
-    files, so concurrent users running ANC on the same node do not collide on a
-    shared, fixed-name path they cannot overwrite (another user's root/other
-    ownership under /tmp/<file> would raise a permission error). Callers are
-    responsible for ``mkdir -p`` before writing. The user is sanitised to a
-    single safe path component.
-    '''
-    return f"/tmp/{_sanitize_path_component(str(user))}"
+_remote_user_tmp = amdtools_lib.remote_user_tmp
 
 
 def _sed_replacement_safe(value):
@@ -500,82 +399,65 @@ def _expected_nodes(cluster_dict):
 
 
 def _fail_unreachable_nodes(cluster_dict, out_dict, action):
-    '''
-    fail_test every expected node absent from an exec result (unreachable).
-
-    ``phdl.exec`` only returns REACHABLE hosts, so a node that is down / did not
-    respond simply drops out of ``out_dict``. Callers that judge pass/fail from
-    ``out_dict`` alone would silently treat such a node as a success. This flags
-    every expected host missing from ``out_dict`` as a failed ``action`` (e.g.
-    "install", "ldconfig").
-
-    Returns:
-      list[str]: the expected hosts that were missing from ``out_dict``.
-    '''
-    expected = _expected_nodes(cluster_dict)
-    missing = [host for host in expected if host not in (out_dict or {})]
-    for host in missing:
-        fail_test(f"ANC {action} failed on {host}: node produced no output (unreachable / did not run)")
-    return missing
+    '''Bind the tool label ``ANC`` and the cluster file's expected hosts to amdtools_lib.fail_unreachable_nodes.'''
+    return amdtools_lib.fail_unreachable_nodes(_expected_nodes(cluster_dict), out_dict, action, "ANC")
 
 
 # ANC changed its release packaging in the 1.5.0 series:
 #   - LEGACY (<= 1.4.x): every flavour ships as an OUTER ``.tar.gz`` whose name
 #     carries a ``-deb-`` / ``-rpm-`` / ``-tar-`` token, e.g.
-#     ``anc-release-helios-nda-1.4.9-deb-linux-x64.tar.gz``. Inside are the real
+#     ``<packagename>-<version>-deb-linux-x64.tar.gz``. Inside are the real
 #     deb/rpm packages (deb/rpm flavours) or two inner tarballs (tar flavour).
 #   - DIRECT (1.5.0+): the URL points straight at the artifact -- a ``.deb``, a
 #     ``.rpm``, or a ``.tar.gz`` that IS the tree (no inner archives) -- with NO
-#     ``-<flavour>-`` token, e.g. ``anc-release-helios-nda_1.5.5_amd64.deb`` /
-#     ``anc-release-helios-nda-1.5.5-x86_64.tar.gz``.
+#     ``-<flavour>-`` token, e.g. ``<packagename>-<version>_amd64.deb`` /
+#     ``<packagename>-<version>-x86_64.tar.gz``.
 # The two are told apart by the presence of the legacy ``-<flavour>-`` token
 # (see detect_package_flavour); a legacy tar's name also ends in ``.tar.gz``, so
 # the token MUST be checked before the extension.
-PackageFlavour = namedtuple("PackageFlavour", ["pkg_type", "is_direct"])
+PackageFlavour = amdtools_lib.PackageFlavour
 
-# Extract the semantic version (``1.4.9`` / ``1.5.5``) from a release URL. The
-# first dotted-numeric run in the filename is the version in every ANC naming
-# scheme, legacy and direct alike ("x86_64"/"x64" have no dot-separated triple,
-# so they never match first).
-_URL_VERSION_RE = re.compile(r"\d+\.\d+(?:\.\d+)*")
+# The ANC version grammar, defined once and reused by every extractor so the
+# "what counts as a version" rule cannot drift between them.
+#   _VERSION_BODY: a dotted-numeric base (>=2 components, so a lone integer is
+#     not a version) with an OPTIONAL lowercase ``-rc.<n>`` suffix. Lowercase is
+#     deliberate -- an IGNORECASE match would accept ``1.7.0-RC.2`` that the
+#     case-sensitive extractors then read as plain ``1.7.0``, letting a lower RC
+#     silently satisfy the guard.
+#   _VERSION_END: a boundary that forbids the match from stopping in the middle
+#     of a longer token. Without it an ATTACHED malformed rc silently truncates
+#     (``1.7.0-rc.bad`` -> ``1.7.0``; ``1.7.0-rc.1foo`` -> ``1.7.0-rc.1``;
+#     ``1.7.0rc1`` -> ``1.7.0``). It rejects a trailing ``.<digit>`` (mid-base),
+#     any alnum (mid-token junk), and a trailing ``-rc`` in ANY case (``-RC`` /
+#     ``-Rc`` too, so an uppercase rc suffix is rejected rather than truncated to
+#     its base). A package revision like the ``-1`` in
+#     ``...-1.7.0-rc.1-1.x86_64.rpm`` is still fine: ``-1`` begins with ``-``
+#     then a digit, which the boundary allows.
+VERSION_BODY = amdtools_lib.VERSION_BODY
+VERSION_END = amdtools_lib.VERSION_END
+_VERSION_BODY = VERSION_BODY
+_VERSION_BODY_GROUPED = amdtools_lib.VERSION_BODY_GROUPED
+_VERSION_END = VERSION_END
+_URL_VERSION_RE = amdtools_lib._URL_VERSION_RE
+_URL_VERSION_CANDIDATE_RE = amdtools_lib._URL_VERSION_CANDIDATE_RE
+_VERSION_RE = amdtools_lib._VERSION_RE
+
+
+is_strict_anc_version = amdtools_lib.is_strict_version
+
+
+parse_anc_version = amdtools_lib.parse_version
+
+
+compare_anc_versions = amdtools_lib.compare_versions
+
+
+anc_version_satisfies = amdtools_lib.version_satisfies
 
 
 def detect_package_flavour(anc_release_url):
-    '''
-    Infer the ANC package flavour AND packaging generation from the release name.
-
-    Returns a PackageFlavour(pkg_type, is_direct):
-      - pkg_type: one of ``"deb"``, ``"rpm"``, ``"tar"``.
-      - is_direct: False for the LEGACY outer-tarball layout (name carries a
-        ``-<flavour>-`` token, or a trailing ``-<flavour>.`` before the
-        extension); True for the DIRECT 1.5.0+ layout (the URL is the artifact
-        itself, flavour taken from the extension).
-
-    The legacy token is checked FIRST because a legacy tar release also ends in
-    ``.tar.gz`` -- extension alone cannot distinguish it from a direct tar.
-
-    Raises:
-      ValueError: if neither a legacy token nor a known direct extension is
-      present in the name.
-    '''
-    name = anc_release_url.rsplit("/", 1)[-1].lower()
-    # Legacy outer-tarball names carry the flavour as a `-<flavour>-` token, or a
-    # trailing `-<flavour>.` before the extension (e.g. `...-1.4.9-deb.tar.gz`).
-    # Match BOTH forms here, before the direct-extension fallback, so a legacy
-    # `...-tar.tar.gz` is not mistaken for a DIRECT tar by its `.tar.gz` suffix.
-    for pkg_type in ("deb", "rpm", "tar"):
-        if f"-{pkg_type}-" in name or f"-{pkg_type}." in name:
-            return PackageFlavour(pkg_type, False)
-    if name.endswith(".deb"):
-        return PackageFlavour("deb", True)
-    if name.endswith(".rpm"):
-        return PackageFlavour("rpm", True)
-    if name.endswith(".tar.gz") or name.endswith(".tgz"):
-        return PackageFlavour("tar", True)
-    raise ValueError(
-        f"Cannot determine ANC package flavour from archive name '{name}'; expected a legacy "
-        f"'-deb-'/'-rpm-'/'-tar-' token or a direct '.deb'/'.rpm'/'.tar.gz' extension"
-    )
+    '''Bind the tool label ``ANC`` to amdtools_lib.detect_package_flavour; see there for the release-naming rules.'''
+    return amdtools_lib.detect_package_flavour(anc_release_url, "ANC")
 
 
 def detect_package_type(anc_release_url):
@@ -591,98 +473,38 @@ def detect_package_type(anc_release_url):
     return detect_package_flavour(anc_release_url).pkg_type
 
 
-def parse_version_from_url(anc_release_url):
-    '''
-    Extract the semantic version embedded in an ANC release URL, or None.
+parse_version_from_url = amdtools_lib.parse_version_from_url
 
-    Matches the first dotted-numeric run in the filename (e.g. ``1.4.9`` from
-    ``...-1.4.9-deb-linux-x64.tar.gz``, ``1.5.5`` from
-    ``...-1.5.5-x86_64.tar.gz`` and ``..._1.5.5_amd64.deb``). Returns None when
-    the URL is empty or carries no version token.
 
-    Used by the fail-fast config guard to abort (before contacting any node)
-    when the user-supplied ``anc.anc_version`` disagrees with the archive.
+def _configured_anc_version(anc_cfg):
     '''
-    if not anc_release_url:
+    Return the configured ``anc.anc_version``, or None when it is unset.
+
+    "Unset" is ONLY None or a blank/whitespace string -- a present but falsy
+    value such as ``0`` / ``False`` / ``"0"`` is returned as-is (set), so it
+    reaches the strict-token check rather than silently disabling version
+    comparison.
+    '''
+    version = anc_cfg.get("anc_version")
+    if version is None or (isinstance(version, str) and not version.strip()):
         return None
-    name = anc_release_url.rsplit("/", 1)[-1]
-    match = _URL_VERSION_RE.search(name)
-    return match.group(0) if match else None
+    return version
 
 
-def check_version_matches_url(config_dict):
+def _url_too_old(anc_cfg, anc_version):
     '''
-    Return a problem string if config ``anc.anc_version`` disagrees with the
-    version parsed from ``anc.anc_release_url``, else None.
+    Decide whether ``anc.anc_release_url`` is too old to satisfy ``anc_version``.
 
-    Only enforced when BOTH a version is configured and one can be parsed from
-    the URL; a blank version or an unparseable URL yields None (no opinion).
-    Applies to legacy and direct packaging alike so a user cannot point a run at
-    the wrong archive for the version they asked for.
+    Returns (too_old, url_version): ``too_old`` is True ONLY when the URL carries
+    a parseable version strictly LESS than ``anc_version`` (under
+    compare_anc_versions, where a release candidate equals its base). When the
+    URL has no parseable version, (False, None) is returned -- no opinion, let the
+    install proceed. ``anc_version`` must already be a strict valid token.
     '''
-    anc_cfg = config_dict.get("anc", {}) or {}
-    configured = anc_cfg.get("anc_version")
-    url = anc_cfg.get("anc_release_url")
-    if not configured or not str(configured).strip():
-        return None
-    url_version = parse_version_from_url(url)
+    url_version = parse_version_from_url(anc_cfg.get("anc_release_url"))
     if not url_version:
-        return None
-    if str(configured).strip() != url_version:
-        return (
-            f"config anc.anc_version ({configured}) does not match the version in "
-            f"anc.anc_release_url ({url_version}); fix one so they agree before running"
-        )
-    return None
-
-
-def validate_anc_config(config_dict, cluster_dict, require_log_folder):
-    '''
-    Collect all fail-fast ANC config problems, before any node is contacted.
-
-    Returns a list of human-readable problem strings (empty when the config is
-    usable). The caller (the ANC conftest fixture) aborts the run if non-empty,
-    so a bad config costs seconds instead of a partial run on the cluster. The
-    ``<changeme>`` placeholder is caught even earlier by the standard resolver;
-    this covers the checks that resolver does not:
-
-      - anc.anc_release_url present and non-blank (an empty URL would otherwise
-        crash install_anc with an uncaught error);
-      - anc.anc_version, when set, matches the version in the URL;
-      - anc.ANC_INSTALL_PATH resolves to a safe, non-root prefix (the shell-safe
-        + non-root guards in resolve_anc_install_prefix are surfaced here as a
-        clean message rather than a mid-run traceback);
-      - the cluster username is safe to interpolate into remote commands;
-      - anc.log_folder_path is set for the group suites (require_log_folder).
-    '''
-    problems = []
-
-    anc_cfg = config_dict.get("anc", {}) or {}
-    url = anc_cfg.get("anc_release_url")
-    if not url or not str(url).strip():
-        problems.append("config anc.anc_release_url is not set; set it to the ANC release archive URL")
-
-    version_problem = check_version_matches_url(config_dict)
-    if version_problem:
-        problems.append(version_problem)
-
-    # Pre-resolve the install prefix so a shell-unsafe or root-resolving
-    # ANC_INSTALL_PATH aborts here with a clear message instead of raising a raw
-    # traceback deep in install / group-run. Only meaningful for tar URLs, but
-    # resolving unconditionally is harmless (deb/rpm ignore the key).
-    try:
-        resolve_anc_paths_from_config(config_dict)
-    except ValueError as exc:
-        problems.append(str(exc))
-
-    username_problem = validate_cluster_username(cluster_dict)
-    if username_problem:
-        problems.append(username_problem)
-
-    if require_log_folder:
-        problems += validate_anc_path_prefixes(config_dict)
-
-    return problems
+        return False, None
+    return compare_anc_versions(url_version, str(anc_version).strip()) < 0, url_version
 
 
 # Install paths for one run: the prefix ANC is extracted under, plus the derived
@@ -746,28 +568,43 @@ def resolve_anc_paths(config_dict, pkg_type):
 def resolve_anc_paths_from_config(config_dict):
     '''
     Resolve AncPaths from config alone, detecting the package flavour from
-    anc.anc_release_url. Used by run-time consumers (version check, group run,
+    anc.anc_release_url. Used by run-time consumers (version probe, group run,
     ldconfig-independent path lookups) that need the live install location
-    without re-passing pkg_type. Falls back to the default prefix if the URL is
-    missing or its flavour cannot be determined.
+    without re-passing pkg_type.
+
+    When the URL yields a concrete flavour, that flavour decides the prefix
+    (deb/rpm -> default; tar -> honour anc.ANC_INSTALL_PATH). When the URL is
+    blank or its flavour cannot be determined, a configured ANC_INSTALL_PATH is
+    treated as a tar relocation so the probe and group-run paths hit where ANC
+    actually lives; absent that, the default prefix is used. (A deb/rpm URL still
+    yields a concrete pkg_type above, so ANC_INSTALL_PATH stays ignored there.)
     '''
-    url = config_dict.get("anc", {}).get("anc_release_url") or ""
+    # Coerce to string up front and use that coerced value everywhere below: a
+    # non-string config value (e.g. JSON anc_release_url: 123) must not reach
+    # detect_package_type, whose rsplit() would raise AttributeError and abort
+    # readiness even when ANC is installed and no URL is needed. Its real
+    # validation happens on the install path; here it only picks the pkg flavour.
+    url = str(config_dict.get("anc", {}).get("anc_release_url") or "").strip()
     try:
-        pkg_type = detect_package_type(url) if url and str(url).strip() else ""
+        pkg_type = detect_package_type(url) if url else ""
     except ValueError:
         pkg_type = ""
+    if not pkg_type:
+        raw = config_dict.get("anc", {}).get(ANC_INSTALL_PATH_KEY)
+        if raw and str(raw).strip():
+            pkg_type = "tar"
     return resolve_anc_paths(config_dict, pkg_type)
 
 
 # The release-content plugin line in ``anc.py --content-list`` output (DIRECT
 # 1.5.0+ packaging only), e.g.
-#   "  anc-release-helios-nda    1.5.5   Helios NDA Release"
+#   "  anc-release-<product>    <version>   <product> Release"
 # The plugin name starts with ``anc-release-`` and its MIDDLE column is the
 # release version, which tracks the archive version. Legacy (<=1.4.x)
 # --content-list has no version column and no anc-release-* plugin at all, so
 # this pattern deliberately never matches there (legacy uses --version instead).
 ANC_RELEASE_PLUGIN_RE = re.compile(
-    r"^\s*anc-release-\S+\s+(\d+\.\d+(?:\.\d+)*)\b",
+    r"^\s*anc-release-\S+\s+(" + _VERSION_BODY + r")" + _VERSION_END,
     re.MULTILINE,
 )
 
@@ -789,7 +626,7 @@ def parse_release_version_from_content_list(output):
     return match.group(1) if match else None
 
 
-def node_release_versions(phdl, anc_bin=ANC_BIN):
+def node_release_versions(orch, anc_bin=ANC_BIN):
     '''
     Query ``<anc_bin> --content-list`` on every node and return the parsed
     release version per host (DIRECT 1.5.0+ packaging).
@@ -799,139 +636,334 @@ def node_release_versions(phdl, anc_bin=ANC_BIN):
       ``anc-release-*`` plugin line, or None when ANC is absent, the node is
       unreachable to the parse, or the output carries no such line.
     '''
-    out_dict = phdl.exec(f"{anc_bin} --content-list 2>&1 || true", timeout=120)
+    out_dict = orch.exec(f"'{anc_bin}' --content-list 2>&1 || true", timeout=120)
     print_test_output(log, out_dict)
     return {host: parse_release_version_from_content_list(output) for host, output in out_dict.items()}
 
 
-def node_version_matches(phdl, expected_version, anc_bin=ANC_BIN, is_direct=False):
+def _parse_version_from_version_output(output):
     '''
-    Query ANC on every node and report which nodes report ``expected_version``.
+    Extract the ANC release version (with any ``-rc.<n>``) from ``--version``
+    output, or None. ANC's ``--version`` prints the release on a labelled line
+    ``Release Version: <version>`` (see anclib ``_display_versions``); the
+    version is read ONLY from that record.
 
-    Mechanism depends on packaging generation:
-      - DIRECT (1.5.0+, ``is_direct=True``): parse ``<anc_bin> --content-list``
-        and compare the ``anc-release-*`` plugin's version column, because
-        ``anc.py --version`` on 1.5.0+ reports the tool version, not the release.
-      - LEGACY (<=1.4.x, ``is_direct=False``): match ``<anc_bin> --version``
-        output, whose version IS the release version there.
+    Anchoring to the label is deliberate: a bare "first dotted number" scan over
+    combined stdout/stderr would mis-read an unrelated number -- e.g. a warning
+    printed before the version, or the ``1.6.0`` inside a relocatable path in a
+    shell ``/opt/anc-1.6.0/anc/anc.py: No such file`` error when ANC is absent --
+    and let the precheck/verify pass on a value that is not the installed
+    release. No ``Release Version:`` line -> None (absent / command failure).
+
+    The LABEL is matched case-insensitively (ANC prints it as ``Release
+    Version:`` / ``ANC Release Version:``, and CVS already treats ANC's labels as
+    case-varying -- see LOG_DIRECTORY_RE), but the version TOKEN stays
+    case-sensitive so an uppercase ``-RC.n`` is not silently read as its base.
+    '''
+    match = re.search(
+        r"(?i:Release\s+Version:)\s*(" + _VERSION_BODY + r")" + _VERSION_END,
+        output or "",
+    )
+    return match.group(1) if match else None
+
+
+def node_installed_versions(orch, anc_bin=ANC_BIN):
+    '''
+    Return the installed ANC release version per host, detecting the packaging
+    GENERATION from what each node actually reports -- never from the requested
+    URL (a node may already run a different generation than this run installs).
+
+    Per host:
+      - DIRECT (1.5.0+): ``<anc_bin> --content-list`` carries an
+        ``anc-release-*`` plugin line whose version column is the release
+        version. When that line is present it is authoritative (direct
+        ``--version`` reports the tool version, not the release, so it must not
+        be used here).
+      - LEGACY (<=1.4.x): ``--content-list`` has no ``anc-release-*`` line, so
+        the node falls back to ``<anc_bin> --version`` (whose version IS the
+        release version on legacy). This fallback also covers the absent case,
+        where both probes yield None.
+
+    Returns:
+      dict[str, str | None]: host -> installed release version, or None when ANC
+      is absent / unreachable / reports no parseable version.
+    '''
+    direct = node_release_versions(orch, anc_bin=anc_bin)
+    legacy_hosts = [host for host, version in direct.items() if version is None]
+    if not legacy_hosts:
+        return direct
+
+    # Only the hosts with no anc-release-* line need the legacy --version probe.
+    out_dict = orch.exec(f"'{anc_bin}' --version 2>&1 || true", timeout=60)
+    print_test_output(log, out_dict)
+    resolved = dict(direct)
+    for host in legacy_hosts:
+        resolved[host] = _parse_version_from_version_output(out_dict.get(host))
+    return resolved
+
+
+def node_version_matches(orch, expected_version, anc_bin=ANC_BIN):
+    '''
+    Query ANC on every node and report which nodes SATISFY ``expected_version``.
+
+    A node satisfies the expected version when its installed version is
+    ``>= expected_version`` under compare_anc_versions (ANC ordering: a release
+    candidate is treated as exactly its base release and the rc number is never
+    compared). This lets a newer install satisfy an older request and lets an
+    installed ``1.7.0-rc.1`` satisfy a requested ``1.7.0``.
+
+    The installed version is read via node_installed_versions, which detects
+    each node's packaging generation from its own output (``--content-list``
+    first, legacy ``--version`` only when no ``anc-release-*`` line is present),
+    so a node already running a different generation than the requested URL is
+    still compared against its true release version.
 
     ``anc_bin`` is the anc.py entrypoint path; it defaults to the fixed-prefix
     ANC_BIN but callers pass the per-install path (which may be a relocated tar
     prefix) so the check hits the location ANC was actually installed to.
 
-    DIRECT compares the parsed version by exact equality. LEGACY matches
-    ``--version`` output as a whole token (bounded by non-version characters),
-    not a substring, so expecting "1.4.7" does NOT match "1.4.70" or "1.4.7-rc".
-
     Returns:
-      dict[str, bool]: host -> True when the node reports ``expected_version``
-      (False if ANC is absent or reports a different version).
+      dict[str, bool]: host -> True when the node's installed version satisfies
+      ``expected_version`` (False if ANC is absent or reports a lower version).
     '''
-    if is_direct:
-        parsed = node_release_versions(phdl, anc_bin=anc_bin)
-        return {host: version == expected_version for host, version in parsed.items()}
-
-    out_dict = phdl.exec(f"{anc_bin} --version 2>&1 || true", timeout=60)
-    print_test_output(log, out_dict)
-    # Boundaries are any char that isn't part of a version token (digits, dots,
-    # hyphens, alphanumerics) so "1.4.7" won't match inside "1.4.70"/"1.4.7-rc".
-    version_re = re.compile(r"(?<![\w.\-])" + re.escape(expected_version) + r"(?![\w.\-])")
-    return {host: bool(version_re.search(output or "")) for host, output in out_dict.items()}
+    parsed = node_installed_versions(orch, anc_bin=anc_bin)
+    return {
+        host: bool(version) and anc_version_satisfies(version, expected_version) for host, version in parsed.items()
+    }
 
 
-def install_anc(phdl, cluster_dict, config_dict):
+def install_anc(orch, cluster_dict, config_dict, strict=False):
     '''
-    Install ANC on all nodes, dispatching by release-archive flavour.
+    Drive the ANC install / readiness decision across all expected nodes, and
+    report the outcome exactly once via update_test_result.
 
-    The packaging kind is inferred from the ``anc_release_url`` archive name
-    (``-deb-`` / ``-rpm-`` / ``-tar-``) and the matching installer is invoked.
-    When ``anc_version`` is set in config, a precheck runs first: install is
-    skipped ONLY if every expected node already reports that version. After
-    installing, the same version check runs as the final step to confirm the
-    target version is present on all nodes. The version is read via
-    ``anc.py --content-list`` (the ``anc-release-*`` plugin's version column) for
-    DIRECT 1.5.0+ packaging, and via ``anc.py --version`` for legacy <=1.4.x
-    (whose ``--version`` reports the release version; 1.5.0+ does not).
+    All ANC config is validated at the point it is used here, never eagerly: the
+    release URL is parsed only when ANC must actually be downloaded, anc_version
+    is token-checked only when it is compared, and ANC_INSTALL_PATH is validated
+    when the install prefix is resolved. The run proceeds against whatever ANC is
+    already installed whenever an install is neither required nor possible.
 
-    Node coverage: ``phdl.exec`` returns only reachable hosts, so any expected
-    node (from ``cluster_dict["node_dict"]``) that is unreachable is treated as
-    a failed install rather than silently passing.
+    ``strict`` selects the install suite's stricter policy (True, from
+    ``test_download_install_anc_on_nodes``) vs. the normal group/item policy
+    (False, from ``ensure_anc_ready``):
 
-    Reports pass/fail via fail_test / update_test_result (call from a test).
+      - Some expected node has NO ANC installed:
+          * anc_release_url set    -> install from it on all nodes. In strict
+            mode, if anc_version is set and the URL's version is older than it,
+            FAIL before installing (the archive cannot satisfy the request).
+          * anc_release_url blank   -> FAIL (both modes): nothing to install from.
+      - All nodes have ANC installed:
+          * anc_version unset       -> proceed with the installed version.
+          * anc_version satisfied   -> proceed.
+          * some node below it:
+              - URL version >= anc_version -> install/upgrade on all nodes.
+              - URL too old to satisfy     -> strict FAILs; normal proceeds with
+                the installed version.
+              - URL blank                  -> strict FAILs; normal proceeds with
+                the installed version.
+      - Whenever an install is actually attempted and it (download / install /
+        post-verify) fails, FAIL in both modes.
+
+    Node coverage: ``orch.exec`` returns only reachable hosts, so an unreachable
+    expected node reports no version and is treated as not-installed (the absent
+    branch), never a silent pass.
     '''
     globals.error_list = []
 
     anc_cfg = config_dict["anc"]
-    # Values interpolated into remote shell strings by the sub-installers; reject
-    # unsafe characters up front (config is trusted, boundary check). Both the
-    # release URL and the relocatable install prefix reach the shell, so both are
-    # guarded here (the prefix is re-checked at its resolve chokepoint too).
+    expected = _expected_nodes(cluster_dict)
+    # An empty node set must never report success: with no expected hosts the
+    # absent/below lists below are both empty and the decision would fall through
+    # to a silent pass without checking anything.
+    if not expected:
+        fail_test("ANC install/readiness check has no expected nodes; cluster node_dict is empty")
+        update_test_result()
+        return
+
+    # The cluster username is interpolated into remote shell commands later this
+    # session (the sudo chown in the log pull, per-user scratch dirs), so reject an
+    # unsafe value here -- the single readiness chokepoint every ANC test reaches.
+    username_problem = validate_cluster_username(cluster_dict)
+    if username_problem:
+        fail_test(username_problem)
+        update_test_result()
+        return
+
+    # Resolve the on-node anc.py location (validates ANC_INSTALL_PATH shell-safe /
+    # non-root at its resolve chokepoint); a bad path fails here rather than deep
+    # in the install.
+    try:
+        paths = resolve_anc_paths_from_config(config_dict)
+    except ValueError as exc:
+        fail_test(str(exc))
+        update_test_result()
+        return
+    log.info("ANC install location for this run: anc.py -> %s", paths.anc_bin)
+
+    # Read + print the installed version on every expected node up front so the
+    # discovered version is visible regardless of the decision taken below.
+    installed = node_installed_versions(orch, anc_bin=paths.anc_bin)
+    for host in expected:
+        version = installed.get(host)
+        if version:
+            log.info("Node %s: ANC version %s installed at %s", host, version, paths.anc_bin)
+        else:
+            log.info("Node %s: ANC not installed at %s", host, paths.anc_bin)
+
+    # anc_version is validated ONLY here, where it is compared; an invalid token
+    # fails the test with a clear message instead of silently reading as its base.
+    anc_version = _configured_anc_version(anc_cfg)
+    if anc_version is not None and not is_strict_anc_version(anc_version):
+        fail_test(
+            f"config anc.anc_version ({anc_version}) is not a valid ANC version; "
+            f"expected a dotted release like 1.7.0 or 1.7.0-rc.1"
+        )
+        update_test_result()
+        return
+
+    url = anc_cfg.get("anc_release_url")
+    has_url = bool(url and str(url).strip())
+    absent = [host for host in expected if not installed.get(host)]
+
+    if absent:
+        if not has_url:
+            fail_test(f"ANC not installed on {', '.join(absent)} and no anc_release_url provided to install from")
+            update_test_result()
+            return
+        if strict and anc_version is not None:
+            too_old, url_version = _url_too_old(anc_cfg, anc_version)
+            if too_old:
+                fail_test(
+                    f"anc.anc_release_url version ({url_version}) is too old to satisfy requested "
+                    f"anc_version ({anc_version}); point the URL at a newer archive or lower anc_version"
+                )
+                update_test_result()
+                return
+        _run_anc_install(orch, cluster_dict, config_dict, paths, anc_version, expected)
+        update_test_result()
+        return
+
+    # Every expected node has ANC installed.
+    if anc_version is None:
+        log.info("ANC installed on all nodes and no anc_version configured; proceeding with the installed version")
+        update_test_result()
+        return
+
+    below = [host for host in expected if not anc_version_satisfies(installed.get(host) or "", anc_version)]
+    if not below:
+        log.info("All nodes already satisfy ANC %s (installed >= requested); skipping install", anc_version)
+        update_test_result()
+        return
+
+    if has_url:
+        too_old, url_version = _url_too_old(anc_cfg, anc_version)
+        if not too_old:
+            log.info("ANC upgrade required on %s (installed < %s); installing from URL", ", ".join(below), anc_version)
+            _run_anc_install(orch, cluster_dict, config_dict, paths, anc_version, expected)
+            update_test_result()
+            return
+        if strict:
+            fail_test(
+                f"installed ANC version on {', '.join(below)} is below requested anc_version ({anc_version}) "
+                f"and anc.anc_release_url ({url_version}) is too old to upgrade"
+            )
+            update_test_result()
+            return
+        _proceed_with_installed(below, installed, anc_version)
+        update_test_result()
+        return
+
+    if strict:
+        fail_test(
+            f"installed ANC version on {', '.join(below)} is below requested anc_version ({anc_version}) "
+            f"and no anc_release_url to upgrade"
+        )
+        update_test_result()
+        return
+    _proceed_with_installed(below, installed, anc_version)
+    update_test_result()
+
+
+def _proceed_with_installed(below, installed, anc_version):
+    '''
+    Log that a NON-strict test proceeds with the installed ANC version on nodes
+    whose version is below ``anc_version`` when no usable URL exists to upgrade.
+
+    Normal group/item tests must not fail merely because the installed version is
+    below the requested one when it cannot be upgraded; they run against whatever
+    is present. ``below`` lists those hosts; ``installed`` maps host -> version.
+    '''
+    for host in below:
+        log.warning(
+            "Node %s: installed ANC version %s is below requested anc_version %s and there is no usable "
+            "anc_release_url to upgrade; proceeding with the installed version",
+            host,
+            installed.get(host) or "unknown",
+            anc_version,
+        )
+
+
+def _run_anc_install(orch, cluster_dict, config_dict, paths, anc_version, expected):
+    '''
+    Download + install ANC from anc.anc_release_url on all nodes, then (when
+    ``anc_version`` is set) post-verify every node now satisfies it.
+
+    The release URL is parsed here (the install point of use): its shell-safety
+    is asserted, its flavour / generation detected, and the matching sub-installer
+    invoked. The sub-installers record their own failures via fail_test; this
+    function and the caller own no duplicate reporting -- the caller issues the
+    single update_test_result. ``paths`` is the resolved on-node install location
+    the post-verify queries.
+    '''
+    anc_cfg = config_dict["anc"]
+    # The release URL and the relocatable install prefix both reach the remote
+    # shell; reject unsafe characters at the boundary (config is trusted). Only
+    # runs on the install path, where a URL is actually used.
     _assert_shell_safe(anc_cfg, ("anc_release_url", ANC_INSTALL_PATH_KEY))
-    anc_version = anc_cfg.get("anc_version")
     anc_release_url = anc_cfg["anc_release_url"]
-    flavour = detect_package_flavour(anc_release_url)
+    try:
+        flavour = detect_package_flavour(anc_release_url)
+    except ValueError as exc:
+        fail_test(f"cannot install ANC: {exc}")
+        return
     pkg_type = flavour.pkg_type
     log.info(
         "ANC package detected from archive: type=%s, layout=%s",
         pkg_type,
         "direct (1.5.0+)" if flavour.is_direct else "legacy (<=1.4.x)",
     )
-
-    # Per-install paths: tar honours a relocated anc.ANC_INSTALL_PATH; deb/rpm
-    # always resolve to the fixed default prefix. The version prechecks and
-    # post-verify below query anc.py at this resolved location so a relocated
-    # tar install is detected/verified where it actually lives.
-    paths = resolve_anc_paths(config_dict, pkg_type)
     log.info("ANC install prefix for this run: %s (anc.py -> %s)", paths.prefix, paths.anc_bin)
 
-    expected = _expected_nodes(cluster_dict)
-
-    # Precheck: skip install only when EVERY expected node already runs the
-    # target version. A missing (unreachable) node yields matches.get(host)
-    # == None -> falsy, so we never skip on incomplete coverage.
-    if anc_version:
-        log.info("ANC precheck: expecting version %s", anc_version)
-        matches = node_version_matches(phdl, anc_version, anc_bin=paths.anc_bin, is_direct=flavour.is_direct)
-        if expected and all(matches.get(host) for host in expected):
-            log.info(
-                "ANC %s already installed on all nodes; skipping install",
-                anc_version,
-            )
-            update_test_result()
-            return
-
     # The sub-installers only record failures via fail_test (they do NOT report
-    # the result themselves); install_anc is the single owner of
+    # the result themselves); the caller is the single owner of
     # update_test_result so the whole install is reported exactly once. Each
     # sub-installer also flags any expected node missing from its output.
     if pkg_type == "deb":
         if flavour.is_direct:
-            _install_anc_deb_direct(phdl, cluster_dict, config_dict)
+            _install_anc_deb_direct(orch, cluster_dict, config_dict)
         else:
-            _install_anc_deb(phdl, cluster_dict, config_dict)
+            _install_anc_deb(orch, cluster_dict, config_dict)
     elif pkg_type == "rpm":
         if flavour.is_direct:
-            _install_anc_rpm_direct(phdl, cluster_dict, config_dict)
+            _install_anc_rpm_direct(orch, cluster_dict, config_dict)
         else:
-            _install_anc_rpm(phdl, cluster_dict, config_dict)
+            _install_anc_rpm(orch, cluster_dict, config_dict)
     elif pkg_type == "tar":
         if flavour.is_direct:
-            _install_anc_tar_direct(phdl, cluster_dict, config_dict)
+            _install_anc_tar_direct(orch, cluster_dict, config_dict)
         else:
-            _install_anc_tar(phdl, cluster_dict, config_dict)
+            _install_anc_tar(orch, cluster_dict, config_dict)
     else:
         fail_test(f"ANC '{pkg_type}' package installation is not yet supported")
-        update_test_result()
         return
 
     # Final verification: confirm the target version is now on all expected
     # nodes. Skip it if the install phase already recorded failures (a bad
     # install can't pass version verification, and this keeps the failure
     # detail focused).
-    if anc_version and not globals.error_list:
-        log.info("ANC final verification: expecting version %s", anc_version)
-        matches = node_version_matches(phdl, anc_version, anc_bin=paths.anc_bin, is_direct=flavour.is_direct)
-        verify_source = "--content-list" if flavour.is_direct else "--version"
+    if anc_version is not None and not globals.error_list:
+        log.info("ANC final verification: expecting version >= %s", anc_version)
+        matches = node_version_matches(orch, anc_version, anc_bin=paths.anc_bin)
         for host in expected:
             if host not in matches:
                 fail_test(
@@ -940,14 +972,10 @@ def install_anc(phdl, cluster_dict, config_dict):
             elif matches[host]:
                 log.info("Node %s: ANC version %s confirmed", host, anc_version)
             else:
-                fail_test(
-                    f"ANC version verification failed on {host}: expected {anc_version} from '{paths.anc_bin} {verify_source}'"
-                )
-
-    update_test_result()
+                fail_test(f"ANC version verification failed on {host}: expected {anc_version} at '{paths.anc_bin}'")
 
 
-def _install_anc_rpm(phdl, cluster_dict, config_dict):
+def _install_anc_rpm(orch, cluster_dict, config_dict):
     '''
     Install ANC from .rpm package(s) on remote nodes (fresh install each run).
 
@@ -985,7 +1013,7 @@ def _install_anc_rpm(phdl, cluster_dict, config_dict):
         f"{ANC_BIN} --help && echo 'ANC_INSTALL_SUCCESS'"
     )
 
-    out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
+    out_dict = orch.exec(install_cmd, timeout=_install_timeout(anc_cfg))
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -999,7 +1027,7 @@ def _install_anc_rpm(phdl, cluster_dict, config_dict):
     _fail_unreachable_nodes(cluster_dict, out_dict, ".rpm install")
 
 
-def _install_anc_deb(phdl, cluster_dict, config_dict):
+def _install_anc_deb(orch, cluster_dict, config_dict):
     '''
     Install ANC from .deb package(s) on remote nodes (fresh install each run).
 
@@ -1055,7 +1083,7 @@ def _install_anc_deb(phdl, cluster_dict, config_dict):
         f"{ANC_BIN} --help && echo 'ANC_INSTALL_SUCCESS'"
     )
 
-    out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
+    out_dict = orch.exec(install_cmd, timeout=_install_timeout(anc_cfg))
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -1069,7 +1097,7 @@ def _install_anc_deb(phdl, cluster_dict, config_dict):
     _fail_unreachable_nodes(cluster_dict, out_dict, ".deb install")
 
 
-def _install_anc_rpm_direct(phdl, cluster_dict, config_dict):
+def _install_anc_rpm_direct(orch, cluster_dict, config_dict):
     '''
     Install ANC from a DIRECT .rpm URL (1.5.0+ packaging) on remote nodes.
 
@@ -1099,7 +1127,7 @@ def _install_anc_rpm_direct(phdl, cluster_dict, config_dict):
         f"{ANC_BIN} --help && echo 'ANC_INSTALL_SUCCESS'"
     )
 
-    out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
+    out_dict = orch.exec(install_cmd, timeout=_install_timeout(anc_cfg))
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -1111,7 +1139,7 @@ def _install_anc_rpm_direct(phdl, cluster_dict, config_dict):
     _fail_unreachable_nodes(cluster_dict, out_dict, ".rpm install")
 
 
-def _install_anc_deb_direct(phdl, cluster_dict, config_dict):
+def _install_anc_deb_direct(orch, cluster_dict, config_dict):
     '''
     Install ANC from a DIRECT .deb URL (1.5.0+ packaging) on remote nodes.
 
@@ -1151,7 +1179,7 @@ def _install_anc_deb_direct(phdl, cluster_dict, config_dict):
         f"{ANC_BIN} --help && echo 'ANC_INSTALL_SUCCESS'"
     )
 
-    out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
+    out_dict = orch.exec(install_cmd, timeout=_install_timeout(anc_cfg))
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -1164,26 +1192,11 @@ def _install_anc_deb_direct(phdl, cluster_dict, config_dict):
 
 
 def _sudo_prefix_snippet(prefix):
-    '''
-    Build a shell snippet that sets ``SUDO`` to "sudo" or "" for writing under
-    ``prefix``, honouring the "auto: sudo only if not writable" policy.
-
-    We cannot test the (not-yet-existing) prefix directly, so walk up to its
-    deepest EXISTING ancestor and test whether THAT is writable by the current
-    user. A user-writable ancestor (e.g. the home dir for a relocated install)
-    means we can mkdir/extract without sudo, so files land user-owned and can be
-    cleaned up later without root. A non-writable ancestor (e.g. /opt) selects
-    sudo. The result is exported as ``$SUDO`` for the extract/rewrite commands.
-    '''
-    return (
-        f"probe='{prefix}'; "
-        f"while [ ! -e \"$probe\" ] && [ \"$probe\" != '/' ]; do probe=$(dirname \"$probe\"); done; "
-        f"if [ -w \"$probe\" ]; then SUDO=''; else SUDO='sudo'; fi; "
-        f"echo \"ANC install: prefix '{prefix}' -> $( [ -n \"$SUDO\" ] && echo 'sudo' || echo 'no-sudo (user-writable)' )\""
-    )
+    '''Bind the tool label ``ANC`` to amdtools_lib.sudo_prefix_snippet.'''
+    return amdtools_lib.sudo_prefix_snippet(prefix, "ANC")
 
 
-def _install_anc_tar(phdl, cluster_dict, config_dict):
+def _install_anc_tar(orch, cluster_dict, config_dict):
     '''
     Install ANC from the tar release on remote nodes (fresh install each run).
 
@@ -1284,7 +1297,7 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
         f"test -f '{anc_bin}' && echo 'ANC_INSTALL_SUCCESS'"
     )
 
-    out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
+    out_dict = orch.exec(install_cmd, timeout=_install_timeout(anc_cfg))
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -1295,10 +1308,10 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
 
     _fail_unreachable_nodes(cluster_dict, out_dict, "tar install")
 
-    _validate_exe_paths(phdl, cluster_dict, content_dir)
+    _validate_exe_paths(orch, cluster_dict, content_dir)
 
 
-def _validate_exe_paths(phdl, cluster_dict, content_dir):
+def _validate_exe_paths(orch, cluster_dict, content_dir):
     '''
     Validate the exe_path entries under a tar install's content dir with the
     bundled validate_exe_paths.py script (shared by legacy and direct tar).
@@ -1320,15 +1333,15 @@ def _validate_exe_paths(phdl, cluster_dict, content_dir):
     remote_script = f"{user_tmp}/validate_exe_paths.py"
 
     log.info("Uploading validation script to remote nodes...")
-    phdl.exec(f"mkdir -p '{user_tmp}'", timeout=30)
-    phdl.upload_file(local_script, remote_script)
+    orch.exec(f"mkdir -p '{user_tmp}'", timeout=30)
+    orch.all.upload_file(local_script, remote_script)
 
     log.info("Validating exe_path entries from %s", content_dir)
-    validate_dict = phdl.exec(f"python3 '{remote_script}' '{content_dir}'", timeout=60)
+    validate_dict = orch.exec(f"python3 '{remote_script}' '{content_dir}'", timeout=60)
     print_test_output(log, validate_dict)
 
     log.info("Removing validation script from remote nodes...")
-    phdl.exec(f"rm -f '{remote_script}'", timeout=10)
+    orch.exec(f"rm -f '{remote_script}'", timeout=10)
 
     for host, output in validate_dict.items():
         if "VALIDATION_FAILED" in output:
@@ -1343,7 +1356,7 @@ def _validate_exe_paths(phdl, cluster_dict, content_dir):
     _fail_unreachable_nodes(cluster_dict, validate_dict, "exe_path validation")
 
 
-def _install_anc_tar_direct(phdl, cluster_dict, config_dict):
+def _install_anc_tar_direct(orch, cluster_dict, config_dict):
     '''
     Install ANC from a DIRECT tar release (1.5.0+ packaging) on remote nodes.
 
@@ -1404,19 +1417,7 @@ def _install_anc_tar_direct(phdl, cluster_dict, config_dict):
         f"cd \"$STAGE\"; "
         f"echo 'Downloading ANC release...'; "
         f"{_download_with_progress_snippet(anc_release_url, 'anc.tar.gz')}; "
-        # Top-level folders shipped by the archive; strip a leading './' and drop
-        # the '.'/'..' entries so a malicious or corrupt archive name cannot make
-        # the cleanup rm -rf outside the prefix.
-        f"echo 'Determining top-level tool folders...'; "
-        f"tops=$( tar -tzf anc.tar.gz | sed 's#^\\./##' | awk -F/ '{{print $1}}' | grep -vE '^([.]{{1,2}})?$' | sort -u ); "
-        f"$SUDO mkdir -p '{prefix}'; "
-        f"echo 'Replacing top-level folders under {prefix}...'; "
-        # Defensive: skip any name that is not a single plain path component
-        # (belt-and-braces alongside the tops filter above).
-        f"for name in $tops; do case \"$name\" in */*|.|..) continue;; esac; "
-        f"echo \"  {prefix}/$name\"; $SUDO rm -rf '{prefix}'/\"$name\"; done; "
-        f"echo 'Extracting archive to {prefix}...'; "
-        f"$SUDO tar -xzf anc.tar.gz -C '{prefix}'; "
+        f"{amdtools_lib.replace_tops_and_extract_snippet('anc.tar.gz', prefix)}"
         f"{rewrite_snippet}"
         f"echo '--- Installed top-level tools ---'; "
         f"ls '{prefix}' | sort; "
@@ -1424,7 +1425,7 @@ def _install_anc_tar_direct(phdl, cluster_dict, config_dict):
         f"test -f '{anc_bin}' && echo 'ANC_INSTALL_SUCCESS'"
     )
 
-    out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
+    out_dict = orch.exec(install_cmd, timeout=_install_timeout(anc_cfg))
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -1435,13 +1436,13 @@ def _install_anc_tar_direct(phdl, cluster_dict, config_dict):
 
     _fail_unreachable_nodes(cluster_dict, out_dict, "tar install")
 
-    _validate_exe_paths(phdl, cluster_dict, content_dir)
+    _validate_exe_paths(orch, cluster_dict, content_dir)
 
 
 # =========================================================================
 # ROCm shared-library resolution (ldconfig)
 # =========================================================================
-def ensure_rocm_ldconfig(phdl, cluster_dict):
+def ensure_rocm_ldconfig(orch, cluster_dict):
     '''
     Make ROCm shared libraries resolvable on every node before ANC runs.
 
@@ -1496,7 +1497,7 @@ def ensure_rocm_ldconfig(phdl, cluster_dict):
         f"fi"
     )
 
-    out_dict = phdl.exec(check, timeout=120)
+    out_dict = orch.exec(check, timeout=120)
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -1537,7 +1538,7 @@ _ANC_READY = False
 _ANC_INSTALL_PATHS = None
 
 
-def resolve_anc_install_location(phdl, cluster_dict, config_dict):
+def resolve_anc_install_location(orch, cluster_dict, config_dict):
     '''
     Resolve the on-node ANC install location group commands run from, verifying
     it actually exists on every node, and cache it for the session.
@@ -1562,7 +1563,7 @@ def resolve_anc_install_location(phdl, cluster_dict, config_dict):
     paths = resolve_anc_paths_from_config(config_dict)
     expected = _expected_nodes(cluster_dict)
 
-    out_dict = phdl.exec(f"test -f '{paths.anc_bin}' && echo ANC_PRESENT || true", timeout=60)
+    out_dict = orch.exec(f"test -f '{paths.anc_bin}' && echo ANC_PRESENT || true", timeout=60)
     print_test_output(log, out_dict)
 
     all_present = True
@@ -1582,49 +1583,22 @@ def resolve_anc_install_location(phdl, cluster_dict, config_dict):
     return paths
 
 
-def _anc_installed(phdl, cluster_dict, config_dict):
-    '''
-    Report whether ANC is already installed on every expected node.
-
-    "Installed" is judged at the per-install anc.py location (a relocated tar
-    prefix when configured, else the default), so a run configured for a new
-    prefix does not treat a leftover install at the old location as present.
-    When ``anc.anc_version`` is set, "installed" means every node reports that
-    version there (via --content-list for DIRECT 1.5.0+, --version for legacy);
-    otherwise it means that anc.py is present on every node.
-    '''
-    expected = _expected_nodes(cluster_dict)
-    if not expected:
-        return False
-
-    paths = resolve_anc_paths_from_config(config_dict)
-
-    anc_version = config_dict.get("anc", {}).get("anc_version")
-    if anc_version:
-        url = config_dict.get("anc", {}).get("anc_release_url") or ""
-        try:
-            is_direct = detect_package_flavour(url).is_direct if url and str(url).strip() else False
-        except ValueError:
-            is_direct = False
-        matches = node_version_matches(phdl, anc_version, anc_bin=paths.anc_bin, is_direct=is_direct)
-        return all(matches.get(host) for host in expected)
-
-    out_dict = phdl.exec(f"test -f '{paths.anc_bin}' && echo ANC_PRESENT || true", timeout=60)
-    return all("ANC_PRESENT" in (out_dict.get(host) or "") for host in expected)
-
-
-def ensure_anc_ready(phdl, cluster_dict, config_dict):
+def ensure_anc_ready(orch, cluster_dict, config_dict):
     '''
     Ensure ANC is installed and ROCm libs are resolvable before a group runs.
 
-    Idempotent and session-cached: the first call installs ANC (unless already
-    present, per ``_anc_installed``) and runs ``ensure_rocm_ldconfig``; later
-    calls in the same pytest session return immediately. Each ANC group test
-    calls this first so a single-group run self-installs while a full-suite run
-    pays the setup cost once.
+    Idempotent and session-cached: the first call drives the non-strict install /
+    readiness flow (install_anc with strict=False) and runs
+    ``ensure_rocm_ldconfig``; later calls in the same pytest session return
+    immediately. Each ANC group test calls this first so a single-group run
+    self-installs while a full-suite run pays the setup cost once.
 
-    Install / ldconfig failures propagate as pytest failures (via their own
-    ``update_test_result``), which aborts the calling group test.
+    install_anc owns the whole decision: it installs only when a node is missing
+    ANC or is below a configured anc_version with a usable anc_release_url, and
+    otherwise proceeds against the already-installed version. Its single
+    ``update_test_result`` raises a pytest failure (aborting this group test)
+    when ANC is absent and uninstallable or an attempted install fails, so a
+    failed install never reaches ldconfig.
 
     After install + ldconfig succeed, the on-node install location is resolved
     and cached (resolve_anc_install_location) so every group in the session runs
@@ -1635,20 +1609,16 @@ def ensure_anc_ready(phdl, cluster_dict, config_dict):
         log.info("ANC already ensured this session; skipping install/ldconfig")
         return
 
-    if _anc_installed(phdl, cluster_dict, config_dict):
-        log.info("ANC already installed on all nodes; skipping install")
-    else:
-        log.info("ANC not present on all nodes; installing")
-        install_anc(phdl, cluster_dict, config_dict)
+    install_anc(orch, cluster_dict, config_dict, strict=False)
 
-    ensure_rocm_ldconfig(phdl, cluster_dict)
+    ensure_rocm_ldconfig(orch, cluster_dict)
 
     # Resolve + verify the on-node install location now that ANC is present, and
     # cache it for the session's group runs. A missing location records a failure
     # here; surface it as a pytest failure so we never proceed to run groups
     # against a path that does not exist.
     globals.error_list = []
-    if resolve_anc_install_location(phdl, cluster_dict, config_dict) is None:
+    if resolve_anc_install_location(orch, cluster_dict, config_dict) is None:
         update_test_result()
         return
 
@@ -1658,9 +1628,7 @@ def ensure_anc_ready(phdl, cluster_dict, config_dict):
 # =========================================================================
 # Group execution + artifact collection
 # =========================================================================
-def _sanitize_path_component(value):
-    '''Make a string safe to use as a single filesystem path component.'''
-    return re.sub(r"[^\w.\-]", "_", value)
+_sanitize_path_component = amdtools_lib.sanitize_path_component
 
 
 def _node_label(host, cluster_dict):
@@ -1674,109 +1642,23 @@ def _node_label(host, cluster_dict):
     return _node_label_from_file(cluster_dict, host)
 
 
-def _chown_tree_to_runner(host, root_path):
-    '''Recursively chown an extracted log tree to the current process's UID/GID.
+_chown_tree_to_runner = amdtools_lib.chown_tree_to_runner
 
-    Best-effort: if the runner lacks privileges to chown (e.g. some entry is
-    root-owned and the process is unprivileged), log a warning rather than
-    failing the whole log-collection step.
+
+_is_within_directory = amdtools_lib.is_within_directory
+
+
+_safe_tar_extract = amdtools_lib.safe_tar_extract
+
+
+def _pull_log_dir(orch, host, user, log_dir, dest_dir):
+    '''Pull the ANC log dir with amdtools_lib.pull_remote_dir, then require ``console.log`` in it.
+
+    Returns (console_log_path, failure_reason), as before the helper moved.
     '''
-    uid = os.getuid()
-    gid = os.getgid()
-    try:
-        os.chown(root_path, uid, gid)
-        for dirpath, dirnames, filenames in os.walk(root_path):
-            for name in dirnames + filenames:
-                try:
-                    os.chown(os.path.join(dirpath, name), uid, gid)
-                except OSError as exc:
-                    log.warning("Node %s: could not chown %s: %s", host, os.path.join(dirpath, name), exc)
-    except OSError as exc:
-        log.warning("Node %s: could not chown log tree %s: %s", host, root_path, exc)
-
-
-def _pull_log_dir(single, host, user, log_dir, dest_dir):
-    '''
-    Copy the ENTIRE ANC log directory from the node into dest_dir.
-
-    ANC writes every artifact (console.log, journal.log, per-item logs, json
-    summaries, ...) under its "Log directory". Rather than cherry-picking
-    files, tar the whole directory on the node, download the tarball, and
-    extract it locally so the full ANC log tree is preserved.
-
-    Returns:
-      tuple[str | None, str | None]: (console_log_path, failure_reason).
-      console_log_path is the local path to the extracted console.log on
-      success; failure_reason is set (and path None) on any collection error.
-    '''
-    log_dir = log_dir.rstrip("/")
-    base = os.path.basename(log_dir)
-    parent = os.path.dirname(log_dir)
-    # Per-user remote path so concurrent users on the same node do not collide on
-    # a shared /tmp/anc_<base>.tar.gz owned by another user.
-    user_tmp = _remote_user_tmp(user)
-    remote_tar = f"{user_tmp}/anc_{base}.tar.gz"
-
-    # ANC ran under sudo, so log_dir (and its parents, e.g. /root/logs) are
-    # root-owned and unreadable by the plain SSH user. Build the archive under
-    # sudo, then chown it back so SFTP can pull it. `&&` so a tar failure aborts
-    # before the (silent-on-nonzero) exec proceeds to download a missing file.
-    archive_cmd = (
-        f"mkdir -p '{user_tmp}' && sudo tar -czf '{remote_tar}' -C '{parent}' '{base}' "
-        f"&& sudo chown '{user}' '{remote_tar}'"
-    )
-    try:
-        single.exec(archive_cmd, timeout=600)
-    except Exception as exc:
-        return None, f"could not archive log dir {log_dir}: {exc}"
-
-    local_tar = os.path.join(dest_dir, f"{base}.tar.gz")
-    # download_file suffixes the local path with '_<host>' (per-host collision
-    # avoidance) and returns {host: actual_path}; use that, not local_tar.
-    try:
-        downloaded = single.download_file(remote_tar, local_tar)
-    except Exception as exc:
-        return None, f"could not download log archive from {log_dir}: {exc}"
-    finally:
-        try:
-            single.exec(f"rm -f '{remote_tar}'", timeout=30)
-        except Exception as exc:  # best-effort cleanup
-            log.warning("Node %s: could not remove remote tar %s: %s", host, remote_tar, exc)
-
-    local_tar = None
-    if isinstance(downloaded, dict) and downloaded:
-        # single-node handle: prefer the host key, else the only entry.
-        local_tar = downloaded.get(host) or next(iter(downloaded.values()))
-    if not local_tar or not os.path.isfile(local_tar):
-        return None, (
-            f"could not archive log dir {log_dir}: remote archive was not created (check sudo/tar permissions on node)"
-        )
-
-    try:
-        with tarfile.open(local_tar) as tf:
-            # filter="data" sanitizes members (no absolute paths / "../" escapes)
-            # and silences the 3.12+ extractall deprecation. The param was added
-            # in 3.12 / backported to 3.9.17+, 3.10.12+, 3.11.4+; fall back for
-            # older interpreters (repo targets python>=3.9).
-            try:
-                tf.extractall(dest_dir, filter="data")
-            except TypeError:
-                tf.extractall(dest_dir)
-    except Exception as exc:
-        return None, f"could not extract log archive for {log_dir}: {exc}"
-    finally:
-        try:
-            os.remove(local_tar)
-        except OSError:
-            pass
-
-    extracted_dir = os.path.join(dest_dir, base)
-    # ANC archived its logs as root, so entries may carry root ownership. Give
-    # the whole extracted tree back to the user running the test so the logs are
-    # readable/removable without sudo on this box.
-    _chown_tree_to_runner(host, extracted_dir)
-    log.info("Node %s: ANC logs copied to %s", host, extracted_dir)
-
+    extracted_dir, reason = amdtools_lib.pull_remote_dir(orch, host, user, log_dir, dest_dir, "ANC")
+    if reason:
+        return None, reason
     console_path = os.path.join(extracted_dir, CONSOLE_LOG)
     if not os.path.isfile(console_path):
         return None, f"{CONSOLE_LOG} not found under {log_dir}"
@@ -1816,42 +1698,42 @@ def _find_errors_json(console_path):
     return candidate if os.path.isfile(candidate) else None
 
 
-def _evaluate_node(cluster_dict, config_dict, host, output, test_name, timestamp):
+def _evaluate_node(orch, cluster_dict, host, output, test_name, timestamp, unit="group"):
     '''
     Collect the ANC log directory for one node and decide whether it passed.
 
     ``output`` is the captured ANC console text (full when
     print_all_to_console, else just the "Log directory:" line) used only to
-    locate the log-directory path. The per-node destination is resolved from
-    config anc.log_folder_path with the "<node>" token set to this node's
-    "<ip>_<hostname>" label (default layout
-    ``.../anc_logs/<node>/<test_name>/<timestamp>/``); the whole log directory is
+    locate the log-directory path. The per-node destination is resolved under
+    this run's run_dir with the "<node>" token set to this node's
+    "<ip>_<hostname>" label (layout
+    ``<run_dir>/anc_logs/<node>/<test_name>/<timestamp>/``); the whole log directory is
     copied there and the verdict is taken from console.log's final "Program
     exiting with return code ANC_SUCCESS [0]" line. On failure, the item summary
     and FAILED rows are surfaced.
+
+    All artifact collection is scoped to this single ``host`` via the shared
+    ``orch`` handle (``hosts=[host]``), so each node's log tree is pulled
+    independently into its own per-node destination.
+
+    ``unit`` ("group" / "item") scopes the not-found detection and log messages
+    to the selection kind actually run, so a group run is not misclassified by an
+    item's FATAL line (and vice versa).
 
     Returns:
       NodeResult(reason, dest_dir, label, errors_json): reason is None when the
       node passed; dest_dir/label/errors_json are filled in as far as collection
       got (errors_json is the copied-out errors.json path, or None if absent).
     '''
-    try:
-        single = Pssh(
-            log,
-            [host],
-            user=cluster_dict["username"],
-            pkey=cluster_dict["priv_key_file"],
-        )
-    except Exception as exc:  # infra failure must fail the test
-        return NodeResult(f"could not open SSH handle for artifact collection: {exc}", None, None, None)
-
+    not_found_re = anc_not_found_re(unit)
     label = _node_label(host, cluster_dict)
 
-    # ANC prints "FATAL: Group '<x>' not found" (and exits ANC_PROG_NOT_FOUND)
-    # when the requested group is not installed on this node. There are no useful
-    # logs to collect in that case, so report it plainly and skip collection.
-    if ANC_GROUP_NOT_FOUND_RE.search(output or ""):
-        log.error("Node %s: ANC group '%s' not found on remote system", host, test_name)
+    # ANC prints "FATAL: <Group|Item> '<x>' not found" (and exits
+    # ANC_PROG_NOT_FOUND) when the requested group/item is not installed on this
+    # node. There are no useful logs to collect in that case, so report it plainly
+    # and skip collection.
+    if not_found_re.search(output or ""):
+        log.error("Node %s: ANC %s '%s' not found on remote system", host, unit, test_name)
         return NodeResult(f"This test is not available on the remote system [{label}]", None, label, None)
 
     ld_match = LOG_DIRECTORY_RE.search(output or "")
@@ -1861,10 +1743,10 @@ def _evaluate_node(cluster_dict, config_dict, host, output, test_name, timestamp
     log_dir = ld_match.group(1)
     log.info("Node %s: ANC %s log directory: %s", host, test_name, log_dir)
 
-    dest_dir = resolve_anc_log_folder(config_dict, test_name, timestamp, node=label)
+    dest_dir = resolve_anc_log_folder(test_name, timestamp, node=label)
     os.makedirs(dest_dir, exist_ok=True)
 
-    console_path, infra_reason = _pull_log_dir(single, host, cluster_dict["username"], log_dir, dest_dir)
+    console_path, infra_reason = _pull_log_dir(orch, host, cluster_dict["username"], log_dir, dest_dir)
     if infra_reason:
         return NodeResult(infra_reason, dest_dir, label, None)
 
@@ -1884,11 +1766,17 @@ def _evaluate_node(cluster_dict, config_dict, host, output, test_name, timestamp
     rc_name, rc_value = rc_matches[-1][0], int(rc_matches[-1][1])
     log.info("Node %s: ANC %s program return code is %s [%s]", host, test_name, rc_name, rc_value)
     if rc_value != 0:
-        # Fallback path: ANC still writes a Log directory on a missing group, so
-        # if the FATAL line was not surfaced in the streamed output it is caught
-        # here via the dedicated return code, with the same friendly message.
-        if rc_name == ANC_PROG_NOT_FOUND_NAME or ANC_GROUP_NOT_FOUND_RE.search(console_text):
-            log.error("Node %s: ANC group '%s' not found on remote system", host, test_name)
+        # "Not available" is decided ONLY by the unit-scoped FATAL matcher in the
+        # collected console.log, never by the ANC_PROG_NOT_FOUND return code
+        # alone. ANC exits ANC_PROG_NOT_FOUND both when the requested selection is
+        # absent AND when a leaf item inside an otherwise-present group is missing
+        # (it prints "FATAL: Item ..." and exits the same code); keying off the
+        # return code would mislabel that genuine group failure as "not
+        # available". The scoped matcher distinguishes them by the FATAL line's
+        # kind (Group vs Item), so a missing leaf item in a group falls through to
+        # the real-failure path below.
+        if not_found_re.search(console_text):
+            log.error("Node %s: ANC %s '%s' not found on remote system", host, unit, test_name)
             return NodeResult(
                 f"This test is not available on the remote system [{label}]", dest_dir, label, errors_json
             )
@@ -1902,23 +1790,8 @@ def _evaluate_node(cluster_dict, config_dict, host, output, test_name, timestamp
 
 
 def _stash_report_link(request, rel_path, link_name):
-    '''
-    Stash a pytest-html url extra on the test node so it renders in the Links
-    column. pytest-html 4.x reads links from report.extras; the repo-root
-    pytest_runtest_makereport hook merges these stashed extras in for this test.
-    Best-effort: a link problem never fails the test.
-    '''
-    if not rel_path:
-        return
-    try:
-        import pytest_html
-
-        extra = pytest_html.extras.url(rel_path, name=link_name)
-        pending = getattr(request.node, "_anc_html_extras", [])
-        pending.append(extra)
-        request.node._anc_html_extras = pending
-    except Exception as exc:  # link is best-effort; file is already in zip
-        log.warning("ANC '%s': could not add report link '%s': %s", getattr(request.node, "name", "?"), link_name, exc)
+    '''Bind ANC's HTML-extras attribute to amdtools_lib.stash_report_link.'''
+    return amdtools_lib.stash_report_link(request, rel_path, link_name, ANC_HTML_EXTRAS_ATTR)
 
 
 def _attach_node_errors_json(request, mgr, test_name, timestamp, results):
@@ -1930,7 +1803,12 @@ def _attach_node_errors_json(request, mgr, test_name, timestamp, results):
     (not moved) so the original stays inside the collected ANC log tree, and it is
     renamed to "<label>_<test>_<timestamp>_errors.json" so multiple nodes never
     collide in the shared report dir. These links always appear (pass or fail).
+
+    Returns {label: rel_path} for each node whose errors.json was attached, so the
+    Run Deck can link the SAME copied file (the deck HTML is a sibling of it in
+    the report dir) rather than recomputing a name that could drift.
     '''
+    hrefs = {}
     for r in results:
         if not r.errors_json or not os.path.isfile(r.errors_json):
             log.warning("ANC '%s': no %s to link for node %s", test_name, ERRORS_JSON, r.label)
@@ -1942,8 +1820,11 @@ def _attach_node_errors_json(request, mgr, test_name, timestamp, results):
                 r.errors_json, request=request, dest_name=dest_name, track_in_reports=False
             )
             _stash_report_link(request, rel_path, link_name)
+            if rel_path:
+                hrefs[r.label] = os.path.basename(rel_path)
         except Exception as exc:  # best-effort
             log.warning("ANC '%s': could not attach %s for node %s: %s", test_name, ERRORS_JSON, r.label, exc)
+    return hrefs
 
 
 def _attach_node_anc_tarballs(request, mgr, config_dict, test_name, timestamp, results, failed):
@@ -1954,48 +1835,19 @@ def _attach_node_anc_tarballs(request, mgr, config_dict, test_name, timestamp, r
     Gating (per config anc.ADD_ANC_LOGS_TO_HTML_REPORTS):
       - flag True  -> always attach.
       - flag False -> attach only when the test failed.
+
+    Returns {label: rel_path} for each node whose tarball was attached, so the
+    Run Deck can link the SAME copied file rather than recomputing a name.
     '''
     always = _as_bool(config_dict.get("anc", {}).get(ADD_ANC_LOGS_TO_HTML_KEY), default=False)
     if not always and not failed:
         log.info("ANC '%s': skipping ANC-log attach (test passed and %s is False)", test_name, ADD_ANC_LOGS_TO_HTML_KEY)
-        return
-
-    present = [r for r in results if r.dest_dir and os.path.isdir(r.dest_dir) and os.listdir(r.dest_dir)]
-    if not present:
-        log.warning("ANC '%s': no collected logs to attach to HTML report", test_name)
-        return
+        return {}
 
     runner_base = resolve_runner_results_base(config_dict.get("run_config", {}))
-    os.makedirs(runner_base, exist_ok=True)
-
-    for r in present:
-        node_dir = r.dest_dir.rstrip(os.sep)
-        arcname = r.label or os.path.basename(node_dir)
-        tar_path = os.path.join(runner_base, f"{r.label}_{test_name}_{timestamp}_anc_logs.tar.gz")
-        try:
-            with tarfile.open(tar_path, "w:gz") as tf:
-                tf.add(node_dir, arcname=arcname)
-        except Exception as exc:  # best-effort; do not fail the test
-            log.warning("ANC '%s': could not archive logs for node %s: %s", test_name, r.label, exc)
-            continue
-        link_name = f"ANC logs: {r.label}" + (" (FAILED)" if r.reason else "")
-        try:
-            # track_in_reports=True lists the tarball in the Reports section; the
-            # Reports renderer groups it under its test's verdict and shows it
-            # only for FAILED tests (test_name/passed carry that grouping info).
-            # The per-row link is added separately via _stash_report_link.
-            # NOTE: do not pass link_name here — the per-row link is added by
-            # _stash_report_link below; passing it would duplicate the row link.
-            rel_path = mgr.add_html_to_report(
-                tar_path,
-                request=request,
-                track_in_reports=True,
-                test_name=test_name,
-                passed=not r.reason,
-            )
-            _stash_report_link(request, rel_path, link_name)
-        except Exception as exc:  # best-effort
-            log.warning("ANC '%s': could not attach logs for node %s: %s", test_name, r.label, exc)
+    return amdtools_lib.attach_node_log_tarballs(
+        request, mgr, results, test_name, timestamp, runner_base, "ANC", ANC_HTML_EXTRAS_ATTR
+    )
 
 
 def _record_anc_verdict(request, test_name, results, passed_labels, failed_nodes):
@@ -2038,47 +1890,75 @@ def _attach_anc_logs_to_html(request, config_dict, test_name, results, timestamp
 
     ``results`` is a list of NodeResult. Best-effort throughout: a reporting
     problem is logged but never turned into a test failure.
+
+    Returns ({label: errors_json_href}, {label: log_tarball_href}) — the actual
+    relative names of the files placed next to the report, so the Run Deck links
+    the same copies instead of guessing a name.
     '''
     if request is None:
-        return
+        return {}, {}
     mgr = getattr(request.config, "_html_report_manager", None)
     if mgr is None or not getattr(mgr, "is_enabled", False):
-        return
+        return {}, {}
 
-    _attach_node_errors_json(request, mgr, test_name, timestamp, results)
-    _attach_node_anc_tarballs(request, mgr, config_dict, test_name, timestamp, results, failed)
+    errors_hrefs = _attach_node_errors_json(request, mgr, test_name, timestamp, results)
+    tarball_hrefs = _attach_node_anc_tarballs(request, mgr, config_dict, test_name, timestamp, results, failed)
+    return errors_hrefs or {}, tarball_hrefs or {}
 
 
-def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=None):
+def run_anc_groups(orch, cluster_dict, config_dict, groups, test_name, request=None):
     '''
     Run one or more ANC groups in a single invocation on all nodes.
 
-    Executes ``cd <ANC_DIR> && sudo ./anc.py -g <groups...>`` on every node,
-    copies the ENTIRE ANC log directory to the configured log_folder_path prefix
-    (laid down as ``<prefix>/anc_logs/<node>/<test_name>/<timestamp>``, where
-    ``<node>`` is that node's ``<ip>_<hostname>`` label), and PASSES only
-    when every node's console.log ends with ANC_SUCCESS [0]. On failure the item
-    summary and FAILED rows are surfaced. Failures across parallel nodes are
-    aggregated into a SINGLE test failure.
+    Thin wrapper over run_anc_selection with the group selector (``-g``). See
+    run_anc_selection for the full behaviour.
+    '''
+    run_anc_selection(orch, cluster_dict, config_dict, groups, test_name, selector="-g", unit="group", request=request)
+
+
+def run_anc_items(orch, cluster_dict, config_dict, items, test_name, request=None):
+    '''
+    Run one or more individual ANC items in a single invocation on all nodes.
+
+    Thin wrapper over run_anc_selection with the item selector (``-i``). See
+    run_anc_selection for the full behaviour.
+    '''
+    run_anc_selection(orch, cluster_dict, config_dict, items, test_name, selector="-i", unit="item", request=request)
+
+
+def run_anc_selection(orch, cluster_dict, config_dict, selection, test_name, selector="-g", unit="group", request=None):
+    '''
+    Run one or more ANC groups OR items in a single invocation on all nodes.
+
+    Executes ``cd <ANC_DIR> && sudo ./anc.py <selector> <selection...>`` on every
+    node (``selector`` is ``-g`` for groups or ``-i`` for items), copies the
+    ENTIRE ANC log directory under this run's run_dir (laid down as
+    ``<run_dir>/anc_logs/<node>/<test_name>/<timestamp>``, where ``<node>`` is
+    that node's ``<ip>_<hostname>`` label), and PASSES only when every node's
+    console.log ends with ANC_SUCCESS [0]. On failure the item summary and FAILED
+    rows are surfaced. Failures across parallel nodes are aggregated into a
+    SINGLE test failure.
 
     Console behaviour is config-driven: when anc.print_all_to_console is truthy
-    (default), the full ANC group output is echoed to the console; when falsey,
-    ANC output is suppressed and only the "Log directory:" line is captured
-    (the verdict always comes from the collected console.log either way).
+    (default), the full ANC output is echoed to the console; when falsey, ANC
+    output is suppressed and only the "Log directory:" line is captured (the
+    verdict always comes from the collected console.log either way).
 
     Parameters:
-      groups:    list of ANC group names passed to ``anc.py -g``.
+      selection: list of ANC group/item names passed after ``selector``.
       test_name: name used for the log path and messages (e.g. "test_cpu").
+      selector:  ``-g`` (groups) or ``-i`` (items).
+      unit:      human label for log messages ("group" / "item").
     '''
     globals.error_list = []
 
     anc_cfg = config_dict["anc"]
     # anc.py lives under the per-install prefix (a relocated tar prefix when
-    # configured, else the default), so the group run cd's to where ANC actually
+    # configured, else the default), so the run cd's to where ANC actually
     # installed rather than the fixed default dir. Prefer the session-cached
     # location resolved + node-verified by resolve_anc_install_location (via
     # ensure_anc_ready); fall back to a fresh config resolve for direct callers
-    # that ran a group without going through the readiness guard.
+    # that ran without going through the readiness guard.
     anc_dir = (_ANC_INSTALL_PATHS or resolve_anc_paths_from_config(config_dict)).anc_dir
     inactivity_timeout = anc_cfg.get(INACTIVITY_TIMEOUT_KEY, DEFAULT_ANC_INACTIVITY_TIMEOUT)
     print_all = _as_bool(anc_cfg.get(PRINT_ALL_TO_CONSOLE_KEY), default=True)
@@ -2086,9 +1966,9 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
     # Per-node destinations are resolved individually in _evaluate_node (each
     # substitutes its own "<node>" label). Here we only compute the pattern with
     # "<node>" left intact, purely to announce where logs will land.
-    log_pattern = resolve_anc_log_folder(config_dict, test_name, timestamp)
+    log_pattern = resolve_anc_log_folder(test_name, timestamp)
     expected_nodes = list(cluster_dict["node_dict"].keys())
-    groups_arg = " ".join(groups)
+    selection_arg = " ".join(selection)
 
     # Announce the resolved (substituted) log directory up front so the user
     # knows exactly where this run's ANC logs will land.
@@ -2100,7 +1980,7 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
         # Run ANC normally so its full output streams back, and print it. ANC's
         # own progress lines keep the SSH channel active, which continually
         # resets the inactivity timer (only a genuine stall trips it).
-        cmd = f"cd '{anc_dir}' && sudo ./anc.py -g {groups_arg}"
+        cmd = f"cd '{anc_dir}' && sudo ./anc.py {selector} {selection_arg}"
     else:
         # Suppress the (potentially huge) ANC output: redirect stdout/stderr to
         # a per-run file on the node and echo ONLY the "Log directory:" line.
@@ -2121,7 +2001,7 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
         remote_stdout = f"{user_tmp}/anc_run_$$.out"
         cmd = (
             f"mkdir -p '{user_tmp}' && cd '{anc_dir}' && "
-            f"( sudo ./anc.py -g {groups_arg} > '{remote_stdout}' 2>&1 ) & "
+            f"( sudo ./anc.py {selector} {selection_arg} > '{remote_stdout}' 2>&1 ) & "
             f"anc_pid=$! && "
             f"last=-1; "
             f"while kill -0 $anc_pid 2>/dev/null; do "
@@ -2131,24 +2011,25 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
             f"sleep {ANC_DOWNLOAD_PROGRESS_INTERVAL}; done; "
             f"wait $anc_pid; "
             # Echo the "Log directory:" line (used to locate artifacts) and any
-            # "FATAL: Group ... not found" line so a missing group is detectable
-            # even when full ANC output is suppressed.
-            f"grep -iE 'Log directory:|FATAL: Group' '{remote_stdout}'; "
+            # "FATAL: Group/Item ... not found" line so a missing group/item is
+            # detectable even when full ANC output is suppressed.
+            f"grep -iE 'Log directory:|FATAL: (Group|Item)' '{remote_stdout}'; "
             f"rm -f '{remote_stdout}'"
         )
 
     log.info(
-        "ANC '%s': running %d group(s) (print_all_to_console=%s, inactivity_timeout=%ss, logs under %s)",
+        "ANC '%s': running %d %s(s) (print_all_to_console=%s, inactivity_timeout=%ss, logs under %s)",
         test_name,
-        len(groups),
+        len(selection),
+        unit,
         print_all,
         inactivity_timeout,
         log_pattern,
     )
-    log.info("ANC '%s': groups=%s", test_name, groups_arg)
+    log.info("ANC '%s': %ss=%s", test_name, unit, selection_arg)
 
     try:
-        out_dict = phdl.exec(cmd, inactivity_timeout=inactivity_timeout)
+        out_dict = orch.exec(cmd, inactivity_timeout=inactivity_timeout)
     except Exception as exc:  # infra failure must fail the test
         fail_test(f"ANC {test_name}: execution failed (SSH/exec error): {exc}")
         update_test_result()
@@ -2175,12 +2056,13 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
             results.append(NodeResult(reason, None, _node_label(host, cluster_dict), None))
             continue
         result = _evaluate_node(
+            orch,
             cluster_dict,
-            config_dict,
             host,
             out_dict[host] or "",
             test_name,
             timestamp,
+            unit=unit,
         )
         # Fall back to the host key for the label if SSH-based labelling failed,
         # so every collected dir / link stays distinct.
@@ -2201,6 +2083,73 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
     _record_anc_verdict(request, test_name, results, passed_labels, failed_nodes)
 
     # Populate the per-test Links column before update_test_result() may raise.
-    _attach_anc_logs_to_html(request, config_dict, test_name, results, timestamp, bool(failed_nodes))
+    errors_hrefs, tarball_hrefs = _attach_anc_logs_to_html(
+        request, config_dict, test_name, results, timestamp, bool(failed_nodes)
+    )
+
+    # Capture structured per-node/per-group results into the Run Deck session
+    # store (best-effort; a reporting problem never fails the test).
+    _capture_rundeck_results(
+        request, cluster_dict, config_dict, selection, test_name, timestamp, results, errors_hrefs, tarball_hrefs
+    )
 
     update_test_result()
+
+
+def _console_log_under(dest_dir):
+    '''Locate the collected console.log under a node's dest_dir, or None.'''
+    if not dest_dir or not os.path.isdir(dest_dir):
+        return None
+    for root, _dirs, files in os.walk(dest_dir):
+        if CONSOLE_LOG in files:
+            return os.path.join(root, CONSOLE_LOG)
+    return None
+
+
+def _node_status(result):
+    '''Map a NodeResult to a deck status: pass | na | fail.'''
+    return amdtools_lib.deck_status(result.reason)
+
+
+def _capture_rundeck_results(
+    request, cluster_dict, config_dict, selection, test_name, timestamp, results, errors_hrefs, tarball_hrefs
+):
+    '''
+    Build the structured per-node records for this group/item selection and merge
+    them into the module-scoped ``anc_res_dict`` fixture, which the Run Deck
+    session binding picks up at module teardown. No-op when the fixture is absent
+    (e.g. the install-only suite) or on any error.
+
+    ``errors_hrefs`` / ``tarball_hrefs`` map node label -> the relative name of
+    the errors.json / log tarball actually copied next to the report by
+    _attach_anc_logs_to_html, so the deck links the real files (not a recomputed
+    name that would 404).
+    '''
+    if request is None:
+        return
+    import pytest
+
+    try:
+        anc_res_dict = request.getfixturevalue("anc_res_dict")
+    except pytest.FixtureLookupError:  # fixture not defined for this suite; nothing to capture
+        return
+
+    try:
+        from cvs.lib import anc_rundeck
+
+        group_label = " ".join(selection) if isinstance(selection, (list, tuple)) else str(selection)
+        suite_name = getattr(request.config, "_suite_name", "") or "anc"
+        node_records = {}
+        for r in results:
+            console_path = _console_log_under(r.dest_dir)
+            node_records[r.label] = anc_rundeck.build_node_record(
+                status=_node_status(r),
+                console_path=console_path,
+                errors_json_path=r.errors_json,
+                errors_json_href=errors_hrefs.get(r.label, ""),
+                log_tarball_href=tarball_hrefs.get(r.label, ""),
+            )
+        meta = anc_rundeck.make_meta(cluster_dict, config_dict, suite_name, timestamp)
+        anc_rundeck.record_group(anc_res_dict, group_label, node_records, meta=meta)
+    except Exception as exc:  # best-effort; never fail the test on a reporting issue
+        log.warning("ANC '%s': could not capture Run Deck results: %s", test_name, exc)

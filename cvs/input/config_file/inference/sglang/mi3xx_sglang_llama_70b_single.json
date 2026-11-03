@@ -46,9 +46,7 @@
     "memory_fraction": "0.85",
     "tokenizer_mode": "auto",
     "inference_poll_iterations": "16",
-    "add_flags": ["--attention-backend aiter"],
-    "benchmark_serv_node": "<changeme>",
-    "proxy_router_serv_port": "8000"
+    "add_flags": ["--attention-backend aiter"]
   },
   "benchmark_params": {
     "backend": "sglang",

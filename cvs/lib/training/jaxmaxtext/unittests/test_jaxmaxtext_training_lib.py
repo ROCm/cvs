@@ -7,14 +7,26 @@ Unit tests for cvs/lib/training/jaxmaxtext/jaxmaxtext_training_lib.py::MaxTextTr
 The job talks to the outside world only through an injected orchestrator
 (`orch.exec` / `orch.exec_cmd_list`), so every test builds a job with a
 MagicMock orch and a lightweight SimpleNamespace variant -- no SSH, no
-container, no real sleeps (mirrors test_megatron_training_lib.py).
+container, no real sleeps (mirrors test_primus_lib.py).
 '''
 
+import base64
+import io
+import struct
+import tarfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import MaxTextTrainingJob, needs_hf_tokenizer
+from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import (
+    MaxTextTrainingJob,
+    _ALWAYS_ON_ERR_PATTERNS,
+    _NAN_INF_RE,
+    _TB_COLLECT_MAX_BYTES,
+    needs_hf_tokenizer,
+)
+from cvs.lib.utils.log_poller import LogPoller
+from cvs.unittests.support import TMP
 
 
 def _training(**overrides):
@@ -64,18 +76,38 @@ def _make_job(hosts=None, **training_overrides):
     variant = SimpleNamespace(
         training=_training(**training_overrides),
         model=SimpleNamespace(id="llama3.3-70b"),
-        paths=SimpleNamespace(log_dir="/logs", models_dir="/models", temp_dir="/tmp/tester/jaxmaxtext"),
+        paths=SimpleNamespace(
+            log_dir="/logs",
+            models_dir="/models",
+            temp_dir=f"{TMP}/tester/jaxmaxtext",
+            hf_token_file="/secrets/.hf_token",
+        ),
     )
-    return MaxTextTrainingJob(orch, variant, hf_token="dummy"), orch
+    return MaxTextTrainingJob(orch, variant), orch
 
 
 def _wire_container_exec(orch, script="/workspace/maxtext/src/MaxText/train.py"):
-    """Answer the in-container train-script probe ``build_training_cmd`` runs."""
+    """Answer the in-container probes ``build_training_cmd`` runs: the HF token
+    file check (reports the file present) and the train-script probe."""
 
     def _side(cmd, *a, **k):
         text = str(cmd)
+        if "test -s" in text:
+            return {h: "__HF_TOKEN_OK__" for h in orch.hosts}
         if "train.py" in text:
             return {h: script for h in orch.hosts}
+        return {}
+
+    orch.exec.side_effect = _side
+
+
+def _wire_token_file(orch, present=True):
+    """Answer only the HF token file check (`test -s`): present -> OK, else MISSING."""
+    marker = "__HF_TOKEN_OK__" if present else "__HF_TOKEN_MISSING__"
+
+    def _side(cmd, *a, **k):
+        if "test -s" in str(cmd):
+            return {h: marker for h in orch.hosts}
         return {}
 
     orch.exec.side_effect = _side
@@ -89,6 +121,30 @@ def _log(steps=3):
             f"TFLOP/s/device: 200.0, Tokens/s/device: 25000.0, total_weights: 1, loss: {9.0 - i}"
         )
     return "\n".join(lines) + "\n"
+
+
+def _scan(job, host, i, text, log=None):
+    """Scan a chunk with the SAME wiring poll_for_completion gives the LogPoller.
+
+    Exercises jaxmaxtext's error-signature data (always-on + config error_patterns
+    + NaN/Inf) through the generic LogPoller.scan mechanism, built with the SAME
+    collision-safe merge (setdefault) production uses so built-ins are not clobbered.
+    """
+    error_patterns = {
+        "NaN/Inf in training metrics": _NAN_INF_RE.pattern,
+        **_ALWAYS_ON_ERR_PATTERNS,
+    }
+    for name, pattern in job.error_patterns.items():
+        error_patterns.setdefault(name, pattern)
+    LogPoller(
+        job.orch,
+        [job._node_log(k) for k in range(job.num_nodes)],
+        complete_pattern="x",
+        error_patterns=error_patterns,
+        error_label="Training",
+        timeout_s=1,
+        log=log,
+    ).scan(host, i, text)
 
 
 class ConstructorTests(unittest.TestCase):
@@ -122,46 +178,24 @@ class StopTrainingTests(unittest.TestCase):
         self.assertIn("[t]raining_launcher_node", cmd)
 
 
-class IsCompleteTests(unittest.TestCase):
-    def test_all_nodes_complete(self):
-        job, orch = _make_job(hosts=["h0", "h1"])
-        orch.exec_cmd_list.return_value = {"h0": "1", "h1": "1"}
-        self.assertTrue(job.is_complete())
-
-    def test_one_node_incomplete(self):
-        job, orch = _make_job(hosts=["h0", "h1"])
-        orch.exec_cmd_list.return_value = {"h0": "1", "h1": "0"}
-        self.assertFalse(job.is_complete())
-
-    def test_missing_host_output(self):
-        job, orch = _make_job(hosts=["h0", "h1"])
-        orch.exec_cmd_list.return_value = {"h0": "1"}
-        self.assertFalse(job.is_complete())
-
-    def test_dict_shaped_result(self):
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": {"output": "1"}}
-        self.assertTrue(job.is_complete())
-
-
 class ScanForErrorsTests(unittest.TestCase):
     def test_clean_log_no_raise(self):
         job, _ = _make_job(hosts=["h0"])
-        job._scan_chunk_for_errors("h0", 0, _log())  # should not raise
+        _scan(job, "h0", 0, _log())  # should not raise
 
     def test_empty_chunk_no_raise(self):
         job, _ = _make_job(hosts=["h0"])
-        job._scan_chunk_for_errors("h0", 0, "")  # should not raise
+        _scan(job, "h0", 0, "")  # should not raise
 
     def test_nccl_error_raises(self):
         job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "some log\nNCCL ERROR: unhandled\n")
+            _scan(job, "h0", 0, "some log\nNCCL ERROR: unhandled\n")
 
     def test_nan_metric_raises(self):
         job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "completed step: 1, TFLOP/s/device: NaN\n")
+            _scan(job, "h0", 0, "completed step: 1, TFLOP/s/device: NaN\n")
 
     def test_nan_loss_raises_even_when_throughput_numeric(self):
         # Real failure signature: loss/lm_loss/perplexity go NaN while
@@ -173,12 +207,12 @@ class ScanForErrorsTests(unittest.TestCase):
             "lm_loss: nan, perplexity: nan, moe_lb_loss: 0.000\n"
         )
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, line)
+            _scan(job, "h0", 0, line)
 
     def test_aborting_nan_loss_line_raises(self):
         job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "metric_logger.py:270] Aborting training due to NaN loss.\n")
+            _scan(job, "h0", 0, "metric_logger.py:270] Aborting training due to NaN loss.\n")
 
     def test_failure_chunk_is_logged_before_raising(self):
         # The offending chunk (e.g. a compile traceback) must be logged so it
@@ -186,9 +220,9 @@ class ScanForErrorsTests(unittest.TestCase):
         # can miss the root cause, and non-node-0 chunks are not otherwise streamed.
         job, _ = _make_job(hosts=["h0", "h1"])
         chunk = "some log\nValueError: Compiler params for platform tpu cannot be used for gpu lowering.\ngrpc tail\n"
-        with patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.log") as mock_log:
-            with self.assertRaises(RuntimeError):
-                job._scan_chunk_for_errors("h1", 1, chunk)
+        mock_log = MagicMock()
+        with self.assertRaises(RuntimeError):
+            _scan(job, "h1", 1, chunk, log=mock_log)
         logged = " ".join(str(c) for c in mock_log.error.call_args_list)
         self.assertIn("FAILURE chunk", logged)
         self.assertIn("Compiler params for platform tpu", logged)
@@ -197,7 +231,8 @@ class ScanForErrorsTests(unittest.TestCase):
         # Regression guard: valid numeric metrics (incl. a big perplexity) must
         # NOT trip the NaN detector.
         job, _ = _make_job(hosts=["h0"])
-        job._scan_chunk_for_errors(
+        _scan(
+            job,
             "h0",
             0,
             "completed step: 2, TFLOP/s/device: 38.530, Tokens/s/device: 296.258, "
@@ -208,22 +243,22 @@ class ScanForErrorsTests(unittest.TestCase):
         # A config-provided error_patterns set fully REPLACES the built-in defaults.
         job, _ = _make_job(hosts=["h0"], error_patterns={"custom": "MY_CUSTOM_ERR"})
         # The default NCCL signature is no longer active -> no raise.
-        job._scan_chunk_for_errors("h0", 0, "some log\nNCCL ERROR: unhandled\n")
+        _scan(job, "h0", 0, "some log\nNCCL ERROR: unhandled\n")
         # The custom signature IS active -> raises.
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "boom MY_CUSTOM_ERR here\n")
+            _scan(job, "h0", 0, "boom MY_CUSTOM_ERR here\n")
 
     def test_default_error_patterns_used_when_config_empty(self):
         # No config error_patterns -> built-in defaults apply.
         job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "RESOURCE_EXHAUSTED: Out of memory\n")
+            _scan(job, "h0", 0, "RESOURCE_EXHAUSTED: Out of memory\n")
 
     def test_default_segfault_pattern_raises(self):
         # segfault is part of the built-in default signatures.
         job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "worker: Segmentation fault (core dumped)\n")
+            _scan(job, "h0", 0, "worker: Segmentation fault (core dumped)\n")
 
     def test_import_error_caught_by_always_on_even_with_custom_patterns(self):
         # A config that fully overrides error_patterns (no ImportError/Traceback)
@@ -236,7 +271,15 @@ class ScanForErrorsTests(unittest.TestCase):
             "ImportError: cannot import name 'must_fuse_call' from 'jax.experimental.xla_metadata'\n"
         )
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, chunk)
+            _scan(job, "h0", 0, chunk)
+
+    def test_colliding_config_key_cannot_disable_always_on_crash_detection(self):
+        # A config that reuses the always-on 'python crash' KEY with a harmless
+        # pattern must NOT disable fast-fail on a real traceback -- the built-in
+        # value wins the collision, so the crash is still caught.
+        job, _ = _make_job(hosts=["h0"], error_patterns={"python crash": "NEVER_MATCHES_THIS", "custom": "MY_ERR"})
+        with self.assertRaises(RuntimeError):
+            _scan(job, "h0", 0, "Traceback (most recent call last):\n  File x\nModuleNotFoundError: no mod\n")
 
     def test_jax_distributed_fatal_caught_by_always_on(self):
         # The glog FATAL from a JAX distributed coordination death must fail fast
@@ -248,7 +291,7 @@ class ScanForErrorsTests(unittest.TestCase):
             "RPC: /tensorflow.CoordinationService/RegisterTask\n"
         )
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, chunk)
+            _scan(job, "h0", 0, chunk)
 
     def test_benign_coordination_shutdown_noise_not_flagged(self):
         # After a run completes, JAX emits benign WARNINGs as peers exit; these
@@ -262,36 +305,7 @@ class ScanForErrorsTests(unittest.TestCase):
             "UNAVAILABLE: failed to connect to all addresses ... Connection refused\n"
         )
         # must NOT raise
-        job._scan_chunk_for_errors("h0", 0, chunk)
-
-
-class DrainNewLogLinesTests(unittest.TestCase):
-    def test_advances_cursor_and_returns_new_text(self):
-        job, orch = _make_job(hosts=["h0", "h1"])
-        orch.exec_cmd_list.return_value = {"h0": "l1\nl2\nl3\n", "h1": "a\nb\n"}
-        new = job._drain_new_log_lines()
-        self.assertEqual(new[0], "l1\nl2\nl3\n")
-        self.assertEqual(new[1], "a\nb\n")
-        # cursor advances by the number of lines read on each node.
-        self.assertEqual(job._log_line_cursor, [3, 2])
-
-    def test_uses_cursor_offset_in_tail_and_no_console_echo(self):
-        job, orch = _make_job(hosts=["h0"])
-        job._log_line_cursor = [5]
-        orch.exec_cmd_list.return_value = {"h0": "l6\n"}
-        job._drain_new_log_lines()
-        # tail starts at the line after the cursor (5 -> +6) ...
-        cmd = orch.exec_cmd_list.call_args.args[0][0]
-        self.assertIn("tail -n +6", cmd)
-        # ... and the bulk read is NOT echoed to the console.
-        self.assertEqual(orch.exec_cmd_list.call_args.kwargs.get("print_console"), False)
-
-    def test_empty_output_leaves_cursor_unchanged(self):
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": ""}
-        new = job._drain_new_log_lines()
-        self.assertEqual(new, {})
-        self.assertEqual(job._log_line_cursor, [0])
+        _scan(job, "h0", 0, chunk)
 
 
 class ParseResultsTests(unittest.TestCase):
@@ -348,11 +362,23 @@ class SetupTokenizerTests(unittest.TestCase):
 
     def test_downloads_when_model_id_set(self):
         job, orch = _make_job(tokenizer=SimpleNamespace(hf_model_id="org/model", tokenizer_path="/models/tok"))
+        _wire_token_file(orch, present=True)
         job.setup_tokenizer()
         joined = " ".join(str(c.args[0]) for c in orch.exec.call_args_list)
         self.assertIn("hf download", joined)
         self.assertNotIn("huggingface-cli", joined)
         self.assertIn("org/model", joined)
+        # Token is read from the file inside the container, not embedded.
+        self.assertIn("/secrets/.hf_token", joined)
+        self.assertIn('export HF_TOKEN="$(tr -d', joined)
+
+    def test_download_fails_fast_when_token_file_unmapped(self):
+        # Token file not readable inside the container -> fail with a clear error
+        # instead of exporting an empty token and failing later on auth.
+        job, orch = _make_job(tokenizer=SimpleNamespace(hf_model_id="org/model", tokenizer_path="/models/tok"))
+        _wire_token_file(orch, present=False)
+        with self.assertRaisesRegex(RuntimeError, "token file .* not mounted|missing, empty, or not mounted"):
+            job.setup_tokenizer()
 
     def test_skips_download_when_dataset_is_synthetic(self):
         job, orch = _make_job(
@@ -379,7 +405,7 @@ class BuildTrainingCmdTests(unittest.TestCase):
         self.assertIn("NNODES=2", cmds[0])
         # resolved train script and user-namespaced scratch dir are wired in
         self.assertIn("/workspace/maxtext/src/MaxText/train.py", cmds[0])
-        self.assertIn("/tmp/tester/jaxmaxtext/maxtext_config.yml", cmds[0])
+        self.assertIn(f"{TMP}/tester/jaxmaxtext/maxtext_config.yml", cmds[0])
         # per-node log file is one-per-rank; common env comes from docker -e, so
         # the launcher no longer sources an env script.
         self.assertIn("training_node0.log", cmds[0])
@@ -402,19 +428,31 @@ class BuildTrainingCmdTests(unittest.TestCase):
         cmds = orch.exec_cmd_list.call_args.args[0]
         self.assertIn("JAX_COORDINATOR_IP=10.0.0.5", cmds[0])
 
-    def test_launcher_sets_creds_and_per_node_only(self):
-        # The launcher exports credentials + per-node/dynamic vars; the common
-        # env (NCCL/NVTE/XLA_FLAGS/JAX_COORDINATOR_PORT) is set on the container
-        # via docker -e, so it is NOT written into the launcher.
+    def test_launcher_reads_token_from_file_not_embedded(self):
+        # The launcher sets HF_TOKEN by reading the token FILE inside the container
+        # (the secret never enters the logged command), plus per-node/dynamic vars.
+        # The common env (NCCL/NVTE/XLA_FLAGS/JAX_COORDINATOR_PORT) comes from
+        # docker -e, so it is NOT written into the launcher.
         job, orch = _make_job(hosts=["10.0.0.5", "10.0.0.6"])
         _wire_container_exec(orch)
         job.build_training_cmd()
         cmds = orch.exec_cmd_list.call_args.args[0]
-        self.assertIn("HF_TOKEN=", cmds[0])
+        # HF_TOKEN is read from the file, not assigned a literal value.
+        self.assertIn("/secrets/.hf_token", cmds[0])
+        self.assertIn('export HF_TOKEN="$(tr -d', cmds[0])
+        self.assertNotIn("export HF_TOKEN=hf", cmds[0])
         self.assertIn("PYTHONPATH=", cmds[0])
         self.assertIn("JAX_COORDINATOR_IP=10.0.0.5", cmds[1])  # first host, on every rank
         self.assertNotIn("JAX_COORDINATOR_PORT", cmds[0])  # comes from container env (docker -e)
         self.assertNotIn("NCCL_", cmds[0])
+
+    def test_launcher_fails_fast_when_token_file_unmapped(self):
+        # Non-synthetic run whose token file is not mounted in the container must
+        # fail before launch, not silently run with an empty token.
+        job, orch = _make_job(hosts=["10.0.0.5", "10.0.0.6"])
+        _wire_token_file(orch, present=False)
+        with self.assertRaisesRegex(RuntimeError, "token file .* not mounted|missing, empty, or not mounted"):
+            job.build_training_cmd()
 
     def test_launcher_uses_custom_maxtext_root(self):
         # cd + PYTHONPATH follow training.maxtext_root so a branch checkout in
@@ -453,25 +491,25 @@ class TrainScriptResolveTests(unittest.TestCase):
 class ScratchDirTests(unittest.TestCase):
     def test_uses_paths_temp_dir(self):
         job, orch = _make_job()
-        self.assertEqual(job._get_scratch_dir(), "/tmp/tester/jaxmaxtext")
+        self.assertEqual(job._get_scratch_dir(), f"{TMP}/tester/jaxmaxtext")
         orch.exec.assert_not_called()
 
     def test_falls_back_when_temp_dir_unset(self):
         job, orch = _make_job()
         job.variant.paths = SimpleNamespace(log_dir="/logs", models_dir="/models")
-        self.assertEqual(job._get_scratch_dir(), "/tmp/cvs/jaxmaxtext")
+        self.assertEqual(job._get_scratch_dir(), f"{TMP}/cvs/jaxmaxtext")
         orch.exec.assert_not_called()
 
     def test_strips_trailing_slash(self):
         job, _ = _make_job()
-        job.variant.paths.temp_dir = "/tmp/alice/jaxmaxtext/"
-        self.assertEqual(job._get_scratch_dir(), "/tmp/alice/jaxmaxtext")
+        job.variant.paths.temp_dir = f"{TMP}/alice/jaxmaxtext/"
+        self.assertEqual(job._get_scratch_dir(), f"{TMP}/alice/jaxmaxtext")
 
     def test_result_is_cached(self):
         job, orch = _make_job()
-        job.variant.paths.temp_dir = "/tmp/bob/jaxmaxtext"
+        job.variant.paths.temp_dir = f"{TMP}/bob/jaxmaxtext"
         first = job._get_scratch_dir()
-        job.variant.paths.temp_dir = "/tmp/other/jaxmaxtext"
+        job.variant.paths.temp_dir = f"{TMP}/other/jaxmaxtext"
         self.assertEqual(job._get_scratch_dir(), first)
         orch.exec.assert_not_called()
 
@@ -511,7 +549,7 @@ class WriteMaxtextYamlTests(unittest.TestCase):
         # run YAML, the poll/timeout budget, and completion -- not the base steps.
         base, _ = _make_job()
         sweep = SimpleNamespace(name="BS=2,PRECISION=BF16,SL=8192", maxtext_overrides={"steps": 7})
-        job = MaxTextTrainingJob(base.orch, base.variant, hf_token="dummy", sweep=sweep)
+        job = MaxTextTrainingJob(base.orch, base.variant, sweep=sweep)
         self.assertEqual(job.steps, 7)  # base training.steps is 3
         self.assertEqual(job._poll_count, 70)
         job._write_maxtext_yaml()
@@ -535,7 +573,7 @@ class WriteMaxtextYamlTests(unittest.TestCase):
                 "quantization": "",
             },
         )
-        job = MaxTextTrainingJob(base.orch, base.variant, hf_token="dummy", sweep=sweep)
+        job = MaxTextTrainingJob(base.orch, base.variant, sweep=sweep)
         self.assertEqual(job.steps, 5)
         self.assertEqual(job._poll_count, 50)
         job._write_maxtext_yaml()
@@ -694,41 +732,129 @@ class StartTrainingTests(unittest.TestCase):
 class PollForCompletionTests(unittest.TestCase):
     _LIB = "cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib"
 
-    @patch(f"{_LIB}.time.sleep")
-    def test_completion_path_scans_final_drain_for_nan(self, _sleep):
-        # The chunk fetched on the completion path (final "completed step" +
-        # anything after) must be error-scanned before declaring success.
-        job, _ = _make_job(hosts=["h0"])
-        job.is_complete = MagicMock(return_value=True)
-        job._drain_new_log_lines = MagicMock(
-            side_effect=[
-                {},  # loop-body drain: nothing new yet
-                {0: "completed step: 2, TFLOP/s/device: NaN\n"},  # completion-path drain
-            ]
-        )
-        with self.assertRaises(RuntimeError):
-            job.poll_for_completion()
+    @patch(f"{_LIB}.LogPoller")
+    def test_delegates_to_log_poller_with_expected_wiring(self, mock_poller_cls):
+        job, orch = _make_job(hosts=["h0", "h1"])
+        job.poll_for_completion(timeout_s=1234)
+        mock_poller_cls.assert_called_once()
+        args, kwargs = mock_poller_cls.call_args
+        self.assertIs(args[0], orch)  # orchestrator
+        self.assertEqual(args[1], [job._node_log(0), job._node_log(1)])  # per-node logs
+        self.assertIn("completed step", kwargs["complete_pattern"])
+        self.assertEqual(kwargs["complete_policy"], "all")
+        # error_patterns is the merged dict: NaN/Inf + always-on + config.
+        ep = kwargs["error_patterns"]
+        self.assertEqual(ep["NaN/Inf in training metrics"], _NAN_INF_RE.pattern)
+        for k, v in _ALWAYS_ON_ERR_PATTERNS.items():
+            self.assertEqual(ep[k], v)
+        for k, v in job.error_patterns.items():
+            self.assertEqual(ep[k], v)
+        self.assertEqual(kwargs["stream_node"], 0)
+        # Defaults are passed explicitly so adopters see the knobs.
+        self.assertIsNone(kwargs["ignore_error_patterns"])
+        self.assertTrue(kwargs["silent_poll"])
+        self.assertEqual(kwargs["cmd_timeout_s"], 60)
+        self.assertEqual(kwargs["timeout_s"], 1234)
+        mock_poller_cls.return_value.poll.assert_called_once()
 
-    @patch(f"{_LIB}.time.sleep")
-    def test_completion_path_scans_worker_node_not_just_node0(self, _sleep):
-        # A worker-only (non-0) error in the completion window must still raise.
-        job, _ = _make_job(hosts=["h0", "h1"])
-        job.is_complete = MagicMock(return_value=True)
-        job._drain_new_log_lines = MagicMock(
-            side_effect=[
-                {},
-                {1: "some log\nNCCL ERROR: boom\n"},
-            ]
-        )
-        with self.assertRaises(RuntimeError):
-            job.poll_for_completion()
+    @patch(f"{_LIB}.LogPoller")
+    def test_config_cannot_clobber_always_on_signatures(self, mock_poller_cls):
+        # A config error_patterns key that collides with an always-on key must NOT
+        # override the built-in fast-fail pattern; non-colliding keys still apply.
+        collide = next(iter(_ALWAYS_ON_ERR_PATTERNS))
+        job, _ = _make_job(hosts=["h0"], error_patterns={collide: "CONFIG_OVERRIDE", "custom": "MY_ERR"})
+        job.poll_for_completion(timeout_s=1)
+        ep = mock_poller_cls.call_args.kwargs["error_patterns"]
+        self.assertEqual(ep[collide], _ALWAYS_ON_ERR_PATTERNS[collide])  # built-in wins
+        self.assertEqual(ep["custom"], "MY_ERR")  # non-colliding config key kept
 
-    @patch(f"{_LIB}.time.sleep")
-    def test_clean_completion_returns(self, _sleep):
+    @patch(f"{_LIB}.LogPoller")
+    def test_default_timeout_is_the_poll_budget(self, mock_poller_cls):
         job, _ = _make_job(hosts=["h0"])
-        job.is_complete = MagicMock(return_value=True)
-        job._drain_new_log_lines = MagicMock(side_effect=[{}, {0: _log()}])
-        job.poll_for_completion()  # should not raise
+        job.poll_for_completion()
+        self.assertEqual(mock_poller_cls.call_args.kwargs["timeout_s"], job._poll_count * job._poll_wait_s)
+
+
+def _tfevents_blob(step, tag, value):
+    """One TFRecord-framed Event with a single simple_value scalar."""
+
+    def _v(n):
+        out = bytearray()
+        while True:
+            b = n & 0x7F
+            n >>= 7
+            out.append(b | 0x80 if n else b)
+            if not n:
+                return bytes(out)
+
+    def _key(f, w):
+        return _v((f << 3) | w)
+
+    val = _key(1, 2) + _v(len(tag.encode())) + tag.encode() + _key(2, 5) + struct.pack("<f", value)
+    summary = _key(1, 2) + _v(len(val)) + val
+    event = _key(2, 0) + _v(step) + _key(5, 2) + _v(len(summary)) + summary
+    return struct.pack("<Q", len(event)) + b"\x00\x00\x00\x00" + event + b"\x00\x00\x00\x00"
+
+
+def _b64_tar(files):
+    """base64 of a tar containing ``{name: bytes}`` -- mimics the node-side dump."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:") as tar:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+class CollectTbScalarsTests(unittest.TestCase):
+    @staticmethod
+    def _wire(orch, b64, size_kb=16):
+        """Answer the du size-probe then the tar|base64 pull (in that order)."""
+
+        def _side(cmd, *_a, **_k):
+            if "du -ck" in str(cmd):
+                return {orch.hosts[0]: f"{size_kb}\ttotal\n"}
+            return {orch.hosts[0]: b64}
+
+        orch.exec.side_effect = _side
+
+    def test_parses_scalars_from_node0_tar(self):
+        job, orch = _make_job(hosts=["h0", "h1"])
+        blob = _tfevents_blob(0, "learning/loss", 12.0) + _tfevents_blob(1, "learning/loss", 11.0)
+        self._wire(orch, _b64_tar({"events.out.tfevents.1.host": blob}))
+        scalars = job.collect_tb_scalars()
+        self.assertEqual([s for s, _v in scalars["learning/loss"]], [0, 1])
+        self.assertEqual(job.tb_collection_note, "")
+        # the pull targets node 0 only, stays off-console, and is bounded by a timeout
+        self.assertEqual(orch.exec.call_args.kwargs.get("hosts"), ["h0"])
+        self.assertIs(orch.exec.call_args.kwargs.get("print_console"), False)
+        self.assertIsNotNone(orch.exec.call_args.kwargs.get("timeout"))
+
+    def test_empty_output_returns_empty_with_note(self):
+        job, orch = _make_job(hosts=["h0"])
+        orch.exec.return_value = {"h0": ""}
+        self.assertEqual(job.collect_tb_scalars(), {})
+        self.assertIn("no TensorBoard events", job.tb_collection_note)
+
+    def test_exec_failure_is_swallowed_with_note(self):
+        job, orch = _make_job(hosts=["h0"])
+        orch.exec.side_effect = RuntimeError("no container")
+        self.assertEqual(job.collect_tb_scalars(), {})
+        self.assertIn("failed", job.tb_collection_note)
+
+    def test_oversize_events_are_skipped_without_pull(self):
+        job, orch = _make_job(hosts=["h0"])
+        huge_kb = (_TB_COLLECT_MAX_BYTES // 1024) + 1024
+
+        def _side(cmd, *_a, **_k):
+            if "du -ck" in str(cmd):
+                return {"h0": f"{huge_kb}\ttotal\n"}
+            raise AssertionError("tar pull must not run when events exceed the size cap")
+
+        orch.exec.side_effect = _side
+        self.assertEqual(job.collect_tb_scalars(), {})
+        self.assertIn("cap", job.tb_collection_note)
 
 
 class ScanDmesgForErrorsTests(unittest.TestCase):

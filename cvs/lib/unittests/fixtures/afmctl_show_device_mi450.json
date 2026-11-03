@@ -1,0 +1,533 @@
+{
+    "device": [
+        {
+            "bdf": "0001:01:00.1",
+            "spec": {
+                "accelerator_id": "3",
+                "config_phase": "ACTIVE",
+                "virtualization_mode": "bare-metal",
+                "encap_type": "IFoE-ethernet",
+                "failover_mode": "disabled",
+                "loopback_mode": "none",
+                "crypto_mode": "off",
+                "local_accelerators": [
+                    "0",
+                    "1",
+                    "2",
+                    "3"
+                ],
+                "vpod_accelerators": [
+                    "0",
+                    "1",
+                    "2",
+                    "3"
+                ],
+                "whitelisted_accelerators": [
+                    "0",
+                    "1",
+                    "2",
+                    "3"
+                ],
+                "capability": {
+                    "num_ual_station": "18",
+                    "num_accelerator": "96",
+                    "num_network_port_per_station": "2",
+                    "num_path_per_station": "2",
+                    "num_network_port": "36"
+                },
+                "scaleup_fabric": {
+                    "physical_pod": {
+                        "id": "7699065b-19a2-4934-bac8-434ba1054400",
+                        "size": "72",
+                        "local_accelerators": [
+                            "3",
+                            "2",
+                            "1",
+                            "0"
+                        ]
+                    },
+                    "virtual_pod": {
+                        "id": "3",
+                        "npa_address_mode": "source-aliasing"
+                    },
+                    "stations": [
+                        {
+                            "station": "1",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "2",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "3",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "4",
+                            "bandwidth_mask": "0x0f"
+                        },
+                        {
+                            "station": "5",
+                            "bandwidth_mask": "0x0f"
+                        },
+                        {
+                            "station": "6",
+                            "bandwidth_mask": "0x0f"
+                        },
+                        {
+                            "station": "7",
+                            "bandwidth_mask": "0x03"
+                        },
+                        {
+                            "station": "8",
+                            "bandwidth_mask": "0x03"
+                        },
+                        {
+                            "station": "9",
+                            "bandwidth_mask": "0x03"
+                        },
+                        {
+                            "station": "10",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "11",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "12",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "13",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "14",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "15",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "16",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "17",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "18",
+                            "bandwidth_mask": "0x00"
+                        }
+                    ]
+                }
+            },
+            "status": {
+                "lib_version": "0.2.0",
+                "firmware_version": "0.20.1",
+                "telemetry_version": "16908288.0.0"
+            }
+        },
+        {
+            "bdf": "0002:01:00.1",
+            "spec": {
+                "accelerator_id": "2",
+                "config_phase": "ACTIVE",
+                "virtualization_mode": "bare-metal",
+                "encap_type": "IFoE-ethernet",
+                "failover_mode": "disabled",
+                "loopback_mode": "none",
+                "crypto_mode": "off",
+                "local_accelerators": [
+                    "0",
+                    "1",
+                    "2",
+                    "3"
+                ],
+                "vpod_accelerators": [
+                    "0",
+                    "1",
+                    "2",
+                    "3"
+                ],
+                "whitelisted_accelerators": [
+                    "0",
+                    "1",
+                    "2",
+                    "3"
+                ],
+                "capability": {
+                    "num_ual_station": "18",
+                    "num_accelerator": "96",
+                    "num_network_port_per_station": "2",
+                    "num_path_per_station": "2",
+                    "num_network_port": "36"
+                },
+                "scaleup_fabric": {
+                    "physical_pod": {
+                        "id": "7699065b-19a2-4934-bac8-434ba1054400",
+                        "size": "72",
+                        "local_accelerators": [
+                            "3",
+                            "2",
+                            "1",
+                            "0"
+                        ]
+                    },
+                    "virtual_pod": {
+                        "id": "3",
+                        "npa_address_mode": "source-aliasing"
+                    },
+                    "stations": [
+                        {
+                            "station": "1",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "2",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "3",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "4",
+                            "bandwidth_mask": "0x0f"
+                        },
+                        {
+                            "station": "5",
+                            "bandwidth_mask": "0x0f"
+                        },
+                        {
+                            "station": "6",
+                            "bandwidth_mask": "0x0f"
+                        },
+                        {
+                            "station": "7",
+                            "bandwidth_mask": "0x03"
+                        },
+                        {
+                            "station": "8",
+                            "bandwidth_mask": "0x03"
+                        },
+                        {
+                            "station": "9",
+                            "bandwidth_mask": "0x03"
+                        },
+                        {
+                            "station": "10",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "11",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "12",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "13",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "14",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "15",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "16",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "17",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "18",
+                            "bandwidth_mask": "0x00"
+                        }
+                    ]
+                }
+            },
+            "status": {
+                "lib_version": "0.2.0",
+                "firmware_version": "0.20.1",
+                "telemetry_version": "16908288.0.0"
+            }
+        },
+        {
+            "bdf": "0003:01:00.1",
+            "spec": {
+                "accelerator_id": "1",
+                "config_phase": "ACTIVE",
+                "virtualization_mode": "bare-metal",
+                "encap_type": "IFoE-ethernet",
+                "failover_mode": "disabled",
+                "loopback_mode": "none",
+                "crypto_mode": "off",
+                "local_accelerators": [
+                    "0",
+                    "1",
+                    "2",
+                    "3"
+                ],
+                "vpod_accelerators": [
+                    "0",
+                    "1",
+                    "2",
+                    "3"
+                ],
+                "whitelisted_accelerators": [
+                    "0",
+                    "1",
+                    "2",
+                    "3"
+                ],
+                "capability": {
+                    "num_ual_station": "18",
+                    "num_accelerator": "96",
+                    "num_network_port_per_station": "2",
+                    "num_path_per_station": "2",
+                    "num_network_port": "36"
+                },
+                "scaleup_fabric": {
+                    "physical_pod": {
+                        "id": "7699065b-19a2-4934-bac8-434ba1054400",
+                        "size": "72",
+                        "local_accelerators": [
+                            "3",
+                            "2",
+                            "1",
+                            "0"
+                        ]
+                    },
+                    "virtual_pod": {
+                        "id": "3",
+                        "npa_address_mode": "source-aliasing"
+                    },
+                    "stations": [
+                        {
+                            "station": "1",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "2",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "3",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "4",
+                            "bandwidth_mask": "0x0f"
+                        },
+                        {
+                            "station": "5",
+                            "bandwidth_mask": "0x0f"
+                        },
+                        {
+                            "station": "6",
+                            "bandwidth_mask": "0x0f"
+                        },
+                        {
+                            "station": "7",
+                            "bandwidth_mask": "0x03"
+                        },
+                        {
+                            "station": "8",
+                            "bandwidth_mask": "0x03"
+                        },
+                        {
+                            "station": "9",
+                            "bandwidth_mask": "0x03"
+                        },
+                        {
+                            "station": "10",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "11",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "12",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "13",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "14",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "15",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "16",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "17",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "18",
+                            "bandwidth_mask": "0x00"
+                        }
+                    ]
+                }
+            },
+            "status": {
+                "lib_version": "0.2.0",
+                "firmware_version": "0.20.1",
+                "telemetry_version": "16908288.0.0"
+            }
+        },
+        {
+            "bdf": "0004:01:00.1",
+            "spec": {
+                "accelerator_id": "0",
+                "config_phase": "ACTIVE",
+                "virtualization_mode": "bare-metal",
+                "encap_type": "IFoE-ethernet",
+                "failover_mode": "disabled",
+                "loopback_mode": "none",
+                "crypto_mode": "off",
+                "local_accelerators": [
+                    "0",
+                    "1",
+                    "2",
+                    "3"
+                ],
+                "vpod_accelerators": [
+                    "0",
+                    "1",
+                    "2",
+                    "3"
+                ],
+                "whitelisted_accelerators": [
+                    "0",
+                    "1",
+                    "2",
+                    "3"
+                ],
+                "capability": {
+                    "num_ual_station": "18",
+                    "num_accelerator": "96",
+                    "num_network_port_per_station": "2",
+                    "num_path_per_station": "2",
+                    "num_network_port": "36"
+                },
+                "scaleup_fabric": {
+                    "physical_pod": {
+                        "id": "7699065b-19a2-4934-bac8-434ba1054400",
+                        "size": "72",
+                        "local_accelerators": [
+                            "3",
+                            "2",
+                            "1",
+                            "0"
+                        ]
+                    },
+                    "virtual_pod": {
+                        "id": "3",
+                        "npa_address_mode": "source-aliasing"
+                    },
+                    "stations": [
+                        {
+                            "station": "1",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "2",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "3",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "4",
+                            "bandwidth_mask": "0x0f"
+                        },
+                        {
+                            "station": "5",
+                            "bandwidth_mask": "0x0f"
+                        },
+                        {
+                            "station": "6",
+                            "bandwidth_mask": "0x0f"
+                        },
+                        {
+                            "station": "7",
+                            "bandwidth_mask": "0x03"
+                        },
+                        {
+                            "station": "8",
+                            "bandwidth_mask": "0x03"
+                        },
+                        {
+                            "station": "9",
+                            "bandwidth_mask": "0x03"
+                        },
+                        {
+                            "station": "10",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "11",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "12",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "13",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "14",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "15",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "16",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "17",
+                            "bandwidth_mask": "0x00"
+                        },
+                        {
+                            "station": "18",
+                            "bandwidth_mask": "0x00"
+                        }
+                    ]
+                }
+            },
+            "status": {
+                "lib_version": "0.2.0",
+                "firmware_version": "0.20.1",
+                "telemetry_version": "16908288.0.0"
+            }
+        }
+    ]
+}
+

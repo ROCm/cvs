@@ -26,11 +26,22 @@
 
         "_example_gid_index": "3",
         "gid_index": "<changeme>",
-        "_comment_gid_index": "GID index to check on all RDMA interfaces. Typically '3' for RoCE (RDMA over Converged Ethernet). Must be a valid GID index for your InfiniBand/RoCE setup.",
+        "_comment_gid_index": "GID index to check on all RDMA interfaces. On RoCE, choose a RoCE v2 GID, preferably with an IPv4-mapped address. Must be an explicit integer ('auto' is ibperf-only).",
+        "_example_gid_type": "RoCE v2",
+        "gid_type": "RoCE v2",
+        "_comment_gid_type": "Expected GID type at gid_index (sysfs gid_attrs/types/<idx>) on every interface. Default 'RoCE v2'. Use 'any' to disable. Not enforced on InfiniBand link layers.",
 
         "_example_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"],
         "interfaces": ["<changeme>"],
         "_comment_interfaces": "List of specific RDMA interface names that should be present on all cluster nodes. Examples: ['rocep28s0', 'rocep62s0'] for standard setup, ['mlx5_0', 'mlx5_1'] for Mellanox, ['ib0', 'ib1'] for generic InfiniBand.",
+
+        "mtu_check": true,
+        "_comment_mtu_check": "Verify the RDMA active MTU on every port and, on RoCE ports, jumbo frames on the Ethernet netdev. InfiniBand ports are checked on active MTU only. Runs only when connectivity_mode is not 'skip'. MTU failures are reported but never prune nodes.",
+        "min_netdev_mtu": 4200,
+        "_example_min_netdev_mtu": 9000,
+        "_comment_min_netdev_mtu": "Minimum Ethernet netdev MTU on RoCE ports; InfiniBand ports (no netdev, or an IPoIB netdev) are exempt. At least 4200 allows a 4096-byte RoCE active MTU; switches along the path must match. Set to 0 to disable this threshold.",
+        "min_active_mtu": 4096,
+        "_comment_min_active_mtu": "Minimum active_mtu reported by ibv_devinfo, on RoCE and InfiniBand ports. On RoCE, 1024 usually means the netdev is still at 1500. Set to 0 to disable this threshold.",
 
         "nodes_per_full_mesh_group": 32,
         "_comment_nodes_per_full_mesh_group": "Number of nodes in each full-mesh partition group for parallel RDMA testing (2-128). Smaller groups use fewer resources per node but require more rounds. Adjust based on cluster size and resource constraints.",
@@ -77,6 +88,8 @@
         "fabric_checks": false,
         "_comment_fabric_checks": "Enable MI4XX-only AIFM/AFM/vPOD, station-mask, and IFoE port admission checks.",
 
+        "_comment_min_up_ports_per_gpu": "Minimum enabled IFoE ports each GPU must report in its station mask. Defaults to 2 (one enabled station) so a node with no scale-up fabric fails admission. Set to 0 only for a diagnostic run that should admit an un-provisioned fabric.",
+
         "_comment_policy": "CVS owns afmctl discovery, privilege handling, BDF and port discovery, strict coverage, traffic selection, and timeout derivation.",
 
         "l2ping": {
@@ -120,12 +133,12 @@
     },
 
     "node_smoke": {
-      "_comment": "Primus node_smoke checks via primus-cli direct (opt-in; default skip). See Primus docs/node-smoke-test-instruction.md",
+      "_comment": "Primus node_smoke checks via primus-cli direct (runs by default; set connectivity_mode to 'skip' to disable). See Primus docs/node-smoke-test-instruction.md",
 
       "_setup_comment": "Primus clone/venv setup runs automatically when auto_setup is true (default). Manual equivalent:",
       "_setup_step_1": "git clone --recurse-submodules https://github.com/AMD-AIG-AIMA/Primus.git /home/{user-id}/INSTALL/Primus",
       "_setup_step_2": "cd /home/{user-id}/INSTALL/Primus && git checkout dev/preflight-direct-test",
-      "_setup_step_3": "python3 -m venv /home/{user-id}/envs/preflight/.venv && pip install torch --index-url https://download.pytorch.org/whl/rocm6.2",
+      "_setup_step_3": "python3 -m venv /home/{user-id}/envs/preflight/.venv && pip install torch --index-url https://download.pytorch.org/whl/rocm7.2",
       "_setup_note": "Paths use {user-id} resolved at runtime. Set auto_setup to false to skip automatic install.",
 
       "auto_setup": true,
@@ -143,8 +156,8 @@
       "pip_install_mode": "minimal",
       "_comment_pip_install_mode": "Venv deps after clone: 'minimal' (torch only), 'requirements' (pip install -r requirements.txt), or 'skip' (venv only).",
 
-      "torch_pip_index_url": "https://download.pytorch.org/whl/rocm6.2",
-      "_comment_torch_pip_index_url": "PyTorch wheel index for minimal install. Match your ROCm version (e.g. rocm6.2, rocm7.1).",
+      "torch_pip_index_url": "https://download.pytorch.org/whl/rocm7.2",
+      "_comment_torch_pip_index_url": "PyTorch wheel index for minimal install. Match your ROCm version (e.g. rocm7.2). auto_setup replaces an already-importable torch when torch.version.hip major.minor does not match this index, so an older ROCm wheel is not left in the shared venv.",
 
       "primus_git_url": "https://github.com/AMD-AIG-AIMA/Primus.git",
       "_comment_primus_git_url": "Primus repository URL for one-time clone.",
@@ -162,7 +175,7 @@
       "_comment_venv_activate": "Path to the Python virtualenv activate script used by primus-cli direct. Required when connectivity_mode is 'run'.",
 
       "connectivity_mode": "run",
-      "_comment_connectivity_mode": "Options: 'run' (host/GPU/RDMA roll-call via node_smoke) or 'skip' (default).",
+      "_comment_connectivity_mode": "Options: 'run' (default; host/GPU/RDMA roll-call via node_smoke) or 'skip'.",
 
       "gpus_per_node": 8,
       "_comment_gpus_per_node": "Expected GPU count per node (exported as GPUS_PER_NODE and passed to node_smoke --expected-gpus).",
@@ -232,10 +245,10 @@
     },
 
     "tier3_info": {
-      "_comment": "Primus Tier 3 Host/GPU/Network info via primus-cli direct -- preflight --host --gpu --network (opt-in; default skip). No Slurm.",
+      "_comment": "Primus Tier 3 Host/GPU/Network info via primus-cli direct -- preflight --host --gpu --network (runs by default; set connectivity_mode to 'skip' to disable). No Slurm.",
 
       "connectivity_mode": "run",
-      "_comment_connectivity_mode": "Options: 'run' or 'skip' (default). Independent of node_smoke.connectivity_mode — enabling node_smoke does not enable Tier 3.",
+      "_comment_connectivity_mode": "Options: 'run' (default) or 'skip'. Independent of node_smoke.connectivity_mode — disabling node_smoke does not disable Tier 3.",
 
       "auto_setup": true,
       "_comment_auto_setup": "When true, clone/update Primus and create venv before Tier 3 (falls back to node_smoke paths).",

@@ -112,6 +112,12 @@ REPORT_STYLE_OVERRIDES = """<style>
     tr.cvs-benchmark-metric-detail-row.failed .col-result {
         color: red !important;
     }
+    tr.cvs-benchmark-metric-detail-row.skipped .col-result {
+        color: #c9a100 !important;
+    }
+    tr.cvs-benchmark-metric-detail-row.record .col-result {
+        color: #4a9edd !important;
+    }
     .filters .cvs-subtests-count {
         color: #1565c0;
     }
@@ -348,8 +354,11 @@ class HtmlReportManager:
                 shutil.copy2(source_path, dest_path)
                 log.info("Added file to report bundle: %s -> %s", source_path, dest_path)
 
-            # Return relative path for potential linking
-            rel_path = dest_path.relative_to(self.htmlpath.parent)
+            # Return relative path for potential linking. dest_path is resolved
+            # (absolute), so resolve the report dir too -- otherwise a relative
+            # --html makes relative_to() raise "one path is relative and the other
+            # is absolute" and the link is silently dropped.
+            rel_path = dest_path.relative_to(self.htmlpath.resolve().parent)
             rel_path_str = str(rel_path)
 
             # Track the added report (unless it's a per-row artifact linked elsewhere)
@@ -547,7 +556,7 @@ class HtmlReportManager:
         """Record a per-test PASS/FAIL verdict for the Reports section.
 
         Args:
-            test_name (str): The test function name (e.g. "test_cpu_all").
+            test_name (str): The test function name (e.g. "test_cpu_mfg_l10").
             passed (bool): True if the test passed on every node.
             detail (str): On pass, the node list ("PASS on all nodes [...]"); on fail,
                 which node(s) failed and a short reason.

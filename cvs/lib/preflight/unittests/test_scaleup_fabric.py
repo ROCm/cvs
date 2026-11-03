@@ -63,6 +63,12 @@ def _port_inventory(bdfs, down_ports=()):
     }
 
 
+def _make_orch(phdl):
+    orch = MagicMock()
+    orch.all = phdl
+    return orch
+
+
 class FakePssh:
     """Small command-aware PSSH substitute; no host actions are performed."""
 
@@ -180,7 +186,7 @@ class TestMi4xxParsers(unittest.TestCase):
 class TestMi4xxNodeHealthCheck(unittest.TestCase):
     def _check(self, phdl, **kwargs):
         return Mi4xxNodeHealthCheck(
-            phdl,
+            _make_orch(phdl),
             use_sudo=False,
             readiness_timeout_seconds=0,
             poll_interval_seconds=1,
@@ -263,6 +269,19 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
         self.assertIn('[i]nb\\-node\\-agent', command)
         self.assertNotIn("'inb-node-agent'", command)
 
+    def test_kernel_command_filters_journal_on_node_before_transfer(self):
+        without_sudo = self._check(FakePssh(hosts=("nodeA",)))._kernel_command()
+        self.assertIn("journalctl -k -b --no-pager", without_sudo)
+        self.assertIn("grep -Ei", without_sudo)
+        self.assertIn("Fatal error during GPU init", without_sudo)
+        self.assertNotRegex(without_sudo, r"journalctl[^|]*\s-n\s+[0-9]")
+
+        with_sudo = Mi4xxNodeHealthCheck(
+            FakePssh(hosts=("nodeA",)), use_sudo=True, readiness_timeout_seconds=0
+        )._kernel_command()
+        self.assertIn("sudo -n journalctl -k -b --no-pager", with_sudo)
+        self.assertIn("grep -Ei", with_sudo)
+
     def test_station_mask_command_uses_sudo_when_configured(self):
         command = Mi4xxNodeHealthCheck(
             FakePssh(hosts=('nodeA',)), use_sudo=True, readiness_timeout_seconds=0
@@ -298,6 +317,134 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
         check._evaluate_station_masks()
         self.assertEqual(check.results["nodeA"]["status"], "FAIL")
         self.assertTrue(any("partial IFoE station" in error for error in check.results["nodeA"]["errors"]))
+
+    def test_all_dark_station_mask_fails_by_default(self):
+        check = self._check(FakePssh(hosts=("nodeA",)))
+        check.results = {"nodeA": {"status": "PASS", "errors": []}}
+        check._exec_all = lambda _command: {
+            "nodeA": "\n".join(f"0000:{index + 1:02x}:00.0 {'0' * 18}" for index in range(4))
+        }
+        check._evaluate_station_masks()
+        self.assertEqual(check.results["nodeA"]["status"], "FAIL")
+        self.assertTrue(any("below min_up_ports_per_gpu" in error for error in check.results["nodeA"]["errors"]))
+
+    def test_partial_station_mask_passes_with_degraded_warning(self):
+        check = self._check(FakePssh(hosts=("nodeA",)))
+        check.results = {"nodeA": {"status": "PASS", "errors": [], "warnings": []}}
+        # One enabled station out of 18 -> fit, but degraded.
+        check._exec_all = lambda _command: {
+            "nodeA": "\n".join(f"0000:{index + 1:02x}:00.0 {'f' + '0' * 17}" for index in range(4))
+        }
+        check._evaluate_station_masks()
+        result = check.results["nodeA"]
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["errors"], [])
+        self.assertTrue(result["warnings"])
+        self.assertTrue(any("reduced" in warning for warning in result["warnings"]))
+        self.assertTrue(any("1/18 IFoE stations" in warning for warning in result["warnings"]))
+
+    def test_fully_enabled_station_mask_has_no_warning(self):
+        check = self._check(FakePssh(hosts=("nodeA",)))
+        check.results = {"nodeA": {"status": "PASS", "errors": [], "warnings": []}}
+        check._exec_all = lambda _command: {
+            "nodeA": "\n".join(f"0000:{index + 1:02x}:00.0 {'f' * 18}" for index in range(4))
+        }
+        check._evaluate_station_masks()
+        result = check.results["nodeA"]
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["warnings"], [])
+
+    def test_uniform_station_mask_policy_is_per_node_not_cluster_wide(self):
+        mask_a = "f" * 18
+        mask_b = "0" * 17 + "f"
+        check = self._check(
+            FakePssh(hosts=("nodeA", "nodeB")), require_uniform_station_mask=True, min_up_ports_per_gpu=0
+        )
+        check.results = {
+            "nodeA": {"status": "PASS", "errors": [], "warnings": []},
+            "nodeB": {"status": "PASS", "errors": [], "warnings": []},
+        }
+        check._exec_all = lambda _command: {
+            "nodeA": "\n".join(f"0000:{index + 1:02x}:00.0 {mask_a}" for index in range(4)),
+            "nodeB": "\n".join(f"0000:{index + 1:02x}:00.0 {mask_b}" for index in range(4)),
+        }
+        check._evaluate_station_masks()
+        self.assertEqual(check.results["nodeA"]["status"], "PASS")
+        self.assertEqual(check.results["nodeB"]["status"], "PASS")
+        self.assertFalse(any("not uniform" in error for error in check.results["nodeA"]["errors"]))
+        self.assertFalse(any("not uniform" in error for error in check.results["nodeB"]["errors"]))
+
+    def test_uniform_station_mask_policy_fails_non_uniform_gpus_on_one_node(self):
+        check = self._check(
+            FakePssh(hosts=("nodeA", "nodeB")), require_uniform_station_mask=True, min_up_ports_per_gpu=0
+        )
+        check.results = {
+            "nodeA": {"status": "PASS", "errors": [], "warnings": []},
+            "nodeB": {"status": "PASS", "errors": [], "warnings": []},
+        }
+        uniform = "f" * 18
+        check._exec_all = lambda _command: {
+            "nodeA": "\n".join(
+                [
+                    f"0000:01:00.0 {uniform}",
+                    f"0000:02:00.0 {'f' + '0' * 17}",
+                    f"0000:03:00.0 {uniform}",
+                    f"0000:04:00.0 {uniform}",
+                ]
+            ),
+            "nodeB": "\n".join(f"0000:{index + 1:02x}:00.0 {uniform}" for index in range(4)),
+        }
+        check._evaluate_station_masks()
+        self.assertEqual(check.results["nodeA"]["status"], "FAIL")
+        self.assertTrue(
+            any("not uniform across GPUs on this node" in error for error in check.results["nodeA"]["errors"])
+        )
+        self.assertEqual(check.results["nodeB"]["status"], "PASS")
+
+    def test_run_reports_warned_nodes_for_partial_fabric(self):
+        check = self._check(FakePssh(hosts=("nodeA",), station_mask="fff000000fff000000"))
+        results = check.run()
+
+        self.assertEqual(results["status"], "PASS")
+        self.assertEqual(results["warned_nodes"], ["nodeA"])
+        self.assertTrue(results["node_results"]["nodeA"]["warnings"])
+
+    def test_diagnostic_profile_admits_all_dark_station_mask_but_warns(self):
+        check = self._check(FakePssh(hosts=("nodeA",)), min_up_ports_per_gpu=0)
+        check.results = {"nodeA": {"status": "PASS", "errors": [], "warnings": []}}
+        check._exec_all = lambda _command: {
+            "nodeA": "\n".join(f"0000:{index + 1:02x}:00.0 {'0' * 18}" for index in range(4))
+        }
+        check._evaluate_station_masks()
+        self.assertEqual(check.results["nodeA"]["status"], "PASS")
+        self.assertEqual(check.results["nodeA"]["errors"], [])
+        # Even a diagnostic admit must surface the degraded signal, never pass silently.
+        self.assertTrue(check.results["nodeA"]["warnings"])
+        self.assertTrue(any("0/18 IFoE stations" in warning for warning in check.results["nodeA"]["warnings"]))
+
+    def test_run_excludes_failed_node_from_warned_nodes(self):
+        # A partial mask raises a warning, but a down enabled-station port makes the
+        # node FAIL in a later phase. run() must not advertise it as degraded-but-fit:
+        # the returned warned_nodes list is the production contract, asserted directly
+        # so that removing the status guard in run() would fail this test.
+        check = self._check(
+            FakePssh(hosts=("nodeA",), station_mask="fff000000fff000000", down_ports_by_host={"nodeA": [0]})
+        )
+        results = check.run()
+
+        self.assertEqual(results["status"], "FAIL")
+        self.assertEqual(results["node_results"]["nodeA"]["status"], "FAIL")
+        self.assertTrue(results["node_results"]["nodeA"]["warnings"])
+        self.assertEqual(results["warned_nodes"], [])
+
+    def test_empty_station_mask_fails(self):
+        # An un-provisioned UALink fabric reports an empty lane_en_bitmap rather
+        # than an 18-nibble zero mask; the malformed record must fail the gate.
+        check = self._check(FakePssh(hosts=("nodeA",)))
+        check.results = {"nodeA": {"status": "PASS", "errors": []}}
+        check._exec_all = lambda _command: {"nodeA": "0000:01:00.0 \n"}
+        check._evaluate_station_masks()
+        self.assertEqual(check.results["nodeA"]["status"], "FAIL")
 
     def test_masked_station_links_do_not_fail_the_gate(self):
         # ``afmctl`` may report a physical LINK_UP on a deliberately masked
@@ -346,7 +493,7 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
                 return results
 
         phdl = BatchedPortPssh()
-        check = Mi4xxNodeHealthCheck(phdl, use_sudo=False, readiness_timeout_seconds=0)
+        check = Mi4xxNodeHealthCheck(_make_orch(phdl), use_sudo=False, readiness_timeout_seconds=0)
         masks = {f'0000:{index + 1:02x}:00.0': 'f' * 18 for index in range(4)}
         check.results = {
             host: {
@@ -427,6 +574,34 @@ class TestNodeHealthConfigContract(unittest.TestCase):
         self.assertEqual(config.node_check.expected_rocm_version, "7.15.0")
         self.assertTrue(config.connectivity_check.ifoe.fabric_checks)
 
+    def test_schema_accepts_station_policy_knobs(self):
+        config = PreflightConfigFile.model_validate(
+            {
+                "node_check": {
+                    "enabled": True,
+                    "min_up_ports_per_gpu": 1,
+                },
+                "connectivity_check": {
+                    "ifoe": {
+                        "fabric_checks": True,
+                        "reject_partial_stations": False,
+                        "allow_disabled_stations": False,
+                        "require_uniform_station_mask": True,
+                        "agent_process_name": "custom-agent",
+                        "expected_station_masks": {"0000:01:00.1": "f" * 18},
+                    }
+                },
+            }
+        )
+
+        self.assertEqual(config.node_check.min_up_ports_per_gpu, 1)
+        ifoe = config.connectivity_check.ifoe
+        self.assertFalse(ifoe.reject_partial_stations)
+        self.assertFalse(ifoe.allow_disabled_stations)
+        self.assertTrue(ifoe.require_uniform_station_mask)
+        self.assertEqual(ifoe.agent_process_name, "custom-agent")
+        self.assertEqual(ifoe.expected_station_masks["0000:01:00.1"], "f" * 18)
+
         with self.assertRaises(ValidationError):
             PreflightConfigFile.model_validate(
                 {
@@ -493,6 +668,62 @@ class TestNodeHealthConfigContract(unittest.TestCase):
             preflight_checks.preflight_results.clear()
             preflight_checks.preflight_results.update(previous_results)
 
+    def test_node_health_accepts_station_policy_from_node_check_and_ifoe(self):
+        from cvs.tests.preflight import preflight_checks
+
+        phdl = MagicMock()
+        phdl.reachable_hosts = ["nodeA"]
+        config = {
+            "node_check": {
+                "enabled": True,
+                "gpus_per_node": 8,
+                "min_up_ports_per_gpu": 2,
+            },
+            "connectivity_check": {
+                "ifoe": {
+                    "fabric_checks": True,
+                    "reject_partial_stations": False,
+                    "agent_process_name": "custom-agent",
+                }
+            },
+        }
+        cluster = {"node_dict": {"nodeA": {}}}
+        checker_results = {
+            "status": "PASS",
+            "fabric_checks": True,
+            "node_results": {"nodeA": {"status": "PASS", "errors": []}},
+            "failed_nodes": [],
+            "vpod_membership": {"status": "PASS", "errors": []},
+            "errors": [],
+        }
+
+        previous_results = dict(preflight_checks.preflight_results)
+        try:
+            with (
+                patch.object(preflight_checks, "NodeHealthCheck") as checker_cls,
+                patch.object(preflight_checks, "preflight_update_test_result"),
+            ):
+                checker_cls.return_value.run.return_value = checker_results
+                preflight_checks.test_node_health(phdl, config, cluster)
+
+            kwargs = checker_cls.call_args.kwargs
+            self.assertEqual(kwargs["min_up_ports_per_gpu"], 2)
+            self.assertFalse(kwargs["reject_partial_stations"])
+            self.assertEqual(kwargs["agent_process_name"], "custom-agent")
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
+
+    def test_ifoe_station_policy_overrides_node_check_min_up_ports(self):
+        from cvs.tests.preflight import preflight_checks
+
+        config = {
+            "node_check": {"enabled": True, "min_up_ports_per_gpu": 1},
+            "connectivity_check": {"ifoe": {"fabric_checks": False, "min_up_ports_per_gpu": 4}},
+        }
+        kwargs = preflight_checks._node_health_station_policy_kwargs(config, fabric_checks=True)
+        self.assertEqual(kwargs["min_up_ports_per_gpu"], 4)
+
     def test_generation_neutral_class_name_preserves_legacy_alias(self):
         self.assertIs(NodeHealthCheck, Mi4xxNodeHealthCheck)
 
@@ -522,6 +753,78 @@ class TestNodeHealthConfigContract(unittest.TestCase):
         self.assertIn("Node-Health Admission", html_report)
         self.assertIn("fabric checks disabled", html_report)
         self.assertNotIn("AFM devices</th>", html_report)
+
+    def test_report_renders_degraded_fabric_banner_for_partial_mask(self):
+        results = {
+            "status": "PASS",
+            "fabric_checks": True,
+            "warned_nodes": ["nodeA"],
+            "node_results": {
+                "nodeA": {
+                    "status": "PASS",
+                    "errors": [],
+                    "warnings": [
+                        "0000:01:00.0: only 6/18 IFoE stations enabled (12/36 scale-up ports); "
+                        "node is fit for processing but scale-up throughput is reduced"
+                    ],
+                    "gpu_inventory": _gpu_inventory()["gpus"],
+                    "station_masks": {"0000:01:00.0": "fff000000fff000000"},
+                    "afm_devices": [],
+                    "afm_port_inventory": {},
+                }
+            },
+            "failed_nodes": [],
+            "vpod_membership": {"status": "PASS", "vpod_accelerators": [0, 1, 2, 3], "errors": []},
+            "coverage": {"missing_nodes": []},
+        }
+        generator = PreflightReportGenerator(MagicMock(), {"node_health": results}, {})
+
+        summary = generator._summarize_node_health_results(results)
+        html_report = generator._generate_node_health_html(results)
+
+        self.assertEqual(summary["status"], "PASS")
+        self.assertEqual(summary["warned_nodes"], ["nodeA"])
+        self.assertIn("degraded IFoE fabric", summary["summary"])
+        self.assertIn("DEGRADED IFoE FABRIC", html_report)
+        self.assertIn("scale-up throughput is reduced", html_report)
+        self.assertIn("WARN", html_report)
+
+    def test_report_omits_failed_node_from_degraded_banner(self):
+        # A FAIL node carrying a station-mask warning must not be summarized or
+        # bannered as "fit for processing"; only genuinely PASSing nodes are degraded.
+        results = {
+            "status": "FAIL",
+            "fabric_checks": True,
+            "node_results": {
+                "nodeA": {
+                    "status": "FAIL",
+                    "errors": ["0000:01:00.0: 0 enabled IFoE ports is below min_up_ports_per_gpu=2"],
+                    "warnings": [
+                        "0000:02:00.0: only 1/18 IFoE stations enabled (2/36 scale-up ports); "
+                        "node is fit for processing but scale-up throughput is reduced"
+                    ],
+                    "gpu_inventory": _gpu_inventory()["gpus"],
+                    "station_masks": {"0000:01:00.0": "0" * 18, "0000:02:00.0": "f" + "0" * 17},
+                    "afm_devices": [],
+                    "afm_port_inventory": {},
+                }
+            },
+            "failed_nodes": ["nodeA"],
+            "vpod_membership": {"status": "FAIL", "vpod_accelerators": [], "errors": []},
+            "coverage": {"missing_nodes": []},
+        }
+        generator = PreflightReportGenerator(MagicMock(), {"node_health": results}, {})
+
+        summary = generator._summarize_node_health_results(results)
+        html_report = generator._generate_node_health_html(results)
+
+        self.assertEqual(summary["warned_nodes"], [])
+        self.assertNotIn("degraded IFoE fabric", summary["summary"])
+        self.assertNotIn("DEGRADED IFoE FABRIC", html_report)
+        # The "fit for processing" claim must not appear anywhere for a FAIL node,
+        # including its per-row Issues cell.
+        self.assertNotIn("fit for processing", html_report)
+        self.assertIn("FAIL", html_report)
 
 
 if __name__ == "__main__":

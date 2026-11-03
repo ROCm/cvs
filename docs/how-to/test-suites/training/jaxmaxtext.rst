@@ -1,10 +1,10 @@
 .. meta::
-  :description: Run JAX MaxText training benchmarks
-  :keywords: CVS, jax, jaxmaxtext, MaxText
+  :description: Run JAX MaxText training benchmarks with CVS on AMD Instinct GPUs for single-node and distributed LLM pre-training performance validation with ROCm.
+  :keywords: CVS, JAX, MaxText, training, benchmark, AMD Instinct, ROCm, AMD, GPU, distributed, RDMA, Llama
 
-**********************
-JAX MaxText tests
-**********************
+**************************************************
+Run JAX MaxText training benchmarks with CVS
+**************************************************
 
 JAX training in CVS is **jaxmaxtext**. The legacy ``jax_llama3_1_*`` suites have
 been removed. Use ``jaxmaxtext_single`` with a single-node config and
@@ -12,6 +12,19 @@ been removed. Use ``jaxmaxtext_single`` with a single-node config and
 the config (distributed configs carry the NCCL RDMA device-selection vars in
 ``container.env``, single-node configs omit them). Copy the matching
 ``*_threshold.json`` into the same directory as the suite config.
+
+Prerequisites
+=============
+
+In addition to the :ref:`common training prerequisites <training-common-prerequisites>`:
+
+- The container image must bundle MaxText and JAX for ROCm.
+- A Hugging Face token file at ``paths.hf_token_file`` when any enabled run
+  downloads a tokenizer. The nodes need network access for that download. A run
+  where every enabled sweep uses ``dataset_type: synthetic`` does not need the
+  token.
+- A shared filesystem at ``paths.shared_fs``, reachable from every node, for the
+  models cache and logs.
 
 .. _jax-set-up-config:
 
@@ -94,13 +107,13 @@ Single-node:
 
 .. code:: bash
 
-  cvs run jaxmaxtext_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jaxmaxtext/mi3xx_jaxmaxtext_llama-3.3-70b_single.json --html=/var/www/html/cvs/jaxmaxtext_single.html --capture=tee-sys --self-contained-html --log-file=/tmp/jaxmaxtext_single.log -vvv -s
+  cvs run jaxmaxtext_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jaxmaxtext/mi3xx_jaxmaxtext_llama-3.3-70b_single.json --capture=tee-sys -vvv -s
 
 Distributed:
 
 .. code:: bash
 
-  cvs run jaxmaxtext_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jaxmaxtext/mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json --html=/var/www/html/cvs/jaxmaxtext_distributed.html --capture=tee-sys --self-contained-html --log-file=/tmp/jaxmaxtext_distributed.log -vvv -s
+  cvs run jaxmaxtext_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jaxmaxtext/mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json --capture=tee-sys -vvv -s
 
 The mode is inferred from the config: distributed configs carry the NCCL RDMA
 device-selection vars in ``container.env`` (and add the ``test_setup_rdma``
@@ -108,17 +121,10 @@ stage), while single-node configs omit them. Run single-node configs with
 ``jaxmaxtext_single`` and distributed configs with ``jaxmaxtext_distributed`` —
 the suite must match the config.
 
-Prerequisites
-=============
+Run on managed compute
+----------------------
 
-- Passwordless SSH from the control host to each node (key in the cluster file),
-  and Docker available on the nodes.
-- A container image bundling MaxText/JAX for ROCm (config ``container.image``).
-- A Hugging Face token file at ``paths.hf_token_file`` (used to fetch the
-  tokenizer; needs network access on the nodes). Skipped when every enabled run
-  uses ``dataset_type: synthetic``.
-- A shared filesystem (``paths.shared_fs``) reachable from all nodes for the
-  models cache and logs.
+Follow :doc:`/how-to/run-on-managed-compute` to run JAX MaxText on managed compute.
 
 Test lifecycle
 ==============

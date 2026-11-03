@@ -129,7 +129,7 @@ GPU 0
 # every code path the parser is asked to handle).
 # ---------------------------------------------------------------------------
 
-SMOKETEST_PASS_OUTPUT = """\
+SMOKETEST_SUCCESS_OUTPUT = """\
 TransferBench (candidate) starting smoketest preset
 Detected 4 local GPUs in vpod_id=0, ppod_id=0
 
@@ -231,6 +231,12 @@ def _with_sentinel(output: str, exit_code: int) -> str:
 # ---------------------------------------------------------------------------
 # Pod-membership parser tests
 # ---------------------------------------------------------------------------
+
+
+def _make_orch(phdl):
+    orch = MagicMock()
+    orch.all = phdl
+    return orch
 
 
 class TestExtractNodePodMembership(unittest.TestCase):
@@ -361,7 +367,7 @@ class TestReconcileClusterVpod(unittest.TestCase):
 
 class TestSmoketestParser(unittest.TestCase):
     def test_passing_output(self):
-        parsed = SmoketestParser.parse(_with_sentinel(SMOKETEST_PASS_OUTPUT, 0))
+        parsed = SmoketestParser.parse(_with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0))
         self.assertEqual(parsed['exit_code'], 0)
         self.assertEqual(parsed['num_pass'], 16)
         self.assertEqual(parsed['num_fail'], 0)
@@ -427,7 +433,7 @@ class TestSmoketestParser(unittest.TestCase):
 
 class TestEvaluateSmoketest(unittest.TestCase):
     def test_pass_verdict(self):
-        parsed = SmoketestParser.parse(_with_sentinel(SMOKETEST_PASS_OUTPUT, 0))
+        parsed = SmoketestParser.parse(_with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0))
         verdict, errors = evaluate_smoketest(parsed, max_skip_pct=25.0)
         self.assertEqual(verdict, 'PASS')
         self.assertEqual(errors, [])
@@ -445,7 +451,7 @@ class TestEvaluateSmoketest(unittest.TestCase):
         self.assertTrue(any('ERR_FATAL precondition' in e for e in errors))
 
     def test_fail_when_sentinel_missing(self):
-        parsed = SmoketestParser.parse(SMOKETEST_PASS_OUTPUT)
+        parsed = SmoketestParser.parse(SMOKETEST_SUCCESS_OUTPUT)
         verdict, errors = evaluate_smoketest(parsed)
         self.assertEqual(verdict, 'FAIL')
         self.assertTrue(any('exit code not captured' in e for e in errors))
@@ -491,7 +497,7 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         return json.dumps(payload)
 
     def test_build_command_per_node_defaults(self):
-        check = TransferBenchSmokeCheck(MagicMock())
+        check = TransferBenchSmokeCheck(_make_orch(MagicMock()))
         cmd = check.build_command(rank=0, num_ranks=1, master_addr='127.0.0.1')
         self.assertIn('TransferBench', cmd)
         self.assertIn('smoketest', cmd)
@@ -505,13 +511,13 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
 
     def test_build_command_uses_size_list_environment_variable(self):
         """The smoketest preset reads sizes from SIZE_LIST, not argv."""
-        check = TransferBenchSmokeCheck(MagicMock(), size_list=['4K', '16M'])
+        check = TransferBenchSmokeCheck(_make_orch(MagicMock()), size_list=['4K', '16M'])
         cmd = check.build_command(rank=0, num_ranks=1, master_addr='127.0.0.1')
         self.assertIn('SIZE_LIST=4K,16M', cmd)
         self.assertNotIn('smoketest 4K 16M', cmd)
 
     def test_build_command_multi_rank_includes_socket_env(self):
-        check = TransferBenchSmokeCheck(MagicMock(), rank_mode='multi_rank')
+        check = TransferBenchSmokeCheck(_make_orch(MagicMock()), rank_mode='multi_rank')
         cmd = check.build_command(rank=2, num_ranks=4, master_addr='10.0.0.1')
         self.assertIn('TB_NUM_RANKS=4', cmd)
         self.assertIn('TB_RANK=2', cmd)
@@ -519,7 +525,7 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         self.assertIn('TB_MASTER_PORT=31337', cmd)
 
     def test_build_command_respects_sudo(self):
-        check = TransferBenchSmokeCheck(MagicMock(), use_sudo=True)
+        check = TransferBenchSmokeCheck(_make_orch(MagicMock()), use_sudo=True)
         cmd = check.build_command(rank=0, num_ranks=1, master_addr='127.0.0.1')
         self.assertTrue(cmd.startswith('sudo bash -c '))
         self.assertIn('TransferBench', cmd)
@@ -528,11 +534,11 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
 
     def test_build_command_does_not_inject_runtime_paths_without_extra_env(self):
         """Runtime paths are opt-in rather than derived from a ROCm root."""
-        check = TransferBenchSmokeCheck(MagicMock(), use_sudo=True)
+        check = TransferBenchSmokeCheck(_make_orch(MagicMock()), use_sudo=True)
         cmd = check.build_command(rank=0, num_ranks=1, master_addr='127.0.0.1')
         self.assertNotIn('PATH=', cmd)
         self.assertNotIn('LD_LIBRARY_PATH=', cmd)
-        check_no_sudo = TransferBenchSmokeCheck(MagicMock(), use_sudo=False)
+        check_no_sudo = TransferBenchSmokeCheck(_make_orch(MagicMock()), use_sudo=False)
         cmd_no_sudo = check_no_sudo.build_command(rank=0, num_ranks=1, master_addr='127.0.0.1')
         self.assertNotIn('PATH=', cmd_no_sudo)
         self.assertNotIn('LD_LIBRARY_PATH=', cmd_no_sudo)
@@ -561,12 +567,12 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
 
     def test_amd_smi_fabric_command_resolves_before_sudo(self):
         """A bare amd-smi name resolves before sudo replaces PATH."""
-        check_no_sudo = TransferBenchSmokeCheck(MagicMock(), use_sudo=False)
+        check_no_sudo = TransferBenchSmokeCheck(_make_orch(MagicMock()), use_sudo=False)
         self.assertEqual(
             check_no_sudo._amd_smi_fabric_command(),
             'amd-smi fabric --json',
         )
-        check_sudo = TransferBenchSmokeCheck(MagicMock(), use_sudo=True)
+        check_sudo = TransferBenchSmokeCheck(_make_orch(MagicMock()), use_sudo=True)
         self.assertEqual(
             check_sudo._amd_smi_fabric_command(),
             'sudo "$(command -v amd-smi)" fabric --json',
@@ -590,15 +596,15 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         fail loudly instead of silently being ignored.
         """
         with self.assertRaises(TypeError):
-            TransferBenchSmokeCheck(MagicMock(), rocm_path='/custom/rocm')  # type: ignore[call-arg]
+            TransferBenchSmokeCheck(_make_orch(MagicMock()), rocm_path='/custom/rocm')  # type: ignore[call-arg]
         with self.assertRaises(TypeError):
-            TransferBenchSmokeCheck(MagicMock(), amd_smi_path='/custom/bin/amd-smi')  # type: ignore[call-arg]
+            TransferBenchSmokeCheck(_make_orch(MagicMock()), amd_smi_path='/custom/bin/amd-smi')  # type: ignore[call-arg]
 
     def test_constructor_accepts_amd_smi_binary_and_rejects_invalid_extra_env(self):
-        check = TransferBenchSmokeCheck(MagicMock(), amd_smi_binary='/opt/rocm/bin/amd-smi')
+        check = TransferBenchSmokeCheck(_make_orch(MagicMock()), amd_smi_binary='/opt/rocm/bin/amd-smi')
         self.assertEqual(check.amd_smi_binary, '/opt/rocm/bin/amd-smi')
         with self.assertRaises(ValueError):
-            TransferBenchSmokeCheck(MagicMock(), extra_env={'LD_LIBRARY_PATH;bad': '/opt/rocm/lib'})
+            TransferBenchSmokeCheck(_make_orch(MagicMock()), extra_env={'LD_LIBRARY_PATH;bad': '/opt/rocm/lib'})
 
     def test_schema_accepts_only_the_six_customer_facing_options(self):
         config = PreflightConfigFile.model_validate(
@@ -666,6 +672,7 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
 
         phdl = MagicMock()
         phdl.reachable_hosts = ['nodeA', 'nodeB']
+        orch = _make_orch(phdl)
         config = {
             'connectivity_check': {
                 'ifoe': {
@@ -697,11 +704,12 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
                 patch.object(preflight_checks, 'preflight_update_test_result'),
             ):
                 checker_cls.return_value.run.return_value = checker_results
-                preflight_checks.test_ifoe_transferbench_smoke(phdl, config)
+                preflight_checks.test_ifoe_transferbench_smoke(orch, config)
         finally:
             preflight_checks.preflight_results.clear()
             preflight_checks.preflight_results.update(previous_results)
 
+        self.assertIs(checker_cls.call_args.args[0], orch)
         kwargs = checker_cls.call_args.kwargs
         self.assertEqual(kwargs['tb_binary'], 'TransferBench')
         self.assertEqual(kwargs['amd_smi_binary'], 'amd-smi')
@@ -724,6 +732,7 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
 
         phdl = MagicMock()
         phdl.reachable_hosts = ['nodeA']
+        orch = _make_orch(phdl)
         config = {
             'node_check': {
                 'enabled': True,
@@ -772,11 +781,12 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
                 patch.object(preflight_checks, 'preflight_update_test_result'),
             ):
                 checker_cls.return_value.run.return_value = checker_results
-                preflight_checks.test_ifoe_transferbench_smoke(phdl, config)
+                preflight_checks.test_ifoe_transferbench_smoke(orch, config)
         finally:
             preflight_checks.preflight_results.clear()
             preflight_checks.preflight_results.update(previous_results)
 
+        self.assertIs(checker_cls.call_args.args[0], orch)
         self.assertEqual(checker_cls.call_args.kwargs['afm_vpod_admission'], admission)
 
     def test_disabled_preflight_skips_without_constructing_checker(self):
@@ -792,7 +802,7 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
                 patch.object(preflight_checks, 'preflight_update_test_result'),
             ):
                 preflight_checks.test_ifoe_transferbench_smoke(
-                    phdl,
+                    _make_orch(phdl),
                     {
                         'connectivity_check': {
                             'ifoe': {
@@ -815,6 +825,7 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
 
         phdl = MagicMock()
         phdl.reachable_hosts = ['nodeA']
+        orch = _make_orch(phdl)
         config = {
             'connectivity_check': {
                 'ifoe': {
@@ -842,14 +853,16 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         try:
             with (
                 patch.object(preflight_checks, 'TransferBenchSmokeCheck') as checker_cls,
-                patch.object(preflight_checks, 'preflight_update_test_result'),
-                patch.object(preflight_checks.pytest, 'fail') as fail,
+                patch.object(preflight_checks, 'preflight_update_test_result') as update_result,
             ):
                 checker_cls.return_value.run.return_value = checker_results
-                preflight_checks.test_ifoe_transferbench_smoke(phdl, config)
+                preflight_checks.test_ifoe_transferbench_smoke(orch, config)
 
-            fail.assert_called_once_with('TransferBench preflight gate failed; see preflight report')
-            self.assertEqual(preflight_checks.preflight_results['transferbench_smoke']['status'], 'FAIL')
+            recorded = preflight_checks.preflight_results['transferbench_smoke']
+            self.assertEqual(recorded['status'], 'FAIL')
+            self.assertEqual(recorded['message'], 'TransferBench preflight gate failed; see preflight report')
+            update_result.assert_called_once_with(recorded)
+            self.assertIs(checker_cls.call_args.args[0], orch)
         finally:
             preflight_checks.preflight_results.clear()
             preflight_checks.preflight_results.update(previous_results)
@@ -885,12 +898,12 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
                     'nodeB': self._fabric_payload(FABRIC_TOPOLOGY_VPOD0_4GPU),
                 },
                 {
-                    'nodeA': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
-                    'nodeB': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
+                    'nodeA': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0),
+                    'nodeB': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0),
                 },
             ],
         )
-        check = TransferBenchSmokeCheck(phdl, rank_mode='per_node')
+        check = TransferBenchSmokeCheck(_make_orch(phdl), rank_mode='per_node')
         results = check.run()
         self.assertEqual(results['status'], 'PASS')
         self.assertEqual(results['pod_membership']['status'], 'PASS')
@@ -905,8 +918,8 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
             reachable_hosts=['nodeA', 'nodeB'],
             exec_responses=[
                 {
-                    'nodeA': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
-                    'nodeB': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
+                    'nodeA': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0),
+                    'nodeB': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0),
                 },
             ],
         )
@@ -917,7 +930,7 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
             'vpod_accelerators': [0, 1, 2, 3],
             'errors': [],
         }
-        results = TransferBenchSmokeCheck(phdl, afm_vpod_admission=admission).run()
+        results = TransferBenchSmokeCheck(_make_orch(phdl), afm_vpod_admission=admission).run()
 
         self.assertEqual(results['status'], 'PASS')
         self.assertEqual(results['pod_membership']['status'], 'PASS')
@@ -934,7 +947,7 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
             'vpod_accelerators': [],
             'errors': ['nodeA: AFM device is PROVIDER'],
         }
-        results = TransferBenchSmokeCheck(phdl, afm_vpod_admission=admission).run()
+        results = TransferBenchSmokeCheck(_make_orch(phdl), afm_vpod_admission=admission).run()
 
         self.assertEqual(results['status'], 'FAIL')
         self.assertEqual(results['nodes']['nodeA']['status'], 'BLOCKED')
@@ -950,7 +963,7 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
                 },
             ],
         )
-        check = TransferBenchSmokeCheck(phdl, rank_mode='multi_rank')
+        check = TransferBenchSmokeCheck(_make_orch(phdl), rank_mode='multi_rank')
         results = check.run()
         self.assertEqual(results['status'], 'FAIL')
         self.assertEqual(results['pod_membership']['status'], 'FAIL')
@@ -967,12 +980,12 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
                     'nodeB': self._fabric_payload(FABRIC_TOPOLOGY_VPOD0_4GPU),
                 },
                 {
-                    'nodeA': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
+                    'nodeA': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0),
                     'nodeB': _with_sentinel(SMOKETEST_FAIL_OUTPUT, 1),
                 },
             ],
         )
-        check = TransferBenchSmokeCheck(phdl, rank_mode='per_node')
+        check = TransferBenchSmokeCheck(_make_orch(phdl), rank_mode='per_node')
         results = check.run()
         self.assertEqual(results['status'], 'FAIL')
         self.assertEqual(results['nodes']['nodeA']['status'], 'PASS')
@@ -989,7 +1002,7 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
                 {'nodeA': _with_sentinel(SMOKETEST_SKIP_HEAVY_OUTPUT, 0)},
             ],
         )
-        check = TransferBenchSmokeCheck(phdl, rank_mode='per_node', max_skip_pct=25.0)
+        check = TransferBenchSmokeCheck(_make_orch(phdl), rank_mode='per_node', max_skip_pct=25.0)
         results = check.run()
         self.assertEqual(results['status'], 'WARNING')
         self.assertEqual(results['nodes']['nodeA']['status'], 'WARNING')
@@ -1006,12 +1019,12 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
             ],
             cmd_list_responses=[
                 {
-                    'nodeA': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
-                    'nodeB': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
+                    'nodeA': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0),
+                    'nodeB': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0),
                 }
             ],
         )
-        check = TransferBenchSmokeCheck(phdl, rank_mode='multi_rank')
+        check = TransferBenchSmokeCheck(_make_orch(phdl), rank_mode='multi_rank')
         results = check.run()
         self.assertEqual(results['status'], 'PASS')
         self.assertEqual(results['rank_mode'], 'multi_rank')
@@ -1030,10 +1043,10 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
             reachable_hosts=['nodeA'],
             exec_responses=[
                 {'nodeA': self._fabric_payload(FABRIC_TOPOLOGY_VPOD0_4GPU)},
-                {'nodeA': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0)},
+                {'nodeA': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0)},
             ],
         )
-        check = TransferBenchSmokeCheck(phdl, rank_mode='multi_rank')
+        check = TransferBenchSmokeCheck(_make_orch(phdl), rank_mode='multi_rank')
         results = check.run()
         self.assertEqual(results['rank_mode'], 'per_node')
         self.assertEqual(results['status'], 'PASS')
@@ -1043,10 +1056,10 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         phdl = self._make_phdl(
             reachable_hosts=['nodeA'],
             exec_responses=[
-                {'nodeA': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0)},
+                {'nodeA': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0)},
             ],
         )
-        check = TransferBenchSmokeCheck(phdl, rank_mode='per_node', skip_pod_check=True)
+        check = TransferBenchSmokeCheck(_make_orch(phdl), rank_mode='per_node', skip_pod_check=True)
         results = check.run()
         self.assertEqual(results['pod_membership']['status'], 'SKIPPED')
         self.assertEqual(results['status'], 'PASS')
@@ -1060,7 +1073,7 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
                 {'nodeA': _with_sentinel(SMOKETEST_FATAL_PRECONDITION_OUTPUT, 2)},
             ],
         )
-        check = TransferBenchSmokeCheck(phdl, rank_mode='per_node')
+        check = TransferBenchSmokeCheck(_make_orch(phdl), rank_mode='per_node')
         results = check.run()
         self.assertEqual(results['status'], 'FAIL')
         node_result = results['nodes']['nodeA']
@@ -1073,17 +1086,17 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
             reachable_hosts=['nodeA'],
             exec_responses=[
                 {'nodeA': FABRIC_TEXT_VPOD0},
-                {'nodeA': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0)},
+                {'nodeA': _with_sentinel(SMOKETEST_SUCCESS_OUTPUT, 0)},
             ],
         )
-        check = TransferBenchSmokeCheck(phdl, rank_mode='per_node')
+        check = TransferBenchSmokeCheck(_make_orch(phdl), rank_mode='per_node')
         results = check.run()
         self.assertEqual(results['status'], 'PASS')
         self.assertEqual(results['pod_membership']['vpod_id'], 0)
 
     def test_run_fails_when_no_reachable_hosts(self):
         phdl = self._make_phdl(reachable_hosts=[])
-        check = TransferBenchSmokeCheck(phdl)
+        check = TransferBenchSmokeCheck(_make_orch(phdl))
         results = check.run()
         self.assertEqual(results['status'], 'FAIL')
         self.assertTrue(any('No reachable hosts' in e for e in results['errors']))

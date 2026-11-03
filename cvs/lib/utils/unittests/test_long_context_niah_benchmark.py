@@ -3,6 +3,7 @@
 import unittest
 
 from cvs.lib.utils.model_query_lib import LongContextNiahBenchmark
+from cvs.unittests.support import TMP
 
 
 class TestLongContextNiahBenchmark(unittest.TestCase):
@@ -29,20 +30,37 @@ class TestLongContextNiahBenchmark(unittest.TestCase):
         )
         self.assertNotIn("local_files_only", src)
 
+    def test_probe_script_disables_thinking_and_searches_reply_fields(self):
+        src = LongContextNiahBenchmark.probe_script(
+            port=8000,
+            model="/root/models/DeepSeek-R1-0528",
+            isl=8192,
+            osl=32,
+            num_prompts=4,
+            seed=42,
+        )
+        self.assertIn('"chat_template_kwargs"', src)
+        self.assertIn("/no_think", src)
+        self.assertIn("def found(expected, actual):", src)
+        self.assertIn("reasoning_content", src)
+        self.assertNotIn("print(req_str, flush=True)", src)
+        self.assertNotIn('"request": req_str or prompt', src)
+
     def test_prepare_passes_local_files_only_to_probe_kwargs(self):
+        rate = 0.0
         _, scoring = LongContextNiahBenchmark.prepare(
             {
                 "num_prompts": 4,
                 "seed": 42,
                 "local_files_only": True,
-                "expected_results": {"auto": {"pass_rate": 0.0}},
+                "expected_results": {"auto": {"pass_rate": rate}},
             },
             port=8000,
             host="127.0.0.1",
             model_id="openai/gpt-oss-120b",
             isl=8192,
             osl=32,
-            log_dir="/tmp/logs",
+            log_dir=f"{TMP}/logs",
             log_basename="niah.log",
         )
         self.assertTrue(scoring["probe_kwargs"]["local_files_only"])

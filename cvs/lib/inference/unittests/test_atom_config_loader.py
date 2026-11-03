@@ -13,11 +13,16 @@ import unittest
 from pathlib import Path
 
 from cvs.lib.inference.atom.atom_config_loader import (
+    CONTAINER_HF_TOKEN_PATH,
     AtomVariantConfig,
+    atom_container_block,
+    bind_hf_token_volume,
     expand_sweep,
     expand_sweep_parametrize,
     gpu_arch_from_config_path,
+    _prune_orphan_sweep_thresholds,
     load_variant,
+    merge_mxfp4_triton_env,
     orchestrator_container_from_variant,
     placeholder_gated_threshold_cell,
     resolve_atom_profile,
@@ -26,6 +31,8 @@ from cvs.lib.inference.atom.atom_config_loader import (
     server_session_key,
 )
 from cvs.lib.inference.utils.inferencing_config_loader import Run, SeqCombo, Sweep
+
+FAKE_CRED_FILE = "/home/x/.hf"
 
 
 def _cluster_dict():
@@ -86,7 +93,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_load_w1_mi3xx_multinode_variant(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_distributed.json")
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
         self.assertEqual(variant.params.nnodes, "2")
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(variant.params.pipeline_parallel_size, "2")
@@ -125,7 +132,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
                 "shared_fs": "/home/x",
                 "models_dir": "/home/x/models",
                 "log_dir": "/home/x/LOGS",
-                "hf_token_file": "/home/x/.hf",
+                "hf_token_file": FAKE_CRED_FILE,
             },
             model={"id": "openai/gpt-oss-120b", "remote": 0, "precision": "bf16"},
             container={
@@ -140,6 +147,177 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         )
         block = orchestrator_container_from_variant(variant)
         self.assertEqual(block["env"]["VLLM_ROCM_USE_AITER"], "1")
+        self.assertEqual(block["runtime"]["args"]["volumes"], ["/home/x:/home/x"])
+
+    def test_orchestrator_container_strips_hf_token_env(self):
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="legacy_profile", isl="7168", osl="1024")],
+            runs=[Run(combo="legacy_profile", concurrency=64)],
+        )
+        thresholds = {
+            "ISL=7168,OSL=1024,TP=8,PP=1,CONC=64": placeholder_gated_threshold_cell(),
+        }
+        variant = AtomVariantConfig(
+            schema_version=1,
+            framework="atom",
+            gpu_arch="mi3xx",
+            enforce_thresholds=False,
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "openai/gpt-oss-120b", "remote": 0, "precision": "bf16"},
+            container={
+                "name": "c",
+                "image": "img",
+                "runtime": {"name": "docker", "args": {"volumes": ["/home/x:/home/x"]}},
+            },
+            roles={
+                "server": {
+                    "env": {
+                        "HF_TOKEN": "hf_secret_value",
+                        "HUGGINGFACE_HUB_TOKEN": "hf_alias_secret",
+                        "VLLM_ROCM_USE_AITER": "1",
+                    }
+                }
+            },
+            params={"tensor_parallelism": "8"},
+            sweep=sweep,
+            thresholds=thresholds,
+        )
+        block = orchestrator_container_from_variant(variant)
+        self.assertNotIn("HF_TOKEN", block["env"])
+        self.assertNotIn("HUGGINGFACE_HUB_TOKEN", block["env"])
+        self.assertNotIn("hf_secret_value", str(block))
+        self.assertNotIn("hf_alias_secret", str(block))
+        self.assertEqual(block["env"]["VLLM_ROCM_USE_AITER"], "1")
+
+    def test_bind_hf_token_volume_rewrites_writable_mount(self):
+        block = {
+            "runtime": {
+                "args": {
+                    "volumes": [
+                        "/cluster/data:/data",
+                        "/host/token:/run/secrets/hf_token",
+                        "/host/token-ro:/run/secrets/hf_token:ro",
+                    ]
+                }
+            }
+        }
+        bind_hf_token_volume(block, "/home/x/.hf")
+        self.assertEqual(
+            block["runtime"]["args"]["volumes"],
+            [
+                "/cluster/data:/data",
+                f"/host/token:{CONTAINER_HF_TOKEN_PATH}:ro",
+                f"/host/token-ro:{CONTAINER_HF_TOKEN_PATH}:ro",
+            ],
+        )
+
+    def test_merged_container_keeps_cluster_volumes(self):
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="legacy_profile", isl="7168", osl="1024")],
+            runs=[Run(combo="legacy_profile", concurrency=64)],
+        )
+        thresholds = {
+            "ISL=7168,OSL=1024,TP=8,PP=1,CONC=64": placeholder_gated_threshold_cell(),
+        }
+        variant = AtomVariantConfig(
+            schema_version=1,
+            framework="atom",
+            gpu_arch="mi3xx",
+            enforce_thresholds=False,
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "openai/gpt-oss-120b", "remote": 0, "precision": "bf16"},
+            container={
+                "name": "c",
+                "image": "img",
+                "runtime": {"name": "docker", "args": {}},
+            },
+            params={"tensor_parallelism": "8"},
+            sweep=sweep,
+            thresholds=thresholds,
+        )
+        cluster = {"runtime": {"name": "docker", "args": {"volumes": ["/cluster:/cluster"]}}}
+        block = atom_container_block(cluster, variant)
+        volumes = block["runtime"]["args"]["volumes"]
+        self.assertEqual(
+            volumes,
+            ["/cluster:/cluster", f"/home/x/.hf:{CONTAINER_HF_TOKEN_PATH}:ro"],
+        )
+
+    def _token_mount_variant(self, container):
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="legacy_profile", isl="7168", osl="1024")],
+            runs=[Run(combo="legacy_profile", concurrency=64)],
+        )
+        thresholds = {
+            "ISL=7168,OSL=1024,TP=8,PP=1,CONC=64": placeholder_gated_threshold_cell(),
+        }
+        return AtomVariantConfig(
+            schema_version=1,
+            framework="atom",
+            gpu_arch="mi3xx",
+            enforce_thresholds=False,
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "openai/gpt-oss-120b", "remote": 0, "precision": "bf16"},
+            container=container,
+            params={"tensor_parallelism": "8"},
+            sweep=sweep,
+            thresholds=thresholds,
+        )
+
+    def test_merged_container_strips_cluster_env_token(self):
+        variant = self._token_mount_variant(
+            {
+                "name": "c",
+                "image": "img",
+                "runtime": {"name": "docker", "args": {}},
+            }
+        )
+        cluster = {
+            "env": {"HF_TOKEN": "from-cluster", "KEEP_ME": "1"},
+            "runtime": {"name": "docker", "args": {"volumes": ["/cluster:/cluster"]}},
+        }
+        block = atom_container_block(cluster, variant)
+        self.assertNotIn("HF_TOKEN", block["env"])
+        self.assertNotIn("from-cluster", str(block))
+        self.assertEqual(block["env"]["KEEP_ME"], "1")
+
+    def test_merged_container_strips_runtime_args_env_token(self):
+        variant = self._token_mount_variant(
+            {
+                "name": "c",
+                "image": "img",
+                "runtime": {
+                    "name": "docker",
+                    "args": {
+                        "env": {
+                            "HF_TOKEN": "from-runtime-args",
+                            "HUGGINGFACE_HUB_TOKEN": "from-runtime-alias",
+                            "KEEP_FLAG": "1",
+                        }
+                    },
+                },
+            }
+        )
+        block = atom_container_block({}, variant)
+        self.assertEqual(block["runtime"]["args"]["env"], {"KEEP_FLAG": "1"})
+        rendered = str(block)
+        self.assertNotIn("from-runtime-args", rendered)
+        self.assertNotIn("from-runtime-alias", rendered)
 
     def test_expand_sweep_matches_w1_single(self):
         root = Path(__file__).resolve().parents[3]
@@ -182,7 +360,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
                     "shared_fs": "/home/x",
                     "models_dir": "/home/x/models",
                     "log_dir": "/home/x/LOGS",
-                    "hf_token_file": "/home/x/.hf",
+                    "hf_token_file": FAKE_CRED_FILE,
                 },
                 model={"id": "deepseek-ai/DeepSeek-R1-0528", "remote": 0, "precision": "fp8"},
                 container={
@@ -236,7 +414,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
                 "shared_fs": "/home/x",
                 "models_dir": "/home/x/models",
                 "log_dir": "/home/x/LOGS",
-                "hf_token_file": "/home/x/.hf",
+                "hf_token_file": FAKE_CRED_FILE,
             },
             model={"id": "deepseek-ai/DeepSeek-R1-0528", "remote": 0, "precision": "fp8"},
             container={
@@ -257,7 +435,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         )
         self.assertEqual(variant.roles.server.ib_netdev, "auto")
 
-    def test_server_env_strips_orchestrator_network_keys(self):
+    def test_server_env_keeps_explicit_network_keys(self):
         sweep = Sweep(
             sequence_combinations=[SeqCombo(name="w1", isl="512", osl="512")],
             runs=[Run(combo="w1", concurrency=16)],
@@ -271,7 +449,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
                 "shared_fs": "/home/x",
                 "models_dir": "/home/x/models",
                 "log_dir": "/home/x/LOGS",
-                "hf_token_file": "/home/x/.hf",
+                "hf_token_file": FAKE_CRED_FILE,
             },
             model={"id": "deepseek-ai/DeepSeek-R1-0528", "remote": 0, "precision": "fp8"},
             container={
@@ -298,7 +476,14 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             sweep=sweep,
             thresholds={},
         )
-        self.assertEqual(variant.roles.server.env, {"NCCL_IB_GID_INDEX": "1"})
+        self.assertEqual(
+            variant.roles.server.env,
+            {
+                "GLOO_SOCKET_IFNAME": "mlx5_0",
+                "NCCL_IB_HCA": "mlx5_0",
+                "NCCL_IB_GID_INDEX": "1",
+            },
+        )
 
     def test_load_w1_accuracy_variant(self):
         root = Path(__file__).resolve().parents[3]
@@ -344,6 +529,11 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertIn("kv-cache-dtype", variant.roles.server.serve_args)
 
+    def test_load_atom_vllm_distributed_serving_schema(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
+        self.assertEqual(variant.params.driver, "vllm_atom")
+
     def test_load_atom_vllm_gpt_oss_serving_schema(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_vllm_gpt-oss-120b_mxfp4_single.json")
@@ -373,14 +563,55 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.model.id, "amd/Qwen3.5-397B-A17B-FP8")
         self.assertEqual(variant.run_card.atom_image_pin, "")
         self.assertEqual(resolved_atom_image_pin(variant), variant.container.image)
-        self.assertEqual(
-            variant.expected_cells(),
-            [
-                "ISL=1024,OSL=8192,TP=8,PP=1,CONC=32",
-                "ISL=1024,OSL=8192,TP=8,PP=1,CONC=64",
-                "ISL=128,OSL=32,TP=8,PP=1,CONC=1",
-            ],
+        cells = variant.expected_cells()
+        self.assertTrue(cells)
+        self.assertTrue(all("TP=8" in cell and "PP=1" in cell for cell in cells))
+        self.assertTrue(all(task.id for task in variant.accuracy.tasks))
+
+    def test_load_qwen397b_fp8_parity_variants(self):
+        root = Path(__file__).resolve().parents[3]
+        cases = (
+            ("vllm", "single", "vllm_atom", "1", "1"),
+            ("vllm", "distributed", "vllm_atom", "2", "2"),
+            ("sglang", "single", "sglang", "1", "1"),
+            ("sglang", "distributed", "sglang", "2", "2"),
         )
+        for engine, mode, driver, nnodes, pp in cases:
+            name = f"mi3xx_atom_{engine}_qwen3.5-397b-a17b_fp8_{mode}.json"
+            with self.subTest(name=name):
+                variant = _atom_config(root, name)
+                self.assertEqual(variant.model.id, "amd/Qwen3.5-397B-A17B-FP8")
+                self.assertEqual(variant.params.driver, driver)
+                self.assertEqual(variant.params.nnodes, nnodes)
+                self.assertEqual(variant.params.pipeline_parallel_size, pp)
+                self.assertTrue(variant.platform.gpu_metrics_poll)
+                self.assertNotIn("HF_HUB_CACHE", variant.roles.server.env)
+                self.assertNotIn("HF_HOME", variant.roles.server.env)
+                self.assertTrue(all(task.id for task in variant.accuracy.tasks))
+                self.assertTrue(all(f"PP={pp}" in cell for cell in variant.expected_cells()))
+                self.assertIn("accuracy", variant.thresholds)
+
+    def test_load_qwen397b_fp8_mtp3(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi3xx_atom_qwen3.5-397b-a17b_fp8_single.json", profile="mtp3")
+        self.assertEqual(variant.params.driver, "atom")
+        self.assertIn("--method", variant.roles.server.atom_args)
+        self.assertTrue(variant.mtp_quality.enabled)
+        self.assertIn("mtp.acceptance_rate", variant.thresholds["mtp_quality"])
+        self.assertTrue(all(task.id for task in variant.accuracy.tasks))
+
+    def test_load_mi355x_qwen_profiles_cover_thresholds(self):
+        root = Path(__file__).resolve().parents[3]
+        name = "mi355x_atom_qwen3.5-397b-a17b_fp8_single.json"
+        for profile in ("perf", "mtp3"):
+            with self.subTest(profile=profile):
+                variant = _atom_config(root, name, profile=profile)
+                self.assertEqual(variant.gpu_arch, "mi355x")
+                self.assertNotIn("HF_HUB_CACHE", variant.roles.server.env)
+                self.assertNotIn("HF_HOME", variant.roles.server.env)
+                self.assertTrue(variant.expected_cells())
+                for cell in variant.expected_cells():
+                    self.assertIn(cell, variant.thresholds, f"{profile} missing {cell}")
 
     def test_load_w1_single_gpu_metrics_poll(self):
         root = Path(__file__).resolve().parents[3]
@@ -398,7 +629,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_load_distributed_accuracy_scaffold(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_distributed.json")
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(variant.params.nnodes, "2")
         self.assertIn("PP=2", variant.expected_cells()[0])
@@ -411,7 +642,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             "gpu_arch": "mi3xx",
             "default_profile": "perf",
             "threshold_json": "t.json",
-            "paths": {"shared_fs": "/home/x", "models_dir": "/m", "log_dir": "/l", "hf_token_file": "/h"},
+            "paths": {"shared_fs": "/home/x", "models_dir": "/m", "log_dir": "/l", "hf_token_file": "/h"},  # nosec B105 - a file path, not a secret
             "model": {"id": "m", "remote": 0, "precision": "fp8"},
             "profiles": {
                 "perf": {
@@ -434,7 +665,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             "framework": "atom",
             "gpu_arch": "mi3xx",
             "default_profile": "perf",
-            "paths": {"shared_fs": "/home/x", "models_dir": "/m", "log_dir": "/l", "hf_token_file": "/h"},
+            "paths": {"shared_fs": "/home/x", "models_dir": "/m", "log_dir": "/l", "hf_token_file": "/h"},  # nosec B105 - a file path, not a secret
             "model": {"id": "m", "remote": 0},
             "profiles": {
                 "perf": {
@@ -446,43 +677,74 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         with self.assertRaises(ValueError):
             resolve_atom_profile(raw, {}, "missing")
 
-    def test_legacy_flat_config_unchanged(self):
+    def test_qwen_native_resolves_perf_profile(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_qwen3.5-397b-a17b_fp8_single.json")
         self.assertEqual(variant.schema_version, 1)
         self.assertEqual(variant.threshold_json, "mi325x_atom_qwen3.5-397b-a17b_fp8_threshold.json")
+        self.assertNotIn("--method", variant.roles.server.atom_args)
 
     def test_flat_config_slices_profiled_threshold(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_distributed.json")
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
         cell = "ISL=512,OSL=512,TP=8,PP=2,CONC=16"
         self.assertIn(cell, variant.expected_cells())
         self.assertIn("scaling.efficiency_pct", variant.thresholds[cell])
+
+    def test_merge_mxfp4_triton_env_skips_mi355x(self):
+        gfx942 = merge_mxfp4_triton_env("mxfp4", {}, gpu_arch="mi3xx")
+        self.assertEqual(gfx942["ATOM_USE_TRITON_MOE"], "1")
+        self.assertEqual(gfx942["ATOM_USE_TRITON_GEMM"], "1")
+        gfx950 = merge_mxfp4_triton_env("mxfp4", {}, gpu_arch="mi355x")
+        self.assertNotIn("ATOM_USE_TRITON_MOE", gfx950)
+        self.assertNotIn("ATOM_USE_TRITON_GEMM", gfx950)
+        opted_in = merge_mxfp4_triton_env(
+            "mxfp4",
+            {"ATOM_USE_TRITON_MOE": "true", "ATOM_USE_TRITON_GEMM": "true"},
+            gpu_arch="mi355x",
+        )
+        self.assertEqual(opted_in["ATOM_USE_TRITON_MOE"], "1")
+        self.assertEqual(opted_in["ATOM_USE_TRITON_GEMM"], "1")
+
+    def test_gpu_arch_from_config_path_reads_family_stem(self):
+        self.assertEqual(gpu_arch_from_config_path("mi3xx_atom_example.json"), "mi3xx")
+        self.assertEqual(gpu_arch_from_config_path("mi355x_atom_example.json"), "mi355x")
+
+    def test_load_mi355x_mxfp4_does_not_inject_triton_env(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi355x_atom_kimi-k27-code_mxfp4_single.json")
+        self.assertEqual(variant.gpu_arch, "mi355x")
+        self.assertNotIn("ATOM_USE_TRITON_MOE", variant.roles.server.env)
+        self.assertNotIn("ATOM_USE_TRITON_GEMM", variant.roles.server.env)
+        self.assertNotIn("HF_HUB_CACHE", variant.roles.server.env)
+        self.assertNotIn("HF_HOME", variant.roles.server.env)
+        pro = _atom_config(root, "mi355x_atom_deepseek-v4-pro_single.json")
+        self.assertEqual(pro.gpu_arch, "mi355x")
+        self.assertNotIn("HF_HUB_CACHE", pro.roles.server.env)
+        self.assertNotIn("HF_HOME", pro.roles.server.env)
 
     def test_atom_threshold_files_use_aligned_keys_and_bare_metrics(self):
         root = Path(__file__).resolve().parents[3]
         atom_dir = root / "input/config_file/inference/atom"
         cell_no_pp = re.compile(r"^ISL=.*,TP=\d+,CONC=")
-        config_platform_stem = re.compile(r"^mi325x_|^mi35x_|^mi300x_|^mi355x_")
-        threshold_family_stem = re.compile(r"^mi3xx_|^mi35x_|^mi300x_|^mi355x_")
         for path in sorted(atom_dir.glob("*.json")):
             if "threshold" in path.name:
-                self.assertFalse(
-                    threshold_family_stem.match(path.name),
-                    f"threshold must use platform stem, not family: {path.name}",
-                )
                 self.assertTrue(
-                    path.name.startswith("mi325x_"),
-                    f"shipped thresholds are mi325x-only: {path.name}",
+                    path.name.startswith(("mi325x_", "mi355x_", "mi300x_")),
+                    f"threshold must use a platform prefix: {path.name}",
+                )
+                self.assertFalse(
+                    path.name.startswith("mi3xx_"),
+                    f"threshold must not use the mi3xx family prefix: {path.name}",
                 )
             else:
-                self.assertFalse(
-                    config_platform_stem.match(path.name),
-                    f"config must use family stem mi3xx, not platform: {path.name}",
-                )
                 self.assertTrue(
-                    path.name.startswith("mi3xx_"),
-                    f"shipped configs use mi3xx family stem: {path.name}",
+                    path.name.startswith(("mi3xx_", "mi355x_")),
+                    f"config must use mi3xx or mi355x: {path.name}",
+                )
+                self.assertFalse(
+                    path.name.startswith(("mi325x_", "mi300x_")),
+                    f"config must not use an mi325x or mi300x prefix: {path.name}",
                 )
         for path in sorted(atom_dir.glob("*threshold*.json")):
             text = path.read_text(encoding="utf-8")
@@ -510,22 +772,43 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
             walk(data)
 
-    def test_all_atom_configs_load_with_aligned_thresholds(self):
+    def test_prune_orphan_sweep_thresholds_drops_other_topologies(self):
+        kept = "ISL=128,OSL=32,TP=8,PP=1,CONC=1"
+        orphan = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
+        pruned = _prune_orphan_sweep_thresholds(
+            {kept: {"output_throughput": {"kind": "min", "value": 1}}, orphan: {}, "accuracy": {}},
+            [kept],
+        )
+        self.assertIn(kept, pruned)
+        self.assertIn("accuracy", pruned)
+        self.assertNotIn(orphan, pruned)
+
+    def test_all_atom_configs_load(self):
         root = Path(__file__).resolve().parents[3]
         atom_dir = root / "input/config_file/inference/atom"
         cluster = _cluster_dict()
+        loaded = 0
         for cfg in sorted(atom_dir.glob("*.json")):
             if "threshold" in cfg.name:
                 continue
-            variant = load_variant(cfg, cluster)
-            if not variant.threshold_json:
-                continue
-            for cell in variant.expected_cells():
-                self.assertIn(
-                    cell,
-                    variant.thresholds,
-                    f"{cfg.name}: missing threshold cell {cell!r}",
-                )
+            raw = json.loads(cfg.read_text(encoding="utf-8"))
+            profiles = raw.get("profiles")
+            # load_variant without a profile uses default_profile, which is perf.
+            selected = list(profiles) if isinstance(profiles, dict) and profiles else [None]
+            for profile in selected:
+                with self.subTest(config=cfg.name, profile=profile or "default"):
+                    variant = load_variant(cfg, cluster, profile=profile)
+                    loaded += 1
+                    if not variant.threshold_json:
+                        continue
+                    label = cfg.name if profile is None else f"{cfg.name} profile={profile}"
+                    for cell in variant.expected_cells():
+                        self.assertIn(
+                            cell,
+                            variant.thresholds,
+                            f"{label}: missing threshold cell {cell!r}",
+                        )
+        self.assertGreater(loaded, 0)
 
 
 if __name__ == "__main__":

@@ -118,6 +118,40 @@ class TestCellCardRenderer(unittest.TestCase):
         self.assertEqual(renderer._theme_tokens, _THEME_TOKENS["pytest"])
         self.assertIsNone(renderer._cell)
 
+    def test_inference_cell_keeps_isl_header_and_tok_s_unit(self):
+        cell = dict(self.sample_cell)
+        cell["metrics"] = [
+            {
+                "metric": "throughput",
+                "actual": 1234.5,
+                "label": "Throughput",
+                "unit": "TFLOP/s/GPU",
+                "status": "pass",
+                "bar_pct": 80,
+                "spec": {"value": 1000},
+                "margin": "+23%",
+            }
+        ]
+        html = CellCardRenderer(self.basic_config).render(cell)
+        self.assertIn("ISL=1024 OSL=2048", html)
+        self.assertIn("C=4", html)
+        self.assertIn("<span class='headline-unit'>tok/s</span>", html)
+        self.assertNotIn("TFLOP/s/GPU</span>", html)
+
+    def test_training_cell_uses_subtitle_and_metric_unit(self):
+        cell = dict(self.sample_cell)
+        cell["subtitle"] = "MBS=4 GBS=128 · FP8"
+        cell["policy"] = ""
+        cell["metrics"] = [
+            dict(metric, unit="TFLOP/s/GPU") if metric["metric"] == "throughput" else metric
+            for metric in self.sample_cell["metrics"]
+        ]
+        html = CellCardRenderer(self.basic_config).render(cell)
+        self.assertIn("MBS=4 GBS=128 · FP8", html)
+        self.assertNotIn("ISL=1024", html)
+        self.assertIn("test_cell_123", html)
+        self.assertIn("<span class='headline-unit'>TFLOP/s/GPU</span>", html)
+
     def test_render_complete_cell(self):
         """Test rendering a complete cell to HTML."""
         renderer = CellCardRenderer(self.basic_config)
@@ -144,6 +178,23 @@ class TestCellCardRenderer(unittest.TestCase):
         # Check footer
         self.assertIn("test_cell_123", html)
         self.assertIn("test_host", html)
+
+    def test_render_xdit_cell_uses_diffusion_labels(self):
+        renderer = CellCardRenderer(self.basic_config)
+        cell = dict(
+            self.sample_cell,
+            policy="SIZE=720*1280,FRAMES=81,STEPS=40,BENCH=1",
+            cell_id="SIZE=720*1280,FRAMES=81,STEPS=40,BENCH=1",
+            concurrency=2,
+        )
+
+        rendered = renderer.render(cell)
+
+        self.assertIn("SIZE=720*1280,FRAMES=81,STEPS=40,BENCH=1", rendered)
+        self.assertIn("NNODES=2", rendered)
+        self.assertNotIn("ISL=", rendered)
+        self.assertNotIn("OSL=", rendered)
+        self.assertNotIn("C=2", rendered)
 
     def test_render_compact_mode(self):
         """Test rendering in compact mode."""

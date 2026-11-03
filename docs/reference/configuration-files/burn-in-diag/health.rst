@@ -1,31 +1,39 @@
 .. meta::
-  :description: Configure the Health configuration file variables
-  :keywords: health, ROCm, install, cvs
+  :description: Reference for the CVS health test configuration file, covering AGFHC, TransferBench, and RVS burn-in parameters for AMD GPU cluster validation.
+  :keywords: CVS, health, AGFHC, TransferBench, RVS, ROCm, GPU, burn-in, AMD Instinct, configuration, JSON, benchmark
 
-******************************
-Health test configuration file
-******************************
+***************************************************************************
+Health test configuration file reference for Cluster Validation Suite (CVS)
+***************************************************************************
 
-The burn-in health tests are single-node diagnostic tests that validate the hardware and firmware versions' functionality and performance.
+The health configuration file controls AGFHC, `TransferBench <https://rocm.docs.amd.com/projects/TransferBench/en/latest/index.html>`_, and `ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmValidationSuite/en/latest/index.html>`_ burn-in parameters. Use these tests to validate GPU hardware, memory bandwidth, and compute throughput on each cluster node before production workloads.
 
-Here's a code snippet of the ``mi300_health_config.json`` file for reference:
+See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on running these tests.
 
 .. note::
 
-  In this configuration file, ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username. 
+  In this configuration file, ``{user-id}`` resolves to the current username at runtime. You can also manually change this value to your username.
 
-.. dropdown:: ``mi300_health_config.json``
+.. dropdown:: ``health_config.json``
 
   .. code:: json
-    
+
     {
-    
+
         "agfhc":
         {
             "path": "/opt/amd/agfhc",
             "package_tar_ball": "/home/{user-id}/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
             "install_dir": "/home/{user-id}/INSTALL/agfhc/",
-            "_comments_log_dir": "log_dir has to be a NON NFS local file system",
+            "_comment_env": "Companion-tool paths. Defaults match an /opt/amd install. Update every value when path changes. A missing key falls back to the directory next to path. FIREXS2_APP_PATH and LD_LIBRARY_PATH are derived from FIREXS_PATH.",
+            "env": {
+                "TXB_PATH": "/opt/amd/transferbench",
+                "MINIHPL_PATH": "/opt/amd/minihpl",
+                "MEMROCKER_PATH": "/opt/amd/memrocker",
+                "FIREXS_PATH": "/opt/amd/firexs2",
+                "AFIDSAG_PATH": "/opt/amd/afid"
+            },
+            "_comments_log_dir": "log_dir has to be a NON NFS local file system. CVS runs mkdir -p and test -w on each node before the recipes.",
             "log_dir": "/root/agfhc_logs",
             "hbm_test_duration": "00:01:30"
         },
@@ -37,10 +45,15 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
           "git_tag": "v1.67.00",
           "_comment_rocm_path": "ROCm installation path. Set the placeholder changeme to auto-detect from /opt/rocm or /opt/rocm/core-*",
           "rocm_path": "<changeme>",
+          "_comment_a2asweep_timeout": "Orch.exec timeout seconds for the a2asweep preset. Default 1500 covers the shipped 24-combo sweep plus buffer. Override directly, or omit and derive via a2asweep_combos / a2asweep_sec_per_combo / a2asweep_timeout_buffer.",
+          "a2asweep_timeout": 1500,
           "results":
           {
               "bytes_to_transfer": "268435456",
               "path": "/home/{user-id}/INSTALL/TransferBench",
+              "_comment_gpu_to_gpu_a2a_per_link_min": "Required a2a guide bar (GB/s): every GPU RTotal_i/(N-1) >= 32.9. Legacy alias gpu_to_gpu_a2a_avg is accepted.",
+              "gpu_to_gpu_a2a_per_link_min": "32.9",
+              "_comment_gpu_to_gpu_a2a_rtotal": "If set, Run Deck plots raw RTotal with no threshold. Not used for pass/fail.",
               "gpu_to_gpu_a2a_rtotal": "320.0",
               "avg_gpu_to_gpu_p2p_unidir_bw": "33.9",
               "avg_gpu_to_gpu_p2p_bidir_bw": "43.9",
@@ -51,7 +64,7 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
               "32_cu_rem_read": "48.0",
               "32_cu_rem_write": "48.0",
               "32_cu_rem_copy": "48.0"
-    
+
           }
         },
         "rvs":
@@ -61,7 +74,7 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
             "git_url": "https://github.com/ROCm/ROCmValidationSuite.git",
             "nfs_install": "True",
             "_comment_rocm_path": "ROCm installation path.Set to placeholder changeme auto-detect from /opt/rocm or /opt/rocm/core-*",
-            "rocm_path": "<changeme>",            
+            "rocm_path": "<changeme>",
             "config_path_mi300x": "/opt/rocm/share/rocm-validation-suite/conf/MI300X",
             "config_path_default": "/opt/rocm/share/rocm-validation-suite/conf",
             "_comment_rvs_test_level": "RVS test level configuration (0-5). 0: Run individual tests (skip level test), 1-5: Run LEVEL config test if RVS >= 1.3.0, else run individual tests. Default is 4.",
@@ -134,7 +147,7 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
                 }
             ]
         }
-    
+
     }
 
 
@@ -142,7 +155,7 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
 Parameters
 ==========
 
-Here's an exhaustive list of the available parameters in the Health configuration file.
+The following parameters are available in the health configuration file.
 
 AGFHC
 -----
@@ -159,19 +172,19 @@ AGFHC
      - Description
    * - ``path``
      - ``/opt/amd/agfhc``
-     - Path where AGFHC is installed
+     - Directory that contains the ``agfhc`` executable. Any other path runs ``./install --rocm-tar -o`` on the parent of ``path``, without sudo. That parent must be writable on the nodes.
    * - ``package_tar_ball``
      - ``/home/{user-id}/`` |br| ``PACKAGES/agfhc-mi300x`` |br| ``_1.22.0_ub2204.tar.bz2``
-     - Path where the tar ball is downloaded   
+     - Path where the tar ball is downloaded
    * - ``install_dir``
      - ``/home/{user-id}/INSTALL/agfhc/``
      - Path where AGFHC runs
-   * - ``_comments_log_dir``
-     - ``/home/{user-id}/INSTALL/agfhc/``
-     - Path where AGFHC runs
+   * - ``env``
+     - ``TXB_PATH=/opt/amd/transferbench``, ``MINIHPL_PATH=/opt/amd/minihpl``, ``MEMROCKER_PATH=/opt/amd/memrocker``, ``FIREXS_PATH=/opt/amd/firexs2``, ``AFIDSAG_PATH=/opt/amd/afid``
+     - Companion-tool paths exported for every AGFHC run, including ``/opt/amd``. Update them when ``path`` changes. A missing key falls back to ``<parent of path>/transferbench``, ``minihpl``, ``memrocker``, ``firexs2``, or ``<path>/sag`` for ``AFIDSAG_PATH``. ``FIREXS2_APP_PATH`` and ``LD_LIBRARY_PATH`` are derived from ``FIREXS_PATH``.
    * - ``log_dir``
      - ``/root/agfhc_logs``
-     - Log directory
+     - Local, non-NFS log directory. CVS runs ``mkdir -p`` and ``test -w`` on each node before the recipes.
    * - ``hbm_test_duration``
      - 00:01:30
      - HBM test duration
@@ -200,13 +213,28 @@ TransferBench
      - Git tag to checkout after cloning TransferBench
    * - ``rocm_path``
      - ``<changeme>``
-     - Set the path of rocm       
+     - Set the path of rocm
+   * - ``a2asweep_timeout``
+     - ``1500``
+     - Orchestrator timeout in seconds for ``test_transfer_bench_a2asweep``. When set, this value wins. When omitted, CVS derives the timeout as ``a2asweep_combos`` × ``a2asweep_sec_per_combo`` + ``a2asweep_timeout_buffer`` (defaults ``24``, ``50``, ``300`` → ``1500``), and never returns less than ``600`` (the former hard-coded 10-minute limit). Raise this on slower nodes or larger custom sweep ranges so a healthy sweep is not aborted mid-run.
+   * - ``a2asweep_combos``
+     - ``24``
+     - Optional. Combo count used only when ``a2asweep_timeout`` is omitted. Matches the default TransferBench a2asweep table size (block size × unroll combinations).
+   * - ``a2asweep_sec_per_combo``
+     - ``50``
+     - Optional. Seconds assumed per combo when deriving ``a2asweep_timeout``.
+   * - ``a2asweep_timeout_buffer``
+     - ``300``
+     - Optional. Extra seconds added after ``combos`` × ``sec_per_combo`` when deriving ``a2asweep_timeout``.
    * - ``bytes_to_transfer``
      - 268435456
      - Amount of data to transfer in bytes (256 MB); this is the payload size for bandwidth tests
+   * - ``gpu_to_gpu_a2a_per_link_min``
+     - 32.9
+     - Required guide bar for ``test_transfer_bench_a2a`` (GB/s). For each GPU, ``RTotal_i / (N-1)`` must be at least this value (coverage-matrix bar 32.9). Pytest and Run Deck both require this key (or the legacy alias ``gpu_to_gpu_a2a_avg``). Benign VMware provider ``No such file`` lines are ignored by scanning; other provider failures are not.
    * - ``gpu_to_gpu_a2a_rtotal``
      - 320.0
-     - All-to-all communication total bandwidth in GB/s across all GPUs 
+     - If present, Run Deck also plots raw per-GPU RTotal series **without** a threshold (annotation only), so chart status cannot disagree with the per-link cell gate. Not used for pass/fail; omitting ``gpu_to_gpu_a2a_per_link_min`` fails a2a in both pytest and Run Deck.
    * - ``avg_gpu_to_gpu_p2p_unidir_bw``
      - 33.9
      - Average peer-to-peer unidirectional bandwidth (GB/s) between GPU pairs
@@ -259,16 +287,13 @@ ROCm Validation Suite (RVS)
      - Set the flag to install nfs
    * - ``rocm_path``
      - ``<changeme>``
-     - Set the path of rocm       
+     - Set the path of rocm
    * - ``config_path_mi300x``
      - ``/opt/rocm/share/`` |br| ``rocm-validation-suite`` |br| ``/conf/MI300X``
-     - Path for Instinct MI300X configuration 
+     - Path for Instinct MI300X configuration
    * - ``config_path_default``
      - ``/opt/rocm/share/`` |br| ``rocm-validation`` |br| ``-suite/conf``
      -  Default path for RVS
-   * - ``_comment_rvs_test_level``
-     - "RVS test level configuration (0-5). 0: Run individual tests (skip level test), 1-5: Run LEVEL config test if RVS >= 1.3.0, else run individual tests. Default is 4."
-     -  RVS test comments
    * - ``rvs_test_level``
      - 4
      - Test level
@@ -386,16 +411,3 @@ ROCm Validation Suite (RVS)
    * - ``fail_regex_pattern``
      - ``\\[ERROR\\s*\\]|RVS-ERROR``
      - Failure expression
-
-
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-   

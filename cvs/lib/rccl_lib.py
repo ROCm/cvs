@@ -6,13 +6,15 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 # Standard libraries
+import hashlib
+import json
 import os
 import re
-import json
 import shlex
 import tempfile
-from typing import List
+import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 # Third party libraries
 import pandas as pd
@@ -26,6 +28,22 @@ from cvs.lib.verify_lib import *
 
 log = globals.log
 
+TOPOLOGY_FIELDS = ('nodes', 'ranks', 'ranksPerNode', 'gpusPerRank')
+
+
+def compare_topology(expected, observed):
+    """Return requested-vs-reported mismatches without modifying either mapping."""
+    return [
+        f'{field}: requested {expected[field]}, reported {observed.get(field, "<missing>")}'
+        for field in TOPOLOGY_FIELDS
+        if field in expected and (field not in observed or expected[field] != observed[field])
+    ]
+
+
+def _result_model(row):
+    """Allow rccl-tests output that omits the multinode topology block."""
+    return RcclTestsMultinodeRaw if all(field in row for field in TOPOLOGY_FIELDS) else RcclTests
+
 
 rccl_err_dict = {
     'orte': 'ORTE does not know how to route|ORTE was unable to reliably start',
@@ -35,13 +53,37 @@ rccl_err_dict = {
 
 
 class RcclVerifier:
-    """Pass/fail checks on one RCCL result set. Log scan is separate (stdout)."""
+    """Pass/fail checks on one RCCL result set. Log scan is separate (stdout).
 
-    def __init__(self, test_name, results, expected=None, cvs_params=None):
+    expected is None when nothing is configured and {} when the collective has no published threshold.
+    """
+
+    DEFAULT_BUS_BW_TOLERANCE = 0.95
+
+    def __init__(self, test_name, results, expected=None, cvs_params=None, resolver_failed=False):
         self.test_name = test_name
         self.results = results
         self.expected = expected
         self.cvs_params = cvs_params or {}
+        self.resolver_failed = resolver_failed
+        self.verdicts = []
+
+    def _record(self, check, row, passed, message, actual=None, threshold=None, unit=None):
+        """Keep each comparison while preserving fail_test side effects."""
+        self.verdicts.append(
+            {
+                'check': check,
+                'size': None if row is None else row.get('size'),
+                'dtype': None if row is None else row.get('type'),
+                'actual': actual,
+                'threshold': threshold,
+                'unit': unit,
+                'status': 'pass' if passed else 'fail',
+                'message': '' if passed else message,
+            }
+        )
+        if not passed:
+            fail_test(message)
 
     @staticmethod
     def scan_logs(output):
@@ -63,88 +105,163 @@ class RcclVerifier:
         if not re.search(r'#\sAvg bus bandwidth', output):
             fail_test('RCCL test did not complete successfully, no bandwidth numbers printed - pls check')
 
+    def bus_bw_tolerance(self):
+        """Fraction of reference bus BW required by cvs_params.bus_bw_tolerance (default 0.95)."""
+        value = self.cvs_params.get('bus_bw_tolerance', self.DEFAULT_BUS_BW_TOLERANCE)
+        try:
+            tolerance = float(value)
+        except (TypeError, ValueError):
+            tolerance = None
+        # NaN fails both comparisons, so it must also be rejected here.
+        if tolerance is None or not 0 < tolerance <= 1:
+            self._record(
+                'bus_bw',
+                None,
+                False,
+                f'Invalid rccl.cvs_params.bus_bw_tolerance {value!r}; expected a fraction in (0, 1], e.g. "0.95"',
+            )
+            return None
+        return tolerance
+
     def check_bus_bw(self):
+        tolerance = self.bus_bw_tolerance()
+        if tolerance is None:
+            return
         test_name = self.test_name
         expected = self.expected
         log.info(f'exp_res_dict = {expected}')
-        tolerance = 0.95
-        msg_size_list = list(expected.keys())
         log.info("%s", test_name)
         in_place = 0 if re.search('alltoall|all_to_all', test_name, re.I) else 1
         place_label = 'out-of-place' if in_place == 0 else 'in-place'
-        for act_dict in self.results:
-            if act_dict['inPlace'] != in_place:
+        for msg_size, reference in expected.items():
+            expected_bw = float(reference['bus_bw'])
+            threshold = expected_bw * tolerance
+            rows = [
+                act_dict
+                for act_dict in self.results
+                if act_dict['inPlace'] == in_place and str(act_dict['size']) == str(msg_size)
+            ]
+            if not rows:
+                self._record(
+                    'bus_bw',
+                    {'size': msg_size},
+                    False,
+                    f'No {place_label} result for {test_name} at configured msg size {msg_size}; '
+                    'check that start_msg_size/end_msg_size cover every size in rccl.results',
+                    threshold=threshold,
+                    unit='GB/s',
+                )
                 continue
-            for msg_size in msg_size_list:
-                if str(msg_size) != str(act_dict['size']):
-                    continue
-                expected_bw = float(expected[msg_size]['bus_bw'])
+            for act_dict in rows:
+                scope = self._series_label(act_dict.get('type'), None)
                 actual_bw = float(act_dict['busBw'])
-                threshold = expected_bw * tolerance
                 log.info(f"Comparing: actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}")
-                if actual_bw < threshold:
-                    fail_test(
-                        f"The actual {place_label} bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})"
-                    )
+                self._record(
+                    'bus_bw',
+                    act_dict,
+                    actual_bw >= threshold,
+                    f"The actual {place_label} bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with {(1 - tolerance) * 100:g}% tolerance: {threshold:.2f}){scope}",
+                    actual=actual_bw,
+                    threshold=threshold,
+                    unit='GB/s',
+                )
 
     def check_bw_dip(self):
-        test_name = self.test_name
-        expected = self.expected
-        tolerance = 0.95
-        if not expected:
-            log.warning(f"No reference data provided for BW dip check, skipping validation for {test_name}")
-            return
-        ref_msg_sizes = set(str(size) for size in expected.keys())
-        log.info(f"Validating BW dip only for reference message sizes: {ref_msg_sizes}")
-        in_place = 0 if re.search('alltoall|all_to_all', test_name, re.I) else 1
-        last_bw = 0.0
-        last_msg_size = self.results[0]['size']
-        for act_dict in self.results:
-            if act_dict['inPlace'] != in_place:
-                continue
-            if str(act_dict['size']) not in ref_msg_sizes:
-                continue
-            current_bw = float(act_dict['busBw'])
-            threshold = float(last_bw) * tolerance
-            if last_bw > 0 and current_bw < threshold:
-                fail_test(
-                    f"The BusBW for msg size {act_dict['size']} = {current_bw} is less than the earlier msg size {last_msg_size} = BW {last_bw} (threshold with 5% tolerance: {threshold:.2f})"
-                )
-            last_bw = act_dict['busBw']
-            last_msg_size = act_dict['size']
+        self._check_dip('BW dip', 'busBw', 'BusBW', 'BW', 'bw_dip', 'GB/s')
 
     def check_lat_dip(self):
-        test_name = self.test_name
-        expected = self.expected
+        self._check_dip('latency dip', 'time', 'latency', 'latency', 'lat_dip', 'us')
+
+    def _dip_series(self):
+        """Map (type, numCycle) to reference-size rows sorted by size; each key is one rccl-tests sweep."""
+        ref_msg_sizes = set(str(size) for size in self.expected.keys())
+        in_place = 0 if re.search('alltoall|all_to_all', self.test_name, re.I) else 1
+        series = {}
+        for row in self.results:
+            if row['inPlace'] != in_place or str(row['size']) not in ref_msg_sizes:
+                continue
+            series.setdefault((row.get('type'), row.get('numCycle')), []).append(row)
+        for rows in series.values():
+            rows.sort(key=lambda row: int(row['size']))
+        return series
+
+    @staticmethod
+    def _series_label(dtype, cycle):
+        parts = []
+        if dtype is not None:
+            parts.append(f'type={dtype}')
+        if cycle is not None:
+            parts.append(f'cycle={cycle}')
+        return f" [{', '.join(parts)}]" if parts else ''
+
+    @staticmethod
+    def split_series_label(name):
+        """Invert _series_label on a series name: return (base name, data type or None)."""
+        match = re.fullmatch(r'(?P<base>.+?) \[type=(?P<dtype>[^,\]]+)(?:, cycle=[^\]]+)?\]', str(name))
+        if not match:
+            return str(name), None
+        return match.group('base'), match.group('dtype')
+
+    def _check_dip(self, check_name, field, metric, value_name, record_key, unit):
         tolerance = 0.95
-        if not expected:
-            log.warning(f"No reference data provided for latency dip check, skipping validation for {test_name}")
+        if not self.expected:
+            if self.resolver_failed:
+                return
+            label = 'BW' if record_key == 'bw_dip' else 'latency'
+            self._record(
+                record_key,
+                None,
+                False,
+                f'No reference message sizes for {label} dip check of {self.test_name} '
+                f'in rccl.results.{self.test_name}',
+            )
             return
-        ref_msg_sizes = set(str(size) for size in expected.keys())
-        log.info(f"Validating latency dip only for reference message sizes: {ref_msg_sizes}")
-        in_place = 0 if re.search('alltoall|all_to_all', test_name, re.I) else 1
-        last_time = 0.0
-        last_msg_size = self.results[0]['size']
-        for act_dict in self.results:
-            if act_dict['inPlace'] != in_place:
-                continue
-            if str(act_dict['size']) not in ref_msg_sizes:
-                continue
-            current_time = float(act_dict['time'])
-            threshold = float(last_time) * tolerance
-            if last_time > 0 and current_time < threshold:
-                fail_test(
-                    f"The latency for msg size {act_dict['size']} = {current_time} is less than the earlier msg size {last_msg_size} = latency {last_time} (threshold with 5% tolerance: {threshold:.2f})"
-                )
-            last_time = act_dict['time']
-            last_msg_size = act_dict['size']
+        if not self.results:
+            log.warning(f"No RCCL results available for {check_name} check, skipping validation for {self.test_name}")
+            return
+        ref_msg_sizes = set(str(size) for size in self.expected.keys())
+        log.info(f"Validating {check_name} only for reference message sizes: {ref_msg_sizes}")
+        for (dtype, cycle), rows in self._dip_series().items():
+            scope = self._series_label(dtype, cycle)
+            last_value = 0.0
+            last_msg_size = None
+            for row in rows:
+                current = float(row[field])
+                threshold = last_value * tolerance
+                passed = not (last_value > 0 and current < threshold)
+                if last_value > 0:
+                    self._record(
+                        record_key,
+                        row,
+                        passed,
+                        f"The {metric} for msg size {row['size']} = {current} is less than the earlier msg size "
+                        f"{last_msg_size} = {value_name} {last_value} (threshold with 5% tolerance: {threshold:.2f}){scope}",
+                        actual=current,
+                        threshold=threshold,
+                        unit=unit,
+                    )
+                last_value = current
+                last_msg_size = row['size']
 
     def check(self):
-        if re.search('True', self.cvs_params.get('verify_bus_bw', 'False'), re.I) and self.expected:
-            self.check_bus_bw()
-        if re.search('True', self.cvs_params.get('verify_bw_dip', 'True'), re.I):
+        if not self.results:
+            self._record('results', None, False, f'RCCL test {self.test_name} produced no result rows')
+            return
+        if re.search('True', self.cvs_params.get('verify_bus_bw', 'False'), re.I):
+            if self.expected:
+                self.check_bus_bw()
+            elif self.expected is not None:
+                log.warning(f'No published threshold for {self.test_name}; bus_bw not gated')
+            elif not self.resolver_failed:
+                self._record(
+                    'bus_bw',
+                    None,
+                    False,
+                    f'No bus bandwidth thresholds for {self.test_name} in rccl.results.{self.test_name}',
+                )
+        if re.search('True', self.cvs_params.get('verify_bw_dip', 'False'), re.I):
             self.check_bw_dip()
-        if re.search('True', self.cvs_params.get('verify_lat_dip', 'True'), re.I):
+        if re.search('True', self.cvs_params.get('verify_lat_dip', 'False'), re.I):
             self.check_lat_dip()
 
     @staticmethod
@@ -161,26 +278,105 @@ class RcclVerifier:
         return 'SEVERE DATA CORRUPTION' in s or "'#wrong'" in s
 
 
+def _graph_metrics(row):
+    """Return (busBw, algBw, time) as floats, or None when any is missing or not numeric."""
+    try:
+        return float(row['busBw']), float(row['algBw']), float(row['time'])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _mean_graph_point(points):
+    """Average one (series, type, size) across rccl-tests cycles, as aggregate_results does."""
+    count = len(points)
+    return {
+        'bus_bw': sum(point[0] for point in points) / count,
+        'alg_bw': sum(point[1] for point in points) / count,
+        'time': sum(point[2] for point in points) / count,
+    }
+
+
 def convert_to_graph_dict(result_dict):
+    """Map each series to {size: mean bus_bw/alg_bw/time} over the rows RcclVerifier checks.
+
+    Rows are grouped by data type and message size; cycles are averaged and sizes ascend.
+    A series holding one data type keeps its name so existing reference JSONs still match;
+    several data types become one series per type, labelled like the dip-check messages.
+    """
     graph_dict = {}
-    for graph_series_name in result_dict.keys():
-        log.info("%s", graph_series_name)
-        graph_dict[graph_series_name] = {}
-        dict_list = result_dict[graph_series_name]
-        log.info("%s", dict_list)
-        for dict_item in dict_list:
-            msg_size = dict_item['size']
-            graph_dict[graph_series_name][msg_size] = {}
-            if re.search('alltoall', dict_item['name'], re.I) and dict_item['inPlace'] == 1:
-                graph_dict[graph_series_name][msg_size]['bus_bw'] = dict_item['busBw']
-                graph_dict[graph_series_name][msg_size]['alg_bw'] = dict_item['algBw']
-                graph_dict[graph_series_name][msg_size]['time'] = dict_item['time']
-            else:
-                graph_dict[graph_series_name][msg_size]['bus_bw'] = dict_item['busBw']
-                graph_dict[graph_series_name][msg_size]['alg_bw'] = dict_item['algBw']
-                graph_dict[graph_series_name][msg_size]['time'] = dict_item['time']
+    for series_name, rows in result_dict.items():
+        by_dtype = {}
+        dropped = 0
+        for row in rows or []:
+            # RcclVerifier checks out-of-place rows for alltoall and in-place rows otherwise; chart the same rows.
+            collective = str(row.get('name') or series_name)
+            in_place = 0 if re.search('alltoall|all_to_all', collective, re.I) else 1
+            if row.get('inPlace') != in_place:
+                continue
+            point = _graph_metrics(row)
+            if point is None:
+                dropped += 1
+                continue
+            by_dtype.setdefault(row.get('type'), {}).setdefault(row['size'], []).append(point)
+        if dropped:
+            log.warning(
+                'Dropped %d RCCL rows with missing or non-numeric busBw/algBw/time from graph series %s',
+                dropped,
+                series_name,
+            )
+        if not by_dtype:
+            if rows:
+                log.warning('No usable verified-placement RCCL rows for %s; its graph series is empty', series_name)
+            graph_dict[series_name] = {}
+            continue
+        for dtype, sizes in by_dtype.items():
+            name = series_name if len(by_dtype) == 1 else f'{series_name}{RcclVerifier._series_label(dtype, None)}'
+            graph_dict[name] = {size: _mean_graph_point(sizes[size]) for size in sorted(sizes, key=int)}
     log.info("%s", graph_dict)
     return graph_dict
+
+
+DEFAULT_COLLECTIVES = [
+    'all_reduce_perf',
+    'all_gather_perf',
+    'scatter_perf',
+    'gather_perf',
+    'reduce_perf',
+    'reduce_scatter_perf',
+    'sendrecv_perf',
+    'alltoall_perf',
+    'alltoallv_perf',
+    'broadcast_perf',
+]
+
+
+NIC_TYPES = ('ainic', 'thor', 'connectx')
+SCALE_OUT = 'scale_out'
+SCALE_UP = 'scale_up'
+
+
+def _normalize_cvs_enum(value, choices, default, option_name):
+    """Normalize a cvs_params enum, warning and using its default if unknown."""
+    normalized_choices = {re.sub(r'[\s_-]', '', choice).lower(): choice for choice in choices}
+    value_key = re.sub(r'[\s_-]', '', str(value or default)).lower()
+    normalized = normalized_choices.get(value_key)
+    if normalized is None:
+        log.warning('Unrecognised %s %r; falling back to %s', option_name, value, default)
+        return default
+    return normalized
+
+
+def fabric_type(fabric):
+    """Normalize cvs_params.fabric; unknown values warn and fall back to scale_out."""
+    return _normalize_cvs_enum(fabric, (SCALE_OUT, SCALE_UP), SCALE_OUT, 'fabric')
+
+
+def configured_collectives(config):
+    """Read the collective list, accepting the older top-level config key."""
+    test_params_collective = config.get('rccl_test_params', {}).get('rccl_collective')
+    if test_params_collective is not None:
+        return test_params_collective
+    return config.get('rccl_collective', DEFAULT_COLLECTIVES)
 
 
 class OpenMPI:
@@ -199,17 +395,17 @@ class OpenMPI:
         path = os.path.normpath(str(mpi_dir or '/usr/local'))
         return os.path.dirname(path) if os.path.basename(path) == 'bin' else path
 
-    def prepare(self, phdl, shdl, head_node):
+    def prepare(self, orch, head_node):
         if self.prepared:
             return self
-        self.pml, self.ucx_env = self._determine_pml_config(phdl, shdl, head_node)
+        self.pml, self.ucx_env = self._determine_pml_config(orch, head_node)
         self.prepared = True
         return self
 
-    def _ucx_available(self, shdl, head_node):
+    def _ucx_available(self, orch, head_node):
         check_ucx_cmd = f'{self.prefix}/bin/ompi_info | grep "pml: ucx" | wc -l'
         try:
-            ucx_check_out = shdl.exec(check_ucx_cmd)
+            ucx_check_out = orch.exec_on_head(check_ucx_cmd)
             ucx_available = int(ucx_check_out[head_node].strip()) > 0
             log.info("UCX available in OpenMPI build" if ucx_available else "UCX not available in OpenMPI build")
             return ucx_available
@@ -219,7 +415,7 @@ class OpenMPI:
         libmpi_path = f'{self.prefix}/lib/libmpi.so'
         check_ldd_cmd = f'ldd {libmpi_path} | grep ucx | wc -l'
         try:
-            ldd_out = shdl.exec(check_ldd_cmd)
+            ldd_out = orch.exec_on_head(check_ldd_cmd)
             ucx_available = int(ldd_out[head_node].strip()) > 0
             log.info("UCX linked in libmpi.so" if ucx_available else "UCX not linked in libmpi.so")
             return ucx_available
@@ -227,7 +423,7 @@ class OpenMPI:
             log.warning(f"ldd check failed: {e}; assuming UCX is not available")
             return False
 
-    def _determine_pml_config(self, phdl, shdl, head_node):
+    def _determine_pml_config(self, orch, head_node):
         """Choose PML from mpi_params.mpi_pml, falling back to ob1 if UCX is unusable."""
         mpi_pml = str(self.mpi_params.get('mpi_pml', 'auto')).lower()
         ucx_tls = self.mpi_params.get('ucx_tls', 'rc,self,sm,tcp') or 'rc,self,sm,tcp'
@@ -241,7 +437,7 @@ class OpenMPI:
             return 'ob1', {}
 
         log.info(f'mpi_pml val in config is {mpi_pml}')
-        if not self._ucx_available(shdl, head_node):
+        if not self._ucx_available(orch, head_node):
             log.warning('UCX not detected — falling back to pml ob1')
             log.info('PML: ob1  UCX params: ')
             return 'ob1', {}
@@ -251,7 +447,7 @@ class OpenMPI:
         if not net_dev_list:
             log.warning("'net_dev_list' missing or empty — auto-detecting from backend NICs...")
             try:
-                net_dev_list = linux_utils.get_ucx_net_devices(phdl)
+                net_dev_list = linux_utils.get_ucx_net_devices(orch)
             except ValueError as exc:
                 log.error(f'UCX net device auto-detection failed: {exc}')
                 log.warning('Falling back to pml ob1 due to auto-detection failure')
@@ -282,28 +478,33 @@ class OpenMPI:
 
 
 class MpiRun:
-    """Launch rccl-tests through Open MPI's mpirun on bare metal."""
+    """Launch rccl-tests through Open MPI's mpirun in the orchestrator environment."""
 
-    def __init__(self, openmpi, shdl, cluster_nodes, vpc_nodes, global_ranks):
+    def __init__(self, openmpi, orch, cluster_nodes, vpc_nodes, global_ranks):
         self.openmpi = openmpi
-        self.shdl = shdl
+        self.orch = orch
         self.cluster_nodes = cluster_nodes
         self.vpc_nodes = vpc_nodes
         self.global_ranks = global_ranks
         self.hosts_file_path = ''
 
+    def topology(self):
+        """Return the topology requested by -np and the uniform hostfile slots."""
+        nodes = len(self.cluster_nodes)
+        return {'nodes': nodes, 'ranks': self.global_ranks, 'ranksPerNode': self.global_ranks // nodes}
+
     def prepare(self):
         if self.hosts_file_path:
             return self
-        slots = int(self.global_ranks / len(self.cluster_nodes))
+        slots = self.topology()['ranksPerNode']
         host_file = ''.join(f'{node} slots={slots}\n' for node in self.vpc_nodes)
         self.hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
-        self.shdl.exec(f'rm -f {self.hosts_file_path}')
-        self.shdl.exec(f'echo "{host_file}" > {self.hosts_file_path}')
+        self.orch.exec_on_head(f'rm -f {self.hosts_file_path}')
+        self.orch.exec_on_head(f'echo "{host_file}" > {self.hosts_file_path}')
         return self
 
     def cleanup(self):
-        """No per-node session directory to remove; mpirun creates its own."""
+        """MpiRun has no launcher-owned process or session state to remove."""
 
     def command(self, binary_cmd, env_file=None, env_overrides=None):
         self.prepare()
@@ -322,6 +523,14 @@ class MpiRun:
             f'--hostfile {self.hosts_file_path}',
             '--bind-to numa',
         ]
+        if self.orch.ssh_port != 22:
+            mpirun_args.extend(
+                [
+                    '--mca plm_rsh_agent ssh',
+                    f'--mca plm_rsh_args "-p {self.orch.ssh_port} '
+                    '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"',
+                ]
+            )
         mpirun_args.extend(f'-x {key}={value}' for key, value in mpi_init['env'].items())
         mpirun_args.extend(f'--mca {key} {value}' for key, value in mpi_init['mca'].items())
         mpirun_args.append(rank_cmd)
@@ -331,14 +540,18 @@ class MpiRun:
 class Srun:
     """Launch a nested PMIx step through Slurm srun or Spur's spur run."""
 
-    def __init__(self, openmpi, phdl, cluster_nodes, no_of_nodes, local_ranks, global_ranks):
+    def __init__(self, openmpi, orch, cluster_nodes, no_of_nodes, local_ranks, global_ranks):
         self.openmpi = openmpi
-        self.phdl = phdl
+        self.orch = orch
         self.cluster_nodes = cluster_nodes
         self.no_of_nodes = no_of_nodes
         self.local_ranks = local_ranks
         self.global_ranks = global_ranks
         self.session_dir = ''
+
+    def topology(self):
+        """Return the topology requested by -N, -n and --ntasks-per-node."""
+        return {'nodes': self.no_of_nodes, 'ranks': self.global_ranks, 'ranksPerNode': self.local_ranks}
 
     def prepare(self):
         """Create the ORTE session directory once per node.
@@ -352,7 +565,7 @@ class Srun:
             return self
         parent = f'/tmp/{os.environ.get("USER", "cvs")}'
         session_dir = f'{parent}/ompi-{os.environ.get("SLURM_JOB_ID") or f"cvs-{os.getpid()}"}'
-        self.phdl.exec(
+        self.orch.exec(
             f'mkdir -p -m 700 {shlex.quote(parent)} 2>/dev/null || true; '
             f'mkdir -p {shlex.quote(session_dir)} && chmod 700 {shlex.quote(session_dir)}'
         )
@@ -364,7 +577,7 @@ class Srun:
         if not self.session_dir:
             return
         try:
-            self.phdl.exec(f'rm -rf {shlex.quote(self.session_dir)}', timeout=30)
+            self.orch.exec(f'rm -rf {shlex.quote(self.session_dir)}', timeout=30)
         except Exception as exc:
             log.warning(f'Session dir cleanup for {self.session_dir} raised {exc!r} (continuing)')
         self.session_dir = ''
@@ -448,13 +661,13 @@ class RcclJob:
 
     OpenMPI owns the settings consumed by MPI_Init. MpiRun or Srun owns rank
     creation. RcclJob owns the rccl-tests binary, NCCL environment, execution,
-    and result collection. RcclVerifier owns pass/fail checks.
+    and result collection. RcclVerifier owns pass/fail checks and records one
+    verdict per comparison (`verdicts`).
     """
 
     def __init__(
         self,
-        phdl,
-        shdl,
+        orch,
         test_name,
         env_file,
         mpi_params,
@@ -463,12 +676,12 @@ class RcclJob:
         cluster_node_list,
         vpc_node_list,
         env_overrides=None,
+        expected_results=None,
     ):
         if not cluster_node_list:
             raise ValueError('cluster_node_list must contain at least one node')
 
-        self.phdl = phdl
-        self.shdl = shdl
+        self.orch = orch
         self.test_name = test_name
         self.env_file = env_file
         self.mpi_params = mpi_params
@@ -477,11 +690,12 @@ class RcclJob:
         self.cluster_node_list = cluster_node_list
         self.vpc_node_list = vpc_node_list
         self.env_overrides = env_overrides
+        self.expected_results = cvs_params.get('results', {}) if expected_results is None else expected_results
 
         self.no_of_nodes = int(mpi_params.get('no_of_nodes', 2))
         self.no_of_local_ranks = int(mpi_params.get('no_of_local_ranks', 8))
         self.no_of_global_ranks = self.no_of_nodes * self.no_of_local_ranks
-        self.head_node = cluster_node_list[0]
+        self.head_node = getattr(orch, 'head_node', None) or cluster_node_list[0]
         self.rccl_tests_dir = rccl_test_params.get('rccl_tests_dir', '/usr/local/rccl-tests/build')
         self.cvs_exec_timeout = int(cvs_params.get('cvs_exec_timeout', 2400))
         self.managed = is_managed_compute()
@@ -489,7 +703,7 @@ class RcclJob:
         if self.managed:
             self.launcher = Srun(
                 self.openmpi,
-                phdl,
+                orch,
                 cluster_node_list,
                 self.no_of_nodes,
                 self.no_of_local_ranks,
@@ -498,19 +712,24 @@ class RcclJob:
         else:
             self.launcher = MpiRun(
                 self.openmpi,
-                shdl,
+                orch,
                 cluster_node_list,
                 vpc_node_list,
                 self.no_of_global_ranks,
             )
         self.output_flag = ''
         self.prepared = False
+        self.topology_checks = []
+        self.verdicts = []
+        self.topology_check_mode = _normalize_cvs_enum(
+            cvs_params.get('topology_check'), ('off', 'warn', 'strict'), 'warn', 'topology_check mode'
+        )
+        self.fabric = fabric_type(cvs_params.get('fabric'))
 
     @classmethod
     def from_config(
         cls,
-        phdl,
-        shdl,
+        orch,
         test_name,
         config_dict,
         cluster_node_list,
@@ -519,14 +738,23 @@ class RcclJob:
         env_overrides=None,
     ):
         """Build a job directly from the grouped RCCL configuration."""
+        expected_results = config_dict.get('results')
+        if expected_results is None:
+            cvs_params_results = config_dict.get('cvs_params', {}).get('results')
+            if cvs_params_results:
+                log.warning('rccl.cvs_params.results is deprecated; move it to rccl.results')
+                expected_results = cvs_params_results
+        rccl_test_params = config_dict['rccl_test_params'].copy()
+        if 'rccl_collective' not in rccl_test_params and 'rccl_collective' in config_dict:
+            rccl_test_params['rccl_collective'] = config_dict['rccl_collective']
         return cls(
-            phdl=phdl,
-            shdl=shdl,
+            orch=orch,
             test_name=test_name,
             env_file=config_dict.get('env_source_script', '/dev/null'),
             mpi_params=config_dict['mpi_params'],
-            rccl_test_params=config_dict['rccl_test_params'],
+            rccl_test_params=rccl_test_params,
             cvs_params=config_dict['cvs_params'],
+            expected_results=expected_results,
             cluster_node_list=cluster_node_list,
             vpc_node_list=vpc_node_list,
             env_overrides=env_overrides,
@@ -538,16 +766,150 @@ class RcclJob:
             return self
 
         self._require_spur_job_step()
+        self._prepare_result_directory()
         log.info(f'Starting RCCL Test ..........................................{self.test_name}')
         log.info(f'%% VPC Node IPs {self.vpc_node_list}')
 
-        self.openmpi.prepare(self.phdl, self.shdl, self.head_node)
+        self.openmpi.prepare(self.orch, self.head_node)
         self.launcher.prepare()
 
         binary_path = f'{self.rccl_tests_dir}/{self.test_name}'
         self.output_flag = self._detect_output_flag(binary_path)
         self.prepared = True
         return self
+
+    @property
+    def result_file(self):
+        """Configured base path; regression derives per-case paths and perf derives per-collective paths."""
+        configured = self.cvs_params.get('rccl_result_file')
+        if configured:
+            return str(configured)
+        from cvs.core.run_layout import RunLayout
+
+        return str(RunLayout.get().run_dir / 'rccl_result_file.json')
+
+    @property
+    def perf_result_path(self):
+        """Path for this collective's combined performance results."""
+        return self._derived_json_path(self.result_file, self.test_name)
+
+    @property
+    def regression_result_path(self):
+        """Path for this collective and regression parameter combination."""
+        return self._derived_json_path(self.result_file, *self._regression_name_parts(self.test_name))
+
+    def _regression_name_parts(self, collective):
+        name_parts = [collective]
+        if self.env_overrides:
+            serialized_overrides = json.dumps(self.env_overrides, sort_keys=True, separators=(',', ':'))
+            case_hash = hashlib.sha256(serialized_overrides.encode('utf-8')).hexdigest()[:12]
+            name_parts.append(case_hash)
+        return name_parts
+
+    @property
+    def perf_result_file(self):
+        return str(self.perf_result_path)
+
+    @staticmethod
+    def _derived_json_path(base_path, *name_parts):
+        base_path = Path(base_path)
+        suffix = '_'.join(quote(str(part), safe='') for part in name_parts)
+        return base_path.with_name(f'{base_path.stem}_{suffix}.json')
+
+    def _configured_collectives(self):
+        collectives = self.rccl_test_params.get('rccl_collective', [self.test_name])
+        if isinstance(collectives, str):
+            collectives = [collectives]
+        elif not collectives:
+            collectives = [self.test_name]
+        elif self.test_name not in collectives:
+            collectives = [*collectives, self.test_name]
+        return collectives
+
+    @staticmethod
+    def _check_result_path_collisions(artifacts):
+        paths = {}
+        for path, owner in artifacts:
+            previous_owner = paths.get(path)
+            if previous_owner is not None:
+                raise ValueError(
+                    f'RCCL result path collision at {path}: {previous_owner} and {owner}. '
+                    'Resolve the duplicate output names.'
+                )
+            paths[path] = owner
+
+    def _validate_perf_result_paths(self):
+        collectives = self._configured_collectives()
+
+        data_types = self.rccl_test_params.get('data_types', ['float'])
+        if isinstance(data_types, str):
+            data_types = [data_types]
+
+        artifacts = []
+        for collective in collectives:
+            combined = self._derived_json_path(self.result_file, collective)
+            artifacts.extend(
+                [
+                    (combined, f'collective {collective!r} combined results'),
+                    (self._derived_json_path(combined, 'aggregated'), f'collective {collective!r} aggregated results'),
+                    (self._derived_json_path(combined, 'topology_check'), f'collective {collective!r} topology audit'),
+                ]
+            )
+            artifacts.extend(
+                (self._derived_json_path(combined, dtype), f'collective {collective!r} dtype {dtype!r}')
+                for dtype in data_types
+            )
+        self._check_result_path_collisions(artifacts)
+
+    def _validate_regression_result_paths(self):
+        artifacts = []
+        for collective in self._configured_collectives():
+            result_path = self._derived_json_path(self.result_file, *self._regression_name_parts(collective))
+            artifacts.extend(
+                (
+                    (result_path, f'collective {collective!r} regression results'),
+                    (
+                        self._derived_json_path(result_path, 'topology_check'),
+                        f'collective {collective!r} regression topology audit',
+                    ),
+                )
+            )
+        self._check_result_path_collisions(artifacts)
+
+    def _prepare_result_directory(self):
+        """Require a result directory CVS can create and read back via download_from_head."""
+        directory = Path(self.result_file).parent
+        token = uuid.uuid4().hex
+        sentinel = directory / f'.cvs-rccl-{token}'
+        cmd = (
+            f'mkdir -p -- {shlex.quote(str(directory))}'
+            f' && (umask 077; printf %s {token} > {shlex.quote(str(sentinel))})'
+        )
+        try:
+            result = self.orch.exec_on_head(cmd, timeout=30, detailed=True)
+            output, exit_code = self._result_payload((result or {}).get(self.head_node))
+            if exit_code != 0:
+                raise OSError(f'head-node directory check failed (exit {exit_code}): {output}')
+
+            # download_from_head suffixes the local path per host; read back the actual path it returns.
+            with tempfile.TemporaryDirectory(prefix='cvs-rccl-sentinel-') as tmpdir:
+                local_prefix = os.path.join(tmpdir, sentinel.name)
+                paths = self.orch.download_from_head(str(sentinel), local_prefix)
+                local_sentinel = Path(paths[self.head_node])
+                if local_sentinel.read_text(encoding='utf-8') != token:
+                    raise OSError('head-node sentinel is not visible through download_from_head')
+        except Exception as exc:
+            raise RuntimeError(
+                f'Cannot use RCCL result directory {directory} on {self.head_node}: {exc}. '
+                'Set --workspace or CVS_WORKSPACE to writable shared storage and use '
+                'cvs_params.rccl_result_file="{run_dir}/rccl_result_file.json". '
+                'With the container backend, bind-mount the result directory at the same path.'
+            ) from exc
+        finally:
+            try:
+                self.orch.exec_on_head(f'rm -f -- {shlex.quote(str(sentinel))}', timeout=30)
+            except Exception as exc:
+                log.warning('Could not remove RCCL sentinel %s on %s: %s', sentinel, self.head_node, exc)
 
     @staticmethod
     def _require_spur_job_step():
@@ -584,7 +946,7 @@ class RcclJob:
         log.info('%%%%%%%%%%%%%%%%')
         error_count_before = len(globals.error_list)
         try:
-            out_dict = self.shdl.exec(cmd, timeout=self.cvs_exec_timeout, detailed=True)
+            out_dict = self.orch.exec_on_head(cmd, timeout=self.cvs_exec_timeout, detailed=True)
             if not out_dict or self.head_node not in out_dict:
                 return self._fail(reason, f'RCCL launch produced no result from {self.head_node}: {cmd}')
             output, exit_code = self._result_payload(out_dict[self.head_node])
@@ -608,7 +970,7 @@ class RcclJob:
 
         Pssh.exec()'s timeout is a client-side SSH read timeout. It does not
         signal remote ranks, so a timed-out launch can leave mpirun and the
-        rccl-tests binary holding GPUs on every host phdl can reach. Cleanup
+        rccl-tests binary holding GPUs on every node the orchestrator can reach. Cleanup
         runs on job failure so the next pairwise/incremental sub-test does not
         oversubscribe those GPUs. Patterns cover both MpiRun leftovers and the
         job binary; they must not match srun or spur.
@@ -616,7 +978,7 @@ class RcclJob:
         log.warning(f'Cleaning up stale RCCL/mpirun processes on all reachable hosts ({reason})')
         for pattern in ('prterun', 'mpirun.*rccl_hosts_file', self.test_name):
             try:
-                self.phdl.exec(f"pkill -9 -f '{pattern}' || true", timeout=30)
+                self.orch.exec(f"pkill -9 -f '{pattern}' || true", timeout=30)
             except Exception as kill_exc:
                 log.warning(f'Cleanup pkill for pattern {pattern!r} raised {kill_exc!r} (continuing)')
         self.launcher.cleanup()
@@ -636,7 +998,7 @@ class RcclJob:
         """Return -X if the binary supports --rccl_output_file, else legacy -x."""
         try:
             check_new_cmd = f'strings {binary_path} | grep -q "\\-\\-rccl_output_file"'
-            result = self.shdl.exec(f'{check_new_cmd} && echo "NEW" || echo "OLD"')
+            result = self.orch.exec_on_head(f'{check_new_cmd} && echo "NEW" || echo "OLD"')
             output = result[self.head_node].strip()
             if output == "NEW":
                 log.debug(f"Detected new RCCL test format: using -X/--rccl_output_file for {binary_path}")
@@ -649,15 +1011,17 @@ class RcclJob:
 
     def read_results(self, result_file, label=None):
         log_label = label or self.test_name
+        # HTTP transfers copy locally because agents rely on shared storage;
+        # container results must also be visible at this path on the host.
         with tempfile.TemporaryDirectory(prefix='cvs_rccl_dl_') as tmpdir:
             local_prefix = os.path.join(tmpdir, os.path.basename(result_file))
-            paths = self.shdl.download_file(result_file, local_prefix)
+            paths = self.orch.download_from_head(result_file, local_prefix)
             local_path = paths[self.head_node]
-            log.info('SFTP download succeeded for %s <- %s:%s', log_label, self.head_node, result_file)
+            log.info('Result download succeeded for %s <- %s:%s', log_label, self.head_node, result_file)
             with open(local_path, 'r', encoding='utf-8') as f:
                 raw_output = f.read()
             try:
-                return json.loads(raw_output)
+                results = json.loads(raw_output)
             except json.JSONDecodeError:
                 msg = (
                     f'Unable to parse RCCL JSON result file {result_file} on {self.head_node}. '
@@ -666,6 +1030,13 @@ class RcclJob:
                 log.error(msg)
                 fail_test(msg)
                 return []
+            if not isinstance(results, list) or any(not isinstance(row, dict) for row in results):
+                fail_test(
+                    f'Invalid RCCL JSON result structure in {result_file} on {self.head_node}: '
+                    'expected an array of result objects'
+                )
+                return []
+            return results
 
     def save_results(self, result_file, payload, label):
         tmp_path = None
@@ -681,19 +1052,16 @@ class RcclJob:
                 json.dump(payload, tf, indent=2)
                 tmp_path = tf.name
             try:
-                self.shdl.upload_file(tmp_path, result_file)
-                log.info('SFTP upload succeeded for %s -> %s:%s', label, self.head_node, result_file)
+                # HTTP copies require the same shared path as the ranks; host
+                # transfers reach containers only through a bind mount.
+                self.orch.upload_to_head(tmp_path, result_file)
+                log.info('Result upload succeeded for %s -> %s:%s', label, self.head_node, result_file)
                 return True
-            except IOError as e:
-                log.error('SFTP upload failed for %s -> %s:%s: %r', label, self.head_node, result_file, e)
-                return False
             except Exception as e:
-                log.error(
-                    'SFTP upload unexpected error for %s -> %s:%s: %r',
-                    label,
-                    self.head_node,
-                    result_file,
-                    e,
+                fail_test(
+                    f'Failed to save RCCL results for {label} to {self.head_node}:{result_file}: {e}. '
+                    'Check result-directory permissions and shared storage (--workspace or CVS_WORKSPACE); '
+                    'containers require a bind mount at the same path.'
                 )
                 return False
         finally:
@@ -704,88 +1072,204 @@ class RcclJob:
                     log.warning('Failed to remove temp file %s: %r', tmp_path, e)
 
     def collect_gpu_info(self):
-        smi_out_dict = self.shdl.exec('rocm-smi -a | head -30')
+        smi_out_dict = self.orch.exec_on_head('rocm-smi -a | head -30')
         get_model_from_rocm_smi_output(smi_out_dict[self.head_node])
 
+    def expected_topology(self, gpus_per_rank):
+        """Combine launcher rank placement with rccl-tests' total GPUs per rank (-t times -g)."""
+        return {**self.launcher.topology(), 'gpusPerRank': gpus_per_rank}
+
+    def _check_reported_topology(self, observed_rows, label, gpus_per_rank):
+        """Record topology discrepancies and apply the configured warning/failure policy."""
+        mode = self.topology_check_mode
+        if mode == 'off':
+            log.debug('Topology check disabled for %s', label)
+            return
+
+        requested = self.expected_topology(gpus_per_rank)
+        record = {
+            'label': label,
+            'requested': requested,
+            'reported': {},
+            'mismatches': [],
+            'mode': mode,
+            'verdict': 'skipped',
+        }
+        self.topology_checks.append(record)
+        if not isinstance(observed_rows, list) or any(not isinstance(row, dict) for row in observed_rows):
+            record['reason'] = 'Invalid result structure: expected an array of result objects'
+            return
+        if not observed_rows:
+            record['reason'] = 'No result rows available'
+            return
+        reported_rows = [{field: row[field] for field in TOPOLOGY_FIELDS if field in row} for row in observed_rows]
+        if not any(reported_rows):
+            record['reason'] = 'Producer did not report topology fields'
+            return
+        baseline_index, reported = next((index, row) for index, row in enumerate(reported_rows) if row)
+        record['reported'] = reported
+        if isinstance(self.launcher, MpiRun) and requested['ranks'] % requested['nodes']:
+            record['reason'] = (
+                'MPI ranks are not evenly divisible by the number of cluster nodes; only uniform launches are supported'
+            )
+            log.warning('Topology check skipped for %s: %s', label, record['reason'])
+            return
+
+        reported_union = {}
+        for row_topology in reported_rows:
+            for field, value in row_topology.items():
+                reported_union.setdefault(field, value)
+
+        mismatches = compare_topology(requested, reported_union)
+        for index, row_topology in enumerate(reported_rows):
+            if index == baseline_index or not row_topology:
+                continue
+            mismatches.extend(
+                f'row {index}: {field} differs from row {baseline_index} '
+                f'(row {baseline_index} reported {reported[field]}, row {index} reported {row_topology[field]})'
+                for field in TOPOLOGY_FIELDS
+                if field in reported and field in row_topology and reported[field] != row_topology[field]
+            )
+        record['mismatches'] = mismatches
+        record['verdict'] = 'mismatch' if mismatches else 'pass'
+        if not mismatches:
+            return
+
+        details = '\n'.join(mismatches)
+        message = (
+            '\n==================== RCCL TOPOLOGY MISMATCH ====================\n'
+            f'{label}\n{details}\n'
+            'Check the rccl-tests output and the requested launcher/binary flags.\n'
+        )
+        if (
+            requested['nodes'] > 1
+            and reported_union.get('nodes') == 1
+            and reported_union.get('ranks') == requested['ranks']
+            and reported_union.get('ranksPerNode') == requested['ranks']
+        ):
+            message += (
+                'rccl-tests may report the global MPI size as ranksPerNode in common.cu, '
+                'which also produces an incorrect node count. The upstream fix must pass localSize.\n'
+                'See AIMVT-334: https://amd-hub.atlassian.net/browse/AIMVT-334\n'
+            )
+        message += (
+            'Producer topology is preserved in the result files.\n'
+            '===============================================================\n'
+        )
+        if mode == 'strict':
+            fail_test(message)
+        else:
+            log.warning('%s', message)
+
+    def _save_topology_checks(self, result_file):
+        """Persist the audit beside the producer results, including checks before an aborted run."""
+        path = str(self._derived_json_path(result_file, 'topology_check'))
+        payload = {'mode': self.topology_check_mode, 'checks': self.topology_checks}
+        if not self.save_results(path, payload, 'rccl_topology_check'):
+            log.error('Failed to save topology checks to %s on head node %s', path, self.head_node)
+
     def run_regression(self):
+        self.verdicts = []
+        self._validate_regression_result_paths()
         self.prepare()
+        self.topology_checks = []
         params = self.rccl_test_params
-        result_file = self.cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
+        threads = int(params.get('threads_per_gpu', 1))
+        result_file = str(self.regression_result_path)
         binary_cmd = (
             f'{self.rccl_tests_dir}/{self.test_name} '
             f'-b {params.get("start_msg_size", "1024")} '
             f'-e {params.get("end_msg_size", "16g")} '
             f'-f {params.get("step_function", 2)} '
-            f'-t {params.get("threads_per_gpu", 1)} '
+            f'-t {threads} '
             f'-w {params.get("warmup_iterations", 10)} '
             f'-n {params.get("no_of_iterations", 20)} '
             f'-N {params.get("no_of_cycles", 1)} '
             f'-c {params.get("check_iteration_count", 1)}{self.test_flags()} '
-            f'-Z json {self.output_flag} {result_file}'
+            f'-Z json {self.output_flag} {shlex.quote(result_file)}'
         )
-        launched = self.execute(binary_cmd, f'exception in rccl_regression: {self.test_name}')
-        if launched is None:
+        result_out = []
+        try:
+            if self.execute(binary_cmd, f'exception in rccl_regression: {self.test_name}') is not None:
+                result_out = self.read_results(result_file)
+            self._check_reported_topology(result_out, self.test_name, gpus_per_rank=threads)
+        finally:
+            self._save_topology_checks(result_file)
+        if not result_out:
             return []
-
-        result_out = self.read_results(result_file)
         self.collect_gpu_info()
-        expected = self.cvs_params.get('results', {})
-        test_expected = expected.get(self.test_name) if expected else None
-        self._verify_results(result_out, test_expected)
+        error_count_before = len(globals.error_list)
+        expected = self._expected_results(['float'])
+        resolver_failed = len(globals.error_list) > error_count_before
+        self._verify_results(result_out, expected, resolver_failed)
         return result_out
 
     def run_perf(self):
+        self.verdicts = []
+        self._validate_perf_result_paths()
         self.prepare()
+        self.topology_checks = []
         params = self.rccl_test_params
         data_types = params.get('data_types', ['float'])
-        result_file = self.cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
-        base_path = Path(result_file)
+        base_path = self.perf_result_path
+        result_file = str(base_path)
         raw_results = []
         validated_results = []
 
-        for dtype in data_types:
-            dtype_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
-            results, validated = self._run_perf_dtype(dtype, dtype_file)
-            if results is None:
-                return raw_results
-            raw_results.extend(results)
-            validated_results.extend(validated)
+        try:
+            for dtype in data_types:
+                dtype_file = str(self._derived_json_path(base_path, dtype))
+                results, validated = self._run_perf_dtype(dtype, dtype_file)
+                if results is None:
+                    return raw_results
+                raw_results.extend(results)
+                validated_results.extend(validated)
 
-        if self.save_results(result_file, raw_results, 'combined_rccl_results'):
-            log.info(f'Saved combined results from all data types to {result_file}')
-        else:
-            log.error('Failed to save combined results to %s on head node %s', result_file, self.head_node)
+            if self.save_results(result_file, raw_results, 'combined_rccl_results'):
+                log.info(f'Saved combined results from all data types to {result_file}')
+            else:
+                log.error('Failed to save combined results to %s on head node %s', result_file, self.head_node)
+        finally:
+            self._save_topology_checks(result_file)
 
+        if not raw_results:
+            return []
         aggregated = self._aggregate_perf_results(validated_results, base_path)
         self.collect_gpu_info()
         verification_results = self._verification_results(aggregated, raw_results)
-        expected = self._perf_expected_results(data_types)
-        self._verify_results(verification_results, expected)
+        error_count_before = len(globals.error_list)
+        expected = self._expected_results(data_types)
+        resolver_failed = len(globals.error_list) > error_count_before
+        self._verify_results(verification_results, expected, resolver_failed)
         return raw_results
 
     def _run_perf_dtype(self, dtype, result_file):
         params = self.rccl_test_params
+        gpus_per_rank = int(params.get('threads_per_gpu', 1))
+        label = f'{self.test_name}_{dtype}'
         log.info(f'Running {self.test_name} with dtype={dtype}')
         binary_cmd = (
             f'{self.rccl_tests_dir}/{self.test_name} '
             f'-b {params.get("start_msg_size", "1024")} '
             f'-e {params.get("end_msg_size", "16g")} '
             f'-f {params.get("step_function", 2)} '
-            f'-g {params.get("threads_per_gpu", 1)} '
+            f'-g {gpus_per_rank} '
             f'-c {params.get("check_iteration_count", 1)} '
             f'-w {params.get("warmup_iterations", 10)} '
             f'-d {dtype} '
             f'-n {params.get("no_of_iterations", 20)} '
             f'-N {params.get("no_of_cycles", 1)}{self.test_flags()} '
-            f'-Z json {self.output_flag} {result_file}'
+            f'-Z json {self.output_flag} {shlex.quote(result_file)}'
         )
         if self.execute(binary_cmd, f'exception in rccl_perf ({dtype})') is None:
+            self._check_reported_topology([], label, gpus_per_rank)
             return None, None
 
-        results = self.read_results(result_file, f'{self.test_name}_{dtype}')
+        results = self.read_results(result_file, label)
         try:
-            validated = [RcclTestsMultinodeRaw.model_validate(result) for result in results]
+            validated = [_result_model(result).model_validate(result) for result in results]
             log.info(f'{dtype}: {len(validated)} rccl-tests row(s) passed schema validation')
+            self._check_reported_topology(results, label, gpus_per_rank)
             return results, validated
         except ValidationError as error:
             if RcclVerifier.is_severe_wrong_corruption_error(error):
@@ -805,6 +1289,7 @@ class RcclJob:
             else:
                 log.error(f'Validation Failed: {error}')
                 fail_test(f'RCCL Test {dtype} schema validation failed: {error}')
+            self._check_reported_topology(results, label, gpus_per_rank)
             raise RuntimeError(f'RCCL Test {dtype} schema validation failed') from error
 
     def _aggregate_perf_results(self, validated_results, base_path):
@@ -814,7 +1299,7 @@ class RcclJob:
         try:
             aggregated = self.aggregate_results(validated_results)
             log.info(f'Aggregation passed: {len(aggregated)} RcclTestsAggregated schema validation passed')
-            path = f'{base_path.parent}/{base_path.stem}_aggregated.json'
+            path = str(self._derived_json_path(base_path, 'aggregated'))
             payload = [result.model_dump() for result in aggregated]
             if self.save_results(path, payload, 'aggregated_rccl_results'):
                 log.info(f'Saved aggregated results to {path}')
@@ -846,7 +1331,11 @@ class RcclJob:
         log.info(f'Converted {len(results)} aggregated results for verification')
         return results
 
-    def _perf_expected_results(self, data_types):
+    def _expected_results(self, data_types):
+        """Resolve NIC/rank references, falling back to flat thresholds; {} means no published threshold, None means none configured."""
+        if not isinstance(self.expected_results, dict):
+            fail_test('Invalid rccl.results; expected a dictionary of collectives')
+            return None
         nic_model = self.cvs_params.get('nic_model', 'ainic')
         if re.search('ainic|pensando|amd', nic_model, re.I):
             nic_type = 'ainic'
@@ -857,26 +1346,68 @@ class RcclJob:
         else:
             nic_type = 'ainic'
         log.info(f'Detected NIC type: {nic_type} from nic_model: {nic_model}')
+        if self.fabric == SCALE_UP:
+            # Scale-up traffic never reaches the NIC, so NIC-keyed references don't describe it.
+            log.info(f'fabric is {SCALE_UP}; looking in rccl.results.{SCALE_UP} instead of rccl.results.{nic_type}')
+            nic_type = SCALE_UP
 
         result_key = f'{self.test_name}-{"_".join(data_types)}-{self.no_of_global_ranks}'
         log.info(f'Looking up results with key: {result_key} in nic_type: {nic_type}')
-        expected = self.cvs_params.get('results', {})
-        nic_results = expected.get(nic_type, {}) if isinstance(expected, dict) else {}
-        if result_key in nic_results:
+        nic_results = self.expected_results.get(nic_type, {})
+        if isinstance(nic_results, dict) and result_key in nic_results:
             log.info(f'Found expected results: {nic_type}/{result_key}')
-        return nic_results.get(result_key)
-
-    def _verify_results(self, results, expected):
-        RcclVerifier(self.test_name, results, expected, self.cvs_params).check()
+            return self._normalize_thresholds(nic_results[result_key], f'rccl.results.{nic_type}.{result_key}')
+        if self.fabric == SCALE_UP:
+            log.warning(
+                f'No scale-up reference at rccl.results.{SCALE_UP}.{result_key}; '
+                'NIC-keyed and flat references describe scale-out runs and are not used'
+            )
+            return None
+        if self.test_name not in self.expected_results:
+            return None
+        return self._normalize_thresholds(self.expected_results[self.test_name], f'rccl.results.{self.test_name}')
 
     @staticmethod
-    def aggregate_results(validated_results: List[RcclTests]) -> List[RcclTestsAggregated]:
+    def _normalize_thresholds(entry, path):
+        """Return {str(size): {'bus_bw': float}}, {} for a null entry, or None."""
+        if entry is None:
+            return {}
+        if not entry:
+            return None
+        if not isinstance(entry, dict):
+            fail_test(f'Invalid {path}; expected a dictionary of message sizes')
+            return None
+        thresholds = entry.get('bus_bw', entry)
+        if not isinstance(thresholds, dict):
+            fail_test(f'Invalid {path}.bus_bw; expected a dictionary of message sizes')
+            return None
+        expected = {}
+        for size, value in thresholds.items():
+            try:
+                bandwidth = value['bus_bw'] if isinstance(value, dict) else value
+                expected[str(size)] = {'bus_bw': float(bandwidth)}
+            except (KeyError, TypeError, ValueError) as error:
+                fail_test(f'Invalid bus bandwidth threshold in {path}.{size}: {error}')
+        return expected or None
+
+    def _verify_results(self, results, expected, resolver_failed=False):
+        verifier = RcclVerifier(self.test_name, results, expected, self.cvs_params, resolver_failed)
+        verifier.check()
+        self.verdicts = verifier.verdicts
+
+    @staticmethod
+    def aggregate_results(validated_results):
         """Aggregate rccl-test rows into mean/std per (name, size, type, inPlace)."""
         if not validated_results:
             raise ValueError("validated_results list cannot be empty")
 
+        multinode = isinstance(validated_results[0], RcclTestsMultinodeRaw)
+        for i, result in enumerate(validated_results):
+            if isinstance(result, RcclTestsMultinodeRaw) != multinode:
+                raise ValueError(f"Mixed single-node and multi-node results at index {i}")
+
         multinode_config = None
-        if isinstance(validated_results[0], RcclTestsMultinodeRaw):
+        if multinode:
             first = validated_results[0]
             multinode_config = {
                 'nodes': first.nodes,
@@ -885,8 +1416,6 @@ class RcclJob:
                 'gpusPerRank': first.gpusPerRank,
             }
             for i, result in enumerate(validated_results):
-                if not isinstance(result, RcclTestsMultinodeRaw):
-                    raise ValueError(f"Mixed single-node and multi-node results at index {i}")
                 if (
                     result.nodes != multinode_config['nodes']
                     or result.ranks != multinode_config['ranks']

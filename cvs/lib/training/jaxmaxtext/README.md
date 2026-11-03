@@ -20,9 +20,11 @@ and the log-parsing/metric helpers.
 
 ## `jaxmaxtext_training_lib.py`
 
-`MaxTextTrainingJob(orch, variant, hf_token, sweep=None)` composes one MaxText
+`MaxTextTrainingJob(orch, variant, sweep=None)` composes one MaxText
 run. All container/SSH plumbing belongs to `orch`; the class only builds
-commands, launches, polls, and parses. Key stages (called by the suite in
+commands, launches, polls, and parses. The HF token is read from
+`variant.paths.hf_token_file` *inside the container* at run time, so the secret
+never enters a command string or log. Key stages (called by the suite in
 order):
 
 | Method | What it does |
@@ -80,6 +82,33 @@ Pure functions (no orchestrator/IO) so they are trivially unit-tested:
 - `extract_checkpoint_timings()` — save/load seconds from orbax logs.
 - `compute_convergence()`, `sample_loss_curve()`, `evaluate_loss_decreasing()`
   — convergence and loss-curve helpers.
+
+## Reporting
+
+Beyond the console log and the per-run text/HTML artifacts, a run surfaces its
+metrics two ways:
+
+- **Per-metric subtest panel (pytest HTML report).** `test_metric` runs once per
+  sweep and evaluates **every** `TRAINING_METRIC`, recording each as its own
+  `pass` / `fail` / `skip` verdict. The pytest-html report renders them as a
+  collapsible panel under that sweep's `test_metric` row — expand it to see each
+  metric. The test fails as a whole only when a *gated* metric violates its
+  threshold; a metric with no value is `skip`, and when `enforce_thresholds` is
+  false a present value passes as a non-gating verdict. (Shared machinery:
+  `cvs/lib/report/benchmark_metric_registry.py`.)
+- **Run Deck (HTML/JSON dashboard + interactive viewer).** With `--html`, CVS
+  also publishes a JAX MaxText **Run Deck** from
+  `cvs/lib/report/profiles/jaxmaxtext.json` on the shared `training_sweep`
+  builder: a run card, per-sweep cells (BS/SL/Precision), a gate matrix,
+  results-by-sweep charts, a full-metric results table, and a linked interactive
+  viewer with per-step loss / learning-rate / grad-norm / throughput / token
+  graphs (background, layout, and metric-selector controls). Run Deck internals:
+  `cvs/lib/report/README.md`.
+
+Sample screenshots of both are in the user docs (`docs/how-to/test-suites/training/index.rst`).
+
+> **Note:** every number shown in the sample reports/screenshots is an
+> illustrative sample value, **not** a final tuned result.
 
 ## Unit tests
 

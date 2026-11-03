@@ -5,15 +5,16 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import pytest
-
 import json
 import re
 import shlex
 
+import pytest
+
+from cvs.lib import globals, transferbench_rundeck
 from cvs.lib.env_lib import build_env_prefix
+from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 from cvs.lib.utils_lib import *
-from cvs.lib import globals
 
 log = globals.log
 
@@ -34,6 +35,30 @@ _TB_NUMA_ABORT_HINT = (
     "transferbench.num_cpu_devices or transferbench.env.NUM_CPU_DEVICES to the "
     "populated CPU NUMA count (Helios-R / Venice: 2)."
 )
+
+# Default a2asweep orch budget: 24 combos × ~50s + 300s buffer (AIMVT-450 / F-12).
+_A2ASWEEP_DEFAULT_COMBOS = 24
+_A2ASWEEP_DEFAULT_SEC_PER_COMBO = 50
+_A2ASWEEP_DEFAULT_TIMEOUT_BUFFER = 300
+_A2ASWEEP_MIN_TIMEOUT = 600
+
+
+def resolve_a2asweep_timeout(config_dict):
+    """Return orch.exec timeout seconds for the default a2asweep preset.
+
+    Explicit ``a2asweep_timeout`` wins. Otherwise derive from
+    ``a2asweep_combos`` × ``a2asweep_sec_per_combo`` + ``a2asweep_timeout_buffer``.
+    Never returns below ``_A2ASWEEP_MIN_TIMEOUT`` (the former hard-coded 10 min).
+    """
+    explicit = config_dict.get('a2asweep_timeout')
+    if explicit is not None and str(explicit).strip() != '':
+        timeout = int(explicit)
+    else:
+        combos = int(config_dict.get('a2asweep_combos', _A2ASWEEP_DEFAULT_COMBOS))
+        sec_per = int(config_dict.get('a2asweep_sec_per_combo', _A2ASWEEP_DEFAULT_SEC_PER_COMBO))
+        buffer = int(config_dict.get('a2asweep_timeout_buffer', _A2ASWEEP_DEFAULT_TIMEOUT_BUFFER))
+        timeout = combos * sec_per + buffer
+    return max(timeout, _A2ASWEEP_MIN_TIMEOUT)
 
 
 def count_linux_id_list(spec):
@@ -98,6 +123,17 @@ def resolve_configured_tb_env(config_dict):
     return extra
 
 
+def _payload_sudo_prefix(orch):
+    """Sudo for a command passed to orch.exec().
+
+    sudo_prefix() is host passwordless sudo. Container exec already applies
+    that to `docker exec`, and the payload runs inside the container.
+    """
+    if getattr(orch, 'orchestrator_type', None) == 'container':
+        return ''
+    return orch.sudo_prefix()
+
+
 def detect_num_cpu_devices(orch):
     """Probe populated CPU NUMA nodes; return a count only when all hosts agree."""
     out_dict = orch.exec(_DETECT_NUM_CPU_DEVICES_CMD, timeout=30)
@@ -131,30 +167,34 @@ def resolve_runtime_tb_env(orch, config_dict):
     return extra
 
 
-def build_transferbench_command(path, rocm_path, preset, extra_env=None):
-    """Build a ``sudo bash -c`` TransferBench invocation with env inside the inner shell.
+def build_transferbench_command(path, rocm_path, preset, extra_env=None, sudo_prefix=''):
+    """Build a TransferBench invocation with env inside an inner bash.
 
-    Cluster/PSSH ``env_vars`` do not survive these ``sudo bash -c`` wrappers, so
-    NUM_CPU_DEVICES and LD_LIBRARY_PATH must be exported in the inner script.
+    Cluster/PSSH ``env_vars`` do not survive sudo wrappers, so NUM_CPU_DEVICES
+    and LD_LIBRARY_PATH are exported in the inner script. sudo strips the
+    environment, which is why the exports sit inside bash -c after the prefix.
+    sudo_prefix is _payload_sudo_prefix(): '' inside a container, 'sudo -n ' on
+    bare metal.
     """
     env = {'LD_LIBRARY_PATH': f'{rocm_path}/lib:$LD_LIBRARY_PATH'}
     if extra_env:
         env.update(extra_env)
     exports = build_env_prefix(env)
     inner = f'{exports} && echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH" && {path}/TransferBench {preset}'
-    return f'sudo bash -c {shlex.quote(inner)}'
+    return f'{sudo_prefix}bash -c {shlex.quote(inner)}'
 
 
-def run_transferbench(orch, config_dict, preset, timeout, extra_env=None):
+def run_transferbench(orch, config_dict, preset, timeout, extra_env=None, lifecycle=None, stage=None):
     """Resolve ROCm/env and execute one TransferBench preset on all orch hosts."""
     path = config_dict['path']
     rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
     env = resolve_runtime_tb_env(orch, config_dict)
     if extra_env:
         env.update(extra_env)
-    cmd = build_transferbench_command(path, rocm_path, preset, env)
+    cmd = build_transferbench_command(path, rocm_path, preset, env, sudo_prefix=_payload_sudo_prefix(orch))
     log.info('TransferBench command: %s', cmd)
-    return orch.exec(cmd, timeout=timeout)
+    with timed_stage(lifecycle, stage or preset):
+        return orch.exec(cmd, timeout=timeout)
 
 
 def _tb_output_excerpt(out, tail=6000):
@@ -198,6 +238,24 @@ def config_dict(config_file, cluster_dict):
 
     log.info("%s", config_dict)
     return config_dict
+
+
+@pytest.fixture(scope="module")
+def lifecycle():
+    """Wall-clock of each TransferBench preset, bound as the deck lifecycle source."""
+    return HealthLifecycle()
+
+
+@pytest.fixture(scope="module")
+def transferbench_res_dict():
+    """
+    Module-scoped structured TransferBench results for the Run Deck status matrix.
+
+    Each preset merges its per-node verdict into this dict. The transferbench_cvs
+    profile names this fixture in sources.results, so session binding captures it
+    at module teardown.
+    """
+    return {}
 
 
 def detect_rocm_path(orch, config_rocm_path):
@@ -257,6 +315,21 @@ def detect_rocm_path(orch, config_rocm_path):
     return '/opt/rocm'
 
 
+def a2a_per_link_values(rtotal_values):
+    """Per-GPU per-link GB/s from RTotal values (each GPU has N-1 peers)."""
+    values = [float(v) for v in rtotal_values]
+    n = len(values)
+    if n < 2:
+        raise ValueError(f'need at least 2 GPU RTotal values, got {n}')
+    return [v / (n - 1) for v in values]
+
+
+def a2a_per_link_average(rtotal_values):
+    """Mean per-link GB/s from per-GPU RTotal values (each GPU has N-1 peers)."""
+    per_link = a2a_per_link_values(rtotal_values)
+    return sum(per_link) / len(per_link)
+
+
 def parse_tb_a2a_bw(out_dict, exp_dict):
     for node in out_dict.keys():
         log.info("%s", exp_dict)
@@ -267,11 +340,24 @@ def parse_tb_a2a_bw(out_dict, exp_dict):
         if not rtotal_list:
             fail_test(f"RTotal row not found in TransferBench a2a output on node {node}")
             continue
-        for gpu_bw in list(rtotal_list[0]):
-            if float(gpu_bw) < float(exp_dict['gpu_to_gpu_a2a_rtotal']):
-                fail_test(
-                    f"Actual GPU a2a bandwidth {gpu_bw} in transferbench a2a test lower than expected {exp_dict['gpu_to_gpu_a2a_rtotal']} on node {node}"
-                )
+        # Guide bar is per-link GB/s (≥32.9); every GPU must clear it (AIMVT-449 / PB-1).
+        gate_key, per_link_min = transferbench_rundeck.resolve_a2a_per_link_min(exp_dict)
+        if per_link_min is None:
+            fail_test(f"Missing {gate_key} in transferbench.results for a2a gate on node {node}")
+            continue
+        try:
+            per_link = a2a_per_link_values(rtotal_list[0])
+        except ValueError as exc:
+            fail_test(f"Cannot derive a2a per-link values on node {node}: {exc}")
+            continue
+        threshold = float(per_link_min)
+        min_bw = min(per_link)
+        avg_bw = sum(per_link) / len(per_link)
+        if min_bw < threshold:
+            fail_test(
+                f"Actual a2a min per-link {min_bw:.3f} GB/s (mean {avg_bw:.3f}) lower than expected "
+                f"{per_link_min} on node {node}"
+            )
 
 
 def parse_tb_p2p_bw(out_dict, exp_dict):
@@ -376,64 +462,120 @@ def parse_tb_schmoo_bw(out_dict, exp_dict):
             )
 
 
+def _capture_tb_rundeck(res_dict, cluster_dict, recorder, *args):
+    """Best-effort: a reporting problem must not change the TransferBench pass/fail."""
+    if res_dict is None:
+        return
+    try:
+        meta = transferbench_rundeck.make_meta(cluster_dict, 'transferbench_cvs')
+        recorder(res_dict, *args, meta=meta)
+    except Exception as exc:
+        log.warning('TransferBench: could not capture Run Deck results: %s', exc)
+
+
 def test_transfer_bench_a2a(
     orch,
     config_dict,
+    transferbench_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     globals.error_list = []
     log.info('Testcase Run Transferbench a2a')
     preset = config_dict.get('a2a_preset') or 'a2a'
-    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 5))
+    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 5), lifecycle=lifecycle, stage='a2a')
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     parse_tb_a2a_bw(out_dict, config_dict['results'])
     scan_test_results(out_dict)
+    _capture_tb_rundeck(
+        transferbench_res_dict,
+        cluster_dict,
+        transferbench_rundeck.record_a2a,
+        out_dict,
+        config_dict['results'],
+    )
     update_test_result()
 
 
 def test_transfer_bench_p2p(
     orch,
     config_dict,
+    transferbench_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     globals.error_list = []
     log.info('Testcase Run Transferbench p2p')
     preset = config_dict.get('p2p_preset') or 'p2p'
-    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 5))
+    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 5), lifecycle=lifecycle, stage='p2p')
     print_test_output(log, out_dict)
     parse_tb_p2p_bw(out_dict, config_dict['results'])
     scan_test_results(out_dict)
+    _capture_tb_rundeck(
+        transferbench_res_dict,
+        cluster_dict,
+        transferbench_rundeck.record_p2p,
+        out_dict,
+        config_dict['results'],
+    )
     update_test_result()
 
 
 def test_transfer_bench_healthcheck(
     orch,
     config_dict,
+    transferbench_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench healthcheck')
     preset = config_dict.get('healthcheck_preset') or 'healthcheck'
-    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 3))
+    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 3), lifecycle=lifecycle, stage='healthcheck')
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
+    _capture_tb_rundeck(
+        transferbench_res_dict,
+        cluster_dict,
+        transferbench_rundeck.record_completion,
+        'healthcheck',
+        out_dict,
+    )
     update_test_result()
 
 
 def test_transfer_bench_a2asweep(
     orch,
     config_dict,
+    transferbench_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench a2asweep')
     preset = config_dict.get('a2asweep_preset') or 'a2asweep'
-    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 10))
+    timeout = resolve_a2asweep_timeout(config_dict)
+    log.info('TransferBench a2asweep orch timeout: %ss', timeout)
+    out_dict = run_transferbench(orch, config_dict, preset, timeout=timeout, lifecycle=lifecycle, stage='a2asweep')
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
+    _capture_tb_rundeck(
+        transferbench_res_dict,
+        cluster_dict,
+        transferbench_rundeck.record_completion,
+        'a2asweep',
+        out_dict,
+    )
     update_test_result()
 
 
 def test_transfer_bench_scaling(
     orch,
     config_dict,
+    transferbench_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench scaling')
@@ -444,16 +586,28 @@ def test_transfer_bench_scaling(
         preset,
         timeout=(60 * 10),
         extra_env={'GFX_TEMPORAL': '3', 'GFX_UNROLL': '32'},
+        lifecycle=lifecycle,
+        stage='scaling',
     )
     print_test_output(log, out_dict)
     parse_tb_scaling_bw(out_dict, config_dict['results'])
     scan_test_results(out_dict)
+    _capture_tb_rundeck(
+        transferbench_res_dict,
+        cluster_dict,
+        transferbench_rundeck.record_scaling,
+        out_dict,
+        config_dict['results'],
+    )
     update_test_result()
 
 
 def test_transfer_bench_schmoo(
     orch,
     config_dict,
+    transferbench_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench schmoo')
@@ -464,8 +618,17 @@ def test_transfer_bench_schmoo(
         preset,
         timeout=(60 * 5),
         extra_env={'GFX_UNROLL': '32', 'SWEEP_MIN': '32'},
+        lifecycle=lifecycle,
+        stage='schmoo',
     )
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     parse_tb_schmoo_bw(out_dict, config_dict['results'])
+    _capture_tb_rundeck(
+        transferbench_res_dict,
+        cluster_dict,
+        transferbench_rundeck.record_schmoo,
+        out_dict,
+        config_dict['results'],
+    )
     update_test_result()

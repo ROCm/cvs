@@ -18,6 +18,12 @@ from cvs.lib import globals
 log = globals.log
 
 
+def _exit_codes(orch, cmd):
+    """Exit codes from one detailed orch.exec. Shared by the test(1) probes."""
+    out_dict = orch.exec(cmd, detailed=True)
+    return [info.get('exit_code') for info in out_dict.values()]
+
+
 # Importing additional cmd line args to script ..
 
 
@@ -55,11 +61,9 @@ def detect_rocm_path(orch, config_rocm_path):
 
     # Fall back to legacy /opt/rocm. One logical operation per orch.exec:
     # use exit code rather than a `test ... && echo` shell short-circuit.
-    out_dict = orch.exec('test -d /opt/rocm', detailed=True)
-    for node, info in out_dict.items():
-        if info.get('exit_code') == 0:
-            log.info('Detected ROCm path (legacy layout): /opt/rocm')
-            return '/opt/rocm'
+    if 0 in _exit_codes(orch, 'test -d /opt/rocm'):
+        log.info('Detected ROCm path (legacy layout): /opt/rocm')
+        return '/opt/rocm'
 
     # If nothing found, default to /opt/rocm (will fail gracefully later)
     log.warning('Could not detect ROCm path, defaulting to /opt/rocm')
@@ -79,18 +83,14 @@ def detect_hip_compiler(orch, rocm_path):
     """
     # Try hipcc first (ROCm 7.x). One logical operation per orch.exec:
     # use the test(1) exit code rather than a `test ... && echo` chain.
-    out_dict = orch.exec(f'test -f {rocm_path}/bin/hipcc', detailed=True)
-    for node, info in out_dict.items():
-        if info.get('exit_code') == 0:
-            log.info(f'Detected HIP compiler: {rocm_path}/bin/hipcc')
-            return f'{rocm_path}/bin/hipcc'
+    if 0 in _exit_codes(orch, f'test -f {rocm_path}/bin/hipcc'):
+        log.info(f'Detected HIP compiler: {rocm_path}/bin/hipcc')
+        return f'{rocm_path}/bin/hipcc'
 
     # Fall back to amdclang++ (older ROCm versions).
-    out_dict = orch.exec(f'test -f {rocm_path}/bin/amdclang++', detailed=True)
-    for node, info in out_dict.items():
-        if info.get('exit_code') == 0:
-            log.info(f'Detected HIP compiler: {rocm_path}/bin/amdclang++')
-            return f'{rocm_path}/bin/amdclang++'
+    if 0 in _exit_codes(orch, f'test -f {rocm_path}/bin/amdclang++'):
+        log.info(f'Detected HIP compiler: {rocm_path}/bin/amdclang++')
+        return f'{rocm_path}/bin/amdclang++'
 
     # Default to hipcc if nothing found
     log.warning(f'Could not detect HIP compiler, defaulting to {rocm_path}/bin/hipcc')
@@ -208,10 +208,8 @@ def test_install_transferbench(orch, config_dict):
         update_test_result()
         return
 
-    out_dict = orch.exec(f'ls -ld {git_install_path}')
-    for node in out_dict.keys():
-        if re.search('No such file', out_dict[node]):
-            orch.exec(f'mkdir -p {git_install_path}')
+    if any(code != 0 for code in _exit_codes(orch, f'test -d {git_install_path}')):
+        orch.exec(f'mkdir -p {git_install_path}')
 
     out_dict = orch.exec(f'rm -rf {git_install_path}/TransferBench')
     # Clone with explicit destination, no cwd dependency.
@@ -256,7 +254,7 @@ def test_install_transferbench(orch, config_dict):
 
     # Verify installation happened fine on all nodes
     out_dict = orch.exec(f'ls -l {git_install_path}/TransferBench')
-    for node in out_dict.keys():
-        if not re.search('TransferBench', out_dict[node]):
+    for node, output in out_dict.items():
+        if not re.search('TransferBench', output):
             fail_test(f'Transfer bench installation failed on node {node}')
     update_test_result()

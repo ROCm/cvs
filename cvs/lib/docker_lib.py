@@ -12,6 +12,7 @@ import shlex
 import time
 
 from cvs.lib import globals
+from cvs.lib.env_lib import redact_secrets
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -143,6 +144,7 @@ def launch_docker_container(
     shm_size='64G',
     timeout=60 * 10,
     ulimit_nofile=None,
+    ulimit_memlock=None,
 ):
     cmd = f'docker run -d --network {network} --ipc {network} \
             --cap-add=IPC_LOCK --security-opt seccomp=unconfined --privileged '
@@ -165,6 +167,11 @@ def launch_docker_container(
             )
     if ulimit_nofile:
         cmd = cmd + f' --ulimit nofile={ulimit_nofile} '
+    if ulimit_memlock is not None:
+        # RDMA tests register GPU memory via ibv_reg_mr, charged against RLIMIT_MEMLOCK.
+        # Docker defaults the container to 8MB even when the host is unlimited
+        # (--privileged does NOT lift ulimits), so registrations >8MB fail with ENOMEM.
+        cmd = cmd + f' --ulimit memlock={ulimit_memlock} '
     for device in device_list:
         cmd = cmd + f' --device {device} '
     for src_vol in volume_dict.keys():
@@ -174,7 +181,7 @@ def launch_docker_container(
     cmd = cmd + f' --shm-size {shm_size} --name {container_name} {image} '
     cmd = cmd + 'tail -f /dev/null'
 
-    log.info(f'cmd = {cmd}')
+    log.info(f'cmd = {redact_secrets(cmd)}')
     out_dict = phdl.exec(cmd, timeout=timeout)
     time.sleep(15)
 

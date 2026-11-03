@@ -16,10 +16,12 @@ import unittest
 import unittest.mock as mock
 from cvs.lib.inference.utils.vllm_config_loader import VariantConfig, serialize_cli_options
 from cvs.lib.inference.vllm_job import VllmJob
+from cvs.unittests.support import TMP
 
 _TP = 8
 _PP = 2
 _NNODES = 2
+FAKE_CRED_FILE = "/logs/.hf"
 
 
 class FakeOrch:
@@ -76,12 +78,11 @@ class FakeOrchMultiHost:
 def _make_job_for_check(tail_output="", grep_exit=1):
     """Construct a VllmJob suitable for testing _check_early_failure."""
     variant = _variant()
-    variant.paths.log_dir = "/tmp/test_logs"
+    variant.paths.log_dir = f"{TMP}/test_logs"
     orch = FakeOrchWithOutput(tail_output=tail_output, grep_exit=grep_exit)
     return VllmJob(
         orch=orch,
         variant=variant,
-        hf_token="tok",
         isl="1024",
         osl="1024",
         concurrency="8",
@@ -97,7 +98,7 @@ def _variant(serve_args=None, benchmark_params=None, sweep_options=None):
         enforce_thresholds=False,
         threshold_json="threshold.json",
         ib_netdev="enp159s0np0",
-        paths={"shared_fs": "/logs", "models_dir": "/models", "log_dir": "/logs", "hf_token_file": "/logs/.hf"},
+        paths={"shared_fs": "/logs", "models_dir": "/models", "log_dir": "/logs", "hf_token_file": FAKE_CRED_FILE},
         container={"name": "test", "image": "test", "env": {}, "runtime": {"name": "docker", "args": {}}},
         server_params={
             "model": "/models/Kimi-K2.5-W4A8",
@@ -117,7 +118,6 @@ def _job(isl, osl, conc, serve_args=None, benchmark_params=None):
     return VllmJob(
         orch=FakeOrch(),
         variant=_variant(serve_args, benchmark_params),
-        hf_token="tok",
         isl=isl,
         osl=osl,
         concurrency=conc,
@@ -157,7 +157,6 @@ class TestMaxModelLenFallback(unittest.TestCase):
         job = VllmJob(
             orch=FakeOrch(),
             variant=variant,
-            hf_token="tok",
             isl=run.cell.isl,
             osl=run.cell.osl,
             concurrency=run.cell.concurrency,
@@ -275,7 +274,6 @@ class TestRunClientTrustRemoteCode(unittest.TestCase):
                 job = VllmJob(
                     orch=FakeOrch(),
                     variant=variant,
-                    hf_token="tok",
                     isl=run.cell.isl,
                     osl=run.cell.osl,
                     concurrency=run.cell.concurrency,
@@ -331,7 +329,6 @@ class TestDumpServerLog(unittest.TestCase):
         job = VllmJob(
             orch=orch,
             variant=_variant({"distributed-executor-backend": "mp"}),
-            hf_token="tok",
             isl="1024",
             osl="1024",
             concurrency=8,
@@ -349,7 +346,6 @@ class TestDumpServerLog(unittest.TestCase):
         job = VllmJob(
             orch=orch,
             variant=_variant({"distributed-executor-backend": "ray"}),
-            hf_token="tok",
             isl="1024",
             osl="1024",
             concurrency=8,

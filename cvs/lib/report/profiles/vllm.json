@@ -12,7 +12,7 @@
   "interactive_viewer": true,
   "viewer_cell_threshold": 24,
   "sources": {
-    "results": "inf_res_dict",
+    "results": "cvs_results_dict",
     "variant": "variant_config",
     "lifecycle": "lifecycle"
   },
@@ -76,7 +76,7 @@
   "behavior": {
     "inference_test_substring": "test_vllm_inference",
     "row_card_extras": true,
-    "row_card_test_names": ["test_verify_cell_metrics"]
+    "row_card_test_names": ["test_vllm_inference"]
   },
   "viewer": {
     "interactivity": {

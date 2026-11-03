@@ -1,14 +1,25 @@
 .. meta::
-  :description: Run ad-hoc commands across all nodes and switches in a CVS cluster
-  :keywords: CVS, cluster, commands, exec, SSH, ad-hoc, cluster-wide
+  :description: Run ad-hoc shell commands across all AMD Instinct GPU cluster nodes and switches simultaneously using the CVS parallel SSH exec command.
+  :keywords: CVS, ROCm, cluster, commands, exec, SSH, ad-hoc, AMD Instinct, GPU, AMD, parallel, Linux, diagnostics
 
-************************
-Run cluster commands
-************************
+***********************************************************************************
+Run ad-hoc commands across all Cluster Validation Suite (CVS) cluster nodes via SSH
+***********************************************************************************
 
 CVS provides an ``exec`` command to execute arbitrary shell commands on all nodes in the cluster simultaneously using parallel SSH. This is useful for gathering system information, running diagnostics, or performing administrative tasks across all cluster nodes at once.
 
 The ``exec`` command uses the same cluster configuration files as other CVS commands and supports both command-line arguments and environment variables for configuration.
+
+Where the command runs
+======================
+
+``cvs exec`` SSHes to the hosts in ``node_dict`` (and to switch trays when you ask for them). It ignores ``orchestrator`` and does not enter a container. Use it to see the host's view of ``docker ps`` during a container run.
+
+``{user-id}`` in ``username`` and ``priv_key_file`` stays as those characters. ``cvs run`` and ``cvs monitor check_cluster_health`` expand the placeholder. Put a literal username and key path in the file you pass here. ``cvs scp`` has the same literal behavior.
+
+``env_vars`` in the cluster file is prefixed onto the remote command as ``export`` statements in the host shell. That is separate from ``container.env``, which becomes ``docker -e`` inside a container for suites that start one.
+
+A per-host line such as ``ABORT: Host Unreachable Error`` or ``ABORT: Timeout Error in Host: ...`` is text in that host's output. ``cvs exec`` still exits 0 after printing it. The process exits non-zero when no cluster file is specified, the cluster file cannot be loaded, required keys are missing (``username``, or ``priv_key_file`` and a non-empty ``node_dict`` for compute targets), the SSH client cannot be built, or the exec call itself raises. A remote command that exits non-zero is printed the same way and does not change the process exit code: this command does not read per-host exit codes.
 
 Execute commands
 ================
@@ -58,7 +69,7 @@ By default ``cvs exec`` runs on every host in ``node_dict`` (compute nodes). Use
 
 .. code:: bash
 
-  # Compute nodes only (default — identical to old behaviour)
+  # Compute nodes only (default — identical to old behavior)
   cvs exec --cmd "hostname" --cluster_file ~/cvs_workspace/cluster.json
 
   # Switch trays only
@@ -74,10 +85,10 @@ Rack-aware cluster file
 
 If ``--target switches`` is used with a plain cluster file (no ``racks`` block), CVS prints a warning and exits without executing any command.
 
-Examples
-========
+Exec command examples
+=====================
 
-Here are some useful examples of commands you can execute across your cluster:
+The following examples show common diagnostic and information-gathering commands.
 
 System information
 ------------------
@@ -200,7 +211,7 @@ Output schema:
     }
   }
 
-- ``output`` is a flat ``host → string`` map. Error and timeout strings appear as values for unreachable hosts.
+- ``output`` is a flat ``host → string`` map. Unreachable hosts and read timeouts show up as ``ABORT:`` strings in that host's value. Those strings do not change the process exit code.
 - For ``--target all``, compute and switch hosts are merged into the same ``output`` dict.
 
 Pipe directly to ``jq`` for filtering:
@@ -216,8 +227,8 @@ Pipe directly to ``jq`` for filtering:
   # List only hosts that succeeded (no error strings)
   cvs exec --cmd "hostname" --json | jq '[.output | to_entries[] | select(.value | test("ABORT|Error") | not) | .key]'
 
-Timeout behaviour
-=================
+Timeout behavior
+================
 
 ``--timeout`` and ``--connect-timeout`` control two distinct phases of the per-node SSH operation:
 
@@ -249,7 +260,7 @@ For long-running operations (benchmarks, firmware updates), keep ``--connect-tim
 
 .. note::
 
-  When TCP packets to target hosts are silently dropped (e.g. no VPN/sshuttle tunnel), the effective per-host timeout is governed by ``--timeout`` (the socket-level IO timeout), not ``--connect-timeout``. Set ``--timeout`` equal to ``--connect-timeout`` for the fastest failure in that scenario.
+  When TCP packets to target hosts are silently dropped (for example, no VPN/sshuttle tunnel), the effective per-host timeout is governed by ``--timeout`` (the socket-level IO timeout), not ``--connect-timeout``. Set ``--timeout`` equal to ``--connect-timeout`` for the fastest failure in that scenario.
 
 Troubleshooting
 ===============
@@ -276,7 +287,7 @@ If SSH connections hang or time out:
 
 - Reduce ``--connect-timeout`` (default ``15`` s) to fail unreachable hosts faster
 - Reduce ``--timeout`` (default ``30`` s) if commands should complete quickly
-- Confirm network reachability to all target hosts before running (e.g. via sshuttle or VPN)
+- Confirm network reachability to all target hosts before running (for example, via sshuttle or VPN)
 
 If the output contains unexpected SSH diagnostic messages:
 
@@ -286,3 +297,10 @@ If the output contains unexpected SSH diagnostic messages:
 .. tip::
 
   Use ``--json | jq '.output'`` to get a clean, machine-readable summary. Combine with ``--verbose`` only when debugging connection issues.
+
+Next steps
+==========
+
+- :doc:`/how-to/copy-to-cluster` — copy files or directories to all cluster nodes in parallel using ``cvs scp``.
+- :doc:`/how-to/test-suites/index` — run a test suite against the cluster.
+- :doc:`/reference/cluster/cluster-file` — full cluster file schema including the ``racks`` block required for ``--target switches``.

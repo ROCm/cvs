@@ -110,6 +110,11 @@ def test_setup_sshd(orch, lifecycle, request):
     if not ok:
         lifecycle.failed = True
         pytest.fail("setup_sshd() returned False")
+    # Spur skips sshd on purpose (srun, not port 2224). Probing here fails every multinode run.
+    from cvs.core.scheduler import is_managed_compute
+
+    if is_managed_compute():
+        return
     if len(orch.hosts) > 1:
         probe = orch.exec(sshd_port_listen_probe_cmd(getattr(orch, "ssh_port", 2224)))
         if not any(sshd_port_listen_ok(v) for v in (probe or {}).values()):

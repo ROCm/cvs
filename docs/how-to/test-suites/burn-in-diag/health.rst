@@ -1,10 +1,12 @@
 .. meta::
-  :description: Run AGFHC, TransferBench, and RVS burn-in tests
-  :keywords: CVS, health
+  :description: Run AGFHC, TransferBench, and RVS health burn-in tests to validate GPU hardware, firmware, and memory bandwidth on AMD Instinct clusters with CVS.
+  :keywords: CVS, health, burn-in, AGFHC, RVS, TransferBench, AMD Instinct, ROCm, AMD, GPU, HBM, PCIe
 
-**********************
-Health (burn-in) tests
-**********************
+*******************************************************
+Run AGFHC, TransferBench, and RVS health burn-in tests
+*******************************************************
+
+Health burn-in tests run AMD GPU Field Health Check (AGFHC), `TransferBench <https://rocm.docs.amd.com/projects/TransferBench/en/latest/index.html>`_, and `ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmValidationSuite/en/latest/index.html>`_ on every node in the cluster. Use these tests to validate GPU hardware, memory bandwidth, and compute throughput before production workloads.
 
 .. _health-set-up-config:
 
@@ -15,25 +17,29 @@ Set up config
 
    .. code:: bash
 
-     cvs config copy health/mi300_health_config.json --output ~/cvs_workspace/health/mi300_health_config.json
+     cvs config copy health/health_config.json --output ~/cvs_workspace/health/health_config.json
 
 2. Edit paths and any remaining ``<changeme>`` placeholders:
 
-   - Under ``agfhc``: ``path``, ``package_tar_ball``, ``install_dir``
-   - Under ``transferbench``: ``git_install_path``, ``rocm_path`` (or leave ``<changeme>`` to auto-detect)
+   - Under ``agfhc``: ``path``, ``package_tar_ball``, ``install_dir``, ``env``, ``log_dir``. A ``path`` other than ``/opt/amd/agfhc`` installs with ``./install --rocm-tar -o`` and no sudo; its parent and ``log_dir`` must be writable on the nodes. Update ``env`` when ``path`` changes.
+   - Under ``transferbench``: ``git_install_path``, ``rocm_path`` (or leave ``<changeme>`` to auto-detect). For ``test_transfer_bench_a2a``, set required ``results.gpu_to_gpu_a2a_per_link_min`` (default ``32.9``). For ``test_transfer_bench_a2asweep``, set ``a2asweep_timeout`` (default ``1500``) or omit it to derive the orch timeout from sweep size; see :doc:`/reference/configuration-files/burn-in-diag/health`.
    - Under ``rvs``: ``git_install_path``, ``path``, ``rocm_path``
 
-Full parameter list: :doc:`/reference/configuration-files/burn-in-diag/health`.
+For the complete field reference including install paths and threshold values, see :doc:`/reference/configuration-files/burn-in-diag/health`.
 
 .. _health-run-tests:
 
 Run tests
 =========
 
-The burn-in health tests are single node diagnostic tests that validate the hardware and firmware versions' functionality and performance. 
-For the performance validation, they use the reference bandwidth or latency numbers provided as part of the input ``config_file`` for the relevant test. 
+Use these tests to validate single-node diagnostics for GPU cluster health.
+For the performance validation, use the reference bandwidth or latency numbers provided as part of the input ``config_file`` for the relevant test.
 
 Use these scripts to run each health test. These CVS test scripts have two parts: installing the functionality and running the tests.
+
+.. note::
+
+  These health suites honor ``orchestrator`` in the cluster file. With ``container``, the workload runs inside the per-host container (``docker exec``). See :doc:`/how-to/run-with-containers`.
 
 AGFHC
 ~~~~~
@@ -62,25 +68,34 @@ You can list all available AGFHC test cases using the CLI:
     - test_agfhc_all_perf
     - test_agfhc_all_lvl5
 
-Use these scripts to start the test:
+Run the AGFHC test:
 
-1. Run the installation: 
+1. Run the installation:
 
-   .. code:: bash 
+   .. code:: bash
 
-     cvs run install_agfhc --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+     cvs run install_agfhc \
+       --cluster_file ~/cvs_workspace/cluster.json \
+       --config_file ~/cvs_workspace/health/health_config.json \
+       --capture=tee-sys -vvv -s
 
 2. Run the AGFHC test:
 
    .. code:: bash
-    
-     cvs run agfhc_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+
+     cvs run agfhc_cvs \
+       --cluster_file ~/cvs_workspace/cluster.json \
+       --config_file ~/cvs_workspace/health/health_config.json \
+       --capture=tee-sys -vvv -s
 
 3. Run the CSP qualification test:
 
    .. code:: bash
-    
-     cvs run csp_qual_agfhc --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+
+     cvs run csp_qual_agfhc \
+       --cluster_file ~/cvs_workspace/cluster.json \
+       --config_file ~/cvs_workspace/health/health_config.json \
+       --capture=tee-sys -vvv -s
 
 TransferBench
 ~~~~~~~~~~~~~
@@ -103,19 +118,25 @@ You can list all available TransferBench test cases using the CLI:
     - test_transfer_bench_scaling
     - test_transfer_bench_schmoo
 
-Use these scripts to start the test:
+Run the TransferBench test:
 
-1. Run the installation: 
+1. Run the installation:
 
    .. code:: bash
 
-     cvs run install_transferbench --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+     cvs run install_transferbench \
+       --cluster_file ~/cvs_workspace/cluster.json \
+       --config_file ~/cvs_workspace/health/health_config.json \
+       --capture=tee-sys -vvv -s
 
 2. Start the TransferBench test:
 
    .. code:: bash
-    
-     cvs run transferbench_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+
+     cvs run transferbench_cvs \
+       --cluster_file ~/cvs_workspace/cluster.json \
+       --config_file ~/cvs_workspace/health/health_config.json \
+       --capture=tee-sys -vvv -s
 
 RVS
 ~~~
@@ -144,20 +165,27 @@ You can list all available RVS test cases using the CLI:
     - test_rvs_tst_single
     - test_rvs_babel_stream
 
-Use these scripts to start the test:
+Run the RVS test:
 
-1. Run the installation: 
+1. Run the installation:
+
+   .. code:: bash
+
+     cvs run install_rvs \
+       --cluster_file ~/cvs_workspace/cluster.json \
+       --config_file ~/cvs_workspace/health/health_config.json \
+       --capture=tee-sys -vvv -s
+
+2. Start the RVS test:
 
    .. code:: bash
 
-     cvs run install_rvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+     cvs run rvs_cvs \
+       --cluster_file ~/cvs_workspace/cluster.json \
+       --config_file ~/cvs_workspace/health/health_config.json \
+       --capture=tee-sys -vvv -s
 
-2. Start the RVS test: 
+Run on managed compute
+~~~~~~~~~~~~~~~~~~~~~~
 
-   .. code:: bash
-    
-     cvs run rvs_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
-
-.. note::
-
-  Both ``cvs run install_rvs`` and ``cvs run rvs_cvs`` support running inside a per-host container instead of on the host filesystem. Pass a ``cluster_container.json`` cluster file with ``orchestrator: container`` to route invocations through the container backend. See :doc:`/how-to/run-with-containers`.
+Follow :doc:`/how-to/run-on-managed-compute` to run these health suites on managed compute.

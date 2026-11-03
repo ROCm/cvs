@@ -10,6 +10,12 @@ import json
 from pathlib import Path
 
 from cvs.lib.preflight.base import PreflightCheck
+from cvs.lib.preflight.mtu_check import (
+    DEFAULT_MIN_ACTIVE_MTU,
+    DEFAULT_MIN_NETDEV_MTU,
+    INFINIBAND,
+    transport_label,
+)
 from cvs.lib.preflight.node_smoke import (
     DEFAULT_ARTIFACTS_ROOT_DIR,
     NODE_SMOKE_TIER1_LABEL,
@@ -22,11 +28,22 @@ from cvs.lib.preflight.node_smoke_counts import (
     aggregate_tier3_test_counts,
     format_tests_run_suffix,
 )
+from cvs.lib.preflight.node_smoke_rows import (
+    build_tier1_metric_rows,
+    build_tier2_metric_rows,
+    build_tier3_metric_rows,
+    row_is_failure,
+    tier1_runner_outcome,
+    tier2_runner_outcome,
+    unexplained_tier1_nodes,
+)
+from cvs.lib.report.render.perf_metric_table import render_benchmark_metrics_html
 from cvs.lib import globals
 
 log = globals.log
 
 PREFLIGHT_CHECK_DISPLAY_NAMES = {
+    'rdma_mtu': 'RDMA MTU',
     'node_smoke_tier1': NODE_SMOKE_TIER1_LABEL,
     'node_smoke_tier2': NODE_SMOKE_TIER2_LABEL,
     'node_smoke_tier3': NODE_SMOKE_TIER3_LABEL,
@@ -51,19 +68,63 @@ def _config_flag_enabled(value, default=True):
     return bool(value)
 
 
+def _result_disposition(result):
+    """Classify a check payload before scoring it.
+
+    Crash backfill stores ``status`` without the ``skipped`` or ``blocked`` flag.
+    A missing payload was not run. A payload that ran with nothing to score is neither.
+    """
+    if not isinstance(result, dict) or not result:
+        return 'missing'
+    status = str(result.get('status') or '').upper()
+    if result.get('blocked') or status == 'BLOCKED':
+        return 'blocked'
+    if result.get('skipped') or status == 'SKIPPED':
+        return 'skipped'
+    return 'ran'
+
+
+def _inactive_check_summary(result, skipped_message, blocked_message, counts, missing_message=None):
+    """Return a SKIPPED or BLOCKED summary, or None when the check ran."""
+    disposition = _result_disposition(result)
+    if disposition == 'ran':
+        return None
+    summary = dict(counts)
+    if disposition == 'blocked':
+        summary['status'] = 'BLOCKED'
+        message = result.get('message') if isinstance(result, dict) else None
+        summary['summary'] = message or blocked_message
+        return summary
+    summary['status'] = 'SKIPPED'
+    if disposition == 'missing':
+        summary['summary'] = missing_message if missing_message is not None else skipped_message
+    else:
+        message = result.get('message') if isinstance(result, dict) else None
+        summary['summary'] = message or skipped_message
+    return summary
+
+
+def _empty_tested_summary(message, counts):
+    """A check that ran and tested nothing is an error, not a pass."""
+    summary = dict(counts)
+    summary['status'] = 'ERROR'
+    summary['summary'] = message
+    return summary
+
+
 class PreflightReportGenerator(PreflightCheck):
     """Generate preflight test reports."""
 
-    def __init__(self, phdl, results, config_dict=None):
+    def __init__(self, orch, results, config_dict=None):
         """
         Initialize report generator.
 
         Args:
-            phdl: Parallel SSH handle for cluster nodes
+            orch: Orchestrator or parallel handle for cluster nodes
             results: Preflight test results to generate reports from
             config_dict: Optional configuration dictionary
         """
-        super().__init__(phdl, config_dict)
+        super().__init__(orch, config_dict)
         self.results = results
 
     def run(self):
@@ -90,6 +151,7 @@ class PreflightReportGenerator(PreflightCheck):
     def _generate_preflight_summary(self):
         """Build summary dict from ``self.results`` (preflight_results bundle)."""
         gid_results = self.results.get('gid_consistency', {})
+        mtu_results = self.results.get('rdma_mtu', {})
         connectivity_results = self.results.get('rdma_connectivity', {})
         rocm_results = self.results.get('rocm_versions', {})
         interface_results = self.results.get('interface_names', {})
@@ -106,6 +168,7 @@ class PreflightReportGenerator(PreflightCheck):
                 'ssh_reachability': self._summarize_reachability_results(reachability_results),
                 'node_health': self._summarize_node_health_results(node_health_results),
                 'gid_consistency': self._summarize_gid_results(gid_results),
+                'rdma_mtu': self._summarize_rdma_mtu_results(mtu_results),
                 'node_smoke_tier1': self._summarize_node_smoke_tier1_results(node_smoke_tier1_results),
                 'node_smoke_tier2': self._summarize_node_smoke_tier2_results(node_smoke_tier1_results),
                 'node_smoke_tier3': self._summarize_node_smoke_tier3_results(node_smoke_tier3_results),
@@ -123,7 +186,7 @@ class PreflightReportGenerator(PreflightCheck):
 
         # Determine overall status (skipped tests don't affect overall status)
         for check_name, check_summary in summary['checks'].items():
-            if check_summary['status'] in ('FAIL', 'BLOCKED'):
+            if check_summary['status'] in ('FAIL', 'BLOCKED', 'ERROR'):
                 summary['overall_status'] = 'FAIL'
 
         # Generate recommendations
@@ -131,6 +194,9 @@ class PreflightReportGenerator(PreflightCheck):
             summary['recommendations'].append(
                 "Fix GID configuration on RDMA interfaces before running performance tests"
             )
+
+        if summary['checks']['rdma_mtu']['status'] == 'FAIL':
+            summary['recommendations'].extend(self._rdma_mtu_recommendations(summary['checks']['rdma_mtu']))
 
         if summary['checks']['node_health']['status'] == 'FAIL':
             summary['recommendations'].append(
@@ -233,14 +299,15 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_gid_results(self, gid_results):
         """Summarize GID consistency check results."""
-        if not gid_results or gid_results.get('skipped') or gid_results.get('status') == 'SKIPPED':
-            return {
-                'status': 'SKIPPED',
-                'total_interfaces': 0,
-                'ok_interfaces': 0,
-                'failed_nodes': [],
-                'summary': gid_results.get('message', 'RDMA GID validation skipped') if gid_results else 'Not run',
-            }
+        inactive = _inactive_check_summary(
+            gid_results,
+            'RDMA GID validation skipped',
+            'RDMA GID validation blocked',
+            {'total_interfaces': 0, 'ok_interfaces': 0, 'failed_nodes': []},
+            missing_message='Not run',
+        )
+        if inactive:
+            return inactive
         total_interfaces = 0
         ok_interfaces = 0
         failed_nodes = []
@@ -262,20 +329,117 @@ class PreflightReportGenerator(PreflightCheck):
             'summary': f"{ok_interfaces}/{total_interfaces} interfaces have valid GID",
         }
 
+    def _summarize_rdma_mtu_results(self, mtu_results):
+        """Summarize RDMA MTU measurements across nodes."""
+        inactive = _inactive_check_summary(
+            mtu_results,
+            'Not run',
+            'RDMA MTU validation blocked',
+            {'total_interfaces': 0, 'ok_interfaces': 0, 'failed_nodes': []},
+            missing_message='Not run',
+        )
+        if inactive:
+            return inactive
+        total_interfaces = 0
+        ok_interfaces = 0
+        failed_nodes = []
+        netdev_mtus = set()
+        active_mtus = set()
+        transports = {}
+        failed_transports = set()
+        min_netdev_mtu = DEFAULT_MIN_NETDEV_MTU
+        min_active_mtu = DEFAULT_MIN_ACTIVE_MTU
+        for node, result in mtu_results.items():
+            if not isinstance(result, dict):
+                continue
+            min_netdev_mtu = result.get('min_netdev_mtu', min_netdev_mtu)
+            min_active_mtu = result.get('min_active_mtu', min_active_mtu)
+            for iface in (result.get('interfaces') or {}).values():
+                total_interfaces += 1
+                transport = transport_label(iface.get('link_layer'))
+                if transport:
+                    transports[transport] = transports.get(transport, 0) + 1
+                if iface.get('status') == 'OK':
+                    ok_interfaces += 1
+                elif iface.get('status') == 'FAIL':
+                    failed_transports.add(transport)
+                if iface.get('netdev_mtu') is not None and transport != INFINIBAND:
+                    netdev_mtus.add(iface['netdev_mtu'])
+                if iface.get('active_mtu') is not None:
+                    active_mtus.add(iface['active_mtu'])
+            if result.get('status') == 'FAIL':
+                failed_nodes.append(node)
+        netdev_mtus = sorted(netdev_mtus)
+        active_mtus = sorted(active_mtus)
+        summary = f"{ok_interfaces}/{total_interfaces} interfaces meet MTU minimums"
+        if transports:
+            summary += ' (' + ', '.join(f"{count} {name}" for name, count in sorted(transports.items())) + ')'
+        measured = []
+        if netdev_mtus:
+            measured.append(f"netdev MTU(s) {', '.join(map(str, netdev_mtus))}")
+        if active_mtus:
+            measured.append(f"active MTU(s) {', '.join(map(str, active_mtus))}")
+        if measured:
+            summary += '; ' + ', '.join(measured)
+        return {
+            'status': 'FAIL' if failed_nodes else 'PASS',
+            'total_interfaces': total_interfaces,
+            'ok_interfaces': ok_interfaces,
+            'failed_nodes': failed_nodes,
+            'netdev_mtus': netdev_mtus,
+            'active_mtus': active_mtus,
+            'transports': transports,
+            'failed_transports': sorted(failed_transports),
+            'min_netdev_mtu': min_netdev_mtu,
+            'min_active_mtu': min_active_mtu,
+            'summary': summary,
+        }
+
+    def _rdma_mtu_recommendations(self, mtu_summary):
+        """Name the configured MTU minimums in the fix for each failing transport."""
+        failed_transports = mtu_summary.get('failed_transports') or ['']
+        min_netdev_mtu = mtu_summary.get('min_netdev_mtu', DEFAULT_MIN_NETDEV_MTU)
+        min_active_mtu = mtu_summary.get('min_active_mtu', DEFAULT_MIN_ACTIVE_MTU)
+        recommendations = []
+        if any(transport != INFINIBAND for transport in failed_transports):
+            netdev_target = f"MTU >= {min_netdev_mtu} " if min_netdev_mtu else ''
+            active_target = f" so RoCE negotiates an active MTU of at least {min_active_mtu}" if min_active_mtu else ''
+            recommendations.append(
+                f"Enable jumbo frames on RoCE netdevs ({netdev_target}end-to-end, including switches)"
+                f"{active_target}; low MTU reduces GPU-Direct RDMA bandwidth"
+            )
+        if INFINIBAND in failed_transports:
+            active_target = f" so active_mtu reaches at least {min_active_mtu}" if min_active_mtu else ''
+            recommendations.append(
+                "Raise the InfiniBand port MTU (subnet manager partition MTU and switch ports)"
+                f"{active_target}; low MTU reduces GPU-Direct RDMA bandwidth"
+            )
+        return recommendations
+
     def _summarize_node_health_results(self, health_results):
         """Summarize mandatory GPU and optional MI4XX fabric admission."""
-        if not health_results or health_results.get('skipped') or health_results.get('status') == 'SKIPPED':
-            message = (
-                health_results.get('message', 'Node-health admission is not enabled')
-                if isinstance(health_results, dict)
-                else ''
-            )
+        disposition = _result_disposition(health_results)
+        if disposition != 'ran':
+            if disposition == 'blocked':
+                message = health_results.get('message') or 'Node-health admission blocked'
+                status = 'BLOCKED'
+            elif disposition == 'missing':
+                message = 'Node-health admission skipped'
+                status = 'SKIPPED'
+            else:
+                message = (
+                    health_results.get('message', 'Node-health admission is not enabled')
+                    if isinstance(health_results, dict)
+                    else ''
+                )
+                message = message or 'Node-health admission skipped'
+                status = 'SKIPPED'
             return {
-                'status': 'SKIPPED',
+                'status': status,
                 'total_nodes': 0,
                 'passing_nodes': 0,
                 'failed_nodes': [],
-                'summary': message or 'Node-health admission skipped',
+                'summary': message,
             }
 
         node_results = health_results.get('node_results') or {}
@@ -285,14 +449,33 @@ class PreflightReportGenerator(PreflightCheck):
             failed_nodes = sorted(node for node, result in node_results.items() if result.get('status') == 'FAIL')
         coverage = health_results.get('coverage') or {}
         missing_nodes = list(coverage.get('missing_nodes') or [])
+        if (
+            total_nodes == 0
+            and not failed_nodes
+            and not missing_nodes
+            and str(health_results.get('status') or '').upper() not in ('FAIL', 'ERROR')
+        ):
+            return _empty_tested_summary(
+                'Node-health admission tested no nodes',
+                {'total_nodes': 0, 'passing_nodes': 0, 'failed_nodes': []},
+            )
         membership = health_results.get('vpod_membership') or {}
         status = health_results.get('status') or ('FAIL' if failed_nodes or missing_nodes else 'PASS')
         passing_nodes = total_nodes - len(failed_nodes)
         fabric_checks = bool(health_results.get('fabric_checks'))
+        warned_nodes = list(health_results.get('warned_nodes') or [])
+        if not warned_nodes:
+            warned_nodes = sorted(
+                node
+                for node, result in node_results.items()
+                if result.get('status') == 'PASS' and result.get('warnings')
+            )
         summary = f"{passing_nodes}/{total_nodes} nodes passed node-health admission"
         if fabric_checks and membership.get('status') == 'PASS':
             accelerators = membership.get('vpod_accelerators') or []
             summary += f"; AFM vPOD accelerator membership {accelerators}"
+        if warned_nodes:
+            summary += f"; {len(warned_nodes)} node(s) on a degraded IFoE fabric (reduced throughput)"
         if missing_nodes:
             summary += f"; {len(missing_nodes)} declared node(s) were not admitted"
         return {
@@ -300,6 +483,7 @@ class PreflightReportGenerator(PreflightCheck):
             'total_nodes': total_nodes,
             'passing_nodes': passing_nodes,
             'failed_nodes': failed_nodes,
+            'warned_nodes': warned_nodes,
             'missing_nodes': missing_nodes,
             'vpod_accelerators': membership.get('vpod_accelerators') or [],
             'fabric_checks': fabric_checks,
@@ -308,7 +492,7 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_connectivity_results(self, connectivity_results):
         """Summarize RDMA connectivity check results."""
-        if connectivity_results.get('blocked') or connectivity_results.get('status') == 'BLOCKED':
+        if _result_disposition(connectivity_results) == 'blocked':
             return {
                 'status': 'BLOCKED',
                 'total_pairs': 0,
@@ -318,7 +502,7 @@ class PreflightReportGenerator(PreflightCheck):
                 'summary': connectivity_results.get('message', 'RDMA connectivity blocked by mandatory admission'),
             }
         # Handle skipped tests (either by configuration or due to failures)
-        if connectivity_results.get('skipped', False) or connectivity_results.get('status') == 'SKIPPED':
+        if _result_disposition(connectivity_results) == 'skipped':
             msg = connectivity_results.get('message', 'RDMA connectivity test skipped')
             excl_if = connectivity_results.get('excluded_nodes_interface_check') or []
             excl_gid = connectivity_results.get('excluded_nodes_gid') or []
@@ -350,6 +534,16 @@ class PreflightReportGenerator(PreflightCheck):
                 'summary': 'RDMA connectivity test failed to complete properly',
             }
 
+        if connectivity_results.get('total_pairs', 0) == 0 and connectivity_results.get('failed_pairs', 0) == 0:
+            return {
+                'status': 'ERROR',
+                'total_pairs': 0,
+                'successful_pairs': connectivity_results.get('successful_pairs', 0),
+                'failed_pairs': 0,
+                'mode': connectivity_results.get('mode', 'unknown'),
+                'summary': 'RDMA connectivity tested no pairs',
+            }
+
         summary = f"{connectivity_results['successful_pairs']}/{connectivity_results['total_pairs']} pairs connected successfully"
         pruned = connectivity_results.get('pruned_nodes_after_intra') or []
         if pruned:
@@ -372,14 +566,15 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_rocm_results(self, rocm_results):
         """Summarize ROCm version check results."""
-        if not rocm_results or rocm_results.get('skipped') or rocm_results.get('status') == 'SKIPPED':
-            return {
-                'status': 'SKIPPED',
-                'total_nodes': 0,
-                'consistent_nodes': 0,
-                'failed_nodes': [],
-                'summary': rocm_results.get('message', 'ROCm validation skipped') if rocm_results else 'Not run',
-            }
+        inactive = _inactive_check_summary(
+            rocm_results,
+            'ROCm validation skipped',
+            'ROCm validation blocked',
+            {'total_nodes': 0, 'consistent_nodes': 0, 'failed_nodes': []},
+            missing_message='Not run',
+        )
+        if inactive:
+            return inactive
         total_nodes = len(rocm_results)
         consistent_nodes = sum(1 for result in rocm_results.values() if result['status'] == 'PASS')
         failed_nodes = [node for node, result in rocm_results.items() if result['status'] == 'FAIL']
@@ -394,18 +589,15 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_interface_results(self, interface_results):
         """Summarize interface name check results."""
-        if not interface_results or interface_results.get('skipped') or interface_results.get('status') == 'SKIPPED':
-            return {
-                'status': 'SKIPPED',
-                'total_nodes': 0,
-                'compliant_nodes': 0,
-                'failed_nodes': [],
-                'summary': (
-                    interface_results.get('message', 'RDMA interface validation skipped')
-                    if interface_results
-                    else 'Not run'
-                ),
-            }
+        inactive = _inactive_check_summary(
+            interface_results,
+            'RDMA interface validation skipped',
+            'RDMA interface validation blocked',
+            {'total_nodes': 0, 'compliant_nodes': 0, 'failed_nodes': []},
+            missing_message='Not run',
+        )
+        if inactive:
+            return inactive
         total_nodes = len(interface_results)
         compliant_nodes = sum(1 for result in interface_results.values() if result['status'] == 'PASS')
         failed_nodes = [node for node, result in interface_results.items() if result['status'] == 'FAIL']
@@ -420,7 +612,8 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_ifoe_l2_results(self, ifoe_results):
         """Summarize IFoE L2 connectivity (afmctl) check results."""
-        if ifoe_results and (ifoe_results.get('blocked') or ifoe_results.get('status') == 'BLOCKED'):
+        disposition = _result_disposition(ifoe_results)
+        if disposition == 'blocked':
             return {
                 'status': 'BLOCKED',
                 'total_nodes': 0,
@@ -429,7 +622,7 @@ class PreflightReportGenerator(PreflightCheck):
                 'failed_invocations': 0,
                 'summary': ifoe_results.get('message', 'IFoE L2 connectivity blocked by mandatory admission'),
             }
-        if not ifoe_results or ifoe_results.get('skipped'):
+        if disposition in ('missing', 'skipped'):
             msg = (
                 ifoe_results.get('message')
                 if isinstance(ifoe_results, dict)
@@ -453,6 +646,16 @@ class PreflightReportGenerator(PreflightCheck):
         missing_nodes = list(coverage.get('missing_nodes') or [])
         incomplete_nodes = list(coverage.get('incomplete_nodes') or [])
         coverage_complete = coverage.get('complete', not missing_nodes and not incomplete_nodes)
+        if total_nodes == 0 and not failed_nodes and coverage_complete:
+            return _empty_tested_summary(
+                'IFoE L2 connectivity tested no nodes',
+                {
+                    'total_nodes': 0,
+                    'failed_nodes': [],
+                    'total_invocations': 0,
+                    'failed_invocations': 0,
+                },
+            )
         passing_nodes = total_nodes - len(failed_nodes)
         total_invocations = int(ifoe_results.get('total_invocations', 0))
         failed_invocations = int(ifoe_results.get('failed_invocations', 0))
@@ -481,7 +684,8 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_transferbench_smoke_results(self, tb_results):
         """Summarize TransferBench smoketest results (AIMVT-181)."""
-        if tb_results and (tb_results.get('blocked') or tb_results.get('status') == 'BLOCKED'):
+        disposition = _result_disposition(tb_results)
+        if disposition == 'blocked':
             return {
                 'status': 'BLOCKED',
                 'nodes_total': 0,
@@ -491,7 +695,7 @@ class PreflightReportGenerator(PreflightCheck):
                 'failed_nodes': [],
                 'summary': tb_results.get('message', 'TransferBench smoketest blocked by mandatory admission'),
             }
-        if not tb_results or tb_results.get('skipped'):
+        if disposition in ('missing', 'skipped'):
             msg = tb_results.get('message') if isinstance(tb_results, dict) else 'TransferBench smoketest not performed'
             return {
                 'status': 'SKIPPED',
@@ -507,6 +711,19 @@ class PreflightReportGenerator(PreflightCheck):
         nodes = tb_results.get('nodes') or {}
         failed_nodes = sorted(n for n, r in nodes.items() if r.get('status') == 'FAIL')
         warning_nodes = sorted(n for n, r in nodes.items() if r.get('status') == 'WARNING')
+        nodes_total = totals.get('nodes_total', len(nodes))
+        explicit_status = str(tb_results.get('status') or '').upper()
+        if nodes_total == 0 and not nodes and explicit_status not in ('FAIL', 'ERROR'):
+            return _empty_tested_summary(
+                'TransferBench smoketest tested no nodes',
+                {
+                    'nodes_total': 0,
+                    'nodes_pass': 0,
+                    'nodes_warning': 0,
+                    'nodes_fail': 0,
+                    'failed_nodes': [],
+                },
+            )
 
         status = tb_results.get('status') or ('FAIL' if failed_nodes else ('WARNING' if warning_nodes else 'PASS'))
         summary_text = (
@@ -536,7 +753,16 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_node_smoke_tier1_results(self, node_smoke_results):
         """Summarize Node Smoke Tier 1 check results."""
-        if not node_smoke_results or node_smoke_results.get('skipped'):
+        disposition = _result_disposition(node_smoke_results)
+        if disposition == 'blocked':
+            return {
+                'status': 'BLOCKED',
+                'total_nodes': 0,
+                'passing_nodes': 0,
+                'failed_nodes': [],
+                'summary': node_smoke_results.get('message') or f'{NODE_SMOKE_TIER1_LABEL} blocked',
+            }
+        if disposition in ('missing', 'skipped'):
             msg = (
                 node_smoke_results.get('message')
                 if isinstance(node_smoke_results, dict)
@@ -552,15 +778,32 @@ class PreflightReportGenerator(PreflightCheck):
 
         node_results = node_smoke_results.get('node_results') or {}
         total_nodes = len(node_results)
-        failed_nodes = list(
-            node_smoke_results.get('failed_nodes') or [n for n, r in node_results.items() if r.get('status') == 'FAIL']
+        if total_nodes == 0:
+            return _empty_tested_summary(
+                f'{NODE_SMOKE_TIER1_LABEL} tested no nodes',
+                {'total_nodes': 0, 'passing_nodes': 0, 'failed_nodes': []},
+            )
+        tier1_rows = build_tier1_metric_rows(node_smoke_results)
+        tier2_rows = build_tier2_metric_rows(node_smoke_results) if node_smoke_results.get('tier2_perf') else []
+        outcome = tier1_runner_outcome(node_smoke_results, tier1_rows, tier2_rows)
+        if outcome == 'skip':
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': total_nodes,
+                'passing_nodes': 0,
+                'failed_nodes': [],
+                'summary': f'{NODE_SMOKE_TIER1_LABEL}: Primus reported no Tier 1 checks',
+            }
+        failed_nodes = sorted(
+            {row.get('node') for row in tier1_rows if row_is_failure(row)}
+            | set(unexplained_tier1_nodes(node_smoke_results, tier2_rows))
         )
         unknown_nodes = list(
             node_smoke_results.get('unknown_nodes')
             or [n for n, r in node_results.items() if r.get('status') not in ('PASS', 'FAIL')]
         )
-        passing_nodes = total_nodes - len(failed_nodes) - len(unknown_nodes)
-        status = 'FAIL' if failed_nodes or unknown_nodes else 'PASS'
+        passing_nodes = total_nodes - len(failed_nodes)
+        status = 'FAIL' if outcome == 'fail' else 'PASS'
         test_counts = self._node_smoke_test_counts(node_smoke_results)
         summary_text = f"{passing_nodes}/{total_nodes} nodes passed {NODE_SMOKE_TIER1_LABEL}" + format_tests_run_suffix(
             test_counts.get('tier1_tests_run'),
@@ -581,13 +824,27 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_node_smoke_tier2_results(self, node_smoke_results):
         """Summarize Node Smoke Tier 2 check results (runs when tier2_perf is enabled)."""
-        if not node_smoke_results or node_smoke_results.get('skipped'):
+        disposition = _result_disposition(node_smoke_results)
+        if disposition == 'blocked':
+            return {
+                'status': 'BLOCKED',
+                'total_nodes': 0,
+                'passing_nodes': 0,
+                'failed_nodes': [],
+                'summary': node_smoke_results.get('message') or f'{NODE_SMOKE_TIER2_LABEL} blocked',
+            }
+        if disposition in ('missing', 'skipped'):
+            msg = (
+                node_smoke_results.get('message')
+                if isinstance(node_smoke_results, dict) and node_smoke_results
+                else None
+            )
             return {
                 'status': 'SKIPPED',
                 'total_nodes': 0,
                 'passing_nodes': 0,
                 'failed_nodes': [],
-                'summary': f'{NODE_SMOKE_TIER2_LABEL} not run ({NODE_SMOKE_TIER1_LABEL} skipped)',
+                'summary': msg or f'{NODE_SMOKE_TIER2_LABEL} not run ({NODE_SMOKE_TIER1_LABEL} skipped)',
             }
         if not node_smoke_results.get('tier2_perf'):
             return {
@@ -598,33 +855,58 @@ class PreflightReportGenerator(PreflightCheck):
                 'summary': f'{NODE_SMOKE_TIER2_LABEL} not enabled (set node_smoke_tier1.tier2_perf=true)',
             }
 
-        tier1_summary = self._summarize_node_smoke_tier1_results(node_smoke_results)
+        node_results = node_smoke_results.get('node_results') or {}
+        total_nodes = len(node_results)
+        if total_nodes == 0:
+            return _empty_tested_summary(
+                f'{NODE_SMOKE_TIER2_LABEL} tested no nodes',
+                {'total_nodes': 0, 'passing_nodes': 0, 'failed_nodes': []},
+            )
+        tier2_rows = build_tier2_metric_rows(node_smoke_results)
+        if tier2_runner_outcome(tier2_rows) == 'skip':
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': total_nodes,
+                'passing_nodes': 0,
+                'failed_nodes': [],
+                'summary': f'{NODE_SMOKE_TIER2_LABEL}: Primus reported no Tier 2 metrics',
+            }
+        failed_nodes = sorted({row.get('node') for row in tier2_rows if row_is_failure(row)})
         test_counts = self._node_smoke_test_counts(node_smoke_results)
         thresholds = node_smoke_results.get('tier2_thresholds') or {}
         summary_text = (
-            f"{tier1_summary['passing_nodes']}/{tier1_summary['total_nodes']} nodes passed {NODE_SMOKE_TIER2_LABEL} "
+            f"{total_nodes - len(failed_nodes)}/{total_nodes} nodes passed {NODE_SMOKE_TIER2_LABEL} "
             f"(GEMM>={thresholds.get('gemm_tflops_min', '?')} TFLOPS, "
             f"HBM>={thresholds.get('hbm_gbs_min', '?')} GB/s, "
             f"RCCL>={thresholds.get('rccl_gbs_min', '?')} GB/s)"
             + format_tests_run_suffix(
                 test_counts.get('tier2_tests_run'),
                 per_node=True,
-                total_nodes=tier1_summary['total_nodes'],
+                total_nodes=total_nodes,
             )
         )
         return {
-            'status': tier1_summary['status'],
-            'total_nodes': tier1_summary['total_nodes'],
-            'passing_nodes': tier1_summary['passing_nodes'],
-            'failed_nodes': tier1_summary['failed_nodes'],
-            'unknown_nodes': tier1_summary.get('unknown_nodes', []),
+            'status': 'FAIL' if failed_nodes else 'PASS',
+            'total_nodes': total_nodes,
+            'passing_nodes': total_nodes - len(failed_nodes),
+            'failed_nodes': failed_nodes,
+            'unknown_nodes': list(node_smoke_results.get('unknown_nodes') or []),
             'tier2_tests_run': test_counts.get('tier2_tests_run', 0),
             'summary': summary_text,
         }
 
     def _summarize_node_smoke_tier3_results(self, tier3_results):
         """Summarize Node Smoke Tier 3 check results."""
-        if not tier3_results or tier3_results.get('skipped'):
+        disposition = _result_disposition(tier3_results)
+        if disposition == 'blocked':
+            return {
+                'status': 'BLOCKED',
+                'total_nodes': 0,
+                'passing_nodes': 0,
+                'failed_nodes': [],
+                'summary': tier3_results.get('message') or f'{NODE_SMOKE_TIER3_LABEL} blocked',
+            }
+        if disposition in ('missing', 'skipped'):
             msg = (
                 tier3_results.get('message')
                 if isinstance(tier3_results, dict)
@@ -647,6 +929,11 @@ class PreflightReportGenerator(PreflightCheck):
             tier3_results.get('unknown_nodes')
             or [n for n, r in node_results.items() if r.get('status') not in ('PASS', 'FAIL', 'WARN')]
         )
+        if total_nodes == 0 and not failed_nodes and not unknown_nodes:
+            return _empty_tested_summary(
+                f'{NODE_SMOKE_TIER3_LABEL} tested no nodes',
+                {'total_nodes': 0, 'passing_nodes': 0, 'failed_nodes': [], 'unknown_nodes': []},
+            )
         passing_nodes = total_nodes - len(failed_nodes) - len(unknown_nodes)
         status = 'FAIL' if failed_nodes or unknown_nodes else 'PASS'
         test_counts = aggregate_tier3_test_counts(tier3_results)
@@ -695,7 +982,8 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_reachability_results(self, reachability_results):
         """Summarize SSH reachability check results."""
-        if not reachability_results:
+        disposition = _result_disposition(reachability_results)
+        if disposition == 'missing':
             return {
                 'status': 'UNKNOWN',
                 'total_nodes': 0,
@@ -703,10 +991,31 @@ class PreflightReportGenerator(PreflightCheck):
                 'unreachable_nodes': [],
                 'summary': 'SSH reachability test not performed',
             }
+        if disposition == 'blocked':
+            return {
+                'status': 'BLOCKED',
+                'total_nodes': 0,
+                'reachable_nodes': 0,
+                'unreachable_nodes': [],
+                'summary': reachability_results.get('message') or 'SSH reachability blocked',
+            }
+        if disposition == 'skipped':
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'reachable_nodes': 0,
+                'unreachable_nodes': [],
+                'summary': reachability_results.get('message') or 'SSH reachability test skipped',
+            }
 
         total_nodes = reachability_results.get('total_nodes', 0)
         reachable_nodes = reachability_results.get('reachable_nodes', 0)
         unreachable_nodes = reachability_results.get('unreachable_nodes', [])
+        if total_nodes == 0 and not unreachable_nodes:
+            return _empty_tested_summary(
+                'SSH reachability tested no nodes',
+                {'total_nodes': 0, 'reachable_nodes': 0, 'unreachable_nodes': []},
+            )
 
         status = 'PASS' if len(unreachable_nodes) == 0 else 'WARNING'
 
@@ -720,7 +1029,8 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_ssh_connectivity_results(self, ssh_connectivity_results):
         """Summarize SSH full mesh connectivity check results."""
-        if not ssh_connectivity_results:
+        disposition = _result_disposition(ssh_connectivity_results)
+        if disposition == 'missing':
             return {
                 'status': 'UNKNOWN',
                 'total_pairs': 0,
@@ -728,14 +1038,21 @@ class PreflightReportGenerator(PreflightCheck):
                 'failed_pairs': 0,
                 'summary': 'SSH connectivity test not performed',
             }
-
-        if ssh_connectivity_results.get('skipped', False):
+        if disposition == 'blocked':
+            return {
+                'status': 'BLOCKED',
+                'total_pairs': 0,
+                'successful_pairs': 0,
+                'failed_pairs': 0,
+                'summary': ssh_connectivity_results.get('message') or 'SSH connectivity test blocked',
+            }
+        if disposition == 'skipped':
             return {
                 'status': 'SKIPPED',
                 'total_pairs': 0,
                 'successful_pairs': 0,
                 'failed_pairs': 0,
-                'summary': 'SSH connectivity test skipped',
+                'summary': ssh_connectivity_results.get('message') or 'SSH connectivity test skipped',
             }
 
         total_pairs = ssh_connectivity_results.get('total_pairs', 0)
@@ -743,7 +1060,10 @@ class PreflightReportGenerator(PreflightCheck):
         failed_pairs = ssh_connectivity_results.get('failed_pairs', 0)
 
         # Determine status based on results
-        if 'error' in ssh_connectivity_results:
+        if total_pairs == 0 and failed_pairs == 0 and 'error' not in ssh_connectivity_results:
+            status = 'ERROR'
+            summary = 'SSH connectivity tested no pairs'
+        elif 'error' in ssh_connectivity_results:
             status = 'ERROR'
             summary = f"SSH connectivity test failed: {ssh_connectivity_results['error']}"
         elif failed_pairs == 0:
@@ -795,7 +1115,9 @@ class PreflightReportGenerator(PreflightCheck):
             {self._generate_executive_summary_html(summary)}
             {self._generate_node_health_html(results.get('node_health', {}))}
             {self._generate_gid_consistency_html(results.get('gid_consistency', {}))}
+            {self._generate_rdma_mtu_html(results.get('rdma_mtu', {}))}
             {self._generate_node_smoke_tier1_html(results.get('node_smoke_tier1') or results.get('node_smoke', {}))}
+            {self._generate_node_smoke_tier2_html(results.get('node_smoke_tier1') or results.get('node_smoke', {}))}
             {self._generate_node_smoke_tier3_html(results.get('node_smoke_tier3') or results.get('tier3_info', {}))}
             {self._generate_ifoe_l2_html(results.get('ifoe_l2_connectivity', {}))}
             {self._generate_transferbench_smoke_html(results.get('transferbench_smoke', {}))}
@@ -806,6 +1128,7 @@ class PreflightReportGenerator(PreflightCheck):
             {self._generate_configuration_html(config_dict)}
             {self._generate_recommendations_html(summary.get('recommendations', []))}
         </div>
+        {self._node_smoke_sort_script()}
     </body>
     </html>
     """
@@ -1095,6 +1418,34 @@ class PreflightReportGenerator(PreflightCheck):
             details table {
                 margin-top: 0;
             }
+            .cvs-node-smoke-results {
+                font-size: 13px;
+            }
+            .cvs-node-smoke-results th[data-sort] {
+                cursor: pointer;
+            }
+            .cvs-node-smoke-results th[data-sort]:hover {
+                color: #007acc;
+            }
+            .cvs-benchmark-metrics-table .passed,
+            .cvs-node-smoke-results .passed {
+                color: #155724;
+                font-weight: 600;
+            }
+            .cvs-benchmark-metrics-table .failed,
+            .cvs-node-smoke-results .failed {
+                color: #721c24;
+                font-weight: 600;
+            }
+            .cvs-benchmark-metrics-table .skipped,
+            .cvs-node-smoke-results .skipped {
+                color: #856404;
+                font-weight: 600;
+            }
+            .cvs-node-smoke-filter {
+                margin: 8px 0 0;
+                color: #495057;
+            }
         """
 
     def _generate_executive_summary_html(self, summary):
@@ -1128,6 +1479,9 @@ class PreflightReportGenerator(PreflightCheck):
             elif status == 'BLOCKED':
                 status_class = 'blocked'
                 status_icon = '⛔'
+            elif status == 'ERROR':
+                status_class = 'fail'
+                status_icon = '❌'
             else:  # SKIPPED
                 status_class = 'skipped'
                 status_icon = '⏭️'
@@ -1166,6 +1520,41 @@ class PreflightReportGenerator(PreflightCheck):
         </section>
         """
         return html
+
+    def _generate_rdma_mtu_html(self, mtu_results):
+        """Render failing RDMA interfaces and their measured MTUs."""
+        if not mtu_results or mtu_results.get('skipped') or mtu_results.get('status') == 'SKIPPED':
+            return ''
+        rows = []
+        for node, result in mtu_results.items():
+            if not isinstance(result, dict) or result.get('status') != 'FAIL':
+                continue
+            for dev, iface in (result.get('interfaces') or {}).items():
+                if iface.get('status') != 'FAIL':
+                    continue
+                values = (
+                    node,
+                    dev,
+                    transport_label(iface.get('link_layer')) or iface.get('link_layer') or 'unknown',
+                    iface.get('netdev', ''),
+                    iface.get('netdev_mtu'),
+                    iface.get('active_mtu'),
+                    iface.get('max_mtu'),
+                    '; '.join(iface.get('errors') or []),
+                )
+                rows.append('<tr>' + ''.join(f'<td>{html.escape(str(value))}</td>' for value in values) + '</tr>')
+        if not rows:
+            return ''
+        section = '''
+        <section>
+            <h2>RDMA MTU Issues</h2>
+            <table>
+                <thead><tr><th>Node</th><th>Interface</th><th>Transport</th><th>Netdev</th><th>Netdev MTU</th><th>Active MTU</th><th>Max MTU</th><th>Issues</th></tr></thead>
+                <tbody>
+        '''
+        section += '\n'.join(rows)
+        section += '</tbody></table></section>'
+        return section
 
     def _generate_gid_consistency_html(self, gid_results):
         """Generate GID inconsistencies section - only show failed nodes."""
@@ -1269,6 +1658,30 @@ class PreflightReportGenerator(PreflightCheck):
                 + '</ul>'
             )
 
+        degraded_banner = ''
+        degraded_warnings = [
+            (node, warning)
+            for node in sorted(node_results)
+            if node_results[node].get('status') == 'PASS'
+            for warning in (node_results[node].get('warnings') or [])
+        ]
+        if degraded_warnings:
+            degraded_banner = (
+                '<div style="margin:12px 0;padding:16px;border:3px solid #b8860b;'
+                'background:#fff3cd;color:#664d03;border-radius:6px;">'
+                '<p style="margin:0 0 8px 0;font-size:1.15em;font-weight:bold;">'
+                '&#9888; DEGRADED IFoE FABRIC &mdash; FIT FOR PROCESSING, REDUCED THROUGHPUT</p>'
+                '<p style="margin:0 0 8px 0;">One or more admitted nodes have some, but not all, IFoE '
+                'scale-up stations enabled. Local GPU compute is unaffected, but scale-up data transfer '
+                '(multi-GPU collectives) will run below full-fabric throughput.</p>'
+                '<ul style="margin:0;">'
+                + ''.join(
+                    f'<li><code>{html.escape(str(node))}</code>: {html.escape(str(warning))}</li>'
+                    for node, warning in degraded_warnings
+                )
+                + '</ul></div>'
+            )
+
         rows = []
         for node in sorted(node_results):
             result = node_results[node]
@@ -1293,15 +1706,23 @@ class PreflightReportGenerator(PreflightCheck):
                 )
                 or 'not reported'
             )
-            errors = result.get('errors') or []
-            error_html = (
-                '—'
-                if not errors
-                else '<ul style="margin:0;color:#721c24;">'
-                + ''.join(f'<li>{html.escape(str(error))}</li>' for error in errors)
-                + '</ul>'
-            )
             node_status = result.get('status', 'UNKNOWN')
+            errors = result.get('errors') or []
+            # A degraded-fabric warning means "fit for processing"; never render it
+            # against a FAIL node, whose errors are the real verdict.
+            warnings = result.get('warnings') or [] if node_status == 'PASS' else []
+            issue_items = [f'<li style="color:#721c24;">{html.escape(str(error))}</li>' for error in errors]
+            issue_items += [
+                f'<li style="color:#664d03;">&#9888; {html.escape(str(warning))}</li>' for warning in warnings
+            ]
+            error_html = '—' if not issue_items else '<ul style="margin:0;">' + ''.join(issue_items) + '</ul>'
+            if node_status == 'PASS' and warnings:
+                status_cell = '<span class="status-pass">PASS</span> <span title="degraded fabric">&#9888; WARN</span>'
+            else:
+                status_cell = (
+                    f'<span class="status-{"pass" if node_status == "PASS" else "fail"}">'
+                    f'{html.escape(str(node_status))}</span>'
+                )
             fabric_cells = ''
             if fabric_checks:
                 fabric_cells = (
@@ -1312,7 +1733,7 @@ class PreflightReportGenerator(PreflightCheck):
             rows.append(
                 '<tr>'
                 f'<td><code>{html.escape(str(node))}</code></td>'
-                f'<td><span class="status-{"pass" if node_status == "PASS" else "fail"}">{html.escape(str(node_status))}</span></td>'
+                f'<td>{status_cell}</td>'
                 f'<td>{len(result.get("gpu_inventory") or [])}</td>'
                 f'{fabric_cells}'
                 f'<td>{error_html}</td>'
@@ -1328,6 +1749,7 @@ class PreflightReportGenerator(PreflightCheck):
             <p><span class="{status_class}">{html.escape(str(status))}</span>. This mandatory, read-only gate validates
             AMDGPU/KFD, GPU inventory, and kernel health{'; with fabric checks enabled it also validates AIFM, AFM ACTIVE bare-metal vPOD state, and IFoE station/port coherence' if fabric_checks else ''}.
             vPOD: {vpod_text}.</p>
+            {degraded_banner}
             {coverage_text}
             {membership_error_html}
             <table>
@@ -1339,164 +1761,156 @@ class PreflightReportGenerator(PreflightCheck):
         </section>
         """
 
+    def _node_smoke_sort_script(self):
+        return """
+        <script>
+        (function () {
+            const ORDER = {Failed: 0, Error: 1, Skipped: 2, Recorded: 3, Passed: 4};
+            function sortTable(table, key) {
+                const tbody = table.tBodies[0];
+                if (!tbody) {
+                    return;
+                }
+                const rows = Array.from(tbody.querySelectorAll('tr'));
+                rows.sort(function (left, right) {
+                    const leftText = (left.querySelector('.col-result') || left.cells[0] || {}).textContent || '';
+                    const rightText = (right.querySelector('.col-result') || right.cells[0] || {}).textContent || '';
+                    if (key === 'result') {
+                        const leftRank = ORDER[leftText.trim()] != null ? ORDER[leftText.trim()] : 9;
+                        const rightRank = ORDER[rightText.trim()] != null ? ORDER[rightText.trim()] : 9;
+                        if (leftRank !== rightRank) {
+                            return leftRank - rightRank;
+                        }
+                    }
+                    const leftName = (left.querySelector('.col-testId') || left.cells[1] || {}).textContent || '';
+                    const rightName = (right.querySelector('.col-testId') || right.cells[1] || {}).textContent || '';
+                    return leftName.localeCompare(rightName);
+                });
+                rows.forEach(function (row) { tbody.appendChild(row); });
+            }
+            function applyQuerySort() {
+                const params = new URLSearchParams(window.location.search);
+                const sort = params.get('sort') || 'result';
+                document.querySelectorAll('table.cvs-node-smoke-results').forEach(function (table) {
+                    sortTable(table, sort);
+                });
+            }
+            document.addEventListener('DOMContentLoaded', applyQuerySort);
+            document.addEventListener('click', function (event) {
+                const header = event.target.closest('th[data-sort]');
+                if (!header) {
+                    return;
+                }
+                const table = header.closest('table');
+                sortTable(table, header.getAttribute('data-sort'));
+            });
+        })();
+        </script>
+        """
+
+    def _metric_row_counts(self, rows):
+        passed = failed = skipped = 0
+        for row in rows:
+            status = str(row.get('status') or '').lower()
+            if status == 'pass':
+                passed += 1
+            elif status == 'skip':
+                skipped += 1
+            else:
+                failed += 1
+        return passed, failed, skipped
+
+    def _render_node_smoke_metric_section(self, title, rows, skipped_message=None, extra_html=""):
+        if skipped_message:
+            return f"""
+        <section>
+            <h2>{html.escape(title)}</h2>
+            <p><em>{html.escape(skipped_message)}</em></p>
+        </section>
+        """
+        if not rows:
+            return ""
+        passed, failed, skipped = self._metric_row_counts(rows)
+        table = render_benchmark_metrics_html(rows).replace(
+            "cvs-benchmark-metrics-table",
+            "cvs-benchmark-metrics-table cvs-node-smoke-results",
+            1,
+        )
+        table = table.replace("<th>Result</th>", '<th data-sort="result">Result</th>', 1)
+        table = table.replace("<th>Metric</th>", '<th data-sort="name">Check</th>', 1)
+        summary = f"{failed} Failed, {passed} Passed, {skipped} Skipped"
+        return f"""
+        <section>
+            <h2>{html.escape(title)}</h2>
+            {extra_html}
+            <p class="cvs-node-smoke-filter">{html.escape(str(len(rows)))} checks. {html.escape(summary)}. Sort with <code>?sort=result</code>.</p>
+            {table}
+        </section>
+        """
+
     def _generate_node_smoke_tier1_html(self, node_smoke_results):
-        """Generate Node Smoke Tier 1 section — failed nodes and fail reasons."""
+        """Generate Node Smoke Tier 1 section with per-check rows."""
         if not node_smoke_results:
             return ""
-
-        if node_smoke_results.get('skipped'):
+        if _result_disposition(node_smoke_results) in ('skipped', 'blocked'):
             msg = node_smoke_results.get('message', f'{NODE_SMOKE_TIER1_LABEL} check skipped')
-            return f"""
-        <section>
-            <h2>{html.escape(NODE_SMOKE_TIER1_LABEL)}</h2>
-            <p><em>{html.escape(msg)}</em></p>
-        </section>
-        """
-
-        node_results = node_smoke_results.get('node_results') or {}
-        if not node_results:
-            return ""
-
-        failed_nodes = {n: r for n, r in node_results.items() if r.get('status') in ('FAIL', 'UNKNOWN')}
+            return self._render_node_smoke_metric_section(NODE_SMOKE_TIER1_LABEL, [], skipped_message=msg)
+        rows = build_tier1_metric_rows(node_smoke_results)
+        extra = ""
         dump_path = node_smoke_results.get('dump_path', '')
-
-        if not failed_nodes:
-            passing = len([n for n, r in node_results.items() if r.get('status') == 'PASS'])
-            tier2_html = ""
-            if node_smoke_results.get('tier2_perf'):
-                thresholds = node_smoke_results.get('tier2_thresholds') or {}
-                tier2_html = f"""
-            <p>{html.escape(NODE_SMOKE_TIER2_LABEL)} also enabled: GEMM &ge; {html.escape(str(thresholds.get('gemm_tflops_min', '?')))} TFLOPS,
-            HBM &ge; {html.escape(str(thresholds.get('hbm_gbs_min', '?')))} GB/s,
-            local RCCL &ge; {html.escape(str(thresholds.get('rccl_gbs_min', '?')))} GB/s.</p>"""
-            return f"""
-        <section>
-            <h2>{html.escape(NODE_SMOKE_TIER1_LABEL)}</h2>
-            <p>All <code>{passing}</code> node(s) passed {html.escape(NODE_SMOKE_TIER1_LABEL)}.</p>{tier2_html}
-        </section>
-        """
-
-        html_out = f"""
-        <section>
-            <h2>{html.escape(NODE_SMOKE_TIER1_LABEL)} — Failures</h2>
-            <p class="error-summary">The following nodes failed {html.escape(NODE_SMOKE_TIER1_LABEL)} checks:</p>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Node</th>
-                        <th>Status</th>
-                        <th>Fail Reasons</th>
-                    </tr>
-                </thead>
-                <tbody>
-        """
-
-        for node, result in sorted(failed_nodes.items()):
-            reasons = result.get('fail_reasons') or []
-            if not reasons and result.get('node_payload'):
-                reasons = list(result['node_payload'].get('fail_reasons') or [])
-            reasons_str = html.escape('; '.join(str(r) for r in reasons) if reasons else 'See node logs')
-            status = html.escape(str(result.get('status', 'FAIL')))
-            html_out += f"""
-                <tr>
-                    <td>{html.escape(node)}</td>
-                    <td>{status}</td>
-                    <td>{reasons_str}</td>
-                </tr>
-            """
-
-        html_out += """
-                </tbody>
-            </table>
-        """
         if dump_path:
-            html_out += (
+            extra = (
                 f"<p>Per-node JSON written under <code>{html.escape(str(dump_path))}/smoke/</code> on each node.</p>"
             )
-        html_out += """
-        </section>
+        return self._render_node_smoke_metric_section(NODE_SMOKE_TIER1_LABEL, rows, extra_html=extra)
+
+    def _generate_node_smoke_tier2_html(self, node_smoke_results):
+        """Generate Node Smoke Tier 2 section with per-check rows."""
+        if not node_smoke_results:
+            return ""
+        if _result_disposition(node_smoke_results) in ('skipped', 'blocked'):
+            return ""
+        if not node_smoke_results.get('tier2_perf'):
+            return self._render_node_smoke_metric_section(
+                NODE_SMOKE_TIER2_LABEL,
+                [],
+                skipped_message=f'{NODE_SMOKE_TIER2_LABEL} not enabled (set node_smoke_tier1.tier2_perf=true)',
+            )
+        rows = build_tier2_metric_rows(node_smoke_results)
+        thresholds = node_smoke_results.get('tier2_thresholds') or {}
+        extra = f"""
+            <p>Thresholds: GEMM &ge; {html.escape(str(thresholds.get('gemm_tflops_min', '?')))} TFLOPS,
+            HBM &ge; {html.escape(str(thresholds.get('hbm_gbs_min', '?')))} GB/s,
+            local RCCL &ge; {html.escape(str(thresholds.get('rccl_gbs_min', '?')))} GB/s.</p>
         """
-        return html_out
+        return self._render_node_smoke_metric_section(NODE_SMOKE_TIER2_LABEL, rows, extra_html=extra)
 
     def _generate_node_smoke_tier3_html(self, tier3_results):
-        """Generate Node Smoke Tier 3 section."""
+        """Generate Node Smoke Tier 3 section with per-check rows."""
         if not tier3_results:
             return ""
-
-        if tier3_results.get('skipped'):
+        if _result_disposition(tier3_results) in ('skipped', 'blocked'):
             msg = tier3_results.get('message', f'{NODE_SMOKE_TIER3_LABEL} check skipped')
-            return f"""
-        <section>
-            <h2>{html.escape(NODE_SMOKE_TIER3_LABEL)}</h2>
-            <p><em>{html.escape(msg)}</em></p>
-        </section>
-        """
-
-        node_results = tier3_results.get('node_results') or {}
-        if not node_results:
-            return ""
-
-        failed_nodes = {n: r for n, r in node_results.items() if r.get('status') in ('FAIL', 'UNKNOWN')}
+            return self._render_node_smoke_metric_section(NODE_SMOKE_TIER3_LABEL, [], skipped_message=msg)
+        rows = build_tier3_metric_rows(tier3_results)
+        extra_parts = []
         dump_path = tier3_results.get('dump_path', '')
         report_name = tier3_results.get('report_file_name', 'node_smoke_tier3')
-        report_md = tier3_results.get('report_markdown')
-
-        if not failed_nodes:
-            passing = len([n for n, r in node_results.items() if r.get('status') == 'PASS'])
-            html_out = f"""
-        <section>
-            <h2>{html.escape(NODE_SMOKE_TIER3_LABEL)}</h2>
-            <p>All <code>{passing}</code> launcher node(s) passed <code>preflight --host --gpu --network</code>.</p>
-        """
-            if dump_path:
-                html_out += f"<p>Markdown report: <code>{html.escape(str(dump_path))}/{html.escape(str(report_name))}.md</code></p>"
-            if report_md:
-                preview = report_md[:4000]
-                if len(report_md) > 4000:
-                    preview += "\n\n... (truncated)"
-                html_out += f"<pre>{html.escape(preview)}</pre>"
-            html_out += """
-        </section>
-        """
-            return html_out
-
-        html_out = f"""
-        <section>
-            <h2>{html.escape(NODE_SMOKE_TIER3_LABEL)} — Failures</h2>
-            <p class="error-summary">The following nodes failed {html.escape(NODE_SMOKE_TIER3_LABEL)} checks:</p>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Node</th>
-                        <th>Status</th>
-                        <th>Fail Reasons</th>
-                    </tr>
-                </thead>
-                <tbody>
-        """
-
-        for node, result in sorted(failed_nodes.items()):
-            reasons = result.get('fail_reasons') or []
-            reasons_str = html.escape('; '.join(str(r) for r in reasons) if reasons else 'See node logs')
-            status = html.escape(str(result.get('status', 'FAIL')))
-            html_out += f"""
-                <tr>
-                    <td>{html.escape(node)}</td>
-                    <td>{status}</td>
-                    <td>{reasons_str}</td>
-                </tr>
-            """
-
-        html_out += """
-                </tbody>
-            </table>
-        """
         if dump_path:
-            html_out += f"<p>Report directory: <code>{html.escape(str(dump_path))}/{html.escape(str(report_name))}.md</code></p>"
-        html_out += """
-        </section>
-        """
-        return html_out
+            extra_parts.append(
+                f"<p>Markdown report: <code>{html.escape(str(dump_path))}/{html.escape(str(report_name))}.md</code></p>"
+            )
+        report_md = tier3_results.get('report_markdown')
+        if report_md:
+            preview = report_md[:4000]
+            if len(report_md) > 4000:
+                preview += "\n\n... (truncated)"
+            extra_parts.append(f"<pre>{html.escape(preview)}</pre>")
+        return self._render_node_smoke_metric_section(
+            NODE_SMOKE_TIER3_LABEL,
+            rows,
+            extra_html=''.join(extra_parts),
+        )
 
     _generate_node_smoke_html = _generate_node_smoke_tier1_html
     _generate_tier3_info_html = _generate_node_smoke_tier3_html
@@ -1506,7 +1920,7 @@ class PreflightReportGenerator(PreflightCheck):
         if not ifoe_results:
             return ""
 
-        if ifoe_results.get('blocked') or ifoe_results.get('status') == 'BLOCKED':
+        if _result_disposition(ifoe_results) == 'blocked':
             return f"""
         <section>
             <h2>IFoE L2 Connectivity (afmctl)</h2>
@@ -1514,7 +1928,7 @@ class PreflightReportGenerator(PreflightCheck):
         </section>
         """
 
-        if ifoe_results.get('skipped'):
+        if _result_disposition(ifoe_results) == 'skipped':
             msg = ifoe_results.get('message', 'IFoE L2 connectivity test skipped')
             return f"""
         <section>
@@ -1736,7 +2150,7 @@ class PreflightReportGenerator(PreflightCheck):
         if not tb_results:
             return ""
 
-        if tb_results.get('blocked') or tb_results.get('status') == 'BLOCKED':
+        if _result_disposition(tb_results) == 'blocked':
             return f"""
         <section>
             <h2>IFoE TransferBench Smoketest</h2>
@@ -1744,7 +2158,7 @@ class PreflightReportGenerator(PreflightCheck):
         </section>
         """
 
-        if tb_results.get('skipped'):
+        if _result_disposition(tb_results) == 'skipped':
             msg = tb_results.get('message', 'TransferBench smoketest skipped')
             return f"""
         <section>
@@ -2166,7 +2580,7 @@ class PreflightReportGenerator(PreflightCheck):
         if not connectivity_results:
             return ""
 
-        if connectivity_results.get('blocked') or connectivity_results.get('status') == 'BLOCKED':
+        if _result_disposition(connectivity_results) == 'blocked':
             return f"""
         <section>
             <h2>RDMA connectivity</h2>
@@ -2174,7 +2588,7 @@ class PreflightReportGenerator(PreflightCheck):
         </section>
         """
 
-        if connectivity_results.get('skipped', False):
+        if _result_disposition(connectivity_results) == 'skipped':
             ex_if = connectivity_results.get('excluded_nodes_interface_check') or []
             ex_gid = connectivity_results.get('excluded_nodes_gid') or []
             if ex_if or ex_gid:
@@ -2381,7 +2795,7 @@ class PreflightReportGenerator(PreflightCheck):
         if not ssh_results:
             return ""
 
-        if ssh_results.get('skipped', False):
+        if _result_disposition(ssh_results) in ('skipped', 'blocked'):
             return ""  # Skip section entirely if test was skipped
 
         # Check if there are any failures

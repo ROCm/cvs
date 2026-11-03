@@ -32,7 +32,6 @@
         "devices": ["/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm"],
         "env": {
           "NCCL_IB_HCA": "<changeme> rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
-          "HCA_ID_PREFIX": "<changeme>",
           "NCCL_SOCKET_IFNAME": "<changeme> eno0",
           "GLOO_SOCKET_IFNAME": "<changeme> eno0",
           "NCCL_IB_GID_INDEX": "3",
@@ -57,11 +56,7 @@
     "tokenizer_mode": "auto",
     "inference_poll_iterations": "16",
     "context_length": "205000",
-    "add_flags": ["--attention-backend aiter"],
-    "server_node_list": ["<changeme>", "<changeme>"],
-    "dist_init_port": "40001",
-    "benchmark_serv_node": "<changeme>",
-    "proxy_router_serv_port": "8000"
+    "add_flags": ["--attention-backend aiter"]
   },
   "benchmark_params": {
         "backend": "sglang",

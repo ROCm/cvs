@@ -1,0 +1,2 @@
+# Validate Run Deck JSON profiles in unit tests.
+jsonschema>=4.18

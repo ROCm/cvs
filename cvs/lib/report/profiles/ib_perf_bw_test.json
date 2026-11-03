@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "profile_id": "ib_perf_bw_test_rundeck",
+  "suite_id": "ib_perf_bw_test",
+  "report_basename": "ib_perf_bw_test_run_deck",
+  "title": "ibperf Run Deck",
+  "subtitle": "perftest bandwidth and latency per GPU/NIC instance against the fleet median",
+  "footer": "CVS ibperf · render-only · does not affect validation gates",
+  "link_name": "ibperf Run Deck",
+  "dataset_builder": "status_matrix",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "cvs_results_dict",
+    "variant": "ibperf_variant_config"
+  },
+  "hooks": {
+    "run_card_display": "cvs.lib.report.profiles.hooks.ibperf_run_card:ibperf_run_card_display"
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {
+      "type": "table",
+      "id": "failed-tests",
+      "title": "Failed tests",
+      "bind": "datasets.status_matrix.meta.failed_tests",
+      "when_empty": "hide"
+    },
+    {
+      "type": "metric_charts",
+      "id": "nics",
+      "title": "Per-NIC bandwidth",
+      "bind": "datasets.status_matrix.meta.nic_grid",
+      "when_empty": "hide",
+      "heatmap_heading": false
+    },
+    {
+      "type": "metric_charts",
+      "id": "charts",
+      "title": "perftest bandwidth and latency by message size",
+      "bind": "datasets.status_matrix.metric_charts"
+    },
+    {
+      "type": "table",
+      "id": "results",
+      "title": "Full results",
+      "bind": "datasets.status_matrix.meta.results_table",
+      "max_height": "480px"
+    }
+  ]
+}

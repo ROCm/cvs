@@ -174,6 +174,18 @@ class TestBareProjection(unittest.TestCase):
             "unknown finite numeric vLLM result field 'new_upstream_number': node0:/tmp/results",
         )
 
+    def test_speculative_decoding_statistics_are_not_metrics(self):
+        raw = {
+            "output_throughput": 123.5,
+            "spec_decode_acceptance_rate": 75.0,
+            "spec_decode_acceptance_length": 2.5,
+            "spec_decode_num_drafts": 200,
+            "spec_decode_draft_tokens": 400,
+            "spec_decode_accepted_tokens": 300,
+        }
+        metrics = project_vllm_metrics(raw, tp=1, pp=1, isl=1024)
+        self.assertEqual(metrics, {"output_throughput": 123.5})
+
     def test_unknown_nonnumeric_and_boolean_fields_are_ignored(self):
         metrics = project_vllm_metrics(
             {"output_throughput": 0, "unknown": "text", "flag": True},
@@ -202,7 +214,7 @@ class TestBareProjection(unittest.TestCase):
             {
                 "completed": 0,
                 "failed": 1,
-                "total_token_throughput": 0.0,
+                "total_token_throughput": 0.0,  # nosec B105 - throughput metric key, not a credential
                 "mean_ttft_ms": 0,
                 "p99_itl_ms": 0,
                 "p50_itl_ms": 2,

@@ -1,22 +1,43 @@
 .. meta::
-  :description: Run TorchTitan pre-training benchmarks
-  :keywords: CVS, TorchTitan, training
+  :description: Run TorchTitan pre-training benchmarks with CVS to validate single-node and multi-node throughput, loss curve, and checkpoint metrics on AMD Instinct GPUs.
+  :keywords: CVS, TorchTitan, training, benchmark, AMD Instinct, ROCm, AMD, GPU, PyTorch, distributed, RDMA, Llama
 
-***********************
-TorchTitan training tests
-***********************
+**************************************************
+Run TorchTitan pre-training benchmarks with CVS
+**************************************************
 
 TorchTitan validates single-node and multi-node pre-training on AMD Instinct GPUs. CVS drives training inside a container, parses logs, and gates on throughput, loss-curve, and optional checkpoint metrics.
 
 There are two suites:
 
 - ``torchtitan_single`` — single-node configs (``framework: torchtitan_single``)
-- ``torchtitan_distributed`` — multi-node configs (``framework: torchtitan_distributed``); adds RDMA setup
+- ``torchtitan_distributed`` — multi-node configs (``framework: torchtitan_distributed``); adds RDMA library setup
+
+Both suites run ``test_backend_nic_speed`` after the container launches. It checks that every discovered backend NIC is linked at 400 Gbps before tokenizer download or training. The distributed suite still runs ``test_setup_rdma`` after that check to copy the Broadcom RDMA library into the container on ``thor2`` nodes.
+
+Prerequisites
+=============
+
+In addition to the :ref:`common training prerequisites <training-common-prerequisites>`:
+
+- The container image must provide TorchTitan at ``torchtitan_root``. The
+  shipped default is ``/workspace/torchtitan``.
+- ``paths.hf_token_file`` is read inside the container on each node when the
+  tokenizer download or training command runs. CVS does not read the file on
+  the machine running ``cvs run``. The path must be mounted into the container.
+  The packaged ``/home/{user-id}/.hf_token`` path works when that home directory
+  is bind-mounted. Tokenizer download always runs, so a missing, empty, or
+  unmounted file fails ``test_download_tokenizer`` and sets ``lifecycle.failed``.
+  Later stages are skipped, and ``test_teardown`` still runs. A run that selects
+  only ``test_training`` fails that combo and still runs the other combos.
+  The nodes need network access to reach Hugging Face.
 
 .. _torchtitan-set-up-config:
 
 Set up config
 =============
+
+Follow these steps to set up the TorchTitan configuration.
 
 1. List available TorchTitan configuration files:
 
@@ -44,6 +65,8 @@ Run tests
 List available stages
 ---------------------
 
+Run the following command to list available stages:
+
 .. code:: bash
 
   cvs list torchtitan_single
@@ -52,6 +75,7 @@ List available stages
 
   Available tests in torchtitan_single:
     - test_launch_container
+    - test_backend_nic_speed
     - test_download_tokenizer
     - test_smoke
     - test_training[...]
@@ -68,6 +92,7 @@ List available stages
 
   Available tests in torchtitan_distributed:
     - test_launch_container
+    - test_backend_nic_speed
     - test_setup_rdma
     - test_download_tokenizer
     - test_smoke
@@ -85,7 +110,7 @@ Single-node example
   cvs run torchtitan_single \
     --cluster_file input/cluster_file/cluster.json \
     --config_file input/config_file/training/torchtitan/mi355x_torchtitan_llama-3.1-8b_single.json \
-    --html ./logs/torchtitan_single.html --self-contained-html -vvv -s
+    -vvv -s
 
 Distributed example
 -------------------
@@ -95,7 +120,7 @@ Distributed example
   cvs run torchtitan_distributed \
     --cluster_file input/cluster_file/cluster.json \
     --config_file input/config_file/training/torchtitan/mi355x_torchtitan_llama-3.3-70b_distributed.json \
-    --html ./logs/torchtitan_distributed.html --self-contained-html -vvv -s
+    -vvv -s
 
 Run a single stage
 ------------------
@@ -107,3 +132,8 @@ Run a single stage
     --config_file input/config_file/training/torchtitan/mi355x_torchtitan_llama-3.1-8b_single.json
 
 Use a single-node config with ``torchtitan_single`` and a distributed config with ``torchtitan_distributed``. The config ``framework`` field must match the suite name.
+
+Run on managed compute
+----------------------
+
+Follow :doc:`/how-to/run-on-managed-compute` to run TorchTitan on managed compute.

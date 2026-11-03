@@ -1,0 +1,808 @@
+'''Unit tests for cvs.lib.host_configs_rundeck (Run Deck capture for host config checks).'''
+
+import shlex
+import unittest
+
+from cvs.lib import host_configs_rundeck
+from cvs.lib.report.profile import load_json_profile
+
+_OS_OLD = 'NAME="Ubuntu"\nVERSION="22.04.1 LTS"\n'
+_OS_NEW = 'NAME="Ubuntu"\nVERSION="24.04.1 LTS"\n'
+_KERNEL_OLD = 'Linux n1 5.15.0-179-generic #179-Ubuntu SMP Fri Jan 1 00:00:00 UTC 2026 x86_64 GNU/Linux\n'
+_KERNEL_NEW = 'Linux n1 6.8.0-60-generic #60-Ubuntu SMP Fri Jan 1 00:00:00 UTC 2026 x86_64 GNU/Linux\n'
+_LNK_OK = 'LnkSta: Speed 32GT/s, Width x16\n'
+_LNK_SLOW = 'LnkSta: Speed 16GT/s (downgraded), Width x8\n'
+
+
+class TestMakeMeta(unittest.TestCase):
+    def test_pulls_cluster_name(self):
+        meta = host_configs_rundeck.make_meta({'cluster_name': 'helios'}, 'host_configs_cvs', '7.0.2')
+        self.assertEqual(meta['cluster'], 'helios')
+        self.assertEqual(meta['version'], '7.0.2')
+        self.assertEqual(meta['version_label'], 'ROCm version')
+        self.assertEqual(meta['suite'], 'host_configs_cvs')
+
+    def test_defaults_when_missing(self):
+        meta = host_configs_rundeck.make_meta({}, '', None)
+        self.assertEqual(meta['cluster'], '—')
+        self.assertEqual(meta['version'], '—')
+        self.assertEqual(meta['suite'], 'host_configs_cvs')
+
+    def test_profile_labels_match_check_ids(self):
+        profile = load_json_profile('host_configs_cvs')
+        self.assertEqual(profile['lifecycle']['session_labels'], list(host_configs_rundeck.CHECK_IDS))
+
+
+class TestVersionChecks(unittest.TestCase):
+    def test_os_release_pass_and_fail(self):
+        records, messages = host_configs_rundeck.eval_os_release(
+            {'n1': _OS_NEW, 'n2': _OS_OLD},
+            '24.04',
+        )
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n1']['items_summary'], '24.04')
+        self.assertEqual(records['n1']['items'], [])
+        self.assertEqual(records['n2']['status'], 'fail')
+        self.assertEqual(records['n2']['items_summary'], '22.04.1')
+        self.assertEqual(
+            messages,
+            ['Installed OS Version 22.04.1  not matching expected version 24.04 on node n2'],
+        )
+
+    def test_os_release_match_is_case_insensitive(self):
+        text = 'PRETTY_NAME="Ubuntu 24.04.1 LTS"\n' + _OS_NEW
+        records, messages = host_configs_rundeck.eval_os_release({'n1': text}, 'ubuntu 24.04')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(messages, [])
+
+    def test_kernel_version_extracts_generic_build(self):
+        records, messages = host_configs_rundeck.eval_kernel_version(
+            {'n1': _KERNEL_OLD},
+            '6.8.0-60-generic',
+        )
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(
+            messages,
+            ['Installed Kernel Version 5.15.0-179-generic not matching expected version 6.8.0-60-generic on node n1'],
+        )
+
+    def test_kernel_version_pass(self):
+        records, messages = host_configs_rundeck.eval_kernel_version({'n1': _KERNEL_NEW}, '6.8.0-60-generic')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(messages, [])
+
+    def test_bios_version(self):
+        records, messages = host_configs_rundeck.eval_bios_version({'n1': '20171212\n', 'n2': 'ABC-99\n'}, '20171212')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n2']['status'], 'fail')
+        self.assertEqual(
+            messages,
+            ['Installed BIOS Version ABC-99 not matching expected version 20171212 on node n2'],
+        )
+
+    def test_bios_version_empty_output_fails_without_raising(self):
+        records, messages = host_configs_rundeck.eval_bios_version({'n1': ''}, '20171212')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['bios_version could not be read on node n1'])
+
+    def test_bios_version_denial_is_not_parsed_as_a_version(self):
+        records, messages = host_configs_rundeck.eval_bios_version(
+            {'n1': 'CVS_CMD_DENIED No such file or directory\n'},
+            '20171212',
+        )
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['BIOS version could not be read on node n1'])
+
+    def test_rocm_version_detects_banner_and_fails_mismatch(self):
+        text = 'ROCm version: 6.3.1\n'
+        records, messages, detected = host_configs_rundeck.eval_rocm_version({'node-a': text}, '7.0.2')
+        self.assertEqual(detected, '6.3.1')
+        self.assertEqual(records['node-a']['status'], 'fail')
+        self.assertEqual(
+            messages,
+            ['Installed rocm version 6.3.1 not matching expected version 7.0.2 on node node-a'],
+        )
+
+    def test_rocm_version_pass_uses_expected_when_banner_regex_misses(self):
+        records, messages, detected = host_configs_rundeck.eval_rocm_version(
+            {'n1': 'package 7.0.2 installed\n'}, '7.0.2'
+        )
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(messages, [])
+        self.assertEqual(detected, '7.0.2')
+
+
+class TestHostFlags(unittest.TestCase):
+    def test_firmware_reports_each_mismatch(self):
+        out = {
+            'n1': [
+                {
+                    'gpu': 0,
+                    'fw_list': [
+                        {'fw_id': 'RLC', 'fw_version': '65'},
+                        {'fw_id': 'PM', 'fw_version': '1.0'},
+                    ],
+                },
+                {'gpu': 1, 'fw_list': [{'fw_id': 'RLC', 'fw_version': '65'}]},
+            ]
+        }
+        records, messages = host_configs_rundeck.eval_firmware(out, {'RLC': '65', 'PM': '2.0'})
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], '1 firmware mismatch(es)')
+        self.assertEqual(len(messages), 1)
+        self.assertIn('For Firmware PM actual FW version 1.0 for gpu 0 on node n1', messages[0])
+        self.assertIn('expected FW version 2.0', messages[0])
+
+    def test_firmware_pass(self):
+        out = {'n1': [{'gpu': 0, 'fw_list': [{'fw_id': 'RLC', 'fw_version': '65'}]}]}
+        records, messages = host_configs_rundeck.eval_firmware(out, {'RLC': '65'})
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n1']['items_summary'], 'firmware matched')
+        self.assertEqual(messages, [])
+
+    def test_pci_realloc_and_iommu(self):
+        cmdline = {'n1': 'pci=realloc=off iommu=pt\n', 'n2': 'quiet\n'}
+        realloc_records, realloc_messages = host_configs_rundeck.eval_pci_realloc(cmdline, 'off')
+        iommu_records, iommu_messages = host_configs_rundeck.eval_iommu_pt(cmdline)
+        self.assertEqual(realloc_records['n1']['status'], 'pass')
+        self.assertEqual(realloc_records['n2']['status'], 'fail')
+        self.assertEqual(realloc_messages, ['PCI realloc flag not set to off on node n2'])
+        self.assertEqual(iommu_records['n2']['status'], 'fail')
+        self.assertEqual(iommu_messages, ['IOMMU not set to pt on node n2'])
+
+    def test_numa_accepts_either_spacing(self):
+        spaced, spaced_messages = host_configs_rundeck.eval_numa_balancing({'n1': 'kernel.numa_balancing = 0\n'})
+        tight, tight_messages = host_configs_rundeck.eval_numa_balancing({'n1': 'kernel.numa_balancing=0\n'})
+        enabled, enabled_messages = host_configs_rundeck.eval_numa_balancing({'n1': 'kernel.numa_balancing = 1\n'})
+        self.assertEqual(spaced['n1']['status'], 'pass')
+        self.assertEqual(tight['n1']['status'], 'pass')
+        self.assertEqual(spaced_messages, [])
+        self.assertEqual(tight_messages, [])
+        self.assertEqual(enabled['n1']['status'], 'fail')
+        self.assertEqual(enabled_messages, ['NUMA balancing not disabled on node n1'])
+
+    def test_online_memory(self):
+        text = 'RANGE SIZE  STATE\nTotal online memory: 512G\n'
+        records, messages = host_configs_rundeck.eval_online_memory({'n1': text}, '1.3T')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], '512G')
+        self.assertEqual(messages, ['Total online memory 512G not matching expected online mem 1.3T on node n1'])
+
+    def test_pci_accelerators_counts_advanced_lines(self):
+        text = '01:00.0 Processing accelerators: Advanced Micro Devices\n03:00.0 Processing accelerators: Advanced\n'
+        records, messages = host_configs_rundeck.eval_pci_accelerators({'n1': text}, '8')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(
+            messages,
+            ['Expected GPU count in PCI 8 not matching actual GPU count 2 on node n1'],
+        )
+
+    def test_pci_acs_records_sudo_denial(self):
+        records, messages = host_configs_rundeck.eval_pci_acs({'n1': 'CVS_CMD_DENIED a password is required\n'})
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['PCIe ACS check could not run lspci on node n1'])
+
+    def test_pci_acs_fails_only_when_acsctl_is_present(self):
+        clean, clean_messages = host_configs_rundeck.eval_pci_acs({'n1': ''})
+        dirty, dirty_messages = host_configs_rundeck.eval_pci_acs({'n1': 'ACSCtl: SrcValid+\n'})
+        self.assertEqual(clean['n1']['status'], 'pass')
+        self.assertEqual(clean_messages, [])
+        self.assertEqual(dirty['n1']['status'], 'fail')
+        self.assertEqual(dirty_messages, ['PCIe ACS not disabled on node n1'])
+
+    @staticmethod
+    def _event(match_content, category='OS'):
+        return {'priority': 'ERROR', 'description': 'x', 'match_content': match_content, 'category': category}
+
+    def test_dmesg_driver_and_reset_use_different_patterns(self):
+        cases = (
+            ('amdgpu: ring timeout error', 'fail', 'pass'),
+            ('amdgpu: Traceback', 'pass', 'fail'),
+            ('amdgpu: GPU reset', 'pass', 'fail'),
+        )
+        for line, driver_status, reset_status in cases:
+            with self.subTest(line=line):
+                driver, _, reset, _ = host_configs_rundeck.eval_dmesg_node_events({'n1': [self._event(line)]})
+                self.assertEqual(driver['n1']['status'], driver_status)
+                self.assertEqual(reset['n1']['status'], reset_status)
+
+    def test_dmesg_node_events_record_denied_nodes(self):
+        driver, driver_messages, reset, reset_messages = host_configs_rundeck.eval_dmesg_node_events(
+            {'n1': []},
+            denied_nodes=['n2'],
+        )
+        self.assertEqual(driver['n1']['status'], 'pass')
+        self.assertEqual(reset['n1']['status'], 'pass')
+        self.assertEqual(driver['n2']['status'], 'fail')
+        self.assertEqual(reset['n2']['status'], 'fail')
+        self.assertEqual(driver_messages, ['Dmesg check could not run on node n2'])
+        self.assertEqual(reset_messages, ['Dmesg check could not run on node n2'])
+
+    def test_dmesg_events_ignore_benign_unknown_errors(self):
+        events = [
+            {'priority': 'ERROR', 'description': 'Unknown dmesg error', 'match_content': line, 'category': 'UNKNOWN'}
+            for line in (
+                'amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x0',
+                'amdgpu 0000:03:00.0: amdgpu: [Firmware Bug]: APIC register already in use',
+            )
+        ]
+        driver, driver_messages, reset, reset_messages = host_configs_rundeck.eval_dmesg_node_events({'n1': events})
+        self.assertEqual(driver['n1']['status'], 'pass')
+        self.assertEqual(reset['n1']['status'], 'pass')
+        self.assertEqual(driver_messages + reset_messages, [])
+
+    def test_dmesg_driver_ignores_zero_status_fields(self):
+        clean = [
+            self._event('amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x0'),
+            self._event('amdgpu 0000:03:00.0: amdgpu: MAPPING_ERROR: 0x0'),
+        ]
+        records, messages = host_configs_rundeck.eval_dmesg_driver_events({'n236': clean})
+        self.assertEqual(records['n236']['status'], 'pass')
+        self.assertEqual(messages, [])
+        dirty, dirty_messages = host_configs_rundeck.eval_dmesg_driver_events(
+            {'n236': [self._event('amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x1')]}
+        )
+        self.assertEqual(dirty['n236']['status'], 'fail')
+        self.assertEqual(dirty_messages, ['Dmesg has amdgpu driver errors on node n236'])
+
+    def test_dmesg_events_ignore_only_whitelisted_benign_lines(self):
+        events = {
+            'n1': [
+                {
+                    'priority': 'ERROR',
+                    'description': 'CVS driver pattern',
+                    'match_content': 'amdgpu: WALKER_ERROR: 0x0',
+                    'category': 'SW_DRIVER',
+                },
+                {
+                    'priority': 'ERROR',
+                    'description': 'Firmware warning',
+                    'match_content': 'amdgpu: [Firmware Bug]: APIC register already in use',
+                    'category': 'BIOS',
+                },
+            ]
+        }
+        driver, driver_messages = host_configs_rundeck.eval_dmesg_driver_events(events)
+        reset, reset_messages = host_configs_rundeck.eval_dmesg_reset_events(events)
+        self.assertEqual(driver['n1']['status'], 'pass')
+        self.assertEqual(driver_messages, [])
+        self.assertEqual(reset['n1']['status'], 'pass')
+        self.assertEqual(reset_messages, [])
+
+        acpi = {
+            'n1': [
+                {
+                    'priority': 'WARNING',
+                    'description': 'ACPI Error',
+                    'match_content': 'amdgpu: ACPI Error: Method parse/execution failed',
+                    'category': 'BIOS',
+                }
+            ]
+        }
+        acpi_records, acpi_messages = host_configs_rundeck.eval_dmesg_driver_events(acpi)
+        self.assertEqual(acpi_records['n1']['status'], 'fail')
+        self.assertEqual(acpi_messages, ['Dmesg has amdgpu driver errors on node n1'])
+
+        fatal = {
+            'n1': [
+                {
+                    'priority': 'ERROR',
+                    'description': 'Fatal error during GPU init',
+                    'match_content': 'amdgpu: Fatal error during GPU init',
+                    'category': 'SW_DRIVER',
+                }
+            ]
+        }
+        failed, failed_messages = host_configs_rundeck.eval_dmesg_driver_events(fatal)
+        self.assertEqual(failed['n1']['status'], 'fail')
+        self.assertEqual(failed_messages, ['Dmesg has amdgpu driver errors on node n1'])
+
+    def test_dmesg_driver_events_keep_sw_driver_without_amdgpu_text(self):
+        crash = {
+            'n1': [
+                {
+                    'priority': 'ERROR',
+                    'description': 'Segmentation fault',
+                    'match_content': 'segfault at 0 ip 00007f0000000000',
+                    'category': 'SW_DRIVER',
+                }
+            ]
+        }
+        records, messages = host_configs_rundeck.eval_dmesg_driver_events(crash)
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['Dmesg has amdgpu driver errors on node n1'])
+
+        other = {
+            'n1': [
+                {
+                    'priority': 'ERROR',
+                    'description': 'Filesystem corrupted!',
+                    'match_content': 'EXT4-fs error (device sda1):',
+                    'category': 'OS',
+                }
+            ]
+        }
+        clean, clean_messages = host_configs_rundeck.eval_dmesg_driver_events(other)
+        self.assertEqual(clean['n1']['status'], 'pass')
+        self.assertEqual(clean_messages, [])
+
+
+class TestPcieCardPartition(unittest.TestCase):
+    def test_card_list_skips_nodes_with_no_map(self):
+        out = {'n1': {}, 'n2': {'card0': {'PCI Bus': '0000:03:00.0'}}}
+        self.assertEqual(host_configs_rundeck.pcie_card_list(out), ['card0'])
+        self.assertEqual(host_configs_rundeck.pcie_card_list({'n1': {}}), [])
+
+    def test_missing_node_is_split_out_of_the_card_lookup(self):
+        out = {
+            'n1': {'card0': {'PCI Bus': '0000:03:00.0'}},
+            'n2': {},
+            'n3': {'card0': {}},
+        }
+        present, missing = host_configs_rundeck.partition_pcie_cards(out, 'card0', 'PCI Bus')
+        self.assertEqual(present, {'n1': '0000:03:00.0'})
+        self.assertEqual(missing, ['n2', 'n3'])
+
+    def test_note_missing_link_records_once(self):
+        records = {}
+        message = 'PCIe bus map missing for card card0 on node n2'
+        self.assertTrue(host_configs_rundeck.note_missing_link(records, 'n2', message))
+        self.assertFalse(host_configs_rundeck.note_missing_link(records, 'n2', message))
+        self.assertEqual(records['n2']['status'], 'fail')
+        self.assertEqual(records['n2']['items'][0]['message'], message)
+
+
+class TestPcieLinks(unittest.TestCase):
+    def test_gpu_link_accumulates_across_cards(self):
+        bus = {
+            'n1': {
+                0: {'PCI Bus': '0000:03:00.0'},
+                1: {'PCI Bus': '0000:04:00.0'},
+            }
+        }
+        records = {}
+        first = host_configs_rundeck.absorb_gpu_pcie(records, {'n1': _LNK_OK}, bus, 0, '32', '16')
+        second = host_configs_rundeck.absorb_gpu_pcie(records, {'n1': _LNK_SLOW}, bus, 1, '32', '16')
+        self.assertEqual(first, [])
+        self.assertEqual(len(second), 3)
+        self.assertIn('expected 32GT/s but got', second[0])
+        self.assertIn('expected 16 but got', second[1])
+        self.assertIn('downgraded state for bus 0000:04:00.0 on node n1', second[2])
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], '3 link check(s) failed')
+        self.assertEqual(
+            [item['name'] for item in records['n1']['items']],
+            ['0000:04:00.0 speed', '0000:04:00.0 width', '0000:04:00.0 downgrade'],
+        )
+
+    def test_gpu_link_pass_summary(self):
+        bus = {'n1': {0: {'PCI Bus': '0000:03:00.0'}}}
+        records = {}
+        messages = host_configs_rundeck.absorb_gpu_pcie(records, {'n1': _LNK_OK}, bus, 0, '32', '16')
+        self.assertEqual(messages, [])
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n1']['items_summary'], 'Speed 32GT Width x16')
+
+    def test_nic_link_messages(self):
+        bus = {'n1': {0: {'nic_bdf': '0000:41:00.0'}}}
+        records = {}
+        messages = host_configs_rundeck.absorb_nic_pcie(records, {'n1': _LNK_SLOW}, bus, 0, '32', '16')
+        self.assertEqual(
+            messages[0],
+            f'NIC PCIe speed mismatch for 0000:41:00.0 on n1: expected 32GT/s, got {_LNK_SLOW}',
+        )
+        self.assertIn('expected x16', messages[1])
+        self.assertEqual(messages[2], 'NIC PCIe in downgraded state for 0000:41:00.0 on n1')
+
+
+def _link(iface, speed='400000', operstate='up', flags='0x1003'):
+    return f'{iface} speed={speed} operstate={operstate} flags={flags}\n'
+
+
+class TestNicLinkSpeed(unittest.TestCase):
+    def test_setting_defaults_and_parses(self):
+        self.assertEqual(host_configs_rundeck.parse_nic_link_speed_setting(None), 400000)
+        for value, expected in [('400000', 400000), (400000, 400000), (' 200000 ', 200000)]:
+            with self.subTest(value=value):
+                self.assertEqual(host_configs_rundeck.parse_nic_link_speed_setting(value), expected)
+
+    def test_setting_rejects_invalid(self):
+        for value in ('400G', '0', '-1', ''):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'nic_link_speed'):
+                host_configs_rundeck.parse_nic_link_speed_setting(value)
+
+    def test_cmd_dedups_sorts_and_quotes(self):
+        self.assertEqual(
+            host_configs_rundeck.nic_link_speed_cmd(['eth1', 'eth0', 'eth1']),
+            'for i in eth0 eth1; do d="/sys/class/net/$i"; '
+            'echo "$i speed=$(cat "$d/speed" 2>/dev/null) operstate=$(cat "$d/operstate" 2>/dev/null) '
+            'flags=$(cat "$d/flags" 2>/dev/null)"; done',
+        )
+        name = 'eth0;touch /tmp/unwanted'
+        self.assertIn(shlex.quote(name), host_configs_rundeck.nic_link_speed_cmd([name]))
+
+    def test_cmd_empty_is_noop(self):
+        self.assertEqual(host_configs_rundeck.nic_link_speed_cmd([]), 'true')
+
+    def test_parse_reads_fields_and_skips_other_lines(self):
+        output = (
+            _link('eth0')
+            + 'eth1 speed= operstate=down flags=0x1002\n'
+            + 'eth2 speed= operstate= flags=\n'
+            + _link('eth3', '-1', 'down')
+            + 'SSH connection failed\n'
+        )
+        self.assertEqual(
+            host_configs_rundeck.parse_nic_links(output),
+            {
+                'eth0': {'speed': 400000, 'operstate': 'up', 'flags': 0x1003},
+                'eth1': {'speed': None, 'operstate': 'down', 'flags': 0x1002},
+                'eth2': {'speed': None, 'operstate': None, 'flags': None},
+                'eth3': {'speed': -1, 'operstate': 'down', 'flags': 0x1003},
+            },
+        )
+
+    def test_pass(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': _link('eth0') + _link('eth1')}, {'n1': ['eth0', 'eth1']}, 400000
+        )
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n1']['items_summary'], '2 x 400000 Mb/s')
+        self.assertEqual(records['n1']['items'], [])
+        self.assertEqual(messages, [])
+
+    def test_lower_speed_fails_with_node_iface_actual(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': _link('eth0') + _link('eth1', '200000')}, {'n1': ['eth0', 'eth1']}, 400000
+        )
+        message = 'Backend NIC eth1 link speed 200000 Mb/s not matching expected 400000 Mb/s on node n1'
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], '1 of 2 NIC(s) not at 400000 Mb/s')
+        self.assertEqual(records['n1']['items'], [{'name': 'eth1 speed', 'status': 'fail', 'message': message}])
+        self.assertEqual(messages, [message])
+
+    def test_missing_output_reports_unreadable(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': _link('eth0', ''), 'n2': 'SSH connection failed'},
+            {'n1': ['eth1'], 'n2': ['eth0', 'eth1']},
+            400000,
+        )
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n2']['status'], 'fail')
+        self.assertEqual(len(messages), 3)
+        for node, iface in (('n1', 'eth1'), ('n2', 'eth0'), ('n2', 'eth1')):
+            self.assertIn(
+                f'Backend NIC {iface} link speed unreadable from /sys/class/net/{iface}/speed, '
+                f'expected 400000 Mb/s on node {node}',
+                messages,
+            )
+
+    def test_absent_interface_reports_not_found(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': _link('eth0') + 'eth9 speed= operstate= flags=\n'}, {'n1': ['eth0', 'eth9']}, 400000
+        )
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['Backend NIC eth9 not found in /sys/class/net, expected 400000 Mb/s on node n1'])
+
+    def test_admin_down_interface_reports_down(self):
+        # speed_show returns -EINVAL unless netif_running(), so an admin-down NIC has no speed.
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': _link('eth0') + 'eth1 speed= operstate=down flags=0x1002\n'}, {'n1': ['eth0', 'eth1']}, 400000
+        )
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(
+            messages,
+            ['Backend NIC eth1 is administratively down, link speed unavailable, expected 400000 Mb/s on node n1'],
+        )
+
+    def test_admin_up_unreadable_speed_keeps_operstate(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': 'eth0 speed= operstate=up flags=0x1003\n'}, {'n1': ['eth0']}, 400000
+        )
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(
+            messages,
+            [
+                'Backend NIC eth0 link speed unreadable from /sys/class/net/eth0/speed (operstate up), '
+                'expected 400000 Mb/s on node n1'
+            ],
+        )
+
+    def test_unknown_speed_reports_link_down(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': _link('eth0', '-1', 'down') + _link('eth1', '4294967295', 'lowerlayerdown')},
+            {'n1': ['eth0', 'eth1']},
+            400000,
+        )
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(
+            messages,
+            [
+                'Backend NIC eth0 link speed unknown (-1), link may be down (operstate down), '
+                'expected 400000 Mb/s on node n1',
+                'Backend NIC eth1 link speed unknown (4294967295), link may be down (operstate lowerlayerdown), '
+                'expected 400000 Mb/s on node n1',
+            ],
+        )
+
+    def test_per_node_lists_ignore_other_nodes_interfaces(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            {
+                'n1': _link('ethA') + _link('ethB', '200000'),
+                'n2': _link('ethA', '200000') + _link('ethB'),
+            },
+            {'n1': ['ethA'], 'n2': ['ethB']},
+            400000,
+        )
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n2']['status'], 'pass')
+        self.assertEqual(messages, [])
+
+    def test_node_without_nics_fails(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed({'n1': ''}, {'n1': [], 'n2': ['eth0']}, 400000)
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'no NICs')
+        self.assertEqual(records['n2']['status'], 'fail')
+        self.assertEqual(
+            messages,
+            [
+                'No backend NICs found on node n1 to check link speed',
+                'Backend NIC eth0 link speed unreadable from /sys/class/net/eth0/speed, '
+                'expected 400000 Mb/s on node n2',
+            ],
+        )
+
+    def test_compare_counts_fails_node_short_of_peers(self):
+        nics_by_node = {'n1': ['eth0', 'eth1'], 'n2': ['eth0']}
+        out_dict = {'n1': _link('eth0') + _link('eth1'), 'n2': _link('eth0')}
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            out_dict, nics_by_node, 400000, compare_counts=True
+        )
+        message = (
+            'Only 1 backend NIC(s) detected on node n2, fewer than the 2 detected on another node; '
+            'a backend NIC may be missing its netdev or RDMA device'
+        )
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n2']['status'], 'fail')
+        self.assertEqual(records['n2']['items_summary'], '1 of 2 NIC(s) detected')
+        self.assertEqual(records['n2']['items'], [{'name': 'backend_nics', 'status': 'fail', 'message': message}])
+        self.assertEqual(messages, [message])
+
+        records, messages = host_configs_rundeck.eval_nic_link_speed(out_dict, nics_by_node, 400000)
+        self.assertEqual(records['n2']['status'], 'pass')
+        self.assertEqual(messages, [])
+
+    def test_compare_counts_combines_short_count_and_slow_nic(self):
+        records, messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': _link('eth0') + _link('eth1') + _link('eth2'), 'n2': _link('eth0', '200000') + _link('eth1')},
+            {'n1': ['eth0', 'eth1', 'eth2'], 'n2': ['eth0', 'eth1']},
+            400000,
+            compare_counts=True,
+        )
+        self.assertEqual(records['n2']['status'], 'fail')
+        self.assertEqual(records['n2']['items_summary'], '2 of 3 NIC(s) detected; 1 of 2 NIC(s) not at 400000 Mb/s')
+        self.assertEqual(len(messages), 2)
+
+    def test_compare_counts_passes_uniform_and_single_node(self):
+        uniform, uniform_messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': _link('eth0'), 'n2': _link('eth0')}, {'n1': ['eth0'], 'n2': ['eth0']}, 400000, compare_counts=True
+        )
+        single, single_messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': _link('eth0')}, {'n1': ['eth0']}, 400000, compare_counts=True
+        )
+        self.assertEqual([uniform['n1']['status'], uniform['n2']['status'], single['n1']['status']], ['pass'] * 3)
+        self.assertEqual(uniform_messages + single_messages, [])
+
+    def test_custom_expected_speed(self):
+        slow, slow_messages = host_configs_rundeck.eval_nic_link_speed({'n1': _link('eth0')}, {'n1': ['eth0']}, 800000)
+        matching, matching_messages = host_configs_rundeck.eval_nic_link_speed(
+            {'n1': _link('eth0', '200000')}, {'n1': ['eth0']}, 200000
+        )
+        self.assertEqual(slow['n1']['status'], 'fail')
+        self.assertEqual(
+            slow_messages,
+            ['Backend NIC eth0 link speed 400000 Mb/s not matching expected 800000 Mb/s on node n1'],
+        )
+        self.assertEqual(matching['n1']['status'], 'pass')
+        self.assertEqual(matching_messages, [])
+
+    def test_invalid_setting_fails_every_node_in_deck(self):
+        with self.assertRaises(ValueError) as ctx:
+            host_configs_rundeck.parse_nic_link_speed_setting('400G')
+        message = str(ctx.exception)
+        records = host_configs_rundeck.config_error_records(['n1', 'n2'], 'nic_link_speed', message)
+        self.assertEqual(set(records), {'n1', 'n2'})
+        for record in records.values():
+            self.assertEqual(record['status'], 'fail')
+            self.assertEqual(record['items_summary'], 'config error')
+            self.assertEqual(record['items'], [{'name': 'nic_link_speed', 'status': 'fail', 'message': message}])
+
+        results = {}
+        host_configs_rundeck.record_group(results, host_configs_rundeck.NIC_LINK, records)
+        self.assertEqual(set(results['groups']['nic_link']['nodes']), {'n1', 'n2'})
+
+
+class TestRecordGroup(unittest.TestCase):
+    def test_version_placeholder_is_replaced_by_later_real_version(self):
+        results = {}
+        host_configs_rundeck.record_group(
+            results,
+            'os_release',
+            {'n1': host_configs_rundeck.build_node_record('pass', [], '24.04')},
+            meta=host_configs_rundeck.make_meta({'name': 'lab'}, 'host_configs_cvs'),
+        )
+        host_configs_rundeck.record_group(
+            results,
+            'rocm_version',
+            {'n1': host_configs_rundeck.build_node_record('pass', [], '7.0.2')},
+            meta=host_configs_rundeck.make_meta({'name': 'lab'}, 'host_configs_cvs', '7.0.2'),
+        )
+        self.assertEqual(results['_meta']['version'], '7.0.2')
+        self.assertEqual(results['_meta']['cluster'], 'lab')
+        self.assertEqual(results['groups']['os_release']['nodes']['n1']['status'], 'pass')
+
+    def test_rerun_overwrites_same_node(self):
+        results = {}
+        host_configs_rundeck.record_group(
+            results,
+            'iommu_pt',
+            {'n1': host_configs_rundeck.build_node_record('fail', [], 'missing')},
+        )
+        host_configs_rundeck.record_group(
+            results,
+            'iommu_pt',
+            {'n1': host_configs_rundeck.build_node_record('pass', [], 'iommu=pt')},
+        )
+        self.assertEqual(results['groups']['iommu_pt']['nodes']['n1']['status'], 'pass')
+
+
+_IFOE_DEVICE = (
+    'BDF                              : 0001:01:00.1\n  Status:\n    Firmware version               : 0.14.15\n'
+)
+
+
+class TestIfoeFirmware(unittest.TestCase):
+    def test_compare_match_passes(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _IFOE_DEVICE}, '0.14.15')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n1']['items_summary'], '0.14.15')
+        self.assertEqual(messages, [])
+
+    def test_compare_mismatch_fails_with_detected(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _IFOE_DEVICE}, '0.14.16')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], '0.14.15')
+        self.assertEqual(
+            messages,
+            ['Installed IFoE firmware version 0.14.15 not matching expected version 0.14.16 on node n1'],
+        )
+
+    def test_inventory_wellformed_passes(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _IFOE_DEVICE}, '')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n1']['items_summary'], '0.14.15')
+        self.assertEqual(messages, [])
+
+    def test_inventory_garbled_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': 'Firmware version : not-a-version!!\n'}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'malformed')
+        self.assertIn('not a well-formed version', messages[0])
+
+    def test_absent_node_is_na_without_failure(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': 'CVS_IFOE_ABSENT\n'}, '0.14.15')
+        self.assertEqual(records['n1']['status'], 'na')
+        self.assertEqual(records['n1']['items_summary'], 'not applicable')
+        self.assertEqual(messages, [])
+
+    def test_denied_sudo_fails_as_denial(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware(
+            {'n1': 'CVS_CMD_DENIED sudo: a password is required\n'}, ''
+        )
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'denied')
+        self.assertEqual(messages, ['IFoE firmware version could not be read on node n1'])
+
+    def test_unreadable_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': ''}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['IFoE firmware version could not be read on node n1'])
+
+    def test_reader_missing_fails_even_with_expected_version(self):
+        # The module is loaded (past the gate) but afmctl could not be resolved: this
+        # is a read failure, not an absent module, so it must fail rather than record
+        # NA and silently skip the configured-version check.
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': 'CVS_IFOE_READER_MISSING\n'}, '0.24.2')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'unavailable')
+        self.assertEqual(messages, ['IFoE firmware version reader not found on node n1'])
+
+    def test_multi_device_all_matching_passes(self):
+        text = _IFOE_DEVICE + 'BDF : 0004:01:00.1\n    Firmware version : 0.14.15\n'
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '0.14.15')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(messages, [])
+
+    def test_multi_device_divergent_fails(self):
+        text = _IFOE_DEVICE + 'BDF : 0004:01:00.1\n    Firmware version : 0.14.16\n'
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'divergent')
+        self.assertIn('differs across devices', messages[0])
+        self.assertIn('0.14.15', messages[0])
+        self.assertIn('0.14.16', messages[0])
+
+    def test_banner_mentioning_firmware_is_not_a_device(self):
+        # A non-device line that merely contains the words must not count as a second
+        # device and trip the divergence check (regex is line-anchored).
+        text = 'AFM tool - Firmware version : 9.9.9 build\n' + _IFOE_DEVICE
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '0.14.15')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(messages, [])
+
+    def test_partial_device_missing_firmware_fails_inventory(self):
+        # Second BDF block reports no firmware line: the node has 2 devices but only
+        # 1 version, so it must fail rather than pass on the first device's value.
+        text = _IFOE_DEVICE + 'BDF                              : 0004:01:00.1\n  Status:\n'
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'incomplete')
+        self.assertIn('missing for 1 of 2 device(s)', messages[0])
+
+    def test_partial_device_missing_firmware_fails_exact_match(self):
+        # The same gap must fail in exact-match mode, not pass because the present
+        # device happens to match the expected version.
+        text = _IFOE_DEVICE + 'BDF                              : 0004:01:00.1\n  Status:\n'
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '0.14.15')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'incomplete')
+        self.assertIn('missing for 1 of 2 device(s)', messages[0])
+
+
+class TestIfoeKmod(unittest.TestCase):
+    def test_compare_match_passes(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'version:        1.0.0\n'}, '1.0.0')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(messages, [])
+
+    def test_inventory_wellformed_passes(self):
+        text = 'version:        1.0.0-5\nsrcversion:     ABCDEF0123456789\n'
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': text}, '')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n1']['items_summary'], '1.0.0-5')
+        self.assertEqual(messages, [])
+
+    def test_absent_node_is_na(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'CVS_IFOE_ABSENT\n'}, '')
+        self.assertEqual(records['n1']['status'], 'na')
+        self.assertEqual(messages, [])
+
+    def test_reader_missing_fails_not_na(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'CVS_IFOE_READER_MISSING\n'}, '1.0.0')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'unavailable')
+        self.assertEqual(messages, ['IFoE kmod version reader not found on node n1'])
+
+    def test_compare_mismatch_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'version:        1.0.0\n'}, '2.0.0')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], '1.0.0')
+        self.assertEqual(
+            messages,
+            ['Installed IFoE kmod version 1.0.0 not matching expected version 2.0.0 on node n1'],
+        )
+
+    def test_inventory_garbled_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'version:        @@@bad!!!\n'}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'malformed')
+        self.assertIn('not a well-formed version', messages[0])
+
+    def test_missing_version_line_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'srcversion: ABCDEF\n'}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['IFoE kmod version could not be read on node n1'])
+
+
+if __name__ == '__main__':
+    unittest.main()

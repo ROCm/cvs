@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "extends": "arc_base",
+  "profile_id": "arc_test_disruptive_rundeck",
+  "suite_id": "arc_test_disruptive",
+  "report_basename": "arc_test_disruptive_run_deck",
+  "title": "ARC Run Deck · Disruptive Item",
+  "link_name": "ARC Disruptive Item Run Deck"
+}

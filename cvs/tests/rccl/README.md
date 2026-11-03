@@ -1,99 +1,122 @@
-# RCCL Performance Tests
+# RCCL validation
 
-## Library entry points (for automation)
+CVS provides three RCCL suites:
 
-- `cvs.lib.rccl_lib.RcclJob.from_config(...)` — composes the rccl-tests command, `OpenMPI`, and either `MpiRun` or `Srun`. Call `run_perf()` or `run_regression()`.
+- `rccl_perf` runs the performance collectives listed in the suite, across `rccl_test_params.data_types`, and generates a performance report.
+- `rccl_regression` runs the collectives in `rccl_test_params.rccl_collective` across the configured `regression` environment combinations. The older `rccl.rccl_collective` key remains a fallback.
+- `rccl_pairwise` checks the reference node, tests each reference/candidate pair, then builds an incremental group from the successful candidates. Phase 1 requires a clean run; Phase 2 also applies `cvs_params.pairwise_min_bw` when greater than zero.
 
-RCCL tests in CVS are split into a small set of focused workflows:
+Host and network diagnostics use the host OS. Perf and regression retain their time-bounded dmesg checks when passwordless sudo is available. RCCL execution and cleanup use the orchestrator's execution environment.
 
-1. `rccl_perf`  
-   User-facing performance suite. It runs the configured collectives and stages one or more env scripts to every node before launch.
+## Run Deck reports
 
-2. `rccl_regression`  
-   Regression suite with Cartesian product sweep. Uses `regression` object in JSON for NCCL/RCCL env variable combinations, or internal defaults.
+With `--html`, `rccl_perf`, `rccl_regression`, and `rccl_pairwise` generate
+`rccl_run_deck.html` and `rccl_run_deck.json` in the `<suite>_html` directory
+beside the pytest report. The HTML deck is linked as "RCCL Run Deck" in the
+pytest report's Reports section; the JSON sits beside it, and both are included
+in the zip bundle. The deck is built from results collected by `test_gen_graph`,
+so include that test when selecting individual tests. Perf and regression also
+retain their existing amCharts reports.
 
-**Single-node testing:** Configure a single-node cluster in your cluster JSON file and use the main suites above for single-node testing.
+The deck includes bus bandwidth, algorithm bandwidth, and time curves by
+message size, a results table, and a run card. Collectives and message sizes
+come from collected results, including when only part of a suite runs.
+Pairwise series retain their Phase 0/1/2 labels, and its run card lists the
+node and MPI rank counts used across those runs.
 
-4. `heatmap`  
-   Standalone result-comparison suite. It generates a heatmap from two result JSON files and is reusable beyond RCCL-only flows.
+Reporting does not change qualification checks. Graph conversion charts the rows the checks evaluate: in-place rows, or out-of-place rows for `alltoall_perf`/`alltoallv_perf`. Cycles of the same data type and message size are averaged, and message sizes are listed in ascending order. A series with several data types is split into one series per type, labelled `<series> [type=<dtype>]`; a single-type series keeps its plain name.
+The Thresholds row reflects the configured `verify_*` switches; it does not
+confirm that a bus-bandwidth threshold was found or applied. Existing
+threshold configuration mismatches still require separate correction.
 
-All RCCL execution suites still collect host/network info and validate firewall state before performance runs.
+Chart x-axis labels are humanized (`1K`, `1M`, `1G`); the results table and
+`rccl_run_deck.json` keep the raw byte size so external tooling can still
+sort or filter on it numerically. On large clusters, `rccl_pairwise` can
+produce one series per node pair — each chart card renders at most 40 series
+(configurable per card via the profile's `max_series`) and shows a "Showing N
+of M" banner when truncated; the full set always remains in the results
+table and JSON export.
 
-## Prerequisites
+### Reported vs requested topology
 
-1. Provide a valid cluster file, for example `input/cluster_file/cluster.json`.
-2. Make sure your env script exports `RCCL_TESTS_BUILD_DIR` for the `*_perf` binaries.
-3. Make sure `mpi_params.mpi_dir` points at the Open MPI prefix used by `mpirun` / PMIx.
-4. Put RCCL/NCCL/HSA tuning into env scripts. MPI/PMIx/ORTE (`OMPI_MCA_*`, `OPAL_PREFIX`, Spur tmpdir) are set by `rccl_lib` from `mpi_params`, including on nested `spur run`/`srun --mpi=pmix`.
-5. Update `results` thresholds for your hardware and cluster size before relying on pass/fail.
+CVS compares the `nodes`, `ranks`, `ranksPerNode`, and `gpusPerRank` in rccl-tests
+JSON with the topology requested by the launch command. This check runs for every
+performance data type and every regression case, including pairwise performance
+runs. It also detects topology changes between rows in the same result file.
 
-## How to run
+Set `rccl.cvs_params.topology_check` in your config:
 
-```bash
-cvs list rccl_perf
-cvs list rccl_regression
-# Single-node testing via cluster config
-cvs list heatmap
-```
+| Mode | Behaviour |
+| --- | --- |
+| `warn` (default) | Log a mismatch banner and record the differences; topology mismatches alone do not fail the test. |
+| `strict` | Record the differences and call `fail_test` directly for that test case. Result collection continues, and pairwise runs are marked unclean. |
+| `off` | Disable the requested-vs-reported comparison. Result parsing and schema validation remain active, and aggregation still rejects rows whose topology disagrees. The audit file contains the mode and an empty check list. |
 
-### Performance
+Older configs that omit the setting use `warn`. Mode names are case insensitive;
+unrecognised values produce a warning and fall back to `warn`.
 
-```bash
-cvs run rccl_perf \
-  --cluster_file input/cluster_file/cluster.json \
-  --config_file input/config_file/rccl/rccl_config.json \
-  --html=/var/www/html/cvs/rccl_perf.html --capture=tee-sys --self-contained-html \
-  --log-file=/tmp/rccl_perf.log -vvv -s
-```
+For Slurm/Spur, requested topology comes from `-N`, `-n`, and `--ntasks-per-node`.
+For bare-metal `mpirun`, it comes from `-np`, the cluster node list, and hostfile
+slots. If the MPI ranks cannot be divided evenly across those nodes, the check is
+recorded as `skipped` with a reason because this comparison supports uniform
+launches. An empty result set, or a result set in which every row omits all topology
+fields, is also recorded as `skipped`, including in `strict` mode. A row that omits
+topology entirely is not itself a mismatch as long as another row reports topology
+matching the request; fields absent from every row still mismatch against what was
+requested, and a field present in both the baseline row and a later row with a
+different value produces a mismatch. Rows are only compared against the baseline,
+not against each other, so two non-baseline rows can still disagree on a field the
+baseline never reported. Malformed JSON result structures fail result loading
+independently of the topology-check mode; CVS expects an array of result objects.
 
-`rccl_perf` accepts either:
+The existing `rccl_test_params.threads_per_gpu` key has two meanings:
 
-- `env_files`: list of env scripts to stage and run (supports multiple env files)
-- `env_source_script`: single env script fallback
+- Performance runs pass it as `-g`, the number of GPUs per thread, with the default
+  of one thread per MPI rank.
+- Regression runs pass it as `-t`, the number of threads per MPI rank, with the
+  default of one GPU per thread because they omit `-g`.
 
-Starter scripts are shipped under `input/config_file/rccl/`:
+The rccl-tests reporter sets `gpusPerRank` to `nThreads * nGpus`, as shown in
+[`common.cu`](https://github.com/ROCm/rocm-systems/blob/3ae53f79fc26ba4d79c3dfa16ab71065760608e8/projects/rccl-tests/src/common.cu#L1348).
+The expected total is therefore `threads_per_gpu` on both paths. For example,
+`threads_per_gpu: "8"` means `gpusPerRank=8` for both `-g 8` and `-t 8`.
 
-- `ainic_env_script.sh`
-- `thor2_env_script.sh`
-- `cx7_env_script.sh`
+Perf writes `<result_file_stem>_<collective>_topology_check.json` beside the result
+files on the head node. For example, `/results/rccl.json` produces
+`/results/rccl_all_reduce_perf_topology_check.json` for `all_reduce_perf`, with one
+check entry per data type. Regression writes
+`<result_file_stem>_<collective>[_<case-hash>]_topology_check.json` beside the
+configured result file. The case hash is a stable digest of the sorted regression
+environment overrides and is present when overrides are configured, so each
+parameterized case keeps its result and audit files. Each check entry contains
+`label`, `requested`, `reported` (the first row that contains any topology field, not
+necessarily row 0), `mismatches`, `mode`, and `verdict` (`pass`, `mismatch`, or
+`skipped`). Skipped entries include a `reason`; differences in later rows appear in
+`mismatches` with their zero-based row index.
+Checks collected before an aborted run are still saved.
 
-Most clusters should list only the one that matches their NIC in `env_files`, or use multiple for comparison.
+For a launch requesting 2 nodes, 1 rank per node, and 8 GPUs per rank, affected
+rccl-tests builds report `nodes=1`, `ranks=2`, `ranksPerNode=2`, `gpusPerRank=8`.
+The audit records `nodes: requested 2, reported 1` and
+`ranksPerNode: requested 1, reported 2`. CVS preserves the producer's topology
+values in the raw, combined, and aggregated results; the audit carries the
+requested values separately. Single-node output without the topology block is
+accepted by the result schema, and the topology comparison is recorded as
+`skipped` when the block is absent from every row.
 
-### Regression
-
-```bash
-cvs run rccl_regression \
-  --cluster_file input/cluster_file/cluster.json \
-  --config_file /path/to/rccl_regression.json \
-  --html=/var/www/html/cvs/rccl_regression.html --capture=tee-sys --self-configured-html \
-  --log-file=/tmp/rccl_regression.log -vvv -s
-```
-
-`rccl_regression` uses a `regression` object in the config JSON:
-
-```json
-"regression": {
-  "NCCL_ALGO": ["ring", "tree"],
-  "NCCL_PROTO": ["Simple"], 
-  "NCCL_IB_QPS_PER_CONNECTION": ["1", "2"],
-  "NCCL_PXN_DISABLE": ["0", "1"]
-}
-```
-
-- **Keys** are real NCCL/RCCL environment variable names
-- **Values** are lists; CVS builds the Cartesian product
-- **Tree + collective rule**: `tree` is skipped for collectives other than `all_reduce_perf`
-- Missing `regression` or `{}` → single default case
-
-Example internal config: [`rccl_regression_internal.json`](rccl_regression_internal.json).
-
-Full design notes and a **from `main` rebuild** checklist: [RCCL_HANDOFF_FROM_MAIN.md](RCCL_HANDOFF_FROM_MAIN.md).
-
-### Single-node testing
-
-Single-node RCCL testing is achieved by using either `rccl_perf` or `rccl_regression` with a cluster configuration that contains only one node. The tests automatically adapt to single-node execution.
+The probable producer cause is in rccl-tests `src/common.cu`: the reporter receives
+the global MPI communicator size (`args->nProcs`) as `ranksPerNode`, then derives
+`nodes` from that value. The identity `ranks == nodes * ranksPerNode` still holds,
+so schema validation alone cannot catch it. The upstream fix must pass the
+separately computed `localSize`. This is tracked separately from the CVS change;
+see [AIMVT-334](https://amd-hub.atlassian.net/browse/AIMVT-334). Use `strict` once
+your installed rccl-tests build reports per-node rank counts correctly. Changing
+the CVS default and documenting a minimum fixed version are follow-up work.
 
 ### Heatmap
+
+`heatmap` is a standalone result-comparison suite, reusable beyond RCCL-only
+flows. Discover it with `cvs list heatmap`, then compare two result JSONs:
 
 ```bash
 cvs run heatmap \
@@ -110,50 +133,168 @@ Heatmap config requires:
 
 ## Configuration
 
-The RCCL config keeps benchmark intent and validation settings, while RCCL/NCCL/UCX tuning moves into env scripts.
+Start from [`rccl_config.json`](../../input/config_file/rccl/rccl_config.json). Replace any `<changeme>` values and configure paths, interfaces, node counts, and reference bandwidths for your cluster.
+For the single-node 8-GPU `all_reduce` guide bar, start from `mi300x_rccl_single_node_config.json` or `mi350x_rccl_single_node_config.json` instead (`cvs config copy rccl/<file>`), and replace only the `<changeme>` site paths.
 
-### Env files vs JSON scope
+- `mpi_params.no_of_nodes` and `no_of_local_ranks` set the MPI topology explicitly. For a single-node run, set `no_of_nodes` to `1` and provide a one-node cluster or allocation.
+- `mpi_params.mpi_dir` names the Open MPI installation prefix; a trailing `/bin` is accepted. `mpi_pml`, `mpi_oob_port`, `net_dev_list`, and `ucx_tls` control Open MPI/UCX discovery and initialization.
+- `rccl_test_params.rccl_tests_dir` names the directory containing the collective binaries. Message sizes, iteration counts, and optional `rccl_timeout`/`output_algo_proto_channels` flags belong in this object.
+- `rccl_test_params.rccl_collective` lists rccl-tests binary names from `rccl_tests_dir`. Thresholds in `results`, report series, and sub-test labels are keyed by these names, not by the collective name in the rccl-tests JSON. Optional binaries can be added to the list; for example, `all_reduce_bias_perf` (requires an RCCL build that exports `ncclAllReduceWithBias`) reports its rows as `AllReduce`, so give it its own `results.all_reduce_bias_perf` entry rather than relying on `all_reduce_perf` thresholds.
+- `env_source_script` names one existing script, available at the same path on every participating node or container. Use `/dev/null` or `"none"` when no script is needed. Regression overrides are applied after sourcing it.
+- `cvs_params.cvs_exec_timeout` caps the outer collective launch (default 2400 seconds).
 
-- **Env scripts**: `NCCL_*`, `RCCL_*`, `UCX_*`, `MPI_HOME`, `RCCL_TESTS_BUILD_DIR`, and runtime paths
-- **JSON config**: collectives list, message sizes, thresholds (`results`), `mpi_pml`, cluster orchestration
+Starter environment scripts are in [`cvs/input/env_file/rccl/`](../../input/env_file/rccl/): `ainic_env_script.sh`, `thor2_env_script.sh`, and `cx7_env_script.sh`. Adapt the appropriate script to your fabric. Put RCCL/NCCL/HSA/plugin tuning in it. CVS supplies MPI/PMIx/ORTE settings from `mpi_params`, including on managed runs.
 
-### Performance config
+### Expected results
 
-```json
-{
-  "rccl": {
-    "env_files": ["/root/ainic_env_script.sh", "/root/thor2_env_script.sh"],
-    "rccl_collective": ["all_reduce_perf", "all_gather_perf"],
-    "rccl_result_file": "/tmp/rccl_perf_result.json",
-    "start_msg_size": "1024",
-    "end_msg_size": "16g",
-    "results": { }
-  }
-}
-```
+Place `results` directly under `rccl`, alongside `cvs_params`. Both perf and regression read it. Older `cvs_params.results` is accepted only when the top-level key is absent; an explicit `results: {}` disables references.
 
-### Regression config
+For thresholds that depend on NIC, data types, and MPI rank count, use this format:
 
 ```json
-{
-  "rccl": {
-    "env_source_script": "/root/thor2_env_script.sh", 
-    "rccl_collective": ["all_reduce_perf"],
-    "regression": {
-      "NCCL_ALGO": ["ring", "tree"],
-      "NCCL_PROTO": ["Simple"],
-      "NCCL_IB_QPS_PER_CONNECTION": ["1", "2"]
+"results": {
+  "thor": {
+    "all_reduce_perf-float-16": {
+      "8589934592": {"bus_bw": "<changeme>"}
     },
-    "start_msg_size": "1024",
-    "end_msg_size": "16g",
-    "results": { }
+    "all_gather_perf-float-16": null
   }
 }
 ```
 
-## Implementation details
+NIC keys are `ainic`, `thor`, and `connectx`, selected from `cvs_params.nic_model`. The result key is `<collective>-<data_types joined with underscores>-<total MPI ranks>`. Perf uses its configured data types in order; regression uses `float`, the rccl-tests default for its command. Pairwise uses the rank count of the current subset. A NIC/rank reference is used only when its full key matches.
 
-- **Env staging**: `run_rccl` stages env scripts to `/tmp/cvs_rccl_env/` on all nodes with optional per-case overrides
-- **Regression cases**: Each combination in the Cartesian product gets its own result file suffix
-- **Single env dump**: Only `test_print_env_once` prints the environment; other tests focus on performance
-- **Tree filter**: Algorithm restrictions apply to maintain compatibility
+`cvs_params.fabric` selects `scale_out` (the default when omitted) or `scale_up`. Matching is case-insensitive; hyphens, underscores, and spaces are ignored. `scale_out` looks up the NIC key from `nic_model`, then the flat table. `scale_up` reads only `results.scale_up.<collective>-<data_types>-<total ranks>`; NIC-keyed and flat references are never used. The rank suffix follows the GPU count, for example `all_reduce_perf-float-4` for a 4-GPU tray. A missing scale-up key logs a warning with the exact path and fails the test when `verify_bus_bw` is `"True"`. Unknown fabric values warn and fall back to `scale_out`.
+
+```json
+"scale_up": {"all_reduce_perf-float-8": {"8589934592": {"bus_bw": "350"}}}
+```
+
+Both suites also accept the shipped legacy flat format:
+
+```json
+"results": {
+  "all_reduce_perf": {
+    "bus_bw": {"8589934592": "<changeme>", "17179869184": "<changeme>"}
+  }
+}
+```
+
+A matching NIC/rank reference takes precedence over a flat reference. Flat references apply regardless of data type or rank count, so calibrate them for every topology you test. The shipped `results.thor` entries cover the published MI350X/MI355X scale-out range of 2–16 nodes at 8 ranks per node: `all_reduce_perf-float-16`, `-24`, through `-128`, each require at least 350 GB/s at 8589934592 bytes. This includes 4 nodes × 8 ranks (32 total) and 8 nodes × 8 ranks (64 total). The sample sets `bus_bw_tolerance` to `"1.0"`, enforcing this bar exactly. Set each all_reduce entry to 304 for MI300X. The guide lists both 304 and 350 for MI355X; the correct bar is still open. Its "8 GB" size is interpreted here as 8 GiB (8589934592 bytes), which is also open. The other nine collectives have no published bar, so their entries are `null` for each covered rank count. The flat table contains generic two-node examples, which are also compared without slack at the sample tolerance of 1.0. Other NICs and unlisted total-rank counts use the flat examples unless you add calibrated NIC/rank entries. Since keys use total ranks, another topology with a covered rank count also resolves to the guide entry and must override it. Pairwise/incremental sub-runs drop flat references entirely, since a threshold calibrated for the full cluster does not apply at pairwise node counts; only NIC/rank-keyed references, already scoped by rank count, are honored there. With `verify_bus_bw` on, 2-node pairs at 8 ranks per node are gated by the `-16` entry.
+
+Set `cvs_params.verify_bus_bw` to `"True"` to enforce bandwidth thresholds. A measurement fails below `bus_bw × cvs_params.bus_bw_tolerance`. The tolerance defaults to 0.95 when absent, must be a fraction in (0, 1], and an invalid value is reported as one failing `bus_bw` case. The guide-backed sample config uses 1.0. A configured size with no matching in-place row (out-of-place for alltoall/alltoallv) fails, so `start_msg_size` and `end_msg_size` must cover every configured size. A collective with no entry fails. A `null` entry logs `No published threshold for <collective>; bus_bw not gated` and is not gated. Invalid entries fail with the full `rccl.results.<nic>.<key>.<size>` path. `verify_bus_bw` is off in the sample because other NICs and unlisted rank counts fall back to flat examples, MI300X needs 304, and regression and pairwise reuse these entries. Enable it after checking the results for your GPU, NIC, and rank count. Dip checks stay off unless `verify_bw_dip` or `verify_lat_dip` is `"True"`; either flag uses the resolved reference message sizes and keeps a fixed 5% tolerance independent of `bus_bw_tolerance`. Dip checks compare consecutive reference sizes within one data type (and, for unaggregated rows, one rccl-tests cycle), in ascending size order; rows of different data types are never compared with each other. An enabled dip check with no resolved reference fails. Bus-bandwidth failure messages end with the data type of the failing row, for example `[type=bfloat16]`.
+
+### Single-node guide bars
+
+| Config | Platform | Bar | Tolerance |
+|---|---|---|---|
+| `mi300x_rccl_single_node_config.json` | MI300X | 304 GB/s | `1.0` |
+| `mi350x_rccl_single_node_config.json` | MI350X | 350 GB/s | `1.0` |
+
+Both bars are for `all_reduce_perf`, 8 GiB, in-place, float, on 1 node with 8 ranks. These configs are for `rccl_perf` only.
+
+**Open item:** The guide gives both 304 and 350 GB/s as the MI355X bar at 8 GiB in-place. CVS ships no MI355X bar until this is resolved; do not use the MI350X config as an MI355X gate.
+
+**Open item:** MI4xx scale-up references still need a published, validated bar; none is shipped.
+
+When `cvs_params.report_ecc_delta` is `"True"` (default `"False"`), `rccl_perf` and `rccl_regression` capture UMC/SDMA/GFX/MMHUB/PCIE_BIF/HDP/XGMI_WAFL CE/UE/DE counters and log one post-test INFO table per node. Optionally set `cvs_params.report_ecc_blocks` to a list of block names (for example `["UMC", "XGMI_WAFL"]`) to limit capture and delta reporting to those blocks; omit or leave empty for all blocks. An unknown block name fails the test. Allowed names are UMC, SDMA, GFX, MMHUB, PCIE_BIF, HDP, and XGMI_WAFL. An increase is a warning and does not fail the test. A GPU present in only one snapshot is warned as missing data (`MISSING_BEFORE` or `MISSING_AFTER`) and is not reported as a counter change. A node whose amd-smi capture returns no GPUs, bad JSON, or times out is reported as `NO_DATA`. `report_ecc_delta` stays a warning when `cluster_snapshot_debug` is also enabled. That debug snapshot still records a test failure if the RAS or PCIE `amd-smi` JSON cannot be parsed. Grep the pytest log for `ECC_BLOCKS`. This requires passwordless sudo.
+
+### Regression combinations
+
+A non-empty `regression` object is required for parametrization:
+
+```json
+"regression": {
+  "NCCL_ALGO": ["Ring", "Tree"],
+  "NCCL_PROTO": ["Simple"],
+  "NCCL_IB_QPS_PER_CONNECTION": ["1", "2"],
+  "NCCL_MIN_NCHANNELS": ["8", "16"],
+  "NCCL_MAX_NCHANNELS": ["8", "16"]
+}
+```
+
+CVS takes the Cartesian product of the environment axes and configured collectives. `NCCL_MIN_NCHANNELS` and `NCCL_MAX_NCHANNELS` must both be present or both absent, and their lists must have equal lengths: channel values are paired by position. Choose algorithm/collective combinations supported by your RCCL build.
+
+### Result storage
+
+`cvs_params.rccl_result_file` defaults to `{run_dir}/rccl_result_file.json`. CVS resolves `{run_dir}` under `<workspace>/cvs_runs/<run_id>/`; managed jobs use the scheduler job ID. Perf writes `<stem>_<collective>.json`, `<stem>_<collective>_<dtype>.json`, `<stem>_<collective>_aggregated.json` and `<stem>_<collective>_topology_check.json`, so each collective in a `rccl_perf` run keeps its own files. Regression writes `<stem>_<collective>[_<case-hash>].json` and its matching topology audit, so every collective and environment override combination keeps its files. The case hash is a stable digest of sorted regression environment overrides and is present when overrides are configured. Characters outside the unreserved filename set are percent-encoded in collective and data type names (for example, `/` becomes `%2F`), and CVS rejects configs whose derived perf paths collide. Derived names always use `.json`, even when the configured path has another suffix. Pairwise runs one `all_reduce_perf` job per phase/candidate pair against this same path, so each sub-run overwrites the previous `<stem>_all_reduce_perf*.json` files — only the last phase's files survive on disk. Pass/fail is unaffected, since pairwise verifies each sub-run's in-memory result immediately after it runs; copy the files out between sub-runs if you need every phase's artifacts.
+
+Every run — managed or not, bare metal or container — requires the result directory to be writable and reachable through the same head-host transfer interface RCCL uses to save results. During preparation, CVS writes a unique sentinel through the head-node orchestrator, then reads it back with `download_from_head` and checks the round trip. An unavailable directory fails before launching RCCL and names `--workspace`/`CVS_WORKSPACE` in the error. This checks the result path between CVS and the head; it does not certify every mount on every allocated node.
+
+Under the container backend, bind-mount the result directory into the container **at the same absolute path as on the host**. The sentinel command runs inside the head container, so preparation rejects a container path that is not visible at the matching host path. RCCL launches inside the execution environment, while result upload/download uses the orchestrator's head-host transfer interface. Managed HTTP transfers are local shared-filesystem copies. Combined or aggregated result-save failures are reported as test failures.
+
+## Running on bare metal
+
+Provide a cluster file with SSH keys and reachable MPI addresses, and a configured RCCL JSON:
+
+```bash
+cvs run rccl_perf \
+  --cluster_file /path/to/cluster.json \
+  --config_file /path/to/rccl_config.json \
+  --workspace /path/to/cvs-workspace \
+  --html /path/to/reports/rccl_perf.html --self-contained-html \
+  --log-file /path/to/reports/rccl_perf.log --capture=tee-sys -vvv -s
+```
+
+Repeat with `rccl_regression` and `rccl_pairwise`. The launcher uses `mpirun`. The container backend launches it inside the head container and supplies the orchestrator's SSH port (2224 for containers); passwordless container-to-container SSH must be available. MPI, RCCL binaries, and the environment script must be usable in that environment.
+
+## Running under SPUR / Slurm
+
+Run inside a scheduler allocation with **one CVS task per node**. An allocation shell alone does not start the CVS agents. Rank 0 runs pytest; other ranks serve command execution through HTTP agents. CVS launches each RCCL workload as a nested PMIx step with the configured GPU/MPI rank count.
+
+For SPUR, inside an allocation:
+
+```bash
+spur run --mpi=none -N 2 --ntasks-per-node 1 -- \
+  cvs run rccl_perf \
+    --config_file /shared/user/rccl_config.json \
+    --workspace /shared/user/cvs \
+    --html /shared/user/reports/rccl_perf.html --self-contained-html \
+    --log-file /shared/user/reports/rccl_perf.log --capture=tee-sys -vvv -s
+```
+
+For Slurm, use the same CVS arguments with:
+
+```bash
+srun --mpi=none -N 2 --ntasks-per-node 1 -- \
+  cvs run rccl_perf \
+    --config_file /shared/user/rccl_config.json \
+    --workspace /shared/user/cvs \
+    --html /shared/user/reports/rccl_perf.html --self-contained-html \
+    --log-file /shared/user/reports/rccl_perf.log --capture=tee-sys -vvv -s
+```
+
+Use paths and node counts appropriate to your allocation. Repeat for `rccl_regression` and `rccl_pairwise`, with distinct HTML/log names. Configure `SPUR_CONTROLLER_ADDR` as required by your cluster's Spur setup.
+
+- `--workspace` or `CVS_WORKSPACE` must name writable shared storage on all participating nodes. Every managed run must set it explicitly; CVS exits before starting otherwise, because the default venv parent can be node-local. Mount both the workspace and result path consistently.
+- `--cluster_file` is optional for a managed run: CVS synthesizes a job-owned cluster file with each node's hostname as its `vpc_ip`. Supply an appropriate cluster config when selecting the container orchestrator.
+- Scheduler detection checks SPUR before Slurm. Override it with `CVS_SCHEDULER=spur` or `CVS_SCHEDULER=slurm` if needed; an override does not replace the job-step requirement.
+- Nested launches use `spur run --overlap --mpi=pmix` or `srun --overlap --mpi=pmix`. Managed container setup skips sshd because the scheduler uses PMIx.
+- The SPUR pairwise/incremental guard remains enabled: Spur 0.11 ignores `--nodelist` on nested steps, preventing reliable subset execution. Both pairwise workload tests skip with this reason; host/network collection still runs. Check the deployed Spur version and actual subset behavior before changing the guard. Slurm subset steps use `-w`.
+
+## Reports and validation artifacts
+
+Perf and regression add their charts to the pytest HTML report. CVS writes a timestamped suite ZIP beside the HTML report. Pairwise also records phase membership in `cvs_params.pairwise_results_file`; choose a persistent path if needed.
+
+When `verify_bus_bw`, `verify_bw_dip`, or `verify_lat_dip` is enabled, perf and regression report each comparison as a pytest sub-test labelled with the collective, check (`bus_bw`, `bw_dip`, `lat_dip`, or `results`), data type, and message size when known. A configured message size with no result row is reported as a failing `bus_bw` case for that size, showing the threshold and no measurement. A collective whose `results` entry is `null` adds no `bus_bw` case. Pairwise reports each Phase 0/1/2 candidate with phase and node labels. Each parent row in the HTML report expands into pass/fail case rows showing measurements and thresholds, and the filter bar shows sub-test totals. Failing cases appear as `SUBFAILED(...)` in the terminal and add a message-only `<failure>` to JUnit. Parent failure counts stay the same. With all verification flags off, perf and regression emit no sub-tests.
+A missing reference for an enabled check, or an invalid `bus_bw_tolerance`, is reported as one failing case for that check (`bus_bw`, `bw_dip`, or `lat_dip`) without a size label.
+
+For cluster validation, retain before/after bare-metal result JSONs and HTML bundles, record each managed suite's pass/fail/skip outcome, and check that results can be read from shared storage. SPUR pairwise validation must record the observed version and subset behavior. Upload report bundles outside CVS, for example:
+
+```bash
+aws s3 cp /path/to/rccl_perf_timestamp.zip s3://<bucket>/AIMVT-344/
+```
+
+## Library entry point
+
+```python
+from cvs.lib.rccl_lib import RcclJob
+
+job = RcclJob.from_config(
+    orch, collective, rccl_config, node_list, vpc_node_list,
+    env_overrides={"NCCL_ALGO": "Ring"},
+)
+results = job.run_perf()
+```
+
+Pass the inner `rccl` config object after resolving placeholders. `run_regression()` is the alternate workflow. The API now takes a single orchestrator; callers of the previous two-handle signature must migrate. `OpenMPI.prepare`, `MpiRun`, and `Srun` also consume that orchestrator.

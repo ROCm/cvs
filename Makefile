@@ -15,8 +15,8 @@ RUFF = $(RUFF_VENV_DIR)/bin/ruff
 PYLINT = $(RUFF_VENV_DIR)/bin/pylint
 CVS = $(TEST_VENV_DIR)/bin/cvs
 
-.PHONY: all help sdist build test-venv cvs-venv install installtest ut test \
-        doc-venv html-doc clean_doc_venv gen-anc-suites \
+.PHONY: all help hooks sdist build test-venv cvs-venv install installtest ut test \
+        doc-venv html-doc clean_doc_venv gen-anc-suites gen-arc-suites \
         clean_test_venv clean_cvs_venv clean_sdist clean_pycache clean
 
 all: build test-venv installtest test
@@ -40,8 +40,18 @@ help:
 	@echo "  html-doc        - Build and serve docs with live-reload at http://localhost:$(DOC_PORT)"
 	@echo "                    Override port: make html-doc DOC_PORT=9090"
 	@echo "  gen-anc-suites  - Regenerate per-group ANC suite files from anc_lib group lists"
+	@echo "  gen-arc-suites  - Regenerate ARC flow and item suites from arc_lib lists"
+	@echo "  hooks           - Enable the repo git hooks (commit-msg format, trailing-space warn)"
 	@echo "  all             - Run build, test-venv, installtest, and test"
 	@echo "  clean           - Remove virtual environment, build artifacts, and Python cache files"
+
+hooks:
+	@echo "Enabling repo git hooks from .githooks/ ..."
+	@chmod +x .githooks/commit-msg .githooks/pre-commit 2>/dev/null || true
+	@git config core.hooksPath .githooks
+	@echo "Enabled (core.hooksPath=.githooks):"
+	@echo "  commit-msg  - title / blank 2nd line / body / Signed-off-by (80-col warn)"
+	@echo "  pre-commit  - warn on trailing whitespace in staged changes"
 
 gen-anc-suites:
 	@echo "Generating per-group ANC suite files from anc_lib group lists..."
@@ -51,6 +61,16 @@ gen-anc-suites:
 		"$(TEST_VENV_DIR)/bin/python" build_tools/gen_anc_suites.py; \
 	else \
 		$(PYTHON) build_tools/gen_anc_suites.py; \
+	fi
+
+gen-arc-suites:
+	@echo "Generating ARC flow and item suite files..."
+	@if [ -x "$(CVS_VENV_DIR)/bin/python" ]; then \
+		"$(CVS_VENV_DIR)/bin/python" build_tools/gen_arc_suites.py; \
+	elif [ -x "$(TEST_VENV_DIR)/bin/python" ]; then \
+		"$(TEST_VENV_DIR)/bin/python" build_tools/gen_arc_suites.py; \
+	else \
+		$(PYTHON) build_tools/gen_arc_suites.py; \
 	fi
 
 sdist: clean_sdist
@@ -85,7 +105,7 @@ install: cvs-venv sdist
 
 installtest: test-venv build
 	@echo "Installing from built distribution..."
-	$(PIP) install dist/*.tar.gz
+	$(PIP) install dist/*.tar.gz -r requirements-test.txt
 
 ut: installtest
 	@echo "Unit Testing cvs..."
@@ -180,13 +200,16 @@ html-doc: doc-venv
 		echo "Installing sphinx-autobuild..."; \
 		$(DOC_VENV_DIR)/bin/pip install -q sphinx-autobuild; \
 	fi
-	@echo "Watching docs for changes. Open http://$(shell hostname -I | awk '{print $$1}'):$(DOC_PORT) in your browser."
+	@echo "Watching docs for changes."
+	@echo "  Open in this machine's browser:  http://localhost:$(DOC_PORT)"
+	@echo "  (WSL: use localhost from Windows — do not use the WSL eth0 IP.)"
+	@echo "  LAN / other hosts (if needed):   http://$$(hostname -I | awk '{print $$1}'):$(DOC_PORT)"
 	@echo "Press Ctrl+C to stop."
 	@echo ""
 	ROCM_DOCS_USE_BUNDLED_MAPPINGS=1 \
 		$(DOC_VENV_DIR)/bin/python -m sphinx build -a docs $(DOC_BUILD_DIR) -q
 	ROCM_DOCS_USE_BUNDLED_MAPPINGS=1 \
-		$(DOC_VENV_DIR)/bin/sphinx-autobuild docs $(DOC_BUILD_DIR) --port $(DOC_PORT) --host 0.0.0.0 -q
+		$(DOC_VENV_DIR)/bin/sphinx-autobuild docs $(DOC_BUILD_DIR) --port $(DOC_PORT) --host 0.0.0.0 -a -q
 
 clean_doc_venv:
 	@echo "Removing doc virtual environment and build artifacts..."

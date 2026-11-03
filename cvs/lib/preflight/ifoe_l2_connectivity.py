@@ -1188,10 +1188,10 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         keep the one-dispatch-per-work-item path instead.
         """
         for attribute in ("exec_cmd_list", "upload_file_list", "exec"):
-            candidate = getattr(self.phdl, attribute, None)
+            candidate = getattr(self.orch.all, attribute, None)
             if not callable(candidate) or type(candidate).__module__.startswith("unittest.mock"):
                 return False
-        return isinstance(getattr(self.phdl, "reachable_hosts", None), (list, tuple))
+        return isinstance(getattr(self.orch.all, "reachable_hosts", None), (list, tuple))
 
     def _batch_timeout(self, invocations_per_node: int) -> int:
         """Wall-clock cap for one batch script.
@@ -1330,9 +1330,9 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
     def _exec_all(self, command: str) -> Dict[str, Dict]:
         """Run one discovery command across all reachable nodes with exit data."""
         try:
-            raw_results = self.phdl.exec(command, timeout=self.ssh_timeout, print_console=False, detailed=True)
+            raw_results = self.orch.all.exec(command, timeout=self.ssh_timeout, print_console=False, detailed=True)
         except TypeError:
-            raw_results = self.phdl.exec(command, timeout=self.ssh_timeout, print_console=False)
+            raw_results = self.orch.all.exec(command, timeout=self.ssh_timeout, print_console=False)
         return self._normalise_exec_results(raw_results)
 
     @staticmethod
@@ -1362,7 +1362,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         exercised on a host where it is absent.  Lightweight/mock backends
         without that API retain the older broadcast fallback for compatibility.
         """
-        command_list_fn = getattr(self.phdl, "exec_cmd_list", None)
+        command_list_fn = getattr(self.orch.all, "exec_cmd_list", None)
         is_mock = type(command_list_fn).__module__.startswith("unittest.mock")
         if callable(command_list_fn) and not is_mock:
             target_command = (
@@ -1370,7 +1370,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                 "printf '\\n__CVS_AFMCTL_EXIT_STATUS__=%s\\n' \"$_cvs_afmctl_rc\"; "
                 "exit \"$_cvs_afmctl_rc\""
             )
-            commands = [target_command if host == node else "true" for host in self.phdl.reachable_hosts]
+            commands = [target_command if host == node else "true" for host in self.orch.all.reachable_hosts]
             raw_results = command_list_fn(commands, timeout=self.ssh_timeout, print_console=False)
             result = self._normalise_exec_results(raw_results).get(node)
             if result is not None:
@@ -1439,7 +1439,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             if exit_status in (None, 0):
                 with tempfile.TemporaryDirectory(prefix="cvs_ifoe_port_") as temp_dir:
                     local_prefix = os.path.join(temp_dir, "port.json")
-                    downloaded_paths = self.phdl.download_file(artifact_path, local_prefix, hosts=[node])
+                    downloaded_paths = self.orch.all.download_file(artifact_path, local_prefix, hosts=[node])
                     local_path = downloaded_paths.get(node)
                     if not local_path:
                         raise IOError(f"SFTP did not return an artifact path for {node}")
@@ -1596,7 +1596,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         )
 
         with ScriptLet(
-            self.phdl,
+            self.orch.all,
             debug=scriptlet_debug,
             scriptlet_workspace=workspace_dir,
             cleanup_on_init=True,
@@ -1687,7 +1687,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         unbatched implementation's per-node error attribution.
         """
         try:
-            return self.phdl.download_file(remote_path, local_prefix, hosts=list(nodes)) or {}
+            return self.orch.all.download_file(remote_path, local_prefix, hosts=list(nodes)) or {}
         except (OSError, ValueError, TypeError) as exc:
             if len(nodes) == 1:
                 probes[(nodes[0], bdf)]["transfer_error"] = str(exc)
@@ -1697,7 +1697,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         downloaded: Dict[str, str] = {}
         for node in nodes:
             try:
-                result = self.phdl.download_file(remote_path, f"{local_prefix}.{node}", hosts=[node]) or {}
+                result = self.orch.all.download_file(remote_path, f"{local_prefix}.{node}", hosts=[node]) or {}
             except (OSError, ValueError, TypeError) as exc:
                 probes[(node, bdf)]["transfer_error"] = str(exc)
                 continue
@@ -1750,7 +1750,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         )
 
         with ScriptLet(
-            self.phdl,
+            self.orch.all,
             debug=scriptlet_debug,
             scriptlet_workspace=workspace_dir,
             cleanup_on_init=True,
@@ -1958,7 +1958,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                     "complete": False,
                 },
             }
-            for node in self.phdl.reachable_hosts
+            for node in self.orch.all.reachable_hosts
         }
 
         needs_topology = self.bdf_discovery == "auto" or self.mesh_mode == "full_mesh" or self.ports == "up"

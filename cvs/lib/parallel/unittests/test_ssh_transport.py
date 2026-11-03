@@ -3,17 +3,19 @@ from unittest.mock import patch, MagicMock, call
 
 from cvs.lib.parallel.ssh_transport import SshTransport
 
+FAKE_CRED = 'fake-cred'
+
 
 class TestSshTransportInit(unittest.TestCase):
     @patch('cvs.lib.parallel.phandle.ParallelSSHClient')
     def test_init_with_password(self, mock_client_cls):
         mock_client_cls.return_value = MagicMock()
-        transport = SshTransport(['h1', 'h2'], user='user', password='pass', num_retries=1)
+        transport = SshTransport(['h1', 'h2'], user='user', password=FAKE_CRED, num_retries=1)
 
         mock_client_cls.assert_called_once_with(
             ['h1', 'h2'],
             user='user',
-            password='pass',
+            password=FAKE_CRED,
             keepalive_seconds=30,
             num_retries=1,
         )
@@ -40,7 +42,7 @@ class TestSshTransportRebuild(unittest.TestCase):
         second_client = MagicMock()
         mock_client_cls.side_effect = [first_client, second_client]
 
-        transport = SshTransport(['h1'], user='user', password='pass')
+        transport = SshTransport(['h1'], user='user', password=FAKE_CRED)
         transport.rebuild(['h2', 'h3'])
 
         self.assertEqual(transport.hosts, ['h2', 'h3'])
@@ -48,8 +50,8 @@ class TestSshTransportRebuild(unittest.TestCase):
         self.assertEqual(
             mock_client_cls.call_args_list,
             [
-                call(['h1'], user='user', password='pass', keepalive_seconds=30),
-                call(['h2', 'h3'], user='user', password='pass', keepalive_seconds=30),
+                call(['h1'], user='user', password=FAKE_CRED, keepalive_seconds=30),
+                call(['h2', 'h3'], user='user', password=FAKE_CRED, keepalive_seconds=30),
             ],
         )
 
@@ -57,7 +59,7 @@ class TestSshTransportRebuild(unittest.TestCase):
 class TestSshTransportCheckConnectivity(unittest.TestCase):
     @patch('cvs.lib.parallel.phandle.ParallelSSHClient')
     def test_check_connectivity_empty_hosts(self, mock_client_cls):
-        transport = SshTransport(['h1'], user='user', password='pass')
+        transport = SshTransport(['h1'], user='user', password=FAKE_CRED)
         self.assertEqual(transport.check_connectivity([]), [])
         mock_client_cls.assert_called_once()
 
@@ -71,7 +73,7 @@ class TestSshTransportCheckConnectivity(unittest.TestCase):
         bad = MagicMock(host='h2', exception=ConnectionError('down'))
         probe_client.run_command.return_value = [ok, bad]
 
-        transport = SshTransport(['h1', 'h2'], user='user', password='pass')
+        transport = SshTransport(['h1', 'h2'], user='user', password=FAKE_CRED)
         unreachable = transport.check_connectivity(['h1', 'h2'])
 
         self.assertEqual(unreachable, ['h2'])
@@ -81,7 +83,7 @@ class TestSshTransportCheckConnectivity(unittest.TestCase):
             call(
                 ['h1', 'h2'],
                 user='user',
-                password='pass',
+                password=FAKE_CRED,
                 keepalive_seconds=30,
                 timeout=2,
                 num_retries=0,
@@ -93,18 +95,18 @@ class TestSshTransportClientForHosts(unittest.TestCase):
     @patch('cvs.lib.parallel.phandle.ParallelSSHClient')
     def test_client_for_hosts_builds_subset_transport(self, mock_client_cls):
         mock_client_cls.return_value = MagicMock()
-        transport = SshTransport(['h1', 'h2'], user='user', password='pass', allow_agent=False)
+        transport = SshTransport(['h1', 'h2'], user='user', password=FAKE_CRED, allow_agent=False)
 
         subset = transport.client_for_hosts(['h2'])
 
         self.assertIsInstance(subset, SshTransport)
         self.assertEqual(subset.hosts, ['h2'])
         self.assertEqual(subset.user, 'user')
-        self.assertEqual(subset.password, 'pass')
+        self.assertEqual(subset.password, FAKE_CRED)
         self.assertEqual(subset.ssh_client_kwargs, {'allow_agent': False})
         self.assertEqual(
             mock_client_cls.call_args_list[-1],
-            call(['h2'], user='user', password='pass', keepalive_seconds=30, allow_agent=False),
+            call(['h2'], user='user', password=FAKE_CRED, keepalive_seconds=30, allow_agent=False),
         )
 
 
@@ -123,7 +125,7 @@ class TestSshTransportDestroy(unittest.TestCase):
         mock_client.cmds = cmds
         mock_client._host_clients = host_clients if host_clients is not None else {}
         mock_client_cls.return_value = mock_client
-        transport = SshTransport(['host1'], user='user', password='pass')
+        transport = SshTransport(['host1'], user='user', password=FAKE_CRED)
         return transport, mock_client
 
     def test_destroy_disconnects_each_host_client(self):

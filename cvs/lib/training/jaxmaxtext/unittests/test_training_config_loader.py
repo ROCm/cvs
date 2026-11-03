@@ -28,6 +28,9 @@ from cvs.lib.training.jaxmaxtext.utils.training_config_loader import (
     normalize_training_config,
     validate_thresholds_cover_training,
 )
+from cvs.unittests.support import TMP
+
+FAKE_CRED_FILE = "{shared_fs}/.hf_token"
 
 
 def _new_format_config():
@@ -45,8 +48,8 @@ def _new_format_config():
             "shared_fs": "/home/{user-id}",
             "models_dir": "{shared_fs}/cache/maxtext",
             "log_dir": "{shared_fs}/LOGS/jaxmaxtext",
-            "hf_token_file": "{shared_fs}/.hf_token",
-            "temp_dir": "/tmp/{user-id}/jaxmaxtext",
+            "hf_token_file": FAKE_CRED_FILE,
+            "temp_dir": f"{TMP}/{{user-id}}/jaxmaxtext",
         },
         "container": {
             "lifetime": "per_run",
@@ -219,11 +222,15 @@ class NormalizeTrainingConfigTests(unittest.TestCase):
         # NCCL IB device selection present -> inferred distributed
         self.assertTrue(internal["training"]["distributed"])
 
-    def test_xla_flags_folded_into_container_env_quoted(self):
+    def test_xla_flags_folded_into_container_env_unquoted(self):
         internal = normalize_training_config(_new_format_config())
         xf = internal["container"]["env"]["XLA_FLAGS"]
-        # wrapped in double quotes so it survives as one docker -e token
-        self.assertTrue(xf.startswith('"') and xf.endswith('"'))
+        # No surrounding quotes: the runtime shlex-quotes each `-e key=value`
+        # token, so literal quotes here would leak into the container value and
+        # JAX would reject XLA_FLAGS (value must start with `--`).
+        self.assertFalse(xf.startswith('"'))
+        self.assertFalse(xf.endswith('"'))
+        self.assertTrue(xf.startswith("--"))
         self.assertIn("--xla_gpu_autotune_level=0", xf)
 
     def test_empty_xla_flags_omits_xla_flags_env(self):
@@ -367,7 +374,7 @@ class RoundTripLoadTests(unittest.TestCase):
         self.assertIn("--xla_gpu_autotune_level=0", xf)
 
     def test_temp_dir_is_user_namespaced(self):
-        expected = f"/tmp/{getpass.getuser()}/jaxmaxtext"
+        expected = f"{TMP}/{getpass.getuser()}/jaxmaxtext"
         self.assertEqual(self.cfg.paths.temp_dir, expected)
 
 

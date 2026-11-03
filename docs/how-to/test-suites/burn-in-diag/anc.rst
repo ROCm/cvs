@@ -1,12 +1,12 @@
 .. meta::
-  :description: Run AMD Node Check (ANC) CPU and GPU diagnostic suites
-  :keywords: CVS, ANC, AMD Node Check, burn-in, diag
+  :description: Run AMD Node Check (ANC) CPU and GPU diagnostic tests across every node in a CVS-managed AMD Instinct GPU cluster to verify hardware health.
+  :keywords: CVS, ANC, AMD Node Check, AMD, GPU, AMD Instinct, ROCm, diagnostic, burn-in, CPU, HBM, DIMM
 
-*********
-ANC tests
-*********
+*****************************************************
+Run AMD Node Check (ANC) CPU and GPU diagnostic tests
+*****************************************************
 
-AMD Node Check (ANC) runs CPU and GPU diagnostic groups on every node in the cluster. CVS installs ANC when needed, invokes each group as ``sudo ./anc.py -g <group>``, and collects logs and HTML reports.
+AMD Node Check (ANC) runs CPU and GPU diagnostic groups on every node in the cluster (the CPU groups include the DIMM/UMC groups), plus individual ANC items. CVS installs ANC when needed, invokes each group as ``sudo ./anc.py -g <group>`` (and each individual item as ``sudo ./anc.py -i <item>``), and collects logs and HTML reports.
 
 ANC requires **root**. The runner must have passwordless SSH and passwordless ``sudo`` on every target node. Without passwordless ``sudo``, group runs and log collection fail.
 
@@ -21,15 +21,14 @@ Set up config
 
      cvs config copy anc/anc_config.json --output ~/cvs_workspace/anc/anc_config.json
 
-2. Replace every ``<changeme>`` placeholder:
+2. Optionally set the install-related keys (all three are optional):
 
-   - ``anc_release_url`` — URL of the ANC release archive to download and install
-   - ``log_folder_path`` — controller-side directory prefix for collected logs and auto-generated HTML reports
-   - ``anc_version`` — expected ANC version (must match the version in ``anc_release_url``)
+   - ``anc_release_url`` — URL of the ANC release archive to download and install. Set it only when ANC must be installed (absent on a node, or below ``anc_version`` with a URL new enough to upgrade); leave blank when ANC is preinstalled.
+   - ``anc_version`` — optional minimum ANC version. When set, a node below it is upgraded only if ``anc_release_url`` can satisfy it; otherwise the ``anc_installation`` suite fails, while the group/item suites proceed with the installed version.
 
-3. Optionally set ``ANC_INSTALL_PATH`` for relocatable **tar** installs. Deb and rpm packages ignore this key and always install under ``/opt/amdtools``.
+3. Optionally set ``ANC_INSTALL_PATH`` for relocatable **tar** installs; each suite also probes this path for an existing install. Deb and rpm packages ignore this key and always install under ``/opt/amdtools``.
 
-Full parameter list: :doc:`/reference/configuration-files/burn-in-diag/anc`.
+For the complete field reference including release URL, install path, and log collection options, see :doc:`/reference/configuration-files/burn-in-diag/anc`.
 
 .. _anc-run-tests:
 
@@ -43,19 +42,19 @@ List the install suite and the CPU / GPU group suites:
   cvs list anc_installation
   cvs list anc_test_cpu
   cvs list anc_test_gpu
+  cvs list anc_test_gemm          # and the other per-family item suites
 
 Install ANC
 ~~~~~~~~~~~
 
-Every CPU and GPU group run installs ANC as a session-cached pre-task, so a separate install step is optional. Run ``anc_installation`` when you want to install or refresh ANC without running a validation group:
+Every CPU / GPU group and individual-item run installs ANC as a session-cached pre-task, so a separate install step is optional. Run ``anc_installation`` when you want to install or refresh ANC without running a validation group:
 
 .. code:: bash
 
   cvs run anc_installation \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/anc/anc_config.json \
-    --html=/var/www/html/cvs/anc.html --capture=tee-sys --self-contained-html \
-    --log-file=/tmp/anc.log -vvv -s
+    --capture=tee-sys -vvv -s
 
 CPU groups
 ~~~~~~~~~~
@@ -65,20 +64,14 @@ CPU groups
 .. code:: text
 
   Available tests in anc_test_cpu:
-    - test_ampttk_full
-    - test_cachewalker_full
-    - test_cpu_all
     - test_cpu_content_check
     - test_cpu_mfg_l10
-    - test_cpu_sanity
-    - test_difect_full
-    - test_fpdeluge_full
-    - test_hdrt_full
-    - test_maxcorestim_full
-    - test_memtest_full
-    - test_miidct_full
-    - test_mithac_full
     - test_weighted_sanity
+    - test_dimm_content_check
+    - test_dimm_mfg_l10
+    - test_dimm_weighted_sanity
+
+The DIMM/UMC groups are part of ``anc_test_cpu`` because ANC reports them under the CPU device.
 
 Run every CPU group (install + ldconfig once, then each group as its own test):
 
@@ -87,14 +80,13 @@ Run every CPU group (install + ldconfig once, then each group as its own test):
   cvs run anc_test_cpu \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/anc/anc_config.json \
-    --html=/var/www/html/cvs/anc_cpu.html --capture=tee-sys --self-contained-html \
-    --log-file=/tmp/anc_cpu.log -vvv -s
+    --capture=tee-sys -vvv -s
 
 Run a single group by function name:
 
 .. code:: bash
 
-  cvs run anc_test_cpu test_cpu_all \
+  cvs run anc_test_cpu test_cpu_mfg_l10 \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/anc/anc_config.json
 
@@ -121,8 +113,7 @@ Run every GPU group:
   cvs run anc_test_gpu \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/anc/anc_config.json \
-    --html=/var/www/html/cvs/anc_gpu.html --capture=tee-sys --self-contained-html \
-    --log-file=/tmp/anc_gpu.log -vvv -s
+    --capture=tee-sys -vvv -s
 
 Run a single GPU group:
 
@@ -132,9 +123,37 @@ Run a single GPU group:
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/anc/anc_config.json
 
+Individual items
+~~~~~~~~~~~~~~~~
+
+Individual ANC items are exposed as per-family suites, each item its own ``test_<item>`` function run as ``sudo ./anc.py -i <item>``: ``anc_test_computerocker`` (24), ``anc_test_memrocker`` (10), ``anc_test_oblex`` (8), ``anc_test_gemm`` (3), ``anc_test_xgmi`` (3), ``anc_test_ualink`` (3), ``anc_test_pcie`` (3), ``anc_test_babel`` (2), and ``anc_test_basic`` (18 one-off items such as ``test_ampttk``, ``test_hdrt``, ``test_no_op``, ``test_sdma_bidi_peak``). ``cvs list anc_test_<family>`` reports a suite's items; the per-family lists live in ``cvs/lib/anc_lib.py``.
+
+Run a whole item family:
+
+.. code:: bash
+
+  cvs run anc_test_gemm \
+    --cluster_file ~/cvs_workspace/cluster.json \
+    --config_file ~/cvs_workspace/anc/anc_config.json \
+    --capture=tee-sys -vvv -s
+
+Run a single item:
+
+.. code:: bash
+
+  cvs run anc_test_gemm test_gemm_fp8_trig \
+    --cluster_file ~/cvs_workspace/cluster.json \
+    --config_file ~/cvs_workspace/anc/anc_config.json
+
+Run on managed compute
+~~~~~~~~~~~~~~~~~~~~~~
+
+Follow :doc:`/how-to/run-on-managed-compute` to run ANC on managed compute.
+
 Pass and fail
 =============
 
 A node passes only when ANC started (a ``Log directory`` line is present), ``console.log`` was collected, and the **final** return-code line in ``console.log`` is ``ANC_SUCCESS [0]``. Failures on multiple nodes are aggregated into a single test failure.
 
-Logs land under ``<log_folder_path>/anc_logs/<ip>_<hostname>/<test_name>/<timestamp>/``. When ``COLLECT_HTML_REPORTS`` is ``True`` (the default), CVS also writes a pytest-html report under ``log_folder_path`` even if you omit ``--html``. An explicit ``--html`` on the command line always wins.
+Logs land under ``<run_dir>/anc_logs/<ip>_<hostname>/<test_name>/<timestamp>/``.
+``cvs run`` also writes the pytest HTML report and text log described in :ref:`pytest-html-report-and-bundle`.

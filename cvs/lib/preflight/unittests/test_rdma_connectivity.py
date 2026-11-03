@@ -16,6 +16,7 @@ from cvs.lib.preflight.base import partition_nodes_into_groups
 from cvs.lib.preflight.rdma_connectivity import RdmaConnectivityCheck
 from cvs.lib.preflight.report import PreflightReportGenerator
 from cvs.parsers.schemas import PreflightConfigFile, normalize_legacy_preflight_rdma_config
+from cvs.unittests.support import TMP
 
 
 def _make_checker(
@@ -29,8 +30,10 @@ def _make_checker(
     """Build RdmaConnectivityCheck with sensible test defaults."""
     phdl = phdl or MagicMock()
     node_list = node_list or ['A', 'B', 'C', 'D']
+    orch = MagicMock()
+    orch.all = phdl
     return RdmaConnectivityCheck(
-        phdl,
+        orch,
         node_list,
         mode=kwargs.get('mode', 'full_mesh'),
         port_range=kwargs.get('port_range', '5000-6000'),
@@ -43,6 +46,30 @@ def _make_checker(
 
 
 class TestPreflightRdmaConfigContract(unittest.TestCase):
+    def test_gid_type_any_is_passed_to_checker(self):
+        from cvs.tests.preflight import preflight_checks
+
+        config = {
+            'connectivity_check': {
+                'rdma': {'connectivity_mode': 'basic', 'gid_index': '7', 'interfaces': ['enp4s0np0'], 'gid_type': 'any'}
+            }
+        }
+        previous_results = dict(preflight_checks.preflight_results)
+        try:
+            with (
+                patch.object(preflight_checks, 'GidConsistencyCheck') as gid_checker,
+                patch.object(preflight_checks, 'preflight_update_test_result'),
+            ):
+                gid_checker.return_value.run.return_value = {
+                    'nodeA': {'status': 'PASS', 'errors': [], 'interfaces': {}}
+                }
+                orch = MagicMock()
+                preflight_checks.test_gid_consistency(orch, config)
+                gid_checker.assert_called_once_with(orch, '7', ['enp4s0np0'], config, expected_gid_type='any')
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
+
     def test_legacy_rdma_inventory_is_normalized_with_one_warning(self):
         legacy = {
             'node_check': {
@@ -127,6 +154,8 @@ class TestPreflightRdmaConfigContract(unittest.TestCase):
 
         phdl = MagicMock()
         phdl.reachable_hosts = ['nodeA', 'nodeB']
+        orch = MagicMock()
+        orch.all = phdl
         previous_results = dict(preflight_checks.preflight_results)
         preflight_checks.preflight_results.clear()
         try:
@@ -151,16 +180,16 @@ class TestPreflightRdmaConfigContract(unittest.TestCase):
                     'pair_results': {},
                     'node_status': {},
                 }
-                preflight_checks.test_interface_name_consistency(phdl, config)
-                preflight_checks.test_gid_consistency(phdl, config)
+                preflight_checks.test_interface_name_consistency(orch, config)
+                preflight_checks.test_gid_consistency(orch, config)
                 preflight_checks.test_rdma_connectivity(
-                    phdl,
+                    orch,
                     {'node_dict': {'nodeA': {}, 'nodeB': {}}},
                     config,
                 )
 
-            interface_checker.assert_called_once_with(phdl, ['enp4s0np0'], config)
-            gid_checker.assert_called_once_with(phdl, '7', ['enp4s0np0'], config)
+            interface_checker.assert_called_once_with(orch, ['enp4s0np0'], config)
+            gid_checker.assert_called_once_with(orch, '7', ['enp4s0np0'], config, expected_gid_type='RoCE v2')
             rdma_args = rdma_checker.call_args.args
             self.assertEqual(rdma_args[5], ['enp4s0np0'])
             self.assertEqual(rdma_args[6], '7')
@@ -265,7 +294,7 @@ class TestPreflightRdmaConfigContract(unittest.TestCase):
                 preflight_checks.test_gid_consistency(phdl, config)
 
             interface_checker.assert_called_once_with(phdl, ['enp4s0np0'], config)
-            gid_checker.assert_called_once_with(phdl, '7', ['enp4s0np0'], config)
+            gid_checker.assert_called_once_with(phdl, '7', ['enp4s0np0'], config, expected_gid_type='RoCE v2')
         finally:
             preflight_checks.preflight_results.clear()
             preflight_checks.preflight_results.update(previous_results)
@@ -671,14 +700,14 @@ class TestGenerateServerCommandsScriptletDebug(unittest.TestCase):
     def test_default_no_strace(self):
         checker = _make_checker(expected_interfaces=['if1'], config_dict={})
         groups = {'group_1': ['A', 'B']}
-        cmds = checker._generate_ibv_server_commands('A', groups, 'intra_group', 5000, '/tmp/preflight')
+        cmds = checker._generate_ibv_server_commands('A', groups, 'intra_group', 5000, f'{TMP}/preflight')
         self.assertTrue(cmds)
         self.assertTrue(all('strace' not in c for c in cmds))
 
     def test_scriptlet_debug_adds_strace(self):
         checker = _make_checker(expected_interfaces=['if1'], config_dict={'debug': {'scriptlet': True}})
         groups = {'group_1': ['A', 'B']}
-        cmds = checker._generate_ibv_server_commands('A', groups, 'intra_group', 5000, '/tmp/preflight')
+        cmds = checker._generate_ibv_server_commands('A', groups, 'intra_group', 5000, f'{TMP}/preflight')
         self.assertTrue(cmds)
         for c in cmds:
             with self.subTest(cmd=c[:80]):
@@ -689,7 +718,7 @@ class TestGenerateServerCommandsScriptletDebug(unittest.TestCase):
     def test_scriptlet_debug_accepts_string_true(self):
         checker = _make_checker(expected_interfaces=['if1'], config_dict={'debug': {'scriptlet': 'true'}})
         groups = {'group_1': ['A', 'B']}
-        cmds = checker._generate_ibv_server_commands('A', groups, 'intra_group', 5000, '/tmp/preflight')
+        cmds = checker._generate_ibv_server_commands('A', groups, 'intra_group', 5000, f'{TMP}/preflight')
         self.assertTrue(any('strace' in c for c in cmds))
 
 

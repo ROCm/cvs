@@ -12,12 +12,31 @@ import re
 import time
 import json
 
+from cvs.lib.agfhc_cmd import (
+    companion_probe_command,
+    install_command,
+    probe_is_writable,
+    rootless_output_dir,
+    uses_output_dir,
+    writable_dir_commands,
+)
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
 from cvs.lib import globals
 
 log = globals.log
+
+
+def _payload_sudo_prefix(orch):
+    """Sudo for a command passed to orch.exec().
+
+    sudo_prefix() is host passwordless sudo. Container exec already applies
+    that to `docker exec`, and the payload runs inside the container.
+    """
+    if getattr(orch, 'orchestrator_type', None) == 'container':
+        return ''
+    return orch.sudo_prefix()
 
 
 # NOTE: This module assumes the following symbols are available in scope:
@@ -134,11 +153,18 @@ def test_install_agfhc(
     # --rocm-tar uses dpkg-deb direct extraction instead of apt-based dep
     # resolution. Required when /opt/rocm came from a TheRock tarball
     # (libs not tracked by dpkg, apt fails with "rocm-device-libs / hipcc /
-    # lib32gcc-s1 not installable"). Safe on apt-rocm systems too: dpkg-deb
-    # just extracts the bundled debs into /, which is correct either way.
+    # lib32gcc-s1 not installable"). Without -o the debs extract into /.
+    # With -o they extract under the parent of agfhc.path, and that install
+    # does not use sudo (root-owned files break on an NFS home with root squash).
     try:
+        sudo_prefix = _payload_sudo_prefix(orch)
+        orch_type = getattr(orch, 'orchestrator_type', None)
+        if uses_output_dir(orch_type, sudo_prefix, config_dict['path']):
+            if not _output_dir_is_writable(orch, config_dict['path']):
+                update_test_result()
+                return
         out_dict = orch.exec(
-            f"sudo bash -c 'cd {install_dir} && ./install --rocm-tar'",
+            install_command(sudo_prefix, orch_type, install_dir, config_dict['path']),
             timeout=90,
         )
         for node in out_dict.keys():
@@ -154,4 +180,28 @@ def test_install_agfhc(
         log.info("%s", out_dict[node])
         if re.search('No such file', out_dict[node], re.I):
             fail_test(f'Installation of AGFHC failed on node {node}')
+    _check_companion_dirs(orch, config_dict)
     update_test_result()
+
+
+def _output_dir_is_writable(orch, path):
+    """False when ./install -o cannot write the parent of path. Returns early from the install test."""
+    output_dir = rootless_output_dir(path)
+    mkdir_cmd, probe_cmd = writable_dir_commands(output_dir)
+    orch.exec(mkdir_cmd)
+    probe = orch.exec(probe_cmd)
+    writable = True
+    for node, text in probe.items():
+        if not probe_is_writable(text):
+            fail_test(f'AGFHC install directory {output_dir} is not writable on node {node}')
+            writable = False
+    return writable
+
+
+def _check_companion_dirs(orch, config_dict):
+    """Name each companion tool directory that is missing after install."""
+    out_dict = orch.exec(companion_probe_command(config_dict['path'], config_dict.get('env')))
+    for node, text in out_dict.items():
+        for line in str(text).splitlines():
+            if line.startswith('missing '):
+                fail_test(f'{line} on node {node}')

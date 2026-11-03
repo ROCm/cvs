@@ -1,22 +1,25 @@
 .. meta::
-  :description: Choose the CVS test suite config file for your workload
-  :keywords: CVS, configure, config_file, test suite
+  :description: Choose the right CVS test suite config template for your workload type on AMD Instinct GPU clusters: training, inference, health, or RCCL.
+  :keywords: CVS, ROCm, configure, config_file, test suite, AMD Instinct, GPU, AMD, RCCL, training, inference, JSON
 
-*************************
-Choose config template
-*************************
+***************************************************************************
+Choose the right Cluster Validation Suite (CVS) config template for your workload
+***************************************************************************
 
-See :doc:`/reference/configuration-files/index` for field-level schemas.
+For the complete field-by-field schema for each test suite's config file, see :doc:`/reference/configuration-files/index`.
 Use ``cvs config copy <path> --output <dest>`` to copy a template, or ``cvs config list <path>`` to browse templates in a directory.
 
 Platform, health, RCCL, and other diagnostic/network configs use **fixed filenames** (see **Burn-in / Diag** and **Network** below). **Training** and **inference** workloads use the naming patterns in their respective sections.
 
-**Threshold pairs**
+Threshold pairs
+===============
 
 Some training and inference suites ship a matching threshold file for each config: the same basename with ``_threshold`` inserted before ``.json`` (for example ``…_single_threshold.json``). Copy both files and keep them in the same directory. The config references its threshold file via a ``threshold_json`` field.
 
 Burn-in / Diag
 ==============
+
+The following suites are available for burn-in and diagnostic workloads:
 
 .. list-table::
    :header-rows: 1
@@ -29,21 +32,18 @@ Burn-in / Diag
      - ``input/config_file/platform/host_config.json``
      - ``cvs config list platform``
    * - Health
-     - ``input/config_file/health/mi300_health_config.json``
+     - ``input/config_file/health/health_config.json``
      - ``cvs config list health``
    * - Preflight
      - ``input/config_file/preflight/preflight_config.json``
      - ``cvs config list preflight``
 
        `README_preflight_config.md <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/preflight/README_preflight_config.md>`_
-   * - ANC
-     - ``input/config_file/anc/anc_config.json``
-     - ``cvs config list anc``
-
-       `cvs/tests/anc/README.md <https://github.com/ROCm/cvs/blob/main/cvs/tests/anc/README.md>`_
 
 Network
 =======
+
+The following suites are available for network testing:
 
 .. list-table::
    :header-rows: 1
@@ -57,6 +57,8 @@ Network
      - ``cvs config list ibperf``
    * - RCCL
      - ``input/config_file/rccl/rccl_config.json``
+       ``input/config_file/rccl/mi300x_rccl_single_node_config.json`` and
+       ``input/config_file/rccl/mi350x_rccl_single_node_config.json`` (single-node guide bars)
      - ``cvs config list rccl``
    * - MORI
      - ``input/config_file/mori/mi35x_mori_config.json``
@@ -86,7 +88,8 @@ Training workload templates use:
    * - ``{mode}``
      - Topology — ``single`` (one node) or ``distributed`` (multi-node).
 
-**Example**
+Example filenames
+-----------------
 
 .. code:: text
 
@@ -96,7 +99,8 @@ Training workload templates use:
 
 ``mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json`` → ``mi3xx`` · ``jaxmaxtext`` · ``llama-3.3-70b`` · ``distributed``.
 
-**Suites**
+Available suites
+----------------
 
 .. list-table::
    :header-rows: 1
@@ -121,13 +125,13 @@ Training workload templates use:
 
        :doc:`Schema reference </reference/configuration-files/training/torchtitan>`
    * - Aorta
-     - ``input/config_file/aorta/aorta_benchmark.yaml``
-     - ``cvs config list aorta``
+     - ``input/config_file/benchmark/aorta/mi3xx_aorta_profile_overlap_2gpu_{single|distributed}.json``
+     - ``cvs config list benchmark/aorta``
 
 Inference
 =========
 
-Inference templates use **one of two** filename patterns:
+Inference templates use one of two filename patterns:
 
 .. code:: text
 
@@ -153,7 +157,8 @@ Use the second form when precision (``fp8``, ``mxfp4``, ``bf16``, and similar) i
    * - ``{mode}``
      - Topology or workload shape — ``single``, ``distributed``, or ``disaggregated`` (SGLang).
 
-**Examples**
+Example filenames
+-----------------
 
 Without ``{precision}``:
 
@@ -175,7 +180,8 @@ With ``{precision}``:
 
 ``mi3xx_vllm_llama33-70b_fp8_single.json`` → ``mi3xx`` · ``vllm`` · ``llama33-70b`` · ``fp8`` · ``single``.
 
-**Suites**
+Available suites
+----------------
 
 .. list-table::
    :header-rows: 1
@@ -185,7 +191,7 @@ With ``{precision}``:
      - Config location
      - List / README
    * - ATOM
-     - ``input/config_file/inference/atom/`` — ``mi{gpu}_atom_{model}_{precision}_{mode}.json`` + ``mi{gpu}_atom_{model}_{precision}_{mode}_threshold.json``
+     - ``input/config_file/inference/atom/`` — ``mi3xx_atom_…`` and ``mi355x_atom_…`` configs. ``mi3xx_*`` configs pair with ``mi325x_*_threshold.json`` siblings; ``mi355x_*`` configs pair with ``mi355x_*_threshold.json``. Native Qwen thresholds omit ``_single`` in the filename.
      - ``cvs config list inference/atom``
 
        :doc:`How to run </how-to/test-suites/inference/atom>` · :doc:`Config reference </reference/configuration-files/inference/atom>`

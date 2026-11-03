@@ -12,9 +12,22 @@ import json
 
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
-from cvs.lib import globals
+from cvs.lib import agfhc_rundeck, globals
+from cvs.lib.agfhc_cmd import agfhc_command
+from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 
 log = globals.log
+
+
+def _payload_sudo_prefix(orch):
+    """Sudo for a command passed to orch.exec().
+
+    sudo_prefix() is host passwordless sudo. Container exec already applies
+    that to `docker exec`, and the payload runs inside the container.
+    """
+    if getattr(orch, 'orchestrator_type', None) == 'container':
+        return ''
+    return orch.sudo_prefix()
 
 
 # NOTE: This module assumes the following symbols are available in scope:
@@ -87,6 +100,51 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
+@pytest.fixture(scope="module")
+def lifecycle():
+    """Wall-clock of each AGFHC recipe, bound as the deck lifecycle source."""
+    return HealthLifecycle()
+
+
+@pytest.fixture(scope="module")
+def agfhc_res_dict():
+    """
+    Module-scoped structured AGFHC results for the Run Deck status matrix.
+
+    Each recipe merges its per-node verdict into this dict. The agfhc_cvs
+    profile names this fixture in sources.results, so session binding captures
+    it at module teardown.
+    """
+    return {}
+
+
+def _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, group, out_dict):
+    """Best-effort: a reporting problem must not change the AGFHC pass/fail."""
+    if agfhc_res_dict is None:
+        return
+    try:
+        meta = agfhc_rundeck.make_meta(cluster_dict, 'agfhc_cvs')
+        agfhc_rundeck.record_outputs(agfhc_res_dict, group, out_dict, meta=meta)
+    except Exception as exc:
+        log.warning("AGFHC '%s': could not capture Run Deck results: %s", group, exc)
+
+
+def _build_agfhc_cmd(orch, path, args, env=None):
+    """Build an AGFHC CLI invocation with Spur/container-safe sudo."""
+    return agfhc_command(_payload_sudo_prefix(orch), path, args, env)
+
+
+def _run_agfhc(orch, config_dict, args, timeout, stage, agfhc_res_dict, cluster_dict, lifecycle):
+    path = config_dict['path']
+    cmd = _build_agfhc_cmd(orch, path, args, config_dict.get('env'))
+    with timed_stage(lifecycle, stage):
+        out_dict = orch.exec(cmd, timeout=timeout)
+    scan_agfc_results(out_dict)
+    print_test_output(log, out_dict)
+    _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, stage, out_dict)
+    update_test_result()
+
+
 def scan_agfc_results(out_dict):
     """
     Parse AGFHC run outputs from all nodes and fail on unexpected patterns.
@@ -110,6 +168,9 @@ def scan_agfc_results(out_dict):
 def test_agfhc_hbm(
     orch,
     config_dict,
+    agfhc_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     """
     Run AGFHC HBM test for a duration specified in config (HH:MM:SS).
@@ -127,19 +188,27 @@ def test_agfhc_hbm(
     """
     globals.error_list = []
     log.info('Testcase Run HBM Test')
-    path = config_dict['path']
     duration = convert_hms_to_secs(config_dict['hbm_test_duration'])
     (hours, mins, secs) = config_dict['hbm_test_duration'].split(":")
-    out_dict = orch.exec(f'sudo {path}/agfhc -t hbm:d={hours}h{mins}m{secs}s --simple-output', timeout=duration + 120)
-    scan_agfc_results(out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
+    _run_agfhc(
+        orch,
+        config_dict,
+        f'-t hbm:d={hours}h{mins}m{secs}s --simple-output',
+        duration + 120,
+        'hbm',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
+    )
 
 
 # 2 hrs
 def test_agfhc_hbm1_lvl5(
     orch,
     config_dict,
+    agfhc_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     """
     Run AGFHC HBM1 level 5 recipe.
@@ -151,17 +220,25 @@ def test_agfhc_hbm1_lvl5(
     """
     globals.error_list = []
     log.info('Testcase Run HBM1 Test - hbm_lvl5')
-    path = config_dict['path']
-    out_dict = orch.exec(f'sudo {path}/agfhc -s hbm1 -r hbm_lvl5', timeout=(60 * 300))
-    scan_agfc_results(out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
+    _run_agfhc(
+        orch,
+        config_dict,
+        '-s hbm1 -r hbm_lvl5',
+        60 * 300,
+        'hbm1_lvl5',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
+    )
 
 
 # 2 hrs
 def test_agfhc_hbm2_lvl5(
     orch,
     config_dict,
+    agfhc_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     """
     Run AGFHC HBM2 level 5 recipe:
@@ -170,17 +247,25 @@ def test_agfhc_hbm2_lvl5(
     """
     globals.error_list = []
     log.info('Testcase Run HBM2 Test - hbm_lvl5')
-    path = config_dict['path']
-    out_dict = orch.exec(f'sudo {path}/agfhc -s hbm2 -r hbm_lvl5', timeout=(60 * 300))
-    scan_agfc_results(out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
+    _run_agfhc(
+        orch,
+        config_dict,
+        '-s hbm2 -r hbm_lvl5',
+        60 * 300,
+        'hbm2_lvl5',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
+    )
 
 
 # 30 min
 def test_agfhc_hbm3_lvl3(
     orch,
     config_dict,
+    agfhc_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     """
     Run AGFHC HBM3 level 3 recipe:
@@ -189,16 +274,24 @@ def test_agfhc_hbm3_lvl3(
     """
     globals.error_list = []
     log.info('Testcase Run HBM3 Test - hbm_lvl3')
-    path = config_dict['path']
-    out_dict = orch.exec(f'sudo {path}/agfhc -s hbm3 -r hbm_lvl3', timeout=(60 * 100))
-    scan_agfc_results(out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
+    _run_agfhc(
+        orch,
+        config_dict,
+        '-s hbm3 -r hbm_lvl3',
+        60 * 100,
+        'hbm3_lvl3',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
+    )
 
 
 def test_agfhc_dma_all_lvl1(
     orch,
     config_dict,
+    agfhc_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     """
     Run AGFHC aggregate level 1 recipe:
@@ -207,16 +300,24 @@ def test_agfhc_dma_all_lvl1(
     """
     globals.error_list = []
     log.info('Testcase Run all_lvl1')
-    path = config_dict['path']
-    out_dict = orch.exec(f'sudo {path}/agfhc -r all_lvl1', timeout=(60 * 30))
-    scan_agfc_results(out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
+    _run_agfhc(
+        orch,
+        config_dict,
+        '-r all_lvl1',
+        60 * 30,
+        'all_lvl1',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
+    )
 
 
 def test_agfhc_dma_lvl1(
     orch,
     config_dict,
+    agfhc_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     """
     Run AGFHC DMA level 1 recipe:
@@ -225,16 +326,24 @@ def test_agfhc_dma_lvl1(
     """
     globals.error_list = []
     log.info('Testcase Run DMA lvl1')
-    path = config_dict['path']
-    out_dict = orch.exec(f'sudo {path}/agfhc -r dma_lvl1', timeout=(60 * 30))
-    scan_agfc_results(out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
+    _run_agfhc(
+        orch,
+        config_dict,
+        '-r dma_lvl1',
+        60 * 30,
+        'dma_lvl1',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
+    )
 
 
 def test_agfhc_gfx_lvl1(
     orch,
     config_dict,
+    agfhc_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     """
     Run AGFHC GFX level 1 recipe:
@@ -243,16 +352,24 @@ def test_agfhc_gfx_lvl1(
     """
     globals.error_list = []
     log.info('Testcase Run GFX lvl1')
-    path = config_dict['path']
-    out_dict = orch.exec(f'sudo {path}/agfhc -r gfx_lvl1', timeout=(60 * 60))
-    scan_agfc_results(out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
+    _run_agfhc(
+        orch,
+        config_dict,
+        '-r gfx_lvl1',
+        60 * 60,
+        'gfx_lvl1',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
+    )
 
 
 def test_agfhc_pcie_lvl1(
     orch,
     config_dict,
+    agfhc_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     """
     Pytest: Run the AGFHC PCIe level-1 recipe on all nodes and validate results.
@@ -264,7 +381,7 @@ def test_agfhc_pcie_lvl1(
 
     Behavior:
       - Resets the global error accumulator (globals.error_list) for a clean test run.
-      - Executes: sudo <path>/agfhc -r pcie_lvl1 with a 60-minute timeout.
+      - Runs agfhc -r pcie_lvl1 through the orchestrator (60-minute timeout). sudo is added only when passwordless sudo is available.
       - Scans output for success (and absence of error patterns) via scan_agfc_results.
       - Prints per-node output and updates the aggregated test result.
 
@@ -275,16 +392,24 @@ def test_agfhc_pcie_lvl1(
     """
     globals.error_list = []
     log.info('Testcase Run PCIe lvl1')
-    path = config_dict['path']
-    out_dict = orch.exec(f'sudo {path}/agfhc -r pcie_lvl1', timeout=(60 * 60))
-    scan_agfc_results(out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
+    _run_agfhc(
+        orch,
+        config_dict,
+        '-r pcie_lvl1',
+        60 * 60,
+        'pcie_lvl1',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
+    )
 
 
 def test_agfhc_pcie_lvl3(
     orch,
     config_dict,
+    agfhc_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     """
     Pytest: Run the AGFHC PCIe level-3 recipe on all nodes and validate results.
@@ -295,22 +420,30 @@ def test_agfhc_pcie_lvl3(
 
     Behavior:
       - Clears the error list for this test.
-      - Runs: sudo <path>/agfhc -r pcie_lvl3 (60-minute timeout).
+      - Runs agfhc -r pcie_lvl3 through the orchestrator (60-minute timeout). sudo is added only when passwordless sudo is available.
       - Checks for AGFHC_SUCCESS and error signatures.
       - Prints outputs per node and updates overall test status.
     """
     globals.error_list = []
     log.info('Testcase Run PCIe lvl3')
-    path = config_dict['path']
-    out_dict = orch.exec(f'sudo {path}/agfhc -r pcie_lvl3', timeout=(60 * 60))
-    scan_agfc_results(out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
+    _run_agfhc(
+        orch,
+        config_dict,
+        '-r pcie_lvl3',
+        60 * 60,
+        'pcie_lvl3',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
+    )
 
 
 def test_agfhc_xgmi_lvl1(
     orch,
     config_dict,
+    agfhc_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     """
     Pytest: Run the AGFHC XGMI level-1 recipe and validate outputs.
@@ -321,22 +454,30 @@ def test_agfhc_xgmi_lvl1(
 
     Behavior:
       - Clears global error list.
-      - Runs: sudo <path>/agfhc -r xgmi_lvl1 (90-minute timeout).
+      - Runs agfhc -r xgmi_lvl1 through the orchestrator (90-minute timeout). sudo is added only when passwordless sudo is available.
       - Validates success markers and absence of failure patterns.
       - Prints outputs, then updates aggregated test result.
     """
     globals.error_list = []
     log.info('Testcase Run XGMI lvl1')
-    path = config_dict['path']
-    out_dict = orch.exec(f'sudo {path}/agfhc -r xgmi_lvl1', timeout=(60 * 90))
-    scan_agfc_results(out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
+    _run_agfhc(
+        orch,
+        config_dict,
+        '-r xgmi_lvl1',
+        60 * 90,
+        'xgmi_lvl1',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
+    )
 
 
 def test_agfhc_all_perf(
     orch,
     config_dict,
+    agfhc_res_dict,
+    cluster_dict,
+    lifecycle,
 ):
     """
     Pytest: Run the AGFHC 'all_perf' performance recipe across nodes.
@@ -347,17 +488,22 @@ def test_agfhc_all_perf(
 
     Behavior:
       - Resets error accumulator.
-      - Runs: sudo <path>/agfhc -r all_perf (90-minute timeout).
+      - Runs agfhc -r all_perf through the orchestrator (90-minute timeout). sudo is added only when passwordless sudo is available.
       - Scans outputs to ensure success and no fatal patterns.
       - Prints outputs and updates the aggregated test result.
     """
     globals.error_list = []
     log.info('Testcase Run all_perf')
-    path = config_dict['path']
-    out_dict = orch.exec(f'sudo {path}/agfhc -r all_perf', timeout=(60 * 90))
-    scan_agfc_results(out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
+    _run_agfhc(
+        orch,
+        config_dict,
+        '-r all_perf',
+        60 * 90,
+        'all_perf',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
+    )
 
 
 def test_agfhc_all_lvl5(
@@ -372,13 +518,19 @@ def test_agfhc_all_lvl5(
       config_dict (dict): Must include 'path'.
 
     Behavior:
-      - Runs: sudo <path>/agfhc --recipe-info all_lvl5 (260-minute timeout).
+      - Runs agfhc --recipe-info all_lvl5 through the orchestrator (260-minute timeout). sudo is added only when passwordless sudo is available.
       - Scans outputs for success/absence of error markers.
       - Prints outputs and updates the test result.
+
+    --recipe-info prints the catalog and does not execute the recipe, so this
+    test stays out of the Run Deck results and lifecycle.
     """
     log.info('Testcase all lvl5')
     path = config_dict['path']
-    out_dict = orch.exec(f'sudo {path}/agfhc --recipe-info all_lvl5', timeout=(60 * 260))
+    out_dict = orch.exec(
+        _build_agfhc_cmd(orch, path, '--recipe-info all_lvl5', config_dict.get('env')),
+        timeout=(60 * 260),
+    )
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()

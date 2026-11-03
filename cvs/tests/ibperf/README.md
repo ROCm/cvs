@@ -1,24 +1,11 @@
-IB (InfiniBand) perf and latency tests are tools used to measure network performance, with perf tests  measuring throughput (bandwidth) and latency tests measuring delay. Perf tests, such as ib_write_bw, evaluate the maximum data transfer rate under different message sizes, while latency tests, like ib_send_lat, measure the time it takes for a message to travel between two nodes, often reporting results like minimum, median, and maximum latency. 
+# IB Perf (perftest) tests
 
-Following are the currently supported test suites
+`install_ibperf_tools` builds perftest with ROCm on the head node. `ib_perf_bw_test` runs the perftest bandwidth (`ib_write_bw`, `ib_read_bw`, `ib_send_bw`) and latency (`ib_write_lat`, `ib_read_lat`, `ib_send_lat`) tests between node pairs, one process per GPU and its PCIe-local NIC.
 
-1. IB Bandwidth 
-2. IB Latency
-
-
-# How to run the tests
-
-This Pytest script can be run in the following fashion (for the details on arguments and their purpose, please refer the main README under the CVS parent folder
-
-In the config file, cvs/input/config_file/ibperf/ibperf_config.json, change the value of parameter "install_dir": "/home/{user-id}/" to the desired location. Else {user-id} will be resolved as the current username at runtime.
-
-
+```bash
+cvs config copy ibperf/ibperf_config.json --output ~/cvs_workspace/ibperf/ibperf_config.json
+cvs run install_ibperf_tools --cluster_file ~/cvs_workspace/cluster.json --config_file ~/cvs_workspace/ibperf/ibperf_config.json
+cvs run ib_perf_bw_test --cluster_file ~/cvs_workspace/cluster.json --config_file ~/cvs_workspace/ibperf/ibperf_config.json
 ```
-(myenv) [user@host]~/cvs:(main)$
-(myenv) [user@host]~/cvs:(main)$pwd
-/home/user/cvs/cvs
-(myenv) [user@host]~/cvs:(main)$pytest -vvv --log-file=/tmp/test.log -s ./tests/ibperf/install_ibperf_tools.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/ibperf/ibperf_config.json --html=/var/www/html/cvs/ib.html --capture=tee-sys --self-contained-html
 
-(myenv) [user@host]~/cvs:(main)$pytest -vvv --log-file=/tmp/test.log -s ./tests/ibperf/ib_perf_bw_test.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/ibperf/ibperf_config.json --html=/var/www/html/cvs/ib.html --capture=tee-sys --self-contained-html
-
-```
+Replace `rocm_dir`'s `<changeme>` before running. Prerequisites, pairing, results and troubleshooting are on the [IB Perf how-to](https://rocm.docs.amd.com/projects/cvs/en/latest/how-to/test-suites/network/ib-perf.html). Every config field is in the [IB Perf configuration reference](https://rocm.docs.amd.com/projects/cvs/en/latest/reference/configuration-files/network/ib.html).

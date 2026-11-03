@@ -10,11 +10,12 @@ The preflight checks system validates essential cluster health before running pe
 2. **MI4XX Scale-up Fabric Admission** - Optionally validates AIFM/AFM/vPOD membership, station masks, and IFoE port state
 3. **IFoE L2 Connectivity (AIMVT-180; opt-in)** - Optionally runs strict `afmctl test ping` coverage before TransferBench and RDMA
 4. **TransferBench** - Optionally validates the IFoE data path per node or with a multi-rank cluster run
-5. **Node Smoke Tier 1 (opt-in)** - Per-node host / GPU / RDMA roll-call via `primus-cli direct -- node_smoke`
-6. **Node Smoke Tier 2 (optional)** - Per-node perf sanity when `node_smoke_tier1.tier2_perf` is enabled (GEMM TFLOPS, HBM bandwidth, local RCCL)
-7. **Node Smoke Tier 3 (opt-in)** - Cluster-wide Host / GPU / Network inventory via `primus-cli direct -- preflight --host --gpu --network`
-8. **GID and Interface Consistency** - Ensures configured RDMA interfaces and GID entries are present and consistent
-9. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
+5. **Node Smoke Tier 1** - Per-node host / GPU / RDMA roll-call via `primus-cli direct -- node_smoke`
+6. **Node Smoke Tier 2** - Per-node perf sanity while `node_smoke_tier1.tier2_perf` is enabled (GEMM TFLOPS, HBM bandwidth, local RCCL)
+7. **Node Smoke Tier 3** - Cluster-wide Host / GPU / Network inventory via `primus-cli direct -- preflight --host --gpu --network`
+8. **GID and Interface Consistency** - Ensures configured RDMA interfaces have populated GIDs of the expected type
+9. **RDMA MTU** - Verifies the active MTU on configured RDMA interfaces, and the netdev MTU (jumbo frames) on RoCE ports
+10. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
 ## Configuration File Structure
 
@@ -55,15 +56,15 @@ The preflight configuration file follows this structure:
       }
     },
     "node_smoke_tier1": {
-      "connectivity_mode": "skip",
+      "connectivity_mode": "run",
       "auto_setup": true,
       "primus_dir": "/home/{user-id}/INSTALL/Primus",
       "venv_activate": "/home/{user-id}/envs/preflight/.venv/bin/activate",
       "gpus_per_node": 8,
-      "tier2_perf": false
+      "tier2_perf": true
     },
     "node_smoke_tier3": {
-      "connectivity_mode": "skip"
+      "connectivity_mode": "run"
     },
     "reporting": {
       "generate_html_report": true,
@@ -91,8 +92,8 @@ preflight/
 │   └── ifoe/                  # MI4XX scale-up fabric checks
 │       ├── l2ping/            # Strict IFoE L2 connectivity gate
 │       └── transferbench/     # IFoE data-path validation
-├── node_smoke_tier1/          # Node Smoke Tier 1/2 per-node JSON artifacts (opt-in)
-├── node_smoke_tier3/          # Node Smoke Tier 3 cluster markdown report (opt-in)
+├── node_smoke_tier1/          # Node Smoke Tier 1/2 per-node JSON artifacts
+├── node_smoke_tier3/          # Node Smoke Tier 3 cluster markdown report
 ├── reporting/                 # Output and report generation
 └── debug/                     # Debug and troubleshooting options
 ```
@@ -115,49 +116,40 @@ Preflight reports **Node Smoke Tier 1**, **Tier 2**, and **Tier 3** as separate 
 console summary and HTML report. Each tier appends a test-count suffix when enabled:
 
 ```
-✅ Node Smoke Tier 1: PASS - 2/2 nodes passed Node Smoke Tier 1; 39 tests run per node
+✅ Node Smoke Tier 1: PASS - 2/2 nodes passed Node Smoke Tier 1; 15 tests run per node
 ✅ Node Smoke Tier 2: PASS - 2/2 nodes passed Node Smoke Tier 2; 17 tests run per node
-✅ Node Smoke Tier 3: PASS - 2/2 nodes passed Node Smoke Tier 3; 27 tests run cluster-wide
+✅ Node Smoke Tier 3: PASS - 2/2 nodes passed Node Smoke Tier 3; 3 tests run cluster-wide
 ```
 
-Counts follow the validation-tracker catalog in `cvs/lib/preflight/node_smoke_counts.py`. Tier 1
-and Tier 2 counts are **per node** (not multiplied across the cluster in the summary). Tier 3 is
-**cluster-wide** (one catalog run, not × node count).
+The suffix is the number of checks Primus actually reported (`cvs/lib/preflight/node_smoke_counts.py`).
+A configured slot or a finding-map name is not counted, and is not marked Passed, unless the
+payload contains that result. Tier 1 and Tier 2 counts are **per node** (not multiplied across
+the cluster in the summary). Tier 3 is **cluster-wide**.
 
-### Tier 1 — per node (39 on an 8-GPU node)
+### Tier 1 — per node
 
-Formula: `4 × gpus_per_node + 7` node operational collectors.
+Pytest collects one row per configured GPU plus these 7 node collectors: `gpu_processes`,
+`nics`, `host_limits`, `gpu_low_level`, `xgmi`, `tooling`, `gpu_visibility`. On an 8-GPU node
+that reports every GPU verdict and every collector, the summary says 15 tests run per node.
 
-| Category | Count (8 GPU) | Notes |
-|----------|---------------|-------|
-| Per-GPU subprocess checks | 32 | 4 checks × 8 GPUs |
-| Node operational collectors | 7 | `gpu_processes`, `nics`, `host_limits`, `gpu_low_level`, `xgmi`, `tooling`, `gpu_visibility` |
+A GPU row passes only when that `per_gpu` entry has its own verdict. A collector row passes
+only when its key is present. Inventory findings (`gpu_info`, `host_info`, `network_info`),
+fingerprint, clock, and dmesg are not rows.
 
-Inventory-style findings (`gpu_info`, `host_info`, `network_info`), fingerprint, clock, and dmesg
-are excluded from the Tier 1 count (they are drift/inventory collectors, not operational gates).
+### Tier 2 — per node
 
-### Tier 2 — per node (17 on an 8-GPU node)
+Runs by default (`node_smoke_tier1.tier2_perf: true`). Pytest collects two rows per configured
+GPU (large GEMM TFLOPS and HBM bandwidth) plus local RCCL when the node has more than one GPU.
+A row passes only when that metric or an explicit verdict is in the payload. An 8-GPU node
+that reports both metrics and RCCL shows 17 tests run per node.
 
-Enabled with `node_smoke_tier1.tier2_perf: true`. Formula: `2 × gpus_per_node + 1` (RCCL omitted when `gpus_per_node < 2`).
+### Tier 3 — cluster-wide
 
-| Check | Count (8 GPU) |
-|-------|---------------|
-| Large GEMM TFLOPS floor (8192³ bf16) | 8 |
-| HBM device-to-device bandwidth | 8 |
-| Local multi-GPU RCCL all-reduce | 1 |
-
-### Tier 3 — cluster-wide (27 checks)
-
-Runs `preflight --host --gpu --network` once across the cluster. CVS counts **27 individual
-collector checks** from the validation tracker, not the **13** aggregated markdown report
-sections Primus emits (for example, one `## CPU` table covers all hosts but the tracker still
-lists CPU as its own check).
-
-| Group (`--flag`) | Checks |
-|------------------|--------|
-| Host (`--host`) | Host identity (×2), CPU, Memory (×2), NUMA, PCIe inventory, PCIe link status (×3) — **10** |
-| GPU (`--gpu`) | GPU enumeration, identity, occupancy, GPU/NUMA mapping, topology (×2), perf sanity (×2) — **8** |
-| Network (`--network`) | Network summary, distributed intent, distributed env, network path (×2), InfiniBand/RDMA, RCCL/NCCL config (×2), runtime process group — **9** |
+Runs `preflight --host --gpu --network` once across the cluster. Pytest collects three rows:
+host, GPU, and network. A group passes only when Primus names it in `checks=` and the node
+status is pass. A FAIL finding fails the group it names (for example a CPU finding fails the
+host row). The other groups stay Skipped rather than Passed. The finding map in
+`node_smoke_counts.py` is only used to attribute that text; it is not 27 passed checks.
 
 ## Configuration Parameters
 
@@ -214,18 +206,36 @@ All parameters below are optional and have sensible defaults. The sample configu
 - **`connectivity_mode`** (default: "basic")
   - **"basic"**: Test adjacent node pairs (fast, ~14% coverage for 8 nodes)
   - **"full_mesh"**: Test all possible node pairs (comprehensive, 100% coverage)
-  - **"skip"**: Skip RDMA interface presence, GID validation, and pairwise connectivity
+  - **"skip"**: Skip RDMA interface presence, GID and MTU validation, and pairwise connectivity
 
 - **`gid_index`** (default: "3")
-  - GID index to check on all configured RDMA interfaces
-  - Typically "3" for RoCE (RDMA over Converged Ethernet)
-  - Must be a valid GID index for your InfiniBand/RoCE setup
+  - GID index to check on all configured RDMA interfaces; on RoCE, choose a RoCE v2 GID, preferably IPv4-mapped
+  - Must be an explicit non-negative integer; `"auto"` is supported by ibperf only, and any other value fails the GID check on every node
+
+- **`gid_type`** (default: "RoCE v2")
+  - Expected sysfs type at `gid_attrs/types/<gid_index>` on each interface; use `"any"` to disable type validation
+  - Type validation is skipped for InfiniBand link layers
 
 - **`interfaces`** (default: `["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]`)
   - List of RDMA device names that should be present on all cluster nodes
   - Examples:
     - `["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]` - Standard 4-interface setup
     - `["mlx5_0", "mlx5_1"]` - Mellanox 2-interface setup
+
+- **`mtu_check`** (default: `true`)
+  - Check the active MTU of each configured RDMA port, and the jumbo-frame netdev MTU on RoCE ports, when RDMA mode is enabled
+  - The link layer comes from `ibv_devinfo` (falling back to sysfs). InfiniBand ports are checked on active MTU only: they have no Ethernet netdev, and an IPoIB netdev such as `ib0` (often MTU 2044) does not limit the verbs MTU
+  - Port 1 of each device is checked, as in the GID and connectivity checks
+  - MTU failures are reported without pruning nodes from connectivity testing
+
+- **`min_netdev_mtu`** (default: `4200`)
+  - Minimum Ethernet netdev MTU on RoCE ports; 4200 permits a 4096-byte RoCE active MTU. Not applied to InfiniBand ports
+  - Switches along the path must support the same jumbo-frame MTU; use `9000` for sites that require it
+  - Set to `0` to disable this threshold
+
+- **`min_active_mtu`** (default: `4096`)
+  - Minimum `active_mtu` reported by `ibv_devinfo`, on RoCE and InfiniBand ports; on RoCE, 1024 usually indicates a 1500-byte netdev MTU
+  - Valid values are `0`, `256`, `512`, `1024`, `2048`, and `4096`; `0` disables this threshold
 
 - **`ibv_test_timeout`** (default: 90)
   - Timeout in seconds for each ibv_rc_pingpong connectivity test
@@ -298,6 +308,31 @@ They now follow this fixed policy:
   - Enables MI4XX-only AIFM/AFM/vPOD, station-mask, and IFoE port admission checks
   - Set to `true` only on MI4XX systems; it remains disabled for MI3XX systems
   - Requires `node_check.enabled: true`
+- **`min_up_ports_per_gpu`** (default: `2`)
+  - Minimum enabled IFoE ports each GPU must report in its station mask; one enabled station carries two ports
+  - The default fails a node whose scale-up fabric is un-provisioned (no enabled stations)
+  - Set to `0` only for a diagnostic run that should admit an un-provisioned fabric
+  - Applies only when `fabric_checks: true`
+
+**Degraded-fabric warning.** A node is admitted when every GPU meets the
+configured `min_up_ports_per_gpu` floor and passes the other fabric checks. A GPU
+whose enabled IFoE ports fall **below** the floor fails the node (at the default
+floor of `2`, that is any fully-dark mask; raise the floor to require more). A GPU
+that meets the floor but has **fewer than all** stations enabled still **passes**
+(it is fit for processing), and preflight emits a prominent warning in the log and
+a banner in the HTML report: local GPU compute is unaffected, yet scale-up data
+transfer (multi-GPU collectives) runs below full-fabric throughput. With the
+diagnostic floor of `0`, a fully-dark mask is admitted but still raises that same
+degraded-fabric warning rather than passing silently.
+
+- **`reject_partial_stations`** (default: `true`) — Fail when station-mask nibbles indicate partial stations
+- **`allow_disabled_stations`** (default: `true`) — Allow masks that intentionally disable ports
+- **`expected_station_masks`** (default: `{}`) — Map of GPU BDF to expected 18-nibble station masks
+- **`require_uniform_station_mask`** (default: `false`) — Require identical masks across GPUs on a node
+- **`agent_process_name`** (default: `"inb-node-agent"`) — AIFM in-band node agent process name to verify
+
+`min_up_ports_per_gpu` may also be set under `node_check` when `connectivity_check.ifoe` does not
+define it; IFoE values take precedence when both are present.
 
 ##### L2 ping (`connectivity_check.ifoe.l2ping`)
 
@@ -332,7 +367,7 @@ port and validates per-port and aggregate summary accounting.
 - **`warmup_iterations`** (default: `0`)
   - Warmup iterations performed before validation
 
-#### Node Smoke Tier 1 (`node_smoke_tier1`) — opt-in
+#### Node Smoke Tier 1 (`node_smoke_tier1`)
 
 Runs Node Smoke Tier 1 (Primus `node_smoke`) on each reachable node via `primus-cli direct --single -- node_smoke`
 over parallel SSH (no Slurm required). Reference: Primus `docs/02-user-guide/node-smoke-test-instruction.md`
@@ -340,7 +375,7 @@ on branch `dev/preflight-direct-test`.
 
 Legacy config key `node_smoke` is accepted as an alias for `node_smoke_tier1`.
 
-- **`connectivity_mode`** (default: `"skip"`)
+- **`connectivity_mode`** (default: `"run"`)
   - `"run"` — execute Node Smoke Tier 1 on every reachable node
   - `"skip"` — preflight records a SKIPPED result and does not invoke Primus
 - **`auto_setup`** (default: `true`)
@@ -353,8 +388,10 @@ Legacy config key `node_smoke` is accepted as an alias for `node_smoke_tier1`.
   - Leader node clones/installs on shared NFS home; other nodes wait (recommended for shared home)
 - **`pip_install_mode`** (default: `"minimal"`)
   - `"minimal"` — ROCm PyTorch only; `"requirements"` — `pip install -r requirements.txt`; `"skip"` — venv only
-- **`torch_pip_index_url`** (default: `"https://download.pytorch.org/whl/rocm6.2"`)
+- **`torch_pip_index_url`** (default: `"https://download.pytorch.org/whl/rocm7.2"`)
   - PyTorch wheel index for minimal install; match your ROCm version
+  - auto_setup reinstalls an importable torch whose HIP major.minor does not match `rocm<major>.<minor>` in this URL
+  - An older wheel that imports, then crashes on the first kernel, is replaced. An index URL without that token reinstalls only when torch does not import.
 - **`primus_git_url`** (default: `"https://github.com/AMD-AIG-AIMA/Primus.git"`)
 - **`primus_git_branch`** (default: `"dev/preflight-direct-test"`)
 - **`primus_git_recurse_submodules`** (default: `false`)
@@ -380,7 +417,7 @@ Legacy config key `node_smoke` is accepted as an alias for `node_smoke_tier1`.
 - **`ssh_timeout`** (default: `300`)
 - **`extra_args`** (default: `[]`) — additional flags forwarded to primus-cli
 
-#### Node Smoke Tier 2 perf sanity (`node_smoke_tier1.tier2_perf`) — optional
+#### Node Smoke Tier 2 perf sanity (`node_smoke_tier1.tier2_perf`)
 
 When `tier2_perf` is `true`, preflight forwards `--tier2-perf` to Primus `node_smoke`, enabling all three Tier 2 checks on each node (same as `launch_nodesmoke_ssh.sh -- --tier2-perf`):
 
@@ -390,7 +427,7 @@ When `tier2_perf` is `true`, preflight forwards `--tier2-perf` to Primus `node_s
 
 Set `NCCL_IB_HCA`, `NCCL_SOCKET_IFNAME`, and `NCCL_IB_GID_INDEX` (via `node_smoke_tier1` config or cluster `env_vars`) before enabling Node Smoke Tier 2 — RCCL init enumerates every transport even though the all-reduce is local-only.
 
-- **`tier2_perf`** (default: `false`) — master switch; maps to `--tier2-perf`
+- **`tier2_perf`** (default: `true`) — master switch; maps to `--tier2-perf`
 - **`gemm_tflops_min`** (default: `600`) — `--gemm-tflops-min`
 - **`hbm_gbs_min`** (default: `2000`) — `--hbm-gbs-min`
 - **`rccl_gbs_min`** (default: `100`) — `--rccl-gbs-min`
@@ -399,11 +436,11 @@ Set `NCCL_IB_HCA`, `NCCL_SOCKET_IFNAME`, and `NCCL_IB_GID_INDEX` (via `node_smok
 
 Tier 2 runs need a longer SSH budget; when `tier2_perf` is enabled the effective timeout is at least 600 seconds even if `ssh_timeout` is lower.
 
-#### Node Smoke Tier 3 (`node_smoke_tier3`) — opt-in
+#### Node Smoke Tier 3 (`node_smoke_tier3`)
 
-Runs Node Smoke Tier 3 (`primus-cli direct -- preflight --host --gpu --network`) across the cluster with a distributed rendezvous. Independent of Tier 1 — enabling `node_smoke_tier1` does not enable Tier 3.
+Runs Node Smoke Tier 3 (`primus-cli direct -- preflight --host --gpu --network`) across the cluster with a distributed rendezvous. Independent of Tier 1 — disabling `node_smoke_tier1` does not disable Tier 3.
 
-- **`connectivity_mode`** (default: `"skip"`) — `"run"` or `"skip"`
+- **`connectivity_mode`** (default: `"run"`) — `"run"` or `"skip"`
 - **`auto_setup`** (default: `true`) — clone/update Primus and create venv before Tier 3 (falls back to Tier 1 paths)
 - **`primus_dir`** / **`venv_activate`** — optional; empty inherits from `node_smoke_tier1`
 - **`gpus_per_node`** (default: `8`) — GPUs per node for torchrun
@@ -645,6 +682,7 @@ cvs run preflight_checks \
    - Ensure RDMA drivers are loaded: `lsmod | grep rdma`
    - Check interface status: `rdma link show`
    - Verify GID entries: `cat /sys/class/infiniband/*/ports/1/gids/3`
+   - Verify GID types: `cat /sys/class/infiniband/*/ports/1/gid_attrs/types/3`
 
 2. **RDMA Connectivity Failures**
    - Check firewall settings: `sudo ufw status`
@@ -679,14 +717,14 @@ cvs run preflight_checks \
    - Reduce to `scope: "node"` to isolate a failing host before retrying cluster scope
 
 8. **Node Smoke Failures**
-   - Set `node_smoke_tier1.connectivity_mode` to `"run"` (default is `"skip"`)
+   - Node Smoke runs by default; set `node_smoke_tier1.connectivity_mode` to `"skip"` to disable it
    - Verify `primus_dir` and `venv_activate`, or enable `auto_setup: true`
    - On shared NFS home, use `shared_install: true` to avoid parallel clone races
-   - Match `torch_pip_index_url` to your ROCm version
+   - Match `torch_pip_index_url` to your ROCm version. auto_setup replaces an importable torch built for a different HIP/ROCm than that index
    - Review per-node fail reasons in the preflight HTML report
 
 9. **Node Smoke Tier 3 Failures**
-   - Set `node_smoke_tier3.connectivity_mode` to `"run"` (independent of Tier 1)
+   - Tier 3 runs by default; set `node_smoke_tier3.connectivity_mode` to `"skip"` to disable it (independent of Tier 1)
    - Ensure NCCL transport env vars are set when validating RDMA/RCCL inventory findings
    - Review `<artifacts_root_dir>/node_smoke_tier3/node_smoke_tier3.md` on the leader node
    - Increase `ssh_timeout` or `dist_timeout_sec` on large or slow clusters

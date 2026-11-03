@@ -16,15 +16,15 @@ class PreflightCheck(ABC):
     This provides a consistent interface for all preflight operations.
     """
 
-    def __init__(self, phdl, config_dict=None):
+    def __init__(self, orch, config_dict=None):
         """
         Initialize the preflight check.
 
         Args:
-            phdl: Parallel SSH handle for cluster nodes
+            orch: Orchestrator for cluster nodes. Unit-test mocks are also accepted.
             config_dict: Optional configuration dictionary
         """
-        self.phdl = phdl
+        self.orch = orch
         self.config_dict = config_dict or {}
         self.results = {}
 

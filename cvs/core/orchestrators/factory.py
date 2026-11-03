@@ -130,18 +130,22 @@ class OrchestratorConfig:
         self.env_vars = kwargs.get('env_vars')
         # Normalize here (not in from_configs) so direct construction is validated too.
         self.container = _resolve_container_lifetime(kwargs.get('container', {}))
+        parallel_handle = kwargs.get('parallel_handle') or {}
+        if not isinstance(parallel_handle, dict):
+            raise ValueError("parallel_handle must be an object")
+        self.parallel_handle = parallel_handle
 
     def get(self, key, default=None):
         """Get configuration value with default."""
         return getattr(self, key, default)
 
     @classmethod
-    def from_configs(cls, cluster_config, testsuite_config=None):
+    def from_configs(cls, cluster_config, testsuite_config=None, overrides=None):
         """
         Create config from multiple configuration sources.
 
-        Merges cluster_config.json and <testsuite>_config.json configurations, with testsuite_config
-        taking precedence for overlapping keys. Before merging, the cluster_config is run through
+        Merges cluster config, then testsuite config, then ``overrides``. Later sources win on
+        overlapping top-level keys. Before merging, the cluster_config is run through
         cvs.lib.utils_lib.resolve_cluster_config_placeholders to substitute {user-id} and enforce
         the <changeme> guard on cluster-portion fields (username, priv_key_file, container.*) --
         unresolved <changeme> tokens in the cluster portion trigger sys.exit(1) at this boundary.
@@ -157,6 +161,8 @@ class OrchestratorConfig:
                            Container structure: {lifetime: 'no_launch'|'per_run'|'persistent', runtime: {name: str, args: dict}, image: str, name: str, ...}
             testsuite_config: Test suite specific configuration (dict or path to <testsuite>_config.json)
                             Can override any keys from cluster_config
+            overrides: Optional in-memory dict applied after the two config files. Suite fixtures
+                       use this for runtime handle settings such as parallel_handle.
 
         Returns:
             OrchestratorConfig instance with extracted orchestrator keys
@@ -188,9 +194,14 @@ class OrchestratorConfig:
 
         cluster_config = resolve_cluster_config_placeholders(cluster_config)
 
+        if overrides is not None and not isinstance(overrides, dict):
+            raise ValueError("overrides must be an object")
+
         merged_config = cluster_config.copy()
         if testsuite_config:
             merged_config.update(testsuite_config)
+        if overrides:
+            merged_config.update(overrides)
 
         # Extract only required keys for orchestrators
         required_config = {
@@ -203,6 +214,7 @@ class OrchestratorConfig:
             'agent_token_file': merged_config.get('agent_token_file'),
             'env_vars': merged_config.get('env_vars'),
             'container': merged_config.get('container', {}),
+            'parallel_handle': merged_config.get('parallel_handle') or {},
         }
 
         # Validate required keys

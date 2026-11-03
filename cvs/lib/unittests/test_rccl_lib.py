@@ -1,18 +1,969 @@
 # cvs/lib/unittests/test_rccl_lib.py
 import os
+import json
+import shlex
+import tempfile
 import unittest
+from copy import deepcopy
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 import cvs.lib.rccl_lib as rccl_lib
+from cvs.core.run_layout import RunLayout
+from cvs.unittests.support import TMP
+
+GUIDE_BARS = {'mi300x_rccl_single_node_config.json': 304.0, 'mi350x_rccl_single_node_config.json': 350.0}
+
+
+def _download_writes_suffixed_path(content, host='head'):
+    """Mimic parallel-ssh's download_file: suffix the local path per host and return that path."""
+
+    def _download(_remote, local):
+        actual_path = f'{local}_{host}'
+        Path(actual_path).write_text(content, encoding='utf-8')
+        return {host: actual_path}
+
+    return _download
+
+
+class _FakeOrch:
+    def __init__(self, ssh_port=22):
+        self.exec = MagicMock()
+        self.exec_on_host = MagicMock()
+        self.exec_on_head = MagicMock()
+        self.upload_to_head = MagicMock()
+        self.download_from_head = MagicMock()
+        self.all = MagicMock()
+        self.head = MagicMock()
+        self.ssh_port = ssh_port
 
 
 class TestRcclLib(unittest.TestCase):
-    def test_convert_to_graph_dict(self):
-        # Test with sample data
-        result_dict = {
-            'allreduce': [{'size': 1024, 'name': 'allreduce', 'inPlace': 0, 'busBw': 100.0, 'algBw': 90.0, 'time': 1.0}]
+    def setUp(self):
+        env = patch.dict(os.environ, {'USER': 'cvsuser'}, clear=True)
+        env.start()
+        self.addCleanup(env.stop)
+        RunLayout._reset()
+        self.addCleanup(RunLayout._reset)
+        errors = patch.object(rccl_lib.globals, 'error_list', [])
+        errors.start()
+        self.addCleanup(errors.stop)
+
+    @staticmethod
+    def _shipped_config():
+        config_file = Path(__file__).resolve().parents[2] / 'input/config_file/rccl/rccl_config.json'
+        with config_file.open(encoding='utf-8') as stream:
+            return json.load(stream)['rccl']
+
+    @staticmethod
+    def _guide_config(name):
+        config_file = Path(__file__).resolve().parents[2] / 'input/config_file/rccl' / name
+        with config_file.open(encoding='utf-8') as stream:
+            return json.load(stream)['rccl']
+
+    @staticmethod
+    def _flat_shipped_config():
+        config = TestRcclLib._shipped_config()
+        config['results'] = {k: v for k, v in config['results'].items() if k not in rccl_lib.NIC_TYPES}
+        return config
+
+    @staticmethod
+    def _configured_job(config):
+        with patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True):
+            return rccl_lib.RcclJob.from_config(_FakeOrch(), 'all_reduce_perf', config, ['n1'], ['n1'])
+
+    @staticmethod
+    def _taper_results():
+        return [
+            {'size': 8589934592, 'inPlace': 1, 'busBw': 340.0, 'time': 20.0},
+            {'size': 17179869184, 'inPlace': 1, 'busBw': 300.0, 'time': 10.0},
+        ]
+
+    @staticmethod
+    def _dtype_row(size, dtype, bus_bw, time, cycle=None):
+        row = {'size': size, 'type': dtype, 'inPlace': 1, 'busBw': bus_bw, 'time': time}
+        if cycle is not None:
+            row['numCycle'] = cycle
+        return row
+
+    @staticmethod
+    def _graph_row(size, dtype, in_place, bus_bw, cycle=0, name='AllReduce'):
+        return {
+            'name': name,
+            'size': size,
+            'type': dtype,
+            'inPlace': in_place,
+            'numCycle': cycle,
+            'busBw': bus_bw,
+            'algBw': bus_bw / 2,
+            'time': size / 1024,
         }
-        result = rccl_lib.convert_to_graph_dict(result_dict)
-        self.assertIsInstance(result, dict)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_bus_bw_tolerance_defaults_to_five_percent(self, mock_fail_test):
+        rows = [{'size': 1024, 'inPlace': 1, 'busBw': 95.0}]
+        expected = {'1024': {'bus_bw': 100.0}}
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, {})
+        self.assertEqual(verifier.bus_bw_tolerance(), 0.95)
+        verifier.check_bus_bw()
+        mock_fail_test.assert_not_called()
+        self.assertEqual(verifier.verdicts[0]['status'], 'pass')
+        self.assertAlmostEqual(verifier.verdicts[0]['threshold'], 95.0)
+
+        rows[0]['busBw'] = 94.9
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, {})
+        verifier.check_bus_bw()
+        mock_fail_test.assert_called_once()
+        self.assertIn('5% tolerance: 95.00', mock_fail_test.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_bus_bw_tolerance_one_enforces_reference(self, mock_fail_test):
+        rows = [{'size': 1024, 'inPlace': 1, 'busBw': 100.0}]
+        expected = {'1024': {'bus_bw': 100.0}}
+        params = {'bus_bw_tolerance': '1.0'}
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, params)
+        verifier.check_bus_bw()
+        mock_fail_test.assert_not_called()
+        self.assertEqual(verifier.verdicts[0]['status'], 'pass')
+
+        rows[0]['busBw'] = 99.9
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, params)
+        verifier.check_bus_bw()
+        mock_fail_test.assert_called_once()
+        self.assertIn('0% tolerance: 100.00', mock_fail_test.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_bus_bw_tolerance_rejects_invalid_values(self, mock_fail_test):
+        rows = [{'size': 1024, 'inPlace': 1, 'busBw': 1.0}]
+        expected = {'1024': {'bus_bw': 100.0}}
+        for value in ('0', '-0.5', '1.01', '95', 'abc', '', None, 'nan', 'inf'):
+            with self.subTest(value=value):
+                mock_fail_test.reset_mock()
+                verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, {'bus_bw_tolerance': value})
+                verifier.check_bus_bw()
+                mock_fail_test.assert_called_once()
+                self.assertIn('bus_bw_tolerance', mock_fail_test.call_args.args[0])
+                self.assertNotIn('lower than expected', mock_fail_test.call_args.args[0])
+                self.assertEqual(
+                    [(v['check'], v['size'], v['status']) for v in verifier.verdicts],
+                    [('bus_bw', None, 'fail')],
+                )
+        for value in (1, '1', 0.5):
+            with self.subTest(value=value):
+                mock_fail_test.reset_mock()
+                rows[0]['busBw'] = 100.0
+                verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, {'bus_bw_tolerance': value})
+                verifier.check_bus_bw()
+                mock_fail_test.assert_not_called()
+                self.assertEqual([v['status'] for v in verifier.verdicts], ['pass'])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_flags_without_reference_fail_closed(self, mock_fail_test):
+        for flag, check, label in (
+            ('verify_bw_dip', 'bw_dip', 'BW dip'),
+            ('verify_lat_dip', 'lat_dip', 'latency dip'),
+        ):
+            for expected in (None, {}):
+                with self.subTest(flag=flag, expected=expected):
+                    mock_fail_test.reset_mock()
+                    verifier = rccl_lib.RcclVerifier('all_reduce_perf', self._taper_results(), expected, {flag: 'True'})
+                    verifier.check()
+                    mock_fail_test.assert_called_once()
+                    self.assertIn(label, mock_fail_test.call_args.args[0])
+                    self.assertIn('rccl.results.all_reduce_perf', mock_fail_test.call_args.args[0])
+                    self.assertEqual(
+                        [(v['check'], v['size'], v['dtype'], v['status']) for v in verifier.verdicts],
+                        [(check, None, None, 'fail')],
+                    )
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_flags_do_not_duplicate_resolver_failure(self, mock_fail_test):
+        params = {'verify_bus_bw': 'True', 'verify_bw_dip': 'True', 'verify_lat_dip': 'True'}
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', self._taper_results(), None, params, resolver_failed=True)
+        verifier.check()
+        mock_fail_test.assert_not_called()
+        self.assertEqual(verifier.verdicts, [])
+
+    def test_malformed_results_report_one_failure_with_all_checks_enabled(self):
+        config = self._shipped_config()
+        config['results'] = {'all_reduce_perf': {'bus_bw': 'invalid'}}
+        config['cvs_params'].update({'verify_bus_bw': 'True', 'verify_bw_dip': 'True', 'verify_lat_dip': 'True'})
+        job = self._configured_job(config)
+        rows = [{'size': 2048, 'inPlace': 1, 'busBw': 10.0}]
+        with (
+            patch.object(rccl_lib.globals, 'error_list', []),
+            patch.object(job, 'prepare'),
+            patch.object(job, 'execute', return_value='RCCL output'),
+            patch.object(job, 'read_results', return_value=rows),
+            patch.object(job, 'collect_gpu_info'),
+            patch.object(job, '_save_topology_checks'),
+        ):
+            job.run_regression()
+            self.assertEqual(len(rccl_lib.globals.error_list), 1)
+            self.assertEqual(job.verdicts, [])
+
+    def test_fabric_type_normalises_and_defaults(self):
+        for value, expected in (
+            (None, 'scale_out'),
+            ('scale_up', 'scale_up'),
+            ('Scale-Up', 'scale_up'),
+            ('scaleup', 'scale_up'),
+            ('scale up', 'scale_up'),
+            ('SCALE_OUT', 'scale_out'),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(rccl_lib.fabric_type(value), expected)
+        with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+            self.assertEqual(rccl_lib.fabric_type('bogus'), 'scale_out')
+        self.assertEqual(len(captured.output), 1)
+
+    def test_job_fabric_defaults_to_scale_out(self):
+        config = self._shipped_config()
+        self.assertEqual(self._configured_job(config).fabric, 'scale_out')
+        del config['cvs_params']['fabric']
+        self.assertEqual(self._configured_job(config).fabric, 'scale_out')
+        for name in GUIDE_BARS:
+            with self.subTest(config=name):
+                self.assertEqual(self._configured_job(self._guide_config(name)).fabric, 'scale_up')
+
+    def test_scale_up_uses_only_scale_up_namespace(self):
+        config = self._shipped_config()
+        config['mpi_params'].update({'no_of_nodes': '1', 'no_of_local_ranks': '8'})
+        config['cvs_params'].update({'fabric': 'scale_up', 'nic_model': 'thor'})
+        config['results'] = {
+            'scale_up': {'all_reduce_perf-float-8': {'1024': {'bus_bw': '200'}}},
+            'thor': {'all_reduce_perf-float-8': {'1024': {'bus_bw': '100'}}},
+            'all_reduce_perf': {'bus_bw': {'1024': '50'}},
+        }
+        self.assertEqual(self._configured_job(config)._expected_results(['float'])['1024']['bus_bw'], 200.0)
+        config['cvs_params']['fabric'] = 'scale_out'
+        self.assertEqual(self._configured_job(config)._expected_results(['float'])['1024']['bus_bw'], 100.0)
+
+    def test_scale_up_missing_key_ignores_nic_and_flat_references(self):
+        config = self._shipped_config()
+        config['mpi_params'].update({'no_of_nodes': '1', 'no_of_local_ranks': '8'})
+        config['cvs_params'].update({'fabric': 'scale_up', 'nic_model': 'thor'})
+        config['results'] = {
+            'thor': {'all_reduce_perf-float-8': {'1024': {'bus_bw': '100'}}},
+            'all_reduce_perf': {'bus_bw': {'1024': '50'}},
+        }
+        with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+            self.assertIsNone(self._configured_job(config)._expected_results(['float']))
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn('rccl.results.scale_up.all_reduce_perf-float-8', captured.output[0])
+        self.assertEqual(rccl_lib.globals.error_list, [])
+
+    def test_scale_out_ignores_scale_up_namespace(self):
+        config = self._shipped_config()
+        config['cvs_params'].update({'fabric': 'scale_out', 'nic_model': 'thor'})
+        config['results'] = {
+            'scale_up': {'all_reduce_perf-float-16': {'1024': {'bus_bw': '200'}}},
+            'all_reduce_perf': {'bus_bw': {'1024': '50'}},
+        }
+        self.assertEqual(self._configured_job(config)._expected_results(['float']), {'1024': {'bus_bw': 50.0}})
+
+    def test_guide_configs_resolve_published_bar(self):
+        for name, bar in GUIDE_BARS.items():
+            with self.subTest(config=name):
+                config = self._guide_config(name)
+                mpi = config['mpi_params']
+                params = config['cvs_params']
+                tests = config['rccl_test_params']
+                self.assertEqual(tests['rccl_collective'], ['all_reduce_perf'])
+                self.assertEqual(tests['data_types'], ['float'])
+                self.assertEqual(mpi['no_of_nodes'], '1')
+                self.assertEqual(int(mpi['no_of_nodes']) * int(mpi['no_of_local_ranks']), 8)
+                self.assertEqual(params['fabric'], 'scale_up')
+                self.assertEqual(params['verify_bus_bw'], 'True')
+                self.assertEqual(params['bus_bw_tolerance'], '1.0')
+                self.assertEqual(rccl_lib.RcclVerifier('all_reduce_perf', [], None, params).bus_bw_tolerance(), 1.0)
+                self.assertEqual((params['verify_bw_dip'], params['verify_lat_dip']), ('False', 'False'))
+                self.assertEqual(set(config['results']), {'scale_up'})
+                self.assertEqual(set(config['results']['scale_up']), {'all_reduce_perf-float-8'})
+                expected = self._configured_job(config)._expected_results(['float'])
+                self.assertEqual(set(expected), {'8589934592'})
+                self.assertEqual(float(expected['8589934592']['bus_bw']), bar)
+                self.assertNotIn('<changeme>', json.dumps(config['results']))
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_guide_configs_enforce_bar_at_8gib_in_place(self, mock_fail_test):
+        for name, bar in GUIDE_BARS.items():
+            with self.subTest(config=name):
+                job = self._configured_job(self._guide_config(name))
+                expected = job._expected_results(['float'])
+                row = {'size': 8589934592, 'inPlace': 1, 'busBw': bar - 0.1}
+                mock_fail_test.reset_mock()
+                job._verify_results([row], expected)
+                mock_fail_test.assert_called_once()
+                self.assertIn(f'expected bus BW {bar}', mock_fail_test.call_args.args[0])
+                self.assertIn('0% tolerance', mock_fail_test.call_args.args[0])
+                self.assertEqual(job.verdicts[0]['threshold'], bar)
+
+                row['busBw'] = bar
+                mock_fail_test.reset_mock()
+                job._verify_results([row], expected)
+                mock_fail_test.assert_not_called()
+                self.assertEqual(job.verdicts[0]['status'], 'pass')
+
+                out_of_place = {'size': 8589934592, 'inPlace': 0, 'busBw': bar - 0.1}
+                job._verify_results([out_of_place, row], expected)
+                mock_fail_test.assert_not_called()
+                self.assertEqual(len(job.verdicts), 1)
+
+    def test_guide_config_scale_up_fails_closed_on_flat_results(self):
+        for name in GUIDE_BARS:
+            for method in ('run_perf', 'run_regression'):
+                with self.subTest(config=name, method=method):
+                    rccl_lib.globals.error_list = []
+                    config = self._guide_config(name)
+                    config['cvs_params']['nic_model'] = 'thor'
+                    config['results'] = {
+                        'all_reduce_perf': {'bus_bw': {'8589934592': '1'}},
+                        'thor': {'all_reduce_perf-float-8': {'8589934592': {'bus_bw': '1'}}},
+                    }
+                    job = self._configured_job(config)
+                    rows = [{'size': 8589934592, 'inPlace': 1, 'busBw': 50}]
+                    with (
+                        self.assertLogs(rccl_lib.log, level='WARNING') as captured,
+                        patch.object(job, 'prepare'),
+                        patch.object(job, 'execute', return_value='# Avg bus bandwidth : 50'),
+                        patch.object(job, 'read_results', return_value=rows),
+                        patch.object(job, '_run_perf_dtype', return_value=(rows, [])),
+                        patch.object(job, 'save_results', return_value=True),
+                        patch.object(job, 'collect_gpu_info'),
+                    ):
+                        self.assertEqual(getattr(job, method)(), rows)
+                    self.assertTrue(
+                        any('rccl.results.scale_up.all_reduce_perf-float-8' in line for line in captured.output)
+                    )
+                    self.assertTrue(any('No bus bandwidth thresholds' in msg for msg in rccl_lib.globals.error_list))
+                    self.assertFalse(any('lower than expected' in msg for msg in rccl_lib.globals.error_list))
+                    self.assertEqual([(v['check'], v['status']) for v in job.verdicts], [('bus_bw', 'fail')])
+
+    def test_shipped_thor_entries_follow_guide(self):
+        config = self._shipped_config()
+        collectives = config['rccl_test_params']['rccl_collective']
+        thor = config['results']['thor']
+        ranks = range(16, 129, 8)
+        self.assertEqual(
+            set(thor),
+            {f'{collective}-float-{rank}' for collective in collectives for rank in ranks},
+        )
+        job = self._configured_job(config)
+        for collective in collectives:
+            with self.subTest(collective=collective):
+                job.test_name = collective
+                key = f'{collective}-float-16'
+                expected = job._expected_results(['float'])
+                if collective == 'all_reduce_perf':
+                    self.assertEqual(thor[key], {'8589934592': {'bus_bw': '350.00'}})
+                    self.assertEqual(expected, {'8589934592': {'bus_bw': 350.0}})
+                    flat = self._configured_job(self._flat_shipped_config())
+                    self.assertNotEqual(expected, flat._expected_results(['float']))
+                else:
+                    self.assertIsNone(thor[key])
+                    self.assertEqual(expected, {})
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_guide_all_reduce_gate_is_absolute(self, mock_fail_test):
+        config = self._shipped_config()
+        self.assertEqual(config['cvs_params']['bus_bw_tolerance'], '1.0')
+        config['cvs_params']['verify_bus_bw'] = 'True'
+        job = self._configured_job(config)
+        expected = job._expected_results(['float'])
+        for bandwidth, failed in ((349.0, True), (332.5, True), (350.0, False)):
+            with self.subTest(bandwidth=bandwidth):
+                mock_fail_test.reset_mock()
+                job._verify_results([{'size': 8589934592, 'inPlace': 1, 'busBw': bandwidth}], expected)
+                if failed:
+                    mock_fail_test.assert_called_once()
+                    self.assertIn('expected bus BW 350.0', mock_fail_test.call_args.args[0])
+                    self.assertIn('(threshold with 0% tolerance: 350.00)', mock_fail_test.call_args.args[0])
+                else:
+                    mock_fail_test.assert_not_called()
+                self.assertEqual(
+                    [(verdict['check'], verdict['status']) for verdict in job.verdicts],
+                    [('bus_bw', 'fail' if failed else 'pass')],
+                )
+                self.assertEqual(job.verdicts[0]['threshold'], 350.0)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_shipped_unpublished_collectives_skip_bus_bw_gate(self, mock_fail_test):
+        config = self._shipped_config()
+        config['cvs_params']['verify_bus_bw'] = 'True'
+        job = self._configured_job(config)
+        rows = [
+            {'size': 8589934592, 'inPlace': 1, 'busBw': 1.0},
+            {'size': 8589934592, 'inPlace': 0, 'busBw': 1.0},
+        ]
+        for collective in config['rccl_test_params']['rccl_collective']:
+            if collective == 'all_reduce_perf':
+                continue
+            with self.subTest(collective=collective):
+                mock_fail_test.reset_mock()
+                job.test_name = collective
+                with self.assertLogs(rccl_lib.log, 'WARNING') as captured:
+                    job._verify_results(rows, job._expected_results(['float']))
+                mock_fail_test.assert_not_called()
+                self.assertIn(f'No published threshold for {collective}; bus_bw not gated', captured.output[0])
+                self.assertEqual(job.verdicts, [])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_null_marker_skips_and_missing_entry_fails(self, mock_fail_test):
+        config = self._shipped_config()
+        config['cvs_params']['verify_bus_bw'] = 'True'
+        references = (
+            ({'thor': {'all_reduce_perf-float-16': None}, 'all_reduce_perf': {'bus_bw': {'1024': '80'}}}, {}),
+            ({'all_reduce_perf': None}, {}),
+            ({'thor': {}}, None),
+            ({'thor': {'all_reduce_perf-float-16': {}}}, None),
+            ({'thor': {'all_reduce_perf-float-16': {'bus_bw': {}}}}, None),
+        )
+        for reference, resolved in references:
+            with self.subTest(reference=reference):
+                mock_fail_test.reset_mock()
+                config['results'] = reference
+                job = self._configured_job(config)
+                expected = job._expected_results(['float'])
+                self.assertEqual(expected, resolved)
+                if expected == {}:
+                    with self.assertLogs(rccl_lib.log, 'WARNING') as captured:
+                        job._verify_results([{'size': 1024, 'inPlace': 1, 'busBw': 1.0}], expected)
+                    self.assertIn('No published threshold for all_reduce_perf; bus_bw not gated', captured.output[0])
+                    mock_fail_test.assert_not_called()
+                    self.assertEqual(job.verdicts, [])
+                else:
+                    job._verify_results([{'size': 1024, 'inPlace': 1, 'busBw': 1.0}], expected)
+                    mock_fail_test.assert_called_once_with(
+                        'No bus bandwidth thresholds for all_reduce_perf in rccl.results.all_reduce_perf'
+                    )
+                    self.assertEqual(
+                        [(verdict['check'], verdict['status'], verdict['size']) for verdict in job.verdicts],
+                        [('bus_bw', 'fail', None)],
+                    )
+
+    def test_expected_results_transposes_shipped_shape(self):
+        config = self._flat_shipped_config()
+        job = self._configured_job(config)
+        self.assertEqual(
+            job._expected_results(['float']),
+            {'8589934592': {'bus_bw': 330.0}, '17179869184': {'bus_bw': 350.0}},
+        )
+
+    def test_expected_results_accepts_transposed_shape(self):
+        config = self._shipped_config()
+        config['results'] = {'all_reduce_perf': {'1024': {'bus_bw': '80.0'}}}
+        self.assertEqual(self._configured_job(config)._expected_results(['float']), {'1024': {'bus_bw': 80.0}})
+
+    def test_expected_results_unknown_collective(self):
+        job = self._configured_job(self._shipped_config())
+        job.test_name = 'unknown_perf'
+        self.assertIsNone(job._expected_results(['float']))
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_expected_results_invalid_bandwidth(self, mock_fail_test):
+        config = self._shipped_config()
+        config['results'] = {'all_reduce_perf': {'bus_bw': {'1024': 'invalid'}}}
+        self.assertIsNone(self._configured_job(config)._expected_results(['float']))
+        self.assertIn('rccl.results.all_reduce_perf.1024', mock_fail_test.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_invalid_bandwidth_does_not_suppress_valid_thresholds(self, mock_fail_test):
+        config = self._shipped_config()
+        config['results'] = {'all_reduce_perf': {'bus_bw': {'1024': 'invalid', '2048': '80.0'}}}
+        job = self._configured_job(config)
+        job.cvs_params['verify_bus_bw'] = 'True'
+        job._verify_results([{'size': 2048, 'inPlace': 1, 'busBw': 10.0}], job._expected_results(['float']))
+        self.assertEqual(mock_fail_test.call_count, 2)
+        self.assertIn('rccl.results.all_reduce_perf.1024', mock_fail_test.call_args_list[0].args[0])
+        self.assertIn('expected bus BW 80.0', mock_fail_test.call_args_list[1].args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_expected_results_rejects_malformed_shape(self, mock_fail_test):
+        config = self._shipped_config()
+        for results, path in (
+            ('invalid', 'rccl.results'),
+            ({'all_reduce_perf': '330.0'}, 'rccl.results.all_reduce_perf'),
+            ({'all_reduce_perf': {'bus_bw': '330.0'}}, 'rccl.results.all_reduce_perf.bus_bw'),
+        ):
+            with self.subTest(results=results):
+                mock_fail_test.reset_mock()
+                config['results'] = results
+                self.assertIsNone(self._configured_job(config)._expected_results(['float']))
+                self.assertIn(path, mock_fail_test.call_args.args[0])
+
+    def test_legacy_results_fallback_warns(self):
+        config = self._shipped_config()
+        config['cvs_params']['results'] = config.pop('results')
+        with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+            self.assertTrue(self._configured_job(config)._expected_results(['float']))
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn('rccl.results', captured.output[0])
+
+    def test_legacy_results_fallback_with_empty_root_results(self):
+        config = self._shipped_config()
+        config['cvs_params']['results'] = config['results']
+        config['results'] = {}
+        job = self._configured_job(config)
+        self.assertIsNone(job._expected_results(['float']))
+
+    def test_malformed_results_report_one_failure_during_regression(self):
+        config = self._shipped_config()
+        config['results'] = {'all_reduce_perf': {'bus_bw': 'invalid'}}
+        config['cvs_params']['verify_bus_bw'] = 'True'
+        job = self._configured_job(config)
+        rows = [{'size': 2048, 'inPlace': 1, 'busBw': 10.0}]
+        with (
+            patch.object(rccl_lib.globals, 'error_list', []),
+            patch.object(job, 'prepare'),
+            patch.object(job, 'execute', return_value='RCCL output'),
+            patch.object(job, 'read_results', return_value=rows),
+            patch.object(job, 'collect_gpu_info'),
+            patch.object(job, '_save_topology_checks'),
+        ):
+            job.run_regression()
+            self.assertEqual(len(rccl_lib.globals.error_list), 1)
+            self.assertIn('rccl.results.all_reduce_perf.bus_bw', rccl_lib.globals.error_list[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_requested_bus_bw_without_thresholds_fails(self, mock_fail_test):
+        verifier = rccl_lib.RcclVerifier('unknown_perf', self._taper_results(), None, {'verify_bus_bw': 'True'})
+        verifier.check()
+        mock_fail_test.assert_called_once_with(
+            'No bus bandwidth thresholds for unknown_perf in rccl.results.unknown_perf'
+        )
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_disabled_bus_bw_does_not_fail(self, mock_fail_test):
+        verifier = rccl_lib.RcclVerifier(
+            'all_reduce_perf',
+            self._taper_results(),
+            {'8589934592': {'bus_bw': 330.0}},
+            {'verify_bus_bw': 'False', 'verify_bw_dip': 'False', 'verify_lat_dip': 'False'},
+        )
+        verifier.check()
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_omitted_dip_flags_are_disabled(self, mock_fail_test):
+        job = self._configured_job(self._flat_shipped_config())
+        rccl_lib.RcclVerifier(job.test_name, self._taper_results(), job._expected_results(['float'])).check()
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_enabled_bus_bw_uses_shipped_flat_thresholds(self, mock_fail_test):
+        job = self._configured_job(self._flat_shipped_config())
+        job.cvs_params['verify_bus_bw'] = 'True'
+        results = [
+            {'size': 8589934592, 'inPlace': 1, 'busBw': 10.0, 'time': 20.0},
+            {'size': 17179869184, 'inPlace': 1, 'busBw': 400.0, 'time': 10.0},
+        ]
+        job._verify_results(results, job._expected_results(['float']))
+        mock_fail_test.assert_called_once()
+        self.assertIn('expected bus BW 330.0', mock_fail_test.call_args.args[0])
+        self.assertIn('(threshold with 0% tolerance: 330.00)', mock_fail_test.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_flags_enable_their_checks(self, mock_fail_test):
+        job = self._configured_job(self._flat_shipped_config())
+        expected = job._expected_results(['float'])
+        for flag, failure in (
+            ('verify_bw_dip', 'BusBW'),
+            ('verify_lat_dip', 'latency'),
+        ):
+            with self.subTest(flag=flag):
+                mock_fail_test.reset_mock()
+                params = {'verify_bus_bw': 'False', 'verify_bw_dip': 'False', 'verify_lat_dip': 'False'}
+                params[flag] = 'True'
+                rccl_lib.RcclVerifier(job.test_name, self._taper_results(), expected, params).check()
+                self.assertEqual(mock_fail_test.call_count, 1)
+                self.assertIn(failure, mock_fail_test.call_args.args[0])
+        mock_fail_test.reset_mock()
+        rccl_lib.RcclVerifier(
+            job.test_name,
+            self._taper_results(),
+            expected,
+            {'verify_bus_bw': 'False', 'verify_bw_dip': 'False', 'verify_lat_dip': 'False'},
+        ).check()
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_checks_normalize_string_measurements(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 80.0}, '2048': {'bus_bw': 85.0}}
+        results = [
+            {'size': 1024, 'inPlace': 1, 'busBw': '100.0', 'time': '20.0'},
+            {'size': 2048, 'inPlace': 1, 'busBw': '90.0', 'time': '10.0'},
+        ]
+        rccl_lib.RcclVerifier(
+            'all_reduce_perf', results, expected, {'verify_bw_dip': 'True', 'verify_lat_dip': 'True'}
+        ).check()
+        self.assertEqual(mock_fail_test.call_count, 2)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_shipped_verification_is_disabled(self, mock_fail_test):
+        job = self._configured_job(self._shipped_config())
+        for flag in ('verify_bus_bw', 'verify_bw_dip', 'verify_lat_dip'):
+            self.assertEqual(job.cvs_params[flag], 'False')
+        rccl_lib.RcclVerifier(
+            job.test_name, self._taper_results(), job._expected_results(['float']), job.cvs_params
+        ).check()
+        mock_fail_test.assert_not_called()
+
+    def test_shipped_collectives_have_numeric_thresholds(self):
+        config = self._flat_shipped_config()
+        job = self._configured_job(config)
+        for collective in config['rccl_test_params']['rccl_collective']:
+            with self.subTest(collective=collective):
+                job.test_name = collective
+                expected = job._expected_results(['float'])
+                self.assertIsNotNone(expected)
+                self.assertTrue(expected)
+                for size, values in expected.items():
+                    self.assertTrue(size.isdigit())
+                    self.assertIsInstance(values['bus_bw'], float)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_bus_bw_records_one_verdict_per_matched_size(self, mock_fail_test):
+        rows = [
+            {'size': 1024, 'type': 'float', 'inPlace': 1, 'busBw': 90.0},
+            {'size': 2048, 'type': 'float', 'inPlace': 1, 'busBw': 10.0},
+        ]
+        expected = {'1024': {'bus_bw': 80}, '2048': {'bus_bw': 80}}
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, {'verify_bus_bw': 'True'})
+        verifier.check()
+        self.assertEqual([v['status'] for v in verifier.verdicts], ['pass', 'fail'])
+        self.assertEqual([v['actual'] for v in verifier.verdicts], [90.0, 10.0])
+        self.assertEqual([v['dtype'] for v in verifier.verdicts], ['float', 'float'])
+        self.assertEqual([v['unit'] for v in verifier.verdicts], ['GB/s', 'GB/s'])
+        for verdict in verifier.verdicts:
+            self.assertEqual(verdict['check'], 'bus_bw')
+            self.assertAlmostEqual(verdict['threshold'], 76.0)
+        self.assertEqual(verifier.verdicts[0]['message'], '')
+        mock_fail_test.assert_called_once_with(verifier.verdicts[1]['message'])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_alltoall_bus_bw_verdicts_use_out_of_place_rows(self, mock_fail_test):
+        rows = [
+            {'size': 1024, 'type': 'float', 'inPlace': 1, 'busBw': 10.0},
+            {'size': 1024, 'type': 'float', 'inPlace': 0, 'busBw': 90.0},
+        ]
+        verifier = rccl_lib.RcclVerifier('alltoall_perf', rows, {'1024': {'bus_bw': 80}}, {'verify_bus_bw': 'True'})
+        verifier.check()
+        self.assertEqual([(v['size'], v['actual']) for v in verifier.verdicts], [(1024, 90.0)])
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_checks_record_verdicts_after_first_size(self, mock_fail_test):
+        expected = {'8589934592': {'bus_bw': 330.0}, '17179869184': {'bus_bw': 350.0}}
+        params = {'verify_bw_dip': 'True', 'verify_lat_dip': 'True'}
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', self._taper_results(), expected, params)
+        verifier.check()
+        self.assertEqual(
+            [(v['check'], v['status'], v['size'], v['actual'], v['unit']) for v in verifier.verdicts],
+            [('bw_dip', 'fail', 17179869184, 300.0, 'GB/s'), ('lat_dip', 'fail', 17179869184, 10.0, 'us')],
+        )
+        self.assertEqual(mock_fail_test.call_count, 2)
+        mock_fail_test.reset_mock()
+        rows = [
+            {'size': 8589934592, 'inPlace': 1, 'busBw': 300.0, 'time': 10.0},
+            {'size': 17179869184, 'inPlace': 1, 'busBw': 340.0, 'time': 20.0},
+        ]
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, params)
+        verifier.check()
+        self.assertEqual([v['status'] for v in verifier.verdicts], ['pass', 'pass'])
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_missing_thresholds_and_empty_results_record_failing_verdicts(self, mock_fail_test):
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', self._taper_results(), None, {'verify_bus_bw': 'True'})
+        verifier.check()
+        self.assertEqual(len(verifier.verdicts), 1)
+        self.assertEqual(
+            {key: verifier.verdicts[0][key] for key in ('check', 'size', 'dtype', 'actual', 'status')},
+            {'check': 'bus_bw', 'size': None, 'dtype': None, 'actual': None, 'status': 'fail'},
+        )
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', [], None)
+        verifier.check()
+        self.assertEqual([(v['check'], v['status']) for v in verifier.verdicts], [('results', 'fail')])
+        self.assertEqual(mock_fail_test.call_count, 2)
+
+    def test_disabled_checks_record_no_verdicts(self):
+        job = self._configured_job(self._shipped_config())
+        verifier = rccl_lib.RcclVerifier(
+            job.test_name, self._taper_results(), job._expected_results(['float']), job.cvs_params
+        )
+        verifier.check()
+        self.assertEqual(verifier.verdicts, [])
+
+    def test_job_verdicts_reset_each_run(self):
+        config = self._shipped_config()
+        config['results'] = {'all_reduce_perf': {'2048': {'bus_bw': 80}}}
+        config['cvs_params']['verify_bus_bw'] = 'True'
+        job = self._configured_job(config)
+        rows = [{'size': 2048, 'type': 'float', 'inPlace': 1, 'busBw': 10.0}]
+        with (
+            patch.object(job, 'prepare'),
+            patch.object(job, 'execute', return_value='RCCL output') as execute,
+            patch.object(job, 'read_results', return_value=rows),
+            patch.object(job, 'collect_gpu_info'),
+            patch.object(job, '_save_topology_checks'),
+        ):
+            job.run_regression()
+            self.assertTrue(job.verdicts)
+            execute.return_value = None
+            job.run_regression()
+            self.assertEqual(job.verdicts, [])
+
+    def test_graph_uses_in_place_rows_regardless_of_order(self):
+        out_of_place = self._graph_row(1024, 'float', 0, 1.0)
+        in_place = self._graph_row(1024, 'float', 1, 2.0)
+        for rows in ([out_of_place, in_place], [in_place, out_of_place]):
+            with self.subTest(rows=rows):
+                graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': rows})
+                self.assertEqual(graph['all_reduce_perf'][1024]['bus_bw'], 2.0)
+
+    def test_graph_uses_out_of_place_rows_for_alltoall(self):
+        cases = (
+            ('alltoall_perf', 'AllToAll', 0),
+            ('Phase1 n0 <-> n1', 'AllReduce', 1),
+            ('alltoall_perf', None, 0),
+            ('alltoall_perf-NCCL_ALGO=Ring NCCL_PROTO=Simple', None, 0),
+        )
+        for series, row_name, verified_placement in cases:
+            with self.subTest(series=series, row_name=row_name):
+                rows = [
+                    self._graph_row(1024, 'float', 0, 3.0, name=row_name),
+                    self._graph_row(1024, 'float', 1, 7.0, name=row_name),
+                ]
+                if row_name is None:
+                    for row in rows:
+                        del row['name']
+                graph = rccl_lib.convert_to_graph_dict({series: rows})
+                self.assertEqual(graph[series][1024]['bus_bw'], 3.0 if verified_placement == 0 else 7.0)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_graph_placement_matches_bus_bw_verdicts(self, mock_fail_test):
+        cases = (('all_reduce_perf', 'AllReduce'), ('alltoall_perf', 'AllToAll'))
+        for series, name in cases:
+            with self.subTest(series=series):
+                rows = [
+                    self._graph_row(size, 'float', placement, size / 1024 + 10 * placement, name=name)
+                    for size in (1024, 2048)
+                    for placement in (0, 1)
+                ]
+                verifier = rccl_lib.RcclVerifier(
+                    series, rows, {'1024': {'bus_bw': 0.0}, '2048': {'bus_bw': 0.0}}, {'verify_bus_bw': 'True'}
+                )
+                verifier.check()
+                graph = rccl_lib.convert_to_graph_dict({series: rows})[series]
+                self.assertEqual(
+                    {verdict['size']: verdict['actual'] for verdict in verifier.verdicts},
+                    {size: point['bus_bw'] for size, point in graph.items()},
+                )
+        mock_fail_test.assert_not_called()
+
+    def test_graph_splits_multiple_data_types(self):
+        dtypes = ('float', 'half', 'bfloat16')
+        for series, name, verified_placement in (
+            ('all_reduce_perf', 'AllReduce', 1),
+            ('alltoall_perf', 'AllToAll', 0),
+        ):
+            with self.subTest(series=series):
+                rows = [
+                    self._graph_row(size, dtype, placement, 100 * dtype_index + size / 1024 + 10 * placement, name=name)
+                    for size in (1024, 2048)
+                    for dtype_index, dtype in enumerate(dtypes)
+                    for placement in (0, 1)
+                ]
+                graph = rccl_lib.convert_to_graph_dict({series: rows})
+                self.assertEqual(list(graph), [f'{series} [type={dtype}]' for dtype in dtypes])
+                self.assertNotIn(series, graph)
+                for dtype_index, dtype in enumerate(dtypes):
+                    for size in (1024, 2048):
+                        self.assertEqual(
+                            graph[f'{series} [type={dtype}]'][size]['bus_bw'],
+                            100 * dtype_index + size / 1024 + 10 * verified_placement,
+                        )
+
+    def test_graph_single_dtype_backward_compatible(self):
+        rows = [
+            self._graph_row(size, 'float', placement, size / 1024 + placement)
+            for size in (1024, 2048)
+            for placement in (0, 1)
+        ]
+        graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': rows})
+        self.assertEqual(
+            graph,
+            {
+                'all_reduce_perf': {
+                    1024: {'bus_bw': 2.0, 'alg_bw': 1.0, 'time': 1.0},
+                    2048: {'bus_bw': 3.0, 'alg_bw': 1.5, 'time': 2.0},
+                }
+            },
+        )
+        self.assertIs(type(next(iter(graph['all_reduce_perf']))), int)
+
+        untyped_rows = [{key: value for key, value in row.items() if key != 'type'} for row in rows]
+        self.assertEqual(list(rccl_lib.convert_to_graph_dict({'all_reduce_perf': untyped_rows})), ['all_reduce_perf'])
+
+        regression_series = (
+            'all_reduce_perf-NCCL_ALGO=Ring NCCL_PROTO=Simple NCCL_IB_QPS_PER_CONNECTION=1 NCCL_PXN_DISABLE=0'
+        )
+        regression_graph = rccl_lib.convert_to_graph_dict({regression_series: rows})
+        self.assertEqual(list(regression_graph), [regression_series])
+
+        from cvs.lib import html_lib
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'rccl_results.html'
+            html_lib.build_rccl_result_table(output, regression_graph)
+            content = output.read_text(encoding='utf-8')
+        self.assertIn('Ring', content)
+        self.assertIn('Simple', content)
+        self.assertIn('1024', content)
+
+    def test_graph_averages_cycles_and_sorts_sizes(self):
+        rows = [self._graph_row(2048, 'float', 1, 200.0)] + [
+            self._graph_row(1024, 'float', 1, bus_bw, cycle=cycle) for cycle, bus_bw in enumerate((100.0, 110.0, 120.0))
+        ]
+        rows[1]['time'], rows[2]['time'], rows[3]['time'] = 1.0, 2.0, 3.0
+        graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': rows})
+        self.assertEqual(list(graph), ['all_reduce_perf'])
+        self.assertEqual(list(graph['all_reduce_perf']), [1024, 2048])
+        self.assertEqual(graph['all_reduce_perf'][1024], {'bus_bw': 110.0, 'alg_bw': 55.0, 'time': 2.0})
+
+        rows = [
+            self._graph_row(1024, dtype, 1, bus_bw, cycle=cycle)
+            for cycle, values in enumerate(((100.0, 50.0), (120.0, 70.0)))
+            for dtype, bus_bw in zip(('float', 'half'), values)
+        ]
+        graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': rows})
+        self.assertEqual(graph['all_reduce_perf [type=float]'][1024]['bus_bw'], 110.0)
+        self.assertEqual(graph['all_reduce_perf [type=half]'][1024]['bus_bw'], 60.0)
+
+        rows = [self._graph_row(1024, 'float', 1, bus_bw, cycle=cycle) for cycle, bus_bw in enumerate((100, 110))]
+        for row in rows:
+            row['busBw'] = str(float(row['busBw']))
+            row['algBw'] = str(float(row['algBw']))
+        graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': rows})
+        self.assertEqual(graph['all_reduce_perf'][1024]['bus_bw'], 105.0)
+
+    def test_graph_empty_or_unmatched_series(self):
+        self.assertEqual(rccl_lib.convert_to_graph_dict({'failed': []}), {'failed': {}})
+        self.assertEqual(rccl_lib.convert_to_graph_dict({'failed': None}), {'failed': {}})
+        with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+            graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': [self._graph_row(1024, 'float', 0, 1.0)]})
+        self.assertEqual(graph, {'all_reduce_perf': {}})
+        self.assertIn('all_reduce_perf', captured.output[0])
+        row = self._graph_row(1024, 'float', 1, 1.0)
+        del row['inPlace']
+        self.assertEqual(rccl_lib.convert_to_graph_dict({'all_reduce_perf': [row]}), {'all_reduce_perf': {}})
+
+    def test_graph_drops_non_numeric_metric_rows(self):
+        for field, value in (('busBw', 'N/A'), ('algBw', None), ('time', '')):
+            with self.subTest(field=field, value=value):
+                row = self._graph_row(1024, 'float', 1, 1.0)
+                row[field] = value
+                with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+                    graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': [row]})
+                self.assertEqual(graph, {'all_reduce_perf': {}})
+                self.assertEqual(len(captured.output), 2)
+                self.assertIn('Dropped 1 RCCL rows', captured.output[0])
+                self.assertIn('all_reduce_perf', captured.output[0])
+                self.assertIn('No usable verified-placement RCCL rows for all_reduce_perf', captured.output[1])
+
+    def test_graph_drops_rows_missing_a_metric(self):
+        for field in ('busBw', 'algBw', 'time'):
+            with self.subTest(field=field):
+                row = self._graph_row(1024, 'float', 1, 1.0)
+                del row[field]
+                with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+                    graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': [row]})
+                self.assertEqual(graph, {'all_reduce_perf': {}})
+                self.assertIn('Dropped 1 RCCL rows', captured.output[0])
+
+    def test_graph_averages_good_rows_around_bad_ones(self):
+        good = [self._graph_row(1024, 'float', 1, bus_bw, cycle=cycle) for cycle, bus_bw in enumerate((100.0, 120.0))]
+        bad_value = self._graph_row(1024, 'float', 1, 1.0, cycle=2)
+        bad_value['busBw'] = 'nan-ish'
+        missing = self._graph_row(2048, 'float', 1, 1.0)
+        del missing['time']
+        unchecked_placement = self._graph_row(1024, 'float', 0, 1.0)
+        unchecked_placement['busBw'] = 'ignored'
+        rows = [good[0], bad_value, missing, unchecked_placement, good[1], self._graph_row(2048, 'float', 1, 300.0)]
+        with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+            graph = rccl_lib.convert_to_graph_dict({'all_reduce_perf': rows})
+        self.assertEqual(list(graph), ['all_reduce_perf'])
+        self.assertEqual(graph['all_reduce_perf'][1024], {'bus_bw': 110.0, 'alg_bw': 55.0, 'time': 1.0})
+        self.assertEqual(graph['all_reduce_perf'][2048]['bus_bw'], 300.0)
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn('Dropped 2 RCCL rows', captured.output[0])
+
+    def test_split_series_label_inverts_series_label(self):
+        for base in ('all_reduce_perf', 'Phase1 n0 <-> n1', 'all_reduce_perf-NCCL_ALGO=Ring NCCL_PROTO=Simple'):
+            for dtype in ('float', 'bfloat16'):
+                for cycle in (None, 2):
+                    with self.subTest(base=base, dtype=dtype, cycle=cycle):
+                        name = f'{base}{rccl_lib.RcclVerifier._series_label(dtype, cycle)}'
+                        self.assertEqual(rccl_lib.RcclVerifier.split_series_label(name), (base, dtype))
+            with self.subTest(base=base, plain=True):
+                self.assertEqual(rccl_lib.RcclVerifier.split_series_label(base), (base, None))
+
+    def test_graph_matches_aggregated_verification_rows(self):
+        for series, name, verified_placement in (
+            ('all_reduce_perf', 'AllReduce', 1),
+            ('alltoall_perf', 'AllToAll', 0),
+        ):
+            with self.subTest(series=series):
+                raw = [
+                    rccl_lib.RcclTests.model_validate(
+                        {
+                            'numCycle': cycle,
+                            'name': name,
+                            'size': size,
+                            'type': dtype,
+                            'redop': 'sum',
+                            'inPlace': placement,
+                            'busBw': 100 * dtype_index + 20 * cycle + 5 * placement + size / 1024,
+                            'algBw': 50 * dtype_index + 10 * cycle + 3 * placement + size / 2048,
+                            'time': 10 * dtype_index + 2 * cycle + placement + size / 4096,
+                            'wrong': 0,
+                        }
+                    )
+                    for size in (1024, 2048)
+                    for dtype_index, dtype in enumerate(('float', 'half'))
+                    for placement in (0, 1)
+                    for cycle in (0, 1)
+                ]
+                aggregated = rccl_lib.RcclJob.aggregate_results(raw)
+                verification_rows = rccl_lib.RcclJob._verification_results(aggregated, [])
+                graph = rccl_lib.convert_to_graph_dict({series: [row.model_dump() for row in raw]})
+                for row in verification_rows:
+                    if row['inPlace'] != verified_placement:
+                        continue
+                    point = graph[f"{series} [type={row['type']}]"][row['size']]
+                    for graph_metric, row_metric in (('bus_bw', 'busBw'), ('alg_bw', 'algBw'), ('time', 'time')):
+                        self.assertAlmostEqual(point[graph_metric], row[row_metric])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_bus_bw_failure_message_names_dtype(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 80}}
+        rows = [self._graph_row(1024, 'float', 1, 90), self._graph_row(1024, 'half', 1, 10)]
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, {'verify_bus_bw': 'True'})
+        verifier.check()
+        mock_fail_test.assert_called_once()
+        self.assertTrue(mock_fail_test.call_args.args[0].endswith('(threshold with 5% tolerance: 76.00) [type=half]'))
+        self.assertEqual([verdict['status'] for verdict in verifier.verdicts], ['pass', 'fail'])
+
+        mock_fail_test.reset_mock()
+        raw_row = self._graph_row(1024, 'float', 1, 10, cycle=1)
+        rccl_lib.RcclVerifier('all_reduce_perf', [raw_row], expected, {'verify_bus_bw': 'True'}).check()
+        self.assertTrue(mock_fail_test.call_args.args[0].endswith('[type=float]'))
+        self.assertNotIn('cycle=', mock_fail_test.call_args.args[0])
+
+        mock_fail_test.reset_mock()
+        untyped_row = {key: value for key, value in raw_row.items() if key != 'type'}
+        rccl_lib.RcclVerifier('all_reduce_perf', [untyped_row], expected, {'verify_bus_bw': 'True'}).check()
+        self.assertTrue(mock_fail_test.call_args.args[0].endswith('(threshold with 5% tolerance: 76.00)'))
 
     # Tests for new verification functions
 
@@ -201,15 +1152,26 @@ class TestRcclLib(unittest.TestCase):
         mock_fail_test.assert_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
-    def test_check_bw_dip_no_reference(self, mock_fail_test):
-        """Test bandwidth dip check without reference data"""
+    def test_check_bw_dip_no_reference_fails_closed(self, mock_fail_test):
+        """A direct bandwidth dip check without reference data fails closed."""
         test_name = "all_reduce_perf"
         output = [
             {"size": 1024, "inPlace": 1, "busBw": 100.0},
             {"size": 2048, "inPlace": 1, "busBw": 50.0},  # Big drop but no reference
         ]
 
-        rccl_lib.RcclVerifier(test_name, output, None).check_bw_dip()
+        verifier = rccl_lib.RcclVerifier(test_name, output, None)
+        verifier.check_bw_dip()
+        mock_fail_test.assert_called_once()
+        self.assertEqual(verifier.verdicts[0]['check'], 'bw_dip')
+        self.assertIn('No reference message sizes', mock_fail_test.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_check_bw_dip_no_results(self, mock_fail_test):
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', [], {'1024': {'bus_bw': 80.0}})
+        with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+            verifier.check_bw_dip()
+        self.assertIn('No RCCL results available for BW dip check', captured.output[0])
         mock_fail_test.assert_not_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
@@ -240,16 +1202,208 @@ class TestRcclLib(unittest.TestCase):
         mock_fail_test.assert_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
-    def test_check_lat_dip_no_reference(self, mock_fail_test):
-        """Test latency dip check without reference data"""
+    def test_check_lat_dip_no_reference_fails_closed(self, mock_fail_test):
+        """A direct latency dip check without reference data fails closed."""
         test_name = "all_reduce_perf"
         output = [
             {"size": 1024, "inPlace": 1, "time": 20.0},
             {"size": 2048, "inPlace": 1, "time": 5.0},  # Big drop but no reference
         ]
 
-        rccl_lib.RcclVerifier(test_name, output, None).check_lat_dip()
+        verifier = rccl_lib.RcclVerifier(test_name, output, None)
+        verifier.check_lat_dip()
+        mock_fail_test.assert_called_once()
+        self.assertEqual(verifier.verdicts[0]['check'], 'lat_dip')
+        self.assertIn('No reference message sizes', mock_fail_test.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_check_lat_dip_no_results(self, mock_fail_test):
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', [], {'1024': {'bus_bw': 80.0}})
+        with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+            verifier.check_lat_dip()
+        self.assertIn('No RCCL results available for latency dip check', captured.output[0])
         mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_bw_dip_ignores_interleaved_aggregated_dtypes(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        rows = [
+            self._dtype_row(1024, 'float', 100, 20),
+            self._dtype_row(1024, 'half', 60, 10),
+            self._dtype_row(2048, 'float', 110, 25),
+            self._dtype_row(2048, 'half', 65, 12),
+            self._dtype_row(4096, 'float', 120, 30),
+            self._dtype_row(4096, 'half', 70, 14),
+        ]
+
+        rccl_lib.RcclVerifier('all_reduce_perf', rows, expected).check_bw_dip()
+
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_bw_dip_detects_dip_within_one_dtype_when_interleaved(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        rows = [
+            self._dtype_row(1024, 'float', 100, 20),
+            self._dtype_row(1024, 'half', 70, 10),
+            self._dtype_row(2048, 'float', 80, 25),
+            self._dtype_row(2048, 'half', 75, 12),
+        ]
+
+        rccl_lib.RcclVerifier('all_reduce_perf', rows, expected).check_bw_dip()
+
+        mock_fail_test.assert_called_once()
+        message = mock_fail_test.call_args.args[0]
+        for detail in ('msg size 2048', 'earlier msg size 1024', 'BW 100.0', '[type=float]'):
+            self.assertIn(detail, message)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_bw_dip_ignores_concatenated_raw_dtype_sweeps(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        rows = [
+            self._dtype_row(1024, 'float', 50, 20),
+            self._dtype_row(2048, 'float', 100, 25),
+            self._dtype_row(4096, 'float', 150, 30),
+            self._dtype_row(1024, 'half', 30, 10),
+            self._dtype_row(2048, 'half', 60, 12),
+            self._dtype_row(4096, 'half', 90, 14),
+        ]
+
+        rccl_lib.RcclVerifier('all_reduce_perf', rows, expected).check_bw_dip()
+
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_lat_dip_ignores_interleaved_dtypes(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        rows = [
+            self._dtype_row(1024, 'float', 100, 20),
+            self._dtype_row(1024, 'half', 60, 10),
+            self._dtype_row(2048, 'float', 110, 25),
+            self._dtype_row(2048, 'half', 65, 12),
+        ]
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected)
+
+        verifier.check_lat_dip()
+        mock_fail_test.assert_not_called()
+
+        rows.append(self._dtype_row(4096, 'float', 120, 15))
+        verifier.check_lat_dip()
+        mock_fail_test.assert_called_once()
+        message = mock_fail_test.call_args.args[0]
+        self.assertIn('latency', message)
+        self.assertIn('[type=float]', message)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_series_sorts_rows_by_size(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        row_2048 = self._dtype_row(2048, 'float', 100, 25)
+        row_1024 = self._dtype_row(1024, 'float', 90, 20)
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', [row_2048, row_1024], expected)
+
+        verifier.check_bw_dip()
+
+        mock_fail_test.assert_not_called()
+        self.assertEqual(verifier._dip_series(), {('float', None): [row_1024, row_2048]})
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_series_separates_raw_cycles(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        rows = [
+            self._dtype_row(1024, 'float', 90, 20, cycle=0),
+            self._dtype_row(2048, 'float', 100, 25, cycle=0),
+            self._dtype_row(1024, 'float', 90, 20, cycle=1),
+            self._dtype_row(2048, 'float', 100, 25, cycle=1),
+        ]
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected)
+
+        verifier.check_bw_dip()
+        mock_fail_test.assert_not_called()
+
+        rows[-1]['busBw'] = 80
+        verifier.check_bw_dip()
+        mock_fail_test.assert_called_once()
+        self.assertIn('[type=float, cycle=1]', mock_fail_test.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_series_filters_in_place_and_reference_sizes(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        in_place_rows = [self._dtype_row(1024, 'float', 100, 20), self._dtype_row(2048, 'float', 110, 25)]
+        out_of_place_row = {**self._dtype_row(2048, 'float', 1, 1), 'inPlace': 0}
+        non_reference_row = self._dtype_row(8192, 'float', 1, 1)
+        verifier = rccl_lib.RcclVerifier(
+            'all_reduce_perf', in_place_rows + [out_of_place_row, non_reference_row], expected
+        )
+
+        verifier.check_bw_dip()
+        self.assertEqual(verifier._dip_series(), {('float', None): in_place_rows})
+        mock_fail_test.assert_not_called()
+
+        out_of_place_rows = [
+            {**self._dtype_row(1024, 'float', 100, 20), 'inPlace': 0},
+            {**self._dtype_row(2048, 'float', 110, 25), 'inPlace': 0},
+        ]
+        verifier = rccl_lib.RcclVerifier(
+            'alltoall_perf', out_of_place_rows + [in_place_rows[-1], {**non_reference_row, 'inPlace': 0}], expected
+        )
+
+        verifier.check_bw_dip()
+        self.assertEqual(verifier._dip_series(), {('float', None): out_of_place_rows})
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_check_on_real_multi_dtype_aggregation(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 1.0}, '2048': {'bus_bw': 1.0}, '4096': {'bus_bw': 1.0}}
+        measurements = (
+            (1024, 'float', 100, 20),
+            (1024, 'half', 60, 10),
+            (2048, 'float', 110, 25),
+            (2048, 'half', 65, 12),
+        )
+        raw_rows = [
+            rccl_lib.RcclTests.model_validate(
+                {
+                    'numCycle': 0,
+                    'name': 'AllReduce',
+                    'size': size,
+                    'type': dtype,
+                    'redop': 'sum',
+                    'inPlace': 1,
+                    'algBw': bus_bw,
+                    'busBw': bus_bw,
+                    'time': time,
+                    'wrong': 0,
+                }
+            )
+            for size, dtype, bus_bw, time in measurements
+        ]
+
+        aggregated = rccl_lib.RcclJob.aggregate_results(raw_rows)
+        rows = rccl_lib.RcclJob._verification_results(aggregated, [])
+        rccl_lib.RcclVerifier(
+            'all_reduce_perf', rows, expected, {'verify_bw_dip': 'True', 'verify_lat_dip': 'True'}
+        ).check()
+
+        self.assertEqual(len(aggregated), 4)
+        mock_fail_test.assert_not_called()
+
+    def test_dip_label_omits_missing_series_keys(self):
+        self.assertEqual(rccl_lib.RcclVerifier._series_label(None, None), '')
+        self.assertEqual(rccl_lib.RcclVerifier._series_label('float', None), ' [type=float]')
+        self.assertEqual(rccl_lib.RcclVerifier._series_label('half', 0), ' [type=half, cycle=0]')
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_verifier_records_empty_results_without_running_checks(self, mock_fail_test):
+        verifier = rccl_lib.RcclVerifier(
+            'all_reduce_perf',
+            [],
+            {'1024': {'bus_bw': 100}},
+            {'verify_bus_bw': 'True', 'verify_bw_dip': 'True', 'verify_lat_dip': 'True'},
+        )
+
+        verifier.check()
+
+        mock_fail_test.assert_called_once_with('RCCL test all_reduce_perf produced no result rows')
 
     def _openmpi(self):
         openmpi = rccl_lib.OpenMPI({'mpi_dir': '/opt/ompi', 'mpi_oob_port': 'eth0'})
@@ -257,10 +1411,10 @@ class TestRcclLib(unittest.TestCase):
         openmpi.prepared = True
         return openmpi
 
-    def _srun(self, nodes, no_of_nodes, local_ranks, global_ranks, openmpi=None, phdl=None):
+    def _srun(self, nodes, no_of_nodes, local_ranks, global_ranks, openmpi=None, orch=None):
         return rccl_lib.Srun(
             openmpi or self._openmpi(),
-            phdl or MagicMock(),
+            orch or _FakeOrch(),
             nodes,
             no_of_nodes,
             local_ranks,
@@ -268,7 +1422,7 @@ class TestRcclLib(unittest.TestCase):
         )
 
     def test_mpirun_command(self):
-        launcher = rccl_lib.MpiRun(self._openmpi(), MagicMock(), ['n1', 'n2'], ['v1', 'v2'], 16)
+        launcher = rccl_lib.MpiRun(self._openmpi(), _FakeOrch(), ['n1', 'n2'], ['v1', 'v2'], 16)
         cmd = launcher.command('all_reduce_perf')
         self.assertIn('mpirun', cmd)
         self.assertIn('--hostfile /tmp/rccl_hosts_file_', cmd)
@@ -277,13 +1431,13 @@ class TestRcclLib(unittest.TestCase):
         self.assertNotIn('spur run', cmd)
 
     def test_mpirun_command_env_overrides_win_over_env_file(self):
-        launcher = rccl_lib.MpiRun(self._openmpi(), MagicMock(), ['n1', 'n2'], ['v1', 'v2'], 16)
+        launcher = rccl_lib.MpiRun(self._openmpi(), _FakeOrch(), ['n1', 'n2'], ['v1', 'v2'], 16)
         cmd = launcher.command('all_reduce_perf', '/home/user/env.sh', {'NCCL_ALGO': 'Ring'})
         self.assertIn('source /home/user/env.sh && export NCCL_ALGO=Ring && all_reduce_perf', cmd)
         self.assertNotIn('-x NCCL_ALGO', cmd)
 
     def test_mpirun_command_wraps_binary_without_env_file(self):
-        launcher = rccl_lib.MpiRun(self._openmpi(), MagicMock(), ['n1', 'n2'], ['v1', 'v2'], 16)
+        launcher = rccl_lib.MpiRun(self._openmpi(), _FakeOrch(), ['n1', 'n2'], ['v1', 'v2'], 16)
         self.assertIn("bash -c all_reduce_perf", launcher.command('all_reduce_perf'))
 
     @patch('cvs.lib.rccl_lib.scheduler_hosts', return_value=['n1', 'n2'])
@@ -346,7 +1500,7 @@ class TestRcclLib(unittest.TestCase):
     @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
     def test_rccl_job_from_config_composes_openmpi_and_srun(self, _managed):
         config = {
-            'env_source_script': '/tmp/ainic.sh',
+            'env_source_script': f'{TMP}/ainic.sh',
             'mpi_params': {
                 'mpi_dir': '/opt/openmpi/bin',
                 'no_of_nodes': '2',
@@ -356,26 +1510,35 @@ class TestRcclLib(unittest.TestCase):
             'rccl_test_params': {'rccl_tests_dir': '/opt/rccl-tests/build'},
             'cvs_params': {'cvs_exec_timeout': '600'},
         }
-        job = rccl_lib.RcclJob.from_config(
-            MagicMock(), MagicMock(), 'all_reduce_perf', config, ['n1', 'n2'], ['v1', 'v2']
-        )
-        self.assertEqual(job.env_file, '/tmp/ainic.sh')
+        job = rccl_lib.RcclJob.from_config(_FakeOrch(), 'all_reduce_perf', config, ['n1', 'n2'], ['v1', 'v2'])
+        self.assertEqual(job.env_file, f'{TMP}/ainic.sh')
         self.assertEqual(job.head_node, 'n1')
         self.assertEqual(job.no_of_global_ranks, 8)
         self.assertEqual(job.openmpi.oob_port, 'ens3')
         self.assertEqual(job.cvs_exec_timeout, 600)
+        self.assertEqual(job.topology_check_mode, 'warn')
         self.assertIsInstance(job.openmpi, rccl_lib.OpenMPI)
         self.assertIsInstance(job.launcher, rccl_lib.Srun)
 
+    def test_rccl_job_uses_orchestrator_head_node_regardless_of_list_order(self):
+        orch = _FakeOrch()
+        orch.head_node = 'n2'
+        config = {'mpi_params': {}, 'rccl_test_params': {}, 'cvs_params': {}}
+
+        job = rccl_lib.RcclJob.from_config(orch, 'all_reduce_perf', config, ['n1', 'n2'], ['v1', 'v2'])
+        self.assertEqual(job.head_node, 'n2')
+
+    @patch.object(rccl_lib.RcclJob, '_prepare_result_directory')
     @patch.object(rccl_lib.RcclJob, '_detect_output_flag', return_value='-X')
     @patch('cvs.lib.rccl_lib.Srun.prepare', autospec=True)
     @patch('cvs.lib.rccl_lib.OpenMPI.prepare', autospec=True)
     @patch.object(rccl_lib.RcclJob, '_require_spur_job_step')
     @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
-    def test_rccl_job_prepare_is_idempotent(self, _managed, require_step, prepare_openmpi, prepare_srun, detect_output):
+    def test_rccl_job_prepare_is_idempotent(
+        self, _managed, require_step, prepare_openmpi, prepare_srun, detect_output, prepare_directory
+    ):
         job = rccl_lib.RcclJob(
-            MagicMock(),
-            MagicMock(),
+            _FakeOrch(),
             'all_reduce_perf',
             '/dev/null',
             {'mpi_pml': 'ob1'},
@@ -386,6 +1549,7 @@ class TestRcclLib(unittest.TestCase):
         )
         self.assertIs(job.prepare(), job)
         self.assertIs(job.prepare(), job)
+        prepare_directory.assert_called_once()
         require_step.assert_called_once()
         prepare_openmpi.assert_called_once()
         prepare_srun.assert_called_once()
@@ -408,15 +1572,15 @@ class TestRcclLib(unittest.TestCase):
 
     @patch.dict(os.environ, {'USER': 'cvsuser', 'SLURM_JOB_ID': '4242'}, clear=False)
     def test_srun_prepare_creates_session_dir_once_per_node(self):
-        phdl = MagicMock()
-        launcher = self._srun(['n1', 'n2'], 2, 8, 16, phdl=phdl)
+        orch = _FakeOrch()
+        launcher = self._srun(['n1', 'n2'], 2, 8, 16, orch=orch)
         self.assertIs(launcher.prepare(), launcher)
         launcher.prepare()
-        self.assertEqual(launcher.session_dir, '/tmp/cvsuser/ompi-4242')
-        phdl.exec.assert_called_once()
-        mkdir_cmd = phdl.exec.call_args[0][0]
+        self.assertEqual(launcher.session_dir, f'{TMP}/cvsuser/ompi-4242')
+        orch.exec.assert_called_once()
+        mkdir_cmd = orch.exec.call_args[0][0]
         self.assertIn('mkdir -p -m 700 /tmp/cvsuser', mkdir_cmd)
-        self.assertIn('/tmp/cvsuser/ompi-4242', mkdir_cmd)
+        self.assertIn(f'{TMP}/cvsuser/ompi-4242', mkdir_cmd)
 
     @patch.dict(os.environ, {'USER': 'cvsuser', 'SLURM_JOB_ID': '4242'}, clear=False)
     def test_srun_exports_literal_session_dir(self):
@@ -429,11 +1593,11 @@ class TestRcclLib(unittest.TestCase):
         self.assertNotIn('$$', joined)
 
     def test_srun_cleanup_removes_session_dir(self):
-        phdl = MagicMock()
-        launcher = self._srun(['n1'], 1, 8, 8, phdl=phdl).prepare()
+        orch = _FakeOrch()
+        launcher = self._srun(['n1'], 1, 8, 8, orch=orch).prepare()
         session_dir = launcher.session_dir
         launcher.cleanup()
-        self.assertIn(f'rm -rf {session_dir}', phdl.exec.call_args[0][0])
+        self.assertIn(f'rm -rf {session_dir}', orch.exec.call_args[0][0])
         self.assertEqual(launcher.session_dir, '')
 
     def test_wrap_rccl_test_cmd_mpi_setup_before_env_script(self):
@@ -455,7 +1619,7 @@ class TestRcclLib(unittest.TestCase):
     def test_mpirun_normalizes_mpi_dir_bin(self):
         launcher = rccl_lib.MpiRun(
             rccl_lib.OpenMPI({'mpi_dir': '/opt/openmpi/bin'}),
-            MagicMock(),
+            _FakeOrch(),
             ['n1'],
             ['v1'],
             8,
@@ -480,28 +1644,26 @@ class TestRcclLib(unittest.TestCase):
             with self.subTest(env=env), patch.dict('os.environ', env, clear=True):
                 rccl_lib.RcclJob._require_spur_job_step()
 
-    def _job(self, phdl, shdl, head='head'):
+    def _job(self, orch, head='head'):
         with patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True):
             return rccl_lib.RcclJob(
-                phdl,
-                shdl,
+                orch,
                 'all_reduce_perf',
                 '/dev/null',
                 {'mpi_pml': 'ob1'},
                 {},
-                {'cvs_exec_timeout': 60},
+                {'cvs_exec_timeout': 60, 'rccl_result_file': '/shared/rccl.json'},
                 [head],
                 [head],
             )
 
     def test_exec_rccl_launch_nonzero_exit_does_not_scan(self):
         rccl_lib.globals.error_list = []
-        shdl = MagicMock()
-        shdl.exec.return_value = {
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {
             'head': {'output': '# Avg bus bandwidth    : 1.8\n', 'exit_code': 3},
         }
-        phdl = MagicMock()
-        job = self._job(phdl, shdl)
+        job = self._job(orch)
         with (
             patch.object(job, 'launch_command', return_value='spur run --overlap --mpi=pmix -- all_reduce_perf'),
             patch('cvs.lib.rccl_lib.RcclVerifier.scan_logs') as mock_scan,
@@ -509,19 +1671,18 @@ class TestRcclLib(unittest.TestCase):
             result = job.execute('all_reduce_perf', 'unit')
         self.assertIsNone(result)
         mock_scan.assert_not_called()
-        phdl.exec.assert_called()
-        shdl.exec.assert_called_once()
-        self.assertTrue(shdl.exec.call_args.kwargs.get('detailed'))
+        orch.exec.assert_called()
+        orch.exec_on_head.assert_called_once()
+        self.assertTrue(orch.exec_on_head.call_args.kwargs.get('detailed'))
         self.assertTrue(any('exit code 3' in msg for msg in rccl_lib.globals.error_list))
 
     def test_exec_rccl_launch_timeout_with_bandwidth_is_failure(self):
         rccl_lib.globals.error_list = []
-        shdl = MagicMock()
-        shdl.exec.return_value = {
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {
             'head': {'output': '# Avg bus bandwidth    : 1.8\nABORT: Timeout\n', 'exit_code': -1},
         }
-        phdl = MagicMock()
-        job = self._job(phdl, shdl)
+        job = self._job(orch)
         with patch.object(job, 'launch_command', return_value='spur run --overlap --'):
             result = job.execute('all_reduce_perf', 'unit')
         self.assertIsNone(result)
@@ -529,17 +1690,16 @@ class TestRcclLib(unittest.TestCase):
 
     def test_exec_rccl_launch_success_scans_logs(self):
         rccl_lib.globals.error_list = []
-        shdl = MagicMock()
-        shdl.exec.return_value = {
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {
             'head': {'output': '# Avg bus bandwidth    : 1.8\n', 'exit_code': 0},
         }
-        phdl = MagicMock()
-        job = self._job(phdl, shdl)
+        job = self._job(orch)
         with patch.object(job, 'launch_command', return_value='spur run --overlap --'):
             result = job.execute('all_reduce_perf', 'unit')
         self.assertIn('Avg bus bandwidth', result)
         self.assertEqual(rccl_lib.globals.error_list, [])
-        phdl.exec.assert_not_called()
+        orch.exec.assert_not_called()
 
     def test_rccl_regression_failed_launch_preserves_graph_generation(self):
         env = {
@@ -549,9 +1709,8 @@ class TestRcclLib(unittest.TestCase):
             'SLURM_PROCID': '0',
             'SPUR_NODES': 'n1,n2',
         }
-        phdl = MagicMock()
-        shdl = MagicMock()
-        shdl.exec.side_effect = [
+        orch = _FakeOrch()
+        orch.exec_on_head.side_effect = [
             {'n1': 'NEW'},
             {'n1': {'output': '# Avg bus bandwidth : 1.8\n', 'exit_code': 3}},
         ]
@@ -559,22 +1718,22 @@ class TestRcclLib(unittest.TestCase):
             patch.dict('os.environ', env, clear=True),
             patch.object(rccl_lib.globals, 'error_list', []),
             patch.object(rccl_lib.RcclJob, 'read_results') as read_results,
+            patch.object(rccl_lib.RcclJob, '_prepare_result_directory'),
         ):
             failed_results = rccl_lib.RcclJob(
-                phdl,
-                shdl,
+                orch,
                 'all_reduce_perf',
                 '/dev/null',
                 {'no_of_nodes': 2, 'no_of_local_ranks': 1, 'mpi_pml': 'ob1', 'mpi_dir': '/opt/openmpi'},
                 {},
-                {},
+                {'rccl_result_file': '/shared/rccl.json'},
                 ['n1', 'n2'],
                 ['n1', 'n2'],
             ).run_regression()
             self.assertEqual(failed_results, [])
             read_results.assert_not_called()
             self.assertTrue(any('exit code 3' in msg for msg in rccl_lib.globals.error_list))
-            phdl.exec.assert_called()
+            orch.exec.assert_called()
 
         successful_results = [
             {'size': 1024, 'name': 'all_reduce_perf', 'inPlace': 1, 'busBw': 100.0, 'algBw': 90.0, 'time': 1.0}
@@ -592,13 +1751,983 @@ class TestRcclLib(unittest.TestCase):
             self.assertEqual(rccl_lib.Srun._cpus_per_nested_task(8), 16)
 
     def test_cleanup_does_not_pkill_scheduler(self):
-        phdl = MagicMock()
-        self._job(phdl, MagicMock())._cleanup_stale_processes('unit-test')
-        commands = [call.args[0] for call in phdl.exec.call_args_list]
+        orch = _FakeOrch()
+        self._job(orch)._cleanup_stale_processes('unit-test')
+        commands = [call.args[0] for call in orch.exec.call_args_list]
         joined = ' '.join(commands)
         self.assertNotRegex(joined, r'(^|[^a-z])srun([^a-z]|$)')
         self.assertNotIn('spur', joined)
         self.assertIn('all_reduce_perf', joined)
+        self.assertEqual(orch.exec.call_count, 3)
+        orch.all.exec.assert_not_called()
+        orch.head.exec.assert_not_called()
+
+    def test_mpirun_uses_container_ssh_port_and_head_environment(self):
+        orch = _FakeOrch(ssh_port=2224)
+        launcher = rccl_lib.MpiRun(self._openmpi(), orch, ['n1', 'n2'], ['v1', 'v2'], 16)
+        cmd = launcher.command('all_reduce_perf')
+        args = shlex.split(cmd)
+        self.assertEqual(
+            args[args.index('plm_rsh_args') + 1],
+            '-p 2224 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null',
+        )
+        self.assertEqual(orch.exec_on_head.call_count, 2)
+        self.assertIn('v1 slots=8\nv2 slots=8', orch.exec_on_head.call_args.args[0])
+        orch.head.exec.assert_not_called()
+        orch.all.exec.assert_not_called()
+
+    def test_openmpi_discovers_ucx_in_orchestrator_environment(self):
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {'head': '1'}
+        openmpi = rccl_lib.OpenMPI({'mpi_pml': 'auto'})
+        with patch.object(rccl_lib.linux_utils, 'get_ucx_net_devices', return_value='rdma0:1') as devices:
+            openmpi.prepare(orch, 'head')
+        devices.assert_called_once_with(orch)
+        self.assertEqual(openmpi.pml, 'ucx')
+        self.assertEqual(openmpi.ucx_env['UCX_NET_DEVICES'], 'rdma0:1')
+        orch.exec_on_head.assert_called_once()
+        orch.head.exec.assert_not_called()
+
+    def test_managed_prepare_rejects_result_directory_invisible_to_cvs(self):
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
+        job = self._job(orch)
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(job.openmpi, 'prepare') as prepare_mpi:
+            job.cvs_params['rccl_result_file'] = f'{tmpdir}/results.json'
+            with self.assertRaisesRegex(RuntimeError, '--workspace or CVS_WORKSPACE'):
+                job.prepare()
+            prepare_mpi.assert_not_called()
+            self.assertFalse(job.prepared)
+            self.assertEqual(list(Path(tmpdir).iterdir()), [])
+
+    def test_managed_prepare_checks_remote_result_directory_failures(self):
+        for result in ({}, {'head': {'output': 'permission denied', 'exit_code': 1}}, {'head': 'no exit code'}):
+            with self.subTest(result=result):
+                orch = _FakeOrch()
+                orch.exec_on_head.return_value = result
+                job = self._job(orch)
+                with self.assertRaisesRegex(RuntimeError, 'Cannot use RCCL result directory /shared'):
+                    job.prepare()
+                self.assertFalse(job.prepared)
+
+    def test_managed_prepare_reports_head_connectivity_failure(self):
+        orch = _FakeOrch()
+        orch.exec_on_head.side_effect = OSError('head unreachable')
+        with self.assertRaisesRegex(RuntimeError, 'head unreachable.*--workspace or CVS_WORKSPACE'):
+            self._job(orch).prepare()
+
+    def test_managed_result_directory_accepts_shared_writable_path_and_cleans_probe(self):
+        orch = _FakeOrch()
+        job = self._job(orch)
+        with tempfile.TemporaryDirectory(prefix='rccl shared ') as tmpdir:
+            job.cvs_params['rccl_result_file'] = f'{tmpdir}/results.json'
+            sentinel = Path(tmpdir) / '.cvs-rccl-probe'
+            orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
+            orch.download_from_head.side_effect = _download_writes_suffixed_path('probe')
+
+            with patch.object(rccl_lib.uuid, 'uuid4', return_value=MagicMock(hex='probe')):
+                job._prepare_result_directory()
+            command = orch.exec_on_head.call_args_list[0].args[0]
+            self.assertIn(shlex.quote(tmpdir), command)
+            self.assertIn(shlex.quote(str(sentinel)), command)
+            remote_arg, local_arg = orch.download_from_head.call_args.args
+            self.assertEqual(remote_arg, str(sentinel))
+            self.assertFalse(Path(local_arg).exists())
+            self.assertFalse(Path(f'{local_arg}_head').exists())
+            orch.all.exec.assert_not_called()
+            orch.head.exec.assert_not_called()
+
+    def test_managed_result_directory_rejects_mismatched_sentinel(self):
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
+        orch.download_from_head.side_effect = _download_writes_suffixed_path('different filesystem')
+        job = self._job(orch)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job.cvs_params['rccl_result_file'] = f'{tmpdir}/results.json'
+            with patch.object(rccl_lib.uuid, 'uuid4', return_value=MagicMock(hex='probe')):
+                with self.assertRaisesRegex(RuntimeError, 'sentinel is not visible'):
+                    job._prepare_result_directory()
+
+    def test_non_managed_result_directory_also_verifies_sentinel_via_download(self):
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
+        orch.download_from_head.side_effect = _download_writes_suffixed_path('probe')
+        job = self._job(orch)
+        job.managed = False
+        with patch.object(rccl_lib.uuid, 'uuid4', return_value=MagicMock(hex='probe')):
+            job._prepare_result_directory()
+        self.assertIn('mkdir -p -- /shared', orch.exec_on_head.call_args_list[0].args[0])
+        orch.download_from_head.assert_called_once()
+
+    def test_non_managed_result_directory_rejects_unmounted_result_path(self):
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
+        job = self._job(orch)
+        job.managed = False
+        with self.assertRaisesRegex(RuntimeError, 'bind-mount the result directory'):
+            job._prepare_result_directory()
+
+    def test_default_result_file_uses_run_layout(self):
+        job = self._job(_FakeOrch())
+        job.cvs_params.pop('rccl_result_file')
+        with patch('cvs.core.run_layout.RunLayout.get') as layout:
+            layout.return_value.run_dir = Path('/shared/cvs_runs/1234')
+            self.assertEqual(job.result_file, '/shared/cvs_runs/1234/rccl_result_file.json')
+
+    def test_perf_result_file_includes_collective_name(self):
+        job = self._job(_FakeOrch())
+        self.assertEqual(job.perf_result_file, '/shared/rccl_all_reduce_perf.json')
+        self.assertEqual(job.result_file, '/shared/rccl.json')
+        job.cvs_params.pop('rccl_result_file')
+        with patch('cvs.core.run_layout.RunLayout.get') as layout:
+            layout.return_value.run_dir = Path('/shared/cvs_runs/1234')
+            self.assertEqual(job.perf_result_file, '/shared/cvs_runs/1234/rccl_result_file_all_reduce_perf.json')
+        job.cvs_params['rccl_result_file'] = '/shared/rccl.out'
+        self.assertEqual(job.perf_result_file, '/shared/rccl_all_reduce_perf.json')
+
+    def test_result_transfers_use_head_host_handle(self):
+        orch = _FakeOrch()
+        job = self._job(orch)
+        payload = [{'size': 1024, 'busBw': 123}]
+        uploads = []
+
+        def upload(local_path, remote_path):
+            uploads.append((json.loads(Path(local_path).read_text()), remote_path))
+
+        orch.upload_to_head.side_effect = upload
+        self.assertTrue(job.save_results('/shared/rccl.json', payload, 'unit'))
+        self.assertEqual(uploads, [(payload, '/shared/rccl.json')])
+        self.assertFalse(Path(orch.upload_to_head.call_args.args[0]).exists())
+
+        def download(remote_path, local_path):
+            Path(local_path).write_text(json.dumps(payload), encoding='utf-8')
+            return {'head': local_path}
+
+        orch.download_from_head.side_effect = download
+        self.assertEqual(job.read_results('/shared/rccl.json'), payload)
+        orch.download_from_head.assert_called_once()
+        orch.head.upload_file.assert_not_called()
+        orch.head.download_file.assert_not_called()
+        orch.exec.assert_not_called()
+        orch.exec_on_head.assert_not_called()
+
+    def test_result_save_failure_records_test_failure(self):
+        orch = _FakeOrch()
+        orch.upload_to_head.side_effect = OSError('shared storage unavailable')
+        self.assertFalse(self._job(orch).save_results('/shared/rccl.json', [], 'unit'))
+        self.assertTrue(any('shared storage unavailable' in msg for msg in rccl_lib.globals.error_list))
+        self.assertFalse(Path(orch.upload_to_head.call_args.args[0]).exists())
+
+    def test_configured_collectives_uses_sample_config_and_supports_legacy(self):
+        config_path = Path(rccl_lib.__file__).parents[1] / 'input/config_file/rccl/rccl_config.json'
+        config = json.loads(config_path.read_text())['rccl']
+        collectives = rccl_lib.configured_collectives(config)
+        self.assertIn('all_gather_perf', collectives)
+        self.assertGreater(len(collectives), 1)
+        config['rccl_collective'] = ['reduce_perf']
+        self.assertEqual(rccl_lib.configured_collectives(config), collectives)
+        del config['rccl_test_params']['rccl_collective']
+        self.assertEqual(rccl_lib.configured_collectives(config), ['reduce_perf'])
+        self.assertEqual(rccl_lib.configured_collectives({}), rccl_lib.DEFAULT_COLLECTIVES)
+
+    def test_thresholds_fail_perf_and_regression_for_both_config_shapes(self):
+        references = [
+            {'all_reduce_perf': {'bus_bw': {'1024': '100'}}},
+            {'thor': {'all_reduce_perf-float-16': {'1024': {'bus_bw': '100'}}}},
+        ]
+        for reference in references:
+            for method in ('run_perf', 'run_regression'):
+                with self.subTest(reference=reference, method=method):
+                    rccl_lib.globals.error_list = []
+                    config = {
+                        'mpi_params': {'no_of_nodes': 2, 'no_of_local_ranks': 8},
+                        'rccl_test_params': {'data_types': ['float']},
+                        'cvs_params': {
+                            'nic_model': 'thor',
+                            'verify_bus_bw': 'True',
+                            'verify_bw_dip': 'False',
+                            'verify_lat_dip': 'False',
+                            'rccl_result_file': '/shared/rccl.json',
+                        },
+                        'results': reference,
+                    }
+                    job = rccl_lib.RcclJob.from_config(
+                        _FakeOrch(), 'all_reduce_perf', config, ['n1', 'n2'], ['v1', 'v2']
+                    )
+                    rows = [{'size': 1024, 'inPlace': 1, 'busBw': 50}]
+                    with (
+                        patch.object(job, 'prepare'),
+                        patch.object(job, 'execute', return_value='# Avg bus bandwidth : 50'),
+                        patch.object(job, 'read_results', return_value=rows),
+                        patch.object(job, '_run_perf_dtype', return_value=(rows, [])),
+                        patch.object(job, 'save_results', return_value=True),
+                        patch.object(job, 'collect_gpu_info'),
+                    ):
+                        self.assertEqual(getattr(job, method)(), rows)
+                    self.assertTrue(any('lower than expected bus BW' in msg for msg in rccl_lib.globals.error_list))
+
+    def test_null_marker_records_no_failure_in_perf_and_regression(self):
+        config = {
+            'mpi_params': {'no_of_nodes': 2, 'no_of_local_ranks': 8},
+            'rccl_test_params': {'data_types': ['float']},
+            'cvs_params': {
+                'nic_model': 'thor',
+                'verify_bus_bw': 'True',
+                'verify_bw_dip': 'False',
+                'verify_lat_dip': 'False',
+                'rccl_result_file': '/shared/rccl.json',
+            },
+            'results': {'thor': {'all_reduce_perf-float-16': None}},
+        }
+        rows = [{'size': 1024, 'inPlace': 1, 'busBw': 1}]
+        for method in ('run_perf', 'run_regression'):
+            with self.subTest(method=method):
+                rccl_lib.globals.error_list = []
+                job = rccl_lib.RcclJob.from_config(_FakeOrch(), 'all_reduce_perf', config, ['n1', 'n2'], ['v1', 'v2'])
+                with (
+                    patch.object(job, 'prepare'),
+                    patch.object(job, 'execute', return_value='# Avg bus bandwidth : 1'),
+                    patch.object(job, 'read_results', return_value=rows),
+                    patch.object(job, '_run_perf_dtype', return_value=(rows, [])),
+                    patch.object(job, 'save_results', return_value=True),
+                    patch.object(job, 'collect_gpu_info'),
+                ):
+                    self.assertEqual(getattr(job, method)(), rows)
+                self.assertEqual(rccl_lib.globals.error_list, [])
+                self.assertEqual(job.verdicts, [])
+
+    def test_missing_configured_size_fails_perf_and_regression(self):
+        config = self._shipped_config()
+        config['cvs_params']['verify_bus_bw'] = 'True'
+        rows = [{'size': size, 'inPlace': 1, 'busBw': 400.0} for size in (1073741824, 2147483648, 4294967296)]
+        for method in ('run_perf', 'run_regression'):
+            with self.subTest(method=method):
+                rccl_lib.globals.error_list = []
+                job = self._configured_job(config)
+                with (
+                    patch.object(job, 'prepare'),
+                    patch.object(job, 'execute', return_value='# Avg bus bandwidth : 400'),
+                    patch.object(job, 'read_results', return_value=rows),
+                    patch.object(job, '_run_perf_dtype', return_value=(rows, [])),
+                    patch.object(job, 'save_results', return_value=True),
+                    patch.object(job, 'collect_gpu_info'),
+                ):
+                    self.assertEqual(getattr(job, method)(), rows)
+                self.assertTrue(
+                    any(
+                        'all_reduce_perf' in message and '8589934592' in message
+                        for message in rccl_lib.globals.error_list
+                    )
+                )
+
+    def test_malformed_nic_reference_reports_one_failure_during_regression(self):
+        config = self._shipped_config()
+        config['results'] = {'thor': {'all_reduce_perf-float-16': 'invalid'}}
+        config['cvs_params']['verify_bus_bw'] = 'True'
+        job = self._configured_job(config)
+        rows = [{'size': 2048, 'inPlace': 1, 'busBw': 10.0}]
+        with (
+            patch.object(rccl_lib.globals, 'error_list', []),
+            patch.object(job, 'prepare'),
+            patch.object(job, 'execute', return_value='RCCL output'),
+            patch.object(job, 'read_results', return_value=rows),
+            patch.object(job, 'collect_gpu_info'),
+            patch.object(job, '_save_topology_checks'),
+        ):
+            job.run_regression()
+            self.assertEqual(len(rccl_lib.globals.error_list), 1)
+            self.assertIn('rccl.results.thor.all_reduce_perf-float-16', rccl_lib.globals.error_list[0])
+
+    @staticmethod
+    def _bias_rows():
+        """Rows shaped like all_reduce_bias_perf output on a 4-GPU node."""
+        base = {
+            'numCycle': 0,
+            'name': 'AllReduce',
+            'nodes': 1,
+            'ranks': 4,
+            'ranksPerNode': 4,
+            'gpusPerRank': 1,
+            'type': 'float',
+            'redop': 'sum',
+            'wrong': '0',
+        }
+        return [
+            {**base, 'size': 1024, 'inPlace': 0, 'time': 5399.35, 'algBw': 0.000190, 'busBw': 0.000284},
+            {**base, 'size': 1024, 'inPlace': 1, 'time': 5402.10, 'algBw': 0.000189, 'busBw': 0.000283},
+            {**base, 'size': 1048576, 'inPlace': 0, 'time': 5500.00, 'algBw': 0.19, 'busBw': 0.29},
+            {**base, 'size': 1048576, 'inPlace': 1, 'time': 5510.00, 'algBw': 0.19, 'busBw': 0.28},
+        ]
+
+    def _bias_job(self, results):
+        config = {
+            'mpi_params': {'no_of_nodes': 1, 'no_of_local_ranks': 4},
+            'rccl_test_params': {'rccl_tests_dir': '/opt/rccl-tests/build', 'data_types': ['float']},
+            'cvs_params': {
+                'verify_bus_bw': 'True',
+                'verify_bw_dip': 'True',
+                'verify_lat_dip': 'False',
+                'topology_check': 'off',
+                'rccl_result_file': '/shared/rccl.json',
+            },
+            'results': results,
+        }
+        return rccl_lib.RcclJob.from_config(_FakeOrch(), 'all_reduce_bias_perf', config, ['n1'], ['v1'])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_all_reduce_bias_perf_runs_and_verifies_against_its_own_thresholds(self, mock_fail_test):
+        job = self._bias_job({'all_reduce_bias_perf': {'bus_bw': {'1024': '0.0002', '1048576': '0.2'}}})
+        saved = {}
+        job.orch.upload_to_head.side_effect = lambda local, remote: saved.__setitem__(
+            remote, json.loads(Path(local).read_text())
+        )
+        with (
+            patch.object(job, 'prepare'),
+            patch.object(job, 'execute', return_value='# Avg bus bandwidth : 0.14') as mock_execute,
+            patch.object(job, 'read_results', return_value=self._bias_rows()),
+            patch.object(job, 'collect_gpu_info'),
+        ):
+            result = job.run_perf()
+
+        self.assertEqual(result, self._bias_rows())
+        command = mock_execute.call_args.args[0]
+        self.assertTrue(command.startswith('/opt/rccl-tests/build/all_reduce_bias_perf '))
+        self.assertIn('-d float', command)
+        aggregated = saved['/shared/rccl_all_reduce_bias_perf_aggregated.json']
+        self.assertEqual(len(aggregated), 4)
+        self.assertTrue(all(row['name'] == 'AllReduce' for row in aggregated))
+        self.assertEqual(
+            {(row['size'], row['inPlace']) for row in aggregated},
+            {(1024, 0), (1024, 1), (1048576, 0), (1048576, 1)},
+        )
+        self.assertEqual(
+            sorted((verdict['check'], verdict['size'], verdict['status']) for verdict in job.verdicts),
+            [('bus_bw', 1024, 'pass'), ('bus_bw', 1048576, 'pass'), ('bw_dip', 1048576, 'pass')],
+        )
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_all_reduce_bias_perf_does_not_borrow_all_reduce_thresholds(self, mock_fail_test):
+        job = self._bias_job({'all_reduce_perf': {'bus_bw': {'1024': '0.0002'}}})
+        with (
+            patch.object(job, 'prepare'),
+            patch.object(job, 'execute', return_value='# Avg bus bandwidth : 0.14'),
+            patch.object(job, 'read_results', return_value=self._bias_rows()),
+            patch.object(job, 'collect_gpu_info'),
+        ):
+            job.run_perf()
+
+        self.assertEqual(mock_fail_test.call_count, 2)
+        fail_messages = [call.args[0] for call in mock_fail_test.call_args_list]
+        self.assertIn(
+            'No bus bandwidth thresholds for all_reduce_bias_perf in rccl.results.all_reduce_bias_perf',
+            fail_messages,
+        )
+        self.assertIn(
+            'No reference message sizes for BW dip check of all_reduce_bias_perf in rccl.results.all_reduce_bias_perf',
+            fail_messages,
+        )
+        self.assertEqual(len(job.verdicts), 2)
+        self.assertEqual(
+            sorted((verdict['check'], verdict['status']) for verdict in job.verdicts),
+            [('bus_bw', 'fail'), ('bw_dip', 'fail')],
+        )
+
+    def test_threshold_config_location_precedence_and_legacy_fallback(self):
+        legacy = {'all_reduce_perf': {'bus_bw': {'1024': '100'}}}
+        current = {'all_reduce_perf': {'bus_bw': {'1024': '200'}}}
+        config = {'mpi_params': {}, 'rccl_test_params': {}, 'cvs_params': {'results': legacy}}
+        for top_level, expected in ((None, '100'), (current, '200'), ({}, None)):
+            with self.subTest(top_level=top_level):
+                if top_level is not None:
+                    config['results'] = top_level
+                job = rccl_lib.RcclJob.from_config(_FakeOrch(), 'all_reduce_perf', config, ['n1'], ['v1'])
+                resolved = job._expected_results(['float'])
+                self.assertEqual(resolved, {'1024': {'bus_bw': float(expected)}} if expected else None)
+
+    def test_nic_thresholds_are_specific_to_rank_count_and_data_types(self):
+        job = self._job(_FakeOrch())
+        job.cvs_params['nic_model'] = 'Broadcom'
+        job.expected_results = {'thor': {'all_reduce_perf-float_half-16': {'1024': {'bus_bw': '100'}}}}
+        self.assertEqual(job._expected_results(['float', 'half']), {'1024': {'bus_bw': 100.0}})
+        self.assertIsNone(job._expected_results(['float']))
+        job.no_of_global_ranks = 8
+        self.assertIsNone(job._expected_results(['float', 'half']))
+
+
+class TestRcclTopology(unittest.TestCase):
+    _AUDIT = {
+        'run_perf': '/results/rccl_all_reduce_perf_topology_check.json',
+        'run_regression': '/results/rccl_all_reduce_perf_topology_check.json',
+    }
+
+    def setUp(self):
+        self.requested = {'nodes': 2, 'ranks': 2, 'ranksPerNode': 1, 'gpusPerRank': 8}
+        self.row = {
+            'numCycle': 0,
+            'name': 'AllReduce',
+            'nodes': 1,
+            'ranks': 2,
+            'ranksPerNode': 2,
+            'gpusPerRank': 8,
+            'size': 8,
+            'type': 'float',
+            'redop': 'sum',
+            'inPlace': 0,
+            'time': 65.3309,
+            'algBw': 0.000122,
+            'busBw': 0.00023,
+            'wrong': '0',
+        }
+        self.job = self._job()
+
+    def _job(self, cvs_params=None, mpi_params=None, nodes=None, managed=True, test_name='all_reduce_perf'):
+        with patch('cvs.lib.rccl_lib.is_managed_compute', return_value=managed):
+            return rccl_lib.RcclJob(
+                _FakeOrch(),
+                test_name,
+                '/dev/null',
+                mpi_params or {'no_of_nodes': '2', 'no_of_local_ranks': '1'},
+                {'threads_per_gpu': '8'},
+                cvs_params or {},
+                nodes or ['n1', 'n2'],
+                nodes or ['n1', 'n2'],
+            )
+
+    def _mock_run(self, rows=None, job=None, saved=None):
+        job = job or self.job
+        saved = {} if saved is None else saved
+
+        def upload(local_path, remote_path):
+            saved[remote_path] = json.loads(Path(local_path).read_text())
+
+        read_results = patch.object(job, 'read_results')
+        if rows is not None:
+            read_results = patch.object(job, 'read_results', return_value=rows)
+        for patcher in (
+            patch.object(job, 'prepare'),
+            patch.object(job, 'execute', return_value='completed'),
+            read_results,
+            patch.object(job, 'collect_gpu_info'),
+            patch.object(job, '_verify_results'),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        job.orch.upload_to_head.side_effect = upload
+        job.cvs_params['rccl_result_file'] = '/results/rccl.json'
+        return saved
+
+    def _mock_download(self, payload):
+        def download(remote_path, local_path):
+            Path(local_path).write_text(json.dumps(payload))
+            return {self.job.head_node: local_path}
+
+        self.job.orch.download_from_head.side_effect = download
+
+    def test_compare_exact_match(self):
+        self.assertEqual(rccl_lib.compare_topology(self.requested, self.requested), [])
+
+    def test_compare_captured_mislabeled_topology(self):
+        """Values captured from a real multi-node run where the launcher's requested rank/node counts and rccl-tests' reported values were swapped."""
+        original = deepcopy(self.row)
+        self.assertEqual(
+            rccl_lib.compare_topology(self.requested, self.row),
+            ['nodes: requested 2, reported 1', 'ranksPerNode: requested 1, reported 2'],
+        )
+        self.assertEqual(self.row, original)
+
+    def test_compare_default_config_mislabeled_topology(self):
+        requested = {**self.requested, 'ranks': 16, 'ranksPerNode': 8, 'gpusPerRank': 1}
+        reported = {**requested, 'nodes': 1, 'ranksPerNode': 16}
+        self.assertEqual(
+            rccl_lib.compare_topology(requested, reported),
+            ['nodes: requested 2, reported 1', 'ranksPerNode: requested 8, reported 16'],
+        )
+
+    def test_compare_missing_fields(self):
+        for field in rccl_lib.TOPOLOGY_FIELDS:
+            with self.subTest(field=field):
+                observed = {key: value for key, value in self.requested.items() if key != field}
+                self.assertEqual(
+                    rccl_lib.compare_topology(self.requested, observed),
+                    [f'{field}: requested {self.requested[field]}, reported <missing>'],
+                )
+
+    def test_compare_omits_fields_not_requested(self):
+        expected = {key: value for key, value in self.requested.items() if key != 'gpusPerRank'}
+        self.assertEqual(rccl_lib.compare_topology(expected, {**self.requested, 'gpusPerRank': 1}), [])
+
+    def test_srun_topology_uses_launch_flags(self):
+        job = self._job(mpi_params={'no_of_nodes': 2, 'no_of_local_ranks': 8}, nodes=['n1', 'n2', 'n3'])
+        self.assertEqual(job.launcher.topology(), {'nodes': 2, 'ranks': 16, 'ranksPerNode': 8})
+
+    def test_mpirun_topology_uses_cluster_nodes_and_hostfile_slots(self):
+        job = self._job(
+            mpi_params={'no_of_nodes': 2, 'no_of_local_ranks': 16},
+            nodes=['n1', 'n2', 'n3', 'n4'],
+            managed=False,
+        )
+        self.assertEqual(job.launcher.topology(), {'nodes': 4, 'ranks': 32, 'ranksPerNode': 8})
+        job.launcher.prepare()
+        self.assertIn('n4 slots=8', job.orch.exec_on_head.call_args.args[0])
+        self.assertEqual(job.orch.exec_on_head.call_args.args[0].count('slots=8'), 4)
+
+    def test_expected_topology_merges_binary_gpu_count(self):
+        for gpus in (1, 8):
+            with self.subTest(gpus=gpus):
+                self.assertEqual(self.job.expected_topology(gpus), {**self.requested, 'gpusPerRank': gpus})
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_warn_mismatch_records_without_failing(self, fail):
+        with patch.object(rccl_lib.log, 'warning') as warning:
+            self.job._check_reported_topology([self.row], 'float', 8)
+        fail.assert_not_called()
+        warning.assert_called_once()
+        self.assertIn('common.cu', warning.call_args.args[1])
+        self.assertEqual(len(self.job.topology_checks), 1)
+        record = self.job.topology_checks[0]
+        self.assertEqual(record['mode'], 'warn')
+        self.assertEqual(record['verdict'], 'mismatch')
+        self.assertEqual(record['requested'], self.requested)
+        self.assertEqual(len(record['mismatches']), 2)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_strict_mismatch_fails_once(self, fail):
+        job = self._job(cvs_params={'topology_check': 'STRICT'})
+        job._check_reported_topology([self.row], 'float', 8)
+        fail.assert_called_once()
+        self.assertIn('nodes: requested 2, reported 1', fail.call_args.args[0])
+        self.assertIn('ranksPerNode: requested 1, reported 2', fail.call_args.args[0])
+        self.assertEqual(job.topology_checks[0]['mode'], 'strict')
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_strict_clean_topology_passes(self, fail):
+        for nodes, local_ranks, gpus in ((1, 1, 8), (1, 8, 1), (2, 1, 8), (2, 8, 1)):
+            with self.subTest(nodes=nodes, local_ranks=local_ranks, gpus=gpus):
+                job = self._job(
+                    cvs_params={'topology_check': 'strict'},
+                    mpi_params={'no_of_nodes': nodes, 'no_of_local_ranks': local_ranks},
+                    nodes=[f'n{i}' for i in range(nodes)],
+                )
+                reported = {
+                    'nodes': nodes,
+                    'ranks': nodes * local_ranks,
+                    'ranksPerNode': local_ranks,
+                    'gpusPerRank': gpus,
+                }
+                job._check_reported_topology([reported], 'float', gpus)
+                self.assertEqual(job.topology_checks[0]['verdict'], 'pass')
+        fail.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.compare_topology')
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_off_disables_comparison(self, fail, compare):
+        job = self._job(cvs_params={'topology_check': 'off'})
+        job._check_reported_topology([self.row], 'float', 8)
+        fail.assert_not_called()
+        compare.assert_not_called()
+        self.assertEqual(job.topology_checks, [])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_invalid_mode_warns_and_defaults_to_warn(self, fail):
+        with patch.object(rccl_lib.log, 'warning') as warning:
+            job = self._job(cvs_params={'topology_check': 'typo'})
+            self.assertEqual(warning.call_args.args[3], 'warn')
+            self.assertEqual(warning.call_args.args[2], 'typo')
+            job._check_reported_topology([self.row], 'float', 8)
+        fail.assert_not_called()
+        self.assertEqual(job.topology_checks[0]['mode'], 'warn')
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_empty_rows_are_skipped(self, fail):
+        self.job._check_reported_topology([], 'float', 8)
+        fail.assert_not_called()
+        self.assertEqual(self.job.topology_checks[0]['verdict'], 'skipped')
+        self.assertIn('No result rows', self.job.topology_checks[0]['reason'])
+
+    @patch('cvs.lib.rccl_lib.compare_topology')
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_absent_topology_is_skipped_in_all_rows(self, fail, compare):
+        job = self._job(cvs_params={'topology_check': 'strict'})
+        with patch.object(rccl_lib.log, 'warning') as warning:
+            job._check_reported_topology([{'size': 8}, {'size': 16}], 'float', 8)
+        record = job.topology_checks[0]
+        self.assertEqual(record['verdict'], 'skipped')
+        self.assertEqual(record['reason'], 'Producer did not report topology fields')
+        self.assertEqual(record['reported'], {})
+        self.assertEqual(record['mismatches'], [])
+        fail.assert_not_called()
+        compare.assert_not_called()
+        warning.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_partial_topology_still_reports_missing_fields(self, fail):
+        job = self._job(cvs_params={'topology_check': 'strict'})
+        job._check_reported_topology([{'gpusPerRank': 8}], 'float', 8)
+        self.assertEqual(
+            job.topology_checks[0]['mismatches'],
+            [
+                'nodes: requested 2, reported <missing>',
+                'ranks: requested 2, reported <missing>',
+                'ranksPerNode: requested 1, reported <missing>',
+            ],
+        )
+        fail.assert_called_once()
+        self.assertNotIn('common.cu', fail.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_absent_topology_in_only_some_rows_is_not_skipped(self, fail):
+        for rows in ([{}, self.requested], [self.requested, {}]):
+            with self.subTest(rows=rows):
+                job = self._job(cvs_params={'topology_check': 'strict'})
+                job._check_reported_topology(rows, 'regression', 8)
+                self.assertEqual(job.topology_checks[0]['verdict'], 'pass')
+        job = self._job(cvs_params={'topology_check': 'strict'})
+        job._check_reported_topology([{}, {'gpusPerRank': 8}], 'regression', 8)
+        self.assertEqual(job.topology_checks[0]['verdict'], 'mismatch')
+        self.assertEqual(
+            job.topology_checks[0]['mismatches'],
+            [
+                'nodes: requested 2, reported <missing>',
+                'ranks: requested 2, reported <missing>',
+                'ranksPerNode: requested 1, reported <missing>',
+            ],
+        )
+        self.assertEqual(fail.call_count, 1)
+
+    @patch('cvs.lib.rccl_lib.compare_topology')
+    def test_topology_check_skips_invalid_result_shapes(self, compare):
+        for rows in ({'nodes': 1}, {}, None, 1, 'invalid', [None], [self.row, 1]):
+            with self.subTest(rows=rows):
+                self.job._check_reported_topology(rows, 'regression', 8)
+                record = self.job.topology_checks[-1]
+                self.assertEqual(record['verdict'], 'skipped')
+                self.assertIn('expected an array of result objects', record['reason'])
+        compare.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_read_results_rejects_malformed_shapes(self, fail):
+        for payload in ({'nodes': 1}, {}, None, 1, 'invalid', [None], [self.row, 1]):
+            with self.subTest(payload=payload):
+                fail.reset_mock()
+                self._mock_download(payload)
+                self.assertEqual(self.job.read_results('/results/rccl.json'), [])
+                fail.assert_called_once()
+                self.assertIn('/results/rccl.json', fail.call_args.args[0])
+                self.assertIn('expected an array of result objects', fail.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_read_results_preserves_result_objects(self, fail):
+        for payload in ([], [self.row], [{'gpusPerRank': 8}], [{'size': 8}]):
+            with self.subTest(payload=payload):
+                self._mock_download(payload)
+                self.assertEqual(self.job.read_results('/results/rccl.json'), payload)
+        fail.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.compare_topology')
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_nonuniform_mpirun_is_skipped(self, fail, compare):
+        job = self._job(cvs_params={'topology_check': 'strict'}, nodes=['n1', 'n2', 'n3'], managed=False)
+        job._check_reported_topology([self.row], 'float', 8)
+        fail.assert_not_called()
+        compare.assert_not_called()
+        self.assertEqual(job.topology_checks[0]['verdict'], 'skipped')
+        self.assertIn('not evenly divisible', job.topology_checks[0]['reason'])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_later_inconsistent_row_is_detected(self, fail):
+        job = self._job(cvs_params={'topology_check': 'strict'})
+        job._check_reported_topology([self.requested, self.row], 'regression', 8)
+        fail.assert_called_once()
+        self.assertIn('row 1', fail.call_args.args[0])
+        mismatches = job.topology_checks[0]['mismatches']
+        self.assertIn('nodes differs from row 0', mismatches[0])
+        self.assertIn('row 0 reported 2, row 1 reported 1', mismatches[0])
+        self.assertTrue(any('ranksPerNode differs from row 0' in mismatch for mismatch in mismatches))
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_later_inconsistent_row_is_detected_against_nonzero_baseline(self, fail):
+        job = self._job(cvs_params={'topology_check': 'strict'})
+        job._check_reported_topology([{}, self.requested, self.row], 'regression', 8)
+        fail.assert_called_once()
+        self.assertIn('row 2', fail.call_args.args[0])
+        mismatches = job.topology_checks[0]['mismatches']
+        self.assertIn('nodes differs from row 1', mismatches[0])
+        self.assertIn('row 1 reported 2, row 2 reported 1', mismatches[0])
+        self.assertTrue(any('ranksPerNode differs from row 1' in mismatch for mismatch in mismatches))
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_sparse_baseline_does_not_mask_later_conflicting_value(self, fail):
+        job = self._job(cvs_params={'topology_check': 'strict'})
+        job._check_reported_topology([{'gpusPerRank': 8}, {'nodes': 1}], 'regression', 8)
+        record = job.topology_checks[0]
+        self.assertEqual(record['reported'], {'gpusPerRank': 8})
+        self.assertIn('nodes: requested 2, reported 1', record['mismatches'])
+        fail.assert_called_once()
+
+    def test_sparse_baseline_still_triggers_common_cu_hint(self):
+        with patch.object(rccl_lib.log, 'warning') as warning:
+            self.job._check_reported_topology([{'gpusPerRank': 8}, self.row], 'float', 8)
+        self.assertIn('common.cu', warning.call_args.args[1])
+
+    def test_result_model_accepts_single_node_and_multinode(self):
+        single = {key: value for key, value in self.row.items() if key not in rccl_lib.TOPOLOGY_FIELDS}
+        self.assertIs(rccl_lib._result_model(single), rccl_lib.RcclTests)
+        self.assertIs(rccl_lib._result_model(self.row), rccl_lib.RcclTestsMultinodeRaw)
+        self.assertEqual(rccl_lib._result_model(single).model_validate(single).wrong, 0)
+
+    def test_mixed_result_shapes_fail_in_either_order(self):
+        single = rccl_lib.RcclTests.model_validate(self.row)
+        multi = rccl_lib.RcclTestsMultinodeRaw.model_validate(self.row)
+        for rows in ([single, multi], [multi, single]):
+            with self.subTest(first=type(rows[0]).__name__):
+                with self.assertRaisesRegex(ValueError, 'Mixed single-node and multi-node results'):
+                    rccl_lib.RcclJob.aggregate_results(rows)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_perf_saves_all_dtype_checks_and_preserves_producer_metadata(self, fail):
+        rows = [deepcopy(self.row)]
+        saved = self._mock_run(rows)
+        self.job.rccl_test_params['data_types'] = ['float', 'half']
+        self.job.read_results.side_effect = [rows, [{**self.row, 'type': 'half'}]]
+        result = self.job.run_perf()
+        self.assertEqual(rows, [self.row])
+        self.assertEqual(saved['/results/rccl_all_reduce_perf.json'], result)
+        artifact = saved['/results/rccl_all_reduce_perf_topology_check.json']
+        self.assertEqual(artifact['mode'], 'warn')
+        self.assertEqual(
+            [check['label'] for check in artifact['checks']], ['all_reduce_perf_float', 'all_reduce_perf_half']
+        )
+        for check in artifact['checks']:
+            self.assertEqual(check['requested'], self.requested)
+            self.assertEqual(check['verdict'], 'mismatch')
+        for row in result + saved['/results/rccl_all_reduce_perf_aggregated.json']:
+            self.assertEqual({key: row[key] for key in rccl_lib.TOPOLOGY_FIELDS}, artifact['checks'][0]['reported'])
+        self.assertEqual(
+            set(saved),
+            {
+                '/results/rccl_all_reduce_perf.json',
+                '/results/rccl_all_reduce_perf_aggregated.json',
+                '/results/rccl_all_reduce_perf_topology_check.json',
+            },
+        )
+        self.assertIn('-g 8', self.job.execute.call_args.args[0])
+        fail.assert_not_called()
+
+    def test_perf_artifacts_are_kept_per_collective(self):
+        ar = self._job()
+        ag = self._job(test_name='all_gather_perf')
+        saved = {}
+        for job, name in ((ar, 'AllReduce'), (ag, 'AllGather')):
+            row_float = {**self.row, 'name': name}
+            row_half = {**row_float, 'type': 'half'}
+            job.rccl_test_params['data_types'] = ['float', 'half']
+            self._mock_run(job=job, saved=saved)
+            job.read_results.side_effect = [[row_float], [row_half]]
+
+        ar.run_perf()
+        ag.run_perf()
+
+        self.assertEqual(
+            set(saved),
+            {
+                '/results/rccl_all_reduce_perf.json',
+                '/results/rccl_all_reduce_perf_aggregated.json',
+                '/results/rccl_all_reduce_perf_topology_check.json',
+                '/results/rccl_all_gather_perf.json',
+                '/results/rccl_all_gather_perf_aggregated.json',
+                '/results/rccl_all_gather_perf_topology_check.json',
+            },
+        )
+        self.assertNotIn('/results/rccl.json', saved)
+        self.assertEqual({row['name'] for row in saved['/results/rccl_all_reduce_perf.json']}, {'AllReduce'})
+        self.assertEqual({row['name'] for row in saved['/results/rccl_all_gather_perf.json']}, {'AllGather'})
+        self.assertEqual(
+            [call.args[0] for call in ag.read_results.call_args_list],
+            ['/results/rccl_all_gather_perf_float.json', '/results/rccl_all_gather_perf_half.json'],
+        )
+        self.assertIn('/results/rccl_all_gather_perf_half.json', ag.execute.call_args.args[0])
+
+    def test_regression_result_file_includes_collective_name(self):
+        saved = self._mock_run([self.row])
+        self.job.run_regression()
+        self.assertIn('/results/rccl_all_reduce_perf.json', self.job.execute.call_args.args[0])
+        self.assertEqual(self.job.read_results.call_args.args[0], '/results/rccl_all_reduce_perf.json')
+        self.assertEqual(set(saved), {'/results/rccl_all_reduce_perf_topology_check.json'})
+
+    def test_perf_strict_records_failure_and_still_saves_results(self):
+        saved = self._mock_run([self.row])
+        self.job.topology_check_mode = 'strict'
+        with patch.object(rccl_lib.globals, 'error_list', []):
+            self.assertEqual(self.job.run_perf(), [self.row])
+            self.assertEqual(len(rccl_lib.globals.error_list), 1)
+        self.assertEqual(saved['/results/rccl_all_reduce_perf_topology_check.json']['checks'][0]['verdict'], 'mismatch')
+        self.assertIn('/results/rccl_all_reduce_perf_aggregated.json', saved)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_perf_single_node_without_topology_is_skipped_in_strict_mode(self, fail):
+        self.job = self._job(
+            cvs_params={'topology_check': 'strict'},
+            mpi_params={'no_of_nodes': 1, 'no_of_local_ranks': 8},
+            nodes=['n1'],
+        )
+        self.job.rccl_test_params['threads_per_gpu'] = '1'
+        row = {key: value for key, value in self.row.items() if key not in rccl_lib.TOPOLOGY_FIELDS}
+        saved = self._mock_run([row])
+        self.assertEqual(self.job.run_perf(), [row])
+        check = saved['/results/rccl_all_reduce_perf_topology_check.json']['checks'][0]
+        self.assertEqual(check['verdict'], 'skipped')
+        self.assertEqual(check['reason'], 'Producer did not report topology fields')
+        self.assertEqual(check['mismatches'], [])
+        self.assertIsNone(saved['/results/rccl_all_reduce_perf_aggregated.json'][0]['nodes'])
+        fail.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_regression_without_topology_is_skipped_in_strict_mode(self, fail):
+        self.job.topology_check_mode = 'strict'
+        row = {key: value for key, value in self.row.items() if key not in rccl_lib.TOPOLOGY_FIELDS}
+        saved = self._mock_run([row])
+        self.assertEqual(self.job.run_regression(), [row])
+        self.assertEqual(saved['/results/rccl_all_reduce_perf_topology_check.json']['checks'][0]['verdict'], 'skipped')
+        fail.assert_not_called()
+
+    def test_perf_preserves_checks_when_a_later_launch_fails(self):
+        saved = self._mock_run([self.row])
+        self.job.rccl_test_params['data_types'] = ['float', 'half']
+        self.job.execute.side_effect = ['completed', None]
+        self.assertEqual(self.job.run_perf(), [self.row])
+        checks = saved['/results/rccl_all_reduce_perf_topology_check.json']['checks']
+        self.assertEqual([check['verdict'] for check in checks], ['mismatch', 'skipped'])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_off_mode_saves_disabled_audit(self, fail):
+        saved = self._mock_run([self.row])
+        self.job.topology_check_mode = 'off'
+        self.job.run_perf()
+        self.assertEqual(saved['/results/rccl_all_reduce_perf_topology_check.json'], {'mode': 'off', 'checks': []})
+        fail.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_off_mode_still_rejects_inconsistent_topology_during_aggregation(self, fail):
+        saved = self._mock_run([self.row, {**self.row, **self.requested}])
+        self.job.topology_check_mode = 'off'
+        self.job.run_perf()
+        fail.assert_called_once()
+        self.assertIn('Inconsistent cluster config', fail.call_args.args[0])
+        self.assertEqual(saved['/results/rccl_all_reduce_perf_topology_check.json'], {'mode': 'off', 'checks': []})
+        self.assertNotIn('/results/rccl_all_reduce_perf_aggregated.json', saved)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_schema_failure_still_aborts_and_saves_prior_checks(self, fail):
+        saved = self._mock_run([self.row])
+        self.job.rccl_test_params['data_types'] = ['float', 'half']
+        self.job.read_results.side_effect = [[self.row], [{**self.row, 'wrong': '1'}]]
+        with self.assertRaisesRegex(RuntimeError, 'schema validation failed'):
+            self.job.run_perf()
+        self.assertIn('SEVERE DATA CORRUPTION', fail.call_args.args[0])
+        checks = saved['/results/rccl_all_reduce_perf_topology_check.json']['checks']
+        self.assertEqual(len(checks), 2)
+        self.assertEqual([check['label'] for check in checks], ['all_reduce_perf_float', 'all_reduce_perf_half'])
+        self.assertEqual(checks[1]['verdict'], 'mismatch')
+        self.assertEqual(checks[1]['reported'], {field: self.row[field] for field in rccl_lib.TOPOLOGY_FIELDS})
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_regression_counts_gpus_across_threads_and_checks_all_raw_rows(self, fail):
+        self.job.topology_check_mode = 'strict'
+        rows = [self.requested, {'nodes': 1, 'ranks': 2, 'ranksPerNode': 2}]
+        original = deepcopy(rows)
+        saved = self._mock_run(rows)
+        self.assertEqual(self.job.run_regression(), original)
+        self.assertEqual(rows, original)
+        self.assertIn('-t 8', self.job.execute.call_args.args[0])
+        self.assertNotIn('-g ', self.job.execute.call_args.args[0])
+        check = saved['/results/rccl_all_reduce_perf_topology_check.json']['checks'][0]
+        self.assertEqual(check['requested']['gpusPerRank'], 8)
+        self.assertEqual(check['verdict'], 'mismatch')
+        fail.assert_called_once()
+        self.assertEqual(set(saved), {'/results/rccl_all_reduce_perf_topology_check.json'})
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_regression_gpu_count_matches_thread_flag(self, fail):
+        for threads in (None, '1', '8'):
+            with self.subTest(threads=threads):
+                self.job = self._job(cvs_params={'topology_check': 'strict'})
+                if threads is None:
+                    del self.job.rccl_test_params['threads_per_gpu']
+                else:
+                    self.job.rccl_test_params['threads_per_gpu'] = threads
+                gpus = int(threads or 1)
+                row = {**self.row, **self.requested, 'gpusPerRank': gpus}
+                saved = self._mock_run([row])
+                self.assertEqual(self.job.run_regression(), [row])
+                self.assertIn(f'-t {gpus}', self.job.execute.call_args.args[0])
+                check = saved['/results/rccl_all_reduce_perf_topology_check.json']['checks'][0]
+                self.assertEqual(check['requested']['gpusPerRank'], gpus)
+                self.assertEqual(check['verdict'], 'pass')
+        fail.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_malformed_results_fail_loading_without_crashing_runs(self, fail):
+        for method in ('run_perf', 'run_regression'):
+            for mode in ('warn', 'strict', 'off'):
+                with self.subTest(method=method, mode=mode):
+                    fail.reset_mock()
+                    self.job = self._job(cvs_params={'topology_check': mode})
+                    saved = self._mock_run(None)
+                    self._mock_download({'nodes': 1})
+                    self.job.read_results.side_effect = lambda *args: rccl_lib.RcclJob.read_results(self.job, *args)
+                    self.assertEqual(getattr(self.job, method)(), [])
+                    fail.assert_called_once()
+                    self.assertIn('expected an array of result objects', fail.call_args.args[0])
+                    self.job._verify_results.assert_not_called()
+                    checks = saved[self._AUDIT[method]]['checks']
+                    if mode == 'off':
+                        self.assertEqual(checks, [])
+                    else:
+                        self.assertEqual(checks[0]['verdict'], 'skipped')
+
+    def test_empty_result_set_returns_without_verifying(self):
+        """An empty result array used to reach check_bw_dip and raise IndexError."""
+        for method in ('run_perf', 'run_regression'):
+            with self.subTest(method=method):
+                self.job = self._job()
+                saved = self._mock_run([])
+                self.assertEqual(getattr(self.job, method)(), [])
+                self.job._verify_results.assert_not_called()
+                check = saved[self._AUDIT[method]]['checks'][0]
+                self.assertEqual(check['verdict'], 'skipped')
+                self.assertIn('No result rows', check['reason'])
+
+    def test_regression_saves_audit_when_execute_raises(self):
+        saved = self._mock_run([])
+        self.job.execute.side_effect = RuntimeError('launcher unavailable')
+        with self.assertRaisesRegex(RuntimeError, 'launcher unavailable'):
+            self.job.run_regression()
+        self.assertEqual(saved['/results/rccl_all_reduce_perf_topology_check.json'], {'mode': 'warn', 'checks': []})
+
+    def test_regression_failed_launch_saves_skipped_check(self):
+        saved = self._mock_run([])
+        self.job.execute.return_value = None
+        self.assertEqual(self.job.run_regression(), [])
+        self.job.read_results.assert_not_called()
+        self.assertEqual(saved['/results/rccl_all_reduce_perf_topology_check.json']['checks'][0]['verdict'], 'skipped')
+
+    def test_reused_job_resets_checks_for_each_run(self):
+        saved = self._mock_run([self.row])
+        for run, audit in (
+            (self.job.run_perf, self._AUDIT['run_perf']),
+            (self.job.run_perf, self._AUDIT['run_perf']),
+            (self.job.run_regression, self._AUDIT['run_regression']),
+            (self.job.run_regression, self._AUDIT['run_regression']),
+        ):
+            run()
+            self.assertEqual(len(saved[audit]['checks']), 1)
+
+    def test_save_topology_checks_reports_upload_failure(self):
+        self.job.orch.upload_to_head.side_effect = IOError('unreachable head node')
+        with patch.object(rccl_lib.log, 'error') as error:
+            self.job._save_topology_checks('/results/rccl.json')
+        self.assertIn('Failed to save topology checks', error.call_args.args[0])
 
 
 if __name__ == '__main__':

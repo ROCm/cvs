@@ -1,10 +1,10 @@
 .. meta::
-  :description: Configure TorchTitan training configuration files
-  :keywords: training, ROCm, CVS, TorchTitan
+  :description: Reference for CVS TorchTitan training configuration files, covering Llama, DeepSeek, and Qwen3 single-node and distributed training on AMD GPU clusters.
+  :keywords: CVS, TorchTitan, training, ROCm, GPU, AMD, distributed, JSON, configuration, Llama, DeepSeek, InfiniBand, benchmark
 
-****************************************
-TorchTitan training configuration files
-****************************************
+************************************************************************
+TorchTitan training configuration files for Cluster Validation Suite (CVS)
+************************************************************************
 
 TorchTitan configs live under ``cvs/input/config_file/training/torchtitan/``. Each config has a sibling ``*_threshold.json`` referenced by ``threshold_json``. One config file can hold multiple precision sweeps (BF16, FP8, MXFP8, MXFP4) for the same model.
 
@@ -19,6 +19,8 @@ Use ``cvs config list training/torchtitan`` to list templates, or ``cvs config c
 
 Available configurations
 ========================
+
+Templates are organized by GPU SKU; select the section that matches your hardware.
 
 MI355X
 ------
@@ -84,25 +86,25 @@ Cluster-specific edits
      - Change to
    * - ``container``
      - ``image``
-     - Your TorchTitan ROCm image tag, accessible on all nodes
+     - Your TorchTitan ROCm image tag, accessible on all nodes.
    * - ``config``
      - ``hf_token_file``
-     - Path to your Hugging Face token file on the nodes
+     - Path to your Hugging Face token file, as seen inside the container. CVS does not read it on the machine running ``cvs run``.
    * - ``config``
      - ``log_dir`` / ``scripts_dir`` / ``data_cache_dir``
-     - Replace ``{user-id}`` with your username
+     - Replace ``{user-id}`` with your username.
    * - ``config``
      - ``nnodes``, ``master_address``
-     - Node count and head-node IP (**distributed only**)
+     - Node count and head-node IP (**distributed only**).
    * - ``config``
      - ``nic_type``, ``nccl_ib_hca_list``, ``nccl_socket_ifname``
-     - Your NIC family and RDMA device names (**distributed only**)
+     - Your NIC family and RDMA device names (**distributed only**).
    * - ``scaling_baseline``
      - ``tokens_per_sec_total``
-     - Measured single-node total tok/s; ``0.0`` disables scaling efficiency (**distributed only**)
+     - Measured single-node total tok/s; ``0.0`` disables scaling efficiency (**distributed only**).
    * - Threshold JSON
      - per-metric bounds
-     - Calibrated PASS/FAIL limits for your hardware
+     - Calibrated PASS/FAIL limits for your hardware.
 
 Top-level fields
 ================
@@ -123,6 +125,9 @@ Top-level fields
    * - ``gpu_arch``
      - ``MI355X``
      - GPU architecture label (informational).
+   * - ``gpus_per_node``
+     - ``8``
+     - GPUs on each node. World size and tokens/s totals use this count (``nnodes * gpus_per_node`` when distributed). Defaults to ``8`` when omitted. Must be at least 1.
    * - ``enforce_thresholds``
      - ``true``
      - If ``false``, ``test_metric`` logs results but does not fail.
@@ -166,7 +171,7 @@ Top-level fields
      - Description
    * - ``hf_token_file``
      - ``/home/{user-id}/.hf_token``
-     - Hugging Face access token file path.
+     - Hugging Face access token file, as seen inside the container. Each node reads it when the tokenizer download or training command runs. CVS does not read the file on the machine running ``cvs run``. The packaged home path works when that directory is bind-mounted. A missing, empty, or unmounted file fails ``test_download_tokenizer`` and sets ``lifecycle.failed``, so later stages are skipped. ``test_teardown`` still runs.
    * - ``log_dir``
      - ``/home/{user-id}/LOGS/torchtitan``
      - Training log output directory.

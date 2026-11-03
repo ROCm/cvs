@@ -11,10 +11,10 @@ Run:
     --config_file <sglang_config.json> \\
     --html=~/cvs_results/sglang_distributed.html
 
-Set ``server_node_list`` (or ``prefill_node_list`` + ``decode_node_list`` whose union
-is every server rank) and matching ``nnodes`` in the inference config. All listed
-nodes get a container and participate in the unified server. ``benchmark_serv_node``
-runs smoke/bench/lm-eval (defaults to rank-0 when omitted).
+Set ``nnodes`` in the inference config. The suite takes that many hosts from
+``cluster.json`` (in ``node_dict`` order). The first host is rank-0, the dist-init
+master, and the benchmark node. If ``nnodes`` is larger than the cluster, the suite
+fails immediately. HTTP defaults to port 8000; dist-init defaults to 40001.
 
 With ``--html``, session end also writes ``sglang_run_deck.html`` (plus JSON
 and interactive viewer) via ``cvs/lib/report/profiles/sglang.json`` (all SGLang stems).
@@ -25,6 +25,8 @@ import time
 from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir
 from cvs.lib import globals
 from cvs.lib.verify_lib import verify_dmesg_for_errors
+from cvs.tests.inference.sglang._shared import run_scan_inference_logs_after_workload
+
 
 log = globals.log
 
@@ -51,14 +53,6 @@ def test_launch_container(orch, variant_config, lifecycle, request):
     lifecycle.complete_stage(request, "container_launch", t0)
 
 
-def test_setup_ibv_devices(im_obj, lifecycle, request):
-    globals.error_list = []
-    t0 = time.monotonic()
-    im_obj.exec_nic_setup_scripts()
-    im_obj.check_ibv_devices()
-    lifecycle.complete_stage(request, "ibv_setup", t0)
-
-
 def test_rms_norm(im_obj, lifecycle, request):
     globals.error_list = []
     t0 = time.monotonic()
@@ -79,7 +73,17 @@ def test_poll_for_server_ready(im_obj, lifecycle, request):
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.poll_and_check_server_ready()
+    lifecycle.server_ready_failed = bool(globals.error_list)
     lifecycle.complete_stage(request, "server_ready", t0)
+
+
+def test_scan_inference_logs_for_failure(im_obj, lifecycle, request):
+    globals.error_list = []
+    if not lifecycle.server_ready_failed:
+        pytest.skip("server-ready poll succeeded; skip server log scan")
+    t0 = time.monotonic()
+    im_obj.scan_for_inference_errors()
+    lifecycle.complete_stage(request, "scan_inference_logs", t0)
 
 
 def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, request):
@@ -87,6 +91,7 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
     t0 = time.monotonic()
     results = im_obj.verify_openai_compatible_endpoints()
     lifecycle.smoke_results = results
+    lifecycle.openai_completions_5xx_or_hang = bool(getattr(im_obj, "openai_completions_5xx_or_hang", False))
     lifecycle.complete_stage(request, "smoke_endpoints", t0)
 
 
@@ -167,6 +172,10 @@ def test_distributed_gpu_topology(im_obj, lifecycle, request):
     t0 = time.monotonic()
     im_obj.sglang_distributed_gpu_counts()
     lifecycle.complete_stage(request, "gpu_topology", t0)
+
+
+def test_scan_inference_logs_after_workload(im_obj, lifecycle, request):
+    run_scan_inference_logs_after_workload(im_obj, lifecycle, request)
 
 
 def test_print_results_table(inf_res_dict, lifecycle, variant_config):

@@ -13,6 +13,8 @@ import unittest
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
 from cvs.lib.inference.utils.vllm_config_loader import VariantConfig
 
+FAKE_CRED_FILE = "/home/x/.hf"
+
 
 def _base_kwargs(**overrides):
     cell = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"
@@ -23,7 +25,7 @@ def _base_kwargs(**overrides):
             "shared_fs": "/home/x",
             "models_dir": "/home/x/models",
             "log_dir": "/home/x/LOGS",
-            "hf_token_file": "/home/x/.hf",
+            "hf_token_file": FAKE_CRED_FILE,
         },
         container={"name": "test", "image": "test", "runtime": {"name": "docker", "args": {}}},
         server_params={"model": "/models/test-model", "tensor_parallel_size": 8},

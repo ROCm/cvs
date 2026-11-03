@@ -6,27 +6,33 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 import datetime
-import os
 import re
+import shlex
 
 from cvs.lib.utils_lib import *
 from cvs.lib.rocm_plib import *
+from cvs.lib import dmesg_noise
 from cvs.lib import linux_utils
 from cvs.lib import node_scraper_adapter
 
 
 err_patterns_dict = {
     'gpu_reset': 'GPU reset begin|GPU hang|cp might be in an unrecoverable state|fence wait loop timeout expired',
-    'crash': 'crashed|Traceback|cut here|Bug:|Call Trace|RIP:|end trace|amdgpu: Fatal error|segfault|show_stack|dump_stack|fault ',
+    'crash': r'crashed|Traceback|cut here|Bug:|Call Trace|RIP:|end trace|amdgpu: Fatal error|segfault|show_stack|dump_stack|\bfault\b',
     'test_fail': 'Test failure',
-    'fault': 'no-retry page fault|Illegal register access|PROTECTION_FAULT_STATUS',
+    # A zero PROTECTION_FAULT_STATUS is a cleared register, not a fault.
+    'fault': r'no-retry page fault|Illegal register access|PROTECTION_FAULT_STATUS(?!\s*:\s*0x0+\b)',
     # Note: amdgpu oversubscription messages ('Runlist is getting oversubscribed',
     # 'Expect reduced ROCm performance') are perf-degrading but not test failures —
     # they're matched as warnings via warn_patterns_dict below. See AMD docs:
     # https://instinct.docs.amd.com/projects/amdgpu-docs/en/latest/conceptual/oversubscription.html
     'driver': 'Queue preemption failed for queue|Failed to evict process queues|No more SDMA queue to allocate|amdgpu: process pid',
-    'hardware': 'hardware error|hardware fail|ras error|uncorrectable|correctable err',
-    'network': 'NIC Link is Down|link is down|ib_uverb|CQE|queue catastrophic|CQ error',
+    'hardware': r'hardware error|hardware fail|ras error|(?:uncorrectable|correctable err)(?!.*initialized)'
+    r'|EDAC (?:MC\d+: \d+ [CU]E |DEVICE\d+: [CU]E: )',
+    'network': (
+        'NIC Link is Down|link is down|ib_uverb|error cqe|cqe_dump:|'
+        r'(?<!dump )CQE(?!: syndrome 0x0)|queue catastrophic|CQ error'
+    ),
 }
 
 
@@ -49,25 +55,6 @@ err_stats_pattern = 'err|drop|discard|overflow|fcs|nak|uncorrect|loss'
 warn_stats_pattern = 'retry|timeout|exceeded|ooo|retransmit'
 threshold_stats_pattern = 'cnp|ecn'
 threshold_counter_val = 1000
-
-
-# Environment toggle selecting the dmesg parser backend:
-#   CVS_DMESG_PARSER=node-scraper (default) -> AMD node-scraper analyzer
-#   CVS_DMESG_PARSER=legacy                 -> historical err_patterns_dict regex
-DMESG_PARSER_ENV = 'CVS_DMESG_PARSER'
-
-
-def use_node_scraper_dmesg():
-    """Return True if dmesg scanning should use the node-scraper adapter.
-
-    Controlled by the CVS_DMESG_PARSER environment variable (default
-    'node-scraper'). Values legacy/cvs/0/false/off/no select the legacy regex
-    path for explicit comparison or rollback.
-    """
-    choice = os.environ.get(DMESG_PARSER_ENV, 'node-scraper').strip().lower()
-    if choice in ('legacy', 'cvs', '0', 'false', 'off', 'no'):
-        return False
-    return True
 
 
 # Map CVS's historical dmesg categories (err_patterns_dict) to node-scraper
@@ -99,6 +86,37 @@ def cvs_dmesg_error_regex():
         }
         for name, pattern in err_patterns_dict.items()
     ]
+
+
+# node-scraper reports every kernel err/crit/alert/emerg line it cannot classify as
+# an "Unknown dmesg error", so this list is a deliberate allowlist of known-harmless
+# messages. Keep each rule anchored to one specific message; never widen it to a
+# whole category or priority, which would hide real lockups and I/O errors.
+_BENIGN_UNKNOWN_DMESG_RULES = [
+    {'message': 'Unknown dmesg error', 'match_regex': r'IPVS: .*no destination available'},
+]
+
+
+def cvs_dmesg_analysis_args():
+    """Return the node-scraper analyzer args shared by every CVS dmesg scan."""
+    return {
+        'error_regex': cvs_dmesg_error_regex(),
+        'ignore_match_rules': list(_BENIGN_UNKNOWN_DMESG_RULES),
+    }
+
+
+_NON_FATAL_DMESG_PRIORITIES = frozenset({'WARNING', 'WARN', 'INFO', 'NOTICE', 'DEBUG'})
+_ERROR_DMESG_PRIORITIES = frozenset({'ERROR', 'ERR', 'CRITICAL', 'CRIT', 'ALERT', 'EMERGENCY', 'EMERG', 'PANIC'})
+
+
+def _node_scraper_event_fails_test(event):
+    """Return True when a node-scraper event should call fail_test."""
+    priority = (event.get('priority') or '').strip().upper()
+    if priority in _NON_FATAL_DMESG_PRIORITIES:
+        return False
+    if not priority or priority in _ERROR_DMESG_PRIORITIES:
+        return True
+    return False
 
 
 def _parse_cvs_time(time_str):
@@ -135,6 +153,36 @@ def _parse_cvs_time(time_str):
     )
 
 
+def _drop_corrected_mces(output_dict, source_label='Dmesg'):
+    """Remove clean corrected host-CPU MCE reports and log one WARN per affected node.
+
+    The kernel already corrected these ("no action required"); uncorrected,
+    deferred, poisoned and TCC reports remain in place.
+    """
+    filtered = {}
+    for node, text in output_dict.items():
+        kept, status_lines = dmesg_noise.drop_corrected_mce_blocks(text)
+        if status_lines:
+            log.warning(
+                f'WARN - {len(status_lines)} corrected host-CPU MCE(s) in {source_label} on node {node} '
+                f'not treated as failures (kernel: no action required); first: {status_lines[0]}'
+            )
+        filtered[node] = kept
+    return filtered
+
+
+def _log_degraded_gpu_lines(output_dict):
+    """Log each warn_patterns_dict match; node-scraper does not report these lines."""
+    for node, text in output_dict.items():
+        for line in (text or '').splitlines():
+            for warn_key, pattern in warn_patterns_dict.items():
+                if re.search(pattern, line, re.I):
+                    log.warning(
+                        f'WARN - GPU in degraded state ({warn_key}) on {node}: {line.strip()} '
+                        f'-- perf numbers from this run may not be trustworthy'
+                    )
+
+
 def _node_scraper_scan(output_dict, analysis_args=None, source_label='Dmesg'):
     """Scan per-node log text with node-scraper and report each detected error.
 
@@ -146,16 +194,83 @@ def _node_scraper_scan(output_dict, analysis_args=None, source_label='Dmesg'):
 
     Returns:
         {node: [matched lines]}; calls fail_test for each detected error.
+        Corrected MCE blocks are removed first and logged as WARN. Uncorrected
+        and deferred status rows are reported verbatim. warn_patterns_dict
+        matches are logged as WARN and do not fail.
     """
+    range_start = (analysis_args or {}).get('analysis_range_start')
+    range_end = (analysis_args or {}).get('analysis_range_end')
+    if range_start or range_end:
+        # Keep the WARN count and uncorrected-MCE report within the analysis window.
+        output_dict = {
+            node: node_scraper_adapter.filter_dmesg_range(text, range_start, range_end)
+            for node, text in output_dict.items()
+        }
+    output_dict = _drop_corrected_mces(output_dict, source_label)
+    _log_degraded_gpu_lines(output_dict)
     err_dict = {}
     for node in output_dict.keys():
         err_dict[node] = []
         events = node_scraper_adapter.parse_dmesg(output_dict[node], node_name=node, analysis_args=analysis_args)
-        for line in node_scraper_adapter.event_match_lines(events):
+        for event in events:
+            if not _node_scraper_event_fails_test(event):
+                priority = (event.get('priority') or '').strip().upper()
+                if priority in ('WARNING', 'WARN'):
+                    lines = node_scraper_adapter.event_match_lines([event])
+                    if lines:
+                        log.warning(
+                            f'WARN - {lines[0]} seen in {source_label} on node {node} '
+                            f'(warning-level kernel event; not failing test)'
+                        )
+                continue
+            if dmesg_noise.dmesg_line_is_benign(node_scraper_adapter.event_match_text(event)):
+                continue
+            lines = node_scraper_adapter.event_match_lines([event])
+            line = lines[0] if lines else ''
+            if not line:
+                continue
             msg = f'ERROR - Failure pattern *** {line} *** seen in {source_label} on node {node}'
             fail_test(msg)
             err_dict[node].append(line)
+        for row in dmesg_noise.uncorrected_mce_status_lines(output_dict[node]):
+            fail_test(
+                f'ERROR - Failure pattern *** Uncorrected host-CPU MCE: {row} *** seen in {source_label} on node {node}'
+            )
+            err_dict[node].append(row)
     return err_dict
+
+
+def parse_dmesg_nodes(output_dict, analysis_args=None):
+    '''Parse per-node dmesg text with node-scraper. Does not call fail_test.'''
+    if analysis_args is None:
+        analysis_args = {'error_regex': cvs_dmesg_error_regex()}
+    parsed = {}
+    for node, text in output_dict.items():
+        parsed[node] = node_scraper_adapter.parse_dmesg(
+            text or '',
+            node_name=str(node),
+            analysis_args=analysis_args,
+        )
+    return parsed
+
+
+def _collect_kernel_log(phdl, cmd):
+    """Fetch kernel-log text without echoing it into the run log."""
+    # A historical backlog can contain millions of lines, and scans run repeatedly.
+    return phdl.exec(cmd, print_console=False)
+
+
+def _log_kernel_scan_summary(scan_name, output_dict, err_dict):
+    """Log host, fetched-line, and reported-match counts for one scan."""
+    line_count = sum(len(str(text or '').splitlines()) for text in output_dict.values())
+    match_count = sum(len(lines) for lines in err_dict.values())
+    log.info(
+        'kernel-log scan %s: %d host(s), %d line(s) scanned, %d match(es)',
+        scan_name,
+        len(output_dict),
+        line_count,
+        match_count,
+    )
 
 
 def verify_gpu_pcie_bus_width(phdl, expected_cards=None, gpu_pcie_speed=32, gpu_pcie_width=16):
@@ -314,99 +429,172 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
     patterns are logged via log.warning but do not fail the test.
 
     Parameters:
-      phdl: pssh handle that can execute remote shell commands via .exec(cmd) -> dict.
-      start_time_dict (dict): Mapping of node -> start timestamp string (human-readable, e.g., 'Mon Jan  2 03:04:05').
+      phdl: pssh handle supporting exec(cmd, print_console=False) -> {node: str}.
+      start_time_dict (dict): Mapping of node -> start timestamp string
+        (`date +"%a %b %e %H:%M:%S"`, e.g. 'Mon Jan  2 03:04:05'; minute precision also accepted).
       end_time_dict (dict): Mapping of node -> end timestamp string (same format as start).
+      till_end_flag (bool): When True, scan from the start time to the end of the buffer.
 
     Behavior:
-      - Extracts a human-readable timestamp prefix (e.g., 'Mon Jan  2 03:04:05') from provided times.
-      - Uses dmesg -T (human-readable timestamps) piped to awk to slice the log from start to end.
-      - Filters out lines containing 'ALLOWED' or 'DENIED' (non-fatal/noisy) via egrep -v.
-      - Scans each line against err_patterns_dict (fail_test on match) and warn_patterns_dict
-        (log.warning only on match; test still passes but run carries a visible WARN).
+      - Collects dmesg with ISO timestamps and filters out 'ALLOWED' / 'DENIED' lines.
+      - node-scraper keeps only lines in [start, end) (or [start, end of buffer)) and reports
+        its built-in patterns plus err_patterns_dict; each match calls fail_test.
+      - Clean corrected host-CPU MCE reports are removed before scanning and logged as WARN.
+      - warn_patterns_dict matches are logged as WARN; the test still passes, but perf numbers
+        from the run should not be trusted blindly.
 
     Assumptions:
-      - err_patterns_dict and warn_patterns_dict are defined in scope: {name: regex_pattern, ...}.
-      - phdl.exec(cmd) returns a dict: { node: stdout_str }.
-      - Input timestamps contain a prefix matching the regex used here.
+      - The first node's timestamps bound every node (the cluster is NTP-synced).
       - sudo is available and does not prompt for a password when running dmesg.
 
     Notes:
-      - This function fails fast on the first detected error to shorten feedback cycles.
-      - Warn-bucket matches are non-fatal but should be reviewed before trusting any
-        perf measurements from the run (e.g. RCCL bandwidth, training step time).
-      - If start/end times are not aligned with dmesg -T formatting, the awk range may be empty.
-      - Consider handling cases where regex extraction fails (no match) to avoid attribute errors.
+      - Logs one 'kernel-log scan' INFO summary line; the fetched log text itself is not logged.
     """
 
-    log.info('scan dmesg')
-
-    if use_node_scraper_dmesg():
-        # node-scraper path: collect full dmesg with ISO timestamps and let the
-        # analyzer filter by time range, instead of sed/awk slicing on the
-        # human-readable timestamps. CVS's historical patterns are added too.
-        node0 = list(start_time_dict.keys())[0]
-        analysis_args = {'error_regex': cvs_dmesg_error_regex()}
-        start_dt = _parse_cvs_time(start_time_dict[node0])
-        if start_dt:
-            analysis_args['analysis_range_start'] = start_dt
-        if not till_end_flag:
-            end_dt = _parse_cvs_time(end_time_dict[node0])
-            if end_dt:
-                analysis_args['analysis_range_end'] = end_dt
-        output_dict = phdl.exec("sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
-        return _node_scraper_scan(output_dict, analysis_args=analysis_args, source_label='Dmesg')
-
-    err_dict = {}
-
-    # Use the first node key to derive the time window to search .. assume cluster has NTP
-    node0 = list(start_time_dict.keys())[0]
-    start_time = start_time_dict[node0].rstrip("\n")
-    end_time = end_time_dict[node0].rstrip("\n")
-
-    # Extract the "Mon Jan  2 03:04:05" style prefix from the provided timestamps
-    pattern = r"([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+\:[0-9]+)"
-    match = re.search(pattern, start_time)
-    start_pattern = match.group(1)
-
-    # Extract end timestamp prefix similarly
-    pattern = r"([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+\:[0-9]+)"
-    match = re.search(pattern, end_time)
-    end_pattern = match.group(1)
-
-    # Pull human-readable dmesg and slice the lines between start and end timestamps.
-    # Filter out allowed/denied lines to reduce noise. Return is a dict keyed by node.
-    if till_end_flag:
-        output_dict = phdl.exec(
-            f"sudo dmesg -T | sed -n '/{start_pattern}/,$p' | egrep -v 'ALLOWED|DENIED' --color=never"
-        )
-    else:
-        output_dict = phdl.exec(
-            f"sudo dmesg -T | awk '/{start_pattern}.*/,/{end_pattern}.*/' | egrep -v 'ALLOWED|DENIED' --color=never"
-        )
-    # print(output_dict)
-    for node in output_dict.keys():
-        err_dict[node] = []
-
-    # Iterate through each node's sliced dmesg and scan for known error/warn patterns.
-    # err patterns -> fail_test (existing behavior).
-    # warn patterns -> log.warning only; the test still passes but the run carries a
-    # visible WARN so callers / reviewers know the GPU was in a degraded state and
-    # any perf numbers from this run should not be trusted blindly.
-    for node in output_dict.keys():
-        for line in output_dict[node].split("\n"):
-            for err_key in err_patterns_dict.keys():
-                if re.search(f'{err_patterns_dict[err_key]}', line, re.I):
-                    fail_test(f'ERROR - Failue pattern ** {line} ** seen in Dmesg')
-                    err_dict[node].append(line)
-            for warn_key in warn_patterns_dict.keys():
-                if re.search(f'{warn_patterns_dict[warn_key]}', line, re.I):
-                    log.warning(
-                        f'WARN - GPU in degraded state ({warn_key}) on {node}: {line.strip()} '
-                        f'-- perf numbers from this run may not be trustworthy'
-                    )
-
+    analysis_args = _clock_window_analysis_args(start_time_dict, end_time_dict, till_end_flag)
+    output_dict = _collect_kernel_log(phdl, _DMESG_ISO_CMD)
+    err_dict = _node_scraper_scan(output_dict, analysis_args=analysis_args, source_label='Dmesg')
+    _log_kernel_scan_summary('verify_dmesg_for_errors', output_dict, err_dict)
     return err_dict
+
+
+def _clock_window_analysis_args(start_time_dict, end_time_dict, till_end_flag):
+    """Analysis args bounded by the first node's start (and end) time."""
+    node0 = list(start_time_dict.keys())[0]
+    analysis_args = cvs_dmesg_analysis_args()
+    start_dt = _parse_cvs_time(start_time_dict[node0])
+    if start_dt:
+        analysis_args['analysis_range_start'] = start_dt
+    if not till_end_flag:
+        end_dt = _parse_cvs_time(end_time_dict[node0])
+        if end_dt:
+            analysis_args['analysis_range_end'] = end_dt
+    return analysis_args
+
+
+_DMESG_ISO_CMD = "sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never"
+_CVS_DATE_CMD = 'date +"%a %b %e %H:%M:%S"'
+_DMESG_DURING_TEST_LOG_LINE_CAP = 500
+
+
+def dmesg_during_test_enabled(config_dict):
+    return bool(re.search('True', str(config_dict.get('cvs_params', {}).get('dmesg_during_test', 'False')), re.I))
+
+
+def dmesg_write_marker_cmd(marker):
+    """Write marker to /dev/kmsg; shlex.quote keeps $, backticks, and quotes out of shell expansion."""
+    return f"echo {shlex.quote(marker)} | sudo tee /dev/kmsg"
+
+
+def _is_marker_line(line, marker):
+    message = line.rstrip()
+    if not message.endswith(marker):
+        return False
+    # A shorter marker (params NCCL_ALGO=Ring) must not match a longer one (NCCL_ALGO=Ring2).
+    head = message[: -len(marker)]
+    return not head or head[-1].isspace()
+
+
+def _dmesg_marker_window(text, start_marker, end_marker):
+    """Return (window_text, has_end) for the last start marker, or None when it is absent.
+
+    The window runs through the first end marker after that start, or to the end
+    of the log when the test crashed or hung before writing it. Marker text has
+    no run id, so this relies on RCCL tests running one after another; overlapping
+    runs that write the same marker pair would share whichever window came last.
+    """
+    lines = (text or '').splitlines()
+    starts = [i for i, line in enumerate(lines) if _is_marker_line(line, start_marker)]
+    if not starts:
+        return None
+    window = lines[starts[-1] :]
+    for i, line in enumerate(window[1:], start=1):
+        if _is_marker_line(line, end_marker):
+            return '\n'.join(window[: i + 1]) + '\n', True
+    return '\n'.join(window) + '\n', False
+
+
+def verify_dmesg_during_test(phdl, start_marker, end_marker, start_time_dict, end_time_dict):
+    """
+    Scan each node's dmesg between the kmsg start/end markers written around one test.
+
+    Parameters:
+      phdl: handle supporting exec(cmd, print_console=False) -> {node: str}.
+      start_marker, end_marker: exact messages written with dmesg_write_marker_cmd.
+      start_time_dict, end_time_dict: `date +"%a %b %e %H:%M:%S"` output taken next to the markers.
+
+    Behavior:
+      - Each node is bounded by its own markers, so clock skew between nodes does not matter.
+      - A node without the end marker is scanned from its start marker to the end of the log.
+      - A node without the start marker (for example, rotated out of the ring buffer) is
+        scanned over the clock window instead, so no node goes unscanned.
+      - Same matching as verify_dmesg_for_errors: error events call fail_test, warnings only log.
+      - The window text is logged at DEBUG only; INFO gets one 'kernel-log scan' summary line.
+    """
+    output_dict = _collect_kernel_log(phdl, _DMESG_ISO_CMD)
+    marked = {}
+    unmarked = {}
+    for node, text in output_dict.items():
+        found = _dmesg_marker_window(text, start_marker, end_marker)
+        if found is None:
+            log.warning(
+                'node %s: start marker %r not found in dmesg; scanning the clock window instead', node, start_marker
+            )
+            unmarked[node] = text
+            continue
+        window, has_end = found
+        if not has_end:
+            log.warning(
+                'node %s: end marker %r not found; scanning to the end of dmesg (the test may have crashed or hung)',
+                node,
+                end_marker,
+            )
+        marked[node] = window
+        lines = window.splitlines()
+        body = '\n'.join(lines[:_DMESG_DURING_TEST_LOG_LINE_CAP])
+        if len(lines) > _DMESG_DURING_TEST_LOG_LINE_CAP:
+            body = f'{body}\n... (truncated, {len(lines)} lines total)'
+        log.debug('node %s: dmesg during test (%d lines):\n%s', node, len(lines), body)
+
+    err_dict = {node: [] for node in output_dict}
+    if marked:
+        err_dict.update(_node_scraper_scan(marked, analysis_args=cvs_dmesg_analysis_args(), source_label='Dmesg'))
+    if unmarked:
+        analysis_args = _clock_window_analysis_args(start_time_dict, end_time_dict, till_end_flag=False)
+        err_dict.update(_node_scraper_scan(unmarked, analysis_args=analysis_args, source_label='Dmesg'))
+    _log_kernel_scan_summary('verify_dmesg_during_test', output_dict, err_dict)
+    return err_dict
+
+
+class DmesgWindow:
+    """Bracket one test with kmsg markers and timestamps, then scan its dmesg.
+
+    use_markers selects verify_dmesg_during_test; otherwise the scan is the
+    clock window from verify_dmesg_for_errors. Markers are written either way so
+    the kernel log shows where each test ran.
+    """
+
+    def __init__(self, handle, label, use_markers):
+        self.handle = handle
+        self.start_marker = f'Starting Test {label}'.strip()
+        self.end_marker = f'End of Test {label}'.strip()
+        self.use_markers = use_markers
+        self.start_time = None
+
+    def open(self):
+        self.handle.exec(dmesg_write_marker_cmd(self.start_marker))
+        # Seconds precision: analysis_range_end is exclusive, so a minute-truncated
+        # time would drop the last minute of the test's window.
+        self.start_time = self.handle.exec(_CVS_DATE_CMD)
+
+    def close_and_scan(self):
+        self.handle.exec(dmesg_write_marker_cmd(self.end_marker))
+        end_time = self.handle.exec(_CVS_DATE_CMD)
+        if self.use_markers:
+            return verify_dmesg_during_test(self.handle, self.start_marker, self.end_marker, self.start_time, end_time)
+        # Bounded to this test: scanning to the end of the buffer would repeat an
+        # earlier test's kernel errors in every later parametrized test.
+        return verify_dmesg_for_errors(self.handle, self.start_time, end_time, till_end_flag=False)
 
 
 def verify_nic_link_flap(phdl):
@@ -416,7 +604,7 @@ def verify_nic_link_flap(phdl):
 
     Parameters:
       phdl: A pssh handle that supports:
-            - exec(cmd: str) -> dict[node: str, output: str]
+            - exec(cmd, print_console=False) -> {node: str}
             Used here to run dmesg on each node.
 
     Behavior:
@@ -438,6 +626,7 @@ def verify_nic_link_flap(phdl):
         Counter values are strings that can be cast to int.
       - fail_test is available in scope to signal a test failure (raises/exits).
       - sudo dmesg is allowed without prompting.
+      - Logs one 'kernel-log scan' INFO summary line; the fetched log text itself is not logged.
     """
 
     err_dict = {}
@@ -460,14 +649,19 @@ def verify_nic_link_flap(phdl):
                         err_dict[node].append(msg)
 
     # Scan dmesg for link-related messages across nodes
-    nic_dmesg_dict = phdl.exec('sudo dmesg -T | grep -i link --color=never')
+    nic_dmesg_dict = _collect_kernel_log(phdl, 'sudo dmesg -T | grep -i link --color=never')
 
     # If the kernel logs show link down messages, fail the test
+    # err_dict also holds the ethtool counter failures above; the kernel-log
+    # summary must count only what the dmesg scan itself found.
+    dmesg_err_dict = {node: [] for node in nic_dmesg_dict}
     for node in nic_dmesg_dict.keys():
         if re.search('NIC Link is down', nic_dmesg_dict[node], re.I):
             msg = f'ERROR !! NIC Link down dmesg logs seen on node {node}'
             fail_test(msg)
             err_dict[node].append(msg)
+            dmesg_err_dict[node].append(msg)
+    _log_kernel_scan_summary('verify_nic_link_flap', nic_dmesg_dict, dmesg_err_dict)
     return err_dict
 
 
@@ -562,7 +756,7 @@ def full_journalctl_scan(phdl, start_time_dict=None):
 
     Parameters:
       phdl: Host/process handle abstraction that supports:
-            - exec(cmd: str) -> dict[node: str, output: str]
+            - exec(cmd, print_console=False) -> {node: str}
               Executes the given command on all relevant nodes and returns a mapping
               of node identifier to the command's stdout.
       start_time_dict: Optional {node: cvs_time_str} (same format produced by
@@ -572,25 +766,17 @@ def full_journalctl_scan(phdl, start_time_dict=None):
             entry), instead of collecting the entire kernel journal.
 
     Behavior:
-      - Runs 'journalctl -k' (kernel messages) filtered through egrep for high-signal
-        keywords: amdgpu, interrupt, error, fail, timeout, fault.
-      - Iterates over each node?s output and checks each line against regex patterns
-        defined in err_patterns_dict.
-      - If any line matches a known failure pattern, calls fail_test immediately
-        with a descriptive message including the offending line and node.
+      - Reads the kernel journal ('journalctl -k -o short-iso'); --since is applied on the
+        node so the whole historic journal is not transferred.
+      - node-scraper reports its built-in patterns plus err_patterns_dict; each match calls fail_test.
+      - Clean corrected host-CPU MCE reports are removed before scanning and logged as WARN.
 
     Assumptions:
-      - err_patterns_dict is defined in scope and maps keys to regex patterns:
-          { "pattern_name": "regex", ... }
-      - fail_test(...) is available in scope to signal test failure (raise/exit).
       - sudo can run journalctl without interactive password prompts.
       - journalctl stores kernel logs (equivalent to dmesg -k), and system uses journald.
 
     Notes:
-      - This function fails fast on the first matching error; consider aggregating
-        all matches per node if you prefer a single consolidated report.
-      - The initial egrep reduces volume; ensure it doesn?t hide relevant lines
-        not containing those keywords if broader scanning is desired.
+      - Logs one 'kernel-log scan' INFO summary line; the fetched log text itself is not logged.
     """
 
     since_clause = ''
@@ -600,34 +786,13 @@ def full_journalctl_scan(phdl, start_time_dict=None):
         if start_dt:
             since_clause = f' --since="{start_dt.strftime("%Y-%m-%d %H:%M:%S")}"'
 
-    if use_node_scraper_dmesg():
-        # node-scraper path: scan the kernel journal (ISO timestamps) with the
-        # node-scraper analyzer plus CVS's historical patterns, instead of the
-        # lossy egrep prefilter + per-line regex. --since (when available) is
-        # applied server-side so journalctl itself, not just the analyzer,
-        # avoids transferring/parsing the entire historic journal.
-        output_dict = phdl.exec(f'sudo journalctl -k -o short-iso{since_clause}')
-        return _node_scraper_scan(
-            output_dict,
-            analysis_args={'error_regex': cvs_dmesg_error_regex()},
-            source_label='journalctl',
-        )
-
-    err_dict = {}
-    # Fetch kernel logs filtered for likely error indicators across nodes
-    out_dict = phdl.exec(f'sudo journalctl -k{since_clause} | egrep "amdgpu|interrupt|error|fail|timeout|fault"')
-    for node in out_dict.keys():
-        err_dict[node] = []
-
-    # For each node, scan each line against known error regex patterns
-    for node in out_dict.keys():
-        for line in out_dict[node].split("\n"):
-            for err_key in err_patterns_dict.keys():
-                # Case-insensitive match against the configured error patterns
-                if re.search(f'{err_patterns_dict[err_key]}', line, re.I):
-                    msg = f'ERROR - Failure pattern *** {line} *** seen in Dmesg on node {node}'
-                    fail_test(msg)
-                    err_dict[node].append(line)
+    output_dict = _collect_kernel_log(phdl, f'sudo journalctl -k -o short-iso{since_clause}')
+    err_dict = _node_scraper_scan(
+        output_dict,
+        analysis_args=cvs_dmesg_analysis_args(),
+        source_label='journalctl',
+    )
+    _log_kernel_scan_summary('full_journalctl_scan', output_dict, err_dict)
     return err_dict
 
 
@@ -635,76 +800,35 @@ def full_dmesg_scan(
     phdl,
 ):
     """
-    Scan dmesg across nodes for known error patterns and fail on each match.
-
-    The parsing backend is selected by the CVS_DMESG_PARSER environment
-    variable (see use_node_scraper_dmesg): the default 'node-scraper' path uses
-    the AMD node-scraper analyzer, while 'legacy' uses the historical
-    err_patterns_dict regex. Both paths return the same {node: [lines]} dict and
-    call fail_test for every detected error.
+    Scan the whole dmesg buffer across nodes for known error patterns and fail on each match.
 
     Parameters:
       phdl: Host/process handle abstraction that supports:
-            - exec(cmd: str) -> dict[node: str]
+            - exec(cmd, print_console=False) -> {node: str}
               Executes the given command on all target nodes and returns a map of node to output.
 
     Behavior:
-      - Runs `dmesg -T` to get human-readable timestamps from kernel logs on each node.
-      - Filters out noisy lines:
-          * Excludes lines containing 'initialized'
-          * Excludes lines containing 'ALLOWED' or 'DENIED' (case-sensitive as written)
-      - Iterates through each remaining line and checks for matches against regex patterns
-        defined in err_patterns_dict.
-      - On the first match, invokes fail_test with a message indicating the failing line and node.
+      - Collects dmesg with ISO timestamps and the decoded level prefix ('--time-format iso -x'),
+        dropping lines that contain 'initialized', 'ALLOWED', or 'DENIED'.
+      - node-scraper reports its built-in patterns plus err_patterns_dict; each match calls fail_test.
+      - Clean corrected host-CPU MCE reports are removed before scanning and logged as WARN.
 
     Assumptions:
-      - err_patterns_dict is available in scope and maps labels to regex patterns:
-          { "pattern_name": "regex", ... }
-      - fail_test(...) is available in scope and raises/exits on failure.
       - sudo can run dmesg without interactive password prompts.
-      - phdl.exec runs the command on all relevant nodes and returns their outputs.
 
     Notes:
-      - This function fails fast. If you need a consolidated report of all matches,
-        consider accumulating them and failing once at the end.
-      - Current filters are simple grep/egrep; adjust if they exclude useful diagnostics.
-      - Consider adding case-insensitive filtering (e.g., grep -i) where appropriate.
+      - Logs one 'kernel-log scan' INFO summary line; the fetched log text itself is not logged.
     """
 
-    log.info('scan dmesg')
-
-    if use_node_scraper_dmesg():
-        # node-scraper path: collect with ISO timestamps + decoded level prefix
-        # ('--time-format iso -x') so the analyzer's full pattern set and
-        # timestamp extraction apply, then flag every detected error. CVS's
-        # historical patterns are added as analyzer extensions.
-        output_dict = phdl.exec(
-            "sudo dmesg --time-format iso -x | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never"
-        )
-        return _node_scraper_scan(
-            output_dict,
-            analysis_args={'error_regex': cvs_dmesg_error_regex()},
-            source_label='Dmesg',
-        )
-
-    # Legacy path: historical err_patterns_dict regex over human-readable dmesg.
-    err_dict = {}
-
-    # Pull human-readable kernel logs and filter out common noise
-    output_dict = phdl.exec("sudo dmesg -T | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never")
-    for node in output_dict.keys():
-        err_dict[node] = []
-
-    # Iterate node-by-node through the filtered dmesg output
-    for node in output_dict.keys():
-        # Examine each line for any known failure pattern
-        for line in output_dict[node].split("\n"):
-            for err_key in err_patterns_dict.keys():
-                # Case-insensitive match against configured error regexes
-                if re.search(f'{err_patterns_dict[err_key]}', line, re.I):
-                    msg = f'ERROR - Failure pattern *** {line} *** seen in Dmesg on node {node}'
-                    fail_test(msg)
-                    err_dict[node].append(line)
+    output_dict = _collect_kernel_log(
+        phdl, "sudo dmesg --time-format iso -x | grep -v initialized | grep -E -v 'ALLOWED|DENIED' --color=never"
+    )
+    err_dict = _node_scraper_scan(
+        output_dict,
+        analysis_args=cvs_dmesg_analysis_args(),
+        source_label='Dmesg',
+    )
+    _log_kernel_scan_summary('full_dmesg_scan', output_dict, err_dict)
     return err_dict
 
 
@@ -714,74 +838,50 @@ def verify_driver_errors(phdl):
 
     Parameters:
       phdl: Host/process handle abstraction that supports:
-            - exec(cmd: str) -> dict[node: str]
+            - exec(cmd, print_console=False) -> {node: str}
               Runs the given command across relevant nodes and returns a mapping
               from node identifier to the command's stdout.
 
     Behavior:
-      - Executes `dmesg -T` (human-readable timestamps) and filters for lines containing
-        'amdgpu' and any of the error indicators: fail, error, reset, hang, traceback.
-      - If any node's output contains 'fail' or 'error' (case-insensitive), triggers a
-        test failure via fail_test.
+      - Parses full dmesg with node-scraper and reports only driver-related events: the
+        matched line mentions amdgpu, or node-scraper classifies the event as SW_DRIVER.
+      - Each reported event calls fail_test.
 
     Assumptions:
       - sudo can run dmesg without interactive password prompts.
-      - fail_test(...) is available in scope and raises/aborts on failure.
-      - re (regex module) is imported and available.
-      - phdl.exec returns a dict mapping node -> stdout string.
 
     Notes:
-      - This function currently only checks for 'fail' or 'error' in the aggregated filtered output,
-        not the other keywords ('reset', 'hang', 'traceback') even though they are included in the grep;
-        consider aligning the regex check with the grep filter.
-      - The fail_test message is truncated in the original code snippet. Consider completing it
-        to include node identification and perhaps sample matching lines for context.
-      - The function fails fast (first detection); if you want a comprehensive report across nodes,
-        aggregate matches and report them collectively before failing.
+      - Logs one 'kernel-log scan' INFO summary line; the fetched log text itself is not logged.
     """
 
-    log.info('Scan for AMD GPU driver errors')
-
-    if use_node_scraper_dmesg():
-        # node-scraper path: parse full dmesg, then report driver-related events
-        # (amdgpu match or SW_DRIVER category) to preserve this check's
-        # driver-error focus while reusing node-scraper's pattern table.
-        err_dict = {}
-        output_dict = phdl.exec("sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
-        for node in output_dict.keys():
-            err_dict[node] = []
-            events = node_scraper_adapter.parse_dmesg(
-                output_dict[node],
-                node_name=node,
-                analysis_args={'error_regex': cvs_dmesg_error_regex()},
-            )
-            for event in events:
-                match = event.get('match_content')
-                if isinstance(match, (list, tuple)):
-                    text = ' '.join(str(part) for part in match if part)
-                else:
-                    text = str(match or '')
-                if 'amdgpu' in text.lower() or event.get('category') == 'SW_DRIVER':
-                    lines = node_scraper_adapter.event_match_lines([event])
-                    line = lines[0] if lines else (event.get('description') or '')
-                    msg = f'ERROR !! amdgpu driver errors detected in dmesg on node {node}: {line}'
-                    fail_test(msg)
-                    err_dict[node].append(line)
-        return err_dict
-
     err_dict = {}
-    # Collect AMDGPU-related kernel messages filtered for likely error terms
-    out_dict = phdl.exec("sudo dmesg -T | grep -i amdgpu  | egrep -i 'fail|error|reset|hang|traceback' --color=never")
-    for node in out_dict.keys():
+    output_dict = _collect_kernel_log(
+        phdl, "sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never"
+    )
+    for node in output_dict.keys():
         err_dict[node] = []
-
-    # For each node, if the filtered output contains 'fail' or 'error', mark test as failed.
-    for node in out_dict.keys():
-        for line in out_dict[node].split("\n"):
-            if re.search('fail|error', line, re.I):
+        events = node_scraper_adapter.parse_dmesg(
+            output_dict[node],
+            node_name=node,
+            analysis_args=cvs_dmesg_analysis_args(),
+        )
+        for event in events:
+            text = node_scraper_adapter.event_match_text(event)
+            if dmesg_noise.dmesg_line_is_benign(text):
+                continue
+            lines = node_scraper_adapter.event_match_lines([event])
+            line = lines[0] if lines else ''
+            if 'amdgpu' not in line.lower() and event.get('category') != 'SW_DRIVER':
+                continue
+            priority = (event.get('priority') or '').strip().upper()
+            should_fail = _node_scraper_event_fails_test(event) or (
+                priority in ('WARNING', 'WARN') and dmesg_noise.line_indicates_driver_error(text)
+            )
+            if should_fail:
                 msg = f'ERROR !! amdgpu driver errors detected in dmesg on node {node}: {line}'
                 fail_test(msg)
                 err_dict[node].append(line)
+    _log_kernel_scan_summary('verify_driver_errors', output_dict, err_dict)
     return err_dict
 
 

@@ -1,11 +1,145 @@
 import datetime
-import os
+import re
+import shlex
 import unittest
 from unittest.mock import MagicMock, patch
 
 
 # Import the module under test
 import cvs.lib.verify_lib as verify_lib
+from cvs.lib.unittests import mce_dmesg_fixtures as mce
+
+
+SCANS = (
+    ('full_dmesg_scan', lambda p: verify_lib.full_dmesg_scan(p)),
+    ('verify_driver_errors', lambda p: verify_lib.verify_driver_errors(p)),
+    (
+        'full_journalctl_scan',
+        lambda p: verify_lib.full_journalctl_scan(p, start_time_dict={'node1': 'Mon Jun  5 08:53:27'}),
+    ),
+    (
+        'verify_dmesg_for_errors',
+        lambda p: verify_lib.verify_dmesg_for_errors(
+            p, {'node1': 'Mon Jun  5 08:00'}, {'node1': 'Mon Jun  5 09:00'}, till_end_flag=True
+        ),
+    ),
+    (
+        'verify_dmesg_for_errors',
+        lambda p: verify_lib.verify_dmesg_for_errors(
+            p, {'node1': 'Mon Jun  5 08:00'}, {'node1': 'Mon Jun  5 09:00'}, till_end_flag=False
+        ),
+    ),
+    ('verify_nic_link_flap', lambda p: verify_lib.verify_nic_link_flap(p)),
+    (
+        'verify_dmesg_during_test',
+        lambda p: verify_lib.verify_dmesg_during_test(
+            p, 'Starting Test x', 'End of Test x', {'node1': 'Mon Jun  5 08:00'}, {'node1': 'Mon Jun  5 09:00'}
+        ),
+    ),
+)
+
+
+class TestKernelLogScanQuietAndSummarized(unittest.TestCase):
+    def test_every_scan_fetches_quietly_and_logs_one_summary(self):
+        for name, scan in SCANS:
+            with self.subTest(scan=name):
+                phdl = MagicMock()
+                phdl.exec.return_value = {'node1': 'a\nb\n', 'node2': 'c\n'}
+                with (
+                    patch('cvs.lib.verify_lib.fail_test'),
+                    patch.object(verify_lib.node_scraper_adapter, 'parse_dmesg', return_value=[]),
+                    patch.object(verify_lib.linux_utils, 'get_nic_ethtool_stats_dict', return_value={}),
+                    patch.object(verify_lib, 'log') as mock_log,
+                ):
+                    scan(phdl)
+                self.assertTrue(phdl.exec.call_args_list)
+                for call in phdl.exec.call_args_list:
+                    self.assertIs(call.kwargs.get('print_console'), False)
+                self.assertEqual(mock_log.info.call_count, 1)
+                self.assertEqual(
+                    mock_log.info.call_args.args,
+                    ('kernel-log scan %s: %d host(s), %d line(s) scanned, %d match(es)', name, 2, 3, 0),
+                )
+
+    def test_summary_counts_matches(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            'n1': 'kern  :info  : 2026-09-30T16:38:50,000000+00:00 ordinary line\n'
+            'kern  :err   : 2026-09-30T16:38:51,000000+00:00 amdgpu: GPU reset begin\n',
+            'n2': 'kern  :info  : 2026-09-30T16:38:52,000000+00:00 x\n',
+        }
+        with patch('cvs.lib.verify_lib.fail_test') as mock_fail, patch.object(verify_lib, 'log') as mock_log:
+            err_dict = verify_lib.full_dmesg_scan(phdl)
+        mock_fail.assert_called()
+        self.assertEqual(err_dict['n2'], [])
+        self.assertEqual(mock_log.info.call_args.args[1:], ('full_dmesg_scan', 2, 3, mock_fail.call_count))
+
+    def _run_link_flap(self, dmesg_out):
+        stats = {
+            'n1': {'eth0': {'link_down_events': '3', 'rx_packets': '9'}},
+            'n2': {'eth0': {'link_down_events': '0'}},
+        }
+        phdl = MagicMock()
+        phdl.exec.return_value = dmesg_out
+        with (
+            patch('cvs.lib.verify_lib.fail_test') as mock_fail,
+            patch.object(verify_lib.linux_utils, 'get_nic_ethtool_stats_dict', return_value=stats),
+            patch.object(verify_lib, 'log') as mock_log,
+        ):
+            err_dict = verify_lib.verify_nic_link_flap(phdl)
+        mock_log.info.assert_called_once()
+        return err_dict, mock_fail, mock_log.info.call_args.args[1:]
+
+    def test_link_flap_summary_excludes_ethtool_failures(self):
+        err_dict, mock_fail, summary = self._run_link_flap({'n1': 'eth0: link up\n', 'n2': ''})
+        self.assertEqual(summary, ('verify_nic_link_flap', 2, 1, 0))
+        self.assertEqual(err_dict, {'n1': ['ERROR !! n1 eth0 link_down_events 3'], 'n2': []})
+        mock_fail.assert_called_once_with('ERROR !! n1 eth0 link_down_events 3')
+
+    def test_link_flap_summary_counts_only_dmesg_matches(self):
+        err_dict, mock_fail, summary = self._run_link_flap(
+            {'n1': 'bnxt_en eth0: NIC Link is Down\n', 'n2': 'eth0: link up\nbnxt_en eth0: NIC Link is Down\n'}
+        )
+        self.assertEqual(summary, ('verify_nic_link_flap', 2, 3, 2))
+        self.assertEqual(
+            err_dict,
+            {
+                'n1': ['ERROR !! n1 eth0 link_down_events 3', 'ERROR !! NIC Link down dmesg logs seen on node n1'],
+                'n2': ['ERROR !! NIC Link down dmesg logs seen on node n2'],
+            },
+        )
+        self.assertEqual(mock_fail.call_count, 3)
+
+    def test_summary_is_bounded(self):
+        output = {f'host-{i}': 'SECRET-LINE\n' * 1000 for i in range(1000)}
+        with patch.object(verify_lib, 'log') as mock_log:
+            verify_lib._log_kernel_scan_summary('full_dmesg_scan', output, {'host-0': ['x']})
+        args = mock_log.info.call_args.args
+        rendered = args[0] % args[1:]
+        self.assertLess(len(rendered), 120)
+        self.assertNotIn('host-', rendered)
+        self.assertNotIn('SECRET-LINE', rendered)
+        mock_log.info.assert_called_once()
+
+    def test_real_parallel_handle_does_not_log_dmesg_lines(self):
+        from cvs.lib.parallel.phandle import ParallelHandle
+
+        sentinel = '2026-09-28T19:27:21,000000+00:00 kern  :err   : SENTINEL-KERNEL-LOG IPVS: rr: TCP 192.0.2.10:8989 - no destination available'
+        with patch('cvs.lib.parallel.phandle.ParallelSSHClient') as client_class:
+            handle = ParallelHandle(None, ['node1'], user='u', pkey='k')
+            handle.log = MagicMock()
+            item = MagicMock()
+            item.host = 'node1'
+            item.stdout = [sentinel] * 50
+            item.stderr = []
+            item.exception = None
+            item.exit_code = 0
+            client_class.return_value.run_command.return_value = [item]
+            with patch('cvs.lib.verify_lib.fail_test'):
+                verify_lib.full_dmesg_scan(handle)
+        self.assertFalse(
+            any('SENTINEL-KERNEL-LOG' in str(arg) for call in handle.log.info.call_args_list for arg in call.args)
+        )
 
 
 class TestVerifyGpuPcieBusWidth(unittest.TestCase):
@@ -41,7 +175,7 @@ class TestVerifyGpuPcieBusWidth(unittest.TestCase):
     @patch("cvs.lib.verify_lib.get_gpu_pcie_bus_dict")
     @patch("cvs.lib.verify_lib.fail_test")
     def test_auto_detects_expected_cards_when_omitted(self, mock_fail_test, mock_get_bus_dict):
-        """Platforms with fewer than 8 GPUs per node (e.g. a 4-GPU Helios-R tray)
+        """Platforms with fewer than 8 GPUs per node (e.g. a 4-GPU node)
         must not be judged against a hardcoded expectation when none is given."""
         mock_get_bus_dict.return_value = {
             "node1": {"card0": {"PCI Bus": "0000:01:00.0"}, "card1": {"PCI Bus": "0000:02:00.0"}},
@@ -115,28 +249,9 @@ class TestVerifyGpuPcieErrors(unittest.TestCase):
 
 
 class TestFullDmesgScan(unittest.TestCase):
-    def tearDown(self):
-        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
-
-    @patch("cvs.lib.verify_lib.fail_test")
-    def test_legacy_path_matches_err_patterns(self, mock_fail_test):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
-        phdl = MagicMock()
-        phdl.exec.return_value = {
-            "node1": "Mar 1 00:00:00 host kernel: amdgpu page fault segfault at 0",
-        }
-
-        result = verify_lib.full_dmesg_scan(phdl)
-
-        # legacy path collects with human-readable `dmesg -T`
-        self.assertIn("dmesg -T", phdl.exec.call_args[0][0])
-        self.assertTrue(result["node1"])
-        mock_fail_test.assert_called()
-
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
     def test_node_scraper_path_uses_adapter(self, mock_parse, mock_fail_test):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [
             {
                 "priority": "ERROR",
@@ -160,11 +275,286 @@ class TestFullDmesgScan(unittest.TestCase):
         self.assertIn("Out of memory error", result["node1"][0])
         mock_fail_test.assert_called()
 
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    def test_node_scraper_warning_does_not_fail(self, mock_parse, mock_fail_test):
+        mock_parse.return_value = [
+            {
+                "priority": "WARNING",
+                "category": "BIOS",
+                "description": "ACPI Error",
+                "match_content": "ACPI Error: Method parse/execution failed",
+                "count": 1,
+                "timestamps": [],
+                "source": "dmesg",
+            }
+        ]
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "raw dmesg text"}
+
+        result = verify_lib.full_dmesg_scan(phdl)
+
+        self.assertEqual(result["node1"], [])
+        mock_fail_test.assert_not_called()
+
+    def test_firmware_bug_is_not_a_crash_pattern(self):
+        firmware = (
+            "[Firmware Bug]: cpu 0, try to use APIC520 (LVT offset 2) for vector 0xf4, "
+            "but the register is already in use for vector 0x0 on this cpu"
+        )
+        # "[Firmware Bug]:" is "Bug]:" so the crash pattern's "Bug:" never matched it.
+        # Suppression is dmesg_line_is_benign, not this regex.
+        self.assertIsNone(re.search(verify_lib.err_patterns_dict["crash"], firmware, re.I))
+        self.assertTrue(verify_lib.dmesg_noise.dmesg_line_is_benign(firmware))
+        self.assertIsNotNone(re.search(verify_lib.err_patterns_dict["crash"], "kernel BUG: unable to handle", re.I))
+        zero_status = "VM_L2_PROTECTION_FAULT_STATUS:0x00000000"
+        self.assertIsNone(re.search(verify_lib.err_patterns_dict["fault"], zero_status, re.I))
+        self.assertIsNotNone(
+            re.search(verify_lib.err_patterns_dict["fault"], "VM_L2_PROTECTION_FAULT_STATUS:0x00301030", re.I)
+        )
+
+
+class TestBenignUnknownDmesgRules(unittest.TestCase):
+    def _scan(self, scan, *lines):
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            "node1": "".join(f"kern  :{level:<6}: 2026-09-28T19:27:21,000000+00:00 {msg}\n" for level, msg in lines)
+        }
+        with patch("cvs.lib.verify_lib.fail_test") as mock_fail:
+            result = scan(phdl)
+        return result["node1"], mock_fail
+
+    def test_ipvs_noise_is_ignored(self):
+        for scan in (verify_lib.full_dmesg_scan, verify_lib.verify_driver_errors):
+            result, mock_fail = self._scan(scan, ("err", "IPVS: rr: TCP 192.0.2.10:8989 - no destination available"))
+            self.assertEqual(result, [])
+            mock_fail.assert_not_called()
+
+    def test_unclassified_kernel_errors_warn_instead_of_fail(self):
+        for level, msg in (
+            ("emerg", "NMI watchdog: Watchdog detected hard LOCKUP on cpu 3"),
+            ("err", "blk_update_request: I/O error, dev sda"),
+            ("err", "nvme nvme0: I/O 123 QID 4 timeout, aborting"),
+        ):
+            result, mock_fail = self._scan(verify_lib.full_dmesg_scan, (level, msg))
+            self.assertEqual(result, [], msg)
+            mock_fail.assert_not_called()
+
+    def test_mlx5_dump_cqe_syndrome_zero_is_ignored(self):
+        result, mock_fail = self._scan(
+            verify_lib.full_dmesg_scan, ("err", "mlx5_core 0000:03:00.0: dump CQE: syndrome 0x0")
+        )
+        self.assertEqual(result, [])
+        mock_fail.assert_not_called()
+
+    def test_unclassified_amdgpu_error_still_fails_driver_check(self):
+        result, mock_fail = self._scan(
+            verify_lib.verify_driver_errors,
+            ("err", "amdgpu 0000:05:00.0: amdgpu: [drm] *ERROR* ring gfx_0.0.0 timeout"),
+        )
+        self.assertEqual(len(result), 1)
+        mock_fail.assert_called_once()
+
+    def test_ipvs_line_matching_a_cvs_pattern_still_fails(self):
+        result, mock_fail = self._scan(
+            verify_lib.full_dmesg_scan, ("err", "IPVS: rr: TCP 192.0.2.10:8989 - no destination available crashed")
+        )
+        self.assertEqual(len(result), 1)
+        mock_fail.assert_called_once()
+
+
+START = 'Starting Test all_reduce_perf'
+END = 'End of Test all_reduce_perf'
+WINDOW_TIMES = {
+    'Wed Sep 30 16:00:00': datetime.datetime(2026, 9, 30, 16, 0, tzinfo=datetime.timezone.utc),
+    'Wed Sep 30 16:01:00': datetime.datetime(2026, 9, 30, 16, 1, tzinfo=datetime.timezone.utc),
+}
+
+
+def _kmsg(clock, text, facility='kern', level='err'):
+    return f'{facility:<6}:{level:<6}: 2026-09-30T{clock},000000+00:00 {text}\n'
+
+
+def _marker(clock, marker):
+    return _kmsg(clock, marker, facility='user', level='warn')
+
+
+class TestVerifyDmesgDuringTest(unittest.TestCase):
+    def _scan(self, outputs, start_marker=START, end_marker=END):
+        phdl = MagicMock()
+        phdl.exec.return_value = outputs
+        with (
+            patch.object(verify_lib, '_parse_cvs_time', side_effect=WINDOW_TIMES.get),
+            patch('cvs.lib.verify_lib.fail_test') as mock_fail,
+            patch.object(verify_lib, 'log') as mock_log,
+        ):
+            result = verify_lib.verify_dmesg_during_test(
+                phdl,
+                start_marker,
+                end_marker,
+                {node: 'Wed Sep 30 16:00:00' for node in outputs},
+                {node: 'Wed Sep 30 16:01:00' for node in outputs},
+            )
+        failures = [c.args[0] for c in mock_fail.call_args_list]
+        warnings = [c.args[0] % c.args[1:] if len(c.args) > 1 else c.args[0] for c in mock_log.warning.call_args_list]
+        return result, failures, warnings, phdl
+
+    def test_scans_only_the_marked_window(self):
+        text = (
+            _kmsg('15:59:00', 'amdgpu 0000:05:00.0: amdgpu: GPU hang detected')
+            + _marker('16:00:05', START)
+            + _kmsg('16:00:10', 'amdgpu 0000:05:00.0: amdgpu: GPU reset begin!')
+            + _marker('16:00:20', END)
+            + _kmsg('16:00:30', 'Call Trace:')
+        )
+        result, failures, _, phdl = self._scan({'node1': text})
+        self.assertTrue(any('GPU reset begin' in line for line in result['node1']))
+        self.assertFalse(any('GPU hang' in line or 'Call Trace' in line for line in result['node1']))
+        self.assertTrue(failures)
+        cmd = phdl.exec.call_args.args[0]
+        self.assertIn('--time-format iso -x', cmd)
+        self.assertNotIn('awk', cmd)
+        self.assertIs(phdl.exec.call_args.kwargs.get('print_console'), False)
+
+    def test_uses_the_last_marker_pair(self):
+        text = (
+            _marker('16:00:01', START)
+            + _kmsg('16:00:02', 'amdgpu 0000:05:00.0: amdgpu: GPU hang detected')
+            + _marker('16:00:03', END)
+            + _marker('16:00:04', START)
+            + _kmsg('16:00:05', 'ordinary line', level='info')
+            + _marker('16:00:06', END)
+        )
+        result, failures, _, _ = self._scan({'node1': text})
+        self.assertEqual(result, {'node1': []})
+        self.assertEqual(failures, [])
+
+    def test_marker_must_match_the_whole_message(self):
+        start, end = f'{START} NCCL_ALGO=Ring', f'{END} NCCL_ALGO=Ring'
+        text = (
+            _marker('16:00:01', start)
+            + _marker('16:00:02', end)
+            + _marker('16:00:03', f'{start}2')
+            + _kmsg('16:00:04', 'amdgpu 0000:05:00.0: amdgpu: GPU hang detected')
+            + _marker('16:00:05', f'{end}2')
+        )
+        result, failures, _, _ = self._scan({'node1': text}, start, end)
+        self.assertEqual(result, {'node1': []})
+        self.assertEqual(failures, [])
+
+    def test_missing_end_marker_scans_to_end_of_log_and_says_so(self):
+        text = _marker('16:00:01', START) + _kmsg('16:00:02', 'amdgpu 0000:05:00.0: amdgpu: GPU hang detected')
+        result, failures, warnings, _ = self._scan({'node1': text})
+        self.assertTrue(result['node1'])
+        self.assertTrue(failures)
+        end_warnings = [w for w in warnings if END in w]
+        self.assertEqual(len(end_warnings), 1)
+        self.assertIn('scanning', end_warnings[0])
+        self.assertNotIn('skipped', end_warnings[0])
+
+    def test_missing_start_marker_falls_back_to_the_clock_window(self):
+        text = (
+            _kmsg('15:59:00', 'amdgpu 0000:05:00.0: amdgpu: GPU hang detected')
+            + _kmsg('16:00:30', 'amdgpu 0000:05:00.0: amdgpu: GPU reset begin!')
+            + _kmsg('16:02:00', 'Call Trace:')
+        )
+        result, failures, warnings, _ = self._scan({'node1': text})
+        self.assertTrue(any('GPU reset begin' in line for line in result['node1']))
+        self.assertFalse(any('GPU hang' in line or 'Call Trace' in line for line in result['node1']))
+        self.assertTrue(failures)
+        self.assertTrue(any(START in w and 'clock window' in w for w in warnings))
+
+    def test_only_nodes_without_a_start_marker_fall_back(self):
+        early_fault = _kmsg('16:00:10', 'amdgpu 0000:05:00.0: amdgpu: GPU hang detected')
+        outputs = {
+            'node1': early_fault + _marker('16:00:20', START) + _marker('16:00:30', END),
+            'node2': early_fault,
+        }
+        result, failures, warnings, _ = self._scan(outputs)
+        self.assertEqual(result['node1'], [])
+        self.assertTrue(result['node2'])
+        self.assertTrue(all('node2' in msg for msg in failures))
+        self.assertTrue(any('node2' in w and 'clock window' in w for w in warnings))
+        self.assertFalse(any('node1' in w for w in warnings))
+
+    def test_warning_level_event_in_window_does_not_fail(self):
+        text = (
+            _marker('16:00:01', START)
+            + _kmsg(
+                '16:00:02', 'amdgpu: Runlist is getting oversubscribed. Expect reduced ROCm performance.', level='warn'
+            )
+            + _marker('16:00:03', END)
+        )
+        result, failures, warnings, _ = self._scan({'node1': text})
+        self.assertEqual(result, {'node1': []})
+        self.assertEqual(failures, [])
+        self.assertTrue(any('oversubscribed' in w for w in warnings))
+
+    def test_write_marker_cmd_quotes_marker_and_only_tee_uses_sudo(self):
+        marker = """Starting Test all_reduce's size=$1 `n` say "hi\""""
+        self.assertEqual(verify_lib.dmesg_write_marker_cmd(marker), f'echo {shlex.quote(marker)} | sudo tee /dev/kmsg')
+
+
+class TestDmesgDuringTestEnabled(unittest.TestCase):
+    def test_reads_cvs_params_like_other_rccl_flags(self):
+        for value, expected in (('True', True), ('true', True), (' TRUE ', True), ('False', False), (True, True)):
+            with self.subTest(value=value):
+                config = {'cvs_params': {'dmesg_during_test': value}}
+                self.assertIs(verify_lib.dmesg_during_test_enabled(config), expected)
+        self.assertFalse(verify_lib.dmesg_during_test_enabled({}))
+        self.assertFalse(verify_lib.dmesg_during_test_enabled({'cvs_params': {}}))
+
+
+class TestDmesgWindow(unittest.TestCase):
+    def _window(self, use_markers):
+        handle = MagicMock()
+        handle.exec.side_effect = lambda cmd, **kwargs: {'n1': cmd}
+        return verify_lib.DmesgWindow(handle, 'all_reduce_perf NCCL_ALGO=Ring ', use_markers), handle
+
+    def test_markers_bracket_the_test_and_drive_the_marker_scan(self):
+        window, handle = self._window(use_markers=True)
+        with (
+            patch.object(verify_lib, 'verify_dmesg_during_test', return_value={'n1': []}) as marker_scan,
+            patch.object(verify_lib, 'verify_dmesg_for_errors') as clock_scan,
+        ):
+            window.open()
+            result = window.close_and_scan()
+        cmds = [c.args[0] for c in handle.exec.call_args_list]
+        self.assertEqual(
+            cmds,
+            [
+                verify_lib.dmesg_write_marker_cmd('Starting Test all_reduce_perf NCCL_ALGO=Ring'),
+                'date +"%a %b %e %H:%M:%S"',
+                verify_lib.dmesg_write_marker_cmd('End of Test all_reduce_perf NCCL_ALGO=Ring'),
+                'date +"%a %b %e %H:%M:%S"',
+            ],
+        )
+        marker_scan.assert_called_once_with(
+            handle,
+            'Starting Test all_reduce_perf NCCL_ALGO=Ring',
+            'End of Test all_reduce_perf NCCL_ALGO=Ring',
+            {'n1': 'date +"%a %b %e %H:%M:%S"'},
+            {'n1': 'date +"%a %b %e %H:%M:%S"'},
+        )
+        clock_scan.assert_not_called()
+        self.assertEqual(result, {'n1': []})
+
+    def test_without_markers_scans_the_bounded_clock_window(self):
+        window, handle = self._window(use_markers=False)
+        with (
+            patch.object(verify_lib, 'verify_dmesg_during_test') as marker_scan,
+            patch.object(verify_lib, 'verify_dmesg_for_errors', return_value={'n1': []}) as clock_scan,
+        ):
+            window.open()
+            window.close_and_scan()
+        marker_scan.assert_not_called()
+        start, end = clock_scan.call_args.args[1:3]
+        self.assertEqual(start, end)
+        self.assertEqual(clock_scan.call_args.kwargs, {'till_end_flag': False})
+        self.assertEqual(handle.exec.call_count, 4)
+
 
 class TestDmesgMigrations(unittest.TestCase):
-    def tearDown(self):
-        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
-
     def test_parse_cvs_time(self):
         dt = verify_lib._parse_cvs_time("Mon Jun  5 08:53")
         self.assertIsNotNone(dt)
@@ -190,7 +580,6 @@ class TestDmesgMigrations(unittest.TestCase):
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
     def test_verify_dmesg_for_errors_uses_time_range(self, mock_parse, mock_fail):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [{"description": "GPU Reset", "match_content": "GPU reset begin", "category": "RAS"}]
         phdl = MagicMock()
         phdl.exec.return_value = {"node1": "raw"}
@@ -209,7 +598,6 @@ class TestDmesgMigrations(unittest.TestCase):
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
     def test_verify_dmesg_for_errors_till_end_omits_end(self, mock_parse, mock_fail):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = []
         phdl = MagicMock()
         phdl.exec.return_value = {"node1": "raw"}
@@ -225,7 +613,6 @@ class TestDmesgMigrations(unittest.TestCase):
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
     def test_full_journalctl_scan_node_scraper(self, mock_parse, mock_fail):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [
             {"description": "Out of memory error", "match_content": "Out of memory: killed", "category": "OS"}
         ]
@@ -239,10 +626,8 @@ class TestDmesgMigrations(unittest.TestCase):
         self.assertTrue(result["node1"])
         mock_fail.assert_called()
 
-    @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
-    def test_full_journalctl_scan_bounds_with_since(self, mock_parse, mock_fail):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+    def test_full_journalctl_scan_bounds_with_since(self, mock_parse):
         mock_parse.return_value = []
         phdl = MagicMock()
         phdl.exec.return_value = {"node1": "raw"}
@@ -257,14 +642,15 @@ class TestDmesgMigrations(unittest.TestCase):
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
     def test_verify_driver_errors_filters_to_driver(self, mock_parse, mock_fail):
-        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [
             {
+                "priority": "ERROR",
                 "description": "amdgpu Page Fault",
                 "match_content": "amdgpu 0000:01:00.0 page fault",
                 "category": "SW_DRIVER",
             },
             {
+                "priority": "ERROR",
                 "description": "Filesystem corrupted!",
                 "match_content": "EXT4-fs error (device sda1):",
                 "category": "OS",
@@ -308,6 +694,213 @@ class TestNodeScraperTimeRangeFiltering(unittest.TestCase):
         )
 
 
+EDAC_BENIGN_DMESG_LINES = [
+    "EDAC MC: Ver: 3.0.0",
+    "EDAC MC0: Giving out device to module amd64_edac controller F19h: DEV 0000:00:18.3 (INTERRUPT)",
+    "EDAC amd64: F19h detected (node 0).",
+    "EDAC amd64: MC: 0:     0MB 1: 16384MB",
+    "EDAC amd64: using x16 syndromes.",
+    "EDAC MC: Removed device 0 for amd64_edac F19h: DEV 0000:00:18.3",
+    "EDAC DEVICE0: Giving out device to module altera_edac controller l2: DEV l2 (POLLED)",
+    "EDAC PCI0: Giving out device to module amd64_edac controller EDAC PCI controller: DEV 0000:00:18.2 (POLLED)",
+    "ghes_edac: This system has 32 DIMM sockets.",
+    "EDAC amd64: Warning: Forcing ECC on is not recommended on newer systems. Please enable ECC in BIOS.",
+    "EDAC sbridge: Seeking for: PCI ID 8086:2fa0",
+]
+
+EDAC_REAL_DMESG_LINES = [
+    "EDAC MC0: 1 CE on mc#0csrow#2channel#0 (csrow:2 channel:0 page:0x1234 offset:0x0 grain:64 syndrome:0x5a)",
+    "EDAC MC0: 1 UE on mc#0csrow#2channel#0 (csrow:2 channel:0 page:0x1234 offset:0x0 grain:64)",
+    "EDAC MC3: 2 CE Single-bit ECC on unknown memory (node:0 card:0 module:0 page:0x0 offset:0x0 grain:1 "
+    "syndrome:0x0 - APEI location: node:0 card:0 module:0)",
+    "EDAC MC0: 1 UE Failed to map error addr to a csrow on unknown label (page:0x0 offset:0x0 grain:64)",
+    "EDAC DEVICE0: CE: l2 instance: 0 block: 0 count: 1 'L2 single-bit error'",
+    "EDAC DEVICE0: UE: l2 instance: 0 block: 0 count: 1 'L2 double-bit error'",
+]
+
+BENIGN_DMESG_LINES = [
+    "infiniband rdma0: Changing to default roce traffic class DSCP 26 and SL 3",
+    "PCI: CLS 64 bytes, default 64",
+    "ast 0000:54:00.0: Using default configuration",
+    "mpt3sas_cm0: CurrentHostPageSize is 0: Setting default host page size to 4k",
+    "RAS: Correctable Errors collector initialized.",
+    "RAS: Uncorrectable Errors collector initialized.",
+] + EDAC_BENIGN_DMESG_LINES
+
+REAL_FAULT_DMESG_LINES = [
+    "python[3215696]: segfault at 75b800000034 ip 000075b86b22d5aa sp 00007ffef62526f0 error 4 "
+    "in libmori_application.so[75b86b200000+c7000] likely on CPU 124 (core 84, socket 1)",
+    "traps: python[4021] general protection fault ip:7f3a5c0b12e4 sp:7ffd2a8c1e50 error:0 in libc.so.6",
+    "amdgpu 0000:05:00.0: amdgpu: [gfxhub] page fault (src_id:0 ring:153 vmid:8 pasid:32770)",
+    "amdgpu 0000:05:00.0: amdgpu: [mmhub0] retry page fault (src_id:0 ring:0 vmid:0 pasid:0)",
+    "amdgpu 0000:05:00.0: GPU fault detected: 146 0x0c680401",
+    "BUG: unable to handle page fault for address: ffffc90000a3f000",
+    "Oops: general protection fault, probably for non-canonical address 0xdead000000000100: 0000 [#1] SMP NOPTI",
+    "pcieport 0000:00:01.1: AER: Correctable error message received from 0000:01:00.0",
+    "pcieport 0000:00:01.1: AER: Uncorrectable (Non-Fatal) error message received from 0000:01:00.0",
+    "amdgpu 0000:05:00.0: amdgpu: Uncorrectable error detected in UMC inst: 0, chan_idx: 3",
+] + EDAC_REAL_DMESG_LINES
+
+
+class TestErrPatterns(unittest.TestCase):
+    def _matching_keys(self, line):
+        return [key for key, pattern in verify_lib.err_patterns_dict.items() if re.search(pattern, line, re.I)]
+
+    def test_benign_lines_match_no_error_pattern(self):
+        for line in BENIGN_DMESG_LINES:
+            with self.subTest(line=line):
+                self.assertEqual(self._matching_keys(line), [])
+
+    def test_real_fault_lines_match_an_error_pattern(self):
+        for line in REAL_FAULT_DMESG_LINES:
+            with self.subTest(line=line):
+                self.assertTrue(self._matching_keys(line))
+
+    def test_standalone_fault_word_still_flags_crash(self):
+        for line in (
+            "traps: python[4021] general protection fault ip:7f3a5c0b12e4 sp:7ffd2a8c1e50 error:0 in libc.so.6",
+            "amdgpu 0000:05:00.0: GPU fault detected: 146 0x0c680401",
+            "Oops: general protection fault, probably for non-canonical address 0xdead000000000100: 0000 [#1] SMP NOPTI",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self._matching_keys(line), ["crash"])
+
+    def test_segfault_flags_crash(self):
+        self.assertIn("crash", self._matching_keys(REAL_FAULT_DMESG_LINES[0]))
+
+    def test_correctable_error_report_still_flags_hardware(self):
+        self.assertEqual(
+            self._matching_keys("pcieport 0000:00:01.1: AER: Correctable error message received from 0000:01:00.0"),
+            ["hardware"],
+        )
+
+    def test_edac_reports_flag_hardware(self):
+        for line in EDAC_REAL_DMESG_LINES:
+            with self.subTest(line=line):
+                self.assertEqual(self._matching_keys(line), ["hardware"])
+
+    def _cvs_events(self, lines, level):
+        dmesg = "".join(
+            f"2026-09-30T16:38:51,{i:06d}+00:00 kern  :{level:<6}: {line}\n" for i, line in enumerate(lines)
+        )
+        events = verify_lib.node_scraper_adapter.parse_dmesg(
+            dmesg, analysis_args={"error_regex": verify_lib.cvs_dmesg_error_regex()}
+        )
+        return [e for e in events if (e["description"] or "").startswith("CVS ")]
+
+    def test_node_scraper_cvs_patterns_ignore_benign_lines(self):
+        self.assertEqual(self._cvs_events(BENIGN_DMESG_LINES, "warn"), [])
+
+    def test_node_scraper_cvs_patterns_flag_bare_fault(self):
+        events = self._cvs_events(["amdgpu 0000:05:00.0: GPU fault detected: 146 0x0c680401"], "err")
+        self.assertEqual([e["description"] for e in events], ["CVS crash pattern"])
+
+    def test_node_scraper_cvs_patterns_flag_edac_ce_at_warn_level(self):
+        events = self._cvs_events([EDAC_REAL_DMESG_LINES[0]], "warn")
+        self.assertEqual([e["description"] for e in events], ["CVS hardware pattern"])
+
+
+def _iso_dmesg(lines, level='err'):
+    return ''.join(f'kern  :{level:<6}: 2026-09-30T16:38:51,{i:06d}+00:00 {line}\n' for i, line in enumerate(lines))
+
+
+class TestNodeScraperIsTheOnlyParser(unittest.TestCase):
+    WINDOW_START = datetime.datetime(2026, 9, 30, 16, 0, tzinfo=datetime.timezone.utc)
+
+    def _window_scan(self, text):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': text}
+        with (
+            patch.object(verify_lib, '_parse_cvs_time', return_value=self.WINDOW_START),
+            patch('cvs.lib.verify_lib.fail_test') as mock_fail,
+            patch.object(verify_lib, 'log') as mock_log,
+        ):
+            result = verify_lib.verify_dmesg_for_errors(
+                phdl, {'node1': 'Wed Sep 30 16:00:00'}, {'node1': 'Wed Sep 30 17:00:00'}, till_end_flag=True
+            )
+        return result, mock_fail, mock_log, phdl.exec.call_args.args[0]
+
+    def test_every_scan_uses_node_scraper(self):
+        for name, scan in SCANS:
+            if name == 'verify_nic_link_flap':
+                continue
+            with self.subTest(scan=name):
+                phdl = MagicMock()
+                phdl.exec.return_value = {'node1': ''}
+                with (
+                    patch('cvs.lib.verify_lib.fail_test'),
+                    patch.object(verify_lib.node_scraper_adapter, 'parse_dmesg', return_value=[]) as parse,
+                    patch.object(verify_lib, 'log'),
+                ):
+                    scan(phdl)
+                cmd = phdl.exec.call_args.args[0]
+                self.assertNotIn('dmesg -T', cmd)
+                parse.assert_called()
+
+    def test_oversubscription_warns_without_failing(self):
+        text = _iso_dmesg(['amdgpu: Runlist is getting oversubscribed. Expect reduced ROCm performance.'], 'warn')
+        result, mock_fail, mock_log, _ = self._window_scan(text)
+        self.assertEqual(result, {'node1': []})
+        mock_fail.assert_not_called()
+        warnings = [c.args[0] for c in mock_log.warning.call_args_list]
+        self.assertTrue(any('oversubscribed' in w and 'node1' in w for w in warnings), warnings)
+
+    def test_oversubscription_outside_window_is_not_reported(self):
+        text = _iso_dmesg(['amdgpu: Runlist is getting oversubscribed.'], 'warn').replace('T16:38:51', 'T15:10:00')
+        _, mock_fail, mock_log, _ = self._window_scan(text)
+        mock_fail.assert_not_called()
+        self.assertFalse(any('oversubscribed' in c.args[0] for c in mock_log.warning.call_args_list))
+
+    def test_window_scan_ignores_benign_lines(self):
+        result, mock_fail, _, cmd = self._window_scan(_iso_dmesg(BENIGN_DMESG_LINES, 'warn'))
+        self.assertIn('--time-format iso -x', cmd)
+        self.assertEqual(result, {'node1': []})
+        mock_fail.assert_not_called()
+
+    def test_window_scan_flags_every_real_fault(self):
+        for fault in REAL_FAULT_DMESG_LINES:
+            for level in ('err', 'warn', 'info'):
+                with self.subTest(fault=fault, level=level):
+                    result, mock_fail, _, _ = self._window_scan(_iso_dmesg(BENIGN_DMESG_LINES + [fault], level))
+                    self.assertTrue(result['node1'])
+                    mock_fail.assert_called()
+
+    def test_err_level_firmware_bug_and_zero_status_do_not_fail(self):
+        lines = [
+            '[Firmware Bug]: cpu 0, try to use APIC520 for vector 0xf4, register already in use',
+            'amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x0',
+            'amdgpu 0000:03:00.0: amdgpu: MAPPING_ERROR: 0x0',
+            'amdgpu 0000:03:00.0: amdgpu: VM_L2_PROTECTION_FAULT_STATUS:0x00000000',
+        ]
+        for scan in (verify_lib.full_dmesg_scan, verify_lib.verify_driver_errors):
+            with self.subTest(scan=scan.__name__):
+                phdl = MagicMock()
+                phdl.exec.return_value = {'node1': _iso_dmesg(lines)}
+                with patch('cvs.lib.verify_lib.fail_test') as mock_fail:
+                    result = scan(phdl)
+                self.assertEqual(result, {'node1': []})
+                mock_fail.assert_not_called()
+
+    def test_err_level_nonzero_status_fails_driver_check_only(self):
+        expected = {'full_dmesg_scan': False, 'verify_driver_errors': True}
+        for scan in (verify_lib.full_dmesg_scan, verify_lib.verify_driver_errors):
+            with self.subTest(scan=scan.__name__):
+                phdl = MagicMock()
+                phdl.exec.return_value = {'node1': _iso_dmesg(['amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x1'])}
+                with patch('cvs.lib.verify_lib.fail_test') as mock_fail, patch.object(verify_lib, 'log'):
+                    result = scan(phdl)
+                self.assertEqual(bool(result['node1']), expected[scan.__name__])
+                self.assertEqual(mock_fail.called, expected[scan.__name__])
+
+    def test_journalctl_scan_flags_real_fault(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': f'2026-09-30T16:38:51+0000 node1 kernel: {REAL_FAULT_DMESG_LINES[0]}\n'}
+        with patch('cvs.lib.verify_lib.fail_test') as mock_fail:
+            result = verify_lib.full_journalctl_scan(phdl)
+        self.assertTrue(result['node1'])
+        mock_fail.assert_called()
+
+
 class TestVerifyHostLspci(unittest.TestCase):
     def setUp(self):
         self.mock_phdl = MagicMock()
@@ -319,6 +912,111 @@ class TestVerifyHostLspci(unittest.TestCase):
         self.mock_phdl.exec_cmd_list.return_value = {'node1': 'LnkSta: Speed 16GT/s, Width x8'}
         verify_lib.verify_host_lspci(self.mock_phdl, 32, 16)
         mock_fail_test.assert_called()
+
+
+class TestCorrectedHostMce(unittest.TestCase):
+    def _scan(self, scan, lines, **kwargs):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': mce.text(lines)}
+        with patch('cvs.lib.verify_lib.fail_test') as mock_fail, patch.object(verify_lib, 'log') as mock_log:
+            result = scan(phdl, **kwargs)
+        failures = [call.args[0] for call in mock_fail.call_args_list]
+        warnings = [call.args[0] for call in mock_log.warning.call_args_list]
+        return result, failures, warnings, phdl.exec.call_args.args[0]
+
+    def test_full_dmesg_scan_node_scraper_ignores_real_ce(self):
+        for lines in (mce.CE_LINES, mce.CE_LINES_PREFIXED_EMPTY):
+            with self.subTest(prefixed_empty=bool(lines[6])):
+                result, failures, warnings, _ = self._scan(verify_lib.full_dmesg_scan, lines)
+                self.assertEqual(result, {'node1': []})
+                self.assertEqual(failures, [])
+                self.assertEqual(len(warnings), 1)
+                self.assertIn('1 corrected host-CPU MCE(s)', warnings[0])
+                self.assertIn('MC53_STATUS[Over|CE|', warnings[0])
+
+    def test_full_dmesg_scan_node_scraper_fails_ue_fatal_deferred(self):
+        for lines, status in (
+            (mce.UE_LINES, mce.UE_STATUS),
+            (mce.FATAL_LINES, mce.FATAL_STATUS),
+            (mce.DEFERRED_LINES, mce.DEFERRED_STATUS),
+        ):
+            with self.subTest(header=lines[1]):
+                _, failures, warnings, _ = self._scan(verify_lib.full_dmesg_scan, lines)
+                self.assertTrue(failures)
+                self.assertTrue(any(status in msg and 'Uncorrected host-CPU MCE' in msg for msg in failures))
+                self.assertFalse(any('corrected host-CPU' in msg for msg in warnings))
+
+    def test_full_dmesg_scan_node_scraper_mixed_still_fails(self):
+        for lines, status in (
+            (mce.MIXED_CE_UE, mce.UE_STATUS),
+            (mce.MIXED_CE_DEFERRED, mce.DEFERRED_STATUS),
+            (mce.MIXED_UE_CE, mce.UE_STATUS),
+        ):
+            with self.subTest(status=status, ce_first=lines[1] == mce.CE_LINES[1]):
+                _, failures, warnings, _ = self._scan(verify_lib.full_dmesg_scan, lines)
+                self.assertTrue(any(status in msg for msg in failures))
+                self.assertFalse(any(mce.CE_STATUS in msg or mce.CE_HEADER in msg for msg in failures))
+                self.assertEqual(len(warnings), 1)
+                self.assertIn('1 corrected host-CPU MCE(s)', warnings[0])
+
+    def test_ce_block_followed_by_ghes_line_still_fails(self):
+        lines = mce.CE_LINES[:3] + [mce.GHES_LINE] + mce.CE_LINES[3:]
+        result, failures, _, _ = self._scan(verify_lib.full_dmesg_scan, lines)
+        self.assertTrue(failures)
+        self.assertTrue(any('Hardware Error' in line for line in result['node1']))
+
+    def test_unrelated_error_inside_ce_block_still_fails(self):
+        fault = (
+            'kern  :err   : 2026-10-15T06:24:34,080231+00:00 '
+            'amdgpu 0000:05:00.0: amdgpu: [gfxhub] page fault (src_id:0 ring:153 vmid:8 pasid:32770)'
+        )
+        lines = mce.CE_LINES[:3] + [fault] + mce.CE_LINES[3:]
+        _, failures, _, _ = self._scan(verify_lib.full_dmesg_scan, lines)
+        self.assertTrue(any('page fault' in msg for msg in failures))
+
+    def test_verify_dmesg_for_errors_window_real_node_scraper(self):
+        times = {
+            'Thu Oct 15 06:24:00': datetime.datetime(2026, 10, 15, 6, 24, tzinfo=datetime.timezone.utc),
+            'Thu Oct 15 06:25:00': datetime.datetime(2026, 10, 15, 6, 25, tzinfo=datetime.timezone.utc),
+        }
+        kwargs = {
+            'start_time_dict': {'node1': 'Thu Oct 15 06:24:00'},
+            'end_time_dict': {'node1': 'Thu Oct 15 06:25:00'},
+            'till_end_flag': False,
+        }
+        outside_deferred = [line.replace('T06:24:34,', 'T06:18:47,') for line in mce.DEFERRED_LINES]
+        with patch.object(verify_lib, '_parse_cvs_time', side_effect=times.get):
+            for lines, should_fail in (
+                (mce.CE_LINES_EARLIER + mce.CE_LINES, False),
+                (mce.CE_LINES_EARLIER + mce.DEFERRED_LINES, True),
+                (outside_deferred + mce.CE_LINES, False),
+            ):
+                with self.subTest(should_fail=should_fail, header=lines[-8]):
+                    result, failures, warnings, _ = self._scan(verify_lib.verify_dmesg_for_errors, lines, **kwargs)
+                    self.assertEqual(bool(failures), should_fail)
+                    if should_fail:
+                        self.assertTrue(any(mce.DEFERRED_STATUS in msg for msg in failures))
+                    else:
+                        self.assertEqual(result, {'node1': []})
+                        self.assertEqual(len(warnings), 1)
+                        self.assertIn('1 corrected host-CPU MCE(s)', warnings[0])
+
+    def test_full_journalctl_scan_node_scraper_ignores_ce(self):
+        result, failures, warnings, _ = self._scan(
+            verify_lib.full_journalctl_scan, mce.as_journal_short_iso(mce.CE_LINES)
+        )
+        self.assertEqual(result, {'node1': []})
+        self.assertEqual(failures, [])
+        self.assertEqual(len(warnings), 1)
+
+    def test_full_journalctl_scan_node_scraper_fails_ue_and_deferred(self):
+        for lines, status in ((mce.UE_LINES, mce.UE_STATUS), (mce.DEFERRED_LINES, mce.DEFERRED_STATUS)):
+            with self.subTest(header=lines[1]):
+                _, failures, warnings, _ = self._scan(verify_lib.full_journalctl_scan, mce.as_journal_short_iso(lines))
+                self.assertTrue(
+                    any('Uncorrected host-CPU MCE' in message and status in message for message in failures)
+                )
+                self.assertFalse(any('corrected host-CPU' in message for message in warnings))
 
 
 if __name__ == "__main__":

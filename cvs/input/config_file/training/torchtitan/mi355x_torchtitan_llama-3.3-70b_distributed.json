@@ -1,6 +1,7 @@
 {
   "gpu_name": "MI355X",
   "enforce_thresholds": true,
+  "gpus_per_node": 8,
   "threshold_json": "mi355x_torchtitan_llama-3.3-70b_distributed_threshold.json",
   "paths": {
     "hf_token_file": "/home/{user-id}/.hf_token",

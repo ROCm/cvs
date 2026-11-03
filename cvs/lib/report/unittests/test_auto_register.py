@@ -29,10 +29,77 @@ class TestAutoRegister(unittest.TestCase):
         self.assertTrue(try_auto_register_suite_report(config))
         self.assertEqual(config._suite_report_config["suite_id"], "sglang")
 
+    def test_auto_register_loads_rccl_aliases(self):
+        for stem in ("rccl_perf", "rccl_regression", "rccl_pairwise"):
+            with self.subTest(stem=stem):
+                config = SimpleNamespace(_suite_name=stem, _suite_report_config=None)
+                self.assertTrue(try_auto_register_suite_report(config))
+                self.assertEqual(config._suite_report_config["suite_id"], "rccl")
+                self.assertEqual(config._suite_report_config["dataset_builder"], "series")
+
+    def test_auto_register_loads_megatron_alias(self):
+        for stem in ("megatron_single", "megatron_distributed"):
+            config = SimpleNamespace(_suite_name=stem, _suite_report_config=None)
+            self.assertTrue(try_auto_register_suite_report(config), stem)
+            self.assertEqual(config._suite_report_config["suite_id"], "megatron")
+            self.assertEqual(config._suite_report_config["dataset_builder"], "training_sweep")
+
+    def test_auto_register_loads_torchtitan_alias(self):
+        for stem in ("torchtitan_single", "torchtitan_distributed"):
+            config = SimpleNamespace(_suite_name=stem, _suite_report_config=None)
+            self.assertTrue(try_auto_register_suite_report(config), stem)
+            self.assertEqual(config._suite_report_config["suite_id"], "torchtitan")
+            self.assertEqual(config._suite_report_config["dataset_builder"], "training_sweep")
+
     def test_auto_register_loads_vllm_json_profile(self):
         config = SimpleNamespace(_suite_name="vllm", _suite_report_config=None)
         self.assertTrue(try_auto_register_suite_report(config))
         self.assertEqual(config._suite_report_config["suite_id"], "vllm")
+
+    def test_auto_register_loads_transferbench_cvs_profile(self):
+        config = SimpleNamespace(_suite_name="transferbench_cvs", _suite_report_config=None)
+        self.assertTrue(try_auto_register_suite_report(config))
+        self.assertEqual(config._suite_report_config["suite_id"], "transferbench_cvs")
+        self.assertEqual(config._suite_report_config["dataset_builder"], "status_matrix")
+        self.assertEqual(config._suite_report_config["sources"]["results"], "transferbench_res_dict")
+
+    def test_auto_register_loads_rvs_cvs_profile(self):
+        config = SimpleNamespace(_suite_name="rvs_cvs", _suite_report_config=None)
+        self.assertTrue(try_auto_register_suite_report(config))
+        self.assertEqual(config._suite_report_config["suite_id"], "rvs_cvs")
+        self.assertEqual(config._suite_report_config["dataset_builder"], "status_matrix")
+        self.assertEqual(config._suite_report_config["sources"]["results"], "rvs_res_dict")
+
+    def test_auto_register_loads_agfhc_cvs_profile(self):
+        config = SimpleNamespace(_suite_name="agfhc_cvs", _suite_report_config=None)
+        self.assertTrue(try_auto_register_suite_report(config))
+        self.assertEqual(config._suite_report_config["suite_id"], "agfhc_cvs")
+        self.assertEqual(config._suite_report_config["dataset_builder"], "status_matrix")
+        self.assertEqual(config._suite_report_config["sources"]["results"], "agfhc_res_dict")
+
+    def test_auto_register_loads_host_configs_cvs_profile(self):
+        config = SimpleNamespace(_suite_name="host_configs_cvs", _suite_report_config=None)
+        self.assertTrue(try_auto_register_suite_report(config))
+        self.assertEqual(config._suite_report_config["suite_id"], "host_configs_cvs")
+        self.assertEqual(config._suite_report_config["dataset_builder"], "status_matrix")
+        self.assertEqual(config._suite_report_config["sources"]["results"], "host_res_dict")
+        self.assertEqual(config._suite_report_config["lifecycle"]["session_labels"][0], "os_release")
+
+    def test_auto_register_loads_preflight_checks_profile(self):
+        config = SimpleNamespace(_suite_name="preflight_checks", _suite_report_config=None)
+        self.assertTrue(try_auto_register_suite_report(config))
+        self.assertEqual(config._suite_report_config["suite_id"], "preflight_checks")
+        self.assertEqual(config._suite_report_config["dataset_builder"], "status_matrix")
+        self.assertEqual(config._suite_report_config["sources"]["results"], "preflight_res_dict")
+        self.assertEqual(config._suite_report_config["lifecycle"]["session_labels"][0], "node_reachability")
+
+    def test_auto_register_loads_csp_qual_agfhc_profile(self):
+        config = SimpleNamespace(_suite_name="csp_qual_agfhc", _suite_report_config=None)
+        self.assertTrue(try_auto_register_suite_report(config))
+        self.assertEqual(config._suite_report_config["suite_id"], "csp_qual_agfhc")
+        self.assertEqual(config._suite_report_config["dataset_builder"], "status_matrix")
+        self.assertEqual(config._suite_report_config["sources"]["results"], "agfhc_res_dict")
+        self.assertEqual(config._suite_report_config["lifecycle"]["session_labels"][0], "version_check")
 
 
 if __name__ == "__main__":

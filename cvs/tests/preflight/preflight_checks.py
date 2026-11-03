@@ -5,27 +5,56 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import functools
+import inspect
+
 import pytest
 import json
 
 # Import new modular preflight classes
 from cvs.lib.preflight.gid_consistency import GidConsistencyCheck
+from cvs.lib.rdma_gid_lib import DEFAULT_GID_TYPE
+from cvs.lib.preflight.mtu_check import RdmaMtuCheck, DEFAULT_MIN_NETDEV_MTU, DEFAULT_MIN_ACTIVE_MTU
 from cvs.lib.preflight.version_check import RocmVersionCheck
 from cvs.lib.preflight.interface_consistency import InterfaceConsistencyCheck
 from cvs.lib.preflight.ifoe_l2_connectivity import IfoeL2ConnectivityCheck
-from cvs.lib.preflight.scaleup_fabric import NodeHealthCheck
+from cvs.lib.preflight.scaleup_fabric import DEFAULT_MIN_UP_PORTS_PER_GPU, NodeHealthCheck
 from cvs.lib.preflight.transferbench_smoke import TransferBenchSmokeCheck
 from cvs.lib.preflight.node_smoke import (
     NODE_SMOKE_TIER1_LABEL,
+    NODE_SMOKE_TIER2_LABEL,
     NODE_SMOKE_TIER3_LABEL,
     NodeSmokeCheck,
 )
 from cvs.lib.preflight.tier3_info import NodeSmokeTier3Check
+from cvs.lib.preflight.node_smoke_rows import (
+    build_tier1_metric_rows,
+    build_tier2_metric_rows,
+    build_tier3_metric_rows,
+    row_is_failure,
+    tier1_runner_outcome,
+    tier2_runner_outcome,
+    unexplained_tier1_nodes,
+)
 
 # RdmaConnectivityCheck not used - using legacy function temporarily
 from cvs.lib.preflight.report import PreflightReportGenerator, preflight_check_display_name
-from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
-from cvs.lib.parallel.config import ParallelConfig
+from cvs.lib.preflight.rundeck import (
+    GID_CONSISTENCY,
+    RDMA_MTU,
+    IFOE_L2,
+    INTERFACE_NAMES,
+    NODE_HEALTH,
+    NODE_REACHABILITY,
+    NODE_SMOKE_TIER1,
+    NODE_SMOKE_TIER2,
+    NODE_SMOKE_TIER3,
+    RDMA_CONNECTIVITY,
+    ROCM_VERSIONS,
+    TRANSFERBENCH,
+    build_preflight_deck,
+)
+from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.parsers.schemas import (
@@ -37,6 +66,38 @@ from cvs.parsers.schemas import (
 from cvs.lib import globals
 
 log = globals.log
+
+# Filled by the module fixture while a pytest session is running. Library unit
+# tests call the check functions directly and leave this empty.
+_rundeck_slot = {'target': None, 'cluster': None}
+
+
+def _publish_preflight_rundeck():
+    """Refresh the Run Deck fixture from preflight_results. Never changes the verdict."""
+    target = _rundeck_slot.get('target')
+    if not isinstance(target, dict):
+        return
+    try:
+        built = build_preflight_deck(preflight_results, _rundeck_slot.get('cluster'))
+        target.clear()
+        target.update(built)
+    except Exception as exc:
+        log.warning("Preflight: could not capture Run Deck results: %s", exc)
+
+
+def _timed_stage(label):
+    """Record wall-clock for one preflight check. Missing lifecycle is a no-op."""
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapped(*args, **kwargs):
+            lifecycle = inspect.signature(fn).bind_partial(*args, **kwargs).arguments.get('lifecycle')
+            with timed_stage(lifecycle, label):
+                return fn(*args, **kwargs)
+
+        return wrapped
+
+    return deco
 
 
 def get_nested_config(config_dict, section, key, default):
@@ -93,15 +154,43 @@ def _reject_flat_preflight_checks(config_dict):
         )
 
 
+_NODE_CHECK_STATION_POLICY_KEYS = frozenset({'min_up_ports_per_gpu'})
+
+_STATION_POLICY_IFOE_KEYS = frozenset(
+    {
+        'min_up_ports_per_gpu',
+        'reject_partial_stations',
+        'allow_disabled_stations',
+        'expected_station_masks',
+        'require_uniform_station_mask',
+        'agent_process_name',
+    }
+)
+
+
+def _node_health_station_policy_kwargs(config_dict, *, fabric_checks):
+    """Map customer-facing station-policy knobs to ``NodeHealthCheck`` kwargs."""
+    if not fabric_checks:
+        return {}
+    ifoe = _ifoe_config(config_dict)
+    kwargs = {}
+    for key in _STATION_POLICY_IFOE_KEYS:
+        if key == 'min_up_ports_per_gpu':
+            continue
+        if key in ifoe:
+            kwargs[key] = ifoe[key]
+    kwargs['min_up_ports_per_gpu'] = _station_mask_min_up_ports(config_dict)
+    return kwargs
+
+
 def _node_check_config(config_dict):
     """Return the customer-facing generic node-check configuration."""
     _reject_flat_preflight_checks(config_dict)
     config = config_dict.get('node_check', {}) if isinstance(config_dict, dict) else {}
     if not isinstance(config, dict):
         raise ValueError("preflight.node_check must be an object")
-    unknown = sorted(
-        key for key in set(config) - {'enabled', 'gpus_per_node', 'expected_rocm_version'} if not key.startswith('_')
-    )
+    allowed = {'enabled', 'gpus_per_node', 'expected_rocm_version'} | _NODE_CHECK_STATION_POLICY_KEYS
+    unknown = sorted(key for key in set(config) - allowed if not key.startswith('_'))
     if unknown:
         raise ValueError("Unsupported preflight.node_check option(s): " + ', '.join(unknown))
     return config
@@ -113,9 +202,8 @@ def _ifoe_config(config_dict):
     config = get_nested_config(config_dict, 'connectivity_check', 'ifoe', {})
     if not isinstance(config, dict):
         raise ValueError("preflight.connectivity_check.ifoe must be an object")
-    unknown = sorted(
-        key for key in set(config) - {'fabric_checks', 'l2ping', 'transferbench'} if not key.startswith('_')
-    )
+    allowed = {'fabric_checks', 'l2ping', 'transferbench'} | _STATION_POLICY_IFOE_KEYS
+    unknown = sorted(key for key in set(config) - allowed if not key.startswith('_'))
     if unknown:
         raise ValueError("Unsupported preflight.connectivity_check.ifoe option(s): " + ', '.join(unknown))
     return config
@@ -141,6 +229,39 @@ def _node_health_fabric_checks_enabled(config_dict):
     if enabled and not _node_health_enabled(config_dict):
         raise ValueError("preflight.connectivity_check.ifoe.fabric_checks requires node_check.enabled=true")
     return enabled
+
+
+def _station_mask_min_up_ports(config_dict):
+    """Resolve the IFoE station-mask admission floor from the preflight config.
+
+    Defaults to :data:`DEFAULT_MIN_UP_PORTS_PER_GPU` so a node with no enabled
+    IFoE ports (an un-provisioned scale-up fabric) is rejected.  A diagnostic
+    profile may set ``min_up_ports_per_gpu: 0`` to admit such a node on purpose.
+    """
+    ifoe = _ifoe_config(config_dict)
+    node_check = _node_check_config(config_dict)
+    if 'min_up_ports_per_gpu' in ifoe:
+        raw = ifoe['min_up_ports_per_gpu']
+        option = 'preflight.connectivity_check.ifoe.min_up_ports_per_gpu'
+    elif 'min_up_ports_per_gpu' in node_check:
+        raw = node_check['min_up_ports_per_gpu']
+        option = 'preflight.node_check.min_up_ports_per_gpu'
+    else:
+        return DEFAULT_MIN_UP_PORTS_PER_GPU
+    # Reject bool (a bool is an int in Python) and anything that is not an exact
+    # integer; the run path loads config via raw json.load, so int() truncation
+    # of 0.5 or 2.9 would silently weaken or disable the floor.
+    if isinstance(raw, bool):
+        raise ValueError(f"{option} must be an integer, not a boolean")
+    if isinstance(raw, float) and not raw.is_integer():
+        raise ValueError(f"{option} must be a whole number")
+    try:
+        min_up_ports = int(raw) if not isinstance(raw, str) else int(raw.strip())
+    except (TypeError, ValueError):
+        raise ValueError(f"{option} must be an integer")
+    if min_up_ports < 0:
+        raise ValueError(f"{option} must not be negative")
+    return min_up_ports
 
 
 def _node_health_admission_failed(config_dict):
@@ -202,17 +323,106 @@ def _prune_nodes_from_phdl(phdl, failed_nodes, reason):
     log.info(f"{reason} Pruned {len(pruned)} node(s) from further preflight tests: {', '.join(sorted(pruned))}")
 
 
-# Override update_test_result for preflight tests to be reporting-only
-def preflight_update_test_result():
+# Recorded statuses meaning the check never executed.
+_PREFLIGHT_NOT_RUN_STATUSES = ('SKIPPED', 'BLOCKED')
+
+
+def _recorded_statuses(result):
+    """Status strings held by a recorded result.
+
+    Checks record either a single status dict or a per-node mapping of them.
     """
-    Preflight-specific test result handler that reports issues but doesn't fail tests.
-    This allows preflight to be a comprehensive reporting tool rather than a pass/fail test.
+    if not isinstance(result, dict):
+        return []
+    if result.get('status'):
+        return [str(result['status']).upper()]
+    return [
+        str(node_result['status']).upper()
+        for node_result in result.values()
+        if isinstance(node_result, dict) and node_result.get('status')
+    ]
+
+
+def _summary_result(result):
+    """True when the dict is a check summary rather than a flat node-to-result map."""
+    return any(
+        key in result
+        for key in (
+            'status',
+            'skipped',
+            'message',
+            'mode',
+            'failed_nodes',
+            'node_results',
+            'nodes',
+            'vpod_membership',
+            'pod_membership',
+            'setup_results',
+        )
+    )
+
+
+def _nodes_with_status(node_map, status):
+    if not isinstance(node_map, dict):
+        return []
+    return sorted(
+        str(node)
+        for node, node_result in node_map.items()
+        if isinstance(node_result, dict) and str(node_result.get('status') or '').upper() == status
+    )
+
+
+def _recorded_failed_nodes(result):
+    """Hostnames that failed. Summary sections such as vpod_membership are not hosts."""
+    listed = result.get('failed_nodes')
+    if isinstance(listed, (list, tuple)) and any(listed):
+        return sorted(str(node) for node in listed if node)
+    for key in ('node_results', 'nodes'):
+        nested = result.get(key)
+        if isinstance(nested, dict) and nested:
+            return _nodes_with_status(nested, 'FAIL')
+    if _summary_result(result):
+        return []
+    return _nodes_with_status(result, 'FAIL')
+
+
+def _recorded_outcome_message(result, default):
+    if result.get('message'):
+        return str(result['message'])
+    failed = _recorded_failed_nodes(result)
+    if failed:
+        return f"{default} on {len(failed)} node(s): {', '.join(failed)}"
+    return default
+
+
+def preflight_update_test_result(result=None):
+    """Clear accumulated errors and mirror a recorded result onto this pytest row.
+
+    Preflight stays diagnostic: a failure here never stops the checks that follow.
+    But the row has to show what was recorded, so a check that was skipped by
+    configuration or that failed must not report as passed. Pass the result only
+    after storing it in ``preflight_results``, so the generated report keeps the
+    detail even though this row ends early.
     """
     if len(globals.error_list) > 0:
         log.info(f"Preflight detected {len(globals.error_list)} issues (see detailed logs above)")
-        # Clear the error list to prevent test failure
+        # Clear the error list so the generic handler cannot fail the test for us.
         globals.error_list.clear()
-    # Always pass - preflight is for reporting, not failing
+
+    _publish_preflight_rundeck()
+
+    if not isinstance(result, dict):
+        return
+
+    statuses = _recorded_statuses(result)
+    if 'FAIL' in statuses:
+        pytest.fail(_recorded_outcome_message(result, 'Preflight check failed'))
+    if (
+        result.get('skipped')
+        or result.get('blocked')
+        or (statuses and all(status in _PREFLIGHT_NOT_RUN_STATUSES for status in statuses))
+    ):
+        pytest.skip(_recorded_outcome_message(result, 'Preflight check did not run'))
 
 
 @pytest.fixture(scope="module")
@@ -306,80 +516,29 @@ def config_dict(config_file, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def phdl(cluster_dict, config_dict):
-    """
-    Build and return a MultiProcessParallelHandle for all cluster nodes.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture containing:
-        - node_dict: dict of node_name -> node_details
-        - username: SSH username
-        - priv_key_file: path to SSH private key
-
-    Returns:
-      MultiProcessParallelHandle: Handle configured for all nodes (for broadcast/parallel operations).
-    """
-    node_list = list(cluster_dict['node_dict'].keys())
-    env_vars = cluster_dict.get("env_vars")
-    log.info(f"Creating parallel SSH handle for {len(node_list)} nodes")
-
-    # Create config with RDMA full-mesh partition group size
-    # (fallbacks: legacy rdma.parallel_group_size, then preflight.parallelism.parallel_group_size).
-    hosts_per_shard = get_nested_config(
-        config_dict,
-        'connectivity_check.rdma',
-        'nodes_per_full_mesh_group',
-        get_nested_config(
-            config_dict,
-            'connectivity_check.rdma',
-            'parallel_group_size',
-            get_nested_config(config_dict, 'parallelism', 'parallel_group_size', 32),
-        ),
-    )
-    config = ParallelConfig(hosts_per_shard=hosts_per_shard)
-
-    phdl = MultiProcessParallelHandle(
-        log,
-        node_list,
-        user=cluster_dict['username'],
-        pkey=cluster_dict['priv_key_file'],
-        env_vars=env_vars,
-        stop_on_errors=False,
-        config=config,
-        timeout=60,
-        num_retries=2,
-        retry_delay=2,
-    )
-    return phdl
+def lifecycle():
+    """Wall-clock of each preflight check, bound as the deck lifecycle source."""
+    return HealthLifecycle()
 
 
 @pytest.fixture(scope="module")
-def shdl(cluster_dict):
-    """
-    Build and return a MultiProcessParallelHandle for the head node only.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
-
-    Returns:
-      MultiProcessParallelHandle: Handle configured for head node only (for single-node operations).
-    """
-    head_node = cluster_dict['head_node_dict']['mgmt_ip']
-    env_vars = cluster_dict.get("env_vars")
-    log.info(f"Creating single SSH handle for head node: {head_node}")
-
-    shdl = MultiProcessParallelHandle(
-        log,
-        [head_node],
-        user=cluster_dict['username'],
-        pkey=cluster_dict['priv_key_file'],
-        env_vars=env_vars,
-        stop_on_errors=False,
-    )
-    return shdl
+def preflight_res_dict():
+    """Status-matrix results for the preflight Run Deck. The profile names this fixture."""
+    return {}
 
 
-def test_node_reachability(phdl):
+@pytest.fixture(scope="module", autouse=True)
+def _bind_preflight_rundeck(preflight_res_dict, cluster_dict):
+    _rundeck_slot['target'] = preflight_res_dict
+    _rundeck_slot['cluster'] = cluster_dict
+    yield
+    _publish_preflight_rundeck()
+    _rundeck_slot['target'] = None
+    _rundeck_slot['cluster'] = None
+
+
+@_timed_stage(NODE_REACHABILITY)
+def test_node_reachability(orch, lifecycle=None):
     """
     Test basic SSH connectivity to all cluster nodes.
 
@@ -393,7 +552,9 @@ def test_node_reachability(phdl):
 
     # Simple connectivity test
     cmd = "echo 'SSH_OK'"
-    out_dict = phdl.exec(cmd, timeout=60)  # Generous timeout for multiprocessing coordination
+    # orch.exec() runs inside the container under ContainerOrchestrator; reachability must
+    # probe host SSH on orch.all.
+    out_dict = orch.all.exec(cmd, timeout=60)  # Generous timeout for multiprocessing coordination
 
     failed_nodes = []
     reachable_nodes = []
@@ -420,22 +581,24 @@ def test_node_reachability(phdl):
         'total_nodes': len(out_dict),
         'reachable_nodes': len(reachable_nodes),
         'unreachable_nodes': failed_nodes,
+        'nodes': {node: {'status': 'PASS' if node in reachable_nodes else 'FAIL'} for node in out_dict},
         'status': 'PASS' if len(failed_nodes) == 0 else 'WARNING',
     }
 
-    # Drop all nodes that did not return SSH_OK from phdl (explicit prune; not only SSH client exceptions)
-    _prune_nodes_from_phdl(phdl, failed_nodes, "Reachability:")
+    # Drop all nodes that did not return SSH_OK (explicit prune; not only SSH client exceptions)
+    _prune_nodes_from_phdl(orch.all, failed_nodes, "Reachability:")
 
-    preflight_update_test_result()
+    preflight_update_test_result(preflight_results['node_reachability'])
 
 
-def test_node_health(phdl, config_dict, cluster_dict):
+@_timed_stage(NODE_HEALTH)
+def test_node_health(orch, config_dict, cluster_dict, lifecycle=None):
     """Perform mandatory GPU health and optional MI4XX fabric admission.
 
     The gate is intentionally read-only.  It records diagnostics and lets the
-    report test run, but downstream scale-up checks are marked BLOCKED when
-    admission fails.  The final report test returns the pytest failure after
-    writing the report artifact.
+    remaining checks run, but downstream scale-up checks are marked BLOCKED when
+    admission fails.  Results are stored before this row reports its verdict, so
+    the report test still writes a complete artifact.
     """
     global preflight_results
 
@@ -448,7 +611,7 @@ def test_node_health(phdl, config_dict, cluster_dict):
             'node_results': {},
             'vpod_membership': {'status': 'SKIPPED', 'errors': []},
         }
-        preflight_update_test_result()
+        preflight_update_test_result(preflight_results['node_health'])
         return
 
     health_config = _node_check_config(config_dict)
@@ -458,13 +621,14 @@ def test_node_health(phdl, config_dict, cluster_dict):
         "Running mandatory node-health admission (gpus_per_node=%d, fabric_checks=%s) on %d reachable host(s)",
         gpus_per_node,
         fabric_checks,
-        len(phdl.reachable_hosts),
+        len(orch.all.reachable_hosts),
     )
     checker = NodeHealthCheck(
-        phdl,
+        orch,
         expected_gpus_per_node=gpus_per_node,
         fabric_checks=fabric_checks,
         config_dict=config_dict,
+        **_node_health_station_policy_kwargs(config_dict, fabric_checks=fabric_checks),
     )
     results = checker.run()
     declared_nodes = sorted(cluster_dict.get('node_dict', {}).keys())
@@ -499,10 +663,34 @@ def test_node_health(phdl, config_dict, cluster_dict):
         log.info("Mandatory node-health and MI4XX fabric admission PASS; AFM vPOD accelerators=%s", vpod)
     else:
         log.info("Mandatory generic GPU node-health admission PASS")
-    preflight_update_test_result()
+    _log_degraded_fabric_banner(results)
+    preflight_update_test_result(results)
 
 
-def test_rocm_version_consistency(phdl, config_dict):
+def _log_degraded_fabric_banner(results):
+    """Emit a prominent WARNING when any admitted node runs on a reduced IFoE fabric.
+
+    The node still passes admission (fit for processing), but scale-up throughput
+    is below full fabric, so the warning must be impossible to miss in the log.
+    """
+    warnings_by_node = {
+        node: result['warnings']
+        for node, result in (results.get('node_results') or {}).items()
+        if result.get('status') == 'PASS' and result.get('warnings')
+    }
+    if not warnings_by_node:
+        return
+    log.warning("!" * 78)
+    log.warning("!!  DEGRADED IFoE FABRIC -- node(s) FIT FOR PROCESSING but at REDUCED THROUGHPUT")
+    log.warning("!" * 78)
+    for node, warnings in warnings_by_node.items():
+        for warning in warnings:
+            log.warning("Node %s: %s", node, warning)
+    log.warning("!" * 78)
+
+
+@_timed_stage(ROCM_VERSIONS)
+def test_rocm_version_consistency(orch, config_dict, lifecycle=None):
     """
     Test ROCm version consistency across all cluster nodes.
 
@@ -520,13 +708,13 @@ def test_rocm_version_consistency(phdl, config_dict):
             'skipped': True,
             'message': 'ROCm validation skipped because preflight.node_check is disabled',
         }
-        preflight_update_test_result()
+        preflight_update_test_result(preflight_results['rocm_versions'])
         return
 
     expected_version = get_nested_config(config_dict, 'node_check', 'expected_rocm_version', '6.2.0')
     log.info(f"Testing ROCm version consistency (expected: {expected_version})")
 
-    version_checker = RocmVersionCheck(phdl, expected_version, config_dict)
+    version_checker = RocmVersionCheck(orch, expected_version, config_dict)
     results = version_checker.run()
     preflight_results['rocm_versions'] = results
 
@@ -555,30 +743,33 @@ def test_rocm_version_consistency(phdl, config_dict):
         f"ROCm version results: {len(results) - len(failed_nodes)}/{len(results)} nodes have expected version {expected_version}"
     )
     # Intentionally do not prune ROCm failures from phdl (see docstring).
-    preflight_update_test_result()
+    preflight_update_test_result(results)
 
 
-def test_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
+@_timed_stage(IFOE_L2)
+def test_ifoe_l2_connectivity(orch, config_dict, cluster_dict, lifecycle=None):
     """Run IFoE L2 before RDMA-specific interface and GID pruning.
 
     IFoE uses AFM/vPOD topology rather than conventional RDMA interfaces.
     Keeping this test ahead of the legacy RDMA eligibility filters ensures an
     absent or separately configured RDMA NIC cannot suppress IFoE validation.
     """
-    _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict)
+    _run_ifoe_l2_connectivity(orch, config_dict, cluster_dict)
 
 
-def test_ifoe_transferbench_smoke(phdl, config_dict):
+@_timed_stage(TRANSFERBENCH)
+def test_ifoe_transferbench_smoke(orch, config_dict, lifecycle=None):
     """Run TransferBench after IFoE L2 and before RDMA eligibility pruning.
 
     TransferBench validates the IFoE data path and must see the same
     node-health-admitted host set as L2 ping. Conventional RDMA interface or
     GID failures must not suppress this independent scale-up validation.
     """
-    _run_ifoe_transferbench_smoke(phdl, config_dict)
+    _run_ifoe_transferbench_smoke(orch, config_dict)
 
 
-def test_interface_name_consistency(phdl, config_dict):
+@_timed_stage(INTERFACE_NAMES)
+def test_interface_name_consistency(orch, config_dict, lifecycle=None):
     """
     Test RDMA interface presence and consistency across all cluster nodes.
 
@@ -595,7 +786,7 @@ def test_interface_name_consistency(phdl, config_dict):
             'skipped': True,
             'message': 'RDMA interface validation skipped because RDMA connectivity mode is skip',
         }
-        preflight_update_test_result()
+        preflight_update_test_result(preflight_results['interface_names'])
         return
 
     expected_interfaces = get_nested_config(
@@ -603,7 +794,7 @@ def test_interface_name_consistency(phdl, config_dict):
     )
     log.info(f"Testing interface presence (expected: {expected_interfaces})")
 
-    interface_checker = InterfaceConsistencyCheck(phdl, expected_interfaces, config_dict)
+    interface_checker = InterfaceConsistencyCheck(orch, expected_interfaces, config_dict)
     results = interface_checker.run()
     preflight_results['interface_names'] = results
 
@@ -632,15 +823,16 @@ def test_interface_name_consistency(phdl, config_dict):
         f"Interface presence results: {compliant_interfaces}/{total_interfaces} interfaces are expected interfaces"
     )
 
-    _prune_nodes_from_phdl(phdl, failed_nodes, "Interface consistency:")
-    preflight_update_test_result()
+    _prune_nodes_from_phdl(orch.all, failed_nodes, "Interface consistency:")
+    preflight_update_test_result(results)
 
 
-def test_gid_consistency(phdl, config_dict):
+@_timed_stage(GID_CONSISTENCY)
+def test_gid_consistency(orch, config_dict, lifecycle=None):
     """
     Test GID consistency across specified RDMA interfaces in the cluster.
 
-    Verifies that the specified GID index exists and is valid on the
+    Verifies that the specified GID index exists and has the expected type on the
     specified RDMA interfaces across all cluster nodes.
 
     Nodes that fail are removed from ``phdl`` before RDMA connectivity testing.
@@ -653,16 +845,17 @@ def test_gid_consistency(phdl, config_dict):
             'skipped': True,
             'message': 'RDMA GID validation skipped because RDMA connectivity mode is skip',
         }
-        preflight_update_test_result()
+        preflight_update_test_result(preflight_results['gid_consistency'])
         return
 
     gid_index = get_nested_config(config_dict, 'connectivity_check.rdma', 'gid_index', '3')
+    gid_type = get_nested_config(config_dict, 'connectivity_check.rdma', 'gid_type', DEFAULT_GID_TYPE)
     expected_interfaces = get_nested_config(
         config_dict, 'connectivity_check.rdma', 'interfaces', ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
     )
-    log.info(f"Testing GID consistency for index {gid_index} on interfaces: {expected_interfaces}")
+    log.info(f"Testing GID consistency for index {gid_index} (type {gid_type}) on interfaces: {expected_interfaces}")
 
-    gid_checker = GidConsistencyCheck(phdl, gid_index, expected_interfaces, config_dict)
+    gid_checker = GidConsistencyCheck(orch, gid_index, expected_interfaces, config_dict, expected_gid_type=gid_type)
     results = gid_checker.run()
     preflight_results['gid_consistency'] = results
 
@@ -687,20 +880,194 @@ def test_gid_consistency(phdl, config_dict):
     else:
         log.info("GID consistency check: All nodes passed")
 
-    log.info(f"GID consistency results: {ok_interfaces}/{total_interfaces} interfaces have valid GID index {gid_index}")
+    log.info(
+        f"GID consistency results: {ok_interfaces}/{total_interfaces} interfaces have a valid GID at index {gid_index} "
+        f"(expected type {gid_type}, not enforced on InfiniBand)"
+    )
 
-    _prune_nodes_from_phdl(phdl, failed_nodes, "GID consistency:")
+    _prune_nodes_from_phdl(orch.all, failed_nodes, "GID consistency:")
+    preflight_update_test_result(results)
+
+
+@_timed_stage(RDMA_MTU)
+def test_rdma_mtu(orch, config_dict, lifecycle=None):
+    """Check RDMA active MTUs, and netdev MTUs on RoCE ports, without pruning nodes.
+
+    Low MTU reduces bandwidth but does not prevent RDMA connectivity.
+    """
+    global preflight_results
+
+    if not _rdma_enabled(config_dict):
+        preflight_results['rdma_mtu'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': 'RDMA MTU validation skipped because RDMA connectivity mode is skip',
+        }
+        preflight_update_test_result(preflight_results['rdma_mtu'])
+        return
+    if not _config_flag_enabled(get_nested_config(config_dict, 'connectivity_check.rdma', 'mtu_check', True)):
+        preflight_results['rdma_mtu'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': 'RDMA MTU validation disabled by connectivity_check.rdma.mtu_check',
+        }
+        preflight_update_test_result(preflight_results['rdma_mtu'])
+        return
+
+    min_netdev_mtu = int(
+        get_nested_config(config_dict, 'connectivity_check.rdma', 'min_netdev_mtu', DEFAULT_MIN_NETDEV_MTU)
+    )
+    min_active_mtu = int(
+        get_nested_config(config_dict, 'connectivity_check.rdma', 'min_active_mtu', DEFAULT_MIN_ACTIVE_MTU)
+    )
+    gid_index = get_nested_config(config_dict, 'connectivity_check.rdma', 'gid_index', '3')
+    expected_interfaces = get_nested_config(
+        config_dict, 'connectivity_check.rdma', 'interfaces', ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+    )
+    results = RdmaMtuCheck(orch, expected_interfaces, min_netdev_mtu, min_active_mtu, gid_index, config_dict).run()
+    preflight_results['rdma_mtu'] = results
+
+    total = 0
+    ok = 0
+    for node, result in results.items():
+        if result['status'] == 'FAIL':
+            for error in result['errors']:
+                log.error(f"Node {node}: {error}")
+        for interface_result in result['interfaces'].values():
+            total += 1
+            if interface_result.get('status') == 'OK':
+                ok += 1
+    log.info(
+        f"RDMA MTU results: {ok}/{total} interfaces meet active MTU >= {min_active_mtu} "
+        f"and, on RoCE ports, netdev MTU >= {min_netdev_mtu}"
+    )
+    preflight_update_test_result(results)
+
+
+# Each tier publishes one pytest row per catalog check. The runner test above the checks
+# executes Primus once; the check rows only read the payload it stored.
+_NODE_SMOKE_TIERS = {
+    'tier1': (NODE_SMOKE_TIER1_LABEL, build_tier1_metric_rows, ('node_smoke_tier1', 'node_smoke')),
+    'tier2': (NODE_SMOKE_TIER2_LABEL, build_tier2_metric_rows, ('node_smoke_tier1', 'node_smoke')),
+    'tier3': (NODE_SMOKE_TIER3_LABEL, build_tier3_metric_rows, ('node_smoke_tier3', 'tier3_info')),
+}
+_node_smoke_rows_by_metric = {}
+
+
+def _node_smoke_rows(tier):
+    """Resolve a tier's per-check rows once and index them by catalog metric key."""
+    if tier not in _node_smoke_rows_by_metric:
+        _, build_rows, result_keys = _NODE_SMOKE_TIERS[tier]
+        results = next((preflight_results.get(key) for key in result_keys if preflight_results.get(key)), {})
+        _node_smoke_rows_by_metric[tier] = {row['metric']: row for row in build_rows(results)}
+    return _node_smoke_rows_by_metric[tier]
+
+
+def _format_measurement(row):
+    actual = row.get('actual')
+    if actual is None:
+        return ''
+    unit = row.get('unit') or ''
+    text = f"{actual} {unit}".strip()
+    spec = row.get('spec') or {}
+    if spec.get('value') is not None:
+        text += f" (gate {spec.get('kind', '')} {spec['value']})".replace('  ', ' ')
+    return text
+
+
+def _report_node_smoke_check(tier, check):
+    """Turn one catalog check into this pytest row's verdict."""
+    label = _NODE_SMOKE_TIERS[tier][0]
+    metric = check.get('metric')
+    if not metric:
+        pytest.skip(f"{label}: no nodes resolved from the cluster file at collection time")
+
+    row = _node_smoke_rows(tier).get(metric)
+    if row is None:
+        pytest.skip(f"{label} did not run, so '{check['label']}' has no result")
+
+    measurement = _format_measurement(row)
+    reason = row.get('reason') or ''
+    log.info(
+        "%s | %s | %s%s%s",
+        label,
+        check['label'],
+        row['status'].upper(),
+        f" | {measurement}" if measurement else '',
+        f" | {reason}" if reason else '',
+    )
+    if row['status'] == 'skip':
+        pytest.skip(reason or f"{label}: '{check['label']}' was not reported by Primus")
+    if row['status'] not in ('pass', 'record'):
+        pytest.fail(f"{label}: '{check['label']}' failed. {reason or measurement or 'No detail reported'}")
+
+
+def _report_tier1_from_rows(results):
+    """Fail Tier 1 only for Tier 1 checks, or a node failure Tier 2 did not record."""
+    rows = build_tier1_metric_rows(results)
+    tier2_rows = build_tier2_metric_rows(results) if results.get('tier2_perf') else []
+    outcome = tier1_runner_outcome(results, rows, tier2_rows)
+    if outcome == 'skip':
+        preflight_update_test_result(
+            {'skipped': True, 'message': f'{NODE_SMOKE_TIER1_LABEL}: Primus reported no Tier 1 checks'}
+        )
+        return
+
+    failed = [row for row in rows if row_is_failure(row)]
+    unexplained = unexplained_tier1_nodes(results, tier2_rows)
+    total = results.get('total_nodes', 0)
+    if failed:
+        log.warning("%s FAIL on %d/%d check(s)", NODE_SMOKE_TIER1_LABEL, len(failed), len(rows))
+    elif unexplained:
+        log.warning(
+            "%s FAIL on %d/%d node(s): %s",
+            NODE_SMOKE_TIER1_LABEL,
+            len(unexplained),
+            total,
+            ", ".join(unexplained),
+        )
+    else:
+        log.info("%s PASS on %d/%d nodes", NODE_SMOKE_TIER1_LABEL, len(results.get('passing_nodes') or []), total)
+
     preflight_update_test_result()
 
+    if failed:
+        pytest.fail(f"{NODE_SMOKE_TIER1_LABEL} failed on {len(failed)}/{len(rows)} check(s)")
+    if unexplained:
+        pytest.fail(f"{NODE_SMOKE_TIER1_LABEL} failed on {len(unexplained)}/{total} node(s): {', '.join(unexplained)}")
 
-def test_node_smoke_tier1(phdl, config_dict):
+
+def _report_tier_node_verdict(label, results):
+    """Log the tier's node roll-up and fail the row when any node did not pass.
+
+    Called only after the results are stored, so later checks and the generated report
+    still see them even though this row fails.
+    """
+    failed_nodes = results.get('failed_nodes') or []
+    unknown_nodes = results.get('unknown_nodes') or []
+    total = results.get('total_nodes', 0)
+    not_passing = failed_nodes + unknown_nodes
+
+    if not_passing:
+        log.warning("%s FAIL on %d/%d node(s): %s", label, len(not_passing), total, ", ".join(not_passing))
+    else:
+        log.info("%s PASS on %d/%d nodes", label, len(results.get('passing_nodes') or []), total)
+
+    preflight_update_test_result()
+
+    if not_passing:
+        pytest.fail(f"{label} failed on {len(not_passing)}/{total} node(s): {', '.join(not_passing)}")
+
+
+@_timed_stage(NODE_SMOKE_TIER1)
+def test_node_smoke_tier1(orch, config_dict, lifecycle=None):
     """
     Run Node Smoke Tier 1 (Primus ``node_smoke``) on each reachable node via primus-cli.
 
-    Opt-in via ``node_smoke_tier1.connectivity_mode`` (legacy: ``node_smoke``) in the
-    preflight config (default ``skip``).  Uses parallel SSH — no Slurm required.
+    Runs by default; disable via ``node_smoke_tier1.connectivity_mode`` (legacy:
+    ``node_smoke``) in the preflight config.  Uses parallel SSH — no Slurm required.
 
-    Optional Node Smoke Tier 2 perf sanity (``node_smoke_tier1.tier2_perf``) enables
+    Node Smoke Tier 2 perf sanity (``node_smoke_tier1.tier2_perf``, default on) enables
     ``--tier2-perf``: large GEMM TFLOPS floor, HBM D2D bandwidth, and local
     multi-GPU RCCL all-reduce thresholds (``gemm_tflops_min``, ``hbm_gbs_min``,
     ``rccl_gbs_min``, etc.).
@@ -709,7 +1076,7 @@ def test_node_smoke_tier1(phdl, config_dict):
     """
     global preflight_results
 
-    if not phdl.reachable_hosts:
+    if not orch.all.reachable_hosts:
         log.warning("%s skipped: no reachable hosts remain after earlier preflight pruning", NODE_SMOKE_TIER1_LABEL)
         skipped = {
             'mode': 'skip',
@@ -719,53 +1086,88 @@ def test_node_smoke_tier1(phdl, config_dict):
         }
         preflight_results['node_smoke_tier1'] = skipped
         preflight_results['node_smoke'] = skipped
-        preflight_update_test_result()
+        preflight_update_test_result(skipped)
         return
 
-    node_list = list(phdl.reachable_hosts)
+    node_list = list(orch.all.reachable_hosts)
     log.info("Running %s on %d reachable host(s)", NODE_SMOKE_TIER1_LABEL, len(node_list))
 
-    checker = NodeSmokeCheck(phdl, node_list, config_dict)
+    checker = NodeSmokeCheck(orch, node_list, config_dict)
     results = checker.run()
     preflight_results['node_smoke_tier1'] = results
     preflight_results['node_smoke'] = results
 
     if results.get('skipped'):
         log.info("%s: %s", NODE_SMOKE_TIER1_LABEL, results.get('message', 'skipped'))
-        preflight_update_test_result()
+        preflight_update_test_result(results)
         return
 
-    failed_nodes = results.get('failed_nodes') or []
-    unknown_nodes = results.get('unknown_nodes') or []
-    total = results.get('total_nodes', 0)
-    passing = len(results.get('passing_nodes') or [])
+    _report_tier1_from_rows(results)
 
-    if failed_nodes or unknown_nodes:
-        log.warning(
-            "%s FAIL on %d/%d node(s): %s",
-            NODE_SMOKE_TIER1_LABEL,
-            len(failed_nodes) + len(unknown_nodes),
-            total,
-            ", ".join(failed_nodes + unknown_nodes),
+
+def test_node_smoke_tier1_check(tier1_check):
+    """One row per configured GPU and per node collector Primus reports."""
+    _report_node_smoke_check('tier1', tier1_check)
+
+
+@_timed_stage(NODE_SMOKE_TIER2)
+def test_node_smoke_tier2(orch, config_dict, lifecycle=None):
+    """Summarize Node Smoke Tier 2 perf sanity, which rides along with the Tier 1 run.
+
+    Does not re-run Primus. Disable with ``node_smoke_tier1.tier2_perf=false``.
+    """
+    global preflight_results
+
+    results = preflight_results.get('node_smoke_tier1') or preflight_results.get('node_smoke') or {}
+    if not results:
+        preflight_update_test_result({'skipped': True, 'message': f'{NODE_SMOKE_TIER1_LABEL} has not run'})
+        return
+    if results.get('skipped'):
+        preflight_update_test_result({'skipped': True, 'message': f'{NODE_SMOKE_TIER1_LABEL} was skipped'})
+        return
+    if not results.get('tier2_perf'):
+        preflight_update_test_result(
+            {'skipped': True, 'message': 'Tier 2 perf sanity is off (node_smoke_tier1.tier2_perf=false)'}
         )
+        return
+
+    rows = build_tier2_metric_rows(results)
+    if tier2_runner_outcome(rows) == 'skip':
+        preflight_update_test_result(
+            {'skipped': True, 'message': f'{NODE_SMOKE_TIER2_LABEL}: Primus reported no Tier 2 metrics'}
+        )
+        return
+
+    failed = [row for row in rows if row_is_failure(row)]
+    if failed:
+        log.warning("%s FAIL on %d/%d check(s)", NODE_SMOKE_TIER2_LABEL, len(failed), len(rows))
     else:
-        log.info("%s PASS on %d/%d nodes", NODE_SMOKE_TIER1_LABEL, passing, total)
+        log.info("%s PASS on %d check(s)", NODE_SMOKE_TIER2_LABEL, len(rows))
 
     preflight_update_test_result()
 
+    if failed:
+        pytest.fail(f"{NODE_SMOKE_TIER2_LABEL} failed on {len(failed)}/{len(rows)} check(s)")
 
-def test_node_smoke_tier3(phdl, config_dict):
+
+def test_node_smoke_tier2_check(tier2_check):
+    """One row per Node Smoke Tier 2 catalog check (2 per GPU + 1 local RCCL)."""
+    _report_node_smoke_check('tier2', tier2_check)
+
+
+@_timed_stage(NODE_SMOKE_TIER3)
+def test_node_smoke_tier3(orch, config_dict, lifecycle=None):
     """
     Run Node Smoke Tier 3 (Primus ``preflight --host --gpu --network``) across the cluster.
 
-    Opt-in via ``node_smoke_tier3.connectivity_mode`` (legacy: ``tier3_info``) in the
-    preflight config (default ``skip``).  Uses parallel SSH with torchrun — no Slurm required.
+    Runs by default; disable via ``node_smoke_tier3.connectivity_mode`` (legacy:
+    ``tier3_info``).  Uses parallel SSH with torchrun — no Slurm required.
 
     Nodes that fail are reported but are **not** pruned from ``phdl``.
     """
     global preflight_results
 
-    if not phdl.reachable_hosts:
+    if not orch.all.reachable_hosts:
         log.warning("%s skipped: no reachable hosts remain after earlier preflight pruning", NODE_SMOKE_TIER3_LABEL)
         skipped = {
             'mode': 'skip',
@@ -775,39 +1177,28 @@ def test_node_smoke_tier3(phdl, config_dict):
         }
         preflight_results['node_smoke_tier3'] = skipped
         preflight_results['tier3_info'] = skipped
-        preflight_update_test_result()
+        preflight_update_test_result(skipped)
         return
 
-    node_list = list(phdl.reachable_hosts)
+    node_list = list(orch.all.reachable_hosts)
     log.info("Running %s on %d reachable host(s)", NODE_SMOKE_TIER3_LABEL, len(node_list))
 
-    checker = NodeSmokeTier3Check(phdl, node_list, config_dict)
+    checker = NodeSmokeTier3Check(orch, node_list, config_dict)
     results = checker.run()
     preflight_results['node_smoke_tier3'] = results
     preflight_results['tier3_info'] = results
 
     if results.get('skipped'):
         log.info("%s: %s", NODE_SMOKE_TIER3_LABEL, results.get('message', 'skipped'))
-        preflight_update_test_result()
+        preflight_update_test_result(results)
         return
 
-    failed_nodes = results.get('failed_nodes') or []
-    unknown_nodes = results.get('unknown_nodes') or []
-    total = results.get('total_nodes', 0)
-    passing = len(results.get('passing_nodes') or [])
+    _report_tier_node_verdict(NODE_SMOKE_TIER3_LABEL, results)
 
-    if failed_nodes or unknown_nodes:
-        log.warning(
-            "%s FAIL on %d/%d node(s): %s",
-            NODE_SMOKE_TIER3_LABEL,
-            len(failed_nodes) + len(unknown_nodes),
-            total,
-            ", ".join(failed_nodes + unknown_nodes),
-        )
-    else:
-        log.info("%s PASS on %d/%d nodes", NODE_SMOKE_TIER3_LABEL, passing, total)
 
-    preflight_update_test_result()
+def test_node_smoke_tier3_check(tier3_check):
+    """One row per Tier 3 group Primus reports (host, GPU, network)."""
+    _report_node_smoke_check('tier3', tier3_check)
 
 
 def _l2ping_config(config_dict):
@@ -829,7 +1220,7 @@ def _l2ping_enabled(config_dict):
     return _config_flag_enabled(_l2ping_config(config_dict).get('enabled'), default=False)
 
 
-def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
+def _run_ifoe_l2_connectivity(orch, config_dict, cluster_dict):
     """
     Test IFoE L2 connectivity using ``afmctl test ping``.
 
@@ -842,7 +1233,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
     result without contacting nodes. When enabled, l2ping is a strict
     admission gate: any IFoE failure, incomplete coverage, or missing required
     cluster node fails pytest after the structured result has been saved.
-    Nodes that fail L2 ping are not pruned from ``phdl`` so the report and
+    Nodes that fail L2 ping are not pruned from ``orch.all`` so the report and
     subsequent diagnostics can still run.
     """
     global preflight_results
@@ -852,7 +1243,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
         blocked.update({'mode': 'blocked', 'node_results': {}, 'failure_mode': 'gate'})
         preflight_results['ifoe_l2_connectivity'] = blocked
         log.warning(blocked['message'])
-        preflight_update_test_result()
+        preflight_update_test_result(blocked)
         return
 
     l2ping_config = _l2ping_config(config_dict)
@@ -864,11 +1255,11 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
             'message': 'IFoE L2 connectivity test skipped by configuration',
             'node_results': {},
         }
-        preflight_update_test_result()
+        preflight_update_test_result(preflight_results['ifoe_l2_connectivity'])
         return
 
     declared_nodes = sorted(cluster_dict.get('node_dict', {}).keys())
-    if not phdl.reachable_hosts:
+    if not orch.all.reachable_hosts:
         message = "No reachable nodes available for IFoE L2 connectivity testing"
         log.warning("IFoE L2 connectivity skipped: no reachable hosts remain after earlier preflight pruning")
         preflight_results['ifoe_l2_connectivity'] = {
@@ -885,8 +1276,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
                 'complete': False,
             },
         }
-        preflight_update_test_result()
-        pytest.fail(message)
+        preflight_update_test_result(preflight_results['ifoe_l2_connectivity'])
         return
 
     pings_per_port = int(l2ping_config.get('pings_per_port', 3))
@@ -906,11 +1296,11 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
         pings_per_port,
         ping_timeout,
         loss_threshold_pct,
-        len(phdl.reachable_hosts),
+        len(orch.all.reachable_hosts),
     )
 
     checker = IfoeL2ConnectivityCheck(
-        phdl,
+        orch,
         afmctl_path='afmctl',
         bdfs=[],
         dst_accelerators=[0],
@@ -980,6 +1370,11 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
     }
 
     if summary_status == 'FAIL':
+        preflight_results['ifoe_l2_connectivity']['message'] = (
+            "IFoE L2 preflight gate failed "
+            f"({len(failed_nodes)} failed node(s), {len(missing_nodes)} missing node(s), "
+            f"{len(incomplete_nodes)} incomplete node(s)); see preflight report"
+        )
         log.warning(
             "IFoE L2 connectivity FAIL on %d/%d tested node(s): %s",
             len(failed_nodes),
@@ -1007,13 +1402,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
             total_invocations,
         )
 
-    preflight_update_test_result()
-    if summary_status == 'FAIL':
-        pytest.fail(
-            "IFoE L2 preflight gate failed "
-            f"({len(failed_nodes)} failed node(s), {len(missing_nodes)} missing node(s), "
-            f"{len(incomplete_nodes)} incomplete node(s)); see preflight report"
-        )
+    preflight_update_test_result(preflight_results['ifoe_l2_connectivity'])
 
 
 def _transferbench_config(config_dict):
@@ -1038,7 +1427,7 @@ def _transferbench_timeout(message_sizes, iterations, warmup_iterations):
     return max(600, 150 * workload_units)
 
 
-def _run_ifoe_transferbench_smoke(phdl, config_dict):
+def _run_ifoe_transferbench_smoke(orch, config_dict):
     """Test IFoE scale-up via TransferBench candidate-branch smoketest (AIMVT-181).
 
     Builds on L2 reachability via ``afmctl test ping`` by exercising the IFoE
@@ -1059,7 +1448,7 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
     Configuration lives under ``connectivity_check.ifoe.transferbench`` in the preflight config file.
     The check is opt-in through ``enabled``. Once enabled, a failed run is a
     mandatory preflight gate; skip-budget warnings remain non-fatal. Failed
-    nodes are not pruned from ``phdl`` so downstream diagnostics and reporting
+    nodes are not pruned from ``orch.all`` so downstream diagnostics and reporting
     can still run.
     """
     global preflight_results
@@ -1069,7 +1458,7 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
         blocked.update({'mode': 'blocked', 'nodes': {}, 'totals': {}, 'pod_membership': {}})
         preflight_results['transferbench_smoke'] = blocked
         log.warning(blocked['message'])
-        preflight_update_test_result()
+        preflight_update_test_result(blocked)
         return
 
     transferbench_config = _transferbench_config(config_dict)
@@ -1081,10 +1470,10 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
             'message': 'IFoE TransferBench smoketest skipped by configuration',
             'nodes': {},
         }
-        preflight_update_test_result()
+        preflight_update_test_result(preflight_results['transferbench_smoke'])
         return
 
-    if not phdl.reachable_hosts:
+    if not orch.all.reachable_hosts:
         message = 'No reachable nodes available for TransferBench smoketest'
         log.warning(message)
         preflight_results['transferbench_smoke'] = {
@@ -1094,8 +1483,7 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
             'message': message,
             'nodes': {},
         }
-        preflight_update_test_result()
-        pytest.fail(message)
+        preflight_update_test_result(preflight_results['transferbench_smoke'])
         return
 
     scope = str(transferbench_config.get('scope', 'node')).strip().lower()
@@ -1134,11 +1522,11 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
         iterations,
         warmup_iterations,
         ssh_timeout,
-        len(phdl.reachable_hosts),
+        len(orch.all.reachable_hosts),
     )
 
     checker = TransferBenchSmokeCheck(
-        phdl,
+        orch,
         tb_binary='TransferBench',
         amd_smi_binary='amd-smi',
         use_sudo=True,
@@ -1183,6 +1571,9 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
 
     totals = results.get('totals') or {}
     if results.get('status') == 'FAIL':
+        preflight_results['transferbench_smoke']['message'] = (
+            'TransferBench preflight gate failed; see preflight report'
+        )
         log.warning(
             "IFoE TransferBench smoketest FAIL: %d/%d node(s) failed, %d warning(s); cluster errors: %s",
             totals.get('nodes_fail', 0),
@@ -1210,12 +1601,11 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
             totals.get('tests_skip', 0),
         )
 
-    preflight_update_test_result()
-    if results.get('status') == 'FAIL':
-        pytest.fail("TransferBench preflight gate failed; see preflight report")
+    preflight_update_test_result(preflight_results['transferbench_smoke'])
 
 
-def test_rdma_connectivity(phdl, cluster_dict, config_dict):
+@_timed_stage(RDMA_CONNECTIVITY)
+def test_rdma_connectivity(orch, cluster_dict, config_dict, lifecycle=None):
     """
     Test RDMA connectivity between cluster nodes using ibv_rc_pingpong.
 
@@ -1229,6 +1619,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     consistency; those steps prune before the next. ROCm version mismatches are reported
     but **not** pruned. Results may include ``excluded_nodes_interface_check`` and
     ``excluded_nodes_gid`` for the report (hosts already removed from ``phdl``).
+    MTU failures are reported but not pruned because they do not affect connectivity.
     """
     global preflight_results
 
@@ -1246,7 +1637,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
             'node_status': {},
         }
         log.info("RDMA interface, GID, and connectivity validation skipped by configuration")
-        preflight_update_test_result()
+        preflight_update_test_result(preflight_results['rdma_connectivity'])
         return
 
     if _node_health_admission_failed(config_dict):
@@ -1263,11 +1654,11 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
         )
         preflight_results['rdma_connectivity'] = blocked
         log.warning(blocked['message'])
-        preflight_update_test_result()
+        preflight_update_test_result(blocked)
         return
 
     # Host list matches prior-step pruning (reachability, interface, GID); not full cluster_dict.
-    node_list = list(phdl.reachable_hosts)
+    node_list = list(orch.all.reachable_hosts)
 
     iface_results = preflight_results.get('interface_names') or {}
     excluded_nodes_interface_check = sorted(
@@ -1278,7 +1669,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     excluded_nodes_gid = sorted(n for n, r in gid_results.items() if isinstance(r, dict) and r.get('status') == 'FAIL')
 
     log.info(
-        f"RDMA connectivity: {len(node_list)} host(s) on phdl after reachability / interface / GID pruning "
+        f"RDMA connectivity: {len(node_list)} host(s) after reachability / interface / GID pruning "
         f"(ROCm mismatches are not pruned)."
     )
 
@@ -1307,7 +1698,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
         f"Testing RDMA connectivity using parallel algorithm (mode: {mode}, group_size: {parallel_group_size}, timeout: {timeout}s, interfaces: {expected_interfaces}, GID: {gid_index})"
     )
 
-    if len(phdl.reachable_hosts) < 2:
+    if len(orch.all.reachable_hosts) < 2:
         log.warning(
             'RDMA connectivity skipped: fewer than 2 hosts remain after reachability / interface / GID pruning.'
         )
@@ -1324,14 +1715,14 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
             'excluded_nodes_gid': excluded_nodes_gid,
         }
         preflight_results['rdma_connectivity'] = skip_results
-        preflight_update_test_result()
+        preflight_update_test_result(skip_results)
         return
 
     # Use the new modular RDMA connectivity check (supports all modes)
     from cvs.lib.preflight.rdma_connectivity import RdmaConnectivityCheck
 
     rdma_checker = RdmaConnectivityCheck(
-        phdl, node_list, mode, port_range, timeout, expected_interfaces, gid_index, parallel_group_size, config_dict
+        orch, node_list, mode, port_range, timeout, expected_interfaces, gid_index, parallel_group_size, config_dict
     )
     results = rdma_checker.run()
     if excluded_nodes_interface_check:
@@ -1343,7 +1734,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     # Handle skipped test
     if results.get('skipped', False):
         log.info("RDMA connectivity test skipped by configuration")
-        preflight_update_test_result()
+        preflight_update_test_result(results)
         return
 
     # Analyze results and report failures
@@ -1366,10 +1757,15 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     log.info(
         f"RDMA connectivity results: {results['successful_pairs']}/{results['total_pairs']} pairs connected successfully"
     )
-    preflight_update_test_result()
+    if results['failed_pairs']:
+        results['status'] = 'FAIL'
+        results.setdefault(
+            'message', f"RDMA connectivity failed on {results['failed_pairs']}/{results['total_pairs']} pair(s)"
+        )
+    preflight_update_test_result(results)
 
 
-def test_generate_preflight_report(phdl, config_dict, request):
+def test_generate_preflight_report(orch, config_dict, request):
     """
     Generate comprehensive preflight check report.
 
@@ -1384,6 +1780,7 @@ def test_generate_preflight_report(phdl, config_dict, request):
     required_checks = [
         'node_health',
         'gid_consistency',
+        'rdma_mtu',
         'rocm_versions',
         'interface_names',
         'node_smoke_tier1',
@@ -1401,21 +1798,35 @@ def test_generate_preflight_report(phdl, config_dict, request):
             preflight_results[check] = {'status': 'SKIPPED', 'message': 'Check was skipped due to earlier failures'}
 
     # Generate comprehensive summary using new report generator
-    report_generator = PreflightReportGenerator(phdl, preflight_results, config_dict)
+    report_generator = PreflightReportGenerator(orch, preflight_results, config_dict)
     report_results = report_generator.run()
     summary = report_results['summary']
 
     preflight_results['summary'] = summary
 
-    # Log summary to console
+    # FAIL, BLOCKED, and ERROR are errors. WARNING does not fail the run, but it is not a pass.
     log.info("=== PREFLIGHT CHECK SUMMARY ===")
     for check_name, check_summary in summary['checks'].items():
-        status_icon = "✅" if check_summary['status'] == 'PASS' else "❌"
-        log.info(
-            f"{status_icon} {preflight_check_display_name(check_name)}: {check_summary['status']} - {check_summary['summary']}"
-        )
+        status = check_summary['status']
+        if status == 'PASS':
+            status_icon = "✅"
+        elif status == 'WARNING':
+            status_icon = "⚠️"
+        else:
+            status_icon = "❌"
+        line = f"{status_icon} {preflight_check_display_name(check_name)}: {status} - {check_summary['summary']}"
+        if status in ('FAIL', 'BLOCKED', 'ERROR'):
+            log.error(line)
+        elif status == 'WARNING':
+            log.warning(line)
+        else:
+            log.info(line)
 
-    log.info(f"\nOverall Status: {summary['overall_status']}")
+    overall_line = f"\nOverall Status: {summary['overall_status']}"
+    if summary['overall_status'] == 'FAIL':
+        log.error(overall_line)
+    else:
+        log.info(overall_line)
 
     if summary['recommendations']:
         log.info("\nRecommendations:")
@@ -1465,18 +1876,23 @@ def test_generate_preflight_report(phdl, config_dict, request):
             log.warning(f"Failed to add preflight report to bundle: {e}")
             log.info(f"Preflight report available at: {html_report_path}")
 
-    # A mandatory node-health admission failure is deliberately reported only after
-    # report artifacts are written, so downstream checks can be marked
-    # BLOCKED with actionable diagnostics rather than disappearing from the
-    # preflight output.
+    # Publish before the row fails so the Run Deck matches the written report.
+    # Node-health stays its own failure: downstream checks are marked BLOCKED
+    # with diagnostics instead of disappearing from that report.
+    preflight_update_test_result()
+
     node_health_results = preflight_results.get('node_health') or {}
     if _node_health_enabled(config_dict) and node_health_results.get('status') != 'PASS':
         pytest.fail("Mandatory node-health admission gate failed; see preflight report")
 
-    # Report overall status but don't fail generic/report-only preflight profiles.
     if summary['overall_status'] == 'FAIL':
-        log.warning("One or more preflight checks detected issues - see detailed results above")
-        log.info("Preflight report generated successfully - review HTML report for detailed analysis")
-    else:
-        log.info("All preflight checks passed - cluster is ready for performance testing")
-    preflight_update_test_result()
+        failed_checks = [
+            preflight_check_display_name(name)
+            for name, check in summary['checks'].items()
+            if check.get('status') in ('FAIL', 'BLOCKED', 'ERROR')
+        ]
+        detail = f" ({', '.join(failed_checks)})" if failed_checks else ""
+        log.error("One or more preflight checks detected issues - see detailed results above")
+        pytest.fail(f"Preflight overall status is FAIL{detail}; see preflight report")
+
+    log.info("All preflight checks passed - cluster is ready for performance testing")

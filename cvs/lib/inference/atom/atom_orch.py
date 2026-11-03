@@ -31,8 +31,14 @@ import shlex
 import time
 
 from cvs.lib import globals
-from cvs.lib.inference.atom.atom_config_loader import merge_mxfp4_triton_env
+from cvs.lib.inference.atom.atom_config_loader import (
+    CONTAINER_HF_TOKEN_PATH,
+    SECRET_ENV_KEYS,
+    merge_mxfp4_triton_env,
+)
+from cvs.lib.inference.atom.hf_token_redaction import install_hf_token_log_redaction, redact_hf_token_text
 from cvs.lib.inference.atom.atom_parsing import sglang_bench_jsonl_to_raw, to_client_metrics
+from cvs.lib.inference.utils.vllm_benchmark_scripts import clamped_bench_random_range_ratio_str
 from cvs.lib.utils.model_query_lib import OpenAIProbe
 
 log = globals.log
@@ -65,7 +71,7 @@ class AtomJob:
         r"|Failed to initialize all EngineCores"
         r"|unexpected SHUTDOWN signal"
         r"|ModuleNotFoundError"
-        r"|No module named",
+        r"|AssertionError",
         re.I,
     )
     FATAL_LOG_RE = re.compile(
@@ -79,7 +85,7 @@ class AtomJob:
         r"|Failed to initialize all EngineCores"
         r"|unexpected SHUTDOWN signal"
         r"|ModuleNotFoundError"
-        r"|No module named",
+        r"|AssertionError",
         re.I,
     )
 
@@ -166,6 +172,7 @@ class AtomJob:
         self.server_env = merge_mxfp4_triton_env(
             getattr(variant.model, "precision", ""),
             variant.roles.server.env,
+            gpu_arch=getattr(variant, "gpu_arch", "") or "",
         )
         configured_netdev = (getattr(variant.roles.server, "ib_netdev", None) or "").strip()
         if ib_netdev:
@@ -259,14 +266,17 @@ class AtomJob:
         return f"{base}/{self._rank_server_log_name()}"
 
     def _exec_all(self, cmd, **kwargs):
+        install_hf_token_log_redaction()
         return self.orch.exec(cmd, **kwargs)
 
     def _exec_head(self, cmd, **kwargs):
+        install_hf_token_log_redaction()
         if self.distributed:
             return self.orch.exec_on_head(cmd, **kwargs)
         return self.orch.exec(cmd, **kwargs)
 
     def _exec_client(self, cmd, **kwargs):
+        install_hf_token_log_redaction()
         return self.orch.exec_on_head(cmd, **kwargs)
 
     def prepare_cell_out_dir(self):
@@ -407,8 +417,18 @@ class AtomJob:
 
     def build_server_cmd(self, *, clear_atom_cache=True):
         self._ensure_multinode_topology()
+        # The token stays in the mounted file. Parallel SSH logs this command, so the
+        # script must read the file inside the container instead of embedding the value.
+        # no_launch and older persistent containers can pass the host file check without
+        # this mount. Skipping the export would start the server with HF_TOKEN unset.
+        token_path = shlex.quote(CONTAINER_HF_TOKEN_PATH)
         env_lines = [
-            f"export HF_TOKEN={shlex.quote(self.hf_token)}",
+            (
+                f"if [ -f {token_path} ] && [ -s {token_path} ]; then "
+                f"export HF_TOKEN=\"$(tr -d '[:space:]' < {token_path})\"; "
+                f"else echo \"HF token file missing or empty in container: {token_path}; server failed to start\" >&2; "
+                "return 1; fi"
+            ),
             f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
         ]
         if self._uses_vllm_serve():
@@ -419,7 +439,7 @@ class AtomJob:
                     "export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1",
                 ]
             )
-        if self.ib_hcas:
+        if self.ib_hcas and "NCCL_IB_HCA" not in self.server_env:
             env_lines.append(f"export NCCL_IB_HCA={shlex.quote(','.join(self.ib_hcas))}")
         if self.distributed and not self.ib_netdev:
             raise RuntimeError(
@@ -427,18 +447,17 @@ class AtomJob:
                 "(set roles.server.ib_netdev or fix cluster IP discovery)"
             )
         if self.distributed and self.ib_netdev:
-            env_lines.append(f"export NCCL_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
-            env_lines.append(f"export GLOO_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
-            env_lines.append(f"export TP_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
+            if "NCCL_SOCKET_IFNAME" not in self.server_env:
+                env_lines.append(f"export NCCL_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
+            if "GLOO_SOCKET_IFNAME" not in self.server_env:
+                env_lines.append(f"export GLOO_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
+            if "TP_SOCKET_IFNAME" not in self.server_env:
+                env_lines.append(f"export TP_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
         for k, v in self.server_env.items():
-            if k in (
+            if k in SECRET_ENV_KEYS or k in (
                 "CVS_GPU_MEMORY_UTIL",
                 "VLLM_GPU_MEMORY_UTIL",
                 "VLLM_ENFORCE_EAGER",
-                "NCCL_SOCKET_IFNAME",
-                "GLOO_SOCKET_IFNAME",
-                "TP_SOCKET_IFNAME",
-                "NCCL_IB_HCA",
             ):
                 continue
             env_lines.append(f"export {k}={shlex.quote(str(v))}")
@@ -553,7 +572,8 @@ class AtomJob:
                 out = self._exec_all("bash -c " + shlex.quote(inner))
             for h, output in out.items():
                 if self.EARLY_FAILURE_RE.search(output or ""):
-                    raise RuntimeError(f"{label} server failed to launch on {h} (rank {rank}): {output[-500:]}")
+                    detail = redact_hf_token_text((output or "")[-500:])
+                    raise RuntimeError(f"{label} server failed to launch on {h} (rank {rank}): {detail}")
 
     def _atom_health_ok(self):
         url = f"http://localhost:{self.port_no}/health"
@@ -587,7 +607,7 @@ class AtomJob:
             if rank > 0 and self.nnodes > 1:
                 continue
             rank_log = self._rank_server_log(rank) if self.distributed else self.server_log
-            out = self.orch.exec(
+            out = self._exec_all(
                 f"grep -qiE {shlex.quote(pattern)} {shlex.quote(rank_log)}",
                 detailed=True,
                 hosts=[host],
@@ -601,21 +621,23 @@ class AtomJob:
         label = self._framework_coordinator_label()
         for rank, host in enumerate(self.orch.hosts):
             rank_log = self._rank_server_log(rank) if self.distributed else self.server_log
-            out = self.orch.exec(f"tail -30 {shlex.quote(rank_log)}", hosts=[host])
+            out = self._exec_all(f"tail -30 {shlex.quote(rank_log)}", hosts=[host])
             for h, output in (out or {}).items():
                 if emit_tail:
                     for line in (output or "").splitlines():
                         log.info("[%s rank%d server.log] %s", h, rank, line)
                 if self.EARLY_FAILURE_RE.search(output or ""):
-                    raise RuntimeError(f"{label} server early failure on {h} (rank {rank}): {(output or '')[-500:]}")
-            out = self.orch.exec(
+                    detail = redact_hf_token_text((output or "")[-500:])
+                    raise RuntimeError(f"{label} server early failure on {h} (rank {rank}): {detail}")
+            out = self._exec_all(
                 f"grep -m1 -iE {shlex.quote(self.FATAL_LOG_RE.pattern)} {shlex.quote(rank_log)}",
                 detailed=True,
                 hosts=[host],
             )
             for h, r in (out or {}).items():
                 if r.get("exit_code") == 0 and r.get("output", "").strip():
-                    raise RuntimeError(f"{label} server fatal error on {h} (rank {rank}): {r['output'].strip()[-500:]}")
+                    detail = redact_hf_token_text(r["output"].strip()[-500:])
+                    raise RuntimeError(f"{label} server fatal error on {h} (rank {rank}): {detail}")
 
     def _tail_server_logs(self, lines=30):
         if self.distributed:
@@ -629,7 +651,8 @@ class AtomJob:
     def _raise_if_atom_server_log_failed(self, host, output):
         text = output or ""
         if self.EARLY_FAILURE_RE.search(text) or self.FATAL_LOG_RE.search(text):
-            raise RuntimeError(f"atom server early failure on {host}: {text[-500:]}")
+            detail = redact_hf_token_text(text[-500:])
+            raise RuntimeError(f"atom server early failure on {host}: {detail}")
 
     def wait_ready(self):
         log.info("waiting %ds for server log to materialise", self._precheck_wait)
@@ -689,27 +712,27 @@ class AtomJob:
             f"echo {shlex.quote(b64)} | base64 -d > {shlex.quote(probe_path)} && "
             f"python3 {shlex.quote(probe_path)}"
         )
-        out = self.orch.exec_on_head("bash -c " + shlex.quote(cmd))
+        out = self._exec_client("bash -c " + shlex.quote(cmd))
         raw = next(iter(out.values()), None) if out else None
         if not raw or not str(raw).strip():
-            raise RuntimeError(f"OpenAI-compatible probe produced no output: {out!r}")
+            raise RuntimeError(redact_hf_token_text(f"OpenAI-compatible probe produced no output: {out!r}"))
         last_line = str(raw).strip().splitlines()[-1]
         try:
             parsed = json.loads(last_line)
         except json.JSONDecodeError as e:
-            raise RuntimeError(f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw!r}") from e
+            raise RuntimeError(redact_hf_token_text(f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw!r}")) from e
         if not isinstance(parsed, dict):
             raise RuntimeError(f"OpenAI-compatible probe expected JSON object, got {type(parsed).__name__!r}")
         results = {}
         for step, val in parsed.items():
             if not (isinstance(val, (list, tuple)) and len(val) == 2):
-                raise RuntimeError(f"OpenAI-compatible probe bad shape at {step!r}: {val!r}")
+                raise RuntimeError(redact_hf_token_text(f"OpenAI-compatible probe bad shape at {step!r}: {val!r}"))
             results[step] = (int(val[0]), val[1])
         OpenAIProbe.log_results(results, log)
         ok, err = OpenAIProbe.check_results(results, port=self.port_no, logger=log)
         summary = OpenAIProbe.summarize_results(results, ok, err)
         if not ok:
-            raise RuntimeError(err)
+            raise RuntimeError(redact_hf_token_text(err))
         return summary
 
     def probe_server_health(self):
@@ -719,14 +742,14 @@ class AtomJob:
         health_probe = f"curl -sf {shlex.quote(health_url)} -o /dev/null && echo OK || echo NO"
         health_out = self._exec_head("bash -c " + shlex.quote(health_probe))
         if not health_out or not all("OK" in (v or "") for v in health_out.values()):
-            raise RuntimeError(f"/health check failed: {health_out!r}")
+            raise RuntimeError(redact_hf_token_text(f"/health check failed: {health_out!r}"))
         summary.append(f"health {health_url}: OK")
 
         models_url = f"http://localhost:{self.port_no}/v1/models"
         models_probe = f"curl -sf {shlex.quote(models_url)} -o /dev/null && echo OK || echo NO"
         models_out = self._exec_head("bash -c " + shlex.quote(models_probe))
         if not models_out or not all("OK" in (v or "") for v in models_out.values()):
-            raise RuntimeError(f"/v1/models check failed: {models_out!r}")
+            raise RuntimeError(redact_hf_token_text(f"/v1/models check failed: {models_out!r}"))
         summary.append(f"models {models_url}: OK")
 
         if self.driver == "atom":
@@ -744,7 +767,7 @@ class AtomJob:
             )
             comp_out = self._exec_head("bash -c " + shlex.quote(comp_probe))
             if not comp_out or not all("OK" in (v or "") for v in comp_out.values()):
-                raise RuntimeError(f"max_tokens=1 completion failed: {comp_out!r}")
+                raise RuntimeError(redact_hf_token_text(f"max_tokens=1 completion failed: {comp_out!r}"))
         summary.append("completion max_tokens=1: OK")
         return summary
 
@@ -765,6 +788,25 @@ class AtomJob:
             )
         time.sleep(5)
 
+    def _bench_random_range_ratio(self):
+        ratio, clamped = clamped_bench_random_range_ratio_str(
+            self.random_range_ratio,
+            self.isl,
+            self.osl,
+            self.max_model_length,
+        )
+        if clamped:
+            log.info(
+                "CVS: clamped --random-range-ratio from %s to %s so peak random (ISL+OSL)*(1+r) "
+                "fits max_model_length=%s (ISL=%s OSL=%s)",
+                self.random_range_ratio,
+                ratio,
+                self.max_model_length,
+                self.isl,
+                self.osl,
+            )
+        return ratio
+
     def _atom_client_argv(self):
         warmups = int(self.concurrency) * 2
         argv = [
@@ -784,7 +826,7 @@ class AtomJob:
             "--random-output-len",
             self.osl,
             "--random-range-ratio",
-            self.random_range_ratio,
+            self._bench_random_range_ratio(),
             "--max-concurrency",
             self.concurrency,
             "--num-prompts",
@@ -829,7 +871,7 @@ class AtomJob:
             "--random-output-len",
             self.osl,
             "--random-range-ratio",
-            self.random_range_ratio,
+            self._bench_random_range_ratio(),
             "--max-concurrency",
             self.concurrency,
             "--request-rate",
@@ -878,7 +920,7 @@ class AtomJob:
             "--seed",
             self.seed,
             "--random-range-ratio",
-            self.random_range_ratio,
+            self._bench_random_range_ratio(),
             "--random-prefix-len",
             self.random_prefix_len,
             "--percentile-metrics",
@@ -972,12 +1014,14 @@ class AtomJob:
     def _raise_if_client_crashed(self):
         failed = self._client_log_failures(check_failed_requests=False)
         if failed:
-            raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
+            detail = "; ".join(f"{h}: {m}" for h, m in failed)
+            raise RuntimeError(redact_hf_token_text("client failed: " + detail))
 
     def _finalize_client_or_fail(self):
         failed = self._client_log_failures(check_failed_requests=True)
         if failed:
-            raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
+            detail = "; ".join(f"{h}: {m}" for h, m in failed)
+            raise RuntimeError(redact_hf_token_text("client failed: " + detail))
 
     def wait_client_complete(self):
         poll_result_artifact = self.driver == "atom" or self._uses_vllm_serve() or self._uses_sglang_serve()

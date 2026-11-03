@@ -126,7 +126,7 @@ class RdmaConnectivityCheck(PreflightCheck):
         root = self._remote_rdma_workspace_root()
         self._rdma_session_id = time.strftime('%Y%m%d_%H%M%S')
         q = shlex.quote
-        self.phdl.exec(f"rm -rf {q(root)} && mkdir -p {q(root)}", timeout=180, print_console=False)
+        self.orch.all.exec(f"rm -rf {q(root)} && mkdir -p {q(root)}", timeout=180, print_console=False)
         self._full_mesh_rdma_artifact_wipe_done = True
         log.info(
             "RDMA full_mesh: cleared remote workspace %s once (HTML in %s preserved); session %s — "
@@ -395,7 +395,7 @@ class RdmaConnectivityCheck(PreflightCheck):
         self._begin_full_mesh_rdma_artifacts()
 
         # Partition nodes into groups (use only reachable nodes)
-        reachable_node_list = list(self.phdl.reachable_hosts)
+        reachable_node_list = list(self.orch.all.reachable_hosts)
         groups = partition_nodes_into_groups(reachable_node_list, self.parallel_group_size)
         num_groups = len(groups)
 
@@ -995,13 +995,13 @@ class RdmaConnectivityCheck(PreflightCheck):
         # Phase 1: Server scripts context (kept open through client phase)
         log.info("Phase 1: Starting ibv_rc_pingpong servers")
         with ScriptLet(
-            self.phdl,
+            self.orch.all,
             debug=scriptlet_debug,
             scriptlet_workspace=workspace_dir,
             cleanup_on_init=True,
             preserve_workspace_on_exit=True,
         ) as server_scriptlet:
-            for host in self.phdl.reachable_hosts:
+            for host in self.orch.all.reachable_hosts:
                 server_commands = self._generate_server_commands_for_host(host, assignments, workspace_dir)
                 script_content = self._build_server_script(host, server_commands)
 
@@ -1011,7 +1011,7 @@ class RdmaConnectivityCheck(PreflightCheck):
 
             server_script_mapping = {
                 host: f"servers_{host}_{round_type}"
-                for host in self.phdl.reachable_hosts
+                for host in self.orch.all.reachable_hosts
                 if f"servers_{host}_{round_type}" in server_scriptlet.local_scripts
             }
 
@@ -1021,13 +1021,13 @@ class RdmaConnectivityCheck(PreflightCheck):
             # Phase 2: Client scripts nested so server cleanup doesn't run before clients start.
             log.info("Phase 2: Starting ibv_rc_pingpong clients")
             with ScriptLet(
-                self.phdl,
+                self.orch.all,
                 debug=scriptlet_debug,
                 scriptlet_workspace=workspace_dir,
                 cleanup_on_init=False,  # Don't clean workspace since servers are using it
                 preserve_workspace_on_exit=True,
             ) as client_scriptlet:
-                for host in self.phdl.reachable_hosts:
+                for host in self.orch.all.reachable_hosts:
                     client_commands = self._generate_client_commands_for_host(host, assignments, workspace_dir)
                     script_content = self._build_client_script(host, client_commands)
 
@@ -1037,7 +1037,7 @@ class RdmaConnectivityCheck(PreflightCheck):
 
                 client_script_mapping = {
                     host: f"clients_{host}_{round_type}"
-                    for host in self.phdl.reachable_hosts
+                    for host in self.orch.all.reachable_hosts
                     if f"clients_{host}_{round_type}" in client_scriptlet.local_scripts
                 }
 
@@ -1333,7 +1333,7 @@ class RdmaConnectivityCheck(PreflightCheck):
         results = {}
 
         with ScriptLet(
-            self.phdl,
+            self.orch.all,
             debug=scriptlet_debug,
             scriptlet_workspace=workspace_dir,
             cleanup_on_init=False,
@@ -1341,7 +1341,7 @@ class RdmaConnectivityCheck(PreflightCheck):
         ) as scriptlet:
             collect_mapping = {}
             for node, node_test_list in node_tests.items():
-                if node in self.phdl.reachable_hosts:
+                if node in self.orch.all.reachable_hosts:
                     script_id = f"collect_{node}"
                     script_content = self._create_collection_script(node_test_list, workspace_dir)
                     scriptlet.create_script(script_id, script_content)

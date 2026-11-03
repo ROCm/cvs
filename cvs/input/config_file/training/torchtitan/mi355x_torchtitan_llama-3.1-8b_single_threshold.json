@@ -13,6 +13,26 @@
       "kind": "max",
       "value": 250.0,
       "optional": true
+    },
+    "training.steps_to_target": {
+      "kind": "info",
+      "value": 10,
+      "optional": true
+    },
+    "training.time_to_target_seconds": {
+      "kind": "info",
+      "value": 2500,
+      "optional": true
+    },
+    "training.step_time_p50_ms": {
+      "kind": "info",
+      "value": 2500,
+      "optional": true
+    },
+    "training.step_time_p95_ms": {
+      "kind": "info",
+      "value": 1500,
+      "optional": true
     }
   },
   "MBS=6,GBS=48,PRECISION=FP8": {
@@ -27,6 +47,26 @@
     "training.mem_usage_gb": {
       "kind": "max",
       "value": 250.0,
+      "optional": true
+    },
+    "training.steps_to_target": {
+      "kind": "info",
+      "value": 10,
+      "optional": true
+    },
+    "training.time_to_target_seconds": {
+      "kind": "info",
+      "value": 2500,
+      "optional": true
+    },
+    "training.step_time_p50_ms": {
+      "kind": "info",
+      "value": 2500,
+      "optional": true
+    },
+    "training.step_time_p95_ms": {
+      "kind": "info",
+      "value": 1500,
       "optional": true
     }
   },
@@ -43,6 +83,26 @@
       "kind": "max",
       "value": 250.0,
       "optional": true
+    },
+    "training.steps_to_target": {
+      "kind": "info",
+      "value": 10,
+      "optional": true
+    },
+    "training.time_to_target_seconds": {
+      "kind": "info",
+      "value": 2500,
+      "optional": true
+    },
+    "training.step_time_p50_ms": {
+      "kind": "info",
+      "value": 2500,
+      "optional": true
+    },
+    "training.step_time_p95_ms": {
+      "kind": "info",
+      "value": 1500,
+      "optional": true
     }
   },
   "MBS=6,GBS=48,PRECISION=MXFP4": {
@@ -57,6 +117,26 @@
     "training.mem_usage_gb": {
       "kind": "max",
       "value": 250.0,
+      "optional": true
+    },
+    "training.steps_to_target": {
+      "kind": "info",
+      "value": 10,
+      "optional": true
+    },
+    "training.time_to_target_seconds": {
+      "kind": "info",
+      "value": 2500,
+      "optional": true
+    },
+    "training.step_time_p50_ms": {
+      "kind": "info",
+      "value": 2500,
+      "optional": true
+    },
+    "training.step_time_p95_ms": {
+      "kind": "info",
+      "value": 1500,
       "optional": true
     }
   }

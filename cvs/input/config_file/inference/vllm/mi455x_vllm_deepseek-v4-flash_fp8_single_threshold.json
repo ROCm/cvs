@@ -1,0 +1,48 @@
+{
+  "ISL=1024,OSL=256,TP=4,PP=1,CONC=64": {
+    "failed": {
+      "kind": "max",
+      "value": 0
+    }
+  },
+  "ISL=16384,OSL=128,TP=4,PP=1,CONC=4": {
+    "failed": {
+      "kind": "max",
+      "value": 0
+    }
+  },
+  "ISL=1024,OSL=1024,TP=4,PP=1,CONC=16": {
+    "failed": {
+      "kind": "max",
+      "value": 0
+    }
+  },
+  "ISL=1024,OSL=1024,TP=4,PP=1,CONC=32": {
+    "failed": {
+      "kind": "max",
+      "value": 0
+    }
+  },
+  "ISL=1024,OSL=1024,TP=4,PP=1,CONC=64": {
+    "failed": {
+      "kind": "max",
+      "value": 0
+    }
+  },
+  "ISL=8192,OSL=1024,TP=4,PP=1,CONC=32": {
+    "failed": {
+      "kind": "max",
+      "value": 0
+    }
+  },
+  "accuracy": {
+    "gsm8k_flex": {
+      "gsm8k.exact_match__flexible-extract": {
+        "kind": "min",
+        "value": 0
+      }
+    },
+    "gsm8k_strict": {},
+    "gsm8k_stderr": {}
+  }
+}

@@ -10,11 +10,11 @@
         "_comment_install_timeout": "Package download+install INACTIVITY timeout in seconds (1800 = 30 min), used only by anc_installation / the install pre-task. It is a per-read (no-output) timeout, not a total budget: the download prints a periodic progress heartbeat so a slow link never trips it, while a genuine stall still fails. Raise this only if download+extract of the large content package legitimately needs longer between output lines.",
         "install_timeout": 1800,
 
-        "_comment_anc_version": "Expected ANC version. The install pre-task skips (re)installation when this version is already present on the node, and post-verifies the install matches.",
-        "anc_version": "1.4.9",
+        "_comment_anc_version": "OPTIONAL minimum ANC version. Leave blank to run against whatever version is installed. When set, a node below it is upgraded ONLY if anc_release_url can satisfy it (its version >= anc_version); the installer then runs on all nodes and post-verifies each one. When the version cannot be satisfied (URL too old, or blank), the install suite (anc_installation) FAILS, while normal group/item tests log the shortfall and proceed with the installed version. Validated (must be a dotted release like 1.7.0) only when it is compared. Each node's packaging generation is auto-detected from its own output. A release candidate is treated as its base release (1.7.0-rc.1 as 1.7.0); the rc number is never compared.",
+        "anc_version": "1.7.3",
 
-        "_comment_anc_release_url": "URL of the ANC release archive to download and install. Replace the placeholder changeme with the real URL before running. Both packaging generations are supported and auto-detected from the filename: LEGACY (<=1.4.x) outer tarballs carry a '-deb-'/'-rpm-'/'-tar-' token (e.g. anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz); DIRECT (1.5.0+) URLs point straight at a '.deb'/'.rpm'/'.tar.gz' with no flavour token (e.g. anc-release-helios-nda-1.5.5-x86_64.tar.gz). When anc_version is set it must match the version in this URL or the run aborts before contacting any node.",
-        "anc_release_url": "<changeme>",
+        "_comment_anc_release_url": "OPTIONAL. URL of the ANC release archive, used only when ANC must be downloaded/installed (a node has no ANC, or has an older version than anc_version and must be upgraded). Leave it blank to run against whatever ANC is already installed on the nodes; normal group/item tests then proceed with the installed version. The URL is validated only when it is actually used to install: packaging generation is auto-detected from the filename (LEGACY <=1.4.x outer tarballs carry a '-deb-'/'-rpm-'/'-tar-' token, e.g. <packagename>-<version>-tar-linux-x64.tar.gz; DIRECT 1.5.0+ URLs point straight at a '.deb'/'.rpm'/'.tar.gz' with no flavour token, e.g. <packagename>-<version>-x86_64.tar.gz). When ANC must be installed but no node has ANC and this URL is blank, the test fails. The install suite (anc_installation) additionally fails if this URL's version is older than anc_version.",
+        "anc_release_url": "",
 
         "_comment_ANC_INSTALL_PATH": "TAR installs ONLY: relocatable install prefix ANC is extracted into (its anc/ dir, tool folders, and content live under here). A leading '{home}' expands to the runner user's home directory (e.g. '/home/{user-id}/my/anc/install/path'); a leading '~' is also expanded. Applies exclusively to tar releases -- deb/rpm packages carry predefined absolute locations baked into their archive and IGNORE this key entirely. Leave blank or omit to keep the legacy default (/opt/amdtools).",
         "ANC_INSTALL_PATH": "",
@@ -22,13 +22,7 @@
         "_comment_print_all_to_console": "'True' echoes ANC group output to the console; 'False' suppresses it (install/ldconfig/version diagnostics still print).",
         "print_all_to_console": "True",
 
-        "_comment_log_folder_path": "Controller-side destination PREFIX for ALL ANC artifacts (collected logs AND the auto-collected HTML report). Set it to a plain directory path (a leading '~' is expanded to your home directory; '{home}'/'{user-id}' tokens are also resolved) under which CVS lays down its own per-node/per-test/per-run folder structure. Required: replace the placeholder changeme before running. To send the HTML report elsewhere, pass --html on the command line.",
-        "log_folder_path": "<changeme>",
-
         "_comment_ADD_ANC_LOGS_TO_HTML_REPORTS": "'True' always bundles the collected ANC log tree into the pytest-html report zip. 'False' (default) bundles it only when the test fails, so passing runs stay lean while failures always carry their logs.",
-        "ADD_ANC_LOGS_TO_HTML_REPORTS": "False",
-
-        "_comment_COLLECT_HTML_REPORTS": "'True' (default) auto-generates a pytest-html report even when no --html is passed on the command line, written under log_folder_path. 'False' disables auto-collection (a report is produced only if you pass --html explicitly). An explicit --html on the command line always overrides the auto-collected path.",
-        "COLLECT_HTML_REPORTS": "True"
+        "ADD_ANC_LOGS_TO_HTML_REPORTS": "False"
     }
 }

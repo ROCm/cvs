@@ -1,0 +1,112 @@
+#!/bin/sh
+#
+# Copyright 2025 Advanced Micro Devices, Inc.
+# All rights reserved.
+#
+# CVS commit-message format check. Enforced structure:
+#
+#   <title>
+#   <blank line>
+#   <body ...>
+#   <blank line>
+#   Signed-off-by: Name <email>   (one or more, at the end)
+#
+# Blocks (exit 1) on a missing/mis-placed title, 2nd line, body, or Signed-off-by.
+# WARNINGs only (never block): a line over 80 chars (except Signed-off-by /
+# Co-authored-by trailers and lines that are only a URL), and a message over 100
+# lines. Bypass everything with `git commit --no-verify`.
+
+msg_file="$1"
+[ -f "$msg_file" ] || exit 0
+
+awk '
+BEGIN { n = 0; stop = 0 }
+# Ignore the "# ------------------------ >8 ------------------------" scissors
+# section (verbose-diff) and any other comment lines git keeps in the buffer.
+/^# +-+ +>8 +-+/ { stop = 1 }
+stop { next }
+/^#/ { next }
+{ lines[++n] = $0 }
+
+END {
+    # Trim trailing blank lines so trailer detection is exact.
+    while (n > 0 && lines[n] ~ /^[ \t]*$/) n--
+    if (n == 0) {
+        print "commit-msg: ERROR: empty commit message" > "/dev/stderr"
+        exit 1
+    }
+
+    subject = lines[1]
+
+    # Leave auto-generated messages alone.
+    if (subject ~ /^(Merge |Revert |fixup! |squash! |amend! )/) exit 0
+
+    errs = 0
+
+    # 1) Title present (line 1 non-blank).
+    if (subject ~ /^[ \t]*$/) { err("commit title (line 1) is empty"); errs++ }
+
+    # 2) Blank line between the title and the body.
+    if (n >= 2 && lines[2] !~ /^[ \t]*$/) {
+        err("line 2 must be blank (separate the title from the body)"); errs++
+    }
+
+    # Locate the trailing trailer block (contiguous "Key: value" lines at the end)
+    # so Signed-off-by placement and body presence can be checked exactly.
+    trailer_start = n + 1
+    for (i = n; i >= 1; i--) {
+        if (lines[i] ~ /^[ \t]*$/) continue
+        if (lines[i] ~ /^[A-Za-z][A-Za-z0-9-]*:[ \t]*.+/) { trailer_start = i; continue }
+        break
+    }
+
+    # 3) Body present: at least one non-blank line between the title and the
+    #    trailer block.
+    body = 0
+    for (i = 3; i < trailer_start; i++) {
+        if (lines[i] !~ /^[ \t]*$/) { body = 1; break }
+    }
+    if (!body) { err("missing commit body (describe what changed and why)"); errs++ }
+
+    # 4) At least one Signed-off-by, and it must sit in the trailing block (end).
+    signoff = 0
+    for (i = trailer_start; i <= n; i++) {
+        if (lines[i] ~ /^Signed-off-by:[ \t]*.+<.+>/) signoff = 1
+    }
+    if (!signoff) {
+        err("missing Signed-off-by trailer at the end (use: git commit -s)"); errs++
+    }
+
+    # Advisory width check: warn on any line over 80 chars, except Signed-off-by /
+    # Co-authored-by trailers and lines that are only a URL (cannot be wrapped).
+    for (i = 1; i <= n; i++) {
+        if (length(lines[i]) <= 80) continue
+        if (lines[i] ~ /^(Signed-off-by|Co-authored-by):/) continue
+        if (is_url_only(lines[i])) continue
+        printf "commit-msg: WARNING: line %d exceeds 80 chars (%d)\n", i, length(lines[i]) > "/dev/stderr"
+    }
+
+    # Advisory length check.
+    if (n > 100) {
+        printf "commit-msg: WARNING: commit message is %d lines (> 100)\n", n > "/dev/stderr"
+    }
+
+    if (errs > 0) {
+        print "commit-msg: fix the message above, or bypass with git commit --no-verify" > "/dev/stderr"
+        exit 1
+    }
+    exit 0
+}
+
+function err(m) { printf "commit-msg: ERROR: %s\n", m > "/dev/stderr" }
+
+# True when the line, trimmed (and with optional <> around it), is only a URL.
+function is_url_only(s,   t) {
+    t = s
+    sub(/^[ \t]+/, "", t)
+    sub(/[ \t]+$/, "", t)
+    sub(/^</, "", t)
+    sub(/>$/, "", t)
+    return (t ~ /^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^ \t]+$/)
+}
+' "$msg_file"

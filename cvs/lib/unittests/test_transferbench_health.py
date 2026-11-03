@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from cvs.core.runtimes.docker import DockerRuntime
 
 _TB_PATH = Path(__file__).resolve().parents[2] / 'tests' / 'health' / 'transferbench_cvs.py'
 _SPEC = importlib.util.spec_from_file_location('transferbench_cvs_under_test', _TB_PATH)
@@ -57,11 +58,64 @@ class TestTransferBenchEnvAndCommand(unittest.TestCase):
             '/opt/rocm',
             'p2p',
             {'NUM_CPU_DEVICES': '2'},
+            sudo_prefix='sudo -n ',
         )
-        self.assertTrue(cmd.startswith('sudo bash -c '))
+        self.assertTrue(cmd.startswith('sudo -n bash -c '))
         self.assertIn('NUM_CPU_DEVICES', cmd)
         self.assertIn('TransferBench p2p', cmd)
         self.assertIn('LD_LIBRARY_PATH', cmd)
+
+    def test_command_omits_sudo_when_prefix_empty(self):
+        cmd = tb.build_transferbench_command(
+            '/opt/amdtools/transferbench',
+            '/opt/rocm',
+            'p2p',
+            {'NUM_CPU_DEVICES': '2'},
+        )
+        self.assertTrue(cmd.startswith('bash -c '))
+        self.assertNotIn('sudo', cmd.split('bash', 1)[0])
+
+    def test_run_transferbench_passes_orch_sudo_prefix(self):
+        orch = MagicMock()
+        orch.orchestrator_type = 'baremetal'
+        orch.sudo_prefix.return_value = 'sudo -n '
+        orch.exec.return_value = {'nodeA': 'ok'}
+        with patch.object(tb, 'detect_rocm_path', return_value='/opt/rocm'):
+            tb.run_transferbench(
+                orch, {'path': '/tb', 'rocm_path': '/opt/rocm', 'num_cpu_devices': 2}, 'p2p', timeout=30
+            )
+        cmd = orch.exec.call_args.args[0]
+        self.assertTrue(cmd.startswith('sudo -n bash -c '))
+
+    def test_run_transferbench_container_sudo_stays_on_docker_exec(self):
+        captured = []
+
+        class _Host:
+            def exec(self, cmd, timeout=None, detailed=False, print_console=True):
+                captured.append(cmd)
+                return {'host1': 'ok'}
+
+        class _Orch:
+            orchestrator_type = 'container'
+            hosts = ('host1',)
+            all = _Host()
+
+            def sudo_prefix(self):
+                return 'sudo -n '
+
+            def exec(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
+                return DockerRuntime(MagicMock(), self).exec('cvs_health', cmd, hosts, timeout, detailed, print_console)
+
+        with patch.object(tb, 'detect_rocm_path', return_value='/opt/rocm'):
+            tb.run_transferbench(
+                _Orch(), {'path': '/tb', 'rocm_path': '/opt/rocm', 'num_cpu_devices': 2}, 'p2p', timeout=30
+            )
+        self.assertEqual(len(captured), 1)
+        rendered = captured[0]
+        self.assertTrue(rendered.startswith('sudo -n docker exec cvs_health bash -c '))
+        payload = rendered.split(' bash -c ', 1)[1]
+        self.assertNotIn('sudo', payload)
+        self.assertIn('TransferBench', payload)
 
     def test_detect_command_counts_populated_cpulists(self):
         self.assertIn('for f in /sys/devices/system/node/node*/cpulist', tb._DETECT_NUM_CPU_DEVICES_CMD)
@@ -90,7 +144,7 @@ class TestTransferBenchEnvAndCommand(unittest.TestCase):
 class TestParseTbP2pBw(unittest.TestCase):
     def test_helios_r_abort_fail_tests_without_attributeerror(self):
         with patch.object(tb, 'fail_test') as fail_test:
-            tb.parse_tb_p2p_bw({'ctheliosr-rck-g02-k19-1': HELIOS_R_P2P_ABORT}, P2P_EXPECT)
+            tb.parse_tb_p2p_bw({'nodeA': HELIOS_R_P2P_ABORT}, P2P_EXPECT)
         fail_test.assert_called_once()
         message = fail_test.call_args.args[0]
         self.assertIn('UniDir averages not found', message)
@@ -111,6 +165,73 @@ class TestScanTestResultsNumaAbort(unittest.TestCase):
         utils_lib.scan_test_results({'nodeA': HELIOS_R_P2P_ABORT})
         mock_fail_test.assert_called()
         self.assertIn('allocate', mock_fail_test.call_args.args[0].lower())
+
+
+class TestResolveA2aSweepTimeout(unittest.TestCase):
+    def test_default_derivation_is_1500(self):
+        self.assertEqual(tb.resolve_a2asweep_timeout({}), 1500)
+
+    def test_explicit_timeout_wins(self):
+        self.assertEqual(tb.resolve_a2asweep_timeout({'a2asweep_timeout': 1800}), 1800)
+        self.assertEqual(tb.resolve_a2asweep_timeout({'a2asweep_timeout': '1200'}), 1200)
+
+    def test_custom_combos_sec_buffer_derivation(self):
+        cfg = {
+            'a2asweep_combos': 30,
+            'a2asweep_sec_per_combo': 40,
+            'a2asweep_timeout_buffer': 100,
+        }
+        self.assertEqual(tb.resolve_a2asweep_timeout(cfg), 30 * 40 + 100)
+
+    def test_floor_at_former_ten_minute_minimum(self):
+        cfg = {
+            'a2asweep_combos': 1,
+            'a2asweep_sec_per_combo': 1,
+            'a2asweep_timeout_buffer': 1,
+        }
+        self.assertEqual(tb.resolve_a2asweep_timeout(cfg), 600)
+        self.assertEqual(tb.resolve_a2asweep_timeout({'a2asweep_timeout': 100}), 600)
+
+
+A2A_RTOTAL_OK = "│  RTotal │ 326.11   325.01   326.48   324.77   324.87   326.37   324.68   326.75 │\n"
+A2A_EXPECT_MIN = {'gpu_to_gpu_a2a_per_link_min': '32.9'}
+
+
+class TestParseTbA2aBw(unittest.TestCase):
+    def test_per_link_average_helper(self):
+        # Eight GPUs at 326 → mean(326/7) ≈ 46.57
+        avg = tb.a2a_per_link_average(['326'] * 8)
+        self.assertAlmostEqual(avg, 326.0 / 7.0, places=5)
+
+    def test_min_above_guide_bar_passes(self):
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_a2a_bw({'nodeA': A2A_RTOTAL_OK}, A2A_EXPECT_MIN)
+        fail_test.assert_not_called()
+
+    def test_legacy_avg_alias_passes(self):
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_a2a_bw({'nodeA': A2A_RTOTAL_OK}, {'gpu_to_gpu_a2a_avg': '32.9'})
+        fail_test.assert_not_called()
+
+    def test_min_below_guide_bar_fails(self):
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_a2a_bw({'nodeA': A2A_RTOTAL_OK}, {'gpu_to_gpu_a2a_per_link_min': '50.0'})
+        fail_test.assert_called()
+        self.assertIn('min per-link', fail_test.call_args.args[0])
+
+    def test_one_slow_gpu_fails_even_if_mean_clears(self):
+        # Seven GPUs at 400 (~57.1/link) and one at 100 (~14.3/link): mean ~51.8 clears 32.9, min does not.
+        mixed = "│  RTotal │ 400.0   400.0   400.0   400.0   400.0   400.0   400.0   100.0 │\n"
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_a2a_bw({'nodeA': mixed}, A2A_EXPECT_MIN)
+        fail_test.assert_called()
+        self.assertIn('min per-link', fail_test.call_args.args[0])
+
+    def test_missing_per_link_min_key_fails(self):
+        with patch.object(tb, 'fail_test') as fail_test:
+            tb.parse_tb_a2a_bw({'nodeA': A2A_RTOTAL_OK}, {'gpu_to_gpu_a2a_rtotal': '320.0'})
+        fail_test.assert_called()
+        self.assertIn('gpu_to_gpu_a2a_per_link_min', fail_test.call_args.args[0])
 
 
 if __name__ == '__main__':

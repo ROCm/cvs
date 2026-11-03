@@ -123,6 +123,28 @@ class TestWorkspaceResolution(_RunLayoutTestCase):
         layout = RunLayout.get(self.workspace)
         self.assertEqual(layout.workspace, Path(self.workspace))
 
+    def test_managed_run_without_workspace_is_a_clean_error(self):
+        # A scheduler-managed run must NOT fall through to the venv-parent default:
+        # in a container that path is node-local, so ranks cannot rendezvous and the
+        # collected artifacts vanish at teardown. Require an explicit workspace.
+        self._enter_job_step(job_id="424242")
+        with self.assertRaisesRegex(RuntimeError, "--workspace"):
+            RunLayout.get()
+
+    def test_managed_run_with_explicit_workspace_is_allowed(self):
+        # The guard rejects only the derived default; a managed run that names a
+        # shared-storage workspace resolves normally.
+        self._enter_job_step(job_id="424242")
+        layout = RunLayout.get(self.workspace)
+        self.assertEqual(layout.workspace, Path(self.workspace))
+
+    def test_managed_run_with_env_workspace_is_allowed(self):
+        # CVS_WORKSPACE is the other accepted explicit source for a managed run.
+        self._enter_job_step(job_id="424242")
+        os.environ["CVS_WORKSPACE"] = self.workspace
+        layout = RunLayout.get()
+        self.assertEqual(layout.workspace, Path(self.workspace))
+
 
 class TestRunIdResolution(_RunLayoutTestCase):
     def test_job_step_uses_the_job_id(self):
@@ -158,10 +180,12 @@ class TestPathComposition(_RunLayoutTestCase):
     def test_default_workspace_composes_the_same_shape_as_an_explicit_one(self):
         # The derived default is the one workspace no test pinned end-to-end:
         # asserting it in isolation let a "cvs_runs" suffix on the default and the
-        # "cvs_runs" segment run_dir adds coexist as cvs_runs/cvs_runs.
-        self._enter_job_step(job_id="99")
+        # "cvs_runs" segment run_dir adds coexist as cvs_runs/cvs_runs. Stays
+        # unmanaged: a managed run with no explicit workspace is now a hard error,
+        # so the venv-parent default is only ever exercised off-scheduler.
         layout = RunLayout.get()
-        self.assertEqual(layout.run_dir, Path(self.workspace) / "cvs_runs" / "99")
+        self.assertEqual(layout.run_dir, Path(self.workspace) / "cvs_runs" / layout.run_id)
+        self.assertRegex(layout.run_id, LOCAL_RUN_ID)
 
     def test_get_tolerates_preexisting_directories(self):
         # Every rank in a job step initializes against the same shared-FS paths,

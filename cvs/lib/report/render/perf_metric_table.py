@@ -42,41 +42,50 @@ def render_benchmark_metrics_html(
     *,
     columns: Sequence[MetricColumn] = (),
 ) -> str:
-    """Render a collapsible pass/fail/skip/record metric-verdict table."""
+    """Render a collapsible pass/fail/skip/record metric-verdict table.
 
-    def _display_value(value: Any, unit: Any) -> str:
+    A row may set ``digits`` to show its Actual and gate values with more than
+    the default one decimal place, for example for ratios well below 1.
+    """
+
+    def _display_value(value: Any, unit: Any, digits: int) -> str:
         if value is None:
             return '—'
         suffix = f' {unit}' if unit and unit != '-' else ''
-        return f'{fmt_num(value)}{suffix}'
+        return f'{fmt_num(value, digits)}{suffix}'
 
-    def _display_gate(spec: Any, *, enforced: bool) -> str:
+    def _display_gate(spec: Any, *, enforced: bool, digits: int) -> str:
         if not isinstance(spec, Mapping):
             return '—'
         kind = spec.get('kind', '')
         value = spec.get('value')
-        rendered = str(kind) if value is None else f'{kind} {fmt_num(value)}'
+        rendered = str(kind) if value is None else f'{kind} {fmt_num(value, digits)}'
         return rendered if enforced else f'reference: {rendered}'
 
+    deduped = list(dedupe_metric_rows(rows))
+    # One node is already identified by the test. Several nodes otherwise share a Result cell.
+    show_node = len({str(row.get('node') or '') for row in deduped}) > 1
+    node_header = '<th>Node</th>' if show_node else ''
     body_rows = []
-    for row in dedupe_metric_rows(rows):
+    for row in deduped:
         status = str(row.get('status') or '').lower()
         outcome, outcome_cls = {
             'pass': ('Passed', 'passed'),
             'skip': ('Skipped', 'skipped'),
             'record': ('Recorded', 'record'),
         }.get(status, ('Failed', 'failed'))
-        label = str(row.get('label') or metric_display_label(str(row.get('metric') or ''), columns))
-        node = row.get('node') or row.get('host')
-        if node:
-            label = f'{node}: {label}'
-        label = html.escape(label)
-        actual = html.escape(_display_value(row.get('actual'), row.get('unit')))
-        gate = html.escape(_display_gate(row.get('spec'), enforced=bool(row.get('enforced', status != 'record'))))
+        label = html.escape(str(row.get('label') or metric_display_label(str(row.get('metric') or ''), columns)))
+        digits = 1 if row.get('digits') is None else int(row['digits'])
+        actual = html.escape(_display_value(row.get('actual'), row.get('unit'), digits))
+        gate = html.escape(
+            _display_gate(row.get('spec'), enforced=bool(row.get('enforced', status != 'record')), digits=digits)
+        )
         reason = html.escape(str(row.get('reason') or ''))
+        node_cell = f"<td class='col-node'>{html.escape(str(row.get('node') or ''))}</td>" if show_node else ''
         body_rows.append(
             f"<tr class='cvs-benchmark-metric-row cvs-benchmark-metric-{outcome_cls} {outcome_cls}'>"
             f"<td class='col-result'>{outcome}</td>"
+            f'{node_cell}'
             f"<td class='col-testId'>{label}</td>"
             f"<td class='col-actual'>{actual}</td>"
             f"<td class='col-gate'>{gate}</td>"
@@ -85,7 +94,7 @@ def render_benchmark_metrics_html(
         )
     return (
         f"<table class='cvs-benchmark-metrics-table {_BENCHMARK_METRICS_WRAP}'>"
-        "<thead><tr><th>Result</th><th>Metric</th><th>Actual</th><th>Gate / reference</th><th>Note</th></tr></thead>"
+        f"<thead><tr><th>Result</th>{node_header}<th>Metric</th><th>Actual</th><th>Gate / reference</th><th>Note</th></tr></thead>"
         f"<tbody>{''.join(body_rows)}</tbody></table>"
     )
 

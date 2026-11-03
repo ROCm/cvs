@@ -23,6 +23,8 @@ from cvs.lib.inference.utils.inferencing_config_loader import (
 from cvs.lib.utils.config_loader import ModelSpec
 from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
 
+FAKE_CRED_FILE = "/home/x/.hf"
+
 
 def _combo(name, isl="128", osl="2048"):
     return SeqCombo(name=name, isl=isl, osl=osl)
@@ -58,7 +60,7 @@ def _variant(sweep, tp="8", thresholds=None, enforce_thresholds=False):
             "shared_fs": "/home/x",
             "models_dir": "/home/x/models",
             "log_dir": "/home/x/LOGS",
-            "hf_token_file": "/home/x/.hf",
+            "hf_token_file": FAKE_CRED_FILE,
         },
         model={"id": "amd/Llama-3.1-70B-Instruct-FP8-KV", "remote": 0},
         container={
@@ -156,7 +158,7 @@ class TestGatedMetricCoverage(unittest.TestCase):
                 "shared_fs": "/home/x",
                 "models_dir": "/home/x/models",
                 "log_dir": "/home/x/LOGS",
-                "hf_token_file": "/home/x/.hf",
+                "hf_token_file": FAKE_CRED_FILE,
             },
             model={"id": "amd/Llama-3.1-70B-Instruct-FP8-KV", "remote": 0},
             container={"name": "c", "image": "rocm/vllm-dev:nightly-sshd", "runtime": {"name": "docker"}},
@@ -234,7 +236,7 @@ class TestThresholdJsonField(unittest.TestCase):
                 "shared_fs": "/home/x",
                 "models_dir": "/home/x/models",
                 "log_dir": "/home/x/LOGS",
-                "hf_token_file": "/home/x/.hf",
+                "hf_token_file": FAKE_CRED_FILE,
             },
             model={"id": "amd/Llama-3.1-70B", "remote": 0},
             container={"name": "c", "image": "img", "runtime": {"name": "docker"}},
@@ -276,7 +278,7 @@ class TestCellCoverageAxis(unittest.TestCase):
                 "shared_fs": "/home/x",
                 "models_dir": "/home/x/models",
                 "log_dir": "/home/x/LOGS",
-                "hf_token_file": "/home/x/.hf",
+                "hf_token_file": FAKE_CRED_FILE,
             },
             model={"id": "amd/Llama-3.1-70B", "remote": 0},
             container={"name": "c", "image": "img", "runtime": {"name": "docker"}},

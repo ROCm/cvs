@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest import mock
 
-from _pytest.outcomes import Skipped
+import pytest
 
 from cvs.lib.report import benchmark_metric_registry as registry
 from cvs.tests.inference.vllm import _common
@@ -16,6 +16,7 @@ class _FakeStash(dict):
     pass
 
 
+# Records only pytest.fail(); an AssertionError escapes, since bare asserts are stripped under python -O.
 class _CapturingSubtests:
     def __init__(self):
         self.calls = []
@@ -26,11 +27,11 @@ class _CapturingSubtests:
         self.calls.append(kwargs)
         try:
             yield
-        except AssertionError as exc:
+        except pytest.fail.Exception as exc:
             self.failures.append(str(exc))
 
 
-class TestVerifyCellMetrics(unittest.TestCase):
+class TestInferenceCellMetrics(unittest.TestCase):
     def setUp(self):
         registry._ROWS_BY_NODEID.clear()
         registry._COLUMNS_BY_NODEID.clear()
@@ -52,37 +53,33 @@ class TestVerifyCellMetrics(unittest.TestCase):
             },
             enforce_thresholds=False,
         )
-        result_key = _common._cell_result_key(variant, run)
-        inf_res_dict = {
-            result_key: {
-                'head': {
-                    'output_throughput': 99,
-                    'mean_ttft_ms': 40,
-                    'queue_time_p50_ms': None,
-                }
+        host_dict = {
+            'head': {
+                'output_throughput': 99,
+                'mean_ttft_ms': 40,
+                'queue_time_p50_ms': None,
             }
         }
         node = SimpleNamespace(
-            nodeid='cvs/tests/inference/vllm/vllm_single.py::test_verify_cell_metrics[cell]',
+            nodeid='cvs/tests/inference/vllm/vllm_single.py::test_vllm_inference[cell]',
             stash=_FakeStash(),
         )
         lifecycle = SimpleNamespace(record=mock.Mock())
         subtests = SimpleNamespace(test=mock.Mock())
 
-        with self.assertRaises(Skipped):
-            _common.test_verify_cell_metrics(
-                run,
-                inf_res_dict,
-                variant,
-                lifecycle,
-                SimpleNamespace(node=node),
-                subtests,
-            )
+        _common._verify_cell_metrics(
+            host_dict,
+            run,
+            variant,
+            lifecycle,
+            SimpleNamespace(node=node),
+            subtests,
+        )
 
         rows = registry.benchmark_metric_rows_for_nodeid(node.nodeid)
         self.assertEqual(
             [(row['metric'], row['status']) for row in rows],
-            [('output_throughput', 'record'), ('mean_ttft_ms', 'record')],
+            [('output_throughput', 'pass'), ('mean_ttft_ms', 'pass')],
         )
         subtests.test.assert_not_called()
         lifecycle.record.assert_called_once()
@@ -117,24 +114,21 @@ class TestVerifyCellMetrics(unittest.TestCase):
             },
             enforce_thresholds=True,
         )
-        result_key = _common._cell_result_key(variant, run)
-        inf_res_dict = {
-            result_key: {
-                'head': {'output_throughput': 99, 'mean_ttft_ms': 40},
-                'worker': {'output_throughput': 101, 'mean_ttft_ms': 60},
-            }
+        host_dict = {
+            'head': {'output_throughput': 99, 'mean_ttft_ms': 40},
+            'worker': {'output_throughput': 101, 'mean_ttft_ms': 60},
         }
         node = SimpleNamespace(
-            nodeid='cvs/tests/inference/vllm/vllm_single.py::test_verify_cell_metrics[cell]',
+            nodeid='cvs/tests/inference/vllm/vllm_single.py::test_vllm_inference[cell]',
             stash=_FakeStash(),
             user_properties=[],
         )
         lifecycle = SimpleNamespace(record=mock.Mock())
         subtests = _CapturingSubtests()
 
-        _common.test_verify_cell_metrics(
+        _common._verify_cell_metrics(
+            host_dict,
             run,
-            inf_res_dict,
             variant,
             lifecycle,
             SimpleNamespace(node=node),
@@ -150,7 +144,10 @@ class TestVerifyCellMetrics(unittest.TestCase):
                 {'node': 'worker', 'metric': 'mean_ttft_ms'},
             ],
         )
-        self.assertEqual(len(subtests.failures), 2)
+        self.assertEqual(
+            subtests.failures,
+            ['output_throughput: actual 99 < min 100', 'mean_ttft_ms: actual 60 > max 50'],
+        )
         keys = [key for key, _value in node.user_properties]
         self.assertEqual(keys.count(_common.VLLM_JUNIT_PROPERTY), 1)
 

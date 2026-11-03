@@ -63,12 +63,58 @@ class TestPerfMetricTable(unittest.TestCase):
         )
         self.assertIn('cvs-benchmark-metrics-table', html_out)
         self.assertIn('Mean TTFT (ms)', html_out)
+        self.assertNotIn('n1:', html_out)
         self.assertIn('Passed', html_out)
         self.assertIn('Failed', html_out)
         self.assertIn('Skipped', html_out)
         self.assertIn('Recorded', html_out)
         self.assertIn('reference: min_tok_s 100', html_out)
         self.assertIn('metric unavailable', html_out)
+        self.assertNotIn('<th>Node</th>', html_out)
+
+    def test_render_benchmark_metrics_html_defaults_to_one_decimal_place(self):
+        html_out = render_benchmark_metrics_html(
+            [{'metric': 'ratio', 'status': 'pass', 'actual': 0.02235, 'spec': {'kind': 'min', 'value': 0.01}}]
+        )
+        self.assertIn("<td class='col-actual'>0.0</td>", html_out)
+        self.assertIn("<td class='col-gate'>min 0.0</td>", html_out)
+
+    def test_render_benchmark_metrics_html_uses_row_digits(self):
+        html_out = render_benchmark_metrics_html(
+            [
+                {
+                    'metric': 'ratio',
+                    'status': 'pass',
+                    'actual': 0.02236,
+                    'spec': {'kind': 'min', 'value': 0.01},
+                    'digits': 4,
+                },
+                {
+                    'metric': 'time',
+                    'status': 'fail',
+                    'actual': 6829.694,
+                    'unit': 'ms',
+                    'spec': {'kind': 'max', 'value': 1},
+                    'digits': 2,
+                },
+                {'metric': 'count', 'status': 'pass', 'actual': 3, 'spec': {'kind': 'min', 'value': 2}, 'digits': 0},
+            ]
+        )
+        self.assertIn("<td class='col-actual'>0.0224</td><td class='col-gate'>min 0.0100</td>", html_out)
+        self.assertIn("<td class='col-actual'>6,829.69 ms</td><td class='col-gate'>max 1.00</td>", html_out)
+        self.assertIn("<td class='col-actual'>3</td><td class='col-gate'>min 2</td>", html_out)
+
+    def test_render_benchmark_metrics_html_names_node_when_several_nodes(self):
+        html_out = render_benchmark_metrics_html(
+            [
+                {'node': 'rank0', 'metric': 'goodput', 'status': 'pass'},
+                {'node': 'rank1', 'metric': 'goodput', 'status': 'fail'},
+            ]
+        )
+
+        self.assertIn('<th>Node</th>', html_out)
+        self.assertIn('rank0', html_out)
+        self.assertIn('rank1', html_out)
 
     def test_is_benchmark_metrics_extra_detects_wrapped_table(self):
         html_out = render_benchmark_metrics_html([{'node': 'n1', 'metric': 'goodput', 'status': 'pass'}])

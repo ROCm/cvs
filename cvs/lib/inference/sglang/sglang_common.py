@@ -4,25 +4,212 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import shlex
 import time
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Mapping
+
+import pytest
 
 from cvs.lib import globals
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
-from cvs.lib.utils_lib import fail_test
+from cvs.lib.utils_lib import fail_test, get_passwordless_sudo_status
 from cvs.lib.utils.verdict import ThresholdViolation, _check_one, evaluate_all
 
 log = globals.log
 
 DEFAULT_GPU_MEM_THRESHOLD_MB = 5000
-AMD_SMI_METRIC_CMD = "sudo amd-smi metric --json"
+DEFAULT_SGLANG_SERVE_PORT = "8000"
+DEFAULT_SGLANG_DIST_INIT_PORT = "40001"
+DEFAULT_SGLANG_PREFILL_SERV_PORT = "30001"
+DEFAULT_SGLANG_DECODE_SERV_PORT = "30002"
+DEFAULT_SGLANG_PREFILL_COORD_PORT = "40001"
+DEFAULT_SGLANG_DECODE_COORD_PORT = "40002"
+# A bare `amd-smi metric` reads every section, including --xgmi-err, and on MI200
+# and older GPUs that read resets the xGMI error counters.
+AMD_SMI_METRIC_CMD = "amd-smi metric --mem-usage --json"
+
+_DISAGG_PINNED_ROLE_KEYS = (
+    "prefill_node_list",
+    "decode_node_list",
+    "proxy_router_node",
+    "benchmark_serv_node",
+    "prefill_coordinator_addr",
+    "decode_coordinator_addr",
+)
 
 _SERVER_READY_RE = re.compile(
     r"server is fired up and ready to roll",
     re.I,
 )
+
+SGLANG_ERROR_PATTERNS = {
+    'NCCL ERROR': r'NCCL ERROR|NCCL timeout|local work queue catastrophic error',
+    'GPU HW ERROR': r'HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset',
+    'application exception': (
+        r'AssertionError|During handling of the above exception|'
+        r'triggered the following exception|RuntimeError|Python error: Aborted'
+    ),
+    'ROCm error': (
+        r'FAILED_PRECONDITION: No visible GPU devices|'
+        r'failed call to hipInit: HIP_ERROR_NoDevice|'
+        r'librocm reported version is: NOT_FOUND'
+    ),
+    'Python error': r'ModuleNotFoundError: No module named|Fatal Python error:',
+    'resource error': (
+        r'RESOURCE_EXHAUSTED: Out of memory|failed: RESOURCE_EXHAUSTED|'
+        r'urllib.error.URLError|ConnectionRefusedError|HSA_STATUS_ERROR_OUT_OF_RESOURCES'
+    ),
+    'serving error': (
+        r'Service Unavailable|No decode workers available|No prefill workers available|'
+        r'Please check if decode servers are configured and healthy|'
+        r'Please check if prefill servers are configured and healthy|'
+        r'Cannot access gated repo|You must have access to it and be authenticated'
+    ),
+}
+
+SGLANG_KV_TRANSFER_PATTERNS = {
+    'kv transfer': r'KVTransfer|kv_transfer|kv cache|TransferEngine|mooncake',
+    'disaggregation': r'disaggregat',
+    'rdma': r'\bRDMA\b|ibv_|NCCL timeout',
+    'pd workers': (
+        r'No decode workers available|No prefill workers available|'
+        r'decode servers are configured|prefill servers are configured'
+    ),
+}
+
+
+def _sglang_exec_text(result, host):
+    if isinstance(result, str):
+        return result
+    value = (result or {}).get(host, '')
+    return value if isinstance(value, str) else (value or {}).get('output', '') or ''
+
+
+_LOG_SCANNED_MARKER = '__CVS_LOG_SCANNED__'
+_LOG_MISSING_PREFIX = '__CVS_MISSING_LOG__:'
+
+
+def grep_sglang_log(host, path, patterns, exec_log_command):
+    """Return ``grep -niE -C 2`` output for ``path`` on ``host``.
+
+    A completed read ends with ``__CVS_LOG_SCANNED__``. grep exits 1 when the
+    file has no hits; only that and exit 0 count as a read. A missing file
+    prints ``__CVS_MISSING_LOG__`` instead.
+    """
+    combined = '|'.join(f'({pattern})' for pattern in patterns.values() if pattern)
+    quoted_path = shlex.quote(path)
+    scanned = shlex.quote(_LOG_SCANNED_MARKER)
+    missing = shlex.quote(f'{_LOG_MISSING_PREFIX}{path}')
+    command = (
+        f"if test -f {quoted_path}; then "
+        f"grep -niE -C 2 -- {shlex.quote(combined)} {quoted_path} || rc=$?; "
+        f"if [ \"${{rc:-0}}\" -le 1 ]; then echo {scanned}; fi; "
+        f"else echo {missing}; fi"
+    )
+    return _sglang_exec_text(exec_log_command(host, command), host)
+
+
+def _log_scan_result(text):
+    lines = (text or '').splitlines()
+    missing = next((line for line in lines if line.startswith(_LOG_MISSING_PREFIX)), '')
+    scanned = any(line.strip() == _LOG_SCANNED_MARKER for line in lines)
+    body = '\n'.join(line for line in lines if line.strip() != _LOG_SCANNED_MARKER)
+    return missing, scanned, body
+
+
+def _unread_log_excerpt(text):
+    excerpt = (text or '').strip().replace('\n', ' ')
+    if len(excerpt) > 300:
+        excerpt = excerpt[:300] + '...'
+    return excerpt or 'empty output'
+
+
+def log_sglang_log_matches(targets, exec_log_command, patterns, heading="SGLang log matches"):
+    """Grep ``targets`` and write hits into the current test log (no fail_test)."""
+    for host, path, role in targets:
+        missing, scanned, body = _log_scan_result(grep_sglang_log(host, path, patterns, exec_log_command))
+        if missing:
+            log.warning("SGLang %s log is missing on %s: %s", role, host, path)
+            continue
+        if not scanned:
+            log.warning("SGLang %s log on %s was not read: %s", role, host, path)
+            continue
+        stripped = body.strip()
+        if stripped:
+            log.info("%s (%s / %s / %s):\n%s", heading, role, host, path, stripped)
+        else:
+            log.info("%s (%s / %s): no matching lines", heading, role, host)
+
+
+def scan_sglang_error_logs(
+    targets,
+    exec_log_command,
+    error_patterns=None,
+    ignore_error_patterns=None,
+):
+    """Scan explicit ``(host, path, role)`` targets once after inference."""
+    patterns = error_patterns or SGLANG_ERROR_PATTERNS
+    ignore_res = [re.compile(pattern, re.I) for pattern in (ignore_error_patterns or {}).values() if pattern]
+    all_clean = True
+
+    for host, path, role in targets:
+        text = grep_sglang_log(host, path, patterns, exec_log_command)
+        missing, scanned, body = _log_scan_result(text)
+
+        if missing:
+            fail_test(f"SGLang {role} log is missing on {host}: {path}")
+            all_clean = False
+            continue
+        if not scanned:
+            fail_test(f"SGLang {role} log on {host} was not read ({path}): {_unread_log_excerpt(text)}")
+            all_clean = False
+            continue
+
+        hits = []
+        for line in body.splitlines():
+            if ignore_res and any(ignore_re.search(line) for ignore_re in ignore_res):
+                continue
+            for name, pattern in patterns.items():
+                if pattern and re.search(pattern, line, re.I):
+                    if name not in hits:
+                        hits.append(name)
+                    break
+
+        if hits:
+            log.error(
+                "SGLang error matches in %s log on %s (%s):\n%s",
+                role,
+                host,
+                path,
+                body.rstrip(),
+            )
+            fail_test(f"SGLang {role} log on {host} contains error signatures: {', '.join(hits)} ({path})")
+            all_clean = False
+
+    return all_clean
+
+
+def launch_script_start_cmd(script_path, script_body, env_script, log_path):
+    """Quoted ``bash -c`` that writes, chmods, sources env, and nohups a launch script."""
+    log_dir = os.path.dirname(log_path) or '.'
+    body = script_body if script_body.endswith('\n') else script_body + '\n'
+    return "bash -c " + shlex.quote(
+        f"cat > {shlex.quote(script_path)} <<'EOF'\n{body}EOF\n"
+        f"chmod 755 {shlex.quote(script_path)}\n"
+        f"mkdir -p {shlex.quote(log_dir)}\n"
+        f"source {shlex.quote(env_script)}\n"
+        f"nohup bash {shlex.quote(script_path)} > {shlex.quote(log_path)} 2>&1 &"
+    )
+
+
+def stage_and_start_launch_script(exec_in_container, hosts, script_path, script_body, env_script, log_path):
+    """Stage ``script_body`` on ``hosts`` and start it in the background."""
+    return exec_in_container(
+        launch_script_start_cmd(script_path, script_body, env_script, log_path),
+        hosts=as_node_list(hosts),
+    )
 
 
 def textwrap_for_yml(msg_string: str) -> str:
@@ -34,6 +221,75 @@ def as_node_list(value) -> list:
     if isinstance(value, str):
         return [value]
     return list(value)
+
+
+def resolve_single_execution_hosts(cluster_dict):
+    """First ``cluster.json`` node only; extra hosts are ignored."""
+    hosts = [host for host in (cluster_dict.get("node_dict") or {}) if host]
+    if not hosts:
+        raise ValueError("sglang_single requires at least one host in cluster node_dict")
+    return hosts[:1]
+
+
+def resolve_distributed_execution_hosts(cluster_dict, inference):
+    """First ``nnodes`` hosts from ``cluster.json``; rank-0 is master and benchmark.
+
+    Ignores ``server_node_list`` and ``benchmark_serv_node``. Fails if ``nnodes``
+    is larger than the cluster.
+    """
+    hosts = [host for host in (cluster_dict.get("node_dict") or {}) if host]
+    nnodes = int(inference.get("nnodes") or 0)
+    if nnodes < 2:
+        raise ValueError(f"sglang_distributed requires nnodes >= 2, got {nnodes}")
+    if len(hosts) < nnodes:
+        raise ValueError(f"sglang_distributed requests {nnodes} nodes but cluster.json only has {len(hosts)}")
+    return hosts[:nnodes]
+
+
+def assign_disagg_pd_roles(hosts, nnodes):
+    """Split hosts into equal prefill/decode groups.
+
+    Rank-0 is prefill coordinator, proxy router, and benchmark. Rank-1 is decode
+    coordinator. Remaining hosts are split in half (prefill first, then decode).
+    """
+    nnodes = int(nnodes or 0)
+    if nnodes < 2:
+        raise ValueError(f"sglang_disagg requires nnodes >= 2, got {nnodes}")
+    if nnodes % 2:
+        raise ValueError(f"sglang_disagg requires an even nnodes so prefill and decode counts match, got {nnodes}")
+    selected = [host for host in hosts if host]
+    if len(selected) < 2:
+        raise ValueError(f"sglang_disagg requires at least 2 cluster.json hosts, got {len(selected)}")
+    if len(selected) < nnodes:
+        raise ValueError(f"sglang_disagg requests {nnodes} nodes but the cluster only has {len(selected)}")
+    selected = selected[:nnodes]
+    remaining = selected[2:]
+    extra = len(remaining) // 2
+    prefill = [selected[0]] + remaining[:extra]
+    decode = [selected[1]] + remaining[extra:]
+    return {
+        "hosts": selected,
+        "prefill_node_list": prefill,
+        "decode_node_list": decode,
+        "proxy_router_node": selected[0],
+        "benchmark_serv_node": selected[0],
+        "prefill_coordinator_addr": selected[0],
+        "decode_coordinator_addr": selected[1],
+    }
+
+
+def resolve_disagg_execution_roles(cluster_dict, inference):
+    """PD roles from the first ``nnodes`` hosts in ``cluster.json``."""
+    hosts = [host for host in (cluster_dict.get("node_dict") or {}) if host]
+    if len(hosts) < 2:
+        raise ValueError(f"sglang_disagg requires at least 2 cluster.json hosts, got {len(hosts)}")
+    return assign_disagg_pd_roles(hosts, inference.get("nnodes"))
+
+
+def stamp_disagg_roles(inference, roles):
+    inference["_execution_hosts"] = list(roles["hosts"])
+    for key in _DISAGG_PINNED_ROLE_KEYS:
+        inference[key] = roles[key]
 
 
 def resolve_server_node_list(inf_dict: Mapping[str, Any]) -> list[str]:
@@ -119,15 +375,166 @@ def _normalize_cli_flags(raw: Any) -> list[str]:
     raise ValueError(f'add_flags must be a list or str, got {type(raw).__name__}')
 
 
+def long_context_requested(value):
+    """True for JSON true and for the string forms users paste into configs."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ('true', '1', 'yes', 'on')
+    if isinstance(value, int):
+        return value == 1
+    return False
+
+
+def _long_context_cli_flags(bp_dict, *, include_chunked_prefill=True):
+    """Build server flags required by an activated long-context workload.
+
+    Chunked-prefill caps apply only to prefill (or unified) servers. Decode still
+    needs ``--context-length`` so it can hold the transferred KV cache.
+    """
+    if not long_context_requested(bp_dict.get('lng_ctx_activate')):
+        return []
+
+    context_length = bp_dict.get('context_length')
+    if context_length in (None, ''):
+        raise ValueError('context_length is required when lng_ctx_activate is true')
+    flags = [f'--context-length {context_length}']
+    if not include_chunked_prefill:
+        return flags
+
+    chunked_prefill_size = bp_dict.get('chunked_prefill_size')
+    if chunked_prefill_size in (None, ''):
+        raise ValueError('chunked_prefill_size is required when lng_ctx_activate is true')
+    flags.append(f'--chunked-prefill-size {chunked_prefill_size}')
+
+    max_prefill_tokens = bp_dict.get('max_prefill_tokens')
+    if max_prefill_tokens not in (None, ''):
+        flags.append(f'--max-prefill-tokens {max_prefill_tokens}')
+    return flags
+
+
+def hsa_force_fine_grain_pcie(inf_dict):
+    """``HSA_FORCE_FINE_GRAIN_PCIE`` from config, otherwise ``1``.
+
+    Container ``runtime.args.env`` is copied onto ``hsa_force_fine_grain_pcie``
+    and ``container_config.env_dict``. A blank value is treated as unset so the
+    in-container export still has a concrete flag.
+    """
+    raw = None
+    if inf_dict:
+        raw = inf_dict.get('hsa_force_fine_grain_pcie')
+        if raw is None or str(raw).strip() == '':
+            env = (inf_dict.get('container_config') or {}).get('env_dict') or {}
+            raw = env.get('HSA_FORCE_FINE_GRAIN_PCIE')
+    if raw is None or str(raw).strip() == '':
+        return '1'
+    return str(raw).strip()
+
+
+def model_requires_hf_download(model):
+    """Hub ids are fetched inside the container; an absolute path is already local."""
+    text = str(model or '').strip()
+    return bool(text) and not text.startswith('/')
+
+
+def hf_token_export_line(token_file, model=''):
+    """Export ``HF_TOKEN`` by reading ``token_file`` inside the container.
+
+    The secret stays in that file. Embedding it in the shell command would
+    print it, because the orchestrator logs the full command.
+
+    A downloaded model exits when the file is missing or empty, so a gated
+    download does not continue with a blank token.
+    """
+    path = str(token_file or '').strip()
+    if not model_requires_hf_download(model):
+        if not path:
+            return 'export HF_TOKEN=\n'
+        quoted = shlex.quote(path)
+        return (
+            f"if [ -f {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; else export HF_TOKEN=; fi\n"
+        )
+    if not path:
+        return (
+            'echo "HF token file is not configured. Set paths.hf_token_file. '
+            'This model is downloaded from Hugging Face inside the container, '
+            'and the token is read on this node." >&2\n'
+            'exit 1\n'
+        )
+    quoted = shlex.quote(path)
+    return (
+        f"if [ ! -s {quoted} ]; then "
+        f"echo \"HF token file missing or empty inside the container: {quoted}. "
+        f"The token is read on this node, not on the machine running CVS.\" >&2; "
+        f"exit 1; "
+        f"fi\n"
+        f"export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"\n"
+    )
+
+
+def require_hf_token_on_nodes(orch, token_file, model, hosts=None):
+    """Fail when a downloaded model has no token file inside the container.
+
+    The launch script reads the file on the server nodes, so the check runs there.
+    """
+    if not model_requires_hf_download(model):
+        return
+    path = str(token_file or '').strip()
+    model_text = str(model or '').strip()
+    if not path:
+        fail_test(
+            "HF token file is not configured. Set paths.hf_token_file. "
+            f"Model {model_text} is downloaded from Hugging Face inside the container, "
+            "and the token is read on each server node."
+        )
+        return
+    quoted = shlex.quote(path)
+    node_hosts = as_node_list(hosts) if hosts is not None else None
+    kwargs = {"detailed": True, "timeout": 30}
+    if node_hosts is not None:
+        kwargs["hosts"] = node_hosts
+    result = orch.exec(f"test -s {quoted}", **kwargs) or {}
+    missing = []
+    seen = set()
+    for host, info in result.items():
+        seen.add(str(host))
+        code = info.get("exit_code") if isinstance(info, dict) else None
+        if code != 0:
+            missing.append(str(host))
+    if node_hosts is not None:
+        for host in node_hosts:
+            if str(host) not in seen:
+                missing.append(str(host))
+    if not result or missing:
+        where = ", ".join(missing) if missing else "no node returned a result"
+        fail_test(
+            f"HF token file {path} is missing or empty inside the container on {where}. "
+            f"Model {model_text} is downloaded from Hugging Face, and the token is read "
+            "on each server node, not on the machine running CVS."
+        )
+
+
+def _without_hf_token_assignments(entries):
+    kept = []
+    for entry in entries:
+        key = str(entry).split('=', 1)[0].strip()
+        if key == 'HF_TOKEN':
+            continue
+        kept.append(entry)
+    return kept
+
+
 def add_export_env_block(bp_dict: Mapping[str, Any], indent: str = '                      ') -> str:
     """Shell ``export`` lines from ``bp_dict['add_export_env']``."""
-    env = _normalize_key_value_list(bp_dict.get('add_export_env'), 'add_export_env')
+    env = _without_hf_token_assignments(_normalize_key_value_list(bp_dict.get('add_export_env'), 'add_export_env'))
     return '\n'.join(f'{indent}export {entry}' for entry in env)
 
 
-def add_cli_flags_block(bp_dict: Mapping[str, Any], indent: str = '                              ') -> str:
+def add_cli_flags_block(bp_dict, indent='                              ', *, include_chunked_prefill=True):
     """Extra ``launch_server`` CLI flag lines from ``bp_dict['add_flags']``."""
-    flags = _normalize_cli_flags(bp_dict.get('add_flags'))
+    flags = _normalize_cli_flags(bp_dict.get('add_flags')) + _long_context_cli_flags(
+        bp_dict, include_chunked_prefill=include_chunked_prefill
+    )
     if not flags:
         return ''
     return '\n'.join(f'{indent}{flag} \\' for flag in flags)
@@ -305,8 +712,8 @@ def verify_inference_results_subtests(
             if violation is not None:
                 all_passed = False
             with subtests.test(test_name=test_name, node=node, metric=metric):
-                if enforce_thresholds:
-                    assert violation is None, violation
+                if enforce_thresholds and violation is not None:
+                    pytest.fail(violation)
 
     return all_passed, finalize_inference_verification(host_exec)
 
@@ -409,14 +816,14 @@ def poll_for_inference_completion(
     """Poll benchmark logs until completion or timeout."""
     time.sleep(60)
     start_time = time.time()
-    poll_cap = inference_poll_iterations if inference_poll_iterations is not None else iterations
+    poll_cap = int(inference_poll_iterations if inference_poll_iterations is not None else iterations)
 
     def timed_out() -> bool:
         return total_timeout is not None and (time.time() - start_time) >= float(total_timeout)
 
     completed_pattern = re.compile('Serving Benchmark Result', re.I)
 
-    for itr in range(1, iterations + 1):
+    for itr in range(1, poll_cap + 1):
         if log_progress:
             log.info('Starting iteration %d', itr)
 
@@ -451,6 +858,28 @@ def poll_for_inference_completion(
     return {"status": "stuck_in_progress", "reason": msg}
 
 
+_OPENAI_COMPLETIONS_STEP = "completion_endpoint"
+
+
+def openai_completions_5xx_or_hang(results, probe_err=None):
+    """True when POST /v1/completions hung or returned HTTP 5xx.
+
+    GET /v1/models and POST /v1/chat/completions are ignored: a chat 5xx with a
+    200 completions response must not skip later stages.
+    """
+    if probe_err:
+        return True
+    if not results or _OPENAI_COMPLETIONS_STEP not in results:
+        fail_test(f"OpenAI probe did not report {_OPENAI_COMPLETIONS_STEP!r}: {results!r}")
+        return True
+    code, _body = results[_OPENAI_COMPLETIONS_STEP]
+    try:
+        status = int(code)
+    except (TypeError, ValueError):
+        return True
+    return status >= 500
+
+
 def verify_openai_compatible_endpoints(
     *,
     port: int,
@@ -476,8 +905,8 @@ def verify_openai_compatible_endpoints(
     out_dict = exec_probe("bash -c " + shlex.quote(inner), min(900, 480 + 180))
     raw_out = out_dict.get(probe_host_key) or first_output(out_dict)
 
-    probe_err: Optional[str] = None
-    results: dict[str, tuple[int, Any]] = {}
+    probe_err = None
+    results = {}
     if not raw_out or not str(raw_out).strip():
         probe_err = f"OpenAI-compatible probe produced no output on {probe_host_key!r}: {out_dict!r}"
     else:
@@ -501,16 +930,17 @@ def verify_openai_compatible_endpoints(
                             probe_err = f"OpenAI-compatible probe bad shape at {step!r}: {val!r}"
                             break
 
+    completions_5xx_or_hang = openai_completions_5xx_or_hang(results, probe_err)
     if probe_err is not None:
         fail_test(probe_err)
-        return []
+        return [], completions_5xx_or_hang
 
     OpenAIProbe.log_results(results, log)
     ok, err = OpenAIProbe.check_results(results, port=port, logger=log)
     if not ok:
         fail_test(f"{err}")
-        return OpenAIProbe.summarize_results(results, ok, err)
-    return OpenAIProbe.summarize_results(results, ok, err)
+        return OpenAIProbe.summarize_results(results, ok, err), completions_5xx_or_hang
+    return OpenAIProbe.summarize_results(results, ok, err), completions_5xx_or_hang
 
 
 def run_lm_eval_benchmark_test(
@@ -570,14 +1000,18 @@ def run_lm_eval_benchmark_test(
     return summary
 
 
-def build_log_dir_cleanup_cmd(log_dir: str, user: str) -> str:
-    """Shell command: rm -rf, recreate, chown (host namespace, not in-container)."""
+def build_log_dir_cleanup_cmd(log_dir: str, use_sudo=False) -> str:
+    """Build the host-side log directory reset command.
+
+    Root-owned logs left by the container are removed with passwordless sudo
+    only when ``use_sudo`` is set. Otherwise the command stays unprivileged so
+    a sudo that needs a password is never attempted.
+    """
     if not log_dir or not str(log_dir).strip():
         raise ValueError("log_dir must be a non-empty path")
-    log_dir = str(log_dir).strip()
-    quser = shlex.quote(str(user))
-    qdir = shlex.quote(log_dir)
-    return f"sudo rm -rf {qdir} && sudo mkdir -p {qdir} && sudo chown -R {quser}:{quser} {qdir}"
+    qdir = shlex.quote(str(log_dir).strip())
+    remove = f"sudo -n rm -rf {qdir}" if use_sudo else f"rm -rf {qdir}"
+    return f"{remove} && mkdir -p {qdir}"
 
 
 def cleanup_sglang_log_dir(
@@ -590,11 +1024,25 @@ def cleanup_sglang_log_dir(
     """Reset log root on cluster hosts via baremetal SSH (``orch.head`` / ``orch.all``)."""
     if all_nodes is None:
         all_nodes = len(orch.hosts) > 1
-    cmd = build_log_dir_cleanup_cmd(log_dir, orch.user)
-    if all_nodes:
-        orch.all.exec(cmd, timeout=timeout)
+    handle = orch.all if all_nodes else orch.head
+    sudo_status = get_passwordless_sudo_status(handle)
+    host_list = getattr(handle, "host_list", None)
+    if isinstance(host_list, (list, tuple)) and host_list:
+        hosts = list(host_list)
     else:
-        orch.head.exec(cmd, timeout=timeout)
+        hosts = list(sudo_status.keys())
+    without_sudo = [host for host in hosts if not sudo_status.get(host, False)]
+    if without_sudo:
+        log.info(
+            "Passwordless sudo unavailable on %d host(s); log cleanup will not use sudo",
+            len(without_sudo),
+        )
+    if len({sudo_status.get(host, False) for host in hosts}) <= 1:
+        use_sudo = bool(hosts) and sudo_status.get(hosts[0], False)
+        handle.exec(build_log_dir_cleanup_cmd(log_dir, use_sudo=use_sudo), timeout=timeout)
+        return
+    cmd_list = [build_log_dir_cleanup_cmd(log_dir, use_sudo=sudo_status.get(host, False)) for host in hosts]
+    handle.exec_cmd_list(cmd_list, timeout=timeout)
 
 
 LM_EVAL_SPECS = {
@@ -676,7 +1124,7 @@ def collect_sglang_gpu_topology(
             group_stats[name] = {"per_node": {}, "total": 0}
             continue
         per_node = count_occupied_gpus_per_node(
-            host_exec(amd_smi_cmd, hosts=hosts, timeout=timeout),
+            host_exec(amd_smi_cmd, hosts=hosts, timeout=timeout, print_console=False),
             mem_threshold_mb=mem_threshold_mb,
         )
         group_total = sum(per_node.values())

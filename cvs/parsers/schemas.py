@@ -390,313 +390,6 @@ class ClusterConfigFile(BaseModel):
         return v
 
 
-class AortaDockerConfigFile(BaseModel):
-    """Schema for docker section in aorta_benchmark.yaml."""
-
-    model_config = ConfigDict(extra="forbid")  # Catch typos
-
-    image: str = Field(
-        default="jeffdaily/pytorch:torchrec-dlrm-complete", description="Docker image for Aorta container"
-    )
-    container_name: str = Field(default="aorta-benchmark", description="Name for the Docker container")
-    shm_size: str = Field(default="17G", description="Shared memory size")
-    network_mode: str = Field(default="host", description="Docker network mode")
-    privileged: bool = Field(default=True, description="Run container in privileged mode")
-
-
-class AortaRcclConfigFile(BaseModel):
-    """Schema for rccl section in aorta_benchmark.yaml."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    clone_url: str = Field(
-        default="https://github.com/ROCmSoftwarePlatform/rccl.git", description="RCCL git repository URL"
-    )
-    branch: str = Field(default="develop", description="RCCL branch to build")
-    build_path: str = Field(default="/mnt/rccl", description="Path inside container for RCCL build")
-
-
-class AortaEnvironmentConfigFile(BaseModel):
-    """Schema for environment section in aorta_benchmark.yaml."""
-
-    model_config = ConfigDict(extra="allow")  # Allow custom env vars
-
-    NCCL_MAX_NCHANNELS: int = Field(default=112, ge=1, le=256, description="Maximum NCCL channels")
-    NCCL_MAX_P2P_NCHANNELS: int = Field(default=112, ge=1, le=256, description="Maximum NCCL P2P channels")
-    NCCL_DEBUG: str = Field(default="VERSION", description="NCCL debug level")
-    TORCH_NCCL_HIGH_PRIORITY: int = Field(default=1, ge=0, le=1, description="Enable high priority NCCL streams")
-    OMP_NUM_THREADS: int = Field(default=1, ge=1, description="OpenMP thread count")
-    RCCL_MSCCL_ENABLE: int = Field(default=0, ge=0, le=1, description="Enable MSCCL")
-
-
-class AortaExpectedResultsConfigFile(BaseModel):
-    """Schema for expected_results section in aorta_benchmark.yaml."""
-
-    model_config = ConfigDict(extra="allow")  # Allow custom thresholds
-
-    max_avg_iteration_ms: Optional[float] = Field(
-        default=None, ge=0, description="Maximum acceptable average iteration time in ms"
-    )
-    min_compute_ratio: Optional[float] = Field(default=None, ge=0, le=1, description="Minimum acceptable compute ratio")
-    min_overlap_ratio: Optional[float] = Field(
-        default=None, ge=0, le=1, description="Minimum acceptable compute-comm overlap ratio"
-    )
-    max_time_variance_ratio: Optional[float] = Field(
-        default=None, ge=0, description="Maximum acceptable iteration time variance"
-    )
-
-
-class AortaAnalysisConfigFile(BaseModel):
-    """Schema for analysis section in aorta_benchmark.yaml."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enable_tracelens: bool = Field(default=True, description="Run Aorta's TraceLens analysis after benchmark")
-    enable_gemm_analysis: bool = Field(default=False, description="Run Aorta's GEMM analysis (for sweep experiments)")
-    tracelens_script: str = Field(
-        default="scripts/tracelens_single_config/run_tracelens_single_config.sh",
-        description="Path to TraceLens analysis script relative to aorta_path",
-    )
-    gemm_script: str = Field(
-        default="scripts/gemm_analysis/run_tracelens_analysis.sh",
-        description="Path to GEMM analysis script relative to aorta_path",
-    )
-    skip_if_exists: bool = Field(
-        default=False, description="Skip analysis if tracelens_analysis directory already exists"
-    )
-
-
-class AortaMultiNodeConfigFile(BaseModel):
-    """
-    Schema for the optional ``multi_node`` section in aorta_benchmark.yaml.
-
-    When the cluster file contains more than one node, the runner launches a
-    disaggregated ``torchrun`` invocation on every node (one per ``node_dict``
-    entry), rendezvous-ing on the head node. This block tunes that path.
-
-    Single-node clusters ignore this block only under the ``auto`` default,
-    which resolves to ``script`` (current behavior) for one node and
-    ``torchrun`` (multi-node disaggregated) for more than one. Explicitly
-    setting ``master_launch_mode: torchrun`` on a single-node cluster still
-    activates ``train_script``, ``extra_env``, and ``master_addr``.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    master_launch_mode: str = Field(
-        default="auto",
-        description=(
-            "How the experiment is launched on each node. 'auto' picks 'script' "
-            "for single-node clusters and 'torchrun' for multi-node clusters. "
-            "'script' always uses the configured experiment_script (single-node only). "
-            "'torchrun' always builds a multi-node torchrun command and ignores "
-            "experiment_script."
-        ),
-    )
-    nproc_per_node: Optional[int] = Field(
-        default=None,
-        ge=1,
-        description=(
-            "Processes (GPUs) per node passed to torchrun --nproc_per_node. "
-            "Defaults to the top-level gpus_per_node when unset."
-        ),
-    )
-    master_port: Optional[int] = Field(
-        default=None,
-        ge=1024,
-        le=65535,
-        description=(
-            "Port used for torchrun rendezvous (--master_port). When unset the "
-            "runner picks a free ephemeral port on the head node."
-        ),
-    )
-    master_addr: Optional[str] = Field(
-        default=None,
-        description=(
-            "Override the master address (--master_addr). When unset, resolves to the "
-            "head node's node_vpc_ips entry if the cluster file defines one, otherwise "
-            "falls back to the head node's plain identifier. Do not pin this to the "
-            "SSH/management address on a fabric-separated cluster: other nodes rendezvous "
-            "over the RDMA fabric, and node_vpc_ips exists precisely to prefer that address."
-        ),
-    )
-    train_script: str = Field(
-        default="train.py",
-        description=(
-            "Path to the Aorta training entry script relative to aorta_path. "
-            "Used when master_launch_mode resolves to 'torchrun'."
-        ),
-    )
-    extra_torchrun_args: List[str] = Field(
-        default_factory=list,
-        description="Additional CLI flags appended to the torchrun command.",
-    )
-    extra_train_args: List[str] = Field(
-        default_factory=list,
-        description="Additional CLI flags appended to train.py after --config.",
-    )
-    extra_env: Dict[str, str] = Field(
-        default_factory=dict,
-        description=(
-            "Extra environment variables to export inside the container before "
-            "torchrun. Useful for NCCL_SOCKET_IFNAME, NCCL_IB_HCA, "
-            "NCCL_IB_GID_INDEX, and similar transport-tuning knobs."
-        ),
-    )
-    collect_traces: bool = Field(
-        default=True,
-        description=(
-            "When true, copy each node's torch_profiler artifacts back to the "
-            "head node under <aorta_path>/combined_traces/node_<rank>/ so the "
-            "host parsers see one unified trace tree."
-        ),
-    )
-
-    @field_validator('master_launch_mode')
-    @classmethod
-    def validate_launch_mode(cls, v: str) -> str:
-        allowed = {"auto", "script", "torchrun"}
-        if v not in allowed:
-            raise ValueError(f"master_launch_mode must be one of {sorted(allowed)}, got {v!r}")
-        return v
-
-
-class AortaBenchmarkConfigFile(BaseModel):
-    """
-    Schema for the entire aorta_benchmark.yaml configuration file.
-
-    Validates structure and provides sensible defaults.
-    Fails fast with clear error messages if configuration is invalid.
-
-    For ``test_aorta``, load YAML, apply ``resolve_test_config_placeholders`` with the resolved
-    cluster dict (same as other CVS suites), then ``model_validate``. Standalone tools may validate
-    raw YAML without placeholder resolution if paths are already absolute.
-    """
-
-    model_config = ConfigDict(extra="forbid")  # Catch typos in top-level keys
-
-    # Path to Aorta repository on host (will be bind-mounted). If missing and aorta_auto_clone is true, it is cloned.
-    aorta_path: str = Field(description="Path to Aorta repository on host (will be bind-mounted)")
-
-    # Optional: clone Aorta repo when aorta_path does not exist
-    aorta_auto_clone: bool = Field(
-        default=False, description="If true and aorta_path missing, clone from aorta_clone_url"
-    )
-    aorta_clone_url: Optional[str] = Field(default=None, description="Git URL to clone when aorta_auto_clone is true")
-
-    # Container settings
-    container_mount_path: str = Field(default="/mnt", description="Mount point inside container for aorta_path")
-
-    # Aorta config
-    base_config: str = Field(default="config/distributed.yaml", description="Aorta config file relative to aorta_path")
-
-    # Nested configuration sections
-    docker: AortaDockerConfigFile = Field(
-        default_factory=AortaDockerConfigFile, description="Docker container configuration"
-    )
-    rccl: AortaRcclConfigFile = Field(default_factory=AortaRcclConfigFile, description="RCCL build configuration")
-    environment: AortaEnvironmentConfigFile = Field(
-        default_factory=AortaEnvironmentConfigFile, description="Environment variables for RCCL/NCCL"
-    )
-
-    # Training overrides
-    training_overrides: Dict[str, Any] = Field(
-        default_factory=dict, description="Overrides passed to Aorta via --override flag"
-    )
-
-    # Scripts
-    build_script: str = Field(
-        default="scripts/build_rccl.sh", description="RCCL build script relative to container mount"
-    )
-    experiment_script: str = Field(
-        default="scripts/rccl_exp.sh", description="Experiment script relative to container mount"
-    )
-
-    # Hardware
-    gpus_per_node: int = Field(default=8, ge=1, description="Number of GPUs per node")
-
-    # Execution settings
-    timeout_seconds: int = Field(default=10800, ge=60, description="Benchmark timeout in seconds")
-    skip_rccl_build: bool = Field(default=False, description="Skip RCCL build if already built")
-
-    # Validation thresholds
-    expected_results: AortaExpectedResultsConfigFile = Field(
-        default_factory=AortaExpectedResultsConfigFile, description="Expected results for validation"
-    )
-
-    # Analysis configuration (use Aorta's built-in analysis scripts)
-    analysis: AortaAnalysisConfigFile = Field(
-        default_factory=AortaAnalysisConfigFile, description="Post-benchmark analysis configuration"
-    )
-
-    # Multi-node disaggregated launch (one container + torchrun rank per node)
-    multi_node: AortaMultiNodeConfigFile = Field(
-        default_factory=AortaMultiNodeConfigFile,
-        description=(
-            "Multi-node launch configuration. Used when the cluster file lists "
-            "more than one node; ignored for single-node clusters unless "
-            "master_launch_mode is forced to 'torchrun'."
-        ),
-    )
-
-    @field_validator('aorta_path')
-    @classmethod
-    def validate_aorta_path_not_placeholder(cls, v: str) -> str:
-        """Check that aorta_path is not a placeholder."""
-        if '<changeme>' in v.lower():
-            raise ValueError(
-                "aorta_path contains placeholder '<changeme>'. Please set the actual path to your Aorta installation."
-            )
-        return v
-
-    def validate_paths_exist(self) -> List[str]:
-        """
-        Validate that referenced paths exist on the filesystem.
-
-        Call this after loading config to check paths.
-        Returns list of error messages (empty if all valid).
-        """
-        errors = []
-
-        aorta = Path(self.aorta_path)
-        if not aorta.exists():
-            if self.aorta_auto_clone and self.aorta_clone_url:
-                # Runner will clone in setup(); skip path checks here
-                return errors
-            errors.append(f"aorta_path does not exist: {self.aorta_path}")
-        else:
-            # Check internal paths
-            base_cfg = aorta / self.base_config
-            if not base_cfg.exists():
-                errors.append(f"base_config does not exist: {base_cfg}")
-
-            build_script = aorta / self.build_script
-            if not build_script.exists():
-                errors.append(f"build_script does not exist: {build_script}")
-
-            exp_script = aorta / self.experiment_script
-            if not exp_script.exists():
-                errors.append(f"experiment_script does not exist: {exp_script}")
-
-            if self.multi_node.master_launch_mode == "torchrun":
-                train_script_path = aorta / self.multi_node.train_script
-                if not train_script_path.exists():
-                    errors.append(f"multi_node.train_script does not exist: {train_script_path}")
-
-            # Check analysis scripts if enabled
-            if self.analysis.enable_tracelens:
-                tracelens_script = aorta / self.analysis.tracelens_script
-                if not tracelens_script.exists():
-                    errors.append(f"tracelens_script does not exist: {tracelens_script}")
-
-            if self.analysis.enable_gemm_analysis:
-                gemm_script = aorta / self.analysis.gemm_script
-                if not gemm_script.exists():
-                    errors.append(f"gemm_script does not exist: {gemm_script}")
-
-        return errors
-
-
 # =============================================================================
 # PyTorch XDit (WAN/Flux) Schemas
 # =============================================================================
@@ -750,6 +443,18 @@ class PytorchXditExpectedResults(BaseModel):
         default=None,
         gt=0,
         description="Maximum acceptable average pipe_time in seconds (xFuser Wan I2V)",
+    )
+    min_clip_score: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Minimum CLIPScore (cosine similarity x 100) for saved FLUX images",
+    )
+    min_mean_frame_clip_score: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description=("Minimum mean frame CLIPScore (cosine similarity x 100) across frames sampled from a WAN MP4"),
     )
 
     @model_validator(mode="after")
@@ -842,20 +547,35 @@ class PytorchXditWan22Benchmarks(BaseModel):
         default=True,
         description="Require video.mp4 under the output dir when parsing results.",
     )
+    clip_model: Optional[str] = Field(
+        default=None,
+        description=(
+            "CLIP model id or local path used to score sampled WAN video frames. "
+            "Defaults to openai/clip-vit-base-patch32 when omitted."
+        ),
+    )
+    clip_sample_frames: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Frames uniformly sampled from the WAN MP4 for CLIPScore. Defaults to 8 when omitted.",
+    )
     compile: bool = Field(default=True, description="Whether to use torch.compile for optimization")
     torchrun_nproc: int = Field(default=8, ge=1, description="Number of processes for torchrun (usually num GPUs)")
     ulysses_size: int = Field(default=8, ge=1, description="Ulysses parallelism degree")
     ring_size: int = Field(default=1, ge=1, description="Ring parallelism degree")
-    expected_results: Dict[str, PytorchXditExpectedResults] = Field(
-        description="Expected results by GPU type (auto, mi300x, mi355, etc.)"
+    expected_results: Optional[Dict[str, PytorchXditExpectedResults]] = Field(
+        default=None,
+        description="Legacy inline thresholds by GPU type (auto, mi300x, mi355, etc.)",
     )
 
     @field_validator('expected_results')
     @classmethod
     def validate_has_auto_or_specific(
-        cls, v: Dict[str, PytorchXditExpectedResults]
-    ) -> Dict[str, PytorchXditExpectedResults]:
-        """Ensure either 'auto' or a specific GPU type is present."""
+        cls, v: Optional[Dict[str, PytorchXditExpectedResults]]
+    ) -> Optional[Dict[str, PytorchXditExpectedResults]]:
+        """Ensure either 'auto' or a specific GPU type is present when embedded thresholds are used."""
+        if v is None:
+            return v
         if not v:
             raise ValueError("expected_results must contain at least one GPU type threshold")
         if 'auto' not in v and not any(k in v for k in ['mi300x', 'mi325', 'mi350', 'mi355']):
@@ -869,6 +589,12 @@ class PytorchXditFluxExpectedResults(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_avg_pipe_time_s: float = Field(gt=0, description="Maximum acceptable average pipe_time in seconds")
+    min_clip_score: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Minimum CLIPScore (cosine similarity x 100) for saved FLUX images",
+    )
 
 
 class PytorchXditFlux1DevBenchmarks(BaseModel):
@@ -910,16 +636,26 @@ class PytorchXditFlux1DevBenchmarks(BaseModel):
     data_parallel_degree: int = Field(default=1, ge=1, description="Data-parallel degree (1 = disabled)")
     use_torch_compile: bool = Field(default=True, description="Whether to use torch.compile for optimization")
     torchrun_nproc: int = Field(default=8, ge=1, description="Number of processes for torchrun (usually num GPUs)")
-    expected_results: Dict[str, PytorchXditFluxExpectedResults] = Field(
-        description="Expected results by GPU type (auto, mi300x, mi355, etc.)"
+    clip_model: Optional[str] = Field(
+        default=None,
+        description=(
+            "CLIP model id or local path used to score saved FLUX images. "
+            "Defaults to openai/clip-vit-base-patch32, the CLIPScore paper model, when omitted."
+        ),
+    )
+    expected_results: Optional[Dict[str, PytorchXditFluxExpectedResults]] = Field(
+        default=None,
+        description="Legacy inline thresholds by GPU type (auto, mi300x, mi355, etc.)",
     )
 
     @field_validator('expected_results')
     @classmethod
     def validate_has_auto_or_specific(
-        cls, v: Dict[str, PytorchXditFluxExpectedResults]
-    ) -> Dict[str, PytorchXditFluxExpectedResults]:
-        """Ensure either 'auto' or a specific GPU type is present."""
+        cls, v: Optional[Dict[str, PytorchXditFluxExpectedResults]]
+    ) -> Optional[Dict[str, PytorchXditFluxExpectedResults]]:
+        """Ensure either 'auto' or a specific GPU type is present when embedded thresholds are used."""
+        if v is None:
+            return v
         if not v:
             raise ValueError("expected_results must contain at least one GPU type threshold")
         if 'auto' not in v and not any(k in v for k in ['mi300x', 'mi325', 'mi350', 'mi355']):
@@ -962,6 +698,8 @@ class PytorchXditWanConfigFile(BaseModel):
         """Ensure at least one benchmark is configured."""
         if not self.benchmark_params.wan22_i2v_a14b:
             raise ValueError("No benchmarks configured in 'benchmark_params' - at least wan22_i2v_a14b is required")
+        if not self.benchmark_params.wan22_i2v_a14b.expected_results:
+            raise ValueError("legacy WAN configs must include benchmark_params.wan22_i2v_a14b.expected_results")
         return self
 
     @model_validator(mode='after')
@@ -1090,6 +828,8 @@ class PytorchXditFluxConfigFile(BaseModel):
         """Ensure at least one benchmark is configured."""
         if not self.benchmark_params.flux1_dev_t2i:
             raise ValueError("No benchmarks configured in 'benchmark_params' - at least flux1_dev_t2i is required")
+        if not self.benchmark_params.flux1_dev_t2i.expected_results:
+            raise ValueError("legacy FLUX configs must include benchmark_params.flux1_dev_t2i.expected_results")
         return self
 
     @model_validator(mode='after')
@@ -1205,6 +945,288 @@ class PytorchXditFluxConfig(PytorchXditDistributedNcclExamples):
         return v
 
 
+class PytorchXditUnifiedPaths(BaseModel):
+    """Host path block for unified xDiT configs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    shared_fs: str = Field(description="Cluster-visible home or scratch root")
+    models_dir: str = Field(description="Host Hugging Face cache or staged model directory")
+    log_dir: str = Field(description="Host directory for benchmark outputs and logs")
+    hf_token_file: str = Field(default="", description="Optional Hugging Face token file on the host")
+
+
+class PytorchXditUnifiedModel(BaseModel):
+    """Model identifier for unified xDiT configs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(description="Hugging Face repo id or absolute on-disk model path")
+    remote: int = Field(
+        default=0,
+        ge=0,
+        le=1,
+        description="0 = offline/local cache only; 1 = allow runtime Hugging Face snapshot download",
+    )
+
+
+class PytorchXditUnifiedRuntime(BaseModel):
+    """Docker runtime block for unified xDiT configs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(default="docker", description="Container runtime name")
+    args: Dict[str, Any] = Field(default_factory=dict, description="Runtime-specific launch arguments")
+
+
+class PytorchXditUnifiedContainer(BaseModel):
+    """Container block for unified xDiT configs."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    lifetime: str = Field(default="per_run", description="Container lifetime policy")
+    name: str = Field(description="Docker container name")
+    image: str = Field(description="Docker image for the benchmark container")
+    env: Dict[str, str] = Field(default_factory=dict, description="Environment variables for docker run")
+    runtime: PytorchXditUnifiedRuntime = Field(description="Container runtime definition")
+    image_example: Optional[str] = Field(
+        default=None,
+        alias="_image_example",
+        description="Documentation only: example container image",
+    )
+    image_comment: Optional[str] = Field(
+        default=None,
+        alias="_image_comment",
+        description="Documentation only: model the container image must support",
+    )
+
+
+class PytorchXditUnifiedParams(BaseModel):
+    """Benchmark parameters for unified xDiT configs (thresholds live in threshold_json)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    wan22_i2v_a14b: Optional[PytorchXditWan22Benchmarks] = Field(
+        default=None, description="WAN 2.2 image-to-video A14B benchmark parameters"
+    )
+    flux1_dev_t2i: Optional[PytorchXditFlux1DevBenchmarks] = Field(
+        default=None, description="FLUX text-to-image benchmark parameters"
+    )
+
+
+class PytorchXditUnifiedInference(BaseModel):
+    """Optional legacy/runtime fields carried beside unified top-level keys."""
+
+    model_config = ConfigDict(extra="allow")
+
+    model_rev: str = Field(
+        default="",
+        description="Model revision (commit hash) when model.id is a Hugging Face repo id",
+    )
+
+
+class PytorchXditServerParams(BaseModel):
+    """SGLang-style server block used by packaged xDiT configs."""
+
+    model_config = ConfigDict(extra="allow")
+
+    backend: str = Field(default="xdit", description="Inference backend identifier")
+    nnodes: Any = Field(default="1", description="Participating node count")
+    log_level: str = Field(default="info", description="Server log level")
+    model: str = Field(description="Hugging Face repo id or absolute on-disk model path")
+    benchmark_serv_node: Optional[str] = Field(
+        default=None,
+        description="Unused. Single jobs run on every cluster node; distributed uses the first cluster node.",
+    )
+    server_node_list: Optional[List[str]] = Field(
+        default=None,
+        description="Unused. Distributed jobs take the first nnodes hosts from the cluster.",
+    )
+    master_addr: str = Field(
+        default="",
+        description="torchrun rendezvous address. Empty probes the first address on the rank-0 node.",
+    )
+    master_port: Any = Field(default="29500", description="torchrun rendezvous port")
+    model_rev: str = Field(default="", description="Pinned Hugging Face snapshot when model is a repo id")
+
+
+class PytorchXditUnifiedConfigFile(BaseModel):
+    """
+    Schema for unified PyTorch xDiT inference configuration files.
+
+    Thresholds are supplied in a sibling ``threshold_json`` file referenced at the top level.
+    Packaged files use the SGLang-style ``server_params`` + flat ``benchmark_params`` layout.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    comment: Optional[str] = Field(
+        default=None,
+        alias="_comment",
+        description="Documentation only: human-readable config summary",
+    )
+    schema_version: int = Field(default=1, ge=1, description="Unified config schema version")
+    framework: str = Field(default="xdit", description="Inference framework identifier")
+    gpu_name: Optional[str] = Field(default=None, description="Target GPU name, e.g. '<changeme> mi325'")
+    gpu_arch: str = Field(default="mi3xx", description="Target GPU architecture family")
+    topology: str = Field(default="single", description="Execution topology: single or distributed")
+    enforce_thresholds: bool = Field(
+        default=True,
+        description="When true, benchmark results must satisfy the selected GPU thresholds",
+    )
+    threshold_json: str = Field(description="Sibling threshold JSON filename")
+    paths: PytorchXditUnifiedPaths = Field(description="Host path block")
+    model: Optional[PytorchXditUnifiedModel] = Field(default=None, description="Legacy model identifier block")
+    container: PytorchXditUnifiedContainer = Field(description="Container definition")
+    params: Optional[PytorchXditUnifiedParams] = Field(
+        default=None,
+        description="Legacy nested benchmark parameters without embedded thresholds",
+    )
+    server_params: Optional[PytorchXditServerParams] = Field(
+        default=None,
+        description="SGLang-style model, topology, and execution-host fields",
+    )
+    benchmark_params: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Flat xDiT workload parameters (FLUX or WAN)",
+    )
+    inference: Optional[PytorchXditUnifiedInference] = Field(
+        default=None,
+        description="Optional runtime fields such as model_rev",
+    )
+    benchmark_serv_node: Optional[str] = Field(
+        default=None,
+        description="Single execution node selected from cluster node_dict",
+    )
+    nnodes: Optional[int] = Field(default=None, ge=1, description="Distributed node count")
+    server_node_list: Optional[List[str]] = Field(
+        default=None,
+        description="Ordered server nodes for distributed jobs",
+    )
+    master_addr: str = Field(
+        default="",
+        description="torchrun rendezvous address. Empty probes the first address on the rank-0 node.",
+    )
+    master_port: int = Field(default=29500, ge=1, le=65535, description="torchrun rendezvous port")
+    nccl_ib_hca: str = Field(default="", description="NCCL_IB_HCA for multi-node jobs")
+    nccl_socket_ifname: str = Field(default="", description="NCCL_SOCKET_IFNAME for multi-node jobs")
+    gloo_socket_ifname: str = Field(default="", description="GLOO_SOCKET_IFNAME for multi-node jobs")
+    nccl_ib_gid_index: int = Field(default=3, ge=0, description="NCCL_IB_GID_INDEX for IB/RoCE")
+    nccl_debug: str = Field(default="INFO", description="NCCL_DEBUG level")
+    example_nccl_ib_hca: Optional[str] = Field(
+        default=None,
+        alias="_example_nccl_ib_hca",
+        description="Documentation only: example NCCL_IB_HCA value",
+    )
+    example_nccl_socket_ifname: Optional[str] = Field(
+        default=None,
+        alias="_example_nccl_socket_ifname",
+        description="Documentation only: example nccl_socket_ifname value",
+    )
+    example_gloo_socket_ifname: Optional[str] = Field(
+        default=None,
+        alias="_example_gloo_socket_ifname",
+        description="Documentation only: example gloo_socket_ifname value",
+    )
+
+    @model_validator(mode="after")
+    def validate_benchmark_present(self):
+        backend = self.framework
+        if self.server_params is not None and self.server_params.backend:
+            backend = self.server_params.backend
+        if str(backend).lower() not in ("xdit", "pytorch_xdit"):
+            raise ValueError("framework/backend must be 'xdit' or 'pytorch_xdit'")
+        if self.topology not in ("single", "distributed"):
+            raise ValueError("topology must be 'single' or 'distributed'")
+        nnodes = self.nnodes
+        if nnodes is None and self.server_params is not None and self.server_params.nnodes not in (None, ""):
+            nnodes = int(self.server_params.nnodes)
+        elif nnodes is not None:
+            nnodes = int(nnodes)
+        else:
+            nnodes = 1
+        nested = 0
+        if self.params is not None:
+            nested = sum(
+                workload is not None
+                for workload in (
+                    self.params.wan22_i2v_a14b,
+                    self.params.flux1_dev_t2i,
+                )
+            )
+        flat = self.benchmark_params if isinstance(self.benchmark_params, dict) else {}
+        has_flat = bool(flat) and not any(key in flat for key in ("flux1_dev_t2i", "wan22_i2v_a14b"))
+        has_nested_bp = any(isinstance(flat.get(key), dict) for key in ("flux1_dev_t2i", "wan22_i2v_a14b"))
+        if nested != 1 and not has_flat and not has_nested_bp:
+            raise ValueError(
+                "config must include params.flux1_dev_t2i, params.wan22_i2v_a14b, or flat benchmark_params"
+            )
+        if self.server_params is None and self.model is None:
+            raise ValueError("config must include server_params.model or model.id")
+        return self
+
+    @model_validator(mode="after")
+    def validate_distributed_topology(self):
+        nnodes = self.nnodes
+        if nnodes is None and self.server_params is not None and self.server_params.nnodes not in (None, ""):
+            nnodes = int(self.server_params.nnodes)
+        elif nnodes is not None:
+            nnodes = int(nnodes)
+        else:
+            nnodes = 1
+        if (self.topology == "distributed" or nnodes > 1) and nnodes < 2:
+            raise ValueError("topology='distributed' requires nnodes >= 2")
+        return self
+
+
+class PytorchXditThresholdFile(BaseModel):
+    """Schema for sibling xDiT threshold JSON files."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    thresholds: Dict[str, PytorchXditExpectedResults] = Field(
+        default_factory=dict,
+        description="GPU-keyed latency thresholds",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def collect_gpu_thresholds(cls, data):
+        if not isinstance(data, dict):
+            return data
+        thresholds = {}
+        for key, value in data.items():
+            if isinstance(key, str) and key.startswith("_"):
+                continue
+            thresholds[key] = value
+        return {"thresholds": thresholds}
+
+    @model_validator(mode="after")
+    def validate_has_auto_or_specific(self):
+        keys = self.thresholds
+        if not keys:
+            raise ValueError("threshold file must contain at least one GPU type threshold")
+        if "auto" not in keys and not any(k in keys for k in ["mi300x", "mi325", "mi350", "mi355"]):
+            raise ValueError("threshold file must contain either 'auto' or a specific GPU type (mi300x, mi325, etc.)")
+        return self
+
+
+def is_pytorch_xdit_unified_config(raw_config):
+    """Return True when a loaded dict uses the unified xDiT layout."""
+    if not isinstance(raw_config, dict):
+        return False
+    if not isinstance(raw_config.get("paths"), dict) or not isinstance(raw_config.get("container"), dict):
+        return False
+    framework = str(raw_config.get("framework") or "").lower()
+    if framework in ("xdit", "pytorch_xdit"):
+        return True
+    backend = str((raw_config.get("server_params") or {}).get("backend") or "").lower()
+    if backend in ("xdit", "pytorch_xdit"):
+        return True
+    threshold = str(raw_config.get("threshold_json") or "").lower()
+    return "pytorch_xdit" in threshold
+
+
 # =============================================================================
 # Preflight Check Configuration Schema
 # =============================================================================
@@ -1216,6 +1238,8 @@ LEGACY_PREFLIGHT_RDMA_PATHS = {
 }
 
 PREFLIGHT_METADATA_PREFIXES = ("_comment", "_example")
+# IB verbs MTU enum values (ibv_mtu), plus 0 to disable the active MTU threshold.
+VALID_RDMA_ACTIVE_MTUS = (0, 256, 512, 1024, 2048, 4096)
 
 
 def strip_preflight_metadata(value):
@@ -1375,6 +1399,11 @@ class PreflightNodeCheckConfig(BaseModel):
     enabled: bool = Field(default=True, description="Enable generic GPU node health and ROCm validation")
     gpus_per_node: int = Field(default=4, ge=1, description="Expected AMD GPU count on each node")
     expected_rocm_version: str = Field(default="6.2.0", description="Expected ROCm version across all cluster nodes")
+    min_up_ports_per_gpu: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=("Optional MI4XX fabric admission override; prefer connectivity_check.ifoe.min_up_ports_per_gpu"),
+    )
 
 
 class PreflightRdmaConfig(BaseModel):
@@ -1384,10 +1413,26 @@ class PreflightRdmaConfig(BaseModel):
 
     connectivity_mode: str = Field(default="basic", description="RDMA connectivity testing: basic, full_mesh, or skip")
     gid_index: str = Field(default="3", description="GID index to check on all RDMA interfaces (typically 3 for RoCE)")
+    gid_type: str = Field(
+        default="RoCE v2",
+        description="Expected sysfs GID type (gid_attrs/types/<idx>) on every RDMA interface; 'any' disables the type check. Not enforced on InfiniBand link layers.",
+    )
     interfaces: List[str] = Field(
         default_factory=lambda: ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
         min_length=1,
         description="RDMA device names checked for presence, GID consistency, and connectivity",
+    )
+    mtu_check: bool = Field(
+        default=True, description="Verify RDMA active MTU, and the netdev MTU on RoCE ports, on configured interfaces"
+    )
+    min_netdev_mtu: int = Field(
+        default=4200,
+        ge=0,
+        le=65535,
+        description="Minimum netdev MTU on RoCE ports; InfiniBand ports are exempt (0 disables)",
+    )
+    min_active_mtu: int = Field(
+        default=4096, description="Minimum active_mtu from ibv_devinfo, RoCE or InfiniBand (0 disables)"
     )
     nodes_per_full_mesh_group: int = Field(
         default=128,
@@ -1461,6 +1506,13 @@ class PreflightRdmaConfig(BaseModel):
         valid_modes = ['basic', 'full_mesh', 'skip']
         if v not in valid_modes:
             raise ValueError(f"connectivity_mode must be one of: {', '.join(valid_modes)}")
+        return v
+
+    @field_validator('min_active_mtu')
+    @classmethod
+    def validate_min_active_mtu(cls, v: int) -> int:
+        if v not in VALID_RDMA_ACTIVE_MTUS:
+            raise ValueError(f"min_active_mtu must be one of {', '.join(map(str, VALID_RDMA_ACTIVE_MTUS))}")
         return v
 
     @field_validator('ibv_test_port_range')
@@ -1546,6 +1598,32 @@ class PreflightIfoeConfig(BaseModel):
         default=False,
         description="Enable MI4XX AIFM, AFM, vPOD, station-mask, and IFoE port admission",
     )
+    min_up_ports_per_gpu: int = Field(
+        default=2,
+        ge=0,
+        description="Minimum enabled IFoE ports each GPU's station mask must report; "
+        "default 2 (one station) fails an un-provisioned fabric, 0 admits it for diagnostics",
+    )
+    reject_partial_stations: bool = Field(
+        default=True,
+        description="Fail when any station mask nibble indicates a partial station",
+    )
+    allow_disabled_stations: bool = Field(
+        default=True,
+        description="Allow station masks that intentionally disable ports",
+    )
+    expected_station_masks: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Optional per-GPU BDF expected 18-nibble station masks",
+    )
+    require_uniform_station_mask: bool = Field(
+        default=False,
+        description="Require identical station masks across all GPUs on a node",
+    )
+    agent_process_name: str = Field(
+        default="inb-node-agent",
+        description="Process name checked for the AIFM in-band node agent",
+    )
     l2ping: PreflightL2PingConfig = Field(
         default_factory=PreflightL2PingConfig,
         description="Strict IFoE L2 connectivity admission",
@@ -1571,8 +1649,8 @@ class PreflightNodeSmokeConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     connectivity_mode: str = Field(
-        default="skip",
-        description="Primus node_smoke mode: 'run' (host/GPU/RDMA roll-call) or 'skip' (default)",
+        default="run",
+        description="Primus node_smoke mode: 'run' (default; host/GPU/RDMA roll-call) or 'skip'",
     )
     auto_setup: bool = Field(
         default=True,
@@ -1596,8 +1674,12 @@ class PreflightNodeSmokeConfig(BaseModel):
         description="Venv deps: minimal (torch only), requirements, or skip",
     )
     torch_pip_index_url: str = Field(
-        default="https://download.pytorch.org/whl/rocm6.2",
-        description="PyTorch ROCm wheel index URL for minimal pip_install_mode",
+        default="https://download.pytorch.org/whl/rocm7.2",
+        description=(
+            "PyTorch ROCm wheel index URL for minimal pip_install_mode. "
+            "An importable torch is reinstalled when its HIP major.minor does not match "
+            "the rocm<major>.<minor> in this URL."
+        ),
     )
     primus_git_url: str = Field(
         default="https://github.com/AMD-AIG-AIMA/Primus.git",
@@ -1660,7 +1742,7 @@ class PreflightNodeSmokeConfig(BaseModel):
     )
     ssh_timeout: int = Field(default=300, ge=30, description="SSH timeout in seconds for each node_smoke run")
     tier2_perf: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Enable Primus node_smoke Tier 2 perf sanity (--tier2-perf): "
             "8192³ GEMM TFLOPS floor, HBM D2D bandwidth, local multi-GPU RCCL all-reduce"
@@ -1783,10 +1865,10 @@ class PreflightConfigFile(BaseModel):
 def validate_config_file(
     config_path: Union[str, Path], config_type: str = "auto"
 ) -> Union[
-    AortaBenchmarkConfigFile,
     ClusterConfigFile,
     PytorchXditWanConfigFile,
     PytorchXditFluxConfigFile,
+    PytorchXditUnifiedConfigFile,
     PreflightConfigFile,
 ]:
     """
@@ -1829,6 +1911,8 @@ def validate_config_file(
             config_type = "preflight"
         elif "aorta_path" in raw_config:
             config_type = "aorta"
+        elif is_pytorch_xdit_unified_config(raw_config):
+            config_type = "pytorch_xdit_unified"
         elif "config" in raw_config and "benchmark_params" in raw_config:
             # Check if it's a pytorch_xdit config (WAN or Flux)
             config_section = raw_config.get("config", {})
@@ -1846,7 +1930,8 @@ def validate_config_file(
         else:
             raise ValueError(
                 f"Cannot auto-detect config type for {config_path}. "
-                f"Specify config_type='aorta', config_type='cluster', config_type='pytorch_xdit_wan', config_type='pytorch_xdit_flux', or config_type='preflight'"
+                f"Specify config_type='aorta', config_type='cluster', config_type='pytorch_xdit_unified', "
+                f"config_type='pytorch_xdit_wan', config_type='pytorch_xdit_flux', or config_type='preflight'"
             )
 
     # Validate with appropriate schema
@@ -1860,11 +1945,15 @@ def validate_config_file(
             else:
                 raise ValueError("Preflight config must contain 'preflight' section")
         elif config_type == "aorta":
-            return AortaBenchmarkConfigFile.model_validate(raw_config)
+            from cvs.lib.benchmark.aorta.aorta_config_loader import load_training_variant
+
+            return load_training_variant(config_path, {})
         elif config_type == "pytorch_xdit_wan":
             return PytorchXditWanConfigFile.model_validate(raw_config)
         elif config_type == "pytorch_xdit_flux":
             return PytorchXditFluxConfigFile.model_validate(raw_config)
+        elif config_type == "pytorch_xdit_unified":
+            return PytorchXditUnifiedConfigFile.model_validate(raw_config)
         else:
             raise ValueError(f"Unknown config_type: {config_type}")
     except Exception as e:

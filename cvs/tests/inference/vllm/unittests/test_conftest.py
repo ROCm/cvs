@@ -39,7 +39,6 @@ class TestVllmMetricReportHook(unittest.TestCase):
         names = [
             "test_teardown",
             "test_accuracy_eval",
-            "test_verify_cell_metrics",
             "test_vllm_inference",
             "test_launch_container",
         ]
@@ -53,14 +52,13 @@ class TestVllmMetricReportHook(unittest.TestCase):
             [
                 "test_launch_container",
                 "test_vllm_inference",
-                "test_verify_cell_metrics",
                 "test_accuracy_eval",
                 "test_teardown",
             ],
         )
 
     def test_makereport_attaches_and_stamps_metric_panel(self):
-        nodeid = 'cvs/tests/inference/vllm/vllm_single.py::test_verify_cell_metrics[cell]'
+        nodeid = 'cvs/tests/inference/vllm/vllm_single.py::test_vllm_inference[cell]'
         item = SimpleNamespace(nodeid=nodeid, stash=_FakeStash())
         rows = [
             {

@@ -66,7 +66,7 @@ make ut          # sdist -> .test_venv -> run_all_unittests.py
   verify_dmesg_for_errors(handle, start_time, end_time, till_end_flag=False)
   ```
   `handle` is `phdl` today in most suites; `orch` works if it exposes `.exec()`. Use `till_end_flag=False` to bound scans to the test window.
-- Dmesg parsing: `full_dmesg_scan` honors `CVS_DMESG_PARSER` (default `node-scraper`; set `legacy` for the regex path). Note that `verify_dmesg_for_errors` — the time-bounded scan shown above — always uses the `err_patterns_dict` regex path and ignores this variable.
+- Dmesg parsing: every scan uses node-scraper, with `err_patterns_dict` added as CVS error patterns.
 - Use `err_patterns_dict` in `cvs/lib/verify_lib.py` for failure patterns
 
 ### Custom HTML Reports
@@ -105,6 +105,22 @@ Key CVS-specific considerations:
 - **Cross-platform testing**: Validate on Ubuntu (primary supported distro)
 - **Configuration compatibility**: Ensure changes maintain backward compatibility with existing cluster/config files
 
+### Changelog
+
+`CHANGELOG.md` records how each release differs from the previous one. Edit only the `Unreleased` section, and only when users of the last release would see different behavior.
+
+- **Compare against the last release**, not against `main`. There are no release tags; check the release branch, e.g. `git show origin/release/cvs-0.2.0:<path>` or `git ls-tree -r origin/release/cvs-0.2.0`.
+- **Change that has not shipped yet**: if the code being fixed or changed was added after the last release, do not add an entry. Update or remove the existing `Unreleased` entry that introduced it, so the entry describes the end state.
+- **One entry per change**: when the same change spans several suites, search `Unreleased` for an existing entry first. If one exists, extend it to name the other suites; do not add a second entry for the same feature or fix.
+- **Consolidate by area**: several changes to the same suite or feature in one section (for example RCCL thresholds) go in one entry. Extend the existing entry for that area if there is one; otherwise create a new entry.
+- **Internal-only change** (refactors, unit tests, CI, agent docs) with no user-visible effect: no entry.
+- **Pick the section by user impact**: `Added`, `Changed`, `Deprecated` (still works, will be removed), `Removed` (gone now), `Fixed`. Removing a config field, CLI flag or environment variable is `Removed`, and the entry says what users must change.
+- **Never edit released sections** or `docs/release-notes.rst`, which covers a shipped release. They are history, even if they name something since removed.
+- Write entries for someone running CVS: the command, config field or result that changed, not internal function names.
+- **Keep entries short**: one or two sentences saying what changed and what the user must do, if anything. Leave out implementation detail, root-cause narrative and examples; those belong in the PR.
+- **Settings belong in the docs**: name a new feature's config field, but leave its options and usage to the configuration reference. Mention a setting only when existing configs break or behave differently and the user must change it.
+- **No performance numbers**: do not quote bandwidth, latency or throughput bars. Name the config or field that sets the threshold; the values live in the config and the configuration reference.
+
 ## Code Quality Boundaries
 
 ### Unit Testing Standards
@@ -136,6 +152,38 @@ def test_example(orch, config_dict):
             fail_test(f"Validation failed on {node}: {output}")
     update_test_result()
 ```
+
+## Documentation
+
+User docs live in `docs/` and are published from those sources. Write for someone running CVS. A section belongs only when reading it changes a command, a config field, or a file the user must provide.
+
+Preview with `make html-doc` (see [CONTRIBUTORS.md](CONTRIBUTORS.md)). Check the new cross-reference from a suite page to the shared page.
+
+### Put shared behavior in one place
+
+- **Pytest report, attachments, zip bundle, and Run Deck packaging**: `docs/how-to/test-suites/index.rst` (`pytest-html-report-and-bundle`). Say that a Run Deck is included when the suite supports it. Report and log flags stay in `docs/reference/cli/cvs-run.rst`.
+- **Managed compute**: `docs/how-to/run-on-managed-compute.rst`. On a suite page, add one **Run on managed compute** subsection under the run step and link that page. Add a suite limitation only when that suite behaves differently, such as the RCCL pairwise SPUR limit or Aorta's shared path and torchrun rendezvous.
+- **Bare metal and containers**: `docs/how-to/test-suites/index.rst` and `docs/how-to/run-with-containers.rst`.
+- **Category prerequisites**: the category `index.rst`, with a stable reference label such as `training-common-prerequisites` or `inference-common-prerequisites`. A suite page links that section and lists only its additional requirements.
+- **Sample screenshots**: the category index, under **Test results**, labeled as sample layout. One representative suite is enough for the category.
+- **Schema, shipped models, and field meanings**: `docs/reference/configuration-files/`. The how-to links there instead of copying the inventory.
+
+Use the same subsection title and step order on every suite in a category.
+
+### Keep a suite page to that suite
+
+A suite how-to covers additional prerequisites, copying and editing its config, the `cvs run` command, and any scheduler limitation unique to that suite. Multinode setup stays in the edit step: host count matches the configured node count, and the head-node address is reachable from every participating node.
+
+Model-specific parallelism, image paths, token files, and shared paths stay when that suite requires them. A shipped-model list stays in the config reference.
+
+### Leave these out
+
+- Internal report or Run Deck mechanics: deck profiles, session stores, variant configs, chart limits, JSON field lists, and extraction recipes.
+- A second explanation of a shared feature on a suite page. Link the canonical page.
+- Lab bring-up sequences, hardcoded accounts, wall-clock limits, report filenames, and debug symptoms from one machine.
+- Environment names such as "VPC IP" when the requirement is an address reachable from the other nodes.
+- Nested `spur run` or `srun` instructions. The scheduler starts CVS; document another step only when the user must launch one.
+- Scheduler overwrite notes and per-suite repeats of `--html`, `--no-html`, or `--self-contained-html`.
 
 ## Do Not
 

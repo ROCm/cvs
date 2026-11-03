@@ -9,12 +9,16 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # and command-dispatch surface (exec, exec_on_head, cleanup, sudo_prefix) used by the
 # migrated rvs_cvs.py orch fixture. Mocks Pssh so tests run with no SSH.
 
+import os
+import subprocess  # nosec B404
 import unittest
 import tempfile
 from unittest.mock import MagicMock, patch
 
 from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
+from cvs.lib.parallel.config import ParallelConfig
+from cvs.unittests.support import FAKE_CRED, TMP
 
 
 def _make_orch_config():
@@ -47,6 +51,38 @@ class TestBaremetalOrchestrator(unittest.TestCase):
             self.assertEqual(call.kwargs.get("env_vars"), cfg.env_vars)
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_parallel_handle_settings_apply_to_both_handles(self, mock_pssh):
+        cfg = _make_orch_config()
+        cfg.parallel_handle = {
+            "config": {"hosts_per_shard": 8},
+            "transport_kwargs": {"timeout": 60, "num_retries": 2, "retry_delay": 2},
+        }
+        BaremetalOrchestrator(MagicMock(), cfg)
+        for call in mock_pssh.call_args_list:
+            self.assertIsInstance(call.kwargs["config"], ParallelConfig)
+            self.assertEqual(call.kwargs["config"].hosts_per_shard, 8)
+            self.assertEqual(call.kwargs["timeout"], 60)
+            self.assertEqual(call.kwargs["num_retries"], 2)
+            self.assertEqual(call.kwargs["retry_delay"], 2)
+            self.assertEqual(call.kwargs["transport"], "ssh")
+
+    @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=True)
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_parallel_handle_transport_kwargs_are_forwarded_on_http(self, mock_pssh, _managed):
+        cfg = _make_orch_config()
+        cfg.parallel_handle = {
+            "config": {"hosts_per_shard": 8},
+            "transport_kwargs": {"timeout": 60, "num_retries": 2, "retry_delay": 2},
+        }
+        BaremetalOrchestrator(MagicMock(), cfg)
+        for call in mock_pssh.call_args_list:
+            self.assertEqual(call.kwargs["transport"], "http")
+            self.assertEqual(call.kwargs["config"].hosts_per_shard, 8)
+            self.assertEqual(call.kwargs["timeout"], 60)
+            self.assertEqual(call.kwargs["num_retries"], 2)
+            self.assertEqual(call.kwargs["retry_delay"], 2)
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_init_sets_orchestrator_type(self, _mock_pssh):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         self.assertEqual(orch.orchestrator_type, "baremetal")
@@ -63,8 +99,21 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch.all = MagicMock()
         orch.all.exec.return_value = {"10.0.0.1": "ok", "10.0.0.2": "ok"}
         result = orch.exec("ls", timeout=5)
-        orch.all.exec.assert_called_once_with("ls", timeout=5, detailed=False, print_console=True)
+        orch.all.exec.assert_called_once_with(
+            "ls", timeout=5, detailed=False, print_console=True, inactivity_timeout=None
+        )
         self.assertEqual(result, {"10.0.0.1": "ok", "10.0.0.2": "ok"})
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_distribute_using_mpi_logs_masked_command(self, _mock_pssh):
+        log = MagicMock()
+        orch = BaremetalOrchestrator(log, _make_orch_config())
+        cmd = f"mpirun -x HF_TOKEN={FAKE_CRED} hostname"
+        with patch.object(orch, "build_mpi_cmd", return_value=cmd), patch.object(orch, "exec_on_head") as run:
+            orch.distribute_using_mpi("hostname", ["10.0.0.1"], 1, {"HF_TOKEN": FAKE_CRED}, "/opt/ompi")
+        run.assert_called_once_with(cmd, timeout=500)
+        logged = [c.args[0] for c in log.debug.call_args_list if str(c.args[0]).startswith("MPI command: ")]
+        self.assertEqual(logged, ["MPI command: mpirun -x HF_TOKEN=<redacted> hostname"])
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_on_head_delegates_to_head_handle(self, _mock_pssh):
@@ -74,6 +123,45 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         result = orch.exec_on_head("hostname", timeout=10)
         orch.head.exec.assert_called_once_with("hostname", timeout=10, detailed=False, print_console=True)
         self.assertEqual(result, {"10.0.0.1": "ok"})
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_download_file_delegates_to_host_transport(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        orch.all.download_file.return_value = {"10.0.0.2": f"{TMP}/result.log"}
+        result = orch.download_file("/remote/result.log", f"{TMP}/result.log", hosts=["10.0.0.2"])
+        orch.all.download_file.assert_called_once_with("/remote/result.log", f"{TMP}/result.log", hosts=["10.0.0.2"])
+        self.assertEqual(result, {"10.0.0.2": f"{TMP}/result.log"})
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_exec_on_host_targets_requested_host_subset(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        with patch.object(orch, "exec", return_value={"10.0.0.2": "ok"}) as exec_mock:
+            result = orch.exec_on_host("date", hosts=["10.0.0.2"], timeout=5)
+
+        exec_mock.assert_called_once_with(
+            "date",
+            hosts=["10.0.0.2"],
+            timeout=5,
+            detailed=False,
+            print_console=True,
+        )
+        self.assertEqual(result, {"10.0.0.2": "ok"})
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_head_file_transfers_delegate_to_head_handle(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+        orch.head.upload_file.return_value = {"10.0.0.1": "/remote/result.json"}
+        orch.head.download_file.return_value = {"10.0.0.1": "/local/result.json"}
+
+        uploaded = orch.upload_to_head("/local/result.json", "/remote/result.json")
+        downloaded = orch.download_from_head("/remote/result.json", "/local/result.json")
+
+        orch.head.upload_file.assert_called_once_with("/local/result.json", "/remote/result.json")
+        orch.head.download_file.assert_called_once_with("/remote/result.json", "/local/result.json")
+        self.assertEqual(uploaded, {"10.0.0.1": "/remote/result.json"})
+        self.assertEqual(downloaded, {"10.0.0.1": "/local/result.json"})
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_forwards_print_console_false_to_all(self, _mock_pssh):
@@ -109,6 +197,26 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         self.assertIs(subset_handle.exec.call_args.kwargs["print_console"], False)
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_exec_forwards_inactivity_timeout_to_all(self, _mock_pssh):
+        """inactivity_timeout must reach the pssh handle (ANC relies on it: abort a
+        group only after N seconds with no new output, no total wall-clock cap)."""
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        orch.exec("sudo ./anc.py -g hbm_lvl1", inactivity_timeout=900)
+        self.assertEqual(orch.all.exec.call_args.kwargs["inactivity_timeout"], 900)
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_exec_forwards_inactivity_timeout_to_host_subset(self, mock_pssh):
+        """The subset branch builds its own Pssh; inactivity_timeout must forward too."""
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        mock_pssh.reset_mock()
+        orch.exec("sudo ./anc.py -g hbm_lvl1", hosts=["10.0.0.2"], inactivity_timeout=900)
+        orch.all.exec.assert_not_called()
+        subset_handle = mock_pssh.return_value
+        self.assertEqual(subset_handle.exec.call_args.kwargs["inactivity_timeout"], 900)
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_on_head_forwards_print_console_false(self, _mock_pssh):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         orch.head = MagicMock()
@@ -120,6 +228,7 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         self.assertTrue(orch.cleanup(orch.hosts))
 
+    @patch.dict(os.environ, {"USER": "testuser"})
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_build_mpi_cmd_hostfile_cleanup_uses_sudo_prefix(self, _mock_pssh):
         # The stale-hostfile `rm -f` on the head node must be built from a single
@@ -146,12 +255,83 @@ class TestBaremetalOrchestrator(unittest.TestCase):
                 self.assertNotIn(
                     "||", first_call_cmd, f"[{label}] must not use the old fallback form: {first_call_cmd!r}"
                 )
-                self.assertEqual(first_call_cmd, f"{sudo_prefix}rm -f /tmp/mpi_hosts.txt")
+                self.assertEqual(first_call_cmd, f"{sudo_prefix}rm -f /tmp/mpi_hosts_testuser.txt")
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_build_mpi_cmd_hostfile_path_is_per_user(self, _mock_pssh):
+        # Users sharing a head node must not share one /tmp hostfile: every use
+        # of the path (removal, write, --hostfile) is scoped by $USER.
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+        orch.head.exec.return_value = {"10.0.0.1": {"output": "", "exit_code": 0}}
+
+        for env, expected in [({"USER": "alice"}, "/tmp/mpi_hosts_alice.txt"), ({}, "/tmp/mpi_hosts_cvs.txt")]:
+            with self.subTest(env=env):
+                orch.head.exec.reset_mock()
+                with patch.dict(os.environ, env, clear=True), patch.object(orch, "sudo_prefix", return_value=""):
+                    full_cmd = orch.build_mpi_cmd(
+                        rank_cmd="echo hi",
+                        mpi_hosts=["10.0.0.1"],
+                        ranks_per_host=1,
+                        env_vars={},
+                        mpi_install_dir="/opt/mpi",
+                    )
+
+                remove_cmd, write_cmd = (call[0][0] for call in orch.head.exec.call_args_list[:2])
+                self.assertEqual(remove_cmd, f"rm -f {expected}")
+                self.assertTrue(write_cmd.endswith(f"> {expected}'"), write_cmd)
+                self.assertIn(f"--hostfile {expected}", full_cmd)
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_build_mpi_cmd_writes_host_names_verbatim(self, _mock_pssh):
+        # The write passes through two shells (the SSH login shell, then the
+        # sudo'd bash -c), so it runs in a real sh: only a shell shows whether a
+        # quote breaks out or $(...) expands.
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        user = f"cvs-ut-{os.getpid()}"
+        host_file = f"/tmp/mpi_hosts_{user}.txt"
+        marker = f"/tmp/{user}-injected"
+        for path in (host_file, marker):
+            self.addCleanup(lambda p=path: os.path.exists(p) and os.remove(p))
+
+        def run_in_sh(cmd, **_kwargs):
+            proc = subprocess.run(["sh", "-c", cmd], capture_output=True, text=True, check=False)  # nosec B603 B607
+            return {"10.0.0.1": {"output": proc.stdout + proc.stderr, "exit_code": proc.returncode}}
+
+        for host in ["a'b", "$(id -un)", "`id -un`", f"x'; touch {marker}; echo '"]:
+            with self.subTest(host=host):
+                with patch.dict(os.environ, {"USER": user}), patch.object(orch, "sudo_prefix", return_value=""):
+                    with patch.object(orch, "exec_on_head", side_effect=run_in_sh):
+                        orch.build_mpi_cmd(
+                            rank_cmd="echo hi",
+                            mpi_hosts=[host],
+                            ranks_per_host=1,
+                            env_vars={},
+                            mpi_install_dir="/opt/mpi",
+                        )
+                with open(host_file) as f:
+                    self.assertEqual(f.read(), f"{host} slots=1\n")
+                self.assertFalse(os.path.exists(marker))
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_build_mpi_cmd_rejects_empty_host_list(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+
+        with self.assertRaises(ValueError):
+            orch.build_mpi_cmd(
+                rank_cmd="echo hi",
+                mpi_hosts=[],
+                ranks_per_host=1,
+                env_vars={},
+                mpi_install_dir="/opt/mpi",
+            )
+        orch.head.exec.assert_not_called()
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_build_mpi_cmd_hostfile_write_uses_same_sudo_prefix_as_removal(self, _mock_pssh):
         # Regression test: the hostfile write must use the SAME sudo_prefix() as
-        # the removal. If a prior run left /tmp/mpi_hosts.txt root-owned (sudo
+        # the removal. If a prior run left the hostfile root-owned (sudo
         # was needed then) and this run's probe resolves no-sudo, an unprefixed
         # write would silently fail against the sticky-bit-protected /tmp entry
         # left by a DIFFERENT owner, launching MPI against a stale hostfile.
@@ -327,11 +507,11 @@ class TestBaremetalOrchestratorSubsetHandleCleanup(unittest.TestCase):
                 if side_effect is None:
                     mock_pssh.return_value.exec.return_value = {"10.0.0.2": {"exit_code": 0}}
                     mock_pssh.return_value.exec.side_effect = None
-                    orch.setup_env(["10.0.0.2"], env_script="/tmp/env.sh")
+                    orch.setup_env(["10.0.0.2"], env_script=f"{TMP}/env.sh")
                 else:
                     mock_pssh.return_value.exec.side_effect = side_effect
                     with self.assertRaises(RuntimeError):
-                        orch.setup_env(["10.0.0.2"], env_script="/tmp/env.sh")
+                        orch.setup_env(["10.0.0.2"], env_script=f"{TMP}/env.sh")
 
                 mock_pssh.return_value.destroy_clients.assert_called_once_with()
 

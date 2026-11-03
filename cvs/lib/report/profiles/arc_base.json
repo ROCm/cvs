@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "profile_id": "arc_base",
+  "suite_id": "arc",
+  "report_basename": "arc_run_deck",
+  "title": "ARC Run Deck",
+  "subtitle": "AMD Rack Check · flow and item results across rack controllers",
+  "footer": "CVS ARC · controller verdict from collected summary.json",
+  "link_name": "ARC Run Deck",
+  "dataset_builder": "status_matrix",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "arc_res_dict"
+  },
+  "cards": [
+    {
+      "type": "run_card",
+      "id": "run-card",
+      "title": "Run card",
+      "bind": "datasets.status_matrix.run_card_display"
+    },
+    {
+      "type": "status_matrix",
+      "id": "results",
+      "title": "Full results",
+      "bind": "datasets.status_matrix"
+    }
+  ]
+}

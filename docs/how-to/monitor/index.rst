@@ -1,10 +1,10 @@
 .. meta::
-  :description: Monitor AMD GPU cluster health with CVS
-  :keywords: CVS, health, monitor, cluster
+  :description: Monitor AMD Instinct GPU cluster health with CVS using health reports, agentless SSH dashboards, or Prometheus exporter-based live dashboards.
+  :keywords: CVS, ROCm, health, monitor, cluster, AMD Instinct, GPU, AMD, Prometheus, Grafana, SSH, dashboard
 
-*************************
-Monitor cluster health
-*************************
+************************************************************************************
+Monitor AMD Instinct GPU cluster health and metrics with Cluster Validation Suite (CVS)
+************************************************************************************
 
 CVS provides three monitoring paths:
 

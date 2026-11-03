@@ -22,12 +22,6 @@ from cvs.parsers.schemas import (
     # Config file schemas
     ClusterConfigFile,
     ClusterNodeConfig,
-    AortaBenchmarkConfigFile,
-    AortaDockerConfigFile,
-    AortaRcclConfigFile,
-    AortaEnvironmentConfigFile,
-    AortaExpectedResultsConfigFile,
-    AortaAnalysisConfigFile,
     # Validation helper
     validate_config_file,
 )
@@ -45,12 +39,6 @@ __all__ = [
     # Config file schemas
     "ClusterConfigFile",
     "ClusterNodeConfig",
-    "AortaBenchmarkConfigFile",
-    "AortaDockerConfigFile",
-    "AortaRcclConfigFile",
-    "AortaEnvironmentConfigFile",
-    "AortaExpectedResultsConfigFile",
-    "AortaAnalysisConfigFile",
     # Validation helper
     "validate_config_file",
     # Parser implementations

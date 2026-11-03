@@ -5,8 +5,13 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import os
+import shlex
+
 from cvs.core.orchestrators.base import Orchestrator
 from cvs.core.scheduler import is_managed_compute
+from cvs.lib.env_lib import redact_secrets
+from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
 from cvs.lib.utils_lib import get_passwordless_sudo_status
 
@@ -70,6 +75,8 @@ class BaremetalOrchestrator(Orchestrator):
 
     def _phandle(self, hosts):
         managed = is_managed_compute()
+        overrides = self.config.get('parallel_handle') or {}
+        config_overrides = overrides.get('config') or {}
         return MultiProcessParallelHandle(
             self.log,
             hosts,
@@ -79,8 +86,10 @@ class BaremetalOrchestrator(Orchestrator):
             host_key_check=False,
             stop_on_errors=self.stop_on_errors,
             env_vars=self.config.get('env_vars'),
+            config=ParallelConfig(**config_overrides) if config_overrides else None,
             transport='http' if managed else 'ssh',
             **(self._transport_kwargs() if managed else {}),
+            **(overrides.get('transport_kwargs') or {}),
         )
 
     def close(self):
@@ -98,7 +107,7 @@ class BaremetalOrchestrator(Orchestrator):
             except Exception as exc:
                 self.log.debug("Error destroying parallel handle: %s", exc)
 
-    def exec(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
+    def exec(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True, inactivity_timeout=None):
         """
         Execute command across hosts via SSH (baremetal execution).
 
@@ -110,6 +119,9 @@ class BaremetalOrchestrator(Orchestrator):
                 exit_code (mirrors ContainerOrchestrator.exec).
             print_console: If False, the command's output is returned but not
                 logged. Use for bulk data the caller parses itself.
+            inactivity_timeout: Abort a host only after this many seconds with no
+                new output (no total wall-clock cap). None keeps the plain
+                ``timeout`` budget.
 
         Returns:
             Dictionary mapping hosts to execution results
@@ -119,14 +131,36 @@ class BaremetalOrchestrator(Orchestrator):
 
         # Use appropriate handle based on target hosts
         if set(hosts) == set(self.hosts):
-            return self.all.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+            return self.all.exec(
+                cmd,
+                timeout=timeout,
+                detailed=detailed,
+                print_console=print_console,
+                inactivity_timeout=inactivity_timeout,
+            )
         else:
             # For arbitrary subset (including head node), create temporary handle
             phandle = self._phandle(hosts)
             try:
-                return phandle.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+                return phandle.exec(
+                    cmd,
+                    timeout=timeout,
+                    detailed=detailed,
+                    print_console=print_console,
+                    inactivity_timeout=inactivity_timeout,
+                )
             finally:
                 phandle.destroy_clients()
+
+    def exec_on_host(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
+        """Execute directly on the host OS."""
+        return self.exec(
+            cmd,
+            hosts=hosts,
+            timeout=timeout,
+            detailed=detailed,
+            print_console=print_console,
+        )
 
     def sudo_prefix(self):
         """
@@ -164,6 +198,18 @@ class BaremetalOrchestrator(Orchestrator):
             Dictionary mapping head node to execution result
         """
         return self.head.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+
+    def upload_to_head(self, local_file, remote_file):
+        """Upload a local file to the head node's host filesystem."""
+        return self.head.upload_file(local_file, remote_file)
+
+    def download_from_head(self, remote_file, local_file):
+        """Download a file from the head node's host filesystem."""
+        return self.head.download_file(remote_file, local_file)
+
+    def download_file(self, remote_file, local_file, hosts=None):
+        """Download a file through the orchestrator's host transport."""
+        return self.all.download_file(remote_file, local_file, hosts=hosts)
 
     def setup_env(self, hosts, env_script=None):
         """Set up environment on hosts."""
@@ -224,7 +270,13 @@ class BaremetalOrchestrator(Orchestrator):
 
         Returns:
             Full MPI command string
+
+        Raises:
+            ValueError: If mpi_hosts is empty
         """
+        if not mpi_hosts:
+            raise ValueError("build_mpi_cmd needs at least one host in mpi_hosts")
+
         # Create MPI hostfile
         host_file_params = ''
         for host in mpi_hosts:
@@ -237,14 +289,18 @@ class BaremetalOrchestrator(Orchestrator):
         # write failure surfaces immediately instead of launching MPI against a
         # leftover hostfile.
         sudo_prefix = self.sudo_prefix()
+        hosts_file_path = f'/tmp/mpi_hosts_{os.environ.get("USER", "cvs")}.txt'
 
-        cmd = f'{sudo_prefix}rm -f /tmp/mpi_hosts.txt'
+        cmd = f'{sudo_prefix}rm -f {hosts_file_path}'
         result = self.exec_on_head(cmd, detailed=True)
         failed = [host for host, res in result.items() if res.get('exit_code') != 0]
         if failed:
             raise RuntimeError(f"Failed to remove stale MPI hostfile on hosts: {failed}")
 
-        cmd = f'{sudo_prefix}bash -c \'echo "{host_file_params}" > /tmp/mpi_hosts.txt\''
+        # Quoted once for the sudo'd bash and once for the login shell, so host
+        # names are written verbatim rather than parsed by either shell.
+        write_cmd = f'printf %s {shlex.quote(host_file_params)} > {hosts_file_path}'
+        cmd = f'{sudo_prefix}bash -c {shlex.quote(write_cmd)}'
         result = self.exec_on_head(cmd, detailed=True)
         failed = [host for host, res in result.items() if res.get('exit_code') != 0]
         if failed:
@@ -258,7 +314,7 @@ class BaremetalOrchestrator(Orchestrator):
             str(no_of_global_ranks),
             '--allow-run-as-root',
             '--hostfile',
-            '/tmp/mpi_hosts.txt',
+            hosts_file_path,
         ]
 
         if mpi_extra_args:
@@ -298,7 +354,7 @@ class BaremetalOrchestrator(Orchestrator):
         )
 
         self.log.info("Launching MPI job")
-        self.log.debug(f"MPI command: {full_mpi_cmd}")
+        self.log.debug(f"MPI command: {redact_secrets(full_mpi_cmd)}")
 
         # Execute on head node
         result = self.exec_on_head(full_mpi_cmd, timeout=500)  # Default timeout

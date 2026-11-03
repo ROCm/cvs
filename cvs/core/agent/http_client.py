@@ -118,7 +118,10 @@ class ParallelHTTPClient:
         token: str,
         connect_timeout: float | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        **kwargs,
     ) -> None:
+        # SSH client settings are forwarded on every transport. This client does not use them.
+        del kwargs
         self._agent_urls = dict(agent_urls)
         self._token = token
         self._connect_timeout = connect_timeout

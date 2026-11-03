@@ -1,0 +1,422 @@
+'''Unit tests for the preflight Run Deck status-matrix capture.'''
+
+import unittest
+
+import pytest
+
+from cvs.lib.preflight.rundeck import CHECK_IDS, NODE_HEALTH, _health_records, build_preflight_deck, make_meta
+from cvs.lib.report.profile import load_json_profile
+from cvs.tests.preflight import preflight_checks
+
+
+def _smoke_payload():
+    return {
+        'status': 'PASS',
+        'tier1': {
+            'per_gpu': [
+                {'gpu': 0, 'status': 'PASS', 'details': {'gemm_tflops': 757.44, 'hbm_gbs': 4410.0}},
+                {'gpu': 1, 'status': 'PASS', 'details': {'gemm_tflops': 700.0, 'hbm_gbs': 4300.0}},
+            ],
+            'gpu_processes': {'ok': True},
+            'nics': {'expected_count': 8, 'issues': []},
+            'host_limits': {'fail_reasons': []},
+            'gpu_low_level': {'ok': True},
+            'xgmi': {'ok': True},
+            'tooling': {'ok': True},
+            'gpu_visibility': {'fail_reasons': [], 'torch_visible': 8},
+        },
+        'tier2': {'rccl': {'status': 'PASS', 'gbs': 277.3}},
+    }
+
+
+class TestPreflightDeck(unittest.TestCase):
+    def test_meta_uses_cluster_and_detected_rocm(self):
+        meta = make_meta({'cluster_name': 'lab'}, 'preflight_checks', '7.2.1')
+        self.assertEqual(meta['cluster'], 'lab')
+        self.assertEqual(meta['version'], '7.2.1')
+        self.assertEqual(meta['version_label'], 'ROCm version')
+        deck = build_preflight_deck(
+            {
+                'rocm_versions': {
+                    'n1': {'status': 'PASS', 'detected_version': '7.2.1', 'expected_version': '7.2.1', 'errors': []},
+                    'n2': {
+                        'status': 'FAIL',
+                        'detected_version': '6.2.0',
+                        'expected_version': '7.2.1',
+                        'errors': ['mismatch'],
+                    },
+                }
+            },
+            {'cluster_name': 'lab', 'node_dict': {'n1': {}, 'n2': {}}},
+        )
+        self.assertEqual(deck['_meta']['version'], '7.2.1')
+        self.assertEqual(deck['groups']['rocm_versions']['nodes']['n1']['status'], 'pass')
+        self.assertEqual(deck['groups']['rocm_versions']['nodes']['n2']['status'], 'fail')
+        self.assertIn('6.2.0', deck['groups']['rocm_versions']['nodes']['n2']['items_summary'])
+
+    def test_skipped_rdma_is_na_on_every_node(self):
+        deck = build_preflight_deck(
+            {
+                'rdma_connectivity': {
+                    'status': 'SKIPPED',
+                    'skipped': True,
+                    'message': 'RDMA interface, GID, and connectivity validation skipped by configuration',
+                }
+            },
+            {'node_dict': {'n1': {}, 'n2': {}}},
+        )
+        nodes = deck['groups']['rdma_connectivity']['nodes']
+        self.assertEqual(set(nodes), {'n1', 'n2'})
+        self.assertTrue(all(record['status'] == 'na' for record in nodes.values()))
+        self.assertIn('skipped by configuration', nodes['n1']['items_summary'])
+
+    def test_mtu_group_pass_fail_and_skip(self):
+        deck = build_preflight_deck(
+            {
+                'rdma_mtu': {
+                    'n1': {
+                        'status': 'PASS',
+                        'interfaces': {'rdma0': {'status': 'OK', 'netdev_mtu': 9000, 'active_mtu': 4096, 'errors': []}},
+                        'errors': [],
+                    },
+                    'n2': {
+                        'status': 'FAIL',
+                        'interfaces': {
+                            'rdma0': {
+                                'status': 'FAIL',
+                                'netdev_mtu': 1500,
+                                'active_mtu': 1024,
+                                'errors': ['jumbo frames not enabled'],
+                            }
+                        },
+                        'errors': ['jumbo frames not enabled'],
+                    },
+                }
+            },
+            {'node_dict': {'n1': {}, 'n2': {}}},
+        )
+        nodes = deck['groups']['rdma_mtu']['nodes']
+        self.assertEqual(nodes['n1']['status'], 'pass')
+        self.assertEqual(nodes['n2']['status'], 'fail')
+        self.assertIn('9000', nodes['n1']['items_summary'])
+        self.assertEqual(nodes['n2']['items'][0]['name'], 'rdma0')
+
+        self.assertEqual(nodes['n1']['items_summary'], 'netdev MTU 9000, active MTU 4096')
+
+        partial = build_preflight_deck(
+            {
+                'rdma_mtu': {
+                    'n1': {
+                        'status': 'FAIL',
+                        'interfaces': {'rdma0': {'status': 'FAIL', 'netdev_mtu': None, 'active_mtu': 4096}},
+                        'errors': ['Could not determine netdev MTU'],
+                    },
+                }
+            },
+            {'node_dict': {'n1': {}}},
+        )
+        self.assertEqual(partial['groups']['rdma_mtu']['nodes']['n1']['items_summary'], 'active MTU 4096')
+
+        infiniband = build_preflight_deck(
+            {
+                'rdma_mtu': {
+                    'n1': {
+                        'status': 'PASS',
+                        'interfaces': {
+                            'mlx5_0': {
+                                'status': 'OK',
+                                'link_layer': 'InfiniBand',
+                                'netdev': 'ib0',
+                                'netdev_mtu': 2044,
+                                'active_mtu': 4096,
+                            }
+                        },
+                        'errors': [],
+                    },
+                }
+            },
+            {'node_dict': {'n1': {}}},
+        )
+        self.assertEqual(
+            infiniband['groups']['rdma_mtu']['nodes']['n1']['items_summary'], 'InfiniBand: active MTU 4096'
+        )
+
+        skipped = build_preflight_deck(
+            {'rdma_mtu': {'status': 'SKIPPED', 'skipped': True, 'message': 'disabled'}},
+            {'node_dict': {'n1': {}, 'n2': {}}},
+        )
+        self.assertTrue(all(node['status'] == 'na' for node in skipped['groups']['rdma_mtu']['nodes'].values()))
+
+    def test_reachability_marks_unreachable_nodes(self):
+        deck = build_preflight_deck(
+            {
+                'node_reachability': {
+                    'status': 'WARNING',
+                    'unreachable_nodes': ['n2'],
+                    'nodes': {'n1': {'status': 'PASS'}, 'n2': {'status': 'FAIL'}},
+                }
+            },
+            {'node_dict': {'n1': {}, 'n2': {}}},
+        )
+        nodes = deck['groups']['node_reachability']['nodes']
+        self.assertEqual(nodes['n1']['status'], 'pass')
+        self.assertEqual(nodes['n2']['status'], 'fail')
+
+    def test_node_smoke_scores_reported_checks_and_keeps_gemm_numbers(self):
+        payload = _smoke_payload()
+        deck = build_preflight_deck(
+            {
+                'node_smoke_tier1': {
+                    'status': 'PASS',
+                    'tier2_perf': True,
+                    'gpus_per_node': 2,
+                    'tier2_thresholds': {'gemm_tflops_min': 600, 'hbm_gbs_min': 2000, 'rccl_gbs_min': 100},
+                    'node_results': {'n1': {'status': 'PASS', 'fail_reasons': [], 'node_payload': payload}},
+                }
+            },
+            {'node_dict': {'n1': {}}},
+        )
+        tier1 = deck['groups']['node_smoke_tier1']['nodes']['n1']
+        self.assertEqual(tier1['status'], 'pass')
+        by_name = {item['name']: item for item in tier1['items']}
+        self.assertEqual(by_name['GPU 0']['status'], 'pass')
+        self.assertEqual(by_name['RDMA NICs']['status'], 'pass')
+        self.assertEqual(by_name['Host limits']['status'], 'pass')
+        self.assertEqual(by_name['GPU visibility']['status'], 'pass')
+        self.assertEqual(by_name['GPU processes']['status'], 'pass')
+
+        tier2 = deck['groups']['node_smoke_tier2']['nodes']['n1']
+        self.assertEqual(tier2['status'], 'pass')
+        tier2_items = {item['name']: item for item in tier2['items']}
+        self.assertEqual(tier2_items['Local RCCL all-reduce']['status'], 'pass')
+        self.assertEqual(tier2_items['GPU 0 Large GEMM TFLOPS']['status'], 'pass')
+        self.assertIn('757.44', tier2_items['GPU 0 Large GEMM TFLOPS']['message'])
+        gemm = next(metric for metric in tier2['metrics'] if metric['name'] == 'large_gemm')
+        self.assertEqual(gemm['value'], 700.0)
+        self.assertEqual(gemm['status'], 'pass')
+        self.assertEqual(gemm['threshold'], 600)
+        self.assertTrue(tier2['series'])
+
+    def test_tier1_deck_does_not_inherit_a_tier2_miss(self):
+        collectors = {
+            'gpu_processes': {'ok': True},
+            'nics': {'expected_count': 1, 'issues': []},
+            'host_limits': {'fail_reasons': []},
+            'gpu_low_level': {'ok': True},
+            'xgmi': {'ok': True},
+            'tooling': {'ok': True},
+            'gpu_visibility': {'fail_reasons': [], 'torch_visible': 1},
+        }
+        deck = build_preflight_deck(
+            {
+                'node_smoke_tier1': {
+                    'status': 'FAIL',
+                    'tier2_perf': True,
+                    'gpus_per_node': 1,
+                    'total_nodes': 1,
+                    'failed_nodes': ['n1'],
+                    'tier2_thresholds': {'gemm_tflops_min': 600, 'hbm_gbs_min': 2000, 'rccl_gbs_min': 100},
+                    'node_results': {
+                        'n1': {
+                            'status': 'FAIL',
+                            'fail_reasons': ['large_gemm: 100 < 600'],
+                            'node_payload': {
+                                'tier1': {'per_gpu': [{'gpu': 0, 'status': 'PASS'}], **collectors},
+                                'tier2': {
+                                    'per_gpu': [{'gpu': 0, 'gemm_tflops': 100, 'hbm_gbs': 3000}],
+                                    'rccl': {'status': 'PASS', 'gbs': 200},
+                                },
+                            },
+                        }
+                    },
+                }
+            },
+            {'node_dict': {'n1': {}}},
+        )
+        tier1 = deck['groups']['node_smoke_tier1']['nodes']['n1']
+        self.assertEqual(tier1['status'], 'pass')
+        self.assertFalse(any(item.get('status') == 'fail' for item in tier1['items']))
+        tier2 = deck['groups']['node_smoke_tier2']['nodes']['n1']
+        self.assertEqual(tier2['status'], 'fail')
+
+    def test_tier1_deck_keeps_collector_failure_with_prim_us_gemm_reason(self):
+        deck = build_preflight_deck(
+            {
+                'node_smoke_tier1': {
+                    'status': 'FAIL',
+                    'tier2_perf': True,
+                    'gpus_per_node': 1,
+                    'total_nodes': 1,
+                    'failed_nodes': ['n1'],
+                    'tier2_thresholds': {'gemm_tflops_min': 600, 'hbm_gbs_min': 2000, 'rccl_gbs_min': 100},
+                    'node_results': {
+                        'n1': {
+                            'status': 'FAIL',
+                            'fail_reasons': [
+                                'gpu0: FAIL: GEMM TFLOPS 100 < threshold 600',
+                                'host_limits: ulimit -l = 8012 MiB < 32 GiB',
+                            ],
+                            'node_payload': {
+                                'tier1': {
+                                    'per_gpu': [{'gpu': 0, 'status': 'PASS'}],
+                                    'gpu_processes': {'ok': True},
+                                    'nics': {'expected_count': 1, 'issues': []},
+                                    'host_limits': {
+                                        'fail_reasons': ['ulimit -l = 8012 MiB < 32 GiB'],
+                                    },
+                                    'gpu_low_level': {'ok': True},
+                                    'xgmi': {'ok': True},
+                                    'tooling': {'ok': True},
+                                    'gpu_visibility': {'fail_reasons': [], 'torch_visible': 1},
+                                },
+                                'tier2': {
+                                    'per_gpu': [{'gpu': 0, 'gemm_tflops': 100, 'hbm_gbs': 3000}],
+                                    'rccl': {'status': 'PASS', 'gbs': 200},
+                                },
+                            },
+                        }
+                    },
+                }
+            },
+            {'node_dict': {'n1': {}}},
+        )
+        tier1 = deck['groups']['node_smoke_tier1']['nodes']['n1']
+        self.assertEqual(tier1['status'], 'fail')
+        by_name = {item['name']: item for item in tier1['items']}
+        self.assertEqual(by_name['Host limits']['status'], 'fail')
+        self.assertFalse(any('GEMM' in (item.get('message') or '') for item in tier1['items']))
+        self.assertEqual(deck['groups']['node_smoke_tier2']['nodes']['n1']['status'], 'fail')
+
+    def test_tier1_deck_keeps_setup_failure_with_tier2_miss(self):
+        collectors = {
+            'gpu_processes': {'ok': True},
+            'nics': {'expected_count': 1, 'issues': []},
+            'host_limits': {'fail_reasons': []},
+            'gpu_low_level': {'ok': True},
+            'xgmi': {'ok': True},
+            'tooling': {'ok': True},
+            'gpu_visibility': {'fail_reasons': [], 'torch_visible': 1},
+        }
+        setup = 'could not determine node_smoke status from output'
+        deck = build_preflight_deck(
+            {
+                'node_smoke_tier1': {
+                    'status': 'FAIL',
+                    'tier2_perf': True,
+                    'gpus_per_node': 1,
+                    'total_nodes': 1,
+                    'failed_nodes': ['n1'],
+                    'tier2_thresholds': {'gemm_tflops_min': 600, 'hbm_gbs_min': 2000, 'rccl_gbs_min': 100},
+                    'node_results': {
+                        'n1': {
+                            'status': 'FAIL',
+                            'fail_reasons': ['large_gemm: 100 < 600', setup],
+                            'node_payload': {
+                                'tier1': {'per_gpu': [{'gpu': 0, 'status': 'PASS'}], **collectors},
+                                'tier2': {
+                                    'per_gpu': [{'gpu': 0, 'gemm_tflops': 100, 'hbm_gbs': 3000}],
+                                    'rccl': {'status': 'PASS', 'gbs': 200},
+                                },
+                            },
+                        }
+                    },
+                }
+            },
+            {'node_dict': {'n1': {}}},
+        )
+        tier1 = deck['groups']['node_smoke_tier1']['nodes']['n1']
+        self.assertEqual(tier1['status'], 'fail')
+        self.assertTrue(any(item.get('message') == setup for item in tier1['items']))
+        self.assertEqual(deck['groups']['node_smoke_tier2']['nodes']['n1']['status'], 'fail')
+
+    def test_tier2_group_omitted_when_perf_disabled(self):
+        deck = build_preflight_deck(
+            {
+                'node_smoke_tier1': {
+                    'status': 'PASS',
+                    'tier2_perf': False,
+                    'gpus_per_node': 2,
+                    'node_results': {
+                        'n1': {'status': 'PASS', 'node_payload': {'tier1': {'per_gpu': [{'gpu': 0, 'status': 'PASS'}]}}}
+                    },
+                }
+            }
+        )
+        self.assertIn('node_smoke_tier1', deck['groups'])
+        self.assertNotIn('node_smoke_tier2', deck['groups'])
+
+    def test_health_record_surfaces_degraded_fabric_warning(self):
+        results = {
+            NODE_HEALTH: {
+                'status': 'PASS',
+                'node_results': {
+                    'n1': {
+                        'status': 'PASS',
+                        'errors': [],
+                        'warnings': [
+                            '0000:01:00.0: only 1/18 IFoE stations enabled (2/36 scale-up ports); '
+                            'node is fit for processing but scale-up throughput is reduced'
+                        ],
+                    }
+                },
+            }
+        }
+        records = _health_records(results, ['n1'])
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertIn('degraded fabric', records['n1']['items_summary'])
+
+    def test_health_record_failed_node_reports_error_not_degraded(self):
+        # A FAIL node that also carries a station-mask warning must surface its
+        # error, never the "fit for processing" degraded-fabric text.
+        results = {
+            NODE_HEALTH: {
+                'status': 'FAIL',
+                'node_results': {
+                    'n1': {
+                        'status': 'FAIL',
+                        'errors': ['0000:01:00.0: 0 enabled IFoE ports is below min_up_ports_per_gpu=2'],
+                        'warnings': [
+                            '0000:02:00.0: only 1/18 IFoE stations enabled (2/36 scale-up ports); '
+                            'node is fit for processing but scale-up throughput is reduced'
+                        ],
+                    }
+                },
+            }
+        }
+        records = _health_records(results, ['n1'])
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertIn('below min_up_ports_per_gpu', records['n1']['items_summary'])
+        self.assertNotIn('degraded fabric', records['n1']['items_summary'])
+        self.assertNotIn('fit for processing', records['n1']['items_summary'])
+
+    def test_profile_labels_match_check_ids(self):
+        profile = load_json_profile('preflight_checks')
+        self.assertEqual(profile['lifecycle']['session_labels'], list(CHECK_IDS))
+        self.assertEqual(profile['sources']['results'], 'preflight_res_dict')
+
+    def test_publish_fills_the_slot_before_a_skip(self):
+        previous_slot = dict(preflight_checks._rundeck_slot)
+        previous_results = dict(preflight_checks.preflight_results)
+        target = {}
+        try:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results['gid_consistency'] = {
+                'status': 'SKIPPED',
+                'skipped': True,
+                'message': 'RDMA GID validation skipped because RDMA connectivity mode is skip',
+            }
+            preflight_checks._rundeck_slot['target'] = target
+            preflight_checks._rundeck_slot['cluster'] = {'cluster_name': 'lab', 'node_dict': {'n1': {}}}
+            with self.assertRaises(pytest.skip.Exception):
+                preflight_checks.preflight_update_test_result(preflight_checks.preflight_results['gid_consistency'])
+            self.assertEqual(target['groups']['gid_consistency']['nodes']['n1']['status'], 'na')
+            self.assertEqual(target['_meta']['cluster'], 'lab')
+        finally:
+            preflight_checks._rundeck_slot.clear()
+            preflight_checks._rundeck_slot.update(previous_slot)
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
+
+
+if __name__ == '__main__':
+    unittest.main()

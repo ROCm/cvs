@@ -44,6 +44,17 @@ class TestProvenance(unittest.TestCase):
         self.assertEqual(prov["pytest_html_path"], "/out/report.html")
         self.assertEqual(prov["log_file_path"], "/out/run.log")
 
+    def test_collect_omits_worktree_diff(self):
+        config = SimpleNamespace(
+            option=SimpleNamespace(
+                cluster_file="/cluster.json",
+                config_file="/variant.json",
+            )
+        )
+        prov = build_inference_report_provenance(config, cvs_version="9.9.9")
+        self.assertNotIn("git_dirty", prov)
+        self.assertNotIn("(dirty)", prov.get("git_ref", ""))
+
     def test_provenance_run_card_rows_includes_standard_fields(self):
         rows = provenance_run_card_rows(
             {

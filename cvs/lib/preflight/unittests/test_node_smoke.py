@@ -3,7 +3,7 @@
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
@@ -18,11 +18,18 @@ from cvs.lib.preflight.node_smoke import (
     resolve_rdma_gid_index,
     resolve_rdma_interfaces,
 )
+from cvs.unittests.support import TMP
+
+
+def _make_orch(phdl):
+    orch = MagicMock()
+    orch.all = phdl
+    return orch
 
 
 class TestBuildNodeSmokeFlags(unittest.TestCase):
     def test_default_flags_include_dump_path(self):
-        flags = build_node_smoke_flags(dump_path="/tmp/smoke")
+        flags = build_node_smoke_flags(dump_path=f"{TMP}/smoke")
         self.assertIn("--dump-path /tmp/smoke", flags)
 
     def test_empty_dump_path_uses_default(self):
@@ -38,7 +45,7 @@ class TestBuildNodeSmokeFlags(unittest.TestCase):
 
     def test_resolve_dump_path_without_reporting_section(self):
         cfg = {"node_smoke": {"dump_path": ""}}
-        self.assertEqual(_resolve_dump_path(cfg), "/tmp/preflight/node_smoke")
+        self.assertEqual(_resolve_dump_path(cfg), f"{TMP}/preflight/node_smoke")
 
     def test_rdma_and_host_limits(self):
         flags = build_node_smoke_flags(
@@ -55,7 +62,7 @@ class TestBuildNodeSmokeFlags(unittest.TestCase):
 
     def test_extra_args_forwarded(self):
         flags = build_node_smoke_flags(
-            dump_path="/tmp/smoke",
+            dump_path=f"{TMP}/smoke",
             extra_args=["--no-clean-dump-path", "--allow-foreign-procs"],
         )
         self.assertIn("--no-clean-dump-path", flags)
@@ -63,7 +70,7 @@ class TestBuildNodeSmokeFlags(unittest.TestCase):
 
     def test_tier2_perf_flags(self):
         flags = build_node_smoke_flags(
-            dump_path="/tmp/smoke",
+            dump_path=f"{TMP}/smoke",
             tier2_perf=True,
             gemm_tflops_min=700,
             hbm_gbs_min=4500,
@@ -80,7 +87,7 @@ class TestBuildNodeSmokeFlags(unittest.TestCase):
 
     def test_tier2_perf_off_omits_threshold_flags(self):
         flags = build_node_smoke_flags(
-            dump_path="/tmp/smoke",
+            dump_path=f"{TMP}/smoke",
             tier2_perf=False,
             gemm_tflops_min=700,
         )
@@ -98,7 +105,7 @@ class TestBuildRemoteCommand(unittest.TestCase):
             master_addr="node0",
             master_port=1234,
             gpus_per_node=8,
-            dump_path="/tmp/preflight/node_smoke",
+            dump_path=f"{TMP}/preflight/node_smoke",
             smoke_flags="--dump-path /tmp/preflight/node_smoke",
             nccl_ib_hca="rdma0,rdma1",
             nccl_ib_gid_index=3,
@@ -111,6 +118,40 @@ class TestBuildRemoteCommand(unittest.TestCase):
         self.assertIn(_JSON_END, cmd)
         self.assertIn("NCCL_IB_HCA=rdma0,rdma1", cmd)
         self.assertIn("NCCL_IB_GID_INDEX=3", cmd)
+
+    def test_reads_this_nodes_json_from_a_shared_dump_path(self):
+        """Every node writes smoke/<short host>.json to one shared dir; read only our own."""
+        import json
+        import socket
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            primus = os.path.join(root, "Primus")
+            os.makedirs(os.path.join(primus, "runner"))
+            cli = os.path.join(primus, "runner", "primus-cli")
+            with open(cli, "w") as f:
+                f.write("#!/bin/sh\nexit 0\n")
+            os.chmod(cli, 0o700)
+            dump = os.path.join(root, "node_smoke")
+            os.makedirs(os.path.join(dump, "smoke"))
+            me = socket.gethostname().split(".")[0]
+            for host in ("0000-sorts-first", me):
+                with open(os.path.join(dump, "smoke", f"{host}.json"), "w") as f:
+                    json.dump({"host": host, "status": "PASS"}, f)
+            cmd = build_remote_node_smoke_command(
+                primus_dir=primus,
+                venv_activate="/dev/null",
+                node_rank=1,
+                nnodes=2,
+                master_addr="node0",
+                master_port=1234,
+                gpus_per_node=8,
+                dump_path=dump,
+                smoke_flags="",
+            )
+            out = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, check=True).stdout
+        self.assertEqual(parse_node_smoke_output(out)["node_payload"]["host"], me)
 
 
 class TestParseNodeSmokeOutput(unittest.TestCase):
@@ -169,7 +210,7 @@ class TestNodeSmokeCheckRun(unittest.TestCase):
             "node2": "wrote /tmp/smoke/c.json status=PASS\n",
         }
 
-        checker = NodeSmokeCheck(phdl, ["node0", "node2"], self._config())
+        checker = NodeSmokeCheck(_make_orch(phdl), ["node0", "node2"], self._config())
         results = checker.run()
 
         cmd_list = phdl.exec_cmd_list.call_args[0][0]
@@ -191,7 +232,7 @@ class TestNodeSmokeCheckRun(unittest.TestCase):
         cfg = self._config()
         cfg["node_smoke"]["tier2_perf"] = True
         cfg["node_smoke"]["ssh_timeout"] = 300
-        checker = NodeSmokeCheck(phdl, ["node0"], cfg)
+        checker = NodeSmokeCheck(_make_orch(phdl), ["node0"], cfg)
         checker.run()
 
         timeout = phdl.exec_cmd_list.call_args.kwargs.get("timeout") or phdl.exec_cmd_list.call_args[1].get("timeout")
@@ -201,6 +242,23 @@ class TestNodeSmokeCheckRun(unittest.TestCase):
         self.assertIn("--gemm-tflops-min 600", cmd)
         self.assertIn("--hbm-gbs-min 2000", cmd)
         self.assertIn("--rccl-gbs-min 100", cmd)
+
+    def test_auto_setup_passes_orchestrator_not_handle(self):
+        phdl = MagicMock()
+        phdl.reachable_hosts = ["node0"]
+        orch = _make_orch(phdl)
+        cfg = self._config()
+        cfg["node_smoke"]["auto_setup"] = True
+
+        with patch("cvs.lib.preflight.primus_setup.PrimusSetup") as setup_cls:
+            setup_cls.return_value.run.return_value = {
+                "status": "FAIL",
+                "message": "setup failed",
+                "node_results": {},
+            }
+            NodeSmokeCheck(orch, ["node0"], cfg).run()
+
+        self.assertIs(setup_cls.call_args.args[0], orch)
 
 
 class TestPreflightNodeSmokeReporting(unittest.TestCase):
@@ -226,12 +284,16 @@ class TestPreflightNodeSmokeReporting(unittest.TestCase):
                 "xgmi": {"ok": True},
                 "tooling": {"ok": True},
                 "gpu_visibility": {"ok": True},
-            }
+            },
+            "tier2": {
+                "per_gpu": [{"gpu": i, "gemm_tflops": 800, "hbm_gbs": 3000} for i in range(8)],
+                "rccl": {"status": "PASS", "gbs": 120},
+            },
         }
         tier1_results = {
             "tier2_perf": True,
             "gpus_per_node": 8,
-            "tier1_tests_run": 39,
+            "tier1_tests_run": 15,
             "tier2_tests_run": 17,
             "node_results": {
                 "node0": {"status": "PASS", "node_payload": tier1_payload},
@@ -249,8 +311,10 @@ class TestPreflightNodeSmokeReporting(unittest.TestCase):
         }
         tier3_results = {
             "skipped": False,
-            "tier3_tests_run": 27,
-            "node_results": {"node0": {"status": "PASS"}, "node1": {"status": "PASS"}},
+            "node_results": {
+                "node0": {"status": "PASS", "checks": ["host,gpu,network"]},
+                "node1": {"status": "PASS", "checks": ["host,gpu,network"]},
+            },
             "failed_nodes": [],
             "unknown_nodes": [],
             "passing_nodes": ["node0", "node1"],
@@ -263,15 +327,44 @@ class TestPreflightNodeSmokeReporting(unittest.TestCase):
         tier3_summary = generator._summarize_node_smoke_tier3_results(tier3_results)
 
         self.assertIn(
-            "2/2 nodes passed Node Smoke Tier 1; 39 tests run per node",
+            "2/2 nodes passed Node Smoke Tier 1; 15 tests run per node",
             tier1_summary["summary"],
         )
         self.assertIn("Node Smoke Tier 2", tier2_summary["summary"])
         self.assertIn("17 tests run per node", tier2_summary["summary"])
         self.assertIn(
-            "2/2 nodes passed Node Smoke Tier 3; 27 tests run cluster-wide",
+            "2/2 nodes passed Node Smoke Tier 3; 3 tests run cluster-wide",
             tier3_summary["summary"],
         )
+
+        report_generator = PreflightReportGenerator(
+            None,
+            {
+                "summary": {
+                    "overall_status": "PASS",
+                    "checks": {
+                        "node_smoke_tier1": tier1_summary,
+                        "node_smoke_tier2": tier2_summary,
+                        "node_smoke_tier3": tier3_summary,
+                    },
+                    "recommendations": [],
+                },
+                "node_smoke_tier1": tier1_results,
+                "node_smoke_tier3": tier3_results,
+            },
+            config_dict={},
+        )
+        html_out = report_generator._generate_html_content()
+        self.assertIn("cvs-node-smoke-results", html_out)
+        self.assertIn("?sort=result", html_out)
+        self.assertIn("Node Smoke Tier 1", html_out)
+        self.assertIn("Node Smoke Tier 2", html_out)
+        self.assertIn("Node Smoke Tier 3", html_out)
+        self.assertIn("GPU processes", html_out)
+        self.assertIn("Large GEMM TFLOPS", html_out)
+        # The shared metrics table used to prefix the node onto the check label
+        # ("cluster: Host") and now puts the node in its own column ("Host").
+        self.assertTrue("cluster: Host" in html_out or ">Host</td>" in html_out)
 
 
 class TestLegacyNodeSmokeConfigNormalization(unittest.TestCase):

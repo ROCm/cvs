@@ -78,7 +78,7 @@ class TestVllmDeckProfile(unittest.TestCase):
         cfg = build_inference_config_from_profile(profile)
         self.assertEqual(cfg.suite_id, "vllm")
         self.assertEqual(cfg.inference_test_substring, "test_vllm_inference")
-        self.assertEqual(cfg.row_card_test_names, ("test_verify_cell_metrics",))
+        self.assertEqual(cfg.row_card_test_names, ("test_vllm_inference",))
         self.assertEqual(cfg.metric_prefix, "")
         self.assertTrue(callable(cfg.metric_verdict))
         self.assertEqual(cfg.metric_contract, {"id": "vllm-bare", "version": 1})

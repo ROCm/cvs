@@ -114,10 +114,10 @@ class InterfaceConsistencyCheck(PreflightCheck):
         """
         self.log_info(f"Checking RDMA interface presence (expected: {self.expected_interfaces})")
 
-        rdma_dict = linux_utils.get_rdma_nic_dict(self.phdl)
+        rdma_dict = linux_utils.get_rdma_nic_dict(self.orch.all)
 
         self.results = {}
-        for node in self.phdl.reachable_hosts:
+        for node in self.orch.all.reachable_hosts:
             node_rdma_info = rdma_dict.get(node, {})
             self.results[node] = self._evaluate_node_interfaces(node, node_rdma_info)
 

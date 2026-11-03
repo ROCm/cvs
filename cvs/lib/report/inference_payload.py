@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from cvs.lib.report.accuracy_lifecycle import extract_accuracy_from_lifecycle
-from cvs.lib.report.cell_build import CellRecordBuilder
+from cvs.lib.report.cell_build import CellRecordBuilder, numeric_token, sweep_result_sort_key
 from cvs.lib.report.panels.panel_builder import ComparisonPanelBuilder
 from cvs.lib.report.provenance import ProvenanceCollector
 from cvs.lib.report.render.gate_matrix import GateMatrixRenderer
@@ -20,11 +20,9 @@ from cvs.lib.report.sweep_shape import (
 from cvs.lib.report.types import InferenceReportConfig
 
 
-def _inf_res_sort_key(kv: tuple) -> tuple:
-    key = kv[0]
-    if isinstance(key, tuple) and len(key) >= 6:
-        return (key[4], key[5])
-    return (0, 0)
+def _shape_group_sort_key(item):
+    isl, osl = item[0]
+    return (numeric_token(isl), numeric_token(osl))
 
 
 class LifecycleAggregator:
@@ -61,7 +59,7 @@ class SweepAnalyticsBuilder:
         for chart in self.config.chart_series:
             full = self.config.full_metric(chart.metric_suffix)
             group_entries: List[dict] = []
-            for (isl, osl), group_cells in sorted(groups.items()):
+            for (isl, osl), group_cells in sorted(groups.items(), key=_shape_group_sort_key):
                 values_by_conc = metric_values_by_concurrency(group_cells, full)
                 points = sorted(values_by_conc.items())
                 if len(points) >= 2:
@@ -80,7 +78,7 @@ class SweepAnalyticsBuilder:
     def summaries(self, cells: List[dict]) -> List[dict]:
         groups = group_cells_by_shape(cells)
         summaries: List[dict] = []
-        for (isl, osl), group in sorted(groups.items()):
+        for (isl, osl), group in sorted(groups.items(), key=_shape_group_sort_key):
             points = []
             for cell in group:
                 tput = cell["actuals"].get(self.config.sweep_throughput_metric)
@@ -127,7 +125,7 @@ class ResultsTableBuilder:
         metric_keys = [key for _label, key in self.config.results_columns]
         n_fixed = sum(1 for _label, key in self.config.results_columns if key is None)
         rows: List[List[Any]] = []
-        for key, host_dict in sorted(inf_res_dict.items(), key=_inf_res_sort_key):
+        for key, host_dict in sorted(inf_res_dict.items(), key=sweep_result_sort_key):
             model, gpu, isl, osl, policy, conc = key
             if not isinstance(host_dict, dict):
                 continue

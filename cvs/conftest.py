@@ -6,7 +6,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 """
 
 import importlib.metadata
-import json
 from pathlib import Path
 
 import pytest
@@ -16,72 +15,8 @@ from cvs.lib.report.pytest_hooks import (
     cvs_rundeck_bind_module_fixture,
     cvs_rundeck_session_fixture,
 )
+from cvs.lib.report.subtest_reports import called_from_subtest_context
 from cvs.lib.report_plugins import HtmlReportManager, cli_option_value
-
-
-def _maybe_autocollect_html(config, suite_name):
-    '''
-    Enable pytest-html for ANC suites without an explicit --html.
-
-    When the ANC config has COLLECT_HTML_REPORTS truthy (default) and the user
-    did not pass --html on the command line, derive the report path from
-    anc.log_folder_path and set config.option.htmlpath so pytest-html generates
-    the report anyway. Runs at
-    tryfirst pytest_configure time (before pytest-html's own configure and before
-    HtmlReportManager reads config.option.htmlpath). An explicit --html always
-    wins. Best-effort: any failure leaves HTML reporting exactly as the command
-    line specified.
-    '''
-    # Explicit --html wins; do nothing.
-    if getattr(config.option, "htmlpath", None):
-        return
-
-    cluster_file = config.getoption("cluster_file", default=None)
-    config_file = config.getoption("config_file", default=None)
-    if not cluster_file or not config_file:
-        return
-
-    try:
-        from cvs.lib.utils_lib import (
-            resolve_cluster_config_placeholders,
-            resolve_test_config_placeholders,
-        )
-        from cvs.lib.anc_lib import (
-            COLLECT_HTML_REPORTS_KEY,
-            _as_bool,
-            new_run_timestamp,
-            resolve_anc_html_report_path,
-        )
-
-        with open(config_file) as fh:
-            config_dict = json.load(fh)
-        # Only ANC suites participate in this auto-collection.
-        if "anc" not in config_dict:
-            return
-
-        with open(cluster_file) as fh:
-            cluster_dict = json.load(fh)
-        cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-        config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
-
-        if not _as_bool(config_dict["anc"].get(COLLECT_HTML_REPORTS_KEY), default=True):
-            return
-
-        timestamp = new_run_timestamp()
-        # Match the per-node log folder naming (test_<group>), whose suite files
-        # are named anc_test_<group>; drop the leading "anc_".
-        report_name = suite_name
-        if report_name.startswith("anc_"):
-            report_name = report_name[len("anc_") :]
-        html_path = resolve_anc_html_report_path(config_dict, cluster_dict, report_name, timestamp)
-        Path(html_path).parent.mkdir(parents=True, exist_ok=True)
-        config.option.htmlpath = html_path
-        # Portable single-file report (matches the usual manual invocation).
-        if hasattr(config.option, "self_contained_html"):
-            config.option.self_contained_html = True
-    except Exception:
-        # Never let report auto-setup break test collection/run.
-        return
 
 
 def _sync_suite_name_from_args(config):
@@ -103,7 +38,6 @@ def _ensure_html_report_manager(config):
     if mgr is not None:
         return mgr
 
-    _maybe_autocollect_html(config, config._suite_name)
     config._html_report_manager = HtmlReportManager(config)
     return config._html_report_manager
 
@@ -118,7 +52,6 @@ def _auto_register_suite_report(config):
 @pytest.hookimpl(tryfirst=True)
 def pytest_configure(config):
     _sync_suite_name_from_args(config)
-    _maybe_autocollect_html(config, config._suite_name)
     _ensure_html_report_manager(config)
     _auto_register_suite_report(config)
 
@@ -215,7 +148,9 @@ def pytest_sessionstart(session):
 def pytest_runtest_makereport(item, call):  # noqa: ARG001
     outcome = yield
     report = outcome.get_result()
-    report.extras = _ensure_html_report_manager(item.config).write_test_log(report, item.originalname)
+    # Sub-test reports inherit setup capture; their log links would shadow the parent's.
+    if not called_from_subtest_context():
+        report.extras = _ensure_html_report_manager(item.config).write_test_log(report, item.originalname)
     attach_rundeck_row_extras(item, report)
 
 

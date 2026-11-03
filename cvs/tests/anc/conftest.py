@@ -6,33 +6,64 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 
 Shared pytest fixtures for the ANC CVS suites (anc_installation, the per-group
-suites under cpu/ and gpu/, and the exec-all suites). Each suite loads the same
-cluster/config JSON and opens one parallel-SSH handle across all nodes.
+suites anc_test_cpu / anc_test_gpu, and the per-family individual-item suites
+anc_test_computerocker / memrocker / oblex / gemm / xgmi / ualink / pcie /
+babel / basic). Every suite file sits flat in this directory. Each suite loads
+the same cluster/config JSON; the ``orch`` execution handle itself comes from
+the repo-root tests/conftest.py.
+ANC runs on baremetal only -- the autouse ``_skip_anc_on_container`` fixture
+below skips every ANC test cleanly when the orchestrator is a container.
 
-This conftest lives at tests/anc/ so its fixtures also apply to the generated
-per-group suites in the cpu/ and gpu/ subfolders.
+This conftest lives at tests/anc/ so its fixtures apply to every generated
+per-group/per-item suite beside it.
 '''
 
 import json
 
 import pytest
 
-from cvs.lib.parallel_ssh_lib import Pssh
+from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.lib.utils_lib import (
     resolve_cluster_config_placeholders,
     resolve_test_config_placeholders,
 )
 from cvs.lib import globals
-from cvs.lib import anc_lib
 
 log = globals.log
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _skip_anc_on_container(pytestconfig):
+    '''
+    Skip every ANC test on a container orchestrator, BEFORE the orch fixture runs.
+
+    ANC installs packages, runs ``sudo ./anc.py`` and tars root-owned log trees
+    directly on the host OS -- none of which is modelled for the container
+    backend, so ANC is baremetal-only. This autouse fixture resolves the
+    orchestrator type from config WITHOUT building ``orch`` (reading it off the
+    live handle would be too late: the repo-root ``orch`` fixture launches the
+    container during its own setup). Being autouse and module-scoped, it is
+    instantiated before the non-autouse ``orch`` fixture of the same scope, so a
+    container run is skipped cleanly instead of paying -- or failing -- container
+    setup for tests that would never run.
+    '''
+    cluster_file = pytestconfig.getoption("cluster_file")
+    config_file = pytestconfig.getoption("config_file")
+    if not cluster_file or not config_file:
+        return
+    cfg = OrchestratorConfig.from_configs(cluster_file, config_file)
+    # Match OrchestratorFactory's case-insensitive normalization so a "Container"
+    # / "CONTAINER" config is skipped here rather than slipping through to build a
+    # container backend ANC cannot use.
+    if (cfg.orchestrator or "").lower() == "container":
+        pytest.skip("ANC is not supported under container orchestration (baremetal only)")
 
 
 # Merge any extra report links stashed on the test item during the run (e.g. ANC
 # log archives attached by anc_lib._attach_anc_logs_to_html). pytest-html 4.x
 # renders links from report.extras; the core makereport hook sets report.extras
 # first, so this wrapper appends afterwards on the "call" phase. Applies to the
-# per-group cpu/ and gpu/ suites and the exec-all suites under this directory.
+# per-group and per-item ANC suites in this directory.
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):  # noqa: ARG001
     outcome = yield
@@ -67,7 +98,7 @@ def cluster_dict(cluster_file):
 
 
 @pytest.fixture(scope="module")
-def config_dict(config_file, cluster_dict, pytestconfig):
+def config_dict(config_file, cluster_dict):
     '''
     Load and resolve the ANC test configuration from JSON.
 
@@ -75,18 +106,15 @@ def config_dict(config_file, cluster_dict, pytestconfig):
     (e.g. a "{home}/logs" value -> "/home/<user>/logs").
 
     Any field still left at the ``<changeme>`` placeholder is caught up front by
-    resolve_test_config_placeholders (which hard-exits with a clear message), so
-    it is not re-checked here. This fixture additionally fails the run before any
-    ANC command runs on:
+    resolve_test_config_placeholders (which hard-exits with a clear message). This
+    fixture does NOT eagerly validate the ANC URL, version, or install path: each
+    is validated only at the point it is actually used (anc_release_url when ANC
+    must be downloaded/installed, anc_version when it is compared, ANC_INSTALL_PATH
+    when the install prefix is resolved), so a run against already-installed ANC
+    needs no URL and a bad value fails the specific test that depends on it.
 
-      - a configured anc_version that disagrees with the version parsed from
-        anc_release_url (aborts before any node is contacted); and
-      - a missing/blank anc.log_folder_path for the group suites (anc_test_*),
-        which write logs + the HTML report under it (the install-only suite does
-        not need it).
-
-    Failing here (fixture setup) means a bad config costs seconds, not a full
-    suite run on the nodes.
+    Collected ANC logs and the pytest HTML/log reports all land under this run's
+    run_dir (resolved by RunLayout), so there is no artifact-path config to check.
     '''
     with open(config_file) as json_file:
         config_dict = json.load(json_file)
@@ -94,30 +122,20 @@ def config_dict(config_file, cluster_dict, pytestconfig):
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
     log.info("ANC test config: %s", config_dict)
 
-    suite_name = getattr(pytestconfig, "_suite_name", "") or ""
-    if suite_name.startswith("anc") and "anc" in config_dict:
-        # Group suites (anc_test_*) additionally require a usable log_folder_path
-        # prefix; the install-only suite does not.
-        problems = anc_lib.validate_anc_config(
-            config_dict, cluster_dict, require_log_folder=suite_name.startswith("anc_test")
-        )
-        if problems:
-            pytest.fail(
-                "ANC config error (fix before running): " + "; ".join(problems),
-                pytrace=False,
-            )
-
     return config_dict
 
 
 @pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    '''Parallel SSH handle targeting every node in cluster_dict["node_dict"].'''
-    node_list = list(cluster_dict["node_dict"].keys())
+def anc_res_dict():
+    '''
+    Module-scoped structured ANC results for the Run Deck ``status_matrix`` deck.
 
-    return Pssh(
-        log,
-        node_list,
-        user=cluster_dict["username"],
-        pkey=cluster_dict["priv_key_file"],
-    )
+    Each ``test_<group>``/``test_<item>`` run has anc_lib.run_anc_groups /
+    run_anc_items merge its per-node records into this dict (keyed by group/item,
+    then node label). Each suite's Run Deck profile (anc_test_cpu.json /
+    anc_test_gpu.json / anc_test_<family>.json) names this fixture in
+    ``sources.results``, so the session binding captures it at module teardown
+    and the deck is generated at session finish. Starts empty; the install-only
+    suite never touches it (no deck profile registered for that stem).
+    '''
+    return {}

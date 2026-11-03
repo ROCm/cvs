@@ -39,22 +39,25 @@ def sglang_run_card_display(variant: Any, provenance: dict) -> List[Tuple[str, s
             ]
         )
     else:
-        try:
-            server_nodes = resolve_server_node_list(inf)
-        except ValueError:
-            server_nodes = []
-        if len(server_nodes) > 1 or inf.get("nnodes", 1) not in (1, "1", None):
+        server_nodes = inf.get("_execution_hosts") or inf.get("server_node_list") or []
+        if not server_nodes:
+            try:
+                server_nodes = resolve_server_node_list(inf)
+            except ValueError:
+                server_nodes = []
+        nnodes = inf.get("nnodes", 1)
+        if nnodes not in (1, "1", None):
+            bench = inf.get("benchmark_serv_node") or (server_nodes[0] if server_nodes else None)
             rows.extend(
                 [
                     ("Server nodes", ", ".join(server_nodes) if server_nodes else "\u2014", False),
-                    ("nnodes", str(inf.get("nnodes", len(server_nodes) or "-")), False),
-                    ("Benchmark node", _format_nodes(inf.get("benchmark_serv_node")), False),
+                    ("nnodes", str(nnodes), False),
+                    ("Benchmark node", _format_nodes(bench), False),
                 ]
             )
         else:
-            bench_raw = inf.get("benchmark_serv_node")
-            bench_node = as_node_list(bench_raw)[0] if bench_raw else "\u2014"
-            rows.append(("Benchmark node", bench_node, False))
+            hosts = inf.get("_execution_hosts") or inf.get("benchmark_serv_node")
+            rows.append(("Benchmark node", _format_nodes(hosts), False))
 
     rows.extend(
         [

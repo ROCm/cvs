@@ -1,12 +1,192 @@
 '''Unit tests for deck profile source resolution and inheritance.'''
 
+import json
 import unittest
 
-from cvs.lib.report.profile import DEFAULT_SOURCES, load_json_profile, sources_for_profile
+from jsonschema import Draft202012Validator
+
+from cvs.lib.report.profile import DEFAULT_SOURCES, load_json_profile, profile_json_path, sources_for_profile
 from cvs.lib.report.rundeck.config_builder import make_inference_report_config
 
 
 class TestProfile(unittest.TestCase):
+    def test_rccl_profile_validates_against_schema(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+        Draft202012Validator(schema).validate(load_json_profile("rccl"))
+
+    def test_status_matrix_health_cards_validate_against_schema(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        profile = {
+            "schema_version": 1,
+            "profile_id": "health_example",
+            "suite_id": "health_example",
+            "report_basename": "health_example_run_deck",
+            "title": "Health Run Deck",
+            "dataset_builder": "status_matrix",
+            "interactive_viewer": True,
+            "sources": {"results": "cvs_results_dict"},
+            "cards": [
+                {
+                    "type": "run_card",
+                    "id": "run-card",
+                    "title": "Run card",
+                    "bind": "datasets.status_matrix.run_card_display",
+                },
+                {
+                    "type": "status_overview",
+                    "id": "overview",
+                    "title": "Health overview",
+                    "bind": "datasets.status_matrix.overview",
+                },
+                {
+                    "type": "metric_charts",
+                    "id": "metrics",
+                    "title": "Metrics",
+                    "bind": "datasets.status_matrix.metric_charts",
+                    "when_empty": "hide",
+                },
+                {
+                    "type": "status_matrix",
+                    "id": "results",
+                    "title": "Full results",
+                    "bind": "datasets.status_matrix",
+                    "hint": "Click a cell's items to expand that node Ã— group.",
+                },
+            ],
+        }
+        Draft202012Validator(schema).validate(profile)
+
+    def test_transferbench_profile_validates_against_schema(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        profile = load_json_profile("transferbench_cvs")
+        Draft202012Validator(schema).validate(profile)
+        self.assertEqual(profile["dataset_builder"], "status_matrix")
+        self.assertEqual(profile["sources"]["results"], "transferbench_res_dict")
+        self.assertTrue(profile["interactive_viewer"])
+        self.assertEqual(
+            [card["type"] for card in profile["cards"]],
+            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "table"],
+        )
+        self.assertEqual(profile["cards"][3]["when_empty"], "hide")
+        self.assertEqual(profile["cards"][4]["bind"], "datasets.status_matrix.results_table")
+
+    def test_health_profiles_extend_shared_card_stack(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        base = load_json_profile("health_status_base")
+        Draft202012Validator(schema).validate(base)
+        self.assertEqual(
+            [card["id"] for card in base["cards"]],
+            ["run-card", "lifecycle", "overview", "metrics", "results"],
+        )
+
+        rvs_raw = json.loads(profile_json_path("rvs_cvs").read_text(encoding="utf-8"))
+        transferbench_raw = json.loads(profile_json_path("transferbench_cvs").read_text(encoding="utf-8"))
+        agfhc_raw = json.loads(profile_json_path("agfhc_cvs").read_text(encoding="utf-8"))
+        csp_raw = json.loads(profile_json_path("csp_qual_agfhc").read_text(encoding="utf-8"))
+        host_raw = json.loads(profile_json_path("host_configs_cvs").read_text(encoding="utf-8"))
+        preflight_raw = json.loads(profile_json_path("preflight_checks").read_text(encoding="utf-8"))
+        self.assertEqual(rvs_raw["extends"], "health_status_base")
+        self.assertNotIn("cards", rvs_raw)
+        self.assertEqual(transferbench_raw["extends"], "health_status_base")
+        self.assertEqual([card["id"] for card in transferbench_raw["cards"]], ["metrics"])
+        self.assertEqual(agfhc_raw["extends"], "health_status_base")
+        self.assertEqual([card["id"] for card in agfhc_raw["cards"]], ["results"])
+        self.assertEqual(csp_raw["extends"], "health_status_base")
+        self.assertEqual([card["id"] for card in csp_raw["cards"]], ["results"])
+        self.assertEqual(host_raw["extends"], "health_status_base")
+        self.assertNotIn("cards", host_raw)
+        self.assertEqual(preflight_raw["extends"], "health_status_base")
+        self.assertEqual([card["id"] for card in preflight_raw["cards"]], ["metrics"])
+
+        rvs = load_json_profile("rvs_cvs")
+        transferbench = load_json_profile("transferbench_cvs")
+        agfhc = load_json_profile("agfhc_cvs")
+        csp = load_json_profile("csp_qual_agfhc")
+        host = load_json_profile("host_configs_cvs")
+        preflight = load_json_profile("preflight_checks")
+        self.assertEqual(
+            [card["id"] for card in rvs["cards"]],
+            ["run-card", "lifecycle", "overview", "metrics", "results"],
+        )
+        self.assertEqual(
+            [card["id"] for card in transferbench["cards"]],
+            ["run-card", "lifecycle", "overview", "metrics", "results"],
+        )
+        self.assertEqual(
+            [card["id"] for card in agfhc["cards"]],
+            ["run-card", "lifecycle", "overview", "metrics", "results"],
+        )
+        self.assertEqual(
+            [card["id"] for card in csp["cards"]],
+            ["run-card", "lifecycle", "overview", "metrics", "results"],
+        )
+        self.assertEqual(
+            next(card for card in agfhc["cards"] if card["id"] == "results")["columns"],
+            ["Node", "Check", "Result", "Status", "Message"],
+        )
+        self.assertEqual(
+            next(card for card in csp["cards"] if card["id"] == "results")["columns"],
+            ["Node", "Check", "Result", "Status", "Message"],
+        )
+        self.assertNotIn("columns", next(card for card in rvs["cards"] if card["id"] == "results"))
+        self.assertEqual(
+            [card["id"] for card in host["cards"]],
+            ["run-card", "lifecycle", "overview", "metrics", "results"],
+        )
+        self.assertEqual(rvs["lifecycle"]["session_labels"][0], "gpu_enumeration")
+        self.assertEqual(transferbench["lifecycle"]["session_labels"][0], "a2a")
+        self.assertEqual(agfhc["lifecycle"]["session_labels"][0], "hbm")
+        self.assertEqual(csp["lifecycle"]["session_labels"][0], "version_check")
+        self.assertEqual(host["lifecycle"]["session_labels"][0], "os_release")
+        self.assertEqual(host["sources"]["results"], "host_res_dict")
+        self.assertEqual(
+            [card["id"] for card in preflight["cards"]],
+            ["run-card", "lifecycle", "overview", "metrics", "results"],
+        )
+        self.assertEqual(preflight["sources"]["results"], "preflight_res_dict")
+        self.assertEqual(preflight["lifecycle"]["session_labels"][0], "node_reachability")
+        self.assertEqual(preflight["cards"][3]["title"], "Perf sanity")
+        self.assertEqual(transferbench["cards"][3]["title"], "Bandwidth highlights")
+        self.assertEqual(rvs["cards"][3]["title"], "Measurements")
+        self.assertEqual(agfhc["cards"][3]["title"], "Measurements")
+        self.assertEqual(agfhc["cards"][3]["when_empty"], "hide")
+        self.assertEqual(csp["cards"][3]["when_empty"], "hide")
+        self.assertEqual(host["cards"][3]["when_empty"], "hide")
+
+    def test_rvs_profile_validates_against_schema(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        profile = load_json_profile("rvs_cvs")
+        Draft202012Validator(schema).validate(profile)
+        self.assertEqual(profile["dataset_builder"], "status_matrix")
+        self.assertEqual(profile["sources"]["results"], "rvs_res_dict")
+
+    def test_agfhc_profile_validates_against_schema(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        profile = load_json_profile("agfhc_cvs")
+        Draft202012Validator(schema).validate(profile)
+        self.assertEqual(profile["dataset_builder"], "status_matrix")
+        self.assertEqual(profile["sources"]["results"], "agfhc_res_dict")
+        self.assertTrue(profile["interactive_viewer"])
+
+    def test_host_configs_profile_validates_against_schema(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        profile = load_json_profile("host_configs_cvs")
+        Draft202012Validator(schema).validate(profile)
+        self.assertEqual(profile["dataset_builder"], "status_matrix")
+        self.assertEqual(profile["sources"]["results"], "host_res_dict")
+        self.assertEqual(profile["sources"]["lifecycle"], "lifecycle")
+        self.assertTrue(profile["interactive_viewer"])
+
+    def test_csp_qual_agfhc_profile_validates_against_schema(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        profile = load_json_profile("csp_qual_agfhc")
+        Draft202012Validator(schema).validate(profile)
+        self.assertEqual(profile["dataset_builder"], "status_matrix")
+        self.assertEqual(profile["sources"]["results"], "agfhc_res_dict")
+        self.assertEqual(profile["report_basename"], "csp_qual_agfhc_run_deck")
+        self.assertTrue(profile["interactive_viewer"])
+
     def test_default_sources_for_legacy_preset(self):
         cfg = make_inference_report_config(
             suite_id="demo",
@@ -15,6 +195,17 @@ class TestProfile(unittest.TestCase):
             tier_metric_specs=lambda _c, _t: {},
         )
         self.assertEqual(sources_for_profile(cfg), DEFAULT_SOURCES)
+
+    def test_rccl_stems_share_one_profile(self):
+        for stem in ("rccl", "rccl_perf", "rccl_regression", "rccl_pairwise"):
+            profile = load_json_profile(stem)
+            self.assertIsNotNone(profile, stem)
+            self.assertEqual(profile["suite_id"], "rccl")
+            self.assertEqual(profile["dataset_builder"], "series")
+            self.assertEqual(
+                profile["hooks"]["run_card_display"],
+                "cvs.lib.report.profiles.hooks.rccl_run_card:rccl_run_card_display",
+            )
 
     def test_sglang_stems_share_one_profile(self):
         for stem in ("sglang_single", "sglang_distributed", "sglang_disagg_distributed"):
@@ -25,6 +216,31 @@ class TestProfile(unittest.TestCase):
             self.assertEqual(
                 profile["hooks"]["run_card_display"],
                 "cvs.lib.report.profiles.hooks.sglang_run_card:sglang_run_card_display",
+            )
+
+    def test_megatron_stems_share_one_profile(self):
+        for stem in ("megatron", "megatron_single", "megatron_distributed"):
+            profile = load_json_profile(stem)
+            self.assertIsNotNone(profile, stem)
+            self.assertEqual(profile["suite_id"], "megatron")
+            self.assertEqual(profile["dataset_builder"], "training_sweep")
+            self.assertEqual(profile["sources"]["results"], "train_res_dict")
+            self.assertIn("smoke", profile["lifecycle"]["session_labels"])
+            self.assertEqual(
+                profile["hooks"]["run_card_display"],
+                "cvs.lib.report.profiles.hooks.megatron_run_card:megatron_run_card_display",
+            )
+
+    def test_torchtitan_stems_share_one_profile(self):
+        for stem in ("torchtitan", "torchtitan_single", "torchtitan_distributed"):
+            profile = load_json_profile(stem)
+            self.assertIsNotNone(profile, stem)
+            self.assertEqual(profile["suite_id"], "torchtitan")
+            self.assertEqual(profile["dataset_builder"], "training_sweep")
+            self.assertEqual(profile["sources"]["results"], "train_res_dict")
+            self.assertEqual(
+                profile["hooks"]["run_card_display"],
+                "cvs.lib.report.profiles.hooks.torchtitan_run_card:torchtitan_run_card_display",
             )
 
     def test_vllm_hooks_point_at_canonical_metric_contract(self):
@@ -63,6 +279,31 @@ class TestProfile(unittest.TestCase):
         self.assertEqual(config.headline_metric, "output_throughput_per_sec")
         self.assertEqual(config.full_metric("output_throughput_per_sec"), "output_throughput_per_sec")
         self.assertEqual(config.metric_tier_order, ("throughput", "latency", "health", "record"))
+
+    def test_xdit_stems_share_one_profile(self):
+        stems = (
+            "xdit_flux_dev_single",
+            "xdit_flux_dev_distributed",
+            "xdit_wan22_14b_single",
+            "xdit_wan22_14b_diffusers_single",
+            "xdit_wan22_14b_diffusers_distributed",
+        )
+        for stem in stems:
+            with self.subTest(stem=stem):
+                profile = load_json_profile(stem)
+                self.assertEqual(profile["suite_id"], "xdit")
+                self.assertEqual(profile["report_basename"], "xdit_run_deck")
+
+    def test_xdit_profile_resolves_latency_metrics(self):
+        from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
+
+        config = build_inference_config_from_profile(load_json_profile("xdit"))
+
+        self.assertEqual(config.metric_prefix, "")
+        self.assertEqual(config.metric_tier_order, ("latency", "quality", "record"))
+        self.assertEqual(config.full_metric("avg_pipe_time_s"), "avg_pipe_time_s")
+        self.assertEqual(config.full_metric("clip_score"), "clip_score")
+        self.assertEqual(config.full_metric("mean_frame_clip_score"), "mean_frame_clip_score")
 
 
 if __name__ == "__main__":
