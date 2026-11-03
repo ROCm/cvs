@@ -113,15 +113,15 @@ class TestCspQualAgfhcOrch(unittest.TestCase):
         orch.orchestrator_type = 'baremetal'
         orch.hosts = ['host1']
         orch.sudo_prefix.return_value = 'sudo -n '
-        orch.all.exec_cmd_list.return_value = {'host1': '"total_failed": 0,\n'}
+        orch.exec_cmd_list.return_value = {'host1': '"total_failed": 0,\n'}
         out_dict = {'host1': 'Log directory: /home/first.last/agfhc_logs/run1\n'}
         res = csp_qual.get_log_results(orch, out_dict)
         self.assertIn('total_failed', res['host1'])
-        cmd_list = orch.all.exec_cmd_list.call_args.args[0]
+        cmd_list = orch.exec_cmd_list.call_args.args[0]
         self.assertEqual(len(cmd_list), 1)
         self.assertTrue(cmd_list[0].startswith('sudo -n cat '))
         self.assertIn('/home/first.last/agfhc_logs/run1/results.json', cmd_list[0])
-        orch.exec_cmd_list.assert_not_called()
+        orch.all.exec_cmd_list.assert_not_called()
 
     def test_get_log_results_container_reads_dict_output_in_parallel(self):
         orch = MagicMock()
@@ -164,7 +164,7 @@ class TestCspQualAgfhcOrch(unittest.TestCase):
                 return {'host1': 'journal-1', 'host2': 'journal-2'}
             return {'host1': 'error-1', 'host2': 'error-2'}
 
-        orch.all.exec_cmd_list.side_effect = exec_cmd_list
+        orch.exec_cmd_list.side_effect = exec_cmd_list
         out_dict = {
             'host1': 'Log directory: /tmp/a\n',
             'host2': 'Log directory: /tmp/b\n',
@@ -172,7 +172,7 @@ class TestCspQualAgfhcOrch(unittest.TestCase):
         }
         with patch.object(csp_qual, 'fail_test') as fail, patch.object(csp_qual.log, 'info') as info:
             csp_qual.get_log_results(orch, out_dict)
-        self.assertEqual(orch.all.exec_cmd_list.call_count, 3)
+        self.assertEqual(orch.exec_cmd_list.call_count, 3)
         messages = [call.args[0] for call in fail.call_args_list]
         self.assertTrue(any('host3' in message for message in messages))
         self.assertTrue(any('host1' in message for message in messages))
@@ -184,7 +184,7 @@ class TestCspQualAgfhcOrch(unittest.TestCase):
         orch.orchestrator_type = 'baremetal'
         orch.hosts = ['h1', 'h2', 'h3']
         orch.sudo_prefix.return_value = 'sudo -n '
-        orch.all.exec_cmd_list.return_value = {
+        orch.exec_cmd_list.return_value = {
             'h1': '"total_failed": 0,\n',
             'h3': '"total_failed": 0,\n',
         }
@@ -195,7 +195,7 @@ class TestCspQualAgfhcOrch(unittest.TestCase):
         }
         with patch.object(csp_qual, 'fail_test') as fail:
             res = csp_qual.get_log_results(orch, out_dict)
-        cmd_list = orch.all.exec_cmd_list.call_args.args[0]
+        cmd_list = orch.exec_cmd_list.call_args.args[0]
         self.assertEqual(
             cmd_list,
             [
@@ -204,7 +204,7 @@ class TestCspQualAgfhcOrch(unittest.TestCase):
                 'sudo -n cat /tmp/c/results.json',
             ],
         )
-        self.assertEqual(orch.all.exec_cmd_list.call_count, 1)
+        self.assertEqual(orch.exec_cmd_list.call_count, 1)
         self.assertNotIn('h2', res)
         fail.assert_called_once()
         self.assertIn('h2', fail.call_args.args[0])
