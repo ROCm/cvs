@@ -561,7 +561,7 @@ class PrimusTrainingJob:
         self.orch.exec_cmd_list([f'mkdir -p {self.combo_log_dir}/out-node{i}' for i in range(n)])
 
         if self.distributed_training:
-            self.orch.all.exec_cmd_list(self.job_cmd_list)
+            self.orch.exec_cmd_list_on_host(self.job_cmd_list)
             self.orch.exec_cmd_list(
                 [
                     f'nohup {self.scripts_dir}/distributed_wrapper_script_{i}.sh '
