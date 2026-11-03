@@ -68,7 +68,7 @@ Expected output (suite names and totals vary by version):
 .. code:: text
   
   (.cvs_venv) user@head-node:~/cvs$ cvs --version
-  cvs: 0.3.0
+  cvs: 0.4.0
 
   (.cvs_venv) user@head-node:~/cvs$ cvs list
 
