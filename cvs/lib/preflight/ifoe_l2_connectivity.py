@@ -649,14 +649,60 @@ def parse_afmctl_show_device(output: str) -> List[Dict]:
     return parse_afmctl_show_device_output(output, allow_text_fallback=True)[0]
 
 
+_FIRMWARE_KEYS = ("firmware_version", "fw_version", "firmware")
+_BDF_KEYS = ("bdf", "device_bdf", "pci_bdf")
+
+
+def _record_own_bdf(record):
+    """Return the BDF declared directly on this dict (a ``bdf`` key), or None.
+
+    Only immediate keys are consulted, not the flattened subtree, so a nested
+    device's BDF cannot be mistaken for this record's own.
+    """
+    for key in _BDF_KEYS:
+        normalized = _normalize_bdf(record.get(key))
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def _collect_firmware_by_bdf(node, bdf_in_scope, firmware_by_bdf):
+    """Walk ``node`` tracking the BDF in scope, binding firmware within its boundary.
+
+    A dict that declares its own ``bdf`` key, or a value reached through a BDF-keyed
+    envelope key, opens a new device boundary; firmware scalars are bound to whichever
+    BDF is in scope where they appear. Descending into another device switches scope,
+    so one device's firmware is never associated with a sibling that omits its own.
+    """
+    if isinstance(node, Mapping):
+        scope = _record_own_bdf(node) or bdf_in_scope
+        if scope is not None:
+            firmware_by_bdf.setdefault(scope, None)
+            for key in _FIRMWARE_KEYS:
+                value = node.get(key)
+                if value not in (None, "") and firmware_by_bdf.get(scope) in (None, ""):
+                    firmware_by_bdf[scope] = value
+        for key, child in node.items():
+            keyed_bdf = _normalize_bdf(key)
+            if keyed_bdf is not None:
+                firmware_by_bdf.setdefault(keyed_bdf, None)
+                _collect_firmware_by_bdf(child, keyed_bdf, firmware_by_bdf)
+            else:
+                _collect_firmware_by_bdf(child, scope, firmware_by_bdf)
+    elif isinstance(node, list):
+        for child in node:
+            _collect_firmware_by_bdf(child, bdf_in_scope, firmware_by_bdf)
+
+
 def parse_afmctl_firmware_by_bdf(output: str) -> Tuple[Dict[str, Optional[str]], List[str]]:
     """Map every reported AFM device BDF to its firmware version (or ``None``).
 
     Unlike :func:`parse_afmctl_show_device_json`, which filters to records carrying an
     accelerator/vPOD descriptor (the shape ibperf's vPOD discovery needs), this counts
     *every* BDF the tool reports so a firmware check can flag a device that reports no
-    version. Each BDF maps to the first firmware version seen in its subtree, or
-    ``None`` when that device reported none. Returns ``(firmware_by_bdf, errors)``.
+    version. Firmware is bound within each device's own boundary, so a device that
+    omits its version maps to ``None`` even when a sibling carries one. Returns
+    ``(firmware_by_bdf, errors)``.
     """
     raw = (output or "").strip()
     if not raw:
@@ -667,17 +713,7 @@ def parse_afmctl_firmware_by_bdf(output: str) -> Tuple[Dict[str, Optional[str]],
         return {}, [f"Invalid afmctl show device JSON: {exc.msg}"]
 
     firmware_by_bdf: Dict[str, Optional[str]] = {}
-    for record, inherited_bdf in _walk_json_dicts(document):
-        flattened = _json_flatten_values(record)
-        bdf = _normalize_bdf(_json_first_value(flattened, ("bdf", "device_bdf", "pci_bdf"))) or inherited_bdf
-        if not bdf:
-            continue
-        firmware = _json_first_value(flattened, ("firmware_version", "fw_version", "firmware"))
-        existing = firmware_by_bdf.get(bdf)
-        if existing in (None, "") and firmware not in (None, ""):
-            firmware_by_bdf[bdf] = firmware
-        else:
-            firmware_by_bdf.setdefault(bdf, firmware)
+    _collect_firmware_by_bdf(document, None, firmware_by_bdf)
     if not firmware_by_bdf:
         return {}, ["afmctl show device JSON contained no device BDFs"]
     return firmware_by_bdf, []

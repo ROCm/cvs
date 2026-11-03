@@ -385,6 +385,38 @@ class TestParseAfmctlFirmwareByBdf(unittest.TestCase):
         self.assertEqual(firmware_by_bdf, {})
         self.assertEqual(errors, ['afmctl show device JSON contained no device BDFs'])
 
+    def test_bdf_keyed_envelope_keeps_firmware_within_boundary(self):
+        # BDF-keyed envelope (device is the value of its BDF key). The second device
+        # omits its firmware and must map to None, not inherit the first device's.
+        payload = json.dumps(
+            {
+                '0001:01:00.1': {'spec': {'accelerator_id': '0'}, 'status': {'firmware_version': '0.24.2'}},
+                '0002:01:00.1': {'spec': {'accelerator_id': '1'}, 'status': {'lib_version': '0.1.0'}},
+            }
+        )
+        firmware_by_bdf, errors = parse_afmctl_firmware_by_bdf(payload)
+        self.assertEqual(errors, [])
+        self.assertEqual(firmware_by_bdf, {'0001:01:00.1': '0.24.2', '0002:01:00.1': None})
+
+    def test_nested_sibling_firmware_not_cross_associated(self):
+        # A device whose record nests another device (its own bdf) must not adopt the
+        # nested device's firmware; each BDF keeps only its own.
+        payload = json.dumps(
+            {
+                'device': [
+                    {
+                        'bdf': '0002:01:00.1',
+                        'spec': {'accelerator_id': '1'},
+                        'status': {},
+                        'sibling': {'bdf': '0001:01:00.1', 'status': {'firmware_version': '0.24.2'}},
+                    }
+                ]
+            }
+        )
+        firmware_by_bdf, errors = parse_afmctl_firmware_by_bdf(payload)
+        self.assertEqual(errors, [])
+        self.assertEqual(firmware_by_bdf, {'0002:01:00.1': None, '0001:01:00.1': '0.24.2'})
+
 
 class TestBuildAfmctlCommand(unittest.TestCase):
     """The shared afmctl command builder backs both ibperf discovery and the platform

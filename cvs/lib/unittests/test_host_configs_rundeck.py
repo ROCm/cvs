@@ -783,6 +783,22 @@ class TestIfoeFirmware(unittest.TestCase):
             self.assertEqual(records['n1']['items_summary'], 'incomplete')
             self.assertIn('missing for 1 of 2 device(s)', messages[0])
 
+    def test_bdf_keyed_envelope_missing_firmware_fails(self):
+        # BDF-keyed envelope where the last device omits its firmware: the version must
+        # not cross from the first device's boundary, so the read fails as incomplete
+        # rather than passing both the inventory and exact-match checks.
+        payload = json.dumps(
+            {
+                '0001:01:00.1': {'spec': {'accelerator_id': '0'}, 'status': {'firmware_version': '0.24.2'}},
+                '0002:01:00.1': {'spec': {'accelerator_id': '1'}, 'status': {'lib_version': '0.1.0'}},
+            }
+        )
+        for expected in ('', '0.24.2'):
+            records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': payload}, expected)
+            self.assertEqual(records['n1']['status'], 'fail')
+            self.assertEqual(records['n1']['items_summary'], 'incomplete')
+            self.assertIn('missing for 1 of 2 device(s)', messages[0])
+
     def test_invalid_json_fails_unreadable(self):
         records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': 'not json at all\n'}, '')
         self.assertEqual(records['n1']['status'], 'fail')
