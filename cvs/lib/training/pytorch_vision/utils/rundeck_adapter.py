@@ -15,15 +15,34 @@ from cvs.lib.training.pytorch_vision.utils.metrics import METRIC_PREFIX, METRICS
 _TOKEN_RE = re.compile(r"([A-Za-z_]+)=([^,]+)")
 
 
-def vision_cell_dimensions(_variant_config, sweep_name):
-    """Parse a vision sweep name into deck cell dimensions.
+def _sweep_record(variant_config, sweep_name):
+    getter = getattr(variant_config, "sweep", None)
+    if not callable(getter):
+        return None
+    try:
+        return getter(sweep_name)
+    except (KeyError, TypeError, ValueError):
+        return None
 
-    Sweep names already carry the axes, for example
+
+def _data_label(sweep):
+    mode = str(getattr(sweep, "data_mode", "") or "")
+    if mode != "rocal":
+        return mode
+    device = str(getattr(sweep, "rocal_device", "") or "gpu").upper()
+    return f"rocAL-{device}"
+
+
+def vision_cell_dimensions(variant_config, sweep_name):
+    """Parse a vision sweep into deck cell dimensions.
+
+    Tokenized sweep names carry the axes, for example
     ``MODEL=resnet50,PRECISION=BF16,MBS=128,GA=1,RES=224,DATA=rocAL-GPU``.
-    Missing tokens yield empty strings.
+    Smoke and scorecard names such as ``W1-SMOKE-ROCAL-GPU-STANDARD`` do not,
+    so missing tokens are filled from the sweep record on the variant.
     """
     tokens = {key.upper(): value.strip() for key, value in _TOKEN_RE.findall(str(sweep_name or ""))}
-    return {
+    dims = {
         "model": tokens.get("MODEL") or "",
         "precision": tokens.get("PRECISION") or "",
         "mbs": tokens.get("MBS") or "",
@@ -31,6 +50,21 @@ def vision_cell_dimensions(_variant_config, sweep_name):
         "res": tokens.get("RES") or "",
         "data": tokens.get("DATA") or "",
     }
+    sweep = _sweep_record(variant_config, sweep_name)
+    if sweep is None:
+        return dims
+    fallback = {
+        "model": getattr(sweep, "model", "") or "",
+        "precision": getattr(sweep, "precision", "") or "",
+        "mbs": getattr(sweep, "batch_size", "") or "",
+        "ga": getattr(sweep, "gradient_accumulation_steps", "") or "",
+        "res": getattr(sweep, "image_size", "") or "",
+        "data": _data_label(sweep),
+    }
+    for key, value in fallback.items():
+        if not dims[key] and value not in ("", None):
+            dims[key] = str(value)
+    return dims
 
 
 def _finite(value):

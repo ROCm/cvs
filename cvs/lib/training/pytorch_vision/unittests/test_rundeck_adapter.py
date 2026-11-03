@@ -2,6 +2,7 @@
 
 import unittest
 
+from cvs.lib.report.render.cell_card import CellCardConfig, CellCardRenderer
 from cvs.lib.report.rundeck.config_adapter import resolve_report_config
 from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.training_cells import build_training_cells, hide_training_scaling_efficiency
@@ -47,6 +48,33 @@ class TestVisionCellDimensions(unittest.TestCase):
         self.assertEqual(dims["model"], "")
         self.assertEqual(dims["precision"], "")
 
+    def test_label_style_name_uses_sweep_record(self):
+        class _Sweep:
+            model = "resnet50"
+            precision = "BF16"
+            batch_size = 64
+            gradient_accumulation_steps = 1
+            image_size = 224
+            data_mode = "rocal"
+            rocal_device = "gpu"
+
+        class _Variant:
+            def sweep(self, _name):
+                return _Sweep()
+
+        dims = vision_cell_dimensions(_Variant(), "W1-SMOKE-ROCAL-GPU-STANDARD")
+        self.assertEqual(
+            dims,
+            {
+                "model": "resnet50",
+                "precision": "BF16",
+                "mbs": "64",
+                "ga": "1",
+                "res": "224",
+                "data": "rocAL-GPU",
+            },
+        )
+
 
 class TestFlatTrainRes(unittest.TestCase):
     def test_first_host_metrics_and_loss_curve(self):
@@ -67,6 +95,33 @@ class TestFlatTrainRes(unittest.TestCase):
         self.assertEqual(cells[0]["mbs"], "128")
         self.assertEqual(cells[0]["data"], "rocAL-GPU")
         self.assertIn("training.images_per_sec_per_gpu", cells[0]["actuals"])
+
+    def test_label_style_cell_renders_without_inference_axes(self):
+        class _Sweep:
+            model = "resnet50"
+            precision = "BF16"
+            batch_size = 64
+            gradient_accumulation_steps = 1
+            image_size = 224
+            data_mode = "rocal"
+            rocal_device = "gpu"
+
+        class _Variant:
+            gpu_name = "MI325X"
+            enforce_thresholds = False
+
+            def sweep(self, _name):
+                return _Sweep()
+
+        name = "W1-SMOKE-ROCAL-GPU-STANDARD"
+        profile = load_json_profile("pytorch_vision_single")
+        config = resolve_report_config(profile)
+        flat = flat_train_res_from_vision({name: _results()[SWEEP]})
+        cells = build_training_cells(config, _Variant(), flat, {})
+        self.assertEqual(cells[0]["subtitle"], "MBS=64 GA=1 R224 \u00b7 resnet50 \u00b7 BF16 \u00b7 rocAL-GPU")
+        html = CellCardRenderer(CellCardConfig(headline_metric="training.images_per_sec_per_gpu")).render(cells[0])
+        self.assertIn("MBS=64 GA=1 R224", html)
+        self.assertNotIn("ISL=", html)
 
 
 class TestScalingVisibility(unittest.TestCase):

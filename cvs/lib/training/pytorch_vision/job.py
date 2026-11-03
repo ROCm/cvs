@@ -43,7 +43,10 @@ class _BoundedHostHandle:
         self._handle = handle
         self._expected_hosts = set(expected_hosts)
 
-    def exec(self, command):
+    def exec(self, command, print_console=False):
+        # Kernel-log scans must stay out of the run log, so print_console is
+        # accepted for the shared verify_lib caller and always forced off.
+        del print_console
         if "dmesg --time-format iso -x" in command:
             command = (
                 "set -o pipefail; sudo -n dmesg --time-format iso -x | "

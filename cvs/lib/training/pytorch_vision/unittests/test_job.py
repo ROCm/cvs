@@ -411,13 +411,17 @@ class TestPyTorchVisionJob(unittest.TestCase):
 
     def test_bounded_host_handle_forces_noninteractive_sudo(self):
         orch = FakeOrchestrator({"node0": {"exit_code": 0, "output": "clean"}})
-        output = _BoundedHostHandle(orch, orch.hosts).exec("sudo dmesg --time-format iso -x")
+        output = _BoundedHostHandle(orch, orch.hosts).exec(
+            "sudo dmesg --time-format iso -x",
+            print_console=False,
+        )
         self.assertEqual(output, {"node0": "clean"})
         command, kwargs = orch.commands[-1]
         self.assertIn("sudo -n dmesg", command)
         self.assertIn("IPVS: .*no destination available", command)
         self.assertEqual(kwargs["timeout"], 60)
         self.assertTrue(kwargs["detailed"])
+        self.assertFalse(kwargs["print_console"])
 
     def test_bounded_host_handle_rejects_remote_failure(self):
         orch = FakeOrchestrator({"node0": {"exit_code": 1, "output": "denied"}})
