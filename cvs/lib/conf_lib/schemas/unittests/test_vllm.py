@@ -225,12 +225,19 @@ class TestThresholds(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "missing threshold coverage"):
             self._variant({}, enforce=True)
 
-    def test_underscore_metrics_are_ignored_and_other_unknown_metrics_rejected(self):
+    def test_comment_metrics_are_ignored_and_other_underscore_keys_rejected(self):
         spec = {"kind": "min", "value": 0}
-        variant = self._variant({CELL: {"_comment": "calibrate", "_typo": spec, "_": spec, "output_throughput": spec}})
+        variant = self._variant({CELL: {"_comment": "calibrate", "_example_floor": spec, "output_throughput": spec}})
         self.assertEqual(variant.thresholds, {CELL: {"output_throughput": spec}})
-        with self.assertRaisesRegex(ValidationError, "unknown vLLM threshold metric 'notes'"):
-            self._variant({CELL: {"notes": spec}})
+        for cell in (
+            {"notes": spec},
+            {"_output_throughput": spec},
+            {"_": spec},
+            {"output_throughput": {**spec, "_note": "calibrated"}},
+        ):
+            with self.subTest(cell=cell):
+                with self.assertRaisesRegex(ValidationError, "unknown (vLLM threshold metric|threshold fields)"):
+                    self._variant({CELL: cell})
 
     def test_rejects_specs_outside_the_vllm_direction_rule(self):
         for metric, spec in (

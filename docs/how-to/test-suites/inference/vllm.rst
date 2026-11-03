@@ -68,7 +68,7 @@ Step 2: Fill in the placeholders
 
 Replace every ``<changeme>`` before the run. ``{user-id}`` is not one of those: it becomes the login name of the ``cvs run`` process, unless the cluster file sets ``username``.
 
-In the **cluster file**, set your SSH user, private key path, and node addresses. Unresolved ``<changeme>`` strings in the cluster file stop startup. A ``<changeme>`` or ``<changeme-...>`` left in the workload file fails test collection, and the error names every field that still has one. See :doc:`/how-to/run-with-containers` for the cluster-file walkthrough.
+In the **cluster file**, set your SSH user, private key path, and node addresses. Unresolved ``<changeme>`` strings in the cluster file stop startup. A ``<changeme>`` or ``<changeme-...>`` left in a checked workload-file field fails test collection, and the error names every such field. :ref:`vllm-config-structure` lists the fields that are checked. See :doc:`/how-to/run-with-containers` for the cluster-file walkthrough.
 
 In the **Llama single-node file**, replace only these strings:
 
@@ -313,7 +313,7 @@ CVS then bootstraps a Ray cluster before serving: ``ray start --head --port=<dis
 Common pitfalls
 ===============
 
-**The run fails immediately with a validation error.** ``container``, ``paths``, and the top-level config reject unknown keys. ``server_params``, ``benchmark_params``, and sweep overrides accept extra snake_case vLLM options. ``image_tar`` belongs on the cluster file, not in the vLLM file. Keys that start with ``_`` are comments and are ignored. See :doc:`/reference/cluster/cluster-file`.
+**The run fails immediately with a validation error.** ``container``, ``paths``, and the top-level config reject unknown keys. ``server_params``, ``benchmark_params``, and sweep overrides accept extra snake_case vLLM options. ``image_tar`` belongs on the cluster file, not in the vLLM file. Keys that start with ``_`` are comments and are ignored, except in threshold cells, where only ``_comment`` and ``_example`` names are. See :doc:`/reference/cluster/cluster-file`.
 
 **Distributed topology validation fails** with ``vllm_distributed requires pipeline_parallel_size>1 unless distributed-executor-backend=ray``. You have two or more hosts on ``mp`` without pipeline parallelism. Raise ``pipeline_parallel_size``, or set ``distributed_executor_backend`` to ``"ray"``.
 

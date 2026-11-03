@@ -31,6 +31,7 @@ _CELL_RE = re.compile(
 _SOCKET_ENV = {"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"}
 _HF_TOKEN_ENV = {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"}
 _SERVER_RESERVED = {"master_addr", "master_port", "nnodes", "node_rank", "headless"}
+_METADATA_PREFIXES = ("_comment", "_example")
 
 
 def _reject_option_placeholder(value, info):
@@ -54,12 +55,29 @@ class _Options(_Allow):
         return dict(self.model_extra or {})
 
 
+def _reject_underscore_metric_keys(thresholds):
+    # A misspelled metric such as _output_throughput would otherwise be dropped
+    # as a comment, and enforcement only checks that the cell exists.
+    for cell_key, cell in thresholds.items():
+        if cell_key == "accuracy" or cell_key.startswith("_") or not isinstance(cell, dict):
+            continue
+        for metric, spec in cell.items():
+            if metric.startswith(_METADATA_PREFIXES):
+                continue
+            if metric.startswith("_"):
+                raise ValueError(f"unknown vLLM threshold metric {metric!r}")
+            extra = sorted(key for key in spec if key.startswith("_")) if isinstance(spec, dict) else []
+            if extra:
+                raise ValueError(f"{cell_key}.{metric}: unknown threshold fields {extra}")
+
+
 def _validate_vllm_thresholds(thresholds):
     """Check every cell spec and return the thresholds without comment keys.
 
     The report code reads ``variant.thresholds`` as plain dicts, so the specs
     are returned as written rather than as ``ThresholdSpec`` models.
     """
+    _reject_underscore_metric_keys(thresholds)
     cells = ThresholdFile.model_validate(thresholds).cells()
     for cell_key, cell in cells.items():
         for metric, spec in cell.items():

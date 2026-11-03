@@ -73,6 +73,8 @@ Each stage of the run is an independent test, so every stage becomes its own tim
 
 If a stage fails, later stages are skipped rather than cascading into confusing downstream errors. The container is still torn down by a leak-guard even when a mid-sweep test fails.
 
+.. _vllm-config-structure:
+
 Configuration file structure
 ============================
 
@@ -128,8 +130,12 @@ A vLLM configuration file has these top-level keys:
   ``benchmark_params.ignore_eos`` and ``trust_remote_code`` do accept ``false``.
   Use an option's negative form instead of ``false`` for any other flag.
   Keys that start with ``_`` are comments and are ignored, except inside
-  ``container.env`` and option values. A ``<changeme>`` or ``<changeme-...>``
-  left in any value fails config load, and the error names every such field.
+  ``container.env`` and option values. In a threshold cell, only metric names
+  starting with ``_comment`` or ``_example`` are comments. A ``<changeme>`` or
+  ``<changeme-...>`` fails config load, and the error names every such field,
+  when it is left in a ``paths`` value, ``container.name``, ``container.image``,
+  a ``container.env`` value, a ``runtime.args`` volume, ``server_params.model``,
+  or an extra option or sweep value. Other values are not checked for placeholders.
 
 Placeholder substitution
 ------------------------
@@ -318,7 +324,7 @@ Container block keys
      - The Docker keys under :ref:`vllm-runtime-args`. ``env`` is rejected.
    * - ``env``
      - ``{}``
-     - Environment variables passed as ``docker run -e``. **On** ``container``, not under ``runtime.args``. ``HF_TOKEN`` and ``HUGGING_FACE_HUB_TOKEN`` are rejected; set ``paths.hf_token_file`` instead.
+     - Environment variables passed as ``docker run -e``. **On** ``container``, not under ``runtime.args``. ``HF_TOKEN`` and ``HUGGING_FACE_HUB_TOKEN`` are rejected in the vLLM file; set ``paths.hf_token_file`` instead. A token in the cluster file's ``container.env`` is passed to the container, and logs redact it.
 
 ``image_tar`` is not a field of this model; set it on the cluster file's ``container`` block. ``runtime.args`` keys such as ``registry``, ``shm_size``, and ``cap_add`` can be set in either file. CVS deep-merges the vLLM ``container`` block onto the cluster file's block and keeps cluster keys the vLLM file does not set. The orchestrator emits them: ``image_tar`` loads an image, ``registry`` logs in before a pull, ``shm_size`` becomes ``--shm-size``, and ``cap_add`` appends to the orchestrator's default capabilities. See :doc:`/reference/cluster/cluster-file` for the orchestrator container keys that page documents.
 
@@ -331,7 +337,7 @@ Container block keys
 Runtime arguments
 -----------------
 
-``runtime.args`` accepts only the keys below. Schema defaults are ``network`` ``host``, ``ipc`` ``host``, ``privileged`` true, and empty ``volumes`` and ``devices``. The orchestrator then appends its own mounts and devices; you cannot drop those defaults from the vLLM file.
+``runtime.args`` accepts only the keys below. ``volumes``, ``devices``, ``network``, ``ipc`` and ``privileged`` come from the vLLM file or its schema defaults. ``shm_size``, ``cap_add`` and ``registry`` keep a cluster value when the vLLM file leaves them out. The orchestrator then appends its own mounts and devices; you cannot drop those defaults from the vLLM file.
 
 .. list-table::
    :widths: 3 7
@@ -788,8 +794,8 @@ Sweep specs are strict at load time regardless of enforcement:
 - ``kind`` must equal the registry direction, exactly ``min`` or ``max``.
 - ``value`` must be a finite JSON number. Booleans, strings, null, arrays,
   objects, NaN, and infinity are rejected.
-- Cell-level keys beginning with ``_`` are comments and are ignored; all
-  other keys must name a registered metric.
+- Cell-level keys beginning with ``_comment`` or ``_example`` are comments and
+  are ignored; all other keys must name a registered metric.
 - Prefixed names (``client.*``, ``gpu.*``, ``prom.*``), unknown names, legacy
   kinds (including ``min_tok_s`` and ``max_ms``), references, tolerances,
   units, ``info``, ``optional``, and extra fields are rejected.
@@ -1119,7 +1125,7 @@ Troubleshooting
    * - ``duplicate task id(s)``
      - Two ``accuracy.tasks`` entries share an ``id``.
    * - ``unknown vLLM threshold metric '<metric>'``
-     - The name is not one of the 56 registry metrics. Keys beginning with ``_`` are ignored.
+     - The name is not one of the 56 registry metrics. Names beginning with ``_comment`` or ``_example`` are ignored.
    * - ``<metric> threshold kind must be '<direction>', got '<kind>'``
      - ``kind`` does not match the registry direction. Use the required ``min`` or ``max`` value shown in the message.
    * - ``<metric>: actual must be a finite built-in int or float, got <value>``
