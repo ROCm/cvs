@@ -28,7 +28,9 @@
         "privileged": true,
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
-          "<changeme-imagenet-host-path>:/datasets/imagenet-1k:ro"
+          "<changeme-imagenet-host-path>:/datasets/imagenet-1k:ro",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+          "/lib/x86_64-linux-gnu/libibverbs.so.1:/opt/cvs-host/libibverbs.so.1:ro"
         ],
         "devices": [
           "/dev/kfd",
@@ -87,7 +89,13 @@
     },
     "env_vars": {
       "NCCL_DEBUG": "WARN",
-      "RCCL_USE_AMD_SMI_LIB": "1"
+      "RCCL_USE_AMD_SMI_LIB": "1",
+      "NCCL_IB_DISABLE": "0",
+      "NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "NCCL_IB_GID_INDEX": "3",
+      "NCCL_SOCKET_IFNAME": "eno0",
+      "NCCL_CUMEM_ENABLE": "1",
+      "NCCL_DMABUF_ENABLE": "1"
     },
     "error_patterns": {
       "NCCL ERROR": "NCCL ERROR|NCCL timeout|local work queue catastrophic error",

@@ -177,11 +177,15 @@ Energy is measured by CodeCarbon on rank zero's node only, so on a multi-node
 run ``energy_kwh`` and ``images/kWh`` are per-node figures; images are scaled
 to that node's share so the ratio stays comparable across topologies.
 
-Known limitation: unlike jaxmaxtext there is no RDMA setup stage, so the suite
-relies on whatever transport RCCL negotiates. A 4-node run spanning two
-subnets (10.32.80.x plus 10.32.81.x) hit a collective timeout, while the same
-config on four same-subnet nodes passed. Keep multi-node sets on one fabric
-until an RDMA stage is added.
+Distributed configs bind-mount the host Thor2 provider,
+``/usr/local/lib/libbnxt_re-rdmav34.so``, and the host ``libibverbs.so.1``.
+Before training, the suite copies that host library over the copy baked into
+the container and opens every rail. The baked provider does not match the TW
+kernel, and the provider alone segfaults against the image's older
+``libibverbs``. The data path is all eight rails (``NCCL_IB_HCA=rdma0``
+through ``rdma7``, RoCE GID 3). ``eno0`` is only the TCP bootstrap. These
+nodes share that layout, so the values are set in the distributed configs
+rather than left as placeholders.
 
 Scaling efficiency needs a calibrated reference. Set
 ``training.scaling_baseline.images_per_sec_total`` from a prior single-node
@@ -189,6 +193,16 @@ run's ``results.json``, and ``num_nodes`` to that run's node count, before the
 metric appears. Left at ``0.0`` it is omitted rather than reported as a
 misleading zero, so a distributed run never claims an efficiency it cannot
 substantiate.
+
+Training crop
+=============
+
+Training decodes the full frame, then applies rocAL's random resized crop
+with the torchvision defaults (area 8% to 100%, aspect 3:4 to 4:3) and a
+horizontal flip. The previous train path used ``image_slice``, which crops a
+random window and stretches it to 224. A 90-epoch ResNet-50 run on that path
+finished at 13.1% Top-1 against the 75.5% qualification target. Evaluation is
+unchanged: shorter side 256, then a 224 center crop.
 
 Evaluation label correctness
 ============================

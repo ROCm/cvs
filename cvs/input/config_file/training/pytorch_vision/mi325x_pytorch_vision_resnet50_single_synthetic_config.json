@@ -4,7 +4,7 @@
   "framework": "pytorch_vision_training",
   "gpu_name": "MI325X",
   "_thresholds_comment": "Gating is threshold-driven and requires enforce_thresholds=true. A threshold entry with kind=info always passes and records the value. Calibrate on the target filesystem and fabric before enforcing numeric limits.",
-  "enforce_thresholds": true,
+  "enforce_thresholds": false,
   "threshold_json": "mi325x_pytorch_vision_resnet50_single_synthetic_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -19,7 +19,7 @@
   "container": {
     "lifetime": "per_run",
     "name": "cvs_pytorch_vision_w1",
-    "image": "rocm/pytorch:rocm7.14_ubuntu24.04_py3.12_pytorch_release_2.12.0@sha256:c38eeda81d85f00fbe35d3d50ce42ce59c524e87d810624f4eb5c52fddb3b9ad",
+    "image": "cvs/pytorch-rocal:rocm7.2.4-py3.12-torch2.10-rocal2.5.0",
     "runtime": {
       "name": "docker",
       "args": {

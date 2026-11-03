@@ -107,6 +107,7 @@ class PyTorchVisionJob:
         if self.variant.training.distributed:
             if len(hosts) < 2:
                 raise RuntimeError(f"{self.workload} distributed requires 2+ nodes, received {len(hosts)}")
+            self.prepare_host_verbs()
         elif len(hosts) != 1:
             raise RuntimeError(f"{self.workload} single-node requires exactly one node, received {len(hosts)}")
 
@@ -151,6 +152,71 @@ class PyTorchVisionJob:
                 f"hip={info['hip']} gpus={info['gpus']} arch={info['architectures'][0]}"
             )
         return "; ".join(summaries)
+
+    def prepare_host_verbs(self):
+        """Install the host Thor2 verbs stack and open every configured rail.
+
+        The container's libibverbs is older than the TW kernel. Bind-mounting
+        only the Broadcom provider then segfaults inside that library, so the
+        host libibverbs (mounted at ``/opt/cvs-host/libibverbs.so.1``) is
+        copied over the container copy before any collective starts.
+        """
+        hca = str(self.variant.training.env_vars.get("NCCL_IB_HCA", "")).strip()
+        names = [part.strip() for part in hca.split(",") if part.strip()]
+        if not names or any(not re.fullmatch(r"(?:rdma|bnxt_re)\d+", name) for name in names):
+            raise RuntimeError(
+                "distributed PyTorch Vision requires NCCL_IB_HCA to name the 400G rails "
+                f"(rdma0 through rdma7 on TW nodes); got {hca!r}"
+            )
+        script = r"""
+import ctypes, os, shutil
+src = "/opt/cvs-host/libibverbs.so.1"
+if not os.path.isfile(src) or os.path.getsize(src) == 0:
+    raise SystemExit("host libibverbs is not mounted at /opt/cvs-host/libibverbs.so.1")
+seen = set()
+src_real = os.path.realpath(src)
+for link in ("/usr/lib/x86_64-linux-gnu/libibverbs.so.1", "/lib/x86_64-linux-gnu/libibverbs.so.1"):
+    if not os.path.lexists(link):
+        continue
+    target = os.path.realpath(link)
+    if target in seen or target == src_real:
+        continue
+    seen.add(target)
+    shutil.copyfile(src, target)
+expected = [name for name in os.environ["NCCL_IB_HCA"].split(",") if name]
+lib = ctypes.CDLL("libibverbs.so.1")
+lib.ibv_get_device_list.argtypes = [ctypes.POINTER(ctypes.c_int)]
+lib.ibv_get_device_list.restype = ctypes.POINTER(ctypes.c_void_p)
+lib.ibv_get_device_name.argtypes = [ctypes.c_void_p]
+lib.ibv_get_device_name.restype = ctypes.c_char_p
+lib.ibv_open_device.argtypes = [ctypes.c_void_p]
+lib.ibv_open_device.restype = ctypes.c_void_p
+lib.ibv_close_device.argtypes = [ctypes.c_void_p]
+count = ctypes.c_int()
+devices = lib.ibv_get_device_list(ctypes.byref(count))
+if not devices:
+    raise SystemExit("ibv_get_device_list returned no devices")
+opened = []
+for index in range(count.value):
+    name = lib.ibv_get_device_name(devices[index]).decode()
+    context = lib.ibv_open_device(devices[index])
+    if not context:
+        raise SystemExit(f"ibv_open_device failed for {name}")
+    lib.ibv_close_device(context)
+    opened.append(name)
+missing = [name for name in expected if name not in opened]
+if missing:
+    raise SystemExit(f"400G rails not open: {missing}; opened {sorted(opened)}")
+print("RDMA_RAILS " + " ".join(sorted(opened)))
+"""
+        command = (
+            "export NCCL_IB_HCA="
+            + shlex.quote(",".join(names))
+            + "; python3 -c "
+            + shlex.quote(script)
+        )
+        result = self.orch.exec(command, timeout=60, detailed=True, print_console=False)
+        self._require_success(result, "prepare host verbs for the 400G rails")
 
     @property
     def workload(self):

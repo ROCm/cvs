@@ -28,7 +28,9 @@
         "privileged": true,
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
-          "<changeme-imagenet-host-path>:/datasets/imagenet-1k:ro"
+          "<changeme-imagenet-host-path>:/datasets/imagenet-1k:ro",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+          "/lib/x86_64-linux-gnu/libibverbs.so.1:/opt/cvs-host/libibverbs.so.1:ro"
         ],
         "devices": [
           "/dev/kfd",
@@ -60,7 +62,7 @@
     "learning_rate": 0.0001,
     "momentum": 0.9,
     "weight_decay": 0.05,
-    "timeout_s": 900,
+    "timeout_s": 28800,
     "omp_num_threads": 1,
     "verify_dmesg": true,
     "peak_tflops_per_gpu": 1307.4,
@@ -68,10 +70,10 @@
     "checkpoint_keep_file": false,
     "checkpoint_loss_tolerance": 1e-05,
     "loss_curve": {
-      "enabled": false,
-      "sample_every_steps": 1,
-      "minimum_points": 2,
-      "require_decrease": false
+      "enabled": true,
+      "sample_every_steps": 10,
+      "minimum_points": 100,
+      "require_decrease": true
     },
     "convergence": {
       "target_train_loss": 4.0
@@ -86,6 +88,12 @@
     "env_vars": {
       "NCCL_DEBUG": "WARN",
       "RCCL_USE_AMD_SMI_LIB": "1",
+      "NCCL_IB_DISABLE": "0",
+      "NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "NCCL_IB_GID_INDEX": "3",
+      "NCCL_SOCKET_IFNAME": "eno0",
+      "NCCL_CUMEM_ENABLE": "1",
+      "NCCL_DMABUF_ENABLE": "1",
       "HF_HOME": "/it-share-prj2-1/models/hub",
       "HF_HUB_DISABLE_TELEMETRY": "1"
     },

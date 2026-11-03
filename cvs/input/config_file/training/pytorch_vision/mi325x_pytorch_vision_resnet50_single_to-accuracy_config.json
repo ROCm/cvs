@@ -18,7 +18,7 @@
   },
   "container": {
     "lifetime": "per_run",
-    "name": "cvs_pytorch_vision_w1_train_to_accuracy_disabled",
+    "name": "cvs_pytorch_vision_w1_train_to_accuracy",
     "image": "cvs/pytorch-rocal:rocm7.2.4-py3.12-torch2.10-rocal2.5.0",
     "runtime": {
       "name": "docker",

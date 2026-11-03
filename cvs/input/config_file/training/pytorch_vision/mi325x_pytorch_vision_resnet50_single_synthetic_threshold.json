@@ -1,5 +1,5 @@
 {
-  "_comment": "Calibrated from three MI325X runs per GA cell. Provisional FLOPS/MFU use 24.6 GFLOP per training image (4.1 GMAC forward x 2 FLOP/MAC x 3 training) and the published 1307.4 dense BF16 TFLOPS/GPU peak; they remain informational pending methodology approval.",
+  "_comment": "The images/s gates were measured on rocm/pytorch 7.14, which is not the image this profile launches. The profile records them and does not enforce them until they are recalibrated on cvs/pytorch-rocal. Provisional FLOPS/MFU use 24.6 GFLOP per training image and the published 1307.4 dense BF16 TFLOPS/GPU peak.",
   "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,MBS=256,GA=1,GBS=2048,RES=224": {
     "training.images_per_sec": { "kind": "min", "value": 24500 },
     "training.images_per_sec_per_gpu": { "kind": "min", "value": 3062.5 },

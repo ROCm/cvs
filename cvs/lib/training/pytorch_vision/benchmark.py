@@ -277,21 +277,28 @@ def _build_rocal_loader(args, rank, world_size, split="train", batch_size=None):
             pad_last_batch=split == "train",
         )
         if split == "train":
-            decoded = fn.decoders.image_slice(
+            # image_slice draws a random window and the old path then stretched
+            # that window to 224. A 90-epoch ResNet-50 run on that pipeline
+            # finished at 13% Top-1. Decode the full frame and apply the
+            # torchvision RandomResizedCrop defaults instead.
+            decoded = fn.decoders.image(
                 jpegs,
                 output_type=types.RGB,
                 file_root=data_path,
                 shard_id=rank,
                 num_shards=world_size,
                 random_shuffle=True,
+                stick_to_shard=True,
             )
-            resized = fn.resize(
+            resized = fn.random_resized_crop(
                 decoded,
                 resize_width=args.image_size,
                 resize_height=args.image_size,
+                crop_area_factor=[0.08, 1.0],
+                crop_aspect_ratio=[0.75, 1.333333],
+                interpolation_type=types.LINEAR_INTERPOLATION,
                 output_layout=types.NHWC,
                 output_dtype=types.UINT8,
-                interpolation_type=types.TRIANGULAR_INTERPOLATION,
             )
         else:
             # Evaluation must consume each image exactly once.

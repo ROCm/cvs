@@ -167,6 +167,41 @@ class TestPyTorchVisionJob(unittest.TestCase):
         summary = PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").verify_environment()
         self.assertIn("gpus=8", summary)
 
+    def test_distributed_verify_installs_host_verbs(self):
+        info = {
+            "torch": "2.12",
+            "torchvision": "0.27",
+            "hip": "7.14",
+            "cuda": True,
+            "gpus": 8,
+            "devices": ["AMD Instinct MI325X"] * 8,
+            "architectures": ["gfx942"] * 8,
+        }
+        marker = "PYTORCH_VISION_ENV " + json.dumps(info)
+        response = {
+            "node0": {"exit_code": 0, "output": marker},
+            "node1": {"exit_code": 0, "output": marker},
+        }
+        variant = _variant()
+        variant.training.distributed = True
+        variant.training.env_vars = {"NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7"}
+        orch = FakeOrchestrator(response)
+        orch.hosts = ["node0", "node1"]
+        PyTorchVisionJob(orch, variant, "w1").verify_environment()
+        prepare = orch.commands[0][0]
+        self.assertIn("/opt/cvs-host/libibverbs.so.1", prepare)
+        self.assertIn("rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7", prepare)
+        self.assertIn("ibv_open_device", prepare)
+
+    def test_distributed_verify_rejects_missing_rails(self):
+        variant = _variant()
+        variant.training.distributed = True
+        orch = FakeOrchestrator()
+        orch.hosts = ["node0", "node1"]
+        with self.assertRaises(RuntimeError):
+            PyTorchVisionJob(orch, variant, "w1").verify_environment()
+        self.assertEqual(orch.commands, [])
+
     def test_rejects_wrong_gpu_count(self):
         info = {
             "torch": "2.12",
