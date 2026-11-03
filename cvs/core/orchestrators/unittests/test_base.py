@@ -7,10 +7,39 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import inspect
 import unittest
+from unittest.mock import MagicMock
 
 from cvs.core.orchestrators.base import Orchestrator
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.orchestrators.container import ContainerOrchestrator
+
+
+class _AbstractMethodsOnly(Orchestrator):
+    """A custom subclass that implements only the abstract methods."""
+
+    def exec(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
+        return {}
+
+    def exec_on_host(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
+        return {}
+
+    def exec_on_head(self, cmd, timeout=None, detailed=False):
+        return {}
+
+    def upload_to_head(self, local_file, remote_file):
+        return {}
+
+    def download_from_head(self, remote_file, local_file):
+        return {}
+
+    def download_file(self, remote_file, local_file, hosts=None):
+        return {}
+
+    def setup_env(self, hosts, env_script=None):
+        return True
+
+    def cleanup(self, hosts):
+        return True
 
 
 class TestOrchestratorExecContract(unittest.TestCase):
@@ -27,3 +56,26 @@ class TestOrchestratorExecContract(unittest.TestCase):
                 self.assertEqual(list(parameters)[:6], expected)
                 self.assertIs(parameters['detailed'].default, False)
                 self.assertIs(parameters['print_console'].default, True)
+
+
+class TestOrchestratorExecCmdListContract(unittest.TestCase):
+    def test_subclass_without_exec_cmd_list_still_instantiates_and_raises_not_implemented(self):
+        orch = _AbstractMethodsOnly(MagicMock(), {})
+        for method in ('exec_cmd_list', 'exec_cmd_list_on_host'):
+            with self.subTest(method=method):
+                with self.assertRaisesRegex(NotImplementedError, f'{method} not supported by _AbstractMethodsOnly'):
+                    getattr(orch, method)(['echo a'])
+
+    def test_concrete_backends_match_base_signature(self):
+        for method in ('exec_cmd_list', 'exec_cmd_list_on_host'):
+            expected = inspect.signature(getattr(Orchestrator, method)).parameters
+            for cls in (BaremetalOrchestrator, ContainerOrchestrator):
+                with self.subTest(cls=cls, method=method):
+                    parameters = inspect.signature(getattr(cls, method)).parameters
+                    self.assertEqual(list(parameters), list(expected))
+                    self.assertIsNone(parameters['timeout'].default)
+                    self.assertIs(parameters['print_console'].default, True)
+
+
+if __name__ == '__main__':
+    unittest.main()

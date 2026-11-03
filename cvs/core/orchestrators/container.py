@@ -715,6 +715,10 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             print_console=print_console,
         )
 
+    def exec_cmd_list_on_host(self, cmd_list, timeout=None, print_console=True):
+        """Execute cmd_list[i] on the i-th cluster host OS (SSH), not inside the container."""
+        return super().exec_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
+
     def exec_on_head(self, cmd, timeout=None, detailed=False, print_console=True):
         """
         Execute command directly on head node (baremetal).

@@ -152,6 +152,24 @@ class BaremetalOrchestrator(Orchestrator):
             finally:
                 phandle.destroy_clients()
 
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+        """
+        Execute different commands on different hosts via SSH.
+
+        Each cmd_list[i] runs on hosts[i] — the parallel per-host equivalent of
+        exec(). Positional correspondence between cmd_list and the
+        orchestrator's host list is the caller's responsibility.
+
+        Args:
+            cmd_list: List of commands, one per host in host order
+            timeout: Command timeout
+            print_console: See exec().
+
+        Returns:
+            Dictionary mapping hosts to execution results
+        """
+        return self.all.exec_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
+
     def exec_on_host(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
         """Execute directly on the host OS."""
         return self.exec(
@@ -161,6 +179,10 @@ class BaremetalOrchestrator(Orchestrator):
             detailed=detailed,
             print_console=print_console,
         )
+
+    def exec_cmd_list_on_host(self, cmd_list, timeout=None, print_console=True):
+        """Execute cmd_list[i] directly on the i-th host's OS."""
+        return self.exec_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
 
     def sudo_prefix(self):
         """

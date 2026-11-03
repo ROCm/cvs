@@ -442,6 +442,25 @@ class TestContainerOrchestratorExecForwarding(unittest.TestCase):
         self.runtime.exec.assert_not_called()
         self.assertEqual(result, {"10.0.0.2": "ok"})
 
+    def test_exec_cmd_list_runs_inside_the_container_not_on_the_host(self):
+        # BaremetalOrchestrator.exec_cmd_list is inherited, so losing this override
+        # would silently run the commands on the hosts instead of raising.
+        result = self.orch.exec_cmd_list(["echo a", "echo b"], timeout=7, print_console=False)
+
+        call = self.runtime.exec_cmd_list.call_args
+        self.assertEqual(call.args[:2], ("cvs_iter_test", ["echo a", "echo b"]))
+        self.assertEqual(self._kwarg(call, "timeout", 2), 7)
+        self.assertIs(self._kwarg(call, "print_console", 3), False)
+        self.orch.all.exec_cmd_list.assert_not_called()
+        self.assertIs(result, self.runtime.exec_cmd_list.return_value)
+
+    def test_exec_cmd_list_on_host_bypasses_container_runtime(self):
+        result = self.orch.exec_cmd_list_on_host(["echo a", "echo b"], timeout=7, print_console=False)
+
+        self.orch.all.exec_cmd_list.assert_called_once_with(["echo a", "echo b"], timeout=7, print_console=False)
+        self.runtime.exec_cmd_list.assert_not_called()
+        self.assertIs(result, self.orch.all.exec_cmd_list.return_value)
+
     def test_exec_on_head_forwards_print_console_false_to_runtime(self):
         self.orch.exec_on_head("cat /tmp/huge", print_console=False)
         self.assertIs(self._kwarg(self.runtime.exec_on_head.call_args, "print_console", 4), False)
