@@ -639,7 +639,7 @@ class MegatronTrainingJob:
          - Prints debug information about the prepared commands.
          - Distributed mode:
          * Runs NIC setup workarounds (if any).
-         * Creates per-node distributed wrapper scripts across nodes via phdl.exec_cmd_list.
+         * Creates per-node distributed wrapper scripts on each host via orch.exec_cmd_list_on_host.
          * Executes those scripts inside each node's container using docker exec.
         - Single-node mode:
          * Writes a single wrapper script locally.
@@ -651,7 +651,7 @@ class MegatronTrainingJob:
           timeout (int): Reserved for future use (e.g., health checks). Not currently used.
 
         Assumptions:
-          - self.phdl provides:
+          - self.orch provides:
           * exec(cmd: str) -> per-node or local command execution
           * exec_cmd_list(cmd_list: List[str]) -> parallel per-node execution
           - Docker is installed and container self.container_name is available on each node.
@@ -680,7 +680,7 @@ class MegatronTrainingJob:
             if not self.exec_nic_setup_scripts():
                 return
 
-            self.orch.all.exec_cmd_list(self.job_cmd_list)
+            self.orch.exec_cmd_list_on_host(self.job_cmd_list)
             # Write per-node wrapper scripts on bare host in parallel (scripts_dir is a volume mount)
 
             # self.orch.all.exec_cmd_list([
