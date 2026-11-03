@@ -649,6 +649,40 @@ def parse_afmctl_show_device(output: str) -> List[Dict]:
     return parse_afmctl_show_device_output(output, allow_text_fallback=True)[0]
 
 
+def parse_afmctl_firmware_by_bdf(output: str) -> Tuple[Dict[str, Optional[str]], List[str]]:
+    """Map every reported AFM device BDF to its firmware version (or ``None``).
+
+    Unlike :func:`parse_afmctl_show_device_json`, which filters to records carrying an
+    accelerator/vPOD descriptor (the shape ibperf's vPOD discovery needs), this counts
+    *every* BDF the tool reports so a firmware check can flag a device that reports no
+    version. Each BDF maps to the first firmware version seen in its subtree, or
+    ``None`` when that device reported none. Returns ``(firmware_by_bdf, errors)``.
+    """
+    raw = (output or "").strip()
+    if not raw:
+        return {}, ["Empty afmctl show device output"]
+    try:
+        document = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return {}, [f"Invalid afmctl show device JSON: {exc.msg}"]
+
+    firmware_by_bdf: Dict[str, Optional[str]] = {}
+    for record, inherited_bdf in _walk_json_dicts(document):
+        flattened = _json_flatten_values(record)
+        bdf = _normalize_bdf(_json_first_value(flattened, ("bdf", "device_bdf", "pci_bdf"))) or inherited_bdf
+        if not bdf:
+            continue
+        firmware = _json_first_value(flattened, ("firmware_version", "fw_version", "firmware"))
+        existing = firmware_by_bdf.get(bdf)
+        if existing in (None, "") and firmware not in (None, ""):
+            firmware_by_bdf[bdf] = firmware
+        else:
+            firmware_by_bdf.setdefault(bdf, firmware)
+    if not firmware_by_bdf:
+        return {}, ["afmctl show device JSON contained no device BDFs"]
+    return firmware_by_bdf, []
+
+
 def _afmctl_read(sudo_target, arguments, denied_marker):
     """Build the ``sudo -n <target> <arguments>`` read, routing a refused read to a token.
 

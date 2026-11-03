@@ -20,7 +20,7 @@ import re
 import shlex
 
 from cvs.lib import dmesg_noise
-from cvs.lib.preflight.scaleup_fabric import parse_afmctl_device_json
+from cvs.lib.preflight.ifoe_l2_connectivity import parse_afmctl_firmware_by_bdf
 
 _STATUSES = ('pass', 'fail', 'na')
 
@@ -328,15 +328,15 @@ def _na_record(summary='not applicable'):
 def _extract_ifoe_firmware(text):
     '''Return (firmware_versions, device_count) from ``afmctl show device --json``.
 
-    Uses the shared AFM JSON parser so the platform firmware check and ibperf's vPOD
-    discovery read the same command output the same way. ``device_count`` is the
-    number of AFM accelerator devices the parser recognizes (a BDF with an accelerator
-    descriptor); a recognized device without a firmware version contributes to the
-    count but not to the value list, so the caller can fail an incomplete read.
+    ``device_count`` is the number of AFM device BDFs the tool reports, counted
+    independently of the accelerator-descriptor filter that ibperf's vPOD discovery
+    uses; a reported BDF without a firmware version contributes to the count but not
+    to the value list, so the caller fails an incomplete read even when the missing
+    device carries no accelerator descriptor.
     '''
-    devices, _errors = parse_afmctl_device_json(text)
-    versions = [str(d['firmware_version']).strip() for d in devices if d.get('firmware_version')]
-    return versions, len(devices)
+    firmware_by_bdf, _errors = parse_afmctl_firmware_by_bdf(text)
+    versions = [str(fw).strip() for fw in firmware_by_bdf.values() if fw]
+    return versions, len(firmware_by_bdf)
 
 
 def _extract_ifoe_kmod(text):
@@ -356,7 +356,7 @@ def _eval_ifoe_version(out_dict, expected, extract, format_re, item_name, label)
       - absent sentinel in output -> ``na`` record, no fail message.
       - denial token in output -> fail (the privileged read was refused).
       - reader-missing marker in output -> fail (module loaded but reader not found).
-      - more recognized devices than detected versions -> fail (a recognized device is
+      - more reported devices than detected versions -> fail (a reported device is
         missing its version), so a healthy device cannot mask a sibling that reports no
         version.
       - ``expected`` set -> every detected value must equal it, else fail.

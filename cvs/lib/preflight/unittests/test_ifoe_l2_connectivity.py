@@ -21,6 +21,7 @@ from cvs.lib.preflight.ifoe_l2_connectivity import (
     build_afmctl_command,
     expand_accelerator_ranges,
     parse_accelerator_ranges,
+    parse_afmctl_firmware_by_bdf,
     parse_afmctl_show_device,
     parse_afmctl_show_device_json,
 )
@@ -339,6 +340,50 @@ class TestParseAfmctlShowDevice(unittest.TestCase):
         devices, errors = parse_afmctl_show_device_json(payload)
         self.assertEqual(errors, [])
         self.assertEqual(devices[0]['firmware_version'], '0.24.2')
+
+
+class TestParseAfmctlFirmwareByBdf(unittest.TestCase):
+    """The firmware-by-BDF map counts every reported device, unlike the accel-filtered
+    device parser, so a firmware check can flag a device that reports no version."""
+
+    def test_maps_each_bdf_to_its_firmware(self):
+        payload = json.dumps(
+            {
+                'device': [
+                    {'bdf': '0001:01:00.1', 'spec': {'accelerator_id': '0'}, 'status': {'firmware_version': '0.24.2'}},
+                    {'bdf': '0002:01:00.1', 'spec': {'accelerator_id': '1'}, 'status': {'firmware_version': '0.24.2'}},
+                ]
+            }
+        )
+        firmware_by_bdf, errors = parse_afmctl_firmware_by_bdf(payload)
+        self.assertEqual(errors, [])
+        self.assertEqual(firmware_by_bdf, {'0001:01:00.1': '0.24.2', '0002:01:00.1': '0.24.2'})
+
+    def test_counts_bdf_without_accelerator_descriptor(self):
+        # A device the accel-filtered parser drops still appears here, mapped to None,
+        # so the caller sees 2 devices with only 1 firmware version.
+        payload = json.dumps(
+            {
+                'device': [
+                    {'bdf': '0001:01:00.1', 'spec': {'accelerator_id': '0'}, 'status': {'firmware_version': '0.24.2'}},
+                    {'bdf': '0002:01:00.1', 'status': {}},
+                ]
+            }
+        )
+        firmware_by_bdf, errors = parse_afmctl_firmware_by_bdf(payload)
+        self.assertEqual(errors, [])
+        self.assertEqual(firmware_by_bdf, {'0001:01:00.1': '0.24.2', '0002:01:00.1': None})
+
+    def test_empty_and_invalid_inputs(self):
+        self.assertEqual(parse_afmctl_firmware_by_bdf(''), ({}, ['Empty afmctl show device output']))
+        firmware_by_bdf, errors = parse_afmctl_firmware_by_bdf('not json')
+        self.assertEqual(firmware_by_bdf, {})
+        self.assertTrue(errors and 'Invalid afmctl show device JSON' in errors[0])
+
+    def test_no_bdf_records_reports_error(self):
+        firmware_by_bdf, errors = parse_afmctl_firmware_by_bdf(json.dumps({'device': [{'status': {}}]}))
+        self.assertEqual(firmware_by_bdf, {})
+        self.assertEqual(errors, ['afmctl show device JSON contained no device BDFs'])
 
 
 class TestBuildAfmctlCommand(unittest.TestCase):

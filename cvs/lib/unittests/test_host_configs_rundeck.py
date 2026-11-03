@@ -765,6 +765,24 @@ class TestIfoeFirmware(unittest.TestCase):
         self.assertEqual(records['n1']['items_summary'], 'incomplete')
         self.assertIn('missing for 1 of 2 device(s)', messages[0])
 
+    def test_incomplete_device_without_accelerator_descriptor_fails(self):
+        # The firmware count must include a reported BDF even when it carries no
+        # accelerator descriptor (the shape the accel-filtered parser drops), so a
+        # healthy device cannot mask an unreadable sibling in inventory or exact-match.
+        payload = json.dumps(
+            {
+                'device': [
+                    {'bdf': '0001:01:00.1', 'spec': {'accelerator_id': '0'}, 'status': {'firmware_version': '0.24.2'}},
+                    {'bdf': '0002:01:00.1', 'status': {}},
+                ]
+            }
+        )
+        for expected in ('', '0.24.2'):
+            records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': payload}, expected)
+            self.assertEqual(records['n1']['status'], 'fail')
+            self.assertEqual(records['n1']['items_summary'], 'incomplete')
+            self.assertIn('missing for 1 of 2 device(s)', messages[0])
+
     def test_invalid_json_fails_unreadable(self):
         records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': 'not json at all\n'}, '')
         self.assertEqual(records['n1']['status'], 'fail')
