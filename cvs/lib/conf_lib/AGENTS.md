@@ -1,6 +1,8 @@
 # cvs/lib/conf_lib — config blocks and `load_config`
 
-Suite schemas are built from `config_blocks.py` and loaded with `loader.load_config`.
+Suite schemas are built from `config_blocks.py`, live in `schemas/` (one module per suite, such
+as `schemas/vllm.py`), and are loaded with `loader.load_config`. A suite with a schema here calls
+`load_config` directly; it has no loader module of its own.
 Substitution (`substitute_config`) and `BaseVariantConfig` stay in
 `cvs/lib/utils/config_loader.py`, which older suite loaders import.
 
