@@ -902,12 +902,12 @@ class ScanDmesgForErrorsTests(unittest.TestCase):
     @patch(f"{_LIB}._verify_dmesg_for_errors")
     def test_saves_per_node_dmesg_logs(self, _mock_verify, _sleep):
         # Each rank's windowed dmesg is written to its own out-node{i}/dmesg_node{i}.log
-        # via the baremetal host handle (cmd_list[i] -> hosts[i]).
+        # on the host OS (cmd_list[i] -> hosts[i]).
         job, orch = self._job_with_host()
         job.training_start_time = {"h0": "Mon Jan  2 03:00", "h1": "Mon Jan  2 03:00"}
         job.scan_dmesg_for_errors()
-        orch.all.exec_cmd_list.assert_called_once()
-        cmds = orch.all.exec_cmd_list.call_args.args[0]
+        orch.exec_cmd_list_on_host.assert_called_once()
+        cmds = orch.exec_cmd_list_on_host.call_args.args[0]
         self.assertEqual(len(cmds), 2)
         self.assertIn("dmesg_node0.log", cmds[0])
         self.assertIn("dmesg_node1.log", cmds[1])

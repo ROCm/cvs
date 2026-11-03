@@ -833,23 +833,21 @@ class MaxTextTrainingJob:
             time.sleep(2)
             # Save each node's dmesg alongside its training log (best-effort, own
             # try) BEFORE the scan so it is captured even if the scan itself fails.
-            self._save_node_dmesg_logs(allh)
+            self._save_node_dmesg_logs()
             verify(allh, self.training_start_time, end_time)
         except Exception as e:  # noqa: BLE001 - scan infra failure is non-fatal
             log.warning("dmesg verification skipped (scan failed): %s", e)
 
-    def _save_node_dmesg_logs(self, allh):
+    def _save_node_dmesg_logs(self):
         """Save each node's windowed dmesg to ``out-node{i}/dmesg_node{i}.log``.
 
         Mirrors the scan's window: from the training start timestamp to the end of
         the kernel buffer, NTP-aligned via node 0's start time (same derivation as
-        ``verify_dmesg_for_errors``). Writes one file per rank via the baremetal
-        host handle (``cmd_list[i]`` runs on ``hosts[i]``). Best-effort: never
-        raises, so a save failure cannot mask the training result.
+        ``verify_dmesg_for_errors``). Writes one file per rank on the host OS via
+        ``orch.exec_cmd_list_on_host`` (``cmd_list[i]`` runs on ``hosts[i]``).
+        Best-effort: never raises, so a save failure cannot mask the training result.
         """
         try:
-            if not hasattr(allh, "exec_cmd_list"):
-                return
             starts = self.training_start_time or {}
             if not starts:
                 return
@@ -873,7 +871,7 @@ class MaxTextTrainingJob:
                     f"dmesg -T | sed -n '/{start_pattern}/,$p' > {shlex.quote(self._node_dmesg_log(i))}"
                 )
                 cmd_list.append("sudo bash -c " + shlex.quote(inner) + " || true")
-            allh.exec_cmd_list(cmd_list)
+            self.orch.exec_cmd_list_on_host(cmd_list)
             log.info("saved per-node dmesg logs (out-node*/dmesg_node*.log)")
         except Exception as e:  # noqa: BLE001 - best-effort; never mask the training result
             log.warning("could not save per-node dmesg logs: %s", e)
