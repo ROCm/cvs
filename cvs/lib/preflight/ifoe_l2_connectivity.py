@@ -649,12 +649,34 @@ def parse_afmctl_show_device(output: str) -> List[Dict]:
     return parse_afmctl_show_device_output(output, allow_text_fallback=True)[0]
 
 
+def _afmctl_read(sudo_target, arguments, denied_marker):
+    """Build the ``sudo -n <target> <arguments>`` read, routing a refused read to a token.
+
+    When ``denied_marker`` is set, the read runs inside a failure check so a denied
+    ``sudo -n`` (the actual afmctl invocation, not a surrogate) prints
+    ``<denied_marker> <stderr>`` instead of leaking the sudo error as unparseable
+    output. Checking the real read means a user with NOPASSWD for afmctl but not for
+    an unrelated command is not misreported, and an afmctl denial is recorded as a
+    denial rather than an empty read.
+    """
+    read = f"sudo -n {sudo_target} {arguments}"
+    if denied_marker is None:
+        return read
+    marker = shlex.quote(denied_marker)
+    return (
+        f"if ! _cvs_out=$({read} 2>&1); then "
+        f"printf '%s %s\\n' {marker} \"$_cvs_out\"; "
+        "else printf '%s\\n' \"$_cvs_out\"; fi"
+    )
+
+
 def build_afmctl_command(
     arguments,
     afmctl_path="afmctl",
     *,
     fallbacks=(),
     sudo_unavailable_marker=None,
+    denied_marker=None,
     missing_marker=None,
 ):
     """Build a privileged ``afmctl`` shell command that survives sudo's secure_path.
@@ -666,8 +688,11 @@ def build_afmctl_command(
     probed with ``-x``. Every interpolated value is ``shlex.quote``-d.
 
     Markers let each caller keep its own error contract:
-      - ``sudo_unavailable_marker``: printed and the command exits when passwordless
-        sudo is refused. When ``None`` the sudo pre-check is omitted.
+      - ``sudo_unavailable_marker``: a ``sudo -n true`` pre-check prints this and the
+        command exits when passwordless sudo is refused (the legacy ibperf contract).
+      - ``denied_marker``: the actual ``sudo -n afmctl`` read is checked, and a refused
+        read prints ``<denied_marker> <stderr>`` so the denial is recorded from the
+        real invocation rather than a surrogate. Prefer this over the pre-check.
       - ``missing_marker``: printed when the binary cannot be resolved. When ``None``
         the command instead prints a human message to stderr and exits 127 (the
         legacy ibperf contract).
@@ -684,7 +709,7 @@ def build_afmctl_command(
         prefix = f"if ! sudo -n true >/dev/null 2>&1; then printf '%s\\n' {marker} >&2; exit 1; fi; "
 
     if afmctl_path.startswith("/"):
-        command = f"{prefix}sudo -n {executable} {arguments}"
+        command = f"{prefix}{_afmctl_read(executable, arguments, denied_marker)}"
         return f"{{ {command}; }} 2>&1"
 
     if missing_marker is not None:
@@ -704,11 +729,8 @@ def build_afmctl_command(
         missing = shlex.quote(f"Unable to find {afmctl_path} in PATH")
         resolve = f'_cvs_afmctl="$(command -v {executable})" || {{ printf \'%s\\n\' {missing} >&2; exit 127; }}; '
 
-    command = (
-        f"{prefix}{resolve}"
-        f'case "$_cvs_afmctl" in /*) ;; *) {unresolved} ;; esac; '
-        f'sudo -n "$_cvs_afmctl" {arguments}'
-    )
+    resolved_read = _afmctl_read('"$_cvs_afmctl"', arguments, denied_marker)
+    command = f"{prefix}{resolve}case \"$_cvs_afmctl\" in /*) ;; *) {unresolved} ;; esac; {resolved_read}"
     return f"{{ {command}; }} 2>&1"
 
 

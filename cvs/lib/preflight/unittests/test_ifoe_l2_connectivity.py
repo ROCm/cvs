@@ -347,39 +347,40 @@ class TestBuildAfmctlCommand(unittest.TestCase):
 
     def test_platform_combo_fallbacks_and_both_markers(self):
         # Relative tool, install-path fallbacks, denial + reader-missing markers:
-        # command -v first, then each fallback probed with -x, and an unresolved tool
+        # command -v first, then each fallback probed with -x; an unresolved tool
         # prints the reader-missing marker and exits 0 (parsed downstream, not 127).
+        # The denial is detected on the actual afmctl read, not a sudo -n true probe.
         command = build_afmctl_command(
             'show device --json',
             'afmctl',
             fallbacks=('/usr/sbin/afmctl', '/opt/amd/afm/bin/afmctl'),
-            sudo_unavailable_marker='CVS_CMD_DENIED',
+            denied_marker='CVS_CMD_DENIED',
             missing_marker='CVS_IFOE_READER_MISSING',
         )
         self.assertEqual(
             command,
-            '{ if ! sudo -n true >/dev/null 2>&1; then '
-            "printf '%s\\n' CVS_CMD_DENIED >&2; exit 1; fi; "
-            '_cvs_afmctl="$(command -v afmctl 2>/dev/null)"; '
+            '{ _cvs_afmctl="$(command -v afmctl 2>/dev/null)"; '
             '[ -n "$_cvs_afmctl" ] || for _cvs_c in /usr/sbin/afmctl /opt/amd/afm/bin/afmctl; do '
             '[ -x "$_cvs_c" ] && { _cvs_afmctl="$_cvs_c"; break; }; done; '
             'case "$_cvs_afmctl" in /*) ;; *) '
             "printf '%s\\n' CVS_IFOE_READER_MISSING; exit 0 ;; esac; "
-            'sudo -n "$_cvs_afmctl" show device --json; } 2>&1',
+            'if ! _cvs_out=$(sudo -n "$_cvs_afmctl" show device --json 2>&1); then '
+            "printf '%s %s\\n' CVS_CMD_DENIED \"$_cvs_out\"; "
+            'else printf \'%s\\n\' "$_cvs_out"; fi; } 2>&1',
         )
 
     def test_absolute_path_skips_resolution(self):
         command = build_afmctl_command(
             'show device --json',
             '/usr/sbin/afmctl',
-            sudo_unavailable_marker='CVS_CMD_DENIED',
+            denied_marker='CVS_CMD_DENIED',
             missing_marker='CVS_IFOE_READER_MISSING',
         )
         self.assertEqual(
             command,
-            '{ if ! sudo -n true >/dev/null 2>&1; then '
-            "printf '%s\\n' CVS_CMD_DENIED >&2; exit 1; fi; "
-            'sudo -n /usr/sbin/afmctl show device --json; } 2>&1',
+            '{ if ! _cvs_out=$(sudo -n /usr/sbin/afmctl show device --json 2>&1); then '
+            "printf '%s %s\\n' CVS_CMD_DENIED \"$_cvs_out\"; "
+            'else printf \'%s\\n\' "$_cvs_out"; fi; } 2>&1',
         )
 
     def test_legacy_ibperf_form_without_markers_or_fallbacks(self):
@@ -394,6 +395,27 @@ class TestBuildAfmctlCommand(unittest.TestCase):
             "printf '%s\\n' 'Resolved afmctl path is not absolute' >&2; exit 127 ;; esac; "
             'sudo -n "$_cvs_afmctl" show device --json; } 2>&1',
         )
+
+    def test_sudo_unavailable_marker_uses_pre_check(self):
+        # ibperf's contract: a sudo -n true pre-check gates the read and the read
+        # itself is unwrapped. Kept for callers that want a fast fail-closed probe.
+        command = build_afmctl_command(
+            'show device --json',
+            'afmctl',
+            sudo_unavailable_marker='CVS_ERROR: needs sudo',
+        )
+        self.assertIn('if ! sudo -n true >/dev/null 2>&1; then', command)
+        self.assertIn("printf '%s\\n' 'CVS_ERROR: needs sudo' >&2; exit 1; fi;", command)
+        self.assertTrue(command.rstrip().endswith('sudo -n "$_cvs_afmctl" show device --json; } 2>&1'))
+
+    def test_denied_marker_checks_the_actual_read(self):
+        # The denial is detected on the real afmctl invocation (no sudo -n true
+        # surrogate), so a user with NOPASSWD for afmctl but not an unrelated command
+        # is not misreported, and an afmctl denial is recorded as a denial.
+        command = build_afmctl_command('show device --json', 'afmctl', denied_marker='CVS_CMD_DENIED')
+        self.assertNotIn('sudo -n true', command)
+        self.assertIn('if ! _cvs_out=$(sudo -n "$_cvs_afmctl" show device --json 2>&1); then', command)
+        self.assertIn("printf '%s %s\\n' CVS_CMD_DENIED \"$_cvs_out\";", command)
 
     def test_values_are_shell_quoted(self):
         command = build_afmctl_command(

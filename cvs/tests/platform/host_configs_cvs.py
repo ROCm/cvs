@@ -351,8 +351,9 @@ def _resolve_tool(var, tool, fallbacks):
 # both checks. When it is absent the node is not an IFoE compute tray, so the outer
 # branch emits CVS_IFOE_ABSENT and the evals record NA. When it is loaded, the shared
 # build_afmctl_command resolves afmctl around sudo's secure_path (the same mechanism
-# ibperf uses for AFM discovery) and reads ``show device --json``; a refused sudo
-# emits CVS_CMD_DENIED (recorded as a denial) and an unresolved binary emits
+# ibperf uses for AFM discovery) and reads ``show device --json``. The denied_marker
+# checks the actual afmctl read, so a refused sudo for afmctl itself emits
+# CVS_CMD_DENIED (recorded as a denial); an unresolved binary emits
 # CVS_IFOE_READER_MISSING, so the check fails as unreadable rather than recording NA.
 _IFOE_FW_CMD = (
     'if [ -d /sys/module/ifoe ]; then '
@@ -360,7 +361,7 @@ _IFOE_FW_CMD = (
         'show device --json',
         'afmctl',
         fallbacks=('/usr/sbin/afmctl', '/opt/amd/afm/bin/afmctl'),
-        sudo_unavailable_marker='CVS_CMD_DENIED',
+        denied_marker='CVS_CMD_DENIED',
         missing_marker=host_configs_rundeck.CVS_IFOE_READER_MISSING,
     )
     + '; else echo CVS_IFOE_ABSENT; fi'
