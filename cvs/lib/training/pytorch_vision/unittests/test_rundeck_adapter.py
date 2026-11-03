@@ -123,6 +123,32 @@ class TestFlatTrainRes(unittest.TestCase):
         self.assertIn("MBS=64 GA=1 R224", html)
         self.assertNotIn("ISL=", html)
 
+    def test_info_threshold_without_value_still_builds_a_cell(self):
+        class _Sweep:
+            model = "vit_b_16"
+            precision = "BF16"
+            batch_size = 64
+            gradient_accumulation_steps = 1
+            image_size = 224
+            data_mode = "rocal"
+            rocal_device = "gpu"
+
+        class _Variant:
+            gpu_name = "MI325X"
+            enforce_thresholds = False
+            thresholds = {"W3-SMOKE": {"training.images_per_sec_per_gpu": {"kind": "info"}}}
+
+            def sweep(self, _name):
+                return _Sweep()
+
+        profile = load_json_profile("pytorch_vision_single")
+        config = resolve_report_config(profile)
+        flat = flat_train_res_from_vision({"W3-SMOKE": {"host": {"training.images_per_sec_per_gpu": 211.4}}})
+        cells = build_training_cells(config, _Variant(), flat, {})
+        headline = next(m for m in cells[0]["metrics"] if m["metric"] == "training.images_per_sec_per_gpu")
+        self.assertEqual(headline["bar_pct"], 0.0)
+        self.assertIsNone(headline["margin"])
+
 
 class TestScalingVisibility(unittest.TestCase):
     def test_single_node_hides_scaling_efficiency(self):

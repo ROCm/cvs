@@ -24,6 +24,8 @@ def metric_pass(metric: str, actual: Any, spec: Optional[dict], evaluator=None) 
 
 def bar_pct(actual: float, spec: dict) -> float:
     kind = spec.get("kind", "")
+    if "value" not in spec:
+        return 0.0
     target = float(spec["value"])
     if target <= 0:
         return 0.0
@@ -68,7 +70,7 @@ def sweep_result_sort_key(item):
 
 
 def margin_text(actual: Any, spec: Optional[dict]) -> Optional[str]:
-    if spec is None or actual is None:
+    if spec is None or actual is None or "value" not in spec:
         return None
     try:
         act = float(actual)

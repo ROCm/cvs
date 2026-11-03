@@ -6,7 +6,13 @@ import math
 from types import SimpleNamespace
 
 from cvs.lib.inference.utils.vllm_metrics import metric_verdict as vllm_metric_verdict
-from cvs.lib.report.cell_build import bar_pct, build_all_cells, build_cell_record, resolve_pytest_nodeids_for_cell
+from cvs.lib.report.cell_build import (
+    bar_pct,
+    build_all_cells,
+    build_cell_record,
+    margin_text,
+    resolve_pytest_nodeids_for_cell,
+)
 from cvs.lib.report.formatting import pytest_row_href
 from cvs.lib.report.testing.fixtures import generic_inference_report_config, generic_variant
 
@@ -102,6 +108,8 @@ class TestCellBuild(unittest.TestCase):
         self.assertEqual(bar_pct(1.0, {"kind": "within", "value": 1.0}), 100.0)
         self.assertEqual(bar_pct(1.0, {"kind": "unknown", "value": 1.0}), 50.0)
         self.assertEqual(bar_pct(1.0, {"kind": "min", "value": 0.0}), 0.0)
+        self.assertEqual(bar_pct(10.0, {"kind": "info"}), 0.0)
+        self.assertIsNone(margin_text(10.0, {"kind": "info"}))
 
     def test_default_evaluator_preserves_legacy_bar_coercion(self):
         variant = generic_variant()
