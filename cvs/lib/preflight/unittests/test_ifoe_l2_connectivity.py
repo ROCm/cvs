@@ -418,6 +418,19 @@ class TestParseAfmctlFirmwareByBdf(unittest.TestCase):
         self.assertEqual(firmware_by_bdf, {'0002:01:00.1': None, '0001:01:00.1': '0.24.2'})
 
 
+def _denied_read(sudo_target, marker):
+    """The failure-classifying read fragment: only a sudo-auth stderr gets the marker."""
+    return (
+        f'if ! _cvs_out=$(sudo -n {sudo_target} show device --json 2>&1); then '
+        'case "$_cvs_out" in '
+        '*"a password is required"*|*"a terminal is required"*|*"no askpass program specified"*'
+        '|*"you must have a tty"*|*"is not allowed to execute"*|*"is not allowed to run sudo"*) '
+        f"printf '%s %s\\n' {marker} \"$_cvs_out\" ;; "
+        '*) printf \'%s\\n\' "$_cvs_out" ;; esac; '
+        'else printf \'%s\\n\' "$_cvs_out"; fi'
+    )
+
+
 class TestBuildAfmctlCommand(unittest.TestCase):
     """The shared afmctl command builder backs both ibperf discovery and the platform
     firmware check, so its exact output per parameter combination is pinned here."""
@@ -441,9 +454,8 @@ class TestBuildAfmctlCommand(unittest.TestCase):
             '[ -x "$_cvs_c" ] && { _cvs_afmctl="$_cvs_c"; break; }; done; '
             'case "$_cvs_afmctl" in /*) ;; *) '
             "printf '%s\\n' CVS_IFOE_READER_MISSING; exit 0 ;; esac; "
-            'if ! _cvs_out=$(sudo -n "$_cvs_afmctl" show device --json 2>&1); then '
-            "printf '%s %s\\n' CVS_CMD_DENIED \"$_cvs_out\"; "
-            'else printf \'%s\\n\' "$_cvs_out"; fi; } 2>&1',
+            + _denied_read('"$_cvs_afmctl"', 'CVS_CMD_DENIED')
+            + '; } 2>&1',
         )
 
     def test_absolute_path_skips_resolution(self):
@@ -455,9 +467,7 @@ class TestBuildAfmctlCommand(unittest.TestCase):
         )
         self.assertEqual(
             command,
-            '{ if ! _cvs_out=$(sudo -n /usr/sbin/afmctl show device --json 2>&1); then '
-            "printf '%s %s\\n' CVS_CMD_DENIED \"$_cvs_out\"; "
-            'else printf \'%s\\n\' "$_cvs_out"; fi; } 2>&1',
+            '{ ' + _denied_read('/usr/sbin/afmctl', 'CVS_CMD_DENIED') + '; } 2>&1',
         )
 
     def test_legacy_ibperf_form_without_markers_or_fallbacks(self):
@@ -473,17 +483,24 @@ class TestBuildAfmctlCommand(unittest.TestCase):
             'sudo -n "$_cvs_afmctl" show device --json; } 2>&1',
         )
 
-    def test_sudo_unavailable_marker_uses_pre_check(self):
-        # ibperf's contract: a sudo -n true pre-check gates the read and the read
-        # itself is unwrapped. Kept for callers that want a fast fail-closed probe.
+    def test_ibperf_denied_marker_form_has_no_sudo_pre_check(self):
+        # ibperf's denial contract: no sudo -n true surrogate, the real read is checked
+        # and its token still lands in the output for parse_afm_vpod_membership.
         command = build_afmctl_command(
             'show device --json',
             'afmctl',
-            sudo_unavailable_marker='CVS_ERROR: needs sudo',
+            denied_marker='CVS_ERROR: needs sudo',
         )
-        self.assertIn('if ! sudo -n true >/dev/null 2>&1; then', command)
-        self.assertIn("printf '%s\\n' 'CVS_ERROR: needs sudo' >&2; exit 1; fi;", command)
-        self.assertTrue(command.rstrip().endswith('sudo -n "$_cvs_afmctl" show device --json; } 2>&1'))
+        self.assertNotIn('sudo -n true', command)
+        self.assertEqual(
+            command,
+            '{ _cvs_afmctl="$(command -v afmctl)" || '
+            "{ printf '%s\\n' 'Unable to find afmctl in PATH' >&2; exit 127; }; "
+            'case "$_cvs_afmctl" in /*) ;; *) '
+            "printf '%s\\n' 'Resolved afmctl path is not absolute' >&2; exit 127 ;; esac; "
+            + _denied_read('"$_cvs_afmctl"', "'CVS_ERROR: needs sudo'")
+            + '; } 2>&1',
+        )
 
     def test_denied_marker_checks_the_actual_read(self):
         # The denial is detected on the real afmctl invocation (no sudo -n true
@@ -492,7 +509,25 @@ class TestBuildAfmctlCommand(unittest.TestCase):
         command = build_afmctl_command('show device --json', 'afmctl', denied_marker='CVS_CMD_DENIED')
         self.assertNotIn('sudo -n true', command)
         self.assertIn('if ! _cvs_out=$(sudo -n "$_cvs_afmctl" show device --json 2>&1); then', command)
-        self.assertIn("printf '%s %s\\n' CVS_CMD_DENIED \"$_cvs_out\";", command)
+        self.assertIn('case "$_cvs_out" in', command)
+        self.assertIn('*"a password is required"*', command)
+
+    def test_denied_marker_classifies_only_sudo_auth_stderr(self):
+        # Only a sudo authorization message routes to the denial marker; any other
+        # nonzero exit (afmctl's own failure) falls through to the raw-output branch,
+        # so a tool error is not relabeled as a sudo-configuration problem.
+        command = build_afmctl_command('show device --json', 'afmctl', denied_marker='CVS_CMD_DENIED')
+        # The marker printf lives inside the sudo-auth case arm, not the fallthrough.
+        denial_arm, _, fallthrough = command.partition('*) printf \'%s\\n\' "$_cvs_out" ;;')
+        self.assertIn("printf '%s %s\\n' CVS_CMD_DENIED \"$_cvs_out\"", denial_arm)
+        self.assertNotIn('CVS_CMD_DENIED', fallthrough)
+        # Every sudo-authorization signature is a case label guarding the marker arm.
+        for signature in (
+            'a password is required',
+            'is not allowed to execute',
+            'you must have a tty',
+        ):
+            self.assertIn(f'*"{signature}"*', denial_arm)
 
     def test_values_are_shell_quoted(self):
         command = build_afmctl_command(

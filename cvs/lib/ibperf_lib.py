@@ -224,11 +224,16 @@ def parse_afm_vpod_membership(out_dict):
 
 
 def _build_afmctl_device_command(afmctl_path):
-    """Check sudo per host and resolve relative afmctl names outside sudo's secure_path."""
+    """Resolve relative afmctl names outside sudo's secure_path and flag a denied read.
+
+    The denial is detected on the actual ``sudo -n afmctl`` read, so a user with
+    passwordless sudo for afmctl but not an unrelated command is not misreported, and
+    the ``_AFM_SUDO_ERROR_MARKER`` token still reaches ``parse_afm_vpod_membership``.
+    """
     return build_afmctl_command(
         'show device --json',
         afmctl_path,
-        sudo_unavailable_marker=_AFM_SUDO_ERROR_MARKER,
+        denied_marker=_AFM_SUDO_ERROR_MARKER,
     )
 
 

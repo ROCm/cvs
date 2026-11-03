@@ -719,23 +719,40 @@ def parse_afmctl_firmware_by_bdf(output: str) -> Tuple[Dict[str, Optional[str]],
     return firmware_by_bdf, []
 
 
-def _afmctl_read(sudo_target, arguments, denied_marker):
-    """Build the ``sudo -n <target> <arguments>`` read, routing a refused read to a token.
+# Signatures ``sudo -n`` prints when it refuses to run the command for an
+# authorization reason (no cached credentials, not a sudoer for it, needs a tty).
+# A failure whose output matches none of these is the tool's own error, which must
+# pass through unchanged rather than be relabeled as a sudo-configuration problem.
+_SUDO_DENIAL_GLOBS = (
+    "a password is required",
+    "a terminal is required",
+    "no askpass program specified",
+    "you must have a tty",
+    "is not allowed to execute",
+    "is not allowed to run sudo",
+)
 
-    When ``denied_marker`` is set, the read runs inside a failure check so a denied
-    ``sudo -n`` (the actual afmctl invocation, not a surrogate) prints
-    ``<denied_marker> <stderr>`` instead of leaking the sudo error as unparseable
-    output. Checking the real read means a user with NOPASSWD for afmctl but not for
-    an unrelated command is not misreported, and an afmctl denial is recorded as a
-    denial rather than an empty read.
+
+def _afmctl_read(sudo_target, arguments, denied_marker):
+    """Build the ``sudo -n <target> <arguments>`` read, flagging only an auth denial.
+
+    When ``denied_marker`` is set, the real ``sudo -n`` read runs inside a failure
+    check. A failure whose stderr matches a sudo authorization message prints
+    ``<denied_marker> <stderr>``; any other nonzero exit (afmctl itself failing while
+    sudo succeeded) passes its diagnostic through unchanged, so a tool error is not
+    misreported as a sudo-configuration problem. Checking the real read also means a
+    user with NOPASSWD for afmctl but not for an unrelated command is not misreported.
     """
     read = f"sudo -n {sudo_target} {arguments}"
     if denied_marker is None:
         return read
     marker = shlex.quote(denied_marker)
+    denial_cases = "|".join(f'*"{glob}"*' for glob in _SUDO_DENIAL_GLOBS)
     return (
         f"if ! _cvs_out=$({read} 2>&1); then "
-        f"printf '%s %s\\n' {marker} \"$_cvs_out\"; "
+        f'case "$_cvs_out" in {denial_cases}) '
+        f"printf '%s %s\\n' {marker} \"$_cvs_out\" ;; "
+        "*) printf '%s\\n' \"$_cvs_out\" ;; esac; "
         "else printf '%s\\n' \"$_cvs_out\"; fi"
     )
 
@@ -745,7 +762,6 @@ def build_afmctl_command(
     afmctl_path="afmctl",
     *,
     fallbacks=(),
-    sudo_unavailable_marker=None,
     denied_marker=None,
     missing_marker=None,
 ):
@@ -757,15 +773,13 @@ def build_afmctl_command(
     tool's output) is tried first; when it misses, each path in ``fallbacks`` is
     probed with ``-x``. Every interpolated value is ``shlex.quote``-d.
 
-    Markers let each caller keep its own error contract:
-      - ``sudo_unavailable_marker``: a ``sudo -n true`` pre-check prints this and the
-        command exits when passwordless sudo is refused (the legacy ibperf contract).
+    Markers:
       - ``denied_marker``: the actual ``sudo -n afmctl`` read is checked, and a refused
-        read prints ``<denied_marker> <stderr>`` so the denial is recorded from the
-        real invocation rather than a surrogate. Prefer this over the pre-check.
+        read prints ``<denied_marker> <stderr>`` so a denial is recorded from the real
+        invocation (not a ``sudo -n true`` surrogate that misreports NOPASSWD scopes).
       - ``missing_marker``: printed when the binary cannot be resolved. When ``None``
         the command instead prints a human message to stderr and exits 127 (the
-        legacy ibperf contract).
+        legacy ibperf missing-binary contract, a distinct eval signal).
 
     ``arguments`` is the already-safe afmctl sub-command string (for example
     ``show device --json``). Output is wrapped in ``{ ...; } 2>&1`` so stderr from a
@@ -773,13 +787,9 @@ def build_afmctl_command(
     """
     afmctl_path = str(afmctl_path or "afmctl")
     executable = shlex.quote(afmctl_path)
-    prefix = ""
-    if sudo_unavailable_marker is not None:
-        marker = shlex.quote(sudo_unavailable_marker)
-        prefix = f"if ! sudo -n true >/dev/null 2>&1; then printf '%s\\n' {marker} >&2; exit 1; fi; "
 
     if afmctl_path.startswith("/"):
-        command = f"{prefix}{_afmctl_read(executable, arguments, denied_marker)}"
+        command = _afmctl_read(executable, arguments, denied_marker)
         return f"{{ {command}; }} 2>&1"
 
     if missing_marker is not None:
@@ -800,7 +810,7 @@ def build_afmctl_command(
         resolve = f'_cvs_afmctl="$(command -v {executable})" || {{ printf \'%s\\n\' {missing} >&2; exit 127; }}; '
 
     resolved_read = _afmctl_read('"$_cvs_afmctl"', arguments, denied_marker)
-    command = f"{prefix}{resolve}case \"$_cvs_afmctl\" in /*) ;; *) {unresolved} ;; esac; {resolved_read}"
+    command = f'{resolve}case "$_cvs_afmctl" in /*) ;; *) {unresolved} ;; esac; {resolved_read}'
     return f"{{ {command}; }} 2>&1"
 
 
