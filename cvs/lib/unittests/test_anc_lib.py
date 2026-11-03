@@ -129,7 +129,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
         content_out = (
             "Available content plugins (2):\n"
             "  Name                      Version Description\n"
-            "  anc-release-helios-nda    1.5.5   Helios NDA Release\n"
+            "  anc-release-rack-nda    1.5.5   Rack NDA Release\n"
             "  base                      1.0.0   Base ANC items\n"
         )
 
@@ -148,7 +148,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
         self.assertTrue(result["node1"])
 
     def test_direct_mismatch_is_false(self):
-        content_out = "  anc-release-helios-nda    1.5.4   Helios NDA Release\n"
+        content_out = "  anc-release-rack-nda    1.5.4   Rack NDA Release\n"
 
         class FakePhdl:
             def exec(self, cmd, timeout=None):
@@ -169,7 +169,7 @@ class TestParseReleaseVersionFromContentList(unittest.TestCase):
             "Start Time: 2026-08-07 12:08:45\n"
             "Available content plugins (5):\n"
             "  Name                      Version Description\n"
-            "  anc-release-helios-nda    1.5.5   Helios NDA Release\n"
+            "  anc-release-rack-nda    1.5.5   Rack NDA Release\n"
             "  base                      1.0.0   Base ANC items\n"
             "Program exiting with return code ANC_SUCCESS [0]\n"
         )
@@ -180,7 +180,7 @@ class TestParseReleaseVersionFromContentList(unittest.TestCase):
         out = (
             "Available content plugins (4):\n"
             "  base - Base ANC items and utilities...\n"
-            "  helios_nda - Helios NDA Test Content\n"
+            "  rack_nda - Rack NDA Test Content\n"
         )
         self.assertIsNone(anc_lib.parse_release_version_from_content_list(out))
 
@@ -193,7 +193,7 @@ class TestParseReleaseVersionFromContentList(unittest.TestCase):
         self.assertIsNone(anc_lib.parse_release_version_from_content_list(None))
 
     def test_two_part_version(self):
-        out = "  anc-release-venice-nda    2.0   Venice NDA Release\n"
+        out = "  anc-release-cpu-nda    2.0   CPU NDA Release\n"
         self.assertEqual(anc_lib.parse_release_version_from_content_list(out), "2.0")
 
 
@@ -201,40 +201,40 @@ class TestDetectPackageFlavour(unittest.TestCase):
     '''detect_package_flavour: flavour + legacy/direct generation from the name.'''
 
     def test_legacy_tar_token(self):
-        url = "http://x/anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz"
+        url = "http://x/anc-release-rack-nda-1.4.9-tar-linux-x64.tar.gz"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("tar", False))
 
     def test_legacy_deb_token(self):
-        url = "http://x/anc-release-helios-nda-1.4.9-deb-linux-x64.tar.gz"
+        url = "http://x/anc-release-rack-nda-1.4.9-deb-linux-x64.tar.gz"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("deb", False))
 
     def test_legacy_rpm_token(self):
-        url = "http://x/anc-release-helios-nda-1.4.9-rpm-linux-x64.tar.gz"
+        url = "http://x/anc-release-rack-nda-1.4.9-rpm-linux-x64.tar.gz"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("rpm", False))
 
     def test_legacy_dot_token_tar(self):
         # Trailing "-tar." before the extension is legacy, NOT a direct tar.
-        url = "http://x/anc-release-helios-nda-1.4.9-tar.tar.gz"
+        url = "http://x/anc-release-rack-nda-1.4.9-tar.tar.gz"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("tar", False))
 
     def test_legacy_dot_token_deb(self):
-        url = "http://x/anc-release-helios-nda-1.4.9-deb.tar.gz"
+        url = "http://x/anc-release-rack-nda-1.4.9-deb.tar.gz"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("deb", False))
 
     def test_direct_deb(self):
-        url = "http://x/anc-release-helios-nda_1.5.5_amd64.deb"
+        url = "http://x/anc-release-rack-nda_1.5.5_amd64.deb"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("deb", True))
 
     def test_direct_rpm(self):
-        url = "http://x/anc-release-helios-nda-1.5.5-1.x86_64.rpm"
+        url = "http://x/anc-release-rack-nda-1.5.5-1.x86_64.rpm"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("rpm", True))
 
     def test_direct_tar(self):
-        url = "http://x/anc-release-helios-nda-1.5.5-x86_64.tar.gz"
+        url = "http://x/anc-release-rack-nda-1.5.5-x86_64.tar.gz"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("tar", True))
 
     def test_direct_tgz(self):
-        url = "http://x/anc-release-helios-nda-1.5.5-x86_64.tgz"
+        url = "http://x/anc-release-rack-nda-1.5.5-x86_64.tgz"
         self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("tar", True))
 
     def test_unrecognised_raises(self):
@@ -253,19 +253,19 @@ class TestParseVersionFromUrl(unittest.TestCase):
 
     def test_legacy_url(self):
         self.assertEqual(
-            anc_lib.parse_version_from_url("http://x/anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz"),
+            anc_lib.parse_version_from_url("http://x/anc-release-rack-nda-1.4.9-tar-linux-x64.tar.gz"),
             "1.4.9",
         )
 
     def test_direct_tar_url(self):
         self.assertEqual(
-            anc_lib.parse_version_from_url("http://x/anc-release-helios-nda-1.5.5-x86_64.tar.gz"),
+            anc_lib.parse_version_from_url("http://x/anc-release-rack-nda-1.5.5-x86_64.tar.gz"),
             "1.5.5",
         )
 
     def test_direct_deb_url(self):
         self.assertEqual(
-            anc_lib.parse_version_from_url("http://x/anc-release-helios-nda_1.5.5_amd64.deb"),
+            anc_lib.parse_version_from_url("http://x/anc-release-rack-nda_1.5.5_amd64.deb"),
             "1.5.5",
         )
 
@@ -324,17 +324,17 @@ class TestDirectInstallers(unittest.TestCase):
         return {"anc": {"anc_release_url": url, "ANC_INSTALL_PATH": install_path}}
 
     def test_deb_direct_command_shape(self):
-        cfg = self._cfg("http://x/anc-release-helios-nda_1.5.5_amd64.deb")
+        cfg = self._cfg("http://x/anc-release-rack-nda_1.5.5_amd64.deb")
         phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
             anc_lib._install_anc_deb_direct(phdl, self.CLUSTER, cfg)
         self.assertIn("dpkg -i --force-depends ./anc.deb", phdl.cmd)
-        self.assertIn("anc-release-helios-nda_1.5.5_amd64.deb", phdl.cmd)
+        self.assertIn("anc-release-rack-nda_1.5.5_amd64.deb", phdl.cmd)
         # No outer-tarball extraction for a direct package.
         self.assertNotIn("outer.tar.gz", phdl.cmd)
 
     def test_rpm_direct_command_shape(self):
-        cfg = self._cfg("http://x/anc-release-helios-nda-1.5.5-1.x86_64.rpm")
+        cfg = self._cfg("http://x/anc-release-rack-nda-1.5.5-1.x86_64.rpm")
         phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
             anc_lib._install_anc_rpm_direct(phdl, self.CLUSTER, cfg)
@@ -342,7 +342,7 @@ class TestDirectInstallers(unittest.TestCase):
         self.assertNotIn("outer.tar.gz", phdl.cmd)
 
     def test_tar_direct_default_prefix_no_rewrite(self):
-        cfg = self._cfg("http://x/anc-release-helios-nda-1.5.5-x86_64.tar.gz")
+        cfg = self._cfg("http://x/anc-release-rack-nda-1.5.5-x86_64.tar.gz")
         phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "_validate_exe_paths"):
             anc_lib._install_anc_tar_direct(phdl, self.CLUSTER, cfg)
@@ -354,7 +354,7 @@ class TestDirectInstallers(unittest.TestCase):
         self.assertNotIn("Rewriting exe_path", phdl.cmd)
 
     def test_tar_direct_relocated_rewrites_exe_path(self):
-        cfg = self._cfg("http://x/anc-release-helios-nda-1.5.5-x86_64.tar.gz", install_path="/home/u/anc")
+        cfg = self._cfg("http://x/anc-release-rack-nda-1.5.5-x86_64.tar.gz", install_path="/home/u/anc")
         phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
         with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "_validate_exe_paths"):
             anc_lib._install_anc_tar_direct(phdl, self.CLUSTER, cfg)

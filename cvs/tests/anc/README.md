@@ -155,7 +155,7 @@ Each key is documented inline in the shipped config via a matching
 | `inactivity_timeout` | Per-group **inactivity** timeout in seconds (default 900 = 15 min). Applies to ANC group runs only, not install. A group is aborted only after this many seconds with **no new ANC output**; there is no total wall-clock cap, so a group that keeps producing progress runs as long as it needs. (Replaces the old `test_timeout` total-budget cap, which killed healthy, actively-running groups.) |
 | `install_timeout` | Package download+install **inactivity** timeout in seconds (default 1800 = 30 min), used only by `anc_installation` / the install pre-task. It is a per-read (no-output) timeout, not a total budget: the download emits a periodic progress heartbeat so a slow link never trips it, while a genuine stall still fails. Independent of `inactivity_timeout`. |
 | `anc_version` | Expected ANC version; install pre-task skips (re)install when already present and post-verifies the match. When set, it must equal the version in `anc_release_url` or the run aborts before contacting any node. The version is read per node via `anc.py --content-list` (the `anc-release-*` plugin's version column) for **direct 1.5.0+** packaging, and via `anc.py --version` for **legacy ≤1.4.x** (whose `--version` reports the release version; 1.5.0+ does not). |
-| `anc_release_url` | ANC release archive URL (used by `anc_installation`). Both packaging generations are auto-detected from the filename: **legacy (≤1.4.x)** outer tarballs carry a `-deb-`/`-rpm-`/`-tar-` token (e.g. `anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz`); **direct (1.5.0+)** URLs point straight at a `.deb`/`.rpm`/`.tar.gz` with no flavour token (e.g. `anc-release-helios-nda-1.5.5-x86_64.tar.gz`). The download/unpack is staged in a private temp dir on each node and removed after install (success or failure). deb/rpm install to `/opt/amdtools/anc`; tar installs to `ANC_INSTALL_PATH` (default `/opt/amdtools`). |
+| `anc_release_url` | ANC release archive URL (used by `anc_installation`). Both packaging generations are auto-detected from the filename: **legacy (≤1.4.x)** outer tarballs carry a `-deb-`/`-rpm-`/`-tar-` token (e.g. `<packagename>-<version>-tar-linux-x64.tar.gz`); **direct (1.5.0+)** URLs point straight at a `.deb`/`.rpm`/`.tar.gz` with no flavour token (e.g. `<packagename>-<version>-x86_64.tar.gz`). The download/unpack is staged in a private temp dir on each node and removed after install (success or failure). deb/rpm install to `/opt/amdtools/anc`; tar installs to `ANC_INSTALL_PATH` (default `/opt/amdtools`). |
 | `ANC_INSTALL_PATH` | **Tar installs only:** relocatable prefix ANC is extracted into (its `anc/` dir, tool folders, and content live under here), giving `<prefix>/anc/anc.py`. A leading `~` is expanded and the `{home}`/`{user-id}` placeholders are resolved during config load. The value is validated up front: shell-metacharacters (`'`, `"`, `` ` ``, `$`, `\`, newline) and a prefix that resolves to filesystem root (`/`, `//`) are rejected before any node is contacted. deb/rpm packages carry absolute locations baked into their archive and **ignore** this key. Leave blank or omit to keep the default `/opt/amdtools`. |
 | `print_all_to_console` | `True` echoes ANC group output to console; `False` suppresses it (diagnostics still print). |
 | `log_folder_path` | Controller-side destination **prefix** for **all** ANC artifacts — collected logs and the auto-collected HTML report. A plain directory path (leading `~` expanded); **required** — replace the shipped `<changeme>`. CVS appends its own fixed structure under it: logs at `anc_logs/<node>/<test_name>/<timestamp>` and the report at `html_reports/<node>/<test_name>/<timestamp>/<test_name>.html` (`<node>` → the node's `<ip>_<hostname>` label, `<test_name>` → the group's test name, `<timestamp>` → per-run stamp). |
@@ -216,7 +216,7 @@ trap 'rm -rf "$STAGE"' EXIT     # auto-remove it on exit (success or failure)
 cd "$STAGE"
 
 # Download and extract the ANC release
-wget -q "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.4.9/anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz" \
+wget -q "https://<anc-artifact-host-url>/anc-release-package.tar.gz" \
   -O outer.tar.gz
 tar -xzf outer.tar.gz
 
@@ -235,7 +235,7 @@ STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 cd "$STAGE"
 
-wget -q "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.5.5/anc-release-helios-nda-1.5.5-x86_64.tar.gz" \
+wget -q "https://<anc-artifact-host-url>/anc-release-package.tar.gz" \
   -O anc.tar.gz
 sudo mkdir -p /opt/amdtools
 sudo tar -xzf anc.tar.gz -C /opt/amdtools
