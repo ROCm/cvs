@@ -176,7 +176,7 @@ The following parameters are available in the platform configuration file. Set e
      - PLDM firmware bundle reported by ``amd-smi firmware``
    * - ``ifoe_fw_version``
      - ``""`` (report-only)
-     - Expected IFoE/AFM device firmware version from ``afmctl show device``. Applies to MI4XX IFoE compute trays; other nodes report NA. Leave blank to record the detected version; set a value to require an exact match
+     - Expected IFoE/AFM device firmware version from ``afmctl show device --json``. Applies to MI4XX IFoE compute trays; other nodes report NA. Leave blank to record the detected version; set a value to require an exact match
    * - ``ifoe_kmod_version``
      - ``""`` (report-only)
      - Expected ``ifoe`` kernel module version from ``modinfo ifoe``. Applies to MI4XX IFoE compute trays; other nodes report NA. Leave blank to record the detected version; set a value to require an exact match

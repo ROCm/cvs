@@ -1,5 +1,6 @@
 '''Unit tests for cvs.lib.host_configs_rundeck (Run Deck capture for host config checks).'''
 
+import json
 import shlex
 import unittest
 
@@ -656,20 +657,36 @@ class TestRecordGroup(unittest.TestCase):
         self.assertEqual(results['groups']['iommu_pt']['nodes']['n1']['status'], 'pass')
 
 
-_IFOE_DEVICE = (
-    'BDF                              : 0001:01:00.1\n  Status:\n    Firmware version               : 0.14.15\n'
-)
+def _ifoe_json(*firmware_versions, accel_base=0):
+    '''Build one ``afmctl show device --json`` payload, one device per version.
+
+    A ``None`` version yields a device block with no firmware field, exercising the
+    incomplete-read path. The structure mirrors real afmctl: firmware nests under a
+    per-device ``status`` block.
+    '''
+    devices = []
+    for index, version in enumerate(firmware_versions):
+        device = {
+            'bdf': f'000{index + 1}:01:00.1',
+            'spec': {'accelerator_id': str(accel_base + index)},
+        }
+        status = {'lib_version': '0.1.0'}
+        if version is not None:
+            status['firmware_version'] = version
+        device['status'] = status
+        devices.append(device)
+    return json.dumps({'device': devices})
 
 
 class TestIfoeFirmware(unittest.TestCase):
     def test_compare_match_passes(self):
-        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _IFOE_DEVICE}, '0.14.15')
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _ifoe_json('0.14.15')}, '0.14.15')
         self.assertEqual(records['n1']['status'], 'pass')
         self.assertEqual(records['n1']['items_summary'], '0.14.15')
         self.assertEqual(messages, [])
 
     def test_compare_mismatch_fails_with_detected(self):
-        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _IFOE_DEVICE}, '0.14.16')
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _ifoe_json('0.14.15')}, '0.14.16')
         self.assertEqual(records['n1']['status'], 'fail')
         self.assertEqual(records['n1']['items_summary'], '0.14.15')
         self.assertEqual(
@@ -678,13 +695,13 @@ class TestIfoeFirmware(unittest.TestCase):
         )
 
     def test_inventory_wellformed_passes(self):
-        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _IFOE_DEVICE}, '')
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _ifoe_json('0.14.15')}, '')
         self.assertEqual(records['n1']['status'], 'pass')
         self.assertEqual(records['n1']['items_summary'], '0.14.15')
         self.assertEqual(messages, [])
 
     def test_inventory_garbled_fails(self):
-        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': 'Firmware version : not-a-version!!\n'}, '')
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _ifoe_json('not-a-version!!')}, '')
         self.assertEqual(records['n1']['status'], 'fail')
         self.assertEqual(records['n1']['items_summary'], 'malformed')
         self.assertIn('not a well-formed version', messages[0])
@@ -718,33 +735,24 @@ class TestIfoeFirmware(unittest.TestCase):
         self.assertEqual(messages, ['IFoE firmware version reader not found on node n1'])
 
     def test_multi_device_all_matching_passes(self):
-        text = _IFOE_DEVICE + 'BDF : 0004:01:00.1\n    Firmware version : 0.14.15\n'
-        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '0.14.15')
+        records, messages = host_configs_rundeck.eval_ifoe_firmware(
+            {'n1': _ifoe_json('0.14.15', '0.14.15', '0.14.15', '0.14.15')}, '0.14.15'
+        )
         self.assertEqual(records['n1']['status'], 'pass')
         self.assertEqual(messages, [])
 
     def test_multi_device_divergent_fails(self):
-        text = _IFOE_DEVICE + 'BDF : 0004:01:00.1\n    Firmware version : 0.14.16\n'
-        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '')
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _ifoe_json('0.14.15', '0.14.16')}, '')
         self.assertEqual(records['n1']['status'], 'fail')
         self.assertEqual(records['n1']['items_summary'], 'divergent')
         self.assertIn('differs across devices', messages[0])
         self.assertIn('0.14.15', messages[0])
         self.assertIn('0.14.16', messages[0])
 
-    def test_banner_mentioning_firmware_is_not_a_device(self):
-        # A non-device line that merely contains the words must not count as a second
-        # device and trip the divergence check (regex is line-anchored).
-        text = 'AFM tool - Firmware version : 9.9.9 build\n' + _IFOE_DEVICE
-        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '0.14.15')
-        self.assertEqual(records['n1']['status'], 'pass')
-        self.assertEqual(messages, [])
-
     def test_partial_device_missing_firmware_fails_inventory(self):
-        # Second BDF block reports no firmware line: the node has 2 devices but only
-        # 1 version, so it must fail rather than pass on the first device's value.
-        text = _IFOE_DEVICE + 'BDF                              : 0004:01:00.1\n  Status:\n'
-        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '')
+        # Second device reports no firmware field: the node has 2 devices but only 1
+        # version, so it must fail rather than pass on the first device's value.
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _ifoe_json('0.14.15', None)}, '')
         self.assertEqual(records['n1']['status'], 'fail')
         self.assertEqual(records['n1']['items_summary'], 'incomplete')
         self.assertIn('missing for 1 of 2 device(s)', messages[0])
@@ -752,11 +760,16 @@ class TestIfoeFirmware(unittest.TestCase):
     def test_partial_device_missing_firmware_fails_exact_match(self):
         # The same gap must fail in exact-match mode, not pass because the present
         # device happens to match the expected version.
-        text = _IFOE_DEVICE + 'BDF                              : 0004:01:00.1\n  Status:\n'
-        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': text}, '0.14.15')
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _ifoe_json('0.14.15', None)}, '0.14.15')
         self.assertEqual(records['n1']['status'], 'fail')
         self.assertEqual(records['n1']['items_summary'], 'incomplete')
         self.assertIn('missing for 1 of 2 device(s)', messages[0])
+
+    def test_invalid_json_fails_unreadable(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': 'not json at all\n'}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'unavailable')
+        self.assertEqual(messages, ['IFoE firmware version could not be read on node n1'])
 
 
 class TestIfoeKmod(unittest.TestCase):

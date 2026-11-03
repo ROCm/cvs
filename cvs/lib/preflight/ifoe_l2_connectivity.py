@@ -618,6 +618,7 @@ def parse_afmctl_show_device_json(output: str) -> Tuple[List[Dict], List[str]]:
                 "virtualization_mode": _json_first_value(
                     flattened, ("virtualization_mode", "virtualisation_mode", "virt_mode", "virtualization")
                 ),
+                "firmware_version": _json_first_value(flattened, ("firmware_version", "fw_version", "firmware")),
                 "parse_errors": errors,
             }
         )
@@ -646,6 +647,69 @@ def parse_afmctl_show_device_output(
 def parse_afmctl_show_device(output: str) -> List[Dict]:
     """Compatibility convenience wrapper around :func:`parse_afmctl_show_device_output`."""
     return parse_afmctl_show_device_output(output, allow_text_fallback=True)[0]
+
+
+def build_afmctl_command(
+    arguments,
+    afmctl_path="afmctl",
+    *,
+    fallbacks=(),
+    sudo_unavailable_marker=None,
+    missing_marker=None,
+):
+    """Build a privileged ``afmctl`` shell command that survives sudo's secure_path.
+
+    ``sudo -n`` runs with its own ``secure_path``, so a relative ``afmctl`` on the
+    SSH user's PATH but outside ``secure_path`` must be resolved to an absolute path
+    before sudo sees it. ``command -v`` (which prints the resolved location, not the
+    tool's output) is tried first; when it misses, each path in ``fallbacks`` is
+    probed with ``-x``. Every interpolated value is ``shlex.quote``-d.
+
+    Markers let each caller keep its own error contract:
+      - ``sudo_unavailable_marker``: printed and the command exits when passwordless
+        sudo is refused. When ``None`` the sudo pre-check is omitted.
+      - ``missing_marker``: printed when the binary cannot be resolved. When ``None``
+        the command instead prints a human message to stderr and exits 127 (the
+        legacy ibperf contract).
+
+    ``arguments`` is the already-safe afmctl sub-command string (for example
+    ``show device --json``). Output is wrapped in ``{ ...; } 2>&1`` so stderr from a
+    failed probe is captured alongside stdout.
+    """
+    afmctl_path = str(afmctl_path or "afmctl")
+    executable = shlex.quote(afmctl_path)
+    prefix = ""
+    if sudo_unavailable_marker is not None:
+        marker = shlex.quote(sudo_unavailable_marker)
+        prefix = f"if ! sudo -n true >/dev/null 2>&1; then printf '%s\\n' {marker} >&2; exit 1; fi; "
+
+    if afmctl_path.startswith("/"):
+        command = f"{prefix}sudo -n {executable} {arguments}"
+        return f"{{ {command}; }} 2>&1"
+
+    if missing_marker is not None:
+        unresolved = f"printf '%s\\n' {shlex.quote(missing_marker)}; exit 0"
+    else:
+        unresolved = "printf '%s\\n' 'Resolved afmctl path is not absolute' >&2; exit 127"
+
+    resolve = f'_cvs_afmctl="$(command -v {executable} 2>/dev/null)"; '
+    if fallbacks:
+        probes = " ".join(shlex.quote(path) for path in fallbacks)
+        resolve += (
+            f'[ -n "$_cvs_afmctl" ] || for _cvs_c in {probes}; do '
+            '[ -x "$_cvs_c" ] && { _cvs_afmctl="$_cvs_c"; break; }; done; '
+        )
+    elif missing_marker is None:
+        # Preserve the legacy ibperf form: command -v failure exits 127 directly.
+        missing = shlex.quote(f"Unable to find {afmctl_path} in PATH")
+        resolve = f'_cvs_afmctl="$(command -v {executable})" || {{ printf \'%s\\n\' {missing} >&2; exit 127; }}; '
+
+    command = (
+        f"{prefix}{resolve}"
+        f'case "$_cvs_afmctl" in /*) ;; *) {unresolved} ;; esac; '
+        f'sudo -n "$_cvs_afmctl" {arguments}'
+    )
+    return f"{{ {command}; }} 2>&1"
 
 
 class AfmctlPortParser:

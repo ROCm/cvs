@@ -11,6 +11,7 @@ import time
 import pytest
 
 from cvs.lib import globals, host_configs_rundeck, linux_utils
+from cvs.lib.preflight.ifoe_l2_connectivity import build_afmctl_command
 from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 from cvs.lib.rocm_plib import *
 from cvs.lib.utils_lib import *
@@ -330,13 +331,11 @@ def test_check_gpu_fw_version(orch, config_dict, host_res_dict, cluster_dict, li
 def _resolve_tool(var, tool, fallbacks):
     '''Resolve ``tool`` to an absolute path in ``var``, trying ``fallbacks`` in order.
 
-    ``sudo -n`` runs with its own ``secure_path``, so a tool that is on the SSH
-    user's PATH but outside ``secure_path`` (for example afmctl in /usr/sbin) must be
-    passed to sudo by its resolved absolute path, not by basename. The path is
-    captured from ``command -v`` (which prints the resolved location, not the tool's
-    output); when the non-login PATH omits the tool's directory, each known install
-    path in ``fallbacks`` is probed with ``-x``. This runs only after the module-
-    presence gate, so an unresolved tool on a loaded-module node is a read failure
+    A non-login SSH PATH may omit a tool's directory (for example ``modinfo`` in
+    /usr/sbin), so the path is captured from ``command -v`` (which prints the resolved
+    location, not the tool's output) and each known install path in ``fallbacks`` is
+    probed with ``-x`` when that misses. This runs only after the module-presence gate,
+    so an unresolved tool on a loaded-module node is a read failure
     (``CVS_IFOE_READER_MISSING``), not the absent-module sentinel.
     '''
     candidates = ' '.join(fallbacks)
@@ -350,15 +349,20 @@ def _resolve_tool(var, tool, fallbacks):
 
 # The ifoe kernel module loaded is the single "IFoE present on this node" signal for
 # both checks. When it is absent the node is not an IFoE compute tray, so the outer
-# branch emits CVS_IFOE_ABSENT and the evals record NA instead of failing. When it is
-# loaded, afmctl is expected; the privileged read goes through the shared
-# _read_or_denied wrapper so a refused ``sudo -n`` becomes CVS_CMD_DENIED (recorded
-# as a denial) rather than empty output mis-read as "could not be read".
-_IFOE_FW_READER = 'sudo -n "$_afm" show device'
+# branch emits CVS_IFOE_ABSENT and the evals record NA. When it is loaded, the shared
+# build_afmctl_command resolves afmctl around sudo's secure_path (the same mechanism
+# ibperf uses for AFM discovery) and reads ``show device --json``; a refused sudo
+# emits CVS_CMD_DENIED (recorded as a denial) and an unresolved binary emits
+# CVS_IFOE_READER_MISSING, so the check fails as unreadable rather than recording NA.
 _IFOE_FW_CMD = (
     'if [ -d /sys/module/ifoe ]; then '
-    + _resolve_tool('_afm', 'afmctl', ['/usr/sbin/afmctl', '/opt/amd/afm/bin/afmctl'])
-    + linux_utils._read_or_denied(_IFOE_FW_READER)
+    + build_afmctl_command(
+        'show device --json',
+        'afmctl',
+        fallbacks=('/usr/sbin/afmctl', '/opt/amd/afm/bin/afmctl'),
+        sudo_unavailable_marker='CVS_CMD_DENIED',
+        missing_marker=host_configs_rundeck.CVS_IFOE_READER_MISSING,
+    )
     + '; else echo CVS_IFOE_ABSENT; fi'
 )
 # modinfo reports the on-disk .ko metadata whether or not the module is loaded, so
@@ -378,7 +382,7 @@ def test_check_ifoe_sw_details(orch, config_dict, host_res_dict, cluster_dict, l
     Report and validate the host IFoE software details on each node.
 
     Collects two per-node attributes, each recorded as its own Run Deck row:
-      - IFoE/AFM device firmware version from ``afmctl show device``.
+      - IFoE/AFM device firmware version from ``afmctl show device --json``.
       - ``ifoe`` kernel module version from ``modinfo ifoe``.
 
     Validation is hybrid for both: when the matching config key

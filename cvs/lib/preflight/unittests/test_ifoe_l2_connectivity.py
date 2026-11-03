@@ -18,6 +18,7 @@ from cvs.lib.preflight.ifoe_l2_connectivity import (
     AfmctlPortParser,
     AfmctlPingParser,
     IfoeL2ConnectivityCheck,
+    build_afmctl_command,
     expand_accelerator_ranges,
     parse_accelerator_ranges,
     parse_afmctl_show_device,
@@ -316,6 +317,94 @@ class TestParseAfmctlShowDevice(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(devices[0]['bdf'], '0001:01:00.1')
         self.assertEqual(devices[0]['vpod_accelerators'], [0, 1])
+
+    def test_json_device_firmware_version_from_nested_status(self):
+        # Real afmctl JSON nests the firmware version under a per-device ``status``
+        # block; the flattener exposes it by leaf key for the platform firmware check.
+        payload = json.dumps(
+            {
+                'device': [
+                    {
+                        'bdf': '0001:01:00.1',
+                        'spec': {'accelerator_id': '0'},
+                        'status': {
+                            'lib_version': '0.1.0',
+                            'firmware_version': '0.24.2',
+                            'telemetry_version': '16908288.0.0',
+                        },
+                    }
+                ]
+            }
+        )
+        devices, errors = parse_afmctl_show_device_json(payload)
+        self.assertEqual(errors, [])
+        self.assertEqual(devices[0]['firmware_version'], '0.24.2')
+
+
+class TestBuildAfmctlCommand(unittest.TestCase):
+    """The shared afmctl command builder backs both ibperf discovery and the platform
+    firmware check, so its exact output per parameter combination is pinned here."""
+
+    def test_platform_combo_fallbacks_and_both_markers(self):
+        # Relative tool, install-path fallbacks, denial + reader-missing markers:
+        # command -v first, then each fallback probed with -x, and an unresolved tool
+        # prints the reader-missing marker and exits 0 (parsed downstream, not 127).
+        command = build_afmctl_command(
+            'show device --json',
+            'afmctl',
+            fallbacks=('/usr/sbin/afmctl', '/opt/amd/afm/bin/afmctl'),
+            sudo_unavailable_marker='CVS_CMD_DENIED',
+            missing_marker='CVS_IFOE_READER_MISSING',
+        )
+        self.assertEqual(
+            command,
+            '{ if ! sudo -n true >/dev/null 2>&1; then '
+            "printf '%s\\n' CVS_CMD_DENIED >&2; exit 1; fi; "
+            '_cvs_afmctl="$(command -v afmctl 2>/dev/null)"; '
+            '[ -n "$_cvs_afmctl" ] || for _cvs_c in /usr/sbin/afmctl /opt/amd/afm/bin/afmctl; do '
+            '[ -x "$_cvs_c" ] && { _cvs_afmctl="$_cvs_c"; break; }; done; '
+            'case "$_cvs_afmctl" in /*) ;; *) '
+            "printf '%s\\n' CVS_IFOE_READER_MISSING; exit 0 ;; esac; "
+            'sudo -n "$_cvs_afmctl" show device --json; } 2>&1',
+        )
+
+    def test_absolute_path_skips_resolution(self):
+        command = build_afmctl_command(
+            'show device --json',
+            '/usr/sbin/afmctl',
+            sudo_unavailable_marker='CVS_CMD_DENIED',
+            missing_marker='CVS_IFOE_READER_MISSING',
+        )
+        self.assertEqual(
+            command,
+            '{ if ! sudo -n true >/dev/null 2>&1; then '
+            "printf '%s\\n' CVS_CMD_DENIED >&2; exit 1; fi; "
+            'sudo -n /usr/sbin/afmctl show device --json; } 2>&1',
+        )
+
+    def test_legacy_ibperf_form_without_markers_or_fallbacks(self):
+        # No markers and no fallbacks: command -v failure exits 127 directly and a
+        # non-absolute resolved path is a hard 127 error (the original ibperf contract).
+        command = build_afmctl_command('show device --json', 'afmctl')
+        self.assertEqual(
+            command,
+            '{ _cvs_afmctl="$(command -v afmctl)" || '
+            "{ printf '%s\\n' 'Unable to find afmctl in PATH' >&2; exit 127; }; "
+            'case "$_cvs_afmctl" in /*) ;; *) '
+            "printf '%s\\n' 'Resolved afmctl path is not absolute' >&2; exit 127 ;; esac; "
+            'sudo -n "$_cvs_afmctl" show device --json; } 2>&1',
+        )
+
+    def test_values_are_shell_quoted(self):
+        command = build_afmctl_command(
+            'show device --json',
+            'my afmctl',
+            fallbacks=('/opt/amd afm/afmctl',),
+            missing_marker='CVS_IFOE_READER_MISSING',
+        )
+        self.assertIn("command -v 'my afmctl'", command)
+        self.assertIn("'/opt/amd afm/afmctl'", command)
+        self.assertIn('sudo -n "$_cvs_afmctl"', command)
 
 
 class TestAcceleratorRangeParsing(unittest.TestCase):
