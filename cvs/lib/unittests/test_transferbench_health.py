@@ -90,7 +90,7 @@ class TestTransferBenchEnvAndCommand(unittest.TestCase):
 class TestParseTbP2pBw(unittest.TestCase):
     def test_helios_r_abort_fail_tests_without_attributeerror(self):
         with patch.object(tb, 'fail_test') as fail_test:
-            tb.parse_tb_p2p_bw({'ctheliosr-rck-g02-k19-1': HELIOS_R_P2P_ABORT}, P2P_EXPECT)
+            tb.parse_tb_p2p_bw({'nodeA': HELIOS_R_P2P_ABORT}, P2P_EXPECT)
         fail_test.assert_called_once()
         message = fail_test.call_args.args[0]
         self.assertIn('UniDir averages not found', message)
