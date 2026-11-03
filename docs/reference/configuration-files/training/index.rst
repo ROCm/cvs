@@ -17,4 +17,4 @@ See :doc:`/how-to/test-suites/training/index` for more information on running th
 
 
 .. |cvs-input-config-file-training| replace:: ``cvs/input/config_file/training/``
-.. _cvs-input-config-file-training: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/training/
+.. _cvs-input-config-file-training: https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/training/

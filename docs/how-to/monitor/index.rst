@@ -18,7 +18,7 @@ Choose health reports for preflight validation or triage snapshots. Choose live 
 
 
 .. |cvs-monitors-cluster-mon| replace:: ``cvs/monitors/cluster-mon/``
-.. _cvs-monitors-cluster-mon: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/monitors/cluster-mon/
+.. _cvs-monitors-cluster-mon: https://github.com/ROCm/cvs/tree/main/cvs/monitors/cluster-mon/
 
 .. |cvs-monitors-metrics-exp| replace:: ``cvs/monitors/metrics_exp/``
-.. _cvs-monitors-metrics-exp: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/monitors/metrics_exp/
+.. _cvs-monitors-metrics-exp: https://github.com/ROCm/cvs/tree/main/cvs/monitors/metrics_exp/

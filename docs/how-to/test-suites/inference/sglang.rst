@@ -254,7 +254,7 @@ Logs are written under ``paths.log_dir`` from the config (default ``/home/{user-
 
 
 .. |cvs-tests-inference-sglang| replace:: ``cvs/tests/inference/sglang/``
-.. _cvs-tests-inference-sglang: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/tests/inference/sglang/
+.. _cvs-tests-inference-sglang: https://github.com/ROCm/cvs/tree/main/cvs/tests/inference/sglang/
 
 .. |cvs-input-config-file-inference-sglang| replace:: ``cvs/input/config_file/inference/sglang/``
-.. _cvs-input-config-file-inference-sglang: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/inference/sglang/
+.. _cvs-input-config-file-inference-sglang: https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/inference/sglang/

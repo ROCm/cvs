@@ -161,4 +161,4 @@ Related resources
 
 
 .. |cvs-input-cluster-file-readme| replace:: ``cvs/input/cluster_file/README.md``
-.. _cvs-input-cluster-file-readme: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/input/cluster_file/README.md
+.. _cvs-input-cluster-file-readme: https://github.com/ROCm/cvs/blob/main/cvs/input/cluster_file/README.md

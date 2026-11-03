@@ -317,4 +317,4 @@ How to run: :doc:`/how-to/test-suites/training/torchtitan`.
 
 
 .. |cvs-input-config-file-training-torchtitan| replace:: ``cvs/input/config_file/training/torchtitan/``
-.. _cvs-input-config-file-training-torchtitan: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/training/torchtitan/
+.. _cvs-input-config-file-training-torchtitan: https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/training/torchtitan/

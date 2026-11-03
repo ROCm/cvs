@@ -75,7 +75,7 @@ For a lightweight SSH-only dashboard without node agents, see :doc:`/how-to/moni
 
 
 .. |cvs-monitors-metrics-exp| replace:: ``cvs/monitors/metrics_exp/``
-.. _cvs-monitors-metrics-exp: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/monitors/metrics_exp/
+.. _cvs-monitors-metrics-exp: https://github.com/ROCm/cvs/tree/main/cvs/monitors/metrics_exp/
 
 .. |cvs-monitors-metrics-exp-readme| replace:: ``cvs/monitors/metrics_exp/README.md``
-.. _cvs-monitors-metrics-exp-readme: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/monitors/metrics_exp/README.md
+.. _cvs-monitors-metrics-exp-readme: https://github.com/ROCm/cvs/blob/main/cvs/monitors/metrics_exp/README.md

@@ -97,10 +97,10 @@ To monitor with Prometheus and Grafana using exporters installed on nodes, see :
 
 
 .. |cvs-monitors-cluster-mon| replace:: ``cvs/monitors/cluster-mon/``
-.. _cvs-monitors-cluster-mon: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/monitors/cluster-mon/
+.. _cvs-monitors-cluster-mon: https://github.com/ROCm/cvs/tree/main/cvs/monitors/cluster-mon/
 
 .. |cvs-monitors-cluster-mon-readme| replace:: ``cvs/monitors/cluster-mon/README.md``
-.. _cvs-monitors-cluster-mon-readme: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/monitors/cluster-mon/README.md
+.. _cvs-monitors-cluster-mon-readme: https://github.com/ROCm/cvs/blob/main/cvs/monitors/cluster-mon/README.md
 
 .. |cvs-monitors-cluster-mon-deployment| replace:: ``cvs/monitors/cluster-mon/DEPLOYMENT.md``
-.. _cvs-monitors-cluster-mon-deployment: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/monitors/cluster-mon/DEPLOYMENT.md
+.. _cvs-monitors-cluster-mon-deployment: https://github.com/ROCm/cvs/blob/main/cvs/monitors/cluster-mon/DEPLOYMENT.md

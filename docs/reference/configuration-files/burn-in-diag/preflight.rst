@@ -17,7 +17,7 @@ by default. Set ``connectivity_mode`` to ``"skip"`` (and ``tier2_perf`` to
 Configuration file location: |cvs-input-config-file-preflight-preflight-config-json|_
 
 For the full parameter reference, examples, and troubleshooting, see
-`README_preflight_config.md <https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/input/config_file/preflight/README_preflight_config.md>`_
+`README_preflight_config.md <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/preflight/README_preflight_config.md>`_
 in the repository.
 
 Run preflight checks
@@ -180,7 +180,7 @@ Related resources
 
 
 .. |cvs-input-config-file-preflight-preflight-config-json| replace:: ``cvs/input/config_file/preflight/preflight_config.json``
-.. _cvs-input-config-file-preflight-preflight-config-json: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/input/config_file/preflight/preflight_config.json
+.. _cvs-input-config-file-preflight-preflight-config-json: https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/preflight/preflight_config.json
 
 .. |cvs-tests-preflight-readme| replace:: ``cvs/tests/preflight/README.md``
-.. _cvs-tests-preflight-readme: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/tests/preflight/README.md
+.. _cvs-tests-preflight-readme: https://github.com/ROCm/cvs/blob/main/cvs/tests/preflight/README.md

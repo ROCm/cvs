@@ -16,4 +16,4 @@ How to run these suites: :doc:`/how-to/test-suites/burn-in-diag/index`.
 
 
 .. |cvs-input-config-file| replace:: ``cvs/input/config_file/``
-.. _cvs-input-config-file: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/
+.. _cvs-input-config-file: https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/

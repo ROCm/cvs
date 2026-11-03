@@ -802,4 +802,4 @@ the ``checkpoint_resume`` block, not the threshold file.
 
 
 .. |cvs-input-config-file-training-jaxmaxtext| replace:: ``cvs/input/config_file/training/jaxmaxtext/``
-.. _cvs-input-config-file-training-jaxmaxtext: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/training/jaxmaxtext/
+.. _cvs-input-config-file-training-jaxmaxtext: https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/training/jaxmaxtext/

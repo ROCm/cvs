@@ -106,10 +106,10 @@ Related resources
 
 
 .. |cvs-lib-anc-lib-py| replace:: ``cvs/lib/anc_lib.py``
-.. _cvs-lib-anc-lib-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/lib/anc_lib.py
+.. _cvs-lib-anc-lib-py: https://github.com/ROCm/cvs/blob/main/cvs/lib/anc_lib.py
 
 .. |cvs-input-config-file-anc-anc-config-json| replace:: ``cvs/input/config_file/anc/anc_config.json``
-.. _cvs-input-config-file-anc-anc-config-json: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/input/config_file/anc/anc_config.json
+.. _cvs-input-config-file-anc-anc-config-json: https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/anc/anc_config.json
 
 .. |cvs-tests-anc-readme| replace:: ``cvs/tests/anc/README.md``
-.. _cvs-tests-anc-readme: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/tests/anc/README.md
+.. _cvs-tests-anc-readme: https://github.com/ROCm/cvs/blob/main/cvs/tests/anc/README.md

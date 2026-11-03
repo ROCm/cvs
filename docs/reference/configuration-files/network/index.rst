@@ -16,4 +16,4 @@ See :doc:`/how-to/test-suites/network/index` for more information on running the
 
 
 .. |cvs-input-config-file| replace:: ``cvs/input/config_file/``
-.. _cvs-input-config-file: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/
+.. _cvs-input-config-file: https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/

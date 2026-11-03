@@ -175,4 +175,4 @@ Logs land under ``<run_dir>/anc_logs/<ip>_<hostname>/<test_name>/<timestamp>/``.
 
 
 .. |cvs-lib-anc-lib-py| replace:: ``cvs/lib/anc_lib.py``
-.. _cvs-lib-anc-lib-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/lib/anc_lib.py
+.. _cvs-lib-anc-lib-py: https://github.com/ROCm/cvs/blob/main/cvs/lib/anc_lib.py

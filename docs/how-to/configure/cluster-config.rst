@@ -71,4 +71,4 @@ Next steps
 
 
 .. |cvs-input| replace:: ``cvs/input/``
-.. _cvs-input: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/
+.. _cvs-input: https://github.com/ROCm/cvs/tree/main/cvs/input/

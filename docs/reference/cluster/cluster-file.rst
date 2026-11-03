@@ -321,10 +321,10 @@ Related resources
 
 
 .. |cvs-core-orchestrators-container-py| replace:: ``cvs/core/orchestrators/container.py``
-.. _cvs-core-orchestrators-container-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/core/orchestrators/container.py
+.. _cvs-core-orchestrators-container-py: https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/container.py
 
 .. |cvs-core-orchestrators-unittests-test-container-py| replace:: ``cvs/core/orchestrators/unittests/test_container.py``
-.. _cvs-core-orchestrators-unittests-test-container-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/core/orchestrators/unittests/test_container.py
+.. _cvs-core-orchestrators-unittests-test-container-py: https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/unittests/test_container.py
 
 .. |cvs-input-cluster-file-readme| replace:: ``cvs/input/cluster_file/README.md``
-.. _cvs-input-cluster-file-readme: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/input/cluster_file/README.md
+.. _cvs-input-cluster-file-readme: https://github.com/ROCm/cvs/blob/main/cvs/input/cluster_file/README.md

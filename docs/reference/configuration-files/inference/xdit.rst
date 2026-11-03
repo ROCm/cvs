@@ -504,7 +504,7 @@ Troubleshooting
 
 
 .. |cvs-tests-inference-xdit| replace:: ``cvs/tests/inference/xdit/``
-.. _cvs-tests-inference-xdit: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/tests/inference/xdit/
+.. _cvs-tests-inference-xdit: https://github.com/ROCm/cvs/tree/main/cvs/tests/inference/xdit/
 
 .. |cvs-input-config-file-inference-xdit| replace:: ``cvs/input/config_file/inference/xdit/``
-.. _cvs-input-config-file-inference-xdit: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/inference/xdit/
+.. _cvs-input-config-file-inference-xdit: https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/inference/xdit/

@@ -159,4 +159,4 @@ this checkout is not implemented; this migration does not add that backend.
 
 
 .. |cvs-input-config-file-benchmark-aorta| replace:: ``cvs/input/config_file/benchmark/aorta/``
-.. _cvs-input-config-file-benchmark-aorta: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/benchmark/aorta/
+.. _cvs-input-config-file-benchmark-aorta: https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/benchmark/aorta/

@@ -483,13 +483,13 @@ Troubleshooting
 
 
 .. |cvs-input-config-file-inference-sglang| replace:: ``cvs/input/config_file/inference/sglang/``
-.. _cvs-input-config-file-inference-sglang: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/input/config_file/inference/sglang/
+.. _cvs-input-config-file-inference-sglang: https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/inference/sglang/
 
 .. |cvs-tests-inference-sglang-single-py| replace:: ``cvs/tests/inference/sglang/sglang_single.py``
-.. _cvs-tests-inference-sglang-single-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/tests/inference/sglang/sglang_single.py
+.. _cvs-tests-inference-sglang-single-py: https://github.com/ROCm/cvs/blob/main/cvs/tests/inference/sglang/sglang_single.py
 
 .. |cvs-tests-inference-sglang-distributed-py| replace:: ``cvs/tests/inference/sglang/sglang_distributed.py``
-.. _cvs-tests-inference-sglang-distributed-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/tests/inference/sglang/sglang_distributed.py
+.. _cvs-tests-inference-sglang-distributed-py: https://github.com/ROCm/cvs/blob/main/cvs/tests/inference/sglang/sglang_distributed.py
 
 .. |cvs-tests-inference-sglang-disagg-distributed-py| replace:: ``cvs/tests/inference/sglang/sglang_disagg_distributed.py``
-.. _cvs-tests-inference-sglang-disagg-distributed-py: https://github.com/ROCm/cvs/blob/release/cvs-0.3.0/cvs/tests/inference/sglang/sglang_disagg_distributed.py
+.. _cvs-tests-inference-sglang-disagg-distributed-py: https://github.com/ROCm/cvs/blob/main/cvs/tests/inference/sglang/sglang_disagg_distributed.py

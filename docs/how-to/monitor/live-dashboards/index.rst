@@ -28,4 +28,4 @@ For a one-time HTML health report (no dashboard), use :doc:`/how-to/monitor/heal
 
 
 .. |cvs-monitors| replace:: ``cvs/monitors/``
-.. _cvs-monitors: https://github.com/ROCm/cvs/tree/release/cvs-0.3.0/cvs/monitors/
+.. _cvs-monitors: https://github.com/ROCm/cvs/tree/main/cvs/monitors/
