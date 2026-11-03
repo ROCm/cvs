@@ -74,6 +74,40 @@ class TestLoadConfig(unittest.TestCase):
         self.assertIsNone(loaded.container)
         self.assertEqual(loaded.config.paths.log_dir, "/data/logs")
 
+    def test_config_container_is_merged_onto_the_cluster_container(self):
+        config = _base_config_dict()
+        config["container"]["env"] = {"B": "config", "C": "config"}
+        config["container"]["runtime"]["args"] = {"volumes": ["/config:/config"]}
+        cluster_path = self.tmp / "cluster.json"
+        cluster_path.write_text(
+            json.dumps(
+                {
+                    "container": {
+                        "name": "cluster-container",
+                        "image": "cluster/image:1",
+                        "env": {"A": "cluster", "B": "cluster"},
+                        "runtime": {
+                            "name": "docker",
+                            "args": {
+                                "shm_size": "64g",
+                                "volumes": ["/cluster:/cluster"],
+                                "registry": {"username": "jdoe"},
+                            },
+                        },
+                    }
+                }
+            )
+        )
+        loaded = load_config(BaseVariantConfig, self._write_config(config), str(cluster_path))
+        container = loaded.container
+        self.assertEqual((container["name"], container["image"]), ("my-container", "rocm/vllm-dev:nightly"))
+        self.assertEqual(container["env"], {"A": "cluster", "B": "config", "C": "config"})
+        self.assertEqual(container["runtime"]["args"]["volumes"], ["/config:/config"])
+        self.assertEqual(container["runtime"]["args"]["shm_size"], "64g")
+        self.assertEqual(container["runtime"]["args"]["registry"], {"username": "jdoe"})
+        container["runtime"]["args"]["registry"]["username"] = "changed"
+        self.assertEqual(loaded.cluster["container"]["runtime"]["args"]["registry"], {"username": "jdoe"})
+
     def test_configstr_fields_with_placeholders_are_named_in_one_error(self):
         config = _base_config_dict()
         config["paths"]["models_dir"] = "<changeme-models-mount>"
