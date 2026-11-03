@@ -46,8 +46,19 @@ Rebuild the image from the updated source:
 
   cd /path/to/cvs/source
   git pull
-  docker build --tag cvs:local .
+  docker build --tag cvs:local \
+    --build-arg CVS_USER="$(id -un)" \
+    --build-arg CVS_UID="$(id -u)" \
+    --build-arg CVS_GID="$(id -g)" \
+    .
   docker run --rm cvs:local --version
+
+Images from this release run as a non-root user. Workspace directories written
+by an older image are owned by root; re-own them before the next run:
+
+.. code:: bash
+
+  sudo chown -R "$(id -u):$(id -g)" ~/cvs_workspace
 
 The new image replaces the old one locally. If you use a named container (``cvs-head``), stop and remove it before rebuilding so the new image is used on the next ``docker run``.
 

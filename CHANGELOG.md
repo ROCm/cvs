@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The CVS container image runs as a non-root user (`cvs`, UID/GID 1000) instead of root. Build with `--build-arg CVS_USER/CVS_UID/CVS_GID` set to your head-node user so mounted SSH keys and workspaces stay accessible, and re-own workspace directories written by an older image.
 - vLLM configs that set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` in `container.env` now fail to load; set `paths.hf_token_file` instead, on a path mounted in the container on each node.
 - ATOM reads the Hugging Face token from `paths.hf_token_file` and mounts that file read-only in the container. The file must exist and be non-empty on every node. If that mount is missing inside the container, the server env script fails instead of starting the server without a token. `HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, and `HUGGINGFACE_HUB_TOKEN` in the container environment are dropped.
 - ibperf's install check and the cluster health monitor require `amd-smi` for GPU discovery. The GPU PCIe bus map shared by ibperf's GPU-NIC pairing and the platform host config check reads `rocm-smi` when present and only falls back to `amd-smi` when `rocm-smi` is absent; the platform check (`test_check_gpu_pcie_speed_width`) now fails, instead of passing without checking a link, when neither tool reports any GPU.

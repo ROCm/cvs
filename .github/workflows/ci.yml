@@ -47,3 +47,47 @@ jobs:
         docker run --rm cvs:ci --version
         docker run --rm cvs:ci copy-config --list
         docker run --rm --entrypoint /bin/sh cvs:ci -c 'command -v ssh && command -v ip'
+
+    - name: Verify the image runs as a non-root user with writable defaults
+      run: |
+        test "$(docker run --rm --entrypoint id cvs:ci -u)" -ne 0
+        docker run --rm --entrypoint /bin/sh cvs:ci -c '
+          test "$HOME" = "/home/$(id -un)" || { echo "unexpected HOME: $HOME" >&2; exit 1; }
+          for d in /workspace /results /tmp/cvs /var/www/html/cvs /opt/cvs_runs "$HOME" "$HOME/.ssh"; do
+            test -w "$d" || { echo "not writable: $d" >&2; exit 1; }
+          done
+          if test -w /opt/cvs-venv; then echo "venv must stay read-only" >&2; exit 1; fi
+        '
+        docker run --rm -i --entrypoint python cvs:ci - <<'PY'
+        import getpass
+        from pathlib import Path
+        from cvs.core.run_layout import RunLayout
+
+        assert getpass.getuser() == "cvs"
+        assert Path.home() == Path("/home/cvs")
+        assert RunLayout.get().run_dir.parent == Path("/opt/cvs_runs")
+        PY
+
+    - name: Verify a host-identity build writes a bind-mounted workspace
+      run: |
+        docker build --tag cvs:ci-host \
+          --build-arg CVS_USER="$(id -un)" \
+          --build-arg CVS_UID="$(id -u)" \
+          --build-arg CVS_GID="$(id -g)" \
+          .
+        mkdir -p "$RUNNER_TEMP/cvs_workspace"
+        docker run --rm \
+          --mount type=bind,src="$RUNNER_TEMP/cvs_workspace",dst=/workspace \
+          --entrypoint /bin/sh cvs:ci-host -c 'touch /workspace/probe && test "$(id -un)" = "'"$(id -un)"'"'
+        test -O "$RUNNER_TEMP/cvs_workspace/probe"
+
+    - name: Verify a root build is refused
+      run: |
+        if docker build --build-arg CVS_UID=0 --tag cvs:ci-root . >"$RUNNER_TEMP/cvs-root-build.log" 2>&1; then
+          cat "$RUNNER_TEMP/cvs-root-build.log"
+          echo "build with CVS_UID=0 must fail" >&2; exit 1
+        fi
+        if ! grep -qF 'CVS_UID and CVS_GID must be non-zero' "$RUNNER_TEMP/cvs-root-build.log"; then
+          cat "$RUNNER_TEMP/cvs-root-build.log"
+          echo "build failed for an unexpected reason" >&2; exit 1
+        fi
