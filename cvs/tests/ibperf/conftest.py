@@ -58,7 +58,7 @@ def config_dict(pytestconfig, cluster_dict):
 
 
 class IbperfOrch:
-    """The orchestrator plus the exec_cmd_list/prune_nodes that ibperf_lib calls on the handle it is given."""
+    """The orchestrator plus the prune_nodes that ibperf_lib calls on the handle it is given."""
 
     def __init__(self, orch):
         self._orch = orch
@@ -66,11 +66,6 @@ class IbperfOrch:
 
     def __getattr__(self, name):
         return getattr(self._orch, name)
-
-    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
-        # ContainerOrchestrator runs these inside the containers; BaremetalOrchestrator has no exec_cmd_list.
-        run = getattr(self._orch, 'exec_cmd_list', None) or self._orch.all.exec_cmd_list
-        return run(cmd_list, timeout=timeout, print_console=print_console)
 
     def exec_on_head(self, cmd, timeout=None, detailed=False, print_console=True):
         # ContainerOrchestrator.exec_on_head does not check for a launched container; exec() does.

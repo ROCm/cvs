@@ -55,9 +55,9 @@ must expose:
   passes a per-call `timeout` (`cmd_timeout_s`) so a hung read cannot block past
   the poll budget.
 
-Today the **container** orchestrator (`cvs/core/orchestrators/container.py`)
-satisfies this. The **baremetal** orchestrator does **not** implement
-`exec_cmd_list` yet, so `LogPoller` cannot drive baremetal runs until it does.
+Both the **container** (`cvs/core/orchestrators/container.py`) and
+**baremetal** (`cvs/core/orchestrators/baremetal.py`) orchestrators satisfy
+this; under the container orchestrator the commands run inside the container.
 `print_console=False` keeps the poller quiet (no command echo, host banners, or
 bulk output); the poller surfaces exactly what it chooses.
 
