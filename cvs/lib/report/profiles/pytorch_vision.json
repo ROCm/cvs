@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "profile_id": "pytorch_vision_rundeck",
+  "suite_id": "pytorch_vision",
+  "report_basename": "pytorch_vision_run_deck",
+  "title": "PyTorch Vision Run Deck",
+  "subtitle": "PyTorch Vision \u00b7 {mode} training summary",
+  "footer": "CVS pytorch_vision \u00b7 render-only \u00b7 does not affect gates",
+  "link_name": "PyTorch Vision Run Deck",
+  "dataset_builder": "training_sweep",
+  "interactive_viewer": true,
+  "sources": {
+    "results": "train_res_dict",
+    "variant": "variant_config",
+    "lifecycle": "lifecycle"
+  },
+  "hooks": {
+    "tier_metric_specs": "cvs.lib.training.pytorch_vision.utils.metrics:tier_metric_specs",
+    "metric_units": "cvs.lib.training.pytorch_vision.utils.metrics:METRIC_UNITS",
+    "cell_dimensions": "cvs.lib.training.pytorch_vision.utils.rundeck_adapter:vision_cell_dimensions",
+    "run_card_display": "cvs.lib.report.profiles.hooks.pytorch_vision_run_card:pytorch_vision_run_card_display"
+  },
+  "sweep": {
+    "metric_prefix": "training.",
+    "throughput_metric": "training.images_per_sec_per_gpu",
+    "headline_metric": "training.images_per_sec_per_gpu",
+    "series_label": "PyTorch Vision sweep",
+    "results_all_metrics": true,
+    "tier_order": ["throughput", "convergence", "stability", "record"],
+    "dimension_fields": [
+      ["model", "Model", ""],
+      ["precision", "Precision", ""],
+      ["mbs", "MBS", "MBS="],
+      ["ga", "GA", "GA="],
+      ["res", "Res", "R"],
+      ["data", "Data", ""]
+    ],
+    "results_table_columns": [
+      ["Model", null],
+      ["GPU", null],
+      ["Precision", null],
+      ["MBS", null],
+      ["GA", null],
+      ["Res", null],
+      ["Data", null],
+      ["Images/s", "training.images_per_sec"],
+      ["Images/s/GPU", "training.images_per_sec_per_gpu"],
+      ["TFLOPS/s/GPU", "training.tflops_per_sec_per_gpu"],
+      ["MFU (%)", "training.mfu_pct"],
+      ["P50 step (ms)", "training.step_time_ms_p50"],
+      ["P95 step (ms)", "training.step_time_ms_p95"],
+      ["Final loss", "training.loss_final"],
+      ["Top-1 (%)", "training.top1_accuracy_pct"],
+      ["Scaling eff. (%)", "training.scaling_efficiency_pct"]
+    ],
+    "cell_highlights": [
+      ["images_per_sec_per_gpu", "Images/s/GPU"],
+      ["tflops_per_sec_per_gpu", "TFLOPS/s/GPU"],
+      ["top1_accuracy_pct", "Top-1 (%)"],
+      ["loss_final", "Final loss"],
+      ["step_time_ms_p50", "P50 step (ms)"],
+      ["scaling_efficiency_pct", "Scaling eff. (%)"]
+    ],
+    "chart_series": [
+      {"metric_suffix": "images_per_sec_per_gpu", "title": "Images/s/GPU", "unit": "images/s/GPU", "invert": false},
+      {"metric_suffix": "tflops_per_sec_per_gpu", "title": "TFLOPS/s/GPU", "unit": "TFLOPS/s/GPU", "invert": false},
+      {"metric_suffix": "step_time_ms_p50", "title": "P50 step time", "unit": "ms", "invert": true},
+      {"metric_suffix": "step_time_ms_p95", "title": "P95 step time", "unit": "ms", "invert": true},
+      {"metric_suffix": "loss_final", "title": "Final loss", "unit": "loss", "invert": true},
+      {"metric_suffix": "top1_accuracy_pct", "title": "Top-1 accuracy", "unit": "%", "invert": false},
+      {"metric_suffix": "scaling_efficiency_pct", "title": "Scaling efficiency", "unit": "%", "invert": false}
+    ]
+  },
+  "lifecycle": {
+    "session_labels": [
+      "container_launch",
+      "environment_verification",
+      "real_data_smoke",
+      "training",
+      "teardown"
+    ],
+    "cell_labels": ["training"],
+    "expand_labels": ["training"]
+  },
+  "behavior": {
+    "inference_test_substring": "test_training",
+    "row_card_extras": false,
+    "row_card_test_names": ["test_metric"]
+  },
+  "viewer": {
+    "group_by": ["precision", "model"],
+    "filters": ["model", "precision", "mbs", "ga", "res", "data"],
+    "concurrency_field": "precision",
+    "heatmap_row_fields": ["mbs", "res"],
+    "comparison_hint": "Compare microbatch, resolution, and rocAL data path at each precision",
+    "sweep_charts": { "enabled": false },
+    "interactivity": { "enabled": false }
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {"type": "lifecycle_timeline", "id": "lifecycle", "title": "Lifecycle timeline", "bind": "lifecycle"},
+    {"type": "sweep_analytics", "id": "sweep", "title": "Sweep analytics", "bind": "datasets.training_sweep"},
+    {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
+    {"type": "gate_heatmap", "bind": "gate_matrix", "when_empty": "hide"},
+    {"type": "sweep_cell_cards", "id": "cells", "title": "Sweep cells", "bind": "cells"},
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}

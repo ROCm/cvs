@@ -5,11 +5,21 @@ Shared by ``pytorch_vision_single`` and ``pytorch_vision_distributed``.
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
+from cvs.lib.report.benchmark_metric_registry import (
+    benchmark_metric_columns_for_nodeid,
+    benchmark_metric_rows_from_item,
+    benchmark_metric_rows_from_report,
+    mark_collapsible_result_cell,
+    patch_benchmark_metrics_into_html,
+    stamp_benchmark_metric_rows_on_report,
+)
+from cvs.lib.report.render.perf_metric_table import render_benchmark_metrics_html
 from cvs.lib.training.pytorch_vision.utils.config_loader import (
     load_vision_variant,
     validate_sweep_selector,
@@ -116,6 +126,38 @@ def metric_rows():
 
 
 @pytest.fixture(scope="module")
+def train_res_dict():
+    """Flat deck-facing sweep results. The Run Deck profile binds this fixture."""
+    return {}
+
+
+_METRIC_TEST_NAME = "test_metric"
+
+
+def _nodeid_test_name(nodeid):
+    return nodeid.rsplit("::", 1)[-1].split("[", 1)[0]
+
+
+def _is_url_extra(extra):
+    return isinstance(extra, dict) and extra.get("format_type") == "url"
+
+
+def _attach_metric_verdict_extras(report, nodeid, rows):
+    """Keep link extras and add the collapsible per-metric verdict panel."""
+    if not rows:
+        return
+    try:
+        import pytest_html
+    except ImportError:
+        return
+    extras = [extra for extra in getattr(report, "extras", []) or [] if _is_url_extra(extra)]
+    columns = benchmark_metric_columns_for_nodeid(nodeid)
+    extras.append(pytest_html.extras.html(render_benchmark_metrics_html(rows, columns=columns)))
+    report.extras = extras
+    stamp_benchmark_metric_rows_on_report(report, rows)
+
+
+@pytest.fixture(scope="module")
 def orch(cluster_dict, variant_config, lifecycle):
     container = _deep_merge(
         cluster_dict.get("container", {}),
@@ -153,6 +195,21 @@ def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
     if report.when != "call":
+        return
+    if _nodeid_test_name(report.nodeid) == _METRIC_TEST_NAME:
+        extras = getattr(report, "extras", [])
+        if report.outcome != "skipped":
+            mgr = getattr(item.config, "_html_report_manager", None)
+            if mgr is not None and getattr(mgr, "is_enabled", False):
+                try:
+                    import pytest_html
+
+                    link = f"{mgr._test_html_dir}/metric_results.html"
+                    extras.append(pytest_html.extras.url(link, name="Metric Results"))
+                    report.extras = extras
+                except ImportError:
+                    pass
+        _attach_metric_verdict_extras(report, item.nodeid, benchmark_metric_rows_from_item(item))
         return
     current = item.funcargs.get("lifecycle")
     rows = getattr(current, "report", {}).get(item.nodeid) if current else None
@@ -196,6 +253,44 @@ def pytest_runtest_makereport(item, call):
             pass
 
     report.extras = extras
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_logreport(report):
+    """Re-attach the per-metric panel after pytest-html stores the call report."""
+    yield
+    if report.when != "call" or _nodeid_test_name(report.nodeid) != _METRIC_TEST_NAME:
+        return
+    rows = benchmark_metric_rows_from_report(report)
+    if rows:
+        _attach_metric_verdict_extras(report, report.nodeid, rows)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_html_results_table_html(report, data):
+    """Drop the inline log for test_metric rows; the collapsible panel replaces it."""
+    if _nodeid_test_name(report.nodeid) != _METRIC_TEST_NAME:
+        return
+    if benchmark_metric_rows_from_report(report):
+        del data[:]
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_html_results_table_row(report, cells):
+    """Mark test_metric result cells collapsible so the metric panel expands."""
+    if report.when != "call" or _nodeid_test_name(report.nodeid) != _METRIC_TEST_NAME:
+        return
+    if benchmark_metric_rows_from_report(report):
+        cells[0] = mark_collapsible_result_cell(str(cells[0]))
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    """Patch pytest-html so test_metric rows expose the collapsible panel."""
+    yield
+    htmlpath = getattr(session.config.option, "htmlpath", None)
+    if htmlpath:
+        patch_benchmark_metrics_into_html(Path(htmlpath), benchmark_test_name=_METRIC_TEST_NAME)
 
 
 def pytest_generate_tests(metafunc):

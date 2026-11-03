@@ -98,10 +98,12 @@ def test_convergence(sweep_name, variant_config, training_results):
     return _common.convergence(sweep_name, variant_config, training_results)
 
 
-def test_print_results_table(variant_config, training_results, metric_rows, request):
-    """Log the per-sweep result table and write the consolidated
-    metric-results HTML that every metric row links to."""
-    return _common.print_results_table(variant_config, training_results, metric_rows, request)
+def test_print_results_table(variant_config, training_results, metric_rows, train_res_dict, loss_series, request):
+    """Log the per-sweep result table, write metric-results HTML, and fill
+    the Run Deck's flat ``train_res_dict``."""
+    return _common.print_results_table(
+        variant_config, training_results, metric_rows, train_res_dict, loss_series, request
+    )
 
 
 def test_teardown(orch, lifecycle, request):

@@ -59,6 +59,59 @@ DERIVED_METRICS: Tuple[Tuple[str, str], ...] = (
 METRICS = ARTIFACT_METRICS + OPTIONAL_ARTIFACT_METRICS + DERIVED_METRICS
 
 METRIC_UNITS = dict(METRICS)
+METRIC_PREFIX = "training."
+
+# Run Deck tiers. Anything in METRICS that is not listed here lands in "record".
+METRIC_TIERS = {
+    "throughput": (
+        "images_per_sec",
+        "images_per_sec_per_gpu",
+        "tflops_per_sec_per_gpu",
+        "mfu_pct",
+        "data_loader_images_per_sec",
+        "scaling_efficiency_pct",
+        "images_per_kwh",
+    ),
+    "convergence": (
+        "loss_initial",
+        "loss_final",
+        "loss_curve_decreased",
+        "top1_accuracy_pct",
+        "top5_accuracy_pct",
+        "eval_loss",
+        "convergence_step",
+        "convergence_time_seconds",
+    ),
+    "stability": (
+        "step_time_ms_mean",
+        "step_time_ms_p50",
+        "step_time_ms_p95",
+        "peak_memory_allocated_mb",
+        "peak_memory_reserved_mb",
+        "peak_memory_used_mb",
+    ),
+}
+_TIERED = {short for names in METRIC_TIERS.values() for short in names}
+RECORD_METRICS = tuple(short for short, _unit in METRICS if short not in _TIERED)
+
+
+def tier_metric_specs(thresholds_cell, tier):
+    """Gating specs for one Run Deck tier, keyed by ``training.<short>``.
+
+    ``kind: info`` specs are record-only and are left out so they cannot force
+    a tier to ``na``. Metrics with no spec in this cell are omitted too.
+    """
+    names = RECORD_METRICS if tier == "record" else METRIC_TIERS.get(tier, ())
+    specs = {}
+    for short in names:
+        full = METRIC_PREFIX + short
+        spec = (thresholds_cell or {}).get(full)
+        if spec is None or (isinstance(spec, dict) and spec.get("kind") == "info"):
+            continue
+        specs[full] = spec
+    return specs
+
+
 GATED_METRICS = {
     "images_per_sec",
     "images_per_sec_per_gpu",

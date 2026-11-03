@@ -43,6 +43,8 @@ PROFILE_STEM_ALIASES: dict[str, str] = {
     "torchtitan_distributed": "torchtitan",
     "jaxmaxtext_single": "jaxmaxtext",
     "jaxmaxtext_distributed": "jaxmaxtext",
+    "pytorch_vision_single": "pytorch_vision",
+    "pytorch_vision_distributed": "pytorch_vision",
 }
 
 DEFAULT_SOURCES: dict[str, str] = {

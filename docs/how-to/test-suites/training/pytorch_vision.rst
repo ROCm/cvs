@@ -265,6 +265,18 @@ Reports and logs
   per-sweep PNG.
 - **Result artifacts** — rank zero writes ``results.json`` and
   ``training.log`` below ``{paths.log_dir}/pytorch_vision/<sweep-label>/<run-id>/``.
+- **Run Deck** — ``pytest --html`` also writes ``pytorch_vision_run_deck.html``,
+  ``.json``, and ``pytorch_vision_run_deck_viewer.html`` next to the pytest
+  report. Both ``pytorch_vision_single`` and ``pytorch_vision_distributed``
+  share ``cvs/lib/report/profiles/pytorch_vision.json``. Cells are the sweep
+  names (model, precision, microbatch, gradient accumulation, resolution, and
+  rocAL data path). The headline metric is images/s/GPU. Single-node runs omit
+  scaling efficiency. Each ``test_metric`` row expands to the same collapsible
+  pass/fail panel the other training suites use, and still links to
+  ``metric_results.html``.
+- **Loss curve on the deck** — sampled ``(step, loss)`` points are copied into
+  the deck cell, so the viewer can draw loss against step. The PNG linked from
+  ``test_loss_curve`` is unchanged.
 
 Prerequisites
 =============

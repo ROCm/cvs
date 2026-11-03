@@ -19,6 +19,7 @@ import pytest
 from tabulate import tabulate
 
 from cvs.lib import globals
+from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
 from cvs.lib.training.pytorch_vision.job import PyTorchVisionJob
 from cvs.lib.training.pytorch_vision.utils.metrics import (
     GATED_METRICS,
@@ -28,6 +29,7 @@ from cvs.lib.training.pytorch_vision.utils.metrics import (
     required_metrics_for_run,
     throughput_overhead_pct,
 )
+from cvs.lib.training.pytorch_vision.utils.rundeck_adapter import flat_train_res_from_vision
 from cvs.lib.utils.loss_curve import render_loss_curve_png
 from cvs.lib.utils.verdict import evaluate_all
 
@@ -319,6 +321,22 @@ def metric(  # noqa: PLR0913
             pytest.fail(f"declared metric was not produced for {cell}: {name}")
         if metric in required:
             pytest.fail(f"required metric was not produced: {name}")
+        record_benchmark_metric_rows(
+            request.node,
+            [
+                {
+                    "node": "",
+                    "metric": metric,
+                    "label": metric,
+                    "status": "skip",
+                    "actual": None,
+                    "unit": METRIC_UNITS.get(metric, "-"),
+                    "spec": None,
+                    "reason": f"metric is not applicable to this sweep: {name}",
+                    "enforced": False,
+                }
+            ],
+        )
         pytest.skip(f"metric is not applicable to this sweep: {name}")
     value = actuals[name]
     request.node.user_properties.append(("metric_value", value))
@@ -332,7 +350,7 @@ def metric(  # noqa: PLR0913
     unit = METRIC_UNITS[metric]
 
     if not variant_config.enforce_thresholds or spec is None:
-        _record_metric_row(metric_rows, label, name, spec, value, unit, "RECORD")
+        _record_metric_row(metric_rows, label, name, spec, value, unit, "RECORD", request)
         if variant_config.enforce_thresholds and metric in GATED_METRICS:
             pytest.fail(f"threshold is missing for {cell}: {name}")
         return
@@ -340,9 +358,9 @@ def metric(  # noqa: PLR0913
     try:
         evaluate_all(actuals, {name: spec})
     except Exception:
-        _record_metric_row(metric_rows, label, name, spec, value, unit, "FAIL")
+        _record_metric_row(metric_rows, label, name, spec, value, unit, "FAIL", request)
         raise
-    _record_metric_row(metric_rows, label, name, spec, value, unit, "PASS")
+    _record_metric_row(metric_rows, label, name, spec, value, unit, "PASS", request)
 
 
 def loss_curve(  # noqa: PLR0913
@@ -420,7 +438,10 @@ def _format_expected(spec):
     return f"{symbol} {value}"
 
 
-def _record_metric_row(metric_rows, sweep_label, name, spec, value, unit, status):
+_PANEL_STATUS = {"PASS": "pass", "FAIL": "fail", "RECORD": "record"}
+
+
+def _record_metric_row(metric_rows, sweep_label, name, spec, value, unit, status, request=None):
     metric_rows.append(
         {
             "sweep": sweep_label,
@@ -430,6 +451,25 @@ def _record_metric_row(metric_rows, sweep_label, name, spec, value, unit, status
             "unit": unit,
             "status": status,
         }
+    )
+    if request is None:
+        return
+    short = name.removeprefix("training.")
+    record_benchmark_metric_rows(
+        request.node,
+        [
+            {
+                "node": "",
+                "metric": short,
+                "label": short,
+                "status": _PANEL_STATUS.get(status, str(status).lower()),
+                "actual": value,
+                "unit": unit,
+                "spec": spec,
+                "reason": "",
+                "enforced": status in {"PASS", "FAIL"},
+            }
+        ],
     )
 
 
@@ -463,8 +503,10 @@ def _write_metric_results_html(metric_rows, variant_config, request):
         log.warning("could not write metric results HTML: %s", exc)
 
 
-def print_results_table(variant_config, training_results, metric_rows, request):
+def print_results_table(variant_config, training_results, metric_rows, train_res_dict, loss_series, request):
     _write_metric_results_html(metric_rows, variant_config, request)
+    train_res_dict.clear()
+    train_res_dict.update(flat_train_res_from_vision(training_results, loss_series))
     if not training_results:
         log.info("No PyTorch Vision results to print")
         return
