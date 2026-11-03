@@ -9,12 +9,14 @@ Inference-only symbols belong in `cvs/lib/inference/utils/`; single-framework sy
 
 ### `config_loader.py`
 
+`config_blocks.py` and `load_config` live in `cvs/lib/conf_lib/`; see `cvs/lib/conf_lib/AGENTS.md`.
+
 #### Schema classes
 
 | Class | Models | Extra keys |
 |---|---|---|
-| `_Forbid` | Base: extra keys forbidden | — |
-| `_Allow` | Base: extra keys allowed | — |
+| `_Forbid` | Base: extra keys forbidden, `_` keys dropped | — |
+| `_Allow` | Base: extra keys allowed, `_` keys dropped | — |
 | `Paths` | Shared filesystem paths | `_Forbid` |
 | `ModelSpec` | Model identity and fetch mode | `_Forbid` |
 | `RuntimeSpec` | Orchestrator runtime (name + open-ended args) | `_Allow` |
@@ -241,9 +243,10 @@ Contract for new suite authors:
 `_check_remote_not_implemented` always fires first — do not add a base validator that
 assumes a valid config before this check passes.
 
-**`load_variant`:** always delegate to `substitute_config` — never reimplement file-read
-or substitution. After calling `substitute_config`, attach `thresholds`, then build
-`YourVariantConfig(**raw)`.
+**`load_variant`:** call `load_config(YourVariantConfig, config_path, cluster)` — never
+reimplement file-read, substitution, placeholder checks or the container merge. Older
+loaders still call `substitute_config`, attach `thresholds`, and build
+`YourVariantConfig(**raw)`; they do not reject `<changeme>`.
 
 ---
 
