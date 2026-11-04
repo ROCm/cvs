@@ -271,6 +271,23 @@ class TestDiffScanning(unittest.TestCase):
         # The real file path must be preserved, not switched to the exempt one.
         self.assertEqual(results[0][0], "real.py")
 
+    def test_no_newline_marker_not_counted(self):
+        # Replacing an unterminated final line: the "\ No newline at end of
+        # file" marker is diff metadata, not a new-side line. It must not
+        # consume the hunk budget, or the replacement addition is skipped.
+        diff = (
+            "diff --git a/f b/f\n"
+            "--- a/f\n"
+            "+++ b/f\n"
+            "@@ -1 +1 @@\n"
+            "-old = 1\n"
+            "\\ No newline at end of file\n"
+            "+host = heliosr-1b114-b01-1\n"
+            "\\ No newline at end of file\n"
+        )
+        results = security_scan.scan_diff(diff)
+        self.assertEqual([r for _, _, r, _ in results], ["real-cluster-hostname"])
+
     def test_clean_diff_passes(self):
         diff = self._diff(
             "docs/x.rst",

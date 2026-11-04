@@ -297,6 +297,10 @@ def iter_added_lines(diff_text):
             continue
 
         # Inside a hunk body: classify strictly by the leading marker.
+        if raw.startswith("\\"):
+            # "\ No newline at end of file" -- diff metadata, not a line on
+            # either side. It must not consume the new-side budget.
+            continue
         if raw.startswith("+"):
             yield current, new_lineno, raw[1:]
             new_lineno += 1
@@ -304,10 +308,14 @@ def iter_added_lines(diff_text):
         elif raw.startswith("-"):
             # Removed line: consumes no new-side line number.
             continue
-        else:
-            # Context line (leading space) or anything else in-body.
+        elif raw.startswith(" "):
+            # Context line: present on both sides.
             new_lineno += 1
             body_remaining -= 1
+        else:
+            # Anything else inside a counted body (should not occur in a
+            # well-formed unified diff); skip without consuming the budget.
+            continue
 
 
 def scan_diff(diff_text):
