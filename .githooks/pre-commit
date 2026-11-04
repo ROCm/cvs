@@ -3,11 +3,98 @@
 # Copyright 2025 Advanced Micro Devices, Inc.
 # All rights reserved.
 #
-# Warn (never block) on trailing whitespace / space-before-tab in the staged
-# changes. `git diff --cached --check` reports the offending file:line for every
-# added/changed line. This is advisory: the commit still proceeds so you can fix
-# it in a follow-up. Bypass entirely with `git commit --no-verify`.
+# CVS pre-commit gate. Two parts:
+#
+#   1. BLOCKING quality gates (exit 1 on failure):
+#        - ruff format --check .   (same as `make fmt-check`)
+#        - ruff check .            (ruff portion of `make lint`)
+#        - pylint logging checks   (E1205/E1206 portion of `make lint`)
+#        - security scan           (internal-infra / secret leaks in staged lines)
+#      These mirror the checks CI enforces, so a commit that would fail CI is
+#      stopped locally first.
+#
+#   2. Advisory whitespace warning (never blocks): `git diff --cached --check`
+#      reports trailing spaces / space-before-tab on added/changed lines.
+#
+# Bypass everything with `git commit --no-verify`.
 
+# Resolve ruff/pylint: prefer the repo's pinned ruff venv (`make ruff-venv`),
+# then any copy on PATH. If ruff is missing entirely we cannot run the gate --
+# tell the user how to get it and block, since these checks are mandatory.
+if [ -x ".ruff_venv/bin/ruff" ]; then
+    RUFF=".ruff_venv/bin/ruff"
+elif command -v ruff >/dev/null 2>&1; then
+    RUFF="ruff"
+else
+    echo "" >&2
+    echo "pre-commit: ERROR: ruff not found." >&2
+    echo "pre-commit: run 'make ruff-venv' to create it, then retry." >&2
+    echo "pre-commit: or bypass with 'git commit --no-verify'." >&2
+    echo "" >&2
+    exit 1
+fi
+
+if [ -x ".ruff_venv/bin/pylint" ]; then
+    PYLINT=".ruff_venv/bin/pylint"
+elif command -v pylint >/dev/null 2>&1; then
+    PYLINT="pylint"
+else
+    PYLINT=""
+fi
+
+# Any python runs the stdlib-only security scanner.
+if [ -x ".test_venv/bin/python" ]; then
+    PY=".test_venv/bin/python"
+elif [ -x ".cvs_venv/bin/python" ]; then
+    PY=".cvs_venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PY="python3"
+else
+    PY="python"
+fi
+
+rc=0
+
+echo "pre-commit: checking formatting (ruff format --check) ..."
+if ! "$RUFF" format --check . ; then
+    echo "" >&2
+    echo "pre-commit: ERROR: formatting check failed. Run 'make fmt' to fix." >&2
+    echo "" >&2
+    rc=1
+fi
+
+echo "pre-commit: linting (ruff check) ..."
+if ! "$RUFF" check . ; then
+    echo "" >&2
+    echo "pre-commit: ERROR: lint check failed. Run 'make lint-fix' to auto-fix." >&2
+    echo "" >&2
+    rc=1
+fi
+
+# Logging arg-count checks (E1205/E1206) -- the pylint portion of `make lint`.
+if [ -n "$PYLINT" ]; then
+    echo "pre-commit: checking logging calls (pylint E1205/E1206) ..."
+    if ! "$PYLINT" cvs --disable=all \
+        --enable=logging-too-many-args,logging-too-few-args \
+        -j 0 --recursive=y ; then
+        echo "" >&2
+        echo "pre-commit: ERROR: logging check failed (fix logging call arg counts)." >&2
+        echo "" >&2
+        rc=1
+    fi
+else
+    echo "pre-commit: WARNING: pylint not found (run 'make ruff-venv'); skipping logging checks." >&2
+fi
+
+# Security scan of staged changes: internal AMD endpoints, real cluster
+# hostnames, exposed https ports, and committed secrets/tokens. Blocking.
+echo "pre-commit: scanning staged changes for infra/secret leaks ..."
+if ! "$PY" build_tools/security_scan.py --staged ; then
+    rc=1
+fi
+
+# Advisory: warn (never block) on trailing whitespace / space-before-tab in the
+# staged changes. `git diff --cached --check` reports the offending file:line.
 issues="$(git diff --cached --check 2>/dev/null)"
 if [ -n "$issues" ]; then
     echo "" >&2
@@ -18,4 +105,8 @@ if [ -n "$issues" ]; then
     echo "" >&2
 fi
 
-exit 0
+if [ "$rc" -ne 0 ]; then
+    echo "pre-commit: quality gate failed above, or bypass with git commit --no-verify" >&2
+fi
+
+exit "$rc"

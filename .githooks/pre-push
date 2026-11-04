@@ -1,0 +1,82 @@
+#!/bin/sh
+#
+# Copyright 2025 Advanced Micro Devices, Inc.
+# All rights reserved.
+#
+# CVS pre-push gate. Two BLOCKING checks (exit 1) before any push reaches
+# GitHub:
+#   1. Security scan of every commit being pushed -- internal AMD endpoints,
+#      real cluster hostnames, exposed https ports, committed secrets/tokens.
+#   2. The full unit-test suite against the working tree -- the same suite CI
+#      runs via `make test`.
+#
+# The suite imports cvs from the source tree; the venv only supplies
+# dependencies. Interpreter preference:
+#   1. .test_venv  (created by `make test-venv` / `make installtest`)
+#   2. .cvs_venv   (created by `make install`)
+#   3. python3 / python on PATH (deps must already be importable)
+#
+# Bypass with `git push --no-verify` (checks still run in CI).
+
+ZERO="0000000000000000000000000000000000000000"
+
+if [ -x ".test_venv/bin/python" ]; then
+    PY=".test_venv/bin/python"
+elif [ -x ".cvs_venv/bin/python" ]; then
+    PY=".cvs_venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PY="python3"
+elif command -v python >/dev/null 2>&1; then
+    PY="python"
+else
+    echo "" >&2
+    echo "pre-push: ERROR: no python interpreter found." >&2
+    echo "pre-push: run 'make test-venv installtest' to create .test_venv, then retry." >&2
+    echo "pre-push: or bypass with 'git push --no-verify'." >&2
+    echo "" >&2
+    exit 1
+fi
+
+# Security scan: scan every commit this push adds. Git feeds
+# "<local ref> <local sha> <remote ref> <remote sha>" lines on stdin. We
+# enumerate the new commits with rev-list (a new branch, remote sha all-zero,
+# is bounded by `--not --remotes` so only genuinely-new commits are walked),
+# then scan each commit's own diff. Scanning per-commit -- rather than the net
+# range diff -- also catches a secret that one commit adds and a later commit
+# removes, since the history still carries it.
+scan_rc=0
+echo "pre-push: scanning pushed commits for infra/secret leaks ..."
+while read -r _local_ref local_sha _remote_ref remote_sha ; do
+    [ -z "$local_sha" ] && continue
+    [ "$local_sha" = "$ZERO" ] && continue  # branch deletion
+    if [ "$remote_sha" = "$ZERO" ]; then
+        commits="$(git rev-list "$local_sha" --not --remotes 2>/dev/null)"
+    else
+        commits="$(git rev-list "$remote_sha..$local_sha" 2>/dev/null)"
+    fi
+    for sha in $commits ; do
+        commit_diff="$(git show --unified=0 --format= "$sha" 2>/dev/null)"
+        [ -z "$commit_diff" ] && continue
+        printf '%s\n' "$commit_diff" | "$PY" build_tools/security_scan.py --stdin || scan_rc=1
+    done
+done
+
+if [ "$scan_rc" -ne 0 ]; then
+    echo "" >&2
+    echo "pre-push: ERROR: security scan found leaks -- push aborted." >&2
+    echo "pre-push: scrub the values above, or bypass with 'git push --no-verify'." >&2
+    echo "" >&2
+    exit 1
+fi
+
+echo "pre-push: running unit tests ($PY run_all_unittests.py) ..."
+if ! "$PY" run_all_unittests.py ; then
+    echo "" >&2
+    echo "pre-push: ERROR: unit tests failed -- push aborted." >&2
+    echo "pre-push: fix the failures above, or bypass with 'git push --no-verify'." >&2
+    echo "" >&2
+    exit 1
+fi
+
+echo "pre-push: unit tests passed."
+exit 0

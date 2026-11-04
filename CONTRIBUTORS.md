@@ -46,10 +46,28 @@ sudo apt install python3-venv
    - `commit-msg` - checks the message has a title, a blank 2nd line, a body,
      and a trailing `Signed-off-by` (warns, without blocking, on lines over 80
      characters).
-   - `pre-commit` - warns on trailing whitespace in staged changes.
+   - `pre-commit` - runs `ruff format --check` and `ruff check` plus the
+     pylint logging checks (the same gates as `make fmt-check` and `make lint`),
+     then a **security scan** of the staged diff, and **blocks the commit** if
+     any fail; also warns on trailing whitespace in staged changes. Needs the
+     ruff venv (`make ruff-venv`, created by `make installtest`).
+   - `pre-push` - runs the **security scan** over the commits being pushed, then
+     the full unit-test suite (`run_all_unittests.py`, the same tests as
+     `make test`), and **blocks the push** if either fails. Needs a test venv
+     (`make test-venv installtest`).
+
+   The security scan (`build_tools/security_scan.py`) inspects only the added
+   lines and blocks internal-infrastructure or secret leaks: internal
+   `*.amd.com` endpoints (public docs domains such as `rocm.docs.amd.com` stay
+   allowed), real cluster hostnames (a family name followed by rack/node
+   coordinates, e.g. `heliosr-<rack>-<node>`; the short family names `heliosr`,
+   `heliosp`, `heliosm-rck` stay allowed), https URLs that expose a non-standard
+   listening port, and committed tokens/keys. For a verified false positive,
+   append the `cvs-security-allow` pragma to that line.
 
    Git never auto-installs repository hooks, so each clone must run `make hooks`
-   once. Bypass the hooks for a single commit with `git commit --no-verify`.
+   once. Bypass a single commit with `git commit --no-verify`, or a single push
+   with `git push --no-verify` (both gates still run in CI).
 
 ## Running Tests
 
@@ -181,7 +199,7 @@ This creates a source distribution in the `dist/` directory.
 ## Available Make Targets
 
 - `make help` - Show all available targets
-- `make hooks` - Enable the repo git hooks (commit-msg format + trailing-space warn)
+- `make hooks` - Enable the repo git hooks (commit-msg format, pre-commit ruff + security gate, pre-push security scan + unit tests)
 - `make test-venv` - Create test virtual environment
 - `make installtest` - Install package in development mode
 - `make test` - Run all tests
