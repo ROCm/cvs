@@ -43,8 +43,11 @@ PUBLIC_AMD_HOSTS = frozenset(
 # so bare `host.amd.com:8443` references are caught too.
 AMD_HOST_RE = re.compile(r"(?<![A-Za-z0-9._-])((?:[A-Za-z0-9-]+\.)*amd\.com)(?![A-Za-z0-9-])", re.IGNORECASE)
 
-# https://host:port  -- capture host and explicit port.
+# https://host:port  -- capture host and explicit port (hostname or IPv4).
 HTTPS_PORT_RE = re.compile(r"https://([A-Za-z0-9._-]+):(\d+)", re.IGNORECASE)
+
+# https://[ipv6]:port  -- a bracketed IPv6 literal with an explicit port.
+HTTPS_IPV6_PORT_RE = re.compile(r"https://\[([0-9A-Fa-f:]+)\]:(\d+)")
 
 # Real helios cluster hostnames. The short family names (heliosr, heliosp,
 # heliosm, heliosr-rck, heliosm-rck) and underscore ARC names (heliosr_mfg_l11)
@@ -72,6 +75,12 @@ _PRIVATE_HOST_RE = re.compile(
     r"172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|"
     r"169\.254\.\d+\.\d+)$",
     re.IGNORECASE,
+)
+
+# Loopback / unspecified / link-local / unique-local IPv6 addresses that never
+# count as a leaked listening endpoint: ::1, ::, fe80::/10, fc00::/7.
+_PRIVATE_IPV6_RE = re.compile(
+    r"^(?:::1|::|[fF][eE][89aAbB][0-9A-Fa-f]*:.*|[fF][cCdD][0-9A-Fa-f]*:.*)$",
 )
 
 # Values that are obviously not real secrets.
@@ -183,6 +192,18 @@ def scan_line(text):
             )
         )
 
+    for host, port in HTTPS_IPV6_PORT_RE.findall(text):
+        if port == "443":
+            continue
+        if _PRIVATE_IPV6_RE.match(host):
+            continue
+        findings.append(
+            (
+                "exposed-https-port",
+                "https endpoint exposes a non-standard listening port",
+            )
+        )
+
     for _match in REAL_HELIOS_HOST_RE.finditer(text):
         findings.append(
             (
@@ -211,15 +232,22 @@ def scan_line(text):
     return findings
 
 
-# Files whose job is to contain these patterns (the scanner and its tests).
-_EXEMPT_BASENAMES = frozenset({"security_scan.py", "test_security_scan.py"})
+# The scanner and its tests legitimately contain these patterns. Exempt by
+# exact repo-relative path, not basename, so an unrelated file that happens to
+# share the name (e.g. another `security_scan.py`) is still scanned.
+_EXEMPT_PATHS = frozenset(
+    {
+        "build_tools/security_scan.py",
+        "build_tools/unittests/test_security_scan.py",
+    }
+)
 
 
 def _is_exempt_path(path):
     if path is None:
         return False
-    base = path.rsplit("/", 1)[-1]
-    return base in _EXEMPT_BASENAMES
+    normalized = path[2:] if path.startswith("./") else path
+    return normalized in _EXEMPT_PATHS
 
 
 def iter_added_lines(diff_text):

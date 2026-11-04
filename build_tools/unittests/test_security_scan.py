@@ -69,6 +69,22 @@ class TestHttpsPortRule(unittest.TestCase):
         ):
             self.assertIn("exposed-https-port", _rules(url), url)
 
+    def test_ipv6_routable_nonstandard_port_blocked(self):
+        for url in (
+            "https://[2001:db8::1]:9443",
+            "https://[2606:4700:4700::1111]:8443",
+        ):
+            self.assertIn("exposed-https-port", _rules(url), url)
+
+    def test_ipv6_loopback_and_private_allowed(self):
+        for url in (
+            "https://[::1]:8443",
+            "https://[fe80::1]:8080",
+            "https://[fc00::1]:9000",
+            "https://[2001:db8::1]:443",
+        ):
+            self.assertNotIn("exposed-https-port", _rules(url), url)
+
 
 class TestRealClusterHostnameRule(unittest.TestCase):
     def test_real_hostnames_blocked(self):
@@ -202,6 +218,13 @@ class TestDiffScanning(unittest.TestCase):
         self.assertEqual(security_scan.scan_diff(diff), [])
         diff2 = self._diff("build_tools/unittests/test_security_scan.py", ["host = heliosr-1b114-b01-1"])
         self.assertEqual(security_scan.scan_diff(diff2), [])
+
+    def test_same_basename_elsewhere_not_exempt(self):
+        # A file that merely shares the basename must still be scanned.
+        diff = self._diff("cvs/elsewhere/security_scan.py", ["host = heliosr-1b114-b01-1"])
+        results = security_scan.scan_diff(diff)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0][2], "real-cluster-hostname")
 
     def test_clean_diff_passes(self):
         diff = self._diff(
