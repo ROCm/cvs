@@ -1,10 +1,13 @@
+import threading
 import time
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 try:
     import torch
 
+    from cvs.lib.training.pytorch_vision import benchmark
     from cvs.lib.training.pytorch_vision.benchmark import (
         _HFStepTimer,
         _build_lr_scheduler,
@@ -17,6 +20,7 @@ try:
     )
 except ModuleNotFoundError:
     torch = None
+    benchmark = None
     _build_lr_scheduler = None
     _evaluation_meets_convergence_target = None
     _evaluation_meets_stop_target = None
@@ -242,6 +246,48 @@ class TestExactEvalBatchSize(unittest.TestCase):
 
     def test_degenerate_input_never_returns_zero(self):
         self.assertGreaterEqual(_exact_eval_batch_size(0, 128), 1)
+
+
+@unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")
+class TestCoordinatedExit(unittest.TestCase):
+    """No rank may leave while a peer is still working on the GPU."""
+
+    def _run(self, world_size, artifact_error="", slow_rank=None):
+        store = torch.distributed.HashStore()
+        exited, errors, times = [], {}, {}
+
+        def rank_main(rank):
+            if rank == slow_rank:
+                time.sleep(0.5)
+            try:
+                benchmark._finish(rank, world_size, artifact_error if rank == 0 else "", timeout_s=5)
+            except RuntimeError as exc:
+                errors[rank] = str(exc)
+            times[rank] = time.monotonic()
+
+        with (
+            mock.patch.object(benchmark.dist.distributed_c10d, "_get_default_store", return_value=store),
+            mock.patch.object(benchmark.torch.cuda, "synchronize"),
+            mock.patch.object(benchmark, "_exit_cleanly", side_effect=lambda: exited.append(1)),
+        ):
+            start = time.monotonic()
+            threads = [threading.Thread(target=rank_main, args=(rank,)) for rank in range(world_size)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=10)
+        return exited, errors, {rank: t - start for rank, t in times.items()}
+
+    def test_every_rank_waits_for_the_slowest_one(self):
+        exited, errors, times = self._run(world_size=4, slow_rank=3)
+        self.assertEqual((len(exited), errors), (4, {}))
+        self.assertTrue(all(elapsed >= 0.5 for elapsed in times.values()), times)
+
+    def test_a_rank_zero_artifact_error_fails_every_rank(self):
+        exited, errors, _ = self._run(world_size=3, artifact_error="OSError: disk full")
+        self.assertEqual(exited, [])
+        self.assertEqual(sorted(errors), [0, 1, 2])
+        self.assertIn("disk full", errors[1])
 
 
 @unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")

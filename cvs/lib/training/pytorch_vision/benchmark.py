@@ -1383,14 +1383,15 @@ def main():
             artifact = _tasks_module().run_task(sys.modules[__name__], args, rank, world_size, device, local_rank)
         else:
             artifact = _run_hf_trainer(args, rank, world_size, device, local_rank)
+        artifact_error = ""
         if rank == 0:
-            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-            Path(args.output).write_text(json.dumps(artifact, indent=2))
-            print("PYTORCH_VISION_OK " + json.dumps(artifact["metrics"]), flush=True)
-        dist.barrier()
-        # destroy_process_group tears NCCL down while rocAL or HIP threads are
-        # still alive and segfaults a rank after the artifact is written.
-        _exit_cleanly()
+            try:
+                Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+                Path(args.output).write_text(json.dumps(artifact, indent=2))
+                print("PYTORCH_VISION_OK " + json.dumps(artifact["metrics"]), flush=True)
+            except Exception as exc:
+                artifact_error = f"{type(exc).__name__}: {exc}"
+        _finish(rank, world_size, artifact_error, args.collective_timeout_seconds)
         return
 
     expected_backend = "mamba" if args.model.startswith("vim_") else "transformers" if args.model_id else "torchvision"
@@ -1746,11 +1747,32 @@ def main():
         except Exception as exc:
             artifact_error = f"{type(exc).__name__}: {exc}"
 
-    artifact_error_payload = [artifact_error]
-    dist.broadcast_object_list(artifact_error_payload, src=0)
-    if artifact_error_payload[0]:
-        dist.destroy_process_group()
-        raise RuntimeError(f"result artifact failed on rank 0: {artifact_error_payload[0]}")
+    _finish(rank, world_size, artifact_error, args.collective_timeout_seconds)
+
+
+def _finish(rank, world_size, artifact_error, timeout_s):
+    """Wait until every rank is done with the GPU, then leave.
+
+    The exit is coordinated through the rendezvous store rather than a
+    collective: NCCL sends are asynchronous, so a rank that exits straight
+    after its last collective can cut off data its peers are still receiving.
+    A final broadcast ended that way on four nodes, with the peers unpickling
+    garbage after a 120 s timeout. Each rank synchronizes its device before
+    checking in, so the count reaching world_size means no transfer is left.
+    """
+    store = dist.distributed_c10d._get_default_store()
+    if rank == 0:
+        store.set("cvs_artifact_error", artifact_error)
+    torch.cuda.synchronize()
+    store.add("cvs_ranks_done", 1)
+    deadline = time.monotonic() + timeout_s
+    while store.add("cvs_ranks_done", 0) < world_size:
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"ranks did not all finish within {timeout_s}s of rank {rank}")
+        time.sleep(0.2)
+    error = store.get("cvs_artifact_error").decode()
+    if error:
+        raise RuntimeError(f"result artifact failed on rank 0: {error}")
     _exit_cleanly()
 
 
