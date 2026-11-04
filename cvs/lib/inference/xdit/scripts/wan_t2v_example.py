@@ -51,6 +51,9 @@ def parse_args():
     parser.add_argument("--save_video_path", default="results/video_i2v.mp4")
     parser.add_argument("--video_fps", type=int, default=16)
     parser.add_argument("--timing_json_path", default="results/timing.json")
+    parser.add_argument("--fid_steps", default="")
+    parser.add_argument("--fid_samples", type=int, default=2)
+    parser.add_argument("--fid_budget_s", type=float, default=0)
     return parser.parse_args()
 
 
@@ -161,7 +164,49 @@ def _write_timing_json(timing_json_path, pipe_times):
     print(f"Wrote timing JSON to {timing_json_path}")
 
 
+def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started):
+    raw_steps = str(getattr(args, "fid_steps", "") or "").strip()
+    if not raw_steps:
+        return
+    from fid_sweep import run_fid_sweep
+
+    steps = [int(part) for part in raw_steps.split(",") if part.strip()]
+
+    def generate_one(nfe, sample_index):
+        run_args = dict(input_args)
+        run_args["num_inference_steps"] = int(nfe)
+        run_args["seed"] = int(args.seed) + sample_index + 1
+        torch.cuda.synchronize()
+        wall_start = time.time()
+        output, _timings = runner.run(run_args)
+        torch.cuda.synchronize()
+        elapsed = time.time() - wall_start
+        dest = os.path.join(args.output_directory, "results", "fid", f"nfe_{int(nfe)}", f"seed_{sample_index}.mp4")
+        owner = _media_owner_rank(output)
+        if owner is not None and rank == owner:
+            _export_video(output, dest, args.video_fps)
+        if dist.is_initialized():
+            dist.barrier()
+        return elapsed
+
+    try:
+        run_fid_sweep(
+            rank,
+            steps,
+            int(args.fid_samples),
+            float(args.fid_budget_s),
+            fid_started,
+            last_wall_s if rank == 0 else 0.0,
+            int(args.num_inference_steps),
+            generate_one,
+            os.path.join(args.output_directory, "results", "fid", "manifest.json"),
+        )
+    except Exception as exc:
+        print(f"FID sweep failed after the timed benchmark: {exc}")
+
+
 def main():
+    fid_started = time.monotonic()
     args = parse_args()
     if not os.path.isabs(args.save_video_path):
         args.save_video_path = os.path.join(args.output_directory, args.save_video_path)
@@ -218,6 +263,7 @@ def main():
             runner.run(input_args)
 
         local_rank = int(torch.cuda.current_device())
+        elapsed = 0.0
         for step in range(max(int(args.num_repetitions), 1)):
             torch.cuda.synchronize()
             start_time = time.time()
@@ -252,6 +298,8 @@ def main():
             if not _copy_first_mp4(args.output_directory, args.save_video_path):
                 print(f"video was not written to {args.save_video_path}", file=sys.stderr)
                 raise SystemExit(1)
+
+        _run_wan_fid_sweep(args, runner, input_args, rank, elapsed, fid_started)
     finally:
         runner.cleanup()
 

@@ -575,6 +575,27 @@ class PytorchXditWan22Benchmarks(BaseModel):
             "Defaults to openai/clip-vit-base-patch32 when omitted."
         ),
     )
+    fid_nfe_steps: Optional[List[int]] = Field(
+        default=None,
+        description="Sampling step counts for an optional FID vs NFE curve. Omit to skip test_fid_curve.",
+    )
+    fid_samples: Optional[int] = Field(
+        default=None,
+        ge=2,
+        description="Images or videos to save at each fid_nfe_steps value. The sweep stops early so the benchmark command stays inside its timeout.",
+    )
+    fid_reference_dir: Optional[str] = Field(
+        default=None,
+        description="In-container directory of real images used as the FID reference set.",
+    )
+    fid_inception_path: Optional[str] = Field(
+        default=None,
+        description="Local Inception-v3 checkpoint. The FID test does not download weights.",
+    )
+    fid_sampler: Optional[str] = Field(
+        default=None,
+        description="Sampler name drawn as its own FID series. Omit for a single line labeled by the model.",
+    )
     clip_sample_frames: Optional[int] = Field(
         default=None,
         ge=1,
@@ -663,6 +684,27 @@ class PytorchXditFlux1DevBenchmarks(BaseModel):
             "CLIP model id or local path used to score saved FLUX images. "
             "Defaults to openai/clip-vit-base-patch32, the CLIPScore paper model, when omitted."
         ),
+    )
+    fid_nfe_steps: Optional[List[int]] = Field(
+        default=None,
+        description="Sampling step counts for an optional FID vs NFE curve. Omit to skip test_fid_curve.",
+    )
+    fid_samples: Optional[int] = Field(
+        default=None,
+        ge=2,
+        description="Images or videos to save at each fid_nfe_steps value. The sweep stops early so the benchmark command stays inside its timeout.",
+    )
+    fid_reference_dir: Optional[str] = Field(
+        default=None,
+        description="In-container directory of real images used as the FID reference set.",
+    )
+    fid_inception_path: Optional[str] = Field(
+        default=None,
+        description="Local Inception-v3 checkpoint. The FID test does not download weights.",
+    )
+    fid_sampler: Optional[str] = Field(
+        default=None,
+        description="Sampler name drawn as its own FID series. Omit for a single line labeled by the model.",
     )
     expected_results: Optional[Dict[str, PytorchXditFluxExpectedResults]] = Field(
         default=None,

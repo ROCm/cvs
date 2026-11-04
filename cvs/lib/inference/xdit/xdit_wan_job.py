@@ -381,6 +381,15 @@ def build_run_wan_native_args(
     ).strip()
 
 
+def _fid_cli_suffix(params: Mapping[str, Any]) -> str:
+    if params.get("_fid_budget_s") is None:
+        return ""
+    from cvs.lib.inference.xdit.xdit_fid import fid_cli_flags
+
+    flags = fid_cli_flags(params, params["_fid_budget_s"])
+    return f" {flags}" if flags else ""
+
+
 def is_wan_diffusers_model(model_format: str) -> bool:
     return model_format == WAN_MODEL_FORMAT_DIFFUSERS
 
@@ -461,6 +470,7 @@ def build_run_wan_xfuser_example_args(
         f"--timing_json_path {shlex.quote(timing_json_path)} "
         f"--video_fps {video_fps} "
         f"--prompt {shlex.quote(str(wan_params['prompt']))}"
+        f"{_fid_cli_suffix(wan_params)}"
     ).strip()
 
 
@@ -1124,6 +1134,22 @@ def launch_wan_benchmark(
         distributed=distributed,
         cluster_dict=cluster_dict,
     )
+    from cvs.lib.inference.xdit.xdit_fid import attach_fid_sweep_mount, fid_budget_seconds, parse_fid_nfe_steps
+
+    resolved_timeout = resolve_wan_benchmark_timeout(distributed=distributed, explicit_timeout=timeout)
+    try:
+        fid_steps = parse_fid_nfe_steps(job.wan_params)
+    except ValueError as exc:
+        return [str(exc)]
+    launcher = str(job.wan_params.get("wan_diffusers_launcher") or "")
+    if fid_steps and launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER:
+        attach_fid_sweep_mount(inference_dict)
+        wan_params = dict(job.wan_params)
+        wan_params["_fid_budget_s"] = fid_budget_seconds(resolved_timeout)
+        job.wan_params = wan_params
+    elif fid_steps:
+        return ["FID vs NFE is available for the WAN Diffusers xFuser scripts, not the native Wan run.py launcher."]
+
     _, plan, errors = job.run(timeout=timeout)
     if not errors:
         job.store_output_dir_hint(plan)

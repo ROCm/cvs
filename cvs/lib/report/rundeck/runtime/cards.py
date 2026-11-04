@@ -14,7 +14,7 @@ from cvs.lib.report.formatting import fmt_num, link_or_text_html
 from cvs.lib.report.inference_payload import sweep_has_multi_shape_comparison
 from cvs.lib.report.render.cell_card import CellCardConfig, CellCardRenderer
 from cvs.lib.report.render.gate_matrix import GateMatrixRenderer
-from cvs.lib.report.render.loss_chart import SERIES_COLORS
+from cvs.lib.report.render.loss_chart import SERIES_COLORS, LossChartRenderer
 from cvs.lib.report.render.panel_shell import (
     paged_table_html,
     render_artifact_links,
@@ -803,6 +803,20 @@ class DeckCardRenderer:
     def render_launch(_payload: dict, _card: dict, data: Any) -> str:
         return render_launch_panel_html(data or {})
 
+    def render_fid_chart(self, _payload: dict, card: dict, data: Any) -> str:
+        markup = LossChartRenderer().render(
+            data if isinstance(data, list) else [],
+            curve_key="fid_curve",
+            x_title="NFE",
+            y_title="FID",
+            hint="FID versus sampling steps (NFE). One line per model or sampler.",
+            markers=True,
+        )
+        if not markup:
+            return ""
+        title = card.get("title") or "FID vs sampling steps"
+        return f"<div class='chart-panel'><h3>{html.escape(str(title))}</h3>{markup}</div>"
+
     def render_line_chart(self, _payload: dict, card: dict, data: Any) -> str:
         series_cfg = card.get("series") or {}
         y_field = series_cfg.get("y_field") or "bus_bw"
@@ -879,6 +893,7 @@ class DeckCardRenderer:
             "metric_charts": self.render_metric_charts,
             "launch_panel": self.render_launch,
             "line_chart": self.render_line_chart,
+            "fid_chart": self.render_fid_chart,
             "heatmap": self.render_heatmap,
         }
 

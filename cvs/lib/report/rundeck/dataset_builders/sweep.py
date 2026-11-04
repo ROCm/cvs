@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from cvs.lib.inference.xdit.xdit_fid import build_fid_series
 from cvs.lib.report.cell_build import build_all_cells, select_summary_cells
 from cvs.lib.report.inference_payload import (
     build_chart_series,
@@ -68,6 +69,7 @@ def build_sweep_datasets(sources: dict[str, Any], profile: DeckProfile) -> dict[
         "multi_shape_comparison": sweep_has_multi_shape_comparison(cells),
         "overall_status": overall_status(config, cells, enforce),
         "metric_tier_order": config.metric_tier_order,
+        "fid_series": build_fid_series(inf_res_dict),
         "headline_metric": config.headline_metric,
         "session_lifecycle_labels": config.session_lifecycle_labels,
         "cell_lifecycle_labels": config.cell_lifecycle_labels,

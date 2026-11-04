@@ -7,6 +7,7 @@ import os
 import sys
 import json
 import logging
+import time
 import torch
 import warnings
 
@@ -119,7 +120,48 @@ def parallelize_transformer(pipe: DiffusionPipeline):
         block.attn.processor = xFuserFluxAttnProcessor()
 
 
+def _run_flux_fid_sweep(args, pipe, input_config, is_last_process, last_wall_s, fid_started):
+    raw_steps = str(getattr(args, "fid_steps", "") or "").strip()
+    if not raw_steps or args.profile_output:
+        return
+    from fid_sweep import run_fid_sweep
+
+    steps = [int(part) for part in raw_steps.split(",") if part.strip()]
+    rank = get_world_group().rank
+
+    def generate_one(nfe, sample_index):
+        kwargs = get_pipe_kwargs(input_config)
+        kwargs["num_inference_steps"] = int(nfe)
+        kwargs["generator"] = torch.Generator(device="cuda").manual_seed(int(input_config.seed) + sample_index + 1)
+        wall_start = time.time()
+        generated = pipe(**kwargs)
+        torch.cuda.synchronize()
+        elapsed = time.time() - wall_start
+        if is_last_process and getattr(generated, "images", None):
+            dest = os.path.join(args.benchmark_output_directory, "results", "fid", f"nfe_{int(nfe)}")
+            os.makedirs(dest, exist_ok=True)
+            for index, image in enumerate(generated.images):
+                image.save(os.path.join(dest, f"seed_{sample_index}_{index}.png"))
+        return elapsed
+
+    try:
+        run_fid_sweep(
+            rank,
+            steps,
+            int(args.fid_samples),
+            float(args.fid_budget_s),
+            fid_started,
+            last_wall_s if rank == 0 else 0.0,
+            int(input_config.num_inference_steps),
+            generate_one,
+            os.path.join(args.benchmark_output_directory, "results", "fid", "manifest.json"),
+        )
+    except Exception as exc:
+        print(f"FID sweep failed after the timed benchmark: {exc}")
+
+
 def main():
+    fid_started = time.monotonic()
     args = create_arg_parser()
     engine_args = xFuserArgs.from_cli_args(args)
     engine_config, input_config = engine_args.create_config()
@@ -170,6 +212,7 @@ def main():
 
     torch.cuda.synchronize()
     is_last_process = is_dp_last_group()
+    last_wall_s = 0.0
 
     if args.profile_output != "":
         all_experiments_data = None  # will not save timings from profiling runs
@@ -218,8 +261,10 @@ def main():
 
         all_experiments_data = []
         for i in range(1, args.num_repetitions + 1):
+            wall_start = time.time()
             pipe_kwargs = get_pipe_kwargs(input_config)
             output, events = time_pipe_func(pipe=pipe, pipe_kwargs=pipe_kwargs)
+            last_wall_s = time.time() - wall_start
             pipe_elapsed_time = events["start"].elapsed_time(events["end"]) / 1000
 
             if input_config.output_type != "latent":
@@ -265,6 +310,15 @@ def main():
                 timing_filename = os.path.abspath(os.path.join(destination, "timing.json"))
                 with open(timing_filename, "w") as f:
                     json.dump(all_experiments_data, f, indent=4)
+
+    _run_flux_fid_sweep(
+        args,
+        pipe,
+        input_config,
+        is_last_process,
+        last_wall_s,
+        fid_started,
+    )
 
     get_runtime_state().destroy_distributed_env()
 

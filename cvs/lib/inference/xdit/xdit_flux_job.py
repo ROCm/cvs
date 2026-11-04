@@ -649,6 +649,15 @@ def resolve_flux_guidance_scale(
     return None
 
 
+def _fid_cli_suffix(params: Mapping[str, Any]) -> str:
+    if params.get("_fid_budget_s") is None:
+        return ""
+    from cvs.lib.inference.xdit.xdit_fid import fid_cli_flags
+
+    flags = fid_cli_flags(params, params["_fid_budget_s"])
+    return f" {flags}" if flags else ""
+
+
 def build_nccl_env(inference_dict: Mapping[str, Any]) -> Dict[str, str]:
     env: Dict[str, str] = {
         "HSA_FORCE_FINE_GRAIN_PCIE": "1",
@@ -706,6 +715,7 @@ def build_run_usp_args(
         f"--tensor_parallel_degree {tp} "
         f"--data_parallel_degree {dp} "
         f"--benchmark_output_directory {shlex.quote(output_dir_container)}"
+        f"{_fid_cli_suffix(flux_params)}"
     )
 
 
@@ -752,6 +762,7 @@ def build_flux2_example_args(
         f"--tensor_parallel_degree {tp} "
         f"--data_parallel_degree {dp} "
         f"--output_type pil"
+        f"{_fid_cli_suffix(flux_params)}"
     )
 
 
@@ -1421,6 +1432,18 @@ def launch_flux_benchmark(
         )
         if is_flux2_model(model_type):
             timeout = FLUX2_DEFAULT_BENCHMARK_TIMEOUT_S
+
+    from cvs.lib.inference.xdit.xdit_fid import attach_fid_sweep_mount, fid_budget_seconds, parse_fid_nfe_steps
+
+    try:
+        fid_steps = parse_fid_nfe_steps(job.flux_params)
+    except ValueError as exc:
+        return [str(exc)]
+    if fid_steps:
+        attach_fid_sweep_mount(inference_dict)
+        flux_params = dict(job.flux_params)
+        flux_params["_fid_budget_s"] = fid_budget_seconds(timeout)
+        job.flux_params = flux_params
 
     _, plan, errors = job.run(timeout=timeout)
     if not errors:

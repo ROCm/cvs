@@ -89,6 +89,13 @@
     {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
     {"type": "gate_heatmap", "bind": "gate_matrix", "when_empty": "hide"},
     {"type": "sweep_cell_cards", "id": "cells", "title": "Benchmark result", "bind": "cells"},
+    {
+      "type": "fid_chart",
+      "id": "fid-nfe",
+      "title": "FID vs sampling steps",
+      "bind": "datasets.sweep.fid_series",
+      "when_empty": "hide"
+    },
     {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
   ]
 }
