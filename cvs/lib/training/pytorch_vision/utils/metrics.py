@@ -50,12 +50,29 @@ OPTIONAL_ARTIFACT_METRICS: Tuple[Tuple[str, str], ...] = (
     ("energy_kwh", "kWh"),
     ("images_per_kwh", "images/kWh"),
     ("codecarbon_tracking_active", "bool"),
+    ("map_50_95", "%"),
+    ("map_50", "%"),
+    ("miou_pct", "%"),
+    ("pixel_accuracy_pct", "%"),
+    ("vlm_benchmark_score", "%"),
+    ("multimodal_samples_per_sec", "samples/s"),
+    ("tokens_per_sec", "tokens/s"),
 )
 DERIVED_METRICS: Tuple[Tuple[str, str], ...] = (
     ("gradient_accumulation_overhead_pct", "%"),
     ("augmentation_overhead_pct", "%"),
     ("rocal_cpu_overhead_pct", "%"),
+    ("scale_parity_accuracy_delta", "pts"),
 )
+# The headline quality metric of each task; scale parity compares one of these.
+QUALITY_METRICS = {
+    "top1_accuracy_pct",
+    "top5_accuracy_pct",
+    "map_50_95",
+    "miou_pct",
+    "pixel_accuracy_pct",
+    "vlm_benchmark_score",
+}
 METRICS = ARTIFACT_METRICS + OPTIONAL_ARTIFACT_METRICS + DERIVED_METRICS
 
 METRIC_UNITS = dict(METRICS)
@@ -174,6 +191,14 @@ RESULTS_COLUMNS = (
     ("Convergence time (s)", "training.convergence_time_seconds"),
     ("Energy (kWh)", "training.energy_kwh"),
     ("Images/kWh", "training.images_per_kwh"),
+    ("mAP@0.5:0.95 (%)", "training.map_50_95"),
+    ("mAP@0.5 (%)", "training.map_50"),
+    ("mIoU (%)", "training.miou_pct"),
+    ("Pixel accuracy (%)", "training.pixel_accuracy_pct"),
+    ("VLM score (%)", "training.vlm_benchmark_score"),
+    ("Multimodal samples/s", "training.multimodal_samples_per_sec"),
+    ("Tokens/s", "training.tokens_per_sec"),
+    ("Scale parity delta (pts)", "training.scale_parity_accuracy_delta"),
 )
 
 METRIC_TIERS = {
@@ -183,6 +208,8 @@ METRIC_TIERS = {
         "scaling_efficiency_pct",
         "tflops_per_sec_per_gpu",
         "mfu_pct",
+        "multimodal_samples_per_sec",
+        "tokens_per_sec",
     ),
     "latency": (
         "step_time_ms_mean",
@@ -217,6 +244,12 @@ METRIC_TIERS = {
         "eval_label_classes_observed",
         "eval_label_min_per_class",
         "eval_label_max_per_class",
+        "map_50_95",
+        "map_50",
+        "miou_pct",
+        "pixel_accuracy_pct",
+        "vlm_benchmark_score",
+        "scale_parity_accuracy_delta",
         "loss_step_100",
         "loss_step_500",
         "loss_step_1000",
@@ -407,24 +440,31 @@ def parse_codecarbon_metrics(payload: Dict[str, Any], expected_gpus: int) -> Dic
     return metrics
 
 
-def required_metrics_for_run(run_mode: str, data_mode: str, codecarbon_enabled: bool = False) -> set[str]:
+_TASK_QUALITY = {
+    "classification": {
+        "top1_accuracy_pct",
+        "top5_accuracy_pct",
+        "eval_label_classes_observed",
+        "eval_label_min_per_class",
+        "eval_label_max_per_class",
+    },
+    "detection": {"map_50_95", "map_50"},
+    "segmentation": {"miou_pct", "pixel_accuracy_pct"},
+    "vlm_sft": {"vlm_benchmark_score"},
+}
+
+
+def required_metrics_for_run(
+    run_mode: str, data_mode: str, codecarbon_enabled: bool = False, task: str = "classification"
+) -> set[str]:
     """Return metrics whose absence is a structural failure for this run."""
     required = set(GATED_METRICS)
-    if data_mode == "rocal":
+    if data_mode == "rocal" or (data_mode == "dataset" and task != "vlm_sft"):
         required.add("data_loader_images_per_sec")
+    if task == "vlm_sft":
+        required.update({"multimodal_samples_per_sec", "tokens_per_sec"})
     if run_mode != "perf":
-        required.update(
-            {
-                "top1_accuracy_pct",
-                "top5_accuracy_pct",
-                "eval_loss",
-                "eval_sample_count",
-                "eval_completed",
-                "eval_label_classes_observed",
-                "eval_label_min_per_class",
-                "eval_label_max_per_class",
-            }
-        )
+        required.update({"eval_loss", "eval_sample_count", "eval_completed", *_TASK_QUALITY[task]})
     if run_mode not in {"smoke", "perf"}:
         required.update(
             {

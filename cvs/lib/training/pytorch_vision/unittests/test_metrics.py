@@ -91,6 +91,18 @@ class TestTrainingMetrics(unittest.TestCase):
         self.assertIn("data_loader_images_per_sec", training)
         self.assertIn("codecarbon_tracking_active", training)
 
+    def test_required_metrics_follow_the_task(self):
+        detection = required_metrics_for_run("finetune", "dataset", task="detection")
+        segmentation = required_metrics_for_run("smoke", "dataset", task="segmentation")
+        vlm = required_metrics_for_run("finetune", "dataset", task="vlm_sft")
+        self.assertIn("map_50_95", detection)
+        self.assertNotIn("top1_accuracy_pct", detection)
+        self.assertIn("miou_pct", segmentation)
+        self.assertIn("vlm_benchmark_score", vlm)
+        self.assertIn("tokens_per_sec", vlm)
+        self.assertNotIn("data_loader_images_per_sec", vlm)
+        self.assertIn("loss_curve_decreased", detection)
+
     def test_codecarbon_detection_and_parsing(self):
         payload = {
             "version": "3.2.4",

@@ -62,6 +62,9 @@ def _variant():
         learning_rate=0.1,
         optimizer="sgd",
         harness="native",
+        task="classification",
+        task_options={},
+        checkpoint_dir=None,
         fsdp_strategy="full_shard",
         momentum=0.9,
         weight_decay=0.0001,
@@ -80,7 +83,9 @@ def _variant():
         checkpoint_loss_tolerance=1e-5,
         loss_curve=SimpleNamespace(sample_every_steps=1, minimum_points=2),
         accuracy=SimpleNamespace(target_top1_pct=None, target_top5_pct=None),
-        scaling_baseline=SimpleNamespace(images_per_sec_total=0.0, num_nodes=1),
+        scaling_baseline=SimpleNamespace(
+            images_per_sec_total=0.0, num_nodes=1, accuracy_metric=None, accuracy_value=None
+        ),
         convergence=SimpleNamespace(
             target_top1_pct=None,
             target_eval_loss=None,
@@ -144,9 +149,11 @@ class TestPyTorchVisionJob(unittest.TestCase):
         orch = FakeOrchestrator()
         job = PyTorchVisionJob(orch, _variant(), "w1")
         job.stage_benchmark()
-        command = orch.commands[-1][0]
-        self.assertIn("base64 -d", command)
-        self.assertIn("/tmp/cvs_pytorch_vision_w1.py", command)
+        benchmark, tasks = (call[0] for call in orch.commands[-2:])
+        self.assertIn("base64 -d", benchmark)
+        self.assertIn("> /tmp/cvs_pytorch_vision_w1.py", benchmark)
+        self.assertIn("> /tmp/cvs_pytorch_vision_w1_tasks.py", tasks)
+        self.assertNotIn("_tasks.py", benchmark)
 
     def test_verifies_exact_gpu_count(self):
         info = {
@@ -218,7 +225,7 @@ class TestPyTorchVisionJob(unittest.TestCase):
                 "output": "PYTORCH_VISION_ENV " + json.dumps(info),
             }
         }
-        with self.assertRaisesRegex(RuntimeError, "requires 8"):
+        with self.assertRaisesRegex(RuntimeError, "requires at least 8"):
             PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").verify_environment()
 
     def test_rejects_wrong_gpu_model(self):
@@ -337,7 +344,9 @@ class TestPyTorchVisionJob(unittest.TestCase):
         variant = _variant()
         # Artifact reports 1.0 images/sec; a 0.5 single-node reference over two
         # nodes gives an ideal of 1.0, so efficiency is 100%.
-        variant.training.scaling_baseline = SimpleNamespace(images_per_sec_total=0.5, num_nodes=1)
+        variant.training.scaling_baseline = SimpleNamespace(
+            images_per_sec_total=0.5, num_nodes=1, accuracy_metric=None, accuracy_value=None
+        )
         response = {"node0": {"exit_code": 0, "output": json.dumps(_artifact(num_nodes=2))}}
         orch = FakeOrchestrator(response)
         orch.hosts = ["node0", "node1"]
@@ -345,6 +354,20 @@ class TestPyTorchVisionJob(unittest.TestCase):
         results = PyTorchVisionJob(orch, variant, "w1").parse_results()
 
         self.assertAlmostEqual(results["node0"]["training.scaling_efficiency_pct"], 100.0)
+
+    def test_scale_parity_is_quality_minus_reference(self):
+        variant = _variant()
+        variant.training.scaling_baseline = SimpleNamespace(
+            images_per_sec_total=0.5, num_nodes=1, accuracy_metric="top1_accuracy_pct", accuracy_value=81.5
+        )
+        artifact = _artifact(num_nodes=2)
+        artifact["metrics"]["top1_accuracy_pct"] = 81.0
+        orch = FakeOrchestrator({"node0": {"exit_code": 0, "output": json.dumps(artifact)}})
+        orch.hosts = ["node0", "node1"]
+
+        results = PyTorchVisionJob(orch, variant, "w1").parse_results()
+
+        self.assertAlmostEqual(results["node0"]["training.scale_parity_accuracy_delta"], -0.5)
 
     def test_energy_efficiency_uses_artifact_processed_image_count(self):
         variant = _variant()

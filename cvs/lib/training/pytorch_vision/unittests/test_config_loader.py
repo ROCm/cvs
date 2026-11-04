@@ -269,6 +269,69 @@ class TestVisionConfigLoader(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "container.image"):
             self._load(config=config)
 
+    def _task_config(self, task="detection"):
+        config = _config()
+        config["training"].update({"harness": "task", "task": task})
+        config["training"]["sweeps"][0].update(
+            {
+                "model_id": "facebook/detr-resnet-50",
+                "backend": "transformers",
+                "data_mode": "dataset",
+                "dataset_path": "/datasets/coco",
+            }
+        )
+        return config
+
+    def test_loads_task_harness(self):
+        variant = self._load(config=self._task_config())
+        self.assertEqual(variant.training.task, "detection")
+        self.assertEqual(variant.training.enabled_sweeps()[0].data_mode, "dataset")
+
+    def test_task_harness_requires_transformers_backend(self):
+        config = self._task_config()
+        config["training"]["sweeps"][0]["backend"] = "torchvision"
+        with self.assertRaisesRegex(ValueError, "requires backend 'transformers'"):
+            self._load(config=config)
+
+    def test_non_classification_task_requires_task_harness(self):
+        config = self._task_config()
+        config["training"]["harness"] = "native"
+        with self.assertRaisesRegex(ValueError, "requires harness=task"):
+            self._load(config=config)
+
+    def test_dataset_data_mode_is_task_harness_only(self):
+        config = _config()
+        config["training"]["sweeps"][0].update({"data_mode": "dataset", "dataset_path": "/datasets/coco"})
+        with self.assertRaisesRegex(ValueError, "data_mode 'dataset'"):
+            self._load(config=config)
+
+    def test_native_vision_mamba_requires_mamba_backend(self):
+        config = _config()
+        config["training"]["sweeps"][0]["model"] = "vim_small"
+        with self.assertRaisesRegex(ValueError, "requires backend 'mamba'"):
+            self._load(config=config)
+        config["training"]["sweeps"][0]["backend"] = "mamba"
+        self.assertEqual(self._load(config=config).training.enabled_sweeps()[0].backend, "mamba")
+
+    def test_finetune_runs_in_accuracy_phase(self):
+        config = _config()
+        config["training"].update({"run_mode": "finetune", "eval_enabled": True, "warmup_steps": 0})
+        with self.assertRaisesRegex(ValueError, "finetune requires training.phase='accuracy'"):
+            self._load(config=config)
+        config["training"]["phase"] = "accuracy"
+        self.assertEqual(self._load(config=config).training.run_mode, "finetune")
+
+    def test_scale_parity_needs_metric_and_value_together(self):
+        config = _config()
+        config["training"]["scaling_baseline"] = {"images_per_sec_total": 1000.0, "accuracy_value": 80.0}
+        with self.assertRaisesRegex(ValueError, "must be set together"):
+            self._load(config=config)
+        config["training"]["scaling_baseline"]["accuracy_metric"] = "images_per_sec"
+        with self.assertRaisesRegex(ValueError, "accuracy_metric must be one of"):
+            self._load(config=config)
+        config["training"]["scaling_baseline"]["accuracy_metric"] = "top1_accuracy_pct"
+        self.assertEqual(self._load(config=config).training.scaling_baseline.accuracy_value, 80.0)
+
     def test_rejects_unknown_top_level_field(self):
         config = _config()
         config["gpu_arhc"] = "typo"

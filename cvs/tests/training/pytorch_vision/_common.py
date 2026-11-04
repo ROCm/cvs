@@ -314,6 +314,7 @@ def metric(  # noqa: PLR0913
         variant_config.training.run_mode,
         variant_config.sweep(sweep_name).data_mode,
         variant_config.training.codecarbon.enabled,
+        variant_config.training.task,
     )
     if name not in actuals:
         cell = variant_config.cell_key(sweep_name)
@@ -366,7 +367,10 @@ def metric(  # noqa: PLR0913
 def loss_curve(  # noqa: PLR0913
     sweep_name, variant_config, training_results, loss_series, lifecycle, request
 ):
-    if variant_config.training.run_mode in {"smoke", "perf"}:
+    run_mode = variant_config.training.run_mode
+    # A smoke profile opts in by enabling loss_curve (W7's one-epoch run);
+    # perf sweeps are too short to say anything about the curve.
+    if run_mode == "perf" or (run_mode == "smoke" and not variant_config.training.loss_curve.enabled):
         pytest.skip("loss-curve checks do not apply to performance-only phases")
     if sweep_name not in training_results:
         pytest.skip(f"no results recorded for {sweep_name}")

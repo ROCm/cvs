@@ -86,21 +86,27 @@ class PyTorchVisionJob:
         # Workload-scoped so two workloads staging onto the same host cannot
         # overwrite each other's script or kill each other's ranks.
         self.benchmark_path = f"/tmp/cvs_pytorch_vision_{variant.training.workload.lower()}.py"
+        self.tasks_path = self.benchmark_path.removesuffix(".py") + "_tasks.py"
         self.log_path = f"{self.output_dir}/training.log"
-        self.checkpoint_path = f"{self.output_dir}/checkpoint.pt"
+        checkpoint_root = variant.training.checkpoint_dir or self.output_dir
+        if variant.training.checkpoint_dir:
+            checkpoint_root = f"{checkpoint_root}/{self.sweep.label}/{run_id}"
+        self.checkpoint_path = f"{checkpoint_root}/checkpoint.pt"
         self.training_start_time = None
         self.monitor_metrics = {}
         self.run_elapsed_seconds = None
 
     def stage_benchmark(self):
-        source = Path(__file__).with_name("benchmark.py").read_bytes()
-        encoded = base64.b64encode(gzip.compress(source, compresslevel=9)).decode("ascii")
-        command = (
-            f"mkdir -p {shlex.quote(self.output_dir)} && "
-            f"printf %s {shlex.quote(encoded)} | base64 -d | gzip -d > {shlex.quote(self.benchmark_path)}"
-        )
-        result = self.orch.exec(command, timeout=30, detailed=True, print_console=False)
-        self._require_success(result, "stage PyTorch Vision benchmark")
+        def _write(name, target):
+            source = Path(__file__).with_name(name).read_bytes()
+            encoded = base64.b64encode(gzip.compress(source, compresslevel=9)).decode("ascii")
+            return f"printf %s {shlex.quote(encoded)} | base64 -d | gzip -d > {shlex.quote(target)}"
+
+        # One exec per file: both payloads in one command exceed the SSH request limit.
+        for name, target in (("benchmark.py", self.benchmark_path), ("tasks.py", self.tasks_path)):
+            command = f"mkdir -p {shlex.quote(self.output_dir)} && {_write(name, target)}"
+            result = self.orch.exec(command, timeout=30, detailed=True, print_console=False)
+            self._require_success(result, f"stage PyTorch Vision {name}")
 
     def verify_environment(self):
         hosts = self.orch.hosts
@@ -138,9 +144,13 @@ class PyTorchVisionJob:
             info = json.loads(marker)
             if not info["cuda"]:
                 raise RuntimeError(f"ROCm GPU support is unavailable in the container on {host}")
+            # A single-GPU workload (W7) runs one rank on GPU 0 of a full node,
+            # so the node needs at least gpus_per_node GPUs, not exactly that many.
             expected = self.variant.training.gpus_per_node
-            if int(info["gpus"]) != expected:
-                raise RuntimeError(f"{self.workload} requires {expected} visible GPUs on {host}, found {info['gpus']}")
+            if int(info["gpus"]) < expected:
+                raise RuntimeError(
+                    f"{self.workload} requires at least {expected} visible GPUs on {host}, found {info['gpus']}"
+                )
             expected_arch = _normalized_hardware_name(self.variant.gpu_arch)
             mismatches = [name for name in info["devices"] if expected_arch not in _normalized_hardware_name(name)]
             if mismatches:
@@ -257,6 +267,10 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
             self.workload,
             "--harness",
             training.harness,
+            "--task",
+            training.task,
+            "--task-options",
+            json.dumps(training.task_options, sort_keys=True),
             "--fsdp-strategy",
             training.fsdp_strategy,
             "--model-id",
@@ -633,6 +647,12 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
             )
             if efficiency is not None:
                 metrics["training.scaling_efficiency_pct"] = efficiency
+            # Scale parity: the same quality metric measured on the reference
+            # topology, so a multi-node run shows what scaling cost in accuracy.
+            if baseline.accuracy_metric and baseline.accuracy_value is not None:
+                actual_quality = metrics.get(f"training.{baseline.accuracy_metric}")
+                if actual_quality is not None:
+                    metrics["training.scale_parity_accuracy_delta"] = actual_quality - baseline.accuracy_value
             parsed[host] = metrics
             # Ordered (step, loss) pairs for the loss-curve PNG. Kept off the
             # metric dict because it is an artifact input, not a gated metric.

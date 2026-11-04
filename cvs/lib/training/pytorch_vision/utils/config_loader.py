@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import field_validator, Field, model_validator
 from typing_extensions import Literal
 
-from cvs.lib.training.pytorch_vision.utils.metrics import GATED_METRICS
+from cvs.lib.training.pytorch_vision.utils.metrics import GATED_METRICS, QUALITY_METRICS
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
 
 
@@ -20,6 +20,7 @@ RUN_MODES = (
     "smoke",
     "perf",
     "train_5k",
+    "finetune",
     "train_to_accuracy",
 )
 LONG_RUN_MODES = {"train_to_accuracy"}
@@ -63,6 +64,18 @@ class ScalingBaselineConfig(_Forbid):
 
     images_per_sec_total: float = Field(default=0.0, ge=0)
     num_nodes: int = Field(default=1, gt=0)
+    # Scale parity: the quality metric (top1_accuracy_pct, map_50_95,
+    # miou_pct, vlm_benchmark_score, ...) and its value on the reference run.
+    accuracy_metric: Optional[str] = None
+    accuracy_value: Optional[float] = None
+
+    @model_validator(mode="after")
+    def _validate_parity(self):
+        if (self.accuracy_metric is None) != (self.accuracy_value is None):
+            raise ValueError("scaling_baseline.accuracy_metric and accuracy_value must be set together")
+        if self.accuracy_metric is not None and self.accuracy_metric not in QUALITY_METRICS:
+            raise ValueError(f"scaling_baseline.accuracy_metric must be one of {sorted(QUALITY_METRICS)}")
+        return self
 
 
 class AccuracyConfig(_Forbid):
@@ -122,13 +135,16 @@ class VisionSweep(_Forbid):
     name: str
     label: str
     model: str
-    backend: Literal["torchvision"] = "torchvision"
+    # torchvision models, HF backbones (transformers), or Vision Mamba (mamba).
+    backend: Literal["torchvision", "transformers", "mamba"] = "torchvision"
     precision: Literal["BF16", "FP16", "FP32"] = "BF16"
     batch_size: int = Field(gt=0)
     image_size: int = Field(default=224, gt=0)
     gradient_accumulation_steps: int = Field(default=1, ge=1)
     training_flops_per_image: float = Field(gt=0)
-    data_mode: Literal["synthetic", "rocal"] = "synthetic"
+    # "dataset" is read by the task harness through a torch DataLoader
+    # (COCO, ADE20K, ChartQA) rather than by rocAL.
+    data_mode: Literal["synthetic", "rocal", "dataset"] = "synthetic"
     dataset_path: str = ""
     rocal_device: Literal["cpu", "gpu"] = "gpu"
     augmentation: Literal["standard", "heavy"] = "standard"
@@ -138,8 +154,8 @@ class VisionSweep(_Forbid):
 
     @model_validator(mode="after")
     def _validate_data(self):
-        if self.data_mode == "rocal" and not self.dataset_path:
-            raise ValueError("rocAL sweeps require dataset_path")
+        if self.data_mode in {"rocal", "dataset"} and not self.dataset_path:
+            raise ValueError(f"{self.data_mode} sweeps require dataset_path")
         return self
 
 
@@ -175,10 +191,13 @@ class VisionTrainingConfig(_Forbid):
     enabled: bool = True
     allow_long_run: bool = False
     phase: Literal["smoke", "performance", "accuracy"] = "performance"
+    # finetune is a pretrained run of arbitrary length: the accuracy phase
+    # (eval, loss curve, convergence) without train_5k's 5000-step floor.
     run_mode: Literal[
         "smoke",
         "perf",
         "train_5k",
+        "finetune",
         "train_to_accuracy",
     ] = "perf"
     gpus_per_node: int = Field(default=8, gt=0)
@@ -198,7 +217,15 @@ class VisionTrainingConfig(_Forbid):
     # "native" drives our own DDP loop; "hf_trainer" hands the loop to
     # HuggingFace Trainer with FSDP and reconstructs the same metric contract
     # from callbacks. hf_trainer requires an image carrying transformers.
-    harness: Literal["native", "hf_trainer"] = "native"
+    # "task" runs tasks.py: detection, segmentation, or multimodal SFT.
+    harness: Literal["native", "hf_trainer", "task"] = "native"
+    task: Literal["classification", "detection", "segmentation", "vlm_sft"] = "classification"
+    # Free-form per-task knobs forwarded to the container as JSON (FSDP vs
+    # DDP, eval batch, VLM pixel budget, input normalization, ...).
+    task_options: Dict[str, Any] = Field(default_factory=dict)
+    # Where checkpoints are written. Defaults to the run's log dir; large
+    # models need a filesystem with room for a full sharded checkpoint.
+    checkpoint_dir: Optional[str] = None
     # Sweeps read the same shards back to back, so a sweep's position decides
     # how warm the page cache is when it runs. Repeating every sweep in a
     # reshuffled order and reporting medians keeps that out of the comparison.
@@ -296,16 +323,30 @@ class VisionTrainingConfig(_Forbid):
             raise ValueError("train_to_accuracy requires convergence.stop_when_reached=true")
         if self.sweep_repeats < 1:
             raise ValueError(f"sweep_repeats must be >= 1, got {self.sweep_repeats}")
-        if self.harness == "hf_trainer":
+        if self.harness in {"hf_trainer", "task"}:
             missing = [s.name for s in self.enabled_sweeps() if not s.model_id]
             if missing:
-                raise ValueError(f"hf_trainer harness requires sweep.model_id for: {missing}")
+                raise ValueError(f"{self.harness} harness requires sweep.model_id for: {missing}")
+        if (self.harness == "task") != (self.task != "classification"):
+            raise ValueError("training.task other than classification requires harness=task, and only then")
+        for sweep in self.enabled_sweeps():
+            if self.harness == "native":
+                expected = (
+                    "mamba" if sweep.model.startswith("vim_") else "transformers" if sweep.model_id else "torchvision"
+                )
+            else:
+                expected = "transformers" if self.harness == "task" else "torchvision"
+            if sweep.backend != expected:
+                raise ValueError(f"sweep {sweep.name!r} on harness {self.harness} requires backend {expected!r}")
+            if (sweep.data_mode == "dataset") != (self.harness == "task"):
+                raise ValueError(f"sweep {sweep.name!r}: data_mode 'dataset' is the task harness input, and only that")
         if self.run_mode == "train_5k" and self.steps < 5000:
             raise ValueError("train_5k requires training.steps>=5000")
         expected_phase = {
             "smoke": "smoke",
             "perf": "performance",
             "train_5k": "accuracy",
+            "finetune": "accuracy",
             "train_to_accuracy": "accuracy",
         }[self.run_mode]
         if self.phase != expected_phase:

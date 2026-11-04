@@ -175,6 +175,10 @@ class TestRocalBatchOwnership(unittest.TestCase):
         self.assertEqual(len(range(loader.iterator_length // loader.batch_size)), 3)
         self.assertEqual(_rocal_batches_per_epoch(loader), 4)
 
+    def test_epoch_is_each_ranks_share_of_the_full_training_set(self):
+        loader = self.ReusingLoader(batches=5, samples=50, batch_size=4)
+        self.assertEqual(_rocal_batches_per_epoch(loader, world_size=4), 4)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,7 @@ import json
 import math
 import os
 import statistics
+import sys
 import time
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from torch.nn.parallel import DistributedDataParallel
 def _parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
-    parser.add_argument("--backend", choices=["torchvision"], default="torchvision")
+    parser.add_argument("--backend", choices=["torchvision", "transformers", "mamba"], default="torchvision")
     parser.add_argument("--precision", choices=["BF16", "FP16", "FP32"], default="BF16")
     parser.add_argument("--batch-size", type=int, required=True)
     parser.add_argument("--image-size", type=int, default=224)
@@ -30,7 +31,7 @@ def _parse_args():
     parser.add_argument("--measure-steps", type=int, default=50)
     parser.add_argument(
         "--run-mode",
-        choices=["smoke", "perf", "train_5k", "train_to_accuracy"],
+        choices=["smoke", "perf", "train_5k", "finetune", "train_to_accuracy"],
         default="perf",
     )
     parser.add_argument("--phase", choices=["smoke", "performance", "accuracy"], default="performance")
@@ -43,8 +44,14 @@ def _parse_args():
     parser.add_argument("--milestone-steps", default="100,500,1000,5000")
     parser.add_argument("--channels-last", action="store_true")
     parser.add_argument("--learning-rate", type=float, default=0.1)
-    parser.add_argument("--harness", choices=["native", "hf_trainer"], default="native")
-    parser.add_argument("--model-id", default="", help="HuggingFace model id for the hf_trainer harness")
+    parser.add_argument("--harness", choices=["native", "hf_trainer", "task"], default="native")
+    parser.add_argument(
+        "--task", choices=["classification", "detection", "segmentation", "vlm_sft"], default="classification"
+    )
+    parser.add_argument("--task-options", default="{}", help="JSON options for the task harness")
+    parser.add_argument(
+        "--model-id", default="", help="HuggingFace model id (hf_trainer, task, or a native HF backbone)"
+    )
     parser.add_argument(
         "--fsdp-strategy",
         choices=["full_shard", "hybrid_shard"],
@@ -67,7 +74,7 @@ def _parse_args():
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
     parser.add_argument("--training-flops-per-image", type=float, required=True)
     parser.add_argument("--peak-tflops-per-gpu", type=float, required=True)
-    parser.add_argument("--data-mode", choices=["synthetic", "rocal"], default="synthetic")
+    parser.add_argument("--data-mode", choices=["synthetic", "rocal", "dataset"], default="synthetic")
     parser.add_argument("--dataset-path", default="")
     parser.add_argument("--rocal-device", choices=["cpu", "gpu"], default="gpu")
     parser.add_argument("--augmentation", choices=["standard", "heavy"], default="standard")
@@ -146,10 +153,61 @@ def _reduce_max(value, device):
     return tensor.item()
 
 
-def _build_model(args, device):
-    from torchvision.models import get_model
+def _tasks_module():
+    """Load tasks.py, staged beside this script as ``<stem>_tasks.py``."""
+    import importlib.util
 
-    model = get_model(args.model, weights=None, num_classes=args.num_classes)
+    here = Path(__file__)
+    for candidate in (here.with_name(here.stem + "_tasks.py"), here.with_name("tasks.py")):
+        if candidate.is_file():
+            spec = importlib.util.spec_from_file_location("cvs_pytorch_vision_tasks", candidate)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+    raise FileNotFoundError(f"task module not staged beside {here}")
+
+
+def _task_options(args):
+    return json.loads(getattr(args, "task_options", "") or "{}")
+
+
+class _LogitsOnly(torch.nn.Module):
+    """Present an HF image classifier as ``images -> logits`` for the native loop."""
+
+    def __init__(self, inner):
+        super().__init__()
+        self.inner = inner
+
+    def forward(self, images):
+        return self.inner(pixel_values=images).logits
+
+
+def _build_model(args, device):
+    if args.model.startswith("vim_"):
+        tasks = _tasks_module()
+        options = _task_options(args)
+        checkpoint = (
+            tasks.resolve_hf_file(args.model_id, options["pretrained_file"])
+            if args.pretrained and options.get("pretrained_file")
+            else ""
+        )
+        model = tasks.build_vim(args.model, args.num_classes, args.image_size, checkpoint)
+    elif args.model_id:
+        from transformers import AutoConfig, AutoModelForImageClassification
+
+        if args.pretrained:
+            inner = AutoModelForImageClassification.from_pretrained(
+                args.model_id, num_labels=args.num_classes, ignore_mismatched_sizes=True
+            )
+        else:
+            inner = AutoModelForImageClassification.from_config(
+                AutoConfig.from_pretrained(args.model_id, num_labels=args.num_classes)
+            )
+        model = _LogitsOnly(inner)
+    else:
+        from torchvision.models import get_model
+
+        model = get_model(args.model, weights=None, num_classes=args.num_classes)
     if args.channels_last:
         model = model.to(memory_format=torch.channels_last)
     return model.to(device)
@@ -258,6 +316,13 @@ def _build_rocal_loader(args, rank, world_size, split="train", batch_size=None):
     data_path = str(Path(args.dataset_path) / split)
     cpu = args.rocal_device == "cpu"
     batch_size = batch_size or args.batch_size
+    # HF ViT checkpoints were trained on inputs scaled to [-1, 1]; everything
+    # else in the suite uses the ImageNet statistics.
+    if _task_options(args).get("input_normalization") == "half":
+        mean, std = [127.5] * 3, [127.5] * 3
+    else:
+        mean = [0.485 * 255, 0.456 * 255, 0.406 * 255]
+        std = [0.229 * 255, 0.224 * 255, 0.225 * 255]
     pipe = Pipeline(
         batch_size=batch_size,
         num_threads=args.rocal_num_threads,
@@ -267,8 +332,8 @@ def _build_rocal_loader(args, rank, world_size, split="train", batch_size=None):
         tensor_dtype=types.FLOAT,
         tensor_layout=types.NCHW,
         prefetch_queue_depth=6,
-        mean=[0.485 * 255, 0.456 * 255, 0.406 * 255],
-        std=[0.229 * 255, 0.224 * 255, 0.225 * 255],
+        mean=mean,
+        std=std,
         output_memory_type=types.HOST_MEMORY if cpu else types.DEVICE_MEMORY,
     )
     with pipe:
@@ -281,12 +346,19 @@ def _build_rocal_loader(args, rank, world_size, split="train", batch_size=None):
             # that window to 224. A 90-epoch ResNet-50 run on that pipeline
             # finished at 13% Top-1. Decode the full frame and apply the
             # torchvision RandomResizedCrop defaults instead.
+            #
+            # rocAL shards are contiguous runs of the class-sorted file list and
+            # it shuffles only within a shard, so sharded training gives every
+            # rank a fixed eighth of the classes. BatchNorm batch statistics
+            # then encode the shard: a 5,000-step ResNet-50 run reached train
+            # loss 2.6 at 5.8% validation Top-1. Each rank instead reads the
+            # whole set in its own seeded order, reshuffled on every pass.
             decoded = fn.decoders.image(
                 jpegs,
                 output_type=types.RGB,
                 file_root=data_path,
-                shard_id=rank,
-                num_shards=world_size,
+                shard_id=0,
+                num_shards=1,
                 random_shuffle=True,
                 stick_to_shard=True,
             )
@@ -328,9 +400,11 @@ def _build_rocal_loader(args, rank, world_size, split="train", batch_size=None):
                 pad_last_batch=True,
                 last_batch_policy=types.LAST_BATCH_FILL,
             )
+            # 256 for a 224 crop; small-image sets such as CIFAR keep the same
+            # 0.875 crop ratio instead of being upscaled to ImageNet size.
             resized = fn.resize(
                 decoded,
-                resize_shorter=256,
+                resize_shorter=round(args.image_size * 256 / 224),
                 scaling_mode=types.SCALING_MODE_NOT_SMALLER,
                 output_layout=types.NHWC,
                 output_dtype=types.UINT8,
@@ -343,8 +417,8 @@ def _build_rocal_loader(args, rank, world_size, split="train", batch_size=None):
             output_dtype=types.FLOAT,
             crop=(args.image_size, args.image_size),
             mirror=flip,
-            mean=[0.485 * 255, 0.456 * 255, 0.406 * 255],
-            std=[0.229 * 255, 0.224 * 255, 0.225 * 255],
+            mean=mean,
+            std=std,
         )
         pipe.set_outputs(normalized)
     pipe.build()
@@ -399,8 +473,14 @@ def _next_rocal_batches(loader, accumulation_steps, channels_last, device, heavy
     return image_batches, label_batches
 
 
-def _rocal_batches_per_epoch(loader):
-    sample_count = int(loader.iterator_length)
+def _rocal_samples_per_rank(loader, world_size=1):
+    # The training loader holds the whole set on every rank, so one epoch is
+    # each rank's share of it rather than a full pass of its iterator.
+    return math.ceil(int(loader.iterator_length) / world_size)
+
+
+def _rocal_batches_per_epoch(loader, world_size=1):
+    sample_count = _rocal_samples_per_rank(loader, world_size)
     batch_size = int(loader.batch_size)
     if sample_count <= 0 or batch_size <= 0:
         raise ValueError(f"invalid rocAL iterator dimensions: samples={sample_count}, batch_size={batch_size}")
@@ -502,9 +582,41 @@ def _scorecard_milestone_metrics(milestone_losses):
     }
 
 
-def _evaluate(model, loader, loss_fn, args, device):
+class _EvalLoader:
+    """Hands ``_evaluate`` a rocAL validation iterator positioned at its shard start.
+
+    ``reset()`` is only safe when every shard is the same size. With unequal
+    shards rocAL fills the short final batch from the next shard, and a reset
+    then restarts the stream off its boundary: on Food-101 (25,250 images over
+    8 ranks) a reset pass saw 238-261 images per class instead of 250. Those
+    sets get a freshly built pipeline per pass instead.
+
+    Retired pipelines stay referenced until exit: destroying a rocAL pipeline
+    mid-run while its prefetch workers are live corrupted the heap
+    (``malloc(): unsorted double linked list corrupted``) on a W8 fine-tune.
+    """
+
+    def __init__(self, build, rebuild_each_pass):
+        self._build = build
+        self._rebuild = rebuild_each_pass
+        self._loader = build()
+        self._retired = []
+        self._fresh = True
+
+    def next_pass(self):
+        if not self._fresh:
+            if self._rebuild:
+                self._retired.append(self._loader)
+                self._loader = self._build()
+            else:
+                self._loader.reset()
+        self._fresh = False
+        return self._loader
+
+
+def _evaluate(model, eval_loader, loss_fn, args, device):
     model.eval()
-    loader.reset()
+    loader = eval_loader.next_pass()
     totals = torch.zeros(4, dtype=torch.float64, device=device)
     # Per-class label histogram. A correct label mapping over a full ImageNet
     # validation set covers every class; a scrambled or truncated label space
@@ -514,28 +626,38 @@ def _evaluate(model, loader, loss_fn, args, device):
     steps = 0
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
+    # rocAL starts shard i at floor(i * N / shards) and pads a short final
+    # batch by reading on into the next shard, so each rank keeps exactly the
+    # images between its own boundaries.
     local_target = (
-        args.eval_sample_count // world_size + (1 if rank < args.eval_sample_count % world_size else 0)
+        (rank + 1) * args.eval_sample_count // world_size - rank * args.eval_sample_count // world_size
         if args.eval_steps is None
         else None
     )
     local_samples = 0
     try:
-        while steps < args.eval_steps if args.eval_steps is not None else local_samples < local_target:
-            try:
-                batches = _distributed_next_rocal_batches(
-                    loader,
-                    1,
-                    args.channels_last,
-                    device,
-                    heavy=False,
-                    reset_on_end=False,
-                )
-                if batches is None:
-                    break
-                images, labels = batches
-            except StopIteration:
+        while True:
+            # Shards differ by one image when the eval set does not divide by
+            # world size, so a rank can finish a batch early. It keeps joining
+            # the collective without fetching until no rank needs more.
+            need = steps < args.eval_steps if args.eval_steps is not None else local_samples < local_target
+            batches, status, error = None, 1, None
+            if need:
+                try:
+                    batches = _next_rocal_batches(loader, 1, args.channels_last, device, False, False)
+                except StopIteration:
+                    status = 0
+                except Exception as exc:
+                    status, error = -1, f"{type(exc).__name__}: {exc}"
+            flags = torch.tensor([int(need), -status], dtype=torch.int32, device=device)
+            dist.all_reduce(flags, op=dist.ReduceOp.MAX)
+            if int(flags[1].item()) > 0:
+                raise RuntimeError(f"rocAL eval iterator failed on at least one rank; local_error={error}")
+            if not int(flags[0].item()) or int(flags[1].item()) == 0:
                 break
+            if not need:
+                continue
+            images, labels = batches
             if local_target is not None:
                 remaining = local_target - local_samples
                 images[0] = images[0][:remaining]
@@ -560,7 +682,6 @@ def _evaluate(model, loader, loss_fn, args, device):
             local_samples += count
             steps += 1
     finally:
-        loader.reset()
         model.train()
     dist.all_reduce(totals, op=dist.ReduceOp.SUM)
     dist.all_reduce(label_hist, op=dist.ReduceOp.SUM)
@@ -801,20 +922,19 @@ def _checkpoint_roundtrip(model, optimizer, scheduler, loss_fn, image_batches, l
     return metrics
 
 
-def _hf_image_transforms(image_size, train):
-    """Standard ImageNet transforms; heavy augmentation is not part of W6."""
+def _hf_image_transforms(image_size, train, heavy=False):
+    """ImageNet transforms; ``heavy`` adds RandAugment and random erasing."""
     from torchvision import transforms
 
     normalize = transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
     if train:
-        return transforms.Compose(
-            [
-                transforms.RandomResizedCrop(image_size),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize,
-            ]
-        )
+        steps = [transforms.RandomResizedCrop(image_size), transforms.RandomHorizontalFlip()]
+        if heavy:
+            steps.append(transforms.RandAugment(num_ops=2, magnitude=9))
+        steps += [transforms.ToTensor(), normalize]
+        if heavy:
+            steps.append(transforms.RandomErasing(p=0.25))
+        return transforms.Compose(steps)
     return transforms.Compose(
         [
             transforms.Resize(256),
@@ -955,17 +1075,22 @@ def _measure_hf_loader(trainer, args, device, world_size):
                     return False
         return True
 
-    if not _drain(args.loader_warmup_steps):
+    # The DataLoader prefetches prefetch_factor batches per worker, so a short
+    # window only reads batches that were decoded during warmup. Timing at
+    # least four full prefetch queues measures the decode rate instead.
+    prefetched = max(1, loader.num_workers) * (loader.prefetch_factor or 2)
+    measured_steps = max(args.loader_benchmark_steps, 4 * prefetched // args.gradient_accumulation_steps)
+    if not _drain(max(args.loader_warmup_steps, prefetched)):
         return {}
     torch.cuda.synchronize(device)
     start = time.perf_counter()
-    if not _drain(args.loader_benchmark_steps):
+    if not _drain(measured_steps):
         return {}
     torch.cuda.synchronize(device)
     elapsed = time.perf_counter() - start
-    if elapsed <= 0 or args.loader_benchmark_steps <= 0:
+    if elapsed <= 0 or measured_steps <= 0:
         return {}
-    mean_ms = elapsed * 1000.0 / args.loader_benchmark_steps
+    mean_ms = elapsed * 1000.0 / measured_steps
     return {"data_loader_images_per_sec": images_per_step * 1000.0 / mean_ms}
 
 
@@ -1068,7 +1193,8 @@ def _run_hf_trainer(args, rank, world_size, device, local_rank):
     model.to(device)
 
     train_dataset = ImageFolder(
-        str(Path(args.dataset_path) / "train"), transform=_hf_image_transforms(args.image_size, True)
+        str(Path(args.dataset_path) / "train"),
+        transform=_hf_image_transforms(args.image_size, True, heavy=args.augmentation == "heavy"),
     )
     eval_dataset = (
         ImageFolder(str(Path(args.dataset_path) / "val"), transform=_hf_image_transforms(args.image_size, False))
@@ -1248,9 +1374,15 @@ def main():
     torch.manual_seed(2026)
     torch.cuda.manual_seed_all(2026)
 
-    if args.harness == "hf_trainer":
-        # HF Trainer drives its own loop; it writes the same artifact and returns.
-        artifact = _run_hf_trainer(args, rank, world_size, device, local_rank)
+    if args.harness in {"hf_trainer", "task"}:
+        # HF Trainer and the task harness drive their own loops; both write the
+        # same artifact contract and return.
+        if args.harness == "task":
+            import sys
+
+            artifact = _tasks_module().run_task(sys.modules[__name__], args, rank, world_size, device, local_rank)
+        else:
+            artifact = _run_hf_trainer(args, rank, world_size, device, local_rank)
         if rank == 0:
             Path(args.output).parent.mkdir(parents=True, exist_ok=True)
             Path(args.output).write_text(json.dumps(artifact, indent=2))
@@ -1259,8 +1391,9 @@ def main():
         dist.destroy_process_group()
         return
 
-    if args.backend != "torchvision":
-        raise ValueError(f"unsupported model backend: {args.backend}")
+    expected_backend = "mamba" if args.model.startswith("vim_") else "transformers" if args.model_id else "torchvision"
+    if args.backend != expected_backend:
+        raise ValueError(f"model {args.model!r} needs backend {expected_backend!r}, got {args.backend!r}")
     model = _build_model(args, device)
     model = DistributedDataParallel(model, device_ids=[local_rank], gradient_as_bucket_view=True)
     model.train()
@@ -1284,7 +1417,10 @@ def main():
                     f"PYTORCH_VISION_EVAL_BATCH shard={shard} train_bs={args.batch_size} eval_bs={eval_bs}",
                     flush=True,
                 )
-            validation_loader = _build_rocal_loader(args, rank, world_size, split="val", batch_size=eval_bs)
+            validation_loader = _EvalLoader(
+                lambda: _build_rocal_loader(args, rank, world_size, split="val", batch_size=eval_bs),
+                rebuild_each_pass=bool(args.eval_sample_count and args.eval_sample_count % world_size),
+            )
         measured_loader_metrics = _measure_rocal_loader(rocal_loader, args, device, rank, world_size)
         if measured_loader_metrics is not None:
             data_loader_metrics = measured_loader_metrics
@@ -1323,7 +1459,7 @@ def main():
         if args.channels_last:
             image_batches = [images.contiguous(memory_format=torch.channels_last) for images in image_batches]
 
-    batches_per_epoch = _rocal_batches_per_epoch(rocal_loader) if rocal_loader is not None else None
+    batches_per_epoch = _rocal_batches_per_epoch(rocal_loader, world_size) if rocal_loader is not None else None
     steps_per_epoch = (
         math.ceil(batches_per_epoch / args.gradient_accumulation_steps) if batches_per_epoch is not None else None
     )
@@ -1377,12 +1513,10 @@ def main():
         target_steps = steps_per_epoch * args.max_epochs
     step = 0
     local_images_processed = 0
-    epoch_local_samples = 0
+    eval_seconds = 0.0
     while step < target_steps:
         if args.max_duration_seconds is not None and time.perf_counter() - window_start >= args.max_duration_seconds:
             break
-        if rocal_loader is not None and steps_per_epoch and step and step % steps_per_epoch == 0:
-            rocal_loader.reset()
         wall_start = time.perf_counter()
         if rocal_loader is not None:
             batches = _distributed_next_rocal_batches(
@@ -1391,13 +1525,10 @@ def main():
                 args.channels_last,
                 device,
                 args.augmentation == "heavy",
-                reset_on_end=args.max_epochs is None,
             )
             if batches is None:
                 raise RuntimeError(f"rocAL epoch ended before expected optimizer step {step + 1}/{target_steps}")
             image_batches, label_batches = batches
-            if args.max_epochs is not None:
-                epoch_local_samples += sum(labels.numel() for labels in label_batches)
         local_images_processed += sum(labels.numel() for labels in label_batches)
         start = torch.cuda.Event(enable_timing=True)
         stop = torch.cuda.Event(enable_timing=True)
@@ -1428,32 +1559,23 @@ def main():
             milestone_losses[str(step)] = loss_value
         all_finite = all_finite and math.isfinite(loss_value)
         epoch_boundary = steps_per_epoch and step % steps_per_epoch == 0
-        if args.max_epochs is not None and epoch_boundary:
-            expected_local_samples = int(rocal_loader.iterator_length)
-            complete = torch.tensor(
-                int(epoch_local_samples == expected_local_samples),
-                dtype=torch.int32,
-                device=device,
-            )
-            dist.all_reduce(complete, op=dist.ReduceOp.MIN)
-            if not complete.item():
-                raise RuntimeError(
-                    "rocAL epoch sample mismatch on at least one rank; "
-                    f"local_consumed={epoch_local_samples}, local_expected={expected_local_samples}"
-                )
-            epoch_local_samples = 0
         if validation_loader is not None and epoch_boundary and (step // steps_per_epoch) % args.eval_every_epochs == 0:
+            eval_start = time.perf_counter()
             evaluation = _evaluate(model, validation_loader, loss_fn, args, device)
+            eval_seconds += time.perf_counter() - eval_start
             evaluation.update({"step": step, "time_seconds": elapsed})
             evaluations.append(evaluation)
             if args.stop_on_convergence and _evaluation_meets_stop_target(evaluation, args):
                 break
     if validation_loader is not None and (not evaluations or evaluations[-1]["step"] != step):
+        eval_start = time.perf_counter()
         evaluation = _evaluate(model, validation_loader, loss_fn, args, device)
+        eval_seconds += time.perf_counter() - eval_start
         evaluation.update({"step": step, "time_seconds": time.perf_counter() - window_start})
         evaluations.append(evaluation)
     torch.cuda.synchronize(device)
-    measured_window_s = _reduce_max(time.perf_counter() - window_start, device)
+    # Evaluation passes are excluded so images/s measures training throughput only.
+    measured_window_s = _reduce_max(time.perf_counter() - window_start - eval_seconds, device)
     codecarbon = _stop_codecarbon(tracker, codecarbon, rank)
     critical_times = _gather_step_times(local_times, rank, world_size, device)
     loss_initial = _reduce_mean(losses[0], world_size, device)
@@ -1564,7 +1686,9 @@ def main():
                 "completed_epochs": step // steps_per_epoch if steps_per_epoch else None,
                 "steps_per_epoch": steps_per_epoch,
                 "batches_per_epoch": batches_per_epoch,
-                "samples_per_rank_per_epoch": (int(rocal_loader.iterator_length) if rocal_loader is not None else None),
+                "samples_per_rank_per_epoch": (
+                    _rocal_samples_per_rank(rocal_loader, world_size) if rocal_loader is not None else None
+                ),
                 "loss_time_series": loss_time_series,
                 "milestone_losses": milestone_losses,
                 "evaluations": evaluations,
@@ -1630,3 +1754,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # rocAL/HIP static destructors can segfault a rank at interpreter exit after a
+    # clean run; skip them once results are written and the process group is gone.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
