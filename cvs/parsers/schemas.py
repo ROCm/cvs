@@ -617,7 +617,7 @@ class PytorchXditFlux1DevBenchmarks(BaseModel):
         default=None,
         gt=0,
         description=(
-            "Classifier-free guidance scale for run_usp.py. Defaults to 4.0 for FLUX.2-dev "
+            "Classifier-free guidance scale for the FLUX launcher. Defaults to 4.0 for FLUX.2-dev "
             "and 2.5 for FLUX.1-Kontext when omitted; not passed for FLUX.1-dev."
         ),
     )

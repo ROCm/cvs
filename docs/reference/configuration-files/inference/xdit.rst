@@ -123,7 +123,7 @@ Example: FLUX.1-dev single-node
         "container": {
             "lifetime": "per_run",
             "name": "flux-benchmark_single",
-            "_image_example": "amdsiloai/pytorch-xdit:v25.11.2",
+            "_image_example": "rocm/pytorch-xdit:v26.9",
             "image": "<changeme>",
             "runtime": {
                 "name": "docker",
@@ -134,7 +134,8 @@ Example: FLUX.1-dev single-node
                     "shm_size": "128G",
                     "volumes": [
                         "{paths.models_dir}:/hf_home",
-                        "{paths.log_dir}:/outputs"
+                        "{paths.log_dir}:/outputs",
+                        "{home}/cvs/cvs/lib/inference/xdit/scripts/run_usp.py:/benchmark/run_usp.py"
                     ],
                     "devices": ["/dev/dri", "/dev/kfd"],
                     "env": { "NCCL_DEBUG": "ERROR" }
@@ -178,7 +179,7 @@ The following parameters appear in every packaged xDiT template.
      - Description
    * - ``container.image``
      - ``<changeme>``
-     - Image to run. ``_image_example`` documents a known tag: ``amdsiloai/pytorch-xdit:v25.11.2`` for FLUX.1 and native WAN; a ``rocm/ufb-private`` gfx942 tag on ``mi3xx`` FLUX.2 and WAN Diffusers; a gfx950 tag on ``mi35x`` FLUX.2 and WAN Diffusers.
+     - Image to run. ``_image_example`` documents a known tag: ``rocm/pytorch-xdit:v26.9`` for FLUX.1; ``amdsiloai/pytorch-xdit:v25.11.2`` for native WAN; a ``rocm/ufb-private`` gfx942 tag on ``mi3xx`` FLUX.2 and WAN Diffusers; a gfx950 tag on ``mi35x`` FLUX.2 and WAN Diffusers.
    * - ``container.name``
      - ``flux-benchmark_single``
      - Docker name.
@@ -202,7 +203,7 @@ The following parameters appear in every packaged xDiT template.
      - GPU device nodes. Distributed templates also pass InfiniBand devices.
    * - ``container.runtime.args.volumes``
      - ``host:container`` list
-     - Bind mounts. FLUX.2 adds ``flux2_example.py``; WAN Diffusers adds ``wan_i2v_example.py``.
+     - Bind mounts. FLUX.1 adds ``run_usp.py``; FLUX.2 adds ``flux2_example.py``; WAN Diffusers adds ``wan_i2v_example.py``.
    * - ``container.runtime.args.env``
      - ``{"NCCL_DEBUG": "ERROR"}``
      - Extra environment variables inside the container.
@@ -233,9 +234,9 @@ the rank-0 node. ``master_port`` defaults to ``29500``.
 =============================
 
 Used by all FLUX templates. The loader stores the flat object as ``flux1_dev_t2i``.
-FLUX.2 sets ``model_type`` to ``flux2``, which selects ``flux2_example.py``. FLUX.1 uses
-``run_usp.py``. A repo or path containing ``flux2`` or ``flux.2`` is also treated as FLUX.2
-when ``model_type`` is omitted.
+FLUX.2 sets ``model_type`` to ``flux2``, which selects ``flux2_example.py``. FLUX.1 runs
+the bind-mounted ``run_usp.py`` at ``/benchmark/run_usp.py``. A repo or path containing
+``flux2`` or ``flux.2`` is also treated as FLUX.2 when ``model_type`` is omitted.
 
 .. list-table::
    :widths: 3 3 5
@@ -363,7 +364,7 @@ Diffusers xFuser WAN
 Volume mounts
 =============
 
-**FLUX.1 / WAN native** templates mount the model cache and the log directory:
+**WAN native** templates mount the model cache and the log directory:
 
 .. code:: json
 
@@ -374,6 +375,13 @@ Volume mounts
 
 An absolute ``server_params.model`` path that is not already mounted is bind-mounted at
 ``/model``.
+
+**FLUX.1** also mounts the in-tree USP launcher. The script imports ``flux_utils`` from
+``/app/Flux`` inside the image. Adjust the host path to your CVS checkout:
+
+.. code:: json
+
+  "{home}/cvs/cvs/lib/inference/xdit/scripts/run_usp.py:/benchmark/run_usp.py"
 
 **FLUX.2** also mounts the in-tree example. Adjust the host path to your CVS checkout:
 
