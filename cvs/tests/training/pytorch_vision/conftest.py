@@ -20,6 +20,7 @@ from cvs.lib.report.benchmark_metric_registry import (
     stamp_benchmark_metric_rows_on_report,
 )
 from cvs.lib.report.render.perf_metric_table import render_benchmark_metrics_html
+from cvs.lib.training.pytorch_vision.staging import staged_container
 from cvs.lib.training.pytorch_vision.utils.config_loader import (
     load_vision_variant,
     validate_sweep_selector,
@@ -159,9 +160,9 @@ def _attach_metric_verdict_extras(report, nodeid, rows):
 
 @pytest.fixture(scope="module")
 def orch(cluster_dict, variant_config, lifecycle):
-    container = _deep_merge(
-        cluster_dict.get("container", {}),
-        variant_config.container.model_dump(),
+    container = staged_container(
+        _deep_merge(cluster_dict.get("container", {}), variant_config.container.model_dump()),
+        variant_config.training.dataset_staging,
     )
     config = OrchestratorConfig.from_configs(
         cluster_dict,
@@ -176,6 +177,7 @@ def orch(cluster_dict, variant_config, lifecycle):
 
 def pytest_collection_modifyitems(items):
     order = {
+        "test_stage_dataset": -1,
         "test_launch_container": 0,
         "test_verify_environment": 1,
         "test_real_data_smoke": 2,

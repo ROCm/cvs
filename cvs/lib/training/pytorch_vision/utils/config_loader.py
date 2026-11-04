@@ -127,6 +127,36 @@ class CodeCarbonConfig(_Forbid):
         return self
 
 
+class DatasetStagingConfig(_Forbid):
+    """Copy a container volume's host directory onto each node before launch.
+
+    Reading ImageNet from a shared filesystem held W1 to 12k images/s on one
+    MI325X node; the same run read from ``/dev/shm`` reached 24k. When enabled,
+    the volume whose host side is ``source`` is mounted from ``destination``
+    instead. A verified copy is reused by later runs until the source changes.
+    """
+
+    enabled: bool = False
+    source: str = ""
+    destination: str = ""
+    parallel_copies: int = Field(default=48, ge=1, le=256)
+    timeout_s: int = Field(default=3600, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_paths(self):
+        if not self.enabled:
+            return self
+        source = self.source.rstrip("/")
+        destination = self.destination.rstrip("/")
+        if not source.startswith("/") or not destination.startswith("/"):
+            raise ValueError("dataset_staging source and destination must be absolute paths")
+        if destination.count("/") < 2:
+            raise ValueError("dataset_staging.destination must be a dedicated directory, not a top-level path")
+        if source == destination or destination.startswith(source + "/") or source.startswith(destination + "/"):
+            raise ValueError("dataset_staging source and destination must not contain each other")
+        return self
+
+
 class VisionSweep(_Forbid):
     # HuggingFace model id, required by the hf_trainer harness.
     model_id: str = ""
@@ -251,6 +281,7 @@ class VisionTrainingConfig(_Forbid):
     scaling_baseline: ScalingBaselineConfig = Field(default_factory=ScalingBaselineConfig)
     convergence: ConvergenceConfig = Field(default_factory=ConvergenceConfig)
     codecarbon: CodeCarbonConfig = Field(default_factory=CodeCarbonConfig)
+    dataset_staging: DatasetStagingConfig = Field(default_factory=DatasetStagingConfig)
     env_vars: Dict[str, str] = Field(default_factory=dict)
     error_patterns: Dict[str, str] = Field(default_factory=dict)
     sweeps: List[VisionSweep]
@@ -384,6 +415,20 @@ class VisionVariantConfig(BaseVariantConfig):
         if name not in _ALLOWED_GPU_NAMES:
             raise ValueError(f"gpu_name must be one of {list(_ALLOWED_GPU_NAMES)}, got {value!r}")
         return name
+
+    @model_validator(mode="after")
+    def _validate_dataset_staging(self):
+        staging = self.training.dataset_staging
+        if not staging.enabled:
+            return self
+        volumes = self.container.runtime.args.get("volumes") or []
+        hosts = [str(volume).split(":", 1)[0].rstrip("/") for volume in volumes]
+        if staging.source.rstrip("/") not in hosts:
+            raise ValueError(
+                f"dataset_staging.source {staging.source!r} must be the host side of a container volume; "
+                f"volumes are {volumes}"
+            )
+        return self
 
     @property
     def gpu_arch(self) -> str:

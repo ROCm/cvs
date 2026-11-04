@@ -5,16 +5,17 @@ All rights reserved.
 PyTorch Vision Multi-Node Training Validation Suite.
 
 Tests performed (in order):
-1. test_launch_container              - Launch the training container on every node
-2. test_verify_environment            - Verify torch/torchvision/GPU count and arch per node
-3. test_real_data_smoke[sweep]        - rocAL smoke profiles only: short real-data run
-4. test_training[sweep]               - Run one training sweep across all nodes
-5. test_rocal_overhead_comparisons    - Require the rocAL CPU/GPU and augmentation baselines
-6. test_metric[sweep-metric]          - Validate each metric against its threshold
-7. test_loss_curve[sweep]             - Render the loss curve and check it decreases
-8. test_convergence[sweep]            - Steps/time to the configured accuracy target
-9. test_print_results_table           - Console tables + metric-results HTML
-10. test_teardown                     - Tear the containers down
+1. test_stage_dataset                 - Stage the dataset onto every node (training.dataset_staging)
+2. test_launch_container              - Launch the training container on every node
+3. test_verify_environment            - Verify torch/torchvision/GPU count and arch per node
+4. test_real_data_smoke[sweep]        - rocAL smoke profiles only: short real-data run
+5. test_training[sweep]               - Run one training sweep across all nodes
+6. test_rocal_overhead_comparisons    - Require the rocAL CPU/GPU and augmentation baselines
+7. test_metric[sweep-metric]          - Validate each metric against its threshold
+8. test_loss_curve[sweep]             - Render the loss curve and check it decreases
+9. test_convergence[sweep]            - Steps/time to the configured accuracy target
+10. test_print_results_table          - Console tables + metric-results HTML
+11. test_teardown                     - Tear the containers down
 
 This is the MULTI-NODE variant. The config must set
 ``training.distributed: true`` and the cluster file must contain two or more
@@ -38,6 +39,12 @@ Example usage:
 '''
 
 from cvs.tests.training.pytorch_vision import _common
+
+
+def test_stage_dataset(orch, variant_config, lifecycle, request):
+    """Copy the dataset volume onto local storage when training.dataset_staging
+    is enabled, reusing a verified copy from an earlier run."""
+    return _common.stage_dataset(orch, variant_config, lifecycle, request)
 
 
 def test_launch_container(orch, lifecycle, request):

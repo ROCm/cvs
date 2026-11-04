@@ -118,6 +118,13 @@ Training block
   rather than reported as a misleading zero.
 - ``codecarbon``: CodeCarbon 3.2.4 AMDSMI activation, sampling, and
   required/optional policy.
+- ``dataset_staging``: copies a dataset volume onto each node before the
+  container starts and mounts the copy in its place. ``enabled`` (default
+  ``false``); ``source``, the host side of one ``container.runtime.args.volumes``
+  entry; ``destination``, a dedicated directory on node-local storage such as
+  ``/dev/shm/cvs-imagenet-1k``; ``parallel_copies`` (default 48) and
+  ``timeout_s`` (default 3600). The destination must not contain the source or
+  sit inside it.
 - ``env_vars``: exported only for the training process. ``NNODES`` and
   ``NODE_RANK`` are overwritten per node by the launcher.
 - ``error_patterns``: named regular expressions checked against

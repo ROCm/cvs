@@ -20,6 +20,7 @@ from tabulate import tabulate
 
 from cvs.lib import globals
 from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
+from cvs.lib.training.pytorch_vision import staging as staging_lib
 from cvs.lib.training.pytorch_vision.job import PyTorchVisionJob
 from cvs.lib.training.pytorch_vision.utils.metrics import (
     GATED_METRICS,
@@ -123,7 +124,24 @@ def _refresh_pipeline_overheads(variant_config, training_results):
                 )
 
 
+def stage_dataset(orch, variant_config, lifecycle, request):
+    staging = variant_config.training.dataset_staging
+    if not staging.enabled:
+        pytest.skip("training.dataset_staging is not enabled")
+    start = time.monotonic()
+    try:
+        summaries = staging_lib.stage_dataset(orch.all, orch.hosts, staging)
+    except Exception:
+        lifecycle.failed = True
+        raise
+    lifecycle.record(request.node.nodeid, "dataset_staging", time.monotonic() - start)
+    for host, summary in sorted(summaries.items()):
+        log.info("%s: %s", host, summary)
+
+
 def launch_container(orch, lifecycle, request):
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
     name = orch.get_container_name(orch.container_config, orch.container_config["image"])
     start = time.monotonic()
     if not orch.setup_containers():
