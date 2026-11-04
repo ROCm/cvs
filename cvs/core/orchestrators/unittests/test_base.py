@@ -61,20 +61,17 @@ class TestOrchestratorExecContract(unittest.TestCase):
 class TestOrchestratorExecCmdListContract(unittest.TestCase):
     def test_subclass_without_exec_cmd_list_still_instantiates_and_raises_not_implemented(self):
         orch = _AbstractMethodsOnly(MagicMock(), {})
-        for method in ('exec_cmd_list', 'exec_cmd_list_on_host'):
-            with self.subTest(method=method):
-                with self.assertRaisesRegex(NotImplementedError, f'{method} not supported by _AbstractMethodsOnly'):
-                    getattr(orch, method)(['echo a'])
+        with self.assertRaisesRegex(NotImplementedError, 'exec_cmd_list not supported by _AbstractMethodsOnly'):
+            orch.exec_cmd_list(['echo a'])
 
     def test_concrete_backends_match_base_signature(self):
-        for method in ('exec_cmd_list', 'exec_cmd_list_on_host'):
-            expected = inspect.signature(getattr(Orchestrator, method)).parameters
-            for cls in (BaremetalOrchestrator, ContainerOrchestrator):
-                with self.subTest(cls=cls, method=method):
-                    parameters = inspect.signature(getattr(cls, method)).parameters
-                    self.assertEqual(list(parameters), list(expected))
-                    self.assertIsNone(parameters['timeout'].default)
-                    self.assertIs(parameters['print_console'].default, True)
+        expected = inspect.signature(Orchestrator.exec_cmd_list).parameters
+        for cls in (BaremetalOrchestrator, ContainerOrchestrator):
+            with self.subTest(cls=cls):
+                parameters = inspect.signature(cls.exec_cmd_list).parameters
+                self.assertEqual(list(parameters), list(expected))
+                self.assertIsNone(parameters['timeout'].default)
+                self.assertIs(parameters['print_console'].default, True)
 
 
 if __name__ == '__main__':

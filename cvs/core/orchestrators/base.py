@@ -85,14 +85,6 @@ class Orchestrator(ABC):
         """
         raise NotImplementedError(f"exec_cmd_list not supported by {self.__class__.__name__}")
 
-    def exec_cmd_list_on_host(self, cmd_list, timeout=None, print_console=True):
-        """
-        Like exec_cmd_list(), but on the host OS, bypassing runtime environments.
-
-        Default implementation raises NotImplementedError.
-        """
-        raise NotImplementedError(f"exec_cmd_list_on_host not supported by {self.__class__.__name__}")
-
     @abstractmethod
     def exec_on_head(self, cmd, timeout=None, detailed=False):
         """

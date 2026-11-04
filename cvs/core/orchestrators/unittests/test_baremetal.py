@@ -105,14 +105,12 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         self.assertEqual(result, {"10.0.0.1": "ok", "10.0.0.2": "ok"})
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
-    def test_exec_cmd_list_and_on_host_variant_delegate_to_all(self, _mock_pssh):
-        for method in ("exec_cmd_list", "exec_cmd_list_on_host"):
-            with self.subTest(method=method):
-                orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
-                orch.all = MagicMock()
-                result = getattr(orch, method)(["echo a", "echo b"], timeout=7, print_console=False)
-                orch.all.exec_cmd_list.assert_called_once_with(["echo a", "echo b"], timeout=7, print_console=False)
-                self.assertIs(result, orch.all.exec_cmd_list.return_value)
+    def test_exec_cmd_list_delegates_to_all(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        result = orch.exec_cmd_list(["echo a", "echo b"], timeout=7, print_console=False)
+        orch.all.exec_cmd_list.assert_called_once_with(["echo a", "echo b"], timeout=7, print_console=False)
+        self.assertIs(result, orch.all.exec_cmd_list.return_value)
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_cmd_list_defaults_match_all_handle(self, _mock_pssh):

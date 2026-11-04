@@ -180,10 +180,6 @@ class BaremetalOrchestrator(Orchestrator):
             print_console=print_console,
         )
 
-    def exec_cmd_list_on_host(self, cmd_list, timeout=None, print_console=True):
-        """Execute cmd_list[i] directly on the i-th host's OS."""
-        return self.exec_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
-
     def sudo_prefix(self):
         """
         Return the command prefix needed for privileged commands, probing
