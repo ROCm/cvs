@@ -141,6 +141,9 @@ class DatasetStagingConfig(_Forbid):
     destination: str = ""
     parallel_copies: int = Field(default=48, ge=1, le=256)
     timeout_s: int = Field(default=3600, gt=0)
+    # A copy in /dev/shm holds node RAM until it is removed; keeping it lets
+    # the next run skip the copy.
+    remove_after_run: bool = False
 
     @model_validator(mode="after")
     def _validate_paths(self):

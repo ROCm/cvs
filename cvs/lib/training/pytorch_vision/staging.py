@@ -67,6 +67,26 @@ echo "CVS_STAGE copied $count files, $bytes bytes to $dst in $(($(date +%s) - st
 """.replace("__MARKER__", _MARKER).replace("__IN_PROGRESS__", _IN_PROGRESS)
 
 
+_REMOVE_SCRIPT = r"""
+set -euo pipefail
+dst=$1
+[ -d "$dst" ] || exit 0
+exec 9>"$(dirname "$dst")/.$(basename "$dst").lock"
+flock 9
+if [ -e "$dst/__MARKER__" ] || [ -e "$dst/__IN_PROGRESS__" ]; then
+    rm -rf "$dst"
+    echo "CVS_STAGE removed $dst"
+else
+    echo "CVS_STAGE kept $dst: it was not created by CVS dataset staging"
+fi
+""".replace("__MARKER__", _MARKER).replace("__IN_PROGRESS__", _IN_PROGRESS)
+
+
+def remove_command(staging) -> str:
+    """Shell command that deletes a staged copy, and only a staged copy."""
+    return "bash -c " + shlex.quote(_REMOVE_SCRIPT) + " cvs-unstage " + shlex.quote(staging.destination.rstrip("/"))
+
+
 def stage_command(staging) -> str:
     """Shell command that stages ``staging.source`` into ``staging.destination``."""
     args = (staging.source.rstrip("/"), staging.destination.rstrip("/"), str(staging.parallel_copies))
@@ -91,9 +111,18 @@ def staged_container(container: dict, staging) -> dict:
 
 def stage_dataset(host_handle, hosts, staging) -> dict:
     """Stage on every host and return each host's summary line."""
+    return _run_on_hosts(host_handle, hosts, stage_command(staging), staging.timeout_s, "dataset staging")
+
+
+def remove_staged_dataset(host_handle, hosts, staging) -> dict:
+    """Delete the staged copy on every host and return each host's summary line."""
+    return _run_on_hosts(host_handle, hosts, remove_command(staging), staging.timeout_s, "staged dataset removal")
+
+
+def _run_on_hosts(host_handle, hosts, command, timeout_s, action) -> dict:
     result = host_handle.exec(
-        stage_command(staging),
-        timeout=staging.timeout_s,
+        command,
+        timeout=timeout_s,
         detailed=True,
         print_console=False,
     )
@@ -115,5 +144,5 @@ def stage_dataset(host_handle, hosts, staging) -> dict:
             output.strip()[-300:],
         )
     if missing or failures:
-        raise RuntimeError(f"dataset staging failed: missing={missing}, failures={failures}")
+        raise RuntimeError(f"{action} failed: missing={missing}, failures={failures}")
     return summaries

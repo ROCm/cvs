@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from cvs.lib.training.pytorch_vision.staging import stage_dataset, staged_container
+from cvs.lib.training.pytorch_vision.staging import remove_staged_dataset, stage_dataset, staged_container
 from cvs.lib.training.pytorch_vision.unittests.test_config_loader import _config, _thresholds
 from cvs.lib.training.pytorch_vision.utils.config_loader import load_vision_variant
 
@@ -80,6 +80,20 @@ class TestStageDataset(unittest.TestCase):
             self._stage()
         self.assertEqual((self.destination / "keep.txt").read_text(), "user data")
 
+    def test_removes_a_staged_copy_after_the_run(self):
+        self._stage()
+        summary = remove_staged_dataset(self.hosts, ["node0"], _staging(self.source, self.destination))["node0"]
+        self.assertIn("CVS_STAGE removed", summary)
+        self.assertFalse(self.destination.exists())
+        self.assertTrue((self.source / "train/0001/a.JPEG").is_file())
+
+    def test_removal_keeps_a_directory_it_did_not_create(self):
+        self.destination.mkdir(parents=True)
+        (self.destination / "keep.txt").write_text("user data")
+        summary = remove_staged_dataset(self.hosts, ["node0"], _staging(self.source, self.destination))["node0"]
+        self.assertIn("CVS_STAGE kept", summary)
+        self.assertTrue((self.destination / "keep.txt").is_file())
+
     def test_reports_a_missing_source(self):
         shutil.rmtree(self.source)
         with self.assertRaisesRegex(RuntimeError, "is not a directory"):
@@ -120,6 +134,7 @@ class TestStagingConfig(unittest.TestCase):
     def test_accepts_a_source_that_is_a_volume(self):
         variant = self._load({"enabled": True, "source": "/weka/imagenet/", "destination": "/dev/shm/cvs-imagenet"})
         self.assertEqual(variant.training.dataset_staging.parallel_copies, 48)
+        self.assertFalse(variant.training.dataset_staging.remove_after_run)
 
     def test_rejects_a_source_that_no_volume_mounts(self):
         with self.assertRaisesRegex(ValueError, "host side of a container volume"):

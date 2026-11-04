@@ -124,7 +124,8 @@ Training block
   entry; ``destination``, a dedicated directory on node-local storage such as
   ``/dev/shm/cvs-imagenet-1k``; ``parallel_copies`` (default 48) and
   ``timeout_s`` (default 3600). The destination must not contain the source or
-  sit inside it.
+  sit inside it. ``remove_after_run`` (default ``false``) deletes the copy in
+  ``test_teardown``; left off, the copy stays for the next run to reuse.
 - ``env_vars``: exported only for the training process. ``NNODES`` and
   ``NODE_RANK`` are overwritten per node by the launcher.
 - ``error_patterns``: named regular expressions checked against

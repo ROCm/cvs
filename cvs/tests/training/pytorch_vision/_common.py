@@ -546,7 +546,7 @@ def print_results_table(variant_config, training_results, metric_rows, train_res
     log.info("\n%s", tabulate(rows, headers=headers, tablefmt="github", floatfmt=".3f"))
 
 
-def teardown(orch, lifecycle, request):
+def teardown(orch, variant_config, lifecycle, request):
     name = orch.get_container_name(orch.container_config, orch.container_config["image"])
     start = time.monotonic()
     if not orch.teardown_containers():
@@ -558,3 +558,7 @@ def teardown(orch, lifecycle, request):
     if running or probe_failures:
         pytest.fail(f"container teardown verification failed: running={running}, probe_failures={probe_failures}")
     lifecycle.torn_down = True
+    staging = variant_config.training.dataset_staging
+    if staging.enabled and staging.remove_after_run:
+        for host, summary in sorted(staging_lib.remove_staged_dataset(orch.all, orch.hosts, staging).items()):
+            log.info("%s: %s", host, summary)

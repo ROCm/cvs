@@ -110,6 +110,6 @@ def test_print_results_table(variant_config, training_results, metric_rows, trai
     )
 
 
-def test_teardown(orch, lifecycle, request):
+def test_teardown(orch, variant_config, lifecycle, request):
     """Tear the container down and verify it is gone."""
-    return _common.teardown(orch, lifecycle, request)
+    return _common.teardown(orch, variant_config, lifecycle, request)
