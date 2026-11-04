@@ -13,17 +13,69 @@ run on performance and correctness metrics with a PASS/FAIL HTML report.
 Overview
 ========
 
-The suites drive a vision training job (ResNet-50 for W1/W2, ViT-B/16 for W3,
-ViT-base-patch16-224 for W6) inside a container on one or more
+The suites drive a vision training job inside a container on one or more
 cluster nodes, then parse the rank-zero result artifact to produce metrics and
-verdicts. They provide:
+verdicts. The shipped configs cover these scorecard workloads:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 8 42 20 30
+
+   * - Id
+     - Workload
+     - Harness
+     - Profiles
+   * - W1/W2
+     - ResNet-50 on ImageNet-1k, one node / multi-node
+     - ``native``
+     - smoke, perf, train-5k, to-accuracy (W1)
+   * - W3
+     - ViT-B/16 on ImageNet-1k
+     - ``native``
+     - smoke, perf, train-5k
+   * - W4
+     - DETR-ResNet-50 on COCO 2017
+     - ``task`` (detection)
+     - smoke, perf, finetune
+   * - W5
+     - Vision Mamba (Vim-S) on ImageNet-1k
+     - ``native`` (``mamba`` backend)
+     - smoke, perf, train-5k
+   * - W6
+     - ViT-base-patch16-224 on ImageNet-1k, HF ``Trainer`` + FSDP
+     - ``hf_trainer``
+     - smoke, perf, train-5k, FSDP strategies
+   * - W7
+     - ResNet-18 on CIFAR-10, one GPU
+     - ``native``
+     - smoke, one epoch, perf
+   * - W8
+     - ViT-base fine-tune on Food-101
+     - ``native`` (``transformers`` backend)
+     - smoke, perf, finetune
+   * - W9
+     - SegFormer-B0 on ADE20K
+     - ``task`` (segmentation)
+     - smoke, perf, train-5k
+   * - W10
+     - Qwen2.5-VL-7B multimodal SFT on ChartQA, one node
+     - ``task`` (vlm_sft)
+     - smoke, perf, finetune
+   * - W11
+     - Qwen2.5-VL-72B multimodal SFT on ChartQA, multi-node
+     - ``task`` (vlm_sft)
+     - smoke (1N reference and multi-node), perf, finetune
+
+They provide:
 
 #. **Config-selected workload** — the model, FLOPs/image, optimizer, and
    scorecard workload id all come from the config, so the same suite code
-   serves W1, W3, W6, and future vision rows without modification.
-#. **Two training harnesses** — ``training.harness`` selects ``native`` (our
-   own DDP loop, W1-W3) or ``hf_trainer`` (HuggingFace Trainer with FSDP, W6).
-   Both emit the same result artifact so their scorecard rows stay comparable.
+   serves every row above without modification.
+#. **Three training harnesses** — ``training.harness`` selects ``native`` (our
+   own DDP loop with rocAL input), ``hf_trainer`` (HuggingFace Trainer with
+   FSDP, W6), or ``task`` (detection, segmentation, and multimodal SFT loops,
+   W4/W9-W11). All emit the same result artifact so their scorecard rows stay
+   comparable.
 #. **Two suites** — ``pytorch_vision_single`` (one node) and
    ``pytorch_vision_distributed`` (two or more nodes, one ``torchrun`` rank
    group per node).
@@ -187,12 +239,25 @@ through ``rdma7``, RoCE GID 3). ``eno0`` is only the TCP bootstrap. These
 nodes share that layout, so the values are set in the distributed configs
 rather than left as placeholders.
 
+``NCCL_DMABUF_ENABLE`` stays ``0``. With it set to ``1``, four-node ResNet-50
+runs on these nodes segfaulted inside ``libdrm_amdgpu`` while RCCL registered
+GPU memory, on four separate sweeps of one perf run, always on the same node.
+The same primary sweep with DMA-BUF registration off completed both repeats
+(41,790 and 42,930 images/s on four nodes).
+
 Scaling efficiency needs a calibrated reference. Set
 ``training.scaling_baseline.images_per_sec_total`` from a prior single-node
 run's ``results.json``, and ``num_nodes`` to that run's node count, before the
 metric appears. Left at ``0.0`` it is omitted rather than reported as a
 misleading zero, so a distributed run never claims an efficiency it cannot
 substantiate.
+
+Scale parity compares quality rather than throughput. Set
+``scaling_baseline.accuracy_metric`` (``top1_accuracy_pct``, ``map_50_95``,
+``miou_pct``, or ``vlm_benchmark_score``) and ``accuracy_value`` from the same
+reference run, and the distributed run reports
+``scale_parity_accuracy_delta``: its own value minus the reference, in points.
+Both keys must be set together.
 
 Training crop
 =============
@@ -203,6 +268,19 @@ horizontal flip. The previous train path used ``image_slice``, which crops a
 random window and stretches it to 224. A 90-epoch ResNet-50 run on that path
 finished at 13.1% Top-1 against the 75.5% qualification target. Evaluation is
 unchanged: shorter side 256, then a 224 center crop.
+
+Training sampling
+=================
+
+Every rank reads the whole training set in its own seeded order, which rocAL
+reshuffles on each pass. One epoch is each rank's share of the set
+(``ceil(N / world_size)`` images), so a rank's full pass spans ``world_size``
+epochs. rocAL shards are contiguous runs of the class-sorted file list and it
+shuffles only within a shard, so a sharded loader hands each of 8 ranks a fixed
+block of about 125 classes. BatchNorm batch statistics then encode which block a
+batch came from: a 5,000-step ResNet-50 run on sharded input reached train loss
+2.6 at 5.8% validation Top-1. Evaluation still shards, because it must see each
+validation image exactly once.
 
 Evaluation label correctness
 ============================
@@ -219,8 +297,17 @@ min == max == 50.
 The evaluation batch size is chosen automatically as the largest divisor of
 the per-rank shard that does not exceed the training batch size, so evaluation
 never leaves a partial batch. This matters because rocAL's default
-``LAST_BATCH_FILL`` pads a partial final batch by repeating samples, and those
-repeats land in the accuracy numbers. Measured over 8 shards at batch 128
+``LAST_BATCH_FILL`` pads a partial final batch with extra samples, and those
+extras land in the accuracy numbers.
+
+When the evaluation set does not divide by the world size (Food-101's 25,250
+images over 8 ranks), the shards differ by one image. rocAL starts shard ``i``
+at ``floor(i * N / shards)`` and fills the short batch by reading on into the
+next shard, so each rank keeps exactly the images between its own boundaries.
+Ranks that finish early keep joining the per-batch collective without fetching
+until every rank is done. Measured on Food-101: trimming to these boundaries
+yields 250 images in every class, where the earlier "first ranks take the
+remainder" rule gave 249-251. Measured over 8 shards at batch 128
 (6,250 per shard): ``FILL`` yielded 50,176 samples with 50-72 images per class,
 ``LAST_BATCH_PARTIAL`` 48,976 with 16 classes missing entirely, and
 ``LAST_BATCH_DROP`` 48,128 with 32 missing. Sizing the batch to divide exactly
@@ -262,7 +349,20 @@ Metrics surfaced (namespace ``training.*``): ``images_per_sec``,
 ``rocal_cpu_overhead_pct``, ``loss_{initial,final}``,
 ``loss_step_{100,500,1000,5000}``, ``top1_accuracy_pct``,
 ``top5_accuracy_pct``, ``eval_loss``, ``eval_sample_count``,
-``convergence_{step,time_seconds}``, ``energy_kwh``, ``images_per_kwh``.
+``convergence_{step,time_seconds}``, ``energy_kwh``, ``images_per_kwh``,
+``scaling_efficiency_pct``, ``scale_parity_accuracy_delta``.
+
+Task workloads replace Top-1/Top-5 with their own quality metric:
+``map_50_95`` and ``map_50`` (W4, COCO), ``miou_pct`` and
+``pixel_accuracy_pct`` (W9, ADE20K), and ``vlm_benchmark_score`` (W10/W11,
+ChartQA relaxed accuracy). Multimodal runs add ``multimodal_samples_per_sec``
+and ``tokens_per_sec``, and report TFLOPS from ``6 x parameters x tokens``.
+The quality metric is required whenever the profile evaluates, so a run that
+silently skips evaluation fails rather than passing without it.
+
+``images_per_sec`` covers training only: evaluation passes inside the measured
+window are subtracted, so a smoke profile's full validation pass does not
+deflate its throughput.
 
 Gating is threshold-driven and requires ``enforce_thresholds: true``. A
 threshold entry with ``"kind": "info"`` always passes (record-only).
@@ -303,6 +403,28 @@ Prerequisites
 - ImageNet-1k reachable at the same path on every node, laid out as
   ``train/<label>/*.JPEG`` and ``val/<label>/*.JPEG``. CVS does not download
   it, because its distribution requires separate access terms.
+- Every ``.JPEG`` must be a real JPEG. ImageNet-1k train ships one PNG under
+  a ``.JPEG`` name (n02105855_2933, class index 230), and rocAL aborts the whole
+  run when it reaches it: a segfault in ``libjpeg`` or ``libstdc++`` partway
+  through any profile long enough to decode that file. Run
+  ``build_tools/pytorch_vision/sanitize_imagefolder.py <root>`` once to find
+  such files, and add ``--fix --backup-dir <dir>`` to re-encode them as RGB
+  JPEGs with the originals kept. On the CVS copy it flagged that single file;
+  its 86 JPEGs with very large metadata segments decode correctly and are left
+  alone.
+- No side may exceed 8000 pixels. rocAL decodes into a buffer of at most
+  1000x1000 and TurboJPEG scales down by at most 1/8, so a longer side overruns
+  the buffer and segfaults inside ``libjpeg``. ImageNet-1k train has one such
+  file (9331x2105, class index 718); the sanitizer flags it as ``oversize`` and
+  ``--fix`` shrinks it to fit. After both fixes every training image passed two
+  random-crop passes through the training pipeline without a fault.
+- The W4-W11 data and weights live under one host directory, mounted at
+  ``/datasets/cvs_vision`` and set through the
+  ``<changeme-cvs-vision-host-path>`` placeholder. It holds the HuggingFace cache
+  (``hub/``) and the prepared datasets: ``cifar10/`` and ``food101/`` as
+  ImageFolder trees, ``coco/`` (``train2017``, ``val2017``, ``annotations``),
+  and ``ade20k/ADEChallengeData2016``. Runs set ``HF_HUB_OFFLINE=1``, so every
+  model must already be in the cache.
 
 See also :doc:`/how-to/run-tests/index` for common ``cvs run`` flags and
 workflow, and
@@ -383,14 +505,100 @@ rather than our own DDP loop. It differs from W3 in more than node count:
   checkpoint makes those rows meaningless, which is why they are split across
   profiles rather than taken from a single run.
 
-Scaling on this cluster is poor: ``full_shard`` spreads an 86M-parameter model
-across every rank, so the cross-node all-gather traffic outweighs the added
-compute and two nodes reach roughly half the ideal throughput. ``HYBRID_SHARD``
-(shard within a node, replicate across nodes) is the usual remedy for a model
-this size and is not yet evaluated here.
+Scaling with ``full_shard`` is poor: it spreads an 86M-parameter model across
+every rank, so the cross-node all-gather traffic outweighs the added compute.
+See `FSDP sharding strategy`_ for the ``hybrid_shard`` comparison.
 
 Because ``Trainer`` owns the loop, it also owns the optimizer and LR schedule.
 The ``training.lr_schedule`` block and the learning-rate trajectory assertion
 apply to the ``native`` harness only; for W6 the scheduler actually used is
 recorded in the artifact as ``hf_lr_scheduler_type``.
 
+
+The ``task`` harness (W4, W9, W10, W11)
+=======================================
+
+Detection, segmentation, and multimodal SFT do not fit a classification loop,
+so ``training.harness: task`` with ``training.task`` set to ``detection``,
+``segmentation``, or ``vlm_sft`` runs them through ``tasks.py``, staged next to
+the benchmark script. Each task owns its dataset, collate, loss, and
+evaluation; the harness owns everything the scorecard compares across
+workloads: warmup, the timed window, gradient accumulation, the loss curve and
+milestones, CodeCarbon, the checkpoint round trip, and the result artifact.
+These sweeps use ``data_mode: dataset`` and ``backend: transformers``, and
+``training.task_options`` carries the per-task settings below.
+
+* **W4 DETR** — ``facebook/detr-resnet-50`` on COCO train2017 with DDP. The
+  evaluation runs ``post_process_object_detection`` on each rank's slice of
+  val2017 and scores the gathered detections with ``pycocotools`` on rank
+  zero. ``pad_multiple`` rounds each batch's padded canvas up to a bucket, and
+  the configs set ``MIOPEN_FIND_MODE=FAST``: DETR batches change shape every
+  step, and a MIOpen kernel search per new shape otherwise dominated the run.
+  The smoke profile measured 44.1 mAP@0.5:0.95 on 200 val images, against
+  42.0 published for this checkpoint on the full set.
+* **W9 SegFormer** — ADE20K with ``reduce_labels`` (background is ignored).
+  Training uses random scale, flip, and 512 crops; evaluation resizes to the
+  crop and upsamples the logits. Smoke loads the ADE-fine-tuned checkpoint,
+  while perf and train-5k start from the ImageNet ``nvidia/mit-b0`` encoder.
+* **W10/W11 Qwen2.5-VL** — ChartQA SFT under FSDP with activation
+  checkpointing. Rank zero loads the weights and the other ranks build an
+  empty model, so the 72B checkpoint is read once per node rather than once
+  per GPU. Prompt tokens are masked from the loss. Evaluation reports the
+  validation loss and ChartQA relaxed accuracy (5% numeric tolerance) from
+  batched ``generate`` with ``synced_gpus``. ``max_pixels`` caps the image
+  tokens; at the shipped 401,408 the 7B model scored 73.4 on a 64-sample smoke
+  evaluation, below the published figure, which uses a much higher image
+  resolution.
+
+The ``finetune`` run mode covers W4, W8, W10, and W11: an accuracy-phase run
+from a pretrained checkpoint with evaluation required and the loss curve
+recorded, but without the 5,000-step milestone rows of ``train_5k``.
+
+Vision Mamba and HF backbones on the native harness
+===================================================
+
+W5 and W8 use the native rocAL loop with a different model builder.
+``model: vim_small`` with ``backend: mamba`` builds Vision Mamba (bidirectional
+selective scan, middle class token) and, with ``task_options.pretrained_file``,
+loads ``hustvl/Vim-small-midclstok``. The smoke profile reproduces the
+checkpoint's accuracy: 80.35% Top-1 on the full ImageNet validation set against
+80.5% published. ``sweep.model_id`` with ``backend: transformers`` wraps any HF
+image classifier; W8 sets ``task_options.input_normalization: half`` because
+the ViT checkpoints were trained on inputs scaled to ``[-1, 1]``.
+
+Both need the task image, ``cvs/pytorch-vision-tasks``, built by
+``build_tools/pytorch_vision/Dockerfile.tasks-7.2.4`` on top of the HF image. It
+adds timm, pycocotools, and ``mamba_ssm`` from upstream main. The last release
+does not build on ROCm 7, and ``MAMBA_KEEP_CUDA_BUILD`` keeps the Mamba-1
+``selective_scan`` kernel Vision Mamba needs. ``HIP_ARCHITECTURES`` must be set
+because ``docker build`` has no GPU to probe.
+
+Measured on MI325X (8 GPUs per node, record-only)
+==================================================
+
+Single node, one run of the primary sweep unless noted:
+
+* **W1** perf 13,400 images/s (GPU decode, batch 128). Train-5k from scratch:
+  39.06% Top-1, 65.37% Top-5, 12,016 images/s. Smoke of the pretrained weights
+  is a separate profile and scores the published checkpoint.
+* **W3** train-5k from scratch: 27.13% Top-1 at 11,190 images/s.
+* **W4** smoke 44.14 mAP@0.5:0.95 (200 images) at 40.7 images/s; perf 76.6
+  images/s at batch 4 and 54.4 at batch 2; a short fine-tune scored 39.96 mAP.
+* **W5** smoke 80.35% Top-1 on the full validation set. Perf about 2,000-2,360
+  images/s. Train-5k from scratch: 43.84% Top-1 at 2,356 images/s.
+* **W6** single-node perf: 9,724 and 9,522 images/s on the two standard sweeps,
+  6,123 images/s with heavy augmentation.
+* **W7** one epoch: 40.45% Top-1. Perf 11,600-13,000 images/s on one GPU's
+  worth of the node measurement.
+* **W8** fine-tune: 88.17% Top-1 (target 85) at 10,100 images/s. Smoke of the
+  fresh 101-way head after 10 steps was 6.68% Top-1 with 250 images in every class.
+* **W9** smoke 28.07 mIoU and 80.21% pixel accuracy at 1,553 images/s. Perf
+  1,978 and 1,681 images/s. Train-5k from the ImageNet encoder: 25.84 mIoU at
+  1,726 images/s.
+* **W10** smoke ChartQA relaxed accuracy 73.4 on 64 samples, 8.84 samples/s
+  and 4,599 tokens/s. Perf 10.1 samples/s (5,235 tokens/s) and 7.9 samples/s.
+  Fine-tune scored 75.6.
+* **W11** single-node smoke: 1.78 samples/s, 898 tokens/s.
+
+Four nodes, DMA-BUF registration off: the W2 primary perf sweep measured
+41,790 and 42,930 images/s across two repeats.

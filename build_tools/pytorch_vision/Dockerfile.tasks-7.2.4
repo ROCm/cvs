@@ -1,0 +1,39 @@
+# PyTorch Vision task image: the HF image plus detection, segmentation,
+# Vision Mamba, and multimodal SFT dependencies.
+#
+# W4 (DETR) needs timm for its backbone and pycocotools for COCO mAP. W5
+# (Vision Mamba) needs the mamba_ssm selective-scan kernels built for ROCm.
+# W9 (SegFormer) and W10/W11 (Qwen2.5-VL) only need what the HF image already
+# carries. Built on the HF image so every workload shares one ROCm/PyTorch
+# baseline.
+FROM cvs/pytorch-vision-hf:rocm7.2.4-py3.12-torch2.10-hf
+
+ARG TIMM_VERSION=1.0.20
+ARG PYCOCOTOOLS_VERSION=2.0.10
+ARG EINOPS_VERSION=0.8.2
+# Upstream main: the last release (2.2.6.post3) does not build on ROCm 7,
+# which made rocprim::warp_size() non-constexpr.
+ARG MAMBA_COMMIT=e9594ce1c732d97440f0332fdc43170a2294dbfa
+ARG PYTORCH_ROCM_ARCH=gfx942
+
+RUN python -m pip install --no-cache-dir \
+        "timm==${TIMM_VERSION}" \
+        "pycocotools==${PYCOCOTOOLS_VERSION}" \
+        "einops==${EINOPS_VERSION}"
+
+# MAMBA_KEEP_CUDA_BUILD keeps the Mamba-1 selective_scan extension, which
+# Vision Mamba uses; without it upstream builds only the Triton Mamba-2 path.
+# HIP_ARCHITECTURES is required because docker build has no GPU for
+# --offload-arch=native to probe.
+RUN git clone https://github.com/state-spaces/mamba.git /tmp/mamba \
+    && cd /tmp/mamba && git checkout "${MAMBA_COMMIT}" \
+    && PYTORCH_ROCM_ARCH="${PYTORCH_ROCM_ARCH}" HIP_ARCHITECTURES="${PYTORCH_ROCM_ARCH}" MAMBA_FORCE_BUILD=TRUE MAMBA_KEEP_CUDA_BUILD=TRUE MAX_JOBS=64 \
+        python -m pip install --no-build-isolation --no-deps --no-cache-dir . \
+    && rm -rf /tmp/mamba
+
+RUN python -c "\
+import torch, selective_scan_cuda, timm, pycocotools, transformers;\
+from transformers import DetrForObjectDetection, SegformerForSemanticSegmentation, Qwen2_5_VLForConditionalGeneration;\
+print('timm', timm.__version__, 'transformers', transformers.__version__)"
+
+LABEL org.opencontainers.image.version="rocm7.2.4-py3.12-torch2.10-tasks"
