@@ -1388,7 +1388,9 @@ def main():
             Path(args.output).write_text(json.dumps(artifact, indent=2))
             print("PYTORCH_VISION_OK " + json.dumps(artifact["metrics"]), flush=True)
         dist.barrier()
-        dist.destroy_process_group()
+        # destroy_process_group tears NCCL down while rocAL or HIP threads are
+        # still alive and segfaults a rank after the artifact is written.
+        _exit_cleanly()
         return
 
     expected_backend = "mamba" if args.model.startswith("vim_") else "transformers" if args.model_id else "torchvision"
@@ -1749,13 +1751,20 @@ def main():
     if artifact_error_payload[0]:
         dist.destroy_process_group()
         raise RuntimeError(f"result artifact failed on rank 0: {artifact_error_payload[0]}")
-    dist.destroy_process_group()
+    _exit_cleanly()
+
+
+def _exit_cleanly():
+    """Leave without running rocAL and HIP static destructors.
+
+    They segfault a rank at interpreter exit after a clean run, and destroying
+    the process group first does the same on more than one node. The result
+    file is already written.
+    """
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
 
 
 if __name__ == "__main__":
     main()
-    # rocAL/HIP static destructors can segfault a rank at interpreter exit after a
-    # clean run; skip them once results are written and the process group is gone.
-    sys.stdout.flush()
-    sys.stderr.flush()
-    os._exit(0)
