@@ -36,6 +36,16 @@ cleanup_prepush() {
 }
 trap cleanup_prepush EXIT HUP INT TERM
 
+# Fail closed: if the temp files cannot be created, we cannot record tips or
+# stage the test content, which would silently skip the unit-test gate.
+if [ -z "$tips_file" ] || [ ! -w "$tips_file" ] || [ -z "$test_root" ]; then
+    echo "" >&2
+    echo "pre-push: ERROR: could not create temporary files for the test gate." >&2
+    echo "pre-push: or bypass with 'git push --no-verify'." >&2
+    echo "" >&2
+    exit 1
+fi
+
 if [ -x ".test_venv/bin/python" ]; then
     PY=".test_venv/bin/python"
 elif [ -x ".cvs_venv/bin/python" ]; then
@@ -73,8 +83,16 @@ echo "pre-push: scanning pushed commits for infra/secret leaks ..."
 while read -r _local_ref local_sha _remote_ref remote_sha ; do
     [ -z "$local_sha" ] && continue
     [ "$local_sha" = "$ZERO" ] && continue  # branch deletion
-    # Record the pushed tip for the test step.
-    printf '%s\n' "$local_sha" >> "$tips_file"
+    # Record the pushed tip for the test step. Fail closed if the write fails
+    # (e.g. the temp filesystem filled up) -- otherwise the later emptiness
+    # check would silently skip the unit-test gate for this tip.
+    if ! printf '%s\n' "$local_sha" >> "$tips_file" ; then
+        echo "" >&2
+        echo "pre-push: ERROR: could not record pushed tip $local_sha for testing." >&2
+        echo "pre-push: or bypass with 'git push --no-verify'." >&2
+        echo "" >&2
+        exit 1
+    fi
     if [ "$remote_sha" = "$ZERO" ]; then
         if [ -n "$REMOTE_NAME" ]; then
             commits="$(git rev-list "$local_sha" --not --remotes="$REMOTE_NAME")"

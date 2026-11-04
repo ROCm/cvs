@@ -32,10 +32,17 @@ PUBLIC_AMD_HOSTS = frozenset(
     {
         "amd.com",
         "www.amd.com",
+        "developer.amd.com",
         "rocm.docs.amd.com",
+        "rocmdocs.amd.com",
+        "rocm-handbook.amd.com",
         "instinct.docs.amd.com",
         "rocm.blogs.amd.com",
+        "rocm.prereleases.amd.com",
+        "rocm.nightlies.amd.com",
         "repo.amd.com",
+        "stable.repo.amd.com",
+        "nightly.repo.amd.com",
     }
 )
 

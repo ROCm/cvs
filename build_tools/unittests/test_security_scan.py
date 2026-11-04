@@ -23,9 +23,16 @@ class TestAmdHostRule(unittest.TestCase):
     def test_public_docs_hosts_allowed(self):
         for url in (
             "https://rocm.docs.amd.com/projects/cvs/en/latest/",
+            "https://rocmdocs.amd.com/",
+            "https://rocm-handbook.amd.com/",
             "https://instinct.docs.amd.com/",
             "https://www.amd.com/en/resources/product-security.html",
+            "https://developer.amd.com/resources/",
             "https://repo.amd.com/rocm/rvs/tarball/",
+            "https://stable.repo.amd.com/rocm/",
+            "https://nightly.repo.amd.com/rocm/",
+            "https://rocm.prereleases.amd.com/",
+            "https://rocm.nightlies.amd.com/",
             "https://rocm.blogs.amd.com/",
             "see https://amd.com/cvs/rundeck/profile.schema.json",
         ):
