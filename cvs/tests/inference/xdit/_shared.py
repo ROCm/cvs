@@ -80,6 +80,7 @@ XDIT_TEST_ORDER = {
 class Lifecycle:
     def __init__(self):
         self.failed = False
+        self.failure_stage = ""
         self.torn_down = False
         self.report = {}
         self.report_results = {}
@@ -90,8 +91,8 @@ class Lifecycle:
         elapsed = time.monotonic() - started
         self.report.setdefault(request.node.nodeid, []).append((label, elapsed, "s"))
 
-    def skip_if_failed(self):
-        if self.failed:
+    def skip_if_failed(self, ignore_stages=()):
+        if self.failed and self.failure_stage not in ignore_stages:
             pytest.skip("a prior xDiT lifecycle stage failed")
 
 
@@ -164,6 +165,8 @@ def scoped_cluster_dict(cluster_dict, hosts):
 
 def _complete(lifecycle, request, label, started):
     lifecycle.record(request, label, started)
+    if globals.error_list and not lifecycle.failed:
+        lifecycle.failure_stage = label
     if globals.error_list:
         lifecycle.failed = True
     update_test_result()
@@ -877,7 +880,8 @@ def _merge_clip_threshold(variant, cell_id, metric, spec):
 def clip_score_stage(orch, variant, gpu_type, spec, lifecycle, request):
     if spec["family"] not in {"flux", "wan"}:
         return
-    lifecycle.skip_if_failed()
+    # A latency miss still leaves media to score. An earlier stage failure does not.
+    lifecycle.skip_if_failed(ignore_stages=("parse_thresholds",))
     globals.error_list = []
     started = time.monotonic()
     inference = inference_from_variant(variant)
