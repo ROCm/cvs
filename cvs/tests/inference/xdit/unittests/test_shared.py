@@ -8,6 +8,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from cvs.lib import globals
 from cvs.lib.inference.xdit.xdit_benchmark_job import cleanup_staged_artifacts
 from cvs.tests.inference.xdit import conftest
@@ -310,6 +312,8 @@ class TestParseThresholdsStage(unittest.TestCase):
         message = globals.error_list[-1]
         self.assertIn("/home/user/flux_host_outputs", message)
         self.assertNotIn("xdit-results-gone", message)
+        self.assertTrue(lifecycle.failed)
+        self.assertEqual(lifecycle.failure_stage, "parse_thresholds")
 
 
 class TestOutputDirsByHost(unittest.TestCase):
@@ -810,6 +814,46 @@ class TestClipScoreStage(unittest.TestCase):
 
         self.assertTrue(lifecycle.failed)
         self.assertTrue(any("11.00" in message for message in globals.error_list))
+
+    def test_runs_when_only_parse_thresholds_failed(self):
+        payload = {"clip_score": 27.5, "image_count": 1, "model": "openai/clip-vit-large-patch14"}
+        orch = _ClipOrch({"10.0.0.1": {"output": f"CVS_CLIP_SCORE {json.dumps(payload)}", "exit_code": 0}})
+        variant = _clip_variant({"10.0.0.1": "/outputs/flux_host_outputs"})
+        lifecycle = Lifecycle()
+        lifecycle.failed = True
+        lifecycle.failure_stage = "parse_thresholds"
+        request = SimpleNamespace(node=SimpleNamespace(nodeid="test_clip_score"), config=SimpleNamespace())
+
+        with patch("cvs.tests.inference.xdit._shared.update_test_result"):
+            clip_score_stage(
+                orch,
+                variant,
+                "auto",
+                {"family": "flux", "distributed": False, "diffusers": False},
+                lifecycle,
+                request,
+            )
+
+        self.assertEqual(lifecycle.results[0][7], 27.5)
+        self.assertEqual(lifecycle.failure_stage, "parse_thresholds")
+
+    def test_skips_when_an_earlier_stage_failed(self):
+        orch = _ClipOrch({})
+        variant = _clip_variant({"10.0.0.1": "/outputs/flux_host_outputs"})
+        lifecycle = Lifecycle()
+        lifecycle.failed = True
+        lifecycle.failure_stage = "generate_and_benchmark"
+        request = SimpleNamespace(node=SimpleNamespace(nodeid="test_clip_score"), config=SimpleNamespace())
+
+        with self.assertRaises(pytest.skip.Exception):
+            clip_score_stage(
+                orch,
+                variant,
+                "auto",
+                {"family": "flux", "distributed": False, "diffusers": False},
+                lifecycle,
+                request,
+            )
 
     def test_reads_clipscore_file_when_output_dir_is_not_mounted(self):
         payload = {"clip_score": 27.5, "image_count": 1, "model": "openai/clip-vit-base-patch32"}
