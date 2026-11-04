@@ -1,5 +1,5 @@
 {
-  "_comment": "FLUX.1-dev single-node xDiT workload. Thresholds live in the sibling threshold JSON. Download model before run.",
+  "_comment": "FLUX.1-dev single-node xDiT workload. Bind-mounts run_usp.py. Thresholds live in the sibling threshold JSON. Download model before run.",
   "gpu_name" : "<changeme> mi325",
   "enforce_thresholds": true,
   "threshold_json": "xdit_flux1_dev_single_threshold.json",
@@ -12,7 +12,7 @@
   "container": {
     "lifetime": "per_run",
     "name": "flux-benchmark_single",
-    "_image_example": "amdsiloai/pytorch-xdit:v25.11.2",
+    "_image_example": "rocm/pytorch-xdit:v26.9",
     "image": "<changeme>",
     "runtime": {
       "name": "docker",
@@ -23,7 +23,8 @@
         "shm_size": "128G",
         "volumes": [
           "{paths.models_dir}:/hf_home",
-          "{paths.log_dir}:/outputs"
+          "{paths.log_dir}:/outputs",
+          "{home}/cvs/cvs/lib/inference/xdit/scripts/run_usp.py:/benchmark/run_usp.py"
         ],
         "devices": ["/dev/dri", "/dev/kfd"],
         "env": {
