@@ -5,7 +5,7 @@
     "threshold_json": "xdit_flux2_dev_distributed_threshold.json",
     "paths": {
       "shared_fs": "/home/{user-id}",
-      "models_dir": "/home/{user-id}/.cache/huggingface",
+      "models_dir": "/data/models",
       "log_dir": "{home}/cvs_flux2_output",
       "hf_token_file": "/home/{user-id}/.hf_token"
     },
@@ -56,6 +56,7 @@
     },
     "benchmark_params": {
       "model_type": "flux2",
+      "clip_model": "/hf_home/clip-vit-base-patch32",
       "guidance_scale": 4.0,
       "prompt": "A small cat",
       "seed": 42,
