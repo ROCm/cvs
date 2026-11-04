@@ -43,11 +43,14 @@ PUBLIC_AMD_HOSTS = frozenset(
 # so bare `host.amd.com:8443` references are caught too.
 AMD_HOST_RE = re.compile(r"(?<![A-Za-z0-9._-])((?:[A-Za-z0-9-]+\.)*amd\.com)(?![A-Za-z0-9-])", re.IGNORECASE)
 
-# https://host:port  -- capture host and explicit port (hostname or IPv4).
-HTTPS_PORT_RE = re.compile(r"https://([A-Za-z0-9._-]+):(\d+)", re.IGNORECASE)
+# Optional URL userinfo ("user@" / "user:pass@") between the scheme and host.
+_USERINFO = r"(?:[A-Za-z0-9._~%!$&'()*+,;=:-]+@)?"
 
-# https://[ipv6]:port  -- a bracketed IPv6 literal with an explicit port.
-HTTPS_IPV6_PORT_RE = re.compile(r"https://\[([0-9A-Fa-f:]+)\]:(\d+)")
+# https://[user@]host:port  -- capture host and explicit port (hostname/IPv4).
+HTTPS_PORT_RE = re.compile(r"https://" + _USERINFO + r"([A-Za-z0-9._-]+):(\d+)", re.IGNORECASE)
+
+# https://[user@][ipv6]:port  -- a bracketed IPv6 literal with an explicit port.
+HTTPS_IPV6_PORT_RE = re.compile(r"https://" + _USERINFO + r"\[([0-9A-Fa-f:]+)\]:(\d+)")
 
 # Real helios cluster hostnames. The short family names (heliosr, heliosp,
 # heliosm, heliosr-rck, heliosm-rck) and underscore ARC names (heliosr_mfg_l11)
@@ -93,14 +96,16 @@ _PLACEHOLDER_HINTS = (
     "your-",
     "dummy",
     "sample",
-    "<",
-    ">",
-    "${",
     "os.environ",
     "getenv",
     "xxxx",
     "****",
 )
+
+# A value that IS a placeholder/template token, rather than one that merely
+# contains an angle bracket (angle brackets are valid password characters, so a
+# bare "<" must not excuse a real secret). Matches <token> and ${token} spans.
+_PLACEHOLDER_TOKEN_RE = re.compile(r"<[^>]*>|\$\{[^}]*\}")
 
 # Assembled at runtime so the verbatim PEM header never appears in this file;
 # GitHub push-protection flags the contiguous literal even inside a scanner's
@@ -140,6 +145,8 @@ _SECRET_VALUE_GROUP = 3
 def _looks_like_placeholder(value):
     low = value.lower()
     if any(hint in low for hint in _PLACEHOLDER_HINTS):
+        return True
+    if _PLACEHOLDER_TOKEN_RE.search(value):
         return True
     # all one repeated character, e.g. "********"
     if len(set(value)) <= 1:
@@ -250,34 +257,57 @@ def _is_exempt_path(path):
     return normalized in _EXEMPT_PATHS
 
 
+_HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
 def iter_added_lines(diff_text):
-    """Yield (path, new_lineno, content) for every added line in a unified diff."""
+    """Yield (path, new_lineno, content) for every added line in a unified diff.
+
+    The hunk header's new-side line count bounds the hunk body, so a line is
+    classified as content purely by position: while body lines remain, a +/-/
+    space line is content, never re-read as a file header. This prevents added
+    content such as "+++ x" or "++ x" (raw "+++ x"/"++ x") from being mistaken
+    for a diff header (which could also switch the path to an exempt file).
+    """
     current = None
     new_lineno = 0
+    body_remaining = 0
     for raw in diff_text.splitlines():
         # A diff produced with color.ui=always carries ANSI escapes before the
         # +/- marker, which would hide added lines from the checks below. Strip
         # them so a colored diff (e.g. piped in via --stdin) is scanned too.
         raw = _ANSI_RE.sub("", raw)
-        if raw.startswith("+++ "):
-            path = raw[4:].strip()
-            if path.startswith("b/"):
-                path = path[2:]
-            current = None if path == "/dev/null" else path
+
+        if body_remaining <= 0:
+            # Between hunks: interpret structural headers.
+            if raw.startswith("+++ "):
+                path = raw[4:].strip()
+                if path.startswith("b/"):
+                    path = path[2:]
+                current = None if path == "/dev/null" else path
+                continue
+            if raw.startswith("--- ") or raw.startswith("diff ") or raw.startswith("index "):
+                continue
+            m = _HUNK_HEADER_RE.match(raw)
+            if m:
+                new_lineno = int(m.group(1))
+                body_remaining = int(m.group(2)) if m.group(2) is not None else 1
+                continue
+            # Any other line outside a hunk body is not scannable content.
             continue
-        if raw.startswith("--- "):
-            continue
-        if raw.startswith("@@"):
-            m = re.search(r"\+(\d+)", raw)
-            new_lineno = int(m.group(1)) if m else 0
-            continue
+
+        # Inside a hunk body: classify strictly by the leading marker.
         if raw.startswith("+"):
             yield current, new_lineno, raw[1:]
             new_lineno += 1
+            body_remaining -= 1
         elif raw.startswith("-"):
+            # Removed line: consumes no new-side line number.
             continue
-        elif raw.startswith(" "):
+        else:
+            # Context line (leading space) or anything else in-body.
             new_lineno += 1
+            body_remaining -= 1
 
 
 def scan_diff(diff_text):

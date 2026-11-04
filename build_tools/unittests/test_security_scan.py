@@ -85,6 +85,15 @@ class TestHttpsPortRule(unittest.TestCase):
         ):
             self.assertNotIn("exposed-https-port", _rules(url), url)
 
+    def test_userinfo_does_not_hide_port(self):
+        # A URL with userinfo (user@ or user:pass@) must still be checked.
+        for url in (
+            "https://alice@metrics.example.net:9443/x",
+            "https://user:pass@grafana.example.com:3000",
+            "https://alice@[2001:db8::1]:9443/x",
+        ):
+            self.assertIn("exposed-https-port", _rules(url), url)
+
 
 class TestRealClusterHostnameRule(unittest.TestCase):
     def test_real_hostnames_blocked(self):
@@ -166,6 +175,24 @@ class TestSecretRules(unittest.TestCase):
         text = '{"password": "<changeme>", "api_key": "A1b2C3d4E5f6G7h8"}'
         self.assertIn("hardcoded-secret", _rules(text), text)
 
+    def test_angle_bracket_in_value_still_flagged(self):
+        # Angle brackets are valid password characters; a secret containing one
+        # must not be excused as a placeholder.
+        for text in (
+            'password = "s3cr3tP@ssw0rd99<"',
+            'password = "s3cr3t>P@ssw0rd9"',
+            "api_key = 'A1b2<C3d4E5f6G7'",
+        ):
+            self.assertIn("hardcoded-secret", _rules(text), text)
+
+    def test_complete_placeholder_tokens_allowed(self):
+        # A value that IS a <token>/${token} placeholder stays allowed.
+        for text in (
+            'password = "<your-password>"',
+            'password = "${DB_PASSWORD}"',
+        ):
+            self.assertNotIn("hardcoded-secret", _rules(text), text)
+
     def test_placeholders_and_env_lookups_allowed(self):
         for text in (
             'password = "<changeme>"',
@@ -225,6 +252,24 @@ class TestDiffScanning(unittest.TestCase):
         results = security_scan.scan_diff(diff)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0][2], "real-cluster-hostname")
+
+    def test_header_shaped_added_content_scanned(self):
+        # An added line whose content starts with "++ " (raw "+++ ...") must be
+        # treated as content, not a file header -- otherwise it could switch the
+        # path to an exempt file and hide the real leak on the next line.
+        diff = (
+            "diff --git a/real.py b/real.py\n"
+            "--- a/real.py\n"
+            "+++ b/real.py\n"
+            "@@ -0,0 +1,2 @@\n"
+            "++ build_tools/security_scan.py\n"
+            "+host = heliosr-1b114-b01-1\n"
+        )
+        results = security_scan.scan_diff(diff)
+        rules = [r for _, _, r, _ in results]
+        self.assertIn("real-cluster-hostname", rules)
+        # The real file path must be preserved, not switched to the exempt one.
+        self.assertEqual(results[0][0], "real.py")
 
     def test_clean_diff_passes(self):
         diff = self._diff(
