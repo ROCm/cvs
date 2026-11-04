@@ -530,6 +530,27 @@ class PytorchXditWan22Benchmarks(BaseModel):
         default=None,
         description="xFuser output_type for xfuser_example (defaults to pil for ufb-private video export).",
     )
+    wan_xfuser_model: Optional[str] = Field(
+        default=None,
+        description="xFuser registry model name. Wan2.1-T2V selects the text-to-video launcher and skips the input image.",
+    )
+    guidance_scale: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Classifier-free guidance scale for WAN text-to-video.",
+    )
+    flow_shift: Optional[float] = Field(
+        default=None,
+        description="Scheduler flow shift for WAN text-to-video.",
+    )
+    attention_backend: Optional[str] = Field(
+        default=None,
+        description="xFuser attention backend for WAN text-to-video, such as AITER.",
+    )
+    cross_attention_backend: Optional[str] = Field(
+        default=None,
+        description="xFuser cross-attention backend for WAN text-to-video.",
+    )
     wan_diffusers_save_video_path: Optional[str] = Field(
         default=None,
         description="In-container MP4 path for xfuser_example (default /outputs/results/video_i2v.mp4).",

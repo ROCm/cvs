@@ -1,0 +1,70 @@
+{
+    "_comment": "WAN 2.1 T2V Diffusers xFuser single-node workload. server_params.model is a Hugging Face repo id or an absolute host path. Download model before run.",
+    "gpu_name" : "<changeme> mi355",
+    "enforce_thresholds": true,
+    "threshold_json": "xdit_wan21_t2v_14b_diffusers_single_threshold.json",
+    "paths": {
+      "shared_fs": "{home}",
+      "models_dir": "/data/models",
+      "log_dir": "{home}/cvs_outputs_wan21_t2v",
+      "hf_token_file": "{home}/.hf_token"
+    },
+    "container": {
+      "lifetime": "per_run",
+      "name": "wan21-t2v-benchmark_diffusers_single",
+      "_image_example": "rocm/pytorch-xdit:v26.9",
+      "_image_comment": "The image needs xfuser.runner support for Wan2.1-T2V.",
+      "image": "<changeme>",
+      "runtime": {
+        "name": "docker",
+        "args": {
+          "network": "host",
+          "ipc": "host",
+          "privileged": true,
+          "shm_size": "128G",
+          "volumes": [
+            "{paths.models_dir}:/hf_home",
+            "{paths.log_dir}:/outputs",
+            "{home}/cvs/cvs/lib/inference/xdit/scripts/wan_t2v_example.py:/benchmark/wan_t2v_example.py"
+          ],
+          "devices": ["/dev/dri", "/dev/kfd"],
+          "env": {
+            "NCCL_DEBUG": "ERROR"
+          }
+        }
+      }
+    },
+    "server_params": {
+      "backend": "xdit",
+      "nnodes": "1",
+      "log_level": "info",
+      "model": "<changeme> /data/models/Wan2.1-T2V-14B-Diffusers"
+    },
+    "benchmark_params": {
+      "model_format": "diffusers",
+      "clip_model": "/hf_home/clip-vit-base-patch32",
+      "wan_diffusers_launcher": "xfuser_example",
+      "wan_diffusers_run_script": "/benchmark/wan_t2v_example.py",
+      "wan_xfuser_model": "Wan2.1-T2V",
+      "wan_xfuser_auto_input_image": false,
+      "wan_xfuser_install_video_deps": true,
+      "wan_xfuser_output_type": "pil",
+      "require_video_artifact": true,
+      "attention_backend": "AITER",
+      "cross_attention_backend": "AITER",
+      "guidance_scale": 6.0,
+      "flow_shift": 8.0,
+      "seed": 0,
+      "wan_diffusers_video_fps": 16,
+      "prompt": "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside.",
+      "size": "480*832",
+      "frame_num": 81,
+      "num_benchmark_steps": 1,
+      "num_inference_steps": 30,
+      "warmup_steps": 1,
+      "compile": false,
+      "torchrun_nproc": 8,
+      "ulysses_size": 8,
+      "ring_size": 1
+    }
+  }
