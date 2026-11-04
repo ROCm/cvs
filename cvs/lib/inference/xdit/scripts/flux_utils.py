@@ -19,7 +19,11 @@ def create_arg_parser():
     _add_if_missing(parser, "--benchmark_output_directory", type=str, default=".")
     _add_if_missing(parser, "--num_repetitions", type=int, default=1)
     _add_if_missing(parser, "--rep_sleep_duration", type=float, default=0)
+    _add_if_missing(parser, "--warmup_calls", type=int, default=0)
     _add_if_missing(parser, "--profile_output", type=str, default="")
+    _add_if_missing(parser, "--profile_wait", type=int, default=0)
+    _add_if_missing(parser, "--profile_warmup", type=int, default=0)
+    _add_if_missing(parser, "--profile_active", type=int, default=0)
     return parser.parse_args()
 
 
