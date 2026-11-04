@@ -12,7 +12,7 @@
   "container": {
     "lifetime": "per_run",
     "name": "flux2-benchmark_distributed",
-    "_image_example": "rocm/ufb-private:xdit-gfx942-py3.12-prereleases-rocm10.0.0rc3-2805c93",
+    "_image_example": "rocm/pytorch-xdit:v26.9",
     "_image_comment": "The image needs to support the FLUX.2-dev model.",
     "image": "<changeme>",
     "runtime": {
@@ -67,7 +67,7 @@
     "width": 1024,
     "ulysses_degree": 8,
     "ring_degree": 2,
-    "use_torch_compile": true,
+    "use_torch_compile": false,
     "torchrun_nproc": 8
   }
 }
