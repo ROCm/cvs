@@ -47,14 +47,18 @@ sudo apt install python3-venv
      and a trailing `Signed-off-by` (warns, without blocking, on lines over 80
      characters).
    - `pre-commit` - runs `ruff format --check` and `ruff check` plus the
-     pylint logging checks (the same gates as `make fmt-check` and `make lint`),
-     then a **security scan** of the staged diff, and **blocks the commit** if
-     any fail; also warns on trailing whitespace in staged changes. Needs the
-     ruff venv (`make ruff-venv`, created by `make installtest`).
+     pylint logging checks (the same gates as `make fmt-check` and `make lint`)
+     against a snapshot of the staged index, not the working tree, so it checks
+     exactly what will be committed; then a **security scan** of the staged
+     diff, and **blocks the commit** if any fail. Also warns on trailing
+     whitespace in staged changes. Needs the ruff venv (`make ruff-venv`,
+     created by `make installtest`).
    - `pre-push` - runs the **security scan** over the commits being pushed, then
      the full unit-test suite (`run_all_unittests.py`, the same tests as
-     `make test`), and **blocks the push** if either fails. Needs a test venv
-     (`make test-venv installtest`).
+     `make test`) against the content of each pushed tip (extracted with
+     `git archive`), not the working tree, so a dirty tree or a push of another
+     branch cannot pass the wrong content. **Blocks the push** if either fails.
+     Needs a test venv (`make test-venv installtest`).
 
    The security scan (`build_tools/security_scan.py`) inspects only the added
    lines and blocks internal-infrastructure or secret leaks: internal

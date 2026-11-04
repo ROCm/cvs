@@ -7,8 +7,10 @@
 # GitHub:
 #   1. Security scan of every commit being pushed -- internal AMD endpoints,
 #      real cluster hostnames, exposed https ports, committed secrets/tokens.
-#   2. The full unit-test suite against the working tree -- the same suite CI
-#      runs via `make test`.
+#   2. The full unit-test suite against the content of each pushed tip (the SHA
+#      actually being sent), not the working tree -- the same suite CI runs via
+#      `make test`. A dirty tree, or `git push <remote> <otherbranch>` while
+#      checked out elsewhere, therefore cannot green-pass commits CI will fail.
 #
 # The suite imports cvs from the source tree; the venv only supplies
 # dependencies. Interpreter preference:
@@ -22,6 +24,17 @@ ZERO="0000000000000000000000000000000000000000"
 
 # Git passes the destination remote name (or URL) as the hook's first argument.
 REMOTE_NAME="$1"
+
+# Collect the pushed tips here (one SHA per line) so the test step can run
+# against the exact content being sent; the scan loop runs in a stdin subshell,
+# so persist across it via a file rather than a variable.
+tips_file="$(mktemp 2>/dev/null)"
+test_root="$(mktemp -d 2>/dev/null)"
+cleanup_prepush() {
+    [ -n "$tips_file" ] && rm -f "$tips_file"
+    [ -n "$test_root" ] && rm -rf "$test_root"
+}
+trap cleanup_prepush EXIT HUP INT TERM
 
 if [ -x ".test_venv/bin/python" ]; then
     PY=".test_venv/bin/python"
@@ -60,6 +73,8 @@ echo "pre-push: scanning pushed commits for infra/secret leaks ..."
 while read -r _local_ref local_sha _remote_ref remote_sha ; do
     [ -z "$local_sha" ] && continue
     [ "$local_sha" = "$ZERO" ] && continue  # branch deletion
+    # Record the pushed tip for the test step.
+    printf '%s\n' "$local_sha" >> "$tips_file"
     if [ "$remote_sha" = "$ZERO" ]; then
         if [ -n "$REMOTE_NAME" ]; then
             commits="$(git rev-list "$local_sha" --not --remotes="$REMOTE_NAME")"
@@ -99,14 +114,42 @@ if [ "$scan_rc" -ne 0 ]; then
     exit 1
 fi
 
-echo "pre-push: running unit tests ($PY run_all_unittests.py) ..."
-if ! "$PY" run_all_unittests.py ; then
-    echo "" >&2
-    echo "pre-push: ERROR: unit tests failed -- push aborted." >&2
-    echo "pre-push: fix the failures above, or bypass with 'git push --no-verify'." >&2
-    echo "" >&2
-    exit 1
+# Run the unit suite against the content of each pushed tip, extracted with
+# `git archive`, so the tested content is exactly what is being sent -- not the
+# working tree, which may be dirty or on a different branch. The interpreter is
+# from a venv that only supplies dependencies; resolve it to an absolute path
+# since the suite runs from the extraction dir.
+PY_ABS="$PY"
+case "$PY_ABS" in .*) PY_ABS="$PWD/${PY_ABS#./}" ;; esac
+
+if [ ! -s "$tips_file" ]; then
+    echo "pre-push: no pushed tips to test."
+    exit 0
 fi
+
+tested=""
+for tip in $(sort -u "$tips_file") ; do
+    case " $tested " in *" $tip "*) continue ;; esac  # de-dup
+    tested="$tested $tip"
+    workdir="$test_root/$tip"
+    mkdir -p "$workdir"
+    if ! git archive "$tip" | tar -x -C "$workdir" ; then
+        echo "" >&2
+        echo "pre-push: ERROR: could not extract pushed tip $tip for testing." >&2
+        echo "pre-push: or bypass with 'git push --no-verify'." >&2
+        echo "" >&2
+        exit 1
+    fi
+    short="$(printf '%s' "$tip" | cut -c1-10)"
+    echo "pre-push: running unit tests on pushed tip $short ..."
+    if ! ( cd "$workdir" && "$PY_ABS" run_all_unittests.py ) ; then
+        echo "" >&2
+        echo "pre-push: ERROR: unit tests failed on pushed content -- push aborted." >&2
+        echo "pre-push: fix the failures above, or bypass with 'git push --no-verify'." >&2
+        echo "" >&2
+        exit 1
+    fi
+done
 
 echo "pre-push: unit tests passed."
 exit 0

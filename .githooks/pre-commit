@@ -16,10 +16,11 @@
 #   2. Advisory whitespace warning (never blocks): `git diff --cached --check`
 #      reports trailing spaces / space-before-tab on added/changed lines.
 #
-# The ruff/pylint gates read the working tree; a file that is only partially
-# staged is flagged with a NOTE (see below) rather than silently checked, and
-# CI re-runs the same gates on the committed content as the backstop. The
-# security scan already reads the staged index directly.
+# The ruff/pylint gates run against a snapshot of the staged index (materialized
+# with `git checkout-index`), not the working tree, so they check exactly the
+# content that will be committed -- a partially staged file cannot commit a
+# version that was never checked, and unrelated unstaged edits cannot fail a
+# clean staged commit. The security scan already reads the staged index.
 #
 # Bypass everything with `git commit --no-verify`.
 
@@ -63,35 +64,35 @@ else
     PY="python"
 fi
 
-# Warn when a tracked file has both staged and unstaged changes: ruff and pylint
-# below read the working tree, so for such a file the commit records different
-# content than what is checked. We deliberately do NOT stash to isolate the
-# index -- a failed `stash pop` can leave conflict markers in the developer's
-# files, which is worse than this edge case. CI re-runs the same gates on the
-# committed tree as the authoritative backstop.
-# A file is "partially staged" when it appears in both the staged list and the
-# unstaged-modified list. Intersect the two with a POSIX loop (no bashisms).
-unstaged_mod="$(git diff --name-only --diff-filter=M 2>/dev/null)"
-partial=""
-if [ -n "$unstaged_mod" ]; then
-    partial="$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | while IFS= read -r f; do
-        [ -n "$f" ] || continue
-        printf '%s\n' "$unstaged_mod" | grep -qxF "$f" && printf '%s\n' "$f"
-    done)"
-fi
-if [ -n "$partial" ]; then
+# Materialize the staged index into a temp dir so the quality gates check the
+# exact content being committed, not the working tree. We do NOT stash to
+# isolate the index -- a failed `stash pop` can leave conflict markers in the
+# developer's files. Resolve tools to absolute paths first, since the checks run
+# from inside the snapshot dir (so ruff/pylint discover the snapshot's config).
+RUFF_ABS="$RUFF"
+PYLINT_ABS="$PYLINT"
+case "$RUFF_ABS" in .*) RUFF_ABS="$PWD/${RUFF_ABS#./}" ;; esac
+case "$PYLINT_ABS" in .*) PYLINT_ABS="$PWD/${PYLINT_ABS#./}" ;; esac
+
+snapshot=""
+cleanup_snapshot() {
+    [ -n "$snapshot" ] && rm -rf "$snapshot"
+}
+trap cleanup_snapshot EXIT HUP INT TERM
+
+snapshot="$(mktemp -d 2>/dev/null)"
+if [ -z "$snapshot" ] || ! git checkout-index -a -f --prefix="$snapshot/" 2>/dev/null; then
     echo "" >&2
-    echo "pre-commit: NOTE: these files have both staged and unstaged changes;" >&2
-    echo "the checks below read the working tree, not just the staged version:" >&2
-    printf '  %s\n' $partial >&2
-    echo "pre-commit: stage or stash the unstaged edits for an exact check." >&2
+    echo "pre-commit: ERROR: could not snapshot the staged index." >&2
+    echo "pre-commit: or bypass with 'git commit --no-verify'." >&2
     echo "" >&2
+    exit 1
 fi
 
 rc=0
 
 echo "pre-commit: checking formatting (ruff format --check) ..."
-if ! "$RUFF" format --check . ; then
+if ! ( cd "$snapshot" && "$RUFF_ABS" format --check . ) ; then
     echo "" >&2
     echo "pre-commit: ERROR: formatting check failed. Run 'make fmt' to fix." >&2
     echo "" >&2
@@ -99,7 +100,7 @@ if ! "$RUFF" format --check . ; then
 fi
 
 echo "pre-commit: linting (ruff check) ..."
-if ! "$RUFF" check . ; then
+if ! ( cd "$snapshot" && "$RUFF_ABS" check . ) ; then
     echo "" >&2
     echo "pre-commit: ERROR: lint check failed. Run 'make lint-fix' to auto-fix." >&2
     echo "" >&2
@@ -108,9 +109,9 @@ fi
 
 # Logging arg-count checks (E1205/E1206) -- the pylint portion of `make lint`.
 echo "pre-commit: checking logging calls (pylint E1205/E1206) ..."
-if ! "$PYLINT" cvs --disable=all \
+if ! ( cd "$snapshot" && "$PYLINT_ABS" cvs --disable=all \
     --enable=logging-too-many-args,logging-too-few-args \
-    -j 0 --recursive=y ; then
+    -j 0 --recursive=y ) ; then
     echo "" >&2
     echo "pre-commit: ERROR: logging check failed (fix logging call arg counts)." >&2
     echo "" >&2
