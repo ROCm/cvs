@@ -22,7 +22,16 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
     parser.add_argument("--xfuser_model", default="Wan2.1-T2V")
-    parser.add_argument("--prompt", default="a cute rabbit hopping through a sunlit meadow")
+    parser.add_argument(
+        "--prompt",
+        default=(
+            "A stylish woman walks down a Tokyo street filled with warm glowing neon and animated city signage. "
+            "She wears a black leather jacket, a long red dress, and black boots, and carries a black purse. "
+            "She wears sunglasses and red lipstick. She walks confidently and casually. "
+            "The street is damp and reflective, creating a mirror effect of the colorful lights. "
+            "Many pedestrians walk about."
+        ),
+    )
     parser.add_argument("--negative_prompt", default="")
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--width", type=int, default=832)
