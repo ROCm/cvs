@@ -11,7 +11,7 @@ Distributed mode:
   - Requires parallel-degree product == nnodes × torchrun_nproc.
 
 FLUX.2-dev is launched via ``/app/external/xdit/examples/flux2_example.py`` (xFuserFlux2Pipeline).
-FLUX.1-dev continues to use ``/app/Flux/run_usp.py``.
+FLUX.1-dev uses ``/app/Flux/run_usp.py``, or the CVS copy bind-mounted at ``/benchmark/run_usp.py``.
 
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
@@ -35,6 +35,8 @@ DEFAULT_BENCHMARK_TIMEOUT_S = 1800
 FLUX2_DEFAULT_BENCHMARK_TIMEOUT_S = 3600
 DEFAULT_MASTER_PORT = 29500
 RUN_USP_PATH = "/app/Flux/run_usp.py"
+RUN_USP_MOUNT_PATH = "/benchmark/run_usp.py"
+RUN_USP_HOST_SCRIPT = Path(__file__).resolve().parent / "scripts" / "run_usp.py"
 FLUX2_EXAMPLE_PATH = "/app/external/xdit/examples/flux2_example.py"
 FLUX2_EXAMPLE_MOUNT_PATH = "/benchmark/flux2_example.py"
 FLUX2_EXAMPLE_HOST_SCRIPT = Path(__file__).resolve().parent / "scripts" / "flux2_example.py"
@@ -885,6 +887,140 @@ def ensure_flux2_example_available(
     return []
 
 
+def default_run_usp_host_path() -> str:
+    """Host path of the CVS-shipped run_usp.py (same layout as flux2_example.py)."""
+    return str(RUN_USP_HOST_SCRIPT)
+
+
+def resolve_run_usp_host_mount(
+    inference_dict: Mapping[str, Any],
+) -> Optional[Tuple[str, str]]:
+    """Return ``(host_path, container_path)`` if run_usp.py is already in volume_dict."""
+    volume_dict = dict(inference_dict.get("container_config", {}).get("volume_dict") or {})
+    for host_path, mount_target in volume_dict.items():
+        if mount_target in {RUN_USP_MOUNT_PATH, RUN_USP_PATH}:
+            return str(host_path), str(mount_target)
+    return None
+
+
+def build_run_usp_image_probe_cmd(container_image: str) -> str:
+    """Print PRESENT when the image already contains /app/Flux/run_usp.py."""
+    img = shlex.quote(container_image)
+    path = shlex.quote(RUN_USP_PATH)
+    return (
+        f"docker run --rm --network none --entrypoint test {img} -f {path} "
+        f">/dev/null 2>&1 && echo RUN_USP_PRESENT || echo RUN_USP_MISSING"
+    )
+
+
+def build_run_usp_host_check_cmd(host_path: str) -> str:
+    quoted = shlex.quote(host_path)
+    return f"test -e {quoted} && echo RUN_USP_HOST_OK || echo RUN_USP_HOST_MISSING"
+
+
+def ensure_run_usp_available(
+    s_phdl,
+    nodes: Sequence[str],
+    inference_dict: Dict[str, Any],
+    flux_params: Mapping[str, Any],
+) -> List[str]:
+    """
+    If the image lacks ``RUN_USP_PATH``, bind-mount CVS ``scripts/run_usp.py``
+    to ``RUN_USP_MOUNT_PATH`` (``/benchmark/run_usp.py``), same as FLUX.2.
+
+    An explicit ``volume_dict`` mapping wins over image probing. Skipped for FLUX.2.
+    """
+    model_type = resolve_flux_model_type_for_job(
+        flux_params,
+        model_repo=str(inference_dict.get("_resolved_model_path_container") or inference_dict.get("model_repo") or ""),
+        model_repo_hints=[
+            str(inference_dict.get("model_repo") or ""),
+            str(inference_dict.get("_resolved_model_mount_host") or ""),
+        ],
+        resolved_model_type=inference_dict.get("_resolved_flux_model_type"),
+    )
+    if is_flux2_model(model_type):
+        return []
+
+    node_list = list(nodes)
+    if not node_list:
+        return ["FLUX.1 run_usp setup requires at least one execution node"]
+
+    existing_mount = resolve_run_usp_host_mount(inference_dict)
+    if isinstance(getattr(s_phdl, "hosts", None), (list, tuple)) and callable(getattr(s_phdl, "exec_on_host", None)):
+        container_path = existing_mount[1] if existing_mount else RUN_USP_PATH
+        check_cmd = f"test -f {shlex.quote(container_path)} && echo RUN_USP_PRESENT || echo RUN_USP_MISSING"
+        try:
+            checks = _exec_on_nodes(s_phdl, node_list, check_cmd, print_console=False)
+        except Exception as exc:
+            return [f"Failed to verify FLUX.1 run_usp.py inside the container: {exc}"]
+        missing = [node for node in node_list if "RUN_USP_PRESENT" not in (checks.get(node) or "")]
+        if missing:
+            return [
+                f"FLUX.1 run_usp.py {container_path} is missing inside the externally managed "
+                f"container on {len(missing)} node(s): {', '.join(missing)}. "
+                "Add the script bind mount to the orchestrator container config before setup."
+            ]
+        inference_dict["_run_usp_container_path"] = container_path
+        return []
+
+    if existing_mount:
+        host_path, container_path = existing_mount
+        log.info(
+            "FLUX.1 run_usp.py already bind-mounted from %s to %s",
+            host_path,
+            container_path,
+        )
+    else:
+        probe_cmd = build_run_usp_image_probe_cmd(str(inference_dict["container_image"]))
+        try:
+            probe = _exec_on_nodes(s_phdl, node_list, probe_cmd, print_console=False)
+        except Exception as exc:
+            return [f"Failed to probe container image for {RUN_USP_PATH}: {exc}"]
+
+        missing = [node for node in node_list if "RUN_USP_PRESENT" not in (probe.get(node) or "")]
+        if not missing:
+            inference_dict["_run_usp_container_path"] = RUN_USP_PATH
+            log.info("FLUX.1 run_usp.py present in image at %s", RUN_USP_PATH)
+            return []
+
+        host_path = default_run_usp_host_path()
+        container_path = RUN_USP_MOUNT_PATH
+        log.info(
+            "FLUX.1 run_usp.py missing in image on %d node(s); bind-mounting %s -> %s",
+            len(missing),
+            host_path,
+            container_path,
+        )
+
+    check_cmd = build_run_usp_host_check_cmd(host_path)
+    try:
+        checks = _exec_on_nodes(s_phdl, node_list, check_cmd, print_console=False)
+    except Exception as extra:
+        return [f"Failed to verify FLUX.1 run_usp host path {host_path}: {extra}"]
+
+    missing_host = [node for node in node_list if "RUN_USP_HOST_OK" not in (checks.get(node) or "")]
+    if missing_host:
+        return [
+            f"FLUX.1 run_usp.py {RUN_USP_PATH} is not in the container image and "
+            f"host file {host_path} is missing on {len(missing_host)} node(s): "
+            f"{', '.join(missing_host)}. Copy cvs/lib/inference/xdit/scripts/run_usp.py "
+            f"onto those nodes or set volume_dict like FLUX.2, for example: "
+            f'"/home/{{user-id}}/cvs/cvs/lib/inference/xdit/scripts/run_usp.py": '
+            f'"{RUN_USP_MOUNT_PATH}"'
+        ]
+
+    if not existing_mount:
+        container_config = inference_dict.setdefault("container_config", {})
+        volume_dict = dict(container_config.get("volume_dict") or {})
+        volume_dict[host_path] = container_path
+        container_config["volume_dict"] = volume_dict
+        log.info("Added FLUX.1 run_usp bind-mount %s -> %s", host_path, container_path)
+
+    inference_dict["_run_usp_container_path"] = container_path
+    return []
+
+
 def _build_torchrun_prefix(
     *,
     distributed: bool,
@@ -1015,6 +1151,7 @@ def build_torchrun_cmd(
     resolved_model_type: Optional[str] = None,
     resolved_hf_repo_id: Optional[str] = None,
     flux2_example_path: Optional[str] = None,
+    run_usp_path: Optional[str] = None,
     output_dir_container: str = CONTAINER_OUTPUT_MOUNT,
 ) -> str:
     nproc = int(nproc_per_node or flux_params["torchrun_nproc"])
@@ -1055,7 +1192,8 @@ def build_torchrun_cmd(
         master_addr=master_addr,
         master_port=master_port,
     )
-    return f"{torchrun_prefix} {RUN_USP_PATH} {run_usp_args}"
+    script_path = run_usp_path or RUN_USP_PATH
+    return f"{torchrun_prefix} {script_path} {run_usp_args}"
 
 
 def verify_distributed_logs(output: str, *, world_size: int) -> Tuple[bool, str]:
@@ -1139,10 +1277,18 @@ class FluxBenchmarkJob(PytorchXditBenchmarkJob):
             self.inference_dict,
             self.flux_params,
         )
+        self._run_usp_setup_errors = ensure_run_usp_available(
+            self.s_phdl,
+            self.server_nodes,
+            self.inference_dict,
+            self.flux_params,
+        )
         return super().build_launch_plan()
 
     def _pre_launch_validation(self, plan: BenchmarkLaunchPlan) -> List[str]:
-        return list(getattr(self, "_flux2_example_setup_errors", None) or [])
+        errors = list(getattr(self, "_flux2_example_setup_errors", None) or [])
+        errors.extend(getattr(self, "_run_usp_setup_errors", None) or [])
+        return errors
 
     def _resolved_model_repo(self) -> str:
         return self.inference_dict.get("_resolved_model_path_container") or self.inference_dict["model_repo"]
@@ -1202,6 +1348,7 @@ class FluxBenchmarkJob(PytorchXditBenchmarkJob):
             resolved_model_type=self.inference_dict.get("_resolved_flux_model_type"),
             resolved_hf_repo_id=self.inference_dict.get("_resolved_flux_hf_repo_id"),
             flux2_example_path=self.inference_dict.get("_flux2_example_container_path"),
+            run_usp_path=self.inference_dict.get("_run_usp_container_path"),
             output_dir_container=(host_output_dir if self.uses_container_orchestrator else CONTAINER_OUTPUT_MOUNT),
         )
 

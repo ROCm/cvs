@@ -6,6 +6,7 @@ from cvs.lib.inference.xdit.xdit_flux_job import (
     FLUX2_DEFAULT_HF_REPO,
     FLUX2_EXAMPLE_MOUNT_PATH,
     FLUX2_EXAMPLE_PATH,
+    RUN_USP_MOUNT_PATH,
     RUN_USP_PATH,
     FluxBenchmarkJob,
     build_flux2_chat_template_host_check_cmd,
@@ -16,15 +17,20 @@ from cvs.lib.inference.xdit.xdit_flux_job import (
     build_nccl_env,
     build_output_cleanup_cmd,
     build_run_usp_args,
+    build_run_usp_host_check_cmd,
+    build_run_usp_image_probe_cmd,
     build_torchrun_cmd,
     default_flux2_example_host_path,
+    default_run_usp_host_path,
     detect_flux_model_type_from_model_index,
     ensure_flux2_example_available,
+    ensure_run_usp_available,
     is_flux2_model,
     parallel_product,
     resolve_distributed_execution_hosts,
     resolve_master_addr,
     resolve_flux2_example_host_mount,
+    resolve_run_usp_host_mount,
     resolve_flux2_hf_repo_id,
     resolve_flux_model_type,
     validate_flux_parallelism_config,
@@ -94,6 +100,10 @@ def _wire_phdl_exec(phdl, hosts, hostnames=None, *, benchmark_exit_code=0, bench
                 value = "FLUX2_EXAMPLE_PRESENT"
             elif "FLUX2_EXAMPLE_HOST_OK" in text:
                 value = "FLUX2_EXAMPLE_HOST_OK"
+            elif "RUN_USP_PRESENT" in text:
+                value = "RUN_USP_PRESENT"
+            elif "RUN_USP_HOST_OK" in text:
+                value = "RUN_USP_HOST_OK"
             elif "docker run" in text:
                 value = benchmark_output
                 if detailed:
@@ -316,6 +326,16 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         self.assertIn("--nnodes=2", cmd)
         self.assertIn("--node_rank=1", cmd)
         self.assertIn("--benchmark_output_directory", cmd)
+
+    def test_flux1_uses_mounted_run_usp_path(self):
+        cmd = build_torchrun_cmd(
+            self._FLUX1_PARAMS,
+            model_repo="black-forest-labs/FLUX.1-dev",
+            distributed=False,
+            run_usp_path=RUN_USP_MOUNT_PATH,
+        )
+        self.assertIn(RUN_USP_MOUNT_PATH, cmd)
+        self.assertNotIn(RUN_USP_PATH, cmd)
 
     def test_flux2_distributed_last_node_writes_timing(self):
         params = {
@@ -562,6 +582,156 @@ class TestFlux2ExampleFallbackMount(unittest.TestCase):
         self.assertIn(host_path, plan.docker_cmds[0])
         self.assertIn(f"target={FLUX2_EXAMPLE_MOUNT_PATH}", plan.docker_cmds[0])
         self.assertIn(FLUX2_EXAMPLE_MOUNT_PATH, plan.docker_cmds[0])
+        self.assertEqual(job._pre_launch_validation(plan), [])
+
+
+class TestRunUspFallbackMount(unittest.TestCase):
+    def test_default_host_path_points_at_cvs_script(self):
+        host_path = default_run_usp_host_path()
+        self.assertTrue(host_path.endswith("scripts/run_usp.py") or host_path.endswith(r"scripts\run_usp.py"))
+        self.assertTrue(host_path.replace("\\", "/").endswith("lib/inference/xdit/scripts/run_usp.py"))
+
+    def test_image_probe_cmd_checks_in_image_path(self):
+        cmd = build_run_usp_image_probe_cmd("rocm/pytorch-xdit:v26.9")
+        self.assertIn("--entrypoint test", cmd)
+        self.assertIn(RUN_USP_PATH, cmd)
+        self.assertIn("RUN_USP_PRESENT", cmd)
+        self.assertIn("RUN_USP_MISSING", cmd)
+
+    def test_host_check_cmd(self):
+        cmd = build_run_usp_host_check_cmd("/host/run_usp.py")
+        self.assertIn("test -e", cmd)
+        self.assertIn("/host/run_usp.py", cmd)
+
+    def test_flux2_does_not_probe_run_usp(self):
+        job, phdl = _make_flux_job(
+            inference_overrides={
+                "model_repo": "black-forest-labs/FLUX.2-dev",
+                "_resolved_flux_model_type": "flux2",
+            }
+        )
+        errors = ensure_run_usp_available(
+            phdl,
+            job.server_nodes,
+            job.inference_dict,
+            job.flux_params,
+        )
+        self.assertEqual(errors, [])
+        probe_cmds = [str(call.args[0]) for call in phdl.exec.call_args_list]
+        self.assertFalse(any("RUN_USP_PRESENT" in cmd for cmd in probe_cmds))
+
+    def test_present_in_image_skips_bind_mount(self):
+        job, phdl = _make_flux_job()
+        errors = ensure_run_usp_available(
+            phdl,
+            job.server_nodes,
+            job.inference_dict,
+            job.flux_params,
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(job.inference_dict["container_config"]["volume_dict"], {})
+        self.assertIsNone(resolve_run_usp_host_mount(job.inference_dict))
+        self.assertEqual(job.inference_dict["_run_usp_container_path"], RUN_USP_PATH)
+
+    def test_missing_in_image_bind_mounts_cvs_script(self):
+        job, phdl = _make_flux_job()
+
+        def _missing_in_image(cmd, timeout=None, print_console=False, detailed=False):
+            text = str(cmd)
+            if "RUN_USP_PRESENT" in text:
+                return {"10.0.0.1": "RUN_USP_MISSING"}
+            if "RUN_USP_HOST_OK" in text:
+                return {"10.0.0.1": "RUN_USP_HOST_OK"}
+            return {"10.0.0.1": ""}
+
+        phdl.exec.side_effect = _missing_in_image
+        errors = ensure_run_usp_available(
+            phdl,
+            job.server_nodes,
+            job.inference_dict,
+            job.flux_params,
+        )
+        self.assertEqual(errors, [])
+        host_path = default_run_usp_host_path()
+        self.assertEqual(
+            job.inference_dict["container_config"]["volume_dict"][host_path],
+            RUN_USP_MOUNT_PATH,
+        )
+        self.assertEqual(
+            resolve_run_usp_host_mount(job.inference_dict),
+            (host_path, RUN_USP_MOUNT_PATH),
+        )
+        self.assertEqual(job.inference_dict["_run_usp_container_path"], RUN_USP_MOUNT_PATH)
+
+    def test_existing_volume_dict_skips_image_probe(self):
+        job, phdl = _make_flux_job(
+            inference_overrides={
+                "container_config": {
+                    "device_list": ["/dev/dri", "/dev/kfd"],
+                    "volume_dict": {"/home/user/cvs/cvs/lib/inference/xdit/scripts/run_usp.py": RUN_USP_MOUNT_PATH},
+                    "env_dict": {},
+                },
+            }
+        )
+        errors = ensure_run_usp_available(
+            phdl,
+            job.server_nodes,
+            job.inference_dict,
+            job.flux_params,
+        )
+        self.assertEqual(errors, [])
+        probe_cmds = [str(call.args[0]) for call in phdl.exec.call_args_list]
+        self.assertFalse(any("RUN_USP_PRESENT" in cmd for cmd in probe_cmds))
+        self.assertTrue(any("RUN_USP_HOST_OK" in cmd for cmd in probe_cmds))
+        self.assertEqual(job.inference_dict["_run_usp_container_path"], RUN_USP_MOUNT_PATH)
+
+    def test_missing_host_script_returns_error(self):
+        job, phdl = _make_flux_job()
+
+        def _missing_host(cmd, timeout=None, print_console=False, detailed=False):
+            text = str(cmd)
+            if "RUN_USP_PRESENT" in text:
+                return {"10.0.0.1": "RUN_USP_MISSING"}
+            if "RUN_USP_HOST_OK" in text:
+                return {"10.0.0.1": "RUN_USP_HOST_MISSING"}
+            return {"10.0.0.1": ""}
+
+        phdl.exec.side_effect = _missing_host
+        errors = ensure_run_usp_available(
+            phdl,
+            job.server_nodes,
+            job.inference_dict,
+            job.flux_params,
+        )
+        self.assertTrue(errors)
+        self.assertIn("run_usp.py", errors[0])
+        self.assertEqual(job.inference_dict["container_config"]["volume_dict"], {})
+
+    def test_launch_plan_docker_cmd_includes_fallback_mount(self):
+        job, phdl = _make_flux_job()
+
+        def _missing_in_image(cmd, timeout=None, print_console=False, detailed=False):
+            text = str(cmd)
+            if "test -e /dev/kfd" in text:
+                return {"10.0.0.1": "KFD_OK"}
+            if text.strip() == "hostname":
+                return {"10.0.0.1": "host-0"}
+            if "RUN_USP_PRESENT" in text:
+                return {"10.0.0.1": "RUN_USP_MISSING"}
+            if "RUN_USP_HOST_OK" in text:
+                return {"10.0.0.1": "RUN_USP_HOST_OK"}
+            if "FLUX2_EXAMPLE_PRESENT" in text:
+                return {"10.0.0.1": "FLUX2_EXAMPLE_PRESENT"}
+            if "docker run" in text:
+                return {"10.0.0.1": "ok"}
+            return {"10.0.0.1": ""}
+
+        phdl.exec.side_effect = _missing_in_image
+        plan = job.build_launch_plan()
+        host_path = default_run_usp_host_path()
+        self.assertIn(host_path, plan.docker_cmds[0])
+        self.assertIn(f"target={RUN_USP_MOUNT_PATH}", plan.docker_cmds[0])
+        self.assertIn(RUN_USP_MOUNT_PATH, plan.docker_cmds[0])
         self.assertEqual(job._pre_launch_validation(plan), [])
 
 

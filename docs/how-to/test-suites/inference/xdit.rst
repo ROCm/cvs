@@ -39,7 +39,7 @@ The following suites are available. Every suite runs the same nine stages.
      - What it runs
    * - ``xdit_flux_dev_single``
      - ``xdit_flux_dev_single.py``
-     - FLUX.1 (``run_usp.py``) or FLUX.2 (``flux2_example.py``); one job per cluster node.
+     - FLUX.1 (bind-mounted ``run_usp.py``) or FLUX.2 (``flux2_example.py``); one job per cluster node.
    * - ``xdit_flux_dev_distributed``
      - ``xdit_flux_dev_distributed.py``
      - Unified FLUX.1 and FLUX.2 torchrun across ``nnodes``.
@@ -130,7 +130,9 @@ GPU keys inside it (``mi300x``, ``mi325``, ``mi350``, ``mi355``, ``auto``) selec
 
 .. note::
 
-  FLUX.2 configs bind-mount |cvs-lib-inference-xdit-scripts-flux2-example-py|_ when the
+  FLUX.1 configs bind-mount |cvs-lib-inference-xdit-scripts-run-usp-py|_ at
+  ``/benchmark/run_usp.py``. That script imports ``flux_utils`` from ``/app/Flux`` in the
+  image. FLUX.2 configs bind-mount |cvs-lib-inference-xdit-scripts-flux2-example-py|_ when the
   image does not ship ``/benchmark/flux2_example.py``. WAN Diffusers suites mount
   |cvs-lib-inference-xdit-scripts-wan-i2v-example-py|_. Adjust the host side of those
   volume entries to your CVS checkout.
@@ -345,6 +347,9 @@ Distributed runs write to the rank-0 hostname directory.
 
 .. |cvs-input-config-file-inference-xdit| replace:: ``cvs/input/config_file/inference/xdit/``
 .. _cvs-input-config-file-inference-xdit: https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/inference/xdit/
+
+.. |cvs-lib-inference-xdit-scripts-run-usp-py| replace:: ``cvs/lib/inference/xdit/scripts/run_usp.py``
+.. _cvs-lib-inference-xdit-scripts-run-usp-py: https://github.com/ROCm/cvs/blob/main/cvs/lib/inference/xdit/scripts/run_usp.py
 
 .. |cvs-lib-inference-xdit-scripts-flux2-example-py| replace:: ``cvs/lib/inference/xdit/scripts/flux2_example.py``
 .. _cvs-lib-inference-xdit-scripts-flux2-example-py: https://github.com/ROCm/cvs/blob/main/cvs/lib/inference/xdit/scripts/flux2_example.py
