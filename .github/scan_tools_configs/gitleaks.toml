@@ -80,3 +80,12 @@ regexes = [
   '''[A-Z][A-Z0-9_]*SHA512\s*[=:]''',
   '''[A-Z][A-Z0-9_]*MD5\s*[=:]''',
 ]
+
+[[allowlists]]
+# The security scanner's own unit tests feed secret-shaped fixtures (a fake
+# generic API key, token headers) to assert the scanner detects them. These
+# are synthetic by construction and structurally cannot be real credentials.
+description = "Security-scanner unit-test fixtures"
+paths = [
+  '''build_tools/unittests/test_security_scan\.py$''',
+]

@@ -107,14 +107,19 @@ _SECRET_TOKEN_RES = (
     ("private-key-file", re.compile(r"-----BEGIN OPENSSH " + _PEM_KEY_TAIL)),
 )
 
-# Generic `secret = "value"` assignment; the value is vetted separately so
-# placeholders and env lookups do not trip it.
+# Generic secret assignment in either bare (`secret = "value"`) or quoted-key
+# (`"secret": "value"`, as in JSON / Python dicts) form. The optional closing
+# quote after the keyword lets a quoted key reach the separator. The value is
+# vetted separately so placeholders and env lookups do not trip it.
 _GENERIC_SECRET_RE = re.compile(
     r"(?i)\b(pass(?:word|wd)?|secret|token|api[_-]?key|access[_-]?key|"
     r"private[_-]?key|client[_-]?secret|auth[_-]?token)\b"
+    r"['\"]?"
     r"\s*[:=]\s*"
     r"""(['"])([^'"]{8,})(\2)"""
 )
+# 1 = keyword, 2 = opening value quote, 3 = value, 4 = closing value quote.
+_SECRET_VALUE_GROUP = 3
 
 
 def _looks_like_placeholder(value):
@@ -156,7 +161,7 @@ def scan_line(text):
             findings.append(
                 (
                     "internal-amd-host",
-                    "internal AMD host '{}' (only public AMD docs domains are allowed)".format(host),
+                    "internal AMD host (only public AMD docs domains are allowed)",
                 )
             )
 
@@ -168,15 +173,15 @@ def scan_line(text):
         findings.append(
             (
                 "exposed-https-port",
-                "https endpoint '{}:{}' exposes a non-standard listening port".format(host, port),
+                "https endpoint exposes a non-standard listening port",
             )
         )
 
-    for match in REAL_HELIOS_HOST_RE.finditer(text):
+    for _match in REAL_HELIOS_HOST_RE.finditer(text):
         findings.append(
             (
                 "real-cluster-hostname",
-                "real cluster hostname '{}' (use a generic name like nodeA / heliosr)".format(match.group(0)),
+                "real cluster hostname (use a generic name like nodeA / heliosr)",
             )
         )
 
@@ -185,11 +190,11 @@ def scan_line(text):
             findings.append((rule, "possible {} committed".format(rule.replace("-", " "))))
 
     gm = _GENERIC_SECRET_RE.search(text)
-    if gm and _looks_like_secret_value(gm.group(3)):
+    if gm and _looks_like_secret_value(gm.group(_SECRET_VALUE_GROUP)):
         findings.append(
             (
                 "hardcoded-secret",
-                "hardcoded secret in '{}=...' assignment".format(gm.group(1)),
+                "hardcoded secret in a credential assignment",
             )
         )
 

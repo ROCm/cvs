@@ -39,7 +39,12 @@ if [ -x ".ruff_venv/bin/pylint" ]; then
 elif command -v pylint >/dev/null 2>&1; then
     PYLINT="pylint"
 else
-    PYLINT=""
+    echo "" >&2
+    echo "pre-commit: ERROR: pylint not found." >&2
+    echo "pre-commit: run 'make ruff-venv' to create it, then retry." >&2
+    echo "pre-commit: or bypass with 'git commit --no-verify'." >&2
+    echo "" >&2
+    exit 1
 fi
 
 # Any python runs the stdlib-only security scanner.
@@ -72,18 +77,14 @@ if ! "$RUFF" check . ; then
 fi
 
 # Logging arg-count checks (E1205/E1206) -- the pylint portion of `make lint`.
-if [ -n "$PYLINT" ]; then
-    echo "pre-commit: checking logging calls (pylint E1205/E1206) ..."
-    if ! "$PYLINT" cvs --disable=all \
-        --enable=logging-too-many-args,logging-too-few-args \
-        -j 0 --recursive=y ; then
-        echo "" >&2
-        echo "pre-commit: ERROR: logging check failed (fix logging call arg counts)." >&2
-        echo "" >&2
-        rc=1
-    fi
-else
-    echo "pre-commit: WARNING: pylint not found (run 'make ruff-venv'); skipping logging checks." >&2
+echo "pre-commit: checking logging calls (pylint E1205/E1206) ..."
+if ! "$PYLINT" cvs --disable=all \
+    --enable=logging-too-many-args,logging-too-few-args \
+    -j 0 --recursive=y ; then
+    echo "" >&2
+    echo "pre-commit: ERROR: logging check failed (fix logging call arg counts)." >&2
+    echo "" >&2
+    rc=1
 fi
 
 # Security scan of staged changes: internal AMD endpoints, real cluster

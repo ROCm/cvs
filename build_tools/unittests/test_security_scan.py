@@ -134,6 +134,16 @@ class TestSecretRules(unittest.TestCase):
         self.assertIn("hardcoded-secret", _rules('password = "s3cr3tP@ssw0rd99"'))
         self.assertIn("hardcoded-secret", _rules("api_key: 'A1b2C3d4E5f6G7h8'"))
 
+    def test_quoted_credential_key_blocked(self):
+        # JSON / dict form: the key itself is quoted. Must detect the same as
+        # the bare assignment above.
+        for text in (
+            '"password": "s3cr3tP@ssw0rd99"',
+            "'api_key': 'A1b2C3d4E5f6G7h8'",
+            '{"client_secret": "Zx9Qw8Er7Ty6Ui5"}',
+        ):
+            self.assertIn("hardcoded-secret", _rules(text), text)
+
     def test_placeholders_and_env_lookups_allowed(self):
         for text in (
             'password = "<changeme>"',

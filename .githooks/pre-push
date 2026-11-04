@@ -20,6 +20,9 @@
 
 ZERO="0000000000000000000000000000000000000000"
 
+# Git passes the destination remote name (or URL) as the hook's first argument.
+REMOTE_NAME="$1"
+
 if [ -x ".test_venv/bin/python" ]; then
     PY=".test_venv/bin/python"
 elif [ -x ".cvs_venv/bin/python" ]; then
@@ -39,23 +42,47 @@ fi
 
 # Security scan: scan every commit this push adds. Git feeds
 # "<local ref> <local sha> <remote ref> <remote sha>" lines on stdin. We
-# enumerate the new commits with rev-list (a new branch, remote sha all-zero,
-# is bounded by `--not --remotes` so only genuinely-new commits are walked),
-# then scan each commit's own diff. Scanning per-commit -- rather than the net
-# range diff -- also catches a secret that one commit adds and a later commit
-# removes, since the history still carries it.
+# enumerate the new commits with rev-list, then scan each commit's own diff.
+# Scanning per-commit -- rather than the net range diff -- also catches a secret
+# that one commit adds and a later commit removes, since the history still
+# carries it.
+#
+# For a new branch (remote sha all-zero) we bound the walk to commits not
+# already on the DESTINATION remote only (`--not --remotes=<name>`), not every
+# remote: a branch already tracked on a private remote must still be scanned
+# when it is published to a public one. If the destination has no tracking refs
+# yet, the walk falls back to the branch's full reachable history.
+#
+# Fail closed: if rev-list or git show cannot read history/a diff (non-zero
+# exit), block the push rather than letting an unscanned commit through.
 scan_rc=0
 echo "pre-push: scanning pushed commits for infra/secret leaks ..."
 while read -r _local_ref local_sha _remote_ref remote_sha ; do
     [ -z "$local_sha" ] && continue
     [ "$local_sha" = "$ZERO" ] && continue  # branch deletion
     if [ "$remote_sha" = "$ZERO" ]; then
-        commits="$(git rev-list "$local_sha" --not --remotes 2>/dev/null)"
+        if [ -n "$REMOTE_NAME" ]; then
+            commits="$(git rev-list "$local_sha" --not --remotes="$REMOTE_NAME")"
+        else
+            commits="$(git rev-list "$local_sha")"
+        fi
     else
-        commits="$(git rev-list "$remote_sha..$local_sha" 2>/dev/null)"
+        commits="$(git rev-list "$remote_sha..$local_sha")"
+    fi
+    if [ "$?" -ne 0 ]; then
+        echo "" >&2
+        echo "pre-push: ERROR: could not enumerate commits for $local_sha." >&2
+        scan_rc=1
+        continue
     fi
     for sha in $commits ; do
-        commit_diff="$(git show --unified=0 --format= "$sha" 2>/dev/null)"
+        commit_diff="$(git show --unified=0 --format= "$sha")"
+        if [ "$?" -ne 0 ]; then
+            echo "" >&2
+            echo "pre-push: ERROR: could not read diff for commit $sha." >&2
+            scan_rc=1
+            continue
+        fi
         [ -z "$commit_diff" ] && continue
         printf '%s\n' "$commit_diff" | "$PY" build_tools/security_scan.py --stdin || scan_rc=1
     done
