@@ -65,9 +65,17 @@ sudo apt install python3-venv
    listening port, and committed tokens/keys. For a verified false positive,
    append the `cvs-security-allow` pragma to that line.
 
+   This infra/secret scanner runs **only in these local hooks** -- CI does not
+   invoke it. CI runs the unit tests (`make test`) and a separate security
+   workflow (gitleaks, bandit, trivy, CodeQL, zizmor); those catch committed
+   secrets independently, but the internal-host, cluster-hostname, and port
+   checks are enforced locally only. So `--no-verify` skips them with no CI
+   backstop -- use it sparingly.
+
    Git never auto-installs repository hooks, so each clone must run `make hooks`
    once. Bypass a single commit with `git commit --no-verify`, or a single push
-   with `git push --no-verify` (both gates still run in CI).
+   with `git push --no-verify`; the ruff/pylint/test gates are still re-run in
+   CI, but the infra/secret scanner above is not.
 
 ## Running Tests
 

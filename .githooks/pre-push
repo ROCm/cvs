@@ -76,7 +76,7 @@ while read -r _local_ref local_sha _remote_ref remote_sha ; do
         continue
     fi
     for sha in $commits ; do
-        commit_diff="$(git show --unified=0 --format= "$sha")"
+        commit_diff="$(git show --no-color --unified=0 --format= "$sha")"
         if [ "$?" -ne 0 ]; then
             echo "" >&2
             echo "pre-push: ERROR: could not read diff for commit $sha." >&2

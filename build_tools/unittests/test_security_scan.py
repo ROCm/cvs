@@ -144,6 +144,12 @@ class TestSecretRules(unittest.TestCase):
         ):
             self.assertIn("hardcoded-secret", _rules(text), text)
 
+    def test_placeholder_first_does_not_hide_later_secret(self):
+        # A leading placeholder assignment must not shadow a real secret later
+        # on the same line.
+        text = '{"password": "<changeme>", "api_key": "A1b2C3d4E5f6G7h8"}'
+        self.assertIn("hardcoded-secret", _rules(text), text)
+
     def test_placeholders_and_env_lookups_allowed(self):
         for text in (
             'password = "<changeme>"',
@@ -203,6 +209,22 @@ class TestDiffScanning(unittest.TestCase):
             ["See https://rocm.docs.amd.com/projects/cvs/ for details.", 'cluster = "heliosr"'],
         )
         self.assertEqual(security_scan.scan_diff(diff), [])
+
+    def test_colored_diff_still_scanned(self):
+        # A diff produced with color.ui=always carries ANSI escapes before the
+        # +/- marker; the scanner must strip them and still flag added lines.
+        esc = "\x1b[32m"
+        reset = "\x1b[m"
+        diff = (
+            "diff --git a/cvs/foo.py b/cvs/foo.py\n"
+            "--- a/cvs/foo.py\n"
+            "{e}+++ b/cvs/foo.py{r}\n"
+            "@@ -0,0 +1 @@\n"
+            "{e}+host = heliosr-1b114-b01-1{r}\n"
+        ).format(e=esc, r=reset)
+        results = security_scan.scan_diff(diff)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0][2], "real-cluster-hostname")
 
 
 if __name__ == "__main__":

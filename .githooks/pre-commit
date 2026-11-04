@@ -16,6 +16,11 @@
 #   2. Advisory whitespace warning (never blocks): `git diff --cached --check`
 #      reports trailing spaces / space-before-tab on added/changed lines.
 #
+# The ruff/pylint gates read the working tree; a file that is only partially
+# staged is flagged with a NOTE (see below) rather than silently checked, and
+# CI re-runs the same gates on the committed content as the backstop. The
+# security scan already reads the staged index directly.
+#
 # Bypass everything with `git commit --no-verify`.
 
 # Resolve ruff/pylint: prefer the repo's pinned ruff venv (`make ruff-venv`),
@@ -56,6 +61,31 @@ elif command -v python3 >/dev/null 2>&1; then
     PY="python3"
 else
     PY="python"
+fi
+
+# Warn when a tracked file has both staged and unstaged changes: ruff and pylint
+# below read the working tree, so for such a file the commit records different
+# content than what is checked. We deliberately do NOT stash to isolate the
+# index -- a failed `stash pop` can leave conflict markers in the developer's
+# files, which is worse than this edge case. CI re-runs the same gates on the
+# committed tree as the authoritative backstop.
+# A file is "partially staged" when it appears in both the staged list and the
+# unstaged-modified list. Intersect the two with a POSIX loop (no bashisms).
+unstaged_mod="$(git diff --name-only --diff-filter=M 2>/dev/null)"
+partial=""
+if [ -n "$unstaged_mod" ]; then
+    partial="$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        printf '%s\n' "$unstaged_mod" | grep -qxF "$f" && printf '%s\n' "$f"
+    done)"
+fi
+if [ -n "$partial" ]; then
+    echo "" >&2
+    echo "pre-commit: NOTE: these files have both staged and unstaged changes;" >&2
+    echo "the checks below read the working tree, not just the staged version:" >&2
+    printf '  %s\n' $partial >&2
+    echo "pre-commit: stage or stash the unstaged edits for an exact check." >&2
+    echo "" >&2
 fi
 
 rc=0

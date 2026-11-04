@@ -22,6 +22,9 @@ import sys
 
 PRAGMA = "cvs-security-allow"
 
+# ANSI/VT100 escape sequences (color.ui=always prepends these to diff lines).
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
 # Public, intentionally-published AMD hosts. Any other *.amd.com host in new
 # content is treated as an internal endpoint and blocked. Exact-host match: a
 # new public domain must be added here deliberately.
@@ -192,14 +195,18 @@ def scan_line(text):
         if pattern.search(text):
             findings.append((rule, "possible {} committed".format(rule.replace("-", " "))))
 
-    gm = _GENERIC_SECRET_RE.search(text)
-    if gm and _looks_like_secret_value(gm.group(_SECRET_VALUE_GROUP)):
-        findings.append(
-            (
-                "hardcoded-secret",
-                "hardcoded secret in a credential assignment",
+    # Every credential assignment on the line, not just the first: a leading
+    # placeholder (e.g. "password": "<changeme>") must not shadow a real secret
+    # later on the same line.
+    for gm in _GENERIC_SECRET_RE.finditer(text):
+        if _looks_like_secret_value(gm.group(_SECRET_VALUE_GROUP)):
+            findings.append(
+                (
+                    "hardcoded-secret",
+                    "hardcoded secret in a credential assignment",
+                )
             )
-        )
+            break
 
     return findings
 
@@ -220,6 +227,10 @@ def iter_added_lines(diff_text):
     current = None
     new_lineno = 0
     for raw in diff_text.splitlines():
+        # A diff produced with color.ui=always carries ANSI escapes before the
+        # +/- marker, which would hide added lines from the checks below. Strip
+        # them so a colored diff (e.g. piped in via --stdin) is scanned too.
+        raw = _ANSI_RE.sub("", raw)
         if raw.startswith("+++ "):
             path = raw[4:].strip()
             if path.startswith("b/"):
@@ -254,7 +265,7 @@ def scan_diff(diff_text):
 
 def _git_diff(args):
     return subprocess.run(
-        ["git", "diff", "--unified=0"] + args,
+        ["git", "diff", "--no-color", "--unified=0"] + args,
         check=True,
         capture_output=True,
         text=True,
