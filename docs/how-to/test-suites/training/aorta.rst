@@ -2,9 +2,9 @@
   :description: Run the Aorta training benchmark with CVS over SSH or under SPUR or Slurm to validate iteration time, compute ratio, and rank balance on AMD Instinct GPU clusters with ROCm.
   :keywords: CVS, Aorta, training, benchmark, AMD Instinct, ROCm, AMD, GPU, RCCL, distributed, PyTorch, Docker, Slurm, SPUR, HTML report
 
-**********************************************
-Run the Aorta training benchmark
-**********************************************
+**************************************************************
+Run the Aorta training benchmark with CVS on AMD Instinct GPUs
+**************************************************************
 
 Aorta runs an RCCL/training workload in containers, collects PyTorch profiler traces, and
 validates iteration time, compute ratio, overlap ratio and rank balance.

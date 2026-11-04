@@ -2,9 +2,9 @@
   :description: Run Megatron Llama and DeepSeek training benchmarks with CVS to validate pre-training throughput and correctness on AMD Instinct GPU clusters with ROCm.
   :keywords: CVS, Megatron, training, benchmark, AMD Instinct, ROCm, AMD, GPU, Llama, DeepSeek, distributed, RDMA
 
-*****************************************************
-Run Megatron Llama and DeepSeek training benchmarks
-*****************************************************
+************************************************************
+Run Megatron Llama and DeepSeek training benchmarks with CVS
+************************************************************
 
 Cluster validation that runs Megatron-LM or Primus pre-training on AMD Instinct GPUs (single-node or multi-node) and gates the run on performance and correctness metrics with a PASS/FAIL HTML report.
 
@@ -405,7 +405,7 @@ Reports and logs
 - **Full log** — each test row links to its own captured log.
 - **Training logs** — Megatron-LM writes ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``. Primus writes ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``. Folder names use the sanitized combo ID (see the table below).
 
-Log path fields:
+Each placeholder in the log path resolves as follows.
 
 .. list-table::
    :header-rows: 1
@@ -423,7 +423,7 @@ Log path fields:
 Config and threshold files
 ==========================
 
-Located in ``cvs/input/config_file/training/megatron/``. Field-level schema: :doc:`/reference/configuration-files/training/megatron`.
+Located in |cvs-input-config-file-training-megatron|_. Field-level schema: :doc:`/reference/configuration-files/training/megatron`.
 
 ``container.env`` NIC fields include example values plus ``<changeme>``. ``NNODES`` is not a JSON field. Every config except Llama 3.1 405B supports Megatron-LM or Primus; 405B is Primus only.
 
@@ -472,6 +472,8 @@ One ``mi3xx_`` config per model and mode. Set ``gpu_name`` to ``MI300X`` or ``MI
 MI355X
 ~~~~~~
 
+MI355X ships Llama 3.1 8B and Llama 3.3 70B configs for single-node runs.
+
 .. list-table::
    :header-rows: 1
    :widths: 45 45 10
@@ -486,3 +488,6 @@ MI355X
      - ``mi355x_megatron_llama-3.3-70b_single_threshold.json``
      - single-node
 
+
+.. |cvs-input-config-file-training-megatron| replace:: ``cvs/input/config_file/training/megatron/``
+.. _cvs-input-config-file-training-megatron: https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/training/megatron/

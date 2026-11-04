@@ -6,8 +6,13 @@
 Cluster Validation Suite (CVS) command-line interface (CLI) reference
 *********************************************************************
 
+Complete option reference for all ``cvs`` commands. For step-by-step usage,
+see the how-to guides linked at the end of each section.
+
 Top-level commands
 ==================
+
+CVS provides the following top-level commands.
 
 .. list-table::
    :header-rows: 1
@@ -112,7 +117,8 @@ See :doc:`/how-to/test-suites/network/rccl`.
 ``cvs config``
 ==============
 
-Subcommands: ``list-dirs``, ``list``, ``copy``.
+Browse and copy bundled configuration templates for test suites and cluster
+files. Subcommands: ``list-dirs``, ``list``, ``copy``.
 
 ``list-dirs [path]``
 --------------------
@@ -237,6 +243,8 @@ Run ``cvs monitor`` with no arguments to list available monitors.
 
 Subcommand: ``check_cluster_health``
 
+``check_cluster_health`` accepts the following options.
+
 .. list-table::
    :header-rows: 1
    :widths: 28 72
@@ -258,6 +266,9 @@ See :doc:`Health reports </how-to/monitor/health-reports/index>` and :doc:`Live 
 
 ``cvs exec``
 ============
+
+Run a shell command on all cluster nodes (or a selected subset) in parallel
+over SSH and print the output grouped by node.
 
 Required options:
 
@@ -295,6 +306,9 @@ See :doc:`/how-to/execute-cluster-commands`.
 
 ``cvs scp``
 ===========
+
+Copy a local file or directory to the same path on every cluster node in
+parallel.
 
 Required options:
 
