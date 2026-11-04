@@ -287,6 +287,8 @@ class TestProfile(unittest.TestCase):
             "xdit_wan22_14b_single",
             "xdit_wan22_14b_diffusers_single",
             "xdit_wan22_14b_diffusers_distributed",
+            "xdit_wan21_t2v_14b_diffusers_single",
+            "xdit_wan21_t2v_14b_diffusers_distributed",
         )
         for stem in stems:
             with self.subTest(stem=stem):

@@ -37,6 +37,8 @@ PROFILE_STEM_ALIASES: dict[str, str] = {
     "xdit_wan22_14b_single": "xdit",
     "xdit_wan22_14b_diffusers_single": "xdit",
     "xdit_wan22_14b_diffusers_distributed": "xdit",
+    "xdit_wan21_t2v_14b_diffusers_single": "xdit",
+    "xdit_wan21_t2v_14b_diffusers_distributed": "xdit",
     "megatron_single": "megatron",
     "megatron_distributed": "megatron",
     "torchtitan_single": "torchtitan",

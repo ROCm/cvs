@@ -281,6 +281,33 @@ class TestBuildRunWanArgs(unittest.TestCase):
         self.assertIn("--timing_json_path results/timing.json", args)
         self.assertIn("--output_type pil", args)
         self.assertNotIn("--task i2v", args)
+        self.assertNotIn("--xfuser_model", args)
+
+    def test_t2v_xfuser_omits_input_image(self):
+        params = {
+            **self._BASE_PARAMS,
+            "compile": False,
+            "wan_xfuser_model": "Wan2.1-T2V",
+            "guidance_scale": 6.0,
+            "flow_shift": 8.0,
+            "seed": 0,
+            "attention_backend": "AITER",
+            "cross_attention_backend": "AITER",
+        }
+        args = build_run_wan_xfuser_example_args(
+            params,
+            model_path="/model",
+            i2v_image_path="/benchmark/i2v_input.JPG",
+        )
+        self.assertNotIn("--input_image", args)
+        self.assertIn("--xfuser_model Wan2.1-T2V", args)
+        self.assertIn("--guidance_scale 6.0", args)
+        self.assertIn("--flow_shift 8.0", args)
+        self.assertIn("--seed 0", args)
+        self.assertIn("--attention_backend AITER", args)
+        self.assertIn("--cross_attention_backend AITER", args)
+        self.assertIn("--height 720", args)
+        self.assertIn("--width 1280", args)
 
     def test_resolve_xfuser_launcher_from_config(self):
         self.assertEqual(
@@ -357,6 +384,26 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         self.assertIn("imageio", cmd)
         self.assertIn("i2v_input.jpg", cmd)
         self.assertNotIn(RUN_WAN_DIFFUSERS_PATH, cmd)
+
+    def test_single_node_t2v_skips_input_image(self):
+        cmd = build_torchrun_cmd(
+            {
+                **self._BASE_PARAMS,
+                "wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER,
+                "wan_diffusers_run_script": "/benchmark/wan_t2v_example.py",
+                "wan_xfuser_model": "Wan2.1-T2V",
+                "wan_xfuser_auto_input_image": False,
+                "guidance_scale": 6.0,
+                "flow_shift": 8.0,
+            },
+            ckpt_dir="/model",
+            distributed=False,
+            model_repo_hints=["Wan-AI/Wan2.1-T2V-14B-Diffusers"],
+        )
+        self.assertIn("/benchmark/wan_t2v_example.py", cmd)
+        self.assertNotIn("--input_image", cmd)
+        self.assertNotIn("i2v_input.jpg", cmd)
+        self.assertIn("--xfuser_model Wan2.1-T2V", cmd)
 
     def test_auto_input_image_cmd_uses_config_size(self):
         cmd = build_wan_xfuser_auto_input_image_cmd({"size": "720*1280"})
