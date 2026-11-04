@@ -600,5 +600,21 @@ Single node, one run of the primary sweep unless noted:
   Fine-tune scored 75.6.
 * **W11** single-node smoke: 1.78 samples/s, 898 tokens/s.
 
-Four nodes, DMA-BUF registration off: the W2 primary perf sweep measured
-41,790 and 42,930 images/s across two repeats.
+Four nodes, DMA-BUF registration off:
+
+* **W2** perf, three repeats of five sweeps: 49,950 to 56,650 images/s on the
+  GPU-decode sweeps (105% of four times the single-node primary), 46,700 to
+  62,950 at batch 256, and about 24,000 with CPU decode. The primary sweep's
+  scaling efficiency was 105%. Train-5k reached 51.7% Top-1 and 77.0% Top-5 at
+  51,610 images/s, with the loss falling from 7.08 to 2.10 and all 1,000
+  validation classes present. The pytest row still fails: after the result
+  file is written, the other ranks time out on the final error broadcast and
+  the log scan treats that traceback as a failure.
+* **W6** perf: 31,420 and 33,410 images/s on the standard sweeps (82% and 88%
+  of four times the single-node reference) and 22,970 with heavy augmentation.
+  ``hybrid_shard`` held 32,400 images/s. ``full_shard`` measured 31,049
+  images/s, then a rank segfaulted during shutdown, so that pytest row fails.
+  Train-5k reached 32.48% Top-1 at 28,680 images/s.
+* **W11** smoke: 6.61 samples/s, 3,447 tokens/s, ChartQA relaxed accuracy 78.1
+  on the smoke sample. Perf: 9.72 samples/s (5,051 tokens/s) and 4.01
+  samples/s. Fine-tune: 6.44 samples/s, 3,344 tokens/s, ChartQA 73.0.
