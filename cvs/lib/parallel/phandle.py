@@ -12,7 +12,7 @@ from gevent import Timeout as GTimeout
 from pssh.clients import ParallelSSHClient
 from pssh.exceptions import Timeout, SessionError
 
-from cvs.lib.env_lib import build_env_prefix
+from cvs.lib.env_lib import build_env_prefix, redact_secrets
 from cvs.lib.parallel.transport import create_transport
 from cvs.lib import globals
 
@@ -79,7 +79,7 @@ class ParallelHandle:
         self.transport_name = transport
         self.transport_kwargs = transport_kwargs
         self.env_prefix = build_env_prefix(env_vars)
-        self.log.debug(f"Environ vars: {self.env_prefix}")
+        self.log.debug(f"Environ vars: {redact_secrets(self.env_prefix)}")
 
         if self.password is None:
             self.log.info("%s", self.reachable_hosts)
@@ -265,15 +265,17 @@ class ParallelHandle:
         """
         cmd_output = {}
         i = 0
+        logged_cmds = [redact_secrets(c) for c in cmd_list] if cmd_list else None
+        logged_cmd = None if cmd_list else redact_secrets(cmd)
         for item in output:
             self.log.info('#----------------------------------------------------------#')
             self.log.info(f'Host == {item.host} ==')
             self.log.info('#----------------------------------------------------------#')
             cmd_out_str = ''
             if cmd_list:
-                self.log.debug("%s", cmd_list[i])
+                self.log.debug("%s", logged_cmds[i])
             else:
-                self.log.debug("%s", cmd)
+                self.log.debug("%s", logged_cmd)
             try:
                 for line in self._iter_lines(item.stdout, inactivity_timeout):
                     if print_console:
@@ -351,21 +353,22 @@ class ParallelHandle:
 
         client_kwargs = self._client_run_kwargs(timeout=timeout, inactivity_timeout=inactivity_timeout)
 
-        self.log.info(f'cmd = {full_cmd}')
+        logged_cmd = redact_secrets(full_cmd)
+        self.log.info(f'cmd = {logged_cmd}')
 
         # Log command execution
         if self.log:
             if inactivity_timeout is not None:
                 self.log.debug(
                     f"Executing command on {len(self.reachable_hosts)} host(s) "
-                    f"[inactivity_timeout={inactivity_timeout}s]: {full_cmd}"
+                    f"[inactivity_timeout={inactivity_timeout}s]: {logged_cmd}"
                 )
             elif timeout is not None:
                 self.log.debug(
-                    f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}"
+                    f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {logged_cmd}"
                 )
             else:
-                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
+                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {logged_cmd}")
 
         output = self._run_command_with_session_retry(full_cmd, **client_kwargs)
         cmd_output = self._process_output(
@@ -378,8 +381,9 @@ class ParallelHandle:
 
         # Log per-host execution completion
         if self.log:
+            logged_cmd = redact_secrets(cmd)
             for host in cmd_output.keys():
-                self.log.debug(f"Command completed on {host}: {cmd}")
+                self.log.debug(f"Command completed on {host}: {logged_cmd}")
 
         return cmd_output
 
@@ -406,7 +410,8 @@ class ParallelHandle:
             timeout=timeout, inactivity_timeout=inactivity_timeout, host_args=cmd_list
         )
 
-        self.log.info("%s", cmd_list)
+        logged_cmds = [redact_secrets(cmd) for cmd in cmd_list]
+        self.log.info("%s", logged_cmds)
 
         # Log command list execution
         if self.log:
@@ -431,8 +436,8 @@ class ParallelHandle:
 
         # Log per-host command execution (only for processed output)
         if self.process_output and self.log and isinstance(cmd_output, dict):
-            for host, cmd in zip(self.reachable_hosts, cmd_list):
-                self.log.debug(f"Command on {host}: {cmd}")
+            for host, logged in zip(self.reachable_hosts, logged_cmds):
+                self.log.debug(f"Command on {host}: {logged}")
 
         return cmd_output
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 import shlex
 import time
@@ -119,10 +120,191 @@ def _normalize_cli_flags(raw: Any) -> list[str]:
     raise ValueError(f'add_flags must be a list or str, got {type(raw).__name__}')
 
 
+_SECRET_ENV_KEYS = frozenset(
+    key.casefold()
+    for key in (
+        'HF_TOKEN',
+        'HUGGING_FACE_HUB_TOKEN',
+        'HUGGINGFACE_HUB_TOKEN',
+        'hf_token',
+    )
+)
+
+_SECRET_ASSIGN_RE = re.compile(
+    r"(?i)((?:HF_TOKEN|HUGGING_FACE_HUB_TOKEN|HUGGINGFACE_HUB_TOKEN|hf_token)\s*=\s*)"
+    r"(?:'[^']*'|\"[^\"]*\"|(?!\$\()\S+)"
+)
+_SECRET_MAPPING_RE = re.compile(
+    r"""(?i)(['"])(HF_TOKEN|HUGGING_FACE_HUB_TOKEN|HUGGINGFACE_HUB_TOKEN|hf_token)\1(\s*:\s*)(['"])[^'"]*\4"""
+)
+_HF_VALUE_RE = re.compile(r"\bhf_[A-Za-z0-9]{8,}\b")
+
+
+def _secret_assignment_key(text):
+    body = str(text).strip()
+    if body.lower().startswith('export '):
+        body = body[7:].strip()
+    if '=' not in body:
+        return ''
+    return body.split('=', 1)[0].strip()
+
+
+def is_secret_env_assignment(text):
+    """True when ``text`` assigns a Hugging Face token env var."""
+    return _secret_assignment_key(text).casefold() in _SECRET_ENV_KEYS
+
+
+def scrub_sglang_secrets(value):
+    """Drop Hugging Face token values from structures that are logged or executed.
+
+    ``hf_token_file`` is a path and is kept. The token itself is loaded from that
+    file inside the container so it never has to appear in a command or report.
+    """
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            if str(key).casefold() in _SECRET_ENV_KEYS:
+                continue
+            cleaned[key] = scrub_sglang_secrets(item)
+        return cleaned
+    if isinstance(value, list):
+        cleaned = []
+        for item in value:
+            if isinstance(item, str) and is_secret_env_assignment(item):
+                continue
+            cleaned.append(scrub_sglang_secrets(item))
+        return cleaned
+    return value
+
+
+def model_needs_hf_token(model_id):
+    """Hub ids are fetched inside the container. An absolute path is a local weight dir."""
+    model = str(model_id or '').strip()
+    return bool(model) and not model.startswith('/')
+
+
+def hf_token_export_line(inf_dict, model_id=''):
+    """Shell that loads ``HF_TOKEN`` from ``hf_token_file`` at source time.
+
+    The secret stays in the file. It is not written into the env script or into
+    the command string that parallel SSH logs.
+
+    For a non-absolute model id the snippet ``exit``s when the file is missing,
+    empty, or unreadable. Sourcing that ``exit`` stops the launch shell before
+    ``nohup``. An absolute model path does not require a token.
+    """
+    path = str((inf_dict or {}).get('hf_token_file') or '').strip()
+    if model_needs_hf_token(model_id):
+        if not path:
+            return (
+                "echo 'HF token file is required for a Hugging Face model id but hf_token_file is unset' >&2\nexit 1\n"
+            )
+        quoted = shlex.quote(path)
+        return (
+            f"if [ ! -s {quoted} ] || [ ! -r {quoted} ]; then\n"
+            f"  echo 'HF token file missing, empty, or unreadable:' {quoted} >&2\n"
+            f"  exit 1\n"
+            f"fi\n"
+            f"HF_TOKEN=$(tr -d '[:space:]' < {quoted}) || exit 1\n"
+            f"if [ -z \"$HF_TOKEN\" ]; then\n"
+            f"  echo 'HF token file is empty:' {quoted} >&2\n"
+            f"  exit 1\n"
+            f"fi\n"
+            f"export HF_TOKEN\n"
+        )
+    if not path:
+        return ''
+    quoted = shlex.quote(path)
+    return f"if [ -s {quoted} ]; then\n  HF_TOKEN=$(tr -d '[:space:]' < {quoted})\n  export HF_TOKEN\nfi\n"
+
+
+def record_container_exec_failure(out_dict, message):
+    """Record a failure when a detailed container command did not exit 0.
+
+    ``orch.exec`` returns per-host output and does not raise on a non-zero status.
+    """
+    if not out_dict:
+        fail_test(f'{message}: no command result')
+        return
+    for node, result in out_dict.items():
+        if not isinstance(result, dict):
+            fail_test(f'{message} on {node}: missing exit status')
+            continue
+        code = result.get('exit_code')
+        if code != 0:
+            detail = str(result.get('output') or '').strip()
+            if detail:
+                fail_test(f'{message} on {node} (exit {code}): {detail}')
+            else:
+                fail_test(f'{message} on {node} (exit {code})')
+
+
+def redact_hf_token_text(text):
+    """Replace Hugging Face token values in a log line. Paths like ``.hf_token`` stay."""
+    if not isinstance(text, str) or not text:
+        return text
+    text = _SECRET_ASSIGN_RE.sub(r'\1<redacted>', text)
+    text = _SECRET_MAPPING_RE.sub(r'\1\2\1\3\4<redacted>\4', text)
+    return _HF_VALUE_RE.sub('<redacted>', text)
+
+
+class HfTokenLogFilter(logging.Filter):
+    """Redact Hugging Face tokens from any log record emitted during SGLang runs."""
+
+    def filter(self, record):
+        _redact_hf_token_record(record)
+        return True
+
+
+def _redact_hf_token_record(record):
+    try:
+        rendered = record.getMessage()
+    except (TypeError, ValueError):
+        rendered = str(record.msg)
+    record.msg = redact_hf_token_text(rendered)
+    record.args = ()
+    return record
+
+
+def _install_hf_token_record_factory():
+    """Install an idempotent record factory that redacts before handlers see a record."""
+    current = logging.getLogRecordFactory()
+    if getattr(current, '_cvs_hf_token_redaction', False):
+        return
+
+    def factory(*args, **kwargs):
+        return _redact_hf_token_record(current(*args, **kwargs))
+
+    factory._cvs_hf_token_redaction = True
+    logging.setLogRecordFactory(factory)
+
+
+def install_hf_token_log_redaction():
+    """Install token redaction before handlers and on current root handlers.
+
+    The record factory handles child logger records and handlers added after
+    this call. Handler filters remain as defense for records created before the
+    factory was installed.
+    """
+    _install_hf_token_record_factory()
+    root = logging.getLogger()
+    filt = next((existing for existing in root.filters if isinstance(existing, HfTokenLogFilter)), None)
+    if filt is None:
+        filt = HfTokenLogFilter()
+        root.addFilter(filt)
+    for handler in root.handlers:
+        if not any(isinstance(existing, HfTokenLogFilter) for existing in handler.filters):
+            handler.addFilter(filt)
+
+
 def add_export_env_block(bp_dict: Mapping[str, Any], indent: str = '                      ') -> str:
-    """Shell ``export`` lines from ``bp_dict['add_export_env']``."""
+    """Shell ``export`` lines from ``bp_dict['add_export_env']``.
+
+    Token assignments are omitted. ``HF_TOKEN`` is loaded from ``hf_token_file``.
+    """
     env = _normalize_key_value_list(bp_dict.get('add_export_env'), 'add_export_env')
-    return '\n'.join(f'{indent}export {entry}' for entry in env)
+    lines = [f'{indent}export {entry}' for entry in env if not is_secret_env_assignment(entry)]
+    return '\n'.join(lines)
 
 
 def add_cli_flags_block(bp_dict: Mapping[str, Any], indent: str = '                              ') -> str:

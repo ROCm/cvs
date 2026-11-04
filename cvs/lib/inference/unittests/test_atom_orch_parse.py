@@ -200,6 +200,25 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertIn("VLLM_USE_AITER_UNIFIED_ATTENTION", env_cmd)
         self.assertIn("VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4", env_cmd)
 
+    def test_build_server_cmd_reads_mounted_hf_token(self):
+        orch = FakeOrch()
+        variant = _fake_variant(driver="vllm")
+        variant.roles.server.env = {"HF_TOKEN": "hf_secret_value", "CUSTOM_FLAG": "on"}
+        job = AtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="hf_secret_value",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.build_server_cmd()
+        rendered = "\n".join(cmd for cmd, _hosts in orch.commands)
+        self.assertNotIn("hf_secret_value", rendered)
+        self.assertIn("/run/secrets/hf_token", rendered)
+        self.assertIn("CUSTOM_FLAG", rendered)
+
     def test_flatten_serve_args_omits_false_flags(self):
         argv = AtomJob._flatten_serve_args({"enforce-eager": False, "trust-remote-code": True})
         self.assertNotIn("--enforce-eager", argv)
@@ -492,6 +511,24 @@ class TestATOMAtomOrchParse(unittest.TestCase):
                 job.wait_ready()
         self.assertIn("atom server early failure", str(ctx.exception))
         self.assertNotIn("did not become ready before timeout", str(ctx.exception))
+
+    def test_server_failure_scrubs_hf_token(self):
+        secret = "hf_supersecretvalue"
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="atom"),
+            hf_token="",
+            isl="1024",
+            osl="1024",
+            concurrency=1,
+            num_prompts=1,
+        )
+        text = f"Engine core initialization failed HF_TOKEN={secret} path=/home/x/.hf_token"
+        with self.assertRaises(RuntimeError) as ctx:
+            job._raise_if_atom_server_log_failed("node0", text)
+        self.assertNotIn(secret, str(ctx.exception))
+        self.assertIn(".hf_token", str(ctx.exception))
+        self.assertIn("<redacted>", str(ctx.exception))
 
     def test_distributed_start_server_targets_each_host(self):
         orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])

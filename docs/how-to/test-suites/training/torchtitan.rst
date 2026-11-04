@@ -13,6 +13,16 @@ There are two suites:
 - ``torchtitan_single`` — single-node configs (``framework: torchtitan_single``)
 - ``torchtitan_distributed`` — multi-node configs (``framework: torchtitan_distributed``); adds RDMA setup
 
+``paths.hf_token_file`` is read inside the container on each node when the
+tokenizer download or training command runs. CVS does not read the file on
+the machine running ``cvs run``. The path must be mounted into the container.
+The packaged ``/home/{user-id}/.hf_token`` path works when that home directory
+is bind-mounted. Tokenizer download always runs, so a missing, empty, or
+unmounted file fails ``test_download_tokenizer`` and sets ``lifecycle.failed``.
+Later stages are skipped, and ``test_teardown`` still runs. A run that selects
+only ``test_training`` fails that combo and still runs the other combos.
+The nodes need network access to reach Hugging Face.
+
 .. _torchtitan-set-up-config:
 
 Set up config

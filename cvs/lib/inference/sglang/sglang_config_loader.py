@@ -24,7 +24,7 @@ from pydantic import Field, model_validator
 from typing_extensions import Literal
 
 from cvs.lib import globals
-from cvs.lib.inference.sglang.sglang_common import perf_enforce_thresholds
+from cvs.lib.inference.sglang.sglang_common import perf_enforce_thresholds, scrub_sglang_secrets
 from cvs.lib.utils.config_loader import (
     BaseVariantConfig,
     _Allow,
@@ -508,8 +508,8 @@ def orchestrator_container_from_variant(variant: SglangSingleVariantConfig) -> d
 
     server_env = variant.roles.server.env
     if server_env:
-        block["env"] = dict(server_env)
-    return block
+        block["env"] = scrub_sglang_secrets(dict(server_env))
+    return scrub_sglang_secrets(block)
 
 
 def _mounts_to_volume_dict(mounts: list[Any]) -> dict[str, str]:
@@ -640,7 +640,11 @@ def _unified_runtime_views(raw: Mapping[str, Any], thresholds: Mapping[str, Any]
         }.items()
         if not isinstance(value, (list, dict))
     }
-    return inference, params, server
+    return (
+        scrub_sglang_secrets(inference),
+        scrub_sglang_secrets(params),
+        scrub_sglang_secrets(server),
+    )
 
 
 def _load_legacy_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> SglangSingleVariantConfig:
@@ -651,9 +655,9 @@ def _load_legacy_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> S
     variant_key = resolve_benchmark_variant_key(root, config_path)
     cfg = root["config"] if isinstance(root.get("config"), dict) else root
 
-    inference = resolve_test_config_placeholders(cfg, cluster_dict)
+    inference = scrub_sglang_secrets(resolve_test_config_placeholders(cfg, cluster_dict))
     bp_all = resolve_test_config_placeholders(root["benchmark_params"], cluster_dict)
-    bp = dict(bp_all[variant_key])
+    bp = scrub_sglang_secrets(dict(bp_all[variant_key]))
 
     threshold_path_str = _threshold_file_path(bp)
     if not threshold_path_str:

@@ -134,8 +134,24 @@ configured threshold.
 A suite **fails** when model paths are missing, preflight checks fail, docker exits
 non-zero, artifacts are missing/empty, or latency exceeds the threshold.
 
-Sample thresholds in-repo are starting points; tune `expected_results` for your hardware,
-software stack, and benchmark settings before production gating.
+Sample thresholds in-repo are starting points. Measured baselines below are the only
+record of how the MI300X and MI350 gates were chosen; `auto` and `mi355` in these files
+are unvalidated placeholders. Tune `expected_results` for your hardware, software stack,
+and benchmark settings before production gating.
+
+`mi3xx_pytorch_xdit_flux1_dev_single.json` (`max_avg_pipe_time_s`):
+
+- `mi300x` 3.0s — measured average 1.39s/pipe over 25 repetitions on MI300X on OCI with
+  `use_torch_compile: true`, then about a 2× margin.
+- `mi350` 2.0s — measured average 0.92s/pipe over 25 repetitions, consistent across two
+  separate MI350 nodes with `use_torch_compile: true`, then about a 2× margin.
+
+`mi3xx_pytorch_xdit_wan22_14b_single.json` (`max_avg_total_time_s`):
+
+- `mi300x` 200s — measured average 161.03s/step across 5 clean steps on MI300X with
+  `compile: true`, then about a 25% margin.
+- `mi350` 120s — measured 86.10s–90.99s/step across two MI350 nodes with `compile: true`,
+  then about a 30% margin over the higher observed value.
 
 ## Output layout
 

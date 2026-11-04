@@ -1,5 +1,12 @@
 '''Unit tests for cvs/lib/inference/sglang/sglang_common.py.'''
 
+import io
+import logging
+import os
+import shlex
+import shutil
+import subprocess
+import tempfile
 import unittest
 from unittest import mock
 
@@ -231,6 +238,250 @@ class TestSglangCommonHelpers(unittest.TestCase):
             )
         self.assertEqual(result['status'], 'success')
         self.assertIn('bench', result['results'])
+
+
+class TestHfTokenRedaction(unittest.TestCase):
+    def test_export_line_reads_file_and_omits_secret(self):
+        secret = 'hf_supersecretvalue'
+        line = sglang_common.hf_token_export_line({'hf_token_file': '/home/user/.hf_token', 'HF_TOKEN': secret})
+        self.assertNotIn(secret, line)
+        self.assertIn('/home/user/.hf_token', line)
+        self.assertIn('export HF_TOKEN', line)
+        self.assertNotIn('export HF_TOKEN=', line)
+
+    def test_export_line_empty_without_path(self):
+        self.assertEqual(sglang_common.hf_token_export_line({}), '')
+        self.assertEqual(sglang_common.hf_token_export_line(None), '')
+
+    def test_hub_model_export_line_fails_closed(self):
+        secret = 'hf_supersecretvalue'
+        line = sglang_common.hf_token_export_line(
+            {'hf_token_file': '/home/user/.hf_token', 'HF_TOKEN': secret},
+            'meta-llama/Llama-3.1-70B-Instruct',
+        )
+        self.assertNotIn(secret, line)
+        self.assertIn('[ ! -s /home/user/.hf_token ]', line)
+        self.assertIn('[ ! -r /home/user/.hf_token ]', line)
+        self.assertIn('exit 1', line)
+        self.assertIn('[ -z "$HF_TOKEN" ]', line)
+        self.assertIn('export HF_TOKEN', line)
+        self.assertNotIn('export HF_TOKEN=', line)
+
+    def test_local_model_export_line_stays_optional(self):
+        line = sglang_common.hf_token_export_line(
+            {'hf_token_file': '/root/models/.hf_token'},
+            '/root/models/DeepSeek-R1-0528',
+        )
+        self.assertNotIn('exit 1', line)
+        self.assertIn('[ -s /root/models/.hf_token ]', line)
+
+    def test_hub_model_without_token_path_exits(self):
+        line = sglang_common.hf_token_export_line({}, 'meta-llama/Llama-3.1-70B-Instruct')
+        self.assertIn('exit 1', line)
+        self.assertIn('hf_token_file is unset', line)
+
+    def test_model_needs_hf_token(self):
+        self.assertTrue(sglang_common.model_needs_hf_token('meta-llama/Llama-3.1-70B-Instruct'))
+        self.assertFalse(sglang_common.model_needs_hf_token('/root/models/DeepSeek-R1-0528'))
+        self.assertFalse(sglang_common.model_needs_hf_token(''))
+        self.assertFalse(sglang_common.model_needs_hf_token(None))
+
+    def test_sourced_hub_token_script_blocks_launch(self):
+        bash = shutil.which('bash')
+        if bash is None:
+            self.fail('bash is required to check the sourced token script')
+        hub = 'meta-llama/Llama-3.1-70B-Instruct'
+        secret = 'hf_supersecretvalue'
+        script = sglang_common.hf_token_export_line({'hf_token_file': '.hf_token'}, hub)
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            self._assert_source_blocks(bash, tmp, script)
+            with open(os.path.join(tmp, '.hf_token'), 'w', encoding='utf-8'):
+                pass
+            self._assert_source_blocks(bash, tmp, script)
+            with open(os.path.join(tmp, '.hf_token'), 'w', encoding='utf-8') as handle:
+                handle.write(' \n\t ')
+            self._assert_source_blocks(bash, tmp, script)
+            with open(os.path.join(tmp, '.hf_token'), 'w', encoding='utf-8') as handle:
+                handle.write(secret + '\n')
+            subprocess.run([bash, '-c', 'chmod 000 .hf_token'], cwd=tmp, check=True)
+            try:
+                readable = subprocess.run([bash, '-c', 'test -r .hf_token'], cwd=tmp, check=False)
+                if readable.returncode != 0:
+                    self._assert_source_blocks(bash, tmp, script)
+                else:
+                    # drvfs still reports mode 000 as readable. [ ! -r ] is what
+                    # rejects that file when the filesystem enforces the mode.
+                    self.assertIn('[ ! -r ', script)
+            finally:
+                subprocess.run([bash, '-c', 'chmod 644 .hf_token'], cwd=tmp, check=False)
+            with open(os.path.join(tmp, '.hf_token'), 'w', encoding='utf-8') as handle:
+                handle.write('  ' + secret + ' \n')
+            proc = self._source_script(bash, tmp, script)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn('LAUNCHED', proc.stdout)
+            self.assertEqual(proc.stdout.splitlines()[0], secret)
+            self.assertNotIn(secret, script)
+
+    def test_sourced_local_model_script_allows_missing_token(self):
+        bash = shutil.which('bash')
+        if bash is None:
+            self.fail('bash is required to check the sourced token script')
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            proc = self._source_script(
+                bash,
+                tmp,
+                sglang_common.hf_token_export_line(
+                    {'hf_token_file': '.hf_token'},
+                    '/root/models/DeepSeek-R1-0528',
+                ),
+            )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn('LAUNCHED', proc.stdout)
+        self.assertIn('UNSET', proc.stdout)
+
+    def test_record_container_exec_failure(self):
+        with mock.patch.object(sglang_common, 'fail_test') as fail:
+            sglang_common.record_container_exec_failure(
+                {'node-a': {'exit_code': 1, 'output': 'HF token file missing, empty, or unreadable: .hf_token'}},
+                'SGLang env script failed inside the container',
+            )
+        fail.assert_called_once()
+        message = fail.call_args.args[0]
+        self.assertIn('node-a', message)
+        self.assertIn('exit 1', message)
+        self.assertIn('missing, empty, or unreadable', message)
+        with mock.patch.object(sglang_common, 'fail_test') as fail:
+            sglang_common.record_container_exec_failure({'node-a': {'exit_code': 0, 'output': ''}}, 'ok')
+        fail.assert_not_called()
+
+    def _source_script(self, bash, cwd, script):
+        # The launch shell has no set -e. exit from the sourced script is what
+        # stops the following command. Keep the launch body in a file so a
+        # Windows bash stub cannot expand $HF_TOKEN before bash runs it.
+        with open(os.path.join(cwd, 'env.sh'), 'w', encoding='utf-8', newline='\n') as handle:
+            handle.write(script)
+        launch = (
+            'source ./env.sh\n'
+            'if [ -n "${HF_TOKEN+x}" ]; then printf %s "$HF_TOKEN"; else echo UNSET; fi\n'
+            'echo\n'
+            'echo LAUNCHED\n'
+        )
+        with open(os.path.join(cwd, 'launch.sh'), 'w', encoding='utf-8', newline='\n') as handle:
+            handle.write(launch)
+        return subprocess.run(
+            [bash, 'launch.sh'],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def _assert_source_blocks(self, bash, cwd, script):
+        proc = self._source_script(bash, cwd, script)
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn('LAUNCHED', proc.stdout)
+        self.assertNotIn('hf_supersecretvalue', proc.stdout + proc.stderr)
+
+    def test_scrub_drops_token_and_keeps_path(self):
+        secret = 'plain-token-value'
+        cleaned = sglang_common.scrub_sglang_secrets(
+            {
+                'hf_token_file': '/home/user/.hf_token',
+                'HF_TOKEN': secret,
+                'Hf_Token': secret,
+                'container_config': {'env_dict': {'HUGGING_FACE_HUB_TOKEN': secret, 'NCCL_DEBUG': 'ERROR'}},
+                'add_export_env': [
+                    f'HF_TOKEN={secret}',
+                    f'export hf_token={secret}',
+                    f'hugging_face_hub_token={secret}',
+                    'SGLANG_USE_AITER=1',
+                ],
+            }
+        )
+        blob = str(cleaned)
+        self.assertNotIn(secret, blob)
+        self.assertEqual(cleaned['hf_token_file'], '/home/user/.hf_token')
+        self.assertEqual(cleaned['container_config']['env_dict'], {'NCCL_DEBUG': 'ERROR'})
+        self.assertEqual(cleaned['add_export_env'], ['SGLANG_USE_AITER=1'])
+
+    def test_add_export_env_block_skips_token_assignment(self):
+        secret = 'hf_supersecretvalue'
+        block = sglang_common.add_export_env_block(
+            {'add_export_env': [f'HF_TOKEN={secret}', 'SGLANG_USE_AITER=1']},
+            indent='',
+        )
+        self.assertNotIn(secret, block)
+        self.assertIn('export SGLANG_USE_AITER=1', block)
+        mixed = sglang_common.add_export_env_block(
+            {'add_export_env': [f'hugging_face_hub_token={secret}', f'Hf_Token={secret}', 'SGLANG_USE_AITER=1']},
+            indent='',
+        )
+        self.assertNotIn(secret, mixed)
+        self.assertEqual(mixed, 'export SGLANG_USE_AITER=1')
+
+    def test_logged_env_command_does_not_contain_token(self):
+        secret = 'hf_supersecretvalue'
+        inf = sglang_common.scrub_sglang_secrets({'hf_token_file': '/home/user/.hf_token', 'HF_TOKEN': secret})
+        bp = sglang_common.scrub_sglang_secrets({'add_export_env': [f'HF_TOKEN={secret}', 'SGLANG_USE_AITER=1']})
+        body = sglang_common.hf_token_export_line(inf) + sglang_common.add_export_env_block(bp, indent='')
+        cmd = 'bash -c ' + shlex.quote(f"cat > /tmp/server_env_script.sh <<'EOF'\n{body}EOF\n")
+        self.assertNotIn(secret, body)
+        self.assertNotIn(secret, cmd)
+        self.assertIn('.hf_token', cmd)
+
+    def test_redact_text_keeps_token_file_path(self):
+        secret = 'hf_supersecretvalue'
+        text = (
+            f"cmd = export HF_TOKEN={secret} path=/home/user/.hf_token "
+            f"{{'HF_TOKEN': '{secret}', 'hf_token_file': '/home/user/.hf_token'}}"
+        )
+        redacted = sglang_common.redact_hf_token_text(text)
+        self.assertNotIn(secret, redacted)
+        self.assertIn('/home/user/.hf_token', redacted)
+        self.assertIn('<redacted>', redacted)
+        command_sub = "HF_TOKEN=$(tr -d '[:space:]' < /home/user/.hf_token)"
+        self.assertEqual(sglang_common.redact_hf_token_text(command_sub), command_sub)
+
+    def test_log_filter_redacts_formatted_dict(self):
+        secret = 'hf_supersecretvalue'
+        logger = logging.getLogger('sglang-hf-token-redaction-test')
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+        logger.addFilter(sglang_common.HfTokenLogFilter())
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        logger.addHandler(handler)
+        try:
+            logger.info("cmd = export HF_TOKEN=%s", secret)
+            logger.info("%s", {'HF_TOKEN': 'not-an-hf-prefix', 'hf_token_file': '/home/user/.hf_token'})
+        finally:
+            logger.removeHandler(handler)
+            logger.removeFilter(logger.filters[-1])
+        text = stream.getvalue()
+        self.assertNotIn(secret, text)
+        self.assertNotIn('not-an-hf-prefix', text)
+        self.assertIn('/home/user/.hf_token', text)
+        self.assertIn('<redacted>', text)
+
+    def test_record_factory_redacts_child_logger_with_late_handler(self):
+        secret = 'hf_supersecretvalue'
+        prior_factory = logging.getLogRecordFactory()
+        logging.setLogRecordFactory(logging.LogRecord)
+        logger = logging.getLogger('sglang-hf-token-late-handler-test')
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        try:
+            sglang_common.install_hf_token_log_redaction()
+            logger.addHandler(handler)
+            logger.info('cmd = export HF_TOKEN=%s', secret)
+        finally:
+            logger.removeHandler(handler)
+            logging.setLogRecordFactory(prior_factory)
+        text = stream.getvalue()
+        self.assertNotIn(secret, text)
+        self.assertIn('HF_TOKEN=<redacted>', text)
 
 
 if __name__ == '__main__':

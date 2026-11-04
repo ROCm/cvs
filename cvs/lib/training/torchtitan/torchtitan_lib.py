@@ -16,6 +16,7 @@ import shlex
 import time
 
 from cvs.lib import globals
+from cvs.lib.env_lib import redact_secrets
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import linux_utils
@@ -115,6 +116,72 @@ def detect_rocm_path(orch, config_rocm_path):
     return '/opt/rocm'
 
 
+def _redact_logged_text(text):
+    """Mask secret assignments and bare Hugging Face hub tokens in logged text.
+
+    ``redact_secrets`` masks ``HF_TOKEN=`` assignments, ``--token`` flags, and a
+    bare hub token such as ``Invalid credentials for token hf_...``. This wrapper
+    only normalizes non-string/empty input to ``''``, since callers log the
+    result directly.
+    """
+    if not isinstance(text, str) or not text:
+        return ''
+    return redact_secrets(text)
+
+
+def _hf_token_export_line(token_file):
+    """Shell line that exports ``HF_TOKEN`` by reading ``token_file`` on the node.
+
+    Embedding the token value in a shell command would print it, because the
+    orchestrator logs the full command. A missing or empty file fails the
+    shell command instead of continuing with an empty token.
+    """
+    path = str(token_file or '').strip()
+    if not path:
+        return "echo 'paths.hf_token_file is not configured' >&2; exit 1; "
+    quoted = shlex.quote(path)
+    return (
+        f"if [ -s {quoted} ]; then export HF_TOKEN=\"$(tr -d '[:space:]' < {quoted})\"; "
+        f"else echo 'HF token file is missing or not mounted inside the container' >&2; exit 1; fi; "
+    )
+
+
+def _require_hf_token_file(orch, token_file):
+    """Fail the test when token_file is missing or empty inside the container.
+
+    The training command reads the file on the node, so a path that is not
+    mounted into the container must stop the test before the job is launched.
+    """
+    path = str(token_file or '').strip()
+    if not path:
+        msg = (
+            'paths.hf_token_file is not configured. TorchTitan reads the token inside the '
+            'container on each node and fails the test when the file is missing.'
+        )
+        fail_test(msg)
+        raise FileNotFoundError(msg)
+    quoted = shlex.quote(path)
+    result = orch.exec(f'test -s {quoted}', detailed=True, timeout=30) or {}
+    missing = []
+    seen = set()
+    for host, info in result.items():
+        seen.add(str(host))
+        code = info.get('exit_code') if isinstance(info, dict) else None
+        if code != 0:
+            missing.append(str(host))
+    for host in getattr(orch, 'hosts', None) or []:
+        if str(host) not in seen:
+            missing.append(str(host))
+    if not result or missing:
+        where = ', '.join(missing) if missing else 'no node returned a result'
+        msg = (
+            f'HF token file {path} is missing, empty, or not mounted inside the container on {where}. '
+            'TorchTitan fails the test here. Mount paths.hf_token_file into the container on each node.'
+        )
+        fail_test(msg)
+        raise FileNotFoundError(msg)
+
+
 class TorchTitanTrainingJob:
     """
     Orchestrates a TorchTitan training job across one or more nodes.
@@ -129,7 +196,6 @@ class TorchTitanTrainingJob:
         self,
         orch,
         variant_config,
-        hf_token,
         micro_batch_size=None,
         global_batch_size=None,
         precision='',
@@ -142,7 +208,6 @@ class TorchTitanTrainingJob:
     ):
         self.orch = orch
         self.variant_config = variant_config
-        self.hf_token = hf_token
         self.distributed_training = distributed_training
         self.tune_model_params = tune_model_params
         self.run_label = run_label
@@ -316,17 +381,25 @@ class TorchTitanTrainingJob:
 
         log.info(f'Downloading HF assets for {self.tokenizer_path} to {local_dir}')
 
+        _require_hf_token_file(self.orch, self.hf_token_file)
         download_cmd = (
             f'cd {self.torchtitan_root}; '
-            f'export HF_TOKEN={self.hf_token}; '
-            f'python scripts/download_hf_assets.py --repo_id {self.tokenizer_path} '
+            + _hf_token_export_line(self.hf_token_file)
+            + f'python scripts/download_hf_assets.py --repo_id {self.tokenizer_path} '
             f'--local_dir {local_dir} --all'
         )
 
-        out_dict = self.orch.exec(download_cmd)
+        # The training-command preview does not cover this command. Log it
+        # redacted, and keep orch.exec from writing stdout and stderr as-is.
+        log.info('%s', _redact_logged_text(download_cmd))
+        out_dict = self.orch.exec(download_cmd, print_console=False) or {}
         for node, output in out_dict.items():
-            if 'error' in (output or '').lower():
-                log.warning(f'Potential download error on {node}: {output}')
+            text = output if isinstance(output, str) else ''
+            redacted = _redact_logged_text(text)
+            if redacted.strip():
+                log.info('HF asset download on %s:\n%s', node, redacted)
+            if 'error' in text.lower():
+                log.warning('Potential download error on %s: %s', node, redacted)
 
     def exec_nic_setup_scripts(self):
         """Setup NICs for distributed training (Broadcom/Thor only)."""
@@ -418,7 +491,7 @@ class TorchTitanTrainingJob:
         """Build torchrun commands for training."""
         # Base environment setup
         cmd = f'cd {self.torchtitan_root}; '
-        cmd += f'export HF_TOKEN={self.hf_token}; '
+        cmd += _hf_token_export_line(self.hf_token_file)
         cmd += 'export HSA_FORCE_FINE_GRAIN_PCIE=1; '
         cmd += 'export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True; '
         # Add TorchTitan to PYTHONPATH so it can be imported as a module
@@ -498,24 +571,52 @@ class TorchTitanTrainingJob:
 
     def start_training_job(self, timeout=500):
         """Launch the training job."""
+        _require_hf_token_file(self.orch, self.hf_token_file)
+        if self.distributed_training:
+            log.info('%s', [_redact_logged_text(c) for c in self.job_cmd_list])
+        else:
+            log.info('%s', _redact_logged_text(self.job_cmd))
         # Capture start time for dmesg verification
         self.training_start_time = self.orch.exec('date')
 
         if self.distributed_training:
             for i, cmd in enumerate(self.job_cmd_list):
-                log.info(f'Writing wrapper script for node {i}')
-                self.orch.exec(cmd)
+                log.info('Writing wrapper script for node %s', i)
+                # phandle.exec logs this command text through redact_secrets (which
+                # also masks a bare hf_ token). Its stdout and stderr are not
+                # covered by that, so keep them off the console and log them
+                # redacted here.
+                out_dict = self.orch.exec(cmd, print_console=False) or {}
+                for node, output in out_dict.items():
+                    text = output if isinstance(output, str) else ''
+                    redacted = _redact_logged_text(text)
+                    if redacted.strip():
+                        log.info('Wrapper script write on %s:\n%s', node, redacted)
 
             time.sleep(2)
 
             for i in range(self.nnodes):
                 script_path = f'{self.scripts_dir}/distributed_wrapper_script_{i}.sh'
                 log.info(f'Launching training on node {i}')
-                self.orch.exec(f'bash {script_path}', hosts=[list(self.orch.hosts)[i]])
+                out_dict = (
+                    self.orch.exec(f'bash {script_path}', hosts=[list(self.orch.hosts)[i]], print_console=False) or {}
+                )
+                for node, output in out_dict.items():
+                    text = output if isinstance(output, str) else ''
+                    redacted = _redact_logged_text(text)
+                    if redacted.strip():
+                        log.info('Distributed launch on %s:\n%s', node, redacted)
                 time.sleep(1)
         else:
             log.info('Launching single-node training')
-            self.orch.exec(f'bash -c {shlex.quote(self.job_cmd)}')
+            # The log.info of job_cmd above is a second copy of the command.
+            # This exec's stdout and stderr are a different stream.
+            out_dict = self.orch.exec(f'bash -c {shlex.quote(self.job_cmd)}', print_console=False) or {}
+            for node, output in out_dict.items():
+                text = output if isinstance(output, str) else ''
+                redacted = _redact_logged_text(text)
+                if redacted.strip():
+                    log.info('Single-node launch on %s:\n%s', node, redacted)
 
     def get_training_results_dict(self):
         """Parse training results from logs."""
@@ -526,7 +627,10 @@ class TorchTitanTrainingJob:
 
         all_results = {}
         for log_file in log_files:
-            out_dict = self.orch.exec(f'cat {log_file}')
+            # Training logs can contain a bare hub token on failure (e.g. a 401
+            # response). Only the parsed numeric metrics are kept; keep the raw
+            # text off the console and out of the orchestrator's log.
+            out_dict = self.orch.exec(f'cat {log_file}', print_console=False)
             for host, output in out_dict.items():
                 if output:
                     parsed = _parse_training_results(output)
@@ -545,7 +649,9 @@ class TorchTitanTrainingJob:
             log_files = [f'{self.combo_log_dir}/out-node0/training.log']
 
         for log_file in log_files:
-            out_dict = self.orch.exec(f'tail -1000 {log_file}')
+            # Only the error-pattern match matters here; keep the raw tail,
+            # which can contain a bare hub token on failure, off the console.
+            out_dict = self.orch.exec(f'tail -1000 {log_file}', print_console=False)
             for host, output in out_dict.items():
                 if not output:
                     continue
@@ -563,7 +669,9 @@ class TorchTitanTrainingJob:
             time.sleep(time_between_iters)
             log.info(f'Polling iteration {iteration + 1}/{max_iters}')
 
-            out_dict = self.orch.exec(f'tail -500 {log_file}')
+            # Only the completion/NaN checks matter here; keep the raw tail,
+            # which can contain a bare hub token on failure, off the console.
+            out_dict = self.orch.exec(f'tail -500 {log_file}', print_console=False)
             for host, output in out_dict.items():
                 if output and _is_training_complete(output, self.iterations):
                     log.info(f'Training completed on {host}')
@@ -705,15 +813,20 @@ class TorchTitanTrainingJob:
     def _read_last_node_log(self, tail_lines=0):
         """Read the training log from the last node and return its output.
 
+        Callers store this text in the results dict and attach it to the pytest-html
+        report as the "Training Log (tail)" extra, so it is redacted here before it
+        is returned: a failed download or launch can leave a bare hub token on the
+        last lines of the log.
+
         Args:
             tail_lines (int): If > 0, only the last N lines of the log are read.
 
         Returns:
-            str: Log text from the last node.
+            str: Redacted log text from the last node.
         """
         n = len(self.orch.hosts)
         last_host = self.orch.hosts[-1]
         tail_suffix = f' | tail -{tail_lines}' if tail_lines > 0 else ''
         log_path = f'{self.combo_log_dir}/out-node{n - 1}/training.log'
-        out_dict = self.orch.exec(f'cat {log_path}{tail_suffix}', hosts=[last_host])
-        return out_dict.get(last_host) or ''
+        out_dict = self.orch.exec(f'cat {log_path}{tail_suffix}', hosts=[last_host], print_console=False)
+        return _redact_logged_text(out_dict.get(last_host) or '')

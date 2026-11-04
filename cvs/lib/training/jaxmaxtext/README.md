@@ -20,9 +20,11 @@ and the log-parsing/metric helpers.
 
 ## `jaxmaxtext_training_lib.py`
 
-`MaxTextTrainingJob(orch, variant, hf_token, sweep=None)` composes one MaxText
+`MaxTextTrainingJob(orch, variant, sweep=None)` composes one MaxText
 run. All container/SSH plumbing belongs to `orch`; the class only builds
-commands, launches, polls, and parses. Key stages (called by the suite in
+commands, launches, polls, and parses. The HF token is read from
+`variant.paths.hf_token_file` *inside the container* at run time, so the secret
+never enters a command string or log. Key stages (called by the suite in
 order):
 
 | Method | What it does |

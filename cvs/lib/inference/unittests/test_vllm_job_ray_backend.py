@@ -272,7 +272,6 @@ def _job(
     return VllmJob(
         orch=orch,
         variant=_variant(serve_args, pp, ib_netdev, tp, master_addr, env),
-        hf_token="tok",
         isl=isl,
         osl=osl,
         concurrency=concurrency,
@@ -354,7 +353,6 @@ class TestCellKeyRayMultiNode(unittest.TestCase):
         job = VllmJob(
             orch=RecordingOrch(),
             variant=variant,
-            hf_token="token",
             isl="1024",
             osl="1024",
             concurrency=16,
@@ -1097,7 +1095,6 @@ class TestVllmJobWaitReady(unittest.TestCase):
         job = VllmJob(
             orch=RecordingOrch(responder=_responder_ok(), hosts=[HEAD]),
             variant=variant,
-            hf_token="tok",
             isl="1024",
             osl="1024",
             concurrency=16,
@@ -1256,6 +1253,17 @@ class TestVllmJobBuildServerCmd(unittest.TestCase):
         mk3 = self._script(orch3, None).count("mkdir")
         self.assertGreater(mk1, 0, "build_server_cmd must create at least the rank-0 log dir")
         self.assertGreater(mk3, mk1, "per-rank mkdir loop must scale with nnodes")
+
+    def test_server_env_script_reads_token_file_and_does_not_embed_a_value(self):
+        orch = RecordingOrch()
+        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1", ib_netdev=None)
+        job.build_server_cmd()
+        script = self._script(orch, None)
+        self.assertIn("/logs/.hf", script)
+        self.assertIn("tr -d", script)
+        self.assertIn("[:space:]", script)
+        self.assertNotIn("export HF_TOKEN=fake-cred", script)
+        self.assertNotIn("export HF_TOKEN=tok", script)
 
 
 # --------------------------------------------------------------------------- #

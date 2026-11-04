@@ -519,10 +519,85 @@ def placeholder_gated_threshold_cell(
     }
 
 
+CONTAINER_HF_TOKEN_PATH = "/run/secrets/hf_token"
+SECRET_ENV_KEYS = frozenset({"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN"})
+
+
+def _without_secret_env(env):
+    if not isinstance(env, dict):
+        return env
+    return {key: value for key, value in env.items() if key not in SECRET_ENV_KEYS}
+
+
+def _deep_merge(base, override):
+    """Merge ``override`` onto ``base``. Dicts merge key-wise; lists are replaced."""
+    if not (isinstance(base, dict) and isinstance(override, dict)):
+        return override
+    out = dict(base)
+    for key, value in override.items():
+        out[key] = _deep_merge(base[key], value) if key in base else value
+    return out
+
+
+def _token_volume_parts(entry):
+    parts = str(entry).split(":")
+    if len(parts) >= 2 and parts[1] == CONTAINER_HF_TOKEN_PATH:
+        return parts
+    return None
+
+
+def bind_hf_token_volume(block, host_path):
+    """Bind ``host_path`` at the container token path, always read-only.
+
+    An existing mount of that path is rewritten to ``:ro`` so a writable mapping
+    cannot leave the host credential modifiable from inside the container.
+    """
+    host_path = str(host_path or "").strip()
+    if not host_path or not isinstance(block, dict):
+        return block
+    runtime = block.setdefault("runtime", {})
+    if not isinstance(runtime, dict):
+        return block
+    args = runtime.setdefault("args", {})
+    if not isinstance(args, dict):
+        return block
+    volumes = []
+    saw_token_mount = False
+    for entry in list(args.get("volumes") or []):
+        parts = _token_volume_parts(entry)
+        if parts is None:
+            volumes.append(entry)
+            continue
+        saw_token_mount = True
+        options = parts[2].split(",") if len(parts) >= 3 else []
+        if "ro" in options:
+            volumes.append(str(entry))
+            continue
+        host = parts[0] or host_path
+        volumes.append(f"{host}:{CONTAINER_HF_TOKEN_PATH}:ro")
+    if not saw_token_mount:
+        volumes.append(f"{host_path}:{CONTAINER_HF_TOKEN_PATH}:ro")
+    args["volumes"] = volumes
+    return block
+
+
 def orchestrator_container_from_variant(variant: AtomVariantConfig) -> dict[str, Any]:
     """``container`` block for :class:`OrchestratorConfig` (includes server env)."""
     block = variant.container.model_dump()
     server_env = variant.roles.server.env
     if server_env:
         block = {**block, "env": dict(server_env)}
+    if isinstance(block.get("env"), dict):
+        block["env"] = _without_secret_env(block["env"])
     return block
+
+
+def atom_container_block(cluster_container, variant):
+    """Merge cluster and variant container config, then bind the token file.
+
+    The token volume is appended after the merge. Putting it on the variant
+    block first would replace cluster fallback volumes, because list values
+    are replaced rather than concatenated.
+    """
+    merged = _deep_merge(cluster_container or {}, orchestrator_container_from_variant(variant))
+    return bind_hf_token_volume(merged, variant.paths.hf_token_file)

@@ -4,7 +4,6 @@ All rights reserved.
 '''
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -204,16 +203,6 @@ def vllm_targets(orch, variant_config, vllm_mode):
 
     variant_config.bind_effective_topology(topology)
     return topology.target_groups
-
-
-@pytest.fixture(scope="module")
-def hf_token(variant_config):
-    path = variant_config.paths.hf_token_file
-    if not os.path.isfile(path):
-        # vLLM configs always reference a mounted, pre-staged model.
-        return ""
-    with open(path) as fp:
-        return fp.read().strip()
 
 
 @pytest.fixture(scope="module")
