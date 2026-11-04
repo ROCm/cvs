@@ -93,7 +93,7 @@
       "NCCL_IB_GID_INDEX": "3",
       "NCCL_SOCKET_IFNAME": "eno0",
       "NCCL_CUMEM_ENABLE": "1",
-      "NCCL_DMABUF_ENABLE": "1",
+      "NCCL_DMABUF_ENABLE": "0",
       "HF_HOME": "/it-share-prj2-1/models/hub",
       "HF_HUB_DISABLE_TELEMETRY": "1"
     },
@@ -133,8 +133,10 @@
     "harness": "hf_trainer",
     "master_port": 29500,
     "scaling_baseline": {
-      "images_per_sec_total": 8901.577,
-      "num_nodes": 1
+      "images_per_sec_total": 9559.432,
+      "num_nodes": 1,
+      "accuracy_metric": "top1_accuracy_pct",
+      "accuracy_value": 81.596
     }
   },
   "_topology_comment": "W6 uses the HuggingFace Trainer with FSDP. The node count comes from the cluster file; the sweep name carries only per-device dimensions so one config runs on any topology. Requires the HF image, which carries transformers/accelerate."

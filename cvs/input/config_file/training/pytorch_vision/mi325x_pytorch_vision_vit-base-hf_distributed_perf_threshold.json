@@ -41,6 +41,58 @@
     "training.codecarbon_tracking_active": {
       "kind": "min",
       "value": 1
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "info"
+    }
+  },
+  "STEPS=50,MODEL=vit-base-hf,HARNESS=hf_trainer,AUG=HEAVY,PRECISION=BF16,MBS=64,GA=1,RES=224": {
+    "training.images_per_sec": {
+      "kind": "info"
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "info"
+    },
+    "training.step_time_ms_p95": {
+      "kind": "info"
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    },
+    "training.codecarbon_tracking_active": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.augmentation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "info"
     }
   },
   "STEPS=50,MODEL=vit-base-hf,HARNESS=hf_trainer,PRECISION=BF16,MBS=64,GA=2,RES=224": {
@@ -84,6 +136,9 @@
     "training.codecarbon_tracking_active": {
       "kind": "min",
       "value": 1
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "info"
     }
   }
 }

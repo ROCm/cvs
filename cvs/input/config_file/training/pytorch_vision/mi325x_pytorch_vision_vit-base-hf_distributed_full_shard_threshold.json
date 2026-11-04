@@ -38,6 +38,9 @@
     "training.codecarbon_tracking_active": {
       "kind": "min",
       "value": 1
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "info"
     }
   }
 }

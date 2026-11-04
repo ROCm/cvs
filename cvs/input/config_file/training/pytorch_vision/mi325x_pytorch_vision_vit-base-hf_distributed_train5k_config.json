@@ -93,7 +93,7 @@
       "NCCL_IB_GID_INDEX": "3",
       "NCCL_SOCKET_IFNAME": "eno0",
       "NCCL_CUMEM_ENABLE": "1",
-      "NCCL_DMABUF_ENABLE": "1",
+      "NCCL_DMABUF_ENABLE": "0",
       "HF_HOME": "/it-share-prj2-1/models/hub",
       "HF_HUB_DISABLE_TELEMETRY": "1"
     },
@@ -133,7 +133,7 @@
     "harness": "hf_trainer",
     "master_port": 29500,
     "scaling_baseline": {
-      "images_per_sec_total": 8901.577,
+      "images_per_sec_total": 9538.168,
       "num_nodes": 1
     }
   },

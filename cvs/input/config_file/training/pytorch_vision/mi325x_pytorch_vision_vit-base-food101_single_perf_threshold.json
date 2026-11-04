@@ -1,0 +1,175 @@
+{
+  "_comment": "Record-only W8 perf thresholds; structural metric presence is enforced by pytest.",
+  "W8-VIT-B-FOOD101-ROCAL-GPU-STANDARD-BF16-R224-MBS128": {
+    "training.images_per_sec": {
+      "kind": "info"
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "info"
+    },
+    "training.step_time_ms_p95": {
+      "kind": "info"
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.codecarbon_tracking_active": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    }
+  },
+  "W8-VIT-B-FOOD101-ROCAL-BF16-R224-MBS32-GA4": {
+    "training.images_per_sec": {
+      "kind": "info"
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "info"
+    },
+    "training.step_time_ms_p95": {
+      "kind": "info"
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.codecarbon_tracking_active": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    }
+  },
+  "W8-VIT-B-FOOD101-ROCAL-CPU-STANDARD-BF16-R224-MBS128": {
+    "training.images_per_sec": {
+      "kind": "info"
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "info"
+    },
+    "training.step_time_ms_p95": {
+      "kind": "info"
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.codecarbon_tracking_active": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    }
+  },
+  "W8-VIT-B-FOOD101-ROCAL-GPU-HEAVY-BF16-R224-MBS128": {
+    "training.images_per_sec": {
+      "kind": "info"
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "info"
+    },
+    "training.step_time_ms_p95": {
+      "kind": "info"
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.codecarbon_tracking_active": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    }
+  }
+}

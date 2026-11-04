@@ -46,6 +46,9 @@
     "training.rocal_cpu_overhead_pct": {
       "kind": "max",
       "value": 0
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "info"
     }
   },
   "STEPS=50,MODEL=resnet50,DATA=rocAL-GPU,PRECISION=BF16,MBS=256,GA=1,RES=224": {
@@ -86,6 +89,9 @@
     },
     "training.data_loader_images_per_sec": {
       "kind": "info"
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "info"
     }
   },
   "STEPS=50,MODEL=resnet50,DATA=rocAL-GPU,PRECISION=BF16,MBS=64,GA=4,RES=224": {
@@ -125,6 +131,9 @@
       "kind": "info"
     },
     "training.data_loader_images_per_sec": {
+      "kind": "info"
+    },
+    "training.scaling_efficiency_pct": {
       "kind": "info"
     }
   },
@@ -170,6 +179,9 @@
     "training.rocal_cpu_overhead_pct": {
       "kind": "max",
       "value": 0
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "info"
     }
   },
   "STEPS=50,MODEL=resnet50,DATA=rocAL-GPU-HEAVY,PRECISION=BF16,MBS=128,GA=1,RES=224": {
@@ -214,6 +226,9 @@
     "training.augmentation_overhead_pct": {
       "kind": "max",
       "value": 0
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "info"
     }
   }
 }

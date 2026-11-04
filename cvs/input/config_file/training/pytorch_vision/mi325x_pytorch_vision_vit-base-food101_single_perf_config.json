@@ -1,0 +1,197 @@
+{
+  "_format_note": "PyTorch Vision training config. The cluster file owns node access; this file owns the container and the training workload; the sibling *_threshold.json owns per-sweep metric gates. Run with: cvs run pytorch_vision_single|pytorch_vision_distributed --cluster_file <cluster>.json --config_file <this>.json --html <out>.html --self-contained-html",
+  "_workload_comment": "W8 ViT-base-patch16-224 fine-tuned on food101 (HF dataset) with DDP on 8 GPUs through the native rocAL loop.",
+  "schema_version": 1,
+  "framework": "pytorch_vision_training",
+  "gpu_name": "MI325X",
+  "_thresholds_comment": "Record-only until a calibrated threshold file replaces this one: kind=info records the value, and only structural checks (checkpoint round trip, eval completed, CodeCarbon active) are min gates.",
+  "enforce_thresholds": false,
+  "threshold_json": "mi325x_pytorch_vision_vit-base-food101_single_perf_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "<changeme-cvs-vision-host-path>",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "google/vit-base-patch16-224",
+    "remote": 0
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "cvs_pytorch_vision_vit_base_food101_single_perf",
+    "image": "cvs/pytorch-vision-tasks:rocm7.2.4-py3.12-torch2.10-tasks",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme-cvs-vision-host-path>:/datasets/cvs_vision"
+        ],
+        "devices": [
+          "/dev/kfd",
+          "/dev/dri"
+        ]
+      }
+    }
+  },
+  "training": {
+    "workload": "W8",
+    "distributed": false,
+    "enabled": true,
+    "phase": "performance",
+    "run_mode": "perf",
+    "harness": "native",
+    "task": "classification",
+    "gpus_per_node": 8,
+    "steps": 50,
+    "warmup_steps": 10,
+    "eval_enabled": false,
+    "eval_sample_count": 25250,
+    "milestone_steps": [
+      100,
+      500,
+      1000,
+      5000
+    ],
+    "num_classes": 101,
+    "channels_last": false,
+    "optimizer": "adamw",
+    "learning_rate": 3e-05,
+    "momentum": 0.9,
+    "weight_decay": 0.05,
+    "timeout_s": 3600,
+    "omp_num_threads": 1,
+    "verify_dmesg": true,
+    "peak_tflops_per_gpu": 1307.4,
+    "checkpoint_enabled": true,
+    "checkpoint_keep_file": false,
+    "checkpoint_loss_tolerance": 1e-05,
+    "loss_curve": {
+      "enabled": false,
+      "sample_every_steps": 1,
+      "minimum_points": 2,
+      "require_decrease": false
+    },
+    "convergence": {
+      "enabled": false
+    },
+    "codecarbon": {
+      "enabled": true,
+      "required": true,
+      "version": "3.2.4",
+      "tracker": "amdsmi",
+      "measure_power_secs": 5
+    },
+    "env_vars": {
+      "NCCL_DEBUG": "WARN",
+      "RCCL_USE_AMD_SMI_LIB": "1",
+      "HF_HOME": "/datasets/cvs_vision",
+      "HF_HUB_CACHE": "/datasets/cvs_vision/hub",
+      "HF_HUB_OFFLINE": "1",
+      "TRANSFORMERS_OFFLINE": "1",
+      "HF_HUB_DISABLE_TELEMETRY": "1"
+    },
+    "error_patterns": {
+      "NCCL ERROR": "NCCL ERROR|NCCL timeout|local work queue catastrophic error",
+      "GPU HW ERROR": "HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset",
+      "Python error": "Traceback \\(most recent call last\\)|ModuleNotFoundError|Fatal Python error",
+      "Resource exhaustion": "Out of memory|RESOURCE_EXHAUSTED|std::bad_alloc",
+      "Process crash": "Segmentation fault|SIGSEGV|core dumped"
+    },
+    "sweeps": [
+      {
+        "name": "W8-VIT-B-FOOD101-ROCAL-GPU-STANDARD-BF16-R224-MBS128",
+        "label": "W8-GPU-standard",
+        "model": "vit_base_patch16_224",
+        "backend": "transformers",
+        "precision": "BF16",
+        "batch_size": 128,
+        "image_size": 224,
+        "gradient_accumulation_steps": 1,
+        "training_flops_per_image": 101100000000.0,
+        "data_mode": "rocal",
+        "dataset_path": "/datasets/cvs_vision/food101",
+        "rocal_device": "gpu",
+        "augmentation": "standard",
+        "rocal_num_threads": 8,
+        "loader_warmup_steps": 2,
+        "loader_benchmark_steps": 10,
+        "model_id": "google/vit-base-patch16-224",
+        "pretrained": true
+      },
+      {
+        "name": "W8-VIT-B-FOOD101-ROCAL-BF16-R224-MBS32-GA4",
+        "label": "W8-GA4",
+        "model": "vit_base_patch16_224",
+        "backend": "transformers",
+        "precision": "BF16",
+        "batch_size": 32,
+        "image_size": 224,
+        "gradient_accumulation_steps": 4,
+        "training_flops_per_image": 101100000000.0,
+        "data_mode": "rocal",
+        "dataset_path": "/datasets/cvs_vision/food101",
+        "rocal_device": "gpu",
+        "augmentation": "standard",
+        "rocal_num_threads": 8,
+        "loader_warmup_steps": 2,
+        "loader_benchmark_steps": 10,
+        "model_id": "google/vit-base-patch16-224",
+        "pretrained": true
+      },
+      {
+        "name": "W8-VIT-B-FOOD101-ROCAL-CPU-STANDARD-BF16-R224-MBS128",
+        "label": "W8-CPU-standard",
+        "model": "vit_base_patch16_224",
+        "backend": "transformers",
+        "precision": "BF16",
+        "batch_size": 128,
+        "image_size": 224,
+        "gradient_accumulation_steps": 1,
+        "training_flops_per_image": 101100000000.0,
+        "data_mode": "rocal",
+        "dataset_path": "/datasets/cvs_vision/food101",
+        "rocal_device": "cpu",
+        "augmentation": "standard",
+        "rocal_num_threads": 8,
+        "loader_warmup_steps": 2,
+        "loader_benchmark_steps": 10,
+        "model_id": "google/vit-base-patch16-224",
+        "pretrained": true
+      },
+      {
+        "name": "W8-VIT-B-FOOD101-ROCAL-GPU-HEAVY-BF16-R224-MBS128",
+        "label": "W8-GPU-heavy",
+        "model": "vit_base_patch16_224",
+        "backend": "transformers",
+        "precision": "BF16",
+        "batch_size": 128,
+        "image_size": 224,
+        "gradient_accumulation_steps": 1,
+        "training_flops_per_image": 101100000000.0,
+        "data_mode": "rocal",
+        "dataset_path": "/datasets/cvs_vision/food101",
+        "rocal_device": "gpu",
+        "augmentation": "heavy",
+        "rocal_num_threads": 8,
+        "loader_warmup_steps": 2,
+        "loader_benchmark_steps": 10,
+        "model_id": "google/vit-base-patch16-224",
+        "pretrained": true
+      }
+    ],
+    "enabled_sweep_list": [
+      "W8-VIT-B-FOOD101-ROCAL-GPU-STANDARD-BF16-R224-MBS128",
+      "W8-VIT-B-FOOD101-ROCAL-BF16-R224-MBS32-GA4",
+      "W8-VIT-B-FOOD101-ROCAL-CPU-STANDARD-BF16-R224-MBS128",
+      "W8-VIT-B-FOOD101-ROCAL-GPU-HEAVY-BF16-R224-MBS128"
+    ],
+    "task_options": {
+      "input_normalization": "half"
+    }
+  }
+}

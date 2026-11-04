@@ -95,7 +95,7 @@
       "NCCL_IB_GID_INDEX": "3",
       "NCCL_SOCKET_IFNAME": "eno0",
       "NCCL_CUMEM_ENABLE": "1",
-      "NCCL_DMABUF_ENABLE": "1"
+      "NCCL_DMABUF_ENABLE": "0"
     },
     "error_patterns": {
       "NCCL ERROR": "NCCL ERROR|NCCL timeout|local work queue catastrophic error",
@@ -128,8 +128,10 @@
     ],
     "master_port": 29500,
     "scaling_baseline": {
-      "images_per_sec_total": 0.0,
-      "num_nodes": 1
+      "images_per_sec_total": 12016.467,
+      "num_nodes": 1,
+      "accuracy_metric": "top1_accuracy_pct",
+      "accuracy_value": 39.056
     }
   }
 }

@@ -63,6 +63,12 @@
     "training.eval_label_classes_observed": {
       "kind": "min",
       "value": 1000
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "info"
+    },
+    "training.scale_parity_accuracy_delta": {
+      "kind": "info"
     }
   }
 }

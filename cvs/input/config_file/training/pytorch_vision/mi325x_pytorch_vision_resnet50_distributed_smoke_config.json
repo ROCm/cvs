@@ -94,7 +94,7 @@
       "NCCL_IB_GID_INDEX": "3",
       "NCCL_SOCKET_IFNAME": "eno0",
       "NCCL_CUMEM_ENABLE": "1",
-      "NCCL_DMABUF_ENABLE": "1"
+      "NCCL_DMABUF_ENABLE": "0"
     },
     "error_patterns": {
       "NCCL ERROR": "NCCL ERROR|NCCL timeout|local work queue catastrophic error",

@@ -1,0 +1,153 @@
+{
+  "_format_note": "PyTorch Vision training config. The cluster file owns node access; this file owns the container and the training workload; the sibling *_threshold.json owns per-sweep metric gates. Run with: cvs run pytorch_vision_single|pytorch_vision_distributed --cluster_file <cluster>.json --config_file <this>.json --html <out>.html --self-contained-html",
+  "_workload_comment": "W11 Qwen2.5-VL-72B-Instruct multimodal SFT on ChartQA with FSDP; quality is ChartQA relaxed accuracy. MIOPEN_FIND_MODE=FAST because input shapes change every step and a MIOpen kernel search per new shape would dominate the run.",
+  "schema_version": 1,
+  "framework": "pytorch_vision_training",
+  "gpu_name": "MI325X",
+  "_thresholds_comment": "Record-only until a calibrated threshold file replaces this one: kind=info records the value, and only structural checks (checkpoint round trip, eval completed, CodeCarbon active) are min gates.",
+  "enforce_thresholds": false,
+  "threshold_json": "mi325x_pytorch_vision_qwen2.5-vl-72b-chartqa_distributed_finetune_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "<changeme-cvs-vision-host-path>",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "Qwen/Qwen2.5-VL-72B-Instruct",
+    "remote": 0
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "cvs_pytorch_vision_qwen2.5_vl_72b_chartqa_distributed_finetune",
+    "image": "cvs/pytorch-vision-tasks:rocm7.2.4-py3.12-torch2.10-tasks",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme-cvs-vision-host-path>:/datasets/cvs_vision",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+          "/lib/x86_64-linux-gnu/libibverbs.so.1:/opt/cvs-host/libibverbs.so.1:ro"
+        ],
+        "devices": [
+          "/dev/kfd",
+          "/dev/dri"
+        ]
+      }
+    }
+  },
+  "training": {
+    "workload": "W11",
+    "distributed": true,
+    "enabled": true,
+    "phase": "accuracy",
+    "run_mode": "finetune",
+    "harness": "task",
+    "task": "vlm_sft",
+    "gpus_per_node": 8,
+    "steps": 200,
+    "warmup_steps": 0,
+    "eval_enabled": true,
+    "eval_sample_count": 256,
+    "milestone_steps": [
+      100,
+      500,
+      1000,
+      5000
+    ],
+    "num_classes": 2,
+    "channels_last": false,
+    "optimizer": "adamw",
+    "learning_rate": 1e-05,
+    "momentum": 0.9,
+    "weight_decay": 0.0,
+    "timeout_s": 21600,
+    "omp_num_threads": 1,
+    "verify_dmesg": true,
+    "peak_tflops_per_gpu": 1307.4,
+    "checkpoint_enabled": true,
+    "checkpoint_keep_file": false,
+    "checkpoint_loss_tolerance": 1e-05,
+    "loss_curve": {
+      "enabled": true,
+      "sample_every_steps": 5,
+      "minimum_points": 20,
+      "require_decrease": true
+    },
+    "convergence": {
+      "enabled": false
+    },
+    "codecarbon": {
+      "enabled": true,
+      "required": true,
+      "version": "3.2.4",
+      "tracker": "amdsmi",
+      "measure_power_secs": 5
+    },
+    "env_vars": {
+      "NCCL_DEBUG": "WARN",
+      "RCCL_USE_AMD_SMI_LIB": "1",
+      "HF_HOME": "/datasets/cvs_vision",
+      "HF_HUB_CACHE": "/datasets/cvs_vision/hub",
+      "HF_HUB_OFFLINE": "1",
+      "TRANSFORMERS_OFFLINE": "1",
+      "HF_HUB_DISABLE_TELEMETRY": "1",
+      "MIOPEN_FIND_MODE": "FAST",
+      "PYTORCH_HIP_ALLOC_CONF": "expandable_segments:True",
+      "NCCL_IB_DISABLE": "0",
+      "NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "NCCL_IB_GID_INDEX": "3",
+      "NCCL_SOCKET_IFNAME": "eno0",
+      "NCCL_CUMEM_ENABLE": "1",
+      "NCCL_DMABUF_ENABLE": "0"
+    },
+    "error_patterns": {
+      "NCCL ERROR": "NCCL ERROR|NCCL timeout|local work queue catastrophic error",
+      "GPU HW ERROR": "HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset",
+      "Python error": "Traceback \\(most recent call last\\)|ModuleNotFoundError|Fatal Python error",
+      "Resource exhaustion": "Out of memory|RESOURCE_EXHAUSTED|std::bad_alloc",
+      "Process crash": "Segmentation fault|SIGSEGV|core dumped"
+    },
+    "sweeps": [
+      {
+        "name": "W11-FINETUNE-QWEN25VL-72B-CHARTQA-FSDP-BF16-MBS1",
+        "label": "W11-Finetune",
+        "model": "qwen2_5_vl_72b",
+        "backend": "transformers",
+        "precision": "BF16",
+        "batch_size": 1,
+        "image_size": 448,
+        "gradient_accumulation_steps": 1,
+        "training_flops_per_image": 1.0,
+        "data_mode": "dataset",
+        "dataset_path": "/datasets/cvs_vision/hub/datasets--HuggingFaceM4--ChartQA",
+        "rocal_device": "gpu",
+        "augmentation": "standard",
+        "rocal_num_threads": 8,
+        "loader_warmup_steps": 2,
+        "loader_benchmark_steps": 10,
+        "model_id": "Qwen/Qwen2.5-VL-72B-Instruct",
+        "pretrained": true
+      }
+    ],
+    "enabled_sweep_list": [
+      "W11-FINETUNE-QWEN25VL-72B-CHARTQA-FSDP-BF16-MBS1"
+    ],
+    "task_options": {
+      "strategy": "fsdp",
+      "activation_checkpointing": true,
+      "eval_batch_size": 4,
+      "max_new_tokens": 16,
+      "max_pixels": 401408,
+      "min_pixels": 100352,
+      "eval_loss_samples": 64,
+      "loader_workers": 4
+    },
+    "checkpoint_dir": "/datasets/cvs_vision/checkpoints",
+    "master_port": 29500
+  }
+}

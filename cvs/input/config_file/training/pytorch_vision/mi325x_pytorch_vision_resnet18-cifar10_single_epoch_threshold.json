@@ -1,0 +1,64 @@
+{
+  "_comment": "Record-only W7 smoke thresholds; structural metric presence is enforced by pytest.",
+  "W7-EPOCH-CIFAR10-1GPU-BF16-R32-MBS128": {
+    "training.images_per_sec": {
+      "kind": "info"
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "info"
+    },
+    "training.step_time_ms_p95": {
+      "kind": "info"
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.codecarbon_tracking_active": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    },
+    "training.eval_completed": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.eval_sample_count": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.top1_accuracy_pct": {
+      "kind": "info"
+    },
+    "training.top5_accuracy_pct": {
+      "kind": "info"
+    },
+    "training.eval_label_classes_observed": {
+      "kind": "min",
+      "value": 10
+    }
+  }
+}
