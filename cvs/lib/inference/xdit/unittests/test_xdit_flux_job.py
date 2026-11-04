@@ -22,6 +22,7 @@ from cvs.lib.inference.xdit.xdit_flux_job import (
     build_torchrun_cmd,
     default_flux2_example_host_path,
     default_run_usp_host_path,
+    flux_utils_host_path_for,
     detect_flux_model_type_from_model_index,
     ensure_flux2_example_available,
     ensure_run_usp_available,
@@ -662,6 +663,10 @@ class TestRunUspFallbackMount(unittest.TestCase):
             (host_path, RUN_USP_MOUNT_PATH),
         )
         self.assertEqual(job.inference_dict["_run_usp_container_path"], RUN_USP_MOUNT_PATH)
+        self.assertEqual(
+            job.inference_dict["container_config"]["volume_dict"][flux_utils_host_path_for(host_path)],
+            "/benchmark/flux_utils.py",
+        )
 
     def test_existing_volume_dict_skips_image_probe(self):
         job, phdl = _make_flux_job(
@@ -732,6 +737,8 @@ class TestRunUspFallbackMount(unittest.TestCase):
         self.assertIn(host_path, plan.docker_cmds[0])
         self.assertIn(f"target={RUN_USP_MOUNT_PATH}", plan.docker_cmds[0])
         self.assertIn(RUN_USP_MOUNT_PATH, plan.docker_cmds[0])
+        self.assertIn("/benchmark/flux_utils.py", plan.docker_cmds[0])
+        self.assertIn(flux_utils_host_path_for(host_path), plan.docker_cmds[0])
         self.assertEqual(job._pre_launch_validation(plan), [])
 
 

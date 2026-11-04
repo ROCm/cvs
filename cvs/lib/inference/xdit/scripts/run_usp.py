@@ -10,9 +10,6 @@ import logging
 import torch
 import warnings
 
-# The CVS bind mount is /benchmark/run_usp.py. flux_utils stays next to the image copy.
-sys.path.insert(0, "/app/Flux")
-
 if torch.version.hip:
     try:
         from opt_groupnorm import OPTGroupNorm
@@ -43,7 +40,14 @@ from xfuser.core.distributed import (
 from xfuser.model_executor.models.transformers.transformer_flux import xFuserFluxAttnProcessor
 
 from torch.profiler import profile, record_function, ProfilerActivity
-from flux_utils import time_pipe_func, get_pipe_kwargs, print_model_args, create_arg_parser
+
+# flux_utils.py is bind-mounted beside this file. /app/Flux is the image copy's location.
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+for _path in ("/app/Flux", _script_dir):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+from flux_utils import time_pipe_func, get_pipe_kwargs, print_model_args, create_arg_parser  # noqa: E402
 
 
 def parallelize_transformer(pipe: DiffusionPipeline):

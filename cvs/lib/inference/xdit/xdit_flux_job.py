@@ -36,7 +36,9 @@ FLUX2_DEFAULT_BENCHMARK_TIMEOUT_S = 3600
 DEFAULT_MASTER_PORT = 29500
 RUN_USP_PATH = "/app/Flux/run_usp.py"
 RUN_USP_MOUNT_PATH = "/benchmark/run_usp.py"
+FLUX_UTILS_MOUNT_PATH = "/benchmark/flux_utils.py"
 RUN_USP_HOST_SCRIPT = Path(__file__).resolve().parent / "scripts" / "run_usp.py"
+FLUX_UTILS_HOST_SCRIPT = RUN_USP_HOST_SCRIPT.parent / "flux_utils.py"
 FLUX2_EXAMPLE_PATH = "/app/external/xdit/examples/flux2_example.py"
 FLUX2_EXAMPLE_MOUNT_PATH = "/benchmark/flux2_example.py"
 FLUX2_EXAMPLE_HOST_SCRIPT = Path(__file__).resolve().parent / "scripts" / "flux2_example.py"
@@ -918,6 +920,23 @@ def build_run_usp_host_check_cmd(host_path: str) -> str:
     return f"test -e {quoted} && echo RUN_USP_HOST_OK || echo RUN_USP_HOST_MISSING"
 
 
+def flux_utils_host_path_for(run_usp_host_path: str) -> str:
+    return str(Path(run_usp_host_path).parent / "flux_utils.py")
+
+
+def _attach_flux_utils_mount(inference_dict: Dict[str, Any], run_usp_host_path: str) -> str:
+    """Bind-mount flux_utils.py beside the mounted run_usp.py."""
+    host_path = flux_utils_host_path_for(run_usp_host_path)
+    container_config = inference_dict.setdefault("container_config", {})
+    volume_dict = dict(container_config.get("volume_dict") or {})
+    mounted = {str(target) for target in volume_dict.values()}
+    if FLUX_UTILS_MOUNT_PATH not in mounted:
+        volume_dict[host_path] = FLUX_UTILS_MOUNT_PATH
+        container_config["volume_dict"] = volume_dict
+        log.info("Added FLUX.1 flux_utils bind-mount %s -> %s", host_path, FLUX_UTILS_MOUNT_PATH)
+    return host_path
+
+
 def ensure_run_usp_available(
     s_phdl,
     nodes: Sequence[str],
@@ -1009,6 +1028,22 @@ def ensure_run_usp_available(
             f'"/home/{{user-id}}/cvs/cvs/lib/inference/xdit/scripts/run_usp.py": '
             f'"{RUN_USP_MOUNT_PATH}"'
         ]
+
+    if container_path == RUN_USP_MOUNT_PATH:
+        utils_host = flux_utils_host_path_for(host_path)
+        utils_check = build_run_usp_host_check_cmd(utils_host)
+        try:
+            utils_checks = _exec_on_nodes(s_phdl, node_list, utils_check, print_console=False)
+        except Exception as extra:
+            return [f"Failed to verify FLUX.1 flux_utils host path {utils_host}: {extra}"]
+        missing_utils = [node for node in node_list if "RUN_USP_HOST_OK" not in (utils_checks.get(node) or "")]
+        if missing_utils:
+            return [
+                f"FLUX.1 helper flux_utils.py is missing on {len(missing_utils)} node(s): "
+                f"{', '.join(missing_utils)}. Expected {utils_host} beside run_usp.py, "
+                f"mounted at {FLUX_UTILS_MOUNT_PATH}."
+            ]
+        _attach_flux_utils_mount(inference_dict, host_path)
 
     if not existing_mount:
         container_config = inference_dict.setdefault("container_config", {})
