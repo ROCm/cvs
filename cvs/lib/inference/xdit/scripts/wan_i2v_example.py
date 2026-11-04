@@ -62,12 +62,15 @@ def _extract_video_frames(run_output):
     output = _unwrap_run_output(run_output)
     if output is None:
         return None
-    if hasattr(output, "videos") and output.videos:
-        videos = output.videos
-        return videos[0] if isinstance(videos, list) and videos else videos
-    if hasattr(output, "frames") and output.frames:
-        frames = output.frames
-        return frames[0] if isinstance(frames, list) and frames else frames
+    for name in ("videos", "frames", "images"):
+        value = getattr(output, name, None)
+        if not _nonempty(value):
+            continue
+        if isinstance(value, (list, tuple)):
+            return value[0]
+        return value
+    if isinstance(output, (list, tuple)) and output:
+        return output
     return None
 
 
@@ -162,8 +165,41 @@ def _export_video(run_output, save_path, fps):
         return False
 
 
+def _nonempty(value):
+    if value is None:
+        return False
+    try:
+        return len(value) > 0
+    except TypeError:
+        return True
+
+
+def _output_has_media(output):
+    if output is None:
+        return False
+    for name in ("videos", "frames", "images"):
+        if _nonempty(getattr(output, name, None)):
+            return True
+    return isinstance(output, (list, tuple)) and len(output) > 0
+
+
+def _media_owner_rank(output):
+    """Pick one rank that holds decoded frames. Parallel VAE decode is not always rank 0."""
+    if not dist.is_initialized():
+        return 0 if _output_has_media(output) else None
+    rank = dist.get_rank()
+    holder = torch.tensor([rank if _output_has_media(output) else -1], dtype=torch.int64, device="cuda")
+    dist.all_reduce(holder, op=dist.ReduceOp.MAX)
+    chosen = int(holder.item())
+    if chosen < 0:
+        return None
+    return chosen
+
+
 def _copy_first_mp4(output_directory, save_path):
-    mp4_files = sorted(glob.glob(os.path.join(output_directory, "*.mp4")))
+    mp4_files = sorted(glob.glob(os.path.join(output_directory, "**", "*.mp4"), recursive=True))
+    save_abs = os.path.abspath(save_path)
+    mp4_files = [path for path in mp4_files if os.path.abspath(path) != save_abs]
     if not mp4_files:
         return False
     parent = os.path.dirname(save_path)
@@ -287,13 +323,30 @@ def main():
 
         if rank == 0:
             _write_timing_json(args.timing_json_path, pipe_times)
-            try:
-                runner.save(output=last_output, timings=last_timings)
-            except Exception as exc:
-                print(f"xFuser save() failed: {exc}", file=sys.stderr)
-            if args.output_type == "pil":
-                if not _export_video(last_output, args.save_video_path, args.video_fps):
-                    _copy_first_mp4(args.output_directory, args.save_video_path)
+
+        # save() selects the rank that owns the frames and may all_reduce, so every rank must call it.
+        try:
+            runner.save(output=last_output, timings=last_timings)
+        except Exception as exc:
+            print(f"rank {rank}: xFuser save() failed: {exc}", file=sys.stderr)
+
+        owner = _media_owner_rank(last_output)
+        if (
+            args.output_type == "pil"
+            and owner is not None
+            and rank == owner
+            and not os.path.isfile(args.save_video_path)
+        ):
+            if not _export_video(last_output, args.save_video_path, args.video_fps):
+                _copy_first_mp4(args.output_directory, args.save_video_path)
+
+        if dist.is_initialized():
+            dist.barrier()
+
+        if rank == 0 and args.output_type == "pil" and not os.path.isfile(args.save_video_path):
+            if not _copy_first_mp4(args.output_directory, args.save_video_path):
+                print(f"video was not written to {args.save_video_path}", file=sys.stderr)
+                raise SystemExit(1)
     finally:
         runner.cleanup()
 
