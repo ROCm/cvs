@@ -42,10 +42,6 @@ def test_clip_score(orch, variant_config, gpu_type, xdit_spec, lifecycle, reques
     clip_score_stage(orch, variant_config, gpu_type, xdit_spec, lifecycle, request)
 
 
-def test_fid_curve(orch, variant_config, gpu_type, xdit_spec, lifecycle, request):
-    fid_curve_stage(orch, variant_config, gpu_type, xdit_spec, lifecycle, request)
-
-
 def test_print_results(lifecycle):
     print_results_stage(lifecycle)
 
