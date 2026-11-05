@@ -105,6 +105,15 @@ class TestFidCurve(unittest.TestCase):
         self.assertEqual(payload["counts"], {"10": 1, "40": 0})
         self.assertTrue(payload["stopped_early"])
 
+    def test_manifest_rewrite_keeps_sweep_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "manifest.json"
+            _fid_sweep.write_manifest(str(manifest), 100, 2, {10: 0, 40: 0}, [], error="boom")
+            _fid_sweep.rewrite_manifest_from_disk(str(manifest), [10, 40], 2, 100)
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(payload["error"], "boom")
+        self.assertEqual(payload["counts"], {"10": 0, "40": 0})
+
     def test_short_budget_manifest_skips_instead_of_failing(self):
         self.assertTrue(_manifest_blocks_fid({"stopped_early": True, "counts": {"10": 1, "20": 0}}))
         self.assertFalse(_manifest_blocks_fid({"stopped_early": True, "counts": {"10": 2, "20": 2}}))
