@@ -554,30 +554,50 @@ class Srun:
         return {'nodes': self.no_of_nodes, 'ranks': self.global_ranks, 'ranksPerNode': self.local_ranks}
 
     def prepare(self):
-        """Create the ORTE session directory once per node.
+        """Create a private ORTE session directory on every node.
 
         Ranks run with orte_create_session_dirs=0, so this path must exist before
         MPI_Init. PMIx's own rendezvous directory is separate and slurmstepd
         creates it. Resolving the path here instead of in the rank shell keeps
-        every rank on a node in agreement even when SLURM_JOB_ID is absent.
+        every rank on every node in agreement even when SLURM_JOB_ID is absent.
+
+        The name is random and mkdir runs without -p, so creation fails if
+        anything already exists at the path: the directory is always new, owned
+        by this user and mode 700, and no other user can pre-create it.
         """
         if self.session_dir:
             return self
-        parent = f'/tmp/{os.environ.get("USER", "cvs")}'
-        session_dir = f'{parent}/ompi-{os.environ.get("SLURM_JOB_ID") or f"cvs-{os.getpid()}"}'
-        self.orch.exec(
-            f'mkdir -p -m 700 {shlex.quote(parent)} 2>/dev/null || true; '
-            f'mkdir -p {shlex.quote(session_dir)} && chmod 700 {shlex.quote(session_dir)}'
+        user = os.environ.get('USER', 'cvs')
+        job = os.environ.get('SLURM_JOB_ID') or f'cvs-{os.getpid()}'
+        token = uuid.uuid4().hex[:16]
+        session_dir = f'/tmp/ompi-{user}-{job}-{token}'  # nosec B108 - random name, created exclusively with mkdir -m 700
+        results = (
+            self.orch.exec(
+                f'mkdir -m 700 -- {shlex.quote(session_dir)}', hosts=self.cluster_nodes, timeout=30, detailed=True
+            )
+            or {}
+        )
+        failed = sorted(
+            node
+            for node in self.cluster_nodes
+            if not isinstance(results.get(node), dict) or results[node].get('exit_code') != 0
         )
         self.session_dir = session_dir
+        if not results or failed:
+            self.cleanup()
+            raise RuntimeError(
+                f'Cannot create private ORTE session directory {session_dir} on '
+                f'{", ".join(failed) if failed else "any node"}{" (no exec results)" if not results else ""}. '
+                'Check that /tmp is writable on those nodes.'
+            )
         return self
 
     def cleanup(self):
-        """Remove the session directory created by prepare()."""
+        """Remove the session directory created by prepare(); RcclJob calls this after each run."""
         if not self.session_dir:
             return
         try:
-            self.orch.exec(f'rm -rf {shlex.quote(self.session_dir)}', timeout=30)
+            self.orch.exec(f'rm -rf {shlex.quote(self.session_dir)}', hosts=self.cluster_nodes, timeout=30)
         except Exception as exc:
             log.warning(f'Session dir cleanup for {self.session_dir} raised {exc!r} (continuing)')
         self.session_dir = ''
@@ -1195,6 +1215,7 @@ class RcclJob:
             self._check_reported_topology(result_out, self.test_name, gpus_per_rank=threads)
         finally:
             self._save_topology_checks(result_file)
+            self.launcher.cleanup()
         if not result_out:
             return []
         self.collect_gpu_info()
@@ -1231,6 +1252,7 @@ class RcclJob:
                 log.error('Failed to save combined results to %s on head node %s', result_file, self.head_node)
         finally:
             self._save_topology_checks(result_file)
+            self.launcher.cleanup()
 
         if not raw_results:
             return []

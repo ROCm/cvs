@@ -37,6 +37,10 @@ class _FakeOrch:
         self.ssh_port = ssh_port
 
 
+def _exec_ok(nodes):
+    return {node: {'output': '', 'exit_code': 0} for node in nodes}
+
+
 class TestRcclLib(unittest.TestCase):
     def setUp(self):
         env = patch.dict(os.environ, {'USER': 'cvsuser'}, clear=True)
@@ -1412,9 +1416,12 @@ class TestRcclLib(unittest.TestCase):
         return openmpi
 
     def _srun(self, nodes, no_of_nodes, local_ranks, global_ranks, openmpi=None, orch=None):
+        if orch is None:
+            orch = _FakeOrch()
+            orch.exec.return_value = _exec_ok(nodes)
         return rccl_lib.Srun(
             openmpi or self._openmpi(),
-            orch or _FakeOrch(),
+            orch,
             nodes,
             no_of_nodes,
             local_ranks,
@@ -1570,23 +1577,97 @@ class TestRcclLib(unittest.TestCase):
         self.assertIn('export UCX_TLS=rc,self,sm,tcp', joined)
         self.assertNotIn('NCCL_', joined)
 
-    @patch.dict(os.environ, {'USER': 'cvsuser', 'SLURM_JOB_ID': '4242'}, clear=False)
+    @patch.dict(os.environ, {'USER': 'cvsuser', 'SLURM_JOB_ID': '4242'}, clear=True)
     def test_srun_prepare_creates_session_dir_once_per_node(self):
         orch = _FakeOrch()
+        orch.exec.return_value = _exec_ok(['n1', 'n2'])
         launcher = self._srun(['n1', 'n2'], 2, 8, 16, orch=orch)
         self.assertIs(launcher.prepare(), launcher)
         launcher.prepare()
-        self.assertEqual(launcher.session_dir, f'{TMP}/cvsuser/ompi-4242')
         orch.exec.assert_called_once()
+        self.assertRegex(launcher.session_dir, r'^/tmp/ompi-cvsuser-4242-[0-9a-f]{16}$')
         mkdir_cmd = orch.exec.call_args[0][0]
-        self.assertIn('mkdir -p -m 700 /tmp/cvsuser', mkdir_cmd)
-        self.assertIn(f'{TMP}/cvsuser/ompi-4242', mkdir_cmd)
+        self.assertEqual(mkdir_cmd, f'mkdir -m 700 -- {launcher.session_dir}')
+        self.assertTrue(orch.exec.call_args.kwargs['detailed'])
+        self.assertEqual(orch.exec.call_args.kwargs['hosts'], ['n1', 'n2'])
+        for text in ('-p', '|| true', '/tmp/cvsuser/'):
+            self.assertNotIn(text, mkdir_cmd)
 
-    @patch.dict(os.environ, {'USER': 'cvsuser', 'SLURM_JOB_ID': '4242'}, clear=False)
+    def test_srun_session_dir_is_unpredictable_per_launcher(self):
+        first = self._srun(['n1'], 1, 8, 8).prepare()
+        second = self._srun(['n1'], 1, 8, 8).prepare()
+        first_path = first.session_dir
+        self.assertNotEqual(first_path, second.session_dir)
+        first.cleanup()
+        first.prepare()
+        self.assertNotEqual(first_path, first.session_dir)
+
+    def test_srun_session_dir_without_slurm_job_id_uses_pid(self):
+        with (
+            patch.dict(os.environ, {'USER': 'cvsuser'}, clear=True),
+            patch('cvs.lib.rccl_lib.os.getpid', return_value=777),
+        ):
+            launcher = self._srun(['n1'], 1, 8, 8).prepare()
+        self.assertRegex(launcher.session_dir, r'^/tmp/ompi-cvsuser-cvs-777-[0-9a-f]{16}$')
+
+    def test_srun_prepare_fails_closed_when_mkdir_fails_on_a_node(self):
+        orch = _FakeOrch()
+        orch.exec.side_effect = [
+            {
+                'n1': {'output': '', 'exit_code': 0},
+                'n2': {'output': 'mkdir: cannot create directory: File exists', 'exit_code': 1},
+            },
+            {},
+        ]
+        launcher = self._srun(['n1', 'n2'], 2, 8, 16, orch=orch)
+        with self.assertRaisesRegex(RuntimeError, 'n2'):
+            launcher.prepare()
+        self.assertEqual(launcher.session_dir, '')
+        self.assertTrue(orch.exec.call_args_list[1].args[0].startswith('rm -rf /tmp/ompi-'))
+        self.assertEqual([call.kwargs['hosts'] for call in orch.exec.call_args_list], [['n1', 'n2']] * 2)
+
+    def test_srun_prepare_fails_closed_when_node_is_missing_from_results(self):
+        orch = _FakeOrch()
+        orch.exec.side_effect = [_exec_ok(['n1']), {}]
+        launcher = self._srun(['n1', 'n2'], 2, 8, 16, orch=orch)
+        with self.assertRaisesRegex(RuntimeError, 'n2'):
+            launcher.prepare()
+        self.assertEqual(launcher.session_dir, '')
+        self.assertTrue(orch.exec.call_args_list[1].args[0].startswith('rm -rf /tmp/ompi-'))
+        self.assertEqual([call.kwargs['hosts'] for call in orch.exec.call_args_list], [['n1', 'n2']] * 2)
+
+    def test_srun_prepare_fails_closed_without_exit_code(self):
+        orch = _FakeOrch()
+        orch.exec.side_effect = [{'n1': {'output': ''}}, {}]
+        launcher = self._srun(['n1'], 1, 8, 8, orch=orch)
+        with self.assertRaisesRegex(RuntimeError, 'n1'):
+            launcher.prepare()
+        self.assertEqual(launcher.session_dir, '')
+
+    def test_srun_prepare_fails_closed_on_unreachable_node(self):
+        orch = _FakeOrch()
+        orch.exec.side_effect = [
+            {'n1': {'output': '', 'exit_code': 0}, 'n2': {'output': 'ABORT: Host Unreachable Error', 'exit_code': -1}},
+            {},
+        ]
+        launcher = self._srun(['n1', 'n2'], 2, 8, 16, orch=orch)
+        with self.assertRaisesRegex(RuntimeError, 'n2'):
+            launcher.prepare()
+        self.assertEqual(launcher.session_dir, '')
+
+    def test_srun_prepare_fails_closed_without_exec_results(self):
+        orch = _FakeOrch()
+        orch.exec.side_effect = [{}, {}]
+        launcher = self._srun(['n1', 'n2'], 2, 8, 16, orch=orch)
+        with self.assertRaisesRegex(RuntimeError, 'n1, n2 \\(no exec results\\)'):
+            launcher.prepare()
+        self.assertEqual(launcher.session_dir, '')
+
+    @patch.dict(os.environ, {'USER': 'cvsuser', 'SLURM_JOB_ID': '4242'}, clear=True)
     def test_srun_exports_literal_session_dir(self):
         joined = ' && '.join(self._srun(['n1'], 1, 8, 8).prepare().mpi_init_exports())
-        self.assertIn('export OMPI_MCA_orte_tmpdir_base=/tmp/cvsuser/ompi-4242', joined)
-        self.assertIn('export OMPI_MCA_orte_top_session_dir=/tmp/cvsuser/ompi-4242', joined)
+        self.assertRegex(joined, r'export OMPI_MCA_orte_tmpdir_base=/tmp/ompi-cvsuser-4242-[0-9a-f]{16}( |$)')
+        self.assertRegex(joined, r'export OMPI_MCA_orte_top_session_dir=/tmp/ompi-cvsuser-4242-[0-9a-f]{16}( |$)')
         self.assertNotIn('TMPDIR=', joined)
         self.assertNotIn('export TMP=', joined)
         self.assertNotIn('mkdir', joined)
@@ -1594,10 +1675,12 @@ class TestRcclLib(unittest.TestCase):
 
     def test_srun_cleanup_removes_session_dir(self):
         orch = _FakeOrch()
+        orch.exec.return_value = _exec_ok(['n1'])
         launcher = self._srun(['n1'], 1, 8, 8, orch=orch).prepare()
         session_dir = launcher.session_dir
         launcher.cleanup()
         self.assertIn(f'rm -rf {session_dir}', orch.exec.call_args[0][0])
+        self.assertEqual(orch.exec.call_args.kwargs['hosts'], ['n1'])
         self.assertEqual(launcher.session_dir, '')
 
     def test_wrap_rccl_test_cmd_mpi_setup_before_env_script(self):
@@ -1710,6 +1793,7 @@ class TestRcclLib(unittest.TestCase):
             'SPUR_NODES': 'n1,n2',
         }
         orch = _FakeOrch()
+        orch.exec.return_value = _exec_ok(['n1', 'n2'])
         orch.exec_on_head.side_effect = [
             {'n1': 'NEW'},
             {'n1': {'output': '# Avg bus bandwidth : 1.8\n', 'exit_code': 3}},
@@ -2554,6 +2638,32 @@ class TestRcclTopology(unittest.TestCase):
         self.assertIn('/results/rccl_all_reduce_perf.json', self.job.execute.call_args.args[0])
         self.assertEqual(self.job.read_results.call_args.args[0], '/results/rccl_all_reduce_perf.json')
         self.assertEqual(set(saved), {'/results/rccl_all_reduce_perf_topology_check.json'})
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_run_perf_releases_launcher_session_dir(self, fail):
+        self._mock_run([deepcopy(self.row)])
+        with patch.object(self.job.launcher, 'cleanup') as cleanup:
+            self.job.run_perf()
+        cleanup.assert_called_once()
+        fail.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_run_perf_releases_launcher_session_dir_on_failed_launch(self, _fail):
+        self._mock_run([deepcopy(self.row)])
+        with (
+            patch.object(self.job, 'execute', return_value=None),
+            patch.object(self.job.launcher, 'cleanup') as cleanup,
+        ):
+            self.job.run_perf()
+        cleanup.assert_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_run_regression_releases_launcher_session_dir(self, fail):
+        self._mock_run([deepcopy(self.row)])
+        with patch.object(self.job.launcher, 'cleanup') as cleanup:
+            self.job.run_regression()
+        cleanup.assert_called_once()
+        fail.assert_not_called()
 
     def test_perf_strict_records_failure_and_still_saves_results(self):
         saved = self._mock_run([self.row])
