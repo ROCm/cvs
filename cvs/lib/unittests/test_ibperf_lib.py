@@ -454,6 +454,17 @@ class TestGetIbBwPps(unittest.TestCase):
 
         mock_fail.assert_called_once_with('perftest instance 3 on node node2 exited with code 1')
 
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_ignores_output_of_nodes_outside_nodes(self, mock_fail):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': BW_LOG, 'node3': 'perftest_rc=1\n'}
+
+        res = ibperf_lib.get_ib_bw_pps(phdl, 8192, 'cat /tmp/ib_perf_0_logs', instance_no=0, nodes=['node1'])
+
+        self.assertEqual(res, {'node1': {'bw': '517.14', 'pps': '7.89'}})
+        self.assertEqual(phdl.exec.call_count, 2)
+        mock_fail.assert_not_called()
+
 
 class TestGetPerftestConfigureCmd(unittest.TestCase):
     def test_includes_rocm_dmabuf_by_default(self):
@@ -545,6 +556,7 @@ class TestReadLatencyResults(unittest.TestCase):
         client_log = server_log + '8192 1000 10.66 13.76 10.97 10.98 0.10 12.01 13.76\n'
         nodes = ('server', 'client')
         phdl = MagicMock()
+        phdl.all.reachable_hosts = list(nodes)
         phdl.exec.side_effect = lambda cmd, **_kwargs: (
             {'server': server_log, 'client': client_log} if cmd.startswith('cat /tmp/ib_perf_') else {}
         )
@@ -603,26 +615,23 @@ class TestReadLatencyResults(unittest.TestCase):
 
 
 class IbPerfCommandFixtures:
-    def active_nodes(self):
-        excluded = self.phdl.prune_nodes.call_args.args[0] if self.phdl.prune_nodes.called else []
-        return [node for node in self.bck_nic_dict if node not in excluded]
-
     def setUp(self):
         globals.error_list = []
         nodes = ('node1', 'node2')
         self.phdl = MagicMock()
+        self.phdl.all.reachable_hosts = list(nodes)
         self.gpu_nic_dict = {n: {f'card{g}': {'rdma_dev': f'rdma{g}'} for g in range(8)} for n in nodes}
         self.gpu_numa_dict = {n: {f'card{g}': {'local_cpulist': '0-63'} for g in range(8)} for n in nodes}
         self.bck_nic_dict = {n: {} for n in nodes}
         self.hip_dev_dict = {n: {f'card{g}': g for g in range(8)} for n in nodes}
         lat = dict.fromkeys(('t_min', 't_max', 't_typical', 't_avg', 't_stdev', 't_99_pct', 't_99_9_pct'), '1.0')
         lat_patch = patch.object(
-            ibperf_lib, 'get_ib_lat_numb', side_effect=lambda *args, **kwargs: {n: lat for n in self.active_nodes()}
+            ibperf_lib, 'get_ib_lat_numb', side_effect=lambda *args, **kwargs: {n: lat for n in kwargs['nodes']}
         )
         bw_patch = patch.object(
             ibperf_lib,
             'get_ib_bw_pps',
-            side_effect=lambda *args, **kwargs: {n: {'bw': '1.0', 'pps': '1.0'} for n in self.active_nodes()},
+            side_effect=lambda *args, **kwargs: {n: {'bw': '1.0', 'pps': '1.0'} for n in kwargs['nodes']},
         )
         sleep_patch = patch.object(ibperf_lib.time, 'sleep')
         for patcher in (lat_patch, bw_patch, sleep_patch):
@@ -681,7 +690,6 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
             suffix = f'; echo perftest_rc=\\$? ) > /tmp/ib_perf_{g}_logs 2>&1 &" >> /tmp/ib_cmds_file.txt'
             self.assertEqual(calls[g + 1].args[0], [stem + suffix, stem + ' node1' + suffix])
         self.assertEqual({n: set(result[n]) for n in result}, {n: set(range(8)) for n in result})
-        self.phdl.prune_nodes.assert_not_called()
         self.assertEqual(globals.error_list, [])
 
     def test_four_gpu_node(self):
@@ -694,13 +702,13 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
             self.assertIn('-p 1519', cmd)
             self.assertIn('/tmp/ib_perf_3_logs', cmd)
         self.assertEqual({n: set(result[n]) for n in result}, {n: set(range(4)) for n in result})
-        self.phdl.prune_nodes.assert_not_called()
         self.assertEqual(globals.error_list, [])
 
     def test_explicit_pairs_and_read_clients(self):
         nodes = ['n1', 'n2', 'n3', 'n4']
         self.gpu_numa_dict, self.gpu_nic_dict, self.hip_dev_dict = gpu_maps(nodes)
         self.bck_nic_dict = {n: {} for n in nodes}
+        self.phdl.all.reachable_hosts = nodes
         with patch.object(ibperf_lib, 'get_ib_lat_numb', return_value={}) as get_lat:
             ibperf_lib.run_ib_perf_lat_test(
                 self.phdl,
@@ -723,8 +731,9 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
         nodes = ['n1', 'n2', 'n3']
         self.gpu_numa_dict, self.gpu_nic_dict, self.hip_dev_dict = gpu_maps(nodes)
         self.bck_nic_dict = {n: {} for n in nodes}
+        self.phdl.all.reachable_hosts = nodes
         result = self.run_latency(node_pairs=[('n1', 'n2'), ('n3', 'n9')])
-        self.phdl.prune_nodes.assert_called_once_with(['n3'])
+        self.assertEqual([c.args[0][2] for c in self.phdl.exec_cmd_list.call_args_list], ['true'] * 9)
         self.assertEqual(set(result), {'n1', 'n2'})
         self.assertEqual({n: set(result[n]) for n in result}, {'n1': set(range(8)), 'n2': set(range(8))})
         self.assertIn('n3', globals.error_list[0])
@@ -733,7 +742,6 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
         self.bck_nic_dict = {'n1': {}}
         result = self.run_latency(node_pairs=[('n1', 'n2')])
         self.assertEqual(result, {})
-        self.phdl.prune_nodes.assert_called_once_with(['n1'])
         self.phdl.exec_cmd_list.assert_not_called()
 
     def test_builds_latency_commands(self):
@@ -775,7 +783,9 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
     def test_launches_then_waits_for_perftest_exit(self, mock_wait):
         self.run_latency()
         self.phdl.exec.assert_any_call(LAUNCH, print_console=False)
-        mock_wait.assert_called_once_with(self.phdl, 'ib_write_lat', ibperf_lib.PERFTEST_LAT_EXIT_TIMEOUT_S)
+        mock_wait.assert_called_once_with(
+            self.phdl, 'ib_write_lat', ibperf_lib.PERFTEST_LAT_EXIT_TIMEOUT_S, nodes=['node1', 'node2']
+        )
 
 
 class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
@@ -802,7 +812,6 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
             [c.args[0] for c in self.phdl.exec.call_args_list[:3]],
             ['rm -rf /tmp/ib_cmds_file.txt', 'rm -rf /tmp/ib_perf*', 'touch /tmp/ib_cmds_file.txt'],
         )
-        self.phdl.prune_nodes.assert_not_called()
         self.assertEqual(globals.error_list, [])
         self.assertEqual({n: set(result[n]) for n in result}, {n: set(range(8)) for n in result})
 
@@ -810,6 +819,7 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
         nodes = ['n1', 'n2', 'n3', 'n4']
         self.gpu_numa_dict, self.gpu_nic_dict, self.hip_dev_dict = gpu_maps(nodes)
         self.bck_nic_dict = {n: {} for n in nodes}
+        self.phdl.all.reachable_hosts = nodes
         self.run_bandwidth(use_dmabuf=False)
         for g, call_args in enumerate(self.phdl.exec_cmd_list.call_args_list[1:]):
             commands = call_args.args[0]
@@ -830,31 +840,32 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
             self.assertIn('-p 1519', cmd)
             self.assertIn('/tmp/ib_perf_3_logs', cmd)
         self.assertEqual({n: set(result[n]) for n in result}, {n: set(range(4)) for n in result})
-        self.phdl.prune_nodes.assert_not_called()
         self.assertEqual(globals.error_list, [])
 
     def test_explicit_pairs_and_orphan(self):
         nodes = ['n1', 'n2', 'n3', 'n4']
         self.gpu_numa_dict, self.gpu_nic_dict, self.hip_dev_dict = gpu_maps(nodes)
         self.bck_nic_dict = {n: {} for n in nodes}
+        self.phdl.all.reachable_hosts = nodes
         self.run_bandwidth(node_pairs=[('n1', 'n3'), ('n2', 'n4')])
         commands = self.phdl.exec_cmd_list.call_args_list[1].args[0]
         self.assertIn('-q 8 n1; echo perftest_rc=\\$? ) >', commands[2])
         self.assertIn('-q 8 n2; echo perftest_rc=\\$? ) >', commands[3])
         self.phdl.reset_mock()
         result = self.run_bandwidth(node_pairs=[('n1', 'n2'), ('n3', 'n9')])
-        self.phdl.prune_nodes.assert_called_once_with(['n3', 'n4'])
+        self.assertEqual([c.args[0][2:] for c in self.phdl.exec_cmd_list.call_args_list], [['true', 'true']] * 9)
         self.assertEqual(set(result), {'n1', 'n2'})
         self.assertIn('n3', globals.error_list[0])
 
-    def test_mismatch_pair_pruned_and_no_active_pairs(self):
+    def test_mismatch_pair_excluded_and_no_active_pairs(self):
         nodes = ['n1', 'n2', 'n3', 'n4']
         self.gpu_numa_dict, self.gpu_nic_dict, self.hip_dev_dict = gpu_maps(nodes)
         self.gpu_nic_dict['n4'] = dict(list(self.gpu_nic_dict['n4'].items())[:4])
         self.bck_nic_dict = {n: {} for n in nodes}
+        self.phdl.all.reachable_hosts = nodes
         self.run_bandwidth(node_pairs=[('n1', 'n2'), ('n3', 'n4')])
-        self.phdl.prune_nodes.assert_called_once_with(['n3', 'n4'])
-        self.assertTrue(all(len(call_args.args[0]) == 2 for call_args in self.phdl.exec_cmd_list.call_args_list))
+        self.assertEqual([c.args[0][2:] for c in self.phdl.exec_cmd_list.call_args_list], [['true', 'true']] * 9)
+        self.assertTrue(all(len(call_args.args[0]) == 4 for call_args in self.phdl.exec_cmd_list.call_args_list))
         self.assertEqual(len(globals.error_list), 1)
         self.assertIn('n3', globals.error_list[0])
         self.assertIn('n4', globals.error_list[0])
@@ -862,7 +873,6 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
         globals.error_list = []
         self.bck_nic_dict = {'n1': {}}
         self.assertEqual(self.run_bandwidth(node_pairs=[('n1', 'n2')]), {})
-        self.phdl.prune_nodes.assert_called_once_with(['n1'])
         self.phdl.exec_cmd_list.assert_not_called()
 
     def test_first_pair_has_fewer_cards_than_majority(self):
@@ -873,27 +883,29 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
             self.gpu_nic_dict[node] = dict(list(self.gpu_nic_dict[node].items())[:4])
             self.hip_dev_dict[node] = dict(list(self.hip_dev_dict[node].items())[:4])
         self.bck_nic_dict = {node: {} for node in nodes}
+        self.phdl.all.reachable_hosts = nodes
         pairs = [('a', 'b'), ('c', 'd'), ('e', 'f')]
 
         result = self.run_bandwidth(node_pairs=pairs)
 
         self.assertEqual(set(result), {'c', 'd', 'e', 'f'})
         self.assertEqual(len(self.phdl.exec_cmd_list.call_args_list), 9)
-        self.assertTrue(all(len(call.args[0]) == 4 for call in self.phdl.exec_cmd_list.call_args_list))
-        self.phdl.prune_nodes.assert_called_once_with(['a', 'b'])
+        self.assertTrue(all(len(call.args[0]) == 6 for call in self.phdl.exec_cmd_list.call_args_list))
+        self.assertEqual([c.args[0][:2] for c in self.phdl.exec_cmd_list.call_args_list], [['true', 'true']] * 9)
         self.assertEqual(len(globals.error_list), 1)
         self.assertIn('a, b', globals.error_list[0])
 
         self.phdl.reset_mock()
         self.run_bandwidth(node_pairs=pairs)
-        self.phdl.prune_nodes.assert_not_called()
         self.assertEqual(len(globals.error_list), 1)
 
     @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
     def test_launches_then_waits_for_perftest_exit_bounded_by_duration(self, mock_wait):
         self.run_bandwidth(duration=30)
         self.phdl.exec.assert_any_call(LAUNCH, print_console=False)
-        mock_wait.assert_called_once_with(self.phdl, 'ib_write_bw', 30 + ibperf_lib.PERFTEST_EXIT_SLACK_S)
+        mock_wait.assert_called_once_with(
+            self.phdl, 'ib_write_bw', 30 + ibperf_lib.PERFTEST_EXIT_SLACK_S, nodes=['node1', 'node2']
+        )
 
     def test_builds_bw_commands_without_dmabuf(self):
         self.run_bandwidth(use_dmabuf=False)
@@ -1055,6 +1067,7 @@ class TestRunIbPerfBwHipDevice(unittest.TestCase):
         gpu_numa_dict = {node: {f'card{g}': {'local_cpulist': '0-63'} for g in range(8)} for node in nodes}
         hip_dev_dict = {node: {f'card{g}': (g + 1) % 8 for g in range(8)} for node in nodes}
         phdl = MagicMock()
+        phdl.all.reachable_hosts = list(nodes)
 
         ibperf_lib.run_ib_perf_bw_test(
             phdl,
@@ -1093,6 +1106,7 @@ class TestRunIbPerfBwHipDevice(unittest.TestCase):
         gpu_numa_dict = {node: {f'card{g}': {'local_cpulist': '0-63'} for g in range(8)} for node in nodes}
         mock_get_hip_device_dict.return_value = {node: {f'card{g}': (g + 1) % 8 for g in range(8)} for node in nodes}
         phdl = MagicMock()
+        phdl.all.reachable_hosts = list(nodes)
 
         ibperf_lib.run_ib_perf_bw_test(
             phdl,
@@ -1377,6 +1391,7 @@ class TestSampleConfigDuration(unittest.TestCase):
         gpu_numa_dict = {n: {f'card{g}': {'local_cpulist': '0-63'} for g in range(8)} for n in nodes}
         hip_dev_dict = {n: {f'card{g}': g for g in range(8)} for n in nodes}
         phdl = MagicMock()
+        phdl.all.reachable_hosts = list(nodes)
 
         ibperf_lib.run_ib_perf_bw_test(
             phdl,

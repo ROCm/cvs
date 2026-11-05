@@ -15,7 +15,7 @@ import pytest
 from cvs.lib import ibperf_lib, ibperf_reporting
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib.rdma_gid_lib import DEFAULT_GID_TYPE
-from cvs.tests.ibperf.conftest import IbperfOrch, close_orch, launch_containers, teardown_containers
+from cvs.tests.ibperf.conftest import close_orch, launch_containers, teardown_containers
 
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
@@ -96,9 +96,8 @@ def orch(cluster_dict, node_pairing, lifecycle):
     log.info('Connecting to %d paired cluster nodes', len(node_list))
     log.debug('Paired cluster nodes: %s', node_list)
     o = _create_orch(cluster_dict, node_list)
-    view = IbperfOrch(o)
-    yield view
-    close_orch(view, lifecycle)
+    yield o
+    close_orch(o, lifecycle)
 
 
 def test_launch_containers(orch, lifecycle):
