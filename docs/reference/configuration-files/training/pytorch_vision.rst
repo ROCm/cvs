@@ -105,6 +105,10 @@ Training block
   all-reduce) must finish within ``startup_timeout_s`` (default 300). A launch
   no rank got past is relaunched up to ``startup_retries`` times (default 0,
   at most 5), keeping the failed attempt's logs and recording the count.
+- ``setup_timeout_s``: how long ranks wait for each other after per-rank setup
+  (building data loaders, reading datasets, rank 0 loading model weights)
+  before the first collective (default 1800). A node reading the dataset from
+  a cold cache can take minutes longer than the others.
 - ``omp_num_threads``: CPU threads per rank.
 - ``verify_dmesg``: enables bounded host-kernel error scanning.
 - ``peak_tflops_per_gpu``: dense-precision hardware peak used for MFU.
@@ -177,6 +181,20 @@ kinds are ``min``, ``max``, ``max_ms``, and ``info``; ``info`` always passes and
 records the value. Start with ``info`` while calibrating and enable numeric
 gates only after repeated runs with the same image, model, hardware, and batch
 shape.
+
+Multi-node cells are shared by every node count, so a spec can carry one bound
+per node count under ``by_nodes``:
+
+.. code-block:: json
+
+   "training.images_per_sec_per_gpu": {
+     "kind": "min",
+     "by_nodes": {"2": {"value": 3800}, "4": {"value": 3300}}
+   }
+
+The entry for the cluster file's node count is used. On a node count with no
+entry, the spec's own ``value`` applies if it has one; otherwise the metric is
+recorded without a gate.
 
 The shipped rocAL and multi-node thresholds are record-only, because storage
 and fabric behaviour materially affect throughput. Calibrate on the target

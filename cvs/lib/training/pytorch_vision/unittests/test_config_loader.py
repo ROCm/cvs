@@ -6,6 +6,7 @@ from pathlib import Path
 
 from cvs.lib.training.pytorch_vision.utils.config_loader import (
     load_vision_variant,
+    resolve_node_thresholds,
     validate_sweep_selector,
 )
 from cvs.lib.training.pytorch_vision.utils.metrics import GATED_METRICS
@@ -363,6 +364,46 @@ class TestSweepSelector(unittest.TestCase):
 
     def test_accepts_selected_subset(self):
         validate_sweep_selector(["w1", "w2"], ["w1"])
+
+
+class TestNodeThresholds(unittest.TestCase):
+    SPEC = {"kind": "min", "by_nodes": {"2": {"value": 4000}, "4": {"value": 3500}}}
+
+    def _resolve(self, spec, num_nodes):
+        cell = resolve_node_thresholds({"cell": {"training.images_per_sec_per_gpu": spec}}, num_nodes)["cell"]
+        return cell["training.images_per_sec_per_gpu"]
+
+    def test_picks_the_entry_for_the_node_count(self):
+        self.assertEqual(self._resolve(self.SPEC, 2), {"kind": "min", "value": 4000})
+        self.assertEqual(self._resolve(self.SPEC, 4), {"kind": "min", "value": 3500})
+
+    def test_uncalibrated_node_count_is_record_only(self):
+        self.assertEqual(self._resolve(self.SPEC, 5), {"kind": "info"})
+
+    def test_uncalibrated_node_count_keeps_a_top_level_value(self):
+        self.assertEqual(self._resolve({**self.SPEC, "value": 3000}, 5), {"kind": "min", "value": 3000})
+
+    def test_plain_specs_pass_through(self):
+        self.assertEqual(self._resolve({"kind": "max", "value": 1}, 4), {"kind": "max", "value": 1})
+
+    def test_rejects_malformed_by_nodes(self):
+        with self.assertRaisesRegex(ValueError, "by_nodes"):
+            self._resolve({"kind": "min", "by_nodes": {"two": {"value": 1}}}, 2)
+        with self.assertRaisesRegex(ValueError, "by_nodes"):
+            self._resolve({"kind": "min", "by_nodes": {"2": 4000}}, 2)
+
+    def test_loader_resolves_for_the_cluster_size(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        thresholds = _thresholds()
+        thresholds["cell-w1"]["training.images_per_sec_per_gpu"] = self.SPEC
+        (root / "w1_config.json").write_text(json.dumps(_config()))
+        (root / "w1_threshold.json").write_text(json.dumps(thresholds))
+        cluster = {"username": "tester", "node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
+        variant = load_vision_variant(root / "w1_config.json", cluster)
+        spec = variant.thresholds["cell-w1"]["training.images_per_sec_per_gpu"]
+        self.assertEqual(spec, {"kind": "min", "value": 4000})
 
 
 if __name__ == "__main__":

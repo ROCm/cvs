@@ -100,6 +100,7 @@ def _parse_args():
     parser.add_argument("--codecarbon-country-iso-code")
     parser.add_argument("--collective-timeout-seconds", type=int, default=120)
     parser.add_argument("--startup-timeout-seconds", type=int, default=300)
+    parser.add_argument("--setup-timeout-seconds", type=int, default=1800)
     parser.add_argument("--output", required=True)
     return parser.parse_args()
 
@@ -1239,8 +1240,10 @@ def _run_hf_trainer(args, rank, world_size, device, local_rank):
             f"PYTORCH_VISION_HF_DATA train={len(train_dataset)} val={len(eval_dataset) if eval_dataset else 0}",
             flush=True,
         )
+    _wait_for_all_ranks("hf_datasets", args.setup_timeout_seconds)
 
     timer = _HFStepTimer(args.warmup_steps, args.loss_curve_sample_every, args.milestone_steps)
+    energy = {}
 
     class _Callback(TrainerCallback):
         def on_step_begin(self, _a, _s, _c, **_kw):
@@ -1248,6 +1251,12 @@ def _run_hf_trainer(args, rank, world_size, device, local_rank):
 
         def on_step_end(self, _a, state, _c, **_kw):
             timer.on_step_end(int(state.global_step))
+            # RCCL and CodeCarbon's polling thread both use AMDSMI, and FSDP
+            # creates its communicators during the first steps, so the tracker
+            # starts after warmup. That also scopes energy to the measured
+            # window, as on the native path.
+            if not energy and state.global_step >= max(1, args.warmup_steps):
+                energy["tracker"], energy["payload"] = _start_codecarbon(args, rank, torch.cuda.device_count())
 
         def on_log(self, _a, state, _c, logs=None, **_kw):
             if logs:
@@ -1299,10 +1308,9 @@ def _run_hf_trainer(args, rank, world_size, device, local_rank):
 
     metrics_loader = _measure_hf_loader(trainer, args, device, world_size)
 
-    tracker, codecarbon = _start_codecarbon(args, rank, torch.cuda.device_count())
     trainer.train()
     measured_window_s = _reduce_max(timer.measured_window_s(), device)
-    codecarbon = _stop_codecarbon(tracker, codecarbon, rank)
+    codecarbon = _stop_codecarbon(energy["tracker"], energy["payload"], rank)
 
     step_times = sorted(timer.step_times_ms)
     images_per_step = args.batch_size * args.gradient_accumulation_steps * world_size
@@ -1460,6 +1468,7 @@ def main():
                 rebuild_each_pass=bool(args.eval_sample_count and args.eval_sample_count % eval_ranks),
                 ranks=eval_ranks,
             )
+        _wait_for_all_ranks("rocal_loaders", args.setup_timeout_seconds)
         measured_loader_metrics = _measure_rocal_loader(rocal_loader, args, device, rank, world_size)
         if measured_loader_metrics is not None:
             data_loader_metrics = measured_loader_metrics
@@ -1848,6 +1857,24 @@ def _start_distributed(device, local_rank, collective_timeout_s, startup_timeout
     deadline.cancel()
     if local_rank == 0:
         print(STARTUP_OK, flush=True)
+
+
+def _wait_for_all_ranks(name, timeout_s):
+    """Meet every rank through the rendezvous store rather than through NCCL.
+
+    Per-rank setup can take minutes longer on one node than another: listing
+    ImageNet's 1.28M files on a node that had never read them took 5m40s while
+    the warm node finished in seconds and timed out in its first collective.
+    Ranks that arrive early wait here, outside NCCL's collective timeout.
+    """
+    store = dist.distributed_c10d._get_default_store()
+    key = f"pytorch_vision_ready/{name}"
+    store.add(key, 1)
+    deadline = time.monotonic() + timeout_s
+    while store.add(key, 0) < dist.get_world_size():
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"not every rank finished {name} within {timeout_s}s")
+        time.sleep(0.5)
 
 
 def _exit_cleanly():

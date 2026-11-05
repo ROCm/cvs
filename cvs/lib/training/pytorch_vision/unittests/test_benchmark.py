@@ -365,6 +365,34 @@ class TestStartDistributed(unittest.TestCase):
 
 
 @unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")
+class TestWaitForAllRanks(unittest.TestCase):
+    """Slow per-rank setup is awaited through the store, not an NCCL collective."""
+
+    def _wait(self, arrived, clock):
+        store = torch.distributed.HashStore()
+        if arrived:
+            store.add("pytorch_vision_ready/setup", arrived)
+        sleeps = []
+        with (
+            mock.patch.object(benchmark.dist.distributed_c10d, "_get_default_store", return_value=store),
+            mock.patch.object(benchmark.dist, "get_world_size", return_value=4),
+            mock.patch.object(benchmark.time, "monotonic", side_effect=clock),
+            mock.patch.object(benchmark.time, "sleep", side_effect=sleeps.append),
+        ):
+            benchmark._wait_for_all_ranks("setup", 600)
+        return store, sleeps
+
+    def test_last_rank_to_arrive_releases_everyone(self):
+        store, sleeps = self._wait(arrived=3, clock=[0.0])
+        self.assertEqual(store.add("pytorch_vision_ready/setup", 0), 4)
+        self.assertEqual(sleeps, [])
+
+    def test_gives_up_at_the_deadline(self):
+        with self.assertRaisesRegex(RuntimeError, "not every rank finished setup within 600s"):
+            self._wait(arrived=1, clock=[0.0, 300.0, 601.0])
+
+
+@unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")
 class TestHFStepTimerWindow(unittest.TestCase):
     """The measured window must cover the same steps as step_times_ms.
 

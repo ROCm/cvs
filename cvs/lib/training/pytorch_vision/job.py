@@ -224,12 +224,7 @@ if missing:
     raise SystemExit(f"400G rails not open: {missing}; opened {sorted(opened)}")
 print("RDMA_RAILS " + " ".join(sorted(opened)))
 """
-        command = (
-            "export NCCL_IB_HCA="
-            + shlex.quote(",".join(names))
-            + "; python3 -c "
-            + shlex.quote(script)
-        )
+        command = "export NCCL_IB_HCA=" + shlex.quote(",".join(names)) + "; python3 -c " + shlex.quote(script)
         result = self.orch.exec(command, timeout=60, detailed=True, print_console=False)
         self._require_success(result, "prepare host verbs for the 400G rails")
 
@@ -351,6 +346,8 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
             str(min(120, training.timeout_s)),
             "--startup-timeout-seconds",
             str(training.startup_timeout_s),
+            "--setup-timeout-seconds",
+            str(training.setup_timeout_s),
         ]
         if training.max_epochs is not None:
             args.extend(["--max-epochs", str(training.max_epochs)])

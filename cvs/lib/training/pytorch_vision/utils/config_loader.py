@@ -284,6 +284,10 @@ class VisionTrainingConfig(_Forbid):
     # relaunches are recorded in the report.
     startup_timeout_s: int = Field(default=300, gt=0)
     startup_retries: int = Field(default=0, ge=0, le=5)
+    # Per-rank setup (loader file scans, dataset builds, rank 0's weight read)
+    # is awaited through the rendezvous store for up to setup_timeout_s, so a
+    # node with a cold filesystem cache does not trip the collective timeout.
+    setup_timeout_s: int = Field(default=1800, gt=0)
     omp_num_threads: int = Field(default=1, gt=0)
     verify_dmesg: bool = True
     peak_tflops_per_gpu: float = Field(gt=0)
@@ -548,9 +552,43 @@ def _check_no_changeme(node: Any, path: str = "", offenders=None) -> None:
         raise ValueError(f"config has unfilled placeholder '<changeme>' in: {', '.join(offenders)}")
 
 
+def resolve_node_thresholds(thresholds, num_nodes):
+    """Select each spec's ``by_nodes`` entry for this cluster's node count.
+
+    Throughput falls as nodes are added, so one cell can carry a bound per
+    topology: ``{"kind": "min", "by_nodes": {"2": {"value": 4000}}}``. The
+    entry for ``num_nodes`` is merged over the spec's other fields. A node
+    count with no entry keeps the spec's own ``value`` if it has one and is
+    otherwise record-only, so an uncalibrated topology never gates on another
+    topology's numbers.
+    """
+    resolved = {}
+    for cell, specs in thresholds.items():
+        if not isinstance(specs, dict):
+            resolved[cell] = specs
+            continue
+        resolved[cell] = {}
+        for metric, spec in specs.items():
+            if not isinstance(spec, dict) or "by_nodes" not in spec:
+                resolved[cell][metric] = spec
+                continue
+            by_nodes = spec["by_nodes"]
+            if not isinstance(by_nodes, dict) or not all(
+                str(key).isdigit() and int(key) > 0 and isinstance(entry, dict) for key, entry in by_nodes.items()
+            ):
+                raise ValueError(f"{cell} {metric}: by_nodes must map node counts to threshold specs")
+            merged = {key: value for key, value in spec.items() if key != "by_nodes"}
+            merged.update(by_nodes.get(str(num_nodes), {}))
+            if "value" not in merged and merged.get("kind") != "info":
+                merged = {"kind": "info"}
+            resolved[cell][metric] = merged
+    return resolved
+
+
 def load_vision_variant(config_path, cluster_dict) -> VisionVariantConfig:
     """Load, substitute, and validate a PyTorch Vision config/threshold pair."""
     raw, thresholds = substitute_config(config_path, cluster_dict)
     _check_no_changeme(raw)
-    raw["thresholds"] = thresholds
+    num_nodes = len((cluster_dict or {}).get("node_dict") or {}) or 1
+    raw["thresholds"] = resolve_node_thresholds(thresholds, num_nodes)
     return VisionVariantConfig(**raw)

@@ -307,6 +307,12 @@ class _Task:
         self.device = device
         self.local_rank = local_rank
 
+    def _wrap(self, model, **kwargs):
+        # Rank 0 alone may still be reading weights or data here; FSDP's
+        # rank-0 broadcast would otherwise time the other ranks out.
+        self.bench._wait_for_all_ranks("task_setup", self.args.setup_timeout_seconds)
+        return _wrap(model, self.args, self.device, self.local_rank, **kwargs)
+
     def tokens(self, batch):
         return 0
 
@@ -372,7 +378,7 @@ class DetectionTask(_Task):
         # The DETR checkpoint already carries its backbone weights; without
         # use_pretrained_backbone=False timm tries to fetch ImageNet weights.
         model = DetrForObjectDetection.from_pretrained(self.args.model_id, use_pretrained_backbone=False)
-        return _wrap(model, self.args, self.device, self.local_rank)
+        return self._wrap(model)
 
     def collate(self, items):
         pixel = [item["pixel_values"] for item in items]
@@ -547,7 +553,7 @@ class SegmentationTask(_Task):
         model = SegformerForSemanticSegmentation.from_pretrained(
             self.args.model_id, num_labels=self.num_classes, ignore_mismatched_sizes=True
         )
-        return _wrap(model, self.args, self.device, self.local_rank)
+        return self._wrap(model)
 
     @staticmethod
     def collate(items):
@@ -700,11 +706,8 @@ class VLMTask(_Task):
                 model = Qwen2_5_VLForConditionalGeneration._from_config(config, torch_dtype=torch.bfloat16)
         model.config.use_cache = False
         self.parameter_count = sum(p.numel() for p in model.parameters())
-        return _wrap(
+        return self._wrap(
             model,
-            self.args,
-            self.device,
-            self.local_rank,
             layer_classes=(Qwen2_5_VLDecoderLayer, Qwen2_5_VLVisionBlock),
             sync_from_rank0=True,
         )

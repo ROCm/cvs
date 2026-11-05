@@ -78,6 +78,7 @@ def _variant():
         ),
         timeout_s=1800,
         startup_timeout_s=300,
+        setup_timeout_s=1800,
         startup_retries=0,
         omp_num_threads=1,
         verify_dmesg=True,
