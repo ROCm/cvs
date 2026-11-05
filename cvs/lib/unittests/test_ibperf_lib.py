@@ -7,6 +7,20 @@ from pathlib import Path
 from unittest.mock import ANY, MagicMock, call as mock_call, patch
 import cvs.lib.ibperf_lib as ibperf_lib
 from cvs.lib import globals
+from cvs.lib.preflight import ifoe_l2_connectivity as ifoe_mod
+
+_AFM_MARKER = "'CVS_ERROR: ibperf.vpod_source afm needs passwordless sudo for afmctl'"
+
+
+def _afm_denied_read(sudo_target):
+    """The LC_ALL=C sudo read with the shared denial classifier, built from the
+    production denial grep so this pin cannot drift from the classifier it asserts."""
+    return (
+        f'if ! _cvs_out=$(LC_ALL=C sudo -n {sudo_target} show device --json 2>&1); then '
+        f'if {ifoe_mod._sudo_denial_grep()}; then printf \'%s %s\\n\' {_AFM_MARKER} "$_cvs_out"; '
+        'else printf \'%s\\n\' "$_cvs_out"; fi; '
+        'else printf \'%s\\n\' "$_cvs_out"; fi'
+    )
 
 
 class TestConfiguredTests(unittest.TestCase):
@@ -1633,6 +1647,17 @@ class TestParseAfmVpodMembership(unittest.TestCase):
             self.assertNotIn('needs root', error)
         self.assertIn('n4: ibperf.vpod_source afm needs passwordless sudo for afmctl', errors[3])
 
+    def test_tool_failure_is_not_reported_as_a_sudo_problem(self):
+        # The command classifier only stamps the sudo marker on an authorization
+        # failure, so an afmctl tool error (sudo succeeded) reaches the parser raw and
+        # must not be surfaced as "needs passwordless sudo".
+        outputs = {'n1': 'afmctl: ERROR failed to query devices (rc=2)'}
+        labels, errors = ibperf_lib.parse_afm_vpod_membership(outputs)
+        self.assertEqual(labels, {})
+        self.assertEqual(len(errors), 1)
+        self.assertIn('AFM vPOD discovery failed', errors[0])
+        self.assertNotIn('needs passwordless sudo', errors[0])
+
 
 class TestDiscoverAfmVpodMap(unittest.TestCase):
     def test_relative_command_is_resolved_before_sudo(self):
@@ -1640,13 +1665,12 @@ class TestDiscoverAfmVpodMap(unittest.TestCase):
         phdl.exec.return_value = {'n': AFM_FIXTURE.read_text()}
         self.assertEqual(ibperf_lib.discover_afm_vpod_map(phdl), ({'n': (MI450_POD, '3')}, []))
         phdl.exec.assert_called_once_with(
-            '{ if ! sudo -n true >/dev/null 2>&1; then '
-            "printf '%s\\n' 'CVS_ERROR: ibperf.vpod_source afm needs passwordless sudo for afmctl' >&2; exit 1; fi; "
-            '_cvs_afmctl="$(command -v afmctl)" || '
+            '{ _cvs_afmctl="$(command -v afmctl)" || '
             "{ printf '%s\\n' 'Unable to find afmctl in PATH' >&2; exit 127; }; "
             'case "$_cvs_afmctl" in /*) ;; *) '
             "printf '%s\\n' 'Resolved afmctl path is not absolute' >&2; exit 127 ;; esac; "
-            'sudo -n "$_cvs_afmctl" show device --json; } 2>&1',
+            + _afm_denied_read('"$_cvs_afmctl"')
+            + '; } 2>&1',
             print_console=False,
         )
 
@@ -1655,9 +1679,7 @@ class TestDiscoverAfmVpodMap(unittest.TestCase):
         phdl.exec.return_value = {'n': AFM_FIXTURE.read_text()}
         ibperf_lib.discover_afm_vpod_map(phdl, '/path with space/afmctl')
         phdl.exec.assert_called_once_with(
-            '{ if ! sudo -n true >/dev/null 2>&1; then '
-            "printf '%s\\n' 'CVS_ERROR: ibperf.vpod_source afm needs passwordless sudo for afmctl' >&2; exit 1; fi; "
-            "sudo -n '/path with space/afmctl' show device --json; } 2>&1",
+            '{ ' + _afm_denied_read("'/path with space/afmctl'") + '; } 2>&1',
             print_console=False,
         )
         phdl.reset_mock()

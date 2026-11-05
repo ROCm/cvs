@@ -5,6 +5,7 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import json
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -140,27 +141,34 @@ def _orch_fw_kmod(fw_out, kmod_out):
     return orch
 
 
+def _fw_json(version):
+    '''One-device ``afmctl show device --json`` payload with the given firmware version.'''
+    return json.dumps(
+        {'device': [{'bdf': '0001:01:00.1', 'spec': {'accelerator_id': '0'}, 'status': {'firmware_version': version}}]}
+    )
+
+
 class TestCheckIfoeSwDetails(unittest.TestCase):
     def setUp(self):
         globals.error_list = []
 
     def test_issues_both_commands(self):
-        orch = _orch_fw_kmod({'n1': 'Firmware version : 0.14.15\n'}, {'n1': 'version:        1.0.0\n'})
+        orch = _orch_fw_kmod({'n1': _fw_json('0.14.15')}, {'n1': 'version:        1.0.0\n'})
         suite.test_check_ifoe_sw_details(orch, {}, {}, {}, None)
         fw_cmd, kmod_cmd = (call.args[0] for call in orch.all.exec.call_args_list)
         self.assertIn('afmctl', fw_cmd)
-        self.assertIn('show device', fw_cmd)
+        # JSON output, parsed by the shared AFM parser (shared with ibperf discovery).
+        self.assertIn('show device --json', fw_cmd)
         self.assertIn('modinfo', kmod_cmd)
-        # Both gated on the loaded module; firmware routed through the denial wrapper.
+        # Both gated on the loaded module; firmware routed through the denial marker.
         self.assertIn('/sys/module/ifoe', fw_cmd)
         self.assertIn('/sys/module/ifoe', kmod_cmd)
         self.assertIn('CVS_CMD_DENIED', fw_cmd)
-        # Tool path resolved to an absolute location so sudo's secure_path cannot
-        # drop a tool that is on the user PATH but outside secure_path. Both the
-        # MI4XX /usr/sbin layout and the /opt install path are probed as fallbacks
-        # when the non-login PATH omits the tool's directory.
+        # afmctl resolved to an absolute path (shared build_afmctl_command) so sudo's
+        # secure_path cannot drop a tool on the user PATH but outside secure_path.
+        # Both the MI4XX /usr/sbin layout and the /opt install path are probed.
         self.assertIn('command -v afmctl', fw_cmd)
-        self.assertIn('sudo -n "$_afm"', fw_cmd)
+        self.assertIn('sudo -n "$_cvs_afmctl"', fw_cmd)
         self.assertIn('/usr/sbin/afmctl', fw_cmd)
         self.assertIn('/opt/amd/afm/bin/afmctl', fw_cmd)
         self.assertIn('command -v modinfo', kmod_cmd)
@@ -172,7 +180,7 @@ class TestCheckIfoeSwDetails(unittest.TestCase):
         self.assertEqual(globals.error_list, [])
 
     def test_both_rows_pass(self):
-        orch = _orch_fw_kmod({'n1': 'Firmware version : 0.14.15\n'}, {'n1': 'version:        1.0.0\n'})
+        orch = _orch_fw_kmod({'n1': _fw_json('0.14.15')}, {'n1': 'version:        1.0.0\n'})
         host_res_dict = {}
         suite.test_check_ifoe_sw_details(orch, {}, host_res_dict, {}, None)
         self.assertEqual(host_res_dict['groups']['ifoe_fw']['nodes']['n1']['status'], 'pass')
@@ -198,7 +206,7 @@ class TestCheckIfoeSwDetails(unittest.TestCase):
 
     def test_firmware_failure_still_records_kmod_row(self):
         # A firmware mismatch must not stop the kmod row from being captured.
-        orch = _orch_fw_kmod({'n1': 'Firmware version : 0.14.15\n'}, {'n1': 'version:        1.0.0\n'})
+        orch = _orch_fw_kmod({'n1': _fw_json('0.14.15')}, {'n1': 'version:        1.0.0\n'})
         config = {'ifoe_fw_version': '0.14.16'}
         host_res_dict = {}
         with self.assertRaises(Failed):
@@ -208,7 +216,7 @@ class TestCheckIfoeSwDetails(unittest.TestCase):
         self.assertTrue(any('n1' in message for message in globals.error_list))
 
     def test_kmod_mismatch_fails(self):
-        orch = _orch_fw_kmod({'n1': 'Firmware version : 0.14.15\n'}, {'n1': 'version:        1.0.0\n'})
+        orch = _orch_fw_kmod({'n1': _fw_json('0.14.15')}, {'n1': 'version:        1.0.0\n'})
         config = {'ifoe_kmod_version': '2.0.0'}
         host_res_dict = {}
         with self.assertRaises(Failed):

@@ -18,11 +18,14 @@ from cvs.lib.preflight.ifoe_l2_connectivity import (
     AfmctlPortParser,
     AfmctlPingParser,
     IfoeL2ConnectivityCheck,
+    build_afmctl_command,
     expand_accelerator_ranges,
     parse_accelerator_ranges,
+    parse_afmctl_firmware_by_bdf,
     parse_afmctl_show_device,
     parse_afmctl_show_device_json,
 )
+from cvs.lib.preflight import ifoe_l2_connectivity as ifoe_mod
 from cvs.lib.preflight.report import PreflightReportGenerator
 from cvs.parsers.schemas import PreflightConfigFile
 
@@ -316,6 +319,257 @@ class TestParseAfmctlShowDevice(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(devices[0]['bdf'], '0001:01:00.1')
         self.assertEqual(devices[0]['vpod_accelerators'], [0, 1])
+
+    def test_json_device_firmware_version_from_nested_status(self):
+        # Real afmctl JSON nests the firmware version under a per-device ``status``
+        # block; the flattener exposes it by leaf key for the platform firmware check.
+        payload = json.dumps(
+            {
+                'device': [
+                    {
+                        'bdf': '0001:01:00.1',
+                        'spec': {'accelerator_id': '0'},
+                        'status': {
+                            'lib_version': '0.1.0',
+                            'firmware_version': '0.24.2',
+                            'telemetry_version': '16908288.0.0',
+                        },
+                    }
+                ]
+            }
+        )
+        devices, errors = parse_afmctl_show_device_json(payload)
+        self.assertEqual(errors, [])
+        self.assertEqual(devices[0]['firmware_version'], '0.24.2')
+
+
+class TestParseAfmctlFirmwareByBdf(unittest.TestCase):
+    """The firmware-by-BDF map counts every reported device, unlike the accel-filtered
+    device parser, so a firmware check can flag a device that reports no version."""
+
+    def test_maps_each_bdf_to_its_firmware(self):
+        payload = json.dumps(
+            {
+                'device': [
+                    {'bdf': '0001:01:00.1', 'spec': {'accelerator_id': '0'}, 'status': {'firmware_version': '0.24.2'}},
+                    {'bdf': '0002:01:00.1', 'spec': {'accelerator_id': '1'}, 'status': {'firmware_version': '0.24.2'}},
+                ]
+            }
+        )
+        firmware_by_bdf, errors = parse_afmctl_firmware_by_bdf(payload)
+        self.assertEqual(errors, [])
+        self.assertEqual(firmware_by_bdf, {'0001:01:00.1': '0.24.2', '0002:01:00.1': '0.24.2'})
+
+    def test_counts_bdf_without_accelerator_descriptor(self):
+        # A device the accel-filtered parser drops still appears here, mapped to None,
+        # so the caller sees 2 devices with only 1 firmware version.
+        payload = json.dumps(
+            {
+                'device': [
+                    {'bdf': '0001:01:00.1', 'spec': {'accelerator_id': '0'}, 'status': {'firmware_version': '0.24.2'}},
+                    {'bdf': '0002:01:00.1', 'status': {}},
+                ]
+            }
+        )
+        firmware_by_bdf, errors = parse_afmctl_firmware_by_bdf(payload)
+        self.assertEqual(errors, [])
+        self.assertEqual(firmware_by_bdf, {'0001:01:00.1': '0.24.2', '0002:01:00.1': None})
+
+    def test_empty_and_invalid_inputs(self):
+        self.assertEqual(parse_afmctl_firmware_by_bdf(''), ({}, ['Empty afmctl show device output']))
+        firmware_by_bdf, errors = parse_afmctl_firmware_by_bdf('not json')
+        self.assertEqual(firmware_by_bdf, {})
+        self.assertTrue(errors and 'Invalid afmctl show device JSON' in errors[0])
+
+    def test_no_bdf_records_reports_error(self):
+        firmware_by_bdf, errors = parse_afmctl_firmware_by_bdf(json.dumps({'device': [{'status': {}}]}))
+        self.assertEqual(firmware_by_bdf, {})
+        self.assertEqual(errors, ['afmctl show device JSON contained no device BDFs'])
+
+    def test_bdf_keyed_envelope_keeps_firmware_within_boundary(self):
+        # BDF-keyed envelope (device is the value of its BDF key). The second device
+        # omits its firmware and must map to None, not inherit the first device's.
+        payload = json.dumps(
+            {
+                '0001:01:00.1': {'spec': {'accelerator_id': '0'}, 'status': {'firmware_version': '0.24.2'}},
+                '0002:01:00.1': {'spec': {'accelerator_id': '1'}, 'status': {'lib_version': '0.1.0'}},
+            }
+        )
+        firmware_by_bdf, errors = parse_afmctl_firmware_by_bdf(payload)
+        self.assertEqual(errors, [])
+        self.assertEqual(firmware_by_bdf, {'0001:01:00.1': '0.24.2', '0002:01:00.1': None})
+
+    def test_nested_sibling_firmware_not_cross_associated(self):
+        # A device whose record nests another device (its own bdf) must not adopt the
+        # nested device's firmware; each BDF keeps only its own.
+        payload = json.dumps(
+            {
+                'device': [
+                    {
+                        'bdf': '0002:01:00.1',
+                        'spec': {'accelerator_id': '1'},
+                        'status': {},
+                        'sibling': {'bdf': '0001:01:00.1', 'status': {'firmware_version': '0.24.2'}},
+                    }
+                ]
+            }
+        )
+        firmware_by_bdf, errors = parse_afmctl_firmware_by_bdf(payload)
+        self.assertEqual(errors, [])
+        self.assertEqual(firmware_by_bdf, {'0002:01:00.1': None, '0001:01:00.1': '0.24.2'})
+
+
+def _denied_read(sudo_target, marker):
+    """The failure-classifying read fragment: only a sudo-auth stderr gets the marker.
+
+    Built from the production denial grep so the expectation cannot drift from the
+    classifier it pins. The read runs under ``LC_ALL=C`` so sudo's own diagnostics are
+    English.
+    """
+    return (
+        f'if ! _cvs_out=$(LC_ALL=C sudo -n {sudo_target} show device --json 2>&1); then '
+        f'if {ifoe_mod._sudo_denial_grep()}; then printf \'%s %s\\n\' {marker} "$_cvs_out"; '
+        'else printf \'%s\\n\' "$_cvs_out"; fi; '
+        'else printf \'%s\\n\' "$_cvs_out"; fi'
+    )
+
+
+class TestBuildAfmctlCommand(unittest.TestCase):
+    """The shared afmctl command builder backs both ibperf discovery and the platform
+    firmware check, so its exact output per parameter combination is pinned here."""
+
+    def test_platform_combo_fallbacks_and_both_markers(self):
+        # Relative tool, install-path fallbacks, denial + reader-missing markers:
+        # command -v first, then each fallback probed with -x; an unresolved tool
+        # prints the reader-missing marker and exits 0 (parsed downstream, not 127).
+        # The denial is detected on the actual afmctl read, not a sudo -n true probe.
+        command = build_afmctl_command(
+            'show device --json',
+            'afmctl',
+            fallbacks=('/usr/sbin/afmctl', '/opt/amd/afm/bin/afmctl'),
+            denied_marker='CVS_CMD_DENIED',
+            missing_marker='CVS_IFOE_READER_MISSING',
+        )
+        self.assertEqual(
+            command,
+            '{ _cvs_afmctl="$(command -v afmctl 2>/dev/null)"; '
+            '[ -n "$_cvs_afmctl" ] || for _cvs_c in /usr/sbin/afmctl /opt/amd/afm/bin/afmctl; do '
+            '[ -x "$_cvs_c" ] && { _cvs_afmctl="$_cvs_c"; break; }; done; '
+            'case "$_cvs_afmctl" in /*) ;; *) '
+            "printf '%s\\n' CVS_IFOE_READER_MISSING; exit 0 ;; esac; "
+            + _denied_read('"$_cvs_afmctl"', 'CVS_CMD_DENIED')
+            + '; } 2>&1',
+        )
+
+    def test_absolute_path_skips_resolution(self):
+        command = build_afmctl_command(
+            'show device --json',
+            '/usr/sbin/afmctl',
+            denied_marker='CVS_CMD_DENIED',
+            missing_marker='CVS_IFOE_READER_MISSING',
+        )
+        self.assertEqual(
+            command,
+            '{ ' + _denied_read('/usr/sbin/afmctl', 'CVS_CMD_DENIED') + '; } 2>&1',
+        )
+
+    def test_legacy_ibperf_form_without_markers_or_fallbacks(self):
+        # No markers and no fallbacks: command -v failure exits 127 directly and a
+        # non-absolute resolved path is a hard 127 error (the original ibperf contract).
+        command = build_afmctl_command('show device --json', 'afmctl')
+        self.assertEqual(
+            command,
+            '{ _cvs_afmctl="$(command -v afmctl)" || '
+            "{ printf '%s\\n' 'Unable to find afmctl in PATH' >&2; exit 127; }; "
+            'case "$_cvs_afmctl" in /*) ;; *) '
+            "printf '%s\\n' 'Resolved afmctl path is not absolute' >&2; exit 127 ;; esac; "
+            'LC_ALL=C sudo -n "$_cvs_afmctl" show device --json; } 2>&1',
+        )
+
+    def test_ibperf_denied_marker_form_has_no_sudo_pre_check(self):
+        # ibperf's denial contract: no sudo -n true surrogate, the real read is checked
+        # and its token still lands in the output for parse_afm_vpod_membership.
+        command = build_afmctl_command(
+            'show device --json',
+            'afmctl',
+            denied_marker='CVS_ERROR: needs sudo',
+        )
+        self.assertNotIn('sudo -n true', command)
+        self.assertEqual(
+            command,
+            '{ _cvs_afmctl="$(command -v afmctl)" || '
+            "{ printf '%s\\n' 'Unable to find afmctl in PATH' >&2; exit 127; }; "
+            'case "$_cvs_afmctl" in /*) ;; *) '
+            "printf '%s\\n' 'Resolved afmctl path is not absolute' >&2; exit 127 ;; esac; "
+            + _denied_read('"$_cvs_afmctl"', "'CVS_ERROR: needs sudo'")
+            + '; } 2>&1',
+        )
+
+    def test_denied_marker_checks_the_actual_read(self):
+        # The denial is detected on the real afmctl invocation (no sudo -n true
+        # surrogate), so a user with NOPASSWD for afmctl but not an unrelated command
+        # is not misreported, and an afmctl denial is recorded as a denial.
+        command = build_afmctl_command('show device --json', 'afmctl', denied_marker='CVS_CMD_DENIED')
+        self.assertNotIn('sudo -n true', command)
+        self.assertIn('if ! _cvs_out=$(LC_ALL=C sudo -n "$_cvs_afmctl" show device --json 2>&1); then', command)
+        self.assertIn('grep -Eq', command)
+        self.assertIn('^sudo:', command)
+
+    def test_denied_marker_only_marks_the_grep_branch(self):
+        # The marker printf lives in the grep-true branch; the fallthrough emits the
+        # raw output, so a tool error is never relabeled as a sudo-configuration problem.
+        command = build_afmctl_command('show device --json', 'afmctl', denied_marker='CVS_CMD_DENIED')
+        grep_true, _, fallthrough = command.partition('; else printf')
+        self.assertIn("printf '%s %s\\n' CVS_CMD_DENIED \"$_cvs_out\"", grep_true)
+        self.assertNotIn('CVS_CMD_DENIED', fallthrough)
+        self.assertIn('LC_ALL=C sudo -n', command)
+
+    def _classify(self, stderr):
+        """Run the generated denial classifier against ``stderr`` and return the verdict.
+
+        Extracts the ``if ...grep...; then <marker>; else <raw>; fi`` classifier from a
+        real built command and executes it, so classification is proven by the shell,
+        not re-implemented. Returns 'DENIED' or 'TOOLERR'.
+        """
+        grep = ifoe_mod._sudo_denial_grep()
+        script = f'_cvs_out={shlex.quote(stderr)}\nif {grep}; then echo DENIED; else echo TOOLERR; fi'
+        return run_trusted(['sh', '-c', script], capture_output=True, text=True).stdout.strip()
+
+    def test_sudoers_file_refusal_classified_as_denial(self):
+        # A standard sudoers refusal, printed unprefixed by sudo, is sudo-specific
+        # vocabulary and is recognized as a denial.
+        self.assertEqual(
+            self._classify('operator is not in the sudoers file. This incident will be reported.'), 'DENIED'
+        )
+
+    def test_sudo_prefixed_auth_message_is_a_denial(self):
+        self.assertEqual(self._classify('sudo: a password is required'), 'DENIED')
+
+    def test_benign_sudo_warning_plus_tool_error_is_not_a_denial(self):
+        # A common cluster warning (host not in /etc/hosts) is a sudo: line but not an
+        # authorization refusal; with afmctl's own error it must stay a tool error so
+        # the real diagnostic is surfaced, not a false passwordless-sudo recommendation.
+        output = 'sudo: unable to resolve host nodeX: Name or service not known\nafmctl: no AFM device present'
+        self.assertEqual(self._classify(output), 'TOOLERR')
+
+    def test_tool_error_text_matching_a_phrase_is_not_a_denial(self):
+        # afmctl's own stderr that merely contains an auth-like phrase (no sudo: line,
+        # no sudoers vocabulary) is a tool error, not a sudo denial.
+        self.assertEqual(self._classify('afmctl: a password is required for the BMC session'), 'TOOLERR')
+
+    def test_plain_tool_error_is_not_a_denial(self):
+        self.assertEqual(self._classify('afmctl: ERROR device query failed (rc=2)'), 'TOOLERR')
+
+    def test_values_are_shell_quoted(self):
+        command = build_afmctl_command(
+            'show device --json',
+            'my afmctl',
+            fallbacks=('/opt/amd afm/afmctl',),
+            missing_marker='CVS_IFOE_READER_MISSING',
+        )
+        self.assertIn("command -v 'my afmctl'", command)
+        self.assertIn("'/opt/amd afm/afmctl'", command)
+        self.assertIn('sudo -n "$_cvs_afmctl"', command)
 
 
 class TestAcceleratorRangeParsing(unittest.TestCase):

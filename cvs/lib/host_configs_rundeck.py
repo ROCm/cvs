@@ -20,6 +20,7 @@ import re
 import shlex
 
 from cvs.lib import dmesg_noise
+from cvs.lib.preflight.ifoe_l2_connectivity import parse_afmctl_firmware_by_bdf
 
 _STATUSES = ('pass', 'fail', 'na')
 
@@ -82,14 +83,6 @@ CVS_IFOE_ABSENT = 'CVS_IFOE_ABSENT'
 # modinfo) could not be resolved. This is a read failure, not an absent module, so
 # the check fails as unreadable rather than silently recording NA.
 CVS_IFOE_READER_MISSING = 'CVS_IFOE_READER_MISSING'
-# ``afmctl show device`` prints one ``BDF : X`` header then one ``Firmware version``
-# per device block. The BDF count is the device count: every reported device must
-# carry a firmware version, so a block missing its version fails rather than passing
-# on the other blocks' values alone.
-_IFOE_BDF_RE = re.compile(r'^\s*BDF\s*:\s*\S+', re.I | re.M)
-# Line-anchored so a banner or tool-version line that merely mentions the words
-# cannot be counted as a device and trip the divergence check.
-_IFOE_FW_RE = re.compile(r'^\s*Firmware\s+version\s*:\s*(\S+)', re.I | re.M)
 # ``modinfo ifoe`` prints a ``version:`` line (dotted/dash build string).
 _IFOE_KMOD_RE = re.compile(r'^version:\s*(\S+)', re.I | re.M)
 # A well-formed firmware version is dotted digits (e.g. 0.14.15); reject garbled data.
@@ -332,23 +325,46 @@ def _na_record(summary='not applicable'):
     return build_node_record('na', [], summary)
 
 
-def _eval_ifoe_version(out_dict, expected, detect_re, format_re, item_name, label, count_re=None):
+def _extract_ifoe_firmware(text):
+    '''Return (firmware_versions, device_count) from ``afmctl show device --json``.
+
+    ``device_count`` is the number of AFM device BDFs the tool reports, counted
+    independently of the accelerator-descriptor filter that ibperf's vPOD discovery
+    uses; a reported BDF without a firmware version contributes to the count but not
+    to the value list, so the caller fails an incomplete read even when the missing
+    device carries no accelerator descriptor.
+    '''
+    firmware_by_bdf, _errors = parse_afmctl_firmware_by_bdf(text)
+    versions = [str(fw).strip() for fw in firmware_by_bdf.values() if fw]
+    return versions, len(firmware_by_bdf)
+
+
+def _extract_ifoe_kmod(text):
+    '''Return (kmod_versions, device_count) from ``modinfo ifoe`` output.
+
+    The kernel module is not per-device, so ``device_count`` matches the number of
+    version lines found and the incomplete-device check never fires.
+    '''
+    versions = _IFOE_KMOD_RE.findall(text)
+    return versions, len(versions)
+
+
+def _eval_ifoe_version(out_dict, expected, extract, format_re, item_name, label):
     '''Shared IFoE firmware/kmod evaluation.
 
     Per node:
       - absent sentinel in output -> ``na`` record, no fail message.
       - denial token in output -> fail (the privileged read was refused).
       - reader-missing marker in output -> fail (module loaded but reader not found).
-      - ``count_re`` set and more devices than detected versions -> fail (a reported
-        device is missing its version).
+      - more reported devices than detected versions -> fail (a reported device is
+        missing its version), so a healthy device cannot mask a sibling that reports no
+        version.
       - ``expected`` set -> every detected value must equal it, else fail.
       - ``expected`` blank -> inventory mode: pass only when every detected value is a
         well-formed version (``format_re``); a missing or garbled value fails.
 
-    ``afmctl show device`` reports one version per device, so every match on a node
-    is checked and a divergence between devices fails rather than passing on the
-    first value alone. When ``count_re`` matches the per-device header, a device whose
-    version line is absent fails rather than passing on the other devices' values.
+    ``extract`` returns ``(values, device_count)`` for one node's output; a divergence
+    between devices fails rather than passing on the first value alone.
     '''
     records = {}
     messages = []
@@ -368,21 +384,17 @@ def _eval_ifoe_version(out_dict, expected, detect_re, format_re, item_name, labe
             messages.append(message)
             records[str(node)] = _fail_record(item_name, message, 'unavailable')
             continue
-        detected = detect_re.findall(text)
+        detected, device_count = extract(text)
         if not detected:
             message = f'{label} could not be read on node {node}'
             messages.append(message)
             records[str(node)] = _fail_record(item_name, message, 'unavailable')
             continue
-        if count_re is not None:
-            device_count = len(count_re.findall(text))
-            if device_count > len(detected):
-                message = (
-                    f'{label} missing for {device_count - len(detected)} of {device_count} device(s) on node {node}'
-                )
-                messages.append(message)
-                records[str(node)] = _fail_record(item_name, message, 'incomplete')
-                continue
+        if device_count > len(detected):
+            message = f'{label} missing for {device_count - len(detected)} of {device_count} device(s) on node {node}'
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'incomplete')
+            continue
         unique = list(dict.fromkeys(detected))
         if len(unique) > 1:
             joined = ', '.join(unique)
@@ -410,20 +422,14 @@ def _eval_ifoe_version(out_dict, expected, detect_re, format_re, item_name, labe
 def eval_ifoe_firmware(out_dict, expected):
     '''Return (node_records, fail_messages) for the IFoE/AFM device firmware version.'''
     return _eval_ifoe_version(
-        out_dict,
-        expected,
-        _IFOE_FW_RE,
-        _IFOE_FW_FORMAT_RE,
-        'ifoe_fw_version',
-        'IFoE firmware version',
-        count_re=_IFOE_BDF_RE,
+        out_dict, expected, _extract_ifoe_firmware, _IFOE_FW_FORMAT_RE, 'ifoe_fw_version', 'IFoE firmware version'
     )
 
 
 def eval_ifoe_kmod(out_dict, expected):
     '''Return (node_records, fail_messages) for the ifoe kernel module version.'''
     return _eval_ifoe_version(
-        out_dict, expected, _IFOE_KMOD_RE, _IFOE_KMOD_FORMAT_RE, 'ifoe_kmod_version', 'IFoE kmod version'
+        out_dict, expected, _extract_ifoe_kmod, _IFOE_KMOD_FORMAT_RE, 'ifoe_kmod_version', 'IFoE kmod version'
     )
 
 

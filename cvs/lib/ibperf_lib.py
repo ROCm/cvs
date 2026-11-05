@@ -15,6 +15,7 @@ import xlsxwriter
 from collections import Counter
 from xlsxwriter.utility import xl_col_to_name
 
+from cvs.lib.preflight.ifoe_l2_connectivity import build_afmctl_command
 from cvs.lib.preflight.scaleup_fabric import parse_afmctl_device_json
 from cvs.lib.utils_lib import *
 from cvs.lib.rdma_gid_lib import (
@@ -223,24 +224,17 @@ def parse_afm_vpod_membership(out_dict):
 
 
 def _build_afmctl_device_command(afmctl_path):
-    """Check sudo per host and resolve relative afmctl names outside sudo's secure_path."""
-    afmctl_path = str(afmctl_path or 'afmctl')
-    arguments = 'show device --json'
-    executable = shlex.quote(afmctl_path)
-    sudo_error = shlex.quote(_AFM_SUDO_ERROR_MARKER)
-    sudo_check = f'if ! sudo -n true >/dev/null 2>&1; then printf \'%s\\n\' {sudo_error} >&2; exit 1; fi; '
-    if afmctl_path.startswith('/'):
-        command = f'{sudo_check}sudo -n {executable} {arguments}'
-    else:
-        missing_command = shlex.quote(f'Unable to find {afmctl_path} in PATH')
-        command = (
-            f'{sudo_check}_cvs_afmctl="$(command -v {executable})" || '
-            f'{{ printf \'%s\\n\' {missing_command} >&2; exit 127; }}; '
-            'case "$_cvs_afmctl" in /*) ;; *) '
-            "printf '%s\\n' 'Resolved afmctl path is not absolute' >&2; exit 127 ;; esac; "
-            'sudo -n "$_cvs_afmctl" show device --json'
-        )
-    return f'{{ {command}; }} 2>&1'
+    """Resolve relative afmctl names outside sudo's secure_path and flag a denied read.
+
+    The denial is detected on the actual ``sudo -n afmctl`` read, so a user with
+    passwordless sudo for afmctl but not an unrelated command is not misreported, and
+    the ``_AFM_SUDO_ERROR_MARKER`` token still reaches ``parse_afm_vpod_membership``.
+    """
+    return build_afmctl_command(
+        'show device --json',
+        afmctl_path,
+        denied_marker=_AFM_SUDO_ERROR_MARKER,
+    )
 
 
 def discover_afm_vpod_map(phdl, afmctl_path='afmctl'):
