@@ -28,8 +28,10 @@ Files live in ``cvs/input/config_file/training/pytorch_vision/`` and are named
      - 50-step performance sweeps: GA, rocAL CPU vs GPU, standard vs heavy augmentation
    * - ``mi325x_pytorch_vision_resnet50_single_train5k_config.json``
      - 5,000-step loss-curve and accuracy profile
-   * - ``mi325x_pytorch_vision_resnet50_single_to-accuracy_disabled_config.json``
-     - Protected train-to-target-accuracy profile (disabled by default)
+   * - ``mi325x_pytorch_vision_resnet50_single_to-accuracy_config.json``
+     - Protected train-to-target-accuracy profile (needs ``allow_long_run``)
+   * - ``mi325x_pytorch_vision_resnet50_distributed_to-accuracy_config.json``
+     - The same target on four nodes with the large-batch recipe
    * - ``mi325x_pytorch_vision_resnet50_single_synthetic_config.json``
      - Synthetic on-GPU input; measures model, optimizer, and DDP without storage
    * - ``mi325x_pytorch_vision_resnet50_distributed_perf_config.json``
@@ -89,10 +91,20 @@ Training block
   artifact.
 - ``num_classes``, ``channels_last``: classifier outputs and NHWC-compatible
   tensor storage.
+- ``zero_init_residual``: starts the last BatchNorm scale of every residual
+  block at zero (Goyal et al., 2017), which large-batch ResNet training relies
+  on. Torchvision ResNets on the native harness only; default ``false``.
+- ``label_smoothing``: cross-entropy label smoothing for the training loss, in
+  ``[0, 1)``. The reported validation loss stays plain cross-entropy. Native
+  harness only; default ``0``.
 - ``learning_rate``, ``momentum``, ``weight_decay``: SGD settings.
 - ``lr_schedule``: constant or epoch-based multistep decay, with optional
   linear warmup and explicit epoch milestones.
 - ``timeout_s``: hard ``torchrun`` timeout.
+- ``startup_timeout_s``, ``startup_retries``: NCCL startup (init and one
+  all-reduce) must finish within ``startup_timeout_s`` (default 300). A launch
+  no rank got past is relaunched up to ``startup_retries`` times (default 0,
+  at most 5), keeping the failed attempt's logs and recording the count.
 - ``omp_num_threads``: CPU threads per rank.
 - ``verify_dmesg``: enables bounded host-kernel error scanning.
 - ``peak_tflops_per_gpu``: dense-precision hardware peak used for MFU.
@@ -128,8 +140,8 @@ Training block
   ``test_teardown``; left off, the copy stays for the next run to reuse.
 - ``env_vars``: exported only for the training process. ``NNODES`` and
   ``NODE_RANK`` are overwritten per node by the launcher.
-- ``error_patterns``: named regular expressions checked against
-  ``training.log``.
+- ``error_patterns``: named regular expressions checked against every node's
+  ``training.node<R>.log``.
 - ``sweeps``: full training runs. Each ``name`` must match a threshold cell.
 - ``enabled_sweep_list``: exact sweep names to execute; omit or empty runs all.
 

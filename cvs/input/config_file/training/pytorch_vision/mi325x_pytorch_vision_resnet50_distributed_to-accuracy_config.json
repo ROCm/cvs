@@ -1,0 +1,166 @@
+{
+  "_format_note": "PyTorch Vision training config. The cluster file owns node access; this file owns the container and the training workload; the sibling *_threshold.json owns per-sweep metric gates. Run with: cvs run pytorch_vision_single|pytorch_vision_distributed --cluster_file <cluster>.json --config_file <this>.json --html <out>.html --self-contained-html",
+  "schema_version": 1,
+  "framework": "pytorch_vision_training",
+  "gpu_name": "MI325X",
+  "_thresholds_comment": "Gating is threshold-driven and requires enforce_thresholds=true. A threshold entry with kind=info always passes and records the value. Calibrate on the target filesystem and fabric before enforcing numeric limits.",
+  "enforce_thresholds": false,
+  "threshold_json": "mi325x_pytorch_vision_resnet50_distributed_to-accuracy_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "<changeme-imagenet-host-path>",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "torchvision/resnet50",
+    "remote": 0
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "cvs_pytorch_vision_w2_train_to_accuracy",
+    "image": "cvs/pytorch-rocal:rocm7.2.4-py3.12-torch2.10-rocal2.5.0",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme-imagenet-host-path>:/datasets/imagenet-1k:ro",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+          "/lib/x86_64-linux-gnu/libibverbs.so.1:/opt/cvs-host/libibverbs.so.1:ro"
+        ],
+        "devices": [
+          "/dev/kfd",
+          "/dev/dri"
+        ]
+      }
+    }
+  },
+  "_training_comment": "training{} defines the workload. `workload` is the scorecard row id (W1 ResNet-50, W3 ViT-B/16) and is cross-checked against the result artifact. `distributed` must match the suite you invoke and the cluster node count. `run_mode` selects the profile (smoke|perf|train_5k|train_to_accuracy) and determines which rows are gated. `optimizer` is sgd or adamw; transformer backbones need adamw.",
+  "_sweeps_comment": "training.sweeps[] are full training runs. Each `name` is also its threshold cell key, so encode every material dimension (topology, precision, microbatch, GA, data mode, rocAL device, augmentation) to stop a result being compared against the wrong gate. `label` is the compact id used in pytest rows and log directory names. training.enabled_sweep_list selects which names execute.",
+  "_recipe_comment": "The W1 target-accuracy recipe scaled linearly to 32 GPUs (Goyal et al., 2017): global batch 8192 at 256 per GPU, learning rate 0.1 x 8192 / 256 = 3.2, 5 warmup epochs, decay at 30/60/80, 90-epoch cap. At this batch the W1 recipe alone reached 75.12% Top-1 and 92.32% Top-5 on four MI325X nodes, short of the 75.5/92.5 targets; zero-initialised residual BatchNorm scales raised that to 75.27/92.55, and label smoothing 0.1 is the remaining large-batch addition.",
+  "_dataset_staging_comment": "Copies the ImageNet volume into node RAM before the container starts and mounts the copy in its place. Reading from the shared filesystem held ResNet-50 to 12k images/s on one MI325X node; /dev/shm reached 24k. Needs about 154 GB free on the destination filesystem; a verified copy is reused until the source changes.",
+  "training": {
+    "workload": "W2",
+    "distributed": true,
+    "enabled": true,
+    "allow_long_run": true,
+    "phase": "accuracy",
+    "run_mode": "train_to_accuracy",
+    "gpus_per_node": 8,
+    "max_epochs": 90,
+    "warmup_steps": 0,
+    "eval_enabled": true,
+    "eval_every_epochs": 1,
+    "eval_sample_count": 50000,
+    "milestone_steps": [
+      100,
+      500,
+      1000,
+      5000
+    ],
+    "num_classes": 1000,
+    "channels_last": true,
+    "zero_init_residual": true,
+    "label_smoothing": 0.1,
+    "learning_rate": 3.2,
+    "momentum": 0.9,
+    "weight_decay": 0.0001,
+    "lr_schedule": {
+      "name": "multistep",
+      "warmup_epochs": 5,
+      "milestones_epochs": [
+        30,
+        60,
+        80
+      ],
+      "gamma": 0.1
+    },
+    "timeout_s": 21600,
+    "startup_retries": 2,
+    "omp_num_threads": 1,
+    "verify_dmesg": true,
+    "peak_tflops_per_gpu": 1307.4,
+    "checkpoint_enabled": true,
+    "checkpoint_loss_tolerance": 1e-05,
+    "loss_curve": {
+      "enabled": true,
+      "sample_every_steps": 100,
+      "minimum_points": 100,
+      "require_decrease": true
+    },
+    "accuracy": {
+      "target_top1_pct": 75.5,
+      "target_top5_pct": 92.5
+    },
+    "convergence": {
+      "enabled": true,
+      "stop_when_reached": true,
+      "target_top1_pct": 75.5
+    },
+    "codecarbon": {
+      "enabled": true,
+      "required": true,
+      "version": "3.2.4",
+      "tracker": "amdsmi",
+      "measure_power_secs": 5
+    },
+    "dataset_staging": {
+      "enabled": true,
+      "source": "<changeme-imagenet-host-path>",
+      "destination": "/dev/shm/cvs-imagenet-1k",
+      "parallel_copies": 48,
+      "timeout_s": 3600
+    },
+    "env_vars": {
+      "NCCL_DEBUG": "WARN",
+      "RCCL_USE_AMD_SMI_LIB": "1",
+      "NCCL_IB_DISABLE": "0",
+      "NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "NCCL_IB_GID_INDEX": "3",
+      "NCCL_SOCKET_IFNAME": "eno0",
+      "NCCL_CUMEM_ENABLE": "1",
+      "NCCL_DMABUF_ENABLE": "0"
+    },
+    "error_patterns": {
+      "NCCL ERROR": "NCCL ERROR|NCCL timeout|local work queue catastrophic error",
+      "GPU HW ERROR": "HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset",
+      "Python error": "Traceback \\(most recent call last\\)|ModuleNotFoundError|Fatal Python error",
+      "Resource exhaustion": "Out of memory|RESOURCE_EXHAUSTED|std::bad_alloc",
+      "Process crash": "Segmentation fault|SIGSEGV|core dumped"
+    },
+    "sweeps": [
+      {
+        "name": "W2-ACCURACY-TARGET-ROCAL-GPU-STANDARD",
+        "label": "W2-target-rocAL-GPU-standard",
+        "model": "resnet50",
+        "precision": "BF16",
+        "batch_size": 256,
+        "image_size": 224,
+        "gradient_accumulation_steps": 1,
+        "training_flops_per_image": 24600000000,
+        "data_mode": "rocal",
+        "dataset_path": "/datasets/imagenet-1k",
+        "rocal_device": "gpu",
+        "augmentation": "standard",
+        "rocal_num_threads": 8,
+        "loader_warmup_steps": 5,
+        "loader_benchmark_steps": 20
+      }
+    ],
+    "enabled_sweep_list": [
+      "W2-ACCURACY-TARGET-ROCAL-GPU-STANDARD"
+    ],
+    "max_duration_seconds": 21600,
+    "master_port": 29500,
+    "scaling_baseline": {
+      "images_per_sec_total": 32678.031,
+      "num_nodes": 1,
+      "accuracy_metric": "top1_accuracy_pct",
+      "accuracy_value": 75.852
+    }
+  }
+}

@@ -39,6 +39,7 @@
   },
   "_training_comment": "training{} defines the workload. `workload` is the scorecard row id (W1 ResNet-50, W3 ViT-B/16) and is cross-checked against the result artifact. `distributed` must match the suite you invoke and the cluster node count. `run_mode` selects the profile (smoke|perf|train_5k|train_to_accuracy) and determines which rows are gated. `optimizer` is sgd or adamw; transformer backbones need adamw.",
   "_sweeps_comment": "training.sweeps[] are full training runs. Each `name` is also its threshold cell key, so encode every material dimension (topology, precision, microbatch, GA, data mode, rocAL device, augmentation) to stop a result being compared against the wrong gate. `label` is the compact id used in pytest rows and log directory names. training.enabled_sweep_list selects which names execute.",
+  "_dataset_staging_comment": "Copies the ImageNet volume into node RAM before the container starts and mounts the copy in its place. Reading from the shared filesystem held ResNet-50 to 12k images/s on one MI325X node; /dev/shm reached 24k. Needs about 154 GB free on the destination filesystem; a verified copy is reused until the source changes.",
   "training": {
     "workload": "W1",
     "distributed": false,
@@ -84,6 +85,13 @@
       "version": "3.2.4",
       "tracker": "amdsmi",
       "measure_power_secs": 5
+    },
+    "dataset_staging": {
+      "enabled": true,
+      "source": "<changeme-imagenet-host-path>",
+      "destination": "/dev/shm/cvs-imagenet-1k",
+      "parallel_copies": 48,
+      "timeout_s": 3600
     },
     "env_vars": {
       "NNODES": "1",

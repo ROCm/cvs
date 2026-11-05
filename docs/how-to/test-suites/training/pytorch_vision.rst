@@ -28,7 +28,7 @@ verdicts. The shipped configs cover these scorecard workloads:
    * - W1/W2
      - ResNet-50 on ImageNet-1k, one node / multi-node
      - ``native``
-     - smoke, perf, train-5k, to-accuracy (W1)
+     - smoke, perf, train-5k, to-accuracy (W1 one node, W2 four nodes)
    * - W3
      - ViT-B/16 on ImageNet-1k
      - ``native``
@@ -158,42 +158,46 @@ Tests run in this pinned order. ``[sweep]`` = one row per enabled sweep;
      - Runs on
      - Purpose
    * - 1
+     - ``test_stage_dataset``
+     - once, when enabled
+     - Copy the dataset volume onto every node (``training.dataset_staging``)
+   * - 2
      - ``test_launch_container``
      - once
      - Launch and verify the container on every node
-   * - 2
+   * - 3
      - ``test_verify_environment``
      - once
      - Verify torch, torchvision, HIP, GPU count, and GPU architecture
-   * - 3
+   * - 4
      - ``test_real_data_smoke[sweep]``
      - smoke profiles
      - Prove real ImageNet flows end to end before longer profiles are trusted
-   * - 4
+   * - 5
      - ``test_training[sweep]``
      - per sweep
      - Stage, train, scan the log, and parse the result artifact
-   * - 5
+   * - 6
      - ``test_rocal_overhead_comparisons``
      - once
      - Require a GPU-standard baseline for every CPU-decode and heavy-augmentation sweep
-   * - 6
+   * - 7
      - ``test_metric[sweep-metric]``
      - per sweep x metric
      - Threshold PASS/FAIL per metric
-   * - 7
+   * - 8
      - ``test_loss_curve[sweep]``
      - per sweep
      - Render loss PNG; gate on downward trend
-   * - 8
+   * - 9
      - ``test_convergence[sweep]``
      - per sweep
      - Steps and wall-clock time to the configured accuracy target
-   * - 9
+   * - 10
      - ``test_print_results_table``
      - once
      - Console table + metric results HTML
-   * - 10
+   * - 11
      - ``test_teardown``
      - once
      - Tear the container down
@@ -218,6 +222,12 @@ collapse a multi-node launch to one rank.
 
 The dataset path must resolve identically on every node, and rank zero owns the
 result artifact.
+
+Ranks leave together. NCCL sends are asynchronous, so a rank that exits right
+after its last collective can cut off data a peer is still receiving; a final
+broadcast ended that way on four nodes, with the peers decoding garbage after
+a 120-second timeout. Each rank therefore synchronizes its GPU and checks in
+through the rendezvous store, and none exits until all have checked in.
 
 The node count is never declared in the config. Sweep names encode only
 per-device dimensions, so one distributed config runs unchanged on 2, 4, or
@@ -244,6 +254,20 @@ runs on these nodes segfaulted inside ``libdrm_amdgpu`` while RCCL registered
 GPU memory, on four separate sweeps of one perf run, always on the same node.
 The same primary sweep with DMA-BUF registration off completed both repeats
 (41,790 and 42,930 images/s on four nodes).
+
+A start can still fail with DMA-BUF off. A 32-rank NCCL start on these nodes
+segfaults one rank in ``amdgpu_bo_query_info`` (``libdrm_amdgpu``, ROCm 7.2.4)
+about one time in ten: 4 of 40 with ``NCCL_CUMEM_ENABLE=1``, 3 of 38 with it
+set to ``0``, and 1 of 11 with ``RCCL_USE_AMD_SMI_LIB=0``, on whichever node.
+The surviving ranks then waited in NCCL teardown until the 40-minute launch
+timeout. Each rank now proves its start with one all-reduce within
+``training.startup_timeout_s`` (default 300 seconds), and exits at once if it
+fails. A launch that no rank got past is relaunched up to
+``training.startup_retries`` times; the distributed configs allow 2. The
+failed attempt's logs are kept as ``startup_failure<N>.node<R>.log``, and the
+relaunch count appears in the report as ``startup_retries``. Each attempt's
+kernel-log scan covers that attempt only. A failure after a successful start
+is never relaunched.
 
 Scaling efficiency needs a calibrated reference. Set
 ``training.scaling_baseline.images_per_sec_total`` from a prior single-node
@@ -281,6 +305,27 @@ block of about 125 classes. BatchNorm batch statistics then encode which block a
 batch came from: a 5,000-step ResNet-50 run on sharded input reached train loss
 2.6 at 5.8% validation Top-1. Evaluation still shards, because it must see each
 validation image exactly once.
+
+A full validation pass uses the largest number of ranks that divides the
+sample count, so every evaluating rank gets an equal shard and builds its
+pipeline once: 25 of 32 ranks at 2,000 images each for ImageNet on four nodes.
+Unequal shards made rocAL rebuild the pipeline on every pass, and each
+retired pipeline kept its GPU memory until a four-node run failed to
+allocate. The forward runs on the unwrapped model, because DDP's buffer
+broadcast is a collective that the idle ranks would never join; every rank
+first takes rank zero's BatchNorm statistics, as that broadcast would.
+
+Large-batch recipe
+==================
+
+The four-node target-accuracy profile trains at 8,192 images per step, four
+times W1's 2,048. The W1 recipe with the learning rate scaled linearly to 3.2
+(Goyal et al., 2017) finished 90 epochs at 75.12% Top-1 and 92.32% Top-5,
+short of the 75.5 and 92.5 targets. ``zero_init_residual`` starts every
+residual block as the identity and raised that to 75.27 and 92.55. Adding
+``label_smoothing: 0.1`` reached 75.60 and 92.59 at epoch 81, and 75.66 and
+92.70 on a repeat. The single-node
+profile keeps the plain recipe, which already passes at its batch size.
 
 Evaluation label correctness
 ============================
@@ -377,8 +422,9 @@ Reports and logs
   Status), titled with the mode.
 - **Loss Curve** — each ``test_loss_curve`` row links to and inlines a
   per-sweep PNG.
-- **Result artifacts** — rank zero writes ``results.json`` and
-  ``training.log`` below ``{paths.log_dir}/pytorch_vision/<sweep-label>/<run-id>/``.
+- **Result artifacts** — rank zero writes ``results.json``, and each node
+  writes ``training.node<R>.log``, below
+  ``{paths.log_dir}/pytorch_vision/<sweep-label>/<run-id>/``.
 - **Run Deck** — ``pytest --html`` also writes ``pytorch_vision_run_deck.html``,
   ``.json``, and ``pytorch_vision_run_deck_viewer.html`` next to the pytest
   report. Both ``pytorch_vision_single`` and ``pytorch_vision_distributed``
@@ -436,13 +482,12 @@ FSDP sharding strategy
 
 ``training.fsdp_strategy`` selects ``full_shard`` (the default, parameters
 spread over every rank) or ``hybrid_shard`` (shard within a node, replicate
-across nodes). For a model as small as ViT-base the choice dominates multi-node
-throughput: on four nodes W6 measured 11,616 images/s with ``full_shard``
-against 24,059 with ``hybrid_shard``, or 31.7% against 68.5% scaling efficiency.
-``full_shard`` spends more on cross-node all-gathers than it recovers in
-parallelism, to the point that two nodes are slower in absolute terms than one.
-Prefer ``hybrid_shard`` for multi-node runs unless the model does not fit in a
-single node's memory.
+across nodes). The choice depends on the cross-node fabric. Before the
+distributed configs pinned NCCL to the 400G rails, four-node W6 measured 11,616
+images/s with ``full_shard`` against 24,059 with ``hybrid_shard``, because
+``full_shard``'s cross-node all-gathers cost more than the added parallelism.
+On the eight 400G RoCE rails the gap is 3-5%: 32,440 against 33,450 to 34,150. ``hybrid_shard`` stays the faster choice for a model
+that fits in one node's memory.
 
 
 Sweep ordering and page-cache warming
@@ -479,6 +524,48 @@ both of which are now the right sign and the right order of magnitude. The
 augmentation row remains slightly negative at -5.7%, so it is closer to noise
 than to a measurement; more repeats would tighten it further.
 
+Dataset staging
+===============
+
+ResNet-50 is limited by input, not by the GPUs. On one MI325X node with batch
+256 per GPU it trained at 38,411 images/s on synthetic data, 12,016 images/s
+reading ImageNet from the shared filesystem, and 24,211 images/s reading the
+same files from ``/dev/shm``. Top-1 after 5,000 steps was unchanged (40.10%
+against 39.06%). Raising ``rocal_num_threads`` from 8 to 16 lowered throughput
+to 19,505 images/s, because eight ranks then ask for more decode threads than
+the node's 120 CPUs.
+
+``training.dataset_staging`` makes that local copy part of the run. When it is
+enabled, ``test_stage_dataset`` copies the ``source`` directory to
+``destination`` on every node in parallel, verifies the copy's file count and
+total bytes against the source, and the container mounts the copy in place of
+the source volume:
+
+.. code-block:: json
+
+   "dataset_staging": {
+     "enabled": true,
+     "source": "<changeme-imagenet-host-path>",
+     "destination": "/dev/shm/cvs-imagenet-1k"
+   }
+
+ImageNet-1k (1,331,476 files, 154 GB) copied into ``/dev/shm`` in 57 seconds
+on an MI325X node, plus about 40 seconds to summarise the source. A later run
+finds the verified copy and reuses it after the same summary, so the copy is
+paid once per node until the source changes. A destination that holds files
+CVS did not stage is left untouched and the run fails instead.
+
+``/dev/shm`` holds the copy in RAM: about 146 GB of each 3 TB MI325X node,
+alongside about 100 GB used by a training run, and the nodes have no swap. On
+smaller or shared nodes point ``destination`` at local NVMe. The copy stays
+after the run so later runs can reuse it; set ``remove_after_run: true`` to
+delete it in ``test_teardown`` instead, at the cost of copying again next
+time. A reboot clears ``/dev/shm``. The W1 and W2 perf, train-5k, and
+target-accuracy configs enable staging, and they share one destination, so a
+node holds a single copy. Other ImageNet profiles can add the same block where
+storage is the bottleneck; W6's ``ImageFolder`` loader is bound by CPU decode
+and gained 2-4%, so its configs leave staging off.
+
 
 The ``hf_trainer`` harness (W6)
 ===============================
@@ -505,9 +592,9 @@ rather than our own DDP loop. It differs from W3 in more than node count:
   checkpoint makes those rows meaningless, which is why they are split across
   profiles rather than taken from a single run.
 
-Scaling with ``full_shard`` is poor: it spreads an 86M-parameter model across
-every rank, so the cross-node all-gather traffic outweighs the added compute.
-See `FSDP sharding strategy`_ for the ``hybrid_shard`` comparison.
+``full_shard`` spreads the 86M-parameter model across every rank, so its
+scaling depends on cross-node all-gather bandwidth. See
+`FSDP sharding strategy`_ for the ``hybrid_shard`` comparison.
 
 Because ``Trainer`` owns the loop, it also owns the optimizer and LR schedule.
 The ``training.lr_schedule`` block and the learning-rate trajectory assertion
@@ -578,16 +665,23 @@ Measured on MI325X (8 GPUs per node, record-only)
 
 Single node, one run of the primary sweep unless noted:
 
-* **W1** perf 13,400 images/s (GPU decode, batch 128). Train-5k from scratch:
-  39.06% Top-1, 65.37% Top-5, 12,016 images/s. Smoke of the pretrained weights
-  is a separate profile and scores the published checkpoint.
+* **W1**, reading the staged ``/dev/shm`` copy: perf 26,718 images/s (GPU
+  decode, batch 128, median of three repeats) and 31,661 at batch 256, against
+  13,400 and 13,242 from the shared filesystem. CPU decode held 14,403, so it
+  is bound by decode rather than storage. Train-5k from scratch: 39.26% Top-1,
+  65.77% Top-5, 24,219 images/s (39.06% at 12,016 from the shared filesystem).
+  To-accuracy: 75.85% Top-1 and 92.62% Top-5 (targets 75.5 and 92.5), reached
+  at epoch 81 after 3,371 seconds at 32,678 images/s, 58 minutes for the whole
+  run. Smoke of the pretrained weights is a separate profile and scores the
+  published checkpoint.
 * **W3** train-5k from scratch: 27.13% Top-1 at 11,190 images/s.
 * **W4** smoke 44.14 mAP@0.5:0.95 (200 images) at 40.7 images/s; perf 76.6
   images/s at batch 4 and 54.4 at batch 2; a short fine-tune scored 39.96 mAP.
 * **W5** smoke 80.35% Top-1 on the full validation set. Perf about 2,000-2,360
   images/s. Train-5k from scratch: 43.84% Top-1 at 2,356 images/s.
 * **W6** single-node perf: 9,724 and 9,522 images/s on the two standard sweeps,
-  6,123 images/s with heavy augmentation.
+  6,123 images/s with heavy augmentation. A staged copy moved these by 2-4%
+  (9,872, 9,886, and 6,292), so the W6 configs read the shared filesystem.
 * **W7** one epoch: 40.45% Top-1. Perf 11,600-13,000 images/s on one GPU's
   worth of the node measurement.
 * **W8** fine-tune: 88.17% Top-1 (target 85) at 10,100 images/s. Smoke of the
@@ -600,21 +694,22 @@ Single node, one run of the primary sweep unless noted:
   Fine-tune scored 75.6.
 * **W11** single-node smoke: 1.78 samples/s, 898 tokens/s.
 
-Four nodes, DMA-BUF registration off:
+Four nodes, DMA-BUF registration off, every distributed profile passing:
 
-* **W2** perf, three repeats of five sweeps: 49,950 to 56,650 images/s on the
-  GPU-decode sweeps (105% of four times the single-node primary), 46,700 to
-  62,950 at batch 256, and about 24,000 with CPU decode. The primary sweep's
-  scaling efficiency was 105%. Train-5k reached 51.7% Top-1 and 77.0% Top-5 at
-  51,610 images/s, with the loss falling from 7.08 to 2.10 and all 1,000
-  validation classes present. The pytest row still fails: after the result
-  file is written, the other ranks time out on the final error broadcast and
-  the log scan treats that traceback as a failure.
-* **W6** perf: 31,420 and 33,410 images/s on the standard sweeps (82% and 88%
-  of four times the single-node reference) and 22,970 with heavy augmentation.
-  ``hybrid_shard`` held 32,400 images/s. ``full_shard`` measured 31,049
-  images/s, then a rank segfaulted during shutdown, so that pytest row fails.
-  Train-5k reached 32.48% Top-1 at 28,680 images/s.
-* **W11** smoke: 6.61 samples/s, 3,447 tokens/s, ChartQA relaxed accuracy 78.1
-  on the smoke sample. Perf: 9.72 samples/s (5,051 tokens/s) and 4.01
-  samples/s. Fine-tune: 6.44 samples/s, 3,344 tokens/s, ChartQA 73.0.
+* **W2**, reading the staged copy: perf, median of three repeats, 84,995
+  images/s on the primary sweep (79.5% scaling efficiency), 113,457 at batch
+  256, 81,361 with heavy augmentation, 64,784 with GA=4, and 24,436 with CPU
+  decode. Train-5k reached 51.34% Top-1 and 76.41% Top-5 at 88,073 images/s
+  (90.9%), with the loss falling from 7.09 to 2.10 and all 1,000 validation
+  classes present. Two perf sweeps relaunched after a failed NCCL start.
+  To-accuracy: 75.66% Top-1 and 92.70% Top-5 at epoch 81, converged after
+  1,043 seconds at 111,523 images/s (85.3% of four times W1's to-accuracy
+  rate, 0.19 points below its Top-1), 18 minutes for the whole run.
+* **W6** perf: 32,740 and 33,970 images/s on the standard sweeps (85.8% and
+  89.0% of four times the single-node reference) and 22,800 with heavy
+  augmentation. ``full_shard`` held 32,440 images/s on all three of its sweeps
+  and ``hybrid_shard`` 33,450 to 34,150. Train-5k reached 32.35% Top-1 at
+  30,078 images/s (78.8%).
+* **W11** smoke: 7.17 samples/s, 3,739 tokens/s, ChartQA relaxed accuracy 78.1
+  on the smoke sample. Perf: 9.42 samples/s (4,892 tokens/s) and 4.04
+  samples/s. Fine-tune: 6.54 samples/s, 3,395 tokens/s, ChartQA 73.0.
