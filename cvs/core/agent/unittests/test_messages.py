@@ -19,6 +19,7 @@ from cvs.core.agent.messages import (
     ExecOutputMode,
     ExecRequest,
     ExecResponse,
+    ExecSpec,
     MessageParseError,
     RegisterRequest,
     RegisterResponse,
@@ -47,9 +48,7 @@ class TestRegisterRequest(unittest.TestCase):
 class TestExecRequest(unittest.TestCase):
     def _base_kwargs(self, **overrides):
         kwargs = dict(
-            cmd="echo hi",
-            env={},
-            cwd=Path(TMP),
+            spec_id="0" * 32,
             timeout=None,
             inactivity_timeout=None,
             cmd_id="abc123",
@@ -97,6 +96,25 @@ class TestExecRequest(unittest.TestCase):
     def test_inline_mode_accepts_inactivity_timeout(self):
         req = ExecRequest(**self._base_kwargs(output_mode=ExecOutputMode.INLINE, inactivity_timeout=10))
         self.assertEqual(req.inactivity_timeout, 10)
+
+    def test_rejects_spec_id_that_is_not_32_hex(self):
+        for spec_id in ("../x", "A" * 32, "0" * 31, ""):
+            with self.subTest(spec_id=spec_id), self.assertRaises(ValidationError):
+                ExecRequest(**self._base_kwargs(spec_id=spec_id))
+
+    def test_rejects_unknown_field_cmd(self):
+        with self.assertRaises(ValidationError):
+            ExecRequest(**self._base_kwargs(cmd="id"))
+
+
+class TestExecSpec(unittest.TestCase):
+    def test_round_trip_json(self):
+        spec = ExecSpec(cmd="echo hi", env={"FOO": "bar"}, cwd=Path(TMP))
+        self.assertEqual(parse_message(ExecSpec, spec.model_dump_json()), spec)
+
+    def test_rejects_extra_fields(self):
+        with self.assertRaises(ValidationError):
+            ExecSpec(cmd="true", env={}, cwd=Path(TMP), unexpected="value")
 
 
 class TestExecResponse(unittest.TestCase):
