@@ -263,8 +263,8 @@ The surviving ranks then waited in NCCL teardown until the 40-minute launch
 timeout. Each rank now proves its start with one all-reduce within
 ``training.startup_timeout_s`` (default 300 seconds), and exits at once if it
 fails. A launch that no rank got past is relaunched up to
-``training.startup_retries`` times; the distributed configs allow 2. The
-failed attempt's logs are kept as ``startup_failure<N>.node<R>.log``, and the
+``training.startup_retries`` times; the distributed configs allow 3, and the
+test fails if the last attempt also fails to start. The failed attempt's logs are kept as ``startup_failure<N>.node<R>.log``, and the
 relaunch count appears in the report as ``startup_retries``. Each attempt's
 kernel-log scan covers that attempt only. A failure after a successful start
 is never relaunched.

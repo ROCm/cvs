@@ -65,7 +65,7 @@
     "momentum": 0.9,
     "weight_decay": 0.0001,
     "timeout_s": 28800,
-    "startup_retries": 2,
+    "startup_retries": 3,
     "omp_num_threads": 1,
     "verify_dmesg": true,
     "peak_tflops_per_gpu": 1307.4,

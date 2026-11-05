@@ -11,6 +11,7 @@ from cvs.lib.training.pytorch_vision.utils.metrics import (
     parse_codecarbon_metrics,
     required_metrics_for_run,
     throughput_overhead_pct,
+    tier_metric_specs,
     to_training_metrics,
 )
 
@@ -199,3 +200,28 @@ class TestConvergenceSemantics(unittest.TestCase):
         self.assertIsNone(
             convergence_point(self.EVALS, target_eval_loss=9.5, loss_series=self.SERIES, target_train_loss=0.1)
         )
+
+
+class TestTierMetricSpecs(unittest.TestCase):
+    CELL = {
+        "training.images_per_sec_per_gpu": {"kind": "min", "value": 3000},
+        "training.top1_accuracy_pct": {"kind": "min", "value": 75},
+        "training.vlm_benchmark_score": {"kind": "min", "value": 70},
+        "training.step_time_ms_p95": {"kind": "max", "value": 90},
+        "training.checkpoint_save_seconds": {"kind": "max", "value": 30},
+        "training.mfu_pct": {"kind": "info"},
+    }
+
+    def test_tiers_follow_the_run_deck_profile(self):
+        self.assertEqual(set(tier_metric_specs(self.CELL, "throughput")), {"training.images_per_sec_per_gpu"})
+        self.assertEqual(
+            set(tier_metric_specs(self.CELL, "convergence")),
+            {"training.top1_accuracy_pct", "training.vlm_benchmark_score"},
+        )
+        self.assertEqual(set(tier_metric_specs(self.CELL, "stability")), {"training.step_time_ms_p95"})
+        self.assertEqual(set(tier_metric_specs(self.CELL, "record")), {"training.checkpoint_save_seconds"})
+
+    def test_info_specs_and_missing_cells_gate_nothing(self):
+        self.assertNotIn("training.mfu_pct", tier_metric_specs(self.CELL, "throughput"))
+        self.assertEqual(tier_metric_specs(None, "throughput"), {})
+        self.assertEqual(tier_metric_specs(self.CELL, "nope"), {})

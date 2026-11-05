@@ -80,7 +80,7 @@
       "gamma": 0.1
     },
     "timeout_s": 21600,
-    "startup_retries": 2,
+    "startup_retries": 3,
     "omp_num_threads": 1,
     "verify_dmesg": true,
     "peak_tflops_per_gpu": 1307.4,

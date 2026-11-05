@@ -88,6 +88,8 @@ METRIC_TIERS = {
         "data_loader_images_per_sec",
         "scaling_efficiency_pct",
         "images_per_kwh",
+        "multimodal_samples_per_sec",
+        "tokens_per_sec",
     ),
     "convergence": (
         "loss_initial",
@@ -95,6 +97,11 @@ METRIC_TIERS = {
         "loss_curve_decreased",
         "top1_accuracy_pct",
         "top5_accuracy_pct",
+        "map_50_95",
+        "map_50",
+        "miou_pct",
+        "pixel_accuracy_pct",
+        "vlm_benchmark_score",
         "eval_loss",
         "convergence_step",
         "convergence_time_seconds",
@@ -200,88 +207,6 @@ RESULTS_COLUMNS = (
     ("Tokens/s", "training.tokens_per_sec"),
     ("Scale parity delta (pts)", "training.scale_parity_accuracy_delta"),
 )
-
-METRIC_TIERS = {
-    "throughput": (
-        "images_per_sec",
-        "images_per_sec_per_gpu",
-        "scaling_efficiency_pct",
-        "tflops_per_sec_per_gpu",
-        "mfu_pct",
-        "multimodal_samples_per_sec",
-        "tokens_per_sec",
-    ),
-    "latency": (
-        "step_time_ms_mean",
-        "step_time_ms_p50",
-        "step_time_ms_p95",
-    ),
-    "memory": (
-        "peak_memory_allocated_mb",
-        "peak_memory_reserved_mb",
-        "peak_memory_used_mb",
-    ),
-    "checkpoint": (
-        "checkpoint_save_seconds",
-        "checkpoint_load_seconds",
-        "checkpoint_state_match",
-        "checkpoint_loss_delta",
-        "checkpoint_resume_model_max_abs_delta",
-        "checkpoint_resume_optimizer_max_abs_delta",
-    ),
-    "overhead": (
-        "gradient_accumulation_overhead_pct",
-        "augmentation_overhead_pct",
-        "rocal_cpu_overhead_pct",
-    ),
-    "data": ("data_loader_images_per_sec",),
-    "accuracy": (
-        "top1_accuracy_pct",
-        "top5_accuracy_pct",
-        "eval_loss",
-        "eval_sample_count",
-        "eval_completed",
-        "eval_label_classes_observed",
-        "eval_label_min_per_class",
-        "eval_label_max_per_class",
-        "map_50_95",
-        "map_50",
-        "miou_pct",
-        "pixel_accuracy_pct",
-        "vlm_benchmark_score",
-        "scale_parity_accuracy_delta",
-        "loss_step_100",
-        "loss_step_500",
-        "loss_step_1000",
-        "loss_step_5000",
-    ),
-    "convergence": (
-        "loss_curve_points",
-        "loss_curve_decreased",
-        "convergence_step",
-        "convergence_time_seconds",
-    ),
-    "energy": (
-        "energy_kwh",
-        "images_per_kwh",
-        "codecarbon_tracking_active",
-    ),
-}
-METRIC_TIER_ORDER = tuple(METRIC_TIERS) + ("record",)
-_TIERED_METRICS = {metric for names in METRIC_TIERS.values() for metric in names}
-RECORD_METRICS = tuple(name for name, _unit in METRICS if name not in _TIERED_METRICS)
-
-
-def tier_metric_specs(thresholds_cell: dict, tier: str) -> Dict[str, dict]:
-    """Return full metric-name threshold specs for one run-deck tier."""
-    names = RECORD_METRICS if tier == "record" else METRIC_TIERS.get(tier, ())
-    specs = {}
-    for name in names:
-        full_name = f"training.{name}"
-        spec = thresholds_cell.get(full_name)
-        if spec is not None:
-            specs[full_name] = spec
-    return specs
 
 
 def gradient_accumulation_overhead_pct(baseline_step_ms: float, accumulated_step_ms: float) -> float:
