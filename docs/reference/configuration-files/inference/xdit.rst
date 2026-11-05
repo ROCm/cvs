@@ -299,6 +299,8 @@ Native WAN (``*_xdit_wan22_14b_single.json``)
 
 Runs ``/app/Wan2.2/run.py``. The threshold metric is ``max_avg_total_time_s``.
 ``num_benchmark_steps`` is required, and the output must contain that many ``rank0_step*.json`` files.
+The native suite has no FID vs steps stage. Setting ``fid_nfe_steps`` on a native config fails
+``test_run_benchmark``, because ``run.py`` cannot run the sweep.
 
 .. list-table::
    :widths: 3 3 5

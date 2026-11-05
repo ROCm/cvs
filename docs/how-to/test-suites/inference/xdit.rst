@@ -28,7 +28,8 @@ Config reference: :doc:`/reference/configuration-files/inference/xdit`.
 Test suites
 ===========
 
-The following suites are available. Every suite runs the same nine stages.
+The following suites are available. Every suite runs the same stages except
+``xdit_wan22_14b_single``, which has no FID vs steps stage.
 
 .. list-table::
    :widths: 3 3 5
@@ -45,7 +46,7 @@ The following suites are available. Every suite runs the same nine stages.
      - Unified FLUX.1 and FLUX.2 torchrun across ``nnodes``.
    * - ``xdit_wan22_14b_single``
      - ``xdit_wan22_14b_single.py``
-     - WAN 2.2 I2V native (``/app/Wan2.2/run.py``); one job per cluster node.
+     - WAN 2.2 I2V native (``/app/Wan2.2/run.py``); one job per cluster node. No FID vs steps stage.
    * - ``xdit_wan22_14b_diffusers_single``
      - ``xdit_wan22_14b_diffusers_single.py``
      - WAN Diffusers xFuser (``wan_i2v_example.py``); one job per cluster node.
@@ -203,7 +204,7 @@ List stages in a suite:
 
   cvs list xdit_flux_dev_single
 
-Every xDiT suite uses this order:
+Every xDiT suite uses this order, except that ``xdit_wan22_14b_single`` omits ``test_fid_curve``:
 
 .. code:: text
 
@@ -362,7 +363,8 @@ Each stage corresponds to a test function in the HTML report.
    * - FID vs steps
      - ``test_fid_curve``
      - Skipped unless ``fid_nfe_steps`` lists two or more sampling step counts.
-       The benchmark saves extra samples under ``results/fid/nfe_<steps>/``
+       Not part of ``xdit_wan22_14b_single``, which fails the benchmark stage if
+       ``fid_nfe_steps`` is set. The benchmark saves extra samples under ``results/fid/nfe_<steps>/``
        after the timed run, then stops at least 180 seconds before the
        benchmark command timeout. ``test_fid_curve`` scores those files
        against ``fid_reference_dir`` with the Inception checkpoint at
