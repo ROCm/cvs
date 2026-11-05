@@ -129,6 +129,9 @@ List the directory with ``cvs config list inference/atom``. Each config's ``thre
    * - ``mi3xx_atom_vllm_gpt-oss-120b_mxfp4``
      - ``_single``
      - ``vllm_atom``
+   * - ``mi3xx_atom_vllm_glm-5.1_fp8``
+     - ``_single``, ``_distributed``
+     - vLLM recipe serve is one server, TP8. Distributed is PP=2 bring-up. MI325X single-node passed smoke, health, short cells, and GSM8K
    * - ``mi3xx_atom_vllm_deepseek-v4-flash_fp8``
      - ``_single``
      - ``vllm_atom``
