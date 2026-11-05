@@ -105,6 +105,20 @@ class TestFidCurve(unittest.TestCase):
         self.assertEqual(payload["counts"], {"10": 1, "40": 0})
         self.assertTrue(payload["stopped_early"])
 
+    def test_manifest_counts_frames_when_video_export_failed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            step_dir = Path(tmp) / "nfe_10"
+            step_dir.mkdir()
+            for slot in range(8):
+                (step_dir / f"seed_0_frame_{slot}.png").write_bytes(b"png")
+                (step_dir / f"seed_1_frame_{slot}.png").write_bytes(b"png")
+            (step_dir / "seed_2.mp4").write_bytes(b"video")
+            (step_dir / "notes.txt").write_text("x", encoding="utf-8")
+            manifest = Path(tmp) / "manifest.json"
+            _fid_sweep.rewrite_manifest_from_disk(str(manifest), [10, 40], 2, 100)
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(payload["counts"], {"10": 3, "40": 0})
+
     def test_manifest_rewrite_keeps_sweep_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             manifest = Path(tmp) / "manifest.json"

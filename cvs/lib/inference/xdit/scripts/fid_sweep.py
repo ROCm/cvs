@@ -8,7 +8,10 @@ the next sample from running into the deadline.
 
 import json
 import os
+import re
 import time
+
+_SAMPLE_FILE = re.compile(r"^seed_(\d+)(?:\.mp4|_frame_\d+\.png)$")
 
 
 def estimate_sample_s(reference_pipe_s, reference_steps, nfe, budget_s):
@@ -41,17 +44,22 @@ def broadcast_value(value, rank):
     return box[0]
 
 
-def count_step_videos(directory):
-    """MP4s saved for one NFE. Frame PNGs beside them are for the scorer, not extra samples."""
+def count_step_samples(directory):
+    """Samples saved for one NFE. A sample is its MP4 or, when the encoder failed, its frame PNGs."""
     if not os.path.isdir(directory):
         return 0
-    return sum(1 for name in os.listdir(directory) if name.lower().endswith(".mp4"))
+    seeds = set()
+    for name in os.listdir(directory):
+        match = _SAMPLE_FILE.match(name)
+        if match:
+            seeds.add(match.group(1))
+    return len(seeds)
 
 
 def rewrite_manifest_from_disk(path, steps, samples, budget_s):
     """Record videos that exist, so a failed export is not counted as a finished sample."""
     root = os.path.dirname(path)
-    counts = {int(step): count_step_videos(os.path.join(root, f"nfe_{int(step)}")) for step in steps}
+    counts = {int(step): count_step_samples(os.path.join(root, f"nfe_{int(step)}")) for step in steps}
     previous = {}
     if os.path.isfile(path):
         with open(path, encoding="utf-8") as handle:

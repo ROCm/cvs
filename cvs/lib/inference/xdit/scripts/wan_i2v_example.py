@@ -17,6 +17,8 @@ import torch
 import torch.distributed as dist
 
 _RANK_STRING_FIELDS = ("determinism_check_report_ranks",)
+# rocm/pytorch-xdit ships ffmpeg without libx264, and imageio does not raise when that encoder is missing.
+_VIDEO_CODECS = ("libx264", "libopenh264", "mpeg4")
 
 _EXTRA_PYPACKAGES = os.environ.get("CVS_WAN_XFUSER_PYPACKAGES", "").strip()
 if _EXTRA_PYPACKAGES and _EXTRA_PYPACKAGES not in sys.path:
@@ -158,6 +160,28 @@ def _write_sample_frames(arrays, save_path, limit=8):
         Image.fromarray(arrays[int(index)]).save(os.path.join(parent, f"{stem}_frame_{slot}.png"))
 
 
+def _write_mp4(arrays, save_path, fps):
+    import imageio
+
+    errors = []
+    for codec in _VIDEO_CODECS:
+        if os.path.isfile(save_path):
+            os.remove(save_path)
+        try:
+            writer = imageio.get_writer(save_path, fps=fps, codec=codec, macro_block_size=1)
+            for arr in arrays:
+                writer.append_data(arr)
+            writer.close()
+        except Exception as exc:
+            errors.append(f"{codec}: {exc}")
+            continue
+        if os.path.isfile(save_path) and os.path.getsize(save_path) > 0:
+            return codec
+        errors.append(f"{codec}: encoder produced no file")
+    print(f"Video export failed: {'; '.join(errors)}", file=sys.stderr)
+    return None
+
+
 def _export_video(run_output, save_path, fps):
     raw = _extract_video_frames(run_output)
     arrays = _iter_frames(raw)
@@ -169,19 +193,11 @@ def _export_video(run_output, save_path, fps):
     if parent:
         os.makedirs(parent, exist_ok=True)
     _write_sample_frames(arrays, save_path)
-
-    try:
-        import imageio
-
-        writer = imageio.get_writer(save_path, fps=fps, codec="libx264")
-        for arr in arrays:
-            writer.append_data(arr)
-        writer.close()
-        print(f"Saved video to {save_path} ({len(arrays)} frames)")
-        return True
-    except Exception as exc:
-        print(f"Video export failed: {exc}", file=sys.stderr)
+    codec = _write_mp4(arrays, save_path, fps)
+    if codec is None:
         return False
+    print(f"Saved video to {save_path} ({len(arrays)} frames, {codec})")
+    return True
 
 
 def _nonempty(value):
@@ -272,7 +288,7 @@ def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started)
     raw_steps = str(getattr(args, "fid_steps", "") or "").strip()
     if not raw_steps:
         return
-    from fid_sweep import broadcast_value, count_step_videos, rewrite_manifest_from_disk, run_fid_sweep
+    from fid_sweep import broadcast_value, count_step_samples, rewrite_manifest_from_disk, run_fid_sweep
 
     steps = [int(part) for part in raw_steps.split(",") if part.strip()]
     samples = int(args.fid_samples)
@@ -315,7 +331,7 @@ def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started)
                 decision = None
                 if rank == 0:
                     dest = os.path.join(args.output_directory, "results", "fid", f"nfe_{int(step)}")
-                    have = count_step_videos(dest)
+                    have = count_step_samples(dest)
                     elapsed = time.monotonic() - fid_started
                     allowance = budget_s if budget_s > 0 else elapsed + pipe_s * samples * max(len(steps), 1) * 1.25
                     if have < samples and pipe_s > 0 and elapsed + pipe_s * 1.25 <= allowance:
