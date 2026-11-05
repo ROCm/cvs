@@ -1,0 +1,312 @@
+'''
+Copyright 2025 Advanced Micro Devices, Inc.
+All rights reserved.
+
+HW/SW support-matrix compatibility gate.
+
+A single data file per category (``training_support_matrix.json`` /
+``inference_support_matrix.json``) declares, per ``(framework, model)``, what is
+*unsupported* (deny-list). At run time -- after the container is launched -- a
+suite calls ``run_support_matrix_gate()`` with the framework, model, and the
+parameter values the run will use (e.g. the precisions across the enabled
+sweeps). The library detects the GPU arch and ROCm version on the nodes and stops
+the run when a declared constraint is violated.
+
+Enforcement is controlled only by the ``CVS_SUPPORT_MATRIX_GATE`` environment
+variable (see README.md): unset/ON/1/TRUE enforce (fail + stop); OFF/0/FALSE warn
+and continue. The library never imports pytest; the suite turns a blocking result
+into a test failure.
+
+Everything lives in this one module on purpose -- it is small enough that
+splitting it into loader/detect/evaluate/gate files would only add indirection.
+'''
+
+import json
+import os
+import re
+from pathlib import Path
+
+from cvs.lib import globals
+from cvs.lib.utils_lib import get_model_from_rocm_smi_output
+
+log = globals.log
+
+GATE_ENV = "CVS_SUPPORT_MATRIX_GATE"
+
+_DATA_DIR = Path(__file__).resolve().parent
+
+# rocm-smi reports mi300x/mi325/mi350/mi355; the data files use the canonical
+# "<family>x" tokens. Normalize so both sides compare equal.
+_ARCH_ALIASES = {
+    "mi300": "mi300x",
+    "mi325": "mi325x",
+    "mi350": "mi350x",
+    "mi355": "mi355x",
+}
+
+NOT_IN_MATRIX_MSG = (
+    "the framework or model under test is not available in the support matrix. "
+    "This means this framework/model is not validated / characterized yet with CVS."
+)
+
+_OFF_VALUES = {"0", "off", "false", "no", "disable", "disabled"}
+
+
+class GateResult:
+    '''Outcome of a gate call.
+
+    ``passed`` is True when the run may proceed (supported, unknown workload, or
+    the gate is disabled). ``violations`` lists the deny matches found regardless
+    of the enforcement mode, so the caller can log them.
+    '''
+
+    def __init__(self):
+        self.passed = True
+        self.not_in_matrix = False
+        self.enforced = True
+        self.violations = []
+        self.warnings = []
+        self.platform = {}
+
+
+def gate_enforced():
+    '''Return True when the gate should fail+stop on a violation.
+
+    Controlled by ``CVS_SUPPORT_MATRIX_GATE``; unset defaults to enforce. Only the
+    explicit OFF values disable it.
+    '''
+    raw = os.getenv(GATE_ENV)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in _OFF_VALUES
+
+
+def normalize_arch(token):
+    '''Lower-case, trim, and map a GPU token to its canonical ``<family>x`` form.'''
+    name = str(token or "").strip().lower()
+    return _ARCH_ALIASES.get(name, name)
+
+
+def parse_version(text):
+    '''Parse a ROCm version string into a (major, minor, patch) int tuple.
+
+    Tolerates a build suffix (``6.4.0-123`` -> ``(6, 4, 0)``) and a missing patch
+    (``7.0`` -> ``(7, 0, 0)``). Returns None when no version is present.
+    '''
+    match = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", str(text or ""))
+    if not match:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3) or 0))
+
+
+def _cmp_version(a, b):
+    return (a > b) - (a < b)
+
+
+def load_matrix(category):
+    '''Load and lightly validate the ``<category>_support_matrix.json`` data file.'''
+    path = _DATA_DIR / f"{category}_support_matrix.json"
+    with open(path) as fp:
+        data = json.load(fp)
+    frameworks = data.get("frameworks")
+    if not isinstance(frameworks, dict):
+        raise ValueError(f"{path.name}: missing or malformed 'frameworks' object")
+    known = {normalize_arch(t) for t in data.get("known_arch_tokens", [])}
+    if known:
+        _validate_arch_tokens(data, known, path.name)
+    return data
+
+
+def _validate_arch_tokens(data, known, fname):
+    '''Reject arch tokens in the data that are not in ``known_arch_tokens`` (typos).'''
+    for fw, fw_block in data.get("frameworks", {}).items():
+        for model, entry in (fw_block.get("models") or {}).items():
+            if not isinstance(entry, dict):
+                continue
+            tokens = list(entry.get("unsupported_gpu_arch") or [])
+            for value_map in (entry.get("unsupported_params") or {}).values():
+                for arches in (value_map or {}).values():
+                    tokens.extend(arches or [])
+            for token in tokens:
+                if normalize_arch(token) not in known:
+                    raise ValueError(
+                        f"{fname}: {fw}/{model} references unknown arch token {token!r} (not in known_arch_tokens)"
+                    )
+
+
+def find_model_entry(matrix, framework, model):
+    '''Return the model entry dict for ``(framework, model)``, or None if absent.
+
+    Matches the normalized model name against the model key or any of its
+    ``aliases``.
+    '''
+    fw_block = (matrix.get("frameworks") or {}).get(str(framework or "").strip().lower())
+    if not fw_block:
+        return None
+    models = fw_block.get("models") or {}
+    wanted = str(model or "").strip().lower()
+    if not wanted:
+        return None
+    for key, entry in models.items():
+        if str(key).strip().lower() == wanted:
+            return entry
+        aliases = [str(a).strip().lower() for a in (entry.get("aliases") or [])]
+        if wanted in aliases:
+            return entry
+    return None
+
+
+def _host_text(raw):
+    '''Extract text from a per-host exec result that may be a str or a dict.'''
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, dict):
+        return raw.get("output", "") or ""
+    return ""
+
+
+def detect_platform(handle):
+    '''Detect ``{host: {"arch": <token|None>, "rocm": <version|None>}}`` via the handle.
+
+    ``handle.exec`` routes into the launched container, so both probes reflect the
+    container the workload will run in.
+    '''
+    arch_out = handle.exec("rocm-smi -a 2>/dev/null | head -40") or {}
+    rocm_probe = (
+        "if [ -f /opt/rocm/.info/version ]; then cat /opt/rocm/.info/version; "
+        "else amd-smi version --json 2>/dev/null || hipconfig --version 2>/dev/null || true; fi"
+    )
+    rocm_out = handle.exec("bash -c " + _shq(rocm_probe)) or {}
+
+    hosts = set(arch_out) | set(rocm_out)
+    platform = {}
+    for host in hosts:
+        arch_text = _host_text(arch_out.get(host, ""))
+        arch = normalize_arch(get_model_from_rocm_smi_output(arch_text)) if arch_text.strip() else None
+        platform[host] = {"arch": arch, "rocm": _extract_rocm_version(_host_text(rocm_out.get(host, "")))}
+    return platform
+
+
+def _shq(cmd):
+    import shlex
+
+    return shlex.quote(cmd)
+
+
+def _extract_rocm_version(text):
+    '''Pull a ROCm version out of ``/opt/rocm/.info/version`` text or amd-smi JSON.'''
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    if raw[:1] in "{[":
+        try:
+            payload = json.loads(raw)
+            if isinstance(payload, list) and payload:
+                payload = payload[0]
+            if isinstance(payload, dict):
+                ver = payload.get("rocm_version")
+                if ver:
+                    return str(ver).strip()
+        except json.JSONDecodeError:
+            pass
+    match = re.search(r"\d+\.\d+(?:\.\d+)?", raw)
+    return match.group(0) if match else None
+
+
+def evaluate(entry, params, platform):
+    '''Return ``(violations, warnings)`` for a model entry against the platform.
+
+    ``params`` maps a parameter name to the values the run will use, e.g.
+    ``{"precision": ["bf16", "mxfp4"]}``. Each rule is a deny: a match is a
+    violation. Undetected arch/ROCm produce warnings, not violations, so an
+    unknown probe never blocks a run.
+    '''
+    violations = []
+    warnings = []
+    unsupported_arch = {normalize_arch(a) for a in (entry.get("unsupported_gpu_arch") or [])}
+    unsupported_params = entry.get("unsupported_params") or {}
+    rmin = parse_version(entry.get("required_rocm_min_version"))
+    rmax = parse_version(entry.get("required_rocm_max_version"))
+
+    for host, info in sorted(platform.items()):
+        arch = info.get("arch")
+        rocm_str = info.get("rocm")
+        rocm = parse_version(rocm_str)
+
+        if not arch:
+            warnings.append(f"{host}: could not detect GPU arch; skipping GPU checks")
+        else:
+            if arch in unsupported_arch:
+                violations.append(f"{host}: GPU arch {arch} is not supported for this model")
+            for pname, values in (params or {}).items():
+                deny = unsupported_params.get(pname) or {}
+                for value in values:
+                    v = str(value).strip().lower()
+                    if arch in {normalize_arch(a) for a in (deny.get(v) or [])}:
+                        violations.append(f"{host}: {pname}={v} is not supported on {arch}")
+
+        if rmin or rmax:
+            if rocm is None:
+                warnings.append(f"{host}: could not detect ROCm version; skipping ROCm range check")
+            else:
+                if rmin and _cmp_version(rocm, rmin) < 0:
+                    violations.append(
+                        f"{host}: ROCm {rocm_str} is below the required minimum "
+                        f"{entry.get('required_rocm_min_version')}"
+                    )
+                if rmax and _cmp_version(rocm, rmax) > 0:
+                    violations.append(
+                        f"{host}: ROCm {rocm_str} is above the supported maximum "
+                        f"{entry.get('required_rocm_max_version')}"
+                    )
+    return violations, warnings
+
+
+def run_support_matrix_gate(category, framework, model, params, handle):
+    '''Run the support-matrix gate and return a ``GateResult``.
+
+    Loads the category data file, looks up ``(framework, model)``, detects the
+    platform via ``handle``, evaluates the deny rules, and applies the
+    ``CVS_SUPPORT_MATRIX_GATE`` enforcement mode. All outcomes are logged here; the
+    caller only needs to act on ``result.passed``.
+    '''
+    result = GateResult()
+    result.enforced = gate_enforced()
+
+    try:
+        matrix = load_matrix(category)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("SUPPORT-MATRIX: could not load %s matrix (%s); gate skipped", category, exc)
+        return result
+
+    entry = find_model_entry(matrix, framework, model)
+    if entry is None:
+        result.not_in_matrix = True
+        log.info("SUPPORT-MATRIX: %s (framework=%s, model=%s)", NOT_IN_MATRIX_MSG, framework, model)
+        return result
+
+    result.platform = detect_platform(handle)
+    log.info("SUPPORT-MATRIX: framework=%s model=%s detected=%s", framework, model, result.platform)
+
+    violations, warnings = evaluate(entry, params, result.platform)
+    result.violations = violations
+    result.warnings = warnings
+    for warning in warnings:
+        log.warning("SUPPORT-MATRIX: %s", warning)
+
+    if not violations:
+        log.info("SUPPORT-MATRIX: PASS - %s/%s supported on the detected platform", framework, model)
+        return result
+
+    for violation in violations:
+        if result.enforced:
+            log.error("SUPPORT-MATRIX: UNSUPPORTED - %s", violation)
+        else:
+            log.warning("SUPPORT-MATRIX: UNSUPPORTED - %s", violation)
+
+    if result.enforced:
+        result.passed = False
+    else:
+        result.passed = True
+        log.warning("NOTE: %s is disabled - continuing despite the violation(s) above.", GATE_ENV)
+    return result
