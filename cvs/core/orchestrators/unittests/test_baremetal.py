@@ -6,7 +6,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 # Unit tests for cvs/core/orchestrators/baremetal.py: BaremetalOrchestrator construction
-# and command-dispatch surface (exec, exec_on_head, cleanup, sudo_prefix) used by the
+# and command-dispatch surface (exec, exec_cmd_list, exec_on_head, cleanup, sudo_prefix) used by the
 # migrated rvs_cvs.py orch fixture. Mocks Pssh so tests run with no SSH.
 
 import os
@@ -103,6 +103,21 @@ class TestBaremetalOrchestrator(unittest.TestCase):
             "ls", timeout=5, detailed=False, print_console=True, inactivity_timeout=None
         )
         self.assertEqual(result, {"10.0.0.1": "ok", "10.0.0.2": "ok"})
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_exec_cmd_list_delegates_to_all(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        result = orch.exec_cmd_list(["echo a", "echo b"], timeout=7, print_console=False)
+        orch.all.exec_cmd_list.assert_called_once_with(["echo a", "echo b"], timeout=7, print_console=False)
+        self.assertIs(result, orch.all.exec_cmd_list.return_value)
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_exec_cmd_list_defaults_match_all_handle(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        orch.exec_cmd_list(["echo a", "echo b"])
+        orch.all.exec_cmd_list.assert_called_once_with(["echo a", "echo b"], timeout=None, print_console=True)
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_distribute_using_mpi_logs_masked_command(self, _mock_pssh):

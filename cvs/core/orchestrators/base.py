@@ -65,6 +65,26 @@ class Orchestrator(ABC):
         """Execute a command on the host OS, bypassing runtime environments."""
         pass
 
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+        """
+        Run cmd_list[i] on the i-th host, in parallel, using the orchestrator's execution strategy.
+
+        Not abstract, so subclasses written before it keep working. Default
+        implementation raises NotImplementedError.
+
+        Args:
+            cmd_list: List of commands, one per host in host order
+            timeout: Command timeout in seconds
+            print_console: See exec().
+
+        Returns:
+            Dictionary mapping hosts to execution results
+
+        Raises:
+            NotImplementedError: If per-host command lists are not supported
+        """
+        raise NotImplementedError(f"exec_cmd_list not supported by {self.__class__.__name__}")
+
     @abstractmethod
     def exec_on_head(self, cmd, timeout=None, detailed=False):
         """
