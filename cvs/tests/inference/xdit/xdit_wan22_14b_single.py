@@ -2,7 +2,6 @@
 
 from cvs.tests.inference.xdit._shared import (
     clip_score_stage,
-    fid_curve_stage,
     launch_container_stage,
     parse_thresholds_stage,
     print_results_stage,
