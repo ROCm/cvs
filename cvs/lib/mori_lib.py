@@ -246,12 +246,6 @@ class MoriBenchmark:
             full += f' 2>&1 | tee {self.run_log_dir}/{log_name}_$(hostname).log'
         return full
 
-    def _exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
-        # BaremetalOrchestrator has no exec_cmd_list; its host handle does.
-        if self.is_container:
-            return self.orch.exec_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
-        return self.orch.all.exec_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
-
     def create_run_log_dir(self):
         out_dict = self.orch.exec(f'mkdir -p {self.run_log_dir}', timeout=self.SETUP_TIMEOUT, detailed=True)
         for node, res in out_dict.items():
@@ -484,7 +478,7 @@ class MoriBenchmark:
         while True:
             remaining = deadline - time.monotonic()
             poll_timeout = min(self.SETUP_TIMEOUT, max(self.IO_POLL_MIN_TIMEOUT, math.ceil(remaining)))
-            out_dict = self._exec_cmd_list(cmd_list, timeout=poll_timeout, print_console=False)
+            out_dict = self.orch.exec_cmd_list(cmd_list, timeout=poll_timeout, print_console=False)
             for host in self.host_list:
                 match = re.search(rf'{IO_EXIT_MARKER}(\d+)', out_dict.get(host) or '')
                 if match:
@@ -557,7 +551,7 @@ class MoriBenchmark:
         case_name = f'io_{op_type}_{buffer_size}_{transfer_batch_size}_{no_of_qp_per_transfer}'
         cmd_list, log_paths = self.build_io_launch_cmds(case_name, cmd_opts)
         try:
-            self._exec_cmd_list(cmd_list, timeout=self.IO_LAUNCH_TIMEOUT)
+            self.orch.exec_cmd_list(cmd_list, timeout=self.IO_LAUNCH_TIMEOUT)
             exit_codes = self.poll_io_completion(log_paths)
         finally:
             # fail_test records without raising, so a launch/poll exception already in flight stays the reported one.
