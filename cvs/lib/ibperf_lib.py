@@ -806,8 +806,20 @@ def resolve_gid_index(phdl, node_dev_dict, gid_index, expected_gid_type=DEFAULT_
     return index
 
 
-def wait_for_perftest_exit(phdl, app_name, timeout):
-    """Poll every node until ``pgrep`` confirms no ``app_name`` process is left or ``timeout`` seconds pass.
+def _exec_on_nodes(phdl, cmd, nodes=None):
+    """Run ``cmd`` on every host and keep the output of ``nodes`` only (default: every host).
+
+    Filtering the output, rather than passing ``hosts=``, keeps polls on the handle's existing connections.
+    """
+    out_dict = phdl.exec(cmd, print_console=False)
+    if nodes is None:
+        return out_dict
+    return {node: out for node, out in out_dict.items() if node in nodes}
+
+
+def wait_for_perftest_exit(phdl, app_name, timeout, nodes=None):
+    """Poll ``nodes`` (default: every host) until ``pgrep`` confirms no ``app_name`` process is left
+    or ``timeout`` seconds pass.
 
     Only a ``pgrep`` no-match counts as exited, so a node whose poll errored keeps the wait going.
     ``pgrep -x`` matches the kernel's 15-character process name, so ``app_name`` is truncated to it.
@@ -816,11 +828,11 @@ def wait_for_perftest_exit(phdl, app_name, timeout):
     cmd = f'pgrep -x {app_name[:15]} > /dev/null; echo "pgrep_rc=$?"'
 
     def unconfirmed():
-        out_dict = phdl.exec(cmd, print_console=False)
+        out_dict = _exec_on_nodes(phdl, cmd, nodes)
         return [node for node, out in out_dict.items() if not re.search(r'\bpgrep_rc=1\b', out)]
 
-    nodes, _ = poll_until(unconfirmed, lambda pending: not pending, timeout, PERFTEST_EXIT_POLL_S)
-    return nodes
+    remaining, _ = poll_until(unconfirmed, lambda pending: not pending, timeout, PERFTEST_EXIT_POLL_S)
+    return remaining
 
 
 def _perftest_cmd_file_line(cmd_parts, inst_count):
@@ -838,16 +850,16 @@ def _fail_nonzero_perftest_rc(out_dict, instance_no):
             fail_test(f'perftest instance {instance_no} on node {node} exited with code {match.group(1)}')
 
 
-def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None, running=None):
-    """Read BW/PPS from each node's perftest log.
+def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None, running=None, nodes=None):
+    """Read BW/PPS from the perftest log of each of ``nodes`` (default: every host).
 
-    Only nodes in ``running`` (default: every node) are polled for a missing result. A node
+    Only nodes in ``running`` (default: every node read) are polled for a missing result. A node
     whose perftest pgrep confirmed exited has its final log, so it is read once.
     """
     res_dict = {}
 
     # Run some of the standard verifications
-    out_dict = phdl.exec(cmd, print_console=False)
+    out_dict = _exec_on_nodes(phdl, cmd, nodes)
     err_pattern = (
         "Couldn't initialize ROCm device|Failed to init|Unable to open file descriptor|ERROR|FAIL|Segmentation fault"
     )
@@ -864,7 +876,7 @@ def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None, running=None):
     running = set(pending if running is None else running)
 
     def collect():
-        out_dict.update(phdl.exec(cmd, print_console=False))
+        out_dict.update(_exec_on_nodes(phdl, cmd, nodes))
         for node in list(pending):
             match = re.search(pattern, out_dict.get(node, ''))
             if match:
@@ -890,15 +902,21 @@ def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None, running=None):
     return res_dict
 
 
-def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None, result_nodes=None, running=None):
-    """Read latency from each node's perftest log; ``running`` works as in ``get_ib_bw_pps``."""
+def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None, result_nodes=None, running=None, nodes=None):
+    """Read latency from each node's perftest log; ``running`` and ``nodes`` work as in ``get_ib_bw_pps``.
+
+    ``result_nodes`` (default: ``nodes``) are the nodes that must report a result.
+    """
     res_dict = {}
 
-    out_dict = phdl.exec(cmd, print_console=False)
+    out_dict = _exec_on_nodes(phdl, cmd, nodes)
     err_pattern = (
         "Couldn't initialize ROCm device|Failed to init|Unable to open file descriptor|ERROR|FAIL|Segmentation fault"
     )
-    required_nodes = list(result_nodes) if result_nodes is not None else list(out_dict)
+    if result_nodes is not None:
+        required_nodes = list(result_nodes)
+    else:
+        required_nodes = list(nodes if nodes is not None else out_dict)
     for node in out_dict:
         if not re.search('bytes of GPU buffer', out_dict[node], re.I):
             fail_test(f'GPU Buffer allocation failed or Connection not setup for IB Test on node {node}')
@@ -913,7 +931,7 @@ def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None, result_nodes=None, ru
     running = set(pending if running is None else running)
 
     def collect():
-        out_dict.update(phdl.exec(cmd, print_console=False))
+        out_dict.update(_exec_on_nodes(phdl, cmd, nodes))
         for node in list(pending):
             match = re.search(pattern, out_dict.get(node, ''))
             if match:
@@ -1188,7 +1206,6 @@ def run_ib_perf_bw_test(
         node_pairs = build_ibperf_node_pairs(nodes)[0]
     roles, cards, excluded = _prepare_pair_roles(node_pairs, nodes, gpu_nic_dict, gpu_numa_dict, hip_dev_dict, bw_test)
     if excluded:
-        phdl.prune_nodes(excluded)
         for node in excluded:
             bck_nic_dict.pop(node, None)
     if not roles:
@@ -1271,10 +1288,8 @@ def run_ib_perf_bw_test(
     first_node_cmd_list = cmd_dict[node_list[0]]
 
     for j in range(0, len(first_node_cmd_list)):
-        cmd_list = []
-        for node in cmd_dict.keys():
-            cmd_list.append(cmd_dict[node][j])
-        # print(cmd_list)
+        # exec_cmd_list runs cmd_list[i] on the i-th reachable host, so every host needs a slot.
+        cmd_list = [cmd_dict[node][j] if node in cmd_dict else 'true' for node in phdl.all.reachable_hosts]
         phdl.exec_cmd_list(cmd_list, print_console=False)
 
     # Clean up any stale instances from earlier runs (ignore if none running)
@@ -1284,14 +1299,19 @@ def run_ib_perf_bw_test(
     phdl.exec(PERFTEST_LAUNCH_CMD, print_console=False)
 
     exit_timeout = duration + PERFTEST_EXIT_SLACK_S
-    unconfirmed = wait_for_perftest_exit(phdl, bw_test, exit_timeout)
+    unconfirmed = wait_for_perftest_exit(phdl, bw_test, exit_timeout, nodes=list(roles))
     if unconfirmed:
         log.warning('%s exit not confirmed on %s after %ss; reading logs anyway', bw_test, unconfirmed, exit_timeout)
 
     for instance_no in range(0, inst_count):
         try:
             bw_pps_dict = get_ib_bw_pps(
-                phdl, msg_size, f'cat /tmp/ib_perf_{instance_no}_logs', instance_no=instance_no, running=unconfirmed
+                phdl,
+                msg_size,
+                f'cat /tmp/ib_perf_{instance_no}_logs',
+                instance_no=instance_no,
+                running=unconfirmed,
+                nodes=list(roles),
             )
             for node in bw_pps_dict.keys():
                 result_dict[node][instance_no] = {}
@@ -1346,7 +1366,6 @@ def run_ib_perf_lat_test(
         node_pairs = build_ibperf_node_pairs(nodes)[0]
     roles, cards, excluded = _prepare_pair_roles(node_pairs, nodes, gpu_nic_dict, gpu_numa_dict, hip_dev_dict, lat_test)
     if excluded:
-        phdl.prune_nodes(excluded)
         for node in excluded:
             bck_nic_dict.pop(node, None)
     if not roles:
@@ -1417,10 +1436,7 @@ def run_ib_perf_lat_test(
     first_node_cmd_list = cmd_dict[node_list[0]]
 
     for j in range(0, len(first_node_cmd_list)):
-        cmd_list = []
-        for node in cmd_dict.keys():
-            cmd_list.append(cmd_dict[node][j])
-        # print(cmd_list)
+        cmd_list = [cmd_dict[node][j] if node in cmd_dict else 'true' for node in phdl.all.reachable_hosts]
         phdl.exec_cmd_list(cmd_list, print_console=False)
 
     # Clean up any stale instances from earlier runs (ignore if none running)
@@ -1429,7 +1445,7 @@ def run_ib_perf_lat_test(
     time.sleep(2)
     phdl.exec(PERFTEST_LAUNCH_CMD, print_console=False)
 
-    unconfirmed = wait_for_perftest_exit(phdl, lat_test, PERFTEST_LAT_EXIT_TIMEOUT_S)
+    unconfirmed = wait_for_perftest_exit(phdl, lat_test, PERFTEST_LAT_EXIT_TIMEOUT_S, nodes=list(roles))
     if unconfirmed:
         log.warning(
             '%s exit not confirmed on %s after %ss; reading logs anyway',
@@ -1448,6 +1464,7 @@ def run_ib_perf_lat_test(
                 instance_no=instance_no,
                 result_nodes=result_nodes,
                 running=unconfirmed,
+                nodes=list(roles),
             )
             for node, latency in lat_dict.items():
                 result_dict[node][instance_no] = latency
