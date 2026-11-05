@@ -109,6 +109,7 @@ def main():
     parser.add_argument("--fid_steps", default="")
     parser.add_argument("--fid_samples", type=int, default=2)
     parser.add_argument("--fid_budget_s", type=float, default=0)
+    parser.add_argument("--num_repetitions", type=int, default=1)
     args = xFuserArgs.add_cli_args(parser).parse_args()
     engine_args = xFuserArgs.from_cli_args(args)
     engine_config, input_config = engine_args.create_config()
@@ -135,21 +136,33 @@ def main():
     parameter_peak_memory = torch.cuda.max_memory_allocated(device=f"cuda:{local_rank}")
     pipe.prepare_run(input_config)
 
-    torch.cuda.reset_peak_memory_stats()
-    start_time = time.time()
-    output = pipe(
-        height=input_config.height,
-        width=input_config.width,
-        prompt=input_config.prompt,
-        num_inference_steps=input_config.num_inference_steps,
-        output_type=input_config.output_type,
-        max_sequence_length=input_config.max_sequence_length,
-        guidance_scale=input_config.guidance_scale,
-        generator=torch.Generator(device="cuda").manual_seed(input_config.seed),
-    )
-    end_time = time.time()
-    elapsed_time = end_time - start_time
-    peak_memory = torch.cuda.max_memory_allocated(device=f"cuda:{local_rank}")
+    repetitions = max(int(args.num_repetitions), 1)
+    pipe_times = []
+    output = None
+    peak_memory = 0
+    for _step in range(repetitions):
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.synchronize()
+        start_time = time.time()
+        output = pipe(
+            height=input_config.height,
+            width=input_config.width,
+            prompt=input_config.prompt,
+            num_inference_steps=input_config.num_inference_steps,
+            output_type=input_config.output_type,
+            max_sequence_length=input_config.max_sequence_length,
+            guidance_scale=input_config.guidance_scale,
+            generator=torch.Generator(device="cuda").manual_seed(input_config.seed),
+        )
+        torch.cuda.synchronize()
+        elapsed_time = time.time() - start_time
+        pipe_times.append(elapsed_time)
+        peak_memory = torch.cuda.max_memory_allocated(device=f"cuda:{local_rank}")
+        if get_world_group().rank == get_world_group().world_size - 1:
+            print(
+                f"epoch time: {elapsed_time:.2f} sec, parameter memory: {parameter_peak_memory / 1e9:.2f} GB, memory: {peak_memory / 1e9:.2f} GB"
+            )
+    elapsed_time = pipe_times[-1]
 
     parallel_info = (
         f"dp{engine_args.data_parallel_degree}_cfg{engine_config.parallel_config.cfg_degree}_"
@@ -171,9 +184,9 @@ def main():
                 print(f"image {i} saved to ./results/{image_name}")
 
     if get_world_group().rank == get_world_group().world_size - 1:
-        print(
-            f"epoch time: {elapsed_time:.2f} sec, parameter memory: {parameter_peak_memory / 1e9:.2f} GB, memory: {peak_memory / 1e9:.2f} GB"
-        )
+        os.makedirs("results", exist_ok=True)
+        with open("results/timing.json", "w", encoding="utf-8") as handle:
+            json.dump([{"pipe_time": float(value)} for value in pipe_times], handle)
     _run_flux2_fid_sweep(args, pipe, input_config, elapsed_time, fid_started)
     get_runtime_state().destroy_distributed_env()
 

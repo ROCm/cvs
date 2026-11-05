@@ -272,7 +272,7 @@ the bind-mounted ``run_usp.py`` at ``/benchmark/run_usp.py``. A repo or path con
      - Disable resolution binning.
    * - ``warmup_steps``, ``warmup_calls``, ``num_repetitions``
      - ``1``, ``5``, ``25``
-     - Warmup, then measured repetitions. FLUX.1 parse requires ``num_repetitions``, and ``timing.json`` must contain that many samples.
+     - Warmup, then measured repetitions. FLUX.1 and FLUX.2 parse require ``num_repetitions``, and ``timing.json`` must contain that many ``pipe_time`` samples. FLUX.2 runs those repetitions in one loaded session.
    * - ``height``, ``width``
      - ``1024``
      - Output image size.
@@ -532,7 +532,7 @@ Troubleshooting
 **Parallel degree product != world_size**
   Align ``ulysses`` / ``ring`` (and FLUX pipefusion, tensor-parallel, and data-parallel degrees) with ``nnodes × torchrun_nproc``.
 
-**FLUX.1 requires num_repetitions / native WAN requires num_benchmark_steps**
+**FLUX requires num_repetitions / native WAN requires num_benchmark_steps**
   Set the field in ``benchmark_params``. The parsed artifact count must match that value.
 
 **Missing ``timing.json`` / ``video.mp4``**

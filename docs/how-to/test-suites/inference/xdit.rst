@@ -340,10 +340,11 @@ Each stage corresponds to a test function in the HTML report.
      -
    * - Parse
      - ``test_parse_thresholds``
-     - Compares average latency to the threshold file. FLUX.1 requires
-       ``num_repetitions`` and that ``timing.json`` contains that many
-       ``pipe_time`` samples. Native WAN requires ``num_benchmark_steps``
-       and that many ``rank0_step*.json`` files.
+     - Compares average latency to the threshold file. FLUX.1 and FLUX.2
+       require ``num_repetitions`` and that ``timing.json`` contains that
+       many ``pipe_time`` samples. FLUX.2 records them in the same torchrun
+       session. Native WAN requires ``num_benchmark_steps`` and that many
+       ``rank0_step*.json`` files.
    * - CLIP score
      - ``test_clip_score``
      - Scores saved media inside the benchmark container. FLUX scores

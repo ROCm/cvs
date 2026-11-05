@@ -754,6 +754,7 @@ def build_flux2_example_args(
         f"{guidance_scale_flag}"
         f"{' '.join(flags)} "
         f"--warmup_steps {int(flux_params['warmup_steps'])} "
+        f"--num_repetitions {int(flux_params['num_repetitions'])} "
         f"--height {int(flux_params['height'])} "
         f"--width {int(flux_params['width'])} "
         f"--ulysses_degree {int(flux_params['ulysses_degree'])} "
@@ -1108,9 +1109,8 @@ def build_flux2_benchmark_cmd(
     """
     Run flux2_example.py once inside a single torchrun session and write results/timing.json.
 
-    flux2_example.py loads the model once, runs ``warmup_steps`` internally, prints
-    ``epoch time: X.XX sec`` for the timed pass, then exits. Re-invoking torchrun for
-    each repetition would reload FLUX.2 on every GPU and take hours.
+    The model stays loaded. ``num_repetitions`` timed passes run in that session, and each
+    prints ``epoch time: X.XX sec``. Re-invoking torchrun per repetition would reload FLUX.2.
     """
     nproc = int(nproc_per_node or flux_params["torchrun_nproc"])
     flux2_args = build_flux2_example_args(flux_params, model_repo=model_repo, model_type=model_type)
@@ -1152,9 +1152,9 @@ def build_flux2_benchmark_cmd(
         )
 
     log.info(
-        "FLUX.2 benchmark uses one torchrun session (warmup_steps=%s); "
-        "num_repetitions/warmup_calls in config apply to FLUX.1 run_usp only",
+        "FLUX.2 benchmark uses one torchrun session (warmup_steps=%s, num_repetitions=%s)",
         flux_params.get("warmup_steps", 0),
+        flux_params.get("num_repetitions", 1),
     )
 
     py_script = (
@@ -1165,11 +1165,11 @@ def build_flux2_benchmark_cmd(
         "sys.stderr.write(proc.stderr)\n"
         "if proc.returncode != 0:\n"
         "    sys.exit(proc.returncode)\n"
-        'match = re.search(r"epoch time:\\s*([\\d.]+)", proc.stdout + proc.stderr)\n'
-        "if not match:\n"
+        'matches = re.findall(r"epoch time:\\s*([\\d.]+)", proc.stdout + proc.stderr)\n'
+        "if not matches:\n"
         '    print("Could not parse epoch time from flux2_example output", file=sys.stderr)\n'
         "    sys.exit(1)\n"
-        'times = [{"pipe_time": float(match.group(1))}]\n'
+        'times = [{"pipe_time": float(value)} for value in matches]\n'
         'with open("results/timing.json", "w", encoding="utf-8") as handle:\n'
         "    json.dump(times, handle)\n"
     )

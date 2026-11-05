@@ -603,7 +603,7 @@ class TestOutputParserRequirements(unittest.TestCase):
         self.assertFalse(_is_flux2_workload(variant, params))
         self.assertEqual(parser.expected_repetitions, 25)
 
-    def test_flux2_does_not_require_flux1_repetition_count(self):
+    def test_flux2_requires_num_repetitions(self):
         variant = SimpleNamespace(model=SimpleNamespace(id="black-forest-labs/FLUX.2-dev"), inference={})
         params = {"model_type": "flux2", "num_repetitions": 25}
         parser = _output_parser(
@@ -613,7 +613,7 @@ class TestOutputParserRequirements(unittest.TestCase):
             variant,
         )
         self.assertTrue(_is_flux2_workload(variant, params))
-        self.assertIsNone(parser.expected_repetitions)
+        self.assertEqual(parser.expected_repetitions, 25)
 
     def test_native_wan_requires_num_benchmark_steps(self):
         variant = SimpleNamespace(inference={})

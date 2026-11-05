@@ -309,6 +309,8 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         self.assertNotIn(RUN_USP_PATH, cmd)
         self.assertIn("results/timing.json", cmd)
         self.assertIn("--use_torch_compile", cmd)
+        self.assertIn("--num_repetitions 25", cmd)
+        self.assertIn("findall", cmd)
         self.assertNotIn("for _ in range(reps)", cmd)
         self.assertNotIn("FLUX2_RUN_CMD", cmd)
 
