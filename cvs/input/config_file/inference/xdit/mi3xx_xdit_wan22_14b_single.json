@@ -5,7 +5,7 @@
   "threshold_json": "xdit_wan22_14b_single_threshold.json",
   "paths": {
     "shared_fs": "{home}",
-    "models_dir": "/data/models",
+    "models_dir": "<changeme> /data/models",
     "log_dir": "{home}/cvs_outputs_wan",
     "hf_token_file": "{home}/.hf_token"
   },

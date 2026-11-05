@@ -213,7 +213,7 @@ class TestPytorchXditUnifiedSchemas(unittest.TestCase):
     def test_packaged_unified_configs_validate(self):
         config_dir = Path(__file__).resolve().parents[2] / "input" / "config_file" / "inference" / "xdit"
         workload_files = sorted(path for path in config_dir.glob("mi3xx_*.json") if "threshold" not in path.name)
-        self.assertEqual(len(workload_files), 7)
+        self.assertEqual(len(workload_files), 9)
         for path in workload_files:
             validated = validate_config_file(path)
             self.assertIsInstance(validated, PytorchXditUnifiedConfigFile)

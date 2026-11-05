@@ -5,7 +5,7 @@
     "threshold_json": "xdit_wan22_14b_diffusers_single_threshold.json",
     "paths": {
       "shared_fs": "{home}",
-      "models_dir": "/data/models",
+      "models_dir": "<changeme> /data/models",
       "log_dir": "{home}/cvs_outputs_wan_diff",
       "hf_token_file": "{home}/.hf_token"
     },
@@ -55,8 +55,8 @@
       "num_benchmark_steps": 1,
       "num_inference_steps": 40,
       "fid_nfe_steps": [10, 40],
-      "fid_reference_dir": "<changeme> /hf_home/fid_reference",
-      "fid_inception_path": "<changeme> /hf_home/inception_v3.pth",
+      "fid_reference_dir": "/hf_home/fid_reference",
+      "fid_inception_path": "/hf_home/inception_v3.pth",
       "warmup_steps": 1,
       "compile": false,
       "torchrun_nproc": 8,
