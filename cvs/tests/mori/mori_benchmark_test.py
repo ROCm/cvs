@@ -12,6 +12,7 @@ from cvs.lib.verify_lib import verify_dmesg_for_errors
 from cvs.lib import mori_lib
 from cvs.lib import mori_reporting
 from cvs.lib import globals
+from cvs.tests.mori.conftest import launch_mori_container, teardown_mori_container
 
 log = globals.log
 
@@ -51,20 +52,7 @@ def test_cleanup_stale_containers(orch):
 
 
 def test_launch_mori_container(orch, lifecycle):
-    if orch.orchestrator_type != "container":
-        pytest.skip("baremetal orchestrator: no container to launch")
-    image = orch.container_config.get("image")
-    if not image:
-        lifecycle.failed = True
-        pytest.fail("container.image is not set in the mori config")
-    name = orch.get_container_name(orch.container_config, image)
-    lifecycle.torn_down = False
-    if not orch.setup_containers():
-        lifecycle.failed = True
-        pytest.fail(f"setup_containers() returned False for {name}")
-    if not orch.verify_containers_running(name):
-        lifecycle.failed = True
-        pytest.fail(f"container {name} not running after setup_containers()")
+    launch_mori_container(orch, lifecycle)
 
 
 # Ensure the MORI RDMA devices show up where the benchmarks run
@@ -247,16 +235,4 @@ def test_verify_dmesg(orch, lifecycle):
 
 
 def test_teardown(orch, lifecycle):
-    if orch.orchestrator_type != "container":
-        lifecycle.torn_down = True
-        pytest.skip("baremetal orchestrator: no container to tear down")
-    image = orch.container_config.get("image")
-    if not image:
-        lifecycle.torn_down = True
-        pytest.skip("container.image is not set in the mori config: no container was launched")
-    name = orch.get_container_name(orch.container_config, image)
-    orch.teardown_containers()
-    lifecycle.torn_down = True
-    # no_launch / persistent containers are left running by design.
-    if orch.container_config.get("lifetime", "per_run") == "per_run" and orch.verify_containers_running(name):
-        pytest.fail(f"container {name} still running after teardown_containers()")
+    teardown_mori_container(orch, lifecycle)

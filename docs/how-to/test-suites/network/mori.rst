@@ -6,7 +6,7 @@
 Run CVS MORI RDMA benchmark tests
 ***********************************************
 
-MORI tests measure RDMA put, write, and I/O throughput using the MORI tree on the nodes. I/O cases run between nodes with ``torchrun``. The IBGDA write case runs inside each node with ``mpiexec``. Run MORI to validate raw RDMA performance before training or inference workloads.
+MORI tests measure RDMA put, write, and I/O throughput using the MORI tree in ``mori_dir`` on the nodes. ``install_mori`` builds that tree from git. I/O cases run between nodes with ``torchrun``. The IBGDA write case runs inside each node with ``mpiexec``. Run MORI to validate raw RDMA performance before training or inference workloads.
 
 .. _mori-set-up-config:
 
@@ -14,9 +14,9 @@ Prerequisites
 =============
 
 - A cluster file that lists the nodes for this run. The ``no_of_nodes`` field in the MORI config is not read. Node count is the number of nodes in the cluster file.
-- For the shipped ``orchestrator`` value ``container``: Docker on the hosts, a GPU image that contains the MORI build, and ``/dev/dri`` plus ``/dev/kfd``. This value overrides the cluster file for this suite. Set ``orchestrator`` to ``baremetal`` to run on the host instead.
+- For the shipped ``orchestrator`` value ``container``: Docker on the hosts, a GPU image with ROCm (including ``hipcc``) and torch, and ``/dev/dri`` plus ``/dev/kfd``. This value overrides the cluster file for this suite. Set ``orchestrator`` to ``baremetal`` to run on the host instead.
 - Passwordless sudo on the hosts if you want the dmesg scan. The scan reads host ``dmesg`` on every node even when the benchmarks run in a container. ``test_verify_dmesg`` skips only when ``orch.sudo_prefix()`` is empty (which uses the head node's ``sudo -n true`` result).
-- ``prettytable`` where ``benchmark.py`` runs. In a container, ``test_install_container_packages`` runs ``pip3 install prettytable``. On bare metal that test is skipped, so the host already needs ``prettytable``.
+- ``prettytable`` where ``benchmark.py`` runs. In a container, ``test_install_container_packages`` runs ``pip3 install prettytable``. On bare metal, ``install_mori`` installs it into ``<mori_dir>/site``. If you skip ``install_mori`` on bare metal, the host needs ``prettytable``.
 
 Set up config
 =============
@@ -29,19 +29,43 @@ Set up config
 
 2. Edit ``~/cvs_workspace/mori/mi35x_mori_config.json`` and replace every ``<changeme>`` before you run:
 
-   - ``container.image`` — image that contains the MORI build
+   - ``container.image`` — the GPU image the build and benchmarks run in
    - ``env.NCCL_SOCKET_IFNAME`` and ``env.GLOO_SOCKET_IFNAME`` — interface name exported into the benchmark
    - ``env.MORI_RDMA_DEVICES`` — comma-separated RDMA device names, checked against ``ibv_devinfo``
-   - ``mori_dir`` — directory of the MORI tree (``tests/python/io/benchmark.py`` and ``build/examples/``)
    - ``master_addr`` — a host from the cluster file. That host is torchrun node rank 0 and the I/O initiator
 
-   ``{user-id}`` in ``log_dir`` and in the home volume becomes the cluster file ``username`` (then ``$USER``, then ``root``). A leftover ``<changeme>`` exits at startup with ``Unresolved placeholder found in test config``.
+   ``mori_dir`` is where ``install_mori`` builds MoRI, ``/home/{user-id}/INSTALL/mori`` in the shipped file. To run a MoRI tree you built yourself, set ``mori_dir`` to it and skip ``install_mori``. ``git_ref`` picks the tag, branch, or commit to build.
 
-   Keys named ``_example_options_orchestrator``, ``_example_env``, and ``_example_mori_dir`` are notes. ``_example_env`` is not copied into ``env``. Edit ``env`` itself.
+   ``{user-id}`` in ``mori_dir``, ``log_dir``, and the home volume becomes the cluster file ``username`` (then ``$USER``, then ``root``). A leftover ``<changeme>`` fails every test with a ``ConfigError`` that names each such field.
+
+   Keys whose names start with ``_`` are notes. ``_example_env`` is not copied into ``env``. Edit ``env`` itself.
+
+   In container mode, set ``container.lifetime`` to ``persistent`` so the container ``install_mori`` builds in is still there for the benchmark.
 
 3. Put the nodes in the cluster file. Changing ``no_of_nodes`` does not add or remove nodes.
 
 For the field reference and the ``expected_results`` shape, see :doc:`/reference/configuration-files/network/mori`.
+
+.. _mori-install:
+
+Build MoRI
+==========
+
+Run ``install_mori`` with the same files before ``mori_benchmark_test``, and again after changing ``git_ref``:
+
+.. code:: bash
+
+  cvs run install_mori \
+    --cluster_file ~/cvs_workspace/cluster.json \
+    --config_file ~/cvs_workspace/mori/mi35x_mori_config.json \
+    --workspace ~/cvs_workspace
+
+- In container mode ``container.lifetime`` must be ``persistent`` or ``no_launch``. With ``per_run``, ``test_launch_mori_container`` fails at once, because the container and everything built in it would be removed when ``install_mori`` ends.
+- MoRI is built into ``<mori_dir>/site`` and ``<mori_dir>/build``. The image's or host's own MoRI is not changed, and ``install_mori`` fails if the MoRI that ``python3`` finds already lives under ``mori_dir``.
+- An existing checkout in ``mori_dir`` is not fetched. ``install_mori`` checks out ``git_ref`` in it.
+- When every node sees ``mori_dir``, the head node builds once. When each node has its own, every node builds.
+- A missing build package fails the test, which lists it per node. With ``install_system_packages`` true, ``install_mori`` first apt-installs what it can: inside the container, or on bare metal with passwordless sudo. It never installs ROCm, torch, pip, or NIC libraries.
+- Each building node writes ``<log_dir>/install_mori_<hostname>.log``, which starts with the MoRI commit. The benchmark's run card shows that commit.
 
 .. _mori-run-tests:
 
@@ -142,8 +166,16 @@ Search the pytest log for ``FAIL -``. The test then ends with ``Following FAILUR
 
    * - What you see
      - What it means
-   * - ``Unresolved placeholder found in test config``
-     - A ``<changeme>`` remains. Replace it in the file you copied.
+   * - ``<config> is not a valid config`` (``ConfigError``)
+     - Each following line names a field that still has ``<changeme>``, has the wrong type, or is not a MORI setting. Fix those fields in the file you copied.
+   * - ``container.lifetime is per_run``
+     - ``install_mori`` needs ``persistent`` or ``no_launch``.
+   * - ``MoRI build dependencies missing on node``
+     - The listed tools, headers, or libraries are absent on that node or in its container. See :ref:`mori-install` for what ``install_mori`` installs.
+   * - ``is under mori_dir``
+     - ``mori_dir`` points at the image's or host's own MoRI tree. Give it a directory of its own.
+   * - ``mori_dir is not visible from node(s)``
+     - Only some nodes share ``mori_dir``. Use a path that every node shares, or one that each node has locally.
    * - ``container.image is not set in the mori config``
      - ``container.image`` is empty. Launch did not start a container, and later benchmark tests skip with ``mori container launch failed``.
    * - ``setup_containers() returned False`` or ``not running after setup_containers()``
@@ -185,3 +217,5 @@ Run on managed compute
 ======================
 
 Follow :doc:`/how-to/run-on-managed-compute` to run MORI on managed compute. Set ``--workspace`` to storage shared by the nodes.
+
+Each ``cvs run`` is its own job step, so run ``install_mori`` and ``mori_benchmark_test`` in one allocation, or put ``mori_dir`` on storage the nodes share. A job step never runs apt, so the node image needs the build packages. If the compute nodes have no internet, clone ``git_url`` into a shared ``mori_dir`` beforehand.

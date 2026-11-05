@@ -29,6 +29,7 @@ def mori_run_card_display(variant, provenance):
         ),
         ("Mori devices", _display(config.get("mori_device_list")), False),
         ("Container image", _display(config.get("container_image")), False),
+        ("MoRI commit", _display(config.get("mori_commit")), False),
     ]
     rows.extend(provenance_link_rows(provenance))
     return rows
