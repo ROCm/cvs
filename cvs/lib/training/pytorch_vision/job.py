@@ -26,6 +26,8 @@ from cvs.lib.utils.gpu import agg_readings, start_gpu_poller, stop_and_collect_g
 log = globals.log
 
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# Printed by benchmark._start_distributed once NCCL is up on every rank.
+STARTUP_OK = "PYTORCH_VISION_STARTUP_OK"
 
 
 def _normalized_hardware_name(value):
@@ -87,7 +89,10 @@ class PyTorchVisionJob:
         # overwrite each other's script or kill each other's ranks.
         self.benchmark_path = f"/tmp/cvs_pytorch_vision_{variant.training.workload.lower()}.py"
         self.tasks_path = self.benchmark_path.removesuffix(".py") + "_tasks.py"
-        self.log_path = f"{self.output_dir}/training.log"
+        # One log per node: output_dir is usually on the shared filesystem, and
+        # nodes teeing into one file truncate and overwrite each other's lines.
+        self.log_glob = f"{shlex.quote(self.output_dir)}/training.node*.log"
+        self.startup_retries_used = 0
         checkpoint_root = variant.training.checkpoint_dir or self.output_dir
         if variant.training.checkpoint_dir:
             checkpoint_root = f"{checkpoint_root}/{self.sweep.label}/{run_id}"
@@ -344,6 +349,8 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
             str(training.loss_curve.minimum_points),
             "--collective-timeout-seconds",
             str(min(120, training.timeout_s)),
+            "--startup-timeout-seconds",
+            str(training.startup_timeout_s),
         ]
         if training.max_epochs is not None:
             args.extend(["--max-epochs", str(training.max_epochs)])
@@ -388,6 +395,10 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
                 args.append("--keep-checkpoint")
         if training.channels_last:
             args.append("--channels-last")
+        if training.zero_init_residual:
+            args.append("--zero-init-residual")
+        if training.label_smoothing:
+            args.extend(["--label-smoothing", str(training.label_smoothing)])
         if sweep.dataset_path:
             args.extend(["--dataset-path", sweep.dataset_path])
 
@@ -414,35 +425,40 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
             + "; ".join(export_lines)
             + f"; rm -f {shlex.quote(self.result_path)}; "
             + f"timeout --signal=TERM --kill-after=30s {timeout}s {launch} "
-            + f"2>&1 | tee {shlex.quote(self.log_path)}"
+            + f"2>&1 | tee {shlex.quote(self.log_path(node_rank))}"
         )
+
+    def log_path(self, node_rank=0):
+        return f"{self.output_dir}/training.node{node_rank}.log"
 
     def run_benchmark(self):
         if not self.variant.training.enabled:
             raise RuntimeError("this PyTorch Vision profile is disabled")
-        if self.variant.training.verify_dmesg:
-            self.training_start_time = self._host_date()
+        retries = self.variant.training.startup_retries
         poller = start_gpu_poller(
             self.orch,
             self.sweep.label,
             poll_interval_s=1.0,
-            hard_cap_s=self.variant.training.timeout_s + 120,
+            hard_cap_s=(self.variant.training.timeout_s + 120) * (retries + 1),
         )
         started = time.monotonic()
         try:
-            timeout = self.variant.training.timeout_s + 60
-            if self.variant.training.distributed:
-                # cmd_list[i] runs on hosts[i], which is the only way each node
-                # can receive its own --node-rank. This path has no `detailed`
-                # option, so per-host exit codes are unavailable; a failed rank
-                # is caught by the training-log scan and by parse_results,
-                # which rejects a missing or malformed artifact.
-                result = self.orch.exec_cmd_list(
-                    [self.build_command(node_rank=i) for i in range(self.num_nodes)],
-                    timeout=timeout,
+            for attempt in range(retries + 1):
+                # Each attempt is judged on its own kernel log; a failed start's
+                # segfault is kept in startup_failure*.log and counted instead.
+                if self.variant.training.verify_dmesg:
+                    self.training_start_time = self._host_date()
+                started = time.monotonic()
+                result = self._launch()
+                if attempt == retries or not self._failed_to_start(result):
+                    break
+                self._keep_failed_start(attempt + 1)
+                log.warning(
+                    "%s: no rank finished NCCL startup on attempt %d; relaunching",
+                    self.sweep_name,
+                    attempt + 1,
                 )
-            else:
-                result = self.orch.exec(self.build_command(), timeout=timeout, detailed=True)
+            self.startup_retries_used = attempt
         finally:
             self.run_elapsed_seconds = time.monotonic() - started
             readings = stop_and_collect_gpu_poller(self.orch, poller)
@@ -455,6 +471,44 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
                     raise
                 log.warning("AMD-SMI telemetry unusable for %s; preserving the primary error", self.sweep_name)
         self._require_success(result, f"run PyTorch Vision sweep {self.sweep_name}")
+
+    def _launch(self):
+        timeout = self.variant.training.timeout_s + 60
+        if self.variant.training.distributed:
+            # cmd_list[i] runs on hosts[i], which is the only way each node
+            # can receive its own --node-rank. This path has no `detailed`
+            # option, so per-host exit codes are unavailable; a failed rank
+            # is caught by the training-log scan and by parse_results,
+            # which rejects a missing or malformed artifact.
+            return self.orch.exec_cmd_list(
+                [self.build_command(node_rank=i) for i in range(self.num_nodes)],
+                timeout=timeout,
+            )
+        return self.orch.exec(self.build_command(), timeout=timeout, detailed=True)
+
+    @staticmethod
+    def _failed_to_start(result):
+        """True when no node got past NCCL startup.
+
+        The startup probe is an all-reduce over every rank, so after a real
+        start every node prints STARTUP_OK; a failure later in the run is never
+        mistaken for a failed start.
+        """
+        outputs = [_output_text(host_result) for host_result in (result or {}).values()]
+        return bool(outputs) and not any(STARTUP_OK in text for text in outputs)
+
+    def _keep_failed_start(self, attempt):
+        """Stop leftover ranks and keep the failed attempt's logs for the report."""
+        self.stop_training_processes()
+        for node_rank in range(self.num_nodes):
+            source = self.log_path(node_rank)
+            target = f"{self.output_dir}/startup_failure{attempt}.node{node_rank}.log"
+            self.orch.exec(
+                f"if [ -f {shlex.quote(source)} ]; then mv -f {shlex.quote(source)} {shlex.quote(target)}; fi",
+                timeout=30,
+                detailed=True,
+                print_console=False,
+            )
 
     def _set_monitor_metrics(self, readings):
         if not readings:
@@ -484,7 +538,7 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
         if not patterns:
             return
         result = self.orch.exec(
-            f"cat {shlex.quote(self.log_path)}",
+            f"cat {self.log_glob}",
             timeout=30,
             detailed=True,
             print_console=False,

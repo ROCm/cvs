@@ -11,6 +11,7 @@ try:
     from cvs.lib.training.pytorch_vision.benchmark import (
         _HFStepTimer,
         _build_lr_scheduler,
+        _eval_ranks,
         _evaluation_meets_convergence_target,
         _exact_eval_batch_size,
         _evaluation_meets_stop_target,
@@ -22,6 +23,7 @@ except ModuleNotFoundError:
     torch = None
     benchmark = None
     _build_lr_scheduler = None
+    _eval_ranks = None
     _evaluation_meets_convergence_target = None
     _evaluation_meets_stop_target = None
     _next_rocal_batches = None
@@ -249,6 +251,24 @@ class TestExactEvalBatchSize(unittest.TestCase):
 
 
 @unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")
+class TestEvalRanks(unittest.TestCase):
+    """Full evaluation runs on equal shards so its pipeline is never rebuilt."""
+
+    def test_imagenet_on_four_nodes_uses_the_ranks_that_divide_it(self):
+        self.assertEqual(_eval_ranks(50_000, 32), 25)
+
+    def test_an_even_split_keeps_every_rank(self):
+        self.assertEqual(_eval_ranks(50_000, 8), 8)
+        self.assertEqual(_eval_ranks(10_000, 1), 1)
+
+    def test_food101_on_one_node(self):
+        self.assertEqual(_eval_ranks(25_250, 8), 5)
+
+    def test_no_sample_count_keeps_every_rank(self):
+        self.assertEqual(_eval_ranks(0, 8), 8)
+
+
+@unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")
 class TestCoordinatedExit(unittest.TestCase):
     """No rank may leave while a peer is still working on the GPU."""
 
@@ -288,6 +308,60 @@ class TestCoordinatedExit(unittest.TestCase):
         self.assertEqual(exited, [])
         self.assertEqual(sorted(errors), [0, 1, 2])
         self.assertIn("disk full", errors[1])
+
+
+@unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")
+class TestStartDistributed(unittest.TestCase):
+    """A failed NCCL start must leave at once and say so; a good one says so too."""
+
+    def _start(self, init_error=None, hang=False):
+        from cvs.lib.training.pytorch_vision.job import STARTUP_OK
+
+        self.assertEqual(benchmark.STARTUP_OK, STARTUP_OK)
+        exited = threading.Event()
+        printed = []
+
+        def fake_exit(code):
+            exited.set()
+            raise SystemExit(code)
+
+        def fake_init(**_kwargs):
+            if init_error:
+                raise init_error
+            if hang:
+                exited.wait(5)
+
+        with (
+            mock.patch.object(benchmark.dist, "init_process_group", side_effect=fake_init),
+            mock.patch.object(benchmark.dist, "all_reduce"),
+            mock.patch.object(benchmark.torch.cuda, "synchronize"),
+            mock.patch.object(benchmark.os, "_exit", side_effect=fake_exit),
+            mock.patch("builtins.print", side_effect=lambda text, **_: printed.append(text)),
+        ):
+            try:
+                benchmark._start_distributed(torch.device("cpu"), 0, 120, 1)
+            except SystemExit:
+                pass
+        exited.wait(3)
+        return printed, exited.is_set()
+
+    def test_successful_start_prints_the_marker(self):
+        printed, exited = self._start()
+        self.assertEqual(printed, [benchmark.STARTUP_OK])
+        self.assertFalse(exited)
+
+    def test_init_error_exits_with_the_failure_marker(self):
+        printed, exited = self._start(init_error=RuntimeError("ncclRemoteError\nmore"))
+        self.assertTrue(exited)
+        self.assertEqual(len(printed), 1)
+        self.assertTrue(printed[0].startswith(benchmark.STARTUP_FAILED))
+        self.assertIn("RuntimeError: ncclRemoteError", printed[0])
+        self.assertNotIn("more", printed[0])
+
+    def test_no_progress_exits_at_the_deadline(self):
+        printed, exited = self._start(hang=True)
+        self.assertTrue(exited)
+        self.assertTrue(any("no progress in 1s" in text for text in printed))
 
 
 @unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")

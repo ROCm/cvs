@@ -177,6 +177,23 @@ class TestVisionConfigLoader(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires exactly one enabled GA=1"):
             self._load(config=config)
 
+    def test_zero_init_residual_is_limited_to_resnets(self):
+        config = _config()
+        config["training"]["zero_init_residual"] = True
+        self.assertTrue(self._load(config).training.zero_init_residual)
+        config["training"]["sweeps"][0]["model"] = "vit_b_16"
+        with self.assertRaisesRegex(ValueError, "zero_init_residual applies to torchvision ResNets"):
+            self._load(config=config)
+
+    def test_label_smoothing_is_limited_to_the_native_harness(self):
+        config = _config()
+        config["training"]["label_smoothing"] = 0.1
+        self.assertEqual(self._load(config).training.label_smoothing, 0.1)
+        config["training"]["harness"] = "hf_trainer"
+        config["training"]["sweeps"][0]["model_id"] = "google/vit-base-patch16-224"
+        with self.assertRaisesRegex(ValueError, "label_smoothing applies to the native harness"):
+            self._load(config=config)
+
     def test_rejects_disabled_checkpoint_validation(self):
         config = _config()
         config["training"]["checkpoint_enabled"] = False

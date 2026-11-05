@@ -245,6 +245,11 @@ class VisionTrainingConfig(_Forbid):
     milestone_steps: List[int] = Field(default_factory=lambda: [100, 500, 1000, 5000])
     num_classes: int = Field(default=1000, gt=1)
     channels_last: bool = True
+    # Starts each residual block's last BatchNorm scale at zero, so every
+    # block begins as the identity (Goyal et al., 2017). Torchvision ResNets only.
+    zero_init_residual: bool = False
+    # Training loss only; the reported validation loss stays plain cross-entropy.
+    label_smoothing: float = Field(default=0.0, ge=0, lt=1)
     learning_rate: float = Field(default=0.1, gt=0)
     optimizer: Literal["sgd", "adamw"] = "sgd"
     # "native" drives our own DDP loop; "hf_trainer" hands the loop to
@@ -273,6 +278,12 @@ class VisionTrainingConfig(_Forbid):
     weight_decay: float = Field(default=0.0001, ge=0)
     lr_schedule: LearningRateScheduleConfig = Field(default_factory=LearningRateScheduleConfig)
     timeout_s: int = Field(default=1800, gt=0)
+    # NCCL startup (init plus one all-reduce) must finish within
+    # startup_timeout_s. A start that no rank finishes is relaunched up to
+    # startup_retries times; the failed attempt's logs are kept and the
+    # relaunches are recorded in the report.
+    startup_timeout_s: int = Field(default=300, gt=0)
+    startup_retries: int = Field(default=0, ge=0, le=5)
     omp_num_threads: int = Field(default=1, gt=0)
     verify_dmesg: bool = True
     peak_tflops_per_gpu: float = Field(gt=0)
@@ -324,6 +335,15 @@ class VisionTrainingConfig(_Forbid):
                     f"enabled GA={sweep.gradient_accumulation_steps} sweep {sweep.name!r} requires exactly one "
                     "enabled GA=1 sweep with the same model, precision, resolution, and effective global batch"
                 )
+        if self.zero_init_residual:
+            for sweep in selected:
+                if self.harness != "native" or sweep.model_id or not sweep.model.startswith("resnet"):
+                    raise ValueError(
+                        f"training.zero_init_residual applies to torchvision ResNets on the native harness; "
+                        f"sweep {sweep.name!r} uses model {sweep.model!r}"
+                    )
+        if self.label_smoothing and self.harness != "native":
+            raise ValueError("training.label_smoothing applies to the native harness only")
         for name, pattern in self.error_patterns.items():
             try:
                 re.compile(pattern)

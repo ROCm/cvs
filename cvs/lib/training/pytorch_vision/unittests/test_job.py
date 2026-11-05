@@ -59,6 +59,8 @@ def _variant():
         milestone_steps=[100, 500, 1000, 5000],
         num_classes=1000,
         channels_last=True,
+        zero_init_residual=False,
+        label_smoothing=0.0,
         learning_rate=0.1,
         optimizer="sgd",
         harness="native",
@@ -75,6 +77,8 @@ def _variant():
             gamma=0.1,
         ),
         timeout_s=1800,
+        startup_timeout_s=300,
+        startup_retries=0,
         omp_num_threads=1,
         verify_dmesg=True,
         peak_tflops_per_gpu=1307.4,
@@ -521,6 +525,62 @@ class TestWorkloadIsolation(unittest.TestCase):
         variant.training.workload = "W3"
         command = PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
         self.assertIn("--workload W3", command)
+
+    def test_each_node_tees_its_own_log(self):
+        job = PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1")
+        self.assertIn("training.node1.log", job.build_command(node_rank=1))
+        self.assertNotIn("training.node0.log", job.build_command(node_rank=1))
+
+    def test_a_start_no_rank_finished_is_a_failed_start(self):
+        self.assertTrue(PyTorchVisionJob._failed_to_start({"n0": "segfault", "n1": ""}))
+        self.assertTrue(PyTorchVisionJob._failed_to_start({"n0": {"exit_code": 1, "output": "x"}}))
+        self.assertFalse(PyTorchVisionJob._failed_to_start({"n0": "PYTORCH_VISION_STARTUP_OK\nTraceback", "n1": ""}))
+        self.assertFalse(PyTorchVisionJob._failed_to_start({}))
+
+    def _run_with_launches(self, retries, outputs):
+        variant = _variant()
+        variant.training.startup_retries = retries
+        variant.training.verify_dmesg = False
+        job = PyTorchVisionJob(FakeOrchestrator(), variant, "w1")
+        launches = [{"node0": {"exit_code": 0, "output": text}} for text in outputs]
+        with (
+            patch("cvs.lib.training.pytorch_vision.job.start_gpu_poller"),
+            patch("cvs.lib.training.pytorch_vision.job.stop_and_collect_gpu_poller"),
+            patch.object(job, "_set_monitor_metrics"),
+            patch.object(job, "_launch", side_effect=launches) as launch,
+            patch.object(job, "_keep_failed_start") as keep,
+        ):
+            job.run_benchmark()
+        return job, launch, keep
+
+    def test_failed_start_is_relaunched_and_counted(self):
+        job, launch, keep = self._run_with_launches(2, ["segfault", "PYTORCH_VISION_STARTUP_OK"])
+        self.assertEqual(launch.call_count, 2)
+        keep.assert_called_once_with(1)
+        self.assertEqual(job.startup_retries_used, 1)
+
+    def test_failure_after_startup_is_not_relaunched(self):
+        job, launch, keep = self._run_with_launches(2, ["PYTORCH_VISION_STARTUP_OK\nTraceback"])
+        self.assertEqual(launch.call_count, 1)
+        keep.assert_not_called()
+        self.assertEqual(job.startup_retries_used, 0)
+
+    def test_relaunch_is_opt_in(self):
+        job, launch, keep = self._run_with_launches(0, ["segfault"])
+        self.assertEqual(launch.call_count, 1)
+        keep.assert_not_called()
+
+    def test_zero_init_residual_is_opt_in(self):
+        variant = _variant()
+        self.assertNotIn("--zero-init-residual", PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command())
+        variant.training.zero_init_residual = True
+        self.assertIn("--zero-init-residual", PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command())
+
+    def test_label_smoothing_is_opt_in(self):
+        variant = _variant()
+        self.assertNotIn("--label-smoothing", PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command())
+        variant.training.label_smoothing = 0.1
+        self.assertIn("--label-smoothing 0.1", PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command())
 
     def test_optimizer_choice_is_passed_to_the_launcher(self):
         variant = _variant()

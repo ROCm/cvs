@@ -226,6 +226,7 @@ def _execute_sweeps_with_repeats(orch, variant_config, training_results, loss_se
     rng = random.Random(training.sweep_order_seed)
     collected = {name: [] for name in names}
     last_loss = {}
+    startup_retries = 0
     for _round in range(training.sweep_repeats):
         order = list(names)
         rng.shuffle(order)
@@ -233,11 +234,13 @@ def _execute_sweeps_with_repeats(orch, variant_config, training_results, loss_se
             job, host_results = _run_sweep_once(orch, variant_config, name)
             collected[name].append(host_results)
             last_loss[name] = job.loss_series
+            startup_retries += job.startup_retries_used
     for name in names:
         training_results[name] = _median_across_repeats(collected[name])
         loss_series[name] = last_loss[name]
     _refresh_ga_overhead(variant_config, training_results)
     _refresh_pipeline_overheads(variant_config, training_results)
+    return startup_retries
 
 
 def _execute_sweep(  # noqa: PLR0913
@@ -283,8 +286,15 @@ def real_data_smoke(
     if variant_config.training.run_mode != "smoke" or sweep.data_mode != "rocal":
         pytest.skip("real-data smoke stage applies to rocAL smoke profiles")
     start = time.monotonic()
-    _execute_sweep(orch, variant_config, sweep_name, training_results, loss_series)
+    job = _execute_sweep(orch, variant_config, sweep_name, training_results, loss_series)
     lifecycle.record(request.node.nodeid, "real_data_smoke", time.monotonic() - start)
+    _record_startup_retries(lifecycle, request, job.startup_retries_used)
+
+
+def _record_startup_retries(lifecycle, request, count):
+    """Relaunches after a failed NCCL start stay visible in the report."""
+    if count:
+        lifecycle.record(request.node.nodeid, "startup_retries", count, unit="launches")
 
 
 def training(  # noqa: PLR0913
@@ -293,14 +303,17 @@ def training(  # noqa: PLR0913
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     start = time.monotonic()
+    startup_retries = 0
     if sweep_name not in training_results:
         if variant_config.training.sweep_repeats > 1:
             # Repeats are scheduled across all sweeps rather than per sweep, so
             # every sweep takes a turn in each cache state.
-            _execute_sweeps_with_repeats(orch, variant_config, training_results, loss_series)
+            startup_retries = _execute_sweeps_with_repeats(orch, variant_config, training_results, loss_series)
         else:
-            _execute_sweep(orch, variant_config, sweep_name, training_results, loss_series)
+            job = _execute_sweep(orch, variant_config, sweep_name, training_results, loss_series)
+            startup_retries = job.startup_retries_used
     lifecycle.record(request.node.nodeid, "training", time.monotonic() - start)
+    _record_startup_retries(lifecycle, request, startup_retries)
 
 
 def rocal_overhead_comparisons(variant_config, training_results):

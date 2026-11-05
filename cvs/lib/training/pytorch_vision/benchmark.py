@@ -11,6 +11,7 @@ import math
 import os
 import statistics
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -43,6 +44,8 @@ def _parse_args():
     parser.add_argument("--eval-sample-count", type=int, default=50000)
     parser.add_argument("--milestone-steps", default="100,500,1000,5000")
     parser.add_argument("--channels-last", action="store_true")
+    parser.add_argument("--zero-init-residual", action="store_true")
+    parser.add_argument("--label-smoothing", type=float, default=0.0)
     parser.add_argument("--learning-rate", type=float, default=0.1)
     parser.add_argument("--harness", choices=["native", "hf_trainer", "task"], default="native")
     parser.add_argument(
@@ -96,6 +99,7 @@ def _parse_args():
     parser.add_argument("--codecarbon-measure-power-secs", type=int, default=5)
     parser.add_argument("--codecarbon-country-iso-code")
     parser.add_argument("--collective-timeout-seconds", type=int, default=120)
+    parser.add_argument("--startup-timeout-seconds", type=int, default=300)
     parser.add_argument("--output", required=True)
     return parser.parse_args()
 
@@ -207,7 +211,8 @@ def _build_model(args, device):
     else:
         from torchvision.models import get_model
 
-        model = get_model(args.model, weights=None, num_classes=args.num_classes)
+        extra = {"zero_init_residual": True} if args.zero_init_residual else {}
+        model = get_model(args.model, weights=None, num_classes=args.num_classes, **extra)
     if args.channels_last:
         model = model.to(memory_format=torch.channels_last)
     return model.to(device)
@@ -594,16 +599,22 @@ class _EvalLoader:
     Retired pipelines stay referenced until exit: destroying a rocAL pipeline
     mid-run while its prefetch workers are live corrupted the heap
     (``malloc(): unsorted double linked list corrupted``) on a W8 fine-tune.
+    Each one keeps its GPU buffers, so full evaluation avoids rebuilding by
+    running on ``ranks`` that divide the set evenly; see ``_eval_ranks``.
+    Ranks outside that group have no pipeline and evaluate nothing.
     """
 
-    def __init__(self, build, rebuild_each_pass):
+    def __init__(self, build, rebuild_each_pass, ranks):
+        self.ranks = ranks
         self._build = build
         self._rebuild = rebuild_each_pass
-        self._loader = build()
+        self._loader = build() if build is not None else None
         self._retired = []
         self._fresh = True
 
     def next_pass(self):
+        if self._loader is None:
+            return None
         if not self._fresh:
             if self._rebuild:
                 self._retired.append(self._loader)
@@ -614,8 +625,29 @@ class _EvalLoader:
         return self._loader
 
 
+def _eval_ranks(sample_count, world_size):
+    """Largest rank count up to ``world_size`` that splits the eval set evenly.
+
+    Unequal shards force a fresh pipeline on every pass (see ``_EvalLoader``),
+    and the retired ones exhaust GPU memory over a long run: ImageNet's 50,000
+    validation images over 32 ranks failed a ``hipMalloc`` partway through a
+    four-node target-accuracy run. 25 of those ranks take 2,000 images each.
+    """
+    if not sample_count:
+        return world_size
+    return max(count for count in range(1, world_size + 1) if sample_count % count == 0)
+
+
 def _evaluate(model, eval_loader, loss_fn, args, device):
     model.eval()
+    # The first DDP forward after a training step broadcasts the buffers, which
+    # is a collective, and ranks outside the eval group never make that call:
+    # a four-node run hung on it at the first evaluation. Every rank takes
+    # rank zero's BatchNorm statistics here, as that broadcast would, and the
+    # forward runs on the unwrapped module.
+    network = getattr(model, "module", model)
+    for buffer in network.buffers():
+        dist.broadcast(buffer, src=0)
     loader = eval_loader.next_pass()
     totals = torch.zeros(4, dtype=torch.float64, device=device)
     # Per-class label histogram. A correct label mapping over a full ImageNet
@@ -625,22 +657,23 @@ def _evaluate(model, eval_loader, loss_fn, args, device):
     label_hist = torch.zeros(args.num_classes, dtype=torch.int64, device=device)
     steps = 0
     rank = int(os.environ["RANK"])
-    world_size = int(os.environ["WORLD_SIZE"])
+    eval_ranks = eval_loader.ranks
     # rocAL starts shard i at floor(i * N / shards) and pads a short final
     # batch by reading on into the next shard, so each rank keeps exactly the
     # images between its own boundaries.
-    local_target = (
-        (rank + 1) * args.eval_sample_count // world_size - rank * args.eval_sample_count // world_size
-        if args.eval_steps is None
-        else None
-    )
+    if rank >= eval_ranks:
+        local_target = 0
+    elif args.eval_steps is None:
+        local_target = (rank + 1) * args.eval_sample_count // eval_ranks - rank * args.eval_sample_count // eval_ranks
+    else:
+        local_target = None
     local_samples = 0
     try:
         while True:
             # Shards differ by one image when the eval set does not divide by
             # world size, so a rank can finish a batch early. It keeps joining
             # the collective without fetching until no rank needs more.
-            need = steps < args.eval_steps if args.eval_steps is not None else local_samples < local_target
+            need = local_samples < local_target if local_target is not None else steps < args.eval_steps
             batches, status, error = None, 1, None
             if need:
                 try:
@@ -663,7 +696,7 @@ def _evaluate(model, eval_loader, loss_fn, args, device):
                 images[0] = images[0][:remaining]
                 labels[0] = labels[0][:remaining]
             with torch.no_grad(), _autocast(args.precision):
-                output = model(images[0])
+                output = network(images[0])
                 loss = loss_fn(output, labels[0])
             count = labels[0].numel()
             flat = labels[0].reshape(-1)
@@ -1365,11 +1398,7 @@ def main():
 
     torch.cuda.set_device(local_rank)
     device = torch.device("cuda", local_rank)
-    dist.init_process_group(
-        backend="nccl",
-        device_id=device,
-        timeout=datetime.timedelta(seconds=args.collective_timeout_seconds),
-    )
+    _start_distributed(device, local_rank, args.collective_timeout_seconds, args.startup_timeout_seconds)
 
     torch.manual_seed(2026)
     torch.cuda.manual_seed_all(2026)
@@ -1402,7 +1431,9 @@ def main():
     model.train()
 
     optimizer = _build_optimizer(model, args)
-    loss_fn = torch.nn.CrossEntropyLoss()
+    loss_fn = torch.nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
+    # Validation loss stays plain cross-entropy so it compares across recipes.
+    eval_loss_fn = torch.nn.CrossEntropyLoss()
 
     rocal_loader = None
     validation_loader = None
@@ -1413,16 +1444,21 @@ def main():
             # Size the eval batch so the per-rank shard divides exactly; see
             # _exact_eval_batch_size. Without this the final partial batch is
             # padded with repeats that corrupt the per-class distribution.
-            shard = args.eval_sample_count // world_size if args.eval_sample_count else 0
+            eval_ranks = world_size if args.eval_steps is not None else _eval_ranks(args.eval_sample_count, world_size)
+            shard = args.eval_sample_count // eval_ranks if args.eval_sample_count else 0
             eval_bs = _exact_eval_batch_size(shard, args.batch_size)
-            if rank == 0 and eval_bs != args.batch_size:
+            if rank == 0 and (eval_bs != args.batch_size or eval_ranks != world_size):
                 print(
-                    f"PYTORCH_VISION_EVAL_BATCH shard={shard} train_bs={args.batch_size} eval_bs={eval_bs}",
+                    f"PYTORCH_VISION_EVAL_BATCH shard={shard} train_bs={args.batch_size} eval_bs={eval_bs} "
+                    f"eval_ranks={eval_ranks}/{world_size}",
                     flush=True,
                 )
             validation_loader = _EvalLoader(
-                lambda: _build_rocal_loader(args, rank, world_size, split="val", batch_size=eval_bs),
-                rebuild_each_pass=bool(args.eval_sample_count and args.eval_sample_count % world_size),
+                (lambda: _build_rocal_loader(args, rank, eval_ranks, split="val", batch_size=eval_bs))
+                if rank < eval_ranks
+                else None,
+                rebuild_each_pass=bool(args.eval_sample_count and args.eval_sample_count % eval_ranks),
+                ranks=eval_ranks,
             )
         measured_loader_metrics = _measure_rocal_loader(rocal_loader, args, device, rank, world_size)
         if measured_loader_metrics is not None:
@@ -1564,7 +1600,7 @@ def main():
         epoch_boundary = steps_per_epoch and step % steps_per_epoch == 0
         if validation_loader is not None and epoch_boundary and (step // steps_per_epoch) % args.eval_every_epochs == 0:
             eval_start = time.perf_counter()
-            evaluation = _evaluate(model, validation_loader, loss_fn, args, device)
+            evaluation = _evaluate(model, validation_loader, eval_loss_fn, args, device)
             eval_seconds += time.perf_counter() - eval_start
             evaluation.update({"step": step, "time_seconds": elapsed})
             evaluations.append(evaluation)
@@ -1572,7 +1608,7 @@ def main():
                 break
     if validation_loader is not None and (not evaluations or evaluations[-1]["step"] != step):
         eval_start = time.perf_counter()
-        evaluation = _evaluate(model, validation_loader, loss_fn, args, device)
+        evaluation = _evaluate(model, validation_loader, eval_loss_fn, args, device)
         eval_seconds += time.perf_counter() - eval_start
         evaluation.update({"step": step, "time_seconds": time.perf_counter() - window_start})
         evaluations.append(evaluation)
@@ -1774,6 +1810,44 @@ def _finish(rank, world_size, artifact_error, timeout_s):
     if error:
         raise RuntimeError(f"result artifact failed on rank 0: {error}")
     _exit_cleanly()
+
+
+STARTUP_OK = "PYTORCH_VISION_STARTUP_OK"
+STARTUP_FAILED = "PYTORCH_VISION_STARTUP_FAILED"
+
+
+def _start_distributed(device, local_rank, collective_timeout_s, startup_timeout_s):
+    """Bring up NCCL and prove it with one all-reduce, or leave at once.
+
+    On MI325X with ROCm 7.2.4 about one 32-rank start in ten segfaults a rank
+    inside libdrm_amdgpu during the NCCL connect. The surviving ranks then wait
+    in NCCL teardown until the launch timeout. Any failure here, or no progress
+    within startup_timeout_s, prints STARTUP_FAILED and exits without
+    destructors, so the launcher can tell a failed start from a failed run.
+    """
+
+    def fail(reason):
+        print(f"{STARTUP_FAILED} local_rank={local_rank} {reason}", flush=True)
+        sys.stderr.flush()
+        os._exit(1)
+
+    deadline = threading.Timer(startup_timeout_s, fail, args=(f"no progress in {startup_timeout_s}s",))
+    deadline.daemon = True
+    deadline.start()
+    try:
+        dist.init_process_group(
+            backend="nccl",
+            device_id=device,
+            timeout=datetime.timedelta(seconds=collective_timeout_s),
+        )
+        probe = torch.ones(1, device=device)
+        dist.all_reduce(probe)
+        torch.cuda.synchronize()
+    except Exception as exc:
+        fail(f"{type(exc).__name__}: {exc}".splitlines()[0])
+    deadline.cancel()
+    if local_rank == 0:
+        print(STARTUP_OK, flush=True)
 
 
 def _exit_cleanly():
