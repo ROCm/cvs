@@ -6,7 +6,7 @@
 xDiT inference benchmark configuration for Cluster Validation Suite (CVS)
 *************************************************************************
 
-CVS ships five xDiT suites under |cvs-tests-inference-xdit|_. Each suite reads a JSON
+CVS ships seven xDiT suites under |cvs-tests-inference-xdit|_. Each suite reads a JSON
 file from |cvs-input-config-file-inference-xdit|_. Latency and CLIPScore limits live in a
 sibling threshold file named by top-level ``threshold_json``. ``mi3xx_*`` and ``mi35x_*``
 templates for the same workload share that file.
@@ -142,7 +142,8 @@ Example: FLUX.1-dev single-node
                         "{paths.models_dir}:/hf_home",
                         "{paths.log_dir}:/outputs",
                         "{home}/cvs/cvs/lib/inference/xdit/scripts/run_usp.py:/benchmark/run_usp.py",
-                        "{home}/cvs/cvs/lib/inference/xdit/scripts/flux_utils.py:/benchmark/flux_utils.py"
+                        "{home}/cvs/cvs/lib/inference/xdit/scripts/flux_utils.py:/benchmark/flux_utils.py",
+                        "{home}/cvs/cvs/lib/inference/xdit/scripts/fid_sweep.py:/benchmark/fid_sweep.py"
                     ],
                     "devices": ["/dev/dri", "/dev/kfd"],
                     "env": { "NCCL_DEBUG": "ERROR" }
@@ -186,7 +187,7 @@ The following parameters appear in every packaged xDiT template.
      - Description
    * - ``container.image``
      - ``<changeme>``
-     - Image to run. ``_image_example`` documents a known tag: ``rocm/pytorch-xdit:v26.9`` for FLUX.1 and WAN 2.1 T2V; ``amdsiloai/pytorch-xdit:v25.11.2`` for native WAN; a ``rocm/ufb-private`` gfx942 tag on ``mi3xx`` FLUX.2 and WAN 2.2 Diffusers; a gfx950 tag on ``mi35x`` FLUX.2 and WAN 2.2 Diffusers.
+     - Image to run. ``_image_example`` documents a known tag: ``rocm/pytorch-xdit:v26.9`` for FLUX.1, FLUX.2, and WAN Diffusers; ``amdsiloai/pytorch-xdit:v25.11.2`` for native WAN. The ``_image_comment`` on each template names the model support the image needs.
    * - ``container.name``
      - ``flux-benchmark_single``
      - Docker name.
@@ -281,12 +282,12 @@ the bind-mounted ``run_usp.py`` at ``/benchmark/run_usp.py``. A repo or path con
      - Sequence-parallel layout. Product with pipefusion, tensor-parallel, and data-parallel degrees (each default ``1``) must equal ``nnodes × torchrun_nproc``.
    * - ``use_torch_compile``
      - ``true`` / ``false``
-     - ``mi3xx`` FLUX templates and ``mi35x`` FLUX.2 single set ``true``. ``mi35x`` FLUX.1 and ``mi35x`` FLUX.2 distributed set ``false``.
+     - ``mi3xx`` and ``mi35x`` FLUX.2 single templates and ``mi3xx`` FLUX.1 single set ``true``. ``mi3xx`` FLUX.1 and FLUX.2 distributed templates and ``mi35x`` FLUX.1 (single and distributed) and FLUX.2 distributed set ``false``.
    * - ``torchrun_nproc``
      - ``8``
      - Processes (GPUs) per node.
    * - ``clip_model``
-     - omitted
+     - ``/hf_home/clip-vit-base-patch32``
      - CLIP checkpoint id or local path used to score saved PNGs. Defaults to ``openai/clip-vit-base-patch32``. ``test_verify_model`` requires it to already be in the container cache or at that path. The suite does not download it; stage it under ``paths.models_dir`` first. Prompts longer than that model's text context (77 tokens) are truncated.
 
 ``benchmark_params`` for WAN 2.2
@@ -328,7 +329,7 @@ The native suite has no FID vs steps stage. Setting ``fid_nfe_steps`` on a nativ
      - ``8``
      - GPUs per node. Single-node native WAN infers ulysses from this value and ring ``1``.
    * - ``clip_model``
-     - omitted
+     - ``/hf_home/clip-vit-base-patch32``
      - CLIP checkpoint id or local path for sampled-frame scoring. Defaults to ``openai/clip-vit-base-patch32``. ``test_verify_model`` requires it offline in the container. The suite does not download it; stage it under ``paths.models_dir`` first. Native and Diffusers WAN share this field.
    * - ``clip_sample_frames``
      - omitted
@@ -364,7 +365,7 @@ Diffusers xFuser WAN
    * - ``require_video_artifact``
      - Fail parse if ``video_i2v.mp4`` is missing. Packaged templates set ``true``.
    * - ``num_inference_steps``, ``warmup_steps``
-     - Denoising and warmup (packaged templates: ``40`` and ``1``).
+     - Denoising and warmup. Packaged templates set ``40`` for WAN 2.2 and ``30`` for WAN 2.1 T2V, with warmup ``1``.
    * - ``num_benchmark_steps``
      - Packaged Diffusers templates set ``1``.
    * - ``compile``
@@ -437,35 +438,35 @@ only when detection reports that same string.
      - Shipped keys (seconds)
    * - ``xdit_flux1_dev_single_threshold.json``
      - ``max_avg_pipe_time_s``
-     - ``auto`` 10, ``mi300x`` 3, ``mi350`` 2, ``mi355`` 7
+     - ``auto`` 10, ``mi300x`` 3, ``mi325`` 20, ``mi350`` 2, ``mi355`` 7
    * - ``xdit_flux1_dev_distributed_threshold.json``
      - ``max_avg_pipe_time_s``
-     - ``auto`` 12, ``mi300x`` 10, ``mi355`` 22
+     - ``auto`` 12, ``mi300x`` 10, ``mi325`` 20, ``mi350`` 20, ``mi355`` 22
    * - ``xdit_flux2_dev_single_threshold.json``
      - ``max_avg_pipe_time_s``
-     - ``auto`` 10, ``mi300x`` 8, ``mi355`` 7
+     - ``auto`` 10, ``mi300x`` 8, ``mi325`` 20, ``mi350`` 7, ``mi355`` 7
    * - ``xdit_flux2_dev_distributed_threshold.json``
      - ``max_avg_pipe_time_s``
-     - ``auto`` 20, ``mi300x`` 16, ``mi355`` 50
+     - ``auto`` 20, ``mi300x`` 16, ``mi325`` 20, ``mi350`` 20, ``mi355`` 50
    * - ``xdit_wan22_14b_single_threshold.json``
      - ``max_avg_total_time_s``
      - ``auto`` 15, ``mi300x`` 200, ``mi325`` 160, ``mi350`` 120, ``mi355`` 120
    * - ``xdit_wan21_t2v_14b_diffusers_single_threshold.json``
      - ``max_avg_pipe_time_s``
-     - ``auto`` 300, ``mi325`` 300, ``mi355`` 300
+     - ``auto`` 300, ``mi325`` 300, ``mi350`` 300, ``mi355`` 300
    * - ``xdit_wan21_t2v_14b_diffusers_distributed_threshold.json``
      - ``max_avg_pipe_time_s``
-     - ``auto`` 300, ``mi325`` 300, ``mi355`` 900
+     - ``auto`` 300, ``mi325`` 300, ``mi350`` 300, ``mi355`` 900
    * - ``xdit_wan22_14b_diffusers_single_threshold.json``
      - ``max_avg_pipe_time_s``
-     - ``auto`` 300, ``mi325`` 300, ``mi355`` 300
+     - ``auto`` 300, ``mi325`` 300, ``mi350`` 300, ``mi355`` 300
    * - ``xdit_wan22_14b_diffusers_distributed_threshold.json``
      - ``max_avg_pipe_time_s``
-     - ``auto`` 300, ``mi325`` 300, ``mi355`` 900
+     - ``auto`` 300, ``mi325`` 300, ``mi350`` 300, ``mi355`` 900
 
-A detected GPU with no key of its own uses ``auto``. MI350X on
-``xdit_flux1_dev_distributed_threshold.json`` has no ``mi350`` entry, so it uses the
-``auto`` limit of 12 seconds. MI325X (``0x74a5``) uses the ``mi325`` limit when that key
+A detected GPU with no key of its own uses ``auto``. For example, MI300X on
+``xdit_wan22_14b_diffusers_single_threshold.json`` has no ``mi300x`` key and uses the
+``auto`` limit of 300 seconds. MI325X (``0x74a5``) uses the ``mi325`` limit when that key
 exists, and ``auto`` otherwise.
 
 Comments in the FLUX.1 single and native WAN files mark which latency keys were measured and

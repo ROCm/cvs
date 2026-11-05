@@ -6,7 +6,7 @@
 Run xDiT diffusion inference tests with Cluster Validation Suite (CVS)
 **********************************************************************
 
-CVS provides five xDiT suites under |cvs-tests-inference-xdit|_. Each suite is a
+CVS provides seven xDiT suites under |cvs-tests-inference-xdit|_. Each suite is a
 separate pytest module; pick the one that matches your topology and launcher, then point
 ``--config_file`` at a template from |cvs-input-config-file-inference-xdit|_.
 
