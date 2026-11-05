@@ -6,6 +6,7 @@ from cvs.lib.inference.xdit.xdit_fid import (
     build_fid_series,
     fid_budget_seconds,
     fid_cli_flags,
+    fid_viewer_curves,
     parse_fid_curve_text,
     parse_fid_nfe_steps,
 )
@@ -64,6 +65,19 @@ class TestFidCurve(unittest.TestCase):
     def test_a_single_point_is_not_a_line(self):
         results = {("FLUX.1-dev",): {"node-a": {"_fid_curve": {"points": [{"nfe": 10, "fid": 1.0}]}}}}
         self.assertEqual(build_fid_series(results), [])
+
+    def test_viewer_curves_keep_each_sampler(self):
+        raw = {
+            "points": [
+                {"nfe": 50, "fid": 12.0, "sampler": "euler"},
+                {"nfe": 10, "fid": 40.0, "sampler": "euler"},
+                {"nfe": 10, "fid": 1.0, "sampler": "dpm"},
+            ]
+        }
+        self.assertEqual(
+            fid_viewer_curves(raw),
+            {"FID · euler": [[10.0, 40.0], [50.0, 12.0]]},
+        )
 
     def test_marker_text_parses(self):
         payload = parse_fid_curve_text(

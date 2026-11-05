@@ -8,7 +8,7 @@
   "footer": "CVS xDiT · render-only · does not affect gates",
   "link_name": "xDiT Run Deck",
   "dataset_builder": "sweep",
-  "interactive_viewer": false,
+  "interactive_viewer": true,
   "viewer_cell_threshold": 16,
   "sources": {
     "results": "cvs_results_dict",

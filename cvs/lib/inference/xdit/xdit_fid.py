@@ -145,6 +145,20 @@ def build_fid_series(inf_res_dict):
     return series
 
 
+def fid_viewer_curves(raw):
+    """``extra_curves`` entries the interactive viewer plots, keyed by sampler."""
+    grouped = {}
+    for sampler, nfe, fid in iter_fid_points(raw):
+        label = f"FID · {sampler}" if sampler else "FID"
+        grouped.setdefault(label, {})[nfe] = fid
+    curves = {}
+    for label, points in grouped.items():
+        series = [[nfe, points[nfe]] for nfe in sorted(points)]
+        if len(series) >= 2:
+            curves[label] = series
+    return curves
+
+
 def build_fid_score_cmd(reference_dir, generated_root, inception_path, output_json, sampler=""):
     """Return a container command that writes ``results/fid_curve.json``."""
     script = FID_SCORE_SCRIPT.read_text(encoding="utf-8")

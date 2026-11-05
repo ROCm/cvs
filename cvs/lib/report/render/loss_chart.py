@@ -106,6 +106,13 @@ class LossChartRenderer:
         )
         return "".join(parts)
 
+    def _y_axis_title(self, y_title):
+        mid_y = (self._TOP + self._BOTTOM) / 2
+        return (
+            f"<text class='loss-axis-title' x='14' y='{mid_y:.1f}' "
+            f"transform='rotate(-90 14 {mid_y:.1f})'>{html.escape(y_title)}</text>"
+        )
+
     def _frame(self):
         return (
             f"<line class='loss-axis' x1='{self._LEFT}' y1='{self._TOP}' "
@@ -143,7 +150,8 @@ class LossChartRenderer:
             f"<p class='chart-sweep-hint'>{hint}</p>"
             f"<div class='loss-chart'><svg viewBox='0 0 {self._WIDTH} {self._HEIGHT}' role='img' "
             f"aria-label='{html.escape(y_title)} versus {html.escape(x_title)}'>"
-            f"{self._y_axis(y_lo, y_hi)}{self._frame()}{''.join(lines)}{self._x_axis(x_lo, x_hi, x_title)}"
+            f"{self._y_axis(y_lo, y_hi)}{self._y_axis_title(y_title)}{self._frame()}{''.join(lines)}"
+            f"{self._x_axis(x_lo, x_hi, x_title)}"
             f"</svg><div class='loss-legend'>{''.join(legend)}</div></div>"
         )
 

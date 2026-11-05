@@ -469,6 +469,7 @@ function extraStepSpecs() {
   [...tags].sort().forEach(tag => {
     const slug = 'extra-' + tag.replace(/[^A-Za-z0-9_-]/g, '_');
     const panelId = slug + '-panel';
+    const xTitle = tag.indexOf('FID') === 0 ? 'NFE' : 'Step';
     if (!document.getElementById(panelId)) {
       const panel = document.createElement('section');
       panel.className = 'panel';
@@ -476,12 +477,20 @@ function extraStepSpecs() {
       panel.style.display = 'none';
       panel.innerHTML = '<h2>' + escapeHtmlText(tag) + '</h2>'
         + '<p class="subsection-hint">' + escapeHtmlText(tag)
-        + ' vs step · one series per filtered combo · scroll to zoom · shift+drag to pan</p>'
+        + ' vs ' + escapeHtmlText(xTitle) + ' · one series per filtered combo · scroll to zoom · shift+drag to pan</p>'
         + '<article class="chart-card chart-card-wide"><div class="chart-wrap chart-wrap-loss" id="'
         + slug + '-wrap"></div></article>';
       host.appendChild(panel);
     }
-    specs.push({ panel: panelId, wrap: slug + '-wrap', nav: null, extraTag: tag, yTitle: tag, id: 'extra:' + tag });
+    specs.push({
+      panel: panelId,
+      wrap: slug + '-wrap',
+      nav: null,
+      extraTag: tag,
+      yTitle: tag,
+      xTitle: xTitle,
+      id: 'extra:' + tag,
+    });
   });
   extraStepSpecsCache = specs;
   return specs;
@@ -508,7 +517,8 @@ function initStepChartControls() {
   });
   const specs = allStepSpecs();
   const defaults = STEP_CHARTS.map(s => s.field);
-  if (selectedStepMetrics === null) selectedStepMetrics = new Set(defaults);
+  const extraIds = specs.filter(s => s.extraTag).map(stepSpecId);
+  if (selectedStepMetrics === null) selectedStepMetrics = new Set(defaults.concat(extraIds));
 
   const list = $('metric-pick-list');
   if (list) {
@@ -534,7 +544,7 @@ function initStepChartControls() {
     selectedStepMetrics = new Set();
     specs.forEach(spec => {
       const id = stepSpecId(spec);
-      const pick = mode === 'all' ? true : (mode === 'defaults' ? defaults.includes(id) : false);
+      const pick = mode === 'all' ? true : (mode === 'defaults' ? (defaults.includes(id) || String(id).indexOf('extra:') === 0) : false);
       if (pick) selectedStepMetrics.add(id);
     });
     if (list) {
@@ -1772,8 +1782,9 @@ function parseLossPoints(curve) {
   return parseCurvePoints(curve);
 }
 
-function makeStepChart(canvas, datasets, yTitle) {
+function makeStepChart(canvas, datasets, yTitle, xTitle) {
   const t = stepChartTheme();
+  const xLabel = xTitle || 'Step';
   const ch = new Chart(canvas, {
     type: 'line',
     data: { datasets },
@@ -1788,7 +1799,7 @@ function makeStepChart(canvas, datasets, yTitle) {
         tooltip: { callbacks: { label: ctx => {
           const y = ctx.parsed && ctx.parsed.y;
           const x = ctx.parsed && ctx.parsed.x;
-          return (ctx.dataset.label || '') + ': step ' + x + '  ' + yTitle + ' ' + y;
+          return (ctx.dataset.label || '') + ': ' + xLabel + ' ' + x + '  ' + yTitle + ' ' + y;
         } } },
         zoom: {
           limits: {
@@ -1818,7 +1829,7 @@ function makeStepChart(canvas, datasets, yTitle) {
       scales: {
         x: {
           type: 'linear',
-          title: { display: true, text: 'Step', color: t.title, font: { size: 11 } },
+          title: { display: true, text: xLabel, color: t.title, font: { size: 11 } },
           ticks: { color: t.tick },
           grid: { color: t.grid },
         },
@@ -1858,7 +1869,7 @@ function buildStepChart(rows, spec) {
     if (!pts.length) return;
     const color = CHART_COLORS[index % CHART_COLORS.length];
     datasets.push({
-      label: c.subtitle || c.cell_id || ('combo ' + index),
+      label: (c.show_host_in_label && c.host ? c.host + ' · ' : '') + (c.subtitle || c.model || c.cell_id || ('combo ' + index)),
       data: pts,
       borderColor: color,
       backgroundColor: color,
@@ -1878,7 +1889,7 @@ function buildStepChart(rows, spec) {
 
   const canvas = document.createElement('canvas');
   wrap.appendChild(canvas);
-  const ch = makeStepChart(canvas, datasets, spec.yTitle);
+  const ch = makeStepChart(canvas, datasets, spec.yTitle, spec.xTitle);
   if (spec.field === 'loss_curve') lossChart = ch;
   panel.style.display = 'block';
   if (nav) nav.style.display = '';
