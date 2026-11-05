@@ -13,7 +13,8 @@ A per-framework module subclasses `BaseVariantConfig` or composes the blocks
 directly and adds its own params, sweep and `cell_key`.
 
 3-pass placeholder substitution:
-  1. cluster placeholders (`{user-id}`) anywhere
+  1. cluster placeholders (`{user-id}`, or with `all_placeholders` the full
+     `resolve_test_config_placeholders` set) anywhere
   2. self-reference within `paths` (e.g. `{shared_fs}`)
   3. cross-block (`{paths.models_dir}`, etc.) into the rest of the doc
 
@@ -50,6 +51,7 @@ from cvs.lib.conf_lib.config_blocks import (  # noqa: F401 - re-exported for sui
     _Allow,
     _Forbid,
 )
+from cvs.lib.utils_lib import config_placeholder_map
 
 
 # ---------- pydantic models (generic) ----------
@@ -155,12 +157,16 @@ def _find_packaged_threshold(name):
     return matches[0] if matches else None
 
 
-def substitute_config(config_path, cluster_dict):
+def substitute_config(config_path, cluster_dict, all_placeholders=False):
     """Read a variant config + sibling threshold file and resolve placeholders.
 
     Returns `(raw_dict, thresholds)`: the substituted config dict (NOT yet
     validated -- the caller's per-framework `VariantConfig(**raw)` does that)
     and the parsed, comment-stripped threshold dict.
+
+    Pass 1 expands only `{user-id}` unless `all_placeholders` is true; then it
+    expands the `utils_lib.config_placeholder_map` set that
+    `resolve_test_config_placeholders` uses, without its `<changeme>` exit.
 
     Threshold discovery supports both layouts:
     - ``threshold_json`` in the config (literal path; vllm_single style), or
@@ -211,8 +217,11 @@ def substitute_config(config_path, cluster_dict):
         threshold_path = threshold_candidates[0]
     thresholds = json.loads(threshold_path.read_text())
 
-    # Pass 1: cluster placeholders ({user-id}) everywhere.
-    cluster_map = _resolve_cluster_mapping(cluster_dict)
+    # Pass 1: cluster placeholders ({user-id}, or the full test-config set) everywhere.
+    if all_placeholders:
+        cluster_map = {key[1:-1]: value for key, value in config_placeholder_map(raw, cluster_dict).items()}
+    else:
+        cluster_map = _resolve_cluster_mapping(cluster_dict)
     raw = _walk_substitute(raw, cluster_map)
 
     # Pass 2: self-reference within paths ({shared_fs} inside paths.*).

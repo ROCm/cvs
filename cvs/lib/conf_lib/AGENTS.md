@@ -33,7 +33,11 @@ The schema blocks every suite composes. `config_loader.py` re-exports `_Forbid`,
 
 - `cluster`: path or dict, resolved with `resolve_cluster_config_placeholders` (a cluster
   `<changeme>` still exits). The cluster is not schema-validated.
-- Runs `substitute_config`, attaches `thresholds` when the model has that field, and validates
+- Runs `substitute_config(..., all_placeholders=True)`, so pass 1 expands the
+  `utils_lib.config_placeholder_map` set (`{user-id}`, `{user}`, `{home}`, `{home-mount-dir}`,
+  `{node-dir-name}`, `{run_dir}`) that `resolve_test_config_placeholders` uses. Do not call that
+  resolver here: it exits at the first `<changeme>`.
+- Attaches `thresholds` when the model has that field, and validates
   with `context={"placeholders": "reject"}`. There is no switch to allow placeholders.
 - `ValidationError` becomes `ConfigError` (a `ValueError`) with one `loc: msg` line per error,
   built from `errors(include_input=False)`; never put input values in a message.
