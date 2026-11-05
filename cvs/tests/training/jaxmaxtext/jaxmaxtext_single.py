@@ -44,6 +44,13 @@ def test_launch_container(orch, variant_config, lifecycle, request):
     return _common.launch_container(orch, variant_config, lifecycle, request)
 
 
+def test_support_matrix_gate(orch, variant_config, lifecycle, request):
+    """Stop the run if this framework/model is unsupported on the detected GPU
+    arch or ROCm version (CVS_SUPPORT_MATRIX_GATE controls enforcement)."""
+    log.info('Starting Testcase: support matrix gate')
+    return _common.support_matrix_gate(orch, variant_config, lifecycle, request)
+
+
 def test_setup_tokenizer(orch, variant_config, lifecycle, request):
     """Download the HuggingFace tokenizer for the model into the models dir."""
     log.info('Starting Testcase: setup tokenizer')

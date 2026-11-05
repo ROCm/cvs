@@ -161,16 +161,17 @@ def pytest_collection_modifyitems(items):
     """Pin lifecycle order: launch → training combos → metric → results table → teardown."""
     rank = {
         "test_launch_container": 0,
-        "test_backend_nic_speed": 1,
-        "test_setup_rdma": 2,
-        "test_download_tokenizer": 3,
-        "test_smoke": 4,
-        "test_checkpoint": 5,
-        "test_training": 6,
-        "test_metric": 7,
-        "test_loss_curve": 8,
-        "test_print_results_table": 9,
-        "test_teardown": 10,
+        "test_support_matrix_gate": 1,
+        "test_backend_nic_speed": 2,
+        "test_setup_rdma": 3,
+        "test_download_tokenizer": 4,
+        "test_smoke": 5,
+        "test_checkpoint": 6,
+        "test_training": 7,
+        "test_metric": 8,
+        "test_loss_curve": 9,
+        "test_print_results_table": 10,
+        "test_teardown": 11,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
