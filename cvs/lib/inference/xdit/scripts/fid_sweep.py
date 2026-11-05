@@ -52,7 +52,11 @@ def rewrite_manifest_from_disk(path, steps, samples, budget_s):
     """Record videos that exist, so a failed export is not counted as a finished sample."""
     root = os.path.dirname(path)
     counts = {int(step): count_step_videos(os.path.join(root, f"nfe_{int(step)}")) for step in steps}
-    write_manifest(path, budget_s, samples, counts, [])
+    previous = {}
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as handle:
+            previous = json.load(handle)
+    write_manifest(path, budget_s, samples, counts, previous.get("produced") or [], previous.get("error") or "")
 
 
 def write_manifest(path, budget_s, samples, counts, produced, error=""):
