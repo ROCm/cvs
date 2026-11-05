@@ -186,10 +186,7 @@ def _exec_cmds_by_host(orch, commands_by_host):
         return {}
     hosts = list(getattr(orch, 'hosts', list(commands_by_host)))
     cmd_list = [commands_by_host.get(host, 'true') for host in hosts]
-    if getattr(orch, 'orchestrator_type', None) == 'container':
-        output = orch.exec_cmd_list(cmd_list, timeout=90, print_console=False)
-    else:
-        output = orch.all.exec_cmd_list(cmd_list, timeout=90, print_console=False)
+    output = orch.exec_cmd_list(cmd_list, timeout=90, print_console=False)
     return {host: _command_output(output.get(host, '')) for host in hosts if host in commands_by_host}
 
 
