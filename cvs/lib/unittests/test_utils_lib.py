@@ -121,6 +121,30 @@ class TestResolveTestConfigPlaceholdersPaths(unittest.TestCase):
         self.assertEqual(resolved["aorta_path"], "/opt/my-aorta")
 
 
+class TestConfigPlaceholderMap(unittest.TestCase):
+    def test_cluster_without_user_keys_falls_back_to_user_env_then_root(self):
+        with (
+            patch.dict(os.environ, {"USER": "envuser"}),
+            patch('cvs.lib.utils_lib.os.path.expanduser', side_effect=lambda p: f"/homes/{p[1:]}"),
+        ):
+            mapping = utils_lib.config_placeholder_map({"path": "/opt"}, {})
+        self.assertEqual(
+            mapping,
+            {
+                '{user-id}': 'envuser',
+                '{user}': 'envuser',
+                '{home}': '/homes/envuser',
+                '{home-mount-dir}': 'home',
+                '{node-dir-name}': 'root',
+                '{run_dir}': '',
+            },
+        )
+        with patch.dict(os.environ, {}):
+            os.environ.pop("USER", None)
+            mapping = utils_lib.config_placeholder_map({}, {})
+        self.assertEqual((mapping['{user-id}'], mapping['{user}']), ('root', 'root'))
+
+
 class TestResolveRunDirPlaceholder(unittest.TestCase):
     """{run_dir} comes from RunLayout, the single source of truth for the paths.
 

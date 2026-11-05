@@ -59,13 +59,15 @@ before any subclass coverage check runs on a config that will be rejected anyway
 
 ---
 
-#### `substitute_config(config_path, cluster_dict) -> (raw_dict, thresholds)`
+#### `substitute_config(config_path, cluster_dict, all_placeholders=False) -> (raw_dict, thresholds)`
 
 - **Accepts**: path to a variant `_config.json` + a resolved cluster dict
 - **`threshold_json` handling**: read as a literal absolute path from the raw (un-substituted) config
   before any substitution pass runs — **no placeholder substitution of any kind is applied to it**
 - **3-pass substitution**:
-  1. Cluster placeholders (`{user-id}`, etc.) resolved everywhere in the document
+  1. Cluster placeholders resolved everywhere in the document: `{user-id}` only by default;
+     with `all_placeholders=True` (what `load_config` passes), the
+     `utils_lib.config_placeholder_map` set that `resolve_test_config_placeholders` uses
   2. Self-reference within the `paths` block (`{shared_fs}` expanded inside other `paths.*` values)
   3. Cross-block references (`{paths.models_dir}`, etc.) resolved anywhere in the document
 - **Strips** `_`-prefixed comment keys from thresholds before returning
@@ -79,7 +81,8 @@ before any subclass coverage check runs on a config that will be rejected anyway
 
 - Returns `{"user-id": <username>}`
 - Falls back to `getpass.getuser()` when `cluster_dict` has no `username` key (or it is falsy)
-- This is how `{user-id}` resolves on clusters without an explicit `username` field
+- This is how `{user-id}` resolves on clusters without an explicit `username` field, unless
+  `all_placeholders=True`: then `config_placeholder_map` falls back to `$USER`, then `root`
 
 ---
 

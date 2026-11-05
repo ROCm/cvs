@@ -493,6 +493,23 @@ class TestSubstituteConfigPlaceholders(unittest.TestCase):
             raw, _ = substitute_config(config_path, {})
             self.assertEqual(raw["paths"]["log_dir"], "/logs/{unknown-token}/run")
 
+    def test_default_leaves_test_config_placeholders_verbatim(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_base = _base_config_dict()
+            cfg_base["paths"]["log_dir"] = "/{home-mount-dir}/{user}/{node-dir-name}/{user-id}"
+            config_path = self._write_files(Path(tmp), cfg_base)
+            raw, _ = substitute_config(config_path, {"username": "jdoe", "home_mount_dir_name": "mnt"})
+            self.assertEqual(raw["paths"]["log_dir"], "/{home-mount-dir}/{user}/{node-dir-name}/jdoe")
+
+    def test_all_placeholders_expands_the_test_config_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_base = _base_config_dict()
+            cfg_base["paths"]["log_dir"] = "/{home-mount-dir}/{user}/{node-dir-name}/{user-id}"
+            config_path = self._write_files(Path(tmp), cfg_base)
+            cluster = {"username": "jdoe", "home_mount_dir_name": "mnt", "node_dir_name": "node7"}
+            raw, _ = substitute_config(config_path, cluster, all_placeholders=True)
+            self.assertEqual(raw["paths"]["log_dir"], "/mnt/jdoe/node7/jdoe")
+
 
 if __name__ == "__main__":
     unittest.main()

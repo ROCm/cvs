@@ -142,7 +142,7 @@ Placeholder substitution
 
 Values are resolved in three passes, so later forms can reference earlier ones:
 
-1. **Cluster placeholders** — ``{user-id}`` resolves to the current username.
+1. **Cluster placeholders** — ``{user-id}`` resolves to the cluster file ``username``, then ``$USER``, then ``root``. ``{user}``, ``{home}``, ``{home-mount-dir}``, ``{node-dir-name}``, and ``{run_dir}`` are replaced in the same pass.
 2. **Self-reference within** ``paths`` — ``{shared_fs}`` expands to the already-resolved ``paths.shared_fs``.
 3. **Cross-block** — ``{paths.models_dir}`` expands anywhere else in the file, such as in a volume mount.
 
