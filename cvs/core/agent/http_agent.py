@@ -7,8 +7,10 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import asyncio
 import hmac
+import logging
 import os
 import signal
+import stat
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +20,48 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from . import messages
 
 FILE_MODE_PREVIEW_LINES = 20
+# This is the shell create_subprocess_shell used, preserving command behavior.
+_EXEC_SHELL = "/bin/sh"
+logger = logging.getLogger(__name__)
+
+
+class ExecSpecError(Exception):
+    '''spec_id did not resolve to an acceptable ExecSpec file'''
+
+
+def _load_exec_spec(spec_dir, spec_id):
+    '''Only the job owner may author commands, since the bearer token travels over plain HTTP.'''
+    root = os.path.realpath(spec_dir)
+    path = os.path.join(root, f"{spec_id}.json")
+    if not os.path.realpath(path).startswith(root + os.sep):
+        raise ExecSpecError(f"exec spec {path} is outside {root}")
+    try:
+        # A planted FIFO must not block the open while exec_busy stays set.
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as exc:
+        raise ExecSpecError(f"cannot open exec spec {path}: {exc}") from exc
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise ExecSpecError(f"exec spec {path} is not a regular file")
+        if info.st_uid != os.geteuid():
+            raise ExecSpecError(f"exec spec {path} is owned by uid {info.st_uid}, not {os.geteuid()}")
+        if info.st_mode & 0o077:
+            raise ExecSpecError(f"exec spec {path} mode {oct(info.st_mode & 0o777)} is open to group or other")
+    except (ExecSpecError, OSError):
+        os.close(fd)
+        raise
+    try:
+        with os.fdopen(fd, encoding="utf-8") as stream:
+            raw = stream.read()
+    except (OSError, UnicodeError) as exc:
+        raise ExecSpecError(f"cannot read exec spec {path}: {exc}") from exc
+    try:
+        return messages.parse_message(messages.ExecSpec, raw)
+    except messages.MessageParseError as exc:
+        issues = exc.__cause__.errors(include_input=False, include_context=False)
+        reasons = ", ".join(f"{'.'.join(map(str, issue['loc']))}: {issue['msg']}" for issue in issues)
+        raise ExecSpecError(f"invalid exec spec {path}: {reasons}") from exc
 
 
 def _read_secret(file_path: Path) -> str:
@@ -159,28 +203,31 @@ async def _communicate_with_timeouts(
 
 async def _spawn_process(
     request: messages.ExecRequest,
+    spec,
     registry: ProcessRegistry,
     stdout: int,
     stderr: int,
 ) -> asyncio.subprocess.Process:
     # start_new_session detaches the child into its own process group so a future kill can target
     # the whole group (via os.killpg) without also signaling this agent process itself.
-    process = await asyncio.create_subprocess_shell(
-        request.cmd,
+    process = await asyncio.create_subprocess_exec(
+        _EXEC_SHELL,
+        "-c",
+        spec.cmd,
         stdout=stdout,
         stderr=stderr,
-        cwd=request.cwd,
-        env=_merged_env(request.env),
+        cwd=spec.cwd,
+        env=_merged_env(spec.env),
         start_new_session=True,
     )
     await registry.register(request.cmd_id, process)
     return process
 
 
-async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> messages.ExecResponse:
+async def _run_cmd(request: messages.ExecRequest, spec, registry: ProcessRegistry) -> messages.ExecResponse:
     if request.output_mode == messages.ExecOutputMode.EXIT_CODE_ONLY:
         process = await _spawn_process(
-            request, registry, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+            request, spec, registry, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
         )
         try:
             timed_out = False
@@ -203,7 +250,7 @@ async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> 
 
     if request.output_mode == messages.ExecOutputMode.INLINE:
         process = await _spawn_process(
-            request, registry, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            request, spec, registry, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         try:
             stdout_bytes, stderr_bytes, timed_out = await _communicate_with_timeouts(
@@ -225,7 +272,7 @@ async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> 
 
     if request.output_mode == messages.ExecOutputMode.FILE:
         process = await _spawn_process(
-            request, registry, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            request, spec, registry, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         try:
             stdout_bytes, stderr_bytes, timed_out = await _communicate_with_timeouts(
@@ -291,6 +338,7 @@ def create_app(
     app.state.registry = AgentRegistry(world_size)
     app.state.process_registry = ProcessRegistry()
     app.state.exec_busy = False
+    app.state.exec_spec_dir = agent_dir / messages.EXEC_SPEC_DIRNAME
 
     @app.post(messages.REGISTER_PATH)
     async def register_agent(request: messages.RegisterRequest, http_request: Request) -> messages.RegisterResponse:
@@ -314,7 +362,12 @@ def create_app(
             raise HTTPException(status.HTTP_409_CONFLICT, detail="an exec is already in progress on this agent")
         http_request.app.state.exec_busy = True
         try:
-            return await _run_cmd(request, http_request.app.state.process_registry)
+            try:
+                spec = await asyncio.to_thread(_load_exec_spec, http_request.app.state.exec_spec_dir, request.spec_id)
+            except ExecSpecError as exc:
+                logger.warning("Rejected exec spec %s: %s", request.spec_id, exc)
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            return await _run_cmd(request, spec, http_request.app.state.process_registry)
         finally:
             http_request.app.state.exec_busy = False
 

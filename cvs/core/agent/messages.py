@@ -9,7 +9,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TypeVar
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 # Auth constants
 AUTH_HEADER = "Authorization"
@@ -24,6 +24,9 @@ REGISTER_PATH = "/v1/register"
 EXEC_PATH = "/v1/exec"
 SHUTDOWN_PATH = "/v1/shutdown"
 HEALTH_PATH = "/v1/health"
+# Specs live on the shared FS so the bearer token alone cannot choose what runs.
+EXEC_SPEC_DIRNAME = "exec"
+EXEC_SPEC_ID_PATTERN = r"^[0-9a-f]{32}$"
 
 # Limits constants
 MAX_INLINE_RESPONSE_BYTES = 4 * 1024 * 1024  # INLINE output beyond this is truncated
@@ -57,10 +60,19 @@ class ExecOutputMode(str, Enum):
     EXIT_CODE_ONLY = "exit_code_only"
 
 
-class ExecRequest(BaseModel):
+class ExecSpec(BaseModel):
+    '''What /v1/exec runs under /bin/sh -c. The client writes it to an owner-only file under
+    agent_dir/EXEC_SPEC_DIRNAME so the bearer token alone cannot choose what runs.'''
+
+    model_config = ConfigDict(extra="forbid")
     cmd: str
     env: dict[str, str]
     cwd: Path
+
+
+class ExecRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    spec_id: str = Field(pattern=EXEC_SPEC_ID_PATTERN)
     timeout: int | None  # some tests / benchmarks are long running require None timeout
     inactivity_timeout: int | None  # None disables the inactivity bound
     cmd_id: str

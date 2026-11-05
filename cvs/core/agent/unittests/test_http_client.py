@@ -12,6 +12,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 
@@ -25,10 +26,16 @@ from cvs.core.agent.http_client import (
     ParallelHTTPClientError,
     _SHUTDOWN_READ_TIMEOUT_SECONDS,
     _exec_http_read_timeout,
+    _write_exec_spec,
 )
 from cvs.core.run_layout import RunLayout
 
 AUTH_FIXTURE = "fixture-auth-123"
+
+
+def _spec_for(body):
+    path = RunLayout.get().agent_dir / messages.EXEC_SPEC_DIRNAME / f"{body['spec_id']}.json"
+    return messages.parse_message(messages.ExecSpec, path.read_text())
 
 
 def _exec_handler(request: httpx.Request) -> httpx.Response:
@@ -38,7 +45,7 @@ def _exec_handler(request: httpx.Request) -> httpx.Response:
         200,
         json={
             "exit_code": 0,
-            "stdout": [body["cmd"]],
+            "stdout": [_spec_for(body).cmd],
             "stderr": [],
             "stdout_path": None,
             "stderr_path": None,
@@ -123,6 +130,97 @@ class TestRunCommand(HttpClientTestBase):
         by_host = {o.host: o.stdout for o in outputs}
         self.assertEqual(by_host, {"h1": ["echo one"], "h2": ["echo two"]})
 
+    async def test_request_body_carries_no_cmd_env_or_cwd(self):
+        seen_bodies = []
+
+        def handler(request):
+            seen_bodies.append(json.loads(request.content))
+            return _exec_handler(request)
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        await client.run_command("echo hi", env={"FOO": "bar"})
+        self.assertIn("spec_id", seen_bodies[0])
+        self.assertTrue({"cmd", "env", "cwd"}.isdisjoint(seen_bodies[0]))
+
+    async def test_spec_file_is_owner_only_while_the_request_is_in_flight(self):
+        seen_modes = []
+
+        def handler(request):
+            body = json.loads(request.content)
+            spec_dir = RunLayout.get().agent_dir / messages.EXEC_SPEC_DIRNAME
+            spec_path = spec_dir / f"{body['spec_id']}.json"
+            seen_modes.append((spec_path.stat().st_mode & 0o777, spec_dir.stat().st_mode & 0o777))
+            return _exec_handler(request)
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        await client.run_command("true")
+        self.assertEqual(seen_modes, [(0o600, 0o700)])
+
+    async def test_spec_files_are_removed_after_run_command(self):
+        client = self._make_client({"h1": "http://h1"}, _exec_handler)
+        await client.run_command("true")
+        self.assertEqual(list((RunLayout.get().agent_dir / messages.EXEC_SPEC_DIRNAME).iterdir()), [])
+
+    async def test_spec_files_are_removed_when_stop_on_errors_raises(self):
+        def handler(request):
+            if "bad" in str(request.url):
+                return httpx.Response(500)
+            return _exec_handler(request)
+
+        client = self._make_client({"good": "http://good", "bad": "http://bad"}, handler)
+        with self.assertRaises(ParallelHTTPClientError):
+            await client.run_command("true", stop_on_errors=True)
+        self.assertEqual(list((RunLayout.get().agent_dir / messages.EXEC_SPEC_DIRNAME).iterdir()), [])
+
+    async def test_same_command_on_all_hosts_shares_one_spec(self):
+        seen_ids = []
+        seen_files = []
+
+        def handler(request):
+            seen_ids.append(json.loads(request.content)["spec_id"])
+            seen_files.append(list((RunLayout.get().agent_dir / messages.EXEC_SPEC_DIRNAME).iterdir()))
+            return _exec_handler(request)
+
+        client = self._make_client({f"h{i}": f"http://h{i}" for i in range(3)}, handler)
+        await client.run_command("true")
+        self.assertEqual(len(set(seen_ids)), 1)
+        self.assertTrue(all(len(files) == 1 for files in seen_files))
+
+    async def test_host_args_get_distinct_specs(self):
+        seen = {}
+
+        def handler(request):
+            body = json.loads(request.content)
+            seen[request.url.host] = (body["spec_id"], _spec_for(body).cmd)
+            return _exec_handler(request)
+
+        client = self._make_client({"h1": "http://h1", "h2": "http://h2"}, handler)
+        await client.run_command("echo %s", host_args=["one", "two"])
+        self.assertNotEqual(seen["h1"][0], seen["h2"][0])
+        self.assertEqual(seen["h1"][1], "echo one")
+        self.assertEqual(seen["h2"][1], "echo two")
+
+    async def test_spec_write_failure_raises_and_leaves_no_files(self):
+        sent = []
+        writes = []
+
+        def handler(request):
+            sent.append(request)
+            return _exec_handler(request)
+
+        def fail_second(path, spec):
+            writes.append(path)
+            if len(writes) == 2:
+                raise OSError("write failed")
+            return _write_exec_spec(path, spec)
+
+        client = self._make_client({"h1": "http://h1", "h2": "http://h2"}, handler)
+        with patch("cvs.core.agent.http_client._write_exec_spec", side_effect=fail_second):
+            with self.assertRaises(OSError):
+                await client.run_command("echo %s", host_args=["one", "two"])
+        self.assertEqual(sent, [])
+        self.assertEqual(list((RunLayout.get().agent_dir / messages.EXEC_SPEC_DIRNAME).iterdir()), [])
+
     async def test_host_args_length_mismatch_raises_value_error(self):
         client = self._make_client({"h1": "http://h1", "h2": "http://h2"}, _exec_handler)
         with self.assertRaises(ValueError):
@@ -150,6 +248,7 @@ class TestRunCommand(HttpClientTestBase):
         self.assertIsNone(by_host["good"].exception)
         self.assertEqual(by_host["good"].exit_code, 0)
         self.assertIsInstance(by_host["bad"].exception, HTTPProtocolError)
+        self.assertEqual(list((RunLayout.get().agent_dir / messages.EXEC_SPEC_DIRNAME).iterdir()), [])
 
     async def test_nonzero_remote_exit_code_is_not_a_stop_on_errors_failure(self):
         def handler(request: httpx.Request) -> httpx.Response:
@@ -234,37 +333,37 @@ class TestRunCommand(HttpClientTestBase):
         self.assertIsNone(seen_requests[0].inactivity_timeout)
 
     async def test_env_is_passed_through_to_the_exec_request(self):
-        seen_requests: list[messages.ExecRequest] = []
+        seen_specs = []
 
         def handler(request: httpx.Request) -> httpx.Response:
-            seen_requests.append(messages.parse_message(messages.ExecRequest, request.content.decode()))
+            seen_specs.append(_spec_for(json.loads(request.content)))
             return _exec_handler(request)
 
         client = self._make_client({"h1": "http://h1"}, handler)
         await client.run_command("true", env={"FOO": "bar"})
-        self.assertEqual(seen_requests[0].env, {"FOO": "bar"})
+        self.assertEqual(seen_specs[0].env, {"FOO": "bar"})
 
     async def test_env_defaults_to_empty_dict(self):
-        seen_requests: list[messages.ExecRequest] = []
+        seen_specs = []
 
         def handler(request: httpx.Request) -> httpx.Response:
-            seen_requests.append(messages.parse_message(messages.ExecRequest, request.content.decode()))
+            seen_specs.append(_spec_for(json.loads(request.content)))
             return _exec_handler(request)
 
         client = self._make_client({"h1": "http://h1"}, handler)
         await client.run_command("true")
-        self.assertEqual(seen_requests[0].env, {})
+        self.assertEqual(seen_specs[0].env, {})
 
     async def test_cwd_defaults_to_the_run_layout_run_dir_not_a_local_path(self):
-        seen_requests: list[messages.ExecRequest] = []
+        seen_specs = []
 
         def handler(request: httpx.Request) -> httpx.Response:
-            seen_requests.append(messages.parse_message(messages.ExecRequest, request.content.decode()))
+            seen_specs.append(_spec_for(json.loads(request.content)))
             return _exec_handler(request)
 
         client = self._make_client({"h1": "http://h1"}, handler)
         await client.run_command("true")
-        self.assertEqual(seen_requests[0].cwd, RunLayout.get().run_dir)
+        self.assertEqual(seen_specs[0].cwd, RunLayout.get().run_dir)
 
     async def test_client_is_reused_across_calls(self):
         client = self._make_client({"h1": "http://h1"}, _exec_handler)
@@ -503,11 +602,34 @@ class TestExceptionClassification(HttpClientTestBase):
 
     async def test_bad_http_status_is_classified_as_protocol_error(self):
         def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(401, text="unauthorized")
+            return httpx.Response(401, json={"detail": "invalid or missing bearer token"})
 
         client = self._make_client({"h1": "http://h1"}, handler)
         outputs = await client.run_command("true", stop_on_errors=False)
         self.assertIsInstance(outputs[0].exception, HTTPProtocolError)
+        self.assertIn("401 Unauthorized", str(outputs[0].exception))
+        self.assertIn("invalid or missing bearer token", str(outputs[0].exception))
+
+    async def test_non_json_http_error_body_is_visible_and_bounded(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(409, text="busy " + "x" * 400)
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        outputs = await client.run_command("true", stop_on_errors=False)
+        error = outputs[0].exception
+        self.assertIsInstance(error, HTTPProtocolError)
+        self.assertIn("409 Conflict", str(error))
+        self.assertTrue(str(error).endswith("busy " + "x" * 295))
+
+    async def test_validation_error_detail_is_visible(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(422, json={"detail": [{"loc": ["body", "spec_id"], "msg": "invalid id"}]})
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        outputs = await client.run_command("true", stop_on_errors=False)
+        self.assertIsInstance(outputs[0].exception, HTTPProtocolError)
+        self.assertIn("422 Unprocessable Entity", str(outputs[0].exception))
+        self.assertIn("invalid id", str(outputs[0].exception))
 
     async def test_unparseable_response_body_is_classified_as_protocol_error(self):
         def handler(request: httpx.Request) -> httpx.Response:
@@ -681,8 +803,7 @@ class TestConnectionPool(HttpClientTestBase):
 
 class TestCreateAppIntegration(HttpClientTestBase):
     async def test_run_command_posts_json_accepted_by_create_app(self):
-        agent_dir = Path(self.tmp.name) / "agent"
-        agent_dir.mkdir()
+        agent_dir = RunLayout.get().agent_dir
         (agent_dir / messages.AUTH_TOKEN_FILENAME).write_text(AUTH_FIXTURE + "\n")
         app = create_app(
             agent_dir=agent_dir,
@@ -697,6 +818,7 @@ class TestCreateAppIntegration(HttpClientTestBase):
             )
             try:
                 outputs = await client.run_command("echo hello")
+                piped = await client.run_command("echo a | tr a b")
             finally:
                 await client.destroy()
         self.assertEqual(len(outputs), 1)
@@ -704,6 +826,35 @@ class TestCreateAppIntegration(HttpClientTestBase):
         self.assertEqual(outputs[0].exit_code, 0)
         self.assertEqual(outputs[0].stdout, ["hello"])
         self.assertFalse(outputs[0].timed_out)
+        self.assertEqual(piped[0].stdout, ["b"])
+
+    async def test_group_readable_spec_reason_reaches_client(self):
+        agent_dir = RunLayout.get().agent_dir
+        (agent_dir / messages.AUTH_TOKEN_FILENAME).write_text(AUTH_FIXTURE + "\n")
+        app = create_app(
+            agent_dir=agent_dir,
+            world_rank=0,
+            world_size=1,
+            own_hostname="rank0-host",
+            own_port=9000,
+        )
+
+        def write_group_readable_spec(path, spec):
+            _write_exec_spec(path, spec)
+            path.chmod(0o640)
+
+        async with app.router.lifespan_context(app):
+            client = ParallelHTTPClient(
+                {"local": "http://testserver"}, AUTH_FIXTURE, transport=httpx.ASGITransport(app=app)
+            )
+            try:
+                with patch("cvs.core.agent.http_client._write_exec_spec", side_effect=write_group_readable_spec):
+                    outputs = await client.run_command("echo hello", stop_on_errors=False)
+            finally:
+                await client.destroy()
+        self.assertIsInstance(outputs[0].exception, HTTPProtocolError)
+        self.assertIn("400 Bad Request", str(outputs[0].exception))
+        self.assertIn("open to group or other", str(outputs[0].exception))
 
 
 class TestHostOutput(unittest.TestCase):
