@@ -41,17 +41,18 @@ help:
 	@echo "                    Override port: make html-doc DOC_PORT=9090"
 	@echo "  gen-anc-suites  - Regenerate per-group ANC suite files from anc_lib group lists"
 	@echo "  gen-arc-suites  - Regenerate ARC flow and item suites from arc_lib lists"
-	@echo "  hooks           - Enable the repo git hooks (commit-msg format, trailing-space warn)"
+	@echo "  hooks           - Enable the repo git hooks (commit-msg format, pre-commit ruff gate, pre-push unit tests)"
 	@echo "  all             - Run build, test-venv, installtest, and test"
 	@echo "  clean           - Remove virtual environment, build artifacts, and Python cache files"
 
 hooks:
 	@echo "Enabling repo git hooks from .githooks/ ..."
-	@chmod +x .githooks/commit-msg .githooks/pre-commit 2>/dev/null || true
+	@chmod +x .githooks/commit-msg .githooks/pre-commit .githooks/pre-push 2>/dev/null || true
 	@git config core.hooksPath .githooks
 	@echo "Enabled (core.hooksPath=.githooks):"
 	@echo "  commit-msg  - title / blank 2nd line / body / Signed-off-by (80-col warn)"
-	@echo "  pre-commit  - warn on trailing whitespace in staged changes"
+	@echo "  pre-commit  - ruff format-check + lint + security scan (blocking) + trailing-space warn"
+	@echo "  pre-push    - security scan + unit tests (blocking)"
 
 gen-anc-suites:
 	@echo "Generating per-group ANC suite files from anc_lib group lists..."

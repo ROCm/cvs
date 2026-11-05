@@ -3,11 +3,130 @@
 # Copyright 2025 Advanced Micro Devices, Inc.
 # All rights reserved.
 #
-# Warn (never block) on trailing whitespace / space-before-tab in the staged
-# changes. `git diff --cached --check` reports the offending file:line for every
-# added/changed line. This is advisory: the commit still proceeds so you can fix
-# it in a follow-up. Bypass entirely with `git commit --no-verify`.
+# CVS pre-commit gate. Two parts:
+#
+#   1. BLOCKING quality gates (exit 1 on failure):
+#        - ruff format --check .   (same as `make fmt-check`)
+#        - ruff check .            (ruff portion of `make lint`)
+#        - pylint logging checks   (E1205/E1206 portion of `make lint`)
+#        - security scan           (internal-infra / secret leaks in staged lines)
+#      These mirror the checks CI enforces, so a commit that would fail CI is
+#      stopped locally first.
+#
+#   2. Advisory whitespace warning (never blocks): `git diff --cached --check`
+#      reports trailing spaces / space-before-tab on added/changed lines.
+#
+# The ruff/pylint gates run against a snapshot of the staged index (materialized
+# with `git checkout-index`), not the working tree, so they check exactly the
+# content that will be committed -- a partially staged file cannot commit a
+# version that was never checked, and unrelated unstaged edits cannot fail a
+# clean staged commit. The security scan already reads the staged index.
+#
+# Bypass everything with `git commit --no-verify`.
 
+# Resolve ruff/pylint: prefer the repo's pinned ruff venv (`make ruff-venv`),
+# then any copy on PATH. If ruff is missing entirely we cannot run the gate --
+# tell the user how to get it and block, since these checks are mandatory.
+if [ -x ".ruff_venv/bin/ruff" ]; then
+    RUFF=".ruff_venv/bin/ruff"
+elif command -v ruff >/dev/null 2>&1; then
+    RUFF="ruff"
+else
+    echo "" >&2
+    echo "pre-commit: ERROR: ruff not found." >&2
+    echo "pre-commit: run 'make ruff-venv' to create it, then retry." >&2
+    echo "pre-commit: or bypass with 'git commit --no-verify'." >&2
+    echo "" >&2
+    exit 1
+fi
+
+if [ -x ".ruff_venv/bin/pylint" ]; then
+    PYLINT=".ruff_venv/bin/pylint"
+elif command -v pylint >/dev/null 2>&1; then
+    PYLINT="pylint"
+else
+    echo "" >&2
+    echo "pre-commit: ERROR: pylint not found." >&2
+    echo "pre-commit: run 'make ruff-venv' to create it, then retry." >&2
+    echo "pre-commit: or bypass with 'git commit --no-verify'." >&2
+    echo "" >&2
+    exit 1
+fi
+
+# Any python runs the stdlib-only security scanner.
+if [ -x ".test_venv/bin/python" ]; then
+    PY=".test_venv/bin/python"
+elif [ -x ".cvs_venv/bin/python" ]; then
+    PY=".cvs_venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PY="python3"
+else
+    PY="python"
+fi
+
+# Materialize the staged index into a temp dir so the quality gates check the
+# exact content being committed, not the working tree. We do NOT stash to
+# isolate the index -- a failed `stash pop` can leave conflict markers in the
+# developer's files. Resolve tools to absolute paths first, since the checks run
+# from inside the snapshot dir (so ruff/pylint discover the snapshot's config).
+RUFF_ABS="$RUFF"
+PYLINT_ABS="$PYLINT"
+case "$RUFF_ABS" in .*) RUFF_ABS="$PWD/${RUFF_ABS#./}" ;; esac
+case "$PYLINT_ABS" in .*) PYLINT_ABS="$PWD/${PYLINT_ABS#./}" ;; esac
+
+snapshot=""
+cleanup_snapshot() {
+    [ -n "$snapshot" ] && rm -rf "$snapshot"
+}
+trap cleanup_snapshot EXIT HUP INT TERM
+
+snapshot="$(mktemp -d 2>/dev/null)"
+if [ -z "$snapshot" ] || ! git checkout-index -a -f --prefix="$snapshot/" 2>/dev/null; then
+    echo "" >&2
+    echo "pre-commit: ERROR: could not snapshot the staged index." >&2
+    echo "pre-commit: or bypass with 'git commit --no-verify'." >&2
+    echo "" >&2
+    exit 1
+fi
+
+rc=0
+
+echo "pre-commit: checking formatting (ruff format --check) ..."
+if ! ( cd "$snapshot" && "$RUFF_ABS" format --check . ) ; then
+    echo "" >&2
+    echo "pre-commit: ERROR: formatting check failed. Run 'make fmt' to fix." >&2
+    echo "" >&2
+    rc=1
+fi
+
+echo "pre-commit: linting (ruff check) ..."
+if ! ( cd "$snapshot" && "$RUFF_ABS" check . ) ; then
+    echo "" >&2
+    echo "pre-commit: ERROR: lint check failed. Run 'make lint-fix' to auto-fix." >&2
+    echo "" >&2
+    rc=1
+fi
+
+# Logging arg-count checks (E1205/E1206) -- the pylint portion of `make lint`.
+echo "pre-commit: checking logging calls (pylint E1205/E1206) ..."
+if ! ( cd "$snapshot" && "$PYLINT_ABS" cvs --disable=all \
+    --enable=logging-too-many-args,logging-too-few-args \
+    -j 0 --recursive=y ) ; then
+    echo "" >&2
+    echo "pre-commit: ERROR: logging check failed (fix logging call arg counts)." >&2
+    echo "" >&2
+    rc=1
+fi
+
+# Security scan of staged changes: internal AMD endpoints, real cluster
+# hostnames, exposed https ports, and committed secrets/tokens. Blocking.
+echo "pre-commit: scanning staged changes for infra/secret leaks ..."
+if ! "$PY" build_tools/security_scan.py --staged ; then
+    rc=1
+fi
+
+# Advisory: warn (never block) on trailing whitespace / space-before-tab in the
+# staged changes. `git diff --cached --check` reports the offending file:line.
 issues="$(git diff --cached --check 2>/dev/null)"
 if [ -n "$issues" ]; then
     echo "" >&2
@@ -18,4 +137,8 @@ if [ -n "$issues" ]; then
     echo "" >&2
 fi
 
-exit 0
+if [ "$rc" -ne 0 ]; then
+    echo "pre-commit: quality gate failed above, or bypass with git commit --no-verify" >&2
+fi
+
+exit "$rc"

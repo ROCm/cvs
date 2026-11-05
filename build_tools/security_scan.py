@@ -1,0 +1,377 @@
+#!/usr/bin/env python3
+#
+# Copyright 2025 Advanced Micro Devices, Inc.
+# All rights reserved.
+#
+# Security scanner for the CVS git hooks. Flags internal-infrastructure leaks in
+# added/changed lines: internal *.amd.com endpoints, real cluster hostnames
+# (helios racks), non-standard https ports on routable hosts, and committed
+# secrets/tokens. Public AMD docs domains and the short helios *family* names
+# stay allowed via explicit allowlists, so legitimate references do not trip.
+#
+# Pure stdlib, no type annotations (CVS convention). The scan_* functions take
+# plain strings so they are unit-testable without git. The CLI reads a unified
+# diff (from `--staged`, `--range A..B`, or stdin) and scans only added lines.
+#
+# Suppress a single line that is a false positive by adding the pragma token
+# `cvs-security-allow` somewhere on that line.
+
+import re
+import subprocess
+import sys
+
+PRAGMA = "cvs-security-allow"
+
+# ANSI/VT100 escape sequences (color.ui=always prepends these to diff lines).
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+# Public, intentionally-published AMD hosts. Any other *.amd.com host in new
+# content is treated as an internal endpoint and blocked. Exact-host match: a
+# new public domain must be added here deliberately.
+PUBLIC_AMD_HOSTS = frozenset(
+    {
+        "amd.com",
+        "www.amd.com",
+        "developer.amd.com",
+        "rocm.docs.amd.com",
+        "rocmdocs.amd.com",
+        "rocm-handbook.amd.com",
+        "instinct.docs.amd.com",
+        "rocm.blogs.amd.com",
+        "rocm.prereleases.amd.com",
+        "rocm.nightlies.amd.com",
+        "repo.amd.com",
+        "stable.repo.amd.com",
+        "nightly.repo.amd.com",
+    }
+)
+
+# A host token that ends in amd.com (optionally with sub-labels), scheme-independent
+# so bare `host.amd.com:8443` references are caught too.
+AMD_HOST_RE = re.compile(r"(?<![A-Za-z0-9._-])((?:[A-Za-z0-9-]+\.)*amd\.com)(?![A-Za-z0-9-])", re.IGNORECASE)
+
+# Optional URL userinfo ("user@" / "user:pass@") between the scheme and host.
+_USERINFO = r"(?:[A-Za-z0-9._~%!$&'()*+,;=:-]+@)?"
+
+# https://[user@]host:port  -- capture host and explicit port (hostname/IPv4).
+HTTPS_PORT_RE = re.compile(r"https://" + _USERINFO + r"([A-Za-z0-9._-]+):(\d+)", re.IGNORECASE)
+
+# https://[user@][ipv6]:port  -- a bracketed IPv6 literal with an explicit port.
+HTTPS_IPV6_PORT_RE = re.compile(r"https://" + _USERINFO + r"\[([0-9A-Fa-f:]+)\]:(\d+)")
+
+# Real helios cluster hostnames. The short family names (heliosr, heliosp,
+# heliosm, heliosr-rck, heliosm-rck) and underscore ARC names (heliosr_mfg_l11)
+# are allowed; a name is a real host only once it carries datacenter
+# coordinates: a building code like 1b114/2b805 right after the family, or
+# `-rck-` followed by further rack coordinates. Hyphen-joined only, so the
+# underscore ARC names never match.
+REAL_HELIOS_HOST_RE = re.compile(
+    r"(?<![A-Za-z0-9_-])"
+    r"(?:ct)?helios[rmp]"
+    r"(?:"
+    r"-\d+b\d+(?:-[0-9a-z]+)+"  # family-1b114-g07-1
+    r"|"
+    r"-rck(?:-[0-9a-z]+)+"  # family-rck-g02-j17-7
+    r")"
+    r"(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+
+# Loopback / private / link-local / placeholder hosts never count as a leaked
+# listening endpoint.
+_PRIVATE_HOST_RE = re.compile(
+    r"^(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|::1|"
+    r"10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|"
+    r"172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|"
+    r"169\.254\.\d+\.\d+)$",
+    re.IGNORECASE,
+)
+
+# Loopback / unspecified / link-local / unique-local IPv6 addresses that never
+# count as a leaked listening endpoint: ::1, ::, fe80::/10, fc00::/7.
+_PRIVATE_IPV6_RE = re.compile(
+    r"^(?:::1|::|[fF][eE][89aAbB][0-9A-Fa-f]*:.*|[fF][cCdD][0-9A-Fa-f]*:.*)$",
+)
+
+# Values that are obviously not real secrets.
+_PLACEHOLDER_HINTS = (
+    "changeme",
+    "example",
+    "placeholder",
+    "redacted",
+    "your_",
+    "your-",
+    "dummy",
+    "sample",
+    "os.environ",
+    "getenv",
+    "xxxx",
+    "****",
+)
+
+# A value that IS a placeholder/template token, rather than one that merely
+# contains an angle bracket (angle brackets are valid password characters, so a
+# bare "<" must not excuse a real secret). Matches <token> and ${token} spans.
+_PLACEHOLDER_TOKEN_RE = re.compile(r"<[^>]*>|\$\{[^}]*\}")
+
+# Assembled at runtime so the verbatim PEM header never appears in this file;
+# GitHub push-protection flags the contiguous literal even inside a scanner's
+# own detection pattern.
+_PEM_KEY_TAIL = "PRIVATE" + " KEY-----"
+
+# High-confidence credential token shapes (the matched value identifies the
+# vendor). Named for the patterns it holds, not "secret", so static analysis
+# does not misread this constant as a logged secret when a finding's rule slug
+# reaches the report writer.
+_VENDOR_TOKEN_PATTERNS = (
+    ("private-key", re.compile(r"-----BEGIN (?:[A-Z0-9 ]+ )?" + _PEM_KEY_TAIL)),
+    ("aws-access-key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    ("github-token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
+    ("github-pat", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{50,}\b")),
+    ("slack-token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
+    ("huggingface-token", re.compile(r"\bhf_[A-Za-z0-9]{20,}\b")),
+    ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
+    ("private-key-file", re.compile(r"-----BEGIN OPENSSH " + _PEM_KEY_TAIL)),
+)
+
+# Generic secret assignment in either bare (`secret = "value"`) or quoted-key
+# (`"secret": "value"`, as in JSON / Python dicts) form. The optional closing
+# quote after the keyword lets a quoted key reach the separator. The value is
+# vetted separately so placeholders and env lookups do not trip it.
+_GENERIC_SECRET_RE = re.compile(
+    r"(?i)\b(pass(?:word|wd)?|secret|token|api[_-]?key|access[_-]?key|"
+    r"private[_-]?key|client[_-]?secret|auth[_-]?token)\b"
+    r"['\"]?"
+    r"\s*[:=]\s*"
+    r"""(['"])([^'"]{8,})(\2)"""
+)
+# 1 = keyword, 2 = opening value quote, 3 = value, 4 = closing value quote.
+_SECRET_VALUE_GROUP = 3
+
+
+def _looks_like_placeholder(value):
+    low = value.lower()
+    if any(hint in low for hint in _PLACEHOLDER_HINTS):
+        return True
+    if _PLACEHOLDER_TOKEN_RE.search(value):
+        return True
+    # all one repeated character, e.g. "********"
+    if len(set(value)) <= 1:
+        return True
+    return False
+
+
+def _looks_like_secret_value(value):
+    if _looks_like_placeholder(value):
+        return False
+    has_digit = any(ch.isdigit() for ch in value)
+    has_alpha = any(ch.isalpha() for ch in value)
+    # Long opaque string, or a mixed alnum string of reasonable length.
+    if len(value) >= 20 and has_alpha:
+        return True
+    if len(value) >= 10 and has_digit and has_alpha:
+        return True
+    return False
+
+
+def scan_line(text):
+    """Return a list of (rule, message) findings for one line of content.
+
+    Pure function over a string -- no git, no filesystem. A line carrying the
+    `cvs-security-allow` pragma yields no findings.
+    """
+    if PRAGMA in text:
+        return []
+
+    findings = []
+
+    for host in AMD_HOST_RE.findall(text):
+        if host.lower() not in PUBLIC_AMD_HOSTS:
+            findings.append(
+                (
+                    "internal-amd-host",
+                    "internal AMD host (only public AMD docs domains are allowed)",
+                )
+            )
+
+    for host, port in HTTPS_PORT_RE.findall(text):
+        if port == "443":
+            continue
+        if _PRIVATE_HOST_RE.match(host) or "<" in host or ">" in host:
+            continue
+        findings.append(
+            (
+                "exposed-https-port",
+                "https endpoint exposes a non-standard listening port",
+            )
+        )
+
+    for host, port in HTTPS_IPV6_PORT_RE.findall(text):
+        if port == "443":
+            continue
+        if _PRIVATE_IPV6_RE.match(host):
+            continue
+        findings.append(
+            (
+                "exposed-https-port",
+                "https endpoint exposes a non-standard listening port",
+            )
+        )
+
+    for _match in REAL_HELIOS_HOST_RE.finditer(text):
+        findings.append(
+            (
+                "real-cluster-hostname",
+                "real cluster hostname (use a generic name like nodeA / heliosr)",
+            )
+        )
+
+    for rule, pattern in _VENDOR_TOKEN_PATTERNS:
+        if pattern.search(text):
+            findings.append((rule, "possible {} committed".format(rule.replace("-", " "))))
+
+    # Every credential assignment on the line, not just the first: a leading
+    # placeholder (e.g. "password": "<changeme>") must not shadow a real secret
+    # later on the same line.
+    for gm in _GENERIC_SECRET_RE.finditer(text):
+        if _looks_like_secret_value(gm.group(_SECRET_VALUE_GROUP)):
+            findings.append(
+                (
+                    "hardcoded-secret",
+                    "hardcoded secret in a credential assignment",
+                )
+            )
+            break
+
+    return findings
+
+
+# The scanner and its tests legitimately contain these patterns. Exempt by
+# exact repo-relative path, not basename, so an unrelated file that happens to
+# share the name (e.g. another `security_scan.py`) is still scanned.
+_EXEMPT_PATHS = frozenset(
+    {
+        "build_tools/security_scan.py",
+        "build_tools/unittests/test_security_scan.py",
+    }
+)
+
+
+def _is_exempt_path(path):
+    if path is None:
+        return False
+    normalized = path[2:] if path.startswith("./") else path
+    return normalized in _EXEMPT_PATHS
+
+
+_HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def iter_added_lines(diff_text):
+    """Yield (path, new_lineno, content) for every added line in a unified diff.
+
+    The hunk header's new-side line count bounds the hunk body, so a line is
+    classified as content purely by position: while body lines remain, a +/-/
+    space line is content, never re-read as a file header. This prevents added
+    content such as "+++ x" or "++ x" (raw "+++ x"/"++ x") from being mistaken
+    for a diff header (which could also switch the path to an exempt file).
+    """
+    current = None
+    new_lineno = 0
+    body_remaining = 0
+    for raw in diff_text.splitlines():
+        # A diff produced with color.ui=always carries ANSI escapes before the
+        # +/- marker, which would hide added lines from the checks below. Strip
+        # them so a colored diff (e.g. piped in via --stdin) is scanned too.
+        raw = _ANSI_RE.sub("", raw)
+
+        if body_remaining <= 0:
+            # Between hunks: interpret structural headers.
+            if raw.startswith("+++ "):
+                path = raw[4:].strip()
+                if path.startswith("b/"):
+                    path = path[2:]
+                current = None if path == "/dev/null" else path
+                continue
+            if raw.startswith("--- ") or raw.startswith("diff ") or raw.startswith("index "):
+                continue
+            m = _HUNK_HEADER_RE.match(raw)
+            if m:
+                new_lineno = int(m.group(1))
+                body_remaining = int(m.group(2)) if m.group(2) is not None else 1
+                continue
+            # Any other line outside a hunk body is not scannable content.
+            continue
+
+        # Inside a hunk body: classify strictly by the leading marker.
+        if raw.startswith("\\"):
+            # "\ No newline at end of file" -- diff metadata, not a line on
+            # either side. It must not consume the new-side budget.
+            continue
+        if raw.startswith("+"):
+            yield current, new_lineno, raw[1:]
+            new_lineno += 1
+            body_remaining -= 1
+        elif raw.startswith("-"):
+            # Removed line: consumes no new-side line number.
+            continue
+        elif raw.startswith(" "):
+            # Context line: present on both sides.
+            new_lineno += 1
+            body_remaining -= 1
+        else:
+            # Anything else inside a counted body (should not occur in a
+            # well-formed unified diff); skip without consuming the budget.
+            continue
+
+
+def scan_diff(diff_text):
+    """Scan a unified diff; return a list of (path, lineno, rule, message)."""
+    results = []
+    for path, lineno, content in iter_added_lines(diff_text):
+        if _is_exempt_path(path):
+            continue
+        for rule, message in scan_line(content):
+            results.append((path, lineno, rule, message))
+    return results
+
+
+def _git_diff(args):
+    return subprocess.run(
+        ["git", "diff", "--no-color", "--unified=0"] + args,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def _read_diff(argv):
+    if "--stdin" in argv:
+        return sys.stdin.read()
+    if "--staged" in argv or "--cached" in argv:
+        return _git_diff(["--cached"])
+    for i, a in enumerate(argv):
+        if a == "--range" and i + 1 < len(argv):
+            return _git_diff([argv[i + 1]])
+    return _git_diff(["--cached"])
+
+
+def main(argv):
+    diff_text = _read_diff(argv)
+    findings = scan_diff(diff_text)
+    if not findings:
+        return 0
+
+    sys.stderr.write("\nsecurity-scan: blocked -- internal-infrastructure / secret leaks in new lines:\n\n")
+    for path, lineno, rule, message in findings:
+        where = "{}:{}".format(path or "<unknown>", lineno)
+        sys.stderr.write("  {}  [{}] {}\n".format(where, rule, message))
+    sys.stderr.write(
+        "\nsecurity-scan: scrub the values above (or append the '" + PRAGMA + "' pragma to a line\n"
+        "that is a verified false positive), then retry. Bypass the hook with --no-verify.\n\n"
+    )
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
