@@ -841,24 +841,6 @@ class TestFluxBenchmarkJob(unittest.TestCase):
         job, _ = _make_flux_job()
         self.assertIsNone(job.validate_parallelism())
 
-    def test_orchestrator_cmd_writes_fid_sweep_before_torchrun(self):
-        job, _ = _make_flux_job()
-        job.uses_container_orchestrator = True
-        with patch.object(
-            job,
-            "_build_torchrun_cmd",
-            return_value="torchrun /benchmark/flux2_example.py --fid_steps 10,50",
-        ):
-            cmd = job._build_docker_cmd(
-                node_rank=0,
-                host_output_dir="/outputs/flux_node_outputs",
-                master_addr="127.0.0.1",
-                master_port=29500,
-            )
-        self.assertNotIn("docker run", cmd)
-        self.assertIn("/benchmark/fid_sweep.py", cmd)
-        self.assertIn("--fid_steps 10,50", cmd)
-
     def test_orchestrator_job_uses_per_run_output_directory(self):
         job, _ = _make_flux_job()
         job.uses_container_orchestrator = True

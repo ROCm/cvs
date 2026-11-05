@@ -82,8 +82,9 @@ XDIT_TEST_ORDER = {
     "test_run_benchmark": 4,
     "test_parse_thresholds": 5,
     "test_clip_score": 6,
-    "test_print_results": 7,
-    "test_teardown": 8,
+    "test_fid_curve": 7,
+    "test_print_results": 8,
+    "test_teardown": 9,
 }
 
 

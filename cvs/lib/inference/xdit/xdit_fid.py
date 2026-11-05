@@ -70,22 +70,6 @@ def attach_fid_sweep_mount(inference_dict):
     return host_path
 
 
-def fid_sweep_bootstrap_shell():
-    """Write fid_sweep.py into an already running container before torchrun.
-
-    A per-run container is created from the config volume list. That list mounts
-    the launcher only, so a later volume_dict entry never appears in the container.
-    """
-    script = Path(fid_sweep_host_path()).read_text(encoding="utf-8")
-    encoded = base64.b64encode(script.encode("utf-8")).decode("ascii")
-    py = (
-        "import base64, pathlib\n"
-        "path = pathlib.Path('/benchmark/fid_sweep.py')\n"
-        f"path.write_bytes(base64.b64decode({encoded!r}))\n"
-    )
-    return "python3 -c " + shlex.quote(py)
-
-
 def parse_fid_nfe_steps(params):
     """Return configured step counts, or an empty list when the curve is off."""
     raw = (params or {}).get("fid_nfe_steps")

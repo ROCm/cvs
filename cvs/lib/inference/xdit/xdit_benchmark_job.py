@@ -319,12 +319,7 @@ class PytorchXditBenchmarkJob(ABC):
             exports = " ".join(
                 f"export {key}={shlex.quote(str(value))};" for key, value in self._build_env_dict().items()
             )
-            prelude = ""
-            if "--fid_steps " in torchrun_cmd:
-                from cvs.lib.inference.xdit.xdit_fid import fid_sweep_bootstrap_shell
-
-                prelude = fid_sweep_bootstrap_shell() + "; "
-            return f"bash -c {shlex.quote(f'{exports} {prelude}{inner_cmd}')}"
+            return f"bash -c {shlex.quote(f'{exports} {inner_cmd}')}"
 
         container_name = self.inference_dict["container_name"]
         if self.distributed:
