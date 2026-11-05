@@ -51,6 +51,7 @@ from cvs.lib.training.torchtitan.utils.results_table import (
     render_metric_results_html,
 )
 from cvs.lib.training.torchtitan.utils.scaling import compute_scaling_efficiency
+from cvs.lib.support_matrix.support_matrix_lib import run_support_matrix_gate
 from cvs.lib.utils.verdict import _check_one, ThresholdViolation
 from cvs.lib.utils_lib import fail_test, update_test_result
 
@@ -90,6 +91,37 @@ def test_launch_container(orch, variant_config, lifecycle, request):
     if not orch.verify_containers_running(name):
         lifecycle.failed = True
         pytest.fail(f"container {name} not running after setup_containers()")
+
+
+def _enabled_precisions(variant_config):
+    """Precision values this config will run: every sweep combo plus the smoke cell."""
+    precisions = {
+        str(c.precision).lower() for c in variant_config.sweep.combinations.values() if getattr(c, "precision", "")
+    }
+    if getattr(variant_config.smoke, "precision", ""):
+        precisions.add(str(variant_config.smoke.precision).lower())
+    return sorted(precisions)
+
+
+def test_support_matrix_gate(orch, variant_config, lifecycle, request):
+    """Stop the run when torchtitan/<model> is unsupported on the detected GPU arch
+    or ROCm version. Runs right after container launch so ROCm is read inside the
+    container. Enforcement is controlled by CVS_SUPPORT_MATRIX_GATE (see
+    cvs/lib/support_matrix/README.md)."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    t = time.monotonic()
+    result = run_support_matrix_gate(
+        "training",
+        "torchtitan",
+        variant_config.model_params.get("model_name", ""),
+        {"precision": _enabled_precisions(variant_config)},
+        orch,
+    )
+    lifecycle.record(request.node.nodeid, "support_matrix_gate", time.monotonic() - t)
+    if not result.passed:
+        lifecycle.failed = True
+        pytest.fail("support matrix gate blocked this run: " + "; ".join(result.violations))
 
 
 def test_backend_nic_speed(orch, lifecycle, request):
