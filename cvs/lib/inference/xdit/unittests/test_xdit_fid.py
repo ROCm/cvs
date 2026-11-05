@@ -3,7 +3,6 @@ import unittest
 from pathlib import Path
 
 from cvs.lib.inference.xdit.xdit_fid import (
-    build_fid_series,
     fid_budget_seconds,
     fid_cli_flags,
     fid_viewer_curves,
@@ -11,7 +10,6 @@ from cvs.lib.inference.xdit.xdit_fid import (
     parse_fid_nfe_steps,
 )
 from cvs.lib.inference.xdit.xdit_flux_job import build_run_usp_args
-from cvs.lib.report.rundeck.runtime.cards import DeckCardRenderer
 from cvs.tests.inference.xdit._shared import _manifest_blocks_fid
 
 _SWEEP_PATH = Path(__file__).resolve().parents[1] / "scripts" / "fid_sweep.py"
@@ -29,42 +27,6 @@ class TestFidCurve(unittest.TestCase):
     def test_one_step_is_rejected(self):
         with self.assertRaises(ValueError):
             parse_fid_nfe_steps({"fid_nfe_steps": [20]})
-
-    def test_models_and_samplers_are_separate_lines(self):
-        results = {
-            ("FLUX.1-dev", "mi300x", "1024x1024", 50, "cell", "1"): {
-                "node-a": {
-                    "_fid_curve": {
-                        "points": [
-                            {"nfe": 30, "fid": 40.0, "sampler": "euler"},
-                            {"nfe": 10, "fid": 80.0, "sampler": "euler"},
-                            {"nfe": 10, "fid": 70.0, "sampler": "dpm"},
-                            {"nfe": 30, "fid": 35.0, "sampler": "dpm"},
-                        ]
-                    }
-                }
-            },
-            ("Wan2.1-T2V-14B", "mi300x", "480x832", 30, "cell", "1"): {
-                "node-a": {
-                    "_fid_curve": {
-                        "sampler": "unipc",
-                        "points": [{"nfe": 10, "fid": 90.0}, {"nfe": 40, "fid": 30.0}],
-                    }
-                }
-            },
-        }
-        series = build_fid_series(results)
-        labels = [item["label"] for item in series]
-        self.assertEqual(
-            labels,
-            ["FLUX.1-dev · dpm", "FLUX.1-dev · euler", "Wan2.1-T2V-14B · unipc"],
-        )
-        euler = next(item for item in series if item["label"].endswith("euler"))
-        self.assertEqual(euler["fid_curve"], [[10.0, 80.0], [30.0, 40.0]])
-
-    def test_a_single_point_is_not_a_line(self):
-        results = {("FLUX.1-dev",): {"node-a": {"_fid_curve": {"points": [{"nfe": 10, "fid": 1.0}]}}}}
-        self.assertEqual(build_fid_series(results), [])
 
     def test_viewer_curves_keep_each_sampler(self):
         raw = {
@@ -133,24 +95,9 @@ class TestFidCurve(unittest.TestCase):
         self.assertTrue(_manifest_blocks_fid({"stopped_early": True, "counts": {"10": 1, "20": 0}}))
         self.assertFalse(_manifest_blocks_fid({"stopped_early": True, "counts": {"10": 2, "20": 2}}))
 
-    def test_chart_draws_each_series(self):
-        series = build_fid_series(
-            {
-                ("FLUX.1-dev", "gpu", "shape", 1, "cell", "1"): {
-                    "h": {"_fid_curve": {"points": [{"nfe": 4, "fid": 12}, {"nfe": 20, "fid": 6}]}}
-                },
-                ("Wan2.1-T2V", "gpu", "shape", 1, "cell", "1"): {
-                    "h": {"_fid_curve": {"sampler": "unipc", "points": [[8, 15], [24, 7]]}}
-                },
-            }
-        )
-        markup = DeckCardRenderer().render_fid_chart({}, {"title": "FID vs sampling steps"}, series)
-        self.assertEqual(markup.count("<polyline"), 2)
-        self.assertIn("FLUX.1-dev", markup)
-        self.assertIn("Wan2.1-T2V · unipc", markup)
-        self.assertIn(">NFE<", markup)
-        self.assertIn("<circle ", markup)
-        self.assertEqual(DeckCardRenderer().render_fid_chart({}, {}, []), "")
+    def test_a_single_point_is_not_a_line(self):
+        raw = {"points": [{"nfe": 10, "fid": 1.0}]}
+        self.assertEqual(fid_viewer_curves(raw), {})
 
 
 if __name__ == "__main__":

@@ -124,27 +124,6 @@ def iter_fid_points(raw):
             yield point
 
 
-def build_fid_series(inf_res_dict):
-    """One chart series per model and sampler. Later hosts overwrite the same NFE."""
-    grouped = {}
-    for key, host_dict in inf_res_dict.items() if isinstance(inf_res_dict, dict) else []:
-        if not isinstance(key, tuple) or not key or not isinstance(host_dict, dict):
-            continue
-        model = str(key[0])
-        for metrics in host_dict.values():
-            if not isinstance(metrics, dict):
-                continue
-            for sampler, nfe, fid in iter_fid_points(metrics.get("_fid_curve")):
-                label = f"{model} · {sampler}" if sampler else model
-                grouped.setdefault(label, {})[nfe] = fid
-    series = []
-    for label in sorted(grouped):
-        points = [[nfe, grouped[label][nfe]] for nfe in sorted(grouped[label])]
-        if len(points) >= 2:
-            series.append({"label": label, "fid_curve": points})
-    return series
-
-
 def fid_viewer_curves(raw):
     """``extra_curves`` entries the interactive viewer plots, keyed by sampler."""
     grouped = {}
