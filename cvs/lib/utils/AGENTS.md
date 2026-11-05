@@ -59,9 +59,10 @@ before any subclass coverage check runs on a config that will be rejected anyway
 
 ---
 
-#### `substitute_config(config_path, cluster_dict, all_placeholders=False) -> (raw_dict, thresholds)`
+#### `substitute_config(config_path, cluster_dict, all_placeholders=False, load_thresholds=True) -> (raw_dict, thresholds)`
 
 - **Accepts**: path to a variant `_config.json` + a resolved cluster dict
+- **`load_thresholds=False`**: skips the threshold-file lookup and returns `{}` as `thresholds`
 - **`threshold_json` handling**: read as a literal absolute path from the raw (un-substituted) config
   before any substitution pass runs — **no placeholder substitution of any kind is applied to it**
 - **3-pass substitution**:

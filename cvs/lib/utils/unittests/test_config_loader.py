@@ -10,7 +10,8 @@ Covers the public contract described in the spec:
   - substitute_config reads the threshold file from ``threshold_json`` when set
     (literal absolute path), or discovers a sole sibling ``*threshold.json``.
   - substitute_config raises FileNotFoundError when ``threshold_json`` names a
-    non-existent file, or when no sibling threshold exists and the field is empty.
+    non-existent file, or when no sibling threshold exists and the field is empty,
+    unless ``load_thresholds=False`` skips the threshold file.
   - Multiple sibling ``*threshold.json`` files raise ValueError (ambiguous).
 
 Framework: unittest.TestCase + self.subTest + unittest.mock (no pytest).
@@ -348,6 +349,21 @@ class TestSubstituteConfigThresholdJsonField(unittest.TestCase):
             config_path = self._write_config(Path(tmp), _base_config_dict())
             with self.assertRaises(FileNotFoundError):
                 substitute_config(config_path, {})
+
+    def test_load_thresholds_false_skips_the_threshold_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = _base_config_dict()
+            cfg["paths"]["log_dir"] = "/home/{user-id}/logs"
+            config_path = self._write_config(Path(tmp), cfg)
+            raw, thresholds = substitute_config(config_path, {"username": "jdoe"}, load_thresholds=False)
+            self.assertEqual(thresholds, {})
+            self.assertEqual(raw["paths"]["log_dir"], "/home/jdoe/logs")
+
+    def test_config_without_paths_gets_no_paths_block(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = self._write_config(Path(tmp), {"log_dir": "/home/{user-id}/logs"})
+            raw, _ = substitute_config(config_path, {"username": "jdoe"}, load_thresholds=False)
+            self.assertEqual(raw, {"log_dir": "/home/jdoe/logs"})
 
     def test_threshold_json_as_absolute_path_no_sibling_glob(self):
         """The threshold file must be read from the explicit path, not discovered

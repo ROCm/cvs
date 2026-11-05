@@ -73,8 +73,9 @@ def load_config(model_cls, config_path, cluster):
         with open(cluster) as fp:
             cluster = json.load(fp)
     cluster = resolve_cluster_config_placeholders(cluster)
-    raw, thresholds = substitute_config(config_path, cluster, all_placeholders=True)
-    if "thresholds" in model_cls.model_fields:
+    has_thresholds = "thresholds" in model_cls.model_fields
+    raw, thresholds = substitute_config(config_path, cluster, all_placeholders=True, load_thresholds=has_thresholds)
+    if has_thresholds:
         raw["thresholds"] = thresholds
     try:
         config = model_cls.model_validate(raw, context={"placeholders": "reject"})
