@@ -26,15 +26,23 @@ def detect_pipeline_class(model_path):
         return xFuserFlux2Pipeline, "dev"
 
 
+def _fid_png_count(directory):
+    if not os.path.isdir(directory):
+        return 0
+    return sum(1 for name in os.listdir(directory) if name.lower().endswith(".png"))
+
+
 def _run_flux2_fid_sweep(args, pipe, input_config, elapsed_time, fid_started):
     raw_steps = str(getattr(args, "fid_steps", "") or "").strip()
     if not raw_steps:
         return
-    from fid_sweep import run_fid_sweep
+    from fid_sweep import broadcast_value, run_fid_sweep
 
     steps = [int(part) for part in raw_steps.split(",") if part.strip()]
+    samples = int(getattr(args, "fid_samples", 2))
     rank = get_world_group().rank
     output_root = os.path.abspath("results")
+    pipe_s = float(elapsed_time) if elapsed_time and elapsed_time > 0 else 0.0
 
     def generate_one(nfe, sample_index):
         wall_start = time.time()
@@ -50,25 +58,47 @@ def _run_flux2_fid_sweep(args, pipe, input_config, elapsed_time, fid_started):
         )
         torch.cuda.synchronize()
         elapsed = time.time() - wall_start
-        if pipe.is_dp_last_group() and getattr(generated, "images", None):
+        images = list(getattr(generated, "images", None) or [])
+        if pipe.is_dp_last_group() and images:
             dest = os.path.join(output_root, "fid", f"nfe_{int(nfe)}")
             os.makedirs(dest, exist_ok=True)
-            for index, image in enumerate(generated.images):
+            for index, image in enumerate(images):
                 image.save(os.path.join(dest, f"seed_{sample_index}_{index}.png"))
+            print(f"FID wrote {len(images)} png(s) to {dest}", flush=True)
         return elapsed
 
+    budget_s = float(getattr(args, "fid_budget_s", 0) or 0)
     try:
         run_fid_sweep(
             rank,
             steps,
-            int(getattr(args, "fid_samples", 2)),
-            float(getattr(args, "fid_budget_s", 0)),
+            samples,
+            budget_s,
             fid_started,
-            elapsed_time if rank == 0 else 0.0,
+            pipe_s if rank == 0 else 0.0,
             int(input_config.num_inference_steps),
             generate_one,
             os.path.join(output_root, "fid", "manifest.json"),
         )
+        # The timed pass saves one flux2_*.png. Each step still needs two fid pngs.
+        for step in steps:
+            for _attempt in range(samples):
+                decision = None
+                if rank == 0:
+                    dest = os.path.join(output_root, "fid", f"nfe_{int(step)}")
+                    have = _fid_png_count(dest)
+                    elapsed = time.monotonic() - fid_started
+                    allowance = budget_s if budget_s > 0 else elapsed + pipe_s * samples * max(len(steps), 1) * 1.25
+                    if have < samples and pipe_s > 0 and elapsed + pipe_s * 1.25 <= allowance:
+                        decision = (int(step), have)
+                decision = broadcast_value(decision, rank)
+                if not decision:
+                    break
+                generate_one(*decision)
+        if rank == 0:
+            for step in steps:
+                dest = os.path.join(output_root, "fid", f"nfe_{int(step)}")
+                print(f"FID samples at {dest}: {_fid_png_count(dest)} png(s)", flush=True)
     except Exception as exc:
         print(f"FID sweep failed after the timed benchmark: {exc}")
 

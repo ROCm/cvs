@@ -295,6 +295,7 @@ class TestProfile(unittest.TestCase):
                 profile = load_json_profile(stem)
                 self.assertEqual(profile["suite_id"], "xdit")
                 self.assertEqual(profile["report_basename"], "xdit_run_deck")
+                self.assertTrue(profile["interactive_viewer"])
 
     def test_xdit_profile_resolves_latency_metrics(self):
         from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
