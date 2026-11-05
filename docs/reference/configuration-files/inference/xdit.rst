@@ -14,7 +14,7 @@ templates for the same workload share that file.
 - **Single-node** templates run one independent docker+torchrun job on every node in the
   cluster file.
 - **Distributed** templates run one coordinated torchrun job (``server_params.nnodes >= 2``).
-  Replace every ``<changeme>`` (image, model, GPU label, and NCCL/network fields) before running.
+  Replace every ``<changeme>`` (image, model, ``paths.models_dir``, GPU label, and NCCL/network fields) before running.
   Stage model weights on every participating node before the run.
 
 See :doc:`/how-to/test-suites/inference/xdit` for more information on running these tests.
@@ -65,6 +65,12 @@ MI300X, MI325X, and MI350X (``gpu_name`` hint ``mi325``). ``mi35x`` covers MI355
    * - ``mi3xx_xdit_wan22_14b_diffusers_distributed.json``, ``mi35x_xdit_wan22_14b_diffusers_distributed.json``
      - ``xdit_wan22_14b_diffusers_distributed_threshold.json``
      - ``xdit_wan22_14b_diffusers_distributed``
+   * - ``mi3xx_xdit_wan21_t2v_14b_diffusers_single.json``, ``mi35x_xdit_wan21_t2v_14b_diffusers_single.json``
+     - ``xdit_wan21_t2v_14b_diffusers_single_threshold.json``
+     - ``xdit_wan21_t2v_14b_diffusers_single``
+   * - ``mi3xx_xdit_wan21_t2v_14b_diffusers_distributed.json``, ``mi35x_xdit_wan21_t2v_14b_diffusers_distributed.json``
+     - ``xdit_wan21_t2v_14b_diffusers_distributed_threshold.json``
+     - ``xdit_wan21_t2v_14b_diffusers_distributed``
 
 Copy a template and its threshold file:
 
@@ -135,7 +141,8 @@ Example: FLUX.1-dev single-node
                     "volumes": [
                         "{paths.models_dir}:/hf_home",
                         "{paths.log_dir}:/outputs",
-                        "{home}/cvs/cvs/lib/inference/xdit/scripts/run_usp.py:/benchmark/run_usp.py"
+                        "{home}/cvs/cvs/lib/inference/xdit/scripts/run_usp.py:/benchmark/run_usp.py",
+                        "{home}/cvs/cvs/lib/inference/xdit/scripts/flux_utils.py:/benchmark/flux_utils.py"
                     ],
                     "devices": ["/dev/dri", "/dev/kfd"],
                     "env": { "NCCL_DEBUG": "ERROR" }
@@ -179,7 +186,7 @@ The following parameters appear in every packaged xDiT template.
      - Description
    * - ``container.image``
      - ``<changeme>``
-     - Image to run. ``_image_example`` documents a known tag: ``rocm/pytorch-xdit:v26.9`` for FLUX.1; ``amdsiloai/pytorch-xdit:v25.11.2`` for native WAN; a ``rocm/ufb-private`` gfx942 tag on ``mi3xx`` FLUX.2 and WAN Diffusers; a gfx950 tag on ``mi35x`` FLUX.2 and WAN Diffusers.
+     - Image to run. ``_image_example`` documents a known tag: ``rocm/pytorch-xdit:v26.9`` for FLUX.1 and WAN 2.1 T2V; ``amdsiloai/pytorch-xdit:v25.11.2`` for native WAN; a ``rocm/ufb-private`` gfx942 tag on ``mi3xx`` FLUX.2 and WAN 2.2 Diffusers; a gfx950 tag on ``mi35x`` FLUX.2 and WAN 2.2 Diffusers.
    * - ``container.name``
      - ``flux-benchmark_single``
      - Docker name.
@@ -187,8 +194,8 @@ The following parameters appear in every packaged xDiT template.
      - ``{home}/.hf_token``
      - Host token file for gated models. The token is read on the runner and is not passed as ``HF_TOKEN`` on ``docker run``.
    * - ``paths.models_dir``
-     - ``{home}/.cache/huggingface``
-     - Host HF cache or model root, mounted at ``/hf_home``.
+     - ``<changeme> /data/models``
+     - Host HF cache or model root, mounted at ``/hf_home``. Replace the ``<changeme>`` placeholder in the samples. Stage the CLIP checkpoint (``hub/models--openai--clip-vit-base-patch32``) and ``inception_v3.pth`` here; the suites do not download them. The how-to lists the commands.
    * - ``paths.log_dir``
      - ``{home}/cvs_flux1_output``
      - Host directory for ``flux_<hostname>_outputs`` or ``wan_22_<hostname>_outputs``. Mounted at ``/outputs``.
@@ -280,7 +287,7 @@ the bind-mounted ``run_usp.py`` at ``/benchmark/run_usp.py``. A repo or path con
      - Processes (GPUs) per node.
    * - ``clip_model``
      - omitted
-     - CLIP checkpoint id or local path used to score saved PNGs. Defaults to ``openai/clip-vit-base-patch32``. ``test_verify_model`` requires it to already be in the container cache or at that path. The suite does not download it. Prompts longer than that model's text context (77 tokens) are truncated.
+     - CLIP checkpoint id or local path used to score saved PNGs. Defaults to ``openai/clip-vit-base-patch32``. ``test_verify_model`` requires it to already be in the container cache or at that path. The suite does not download it; stage it under ``paths.models_dir`` first. Prompts longer than that model's text context (77 tokens) are truncated.
 
 ``benchmark_params`` for WAN 2.2
 ================================
@@ -320,7 +327,7 @@ Runs ``/app/Wan2.2/run.py``. The threshold metric is ``max_avg_total_time_s``.
      - GPUs per node. Single-node native WAN infers ulysses from this value and ring ``1``.
    * - ``clip_model``
      - omitted
-     - CLIP checkpoint id or local path for sampled-frame scoring. Defaults to ``openai/clip-vit-base-patch32``. ``test_verify_model`` requires it offline in the container. The suite does not download it. Native and Diffusers WAN share this field.
+     - CLIP checkpoint id or local path for sampled-frame scoring. Defaults to ``openai/clip-vit-base-patch32``. ``test_verify_model`` requires it offline in the container. The suite does not download it; stage it under ``paths.models_dir`` first. Native and Diffusers WAN share this field.
    * - ``clip_sample_frames``
      - omitted
      - Frames sampled evenly from the MP4, including the first and last. Defaults to ``8``. Native and Diffusers WAN share this field.
@@ -328,7 +335,7 @@ Runs ``/app/Wan2.2/run.py``. The threshold metric is ``max_avg_total_time_s``.
 Diffusers xFuser WAN
 --------------------
 
-``*_xdit_wan22_14b_diffusers_*.json`` additionally set:
+``*_xdit_wan22_14b_diffusers_*.json`` and ``*_xdit_wan21_t2v_14b_diffusers_*.json`` additionally set:
 
 .. list-table::
    :widths: 3 5
@@ -340,8 +347,12 @@ Diffusers xFuser WAN
      - ``diffusers``.
    * - ``wan_diffusers_launcher``
      - ``xfuser_example``.
+   * - ``wan_xfuser_model``
+     - ``Wan2.1-T2V`` on the WAN 2.1 T2V templates. WAN 2.2 I2V leaves this unset.
+   * - ``guidance_scale``, ``flow_shift``, ``attention_backend``
+     - T2V templates set ``6.0``, ``8.0``, and ``AITER``. Cross attention uses ``cross_attention_backend``.
    * - ``wan_diffusers_run_script``
-     - In-container path to ``wan_i2v_example.py`` when you override the default ``/benchmark/wan_i2v_example.py``.
+     - In-container launcher. WAN 2.2 I2V defaults to ``/benchmark/wan_i2v_example.py``. WAN 2.1 T2V templates set ``/benchmark/wan_t2v_example.py``.
    * - ``wan_xfuser_auto_input_image``
      - Generate an in-container input image when true.
    * - ``wan_xfuser_install_video_deps``
@@ -376,24 +387,29 @@ Volume mounts
 An absolute ``server_params.model`` path that is not already mounted is bind-mounted at
 ``/model``.
 
-**FLUX.1** also mounts the in-tree USP launcher. The script imports ``flux_utils`` from
-``/app/Flux`` inside the image. Adjust the host path to your CVS checkout:
+**FLUX.1** also mounts the in-tree USP launcher and its ``flux_utils.py`` helper.
+Adjust the host paths to your CVS checkout:
 
 .. code:: json
 
   "{home}/cvs/cvs/lib/inference/xdit/scripts/run_usp.py:/benchmark/run_usp.py"
+  "{home}/cvs/cvs/lib/inference/xdit/scripts/flux_utils.py:/benchmark/flux_utils.py"
 
 **FLUX.2** also mounts the in-tree example. Adjust the host path to your CVS checkout:
 
 .. code:: json
 
   "{home}/cvs/cvs/lib/inference/xdit/scripts/flux2_example.py:/benchmark/flux2_example.py"
+  "{home}/cvs/cvs/lib/inference/xdit/scripts/fid_sweep.py:/benchmark/fid_sweep.py"
 
 **WAN Diffusers** mounts the xFuser example the same way:
 
 .. code:: json
 
   "{home}/cvs/cvs/lib/inference/xdit/scripts/wan_i2v_example.py:/benchmark/wan_i2v_example.py"
+
+When ``fid_nfe_steps`` is set, also mount ``fid_sweep.py`` at ``/benchmark/fid_sweep.py``.
+The per-run container only sees volumes from this list.
 
 Distributed templates add the host home directory, ``/dev/infiniband``, and the fabric
 provider libraries (bnxt on ``mi3xx``, Ionic on ``mi35x``).
@@ -432,6 +448,12 @@ only when detection reports that same string.
    * - ``xdit_wan22_14b_single_threshold.json``
      - ``max_avg_total_time_s``
      - ``auto`` 15, ``mi300x`` 200, ``mi325`` 160, ``mi350`` 120, ``mi355`` 120
+   * - ``xdit_wan21_t2v_14b_diffusers_single_threshold.json``
+     - ``max_avg_pipe_time_s``
+     - ``auto`` 300, ``mi325`` 300, ``mi355`` 300
+   * - ``xdit_wan21_t2v_14b_diffusers_distributed_threshold.json``
+     - ``max_avg_pipe_time_s``
+     - ``auto`` 300, ``mi325`` 300, ``mi355`` 900
    * - ``xdit_wan22_14b_diffusers_single_threshold.json``
      - ``max_avg_pipe_time_s``
      - ``auto`` 300, ``mi325`` 300, ``mi355`` 300
@@ -467,6 +489,19 @@ starting value, not a measured pass bar.
    * - WAN Diffusers
      - ``min_mean_frame_clip_score``
      - Mean CLIPScore of frames sampled from ``video_i2v.mp4``.
+
+``test_fid_curve`` is skipped unless ``fid_nfe_steps`` lists at least two sampling step counts.
+The FLUX and WAN Diffusers scripts then save extra samples under ``results/fid/nfe_<steps>/``
+after the timed benchmark. ``fid_samples`` is how many to save at each step count (default 2).
+The sweep stops so the command still exits at least 180 seconds before its timeout, and a
+curve cut short for that reason is skipped rather than failed. Set ``fid_reference_dir`` to
+real images already in the container (``/hf_home/fid_reference`` in the samples) and
+``fid_inception_path`` to a torchvision Inception-v3 state dict (``/hf_home/inception_v3.pth``
+in the samples). The test does not download either. A reference directory with fewer than two
+images uses the highest step-count samples this run saved under ``results/fid/nfe_<steps>/``.
+WAN scores sampled frames from each video.
+``fid_sampler`` names the line when one run compares samplers. The interactive viewer
+plots FID against those step counts. Native WAN ``run.py`` does not run this sweep.
 
 ``test_clip_score`` runs inside the benchmark container and writes ``results/clipscore.json``.
 The controller reads that file from the node, so the output directory does not have to be on

@@ -52,6 +52,12 @@ The following suites are available. Every suite runs the same nine stages.
    * - ``xdit_wan22_14b_diffusers_distributed``
      - ``xdit_wan22_14b_diffusers_distributed.py``
      - Unified WAN Diffusers xFuser torchrun across ``nnodes``.
+   * - ``xdit_wan21_t2v_14b_diffusers_single``
+     - ``xdit_wan21_t2v_14b_diffusers_single.py``
+     - WAN 2.1 T2V Diffusers (bind-mounted ``wan_t2v_example.py``); one job per cluster node.
+   * - ``xdit_wan21_t2v_14b_diffusers_distributed``
+     - ``xdit_wan21_t2v_14b_diffusers_distributed.py``
+     - Unified WAN 2.1 T2V Diffusers torchrun across ``nnodes``.
 
 .. _xdit-set-up-config:
 
@@ -95,11 +101,44 @@ Follow these steps to set up the xDiT configuration.
    - Set ``container.image`` (``_image_example`` names a known image for that template).
    - Set ``server_params.model`` to a Hugging Face repo id or an absolute host path, and
      stage those weights before the run.
+   - Set ``paths.models_dir`` by removing ``<changeme>``. It is the host directory that holds
+     the model weights and the scoring checkpoints from step 5, mounted at ``/hf_home``.
    - Set ``gpu_name`` by removing ``<changeme>`` (templates hint ``mi325`` or ``mi355``).
    - On distributed templates, replace every ``<changeme>`` NCCL/socket field and confirm
      the RDMA library bind mounts match the host.
    - Resolve ``{user-id}`` and ``{home}`` or leave them for CVS to expand.
    - Keep ``threshold_json`` as the sibling filename unless you point it at your own file.
+
+5. Download the scoring checkpoints into ``paths.models_dir`` on every participating node.
+   CVS never downloads them, and the stages that need them fail when they are missing.
+
+   - **CLIP** ``openai/clip-vit-base-patch32`` is the default ``clip_model``. ``test_clip_score``
+     scores with it, and ``test_verify_model`` checks it is already present offline.
+
+     .. code:: bash
+
+       HF_HOME=/data/models huggingface-cli download openai/clip-vit-base-patch32
+
+     This writes ``/data/models/hub/models--openai--clip-vit-base-patch32``, which is
+     ``/hf_home`` inside the container. A local copy of the model directory also works when
+     you set ``clip_model`` to its container path, for example ``/hf_home/clip-vit-base-patch32``.
+
+   - **Inception-v3** ``inception_v3.pth`` is required by ``test_fid_curve`` when
+     ``fid_nfe_steps`` is set. Place it at ``/data/models/inception_v3.pth`` so the sample
+     ``fid_inception_path`` of ``/hf_home/inception_v3.pth`` resolves. It must be a torchvision
+     ``inception_v3`` state dict from ``Inception_V3_Weights.IMAGENET1K_V1``, saved with
+     ``torch.save(model.state_dict(), ...)``. The xDiT image ships torch and torchvision, so
+     you can generate it there:
+
+     .. code:: bash
+
+       docker run --rm -v /data/models:/hf_home rocm/pytorch-xdit:v26.9 python3 -c \
+         "import torch, torchvision as tv; m = tv.models.inception_v3(weights=tv.models.Inception_V3_Weights.IMAGENET1K_V1); torch.save(m.state_dict(), '/hf_home/inception_v3.pth')"
+
+   - **FID reference images** for ``fid_reference_dir`` (``/hf_home/fid_reference`` in the samples)
+     must be real PNG or JPG files, at least two. Hundreds give a stable score. Keep the folder
+     fixed between runs so scores stay comparable. If it holds fewer than two images, the score
+     uses the highest step-count samples from the same run.
 
 Shipped config templates and the suites they target:
 
@@ -123,6 +162,10 @@ Shipped config templates and the suites they target:
      - ``xdit_wan22_14b_diffusers_single``
    * - ``mi3xx_xdit_wan22_14b_diffusers_distributed.json`` or ``mi35x_xdit_wan22_14b_diffusers_distributed.json``
      - ``xdit_wan22_14b_diffusers_distributed``
+   * - ``mi3xx_xdit_wan21_t2v_14b_diffusers_single.json`` or ``mi35x_xdit_wan21_t2v_14b_diffusers_single.json``
+     - ``xdit_wan21_t2v_14b_diffusers_single``
+   * - ``mi3xx_xdit_wan21_t2v_14b_diffusers_distributed.json`` or ``mi35x_xdit_wan21_t2v_14b_diffusers_distributed.json``
+     - ``xdit_wan21_t2v_14b_diffusers_distributed``
 
 Each workload has one shared threshold file (``xdit_<workload>_threshold.json``).
 ``mi3xx`` and ``mi35x`` configs for the same workload reference that same file.
@@ -131,10 +174,12 @@ GPU keys inside it (``mi300x``, ``mi325``, ``mi350``, ``mi355``, ``auto``) selec
 .. note::
 
   FLUX.1 configs bind-mount |cvs-lib-inference-xdit-scripts-run-usp-py|_ at
-  ``/benchmark/run_usp.py``. That script imports ``flux_utils`` from ``/app/Flux`` in the
-  image. FLUX.2 configs bind-mount |cvs-lib-inference-xdit-scripts-flux2-example-py|_ when the
-  image does not ship ``/benchmark/flux2_example.py``. WAN Diffusers suites mount
-  |cvs-lib-inference-xdit-scripts-wan-i2v-example-py|_. Adjust the host side of those
+  ``/benchmark/run_usp.py`` and ``flux_utils.py`` beside it at ``/benchmark/flux_utils.py``.
+  FLUX.2 configs bind-mount |cvs-lib-inference-xdit-scripts-flux2-example-py|_ when the
+  image does not ship ``/benchmark/flux2_example.py``. WAN 2.2 Diffusers suites mount
+  |cvs-lib-inference-xdit-scripts-wan-i2v-example-py|_. WAN 2.1 T2V Diffusers suites mount
+  |cvs-lib-inference-xdit-scripts-wan-t2v-example-py|_. Configs that set ``fid_nfe_steps``
+  also mount ``fid_sweep.py`` at ``/benchmark/fid_sweep.py``. Adjust the host side of those
   volume entries to your CVS checkout.
 
   ``mi3xx`` distributed templates ship Broadcom bnxt RDMA mounts and ``rdma*`` HCA names.
@@ -170,6 +215,7 @@ Every xDiT suite uses this order:
     - test_run_benchmark
     - test_parse_thresholds
     - test_clip_score
+    - test_fid_curve
     - test_print_results
     - test_teardown
 
@@ -217,6 +263,20 @@ WAN Diffusers:
   cvs run xdit_wan22_14b_diffusers_distributed \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/inference/xdit/mi35x_xdit_wan22_14b_diffusers_distributed.json \
+    -vvv
+
+WAN 2.1 T2V Diffusers:
+
+.. code:: bash
+
+  cvs run xdit_wan21_t2v_14b_diffusers_single \
+    --cluster_file ~/cvs_workspace/cluster.json \
+    --config_file ~/cvs_workspace/inference/xdit/mi3xx_xdit_wan21_t2v_14b_diffusers_single.json \
+    -vvv
+
+  cvs run xdit_wan21_t2v_14b_diffusers_distributed \
+    --cluster_file ~/cvs_workspace/cluster.json \
+    --config_file ~/cvs_workspace/inference/xdit/mi3xx_xdit_wan21_t2v_14b_diffusers_distributed.json \
     -vvv
 
 Direct pytest invocation
@@ -297,7 +357,19 @@ Each stage corresponds to a test function in the HTML report.
        The shipped floor of 20 is an unvalidated placeholder.
        ``enforce_thresholds: false`` records a score that misses the floor
        without failing the stage, but does not skip a missing CLIP
-       checkpoint.
+       checkpoint. A failed ``test_parse_thresholds`` does not skip this
+       stage. A failed earlier stage still does.
+   * - FID vs steps
+     - ``test_fid_curve``
+     - Skipped unless ``fid_nfe_steps`` lists two or more sampling step counts.
+       The benchmark saves extra samples under ``results/fid/nfe_<steps>/``
+       after the timed run, then stops at least 180 seconds before the
+       benchmark command timeout. ``test_fid_curve`` scores those files
+       against ``fid_reference_dir`` with the Inception checkpoint at
+       ``fid_inception_path``; both are staged in step 5. Fewer than two images there uses the highest
+       step-count samples from this run. The interactive viewer plots FID
+       against the step counts, one line per host. A sweep that the
+       timeout cuts short is skipped, not failed.
    * - Teardown
      - ``test_teardown``
      - Stops the container.
@@ -356,3 +428,6 @@ Distributed runs write to the rank-0 hostname directory.
 
 .. |cvs-lib-inference-xdit-scripts-wan-i2v-example-py| replace:: ``cvs/lib/inference/xdit/scripts/wan_i2v_example.py``
 .. _cvs-lib-inference-xdit-scripts-wan-i2v-example-py: https://github.com/ROCm/cvs/blob/main/cvs/lib/inference/xdit/scripts/wan_i2v_example.py
+
+.. |cvs-lib-inference-xdit-scripts-wan-t2v-example-py| replace:: ``cvs/lib/inference/xdit/scripts/wan_t2v_example.py``
+.. _cvs-lib-inference-xdit-scripts-wan-t2v-example-py: https://github.com/ROCm/cvs/blob/main/cvs/lib/inference/xdit/scripts/wan_t2v_example.py

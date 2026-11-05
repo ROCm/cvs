@@ -879,7 +879,10 @@ function cellColumnHtml(c, col) {
 
 function cellColumnCsv(c, col) {
   if (col.computed === 'status') return cellStatus(c);
-  if (col.metric) return metricNum(c, col.metric) ?? '';
+  if (col.metric) {
+    const raw = (c.actuals || {})[col.metric];
+    return typeof raw === 'string' ? raw : (metricNum(c, col.metric) ?? '');
+  }
   return c[col.field] ?? '';
 }
 
@@ -898,6 +901,7 @@ function cellStatus(cell) {
 function metricVal(cell, key) {
   const v = (cell.actuals || {})[key];
   if (v == null) return '—';
+  if (typeof v === 'string') return escapeHtmlText(v);
   return Math.abs(v) >= 1000
     ? Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 })
     : Number(v).toFixed(1);
