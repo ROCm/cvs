@@ -79,6 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A perftest process that exits non-zero fails the test.
 - RCCL:
   - Perf and regression thresholds and dip checks read the configured top-level `rccl.results` table, and regression reads its collectives from `rccl_test_params`.
+  - Runs launched with mpirun create a private, randomly named MPI hostfile and attempt to remove it when the run finishes. Hostfile creation failures fail the test.
   - NIC- and rank-keyed `results` entries are validated like flat entries, and invalid values fail with their config path.
   - Bus-bandwidth verification fails when a configured message size has no result row, instead of skipping it.
   - Perf and regression result files include the collective name, so a run keeps every collective's results instead of only the last. Tools that read the old result paths must use the new names.
