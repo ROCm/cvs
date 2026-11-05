@@ -143,6 +143,21 @@ def _iter_frames(raw_frames):
     return [_normalize_single_frame(arr)]
 
 
+def _write_sample_frames(arrays, save_path, limit=8):
+    """The FID scorer needs two images per step. One video's frames cover that if the mp4 will not decode."""
+    if not arrays or not save_path.lower().endswith(".mp4"):
+        return
+    parent = os.path.dirname(save_path)
+    stem = os.path.splitext(os.path.basename(save_path))[0]
+    chosen = np.linspace(0, len(arrays) - 1, num=min(limit, len(arrays)), dtype=int)
+    try:
+        from PIL import Image
+    except ImportError:
+        return
+    for slot, index in enumerate(chosen):
+        Image.fromarray(arrays[int(index)]).save(os.path.join(parent, f"{stem}_frame_{slot}.png"))
+
+
 def _export_video(run_output, save_path, fps):
     raw = _extract_video_frames(run_output)
     arrays = _iter_frames(raw)
@@ -153,6 +168,7 @@ def _export_video(run_output, save_path, fps):
     parent = os.path.dirname(save_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
+    _write_sample_frames(arrays, save_path)
 
     try:
         import imageio
@@ -256,10 +272,13 @@ def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started)
     raw_steps = str(getattr(args, "fid_steps", "") or "").strip()
     if not raw_steps:
         return
-    from fid_sweep import run_fid_sweep
+    from fid_sweep import broadcast_value, count_step_videos, rewrite_manifest_from_disk, run_fid_sweep
 
     steps = [int(part) for part in raw_steps.split(",") if part.strip()]
+    samples = int(args.fid_samples)
+    budget_s = float(args.fid_budget_s)
     base_seed = int(getattr(args, "seed", 0) or 0)
+    manifest_path = os.path.join(args.output_directory, "results", "fid", "manifest.json")
 
     def generate_one(nfe, sample_index):
         run_args = dict(input_args)
@@ -282,16 +301,34 @@ def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started)
         run_fid_sweep(
             rank,
             steps,
-            int(args.fid_samples),
-            float(args.fid_budget_s),
+            samples,
+            budget_s,
             fid_started,
             last_wall_s if rank == 0 else 0.0,
             int(args.num_inference_steps),
             generate_one,
-            os.path.join(args.output_directory, "results", "fid", "manifest.json"),
+            manifest_path,
         )
+        pipe_s = float(last_wall_s) if last_wall_s and last_wall_s > 0 else 0.0
+        for step in steps:
+            for _attempt in range(samples):
+                decision = None
+                if rank == 0:
+                    dest = os.path.join(args.output_directory, "results", "fid", f"nfe_{int(step)}")
+                    have = count_step_videos(dest)
+                    elapsed = time.monotonic() - fid_started
+                    allowance = budget_s if budget_s > 0 else elapsed + pipe_s * samples * max(len(steps), 1) * 1.25
+                    if have < samples and pipe_s > 0 and elapsed + pipe_s * 1.25 <= allowance:
+                        decision = (int(step), have)
+                decision = broadcast_value(decision, rank)
+                if not decision:
+                    break
+                generate_one(*decision)
     except Exception as exc:
         print(f"FID sweep failed after the timed benchmark: {exc}")
+    finally:
+        if rank == 0:
+            rewrite_manifest_from_disk(manifest_path, steps, samples, budget_s)
 
 
 def main():

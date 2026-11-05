@@ -78,10 +78,12 @@ def resolve_wan_benchmark_timeout(
     *,
     distributed: bool,
     explicit_timeout: Optional[int] = None,
+    fid_steps: bool = False,
 ) -> int:
     if explicit_timeout is not None:
         return int(explicit_timeout)
-    if distributed:
+    # An 81-frame I2V leaves no time for extra NFE samples inside the 30-minute single-node default.
+    if distributed or fid_steps:
         return WAN_DISTRIBUTED_BENCHMARK_TIMEOUT_S
     return DEFAULT_BENCHMARK_TIMEOUT_S
 
@@ -1144,9 +1146,15 @@ def launch_wan_benchmark(
     launcher = str(job.wan_params.get("wan_diffusers_launcher") or "")
     if fid_steps and launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER:
         attach_fid_sweep_mount(inference_dict)
+        resolved_timeout = resolve_wan_benchmark_timeout(
+            distributed=distributed,
+            explicit_timeout=timeout,
+            fid_steps=True,
+        )
         wan_params = dict(job.wan_params)
         wan_params["_fid_budget_s"] = fid_budget_seconds(resolved_timeout)
         job.wan_params = wan_params
+        timeout = resolved_timeout
     elif fid_steps:
         return ["FID vs NFE is available for the WAN Diffusers xFuser scripts, not the native Wan run.py launcher."]
 

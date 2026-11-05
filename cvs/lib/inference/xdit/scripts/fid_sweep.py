@@ -41,6 +41,20 @@ def broadcast_value(value, rank):
     return box[0]
 
 
+def count_step_videos(directory):
+    """MP4s saved for one NFE. Frame PNGs beside them are for the scorer, not extra samples."""
+    if not os.path.isdir(directory):
+        return 0
+    return sum(1 for name in os.listdir(directory) if name.lower().endswith(".mp4"))
+
+
+def rewrite_manifest_from_disk(path, steps, samples, budget_s):
+    """Record videos that exist, so a failed export is not counted as a finished sample."""
+    root = os.path.dirname(path)
+    counts = {int(step): count_step_videos(os.path.join(root, f"nfe_{int(step)}")) for step in steps}
+    write_manifest(path, budget_s, samples, counts, [])
+
+
 def write_manifest(path, budget_s, samples, counts, produced, error=""):
     parent = os.path.dirname(path)
     if parent:

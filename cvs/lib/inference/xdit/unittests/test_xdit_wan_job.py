@@ -156,6 +156,10 @@ class TestWanParallelism(unittest.TestCase):
             resolve_wan_benchmark_timeout(distributed=False),
             DEFAULT_BENCHMARK_TIMEOUT_S,
         )
+        self.assertEqual(
+            resolve_wan_benchmark_timeout(distributed=False, fid_steps=True),
+            WAN_DISTRIBUTED_BENCHMARK_TIMEOUT_S,
+        )
         self.assertEqual(resolve_wan_benchmark_timeout(distributed=True, explicit_timeout=999), 999)
 
     def test_build_wan_distributed_container_cleanup_cmds(self):

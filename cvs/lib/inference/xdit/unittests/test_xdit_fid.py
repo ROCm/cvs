@@ -1,4 +1,6 @@
 import importlib.util
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -90,6 +92,18 @@ class TestFidCurve(unittest.TestCase):
         bare.pop("fid_nfe_steps")
         bare.pop("_fid_budget_s")
         self.assertNotIn("--fid_steps", build_run_usp_args(bare, model_repo="/model"))
+
+    def test_manifest_counts_videos_on_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            step_dir = Path(tmp) / "nfe_10"
+            step_dir.mkdir()
+            (step_dir / "seed_0.mp4").write_bytes(b"video")
+            (step_dir / "seed_0_frame_0.png").write_bytes(b"png")
+            manifest = Path(tmp) / "manifest.json"
+            _fid_sweep.rewrite_manifest_from_disk(str(manifest), [10, 40], 2, 100)
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(payload["counts"], {"10": 1, "40": 0})
+        self.assertTrue(payload["stopped_early"])
 
     def test_short_budget_manifest_skips_instead_of_failing(self):
         self.assertTrue(_manifest_blocks_fid({"stopped_early": True, "counts": {"10": 1, "20": 0}}))
