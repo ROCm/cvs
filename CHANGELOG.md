@@ -9,9 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- xDiT FLUX and WAN Diffusers sample configs set ``fid_nfe_steps``, ``fid_reference_dir``, and ``fid_inception_path``, and bind-mount ``fid_sweep.py`` at ``/benchmark/fid_sweep.py``. Replace the ``<changeme>`` in ``paths.models_dir`` before running or CVS exits at startup, and stage the CLIP checkpoint and ``inception_v3.pth`` there. Add the ``fid_sweep.py`` volume if a copied config only mounts the launcher script. The benchmark saves extra samples under ``results/fid/nfe_<steps>/`` after the timed run and stops 180 seconds before the benchmark timeout. A single-node WAN run that sets ``fid_nfe_steps`` uses a two-hour command timeout so those samples fit. When ``fid_reference_dir`` has fewer than two images, the score uses the highest step-count samples from that run. The xDiT interactive viewer plots FID against those step counts. A sweep cut short by that limit is skipped.
+
+- WAN 2.1 T2V Diffusers suites ``xdit_wan21_t2v_14b_diffusers_single`` and ``xdit_wan21_t2v_14b_diffusers_distributed``. They bind-mount ``cvs/lib/inference/xdit/scripts/wan_t2v_example.py`` at ``/benchmark/wan_t2v_example.py`` and score ``results/video_i2v.mp4``. Set ``container.image`` and ``server_params.model`` before running.
+
 ### Changed
 
+- FLUX.2 single-node and distributed xDiT runs write one ``results/timing.json`` ``pipe_time`` per ``num_repetitions`` from the same loaded session. The shipped FLUX.2 configs set ``num_repetitions`` to 25, so ``timing.json`` has 25 entries. A file with a different count fails ``test_parse_thresholds``. Copy the updated ``flux2_example.py`` into a config that bind-mounts it.
+
+- FLUX.1 xDiT sample configs document ``rocm/pytorch-xdit:v26.9`` and bind-mount ``cvs/lib/inference/xdit/scripts/run_usp.py`` at ``/benchmark/run_usp.py`` plus ``flux_utils.py`` at ``/benchmark/flux_utils.py``. Add both volumes to configs copied from an older sample, and set ``container.image`` to this tag.
+
 ### Fixed
+
+- xDiT ``test_clip_score`` still scores saved media when ``test_parse_thresholds`` fails. A failure in an earlier stage still skips it.
+- WAN Diffusers xDiT writes ``results/video_i2v.mp4`` from the rank that holds the decoded frames. ``test_parse_thresholds`` and ``test_clip_score`` were failing when only ``timing.json`` was present.
 
 ### Removed
 
