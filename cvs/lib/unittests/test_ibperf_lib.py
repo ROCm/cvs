@@ -406,6 +406,16 @@ class TestWaitForPerftestExit(unittest.TestCase):
 
         self.assertEqual(ibperf_lib.wait_for_perftest_exit(phdl, 'ib_write_bw', 0), ['node2'])
 
+    def test_ignores_nodes_outside_nodes(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            'node1': 'pgrep_rc=1',
+            'node2': 'pgrep_rc=0',
+            'node3': 'ABORT: Host Unreachable Error',
+        }
+
+        self.assertEqual(ibperf_lib.wait_for_perftest_exit(phdl, 'ib_write_bw', 0, nodes=['node1', 'node2']), ['node2'])
+
 
 class TestGetIbBwPps(unittest.TestCase):
     @patch.object(ibperf_lib, 'fail_test')
@@ -612,6 +622,29 @@ class TestReadLatencyResults(unittest.TestCase):
             )
 
         mock_fail.assert_called_once_with('perftest instance 0 on node server exited with code 2')
+
+    def test_ignores_output_of_nodes_outside_nodes(self):
+        log = 'allocated 65536 bytes of GPU buffer\n8192 1000 10.66 13.76 10.97 10.98 0.10 12.01 13.76\n'
+        phdl = MagicMock()
+        phdl.exec.return_value = {'server': log, 'client': log, 'node3': 'perftest_rc=1\n'}
+        with patch.object(ibperf_lib, 'fail_test') as mock_fail:
+            results = ibperf_lib.get_ib_lat_numb(
+                phdl, 8192, 'cat /tmp/ib_perf_0_logs', instance_no=0, nodes=['server', 'client']
+            )
+
+        self.assertEqual(set(results), {'server', 'client'})
+        mock_fail.assert_not_called()
+
+    @patch.object(ibperf_lib, 'PERFTEST_LAT_RESULT_TIMEOUT_S', 0)
+    def test_node_in_nodes_without_output_must_still_report(self):
+        log = 'allocated 65536 bytes of GPU buffer\n8192 1000 10.66 13.76 10.97 10.98 0.10 12.01 13.76\n'
+        phdl = MagicMock()
+        phdl.exec.return_value = {'client': log}
+        with patch.object(ibperf_lib, 'fail_test') as mock_fail:
+            results = ibperf_lib.get_ib_lat_numb(phdl, 8192, 'cat /tmp/ib_perf_0_logs', nodes=['server', 'client'])
+
+        self.assertEqual(set(results), {'client'})
+        mock_fail.assert_called_once_with('ERROR !!! on node server Client did not complete for msg size 8192')
 
 
 class IbPerfCommandFixtures:
