@@ -47,6 +47,13 @@ def test_launch_container(orch, variant_config, lifecycle, request):
     return _common.launch_container(orch, variant_config, lifecycle, request)
 
 
+def test_support_matrix_gate(orch, variant_config, lifecycle, request):
+    """Stop the run if this framework/model is unsupported on the detected GPU
+    arch or ROCm version (CVS_SUPPORT_MATRIX_GATE controls enforcement)."""
+    log.info('Starting Testcase: support matrix gate')
+    return _common.support_matrix_gate(orch, variant_config, lifecycle, request)
+
+
 def test_setup_rdma(orch, variant_config, lifecycle, request):
     """Distributed-only: copy the host RDMA library into the container (thor2
     NIC workaround) and verify ibv_devinfo reports the expected HCA."""

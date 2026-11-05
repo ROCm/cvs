@@ -205,15 +205,16 @@ def pytest_collection_modifyitems(items):
     """Pin the lifecycle order explicitly."""
     rank = {
         "test_launch_container": 0,
-        "test_setup_rdma": 1,
-        "test_setup_tokenizer": 2,
-        "test_smoke": 3,
-        "test_training_run": 4,
-        "test_metric": 5,
-        "test_loss_curve": 6,
-        "test_checkpoint_resume": 7,
-        "test_print_results_table": 8,
-        "test_teardown": 9,
+        "test_support_matrix_gate": 1,
+        "test_setup_rdma": 2,
+        "test_setup_tokenizer": 3,
+        "test_smoke": 4,
+        "test_training_run": 5,
+        "test_metric": 6,
+        "test_loss_curve": 7,
+        "test_checkpoint_resume": 8,
+        "test_print_results_table": 9,
+        "test_teardown": 10,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
