@@ -17,7 +17,6 @@ import os
 import numpy as np
 import torch
 from PIL import Image
-from scipy import linalg
 
 MARKER = "CVS_FID_CURVE "
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
@@ -122,16 +121,23 @@ def _stats(features):
     return mu, np.atleast_2d(sigma)
 
 
+def _matrix_sqrt(matrix):
+    # rocm/pytorch-xdit does not ship scipy. Eigenvalues of a covariance product
+    # are real; tiny negatives are rounding error.
+    values, vectors = np.linalg.eig(np.asarray(matrix, dtype=np.float64))
+    values = np.clip(np.real(values), 0.0, None)
+    root = vectors @ np.diag(np.sqrt(values)) @ np.linalg.inv(vectors)
+    return np.real(root)
+
+
 def frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
     sigma1 = sigma1 + np.eye(sigma1.shape[0]) * eps
     sigma2 = sigma2 + np.eye(sigma2.shape[0]) * eps
     diff = mu1 - mu2
-    covmean, _info = linalg.sqrtm(sigma1.dot(sigma2), disp=False)
+    covmean = _matrix_sqrt(sigma1.dot(sigma2))
     if not np.isfinite(covmean).all():
         offset = np.eye(sigma1.shape[0]) * eps
-        covmean = linalg.sqrtm((sigma1 + offset).dot(sigma2 + offset))
-    if np.iscomplexobj(covmean):
-        covmean = covmean.real
+        covmean = _matrix_sqrt((sigma1 + offset).dot(sigma2 + offset))
     value = diff.dot(diff) + np.trace(sigma1) + np.trace(sigma2) - 2 * np.trace(covmean)
     return float(np.real(value))
 
