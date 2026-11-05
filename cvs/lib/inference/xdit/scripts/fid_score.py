@@ -39,15 +39,14 @@ def _nfe_from_name(name):
 def _list_media(directory):
     images = []
     videos = []
-    for entry in sorted(os.listdir(directory)):
-        path = os.path.join(directory, entry)
-        if not os.path.isfile(path):
-            continue
-        lower = entry.lower()
-        if lower.endswith(IMAGE_SUFFIXES):
-            images.append(path)
-        elif lower.endswith(VIDEO_SUFFIXES):
-            videos.append(path)
+    for dirpath, _dirnames, names in os.walk(directory):
+        for entry in sorted(names):
+            path = os.path.join(dirpath, entry)
+            lower = entry.lower()
+            if lower.endswith(IMAGE_SUFFIXES):
+                images.append(path)
+            elif lower.endswith(VIDEO_SUFFIXES):
+                videos.append(path)
     return images, videos
 
 
@@ -94,7 +93,11 @@ def _preprocess(image):
 def _load_inception(path, device):
     from torchvision.models import inception_v3
 
-    model = inception_v3(weights=None, transform_input=False, aux_logits=True)
+    # init_weights=True pulls SciPy, which this image does not ship. The checkpoint replaces the weights.
+    try:
+        model = inception_v3(weights=None, transform_input=False, aux_logits=True, init_weights=False)
+    except TypeError:
+        model = inception_v3(weights=None, transform_input=False, aux_logits=True)
     state = torch.load(path, map_location="cpu")
     if isinstance(state, dict) and "state_dict" in state:
         state = state["state_dict"]
@@ -172,7 +175,10 @@ def main():
     model = _load_inception(args.inception, device)
     reference_images = _collect_images(args.reference_dir, args.sample_frames)
     if len(reference_images) < 2:
-        raise SystemExit(f"reference dir has {len(reference_images)} image(s); FID needs at least 2")
+        raise SystemExit(
+            f"{args.reference_dir} has {len(reference_images)} image(s); FID needs at least 2 "
+            "png or jpg files in that directory. The Inception checkpoint is not a reference image."
+        )
     reference_stats = _stats(_features(model, reference_images, device))
 
     points = []
