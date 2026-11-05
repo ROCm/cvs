@@ -13,6 +13,7 @@ class TestMoriRunCard(unittest.TestCase):
                 "node_count": 2,
                 "mori_device_list": "rdma0,rdma1",
                 "container_image": "example/mori:latest",
+                "mori_commit": "38dbdd8f",
             },
             {"pytest_html_href": "mori.html"},
         )
@@ -22,6 +23,7 @@ class TestMoriRunCard(unittest.TestCase):
         self.assertEqual(display["Nodes"], "2")
         self.assertEqual(display["Mori devices"], "rdma0,rdma1")
         self.assertEqual(display["Container image"], "example/mori:latest")
+        self.assertEqual(display["MoRI commit"], "38dbdd8f")
         self.assertEqual(display["Pytest report"], "mori.html")
         self.assertNotIn("Model", display)
         self.assertNotIn("TP", display)
@@ -34,6 +36,7 @@ class TestMoriRunCard(unittest.TestCase):
                 self.assertEqual(display["GPU"], "—")
                 self.assertEqual(display["Container image"], "—")
                 self.assertEqual(display["Nodes"], "—")
+                self.assertEqual(display["MoRI commit"], "—")
 
 
 if __name__ == "__main__":

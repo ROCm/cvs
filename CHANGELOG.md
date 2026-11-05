@@ -9,7 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `install_mori` builds MoRI from `git_url` at `git_ref` into `mori_dir`, using the MORI config, before `mori_benchmark_test` runs. In container mode it needs `container.lifetime` `persistent` or `no_launch`. The MORI run card shows the built commit.
+
 ### Changed
+
+- MORI configs are validated when the suite starts: a leftover `<changeme>`, an unknown key or a wrong type fails every test with one `ConfigError` naming each field, instead of exiting at the first placeholder. The shipped `mori_dir` is now `/home/{user-id}/INSTALL/mori`.
 
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.
 
