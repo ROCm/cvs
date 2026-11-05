@@ -37,8 +37,10 @@ The schema blocks every suite composes. `config_loader.py` re-exports `_Forbid`,
   `utils_lib.config_placeholder_map` set (`{user-id}`, `{user}`, `{home}`, `{home-mount-dir}`,
   `{node-dir-name}`, `{run_dir}`) that `resolve_test_config_placeholders` uses. Do not call that
   resolver here: it exits at the first `<changeme>`.
-- Attaches `thresholds` when the model has that field, and validates
-  with `context={"placeholders": "reject"}`. There is no switch to allow placeholders.
+- Validates with `context={"placeholders": "reject"}`. There is no switch to allow placeholders.
+- A model with a `thresholds` field gets the threshold file's contents there, and a missing
+  threshold file raises. A model without one, for a suite that keeps its thresholds in the
+  config, loads no threshold file.
 - `ValidationError` becomes `ConfigError` (a `ValueError`) with one `loc: msg` line per error,
   built from `errors(include_input=False)`; never put input values in a message.
 - `container`: cluster `container` with `config.container.model_dump()` deep-merged on top

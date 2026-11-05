@@ -157,31 +157,13 @@ def _find_packaged_threshold(name):
     return matches[0] if matches else None
 
 
-def substitute_config(config_path, cluster_dict, all_placeholders=False):
-    """Read a variant config + sibling threshold file and resolve placeholders.
+def _find_threshold_file(raw, config_path):
+    """Return the threshold file a variant config names or sits next to.
 
-    Returns `(raw_dict, thresholds)`: the substituted config dict (NOT yet
-    validated -- the caller's per-framework `VariantConfig(**raw)` does that)
-    and the parsed, comment-stripped threshold dict.
-
-    Pass 1 expands only `{user-id}` unless `all_placeholders` is true; then it
-    expands the `utils_lib.config_placeholder_map` set that
-    `resolve_test_config_placeholders` uses, without its `<changeme>` exit.
-
-    Threshold discovery supports both layouts:
+    Supports both layouts:
     - ``threshold_json`` in the config (literal path; vllm_single style), or
     - a sole ``*threshold.json`` sibling next to the config (atom style).
-
-    This is the framework-neutral body of the old `load_variant`: file read +
-    3-pass substitution + threshold read. Per-framework loaders call it, attach
-    ``thresholds``, then build their typed config.
     """
-    config_path = Path(config_path)
-    if not config_path.is_file():
-        raise FileNotFoundError(f"variant config not found: {config_path}")
-
-    raw = json.loads(config_path.read_text())
-
     threshold_json = (raw.get("threshold_json") or "").strip()
     if "<changeme>" in threshold_json.lower():
         raise ValueError(
@@ -205,7 +187,7 @@ def substitute_config(config_path, cluster_dict, all_placeholders=False):
             warnings.warn(
                 f"threshold_json '{threshold_path.name}' not found next to the config "
                 f"({config_path.parent}); using the packaged copy at {packaged}",
-                stacklevel=2,
+                stacklevel=3,
             )
             threshold_path = packaged
     else:
@@ -215,7 +197,32 @@ def substitute_config(config_path, cluster_dict, all_placeholders=False):
         if len(threshold_candidates) > 1:
             raise ValueError(f"multiple *threshold.json files next to config (ambiguous): {threshold_candidates}")
         threshold_path = threshold_candidates[0]
-    thresholds = json.loads(threshold_path.read_text())
+    return threshold_path
+
+
+def substitute_config(config_path, cluster_dict, all_placeholders=False, load_thresholds=True):
+    """Read a variant config + sibling threshold file and resolve placeholders.
+
+    Returns `(raw_dict, thresholds)`: the substituted config dict (NOT yet
+    validated -- the caller's per-framework `VariantConfig(**raw)` does that)
+    and the parsed, comment-stripped threshold dict. With `load_thresholds`
+    false, no threshold file is looked up and `thresholds` is `{}`, for suites
+    that keep their thresholds in the config itself.
+
+    Pass 1 expands only `{user-id}` unless `all_placeholders` is true; then it
+    expands the `utils_lib.config_placeholder_map` set that
+    `resolve_test_config_placeholders` uses, without its `<changeme>` exit.
+
+    This is the framework-neutral body of the old `load_variant`: file read +
+    3-pass substitution + threshold read. Per-framework loaders call it, attach
+    ``thresholds``, then build their typed config.
+    """
+    config_path = Path(config_path)
+    if not config_path.is_file():
+        raise FileNotFoundError(f"variant config not found: {config_path}")
+
+    raw = json.loads(config_path.read_text())
+    thresholds = json.loads(_find_threshold_file(raw, config_path).read_text()) if load_thresholds else {}
 
     # Pass 1: cluster placeholders ({user-id}, or the full test-config set) everywhere.
     if all_placeholders:
@@ -225,7 +232,7 @@ def substitute_config(config_path, cluster_dict, all_placeholders=False):
     raw = _walk_substitute(raw, cluster_map)
 
     # Pass 2: self-reference within paths ({shared_fs} inside paths.*).
-    paths_block = raw.get("paths", {})
+    paths_block = raw.get("paths")
     if isinstance(paths_block, dict):
         for _ in range(len(paths_block) + 1):
             new = {

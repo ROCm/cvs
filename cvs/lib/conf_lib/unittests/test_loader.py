@@ -14,6 +14,7 @@ from unittest.mock import patch
 from cvs.core.run_layout import RunLayout
 from cvs.lib.conf_lib.config_blocks import Paths, _Forbid
 from cvs.lib.conf_lib.loader import ConfigError, load_config
+from cvs.lib.conf_lib.schemas.vllm import VariantConfig
 from cvs.lib.utils.config_loader import BaseVariantConfig
 from cvs.unittests.support import FAKE_CRED
 
@@ -39,6 +40,11 @@ def _base_config_dict():
 class _PathsOnlyConfig(_Forbid):
     threshold_json: str = ""
     paths: Paths
+
+
+class _InlineThresholdsConfig(_Forbid):
+    log_dir: str
+    expected_results: dict
 
 
 class TestLoadConfig(unittest.TestCase):
@@ -75,6 +81,25 @@ class TestLoadConfig(unittest.TestCase):
         loaded = load_config(_PathsOnlyConfig, self._write_config({"paths": _paths_dict()}), {})
         self.assertIsNone(loaded.container)
         self.assertEqual(loaded.config.paths.log_dir, "/data/logs")
+
+    def _write_config_without_threshold_file(self, config):
+        empty = Path(tempfile.mkdtemp(dir=self.tmp))
+        path = empty / "config.json"
+        path.write_text(json.dumps(config))
+        return path
+
+    def test_model_without_thresholds_or_paths_loads_with_no_threshold_file(self):
+        config = {"log_dir": "/home/{user-id}/logs", "expected_results": {"io_read": {}}}
+        loaded = load_config(
+            _InlineThresholdsConfig, self._write_config_without_threshold_file(config), {"username": "jdoe"}
+        )
+        self.assertEqual(loaded.config.log_dir, "/home/jdoe/logs")
+        self.assertEqual(loaded.config.expected_results, {"io_read": {}})
+
+    def test_vllm_model_still_needs_a_threshold_file(self):
+        config_path = self._write_config_without_threshold_file(_base_config_dict())
+        with self.assertRaises(FileNotFoundError):
+            load_config(VariantConfig, config_path, {})
 
     def test_config_container_is_merged_onto_the_cluster_container(self):
         config = _base_config_dict()
