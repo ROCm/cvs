@@ -17,12 +17,13 @@ documented here.
 
 ## How it runs
 
-Each training suite runs a `test_support_matrix_gate` stage, pinned to execute
-**right after the container is launched** and before the first workload stage
-(`pytest_collection_modifyitems` in each suite's `conftest.py` sets the order). The
-stage gathers what the suite already knows — the framework (the suite itself), the
-model (a config field), and the parameter values the run will use (e.g. the set of
-precisions across the enabled sweeps) — and calls the library:
+Each training and inference suite runs a `test_support_matrix_gate` stage, pinned
+to execute **right after the container is launched** and before the first workload
+stage (`pytest_collection_modifyitems` in each suite's `conftest.py` sets the
+order). The stage gathers what the suite already knows — the framework (the suite
+itself), the model (a config field), and the parameter values the run will use
+(e.g. the set of precisions across the enabled sweeps; inference suites pass no
+parameters today) — and calls the library:
 
 ```python
 from cvs.lib.support_matrix.support_matrix_lib import run_support_matrix_gate
