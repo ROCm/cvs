@@ -6,7 +6,6 @@ from cvs.lib.inference.xdit.xdit_fid import (
     build_fid_series,
     fid_budget_seconds,
     fid_cli_flags,
-    fid_sweep_bootstrap_shell,
     parse_fid_curve_text,
     parse_fid_nfe_steps,
 )
@@ -115,11 +114,6 @@ class TestFidCurve(unittest.TestCase):
         bare.pop("fid_nfe_steps")
         bare.pop("_fid_budget_s")
         self.assertNotIn("--fid_steps", build_run_usp_args(bare, model_repo="/model"))
-
-    def test_bootstrap_writes_the_sweep_module(self):
-        shell = fid_sweep_bootstrap_shell()
-        self.assertIn("/benchmark/fid_sweep.py", shell)
-        self.assertIn("python3 -c", shell)
 
     def test_short_budget_manifest_skips_instead_of_failing(self):
         self.assertTrue(_manifest_blocks_fid({"stopped_early": True, "counts": {"10": 1, "20": 0}}))

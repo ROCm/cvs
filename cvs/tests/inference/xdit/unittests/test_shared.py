@@ -15,6 +15,7 @@ from cvs.lib.inference.xdit.xdit_benchmark_job import cleanup_staged_artifacts
 from cvs.tests.inference.xdit import conftest
 from cvs.tests.inference.xdit._shared import (
     Lifecycle,
+    XDIT_TEST_ORDER,
     _SecretValue,
     _attach_benchmark_artifacts,
     _is_flux2_workload,
@@ -487,6 +488,11 @@ class TestConftestHelpers(unittest.TestCase):
         self.assertEqual(merged["runtime"]["name"], "docker")
         self.assertEqual(merged["runtime"]["args"], {"network": "host", "ipc": "host"})
         self.assertEqual(merged["image"], "xdit:latest")
+
+    def test_fid_curve_runs_before_teardown(self):
+        self.assertLess(XDIT_TEST_ORDER["test_clip_score"], XDIT_TEST_ORDER["test_fid_curve"])
+        self.assertLess(XDIT_TEST_ORDER["test_fid_curve"], XDIT_TEST_ORDER["test_print_results"])
+        self.assertLess(XDIT_TEST_ORDER["test_print_results"], XDIT_TEST_ORDER["test_teardown"])
 
 
 class TestVerifyModelStage(unittest.TestCase):
