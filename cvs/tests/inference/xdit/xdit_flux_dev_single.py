@@ -4,6 +4,7 @@ from cvs.tests.inference.xdit._shared import (
     clip_score_stage,
     launch_container_stage,
     parse_thresholds_stage,
+    support_matrix_gate_stage,
     print_results_stage,
     run_benchmark_stage,
     teardown_stage,
@@ -15,6 +16,10 @@ from cvs.tests.inference.xdit._shared import (
 
 def test_launch_container(orch, lifecycle, request):
     launch_container_stage(orch, lifecycle, request)
+
+
+def test_support_matrix_gate(orch, variant_config, lifecycle, request):
+    support_matrix_gate_stage(orch, variant_config, lifecycle, request)
 
 
 def test_verify_prerequisites(orch, lifecycle, request):

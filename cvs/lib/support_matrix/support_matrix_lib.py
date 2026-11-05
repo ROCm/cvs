@@ -156,6 +156,42 @@ def find_model_entry(matrix, framework, model):
     return None
 
 
+def served_model_name(variant_config):
+    '''Best-effort served-model identifier from a suite's variant config.
+
+    Handles the shapes used across suites: a ``model`` object with ``.id`` (or a
+    bare string), ``server_params.model`` (dict or object), and an ``inference``
+    dict carrying ``model`` / ``model_repo``. Returns "" when none is found, in
+    which case the gate treats the workload as not-in-matrix (unchecked).
+    '''
+
+    def _field(obj, key):
+        if isinstance(obj, dict):
+            return obj.get(key)
+        return getattr(obj, key, None)
+
+    model = getattr(variant_config, "model", None)
+    if isinstance(model, str) and model.strip():
+        return model.strip()
+    if model is not None:
+        mid = _field(model, "id")
+        if mid:
+            return str(mid)
+
+    server_params = getattr(variant_config, "server_params", None)
+    if server_params is not None:
+        val = _field(server_params, "model")
+        if val:
+            return str(val)
+
+    inference = getattr(variant_config, "inference", None)
+    if isinstance(inference, dict):
+        val = inference.get("model") or inference.get("model_repo")
+        if val:
+            return str(val)
+    return ""
+
+
 def _host_text(raw):
     '''Extract text from a per-host exec result that may be a str or a dict.'''
     if isinstance(raw, str):
