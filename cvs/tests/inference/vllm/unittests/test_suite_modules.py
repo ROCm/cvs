@@ -8,6 +8,7 @@ from cvs.tests.inference.vllm import _common, _shared, vllm_distributed, vllm_si
 EXPECTED_TESTS = [
     "test_launch_container",
     "test_setup_sshd",
+    "test_support_matrix_gate",
     "test_discover_topology",
     "test_model_fetch",
     "test_openai_compatible_smoke",

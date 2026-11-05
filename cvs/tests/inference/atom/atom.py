@@ -38,6 +38,7 @@ from cvs.lib.inference.atom.atom_mtp_quality import (
 )
 from cvs.lib.inference.atom.atom_niah_job import run_niah_cell
 from cvs.lib.inference.atom.atom_orch import AtomJob
+from cvs.lib.support_matrix.support_matrix_lib import run_support_matrix_gate, served_model_name
 from cvs.lib.inference.atom.atom_parsing import (
     CLIENT_METRIC_UNITS as _METRIC_UNITS,
 )
@@ -114,6 +115,18 @@ def test_discover_topology(orch, variant_config, lifecycle, request):
         resolved_netdev,
         resolved_hcas,
     )
+
+
+def test_support_matrix_gate(orch, variant_config, lifecycle, request):
+    """Stop the run if atom/<model> is unsupported on the detected GPU arch or ROCm
+    version. Inference passes no params; enforcement is controlled by
+    CVS_SUPPORT_MATRIX_GATE (see cvs/lib/support_matrix/README.md)."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    result = run_support_matrix_gate("inference", "atom", served_model_name(variant_config), {}, orch)
+    if not result.passed:
+        lifecycle.failed = True
+        pytest.fail("support matrix gate blocked this run: " + "; ".join(result.violations))
 
 
 def _mtp_quality_requested(variant_config) -> bool:

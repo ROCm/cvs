@@ -29,7 +29,10 @@ from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir, long_
 from cvs.lib.verify_lib import verify_dmesg_for_errors
 
 from cvs.tests.inference.sglang.conftest import flat_expected_from_specs
-from cvs.tests.inference.sglang._shared import run_scan_inference_logs_after_workload
+from cvs.tests.inference.sglang._shared import (
+    run_scan_inference_logs_after_workload,
+    run_support_matrix_gate_stage,
+)
 
 log = globals.log
 
@@ -54,6 +57,13 @@ def test_launch_container(orch, variant_config, lifecycle, request):
         pytest.fail(f"container {name} not running after setup_containers()")
 
     lifecycle.complete_stage(request, "container_launch", t0)
+
+
+def test_support_matrix_gate(orch, variant_config, lifecycle, request):
+    """Stop the run if this framework/model is unsupported on the detected GPU
+    arch or ROCm version (CVS_SUPPORT_MATRIX_GATE controls enforcement)."""
+    log.info("Testcase support matrix gate (disaggregated)")
+    run_support_matrix_gate_stage(orch, variant_config, lifecycle, request)
 
 
 def test_rms_norm(im_obj, lifecycle, request):

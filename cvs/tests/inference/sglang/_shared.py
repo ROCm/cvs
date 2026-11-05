@@ -18,6 +18,7 @@ import pytest
 from cvs.lib import globals
 from cvs.lib.inference.sglang.sglang_config_loader import perf_specs_for_cell, resolve_benchmark_variant_key
 from cvs.lib.inference.sglang.sglang_common import perf_enforce_thresholds
+from cvs.lib.support_matrix.support_matrix_lib import run_support_matrix_gate, served_model_name
 
 log = globals.log
 
@@ -28,7 +29,21 @@ __all__ = [
     "SGLANG_DISTRIBUTED_TEST_ORDER",
     "test_print_results_table",
     "run_scan_inference_logs_after_workload",
+    "run_support_matrix_gate_stage",
 ]
+
+
+def run_support_matrix_gate_stage(orch, variant_config, lifecycle, request):
+    """Stop the run when sglang/<model> is unsupported on the detected GPU arch or
+    ROCm version. Inference passes no params; enforcement is controlled by
+    CVS_SUPPORT_MATRIX_GATE (see cvs/lib/support_matrix/README.md)."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    result = run_support_matrix_gate("inference", "sglang", served_model_name(variant_config), {}, orch)
+    if not result.passed:
+        lifecycle.failed = True
+        pytest.fail("support matrix gate blocked this run: " + "; ".join(result.violations))
+
 
 _SMOKE_LINE_RE = re.compile(r"^(.+) -> (Pass|Fail) \((\d+)\)$")
 
@@ -36,57 +51,60 @@ _SMOKE_LINE_RE = re.compile(r"^(.+) -> (Pass|Fail) \((\d+)\)$")
 # Stable test order for sglang_disagg_distributed (PD prefill/decode/router).
 SGLANG_TEST_ORDER = {
     "test_launch_container": 0,
-    "test_rms_norm": 1,
-    "test_launch_prefill_servers": 2,
-    "test_launch_decode_servers": 3,
-    "test_poll_for_server_ready": 4,
-    "test_scan_inference_logs_for_failure": 5,
-    "test_launch_proxy_router": 6,
-    "test_openai_compatible_http_endpoints": 7,
-    "test_run_long_context_accuracy": 8,
-    "test_run_lm_eval_hellaswag_benchmark_test": 9,
-    "test_run_lm_eval_gsm8k_benchmark_test": 10,
-    "test_run_performance_benchmark_test": 11,
-    "test_verify_dmesg_after_benchmark": 12,
-    "test_disagg_gpu_topology": 13,
-    "test_scan_inference_logs_after_workload": 14,
-    "test_print_results_table": 15,
-    "test_teardown": 16,
+    "test_support_matrix_gate": 1,
+    "test_rms_norm": 2,
+    "test_launch_prefill_servers": 3,
+    "test_launch_decode_servers": 4,
+    "test_poll_for_server_ready": 5,
+    "test_scan_inference_logs_for_failure": 6,
+    "test_launch_proxy_router": 7,
+    "test_openai_compatible_http_endpoints": 8,
+    "test_run_long_context_accuracy": 9,
+    "test_run_lm_eval_hellaswag_benchmark_test": 10,
+    "test_run_lm_eval_gsm8k_benchmark_test": 11,
+    "test_run_performance_benchmark_test": 12,
+    "test_verify_dmesg_after_benchmark": 13,
+    "test_disagg_gpu_topology": 14,
+    "test_scan_inference_logs_after_workload": 15,
+    "test_print_results_table": 16,
+    "test_teardown": 17,
 }
 
 # Stable test order for sglang_single (full-model server on the first cluster host).
 SGLANG_SINGLE_TEST_ORDER = {
     "test_launch_container": 0,
-    "test_rms_norm": 1,
-    "test_launch_server": 2,
-    "test_poll_for_server_ready": 3,
-    "test_scan_inference_logs_for_failure": 4,
-    "test_openai_compatible_http_endpoints": 5,
-    "test_run_lm_eval_hellaswag_benchmark_test": 6,
-    "test_run_lm_eval_gsm8k_benchmark_test": 7,
-    "test_run_performance_benchmark_test": 8,
-    "test_verify_dmesg_after_benchmark": 9,
-    "test_scan_inference_logs_after_workload": 10,
-    "test_print_results_table": 11,
-    "test_teardown": 12,
+    "test_support_matrix_gate": 1,
+    "test_rms_norm": 2,
+    "test_launch_server": 3,
+    "test_poll_for_server_ready": 4,
+    "test_scan_inference_logs_for_failure": 5,
+    "test_openai_compatible_http_endpoints": 6,
+    "test_run_lm_eval_hellaswag_benchmark_test": 7,
+    "test_run_lm_eval_gsm8k_benchmark_test": 8,
+    "test_run_performance_benchmark_test": 9,
+    "test_verify_dmesg_after_benchmark": 10,
+    "test_scan_inference_logs_after_workload": 11,
+    "test_print_results_table": 12,
+    "test_teardown": 13,
 }
 
 # Stable test order for sglang_distributed (unified multi-node server, no PD).
 SGLANG_DISTRIBUTED_TEST_ORDER = {
     "test_launch_container": 0,
-    "test_rms_norm": 1,
-    "test_launch_server": 2,
-    "test_poll_for_server_ready": 3,
-    "test_scan_inference_logs_for_failure": 4,
-    "test_openai_compatible_http_endpoints": 5,
-    "test_run_lm_eval_hellaswag_benchmark_test": 6,
-    "test_run_lm_eval_gsm8k_benchmark_test": 7,
-    "test_run_performance_benchmark_test": 8,
-    "test_verify_dmesg_after_benchmark": 9,
-    "test_distributed_gpu_topology": 10,
-    "test_scan_inference_logs_after_workload": 11,
-    "test_print_results_table": 12,
-    "test_teardown": 13,
+    "test_support_matrix_gate": 1,
+    "test_rms_norm": 2,
+    "test_launch_server": 3,
+    "test_poll_for_server_ready": 4,
+    "test_scan_inference_logs_for_failure": 5,
+    "test_openai_compatible_http_endpoints": 6,
+    "test_run_lm_eval_hellaswag_benchmark_test": 7,
+    "test_run_lm_eval_gsm8k_benchmark_test": 8,
+    "test_run_performance_benchmark_test": 9,
+    "test_verify_dmesg_after_benchmark": 10,
+    "test_distributed_gpu_topology": 11,
+    "test_scan_inference_logs_after_workload": 12,
+    "test_print_results_table": 13,
+    "test_teardown": 14,
 }
 
 

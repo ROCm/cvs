@@ -127,6 +127,31 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(len(warnings), 2)
 
 
+class ServedModelNameTests(unittest.TestCase):
+    def test_model_object_with_id(self):
+        vc = MagicMock(spec=["model"])
+        vc.model = MagicMock(spec=["id"])
+        vc.model.id = "llama-3.1-8b"
+        self.assertEqual(sm.served_model_name(vc), "llama-3.1-8b")
+
+    def test_server_params_dict(self):
+        vc = MagicMock(spec=["model", "server_params"])
+        vc.model = None
+        vc.server_params = {"model": "openai/gpt-oss-120b"}
+        self.assertEqual(sm.served_model_name(vc), "openai/gpt-oss-120b")
+
+    def test_inference_dict_model_repo(self):
+        vc = MagicMock(spec=["model", "server_params", "inference"])
+        vc.model = None
+        vc.server_params = None
+        vc.inference = {"model_repo": "black-forest-labs/FLUX.1-dev"}
+        self.assertEqual(sm.served_model_name(vc), "black-forest-labs/FLUX.1-dev")
+
+    def test_none_found(self):
+        vc = MagicMock(spec=[])
+        self.assertEqual(sm.served_model_name(vc), "")
+
+
 class FindEntryTests(unittest.TestCase):
     def setUp(self):
         self.matrix = sm.load_matrix("training")
