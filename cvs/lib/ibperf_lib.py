@@ -837,8 +837,8 @@ def wait_for_perftest_exit(phdl, app_name, timeout, nodes=None):
         out_dict = _exec_on_nodes(phdl, cmd, nodes)
         return [node for node, out in out_dict.items() if not re.search(r'\bpgrep_rc=1\b', out)]
 
-    nodes, _ = poll_until(unconfirmed, lambda pending: not pending, timeout, PERFTEST_EXIT_POLL_S)
-    return nodes
+    remaining, _ = poll_until(unconfirmed, lambda pending: not pending, timeout, PERFTEST_EXIT_POLL_S)
+    return remaining
 
 
 def _perftest_cmd_file_line(cmd_parts, inst_count):

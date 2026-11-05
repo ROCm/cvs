@@ -767,6 +767,7 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
         self.phdl.all.reachable_hosts = nodes
         result = self.run_latency(node_pairs=[('n1', 'n2'), ('n3', 'n9')])
         self.assertEqual([c.args[0][2] for c in self.phdl.exec_cmd_list.call_args_list], ['true'] * 9)
+        self.phdl.prune_nodes.assert_not_called()
         self.assertEqual(set(result), {'n1', 'n2'})
         self.assertEqual({n: set(result[n]) for n in result}, {'n1': set(range(8)), 'n2': set(range(8))})
         self.assertIn('n3', globals.error_list[0])
@@ -887,6 +888,7 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
         self.phdl.reset_mock()
         result = self.run_bandwidth(node_pairs=[('n1', 'n2'), ('n3', 'n9')])
         self.assertEqual([c.args[0][2:] for c in self.phdl.exec_cmd_list.call_args_list], [['true', 'true']] * 9)
+        self.phdl.prune_nodes.assert_not_called()
         self.assertEqual(set(result), {'n1', 'n2'})
         self.assertIn('n3', globals.error_list[0])
 
@@ -898,6 +900,7 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
         self.phdl.all.reachable_hosts = nodes
         self.run_bandwidth(node_pairs=[('n1', 'n2'), ('n3', 'n4')])
         self.assertEqual([c.args[0][2:] for c in self.phdl.exec_cmd_list.call_args_list], [['true', 'true']] * 9)
+        self.phdl.prune_nodes.assert_not_called()
         self.assertTrue(all(len(call_args.args[0]) == 4 for call_args in self.phdl.exec_cmd_list.call_args_list))
         self.assertEqual(len(globals.error_list), 1)
         self.assertIn('n3', globals.error_list[0])
@@ -925,6 +928,7 @@ class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
         self.assertEqual(len(self.phdl.exec_cmd_list.call_args_list), 9)
         self.assertTrue(all(len(call.args[0]) == 6 for call in self.phdl.exec_cmd_list.call_args_list))
         self.assertEqual([c.args[0][:2] for c in self.phdl.exec_cmd_list.call_args_list], [['true', 'true']] * 9)
+        self.phdl.prune_nodes.assert_not_called()
         self.assertEqual(len(globals.error_list), 1)
         self.assertIn('a, b', globals.error_list[0])
 
