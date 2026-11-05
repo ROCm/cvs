@@ -41,6 +41,7 @@ from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
 from cvs.lib.training.jaxmaxtext.utils.loss_curve import render_loss_curve_png
 from cvs.lib.training.jaxmaxtext.utils.rundeck_adapter import flat_train_res_from_nested
 from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
+from cvs.lib.support_matrix.support_matrix_lib import run_support_matrix_gate
 from cvs.lib.utils.verdict import evaluate_all, ThresholdViolation
 from cvs.lib.utils_lib import fail_test, update_test_result
 
@@ -206,6 +207,40 @@ def launch_container(orch, variant_config, lifecycle, request):
     except Exception as e:  # noqa: BLE001
         lifecycle.failed = True
         pytest.fail(f"MaxText branch checkout failed: {e}")
+
+
+def _enabled_precisions(variant_config):
+    """Collect the precision values the enabled jaxmaxtext sweeps will run.
+
+    Sweep keys look like ``BS=3,PRECISION=FP8,SL=8192``; a key with no PRECISION
+    token is BF16 by default.
+    """
+    precisions = set()
+    for sweep in variant_config.enabled_sweeps():
+        match = re.search(r"PRECISION=([^,]+)", sweep.name, re.I)
+        precisions.add((match.group(1) if match else "BF16").strip().lower())
+    return sorted(precisions) or ["bf16"]
+
+
+def support_matrix_gate(orch, variant_config, lifecycle, request):
+    """Stop early when jaxmaxtext/<model> is unsupported on the detected GPU arch
+    or ROCm version. Runs right after container launch so ROCm is read inside the
+    container. Enforcement is controlled by CVS_SUPPORT_MATRIX_GATE (see
+    cvs/lib/support_matrix/README.md)."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    t = time.monotonic()
+    result = run_support_matrix_gate(
+        "training",
+        "jaxmaxtext",
+        variant_config.model.id,
+        {"precision": _enabled_precisions(variant_config)},
+        orch,
+    )
+    lifecycle.record(request.node.nodeid, "support_matrix_gate", time.monotonic() - t)
+    if not result.passed:
+        lifecycle.failed = True
+        pytest.fail("support matrix gate blocked this run: " + "; ".join(result.violations))
 
 
 def setup_rdma(orch, variant_config, lifecycle, request):

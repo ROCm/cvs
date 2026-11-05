@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Training suites (jaxmaxtext, megatron, torchtitan) run a `test_support_matrix_gate` stage after the container launches that stops the run when the framework/model is unsupported on the detected GPU architecture or ROCm version (for example MXFP4 on MI300X/MI325X). Support is declared in `cvs/lib/support_matrix/{training,inference}_support_matrix.json`. Set `CVS_SUPPORT_MATRIX_GATE=OFF` to log violations and continue instead of stopping; a framework or model with no entry runs unchecked. See `cvs/lib/support_matrix/README.md`.
+
 ### Changed
 
 ### Fixed
