@@ -6,7 +6,8 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 # Unit tests for cvs/core/agent/http_agent.py: AgentRegistry bookkeeping/readiness,
-# the bearer-token auth dependency, and the /v1/register, /v1/health route behavior.
+# the bearer-token auth dependency, /v1/exec path confinement, and the /v1/register,
+# /v1/health route behavior.
 
 import asyncio
 import os
@@ -21,8 +22,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from cvs.core.agent import messages
-from cvs.core.agent.http_agent import AgentInfo, AgentRegistry, create_app, _terminate_process_group
-from cvs.unittests.support import TMP
+from cvs.core.agent.http_agent import AgentInfo, AgentRegistry, create_app, _resolve_under, _terminate_process_group
 
 
 class TestAgentRegistry(unittest.IsolatedAsyncioTestCase):
@@ -77,7 +77,9 @@ class HttpAgentTestBase(unittest.TestCase):
     def _make_client(self, world_rank: int, world_size: int = 1) -> TestClient:
         tmp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(tmp_dir.cleanup)
-        agent_dir = Path(tmp_dir.name)
+        self.run_dir = Path(tmp_dir.name)
+        agent_dir = self.run_dir / "agent"
+        agent_dir.mkdir()
         (agent_dir / messages.AUTH_TOKEN_FILENAME).write_text(self.AUTH_FIXTURE + "\n")
         app = create_app(
             agent_dir=agent_dir,
@@ -169,12 +171,61 @@ class TestRankZeroSelfRegistration(HttpAgentTestBase):
             self.assertEqual(app.state.registry.snapshot(), {0: AgentInfo(hostname="rank0-host", port=9000)})
 
 
+class TestResolveUnder(unittest.TestCase):
+    def test_accepts_root_itself(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = os.path.realpath(directory)
+            self.assertEqual(_resolve_under(root, root), root)
+
+    def test_accepts_and_resolves_path_beneath_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = os.path.realpath(directory)
+            self.assertEqual(_resolve_under(os.path.join(root, "a", "..", "b"), root), os.path.join(root, "b"))
+
+    def test_rejects_dotdot_escape(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = os.path.realpath(directory)
+            with self.assertRaises(ValueError):
+                _resolve_under(os.path.join(root, ".."), root)
+
+    def test_rejects_absolute_path_outside_root(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
+            root = os.path.realpath(directory)
+            with self.assertRaises(ValueError):
+                _resolve_under(outside, root)
+
+    def test_rejects_sibling_sharing_root_prefix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = os.path.realpath(directory)
+            with self.assertRaises(ValueError):
+                _resolve_under(root + "-other", root)
+
+    def test_rejects_symlink_escaping_root(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
+            root = os.path.realpath(directory)
+            link = os.path.join(root, "link")
+            os.symlink(outside, link)
+            with self.assertRaises(ValueError):
+                _resolve_under(link, root)
+
+    def test_rejects_relative_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = os.path.realpath(directory)
+            with self.assertRaises(ValueError):
+                _resolve_under("sub", root)
+
+    def test_accepts_pathlib_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = os.path.realpath(directory)
+            self.assertEqual(_resolve_under(Path(root) / "x", root), os.path.join(root, "x"))
+
+
 class TestExec(HttpAgentTestBase):
     def _exec_request(self, **overrides) -> messages.ExecRequest:
         kwargs = dict(
             cmd="true",
             env={},
-            cwd=Path(TMP),
+            cwd=self.run_dir,
             timeout=None,
             inactivity_timeout=None,
             cmd_id="cmd-1",
@@ -211,66 +262,138 @@ class TestExec(HttpAgentTestBase):
 
     def test_file_mode_writes_output_and_returns_preview(self):
         client = self._make_client(world_rank=0)
-        with tempfile.TemporaryDirectory() as out_dir:
-            out_path = Path(out_dir)
-            req = self._exec_request(
-                cmd="echo hello; echo world 1>&2",
-                cmd_id="cmd-file",
-                out_path=out_path,
-                output_mode=messages.ExecOutputMode.FILE,
-            )
-            response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
-            self.assertEqual(response.status_code, 200)
-            exec_response = messages.ExecResponse(**response.json())
-            self.assertEqual(exec_response.exit_code, 0)
-            self.assertEqual(exec_response.stdout, ["hello"])
-            self.assertEqual(exec_response.stderr, ["world"])
-            self.assertEqual((out_path / "cmd-file.stdout").read_text(), "hello\n")
-            self.assertEqual((out_path / "cmd-file.stderr").read_text(), "world\n")
+        out_path = self.run_dir / "exec_output"
+        out_path.mkdir()
+        req = self._exec_request(
+            cmd="echo hello; echo world 1>&2",
+            cmd_id="cmd-file",
+            out_path=out_path,
+            output_mode=messages.ExecOutputMode.FILE,
+        )
+        response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        self.assertEqual(response.status_code, 200)
+        exec_response = messages.ExecResponse(**response.json())
+        self.assertEqual(exec_response.exit_code, 0)
+        self.assertEqual(exec_response.stdout, ["hello"])
+        self.assertEqual(exec_response.stderr, ["world"])
+        self.assertEqual((out_path / "cmd-file.stdout").read_text(), "hello\n")
+        self.assertEqual((out_path / "cmd-file.stderr").read_text(), "world\n")
 
     def test_file_mode_previews_only_trailing_lines(self):
         client = self._make_client(world_rank=0)
-        with tempfile.TemporaryDirectory() as out_dir:
-            out_path = Path(out_dir)
-            req = self._exec_request(
-                cmd="seq 1 30",
-                cmd_id="cmd-tail",
-                out_path=out_path,
-                output_mode=messages.ExecOutputMode.FILE,
-            )
-            response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
-            exec_response = messages.ExecResponse(**response.json())
-            self.assertEqual(exec_response.stdout, [str(n) for n in range(11, 31)])
-            self.assertEqual((out_path / "cmd-tail.stdout").read_text(), "\n".join(str(n) for n in range(1, 31)) + "\n")
+        out_path = self.run_dir / "exec_output"
+        out_path.mkdir()
+        req = self._exec_request(
+            cmd="seq 1 30",
+            cmd_id="cmd-tail",
+            out_path=out_path,
+            output_mode=messages.ExecOutputMode.FILE,
+        )
+        response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        exec_response = messages.ExecResponse(**response.json())
+        self.assertEqual(exec_response.stdout, [str(n) for n in range(11, 31)])
+        self.assertEqual((out_path / "cmd-tail.stdout").read_text(), "\n".join(str(n) for n in range(1, 31)) + "\n")
 
     def test_env_is_passed_to_command(self):
         client = self._make_client(world_rank=0)
-        with tempfile.TemporaryDirectory() as out_dir:
-            out_path = Path(out_dir)
-            req = self._exec_request(
-                cmd="echo $MY_TEST_VAR",
-                cmd_id="cmd-env",
-                out_path=out_path,
-                output_mode=messages.ExecOutputMode.FILE,
-                env={"MY_TEST_VAR": "hello-env"},
-            )
-            response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
-            exec_response = messages.ExecResponse(**response.json())
-            self.assertEqual(exec_response.stdout, ["hello-env"])
+        out_path = self.run_dir / "exec_output"
+        out_path.mkdir()
+        req = self._exec_request(
+            cmd="echo $MY_TEST_VAR",
+            cmd_id="cmd-env",
+            out_path=out_path,
+            output_mode=messages.ExecOutputMode.FILE,
+            env={"MY_TEST_VAR": "hello-env"},
+        )
+        response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        exec_response = messages.ExecResponse(**response.json())
+        self.assertEqual(exec_response.stdout, ["hello-env"])
 
     def test_cwd_is_passed_to_command(self):
         client = self._make_client(world_rank=0)
-        with tempfile.TemporaryDirectory() as cwd_dir, tempfile.TemporaryDirectory() as out_dir:
-            req = self._exec_request(
-                cmd="pwd",
-                cmd_id="cmd-cwd",
-                cwd=Path(cwd_dir),
-                out_path=Path(out_dir),
-                output_mode=messages.ExecOutputMode.FILE,
-            )
+        cwd = self.run_dir / "sub"
+        cwd.mkdir()
+        out_path = self.run_dir / "exec_output"
+        out_path.mkdir()
+        req = self._exec_request(
+            cmd="pwd",
+            cmd_id="cmd-cwd",
+            cwd=cwd,
+            out_path=out_path,
+            output_mode=messages.ExecOutputMode.FILE,
+        )
+        response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        exec_response = messages.ExecResponse(**response.json())
+        self.assertEqual(exec_response.stdout, [os.path.realpath(cwd)])
+
+
+class TestExecPathConfinement(HttpAgentTestBase):
+    def _exec_request(self, **overrides):
+        kwargs = dict(
+            cmd="true",
+            env={},
+            cwd=self.run_dir,
+            timeout=None,
+            inactivity_timeout=None,
+            cmd_id="cmd-confine",
+            out_path=None,
+            output_mode=messages.ExecOutputMode.EXIT_CODE_ONLY,
+        )
+        kwargs.update(overrides)
+        return messages.ExecRequest(**kwargs)
+
+    def test_cwd_outside_run_dir_is_rejected_without_spawning(self):
+        client = self._make_client(world_rank=0)
+        marker = self.run_dir / "spawned"
+        with tempfile.TemporaryDirectory() as outside:
+            req = self._exec_request(cmd=f"touch {marker}", cwd=outside)
             response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
-            exec_response = messages.ExecResponse(**response.json())
-            self.assertEqual(exec_response.stdout, [cwd_dir])
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(marker.exists())
+
+    def test_cwd_dotdot_escape_is_rejected(self):
+        client = self._make_client(world_rank=0)
+        req = self._exec_request(cwd=self.run_dir / "..")
+        response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        self.assertEqual(response.status_code, 403)
+
+    def test_cwd_symlink_escape_is_rejected(self):
+        client = self._make_client(world_rank=0)
+        with tempfile.TemporaryDirectory() as outside:
+            link = self.run_dir / "link"
+            link.symlink_to(outside)
+            req = self._exec_request(cwd=link)
+            response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        self.assertEqual(response.status_code, 403)
+
+    def test_out_path_outside_run_dir_is_rejected(self):
+        client = self._make_client(world_rank=0)
+        with tempfile.TemporaryDirectory() as outside:
+            req = self._exec_request(cmd="echo hi", out_path=outside, output_mode=messages.ExecOutputMode.FILE)
+            response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(list(Path(outside).iterdir()), [])
+
+    def test_rejected_request_does_not_leave_agent_busy(self):
+        client = self._make_client(world_rank=0)
+        with tempfile.TemporaryDirectory() as outside:
+            rejected = self._exec_request(cwd=outside)
+            response = client.post(messages.EXEC_PATH, content=rejected.model_dump_json(), headers=self._auth_headers())
+        self.assertEqual(response.status_code, 403)
+        accepted = self._exec_request()
+        response = client.post(messages.EXEC_PATH, content=accepted.model_dump_json(), headers=self._auth_headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(messages.ExecResponse(**response.json()).exit_code, 0)
+
+    def test_cmd_id_with_path_traversal_is_rejected(self):
+        client = self._make_client(world_rank=0)
+        out_path = self.run_dir / "exec_output"
+        out_path.mkdir()
+        body = self._exec_request(output_mode=messages.ExecOutputMode.FILE, out_path=out_path).model_dump(mode="json")
+        body["cmd_id"] = "../escape"
+        response = client.post(messages.EXEC_PATH, json=body, headers=self._auth_headers())
+        self.assertEqual(response.status_code, 422)
+        self.assertFalse((self.run_dir / "escape.stdout").exists())
 
 
 class TestExecTimeouts(HttpAgentTestBase):
@@ -278,7 +401,7 @@ class TestExecTimeouts(HttpAgentTestBase):
         kwargs = dict(
             cmd="true",
             env={},
-            cwd=Path(TMP),
+            cwd=self.run_dir,
             timeout=None,
             inactivity_timeout=None,
             cmd_id="cmd-timeout",
@@ -366,7 +489,7 @@ class TestInlineExec(HttpAgentTestBase):
         kwargs = dict(
             cmd="true",
             env={},
-            cwd=Path(TMP),
+            cwd=self.run_dir,
             timeout=None,
             inactivity_timeout=None,
             cmd_id="cmd-inline",
@@ -418,7 +541,7 @@ class TestExecConcurrency(HttpAgentTestBase):
         kwargs = dict(
             cmd="true",
             env={},
-            cwd=Path(TMP),
+            cwd=self.run_dir,
             timeout=None,
             inactivity_timeout=None,
             cmd_id="cmd-1",

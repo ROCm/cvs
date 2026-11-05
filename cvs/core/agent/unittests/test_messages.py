@@ -98,6 +98,23 @@ class TestExecRequest(unittest.TestCase):
         req = ExecRequest(**self._base_kwargs(output_mode=ExecOutputMode.INLINE, inactivity_timeout=10))
         self.assertEqual(req.inactivity_timeout, 10)
 
+    def test_accepts_uuid_hex_cmd_id(self):
+        cmd_id = "0123456789abcdef0123456789abcdef"
+        req = ExecRequest(**self._base_kwargs(cmd_id=cmd_id))
+        self.assertEqual(req.cmd_id, cmd_id)
+
+    def test_rejects_cmd_id_with_path_separator(self):
+        with self.assertRaises(ValidationError):
+            ExecRequest(**self._base_kwargs(cmd_id="a/b"))
+
+    def test_rejects_dotdot_cmd_id(self):
+        with self.assertRaises(ValidationError):
+            ExecRequest(**self._base_kwargs(cmd_id=".."))
+
+    def test_rejects_empty_cmd_id(self):
+        with self.assertRaises(ValidationError):
+            ExecRequest(**self._base_kwargs(cmd_id=""))
+
 
 class TestExecResponse(unittest.TestCase):
     def test_inline_mode_response(self):
