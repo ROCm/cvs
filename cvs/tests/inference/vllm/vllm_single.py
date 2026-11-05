@@ -30,6 +30,12 @@ def test_setup_sshd():
     return _common.setup_sshd()
 
 
+def test_support_matrix_gate(orch, variant_config, lifecycle, request):
+    """Stop the run if this framework/model is unsupported on the detected GPU
+    arch or ROCm version (CVS_SUPPORT_MATRIX_GATE controls enforcement)."""
+    return _common.support_matrix_gate(orch, variant_config, lifecycle, request)
+
+
 def test_discover_topology(orch, variant_config, vllm_targets, lifecycle, request):
     """Resolve IB HCA devices; a no-op when the effective topology is one node."""
     return _common.discover_topology(orch, variant_config, vllm_targets, lifecycle, request)

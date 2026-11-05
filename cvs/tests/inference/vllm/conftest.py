@@ -184,13 +184,14 @@ def pytest_collection_modifyitems(config, items):
     rank = {
         "test_launch_container": 0,
         "test_setup_sshd": 1,
-        "test_discover_topology": 2,
-        "test_model_fetch": 3,
-        "test_openai_compatible_smoke": 4,
-        VLLM_INFERENCE_TEST: 5,
-        "test_accuracy_eval": 6,
-        "test_print_results_table": 7,
-        "test_teardown": 8,
+        "test_support_matrix_gate": 2,
+        "test_discover_topology": 3,
+        "test_model_fetch": 4,
+        "test_openai_compatible_smoke": 5,
+        VLLM_INFERENCE_TEST: 6,
+        "test_accuracy_eval": 7,
+        "test_print_results_table": 8,
+        "test_teardown": 9,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 

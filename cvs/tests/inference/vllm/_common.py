@@ -27,6 +27,7 @@ from cvs.lib.utils.gpu import (
     stop_and_collect_gpu_poller,
 )
 from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
+from cvs.lib.support_matrix.support_matrix_lib import run_support_matrix_gate, served_model_name
 
 
 log = globals.log
@@ -79,6 +80,18 @@ def launch_container(orch, vllm_targets, lifecycle, request):
 
 def setup_sshd():
     pytest.skip("vLLM uses host-network NCCL/gloo rather than in-container sshd")
+
+
+def support_matrix_gate(orch, variant_config, lifecycle, request):
+    """Stop the run when vllm/<model> is unsupported on the detected GPU arch or
+    ROCm version. Inference passes no params; enforcement is controlled by
+    CVS_SUPPORT_MATRIX_GATE (see cvs/lib/support_matrix/README.md)."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    result = run_support_matrix_gate("inference", "vllm", served_model_name(variant_config), {}, orch)
+    if not result.passed:
+        lifecycle.failed = True
+        pytest.fail("support matrix gate blocked this run: " + "; ".join(result.violations))
 
 
 def discover_topology(orch, variant_config, vllm_targets, lifecycle, request):
