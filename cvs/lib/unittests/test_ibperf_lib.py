@@ -7,6 +7,20 @@ from pathlib import Path
 from unittest.mock import ANY, MagicMock, call as mock_call, patch
 import cvs.lib.ibperf_lib as ibperf_lib
 from cvs.lib import globals
+from cvs.lib.preflight import ifoe_l2_connectivity as ifoe_mod
+
+_AFM_MARKER = "'CVS_ERROR: ibperf.vpod_source afm needs passwordless sudo for afmctl'"
+
+
+def _afm_denied_read(sudo_target):
+    """The LC_ALL=C sudo read with the shared denial classifier, built from the
+    production denial grep so this pin cannot drift from the classifier it asserts."""
+    return (
+        f'if ! _cvs_out=$(LC_ALL=C sudo -n {sudo_target} show device --json 2>&1); then '
+        f'if {ifoe_mod._sudo_denial_grep()}; then printf \'%s %s\\n\' {_AFM_MARKER} "$_cvs_out"; '
+        'else printf \'%s\\n\' "$_cvs_out"; fi; '
+        'else printf \'%s\\n\' "$_cvs_out"; fi'
+    )
 
 
 class TestConfiguredTests(unittest.TestCase):
@@ -1655,13 +1669,8 @@ class TestDiscoverAfmVpodMap(unittest.TestCase):
             "{ printf '%s\\n' 'Unable to find afmctl in PATH' >&2; exit 127; }; "
             'case "$_cvs_afmctl" in /*) ;; *) '
             "printf '%s\\n' 'Resolved afmctl path is not absolute' >&2; exit 127 ;; esac; "
-            'if ! _cvs_out=$(sudo -n "$_cvs_afmctl" show device --json 2>&1); then '
-            'case "$_cvs_out" in '
-            '*"a password is required"*|*"a terminal is required"*|*"no askpass program specified"*'
-            '|*"you must have a tty"*|*"is not allowed to execute"*|*"is not allowed to run sudo"*) '
-            "printf '%s %s\\n' 'CVS_ERROR: ibperf.vpod_source afm needs passwordless sudo for afmctl' \"$_cvs_out\" ;; "
-            '*) printf \'%s\\n\' "$_cvs_out" ;; esac; '
-            'else printf \'%s\\n\' "$_cvs_out"; fi; } 2>&1',
+            + _afm_denied_read('"$_cvs_afmctl"')
+            + '; } 2>&1',
             print_console=False,
         )
 
@@ -1670,13 +1679,7 @@ class TestDiscoverAfmVpodMap(unittest.TestCase):
         phdl.exec.return_value = {'n': AFM_FIXTURE.read_text()}
         ibperf_lib.discover_afm_vpod_map(phdl, '/path with space/afmctl')
         phdl.exec.assert_called_once_with(
-            "{ if ! _cvs_out=$(sudo -n '/path with space/afmctl' show device --json 2>&1); then "
-            'case "$_cvs_out" in '
-            '*"a password is required"*|*"a terminal is required"*|*"no askpass program specified"*'
-            '|*"you must have a tty"*|*"is not allowed to execute"*|*"is not allowed to run sudo"*) '
-            "printf '%s %s\\n' 'CVS_ERROR: ibperf.vpod_source afm needs passwordless sudo for afmctl' \"$_cvs_out\" ;; "
-            '*) printf \'%s\\n\' "$_cvs_out" ;; esac; '
-            'else printf \'%s\\n\' "$_cvs_out"; fi; } 2>&1',
+            '{ ' + _afm_denied_read("'/path with space/afmctl'") + '; } 2>&1',
             print_console=False,
         )
         phdl.reset_mock()

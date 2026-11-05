@@ -719,40 +719,59 @@ def parse_afmctl_firmware_by_bdf(output: str) -> Tuple[Dict[str, Optional[str]],
     return firmware_by_bdf, []
 
 
-# Signatures ``sudo -n`` prints when it refuses to run the command for an
-# authorization reason (no cached credentials, not a sudoer for it, needs a tty).
-# A failure whose output matches none of these is the tool's own error, which must
-# pass through unchanged rather than be relabeled as a sudo-configuration problem.
-_SUDO_DENIAL_GLOBS = (
+# A denial is identified only from a line that is unambiguously sudo's own, so a
+# benign ``sudo:`` warning (for example ``sudo: unable to resolve host``) or afmctl's
+# own error text that happens to contain one of these words is not mistaken for an
+# authorization failure. Two line-anchored forms, matched under ``LC_ALL=C`` so sudo's
+# own diagnostics are English:
+#   - a ``sudo:`` program line that also states an authorization reason, and
+#   - a sudoers policy refusal, which sudo prints without the ``sudo:`` prefix.
+# afmctl's errors carry neither, so a tool failure passes through unchanged.
+_SUDO_PREFIX_AUTH_PATTERNS = (
     "a password is required",
     "a terminal is required",
     "no askpass program specified",
     "you must have a tty",
+)
+_SUDOERS_POLICY_PATTERNS = (
     "is not allowed to execute",
     "is not allowed to run sudo",
+    "is not in the sudoers file",
 )
 
 
-def _afmctl_read(sudo_target, arguments, denied_marker):
-    """Build the ``sudo -n <target> <arguments>`` read, flagging only an auth denial.
+def _sudo_denial_grep():
+    """A ``grep -Eq`` test that is true only for sudo's own authorization refusal.
 
-    When ``denied_marker`` is set, the real ``sudo -n`` read runs inside a failure
-    check. A failure whose stderr matches a sudo authorization message prints
+    Authorization phrases are anchored to a ``^sudo:`` line; sudoers policy refusals
+    (printed without the prefix) are matched as whole lines. Line anchoring is what
+    keeps a bare ``sudo:`` warning or afmctl error text from reading as a denial.
+    """
+    prefix_alt = "|".join(re.escape(p) for p in _SUDO_PREFIX_AUTH_PATTERNS)
+    policy_alt = "|".join(re.escape(p) for p in _SUDOERS_POLICY_PATTERNS)
+    pattern = f"^sudo:.*({prefix_alt})|({policy_alt})"
+    return f"printf '%s' \"$_cvs_out\" | grep -Eq {shlex.quote(pattern)}"
+
+
+def _afmctl_read(sudo_target, arguments, denied_marker):
+    """Build the ``LC_ALL=C sudo -n <target> <arguments>`` read, flagging an auth denial.
+
+    ``LC_ALL=C`` pins sudo's own diagnostics to English. When ``denied_marker`` is set,
+    the real read runs inside a failure check: a failure whose stderr is a sudo
+    authorization refusal (see :func:`_sudo_denial_grep`) prints
     ``<denied_marker> <stderr>``; any other nonzero exit (afmctl itself failing while
     sudo succeeded) passes its diagnostic through unchanged, so a tool error is not
     misreported as a sudo-configuration problem. Checking the real read also means a
     user with NOPASSWD for afmctl but not for an unrelated command is not misreported.
     """
-    read = f"sudo -n {sudo_target} {arguments}"
+    read = f"LC_ALL=C sudo -n {sudo_target} {arguments}"
     if denied_marker is None:
         return read
     marker = shlex.quote(denied_marker)
-    denial_cases = "|".join(f'*"{glob}"*' for glob in _SUDO_DENIAL_GLOBS)
     return (
         f"if ! _cvs_out=$({read} 2>&1); then "
-        f'case "$_cvs_out" in {denial_cases}) '
-        f"printf '%s %s\\n' {marker} \"$_cvs_out\" ;; "
-        "*) printf '%s\\n' \"$_cvs_out\" ;; esac; "
+        f"if {_sudo_denial_grep()}; then printf '%s %s\\n' {marker} \"$_cvs_out\"; "
+        "else printf '%s\\n' \"$_cvs_out\"; fi; "
         "else printf '%s\\n' \"$_cvs_out\"; fi"
     )
 

@@ -25,6 +25,7 @@ from cvs.lib.preflight.ifoe_l2_connectivity import (
     parse_afmctl_show_device,
     parse_afmctl_show_device_json,
 )
+from cvs.lib.preflight import ifoe_l2_connectivity as ifoe_mod
 from cvs.lib.preflight.report import PreflightReportGenerator
 from cvs.parsers.schemas import PreflightConfigFile
 
@@ -419,14 +420,16 @@ class TestParseAfmctlFirmwareByBdf(unittest.TestCase):
 
 
 def _denied_read(sudo_target, marker):
-    """The failure-classifying read fragment: only a sudo-auth stderr gets the marker."""
+    """The failure-classifying read fragment: only a sudo-auth stderr gets the marker.
+
+    Built from the production denial grep so the expectation cannot drift from the
+    classifier it pins. The read runs under ``LC_ALL=C`` so sudo's own diagnostics are
+    English.
+    """
     return (
-        f'if ! _cvs_out=$(sudo -n {sudo_target} show device --json 2>&1); then '
-        'case "$_cvs_out" in '
-        '*"a password is required"*|*"a terminal is required"*|*"no askpass program specified"*'
-        '|*"you must have a tty"*|*"is not allowed to execute"*|*"is not allowed to run sudo"*) '
-        f"printf '%s %s\\n' {marker} \"$_cvs_out\" ;; "
-        '*) printf \'%s\\n\' "$_cvs_out" ;; esac; '
+        f'if ! _cvs_out=$(LC_ALL=C sudo -n {sudo_target} show device --json 2>&1); then '
+        f'if {ifoe_mod._sudo_denial_grep()}; then printf \'%s %s\\n\' {marker} "$_cvs_out"; '
+        'else printf \'%s\\n\' "$_cvs_out"; fi; '
         'else printf \'%s\\n\' "$_cvs_out"; fi'
     )
 
@@ -480,7 +483,7 @@ class TestBuildAfmctlCommand(unittest.TestCase):
             "{ printf '%s\\n' 'Unable to find afmctl in PATH' >&2; exit 127; }; "
             'case "$_cvs_afmctl" in /*) ;; *) '
             "printf '%s\\n' 'Resolved afmctl path is not absolute' >&2; exit 127 ;; esac; "
-            'sudo -n "$_cvs_afmctl" show device --json; } 2>&1',
+            'LC_ALL=C sudo -n "$_cvs_afmctl" show device --json; } 2>&1',
         )
 
     def test_ibperf_denied_marker_form_has_no_sudo_pre_check(self):
@@ -508,26 +511,54 @@ class TestBuildAfmctlCommand(unittest.TestCase):
         # is not misreported, and an afmctl denial is recorded as a denial.
         command = build_afmctl_command('show device --json', 'afmctl', denied_marker='CVS_CMD_DENIED')
         self.assertNotIn('sudo -n true', command)
-        self.assertIn('if ! _cvs_out=$(sudo -n "$_cvs_afmctl" show device --json 2>&1); then', command)
-        self.assertIn('case "$_cvs_out" in', command)
-        self.assertIn('*"a password is required"*', command)
+        self.assertIn('if ! _cvs_out=$(LC_ALL=C sudo -n "$_cvs_afmctl" show device --json 2>&1); then', command)
+        self.assertIn('grep -Eq', command)
+        self.assertIn('^sudo:', command)
 
-    def test_denied_marker_classifies_only_sudo_auth_stderr(self):
-        # Only a sudo authorization message routes to the denial marker; any other
-        # nonzero exit (afmctl's own failure) falls through to the raw-output branch,
-        # so a tool error is not relabeled as a sudo-configuration problem.
+    def test_denied_marker_only_marks_the_grep_branch(self):
+        # The marker printf lives in the grep-true branch; the fallthrough emits the
+        # raw output, so a tool error is never relabeled as a sudo-configuration problem.
         command = build_afmctl_command('show device --json', 'afmctl', denied_marker='CVS_CMD_DENIED')
-        # The marker printf lives inside the sudo-auth case arm, not the fallthrough.
-        denial_arm, _, fallthrough = command.partition('*) printf \'%s\\n\' "$_cvs_out" ;;')
-        self.assertIn("printf '%s %s\\n' CVS_CMD_DENIED \"$_cvs_out\"", denial_arm)
+        grep_true, _, fallthrough = command.partition('; else printf')
+        self.assertIn("printf '%s %s\\n' CVS_CMD_DENIED \"$_cvs_out\"", grep_true)
         self.assertNotIn('CVS_CMD_DENIED', fallthrough)
-        # Every sudo-authorization signature is a case label guarding the marker arm.
-        for signature in (
-            'a password is required',
-            'is not allowed to execute',
-            'you must have a tty',
-        ):
-            self.assertIn(f'*"{signature}"*', denial_arm)
+        self.assertIn('LC_ALL=C sudo -n', command)
+
+    def _classify(self, stderr):
+        """Run the generated denial classifier against ``stderr`` and return the verdict.
+
+        Extracts the ``if ...grep...; then <marker>; else <raw>; fi`` classifier from a
+        real built command and executes it, so classification is proven by the shell,
+        not re-implemented. Returns 'DENIED' or 'TOOLERR'.
+        """
+        grep = ifoe_mod._sudo_denial_grep()
+        script = f'_cvs_out={shlex.quote(stderr)}\nif {grep}; then echo DENIED; else echo TOOLERR; fi'
+        return run_trusted(['sh', '-c', script], capture_output=True, text=True).stdout.strip()
+
+    def test_sudoers_file_refusal_classified_as_denial(self):
+        # A standard sudoers refusal, printed unprefixed by sudo, is sudo-specific
+        # vocabulary and is recognized as a denial.
+        self.assertEqual(
+            self._classify('operator is not in the sudoers file. This incident will be reported.'), 'DENIED'
+        )
+
+    def test_sudo_prefixed_auth_message_is_a_denial(self):
+        self.assertEqual(self._classify('sudo: a password is required'), 'DENIED')
+
+    def test_benign_sudo_warning_plus_tool_error_is_not_a_denial(self):
+        # A common cluster warning (host not in /etc/hosts) is a sudo: line but not an
+        # authorization refusal; with afmctl's own error it must stay a tool error so
+        # the real diagnostic is surfaced, not a false passwordless-sudo recommendation.
+        output = 'sudo: unable to resolve host nodeX: Name or service not known\nafmctl: no AFM device present'
+        self.assertEqual(self._classify(output), 'TOOLERR')
+
+    def test_tool_error_text_matching_a_phrase_is_not_a_denial(self):
+        # afmctl's own stderr that merely contains an auth-like phrase (no sudo: line,
+        # no sudoers vocabulary) is a tool error, not a sudo denial.
+        self.assertEqual(self._classify('afmctl: a password is required for the BMC session'), 'TOOLERR')
+
+    def test_plain_tool_error_is_not_a_denial(self):
+        self.assertEqual(self._classify('afmctl: ERROR device query failed (rc=2)'), 'TOOLERR')
 
     def test_values_are_shell_quoted(self):
         command = build_afmctl_command(
