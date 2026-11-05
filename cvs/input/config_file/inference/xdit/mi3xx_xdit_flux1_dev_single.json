@@ -25,7 +25,8 @@
           "{paths.models_dir}:/hf_home",
           "{paths.log_dir}:/outputs",
           "{home}/cvs/cvs/lib/inference/xdit/scripts/run_usp.py:/benchmark/run_usp.py",
-          "{home}/cvs/cvs/lib/inference/xdit/scripts/flux_utils.py:/benchmark/flux_utils.py"
+          "{home}/cvs/cvs/lib/inference/xdit/scripts/flux_utils.py:/benchmark/flux_utils.py",
+          "{home}/cvs/cvs/lib/inference/xdit/scripts/fid_sweep.py:/benchmark/fid_sweep.py"
         ],
         "devices": ["/dev/dri", "/dev/kfd"],
         "env": {
