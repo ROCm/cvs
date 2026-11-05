@@ -162,9 +162,7 @@ def _generated_reference(generated_root, sample_frames):
             continue
         best_dir, best_nfe, best_images = directory, nfe, found
     if best_dir is None:
-        raise SystemExit(
-            f"{generated_root} has no step directory with 2 images to use as the FID reference"
-        )
+        raise SystemExit(f"{generated_root} has no step directory with 2 images to use as the FID reference")
     print(f"FID reference is the generated samples in {best_dir} ({len(best_images)} images)", flush=True)
     return best_images, best_dir
 
