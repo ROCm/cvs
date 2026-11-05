@@ -25,7 +25,8 @@
           "volumes": [
             "{paths.models_dir}:/hf_home",
             "{paths.log_dir}:/outputs",
-            "{home}/cvs/cvs/lib/inference/xdit/scripts/flux2_example.py:/benchmark/flux2_example.py"
+            "{home}/cvs/cvs/lib/inference/xdit/scripts/flux2_example.py:/benchmark/flux2_example.py",
+            "{home}/cvs/cvs/lib/inference/xdit/scripts/fid_sweep.py:/benchmark/fid_sweep.py"
           ],
           "devices": ["/dev/dri", "/dev/kfd"],
           "env": {

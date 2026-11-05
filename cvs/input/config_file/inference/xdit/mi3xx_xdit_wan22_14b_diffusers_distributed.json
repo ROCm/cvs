@@ -27,6 +27,7 @@
           "{paths.models_dir}:/hf_home",
           "{paths.log_dir}:/outputs",
           "/home/{user-id}/cvs/cvs/lib/inference/xdit/scripts/wan_i2v_example.py:/benchmark/wan_i2v_example.py",
+          "/home/{user-id}/cvs/cvs/lib/inference/xdit/scripts/fid_sweep.py:/benchmark/fid_sweep.py",
           "/dev/infiniband:/dev/infiniband",
           "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
           "/usr/lib/x86_64-linux-gnu/libibverbs.so.1:/usr/lib/x86_64-linux-gnu/libibverbs.so.1:ro",
