@@ -550,9 +550,7 @@ def _is_flux2_workload(variant, params):
 
 def _output_parser(spec, params, output_dir, variant):
     if spec["family"] == "flux":
-        expected_repetitions = None
-        if not _is_flux2_workload(variant, params):
-            expected_repetitions = _configured_count(params.get("num_repetitions"))
+        expected_repetitions = _configured_count(params.get("num_repetitions"))
         return FluxOutputParser(
             output_dir,
             expected_image_pattern="flux_*.png",
@@ -715,8 +713,8 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
         reported_dir = reported_by_host.get(host) or output_dir
         _attach_benchmark_artifacts(request, host, output_dir)
         parser = _output_parser(spec, params, output_dir, variant)
-        if spec["family"] == "flux" and not _is_flux2_workload(variant, params) and parser.expected_repetitions is None:
-            failures.append(f"{host}: FLUX.1 requires num_repetitions")
+        if spec["family"] == "flux" and parser.expected_repetitions is None:
+            failures.append(f"{host}: FLUX requires num_repetitions")
             continue
         if spec["family"] == "wan" and not spec["diffusers"] and parser.expected_steps is None:
             failures.append(f"{host}: native WAN requires num_benchmark_steps")
@@ -1127,10 +1125,7 @@ def fid_curve_stage(orch, variant, gpu_type, spec, lifecycle, request):
                 continue
             payload, error = _score_fid_curve(orch, hosts, output_dir, reference_dir, inception_path, sampler)
         if payload is None and error and "no step directory with 2 images" in error:
-            pytest.skip(
-                "FID sweep saved no step directory with two images before the benchmark "
-                f"time limit. {error}"
-            )
+            pytest.skip(f"FID sweep saved no step directory with two images before the benchmark time limit. {error}")
         if payload is None:
             failures.append(f"{label}: {error}")
             continue
