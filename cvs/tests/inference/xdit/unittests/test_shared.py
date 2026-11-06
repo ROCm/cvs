@@ -8,11 +8,14 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from cvs.lib import globals
 from cvs.lib.inference.xdit.xdit_benchmark_job import cleanup_staged_artifacts
 from cvs.tests.inference.xdit import conftest
 from cvs.tests.inference.xdit._shared import (
     Lifecycle,
+    XDIT_TEST_ORDER,
     _SecretValue,
     _attach_benchmark_artifacts,
     _is_flux2_workload,
@@ -22,6 +25,7 @@ from cvs.tests.inference.xdit._shared import (
     _report_threshold,
     benchmark_params_from_variant,
     clip_score_stage,
+    fid_curve_stage,
     hf_remote_download_enabled,
     hf_token_from_variant,
     inference_from_variant,
@@ -310,6 +314,8 @@ class TestParseThresholdsStage(unittest.TestCase):
         message = globals.error_list[-1]
         self.assertIn("/home/user/flux_host_outputs", message)
         self.assertNotIn("xdit-results-gone", message)
+        self.assertTrue(lifecycle.failed)
+        self.assertEqual(lifecycle.failure_stage, "parse_thresholds")
 
 
 class TestOutputDirsByHost(unittest.TestCase):
@@ -484,6 +490,326 @@ class TestConftestHelpers(unittest.TestCase):
         self.assertEqual(merged["runtime"]["args"], {"network": "host", "ipc": "host"})
         self.assertEqual(merged["image"], "xdit:latest")
 
+    def test_fid_curve_runs_before_teardown(self):
+        self.assertLess(XDIT_TEST_ORDER["test_clip_score"], XDIT_TEST_ORDER["test_fid_curve"])
+        self.assertLess(XDIT_TEST_ORDER["test_fid_curve"], XDIT_TEST_ORDER["test_print_results"])
+        self.assertLess(XDIT_TEST_ORDER["test_print_results"], XDIT_TEST_ORDER["test_teardown"])
+
+
+class TestFidCurveStage(unittest.TestCase):
+    def _variant(self, params):
+        workload = {"ulysses_degree": 1, "ring_degree": 1}
+        workload.update(params)
+        return SimpleNamespace(
+            inference={"_test_container_output_dirs_by_node": {"n1": "/out"}, "model_repo": "org/flux"},
+            model=SimpleNamespace(id="flux"),
+            benchmark_params={"flux1_dev_t2i": workload},
+        )
+
+    def _run(self, params, score_error):
+        spec = {"family": "flux", "distributed": False, "diffusers": True}
+        with (
+            patch("cvs.tests.inference.xdit._shared._read_fid_curve_file", return_value=(None, "missing")),
+            patch("cvs.tests.inference.xdit._shared._read_fid_manifest", return_value=None),
+            patch(
+                "cvs.tests.inference.xdit._shared._score_fid_groups",
+                side_effect=lambda _orch, jobs, *_args: {label: (None, score_error) for label, _dir, _hosts in jobs},
+            ) as score,
+            patch("cvs.tests.inference.xdit._shared.fail_test") as fail,
+        ):
+            try:
+                fid_curve_stage(MagicMock(), self._variant(params), "mi300x", spec, Lifecycle(), MagicMock())
+            except pytest.skip.Exception as exc:
+                return "skip", str(exc), fail, score
+        return "ran", "", fail, score
+
+    def test_missing_inception_skips(self):
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/hf_home/fid_reference",
+            "fid_inception_path": "/hf_home/inception_v3.pth",
+        }
+        outcome, message, fail, _score = self._run(
+            params,
+            "n1: FID command failed (inception checkpoint not found: /hf_home/inception_v3.pth)",
+        )
+        self.assertEqual(outcome, "skip")
+        self.assertIn("does not download", message)
+        self.assertIn("inception checkpoint not found", message)
+        fail.assert_not_called()
+
+    def test_empty_inception_path_skips_without_scoring(self):
+        outcome, message, fail, score = self._run({"fid_nfe_steps": [10, 20]}, "")
+        self.assertEqual(outcome, "skip")
+        self.assertIn("fid_inception_path is empty", message)
+        fail.assert_not_called()
+        score.assert_not_called()
+
+    def test_missing_reference_directory_still_scores(self):
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_inception_path": "/hf_home/inception_v3.pth",
+        }
+        curve = {"points": [{"nfe": 10, "fid": 12.5}, {"nfe": 20, "fid": 8.0}]}
+        with (
+            patch("cvs.tests.inference.xdit._shared._read_fid_curve_file", return_value=(None, "missing")),
+            patch("cvs.tests.inference.xdit._shared._read_fid_manifest", return_value=None),
+            patch(
+                "cvs.tests.inference.xdit._shared._score_fid_groups",
+                side_effect=lambda _orch, jobs, *_args: {label: (curve, None) for label, _dir, _hosts in jobs},
+            ) as score,
+            patch("cvs.tests.inference.xdit._shared.fail_test") as fail,
+        ):
+            fid_curve_stage(
+                MagicMock(),
+                self._variant(params),
+                "mi300x",
+                {"family": "flux", "distributed": False, "diffusers": True},
+                Lifecycle(),
+                MagicMock(),
+            )
+        fail.assert_not_called()
+        score.assert_called_once()
+        self.assertEqual(score.call_args.args[2], "")
+        self.assertEqual(score.call_args.args[3], "/hf_home/inception_v3.pth")
+
+    def _run_nodes(self, params, dirs, curves, manifests, scores):
+        spec = {"family": "flux", "distributed": False, "diffusers": True}
+        variant = self._variant(params)
+        variant.inference["_test_container_output_dirs_by_node"] = dirs
+        lifecycle = Lifecycle()
+
+        def _curve(_orch, _hosts, output_dir):
+            return curves.get(output_dir, (None, "missing"))
+
+        def _manifest(_orch, _hosts, output_dir):
+            return manifests.get(output_dir)
+
+        def _score(_orch, jobs, _reference_dir, _inception_path, _sampler):
+            return {label: scores.get(output_dir, (None, "unscored")) for label, output_dir, _hosts in jobs}
+
+        with (
+            patch("cvs.tests.inference.xdit._shared._read_fid_curve_file", side_effect=_curve),
+            patch("cvs.tests.inference.xdit._shared._read_fid_manifest", side_effect=_manifest),
+            patch("cvs.tests.inference.xdit._shared._score_fid_groups", side_effect=_score),
+            patch("cvs.tests.inference.xdit._shared.fail_test") as fail,
+        ):
+            try:
+                fid_curve_stage(MagicMock(), variant, "mi300x", spec, lifecycle, MagicMock())
+            except pytest.skip.Exception as exc:
+                return "skip", str(exc), fail, lifecycle
+        return "ran", "", fail, lifecycle
+
+    def test_stopped_early_host_does_not_hide_another_hosts_failure(self):
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/ref",
+            "fid_inception_path": "/inception.pth",
+        }
+        outcome, _message, fail, lifecycle = self._run_nodes(
+            params,
+            {"n1": "/out-a", "n2": "/out-b"},
+            {},
+            {"/out-a": {"stopped_early": True, "counts": {"10": 1}}},
+            {"/out-b": (None, "scorer exploded")},
+        )
+        self.assertEqual(outcome, "ran")
+        fail.assert_called_once()
+        self.assertIn("n2", fail.call_args.args[0])
+        self.assertIn("scorer exploded", fail.call_args.args[0])
+        notes = [
+            row.get("_fid_skip")
+            for cell in lifecycle.report_results.values()
+            for row in cell.values()
+            if isinstance(row, dict)
+        ]
+        self.assertTrue(any(note and "stopped before the benchmark time limit" in note for note in notes))
+
+    def test_stopped_early_host_keeps_another_hosts_curve(self):
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/ref",
+            "fid_inception_path": "/inception.pth",
+        }
+        curve = {"points": [{"nfe": 10, "fid": 12.5}, {"nfe": 20, "fid": 8.0}]}
+        outcome, _message, fail, lifecycle = self._run_nodes(
+            params,
+            {"n1": "/out-a", "n2": "/out-b"},
+            {"/out-b": (curve, None)},
+            {"/out-a": {"stopped_early": True, "counts": {"10": 1}}},
+            {},
+        )
+        self.assertEqual(outcome, "ran")
+        fail.assert_not_called()
+        self.assertEqual([row[0] for row in lifecycle.results], ["n2", "n2"])
+        self.assertEqual(lifecycle.results[0][7], 12.5)
+        stored = [
+            row.get("_extra_curves")
+            for cell in lifecycle.report_results.values()
+            for host, row in cell.items()
+            if host == "n2" and isinstance(row, dict)
+        ]
+        self.assertEqual(
+            stored,
+            [
+                {
+                    "FID": {
+                        "points": [[10.0, 12.5], [20.0, 8.0]],
+                        "default_on": True,
+                        "x_title": "NFE",
+                    }
+                }
+            ],
+        )
+
+    def test_every_host_stopped_early_skips(self):
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/ref",
+            "fid_inception_path": "/inception.pth",
+        }
+        blocked = {"stopped_early": True, "counts": {"10": 1}}
+        outcome, message, fail, _lifecycle = self._run_nodes(
+            params,
+            {"n1": "/out-a", "n2": "/out-b"},
+            {},
+            {"/out-a": blocked, "/out-b": blocked},
+            {},
+        )
+        self.assertEqual(outcome, "skip")
+        self.assertIn("n1", message)
+        self.assertIn("n2", message)
+        fail.assert_not_called()
+
+    def test_short_sweep_on_one_host_does_not_hide_another_hosts_failure(self):
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/ref",
+            "fid_inception_path": "/inception.pth",
+        }
+        outcome, _message, fail, _lifecycle = self._run_nodes(
+            params,
+            {"n1": "/out-a", "n2": "/out-b"},
+            {},
+            {},
+            {
+                "/out-a": (None, "no step directory with 2 images"),
+                "/out-b": (None, "scorer exploded"),
+            },
+        )
+        self.assertEqual(outcome, "ran")
+        fail.assert_called_once()
+        self.assertIn("scorer exploded", fail.call_args.args[0])
+        self.assertNotIn("no step directory", fail.call_args.args[0])
+
+    def test_missing_inception_on_one_host_keeps_another_hosts_curve(self):
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/ref",
+            "fid_inception_path": "/inception.pth",
+        }
+        curve = {"points": [{"nfe": 10, "fid": 12.5}, {"nfe": 20, "fid": 8.0}]}
+        outcome, _message, fail, lifecycle = self._run_nodes(
+            params,
+            {"n1": "/out-a", "n2": "/out-b"},
+            {"/out-b": (curve, None)},
+            {},
+            {"/out-a": (None, "inception checkpoint not found: /inception.pth")},
+        )
+        self.assertEqual(outcome, "ran")
+        fail.assert_not_called()
+        self.assertEqual(lifecycle.results[0][0], "n2")
+
+    def test_scores_every_directory_in_one_parallel_exec(self):
+        from cvs.lib.inference.xdit.xdit_fid import FID_CURVE_MARKER, FID_SCORE_TIMEOUT_S
+
+        curve = {"points": [{"nfe": 10, "fid": 12.5}, {"nfe": 20, "fid": 8.0}]}
+        marker = FID_CURVE_MARKER + json.dumps(curve)
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/ref",
+            "fid_inception_path": "/inception.pth",
+        }
+
+        class _Orch:
+            def __init__(self):
+                self.hosts = ["n1", "n2", "idle"]
+                self.calls = []
+
+            def exec_cmd_list(self, commands, timeout=None, print_console=True):
+                self.calls.append((list(commands), timeout, print_console))
+                return {
+                    "n1": marker,
+                    "n2": "inception checkpoint not found: /inception.pth",
+                    "idle": "",
+                }
+
+        orch = _Orch()
+        variant = self._variant(params)
+        variant.inference["_test_container_output_dirs_by_node"] = {"n1": "/out-a", "n2": "/out-b"}
+        with (
+            patch("cvs.tests.inference.xdit._shared._read_fid_curve_file", return_value=(None, "missing")),
+            patch("cvs.tests.inference.xdit._shared._read_fid_manifest", return_value=None),
+            patch("cvs.tests.inference.xdit._shared.fail_test") as fail,
+        ):
+            fid_curve_stage(
+                orch,
+                variant,
+                "mi300x",
+                {"family": "flux", "distributed": False, "diffusers": True},
+                Lifecycle(),
+                MagicMock(),
+            )
+        self.assertEqual(len(orch.calls), 1)
+        commands, timeout, print_console = orch.calls[0]
+        self.assertEqual(timeout, FID_SCORE_TIMEOUT_S)
+        self.assertFalse(print_console)
+        self.assertEqual(len(commands), 3)
+        self.assertIn("/out-a", commands[0])
+        self.assertIn("/out-b", commands[1])
+        self.assertEqual(commands[2], "true")
+        fail.assert_not_called()
+
+    def test_shared_output_directory_is_scored_on_one_host(self):
+        from cvs.lib.inference.xdit.xdit_fid import FID_CURVE_MARKER
+
+        curve = {"points": [{"nfe": 10, "fid": 12.5}, {"nfe": 20, "fid": 8.0}]}
+        marker = FID_CURVE_MARKER + json.dumps(curve)
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/ref",
+            "fid_inception_path": "/inception.pth",
+        }
+
+        class _Orch:
+            def __init__(self):
+                self.hosts = ["n1", "n2"]
+                self.calls = []
+
+            def exec_cmd_list(self, commands, timeout=None, print_console=True):
+                self.calls.append(list(commands))
+                return {"n1": marker, "n2": ""}
+
+        orch = _Orch()
+        variant = self._variant(params)
+        variant.inference["_test_container_output_dirs_by_node"] = {"n1": "/shared", "n2": "/shared"}
+        with (
+            patch("cvs.tests.inference.xdit._shared._read_fid_curve_file", return_value=(None, "missing")),
+            patch("cvs.tests.inference.xdit._shared._read_fid_manifest", return_value=None),
+            patch("cvs.tests.inference.xdit._shared.fail_test"),
+        ):
+            fid_curve_stage(
+                orch,
+                variant,
+                "mi300x",
+                {"family": "flux", "distributed": False, "diffusers": True},
+                Lifecycle(),
+                MagicMock(),
+            )
+        self.assertEqual(len(orch.calls), 1)
+        self.assertIn("/shared", orch.calls[0][0])
+        self.assertEqual(orch.calls[0][1], "true")
+
 
 class TestVerifyModelStage(unittest.TestCase):
     def test_hf_remote_download_reads_model_remote(self):
@@ -593,7 +919,7 @@ class TestOutputParserRequirements(unittest.TestCase):
         self.assertFalse(_is_flux2_workload(variant, params))
         self.assertEqual(parser.expected_repetitions, 25)
 
-    def test_flux2_does_not_require_flux1_repetition_count(self):
+    def test_flux2_requires_num_repetitions(self):
         variant = SimpleNamespace(model=SimpleNamespace(id="black-forest-labs/FLUX.2-dev"), inference={})
         params = {"model_type": "flux2", "num_repetitions": 25}
         parser = _output_parser(
@@ -603,7 +929,7 @@ class TestOutputParserRequirements(unittest.TestCase):
             variant,
         )
         self.assertTrue(_is_flux2_workload(variant, params))
-        self.assertIsNone(parser.expected_repetitions)
+        self.assertEqual(parser.expected_repetitions, 25)
 
     def test_native_wan_requires_num_benchmark_steps(self):
         variant = SimpleNamespace(inference={})
@@ -810,6 +1136,46 @@ class TestClipScoreStage(unittest.TestCase):
 
         self.assertTrue(lifecycle.failed)
         self.assertTrue(any("11.00" in message for message in globals.error_list))
+
+    def test_runs_when_only_parse_thresholds_failed(self):
+        payload = {"clip_score": 27.5, "image_count": 1, "model": "openai/clip-vit-large-patch14"}
+        orch = _ClipOrch({"10.0.0.1": {"output": f"CVS_CLIP_SCORE {json.dumps(payload)}", "exit_code": 0}})
+        variant = _clip_variant({"10.0.0.1": "/outputs/flux_host_outputs"})
+        lifecycle = Lifecycle()
+        lifecycle.failed = True
+        lifecycle.failure_stage = "parse_thresholds"
+        request = SimpleNamespace(node=SimpleNamespace(nodeid="test_clip_score"), config=SimpleNamespace())
+
+        with patch("cvs.tests.inference.xdit._shared.update_test_result"):
+            clip_score_stage(
+                orch,
+                variant,
+                "auto",
+                {"family": "flux", "distributed": False, "diffusers": False},
+                lifecycle,
+                request,
+            )
+
+        self.assertEqual(lifecycle.results[0][7], 27.5)
+        self.assertEqual(lifecycle.failure_stage, "parse_thresholds")
+
+    def test_skips_when_an_earlier_stage_failed(self):
+        orch = _ClipOrch({})
+        variant = _clip_variant({"10.0.0.1": "/outputs/flux_host_outputs"})
+        lifecycle = Lifecycle()
+        lifecycle.failed = True
+        lifecycle.failure_stage = "generate_and_benchmark"
+        request = SimpleNamespace(node=SimpleNamespace(nodeid="test_clip_score"), config=SimpleNamespace())
+
+        with self.assertRaises(pytest.skip.Exception):
+            clip_score_stage(
+                orch,
+                variant,
+                "auto",
+                {"family": "flux", "distributed": False, "diffusers": False},
+                lifecycle,
+                request,
+            )
 
     def test_reads_clipscore_file_when_output_dir_is_not_mounted(self):
         payload = {"clip_score": 27.5, "image_count": 1, "model": "openai/clip-vit-base-patch32"}

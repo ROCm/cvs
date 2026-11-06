@@ -2,6 +2,7 @@
 
 from cvs.tests.inference.xdit._shared import (
     clip_score_stage,
+    fid_curve_stage,
     launch_container_stage,
     parse_thresholds_stage,
     print_results_stage,
@@ -39,6 +40,10 @@ def test_parse_thresholds(variant_config, gpu_type, xdit_spec, lifecycle, reques
 
 def test_clip_score(orch, variant_config, gpu_type, xdit_spec, lifecycle, request):
     clip_score_stage(orch, variant_config, gpu_type, xdit_spec, lifecycle, request)
+
+
+def test_fid_curve(orch, variant_config, gpu_type, xdit_spec, lifecycle, request):
+    fid_curve_stage(orch, variant_config, gpu_type, xdit_spec, lifecycle, request)
 
 
 def test_print_results(lifecycle):

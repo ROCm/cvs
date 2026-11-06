@@ -294,6 +294,12 @@ class PytorchXditBenchmarkJob(ABC):
     def _mkdir_cmd(self, host_output_dir: str) -> str:
         return f"mkdir -p {shlex.quote(host_output_dir)}"
 
+    def _fid_command_budget_s(self):
+        for params in (getattr(self, "flux_params", None), getattr(self, "wan_params", None)):
+            if isinstance(params, dict) and params.get("_fid_budget_s") is not None:
+                return int(params["_fid_budget_s"])
+        return None
+
     def _build_docker_cmd(
         self,
         *,
@@ -314,18 +320,31 @@ class PytorchXditBenchmarkJob(ABC):
         )
         token_setup = _hf_home_token_install_cmd(self.inference_dict.get("hf_home_container", "/hf_home"))
         inner_cmd = f"{token_setup}; {torchrun_cmd}"
+        budget_s = self._fid_command_budget_s()
+        deadline_arm = ""
+        if budget_s is not None:
+            from cvs.lib.inference.xdit.xdit_fid import fid_deadline_shell
+
+            deadline_arm = f"export fid_deadline={fid_deadline_shell(budget_s)}; "
 
         if self.uses_container_orchestrator:
             exports = " ".join(
                 f"export {key}={shlex.quote(str(value))};" for key, value in self._build_env_dict().items()
             )
-            return f"bash -c {shlex.quote(f'{exports} {inner_cmd}')}"
+            return f"bash -c {shlex.quote(f'{deadline_arm}{exports} {inner_cmd}')}"
 
         container_name = self.inference_dict["container_name"]
         if self.distributed:
             container_name = f"{container_name}-rank{node_rank}"
 
+        host_arm = ""
+        deadline_env = ""
+        if deadline_arm:
+            host_arm = deadline_arm
+            deadline_env = "-e fid_deadline=$fid_deadline "
+
         return (
+            f"{host_arm}"
             f"docker run "
             f"--cap-add=SYS_PTRACE "
             f"--security-opt seccomp=unconfined "
@@ -337,6 +356,7 @@ class PytorchXditBenchmarkJob(ABC):
             f"--privileged "
             f"--name {container_name} "
             f"{volume_args} "
+            f"{deadline_env}"
             f"{env_args} "
             f"{self.inference_dict['container_image']} "
             f"bash -c {shlex.quote(inner_cmd)}"

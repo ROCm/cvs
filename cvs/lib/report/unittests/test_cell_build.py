@@ -37,6 +37,29 @@ class TestCellBuild(unittest.TestCase):
         self.assertIsNotNone(throughput["margin"])
         self.assertIn("above gate", throughput["margin"])
 
+    def test_extra_curves_are_lifted_off_actuals(self):
+        variant = SimpleNamespace(
+            enforce_thresholds=False,
+            thresholds={},
+            cell_key=lambda isl, osl, conc: f"ISL={isl},OSL={osl},TP=8,CONC={conc}",
+        )
+        key = ("org/example-model", "mi300x", "1024", "1024", "default", 128)
+        series = {
+            "step time (ms)": [[1, 12.0], [10, 11.0]],
+            "FID": {"points": [[10.0, 40.0], [50.0, 12.0]], "default_on": True, "x_title": "NFE"},
+        }
+        cell = build_cell_record(
+            generic_inference_report_config(),
+            key=key,
+            host="10.0.0.1",
+            actuals={"client.output_throughput": 1200.0, "_extra_curves": series},
+            variant_config=variant,
+            lifecycle_report={},
+            multi_host=False,
+        )
+        self.assertEqual(cell["extra_curves"], series)
+        self.assertNotIn("_extra_curves", cell["actuals"])
+
     def test_resolve_pytest_nodeids_for_cell(self):
         config = generic_inference_report_config()
         lifecycle = {

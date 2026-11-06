@@ -5,14 +5,14 @@
     "threshold_json": "xdit_wan22_14b_diffusers_single_threshold.json",
     "paths": {
       "shared_fs": "{home}",
-      "models_dir": "{home}",
+      "models_dir": "<changeme> /data/models",
       "log_dir": "{home}/cvs_outputs_wan_diff",
       "hf_token_file": "{home}/.hf_token"
     },
     "container": {
       "lifetime": "per_run",
       "name": "wan22-benchmark_diffusers_single",
-      "_image_example": "rocm/ufb-private:xdit-gfx950-py3.12-prereleases-rocm10.1.0rc3-6b5b35c",
+      "_image_example": "rocm/pytorch-xdit:v26.9",
       "_image_comment": "The image needs to support the Wan2.2-I2V-A14B-Diffusers model.",
       "image": "<changeme>",
       "runtime": {
@@ -25,7 +25,8 @@
           "volumes": [
             "{paths.models_dir}:/hf_home",
             "{paths.log_dir}:/outputs",
-            "{home}/cvs/cvs/lib/inference/xdit/scripts/wan_i2v_example.py:/benchmark/wan_i2v_example.py"
+            "{home}/cvs/cvs/lib/inference/xdit/scripts/wan_i2v_example.py:/benchmark/wan_i2v_example.py",
+            "{home}/cvs/cvs/lib/inference/xdit/scripts/fid_sweep.py:/benchmark/fid_sweep.py"
           ],
           "devices": ["/dev/dri", "/dev/kfd"],
           "env": {
@@ -42,6 +43,7 @@
     },
     "benchmark_params": {
       "model_format": "diffusers",
+      "clip_model": "/hf_home/clip-vit-base-patch32",
       "wan_diffusers_launcher": "xfuser_example",
       "wan_xfuser_auto_input_image": true,
       "wan_xfuser_install_video_deps": true,
@@ -52,6 +54,8 @@
       "frame_num": 81,
       "num_benchmark_steps": 1,
       "num_inference_steps": 40,
+      "fid_nfe_steps": [10, 40],
+      "fid_inception_path": "/hf_home/inception_v3.pth",
       "warmup_steps": 1,
       "compile": false,
       "torchrun_nproc": 8,

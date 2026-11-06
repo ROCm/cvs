@@ -156,6 +156,10 @@ class TestWanParallelism(unittest.TestCase):
             resolve_wan_benchmark_timeout(distributed=False),
             DEFAULT_BENCHMARK_TIMEOUT_S,
         )
+        self.assertEqual(
+            resolve_wan_benchmark_timeout(distributed=False, fid_steps=True),
+            WAN_DISTRIBUTED_BENCHMARK_TIMEOUT_S,
+        )
         self.assertEqual(resolve_wan_benchmark_timeout(distributed=True, explicit_timeout=999), 999)
 
     def test_build_wan_distributed_container_cleanup_cmds(self):
@@ -281,6 +285,33 @@ class TestBuildRunWanArgs(unittest.TestCase):
         self.assertIn("--timing_json_path results/timing.json", args)
         self.assertIn("--output_type pil", args)
         self.assertNotIn("--task i2v", args)
+        self.assertNotIn("--xfuser_model", args)
+
+    def test_t2v_xfuser_omits_input_image(self):
+        params = {
+            **self._BASE_PARAMS,
+            "compile": False,
+            "wan_xfuser_model": "Wan2.1-T2V",
+            "guidance_scale": 6.0,
+            "flow_shift": 8.0,
+            "seed": 0,
+            "attention_backend": "AITER",
+            "cross_attention_backend": "AITER",
+        }
+        args = build_run_wan_xfuser_example_args(
+            params,
+            model_path="/model",
+            i2v_image_path="/benchmark/i2v_input.JPG",
+        )
+        self.assertNotIn("--input_image", args)
+        self.assertIn("--xfuser_model Wan2.1-T2V", args)
+        self.assertIn("--guidance_scale 6.0", args)
+        self.assertIn("--flow_shift 8.0", args)
+        self.assertIn("--seed 0", args)
+        self.assertIn("--attention_backend AITER", args)
+        self.assertIn("--cross_attention_backend AITER", args)
+        self.assertIn("--height 720", args)
+        self.assertIn("--width 1280", args)
 
     def test_resolve_xfuser_launcher_from_config(self):
         self.assertEqual(
@@ -357,6 +388,26 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         self.assertIn("imageio", cmd)
         self.assertIn("i2v_input.jpg", cmd)
         self.assertNotIn(RUN_WAN_DIFFUSERS_PATH, cmd)
+
+    def test_single_node_t2v_skips_input_image(self):
+        cmd = build_torchrun_cmd(
+            {
+                **self._BASE_PARAMS,
+                "wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER,
+                "wan_diffusers_run_script": "/benchmark/wan_t2v_example.py",
+                "wan_xfuser_model": "Wan2.1-T2V",
+                "wan_xfuser_auto_input_image": False,
+                "guidance_scale": 6.0,
+                "flow_shift": 8.0,
+            },
+            ckpt_dir="/model",
+            distributed=False,
+            model_repo_hints=["Wan-AI/Wan2.1-T2V-14B-Diffusers"],
+        )
+        self.assertIn("/benchmark/wan_t2v_example.py", cmd)
+        self.assertNotIn("--input_image", cmd)
+        self.assertNotIn("i2v_input.jpg", cmd)
+        self.assertIn("--xfuser_model Wan2.1-T2V", cmd)
 
     def test_auto_input_image_cmd_uses_config_size(self):
         cmd = build_wan_xfuser_auto_input_image_cmd({"size": "720*1280"})
@@ -477,6 +528,59 @@ class TestWanOutputVerification(unittest.TestCase):
         }
         errors = validate_wan_xfuser_mounts(FakePssh(), ["10.0.0.1"], inference_dict, wan_params)
         self.assertEqual(errors, [])
+
+    def test_orchestrator_checks_fid_sweep_when_the_curve_is_on(self):
+        class FakeOrch:
+            hosts = ["10.0.0.1"]
+            cmds = []
+
+            def exec_on_host(self, cmd, **kwargs):
+                return self.exec(cmd)
+
+            def exec(self, cmd, hosts=None, timeout=None, print_console=False, detailed=False):
+                self.cmds.append(str(cmd))
+                return {"10.0.0.1": "WAN_MOUNT_MISSING"}
+
+        handle = FakeOrch()
+        errors = validate_wan_xfuser_mounts(
+            handle,
+            ["10.0.0.1"],
+            {"container_config": {"volume_dict": {}}},
+            {
+                "wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER,
+                "wan_xfuser_auto_input_image": True,
+                "fid_nfe_steps": [10, 40],
+            },
+        )
+        self.assertTrue(errors)
+        self.assertIn("/benchmark/fid_sweep.py", handle.cmds[0])
+        self.assertIn("/benchmark/fid_sweep.py", errors[0])
+        self.assertIn("Configure all bind mounts before orchestrator setup", errors[0])
+
+    def test_orchestrator_skips_fid_sweep_when_the_curve_is_off(self):
+        class FakeOrch:
+            hosts = ["10.0.0.1"]
+            cmds = []
+
+            def exec_on_host(self, cmd, **kwargs):
+                return self.exec(cmd)
+
+            def exec(self, cmd, hosts=None, timeout=None, print_console=False, detailed=False):
+                self.cmds.append(str(cmd))
+                return {"10.0.0.1": "WAN_MOUNT_OK"}
+
+        handle = FakeOrch()
+        errors = validate_wan_xfuser_mounts(
+            handle,
+            ["10.0.0.1"],
+            {"container_config": {"volume_dict": {}}},
+            {
+                "wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER,
+                "wan_xfuser_auto_input_image": True,
+            },
+        )
+        self.assertEqual(errors, [])
+        self.assertFalse(any("fid_sweep.py" in cmd for cmd in handle.cmds))
 
 
 class TestBuildNcclEnv(unittest.TestCase):

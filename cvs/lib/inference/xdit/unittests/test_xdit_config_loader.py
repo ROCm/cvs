@@ -383,7 +383,7 @@ class TestXditConfigLoader(unittest.TestCase):
     def test_all_packaged_configs_load_thresholds_into_workload(self):
         config_dir = Path(__file__).resolve().parents[4] / "input" / "config_file" / "inference" / "xdit"
         workload_paths = sorted(path for path in config_dir.glob("mi3xx_*.json") if "threshold" not in path.name)
-        self.assertEqual(len(workload_paths), 7)
+        self.assertEqual(len(workload_paths), 9)
 
         for workload_path in workload_paths:
             raw = json.loads(workload_path.read_text(encoding="utf-8"))

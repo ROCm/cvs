@@ -78,10 +78,12 @@ def resolve_wan_benchmark_timeout(
     *,
     distributed: bool,
     explicit_timeout: Optional[int] = None,
+    fid_steps: bool = False,
 ) -> int:
     if explicit_timeout is not None:
         return int(explicit_timeout)
-    if distributed:
+    # An 81-frame I2V leaves no time for extra NFE samples inside the 30-minute single-node default.
+    if distributed or fid_steps:
         return WAN_DISTRIBUTED_BENCHMARK_TIMEOUT_S
     return DEFAULT_BENCHMARK_TIMEOUT_S
 
@@ -269,12 +271,26 @@ def resolve_wan_diffusers_i2v_image(
     return I2V_INPUT_IMAGE_DIFFUSERS
 
 
+def wan_xfuser_registry_model(wan_params, inference_dict=None):
+    for source in (wan_params or {}, inference_dict or {}):
+        value = source.get("wan_xfuser_model")
+        if value:
+            return str(value)
+    return ""
+
+
+def wan_xfuser_is_t2v(wan_params, inference_dict=None):
+    return "T2V" in wan_xfuser_registry_model(wan_params, inference_dict).upper()
+
+
 def should_wan_xfuser_auto_generate_input_image(
     wan_params: Mapping[str, Any],
     inference_dict: Optional[Mapping[str, Any]] = None,
 ) -> bool:
     """True when xFuser should synthesize a placeholder I2V input inside the container."""
     if resolve_wan_diffusers_launcher(wan_params, inference_dict) != WAN_DIFFUSERS_LAUNCHER_XFUSER:
+        return False
+    if wan_xfuser_is_t2v(wan_params, inference_dict):
         return False
 
     explicit_flag = wan_params.get("wan_xfuser_auto_input_image")
@@ -367,6 +383,15 @@ def build_run_wan_native_args(
     ).strip()
 
 
+def _fid_cli_suffix(params: Mapping[str, Any]) -> str:
+    if params.get("_fid_budget_s") is None:
+        return ""
+    from cvs.lib.inference.xdit.xdit_fid import fid_cli_flags
+
+    flags = fid_cli_flags(params, params["_fid_budget_s"])
+    return f" {flags}" if flags else ""
+
+
 def is_wan_diffusers_model(model_format: str) -> bool:
     return model_format == WAN_MODEL_FORMAT_DIFFUSERS
 
@@ -398,9 +423,12 @@ def build_run_wan_xfuser_example_args(
         if timing_json_path.startswith(CONTAINER_OUTPUT_MOUNT + "/"):
             timing_json_path = output_dir_container + timing_json_path[len(CONTAINER_OUTPUT_MOUNT) :]
     video_fps = _optional_int(wan_params.get("wan_diffusers_video_fps"), 16)
+    registry_model = wan_xfuser_registry_model(wan_params)
+    text_to_video = wan_xfuser_is_t2v(wan_params)
 
     log.info(
-        "WAN xFuser wan_i2v_example: model=%s size=%dx%d repetitions=%s warmup=%s",
+        "WAN xFuser example: registry=%s checkpoint=%s size=%dx%d repetitions=%s warmup=%s",
+        registry_model or "Wan2.2-I2V",
         model_path,
         height,
         width,
@@ -408,9 +436,28 @@ def build_run_wan_xfuser_example_args(
         warmup_steps,
     )
 
+    optional = []
+    if not text_to_video:
+        optional.append(f"--input_image {shlex.quote(i2v_image_path)}")
+    if registry_model:
+        optional.append(f"--xfuser_model {shlex.quote(registry_model)}")
+    if wan_params.get("guidance_scale") is not None:
+        optional.append(f"--guidance_scale {wan_params['guidance_scale']}")
+    if wan_params.get("flow_shift") is not None:
+        optional.append(f"--flow_shift {wan_params['flow_shift']}")
+    if wan_params.get("seed") is not None:
+        optional.append(f"--seed {int(wan_params['seed'])}")
+    if wan_params.get("attention_backend"):
+        optional.append(f"--attention_backend {shlex.quote(str(wan_params['attention_backend']))}")
+    if wan_params.get("cross_attention_backend"):
+        optional.append(f"--cross_attention_backend {shlex.quote(str(wan_params['cross_attention_backend']))}")
+    if wan_params.get("negative_prompt"):
+        optional.append(f"--negative_prompt {shlex.quote(str(wan_params['negative_prompt']))}")
+    optional_flags = f"{' '.join(optional)} " if optional else ""
+
     return (
         f"--model {shlex.quote(model_path)} "
-        f"--input_image {shlex.quote(i2v_image_path)} "
+        f"{optional_flags}"
         f"--height {height} "
         f"--width {width} "
         f"--num_frames {int(wan_params['frame_num'])} "
@@ -425,6 +472,7 @@ def build_run_wan_xfuser_example_args(
         f"--timing_json_path {shlex.quote(timing_json_path)} "
         f"--video_fps {video_fps} "
         f"--prompt {shlex.quote(str(wan_params['prompt']))}"
+        f"{_fid_cli_suffix(wan_params)}"
     ).strip()
 
 
@@ -695,9 +743,16 @@ def validate_wan_xfuser_mounts(
         return []
 
     if isinstance(getattr(s_phdl, "hosts", None), (list, tuple)) and callable(getattr(s_phdl, "exec_on_host", None)):
+        from cvs.lib.inference.xdit.xdit_fid import fid_sweep_mount_when_enabled
+
         container_paths = [resolve_wan_diffusers_run_script(wan_params, inference_dict)]
-        if not should_wan_xfuser_auto_generate_input_image(wan_params, inference_dict):
+        if not wan_xfuser_is_t2v(wan_params, inference_dict) and not should_wan_xfuser_auto_generate_input_image(
+            wan_params, inference_dict
+        ):
             container_paths.append(resolve_wan_diffusers_i2v_image(wan_params, inference_dict))
+        sweep = fid_sweep_mount_when_enabled(wan_params)
+        if sweep:
+            container_paths.append(sweep)
         check_cmd = (
             " && ".join(f"test -e {shlex.quote(path)}" for path in container_paths)
             + " && echo WAN_MOUNT_OK || echo WAN_MOUNT_MISSING"
@@ -711,7 +766,8 @@ def validate_wan_xfuser_mounts(
             return [
                 "xFuser assets are missing inside the externally managed container on "
                 f"{len(missing)} node(s): {', '.join(missing)}. "
-                "Configure all bind mounts before orchestrator setup."
+                "Configure all bind mounts before orchestrator setup. "
+                f"Expected inside the container: {', '.join(container_paths)}."
             ]
         return []
 
@@ -733,18 +789,19 @@ def validate_wan_xfuser_mounts(
 
     i2v_host = resolve_host_path_for_container_mount(inference_dict, i2v_image_container)
     auto_input = should_wan_xfuser_auto_generate_input_image(wan_params, inference_dict)
+    needs_input_image = not wan_xfuser_is_t2v(wan_params, inference_dict)
     if auto_input:
         log.info(
             "xFuser I2V input will be generated in-container at %s (no host image mount required)",
             WAN_XFUSER_AUTO_INPUT_IMAGE,
         )
-    elif not i2v_host:
+    elif needs_input_image and not i2v_host:
         errors.append(
             f"volume_dict must bind-mount an I2V input image to {i2v_image_container}, "
             f"or set wan_xfuser_auto_input_image to true to generate a placeholder JPEG "
             f"in-container at {WAN_XFUSER_AUTO_INPUT_IMAGE}."
         )
-    else:
+    elif needs_input_image:
         mount_checks.append((i2v_host, f"I2V input image ({i2v_image_container})"))
 
     for host_path, label in mount_checks:
@@ -1085,6 +1142,28 @@ def launch_wan_benchmark(
         distributed=distributed,
         cluster_dict=cluster_dict,
     )
+    from cvs.lib.inference.xdit.xdit_fid import attach_fid_sweep_mount, fid_budget_seconds, parse_fid_nfe_steps
+
+    resolved_timeout = resolve_wan_benchmark_timeout(distributed=distributed, explicit_timeout=timeout)
+    try:
+        fid_steps = parse_fid_nfe_steps(job.wan_params)
+    except ValueError as exc:
+        return [str(exc)]
+    launcher = str(job.wan_params.get("wan_diffusers_launcher") or "")
+    if fid_steps and launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER:
+        attach_fid_sweep_mount(inference_dict)
+        resolved_timeout = resolve_wan_benchmark_timeout(
+            distributed=distributed,
+            explicit_timeout=timeout,
+            fid_steps=True,
+        )
+        wan_params = dict(job.wan_params)
+        wan_params["_fid_budget_s"] = fid_budget_seconds(resolved_timeout)
+        job.wan_params = wan_params
+        timeout = resolved_timeout
+    elif fid_steps:
+        return ["FID vs NFE is available for the WAN Diffusers xFuser scripts, not the native Wan run.py launcher."]
+
     _, plan, errors = job.run(timeout=timeout)
     if not errors:
         job.store_output_dir_hint(plan)
