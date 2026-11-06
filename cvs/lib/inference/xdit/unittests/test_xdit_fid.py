@@ -2,6 +2,7 @@ import importlib.util
 import json
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
@@ -251,6 +252,70 @@ class TestFidCurve(unittest.TestCase):
             with self.assertRaises(SystemExit) as raised:
                 _fid_score._require_reference(str(empty), 8)
             self.assertIn("needs at least 2", str(raised.exception))
+
+    def test_collective_returns_the_result_when_every_rank_succeeds(self):
+        with patch.object(_fid_sweep, "_gather_errors", return_value=["", ""]):
+            self.assertEqual(_fid_sweep.collective(0, lambda nfe, index: nfe + index)(10, 1), 11)
+
+    def test_collective_raises_on_the_rank_that_failed(self):
+        def generate_one(nfe, index):
+            raise OSError("disk full")
+
+        gathered = []
+
+        def gather(error):
+            gathered.append(error)
+            return [error, ""]
+
+        with patch.object(_fid_sweep, "_gather_errors", side_effect=gather):
+            with self.assertRaises(_fid_sweep.CollectiveSweepError) as raised:
+                _fid_sweep.collective(1, generate_one)(10, 0)
+        self.assertEqual(gathered, ["rank 1: disk full"])
+        self.assertIn("rank 1: disk full", str(raised.exception))
+
+    def test_collective_raises_on_a_rank_whose_own_sample_succeeded(self):
+        with patch.object(_fid_sweep, "_gather_errors", return_value=["", "rank 3: image.save failed"]):
+            with self.assertRaises(_fid_sweep.CollectiveSweepError) as raised:
+                _fid_sweep.collective(0, lambda nfe, index: 1.0)(10, 0)
+        self.assertIn("rank 3: image.save failed", str(raised.exception))
+
+    def test_sweep_stops_on_every_rank_when_one_sample_fails(self):
+        calls = []
+
+        def generate_one(nfe, index):
+            calls.append((nfe, index))
+            return 1.0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "manifest.json"
+            with patch.object(_fid_sweep, "_gather_errors", return_value=["", "rank 1: no space left"]):
+                with self.assertRaises(_fid_sweep.CollectiveSweepError):
+                    _fid_sweep.run_fid_sweep(
+                        0, [10, 20], 2, 1000, time.monotonic(), 1.0, 10, generate_one, str(manifest)
+                    )
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(calls, [(10, 0)])
+        self.assertIn("rank 1: no space left", payload["error"])
+        self.assertTrue(payload["stopped_early"])
+        self.assertEqual(payload["counts"], {"10": 0, "20": 0})
+
+    def test_sweep_without_a_process_group_runs_to_the_budget(self):
+        calls = []
+
+        def generate_one(nfe, index):
+            calls.append((nfe, index))
+            return 0.01
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "manifest.json"
+            produced = _fid_sweep.run_fid_sweep(
+                0, [10, 20], 1, 1000, time.monotonic(), 1.0, 10, generate_one, str(manifest)
+            )
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(sorted(calls), [(10, 0), (20, 0)])
+        self.assertEqual(len(produced), 2)
+        self.assertEqual(payload["error"], "")
+        self.assertFalse(payload["stopped_early"])
 
     def test_absent_checkpoint_or_reference_skips(self):
         empty = fid_absent_skip_reason("", "/hf_home/inception_v3.pth")

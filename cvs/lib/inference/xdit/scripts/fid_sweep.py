@@ -4,6 +4,9 @@ Extra FID samples after the timed benchmark, stopped before the command timeout.
 Rank 0 picks the next step count. Every rank runs that same sample, so the
 process group stays aligned. A 25% slack on the last measured pipe time keeps
 the next sample from running into the deadline.
+
+A sample that fails on any rank fails on every rank at the same point, so no
+rank is left waiting in a collective after the others have gone on to clean up.
 """
 
 import json
@@ -34,14 +37,60 @@ def next_fid_sample(steps, counts, samples, elapsed, budget_s, reference_pipe_s,
     return None
 
 
-def broadcast_value(value, rank):
-    import torch.distributed as dist
+class CollectiveSweepError(RuntimeError):
+    """A sample failed on at least one rank. Raised on every rank together."""
 
+
+def _process_group():
+    try:
+        import torch.distributed as dist
+    except ImportError:
+        return None
     if not dist.is_available() or not dist.is_initialized():
+        return None
+    return dist
+
+
+def broadcast_value(value, rank):
+    dist = _process_group()
+    if dist is None:
         return value
     box = [value if rank == 0 else None]
     dist.broadcast_object_list(box, src=0)
     return box[0]
+
+
+def _gather_errors(error):
+    """Every rank's error text. Also the point where the ranks meet after a sample."""
+    dist = _process_group()
+    if dist is None:
+        return [error]
+    errors = [None] * dist.get_world_size()
+    dist.all_gather_object(errors, error)
+    return errors
+
+
+def collective(rank, generate_one):
+    """Wrap ``generate_one`` so a failure on any rank raises on all of them.
+
+    Per-rank work such as writing a file runs on some ranks only, so an error there
+    would leave the other ranks in their next collective until the command times out.
+    The gather replaces a barrier after the sample.
+    """
+
+    def run(*args, **kwargs):
+        result = None
+        error = ""
+        try:
+            result = generate_one(*args, **kwargs)
+        except Exception as exc:
+            error = f"rank {rank}: {exc}"
+        failures = [text for text in _gather_errors(error) if text]
+        if failures:
+            raise CollectiveSweepError("; ".join(failures))
+        return result
+
+    return run
 
 
 def count_step_samples(directory):
@@ -100,6 +149,7 @@ def run_fid_sweep(
     counts = {int(step): 0 for step in steps}
     produced = []
     error = ""
+    generate_one = collective(rank, generate_one)
     try:
         while True:
             decision = None

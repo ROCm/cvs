@@ -185,8 +185,6 @@ def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started)
         owner = _media_owner_rank(output)
         if owner is not None and rank == owner:
             _export_video(output, dest, args.video_fps)
-        if dist.is_initialized():
-            dist.barrier()
         return elapsed
 
     try:

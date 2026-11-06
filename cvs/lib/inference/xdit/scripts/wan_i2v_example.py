@@ -288,7 +288,7 @@ def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started)
     raw_steps = str(getattr(args, "fid_steps", "") or "").strip()
     if not raw_steps:
         return
-    from fid_sweep import broadcast_value, count_step_samples, rewrite_manifest_from_disk, run_fid_sweep
+    from fid_sweep import broadcast_value, collective, count_step_samples, rewrite_manifest_from_disk, run_fid_sweep
 
     steps = [int(part) for part in raw_steps.split(",") if part.strip()]
     samples = int(args.fid_samples)
@@ -309,10 +309,9 @@ def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started)
         owner = _media_owner_rank(output)
         if owner is not None and rank == owner:
             _export_video(output, dest, args.video_fps)
-        if dist.is_initialized():
-            dist.barrier()
         return elapsed
 
+    sync_one = collective(rank, generate_one)
     try:
         run_fid_sweep(
             rank,
@@ -339,7 +338,7 @@ def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started)
                 decision = broadcast_value(decision, rank)
                 if not decision:
                     break
-                generate_one(*decision)
+                sync_one(*decision)
     except Exception as exc:
         print(f"FID sweep failed after the timed benchmark: {exc}")
     finally:
