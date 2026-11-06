@@ -588,6 +588,96 @@ class TestFlux2ExampleFallbackMount(unittest.TestCase):
         self.assertEqual(job._pre_launch_validation(plan), [])
 
 
+class _OrchestratorHandle:
+    def __init__(self, replies):
+        self.hosts = ["10.0.0.1"]
+        self.cmds = []
+        self._replies = replies
+
+    def exec_on_host(self, cmd, **kwargs):
+        return self.exec(cmd, **kwargs)
+
+    def exec(self, cmd, hosts=None, timeout=None, print_console=False, detailed=False):
+        self.cmds.append(str(cmd))
+        for needle, reply in self._replies:
+            if needle in str(cmd):
+                return {"10.0.0.1": reply}
+        return {"10.0.0.1": ""}
+
+
+class TestOrchestratorLauncherImports(unittest.TestCase):
+    def test_flux2_orchestrator_requires_fid_sweep_when_the_curve_is_on(self):
+        handle = _OrchestratorHandle(
+            [
+                ("FLUX2_EXAMPLE_PRESENT", "FLUX2_EXAMPLE_PRESENT"),
+                ("fid_sweep.py", "CVS_MOUNT_MISSING"),
+            ]
+        )
+        errors = ensure_flux2_example_available(
+            handle,
+            ["10.0.0.1"],
+            {
+                "model_repo": "black-forest-labs/FLUX.2-dev",
+                "_resolved_flux_model_type": "flux2",
+                "container_config": {"volume_dict": {}},
+            },
+            {"fid_nfe_steps": [10, 20]},
+        )
+        self.assertTrue(errors)
+        self.assertIn("/benchmark/fid_sweep.py", errors[0])
+        self.assertIn("Add the script bind mount", errors[0])
+
+    def test_flux2_orchestrator_skips_fid_sweep_when_the_curve_is_off(self):
+        handle = _OrchestratorHandle([("FLUX2_EXAMPLE_PRESENT", "FLUX2_EXAMPLE_PRESENT")])
+        errors = ensure_flux2_example_available(
+            handle,
+            ["10.0.0.1"],
+            {
+                "model_repo": "black-forest-labs/FLUX.2-dev",
+                "_resolved_flux_model_type": "flux2",
+                "container_config": {"volume_dict": {}},
+            },
+            {},
+        )
+        self.assertEqual(errors, [])
+        self.assertFalse(any("fid_sweep.py" in cmd for cmd in handle.cmds))
+
+    def test_mounted_run_usp_requires_flux_utils_and_fid_sweep(self):
+        handle = _OrchestratorHandle(
+            [
+                ("RUN_USP_PRESENT", "RUN_USP_PRESENT"),
+                ("flux_utils.py", "CVS_MOUNT_MISSING"),
+            ]
+        )
+        errors = ensure_run_usp_available(
+            handle,
+            ["10.0.0.1"],
+            {
+                "model_repo": "black-forest-labs/FLUX.1-dev",
+                "container_config": {"volume_dict": {"/host/run_usp.py": RUN_USP_MOUNT_PATH}},
+            },
+            {"fid_nfe_steps": [10, 25]},
+        )
+        self.assertTrue(any("/benchmark/flux_utils.py" in err for err in errors))
+        self.assertTrue(any("/benchmark/fid_sweep.py" in err for err in errors))
+        self.assertTrue(all("Add the script bind mount" in err for err in errors))
+
+    def test_image_run_usp_does_not_require_flux_utils(self):
+        handle = _OrchestratorHandle([("RUN_USP_PRESENT", "RUN_USP_PRESENT")])
+        errors = ensure_run_usp_available(
+            handle,
+            ["10.0.0.1"],
+            {
+                "model_repo": "black-forest-labs/FLUX.1-dev",
+                "container_config": {"volume_dict": {}},
+            },
+            {},
+        )
+        self.assertEqual(errors, [])
+        self.assertFalse(any("flux_utils.py" in cmd for cmd in handle.cmds))
+        self.assertFalse(any("fid_sweep.py" in cmd for cmd in handle.cmds))
+
+
 class TestRunUspFallbackMount(unittest.TestCase):
     def test_default_host_path_points_at_cvs_script(self):
         host_path = default_run_usp_host_path()

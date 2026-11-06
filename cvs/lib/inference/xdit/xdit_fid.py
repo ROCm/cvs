@@ -58,6 +58,13 @@ def fid_cli_flags(params, budget_s):
     return f"--fid_steps {steps_arg} --fid_samples {samples} --fid_budget_s {int(budget_s)}"
 
 
+def fid_sweep_mount_when_enabled(params):
+    """``/benchmark/fid_sweep.py`` when the curve is on, else empty."""
+    if not parse_fid_nfe_steps(params):
+        return ""
+    return FID_SWEEP_MOUNT_PATH
+
+
 def attach_fid_sweep_mount(inference_dict):
     """Bind-mount fid_sweep.py beside the other /benchmark scripts."""
     host_path = fid_sweep_host_path()

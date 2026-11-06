@@ -841,6 +841,11 @@ def ensure_flux2_example_available(
                 f"container on {len(missing)} node(s): {', '.join(missing)}. "
                 "Add the script bind mount to the orchestrator container config before setup."
             ]
+        missing_imports = _require_container_scripts(
+            s_phdl, node_list, _launcher_import_scripts(container_path, flux_params)
+        )
+        if missing_imports:
+            return missing_imports
         inference_dict["_flux2_example_container_path"] = container_path
         return []
 
@@ -932,6 +937,38 @@ def build_run_usp_host_check_cmd(host_path: str) -> str:
     return f"test -e {quoted} && echo RUN_USP_HOST_OK || echo RUN_USP_HOST_MISSING"
 
 
+def _require_container_scripts(s_phdl, nodes, scripts):
+    """Fail before launch when a running container is missing a script the launcher imports."""
+    errors = []
+    for container_path, label in scripts:
+        check_cmd = f"test -f {shlex.quote(container_path)} && echo CVS_MOUNT_PRESENT || echo CVS_MOUNT_MISSING"
+        try:
+            checks = _exec_on_nodes(s_phdl, list(nodes), check_cmd, print_console=False)
+        except Exception as exc:
+            errors.append(f"Failed to verify {label} {container_path} inside the container: {exc}")
+            continue
+        missing = [node for node in nodes if "CVS_MOUNT_PRESENT" not in (checks.get(node) or "")]
+        if missing:
+            errors.append(
+                f"{label} {container_path} is missing inside the externally managed "
+                f"container on {len(missing)} node(s): {', '.join(missing)}. "
+                "Add the script bind mount to the orchestrator container config before setup."
+            )
+    return errors
+
+
+def _launcher_import_scripts(container_path, params, *, flux_utils=False):
+    from cvs.lib.inference.xdit.xdit_fid import fid_sweep_mount_when_enabled
+
+    scripts = []
+    if flux_utils and container_path == RUN_USP_MOUNT_PATH:
+        scripts.append((FLUX_UTILS_MOUNT_PATH, "FLUX.1 helper flux_utils.py"))
+    sweep = fid_sweep_mount_when_enabled(params)
+    if sweep:
+        scripts.append((sweep, "FID sweep script"))
+    return scripts
+
+
 def flux_utils_host_path_for(run_usp_host_path: str) -> str:
     return str(Path(run_usp_host_path).parent / "flux_utils.py")
 
@@ -992,6 +1029,13 @@ def ensure_run_usp_available(
                 f"container on {len(missing)} node(s): {', '.join(missing)}. "
                 "Add the script bind mount to the orchestrator container config before setup."
             ]
+        missing_imports = _require_container_scripts(
+            s_phdl,
+            node_list,
+            _launcher_import_scripts(container_path, flux_params, flux_utils=True),
+        )
+        if missing_imports:
+            return missing_imports
         inference_dict["_run_usp_container_path"] = container_path
         return []
 

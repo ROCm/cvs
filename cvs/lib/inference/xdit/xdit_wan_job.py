@@ -743,11 +743,16 @@ def validate_wan_xfuser_mounts(
         return []
 
     if isinstance(getattr(s_phdl, "hosts", None), (list, tuple)) and callable(getattr(s_phdl, "exec_on_host", None)):
+        from cvs.lib.inference.xdit.xdit_fid import fid_sweep_mount_when_enabled
+
         container_paths = [resolve_wan_diffusers_run_script(wan_params, inference_dict)]
         if not wan_xfuser_is_t2v(wan_params, inference_dict) and not should_wan_xfuser_auto_generate_input_image(
             wan_params, inference_dict
         ):
             container_paths.append(resolve_wan_diffusers_i2v_image(wan_params, inference_dict))
+        sweep = fid_sweep_mount_when_enabled(wan_params)
+        if sweep:
+            container_paths.append(sweep)
         check_cmd = (
             " && ".join(f"test -e {shlex.quote(path)}" for path in container_paths)
             + " && echo WAN_MOUNT_OK || echo WAN_MOUNT_MISSING"
@@ -761,7 +766,8 @@ def validate_wan_xfuser_mounts(
             return [
                 "xFuser assets are missing inside the externally managed container on "
                 f"{len(missing)} node(s): {', '.join(missing)}. "
-                "Configure all bind mounts before orchestrator setup."
+                "Configure all bind mounts before orchestrator setup. "
+                f"Expected inside the container: {', '.join(container_paths)}."
             ]
         return []
 

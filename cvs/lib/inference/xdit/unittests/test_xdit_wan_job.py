@@ -529,6 +529,59 @@ class TestWanOutputVerification(unittest.TestCase):
         errors = validate_wan_xfuser_mounts(FakePssh(), ["10.0.0.1"], inference_dict, wan_params)
         self.assertEqual(errors, [])
 
+    def test_orchestrator_checks_fid_sweep_when_the_curve_is_on(self):
+        class FakeOrch:
+            hosts = ["10.0.0.1"]
+            cmds = []
+
+            def exec_on_host(self, cmd, **kwargs):
+                return self.exec(cmd)
+
+            def exec(self, cmd, hosts=None, timeout=None, print_console=False, detailed=False):
+                self.cmds.append(str(cmd))
+                return {"10.0.0.1": "WAN_MOUNT_MISSING"}
+
+        handle = FakeOrch()
+        errors = validate_wan_xfuser_mounts(
+            handle,
+            ["10.0.0.1"],
+            {"container_config": {"volume_dict": {}}},
+            {
+                "wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER,
+                "wan_xfuser_auto_input_image": True,
+                "fid_nfe_steps": [10, 40],
+            },
+        )
+        self.assertTrue(errors)
+        self.assertIn("/benchmark/fid_sweep.py", handle.cmds[0])
+        self.assertIn("/benchmark/fid_sweep.py", errors[0])
+        self.assertIn("Configure all bind mounts before orchestrator setup", errors[0])
+
+    def test_orchestrator_skips_fid_sweep_when_the_curve_is_off(self):
+        class FakeOrch:
+            hosts = ["10.0.0.1"]
+            cmds = []
+
+            def exec_on_host(self, cmd, **kwargs):
+                return self.exec(cmd)
+
+            def exec(self, cmd, hosts=None, timeout=None, print_console=False, detailed=False):
+                self.cmds.append(str(cmd))
+                return {"10.0.0.1": "WAN_MOUNT_OK"}
+
+        handle = FakeOrch()
+        errors = validate_wan_xfuser_mounts(
+            handle,
+            ["10.0.0.1"],
+            {"container_config": {"volume_dict": {}}},
+            {
+                "wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER,
+                "wan_xfuser_auto_input_image": True,
+            },
+        )
+        self.assertEqual(errors, [])
+        self.assertFalse(any("fid_sweep.py" in cmd for cmd in handle.cmds))
+
 
 class TestBuildNcclEnv(unittest.TestCase):
     def test_defaults_include_nccl_proto_simple(self):
