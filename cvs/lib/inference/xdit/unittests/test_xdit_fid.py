@@ -86,7 +86,13 @@ class TestFidCurve(unittest.TestCase):
         }
         self.assertEqual(
             fid_viewer_curves(raw),
-            {"FID · euler": {"points": [[10.0, 40.0], [50.0, 12.0]], "default_on": True}},
+            {
+                "FID · euler": {
+                    "points": [[10.0, 40.0], [50.0, 12.0]],
+                    "default_on": True,
+                    "x_title": "NFE",
+                }
+            },
         )
 
     def test_marker_text_parses(self):
