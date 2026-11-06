@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from cvs.lib.inference.xdit.xdit_fid import fid_viewer_curves
 from cvs.lib.report.cell_build import build_all_cells, select_summary_cells
 from cvs.lib.report.inference_payload import (
     build_chart_series,
@@ -45,14 +44,6 @@ def build_sweep_datasets(sources: dict[str, Any], profile: DeckProfile) -> dict[
         inf_res_dict=inf_res_dict,
         lifecycle_report=lifecycle_report,
     )
-
-    for cell in cells:
-        curves = fid_viewer_curves((cell.get("actuals") or {}).get("_fid_curve"))
-        if not curves:
-            continue
-        extra = dict(cell.get("extra_curves") or {})
-        extra.update(curves)
-        cell["extra_curves"] = extra
 
     chart_series = build_chart_series(config, cells)
     chart_config = [

@@ -44,6 +44,7 @@ from cvs.lib.inference.xdit.xdit_fid import (
     fid_curve_container_path,
     fid_manifest_container_path,
     fid_samples_container_root,
+    fid_viewer_curves,
     iter_fid_points,
     parse_fid_curve_text,
     parse_fid_nfe_steps,
@@ -1189,9 +1190,15 @@ def fid_curve_stage(orch, variant, gpu_type, spec, lifecycle, request):
         if len(points) < 2:
             failures.append(f"{label}: FID curve needs at least two NFE points")
             continue
+        curves = fid_viewer_curves(payload)
+        if not curves:
+            failures.append(f"{label}: FID curve needs at least two NFE points")
+            continue
         reported_dir = node_dirs.get(label) or output_dir
         host_row = cell.setdefault(label, {})
-        host_row["_fid_curve"] = payload
+        extra = dict(host_row.get("_extra_curves") or {})
+        extra.update(curves)
+        host_row["_extra_curves"] = extra
         recorded = True
         host_row.setdefault("output_dir", reported_dir)
         for point_sampler, nfe, fid in points:

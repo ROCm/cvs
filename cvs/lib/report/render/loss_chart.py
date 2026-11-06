@@ -52,14 +52,14 @@ class LossChartRenderer:
                 continue
         return sorted(points)
 
-    def build_series(self, cells, curve_key="loss_curve"):
-        """Return one drawable series per cell that carries at least two points."""
+    def build_series(self, cells):
+        """Return one drawable series per cell that carries at least two loss points."""
         series = []
         for cell in cells or []:
-            points = self._points(cell.get(curve_key))
+            points = self._points(cell.get("loss_curve"))
             if len(points) < 2:
                 continue
-            label = cell.get("subtitle") or cell.get("label") or cell.get("cell_id") or curve_key
+            label = cell.get("subtitle") or cell.get("label") or cell.get("cell_id") or "lm_loss"
             series.append(
                 {
                     "label": str(label),
@@ -94,24 +94,15 @@ class LossChartRenderer:
             parts.append(f"<text class='loss-ylbl' x='{self._LEFT - 8}' y='{y + 3.5:.1f}'>{value:.2f}</text>")
         return "".join(parts)
 
-    def _x_axis(self, lo, hi, x_title):
+    def _x_axis(self, lo, hi):
         parts = []
         for i in range(self._X_TICKS):
             value = lo + (hi - lo) * i / (self._X_TICKS - 1)
             x = self._x(value, lo, hi)
             parts.append(f"<text class='loss-xlbl' x='{x:.1f}' y='{self._BOTTOM + 18}'>{value:,.0f}</text>")
         mid_x = (self._LEFT + self._RIGHT) / 2
-        parts.append(
-            f"<text class='loss-axis-title' x='{mid_x:.1f}' y='{self._HEIGHT - 6}'>{html.escape(x_title)}</text>"
-        )
+        parts.append(f"<text class='loss-axis-title' x='{mid_x:.1f}' y='{self._HEIGHT - 6}'>step</text>")
         return "".join(parts)
-
-    def _y_axis_title(self, y_title):
-        mid_y = (self._TOP + self._BOTTOM) / 2
-        return (
-            f"<text class='loss-axis-title' x='14' y='{mid_y:.1f}' "
-            f"transform='rotate(-90 14 {mid_y:.1f})'>{html.escape(y_title)}</text>"
-        )
 
     def _frame(self):
         return (
@@ -121,8 +112,8 @@ class LossChartRenderer:
             f"x2='{self._RIGHT}' y2='{self._BOTTOM}'/>"
         )
 
-    def render(self, cells, curve_key="loss_curve", x_title="step", y_title="lm_loss", hint=None, markers=False) -> str:
-        series = self.build_series(cells, curve_key)
+    def render(self, cells) -> str:
+        series = self.build_series(cells)
         if not series:
             return ""
         x_lo, x_hi = self._domain([x for s in series for x, _ in s["points"]])
@@ -133,25 +124,16 @@ class LossChartRenderer:
         for entry in series:
             coords = " ".join(f"{self._x(x, x_lo, x_hi):.1f},{self._y(y, y_lo, y_hi):.1f}" for x, y in entry["points"])
             lines.append(f"<polyline class='loss-line' stroke='{entry['color']}' points='{coords}'/>")
-            if markers:
-                for x_value, y_value in entry["points"]:
-                    lines.append(
-                        f"<circle cx='{self._x(x_value, x_lo, x_hi):.1f}' cy='{self._y(y_value, y_lo, y_hi):.1f}' "
-                        f"r='3.5' fill='{entry['color']}'/>"
-                    )
             legend.append(
                 f"<span class='loss-key'><span class='loss-swatch' style='background:{entry['color']}'></span>"
                 f"{html.escape(entry['label'])}</span>"
             )
-        if hint is None:
-            hint = "Sampled lm_loss vs step &middot; one series per sweep cell."
 
         return (
-            f"<p class='chart-sweep-hint'>{hint}</p>"
+            "<p class='chart-sweep-hint'>Sampled lm_loss vs step &middot; one series per sweep cell.</p>"
             f"<div class='loss-chart'><svg viewBox='0 0 {self._WIDTH} {self._HEIGHT}' role='img' "
-            f"aria-label='{html.escape(y_title)} versus {html.escape(x_title)}'>"
-            f"{self._y_axis(y_lo, y_hi)}{self._y_axis_title(y_title)}{self._frame()}{''.join(lines)}"
-            f"{self._x_axis(x_lo, x_hi, x_title)}"
+            f"aria-label='lm_loss versus step'>"
+            f"{self._y_axis(y_lo, y_hi)}{self._frame()}{''.join(lines)}{self._x_axis(x_lo, x_hi)}"
             f"</svg><div class='loss-legend'>{''.join(legend)}</div></div>"
         )
 

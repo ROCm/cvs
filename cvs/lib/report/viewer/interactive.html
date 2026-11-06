@@ -442,11 +442,17 @@ function extraCurvePoints(raw) {
   if (raw && !Array.isArray(raw) && Array.isArray(raw.points)) return raw.points;
   return raw;
 }
-function extraCurveDefaultOn(tag) {
-  return allCells.some(cell => {
+function extraCurveOption(tag, field) {
+  let value = null;
+  allCells.some(cell => {
     const raw = extraCurveRaw(cell, tag);
-    return !!(raw && !Array.isArray(raw) && raw.default_on);
+    if (raw && !Array.isArray(raw) && raw[field] != null && raw[field] !== '') {
+      value = raw[field];
+      return true;
+    }
+    return false;
   });
+  return value;
 }
 function stepSpecCurve(cell, spec) {
   if (!spec.extraTag) return cell[spec.field];
@@ -483,7 +489,8 @@ function extraStepSpecs() {
   [...tags].sort().forEach(tag => {
     const slug = 'extra-' + tag.replace(/[^A-Za-z0-9_-]/g, '_');
     const panelId = slug + '-panel';
-    const xTitle = tag.indexOf('FID') === 0 ? 'NFE' : 'Step';
+    const markedTitle = extraCurveOption(tag, 'x_title');
+    const xTitle = markedTitle ? String(markedTitle) : 'Step';
     if (!document.getElementById(panelId)) {
       const panel = document.createElement('section');
       panel.className = 'panel';
@@ -504,7 +511,7 @@ function extraStepSpecs() {
       yTitle: tag,
       xTitle: xTitle,
       id: 'extra:' + tag,
-      defaultOn: extraCurveDefaultOn(tag),
+      defaultOn: !!extraCurveOption(tag, 'default_on'),
     });
   });
   extraStepSpecsCache = specs;

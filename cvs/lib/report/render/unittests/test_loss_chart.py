@@ -45,12 +45,6 @@ class TestLossChartRenderer(unittest.TestCase):
         self.assertIn("lm_loss versus step", markup)
         self.assertIn("loss-legend", markup)
 
-    def test_render_draws_both_axis_titles(self):
-        markup = self.renderer.render(self._CELLS, x_title="NFE", y_title="FID")
-        self.assertIn("transform='rotate(-90 14", markup)
-        self.assertIn(">FID</text>", markup)
-        self.assertIn(">NFE</text>", markup)
-
     def test_render_is_empty_without_loss_data(self):
         self.assertEqual(self.renderer.render([{"cell_id": "c1"}]), "")
         self.assertEqual(render_loss_chart_html([]), "")

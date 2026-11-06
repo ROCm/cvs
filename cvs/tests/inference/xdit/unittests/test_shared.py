@@ -643,6 +643,24 @@ class TestFidCurveStage(unittest.TestCase):
         fail.assert_not_called()
         self.assertEqual([row[0] for row in lifecycle.results], ["n2", "n2"])
         self.assertEqual(lifecycle.results[0][7], 12.5)
+        stored = [
+            row.get("_extra_curves")
+            for cell in lifecycle.report_results.values()
+            for host, row in cell.items()
+            if host == "n2" and isinstance(row, dict)
+        ]
+        self.assertEqual(
+            stored,
+            [
+                {
+                    "FID": {
+                        "points": [[10.0, 12.5], [20.0, 8.0]],
+                        "default_on": True,
+                        "x_title": "NFE",
+                    }
+                }
+            ],
+        )
 
     def test_every_host_stopped_early_skips(self):
         params = {
