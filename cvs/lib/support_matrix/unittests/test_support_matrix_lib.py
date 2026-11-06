@@ -77,6 +77,22 @@ class ExtractRocmTests(unittest.TestCase):
         self.assertIsNone(sm._extract_rocm_version(""))
 
 
+class ConfidentArchTests(unittest.TestCase):
+    def test_marketing_names(self):
+        self.assertEqual(sm._confident_arch("Card series: AMD Instinct MI355X"), "mi355x")
+        self.assertEqual(sm._confident_arch("AMD Instinct MI300X"), "mi300x")
+        self.assertEqual(sm._confident_arch("Market Name: Instinct MI325X"), "mi325x")
+
+    def test_device_id_fallback(self):
+        self.assertEqual(sm._confident_arch("Device ID: 0x75a0\nGFX Version: gfx950"), "mi350x")
+
+    def test_unrecognized_is_none_not_mi300x(self):
+        # A banner or an arch the parser does not know must NOT become mi300x.
+        self.assertIsNone(sm._confident_arch("============ ROCm System Management ============"))
+        self.assertIsNone(sm._confident_arch("Device ID: 0x9999"))
+        self.assertIsNone(sm._confident_arch(""))
+
+
 class DetectPlatformTests(unittest.TestCase):
     def test_detects_arch_and_rocm(self):
         handle = _handle("Card series: AMD Instinct MI355X", "7.0.0-42", hosts=("n0", "n1"))
@@ -89,6 +105,11 @@ class DetectPlatformTests(unittest.TestCase):
         platform = sm.detect_platform(handle)
         self.assertIsNone(platform["n0"]["arch"])
         self.assertIsNone(platform["n0"]["rocm"])
+
+    def test_probe_passes_timeout(self):
+        handle = _handle("AMD Instinct MI300X", "7.0.0")
+        sm.detect_platform(handle)
+        self.assertTrue(all("timeout" in c.kwargs for c in handle.exec.call_args_list))
 
 
 _ENTRY = {
@@ -121,10 +142,15 @@ class EvaluateTests(unittest.TestCase):
         violations, _ = sm.evaluate(entry, {}, {"n0": {"arch": "mi355x", "rocm": "7.1.0"}})
         self.assertTrue(any("above the supported maximum" in v for v in violations))
 
-    def test_undetected_are_warnings_not_violations(self):
-        violations, warnings = sm.evaluate(_ENTRY, {"precision": ["mxfp4"]}, {"n0": {"arch": None, "rocm": None}})
+    def test_undetected_arch_is_violation(self):
+        violations, _ = sm.evaluate(_ENTRY, {"precision": ["mxfp4"]}, {"n0": {"arch": None, "rocm": "7.0"}})
+        self.assertTrue(any("could not detect a supported GPU arch" in v for v in violations))
+
+    def test_undetected_rocm_is_warning_only(self):
+        entry = {"required_rocm_min_version": "7.0", "unsupported_gpu_arch": [], "unsupported_params": {}}
+        violations, warnings = sm.evaluate(entry, {}, {"n0": {"arch": "mi355x", "rocm": None}})
         self.assertEqual(violations, [])
-        self.assertEqual(len(warnings), 2)
+        self.assertTrue(any("could not detect ROCm" in w for w in warnings))
 
 
 class ServedModelNameTests(unittest.TestCase):
@@ -169,6 +195,16 @@ class FindEntryTests(unittest.TestCase):
 
     def test_absent_framework(self):
         self.assertIsNone(sm.find_model_entry(self.matrix, "nope", "llama-3.1-8b"))
+
+    def test_matches_config_spellings(self):
+        # The strings the suites actually pass: megatron llama3.1_8B, torchtitan
+        # llama3_1_8b, and the jaxmaxtext MaxText preset alias deepseek2-16b.
+        self.assertIsNotNone(sm.find_model_entry(self.matrix, "megatron", "llama3.1_8B"))
+        self.assertIsNotNone(sm.find_model_entry(self.matrix, "torchtitan", "llama3_1_8b"))
+        self.assertIsNotNone(sm.find_model_entry(self.matrix, "jaxmaxtext", "deepseek2-16b"))
+
+    def test_matches_path_basename(self):
+        self.assertIsNotNone(sm.find_model_entry(self.matrix, "jaxmaxtext", "/root/models/Llama-3.1-8B"))
 
 
 class LoadMatrixValidationTests(unittest.TestCase):
@@ -221,6 +257,34 @@ class RunGateTests(unittest.TestCase):
             )
         self.assertTrue(result.passed)
         self.assertTrue(result.violations)
+
+    def test_normalized_model_spelling_blocks(self):
+        # A different separator spelling of the model still matches the entry.
+        handle = _handle("AMD Instinct MI300X", "7.14.0")
+        with patch.dict(os.environ, {sm.GATE_ENV: "ON"}, clear=True):
+            result = sm.run_support_matrix_gate(
+                "training", "jaxmaxtext", "LLAMA3_1_8B", {"precision": ["mxfp4"]}, handle
+            )
+        self.assertFalse(result.passed)
+
+    def test_undetected_gpu_fails_when_enforced(self):
+        handle = _handle("==== ROCm System Management ====", "7.0.0")
+        with patch.dict(os.environ, {sm.GATE_ENV: "ON"}, clear=True):
+            result = sm.run_support_matrix_gate(
+                "training", "jaxmaxtext", "llama-3.1-8b", {"precision": ["bf16"]}, handle
+            )
+        self.assertFalse(result.passed)
+        self.assertTrue(any("could not detect" in v for v in result.violations))
+
+    def test_matrix_load_failure_fails_when_enforced(self):
+        handle = _handle("AMD Instinct MI300X", "7.0.0")
+        with patch.object(sm, "load_matrix", side_effect=ValueError("bad json")):
+            with patch.dict(os.environ, {sm.GATE_ENV: "ON"}, clear=True):
+                self.assertFalse(
+                    sm.run_support_matrix_gate("training", "jaxmaxtext", "llama-3.1-8b", {}, handle).passed
+                )
+            with patch.dict(os.environ, {sm.GATE_ENV: "OFF"}, clear=True):
+                self.assertTrue(sm.run_support_matrix_gate("training", "jaxmaxtext", "llama-3.1-8b", {}, handle).passed)
 
 
 if __name__ == "__main__":
