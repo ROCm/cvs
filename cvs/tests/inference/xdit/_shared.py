@@ -17,6 +17,7 @@ import pytest
 from tabulate import tabulate
 
 from cvs.lib import globals
+from cvs.lib.support_matrix.support_matrix_lib import run_support_matrix_gate, served_model_name
 from cvs.lib.inference.xdit.xdit_benchmark_job import (
     _ARTIFACT_COLLECT_TIMEOUT_S,
     _materialize_artifacts,
@@ -66,14 +67,15 @@ log = globals.log
 
 XDIT_TEST_ORDER = {
     "test_launch_container": 0,
-    "test_verify_prerequisites": 1,
-    "test_verify_model": 2,
-    "test_verify_parallelism": 3,
-    "test_run_benchmark": 4,
-    "test_parse_thresholds": 5,
-    "test_clip_score": 6,
-    "test_print_results": 7,
-    "test_teardown": 8,
+    "test_support_matrix_gate": 1,
+    "test_verify_prerequisites": 2,
+    "test_verify_model": 3,
+    "test_verify_parallelism": 4,
+    "test_run_benchmark": 5,
+    "test_parse_thresholds": 6,
+    "test_clip_score": 7,
+    "test_print_results": 8,
+    "test_teardown": 9,
 }
 
 
@@ -182,6 +184,18 @@ def launch_container_stage(orch, lifecycle, request):
         lifecycle.record(request, "container_launch", started)
         pytest.fail(f"container {name} not running after setup_containers()")
     _complete(lifecycle, request, "container_launch", started)
+
+
+def support_matrix_gate_stage(orch, variant_config, lifecycle, request):
+    """Stop the run when xdit/<model> is unsupported on the detected GPU arch or
+    ROCm version. Inference passes no params; enforcement is controlled by
+    CVS_SUPPORT_MATRIX_GATE (see cvs/lib/support_matrix/README.md)."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    result = run_support_matrix_gate("inference", "xdit", served_model_name(variant_config), {}, orch)
+    if not result.passed:
+        lifecycle.failed = True
+        pytest.fail("support matrix gate blocked this run: " + "; ".join(result.violations))
 
 
 def verify_prerequisites_stage(orch, lifecycle, request):

@@ -1,0 +1,147 @@
+{
+  "_comment": "CVS training HW/SW support matrix. One file for all training frameworks. Deny-list semantics: an entry lists only what is UNSUPPORTED; anything not listed (including future GPU archs) is allowed. Model keys/aliases match the model name each framework's input config carries (matching is separator- and path-insensitive, so llama-3.1-8b == llama3.1_8B == llama3_1_8b == /models/Llama-3.1-8B). Only models that have an input config are listed. required_rocm_min_version is left empty until a model needs a real minimum (set by the module owner in a later PR). Enforcement is controlled by the CVS_SUPPORT_MATRIX_GATE environment variable (see README.md). Batch/GBS/tok-s are performance values (NOT support signals) and are not stored here.",
+  "_comment_model_entry_example": {
+    "<model-key>": {
+      "aliases": ["<optional alternate names the config may use, e.g. a MaxText preset or HF id>"],
+      "unsupported_gpu_arch": ["<archs where the model does not run at all, e.g. mi300x; empty [] = all archs allowed>"],
+      "required_rocm_min_version": "<minimum ROCm, e.g. 7.14.0; empty string = no minimum (default)>",
+      "required_rocm_max_version": "<maximum ROCm, set to gate a deprecated model; empty string = no maximum>",
+      "unsupported_params": {
+        "precision": {
+          "mxfp4": ["<archs where precision=mxfp4 is unsupported, e.g. mi300x, mi325x>"]
+        }
+      },
+      "notes": "<optional free text; ignored by the gate>"
+    }
+  },
+  "schema_version": 1,
+  "category": "training",
+  "known_arch_tokens": ["mi300x", "mi325x", "mi350x", "mi355x"],
+  "frameworks": {
+    "jaxmaxtext": {
+      "models": {
+        "deepseek-v2-lite": {
+          "aliases": ["deepseek2-16b"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {}
+        },
+        "deepseek-v4-284b": {
+          "aliases": ["deepseek4-284b"],
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {}
+        },
+        "llama-3.1-8b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {
+            "precision": {
+              "mxfp8": ["mi300x", "mi325x"],
+              "mxfp4": ["mi300x", "mi325x"]
+            }
+          }
+        },
+        "llama-3.1-70b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {}
+        },
+        "llama-3.3-70b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {
+            "precision": {
+              "fp8": ["mi300x"]
+            }
+          }
+        },
+        "llama-3.1-405b": {
+          "unsupported_gpu_arch": ["mi300x"],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {}
+        }
+      }
+    },
+    "megatron": {
+      "models": {
+        "deepseek-v2-lite": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {}
+        },
+        "llama-3.1-8b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {}
+        },
+        "llama-3.3-70b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {}
+        },
+        "llama-3.1-405b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {}
+        }
+      }
+    },
+    "torchtitan": {
+      "models": {
+        "deepseek-v2-lite": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {}
+        },
+        "llama-3.1-8b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {}
+        },
+        "llama-3.1-70b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {}
+        },
+        "llama-3.3-70b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {}
+        },
+        "llama-3.1-405b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {}
+        },
+        "mixtral-8x22b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {}
+        },
+        "qwen3-32b": {
+          "unsupported_gpu_arch": [],
+          "required_rocm_min_version": "",
+          "required_rocm_max_version": "",
+          "unsupported_params": {}
+        }
+      }
+    }
+  }
+}
