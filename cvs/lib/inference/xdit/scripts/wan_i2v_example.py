@@ -288,7 +288,7 @@ def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started)
     raw_steps = str(getattr(args, "fid_steps", "") or "").strip()
     if not raw_steps:
         return
-    from fid_sweep import broadcast_value, collective, count_step_samples, rewrite_manifest_from_disk, run_fid_sweep
+    from fid_sweep import rewrite_manifest_from_disk, run_fid_sweep
 
     steps = [int(part) for part in raw_steps.split(",") if part.strip()]
     samples = int(args.fid_samples)
@@ -311,7 +311,6 @@ def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started)
             _export_video(output, dest, args.video_fps)
         return elapsed
 
-    sync_one = collective(rank, generate_one)
     try:
         run_fid_sweep(
             rank,
@@ -324,21 +323,6 @@ def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started)
             generate_one,
             manifest_path,
         )
-        pipe_s = float(last_wall_s) if last_wall_s and last_wall_s > 0 else 0.0
-        for step in steps:
-            for _attempt in range(samples):
-                decision = None
-                if rank == 0:
-                    dest = os.path.join(args.output_directory, "results", "fid", f"nfe_{int(step)}")
-                    have = count_step_samples(dest)
-                    elapsed = time.monotonic() - fid_started
-                    allowance = budget_s if budget_s > 0 else elapsed + pipe_s * samples * max(len(steps), 1) * 1.25
-                    if have < samples and pipe_s > 0 and elapsed + pipe_s * 1.25 <= allowance:
-                        decision = (int(step), have)
-                decision = broadcast_value(decision, rank)
-                if not decision:
-                    break
-                sync_one(*decision)
     except Exception as exc:
         print(f"FID sweep failed after the timed benchmark: {exc}")
     finally:

@@ -36,7 +36,7 @@ def _run_flux2_fid_sweep(args, pipe, input_config, elapsed_time, fid_started):
     raw_steps = str(getattr(args, "fid_steps", "") or "").strip()
     if not raw_steps:
         return
-    from fid_sweep import broadcast_value, collective, run_fid_sweep
+    from fid_sweep import run_fid_sweep
 
     steps = [int(part) for part in raw_steps.split(",") if part.strip()]
     samples = int(getattr(args, "fid_samples", 2))
@@ -67,7 +67,6 @@ def _run_flux2_fid_sweep(args, pipe, input_config, elapsed_time, fid_started):
             print(f"FID wrote {len(images)} png(s) to {dest}", flush=True)
         return elapsed
 
-    sync_one = collective(rank, generate_one)
     budget_s = float(getattr(args, "fid_budget_s", 0) or 0)
     try:
         run_fid_sweep(
@@ -81,21 +80,6 @@ def _run_flux2_fid_sweep(args, pipe, input_config, elapsed_time, fid_started):
             generate_one,
             os.path.join(output_root, "fid", "manifest.json"),
         )
-        # The timed pass saves one flux2_*.png. Each step still needs two fid pngs.
-        for step in steps:
-            for _attempt in range(samples):
-                decision = None
-                if rank == 0:
-                    dest = os.path.join(output_root, "fid", f"nfe_{int(step)}")
-                    have = _fid_png_count(dest)
-                    elapsed = time.monotonic() - fid_started
-                    allowance = budget_s if budget_s > 0 else elapsed + pipe_s * samples * max(len(steps), 1) * 1.25
-                    if have < samples and pipe_s > 0 and elapsed + pipe_s * 1.25 <= allowance:
-                        decision = (int(step), have)
-                decision = broadcast_value(decision, rank)
-                if not decision:
-                    break
-                sync_one(*decision)
         if rank == 0:
             for step in steps:
                 dest = os.path.join(output_root, "fid", f"nfe_{int(step)}")
