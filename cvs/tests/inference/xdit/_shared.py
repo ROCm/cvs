@@ -1109,23 +1109,39 @@ def fid_curve_stage(orch, variant, gpu_type, spec, lifecycle, request):
     cell = lifecycle.report_results.setdefault((model_id, gpu_type, _shape, _steps, cell_id, str(nnodes)), {})
     node_dirs = inference.get("_test_node_output_dirs_by_node") or {}
     failures = []
+    skipped = []
+    recorded = False
     for label, output_dir, hosts in groups:
         payload, error = _read_fid_curve_file(orch, hosts, output_dir)
         manifest = _read_fid_manifest(orch, hosts, output_dir)
         if payload is None and _manifest_blocks_fid(manifest):
-            pytest.skip(
-                "FID sweep stopped before the benchmark time limit and saved fewer than "
-                f"two step counts with two samples. counts={manifest.get('counts')}"
+            skipped.append(
+                (
+                    label,
+                    "FID sweep stopped before the benchmark time limit and saved fewer than "
+                    f"two step counts with two samples. counts={manifest.get('counts')}",
+                )
             )
+            continue
         if payload is None:
             reason = fid_absent_skip_reason(reference_dir, inception_path)
             if reason:
-                pytest.skip(reason)
+                skipped.append((label, reason))
+                continue
             payload, error = _score_fid_curve(orch, hosts, output_dir, reference_dir, inception_path, sampler)
         if payload is None:
             reason = fid_absent_skip_reason(reference_dir, inception_path, error)
             if reason:
-                pytest.skip(reason)
+                skipped.append((label, reason))
+                continue
+            if error and "no step directory with 2 images" in error:
+                skipped.append(
+                    (
+                        label,
+                        f"FID sweep saved no step directory with two images before the benchmark time limit. {error}",
+                    )
+                )
+                continue
             failures.append(f"{label}: {error}")
             continue
         points = list(iter_fid_points(payload))
@@ -1135,6 +1151,7 @@ def fid_curve_stage(orch, variant, gpu_type, spec, lifecycle, request):
         reported_dir = node_dirs.get(label) or output_dir
         host_row = cell.setdefault(label, {})
         host_row["_fid_curve"] = payload
+        recorded = True
         host_row.setdefault("output_dir", reported_dir)
         for point_sampler, nfe, fid in points:
             recorded_sampler = point_sampler or sampler
@@ -1154,6 +1171,11 @@ def fid_curve_stage(orch, variant, gpu_type, spec, lifecycle, request):
             )
             log.info("FID on %s at NFE %s: %.3f", label, int(nfe), fid)
 
+    for label, reason in skipped:
+        cell.setdefault(label, {})["_fid_skip"] = reason
+        log.info("FID skipped on %s: %s", label, reason)
+    if not recorded and not failures and skipped:
+        pytest.skip(" ".join(f"{label}: {reason}" for label, reason in skipped))
     for failure in failures:
         fail_test(failure)
     _complete(lifecycle, request, "fid_curve", started)

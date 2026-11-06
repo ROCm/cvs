@@ -570,6 +570,135 @@ class TestFidCurveStage(unittest.TestCase):
         fail.assert_called_once()
         self.assertIn("needs at least 2", fail.call_args.args[0])
 
+    def _run_nodes(self, params, dirs, curves, manifests, scores):
+        spec = {"family": "flux", "distributed": False, "diffusers": True}
+        variant = self._variant(params)
+        variant.inference["_test_container_output_dirs_by_node"] = dirs
+        lifecycle = Lifecycle()
+
+        def _curve(_orch, _hosts, output_dir):
+            return curves.get(output_dir, (None, "missing"))
+
+        def _manifest(_orch, _hosts, output_dir):
+            return manifests.get(output_dir)
+
+        def _score(_orch, _hosts, output_dir, _reference_dir, _inception_path, _sampler):
+            return scores.get(output_dir, (None, "unscored"))
+
+        with (
+            patch("cvs.tests.inference.xdit._shared._read_fid_curve_file", side_effect=_curve),
+            patch("cvs.tests.inference.xdit._shared._read_fid_manifest", side_effect=_manifest),
+            patch("cvs.tests.inference.xdit._shared._score_fid_curve", side_effect=_score),
+            patch("cvs.tests.inference.xdit._shared.fail_test") as fail,
+        ):
+            try:
+                fid_curve_stage(MagicMock(), variant, "mi300x", spec, lifecycle, MagicMock())
+            except pytest.skip.Exception as exc:
+                return "skip", str(exc), fail, lifecycle
+        return "ran", "", fail, lifecycle
+
+    def test_stopped_early_host_does_not_hide_another_hosts_failure(self):
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/ref",
+            "fid_inception_path": "/inception.pth",
+        }
+        outcome, _message, fail, lifecycle = self._run_nodes(
+            params,
+            {"n1": "/out-a", "n2": "/out-b"},
+            {},
+            {"/out-a": {"stopped_early": True, "counts": {"10": 1}}},
+            {"/out-b": (None, "scorer exploded")},
+        )
+        self.assertEqual(outcome, "ran")
+        fail.assert_called_once()
+        self.assertIn("n2", fail.call_args.args[0])
+        self.assertIn("scorer exploded", fail.call_args.args[0])
+        notes = [
+            row.get("_fid_skip")
+            for cell in lifecycle.report_results.values()
+            for row in cell.values()
+            if isinstance(row, dict)
+        ]
+        self.assertTrue(any(note and "stopped before the benchmark time limit" in note for note in notes))
+
+    def test_stopped_early_host_keeps_another_hosts_curve(self):
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/ref",
+            "fid_inception_path": "/inception.pth",
+        }
+        curve = {"points": [{"nfe": 10, "fid": 12.5}, {"nfe": 20, "fid": 8.0}]}
+        outcome, _message, fail, lifecycle = self._run_nodes(
+            params,
+            {"n1": "/out-a", "n2": "/out-b"},
+            {"/out-b": (curve, None)},
+            {"/out-a": {"stopped_early": True, "counts": {"10": 1}}},
+            {},
+        )
+        self.assertEqual(outcome, "ran")
+        fail.assert_not_called()
+        self.assertEqual([row[0] for row in lifecycle.results], ["n2", "n2"])
+        self.assertEqual(lifecycle.results[0][7], 12.5)
+
+    def test_every_host_stopped_early_skips(self):
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/ref",
+            "fid_inception_path": "/inception.pth",
+        }
+        blocked = {"stopped_early": True, "counts": {"10": 1}}
+        outcome, message, fail, _lifecycle = self._run_nodes(
+            params,
+            {"n1": "/out-a", "n2": "/out-b"},
+            {},
+            {"/out-a": blocked, "/out-b": blocked},
+            {},
+        )
+        self.assertEqual(outcome, "skip")
+        self.assertIn("n1", message)
+        self.assertIn("n2", message)
+        fail.assert_not_called()
+
+    def test_short_sweep_on_one_host_does_not_hide_another_hosts_failure(self):
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/ref",
+            "fid_inception_path": "/inception.pth",
+        }
+        outcome, _message, fail, _lifecycle = self._run_nodes(
+            params,
+            {"n1": "/out-a", "n2": "/out-b"},
+            {},
+            {},
+            {
+                "/out-a": (None, "no step directory with 2 images"),
+                "/out-b": (None, "scorer exploded"),
+            },
+        )
+        self.assertEqual(outcome, "ran")
+        fail.assert_called_once()
+        self.assertIn("scorer exploded", fail.call_args.args[0])
+        self.assertNotIn("no step directory", fail.call_args.args[0])
+
+    def test_missing_inception_on_one_host_keeps_another_hosts_curve(self):
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/ref",
+            "fid_inception_path": "/inception.pth",
+        }
+        curve = {"points": [{"nfe": 10, "fid": 12.5}, {"nfe": 20, "fid": 8.0}]}
+        outcome, _message, fail, lifecycle = self._run_nodes(
+            params,
+            {"n1": "/out-a", "n2": "/out-b"},
+            {"/out-b": (curve, None)},
+            {},
+            {"/out-a": (None, "inception checkpoint not found: /inception.pth")},
+        )
+        self.assertEqual(outcome, "ran")
+        fail.assert_not_called()
+        self.assertEqual(lifecycle.results[0][0], "n2")
+
 
 class TestVerifyModelStage(unittest.TestCase):
     def test_hf_remote_download_reads_model_remote(self):
