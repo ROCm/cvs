@@ -64,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Generic ANC install and log helpers moved to `cvs/lib/amdtools_lib.py`; `anc_lib` names unchanged.
 - ANC `anc_release_url` is now optional. Each suite checks for an existing install (at `ANC_INSTALL_PATH` when set, else `/opt/amdtools`) and runs against the installed version; a URL is needed only to install ANC when it is absent or below `anc_version`. `anc_installation` fails if an install is required but no usable URL is given, while group/item suites proceed with the installed version. `anc_release_url`, `anc_version`, and `ANC_INSTALL_PATH` are validated only when used. A release candidate is treated as its base release (`1.7.0-rc.1` as `1.7.0`); the rc number is no longer compared.
 - Logged command lines show `<redacted>` in place of the values of token, password, secret and API-key variables and flags; the commands sent to nodes are unchanged.
+- The health sample config installs TransferBench `v1.71.01` (was `v1.67.00`), which fixes timing and DMA measurement errors in the older release. TransferBench results can differ from earlier runs; configs that set `transferbench.git_tag` keep their version.
 
 ### Fixed
 
