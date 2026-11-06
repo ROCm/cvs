@@ -23,18 +23,24 @@ CHECKOUT_TIMEOUT = 900
 BUILD_TIMEOUT = 3600
 
 
+NOT_APT_HINT = (
+    'the ROCm dev stack and torch must come from the image or host; CVS never installs them, pip or the NIC libraries'
+)
+
+
 def _apt_prefix(orch, install_system_packages):
-    """Return ``(prefix, hint)``: the sudo prefix for apt, or None when apt may not run, and what to tell the user."""
+    """Return ``(prefix, hint)``: the sudo prefix for apt, or None when apt may not run, and what to tell
+    the user about missing items that apt can install."""
     if not install_system_packages:
         return None, 'install them, or set install_system_packages to true'
     if is_managed_compute():
         return None, 'a Slurm or SPUR job step never runs apt; install them in the node image or before allocating'
     if orch.orchestrator_type == 'container':
-        return '', 'apt cannot install ROCm, torch, pip or the NIC libraries; the image must provide them'
+        return '', 'apt did not install them; its output is in the CVS log'
     sudo = orch.sudo_prefix()
     if not sudo:
         return None, 'apt needs passwordless sudo on the hosts; install them yourself'
-    return sudo, 'apt cannot install ROCm, torch, pip or the NIC libraries; the hosts must provide them'
+    return sudo, 'apt did not install them; its output is in the CVS log'
 
 
 def _check_deps(orch, install_system_packages):
@@ -61,7 +67,11 @@ def _check_deps(orch, install_system_packages):
         if items is None:
             fail_test(f'could not check the MoRI build dependencies on node {node}')
         elif items:
-            fail_test(f'MoRI build dependencies missing on node {node}: {", ".join(items)}; {hint}')
+            apt_can_install = all(mori_lib.apt_packages([item]) for item in items)
+            fail_test(
+                f'MoRI build dependencies missing on node {node}: {", ".join(items)}; '
+                f'{hint if apt_can_install else NOT_APT_HINT}'
+            )
 
 
 def _run(orch, step, cmd, timeout, head_only):

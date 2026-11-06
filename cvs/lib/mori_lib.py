@@ -53,7 +53,8 @@ BUILD_DEPS = (
     ('verbs.h', 'test -f /usr/include/infiniband/verbs.h', 'libibverbs-dev'),
     ('numa.h', 'test -f /usr/include/numa.h', 'libnuma-dev'),
     ('libdrm', 'test -d /usr/include/libdrm', 'libdrm-dev'),
-    ('pci.h', 'test -f /usr/include/pci/pci.h', 'libpci-dev'),
+    # Ubuntu 24.04's libpci-dev puts the header in the multiarch include dir.
+    ('pci.h', 'test -f /usr/include/pci/pci.h || test -f /usr/include/x86_64-linux-gnu/pci/pci.h', 'libpci-dev'),
     ('hipcc', 'test -x "${ROCM_PATH:-/opt/rocm}/bin/hipcc"', None),
     ('hip-lang', 'test -f "${ROCM_PATH:-/opt/rocm}/lib/cmake/hip-lang/hip-lang-config.cmake"', None),
     ('libibverbs', '/sbin/ldconfig -p | grep -q libibverbs.so.1', None),
