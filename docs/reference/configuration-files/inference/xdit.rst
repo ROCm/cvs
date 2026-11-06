@@ -242,8 +242,10 @@ the rank-0 node. ``master_port`` defaults to ``29500``.
 =============================
 
 Used by all FLUX templates. The loader stores the flat object as ``flux1_dev_t2i``.
-FLUX.2 sets ``model_type`` to ``flux2``, which selects ``flux2_example.py``. FLUX.1 runs
-the bind-mounted ``run_usp.py`` at ``/benchmark/run_usp.py``. A repo or path containing
+FLUX.2 sets ``model_type`` to ``flux2`` and runs the bind-mounted ``flux2_example.py`` at
+``/benchmark/flux2_example.py``. FLUX.1 runs the bind-mounted ``run_usp.py`` at
+``/benchmark/run_usp.py``. The copies baked into the image do not accept these arguments.
+A repo or path containing
 ``flux2`` or ``flux.2`` is also treated as FLUX.2 when ``model_type`` is omitted.
 
 .. list-table::

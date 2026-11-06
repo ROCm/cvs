@@ -177,8 +177,10 @@ GPU keys inside it (``mi300x``, ``mi325``, ``mi350``, ``mi355``, ``auto``) selec
 
   FLUX.1 configs bind-mount |cvs-lib-inference-xdit-scripts-run-usp-py|_ at
   ``/benchmark/run_usp.py`` and ``flux_utils.py`` beside it at ``/benchmark/flux_utils.py``.
-  FLUX.2 configs bind-mount |cvs-lib-inference-xdit-scripts-flux2-example-py|_ when the
-  image does not ship ``/benchmark/flux2_example.py``. WAN 2.2 Diffusers suites mount
+  FLUX.2 configs bind-mount |cvs-lib-inference-xdit-scripts-flux2-example-py|_ at
+  ``/benchmark/flux2_example.py``. The copy baked into the image does not accept
+  the benchmark arguments.
+  WAN 2.2 Diffusers suites mount
   |cvs-lib-inference-xdit-scripts-wan-i2v-example-py|_. WAN 2.1 T2V Diffusers suites mount
   |cvs-lib-inference-xdit-scripts-wan-t2v-example-py|_. Configs that set ``fid_nfe_steps``
   also mount ``fid_sweep.py`` at ``/benchmark/fid_sweep.py``. Adjust the host side of those
