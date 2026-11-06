@@ -63,7 +63,6 @@
       "seed": 42,
       "num_inference_steps": 50,
       "fid_nfe_steps": [10, 50],
-      "fid_reference_dir": "/hf_home/fid_reference",
       "fid_inception_path": "/hf_home/inception_v3.pth",
       "max_sequence_length": 512,
       "no_use_resolution_binning": true,

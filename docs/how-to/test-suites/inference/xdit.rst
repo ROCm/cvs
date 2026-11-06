@@ -137,10 +137,9 @@ Follow these steps to set up the xDiT configuration.
        docker run --rm -v /data/models:/hf_home rocm/pytorch-xdit:v26.9 python3 -c \
          "import torch, torchvision as tv; m = tv.models.inception_v3(weights=tv.models.Inception_V3_Weights.IMAGENET1K_V1); torch.save(m.state_dict(), '/hf_home/inception_v3.pth')"
 
-   - **FID reference images** for ``fid_reference_dir`` (``/hf_home/fid_reference`` in the samples)
-     are optional. When that directory is missing or has fewer than two images, the score uses
-     the highest step-count samples this run saved under ``results/fid/``. A staged set of real
-     PNG or JPG files is used instead when it has at least two images.
+   - **FID reference images** are the highest step-count samples this run saves under
+     ``results/fid/``. The samples do not set ``fid_reference_dir``. Set that field only when
+     you have a directory of real PNG or JPG files, at least two, to use instead.
 
 Shipped config templates and the suites they target:
 
@@ -371,12 +370,11 @@ Each stage corresponds to a test function in the HTML report.
        ``fid_nfe_steps`` is set. The benchmark saves extra samples under ``results/fid/nfe_<steps>/``
        after the timed run, then stops at least 180 seconds before the
        benchmark command timeout. ``test_fid_curve`` scores those files
-       against ``fid_reference_dir`` with the Inception checkpoint at
-       ``fid_inception_path``; the checkpoint is staged in step 5. A single-node WAN run
+       against the highest step-count samples from this run, using the Inception checkpoint at
+       ``fid_inception_path``. The checkpoint is staged in step 5. A single-node WAN run
        that sets ``fid_nfe_steps`` uses a two-hour benchmark timeout so the extra
        videos fit after the timed pass. A missing Inception checkpoint skips the stage.
-       CVS does not download it. A missing or short ``fid_reference_dir`` uses the highest
-       step-count samples from this run. The interactive viewer plots FID
+       CVS does not download it. The interactive viewer plots FID
        against the step counts, one line per host. A sweep that the
        timeout cuts short is skipped, not failed.
    * - Teardown

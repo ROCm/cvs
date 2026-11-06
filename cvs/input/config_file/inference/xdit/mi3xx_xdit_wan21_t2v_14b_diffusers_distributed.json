@@ -74,7 +74,6 @@
     "num_benchmark_steps": 1,
     "num_inference_steps": 30,
     "fid_nfe_steps": [10, 30],
-    "fid_reference_dir": "/hf_home/fid_reference",
     "fid_inception_path": "/hf_home/inception_v3.pth",
     "warmup_steps": 1,
     "compile": false,
