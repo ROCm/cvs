@@ -440,16 +440,16 @@ only when detection reports that same string.
      - Shipped keys (seconds)
    * - ``xdit_flux1_dev_single_threshold.json``
      - ``max_avg_pipe_time_s``
-     - ``auto`` 10, ``mi300x`` 3, ``mi325`` 20, ``mi350`` 2, ``mi355`` 7
+     - ``auto`` 10, ``mi300x`` 3, ``mi325`` 3, ``mi350`` 2, ``mi355`` 7
    * - ``xdit_flux1_dev_distributed_threshold.json``
      - ``max_avg_pipe_time_s``
-     - ``auto`` 12, ``mi300x`` 10, ``mi325`` 20, ``mi350`` 20, ``mi355`` 22
+     - ``auto`` 12, ``mi300x`` 10, ``mi325`` 10, ``mi350`` 20, ``mi355`` 22
    * - ``xdit_flux2_dev_single_threshold.json``
      - ``max_avg_pipe_time_s``
-     - ``auto`` 10, ``mi300x`` 8, ``mi325`` 20, ``mi350`` 7, ``mi355`` 7
+     - ``auto`` 10, ``mi300x`` 8, ``mi325`` 8, ``mi350`` 7, ``mi355`` 7
    * - ``xdit_flux2_dev_distributed_threshold.json``
      - ``max_avg_pipe_time_s``
-     - ``auto`` 20, ``mi300x`` 16, ``mi325`` 20, ``mi350`` 20, ``mi355`` 50
+     - ``auto`` 20, ``mi300x`` 16, ``mi325`` 16, ``mi350`` 20, ``mi355`` 50
    * - ``xdit_wan22_14b_single_threshold.json``
      - ``max_avg_total_time_s``
      - ``auto`` 15, ``mi300x`` 200, ``mi325`` 160, ``mi350`` 120, ``mi355`` 120
