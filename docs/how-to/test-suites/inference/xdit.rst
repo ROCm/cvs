@@ -138,9 +138,9 @@ Follow these steps to set up the xDiT configuration.
          "import torch, torchvision as tv; m = tv.models.inception_v3(weights=tv.models.Inception_V3_Weights.IMAGENET1K_V1); torch.save(m.state_dict(), '/hf_home/inception_v3.pth')"
 
    - **FID reference images** for ``fid_reference_dir`` (``/hf_home/fid_reference`` in the samples)
-     must be real PNG or JPG files, at least two. Hundreds give a stable score. Keep the folder
-     fixed between runs so scores stay comparable. A missing directory skips
-     ``test_fid_curve``. A directory with fewer than two images fails the stage.
+     are optional. When that directory is missing or has fewer than two images, the score uses
+     the highest step-count samples this run saved under ``results/fid/``. A staged set of real
+     PNG or JPG files is used instead when it has at least two images.
 
 Shipped config templates and the suites they target:
 
@@ -374,9 +374,9 @@ Each stage corresponds to a test function in the HTML report.
        against ``fid_reference_dir`` with the Inception checkpoint at
        ``fid_inception_path``; both are staged in step 5. A single-node WAN run
        that sets ``fid_nfe_steps`` uses a two-hour benchmark timeout so the extra
-       videos fit after the timed pass. A missing Inception checkpoint or
-       ``fid_reference_dir`` skips the stage. CVS does not download either. A reference
-       directory with fewer than two images fails the stage. The interactive viewer plots FID
+       videos fit after the timed pass. A missing Inception checkpoint skips the stage.
+       CVS does not download it. A missing or short ``fid_reference_dir`` uses the highest
+       step-count samples from this run. The interactive viewer plots FID
        against the step counts, one line per host. A sweep that the
        timeout cuts short is skipped, not failed.
    * - Teardown

@@ -254,19 +254,31 @@ class TestFidCurve(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self._load_with(inception_v3, {"conv.weight": object()})
 
-    def test_reference_set_must_be_present(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            missing = str(Path(tmp) / "missing")
-            with self.assertRaises(SystemExit) as raised:
-                _fid_score._require_reference(missing, 8)
-            self.assertIn(missing, str(raised.exception))
+    def test_empty_reference_uses_the_highest_step_directory(self):
+        def collect(directory, _frames):
+            if directory.endswith("nfe_25"):
+                return ["high-a", "high-b"]
+            if directory.endswith("nfe_10"):
+                return ["low"]
+            return []
 
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "fid"
+            (root / "nfe_10").mkdir(parents=True)
+            (root / "nfe_25").mkdir()
             empty = Path(tmp) / "empty"
             empty.mkdir()
-            (empty / "notes.txt").write_text("x", encoding="utf-8")
+            with patch.object(_fid_score, "_collect_images", side_effect=collect):
+                images, label = _fid_score._reference_images(str(empty), str(root), 8)
+                kept, kept_label = _fid_score._reference_images(str(root / "nfe_25"), str(root), 8)
+            self.assertEqual(images, ["high-a", "high-b"])
+            self.assertTrue(label.endswith("nfe_25"))
+            self.assertEqual(kept, ["high-a", "high-b"])
+            self.assertTrue(kept_label.endswith("nfe_25"))
+
             with self.assertRaises(SystemExit) as raised:
-                _fid_score._require_reference(str(empty), 8)
-            self.assertIn("needs at least 2", str(raised.exception))
+                _fid_score._reference_images(str(empty), str(root / "nfe_10"), 8)
+            self.assertIn("no step directory with 2 images", str(raised.exception))
 
     def test_collective_returns_the_result_when_every_rank_succeeds(self):
         with patch.object(_fid_sweep, "_gather_errors", return_value=["", ""]):

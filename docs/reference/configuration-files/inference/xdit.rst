@@ -499,12 +499,12 @@ starting value, not a measured pass bar.
 The FLUX and WAN Diffusers scripts then save extra samples under ``results/fid/nfe_<steps>/``
 after the timed benchmark. ``fid_samples`` is how many to save at each step count (default 2).
 The sweep stops so the command still exits at least 180 seconds before its timeout, and a
-curve cut short for that reason is skipped rather than failed. Set ``fid_reference_dir`` to
-real images already in the container (``/hf_home/fid_reference`` in the samples) and
-``fid_inception_path`` to a torchvision Inception-v3 state dict (``/hf_home/inception_v3.pth``
-in the samples). The test does not download either. A missing checkpoint or
-``fid_reference_dir`` skips the stage. A reference directory with fewer than two
-images fails the stage.
+curve cut short for that reason is skipped rather than failed. ``fid_reference_dir``
+(``/hf_home/fid_reference`` in the samples) is optional. When it is missing or has fewer
+than two images, the score uses the highest step-count samples this run saved under
+``results/fid/``. A directory with at least two real images is used instead.
+``fid_inception_path`` is a torchvision Inception-v3 state dict (``/hf_home/inception_v3.pth``
+in the samples). The test does not download it. A missing checkpoint skips the stage.
 WAN scores sampled frames from each video.
 ``fid_sampler`` names the line when one run compares samplers. The interactive viewer
 plots FID against those step counts. Native WAN ``run.py`` does not run this sweep.
