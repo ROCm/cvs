@@ -344,28 +344,25 @@ class TestFidCurve(unittest.TestCase):
         self.assertEqual(payload["error"], "")
         self.assertFalse(payload["stopped_early"])
 
-    def test_absent_checkpoint_or_reference_skips(self):
-        empty = fid_absent_skip_reason("", "/hf_home/inception_v3.pth")
-        self.assertIn("fid_reference_dir or fid_inception_path is empty", empty)
+    def test_absent_inception_checkpoint_skips(self):
+        empty = fid_absent_skip_reason("")
+        self.assertIn("fid_inception_path is empty", empty)
         self.assertIn("does not download", empty)
         missing_ckpt = fid_absent_skip_reason(
-            "/hf_home/fid_reference",
             "/hf_home/inception_v3.pth",
             "n1: FID command failed (inception checkpoint not found: /hf_home/inception_v3.pth)",
         )
         self.assertIn("inception checkpoint not found", missing_ckpt)
-        missing_ref = fid_absent_skip_reason(
-            "/hf_home/fid_reference",
-            "/hf_home/inception_v3.pth",
-            "n1: FID command failed (FID reference directory not found: /hf_home/fid_reference)",
+
+    def test_reference_directory_does_not_skip(self):
+        self.assertEqual(fid_absent_skip_reason("/hf_home/inception_v3.pth"), "")
+        self.assertEqual(
+            fid_absent_skip_reason(
+                "/hf_home/inception_v3.pth",
+                "n1: FID command failed (/hf_home/fid_reference has 0 sample(s); FID reference needs at least 2)",
+            ),
+            "",
         )
-        self.assertIn("FID reference directory not found", missing_ref)
-        short = fid_absent_skip_reason(
-            "/hf_home/fid_reference",
-            "/hf_home/inception_v3.pth",
-            "n1: FID command failed (/hf_home/fid_reference has 1 sample(s); FID reference needs at least 2)",
-        )
-        self.assertEqual(short, "")
 
 
 if __name__ == "__main__":

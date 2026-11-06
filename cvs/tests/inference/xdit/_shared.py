@@ -1116,8 +1116,7 @@ def fid_curve_stage(orch, variant, gpu_type, spec, lifecycle, request):
     if not steps:
         pytest.skip(
             "FID vs NFE is off. Set benchmark_params.fid_nfe_steps to two or more sampling "
-            "step counts, fid_reference_dir to a directory of real images, and "
-            "fid_inception_path to a local Inception-v3 checkpoint. Put one directory of "
+            "step counts and fid_inception_path to a local Inception-v3 checkpoint. Put one directory of "
             "generated images per step under results/fid/<steps>/, or write results/fid_curve.json."
         )
 
@@ -1156,7 +1155,7 @@ def fid_curve_stage(orch, variant, gpu_type, spec, lifecycle, request):
             )
             continue
         if payload is None:
-            reason = fid_absent_skip_reason(reference_dir, inception_path)
+            reason = fid_absent_skip_reason(inception_path)
             if reason:
                 skipped.append((label, reason))
                 continue
@@ -1172,7 +1171,7 @@ def fid_curve_stage(orch, variant, gpu_type, spec, lifecycle, request):
         else:
             payload, error = scored[label]
         if payload is None:
-            reason = fid_absent_skip_reason(reference_dir, inception_path, error)
+            reason = fid_absent_skip_reason(inception_path, error)
             if reason:
                 skipped.append((label, reason))
                 continue

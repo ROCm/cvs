@@ -372,7 +372,7 @@ Each stage corresponds to a test function in the HTML report.
        after the timed run, then stops at least 180 seconds before the
        benchmark command timeout. ``test_fid_curve`` scores those files
        against ``fid_reference_dir`` with the Inception checkpoint at
-       ``fid_inception_path``; both are staged in step 5. A single-node WAN run
+       ``fid_inception_path``; the checkpoint is staged in step 5. A single-node WAN run
        that sets ``fid_nfe_steps`` uses a two-hour benchmark timeout so the extra
        videos fit after the timed pass. A missing Inception checkpoint skips the stage.
        CVS does not download it. A missing or short ``fid_reference_dir`` uses the highest

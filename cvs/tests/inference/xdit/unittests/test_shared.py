@@ -538,40 +538,40 @@ class TestFidCurveStage(unittest.TestCase):
         self.assertIn("inception checkpoint not found", message)
         fail.assert_not_called()
 
-    def test_missing_reference_directory_skips(self):
-        params = {
-            "fid_nfe_steps": [10, 20],
-            "fid_reference_dir": "/hf_home/fid_reference",
-            "fid_inception_path": "/hf_home/inception_v3.pth",
-        }
-        outcome, message, fail, _score = self._run(
-            params,
-            "n1: FID command failed (FID reference directory not found: /hf_home/fid_reference)",
-        )
-        self.assertEqual(outcome, "skip")
-        self.assertIn("FID reference directory not found", message)
-        fail.assert_not_called()
-
-    def test_empty_artifact_paths_skip_without_scoring(self):
+    def test_empty_inception_path_skips_without_scoring(self):
         outcome, message, fail, score = self._run({"fid_nfe_steps": [10, 20]}, "")
         self.assertEqual(outcome, "skip")
-        self.assertIn("fid_reference_dir or fid_inception_path is empty", message)
+        self.assertIn("fid_inception_path is empty", message)
         fail.assert_not_called()
         score.assert_not_called()
 
-    def test_short_reference_directory_fails(self):
+    def test_missing_reference_directory_still_scores(self):
         params = {
             "fid_nfe_steps": [10, 20],
-            "fid_reference_dir": "/hf_home/fid_reference",
             "fid_inception_path": "/hf_home/inception_v3.pth",
         }
-        outcome, _message, fail, _score = self._run(
-            params,
-            "n1: FID command failed (/hf_home/fid_reference has 1 sample(s); FID reference needs at least 2)",
-        )
-        self.assertEqual(outcome, "ran")
-        fail.assert_called_once()
-        self.assertIn("needs at least 2", fail.call_args.args[0])
+        curve = {"points": [{"nfe": 10, "fid": 12.5}, {"nfe": 20, "fid": 8.0}]}
+        with (
+            patch("cvs.tests.inference.xdit._shared._read_fid_curve_file", return_value=(None, "missing")),
+            patch("cvs.tests.inference.xdit._shared._read_fid_manifest", return_value=None),
+            patch(
+                "cvs.tests.inference.xdit._shared._score_fid_groups",
+                side_effect=lambda _orch, jobs, *_args: {label: (curve, None) for label, _dir, _hosts in jobs},
+            ) as score,
+            patch("cvs.tests.inference.xdit._shared.fail_test") as fail,
+        ):
+            fid_curve_stage(
+                MagicMock(),
+                self._variant(params),
+                "mi300x",
+                {"family": "flux", "distributed": False, "diffusers": True},
+                Lifecycle(),
+                MagicMock(),
+            )
+        fail.assert_not_called()
+        score.assert_called_once()
+        self.assertEqual(score.call_args.args[2], "")
+        self.assertEqual(score.call_args.args[3], "/hf_home/inception_v3.pth")
 
     def _run_nodes(self, params, dirs, curves, manifests, scores):
         spec = {"family": "flux", "distributed": False, "diffusers": True}

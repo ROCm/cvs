@@ -586,7 +586,10 @@ class PytorchXditWan22Benchmarks(BaseModel):
     )
     fid_reference_dir: Optional[str] = Field(
         default=None,
-        description="In-container directory of real images used as the FID reference set.",
+        description=(
+            "Optional in-container directory of real images for the FID reference set. When it is missing "
+            "or has fewer than two images, the highest step-count samples from the run are used."
+        ),
     )
     fid_inception_path: Optional[str] = Field(
         default=None,
@@ -696,7 +699,10 @@ class PytorchXditFlux1DevBenchmarks(BaseModel):
     )
     fid_reference_dir: Optional[str] = Field(
         default=None,
-        description="In-container directory of real images used as the FID reference set.",
+        description=(
+            "Optional in-container directory of real images for the FID reference set. When it is missing "
+            "or has fewer than two images, the highest step-count samples from the run are used."
+        ),
     )
     fid_inception_path: Optional[str] = Field(
         default=None,
