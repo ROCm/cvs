@@ -53,7 +53,7 @@ def parse_args():
     parser.add_argument("--timing_json_path", default="results/timing.json")
     parser.add_argument("--fid_steps", default="")
     parser.add_argument("--fid_samples", type=int, default=2)
-    parser.add_argument("--fid_budget_s", type=float, default=0)
+    parser.add_argument("--fid_deadline", type=float, default=0)
     return parser.parse_args()
 
 
@@ -164,15 +164,15 @@ def _write_timing_json(timing_json_path, pipe_times):
     print(f"Wrote timing JSON to {timing_json_path}")
 
 
-def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started):
+def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s):
     raw_steps = str(getattr(args, "fid_steps", "") or "").strip()
     if not raw_steps:
         return
-    from fid_sweep import rewrite_manifest_from_disk, run_fid_sweep
+    from fid_sweep import rewrite_manifest_from_disk, run_fid_sweep, seconds_until
 
     steps = [int(part) for part in raw_steps.split(",") if part.strip()]
     samples = int(args.fid_samples)
-    budget_s = float(args.fid_budget_s)
+    budget_s = seconds_until(getattr(args, "fid_deadline", 0))
     manifest_path = os.path.join(args.output_directory, "results", "fid", "manifest.json")
 
     def generate_one(nfe, sample_index):
@@ -196,7 +196,7 @@ def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started)
             steps,
             samples,
             budget_s,
-            fid_started,
+            time.monotonic(),
             last_wall_s if rank == 0 else 0.0,
             int(args.num_inference_steps),
             generate_one,
@@ -210,7 +210,6 @@ def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started)
 
 
 def main():
-    fid_started = time.monotonic()
     args = parse_args()
     if not os.path.isabs(args.save_video_path):
         args.save_video_path = os.path.join(args.output_directory, args.save_video_path)
@@ -303,7 +302,7 @@ def main():
                 print(f"video was not written to {args.save_video_path}", file=sys.stderr)
                 raise SystemExit(1)
 
-        _run_wan_fid_sweep(args, runner, input_args, rank, elapsed, fid_started)
+        _run_wan_fid_sweep(args, runner, input_args, rank, elapsed)
     finally:
         runner.cleanup()
 

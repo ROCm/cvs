@@ -32,11 +32,11 @@ def _fid_png_count(directory):
     return sum(1 for name in os.listdir(directory) if name.lower().endswith(".png"))
 
 
-def _run_flux2_fid_sweep(args, pipe, input_config, elapsed_time, fid_started):
+def _run_flux2_fid_sweep(args, pipe, input_config, elapsed_time):
     raw_steps = str(getattr(args, "fid_steps", "") or "").strip()
     if not raw_steps:
         return
-    from fid_sweep import run_fid_sweep
+    from fid_sweep import run_fid_sweep, seconds_until
 
     steps = [int(part) for part in raw_steps.split(",") if part.strip()]
     samples = int(getattr(args, "fid_samples", 2))
@@ -67,14 +67,14 @@ def _run_flux2_fid_sweep(args, pipe, input_config, elapsed_time, fid_started):
             print(f"FID wrote {len(images)} png(s) to {dest}", flush=True)
         return elapsed
 
-    budget_s = float(getattr(args, "fid_budget_s", 0) or 0)
+    budget_s = seconds_until(getattr(args, "fid_deadline", 0))
     try:
         run_fid_sweep(
             rank,
             steps,
             samples,
             budget_s,
-            fid_started,
+            time.monotonic(),
             pipe_s if rank == 0 else 0.0,
             int(input_config.num_inference_steps),
             generate_one,
@@ -89,11 +89,10 @@ def _run_flux2_fid_sweep(args, pipe, input_config, elapsed_time, fid_started):
 
 
 def main():
-    fid_started = time.monotonic()
     parser = FlexibleArgumentParser(description="xFuser Arguments")
     parser.add_argument("--fid_steps", default="")
     parser.add_argument("--fid_samples", type=int, default=2)
-    parser.add_argument("--fid_budget_s", type=float, default=0)
+    parser.add_argument("--fid_deadline", type=float, default=0)
     parser.add_argument("--num_repetitions", type=int, default=1)
     args = xFuserArgs.add_cli_args(parser).parse_args()
     engine_args = xFuserArgs.from_cli_args(args)
@@ -172,7 +171,7 @@ def main():
         os.makedirs("results", exist_ok=True)
         with open("results/timing.json", "w", encoding="utf-8") as handle:
             json.dump([{"pipe_time": float(value)} for value in pipe_times], handle)
-    _run_flux2_fid_sweep(args, pipe, input_config, elapsed_time, fid_started)
+    _run_flux2_fid_sweep(args, pipe, input_config, elapsed_time)
     get_runtime_state().destroy_distributed_env()
 
 

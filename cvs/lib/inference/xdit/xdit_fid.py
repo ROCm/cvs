@@ -40,12 +40,21 @@ def fid_sweep_host_path():
 
 
 def fid_budget_seconds(timeout_s):
-    """Seconds from process start that leave ``FID_EXIT_RESERVE_S`` before the command is killed."""
+    """Seconds of the command timeout left for the run after the exit reserve."""
     return max(0, int(timeout_s) - FID_EXIT_RESERVE_S)
 
 
-def fid_cli_flags(params, budget_s):
-    """Extra launcher flags, or "" when the curve is off."""
+def fid_deadline_shell(budget_s):
+    """Epoch seconds. The node shell evaluates this when the timed command starts."""
+    return f"$(($(date +%s) + {int(budget_s)}))"
+
+
+def fid_cli_flags(params, _budget_s):
+    """Extra launcher flags, or "" when the curve is off.
+
+    ``$fid_deadline`` is the epoch from ``fid_deadline_shell``. The launch command
+    sets it before container start, pip, and torchrun, so those are inside the budget.
+    """
     steps = parse_fid_nfe_steps(params)
     if not steps:
         return ""
@@ -55,7 +64,7 @@ def fid_cli_flags(params, budget_s):
     if samples < 2:
         raise ValueError("fid_samples must be at least 2")
     steps_arg = ",".join(str(step) for step in steps)
-    return f"--fid_steps {steps_arg} --fid_samples {samples} --fid_budget_s {int(budget_s)}"
+    return f"--fid_steps {steps_arg} --fid_samples {samples} --fid_deadline $fid_deadline"
 
 
 def fid_sweep_mount_when_enabled(params):

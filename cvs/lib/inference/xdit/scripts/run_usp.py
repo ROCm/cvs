@@ -120,11 +120,11 @@ def parallelize_transformer(pipe: DiffusionPipeline):
         block.attn.processor = xFuserFluxAttnProcessor()
 
 
-def _run_flux_fid_sweep(args, pipe, input_config, is_last_process, last_wall_s, fid_started):
+def _run_flux_fid_sweep(args, pipe, input_config, is_last_process, last_wall_s):
     raw_steps = str(getattr(args, "fid_steps", "") or "").strip()
     if not raw_steps or args.profile_output:
         return
-    from fid_sweep import run_fid_sweep
+    from fid_sweep import run_fid_sweep, seconds_until
 
     steps = [int(part) for part in raw_steps.split(",") if part.strip()]
     rank = get_world_group().rank
@@ -149,8 +149,8 @@ def _run_flux_fid_sweep(args, pipe, input_config, is_last_process, last_wall_s, 
             rank,
             steps,
             int(args.fid_samples),
-            float(args.fid_budget_s),
-            fid_started,
+            seconds_until(getattr(args, "fid_deadline", 0)),
+            time.monotonic(),
             last_wall_s if rank == 0 else 0.0,
             int(input_config.num_inference_steps),
             generate_one,
@@ -161,7 +161,6 @@ def _run_flux_fid_sweep(args, pipe, input_config, is_last_process, last_wall_s, 
 
 
 def main():
-    fid_started = time.monotonic()
     args = create_arg_parser()
     engine_args = xFuserArgs.from_cli_args(args)
     engine_config, input_config = engine_args.create_config()
@@ -317,7 +316,6 @@ def main():
         input_config,
         is_last_process,
         last_wall_s,
-        fid_started,
     )
 
     get_runtime_state().destroy_distributed_env()

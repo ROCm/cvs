@@ -1026,6 +1026,34 @@ class TestFluxBenchmarkJob(unittest.TestCase):
         self.assertIn(RUN_USP_MOUNT_PATH, cmd)
         self.assertNotIn(RUN_USP_PATH, cmd)
         self.assertIn("--name flux-benchmark", cmd)
+        self.assertNotIn("fid_deadline", cmd)
+
+    def test_fid_deadline_is_stamped_before_docker_starts(self):
+        job, _ = _make_flux_job(benchmark_overrides={"fid_nfe_steps": [10, 20]})
+        job.flux_params["_fid_budget_s"] = 1620
+        cmd = job._build_docker_cmd(
+            node_rank=0,
+            host_output_dir="/home/user/cvs_flux_output/flux_host-0_outputs",
+            master_addr="127.0.0.1",
+            master_port=29500,
+        )
+        self.assertLess(cmd.index("$(($(date +%s) + 1620))"), cmd.index("docker run"))
+        self.assertIn("-e fid_deadline=$fid_deadline", cmd)
+        self.assertIn("--fid_deadline $fid_deadline", cmd)
+
+    def test_orchestrator_stamps_the_fid_deadline_inside_the_timed_shell(self):
+        job, _ = _make_flux_job(benchmark_overrides={"fid_nfe_steps": [10, 20]})
+        job.uses_container_orchestrator = True
+        job.flux_params["_fid_budget_s"] = 1620
+        cmd = job._build_docker_cmd(
+            node_rank=0,
+            host_output_dir="/outputs/flux_node_outputs",
+            master_addr="127.0.0.1",
+            master_port=29500,
+        )
+        self.assertTrue(cmd.startswith("bash -c "))
+        self.assertLess(cmd.index("$(($(date +%s) + 1620))"), cmd.index("torchrun"))
+        self.assertNotIn("docker run", cmd)
         self.assertNotIn(FAKE_CRED, cmd)
 
     def test_build_docker_cmd_distributed_uses_ranked_container_name(self):

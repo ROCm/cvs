@@ -26,7 +26,7 @@ def create_arg_parser():
     _add_if_missing(parser, "--profile_active", type=int, default=0)
     _add_if_missing(parser, "--fid_steps", type=str, default="")
     _add_if_missing(parser, "--fid_samples", type=int, default=2)
-    _add_if_missing(parser, "--fid_budget_s", type=float, default=0)
+    _add_if_missing(parser, "--fid_deadline", type=float, default=0)
     return parser.parse_args()
 
 

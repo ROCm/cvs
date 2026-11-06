@@ -17,6 +17,14 @@ import time
 _SAMPLE_FILE = re.compile(r"^seed_(\d+)(?:\.mp4|_frame_\d+\.png)$")
 
 
+def seconds_until(deadline_s):
+    """Seconds left before an epoch deadline. Zero when the deadline is unset or past."""
+    deadline = float(deadline_s or 0)
+    if deadline <= 0:
+        return 0.0
+    return max(0.0, deadline - time.time())
+
+
 def estimate_sample_s(reference_pipe_s, reference_steps, nfe, budget_s):
     """Return a conservative duration for one sample at ``nfe`` steps."""
     if reference_pipe_s <= 0 or reference_steps <= 0 or budget_s <= 0:

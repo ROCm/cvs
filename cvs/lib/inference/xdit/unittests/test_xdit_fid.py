@@ -12,6 +12,7 @@ from cvs.lib.inference.xdit.xdit_fid import (
     fid_absent_skip_reason,
     fid_budget_seconds,
     fid_cli_flags,
+    fid_deadline_shell,
     fid_viewer_curves,
     parse_fid_curve_text,
     parse_fid_nfe_steps,
@@ -97,6 +98,13 @@ class TestFidCurve(unittest.TestCase):
     def test_budget_leaves_three_minutes(self):
         self.assertEqual(fid_budget_seconds(1800), 1620)
         self.assertEqual(fid_budget_seconds(100), 0)
+        self.assertEqual(fid_deadline_shell(1620), "$(($(date +%s) + 1620))")
+
+    def test_seconds_left_uses_the_epoch_deadline(self):
+        with patch.object(_fid_sweep.time, "time", return_value=1_000.0):
+            self.assertEqual(_fid_sweep.seconds_until(1_100), 100.0)
+            self.assertEqual(_fid_sweep.seconds_until(900), 0.0)
+            self.assertEqual(_fid_sweep.seconds_until(0), 0.0)
 
     def test_next_sample_prefers_coverage_and_stops_before_the_deadline(self):
         steps = [10, 30]
@@ -114,7 +122,8 @@ class TestFidCurve(unittest.TestCase):
     def test_cli_flags_carry_the_budget(self):
         flags = fid_cli_flags({"fid_nfe_steps": [10, 20], "fid_samples": 2}, 1620)
         self.assertIn("--fid_steps 10,20", flags)
-        self.assertIn("--fid_budget_s 1620", flags)
+        self.assertIn("--fid_deadline $fid_deadline", flags)
+        self.assertNotIn("--fid_budget_s", flags)
         params = {
             "prompt": "a cat",
             "seed": 0,
@@ -132,7 +141,7 @@ class TestFidCurve(unittest.TestCase):
             "fid_nfe_steps": [10, 20],
             "_fid_budget_s": 1620,
         }
-        self.assertIn("--fid_budget_s 1620", build_run_usp_args(params, model_repo="/model"))
+        self.assertIn("--fid_deadline $fid_deadline", build_run_usp_args(params, model_repo="/model"))
         bare = dict(params)
         bare.pop("fid_nfe_steps")
         bare.pop("_fid_budget_s")
