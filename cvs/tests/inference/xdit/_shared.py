@@ -40,6 +40,7 @@ from cvs.lib.inference.xdit.xdit_clipscore import (
 from cvs.lib.inference.xdit.xdit_fid import (
     FID_SCORE_TIMEOUT_S,
     build_fid_score_cmd,
+    fid_absent_skip_reason,
     fid_curve_container_path,
     fid_manifest_container_path,
     fid_samples_container_root,
@@ -1117,14 +1118,14 @@ def fid_curve_stage(orch, variant, gpu_type, spec, lifecycle, request):
                 f"two step counts with two samples. counts={manifest.get('counts')}"
             )
         if payload is None:
-            if not reference_dir or not inception_path:
-                failures.append(
-                    f"{label}: results/fid_curve.json is missing. Set fid_reference_dir and "
-                    "fid_inception_path, and generate results/fid/<steps>/ with at least two images each."
-                )
-                continue
+            reason = fid_absent_skip_reason(reference_dir, inception_path)
+            if reason:
+                pytest.skip(reason)
             payload, error = _score_fid_curve(orch, hosts, output_dir, reference_dir, inception_path, sampler)
         if payload is None:
+            reason = fid_absent_skip_reason(reference_dir, inception_path, error)
+            if reason:
+                pytest.skip(reason)
             failures.append(f"{label}: {error}")
             continue
         points = list(iter_fid_points(payload))

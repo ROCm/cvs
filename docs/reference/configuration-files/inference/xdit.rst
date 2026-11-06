@@ -500,8 +500,9 @@ The sweep stops so the command still exits at least 180 seconds before its timeo
 curve cut short for that reason is skipped rather than failed. Set ``fid_reference_dir`` to
 real images already in the container (``/hf_home/fid_reference`` in the samples) and
 ``fid_inception_path`` to a torchvision Inception-v3 state dict (``/hf_home/inception_v3.pth``
-in the samples). The test does not download either. A missing ``fid_reference_dir``, or one with
-fewer than two images, fails the stage.
+in the samples). The test does not download either. A missing checkpoint or
+``fid_reference_dir`` skips the stage. A reference directory with fewer than two
+images fails the stage.
 WAN scores sampled frames from each video.
 ``fid_sampler`` names the line when one run compares samplers. The interactive viewer
 plots FID against those step counts. Native WAN ``run.py`` does not run this sweep.

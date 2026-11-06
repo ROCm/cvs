@@ -146,13 +146,18 @@ def frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
     return float(np.real(value))
 
 
+def _exit_with(message):
+    print(message, flush=True)
+    raise SystemExit(message)
+
+
 def _require_reference(directory, sample_frames):
-    """A missing or short reference set must fail. Scoring a run against its own samples yields FID ~0."""
+    """A missing directory is reported so the stage can skip. Fewer than two images fails the score."""
     if not directory or not os.path.isdir(directory):
-        raise SystemExit(f"FID reference directory not found: {directory}")
+        _exit_with(f"FID reference directory not found: {directory}")
     images = _collect_images(directory, sample_frames)
     if len(images) < 2:
-        raise SystemExit(f"{directory} has {len(images)} sample(s); FID reference needs at least 2")
+        _exit_with(f"{directory} has {len(images)} sample(s); FID reference needs at least 2")
     return images
 
 
@@ -178,7 +183,7 @@ def main():
     if not os.path.isdir(args.generated_root):
         raise SystemExit(f"generated root not found: {args.generated_root}")
     if not os.path.isfile(args.inception):
-        raise SystemExit(f"inception checkpoint not found: {args.inception}")
+        _exit_with(f"inception checkpoint not found: {args.inception}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = _load_inception(args.inception, device)

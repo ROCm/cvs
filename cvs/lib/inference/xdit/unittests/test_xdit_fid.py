@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from cvs.lib.inference.xdit.xdit_fid import (
+    fid_absent_skip_reason,
     fid_budget_seconds,
     fid_cli_flags,
     fid_viewer_curves,
@@ -250,6 +251,29 @@ class TestFidCurve(unittest.TestCase):
             with self.assertRaises(SystemExit) as raised:
                 _fid_score._require_reference(str(empty), 8)
             self.assertIn("needs at least 2", str(raised.exception))
+
+    def test_absent_checkpoint_or_reference_skips(self):
+        empty = fid_absent_skip_reason("", "/hf_home/inception_v3.pth")
+        self.assertIn("fid_reference_dir or fid_inception_path is empty", empty)
+        self.assertIn("does not download", empty)
+        missing_ckpt = fid_absent_skip_reason(
+            "/hf_home/fid_reference",
+            "/hf_home/inception_v3.pth",
+            "n1: FID command failed (inception checkpoint not found: /hf_home/inception_v3.pth)",
+        )
+        self.assertIn("inception checkpoint not found", missing_ckpt)
+        missing_ref = fid_absent_skip_reason(
+            "/hf_home/fid_reference",
+            "/hf_home/inception_v3.pth",
+            "n1: FID command failed (FID reference directory not found: /hf_home/fid_reference)",
+        )
+        self.assertIn("FID reference directory not found", missing_ref)
+        short = fid_absent_skip_reason(
+            "/hf_home/fid_reference",
+            "/hf_home/inception_v3.pth",
+            "n1: FID command failed (/hf_home/fid_reference has 1 sample(s); FID reference needs at least 2)",
+        )
+        self.assertEqual(short, "")
 
 
 if __name__ == "__main__":

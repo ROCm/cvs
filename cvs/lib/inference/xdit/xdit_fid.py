@@ -167,6 +167,22 @@ def build_fid_score_cmd(reference_dir, generated_root, inception_path, output_js
     return " ".join(argv)
 
 
+def fid_absent_skip_reason(reference_dir, inception_path, error=""):
+    """Skip message when the checkpoint or reference directory is absent. A short set still fails."""
+    if not str(reference_dir or "").strip() or not str(inception_path or "").strip():
+        return (
+            "Skipping FID vs steps. fid_reference_dir or fid_inception_path is empty. "
+            "CVS does not download the Inception checkpoint or the reference images."
+        )
+    text = str(error or "")
+    if "inception checkpoint not found" in text or "FID reference directory not found" in text:
+        return (
+            "Skipping FID vs steps. The Inception checkpoint or the reference directory "
+            "is not in the container. CVS does not download either. " + text
+        )
+    return ""
+
+
 def parse_fid_curve_text(text):
     """Return the last FID curve payload printed by the container scorer."""
     import json

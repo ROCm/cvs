@@ -124,9 +124,10 @@ Follow these steps to set up the xDiT configuration.
      ``/hf_home`` inside the container. A local copy of the model directory also works when
      you set ``clip_model`` to its container path, for example ``/hf_home/clip-vit-base-patch32``.
 
-   - **Inception-v3** ``inception_v3.pth`` is required by ``test_fid_curve`` when
+   - **Inception-v3** ``inception_v3.pth`` is used by ``test_fid_curve`` when
      ``fid_nfe_steps`` is set. Place it at ``/data/models/inception_v3.pth`` so the sample
-     ``fid_inception_path`` of ``/hf_home/inception_v3.pth`` resolves. It must be a torchvision
+     ``fid_inception_path`` of ``/hf_home/inception_v3.pth`` resolves. A missing file skips
+     ``test_fid_curve``. CVS does not download it. It must be a torchvision
      ``inception_v3`` state dict from ``Inception_V3_Weights.IMAGENET1K_V1``, saved with
      ``torch.save(model.state_dict(), ...)``. The xDiT image ships torch and torchvision, so
      you can generate it there:
@@ -138,8 +139,8 @@ Follow these steps to set up the xDiT configuration.
 
    - **FID reference images** for ``fid_reference_dir`` (``/hf_home/fid_reference`` in the samples)
      must be real PNG or JPG files, at least two. Hundreds give a stable score. Keep the folder
-     fixed between runs so scores stay comparable. A missing directory, or one with fewer than
-     two images, fails ``test_fid_curve``.
+     fixed between runs so scores stay comparable. A missing directory skips
+     ``test_fid_curve``. A directory with fewer than two images fails the stage.
 
 Shipped config templates and the suites they target:
 
@@ -371,8 +372,9 @@ Each stage corresponds to a test function in the HTML report.
        against ``fid_reference_dir`` with the Inception checkpoint at
        ``fid_inception_path``; both are staged in step 5. A single-node WAN run
        that sets ``fid_nfe_steps`` uses a two-hour benchmark timeout so the extra
-       videos fit after the timed pass. A missing ``fid_reference_dir``, or one with
-       fewer than two images, fails the stage. The interactive viewer plots FID
+       videos fit after the timed pass. A missing Inception checkpoint or
+       ``fid_reference_dir`` skips the stage. CVS does not download either. A reference
+       directory with fewer than two images fails the stage. The interactive viewer plots FID
        against the step counts, one line per host. A sweep that the
        timeout cuts short is skipped, not failed.
    * - Teardown

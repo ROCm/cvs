@@ -25,6 +25,7 @@ from cvs.tests.inference.xdit._shared import (
     _report_threshold,
     benchmark_params_from_variant,
     clip_score_stage,
+    fid_curve_stage,
     hf_remote_download_enabled,
     hf_token_from_variant,
     inference_from_variant,
@@ -493,6 +494,81 @@ class TestConftestHelpers(unittest.TestCase):
         self.assertLess(XDIT_TEST_ORDER["test_clip_score"], XDIT_TEST_ORDER["test_fid_curve"])
         self.assertLess(XDIT_TEST_ORDER["test_fid_curve"], XDIT_TEST_ORDER["test_print_results"])
         self.assertLess(XDIT_TEST_ORDER["test_print_results"], XDIT_TEST_ORDER["test_teardown"])
+
+
+class TestFidCurveStage(unittest.TestCase):
+    def _variant(self, params):
+        workload = {"ulysses_degree": 1, "ring_degree": 1}
+        workload.update(params)
+        return SimpleNamespace(
+            inference={"_test_container_output_dirs_by_node": {"n1": "/out"}, "model_repo": "org/flux"},
+            model=SimpleNamespace(id="flux"),
+            benchmark_params={"flux1_dev_t2i": workload},
+        )
+
+    def _run(self, params, score_error):
+        spec = {"family": "flux", "distributed": False, "diffusers": True}
+        with (
+            patch("cvs.tests.inference.xdit._shared._read_fid_curve_file", return_value=(None, "missing")),
+            patch("cvs.tests.inference.xdit._shared._read_fid_manifest", return_value=None),
+            patch("cvs.tests.inference.xdit._shared._score_fid_curve", return_value=(None, score_error)) as score,
+            patch("cvs.tests.inference.xdit._shared.fail_test") as fail,
+        ):
+            try:
+                fid_curve_stage(MagicMock(), self._variant(params), "mi300x", spec, Lifecycle(), MagicMock())
+            except pytest.skip.Exception as exc:
+                return "skip", str(exc), fail, score
+        return "ran", "", fail, score
+
+    def test_missing_inception_skips(self):
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/hf_home/fid_reference",
+            "fid_inception_path": "/hf_home/inception_v3.pth",
+        }
+        outcome, message, fail, _score = self._run(
+            params,
+            "n1: FID command failed (inception checkpoint not found: /hf_home/inception_v3.pth)",
+        )
+        self.assertEqual(outcome, "skip")
+        self.assertIn("does not download", message)
+        self.assertIn("inception checkpoint not found", message)
+        fail.assert_not_called()
+
+    def test_missing_reference_directory_skips(self):
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/hf_home/fid_reference",
+            "fid_inception_path": "/hf_home/inception_v3.pth",
+        }
+        outcome, message, fail, _score = self._run(
+            params,
+            "n1: FID command failed (FID reference directory not found: /hf_home/fid_reference)",
+        )
+        self.assertEqual(outcome, "skip")
+        self.assertIn("FID reference directory not found", message)
+        fail.assert_not_called()
+
+    def test_empty_artifact_paths_skip_without_scoring(self):
+        outcome, message, fail, score = self._run({"fid_nfe_steps": [10, 20]}, "")
+        self.assertEqual(outcome, "skip")
+        self.assertIn("fid_reference_dir or fid_inception_path is empty", message)
+        fail.assert_not_called()
+        score.assert_not_called()
+
+    def test_short_reference_directory_fails(self):
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/hf_home/fid_reference",
+            "fid_inception_path": "/hf_home/inception_v3.pth",
+        }
+        outcome, _message, fail, _score = self._run(
+            params,
+            "n1: FID command failed (/hf_home/fid_reference has 1 sample(s); FID reference needs at least 2)",
+        )
+        self.assertEqual(outcome, "ran")
+        fail.assert_called_once()
+        self.assertIn("needs at least 2", fail.call_args.args[0])
 
 
 class TestVerifyModelStage(unittest.TestCase):
