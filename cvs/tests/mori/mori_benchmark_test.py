@@ -31,16 +31,19 @@ log = globals.log
 #   orch      : Orchestrator (container or baremetal) from the suite conftest
 #   mori_dict : Configuration dictionary for MORI benchmark parameters
 #   lifecycle : Cross-test state; a failed container launch skips every user
+#   mori_variant_config : Run-card fields; gets the built MoRI commit here
 #
 # Side effects:
 #   - Resets global error list at fixture creation time to ensure a clean
 #     error state before any tests are executed.
+#   - Sets mori_variant_config["mori_commit"], which needs the launched container.
 # -----------------------------------------------------------------------------
 @pytest.fixture(scope="module")
-def mori_obj(orch, mori_dict, lifecycle):
+def mori_obj(orch, mori_dict, lifecycle, mori_variant_config):
     if lifecycle.failed:
         pytest.skip("mori container launch failed")
     globals.error_list = []
+    mori_variant_config["mori_commit"] = mori_lib.built_commit(orch, mori_dict["mori_dir"])
     return mori_lib.MoriBenchmark(orch, mori_dict)
 
 

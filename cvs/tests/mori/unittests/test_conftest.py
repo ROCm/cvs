@@ -97,13 +97,10 @@ class TestCollectionOrder(unittest.TestCase):
 
 
 class TestRunDeckFixtures(unittest.TestCase):
-    def _variant(self, mori_dict, orchestrator_type, image='img:1', head_out='38dbdd8f\n'):
+    def _variant(self, mori_dict, orchestrator_type, image='img:1'):
+        # No exec methods: the Run Deck resolves this fixture before the container exists.
         orch = SimpleNamespace(
-            orchestrator_type=orchestrator_type,
-            hosts=['n0', 'n1'],
-            head_node='n0',
-            container_config={'image': image},
-            exec_on_head=lambda cmd, timeout=None: {'n0': head_out},
+            orchestrator_type=orchestrator_type, hosts=['n0', 'n1'], head_node='n0', container_config={'image': image}
         )
         return mori_conftest.mori_variant_config.__wrapped__(dict({'mori_dir': '/m'}, **mori_dict), orch)
 
@@ -118,12 +115,9 @@ class TestRunDeckFixtures(unittest.TestCase):
                 'container_image': 'img:1',
                 'hosts': ['n0', 'n1'],
                 'initiator': 'n0',
-                'mori_commit': '38dbdd8f',
+                'mori_commit': None,
             },
         )
-
-    def test_variant_reports_no_commit_when_mori_dir_is_not_a_checkout(self):
-        self.assertIsNone(self._variant({'env': {}}, 'container', head_out='')['mori_commit'])
 
     def test_variant_initiator_follows_master_addr(self):
         variant = self._variant({'env': {}, 'master_addr': 'n1'}, 'container')
