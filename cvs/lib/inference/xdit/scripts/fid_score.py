@@ -3,8 +3,8 @@ Frechet Inception Distance at each sampling-step directory.
 
 ``--generated-root`` holds one subdirectory per NFE (``10`` or ``nfe_10``).
 Each directory needs at least two images, or frames taken from videos.
-``--reference-dir`` is the real-image set. ``--inception`` is a local
-Inception-v3 checkpoint. This script does not download weights.
+``--reference-dir`` is the real-image set and must contain at least two images.
+``--inception`` is a local Inception-v3 checkpoint. This script does not download weights.
 
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
@@ -146,26 +146,14 @@ def frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
     return float(np.real(value))
 
 
-def _generated_reference(generated_root, sample_frames):
-    """Highest step-count directory this run wrote, when no external reference is present."""
-    best_dir = None
-    best_nfe = -1
-    best_images = []
-    for name in sorted(os.listdir(generated_root)):
-        directory = os.path.join(generated_root, name)
-        if not os.path.isdir(directory):
-            continue
-        nfe = _nfe_from_name(name)
-        if nfe is None or nfe <= best_nfe:
-            continue
-        found = _collect_images(directory, sample_frames)
-        if len(found) < 2:
-            continue
-        best_dir, best_nfe, best_images = directory, nfe, found
-    if best_dir is None:
-        raise SystemExit(f"{generated_root} has no step directory with 2 images to use as the FID reference")
-    print(f"FID reference is the generated samples in {best_dir} ({len(best_images)} images)", flush=True)
-    return best_images, best_dir
+def _require_reference(directory, sample_frames):
+    """A missing or short reference set must fail. Scoring a run against its own samples yields FID ~0."""
+    if not directory or not os.path.isdir(directory):
+        raise SystemExit(f"FID reference directory not found: {directory}")
+    images = _collect_images(directory, sample_frames)
+    if len(images) < 2:
+        raise SystemExit(f"{directory} has {len(images)} sample(s); FID reference needs at least 2")
+    return images
 
 
 def _score_directory(model, device, directory, reference_stats, sample_frames):
@@ -194,14 +182,7 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = _load_inception(args.inception, device)
-    if os.path.isdir(args.reference_dir):
-        reference_images = _collect_images(args.reference_dir, args.sample_frames)
-        reference_label = args.reference_dir
-    else:
-        reference_images = []
-        reference_label = args.reference_dir
-    if len(reference_images) < 2:
-        reference_images, reference_label = _generated_reference(args.generated_root, args.sample_frames)
+    reference_images = _require_reference(args.reference_dir, args.sample_frames)
     reference_stats = _stats(_features(model, reference_images, device))
 
     points = []
@@ -228,7 +209,7 @@ def main():
     payload = {
         "sampler": args.sampler,
         "reference_count": len(reference_images),
-        "reference_dir": reference_label,
+        "reference_dir": args.reference_dir,
         "inception": args.inception,
         "points": points,
     }

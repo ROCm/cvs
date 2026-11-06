@@ -237,6 +237,20 @@ class TestFidCurve(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self._load_with(inception_v3, {"conv.weight": object()})
 
+    def test_reference_set_must_be_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = str(Path(tmp) / "missing")
+            with self.assertRaises(SystemExit) as raised:
+                _fid_score._require_reference(missing, 8)
+            self.assertIn(missing, str(raised.exception))
+
+            empty = Path(tmp) / "empty"
+            empty.mkdir()
+            (empty / "notes.txt").write_text("x", encoding="utf-8")
+            with self.assertRaises(SystemExit) as raised:
+                _fid_score._require_reference(str(empty), 8)
+            self.assertIn("needs at least 2", str(raised.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

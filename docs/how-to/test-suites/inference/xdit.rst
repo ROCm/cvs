@@ -138,8 +138,8 @@ Follow these steps to set up the xDiT configuration.
 
    - **FID reference images** for ``fid_reference_dir`` (``/hf_home/fid_reference`` in the samples)
      must be real PNG or JPG files, at least two. Hundreds give a stable score. Keep the folder
-     fixed between runs so scores stay comparable. If it holds fewer than two images, the score
-     uses the highest step-count samples from the same run.
+     fixed between runs so scores stay comparable. A missing directory, or one with fewer than
+     two images, fails ``test_fid_curve``.
 
 Shipped config templates and the suites they target:
 
@@ -371,8 +371,8 @@ Each stage corresponds to a test function in the HTML report.
        against ``fid_reference_dir`` with the Inception checkpoint at
        ``fid_inception_path``; both are staged in step 5. A single-node WAN run
        that sets ``fid_nfe_steps`` uses a two-hour benchmark timeout so the extra
-       videos fit after the timed pass. Fewer than two images there uses the highest
-       step-count samples from this run. The interactive viewer plots FID
+       videos fit after the timed pass. A missing ``fid_reference_dir``, or one with
+       fewer than two images, fails the stage. The interactive viewer plots FID
        against the step counts, one line per host. A sweep that the
        timeout cuts short is skipped, not failed.
    * - Teardown
