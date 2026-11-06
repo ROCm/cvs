@@ -160,8 +160,17 @@ class TestInstallRules(_InstallCase):
 
     def test_install_system_packages_false_never_runs_apt(self):
         orch = _FakeOrch(orchestrator_type='container', missing={'n1': ['git']})
-        self.assertIn('n1: git', self._install_fails(orch, install_system_packages=False))
+        message = self._install_fails(orch, install_system_packages=False)
+        self.assertIn('n1: git; install them, or set install_system_packages to true', message)
         self.assertEqual(orch.ran('apt-get'), [])
+
+    def test_items_apt_never_installs_get_no_install_system_packages_hint(self):
+        orch = _FakeOrch(missing={'n0': ['pci.h', 'hip-lang', 'torch']})
+        message = self._install_fails(orch, install_system_packages=False)
+        self.assertIn(
+            'n0: pci.h, hip-lang, torch; the ROCm dev stack and torch must come from the image or host', message
+        )
+        self.assertNotIn('install_system_packages', message)
 
     def test_apt_installs_only_what_each_node_misses_and_fails_on_the_rest(self):
         orch = _FakeOrch(orchestrator_type='container', missing={'n1': ['git', 'hipcc']})

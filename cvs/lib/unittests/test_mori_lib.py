@@ -222,6 +222,20 @@ class TestParseMissing(unittest.TestCase):
             parse_missing({'n0': '', 'n1': None, 'n2': 'MISSING:git'}), {'n0': None, 'n1': None, 'n2': None}
         )
 
+    def _missing_with_files(self, *present):
+        # A shell function named test shadows the builtin, so the check sees only these files.
+        exists = ' || '.join(f'[ "$2" = {path} ]' for path in present) or 'false'
+        out = _bash(f'test() {{ [ "$1" = -f ] && {{ {exists}; }}; }}; ' + deps_check_cmd()).stdout
+        return parse_missing({'n0': out})['n0']
+
+    def test_pci_header_in_either_include_dir_is_found(self):
+        for path in ('/usr/include/pci/pci.h', '/usr/include/x86_64-linux-gnu/pci/pci.h'):
+            with self.subTest(path=path):
+                self.assertNotIn('pci.h', self._missing_with_files(path))
+
+    def test_pci_header_in_neither_include_dir_is_missing(self):
+        self.assertIn('pci.h', self._missing_with_files('/usr/include/numa.h'))
+
     def test_deps_check_prints_done_after_its_checks(self):
         out = _bash('export PATH=/nonexistent ROCM_PATH=/nonexistent; ' + deps_check_cmd()).stdout
         missing = parse_missing({'n0': out})['n0']
