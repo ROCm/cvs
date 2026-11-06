@@ -94,15 +94,16 @@ def _load_inception(path, device):
     from torchvision.models import inception_v3
 
     # init_weights=True pulls SciPy, which this image does not ship. The checkpoint replaces the weights.
+    # IMAGENET1K_V1 was trained on [-1, 1]. transform_input maps the ImageNet-normalized tensor there.
     try:
-        model = inception_v3(weights=None, transform_input=False, aux_logits=True, init_weights=False)
+        model = inception_v3(weights=None, transform_input=True, aux_logits=True, init_weights=False)
     except TypeError:
-        model = inception_v3(weights=None, transform_input=False, aux_logits=True)
+        model = inception_v3(weights=None, transform_input=True, aux_logits=True)
     state = torch.load(path, map_location="cpu")
     if isinstance(state, dict) and "state_dict" in state:
         state = state["state_dict"]
     cleaned = {key.replace("module.", ""): value for key, value in state.items()}
-    model.load_state_dict(cleaned, strict=False)
+    model.load_state_dict(cleaned, strict=True)
     model.fc = torch.nn.Identity()
     model.eval()
     return model.to(device)

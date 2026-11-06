@@ -1,8 +1,11 @@
 import importlib.util
 import json
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from cvs.lib.inference.xdit.xdit_fid import (
     fid_budget_seconds,
@@ -18,6 +21,46 @@ _SWEEP_PATH = Path(__file__).resolve().parents[1] / "scripts" / "fid_sweep.py"
 _spec = importlib.util.spec_from_file_location("fid_sweep", _SWEEP_PATH)
 _fid_sweep = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_fid_sweep)
+
+
+def _stub_module(name):
+    if name not in sys.modules:
+        sys.modules[name] = types.ModuleType(name)
+    return sys.modules[name]
+
+
+def _load_fid_score():
+    """Import the container scorer. The unit-test env has no torch or Pillow."""
+    try:
+        import numpy  # noqa: F401
+    except ImportError:
+        numpy = _stub_module("numpy")
+        numpy.float32 = float
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        torch = _stub_module("torch")
+        nn = _stub_module("torch.nn")
+        torch.nn = nn
+
+        class Identity:
+            pass
+
+        nn.Identity = Identity
+    try:
+        from PIL import Image  # noqa: F401
+    except ImportError:
+        pil = _stub_module("PIL")
+        image = _stub_module("PIL.Image")
+        pil.Image = image
+    path = Path(__file__).resolve().parents[1] / "scripts" / "fid_score.py"
+    spec = importlib.util.spec_from_file_location("fid_score", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_fid_score = _load_fid_score()
 
 
 class TestFidCurve(unittest.TestCase):
@@ -135,6 +178,64 @@ class TestFidCurve(unittest.TestCase):
     def test_a_single_point_is_not_a_line(self):
         raw = {"points": [{"nfe": 10, "fid": 1.0}]}
         self.assertEqual(fid_viewer_curves(raw), {})
+
+    def _load_with(self, inception_v3, state):
+        tv_models = types.ModuleType("torchvision.models")
+        tv_models.inception_v3 = inception_v3
+        tv = types.ModuleType("torchvision")
+        tv.models = tv_models
+        with patch.dict(sys.modules, {"torchvision": tv, "torchvision.models": tv_models}):
+            with patch.object(_fid_score.torch, "load", return_value=state, create=True):
+                return _fid_score._load_inception("inception_v3.pth", "cpu")
+
+    def test_inception_matches_imagenet_checkpoint(self):
+        model = MagicMock()
+        seen = {}
+
+        def inception_v3(**kwargs):
+            seen["kwargs"] = kwargs
+            return model
+
+        model.to.return_value = model
+        state = {"state_dict": {"module.conv.weight": object(), "fc.weight": object()}}
+        loaded = self._load_with(inception_v3, state)
+        self.assertIs(loaded, model)
+        self.assertTrue(seen["kwargs"]["transform_input"])
+        self.assertTrue(seen["kwargs"]["aux_logits"])
+        self.assertFalse(seen["kwargs"]["init_weights"])
+        args, kwargs = model.load_state_dict.call_args
+        self.assertEqual(set(args[0]), {"conv.weight", "fc.weight"})
+        self.assertTrue(kwargs["strict"])
+        self.assertIsInstance(model.fc, _fid_score.torch.nn.Identity)
+        model.eval.assert_called_once()
+        model.to.assert_called_once_with("cpu")
+
+    def test_inception_keeps_transform_when_init_weights_is_unsupported(self):
+        model = MagicMock()
+        seen = []
+
+        def inception_v3(**kwargs):
+            seen.append(kwargs)
+            if "init_weights" in kwargs:
+                raise TypeError("init_weights")
+            return model
+
+        self._load_with(inception_v3, {"conv.weight": object()})
+        self.assertTrue(seen[0]["transform_input"])
+        self.assertTrue(seen[1]["transform_input"])
+        self.assertNotIn("init_weights", seen[1])
+        _args, kwargs = model.load_state_dict.call_args
+        self.assertTrue(kwargs["strict"])
+
+    def test_inception_load_reports_a_bad_checkpoint(self):
+        model = MagicMock()
+        model.load_state_dict.side_effect = RuntimeError("missing keys")
+
+        def inception_v3(**kwargs):
+            return model
+
+        with self.assertRaises(RuntimeError):
+            self._load_with(inception_v3, {"conv.weight": object()})
 
 
 if __name__ == "__main__":
