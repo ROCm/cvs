@@ -13,7 +13,7 @@ from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFacto
 from cvs.lib import globals, mori_reporting
 from cvs.lib.conf_lib.loader import load_config
 from cvs.lib.conf_lib.schemas.mori import MoriConfig
-from cvs.lib.mori_lib import DMESG_DATE_CMD, built_commit, io_initiator
+from cvs.lib.mori_lib import DMESG_DATE_CMD, io_initiator
 
 log = globals.log
 
@@ -145,7 +145,8 @@ def mori_variant_config(mori_dict, orch):
         "container_image": orch.container_config.get("image") if orch.orchestrator_type == "container" else None,
         "hosts": list(orch.hosts),
         "initiator": io_initiator(mori_dict, orch),
-        "mori_commit": built_commit(orch, mori_dict["mori_dir"]),
+        # The Run Deck resolves this fixture before the container is up; mori_obj fills it in after launch.
+        "mori_commit": None,
     }
 
 

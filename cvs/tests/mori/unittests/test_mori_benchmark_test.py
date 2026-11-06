@@ -9,9 +9,36 @@ import json
 import os
 import re
 import unittest
+from unittest.mock import MagicMock
+
+from _pytest.outcomes import Skipped
 
 import cvs
 from cvs.tests.mori import mori_benchmark_test as suite
+from cvs.tests.mori.conftest import _Lifecycle
+
+MORI_DICT = {'mori_dir': '/m', 'master_port': 1234, 'log_dir': '/logs', 'expected_results': {}, 'env': {}}
+
+
+class TestMoriObj(unittest.TestCase):
+    def _orch(self):
+        orch = MagicMock(orchestrator_type='container', hosts=['n0', 'n1'], head_node='n0')
+        orch.exec_on_head.return_value = {'n0': '41c5257d\n'}
+        return orch
+
+    def test_run_card_gets_the_commit_once_the_container_is_up(self):
+        orch, variant = self._orch(), {'mori_commit': None}
+        suite.mori_obj.__wrapped__(orch, dict(MORI_DICT), _Lifecycle(), variant)
+        self.assertEqual(variant['mori_commit'], '41c5257d')
+        self.assertIn('git -C /m rev-parse --short HEAD', orch.exec_on_head.call_args.args[0])
+
+    def test_failed_launch_skips_without_running_a_command(self):
+        orch, variant, lifecycle = self._orch(), {'mori_commit': None}, _Lifecycle()
+        lifecycle.failed = True
+        with self.assertRaises(Skipped):
+            suite.mori_obj.__wrapped__(orch, dict(MORI_DICT), lifecycle, variant)
+        orch.exec_on_head.assert_not_called()
+        self.assertIsNone(variant['mori_commit'])
 
 
 class TestSampleIoThresholds(unittest.TestCase):
