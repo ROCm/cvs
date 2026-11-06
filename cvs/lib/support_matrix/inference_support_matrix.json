@@ -34,7 +34,7 @@
             "meta-llama/Llama-3.1-70B-Instruct"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -43,7 +43,7 @@
             "openai/gpt-oss-120b"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -52,7 +52,7 @@
             "zai-org/GLM-5.1"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -61,7 +61,7 @@
             "zai-org/GLM-5.1-FP8"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -70,7 +70,7 @@
             "deepseek-ai/DeepSeek-V4-Pro"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -79,7 +79,7 @@
             "deepseek-ai/DeepSeek-V4-Flash"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -88,7 +88,7 @@
             "uniquealexx/Kimi-K2.6-Thinking-200x"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -97,7 +97,7 @@
             "amd/GLM-5-MXFP4"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -106,7 +106,7 @@
             "amd/Kimi-K2.5-MXFP4"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -115,7 +115,7 @@
             "Qwen/Qwen3.5-397B-A17B"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -124,7 +124,7 @@
             "zai-org/GLM-5.2-FP8"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -133,7 +133,7 @@
             "zai-org/GLM-5.2"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -142,7 +142,7 @@
             "moonshotai/Kimi-K2.7-Code"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -151,7 +151,7 @@
             "MiniMaxAI/MiniMax-M3"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -160,7 +160,7 @@
             "amd/Qwen3.5-397B-A17B-MXFP4"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -169,7 +169,7 @@
             "mistralai/Mistral-Large-3-675B-Instruct-2512"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -178,7 +178,7 @@
             "amd/DeepSeek-R1-0528-MXFP4"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -187,7 +187,7 @@
             "XiaomiMiMo/MiMo-V2.5-Pro"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         }
@@ -196,8 +196,9 @@
     "vllm": {
       "models": {
         "llama-3.3-70b-fp8": {
+          "aliases": ["meta-llama/Llama-3.3-70B-Instruct", "meta-llama/Llama-3.3-70B", "llama33-70b"],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -206,7 +207,7 @@
             "openai/gpt-oss-120b"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -215,7 +216,7 @@
             "zai-org/GLM-5.1"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -224,7 +225,7 @@
             "zai-org/GLM-5.1-FP8"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -233,7 +234,7 @@
             "deepseek-ai/DeepSeek-V4-Pro"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -242,7 +243,7 @@
             "deepseek-ai/DeepSeek-V4-Flash"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -251,7 +252,7 @@
             "uniquealexx/Kimi-K2.6-Thinking-200x"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -260,7 +261,7 @@
             "amd/GLM-5-MXFP4"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -269,7 +270,7 @@
             "amd/Kimi-K2.5-W4A8"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -278,7 +279,7 @@
             "Qwen/Qwen3.5-397B-A17B"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -287,7 +288,7 @@
             "zai-org/GLM-5.2-FP8"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -296,7 +297,7 @@
             "zai-org/GLM-5.2"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -305,7 +306,7 @@
             "moonshotai/Kimi-K2.7-Code"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -314,7 +315,7 @@
             "MiniMaxAI/MiniMax-M3"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -323,7 +324,7 @@
             "amd/Qwen3.5-397B-A17B-MXFP4"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -332,7 +333,7 @@
             "mistralai/Mistral-Large-3-675B-Instruct-2512"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -341,7 +342,7 @@
             "amd/DeepSeek-R1-0528-MXFP4"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -350,7 +351,7 @@
             "XiaomiMiMo/MiMo-V2.5-Pro"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         }
@@ -363,7 +364,7 @@
             "Wan-AI/Wan2.1-T2V-14B-720P-Diffusers"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -372,7 +373,7 @@
             "Wan-AI/Wan2.2-T2V-A14B-Diffusers"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -381,7 +382,7 @@
             "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -390,7 +391,7 @@
             "tencent/HunyuanVideo"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -399,7 +400,7 @@
             "tencent/HunyuanVideo-1.5"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -409,7 +410,7 @@
             "Lightricks/LTX-Video-2B-0.9.6-Dev-04-25"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -418,7 +419,7 @@
             "black-forest-labs/FLUX.1-dev"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -427,7 +428,7 @@
             "black-forest-labs/FLUX.2-dev"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -436,7 +437,7 @@
             "black-forest-labs/FLUX.2-klein-9B"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -445,27 +446,25 @@
             "black-forest-labs/FLUX.1-Kontext-dev"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
         "qwen-image-2512": {
           "aliases": [
-            "Qwen/Qwen-Image-2512",
-            "Qwen/Qwen2.5-VL-7B-Instruct"
+            "Qwen/Qwen-Image-2512"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
         "qwen-image-edit-2511": {
           "aliases": [
-            "Qwen/Qwen-Image-Edit-2511",
-            "Qwen/Qwen2.5-VL-72B-Instruct"
+            "Qwen/Qwen-Image-Edit-2511"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -474,7 +473,7 @@
             "stabilityai/stable-diffusion-3.5-large"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -483,7 +482,7 @@
             "Tongyi-MAI/Z-Image-Turbo"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         }
@@ -496,7 +495,7 @@
             "deepseek-ai/DeepSeek-R1-0528"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -505,7 +504,7 @@
             "openai/gpt-oss-120b"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -514,7 +513,7 @@
             "amd/Qwen3.5-397B-A17B-FP8"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -523,7 +522,7 @@
             "zai-org/GLM-5.1-FP8"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -532,7 +531,7 @@
             "deepseek-ai/DeepSeek-V4-Pro"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -541,7 +540,7 @@
             "deepseek-ai/DeepSeek-V4-Flash"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -550,7 +549,7 @@
             "amd/Kimi-K2-Thinking-MXFP4"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -560,7 +559,7 @@
             "amd/Kimi-K2.5-MXFP4-AttnFP8"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -569,7 +568,7 @@
             "Qwen/Qwen3.5-397B-A17B"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -578,7 +577,7 @@
             "zai-org/GLM-5.2-FP8"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -587,7 +586,7 @@
             "amd/GLM-5.2-MXFP4"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -596,7 +595,7 @@
             "moonshotai/Kimi-K2.7-Code"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -605,7 +604,7 @@
             "amd/MiniMax-M3-MXFP4"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -614,7 +613,7 @@
             "amd/Qwen3.5-397B-A17B-MXFP4"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -623,7 +622,7 @@
             "amd/DeepSeek-R1-0528-MXFP4"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         },
@@ -632,7 +631,7 @@
             "XiaomiMiMo/MiMo-V2.5-Pro"
           ],
           "unsupported_gpu_arch": [],
-          "required_rocm_min_version": "7.14.0",
+          "required_rocm_min_version": "",
           "required_rocm_max_version": "",
           "unsupported_params": {}
         }

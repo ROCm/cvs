@@ -40,8 +40,10 @@ The library detects the platform on every participating node — through the sam
 `orch` handle, whose `.exec()` routes into the launched container, so both probes
 reflect the container the workload will run in:
 
-- **GPU arch** via `rocm-smi` (parsed by `get_model_from_rocm_smi_output()` in
-  `cvs/lib/utils_lib.py`), normalized to a canonical token.
+- **GPU arch** via `rocm-smi`, falling back to `amd-smi` (both parsed by the
+  existing `get_model_from_rocm_smi_output()` in `cvs/lib/utils_lib.py`), normalized
+  to a canonical token. The probes carry a short timeout. An **unrecognized GPU is
+  reported as undetected** — it is never defaulted to MI300X.
 - **ROCm version** via `cat /opt/rocm/.info/version`, falling back to
   `amd-smi version --json`, then `hipconfig --version`.
 
@@ -49,14 +51,16 @@ It then evaluates three independent deny checks against each node's detected
 arch/ROCm; any match is a violation:
 
 - **Check-A — GPU arch:** detected arch is in the model's `unsupported_gpu_arch`.
+  An **undetected GPU is itself a violation** — the gate cannot certify a GPU it
+  cannot identify.
 - **Check-B — ROCm range:** detected ROCm is below `required_rocm_min_version` or
   above `required_rocm_max_version`.
 - **Check-C — parameter value:** a value the run uses (e.g. `precision=mxfp4`) is in
   `unsupported_params.<param>.<value>` for the detected arch.
 
-Undetected arch or ROCm produces a warning, not a violation, so a probe gap never
-blocks an otherwise-valid run. The config **filename is never parsed** — only the
-data file and the runtime-detected values drive the decision.
+Undetected ROCm produces a warning, not a violation (a model only gates ROCm when it
+declares a min/max). The config **filename is never parsed** — only the data file and
+the runtime-detected values drive the decision.
 
 ## The data files
 
@@ -91,7 +95,7 @@ archs added in the future — is allowed, so most entries are tiny or empty.
 "llama-3.1-8b": {
   "aliases": ["meta-llama/Llama-3.1-8B"],
   "unsupported_gpu_arch": [],
-  "required_rocm_min_version": "7.0",
+  "required_rocm_min_version": "",
   "required_rocm_max_version": "",
   "unsupported_params": {
     "precision": {
@@ -106,15 +110,20 @@ archs added in the future — is allowed, so most entries are tiny or empty.
 Field semantics (every rule is a deny; a match stops the run):
 
 - **`aliases`** (optional): alternate names the suite may pass (e.g. an HF id). The
-  lookup matches the normalized (lower-cased, trimmed) model name against the key or
-  any alias.
+  lookup is **separator- and path-insensitive**: it lower-cases, takes the basename
+  of a path or `org/model` HF id, and drops `-`, `_`, `.` and spaces, so
+  `llama-3.1-8b` (jaxmaxtext), `llama3.1_8B` (megatron), `llama3_1_8b` (torchtitan),
+  `/root/models/Llama-3.1-8B` and `meta-llama/Llama-3.1-8B` all match the one entry.
+  Add an alias only for a genuinely different name (e.g. a MaxText preset like
+  `deepseek2-16b`).
 - **`unsupported_gpu_arch`** (Check-A): archs on which the model does not run at all.
   Empty `[]` means it runs on every arch. Kept present even when empty so the field
   is discoverable.
 - **`required_rocm_min_version`** / **`required_rocm_max_version`** (Check-B): the
   detected ROCm must be within `[min, max]`. An empty string `""` means that bound is
-  unset. Leave `max` empty until a model is **deprecated**, then set it to gate newer
-  ROCm. Versions tolerate a build suffix (`6.4.0-123`) and a missing patch (`7.0`).
+  unset — **both are empty by default**, so no ROCm gating happens until a model
+  owner sets a real minimum (or a `max` when a model is **deprecated**). Versions
+  tolerate a build suffix (`6.4.0-123`) and a missing patch (`7.0`).
 - **`unsupported_params.<param>.<value>`** (Check-C): the archs on which that
   parameter value is unsupported. The shape is `param → value → [archs]`, so it
   extends to any parameter (`precision`, `seqlen`, `tp`, `ep`, ...) with no schema
@@ -144,10 +153,12 @@ validation tracker; this file records only what to block.
 ### Editing the data
 
 Adding or removing support is a **data edit only** — the library code never changes
-for a new mapping. Add a model under its framework, fill the deny fields that apply,
-and (if the suite may pass a different name) add `aliases`. Only jaxmaxtext has data
-today; megatron, torchtitan, and all inference frameworks are present but empty and
-are filled in by their owners over time.
+for a new mapping. Add a model under its framework, keyed by the name its input
+config carries (matching is separator/path-insensitive — see `aliases` above), fill
+the deny fields that apply, and add an alias only for a genuinely different preset
+name. The matrix lists **only models that have an input config**. Today jaxmaxtext
+carries the transcribed deny data; megatron, torchtitan and the inference frameworks
+are present as empty templates for their owners to fill.
 
 ## Turning the gate off (experiment runs)
 
@@ -161,6 +172,9 @@ CVS_SUPPORT_MATRIX_GATE
 |---|---|
 | unset (default), `1`, `ON`, `TRUE` | **Enforce** — on a violation the gate fails and the run stops. |
 | `0`, `OFF`, `FALSE` | **Disabled** — violations are printed as warnings and the run continues, with a NOTE that the gate is disabled. |
+
+If the data file itself fails to load, the stage **fails** when the gate is on, and
+warns-and-continues when it is off.
 
 Use the disabled mode when you deliberately want to run a combination the matrix
 flags (for example, an experiment on hardware that is not yet characterized) without
@@ -201,8 +215,10 @@ Everything lives in one module, `support_matrix_lib.py`:
 - `evaluate(entry, params, platform)` — pure function returning
   `(violations, warnings)`; the core logic, trivially unit-tested.
 - `gate_enforced()` — reads `CVS_SUPPORT_MATRIX_GATE`.
-- `load_matrix(category)`, `find_model_entry(matrix, framework, model)`,
-  `normalize_arch(token)`, `parse_version(text)`.
+- `served_model_name(variant_config)` — best-effort served-model id from a suite's
+  config (`model.id`, `server_params.model`, or an `inference` dict).
+- `load_matrix(category)`, `find_model_entry(matrix, framework, model)` (lenient,
+  separator/path-insensitive), `normalize_arch(token)`, `parse_version(text)`.
 
 ## Files in this folder
 
@@ -216,9 +232,11 @@ unittests/test_support_matrix_lib.py
 ```
 
 Unit tests mock all `.exec()` calls (no live cluster) and cover version parsing,
-arch normalization, the env switch, detection, evaluation (arch/ROCm/param denies and
-undetected-as-warning), lookup by key/alias, and the end-to-end gate in enforce,
-disabled, supported, and absent-entry modes. Run them with:
+arch normalization and confident detection, the env switch, lenient model matching
+(config spellings and path basenames), evaluation (arch/ROCm/param denies and
+undetected arch as a violation), served-model extraction, and the end-to-end gate in
+enforce, disabled, supported, absent-entry, unknown-GPU, and load-failure modes. Run
+them with:
 
 ```bash
 python -m unittest cvs.lib.support_matrix.unittests.test_support_matrix_lib
