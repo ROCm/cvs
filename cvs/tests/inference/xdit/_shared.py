@@ -1044,32 +1044,61 @@ def _read_fid_manifest(orch, hosts, output_dir):
     return payload
 
 
-def _score_fid_curve(orch, hosts, output_dir, reference_dir, inception_path, sampler):
-    cmd = build_fid_score_cmd(
-        reference_dir,
-        fid_samples_container_root(output_dir),
-        inception_path,
-        fid_curve_container_path(output_dir),
-        sampler,
-    )
-    errors = []
-    for host in hosts:
-        try:
-            raw = orch.exec(cmd, hosts=[host], timeout=FID_SCORE_TIMEOUT_S, detailed=True, print_console=False)
-        except Exception as exc:
-            errors.append(f"{host}: {exc}")
+def _parse_fid_score_output(host, value):
+    if value is None:
+        return None, f"{host}: FID command failed (no output)"
+    text, exit_code = _exec_detail(value)
+    try:
+        payload = parse_fid_curve_text(text)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return None, f"{host}: {exc}"
+    if payload is not None and exit_code in (None, 0):
+        return payload, None
+    tail = " | ".join(line.strip() for line in text.splitlines() if line.strip())[-500:]
+    return None, f"{host}: FID command failed ({tail or 'no output'})"
+
+
+def _score_host_order(orch, writers):
+    known = getattr(orch, "hosts", None)
+    if isinstance(known, (list, tuple)) and known and set(writers).issubset(set(known)):
+        return list(known)
+    return list(writers)
+
+
+def _score_fid_groups(orch, jobs, reference_dir, inception_path, sampler):
+    """Score every pending directory in one parallel exec. One writer per directory."""
+    if not jobs:
+        return {}
+    writer_for = {}
+    for label, output_dir, hosts in jobs:
+        writer = label if label in hosts else hosts[0]
+        writer_for[writer] = (label, output_dir)
+    host_order = _score_host_order(orch, list(writer_for))
+    commands = []
+    for host in host_order:
+        job = writer_for.get(host)
+        if job is None:
+            commands.append("true")
             continue
-        text, exit_code = _exec_detail((raw or {}).get(host))
-        try:
-            payload = parse_fid_curve_text(text)
-        except (ValueError, json.JSONDecodeError) as exc:
-            errors.append(f"{host}: {exc}")
-            continue
-        if payload is not None and exit_code in (None, 0):
-            return payload, None
-        tail = " | ".join(line.strip() for line in text.splitlines() if line.strip())[-500:]
-        errors.append(f"{host}: FID command failed ({tail or 'no output'})")
-    return None, "; ".join(errors) or "FID command failed"
+        _label, output_dir = job
+        commands.append(
+            build_fid_score_cmd(
+                reference_dir,
+                fid_samples_container_root(output_dir),
+                inception_path,
+                fid_curve_container_path(output_dir),
+                sampler,
+            )
+        )
+    try:
+        raw = orch.exec_cmd_list(commands, timeout=FID_SCORE_TIMEOUT_S, print_console=False) or {}
+    except Exception as exc:
+        return {label: (None, f"{hosts[0]}: {exc}") for label, _output_dir, hosts in jobs}
+    scored = {}
+    for label, _output_dir, hosts in jobs:
+        writer = label if label in hosts else hosts[0]
+        scored[label] = _parse_fid_score_output(writer, raw.get(writer))
+    return scored
 
 
 def fid_curve_stage(orch, variant, gpu_type, spec, lifecycle, request):
@@ -1111,8 +1140,10 @@ def fid_curve_stage(orch, variant, gpu_type, spec, lifecycle, request):
     failures = []
     skipped = []
     recorded = False
+    pending = []
+    loaded = {}
     for label, output_dir, hosts in groups:
-        payload, error = _read_fid_curve_file(orch, hosts, output_dir)
+        payload, _error = _read_fid_curve_file(orch, hosts, output_dir)
         manifest = _read_fid_manifest(orch, hosts, output_dir)
         if payload is None and _manifest_blocks_fid(manifest):
             skipped.append(
@@ -1128,7 +1159,17 @@ def fid_curve_stage(orch, variant, gpu_type, spec, lifecycle, request):
             if reason:
                 skipped.append((label, reason))
                 continue
-            payload, error = _score_fid_curve(orch, hosts, output_dir, reference_dir, inception_path, sampler)
+            pending.append((label, output_dir, hosts))
+            continue
+        loaded[label] = payload
+    scored = _score_fid_groups(orch, pending, reference_dir, inception_path, sampler) if pending else {}
+    for label, output_dir, hosts in groups:
+        if label in loaded:
+            payload, error = loaded[label], None
+        elif label not in scored:
+            continue
+        else:
+            payload, error = scored[label]
         if payload is None:
             reason = fid_absent_skip_reason(reference_dir, inception_path, error)
             if reason:

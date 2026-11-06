@@ -511,7 +511,10 @@ class TestFidCurveStage(unittest.TestCase):
         with (
             patch("cvs.tests.inference.xdit._shared._read_fid_curve_file", return_value=(None, "missing")),
             patch("cvs.tests.inference.xdit._shared._read_fid_manifest", return_value=None),
-            patch("cvs.tests.inference.xdit._shared._score_fid_curve", return_value=(None, score_error)) as score,
+            patch(
+                "cvs.tests.inference.xdit._shared._score_fid_groups",
+                side_effect=lambda _orch, jobs, *_args: {label: (None, score_error) for label, _dir, _hosts in jobs},
+            ) as score,
             patch("cvs.tests.inference.xdit._shared.fail_test") as fail,
         ):
             try:
@@ -582,13 +585,13 @@ class TestFidCurveStage(unittest.TestCase):
         def _manifest(_orch, _hosts, output_dir):
             return manifests.get(output_dir)
 
-        def _score(_orch, _hosts, output_dir, _reference_dir, _inception_path, _sampler):
-            return scores.get(output_dir, (None, "unscored"))
+        def _score(_orch, jobs, _reference_dir, _inception_path, _sampler):
+            return {label: scores.get(output_dir, (None, "unscored")) for label, output_dir, _hosts in jobs}
 
         with (
             patch("cvs.tests.inference.xdit._shared._read_fid_curve_file", side_effect=_curve),
             patch("cvs.tests.inference.xdit._shared._read_fid_manifest", side_effect=_manifest),
-            patch("cvs.tests.inference.xdit._shared._score_fid_curve", side_effect=_score),
+            patch("cvs.tests.inference.xdit._shared._score_fid_groups", side_effect=_score),
             patch("cvs.tests.inference.xdit._shared.fail_test") as fail,
         ):
             try:
@@ -698,6 +701,96 @@ class TestFidCurveStage(unittest.TestCase):
         self.assertEqual(outcome, "ran")
         fail.assert_not_called()
         self.assertEqual(lifecycle.results[0][0], "n2")
+
+    def test_scores_every_directory_in_one_parallel_exec(self):
+        from cvs.lib.inference.xdit.xdit_fid import FID_CURVE_MARKER, FID_SCORE_TIMEOUT_S
+
+        curve = {"points": [{"nfe": 10, "fid": 12.5}, {"nfe": 20, "fid": 8.0}]}
+        marker = FID_CURVE_MARKER + json.dumps(curve)
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/ref",
+            "fid_inception_path": "/inception.pth",
+        }
+
+        class _Orch:
+            def __init__(self):
+                self.hosts = ["n1", "n2", "idle"]
+                self.calls = []
+
+            def exec_cmd_list(self, commands, timeout=None, print_console=True):
+                self.calls.append((list(commands), timeout, print_console))
+                return {
+                    "n1": marker,
+                    "n2": "inception checkpoint not found: /inception.pth",
+                    "idle": "",
+                }
+
+        orch = _Orch()
+        variant = self._variant(params)
+        variant.inference["_test_container_output_dirs_by_node"] = {"n1": "/out-a", "n2": "/out-b"}
+        with (
+            patch("cvs.tests.inference.xdit._shared._read_fid_curve_file", return_value=(None, "missing")),
+            patch("cvs.tests.inference.xdit._shared._read_fid_manifest", return_value=None),
+            patch("cvs.tests.inference.xdit._shared.fail_test") as fail,
+        ):
+            fid_curve_stage(
+                orch,
+                variant,
+                "mi300x",
+                {"family": "flux", "distributed": False, "diffusers": True},
+                Lifecycle(),
+                MagicMock(),
+            )
+        self.assertEqual(len(orch.calls), 1)
+        commands, timeout, print_console = orch.calls[0]
+        self.assertEqual(timeout, FID_SCORE_TIMEOUT_S)
+        self.assertFalse(print_console)
+        self.assertEqual(len(commands), 3)
+        self.assertIn("/out-a", commands[0])
+        self.assertIn("/out-b", commands[1])
+        self.assertEqual(commands[2], "true")
+        fail.assert_not_called()
+
+    def test_shared_output_directory_is_scored_on_one_host(self):
+        from cvs.lib.inference.xdit.xdit_fid import FID_CURVE_MARKER
+
+        curve = {"points": [{"nfe": 10, "fid": 12.5}, {"nfe": 20, "fid": 8.0}]}
+        marker = FID_CURVE_MARKER + json.dumps(curve)
+        params = {
+            "fid_nfe_steps": [10, 20],
+            "fid_reference_dir": "/ref",
+            "fid_inception_path": "/inception.pth",
+        }
+
+        class _Orch:
+            def __init__(self):
+                self.hosts = ["n1", "n2"]
+                self.calls = []
+
+            def exec_cmd_list(self, commands, timeout=None, print_console=True):
+                self.calls.append(list(commands))
+                return {"n1": marker, "n2": ""}
+
+        orch = _Orch()
+        variant = self._variant(params)
+        variant.inference["_test_container_output_dirs_by_node"] = {"n1": "/shared", "n2": "/shared"}
+        with (
+            patch("cvs.tests.inference.xdit._shared._read_fid_curve_file", return_value=(None, "missing")),
+            patch("cvs.tests.inference.xdit._shared._read_fid_manifest", return_value=None),
+            patch("cvs.tests.inference.xdit._shared.fail_test"),
+        ):
+            fid_curve_stage(
+                orch,
+                variant,
+                "mi300x",
+                {"family": "flux", "distributed": False, "diffusers": True},
+                Lifecycle(),
+                MagicMock(),
+            )
+        self.assertEqual(len(orch.calls), 1)
+        self.assertIn("/shared", orch.calls[0][0])
+        self.assertEqual(orch.calls[0][1], "true")
 
 
 class TestVerifyModelStage(unittest.TestCase):
