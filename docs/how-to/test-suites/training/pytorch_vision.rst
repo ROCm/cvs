@@ -262,12 +262,14 @@ set to ``0``, and 1 of 11 with ``RCCL_USE_AMD_SMI_LIB=0``, on whichever node.
 The surviving ranks then waited in NCCL teardown until the 40-minute launch
 timeout. Each rank now proves its start with one all-reduce within
 ``training.startup_timeout_s`` (default 300 seconds), and exits at once if it
-fails. A launch that no rank got past is relaunched up to
-``training.startup_retries`` times; the distributed configs allow 3, and the
-test fails if the last attempt also fails to start. The failed attempt's logs are kept as ``startup_failure<N>.node<R>.log``, and the
-relaunch count appears in the report as ``startup_retries``. Each attempt's
-kernel-log scan covers that attempt only. A failure after a successful start
-is never relaunched.
+fails. The same segfault also hit FSDP and HF Trainer runs during warmup,
+when they create their remaining communicators. A launch that ends before
+warmup finishes is relaunched up to ``training.startup_retries`` times; the
+distributed configs allow 3, and the test fails if the last attempt also ends
+early. The failed attempt's logs are kept as
+``startup_failure<N>.node<R>.log``, and the relaunch count appears in the
+report as ``startup_retries``. Each attempt's kernel-log scan covers that
+attempt only. A failure inside the measured window is never relaunched.
 
 Scaling efficiency needs a calibrated reference. Set
 ``training.scaling_baseline.images_per_sec_total`` from a prior single-node
@@ -660,8 +662,8 @@ does not build on ROCm 7, and ``MAMBA_KEEP_CUDA_BUILD`` keeps the Mamba-1
 ``selective_scan`` kernel Vision Mamba needs. ``HIP_ARCHITECTURES`` must be set
 because ``docker build`` has no GPU to probe.
 
-Measured on MI325X (8 GPUs per node, record-only)
-==================================================
+Measured on MI325X (8 GPUs per node)
+=====================================
 
 Single node, one run of the primary sweep unless noted:
 
@@ -713,3 +715,9 @@ Four nodes, DMA-BUF registration off, every distributed profile passing:
 * **W11** smoke: 7.17 samples/s, 3,739 tokens/s, ChartQA relaxed accuracy 78.1
   on the smoke sample. Perf: 9.42 samples/s (4,892 tokens/s) and 4.04
   samples/s. Fine-tune: 6.54 samples/s, 3,395 tokens/s, ChartQA 73.0.
+
+Two nodes, four runs of every distributed profile across two node pairs:
+training throughput varied by under 2% between runs. W2 train-5k ranged from
+39.45% to 47.66% Top-1, W6 train-5k held 25.7%, and W11 fine-tune scored
+ChartQA 80.08 at 4.06 samples/s. These runs and three more at four nodes set
+the shipped ``by_nodes`` gates.

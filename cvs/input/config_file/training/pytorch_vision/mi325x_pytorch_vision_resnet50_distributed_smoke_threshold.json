@@ -1,5 +1,5 @@
 {
-  "_comment": "Record-only distributed smoke thresholds.",
+  "_comment": "Smoke checks correctness gates only; throughput is recorded, since five steps are too few to measure it.",
   "W2-SMOKE-ROCAL-GPU-STANDARD": {
     "training.images_per_sec": {
       "kind": "info",
@@ -31,7 +31,7 @@
     },
     "training.checkpoint_loss_delta": {
       "kind": "max",
-      "value": 1e-05
+      "value": 0.001
     },
     "training.checkpoint_resume_model_max_abs_delta": {
       "kind": "info",

@@ -103,14 +103,17 @@ Training block
 - ``timeout_s``: hard ``torchrun`` timeout.
 - ``startup_timeout_s``, ``startup_retries``: NCCL startup (init and one
   all-reduce) must finish within ``startup_timeout_s`` (default 300). A launch
-  no rank got past is relaunched up to ``startup_retries`` times (default 0,
-  at most 5), keeping the failed attempt's logs and recording the count.
+  that ends before warmup finishes is relaunched up to ``startup_retries``
+  times (default 0, at most 5), keeping the failed attempt's logs and
+  recording the count. A failure in the measured window is not relaunched.
 - ``setup_timeout_s``: how long ranks wait for each other after per-rank setup
   (building data loaders, reading datasets, rank 0 loading model weights)
   before the first collective (default 1800). A node reading the dataset from
   a cold cache can take minutes longer than the others.
 - ``omp_num_threads``: CPU threads per rank.
-- ``verify_dmesg``: enables bounded host-kernel error scanning.
+- ``verify_dmesg``: enables host-kernel error scanning. Each launch attempt
+  writes its own start and end markers to the kernel log, so a relaunched
+  sweep is judged only on its own attempt.
 - ``peak_tflops_per_gpu``: dense-precision hardware peak used for MFU.
 - ``checkpoint_enabled``, ``checkpoint_keep_file``,
   ``checkpoint_loss_tolerance``: save/load and resume-parity validation.
@@ -196,9 +199,18 @@ The entry for the cluster file's node count is used. On a node count with no
 entry, the spec's own ``value`` applies if it has one; otherwise the metric is
 recorded without a gate.
 
-The shipped rocAL and multi-node thresholds are record-only, because storage
-and fabric behaviour materially affect throughput. Calibrate on the target
-filesystem and fabric before setting ``enforce_thresholds`` to ``true``.
+The shipped distributed thresholds gate 2-node and 4-node runs with bounds from
+three or four passing MI325X runs per node count. Throughput floors are 90% of
+the slowest run, widened when run-to-run variation exceeds 5%. P95 step time
+and peak memory ceilings are 1.25 and 1.10 times the highest run, and quality
+floors sit 2 points under the lowest, widened the same way. Data-loader throughput stays ``info``
+because it follows filesystem cache state rather than training speed. Other
+node counts record without a gate.
+
+The single-node rocAL thresholds are record-only, because storage behaviour
+materially affects throughput. Calibrate on the target filesystem and fabric
+before relying on any shipped bound or setting ``enforce_thresholds`` to
+``true``.
 
 Adding a sweep
 ==============

@@ -4,7 +4,7 @@
   "framework": "pytorch_vision_training",
   "gpu_name": "MI325X",
   "_thresholds_comment": "Gating is threshold-driven and requires enforce_thresholds=true. A threshold entry with kind=info always passes and records the value. Calibrate on the target filesystem and fabric before enforcing numeric limits.",
-  "enforce_thresholds": false,
+  "enforce_thresholds": true,
   "threshold_json": "mi325x_pytorch_vision_resnet50_distributed_train5k_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",

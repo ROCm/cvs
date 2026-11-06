@@ -1,20 +1,60 @@
 {
-  "_comment": "Record-only W6 train_5k thresholds (HF Trainer + FSDP, from scratch).",
+  "_comment": "Gates per node count (by_nodes) from 3-4 passing runs per count on MI325X, two node sets per count. Throughput >= 90% of the slowest run and quality >= 2 points under the lowest (both widened when runs vary by over 5%), P95 step time <= 1.25x and peak memory <= 1.10x the highest run. Other node counts record without gating.",
   "W6-TRAIN5K-HF-FSDP-BF16-R224-MBS64": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 14500
+        },
+        "4": {
+          "value": 25600
+        }
+      }
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 907
+        },
+        "4": {
+          "value": 802
+        }
+      }
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 77.9
+        },
+        "4": {
+          "value": 84.30000000000001
+        }
+      }
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 5710
+        },
+        "4": {
+          "value": 5670
+        }
+      }
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 6540
+        },
+        "4": {
+          "value": 6320
+        }
+      }
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -52,6 +92,28 @@
     },
     "training.scaling_efficiency_pct": {
       "kind": "info"
+    },
+    "training.top1_accuracy_pct": {
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 23.6
+        },
+        "4": {
+          "value": 30.3
+        }
+      }
+    },
+    "training.convergence_time_seconds": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 314
+        },
+        "4": {
+          "value": 221
+        }
+      }
     }
   }
 }

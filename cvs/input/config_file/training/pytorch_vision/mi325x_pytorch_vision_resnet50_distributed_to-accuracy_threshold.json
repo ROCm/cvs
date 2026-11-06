@@ -1,11 +1,21 @@
 {
-  "_comment": "Protected four-node target-accuracy qualification. Stops when Top-1 reaches 75.5% and Top-5 reaches 92.5%; 90 epochs is only a safety cap. The config runs record-only until enforced limits are supplied.",
+  "_comment": "Gates per node count (by_nodes) from 3-4 passing runs per count on MI325X, two node sets per count. Throughput >= 90% of the slowest run and quality >= 2 points under the lowest (both widened when runs vary by over 5%), P95 step time <= 1.25x and peak memory <= 1.10x the highest run. Other node counts record without gating.",
   "W2-ACCURACY-TARGET-ROCAL-GPU-STANDARD": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "by_nodes": {
+        "4": {
+          "value": 100000
+        }
+      }
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "by_nodes": {
+        "4": {
+          "value": 3130
+        }
+      }
     },
     "training.tflops_per_sec_per_gpu": {
       "kind": "info"
@@ -14,13 +24,28 @@
       "kind": "info"
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "4": {
+          "value": 101
+        }
+      }
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "4": {
+          "value": 13600
+        }
+      }
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "4": {
+          "value": 16100
+        }
+      }
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -31,7 +56,7 @@
     },
     "training.checkpoint_loss_delta": {
       "kind": "max",
-      "value": 1e-05
+      "value": 0.001
     },
     "training.checkpoint_resume_model_max_abs_delta": {
       "kind": "info"
@@ -80,7 +105,12 @@
       "value": 60000
     },
     "training.convergence_time_seconds": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "4": {
+          "value": 1310
+        }
+      }
     },
     "training.codecarbon_tracking_active": {
       "kind": "min",

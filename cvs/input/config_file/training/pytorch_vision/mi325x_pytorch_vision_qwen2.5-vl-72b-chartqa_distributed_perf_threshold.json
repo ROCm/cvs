@@ -1,20 +1,60 @@
 {
-  "_comment": "Record-only W11 perf thresholds; structural metric presence is enforced by pytest.",
+  "_comment": "Gates per node count (by_nodes) from 3-4 passing runs per count on MI325X, two node sets per count. Throughput >= 90% of the slowest run and quality >= 2 points under the lowest (both widened when runs vary by over 5%), P95 step time <= 1.25x and peak memory <= 1.10x the highest run. Other node counts record without gating.",
   "W11-QWEN25VL-72B-CHARTQA-FSDP-BF16-MBS2": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 5.34
+        },
+        "4": {
+          "value": 8.47
+        }
+      }
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 0.334
+        },
+        "4": {
+          "value": 0.264
+        }
+      }
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 7620
+        },
+        "4": {
+          "value": 9840
+        }
+      }
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 58200
+        },
+        "4": {
+          "value": 37700
+        }
+      }
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 82600
+        },
+        "4": {
+          "value": 62300
+        }
+      }
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -40,27 +80,83 @@
       "value": 1
     },
     "training.multimodal_samples_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 5.34
+        },
+        "4": {
+          "value": 8.47
+        }
+      }
     },
     "training.tokens_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 2770
+        },
+        "4": {
+          "value": 4400
+        }
+      }
     }
   },
   "W11-QWEN25VL-72B-CHARTQA-FSDP-BF16-MBS1-GA2": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 2.05
+        },
+        "4": {
+          "value": 3.62
+        }
+      }
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 0.128
+        },
+        "4": {
+          "value": 0.113
+        }
+      }
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 19400
+        },
+        "4": {
+          "value": 21500
+        }
+      }
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 210000
+        },
+        "4": {
+          "value": 195000
+        }
+      }
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 244000
+        },
+        "4": {
+          "value": 223000
+        }
+      }
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -86,10 +182,26 @@
       "value": 1
     },
     "training.multimodal_samples_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 2.05
+        },
+        "4": {
+          "value": 3.62
+        }
+      }
     },
     "training.tokens_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 1060
+        },
+        "4": {
+          "value": 1880
+        }
+      }
     }
   }
 }

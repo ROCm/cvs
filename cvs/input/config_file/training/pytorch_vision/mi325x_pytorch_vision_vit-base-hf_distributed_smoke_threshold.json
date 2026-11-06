@@ -1,5 +1,5 @@
 {
-  "_comment": "Record-only W6 distributed smoke thresholds (HF Trainer + FSDP, eval enabled).",
+  "_comment": "Smoke checks correctness gates only; throughput is recorded, since five steps are too few to measure it.",
   "W6-DIST-SMOKE-HF-FSDP-BF16-R224-MBS64": {
     "training.images_per_sec": {
       "kind": "info"

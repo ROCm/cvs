@@ -1,20 +1,60 @@
 {
-  "_comment": "Record-only W6 full_shard thresholds; isolates the FSDP sharding strategy.",
+  "_comment": "Gates per node count (by_nodes) from 3-4 passing runs per count on MI325X, two node sets per count. Throughput >= 90% of the slowest run and quality >= 2 points under the lowest (both widened when runs vary by over 5%), P95 step time <= 1.25x and peak memory <= 1.10x the highest run. Other node counts record without gating.",
   "STEPS=50,MODEL=vit-base-hf,HARNESS=hf_trainer,FSDP=FULL_SHARD,PRECISION=BF16,MBS=64,GA=1,RES=224": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 15300
+        },
+        "4": {
+          "value": 28500
+        }
+      }
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 958
+        },
+        "4": {
+          "value": 890
+        }
+      }
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 76.10000000000001
+        },
+        "4": {
+          "value": 80.2
+        }
+      }
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 5710
+        },
+        "4": {
+          "value": 5670
+        }
+      }
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 6540
+        },
+        "4": {
+          "value": 6320
+        }
+      }
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -40,6 +80,9 @@
       "value": 1
     },
     "training.scaling_efficiency_pct": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
       "kind": "info"
     }
   }
