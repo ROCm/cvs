@@ -435,8 +435,22 @@ const STEP_CHARTS = [
 
 function stepSpecId(spec) { return spec.id || spec.field; }
 function stepSpecLabel(spec) { return spec.yTitle || stepSpecId(spec); }
+function extraCurveRaw(cell, tag) {
+  return (cell.extra_curves || {})[tag];
+}
+function extraCurvePoints(raw) {
+  if (raw && !Array.isArray(raw) && Array.isArray(raw.points)) return raw.points;
+  return raw;
+}
+function extraCurveDefaultOn(tag) {
+  return allCells.some(cell => {
+    const raw = extraCurveRaw(cell, tag);
+    return !!(raw && !Array.isArray(raw) && raw.default_on);
+  });
+}
 function stepSpecCurve(cell, spec) {
-  return spec.extraTag ? (cell.extra_curves || {})[spec.extraTag] : cell[spec.field];
+  if (!spec.extraTag) return cell[spec.field];
+  return extraCurvePoints(extraCurveRaw(cell, spec.extraTag));
 }
 
 function stepChartTheme() {
@@ -490,6 +504,7 @@ function extraStepSpecs() {
       yTitle: tag,
       xTitle: xTitle,
       id: 'extra:' + tag,
+      defaultOn: extraCurveDefaultOn(tag),
     });
   });
   extraStepSpecsCache = specs;
@@ -517,8 +532,12 @@ function initStepChartControls() {
   });
   const specs = allStepSpecs();
   const defaults = STEP_CHARTS.map(s => s.field);
-  const extraIds = specs.filter(s => s.extraTag).map(stepSpecId);
-  if (selectedStepMetrics === null) selectedStepMetrics = new Set(defaults.concat(extraIds));
+  if (selectedStepMetrics === null) {
+    selectedStepMetrics = new Set(defaults);
+    specs.forEach(spec => {
+      if (spec.defaultOn) selectedStepMetrics.add(stepSpecId(spec));
+    });
+  }
 
   const list = $('metric-pick-list');
   if (list) {
@@ -544,7 +563,7 @@ function initStepChartControls() {
     selectedStepMetrics = new Set();
     specs.forEach(spec => {
       const id = stepSpecId(spec);
-      const pick = mode === 'all' ? true : (mode === 'defaults' ? (defaults.includes(id) || String(id).indexOf('extra:') === 0) : false);
+      const pick = mode === 'all' ? true : (mode === 'defaults' ? (defaults.includes(id) || spec.defaultOn) : false);
       if (pick) selectedStepMetrics.add(id);
     });
     if (list) {

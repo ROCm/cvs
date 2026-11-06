@@ -141,7 +141,11 @@ def iter_fid_points(raw):
 
 
 def fid_viewer_curves(raw):
-    """``extra_curves`` entries the interactive viewer plots, keyed by sampler."""
+    """``extra_curves`` entries the interactive viewer plots, keyed by sampler.
+
+    Each value is the point list plus ``default_on``. A plain list stays off
+    until the user picks it, which is how the training decks ship their extras.
+    """
     grouped = {}
     for sampler, nfe, fid in iter_fid_points(raw):
         label = f"FID · {sampler}" if sampler else "FID"
@@ -150,7 +154,7 @@ def fid_viewer_curves(raw):
     for label, points in grouped.items():
         series = [[nfe, points[nfe]] for nfe in sorted(points)]
         if len(series) >= 2:
-            curves[label] = series
+            curves[label] = {"points": series, "default_on": True}
     return curves
 
 
