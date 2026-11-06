@@ -144,16 +144,29 @@ def find_model_entry(matrix, framework, model):
     if not fw_block:
         return None
     models = fw_block.get("models") or {}
-    wanted = str(model or "").strip().lower()
+    wanted = _norm_model(model)
     if not wanted:
         return None
     for key, entry in models.items():
-        if str(key).strip().lower() == wanted:
-            return entry
-        aliases = [str(a).strip().lower() for a in (entry.get("aliases") or [])]
-        if wanted in aliases:
+        candidates = [key] + list(entry.get("aliases") or [])
+        if any(_norm_model(c) == wanted for c in candidates):
             return entry
     return None
+
+
+def _norm_model(name):
+    '''Normalize a model identifier for lenient matching.
+
+    Lower-cases, takes the basename of a path or HF ``org/model`` id, and drops
+    separators, so ``llama-3.1-8b``, ``llama3.1_8B``, ``llama3_1_8b`` and
+    ``/root/models/Llama-3.1-8B`` all compare equal. The matrix therefore matches
+    the preset name a training config uses and the HF id or local path an
+    inference config uses, without one alias per spelling.
+    '''
+    text = str(name or "").strip().lower()
+    if "/" in text:
+        text = text.rsplit("/", 1)[-1]
+    return re.sub(r"[\s._-]+", "", text)
 
 
 def served_model_name(variant_config):
@@ -201,25 +214,62 @@ def _host_text(raw):
     return ""
 
 
+_PROBE_TIMEOUT_S = 30
+
+
+def _exec(handle, cmd, timeout=_PROBE_TIMEOUT_S):
+    '''Run ``handle.exec`` with a short timeout; fall back if the backend lacks it.'''
+    try:
+        return handle.exec(cmd, timeout=timeout)
+    except TypeError:
+        return handle.exec(cmd)
+
+
+def _confident_arch(text):
+    '''Return a canonical arch token only when the probe output actually names it.
+
+    Reuses ``get_model_from_rocm_smi_output`` (the existing CVS parser), but that
+    helper defaults to ``mi300x`` for unrecognized output, so ``mi300x`` is trusted
+    only when the text really names it. Anything else -- empty output, a banner, or
+    an arch the parser does not know (e.g. MI308X) -- returns None so the gate fails
+    instead of assuming a default GPU.
+    '''
+    body = (text or "").strip()
+    if not body:
+        return None
+    arch = normalize_arch(get_model_from_rocm_smi_output(body))
+    if arch == "mi300x" and not re.search(r"MI300X", body, re.I):
+        return None
+    return arch
+
+
 def detect_platform(handle):
     '''Detect ``{host: {"arch": <token|None>, "rocm": <version|None>}}`` via the handle.
 
     ``handle.exec`` routes into the launched container, so both probes reflect the
-    container the workload will run in.
+    container the workload will run in. GPU arch comes from ``rocm-smi`` with
+    ``amd-smi`` as a fallback (both parsed by the existing
+    ``get_model_from_rocm_smi_output``); an unrecognized GPU yields ``arch=None``.
+    ROCm comes from ``/opt/rocm/.info/version`` then ``amd-smi`` / ``hipconfig``.
     '''
-    arch_out = handle.exec("rocm-smi -a 2>/dev/null | head -40") or {}
+    arch_probe = (
+        "rocm-smi --showproductname 2>/dev/null; rocm-smi -a 2>/dev/null; "
+        "amd-smi static --asic 2>/dev/null; amd-smi list 2>/dev/null"
+    )
+    arch_out = _exec(handle, "bash -c " + _shq(arch_probe)) or {}
     rocm_probe = (
         "if [ -f /opt/rocm/.info/version ]; then cat /opt/rocm/.info/version; "
         "else amd-smi version --json 2>/dev/null || hipconfig --version 2>/dev/null || true; fi"
     )
-    rocm_out = handle.exec("bash -c " + _shq(rocm_probe)) or {}
+    rocm_out = _exec(handle, "bash -c " + _shq(rocm_probe)) or {}
 
     hosts = set(arch_out) | set(rocm_out)
     platform = {}
     for host in hosts:
-        arch_text = _host_text(arch_out.get(host, ""))
-        arch = normalize_arch(get_model_from_rocm_smi_output(arch_text)) if arch_text.strip() else None
-        platform[host] = {"arch": arch, "rocm": _extract_rocm_version(_host_text(rocm_out.get(host, "")))}
+        platform[host] = {
+            "arch": _confident_arch(_host_text(arch_out.get(host, ""))),
+            "rocm": _extract_rocm_version(_host_text(rocm_out.get(host, ""))),
+        }
     return platform
 
 
@@ -254,8 +304,9 @@ def evaluate(entry, params, platform):
 
     ``params`` maps a parameter name to the values the run will use, e.g.
     ``{"precision": ["bf16", "mxfp4"]}``. Each rule is a deny: a match is a
-    violation. Undetected arch/ROCm produce warnings, not violations, so an
-    unknown probe never blocks a run.
+    violation. An **undetected GPU arch is a violation** (the gate cannot certify a
+    GPU it cannot identify). Undetected ROCm stays a warning, since a model only
+    gates ROCm when it declares a min/max.
     '''
     violations = []
     warnings = []
@@ -270,7 +321,9 @@ def evaluate(entry, params, platform):
         rocm = parse_version(rocm_str)
 
         if not arch:
-            warnings.append(f"{host}: could not detect GPU arch; skipping GPU checks")
+            violations.append(
+                f"{host}: could not detect a supported GPU arch (rocm-smi/amd-smi returned no recognizable device)"
+            )
         else:
             if arch in unsupported_arch:
                 violations.append(f"{host}: GPU arch {arch} is not supported for this model")
@@ -312,7 +365,17 @@ def run_support_matrix_gate(category, framework, model, params, handle):
     try:
         matrix = load_matrix(category)
     except Exception as exc:  # noqa: BLE001
-        log.warning("SUPPORT-MATRIX: could not load %s matrix (%s); gate skipped", category, exc)
+        if result.enforced:
+            log.error(
+                "SUPPORT-MATRIX: could not load %s matrix (%s); failing (set %s=OFF to bypass)",
+                category,
+                exc,
+                GATE_ENV,
+            )
+            result.passed = False
+            result.violations = [f"support matrix for '{category}' failed to load: {exc}"]
+        else:
+            log.warning("SUPPORT-MATRIX: could not load %s matrix (%s); gate disabled, continuing", category, exc)
         return result
 
     entry = find_model_entry(matrix, framework, model)
