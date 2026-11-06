@@ -1,5 +1,5 @@
 {
-  "_comment": "Record-only W3 (ViT-B/16) thresholds. Calibrate before enforcing.",
+  "_comment": "Smoke checks correctness gates only; throughput is recorded, since a few steps are too few to measure it.",
   "W1-SMOKE-ROCAL-GPU-STANDARD": {
     "training.images_per_sec": {
       "kind": "info"

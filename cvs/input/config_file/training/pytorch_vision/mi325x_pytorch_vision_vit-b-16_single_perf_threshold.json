@@ -1,11 +1,13 @@
 {
-  "_comment": "Record-only W3 (ViT-B/16) thresholds. Calibrate before enforcing.",
+  "_comment": "Gates from at least three passing single-node runs on MI325X, each on a different node. Throughput >= 90% of the slowest run and quality >= 2 points under the lowest (both widened when runs vary by over 5%), P95 step time <= 1.25x and peak memory <= 1.10x the highest run. Metrics varying by over 25% between runs record without gating.",
   "NNODES=1,STEPS=50,MODEL=vit_b_16,DATA=rocAL-GPU,PRECISION=BF16,MBS=256,GA=1,GBS=2048,RES=224": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 7360
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 920
     },
     "training.tflops_per_sec_per_gpu": {
       "kind": "info"
@@ -20,13 +22,16 @@
       "kind": "info"
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 304
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 21600
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 22900
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -65,10 +70,12 @@
   },
   "NNODES=1,STEPS=50,MODEL=vit_b_16,DATA=rocAL-GPU,PRECISION=BF16,MBS=64,GA=4,GBS=2048,RES=224": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 7560
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 945
     },
     "training.tflops_per_sec_per_gpu": {
       "kind": "info"
@@ -83,13 +90,16 @@
       "kind": "info"
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 324
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 7440
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 8240
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -128,10 +138,12 @@
   },
   "NNODES=1,STEPS=50,MODEL=vit_b_16,DATA=rocAL-GPU-STANDARD,PRECISION=BF16,MBS=128,GA=1,GBS=1024,RES=224": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 9510
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 1180
     },
     "training.tflops_per_sec_per_gpu": {
       "kind": "info"
@@ -146,13 +158,16 @@
       "kind": "info"
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 155
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 11800
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 13000
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -191,10 +206,12 @@
   },
   "NNODES=1,STEPS=50,MODEL=vit_b_16,DATA=rocAL-CPU-STANDARD,PRECISION=BF16,MBS=128,GA=1,GBS=1024,RES=224": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 9790
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 1220
     },
     "training.tflops_per_sec_per_gpu": {
       "kind": "info"
@@ -209,13 +226,16 @@
       "kind": "info"
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 176
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 11800
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 12600
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -254,10 +274,12 @@
   },
   "NNODES=1,STEPS=50,MODEL=vit_b_16,DATA=rocAL-GPU-HEAVY,PRECISION=BF16,MBS=128,GA=1,GBS=1024,RES=224": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 10500
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 1310
     },
     "training.tflops_per_sec_per_gpu": {
       "kind": "info"
@@ -272,13 +294,16 @@
       "kind": "info"
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 141
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 11800
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 13000
     },
     "training.peak_memory_used_mb": {
       "kind": "info"

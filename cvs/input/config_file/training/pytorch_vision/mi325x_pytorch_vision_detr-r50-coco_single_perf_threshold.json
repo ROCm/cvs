@@ -1,20 +1,25 @@
 {
-  "_comment": "Record-only W4 perf thresholds; structural metric presence is enforced by pytest.",
+  "_comment": "Gates from at least three passing single-node runs on MI325X, each on a different node. Throughput >= 90% of the slowest run and quality >= 2 points under the lowest (both widened when runs vary by over 5%), P95 step time <= 1.25x and peak memory <= 1.10x the highest run. Metrics varying by over 25% between runs record without gating.",
   "W4-DETR-R50-COCO-BF16-R800-MBS4": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 74.10000000000001
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 9.26
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 873
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 14500
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 17100
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -45,19 +50,24 @@
   },
   "W4-DETR-R50-COCO-BF16-R800-MBS2-GA2": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 49.0
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 6.13
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 1480
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 7750
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 8900
     },
     "training.peak_memory_used_mb": {
       "kind": "info"

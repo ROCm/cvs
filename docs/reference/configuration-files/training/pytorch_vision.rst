@@ -199,18 +199,23 @@ The entry for the cluster file's node count is used. On a node count with no
 entry, the spec's own ``value`` applies if it has one; otherwise the metric is
 recorded without a gate.
 
-The shipped distributed thresholds gate 2-node and 4-node runs with bounds from
-three or four passing MI325X runs per node count. Throughput floors are 90% of
-the slowest run, widened when run-to-run variation exceeds 5%. P95 step time
-and peak memory ceilings are 1.25 and 1.10 times the highest run, and quality
-floors sit 2 points under the lowest, widened the same way. Data-loader throughput stays ``info``
-because it follows filesystem cache state rather than training speed. Other
+The shipped configs enforce bounds measured on MI325X: at least three passing
+runs per single-node profile, each on a different node, and three or four runs
+per node count for the 2-node and 4-node distributed profiles. Throughput
+floors are 90% of the slowest run, widened when run-to-run variation exceeds
+5%. P95 step time and peak memory ceilings are 1.25 and 1.10 times the highest
+run, and quality floors sit 2 points under the lowest, widened the same way.
+Smoke profiles gate correctness only, because a few steps are too few to
+measure throughput. Data-loader throughput stays ``info`` because it follows
+filesystem cache state rather than training speed. Distributed runs on other
 node counts record without a gate.
 
-The single-node rocAL thresholds are record-only, because storage behaviour
-materially affects throughput. Calibrate on the target filesystem and fabric
-before relying on any shipped bound or setting ``enforce_thresholds`` to
-``true``.
+``checkpoint_state_match`` requires a bit-exact save and restore. The loss and
+parameter deltas from repeating one step after the restore measure kernel
+nondeterminism instead, so the loss delta is bounded at 0.01 and the parameter
+deltas are recorded. Storage and fabric behaviour affect throughput, so
+recalibrate on the target filesystem and fabric before relying on the shipped
+bounds elsewhere.
 
 Adding a sweep
 ==============

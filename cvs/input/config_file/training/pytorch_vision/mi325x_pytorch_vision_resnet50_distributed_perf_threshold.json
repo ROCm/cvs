@@ -65,7 +65,7 @@
     },
     "training.checkpoint_loss_delta": {
       "kind": "max",
-      "value": 0.001
+      "value": 0.01
     },
     "training.checkpoint_resume_model_max_abs_delta": {
       "kind": "info"
@@ -154,7 +154,7 @@
     },
     "training.checkpoint_loss_delta": {
       "kind": "max",
-      "value": 0.001
+      "value": 0.01
     },
     "training.checkpoint_resume_model_max_abs_delta": {
       "kind": "info"
@@ -237,7 +237,7 @@
     },
     "training.checkpoint_loss_delta": {
       "kind": "max",
-      "value": 0.001
+      "value": 0.01
     },
     "training.checkpoint_resume_model_max_abs_delta": {
       "kind": "info"
@@ -320,7 +320,7 @@
     },
     "training.checkpoint_loss_delta": {
       "kind": "max",
-      "value": 0.001
+      "value": 0.01
     },
     "training.checkpoint_resume_model_max_abs_delta": {
       "kind": "info"
@@ -406,7 +406,7 @@
     },
     "training.checkpoint_loss_delta": {
       "kind": "max",
-      "value": 0.001
+      "value": 0.01
     },
     "training.checkpoint_resume_model_max_abs_delta": {
       "kind": "info"

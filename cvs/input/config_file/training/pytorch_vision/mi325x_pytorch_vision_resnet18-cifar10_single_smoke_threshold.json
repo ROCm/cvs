@@ -1,5 +1,5 @@
 {
-  "_comment": "Record-only W7 smoke thresholds; structural metric presence is enforced by pytest.",
+  "_comment": "Smoke checks correctness gates only; throughput is recorded, since a few steps are too few to measure it.",
   "W7-SMOKE-CIFAR10-1GPU-BF16-R32-MBS128": {
     "training.images_per_sec": {
       "kind": "info"

@@ -1,20 +1,25 @@
 {
-  "_comment": "Record-only W5 perf thresholds; structural metric presence is enforced by pytest.",
+  "_comment": "Gates from at least three passing single-node runs on MI325X, each on a different node. Throughput >= 90% of the slowest run and quality >= 2 points under the lowest (both widened when runs vary by over 5%), P95 step time <= 1.25x and peak memory <= 1.10x the highest run. Metrics varying by over 25% between runs record without gating.",
   "W5-VIM-S-ROCAL-GPU-STANDARD-BF16-R224-MBS128": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 1990
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 249
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 579
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 21100
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 22000
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -45,19 +50,24 @@
   },
   "W5-VIM-S-ROCAL-BF16-R224-MBS32-GA4": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 1730
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 217
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 666
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 6060
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 6510
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -88,19 +98,24 @@
   },
   "W5-VIM-S-ROCAL-CPU-STANDARD-BF16-R224-MBS128": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 1860
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 233
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 605
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 21100
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 21900
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -131,19 +146,24 @@
   },
   "W5-VIM-S-ROCAL-GPU-HEAVY-BF16-R224-MBS128": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 1940
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 242
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 579
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 21100
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 22000
     },
     "training.peak_memory_used_mb": {
       "kind": "info"

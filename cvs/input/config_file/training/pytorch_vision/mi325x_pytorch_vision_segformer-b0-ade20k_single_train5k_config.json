@@ -5,7 +5,7 @@
   "framework": "pytorch_vision_training",
   "gpu_name": "MI325X",
   "_thresholds_comment": "Record-only until a calibrated threshold file replaces this one: kind=info records the value, and only structural checks (checkpoint round trip, eval completed, CodeCarbon active) are min gates.",
-  "enforce_thresholds": false,
+  "enforce_thresholds": true,
   "threshold_json": "mi325x_pytorch_vision_segformer-b0-ade20k_single_train5k_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -64,6 +64,7 @@
     "momentum": 0.9,
     "weight_decay": 0.01,
     "timeout_s": 28800,
+    "startup_retries": 3,
     "omp_num_threads": 1,
     "verify_dmesg": true,
     "peak_tflops_per_gpu": 1307.4,

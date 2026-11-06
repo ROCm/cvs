@@ -1,5 +1,5 @@
 {
-  "_comment": "Record-only W7 perf thresholds; structural metric presence is enforced by pytest.",
+  "_comment": "Gates from at least three passing single-node runs on MI325X, each on a different node. Throughput >= 90% of the slowest run and quality >= 2 points under the lowest (both widened when runs vary by over 5%), P95 step time <= 1.25x and peak memory <= 1.10x the highest run. Metrics varying by over 25% between runs record without gating.",
   "W7-CIFAR10-1GPU-ROCAL-GPU-STANDARD-BF16-R32-MBS128": {
     "training.images_per_sec": {
       "kind": "info"
@@ -11,10 +11,12 @@
       "kind": "info"
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 403
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 473
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -45,19 +47,24 @@
   },
   "W7-CIFAR10-1GPU-ROCAL-CPU-STANDARD-BF16-R32-MBS128": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 10400
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 10400
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 30.5
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 406
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 473
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -88,19 +95,24 @@
   },
   "W7-CIFAR10-1GPU-ROCAL-GPU-HEAVY-BF16-R32-MBS128": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 9100
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 9100
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 29.900000000000002
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 408
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 473
     },
     "training.peak_memory_used_mb": {
       "kind": "info"

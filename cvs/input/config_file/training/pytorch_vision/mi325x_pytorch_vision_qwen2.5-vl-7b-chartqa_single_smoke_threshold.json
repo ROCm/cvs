@@ -1,5 +1,5 @@
 {
-  "_comment": "Record-only W10 smoke thresholds; structural metric presence is enforced by pytest.",
+  "_comment": "Smoke checks correctness gates only; throughput is recorded, since a few steps are too few to measure it.",
   "W10-SMOKE-QWEN25VL-7B-CHARTQA-FSDP-BF16-MBS2": {
     "training.images_per_sec": {
       "kind": "info"

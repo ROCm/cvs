@@ -1,5 +1,5 @@
 {
-  "_comment": "Record-only W6 (HF Trainer + FSDP) thresholds. Calibrate before enforcing.",
+  "_comment": "Smoke checks correctness gates only; throughput is recorded, since a few steps are too few to measure it.",
   "W6-SMOKE-HF-FSDP-BF16-R224-MBS64": {
     "training.images_per_sec": {
       "kind": "info"

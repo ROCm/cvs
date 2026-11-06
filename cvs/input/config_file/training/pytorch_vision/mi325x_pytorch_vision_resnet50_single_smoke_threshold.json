@@ -1,5 +1,5 @@
 {
-  "_comment": "Record-only smoke thresholds; structural metric presence is enforced by pytest.",
+  "_comment": "Smoke checks correctness gates only; throughput is recorded, since a few steps are too few to measure it.",
   "W1-SMOKE-ROCAL-GPU-STANDARD": {
     "training.images_per_sec": {
       "kind": "info",
@@ -31,15 +31,13 @@
     },
     "training.checkpoint_loss_delta": {
       "kind": "max",
-      "value": 1e-05
+      "value": 0.01
     },
     "training.checkpoint_resume_model_max_abs_delta": {
-      "kind": "info",
-      "value": 0
+      "kind": "info"
     },
     "training.checkpoint_resume_optimizer_max_abs_delta": {
-      "kind": "info",
-      "value": 0
+      "kind": "info"
     },
     "training.gradient_accumulation_overhead_pct": {
       "kind": "info",

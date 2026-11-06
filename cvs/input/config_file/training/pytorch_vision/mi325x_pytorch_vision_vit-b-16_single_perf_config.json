@@ -4,7 +4,7 @@
   "framework": "pytorch_vision_training",
   "gpu_name": "MI325X",
   "_thresholds_comment": "Gating is threshold-driven and requires enforce_thresholds=true. A threshold entry with kind=info always passes and records the value. Calibrate on the target filesystem and fabric before enforcing numeric limits.",
-  "enforce_thresholds": false,
+  "enforce_thresholds": true,
   "threshold_json": "mi325x_pytorch_vision_vit-b-16_single_perf_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -53,6 +53,7 @@
     "momentum": 0.9,
     "weight_decay": 0.05,
     "timeout_s": 2400,
+    "startup_retries": 3,
     "omp_num_threads": 1,
     "verify_dmesg": true,
     "peak_tflops_per_gpu": 1307.4,

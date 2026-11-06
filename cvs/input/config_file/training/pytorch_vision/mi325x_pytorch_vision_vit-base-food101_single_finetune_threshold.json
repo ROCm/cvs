@@ -1,20 +1,25 @@
 {
-  "_comment": "Record-only W8 finetune thresholds; structural metric presence is enforced by pytest.",
+  "_comment": "Gates from at least three passing single-node runs on MI325X, each on a different node. Throughput >= 90% of the slowest run and quality >= 2 points under the lowest (both widened when runs vary by over 5%), P95 step time <= 1.25x and peak memory <= 1.10x the highest run. Metrics varying by over 25% between runs record without gating.",
   "W8-FINETUNE-VIT-B-FOOD101-ROCAL-GPU-BF16-R224-MBS64": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 8990
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 1120
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 54.6
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 7770
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 8100
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -51,7 +56,8 @@
       "value": 1
     },
     "training.top1_accuracy_pct": {
-      "kind": "info"
+      "kind": "min",
+      "value": 86.2
     },
     "training.top5_accuracy_pct": {
       "kind": "info"

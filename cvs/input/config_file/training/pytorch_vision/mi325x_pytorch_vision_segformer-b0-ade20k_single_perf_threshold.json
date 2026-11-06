@@ -1,20 +1,25 @@
 {
-  "_comment": "Record-only W9 perf thresholds; structural metric presence is enforced by pytest.",
+  "_comment": "Gates from at least three passing single-node runs on MI325X, each on a different node. Throughput >= 90% of the slowest run and quality >= 2 points under the lowest (both widened when runs vary by over 5%), P95 step time <= 1.25x and peak memory <= 1.10x the highest run. Metrics varying by over 25% between runs record without gating.",
   "W9-SEGFORMER-B0-ADE20K-BF16-R512-MBS16": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 1820
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 228
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 90.5
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 13500
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 15400
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
@@ -45,19 +50,24 @@
   },
   "W9-SEGFORMER-B0-ADE20K-BF16-R512-MBS8-GA2": {
     "training.images_per_sec": {
-      "kind": "info"
+      "kind": "min",
+      "value": 1520
     },
     "training.images_per_sec_per_gpu": {
-      "kind": "info"
+      "kind": "min",
+      "value": 191
     },
     "training.step_time_ms_p95": {
-      "kind": "info"
+      "kind": "max",
+      "value": 103
     },
     "training.peak_memory_allocated_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 6870
     },
     "training.peak_memory_reserved_mb": {
-      "kind": "info"
+      "kind": "max",
+      "value": 7990
     },
     "training.peak_memory_used_mb": {
       "kind": "info"
