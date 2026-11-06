@@ -168,9 +168,12 @@ def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started)
     raw_steps = str(getattr(args, "fid_steps", "") or "").strip()
     if not raw_steps:
         return
-    from fid_sweep import run_fid_sweep
+    from fid_sweep import rewrite_manifest_from_disk, run_fid_sweep
 
     steps = [int(part) for part in raw_steps.split(",") if part.strip()]
+    samples = int(args.fid_samples)
+    budget_s = float(args.fid_budget_s)
+    manifest_path = os.path.join(args.output_directory, "results", "fid", "manifest.json")
 
     def generate_one(nfe, sample_index):
         run_args = dict(input_args)
@@ -191,16 +194,19 @@ def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s, fid_started)
         run_fid_sweep(
             rank,
             steps,
-            int(args.fid_samples),
-            float(args.fid_budget_s),
+            samples,
+            budget_s,
             fid_started,
             last_wall_s if rank == 0 else 0.0,
             int(args.num_inference_steps),
             generate_one,
-            os.path.join(args.output_directory, "results", "fid", "manifest.json"),
+            manifest_path,
         )
     except Exception as exc:
         print(f"FID sweep failed after the timed benchmark: {exc}")
+    finally:
+        if rank == 0:
+            rewrite_manifest_from_disk(manifest_path, steps, samples, budget_s)
 
 
 def main():
