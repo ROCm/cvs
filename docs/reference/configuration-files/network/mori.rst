@@ -6,7 +6,7 @@
 MORI network configuration file reference for Cluster Validation Suite (CVS)
 ****************************************************************************
 
-MORI (Memory-Oriented RDMA Interface) benchmarks run from ``mori_dir`` through the orchestrator. The shipped file is ``input/config_file/mori/mi35x_mori_config.json``.
+MORI (Memory-Oriented RDMA Interface) benchmarks run from ``mori_dir`` through the orchestrator. ``install_mori`` builds MoRI into ``mori_dir`` with the same file. The shipped file is ``input/config_file/mori/mi35x_mori_config.json``.
 
 The suite checks:
 
@@ -19,13 +19,13 @@ The suite checks:
 .. note::
 
   - ``{user-id}`` is replaced with the cluster file ``username``, then ``$USER``, then ``root``. ``{user}``, ``{home}``, ``{home-mount-dir}``, ``{node-dir-name}``, and ``{run_dir}`` are replaced in the same pass.
-  - Any string that still contains ``<changeme>`` stops the run with ``Unresolved placeholder found in test config``.
+  - A ``<changeme>`` left in ``mori_dir``, ``git_url``, ``git_ref``, ``master_addr``, ``log_dir``, an ``env`` value, or ``container.name``, ``container.image`` or a ``container.env`` value fails every test with one ``ConfigError`` that names each such field. So does a key the suite does not know, or a value of the wrong type.
   - A key whose name starts with ``_`` is not a setting. ``_example_env`` is not merged into ``env``.
 
 ``mi35x_mori_config.json``
 ==========================
 
-The block below is the shipped file with the ``_example_*`` notes removed. Those notes are still in the file on disk and are not applied.
+The block below is the shipped file with the ``_example_*`` and ``_comment_*`` notes removed. Those notes are still in the file on disk and are not applied.
 
 .. dropdown:: ``mi35x_mori_config.json``
 
@@ -53,7 +53,9 @@ The block below is the shipped file with the ``_example_*`` notes removed. Those
             "MORI_RDMA_DEVICES": "<changeme>",
             "LD_LIBRARY_PATH": "/usr/local/lib/python3.12/dist-packages/torch/lib:$LD_LIBRARY_PATH"
         },
-        "mori_dir": "<changeme>",
+        "mori_dir": "/home/{user-id}/INSTALL/mori",
+        "git_ref": "main",
+        "install_system_packages": true,
         "master_addr": "<changeme>",
         "master_port": "1234",
         "log_dir": "/home/{user-id}/LOGS/mori",
@@ -124,8 +126,17 @@ The MORI config's ``container`` object is deep-merged over the cluster file's ``
      - See the sample
      - Exported on every benchmark command. This is separate from ``container.env``. ``MORI_RDMA_DEVICES`` is the device list checked in ``ibv_devinfo``. ``LD_LIBRARY_PATH`` can append ``$LD_LIBRARY_PATH``. ``NCCL_SOCKET_IFNAME`` and ``GLOO_SOCKET_IFNAME`` are exported the same way.
    * - ``mori_dir``
-     - ``<changeme>``
-     - Working directory. I/O runs ``<mori_dir>/tests/python/io/benchmark.py``. IBGDA and the put binaries run under ``<mori_dir>/build/examples/``. Required.
+     - ``/home/{user-id}/INSTALL/mori``
+     - Where ``install_mori`` builds MoRI, and the benchmarks' working directory. I/O runs ``<mori_dir>/tests/python/io/benchmark.py``. IBGDA and the put binaries run under ``<mori_dir>/build/examples/``. Benchmarks import ``mori`` from ``<mori_dir>/site`` first. Required.
+   * - ``git_url``
+     - Not shipped
+     - Repository ``install_mori`` clones. Default ``https://github.com/ROCm/mori``.
+   * - ``git_ref``
+     - ``main``
+     - Tag, branch, or commit ``install_mori`` checks out and builds. Default ``main``.
+   * - ``install_system_packages``
+     - ``true``
+     - Lets ``install_mori`` apt-install missing build packages inside the container, or on bare metal with passwordless sudo. Never in a Slurm or SPUR job step. Default ``true``. The string forms ``"True"`` and ``"False"`` are accepted.
    * - ``master_addr``
      - ``<changeme>``
      - Torchrun node rank 0 and the I/O initiator. It must be one of the cluster hosts. Omitted, the cluster head node is used.
@@ -137,7 +148,7 @@ The MORI config's ``container`` object is deep-merged over the cluster file's ``
      - Parent of the per-run log directory ``<log_dir>/YYYYMMDD_HHMMSS``. Required.
    * - ``expected_results``
      - See below
-     - Thresholds. Required once a benchmark test builds ``MoriBenchmark``. The lookup shape is below.
+     - Thresholds. Required, also by ``install_mori``. The lookup shape is below.
    * - ``gpu_name``
      - ``mi35x``
      - Shown on the HTML run card only. It does not change binaries, devices, or thresholds.
@@ -147,7 +158,7 @@ Shipped keys the checker does not read
 
 - ``no_of_nodes`` is in the shipped file and is not read. The node list is the cluster file.
 - ``gpu_name`` is not used as a threshold or a device filter.
-- ``_example_options_orchestrator``, ``_example_env``, and ``_example_mori_dir`` are not applied. ``_example_mori_dir`` (``/sgl-workspace/mori``) is an illustration in the file, not the path the suite opens.
+- ``_example_options_orchestrator``, ``_example_env``, and the ``_comment_*`` keys are not applied.
 - There is no ``nic_type``, ``oob_port``, ``mori_device_list``, ``torchlib_dir``, or ``container_config`` key. Devices are ``env.MORI_RDMA_DEVICES``. The out-of-band interface is whatever you export in ``env``.
 
 ``expected_results``

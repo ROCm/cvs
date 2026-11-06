@@ -43,7 +43,7 @@ _PLACEHOLDER_RE = re.compile(r"<changeme(?:-[^<>]*)?>", re.IGNORECASE)
 def write_filled_config(template_path, out_dir):
     """Write a copy of a shipped config with every ``<changeme>`` value filled in.
 
-    Comment keys are copied unchanged. ``threshold_json`` is made absolute so
+    Comment keys are copied unchanged. A ``threshold_json`` is made absolute so
     the copy still reads the shipped threshold file. Returns the copy's path.
     """
     template_path = Path(template_path)
@@ -58,7 +58,8 @@ def write_filled_config(template_path, out_dir):
         return node
 
     config = fill(json.loads(template_path.read_text()))
-    config["threshold_json"] = str(template_path.parent / config["threshold_json"])
+    if "threshold_json" in config:
+        config["threshold_json"] = str(template_path.parent / config["threshold_json"])
     out_path = Path(out_dir) / template_path.name
     out_path.write_text(json.dumps(config))
     return out_path

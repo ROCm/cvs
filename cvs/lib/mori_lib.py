@@ -37,6 +37,128 @@ REMOTE_TIMEOUT_MARKER = 'MORI_REMOTE_TIMEOUT after '
 # Seconds precision: verify_dmesg_for_errors' node-scraper path treats the end time as an exclusive cutoff.
 DMESG_DATE_CMD = 'date +"%a %b %e %H:%M:%S"'
 
+CHECK_DONE = 'MORI_CHECK_DONE'
+MORI_IN_DIR = 'MORI_IN_MORI_DIR'
+EXAMPLES = ('dist_write', 'concurrent_put_thread', 'concurrent_put_imm_thread', 'concurrent_put_signal_thread')
+
+# (item, shell test that passes when it is present, apt package or None). CVS never installs the
+# None items: the ROCm stack, torch, the Python env and the NIC libraries are the platform under test.
+# cmake and ninja are not listed: pip's isolated build env fetches them.
+BUILD_DEPS = (
+    ('git', 'command -v git', 'git'),
+    ('g++', 'command -v g++', 'g++'),
+    ('mpicc', 'command -v mpicc', 'libopenmpi-dev'),
+    ('mpiexec', 'command -v mpiexec', 'openmpi-bin'),
+    ('ibv_devinfo', 'command -v ibv_devinfo', 'ibverbs-utils'),
+    ('verbs.h', 'test -f /usr/include/infiniband/verbs.h', 'libibverbs-dev'),
+    ('numa.h', 'test -f /usr/include/numa.h', 'libnuma-dev'),
+    ('libdrm', 'test -d /usr/include/libdrm', 'libdrm-dev'),
+    # Ubuntu 24.04's libpci-dev puts the header in the multiarch include dir.
+    ('pci.h', 'test -f /usr/include/pci/pci.h || test -f /usr/include/x86_64-linux-gnu/pci/pci.h', 'libpci-dev'),
+    ('hipcc', 'test -x "${ROCM_PATH:-/opt/rocm}/bin/hipcc"', None),
+    ('hip-lang', 'test -f "${ROCM_PATH:-/opt/rocm}/lib/cmake/hip-lang/hip-lang-config.cmake"', None),
+    ('libibverbs', '/sbin/ldconfig -p | grep -q libibverbs.so.1', None),
+    ('pip', 'python3 -m pip --version', None),
+    ('torch', 'python3 -c "import torch"', None),
+)
+
+# Locates the mori package without importing it, so a mori that fails to load still trips the guard.
+_ENV_MORI_PY = (
+    'import importlib.util, os, sys\n'
+    's = importlib.util.find_spec("mori")\n'
+    'd = s and os.path.realpath(os.path.dirname(s.origin) if s.origin else list(s.submodule_search_locations)[0])\n'
+    'm = os.path.realpath(sys.argv[1])\n'
+    f'print("{MORI_IN_DIR}" if d and (d == m or d.startswith(m + os.sep)) else "MORI_AT=%s" % d)\n'
+)
+
+
+def deps_check_cmd():
+    """Print ``MISSING:<item>`` for each missing build dependency, then ``CHECK_DONE``."""
+    checks = ' '.join(f'{{ {test}; }} >/dev/null 2>&1 || echo MISSING:{item};' for item, test, _ in BUILD_DEPS)
+    return f'{checks} echo {CHECK_DONE}'
+
+
+def parse_missing(out_dict):
+    """Map each node to the items its check printed as ``MISSING:``, or to None when the check did not finish."""
+    return {
+        node: re.findall(r'MISSING:(\S+)', out) if out and CHECK_DONE in out else None for node, out in out_dict.items()
+    }
+
+
+def apt_packages(missing):
+    """The apt packages that provide the ``missing`` items; items CVS never installs map to none."""
+    packages = {item: package for item, _, package in BUILD_DEPS if package}
+    return sorted({packages[item] for item in missing if item in packages})
+
+
+def storage_layout(seen, head):
+    """``shared`` when every node sees the marker the head wrote into mori_dir, ``local`` when only the head does.
+
+    ``seen`` maps each node to whether it sees the marker. Raises ValueError naming the nodes
+    that cannot see it when the storage is neither.
+    """
+    blind = sorted(node for node, ok in seen.items() if not ok)
+    if not blind:
+        return 'shared'
+    if set(blind) == set(seen) - {head}:
+        return 'local'
+    raise ValueError(
+        f'mori_dir is not visible from node(s) {", ".join(blind)} while other nodes share it; '
+        'put mori_dir on storage that every node or only one node sees'
+    )
+
+
+def env_mori_check_cmd(mori_dir):
+    """Print ``MORI_IN_DIR`` when the ``mori`` that python3 finds outside CVS lives under ``mori_dir``."""
+    return f'cd / && python3 -c {shlex.quote(_ENV_MORI_PY)} {shlex.quote(mori_dir)}'
+
+
+def checkout_cmd(mori_dir, git_url, git_ref):
+    """Clone ``git_url`` into ``mori_dir`` unless it is already a checkout, then check out ``git_ref`` and its submodules.
+
+    An existing checkout is not fetched, so a node without internet can use one cloned in advance.
+    The clone is ``git init`` plus fetch because mori_dir may already hold the storage marker.
+    """
+    md, url, ref = (shlex.quote(value) for value in (mori_dir, git_url, git_ref))
+    return (
+        f'mkdir -p {md} && cd {md} && '
+        f'{{ [ -d .git ] || {{ git init -q && git remote add origin {url} && git fetch -q --tags origin; }}; }} && '
+        f'{{ git checkout -q --detach origin/{ref} 2>/dev/null || git checkout -q --detach {ref}; }} && '
+        'git submodule update -q --init --recursive'
+    )
+
+
+def build_cmd(mori_dir, log_path):
+    """Build MoRI and its examples into ``<mori_dir>/site``, teeing the commit and build output to ``log_path``.
+
+    ``--target`` keeps pip away from the environment's own MoRI. ``log_path`` is not quoted, so it
+    may use ``$(hostname)``.
+    """
+    md = shlex.quote(mori_dir)
+    return (
+        f'set -o pipefail; cd {md} && '
+        f'{{ echo "MoRI commit $(git rev-parse HEAD)"; '
+        f'BUILD_EXAMPLES=ON python3 -m pip install --upgrade --target {md}/site .; }} 2>&1 | tee {log_path}'
+    )
+
+
+def verify_build_cmd(mori_dir):
+    """Print ``MISSING:`` for each example binary and for a ``mori`` that ``site`` does not provide, then ``CHECK_DONE``."""
+    md = shlex.quote(mori_dir)
+    site = shlex.quote(f'{mori_dir}/site/')
+    return (
+        f'for b in {" ".join(EXAMPLES)}; do [ -x {md}/build/examples/$b ] || echo MISSING:build/examples/$b; done; '
+        f'cd / && PYTHONPATH={site} python3 -c "import mori, sys; sys.exit(not mori.__file__.startswith(sys.argv[1]))" '
+        f'{site} >/dev/null || echo MISSING:site/mori; echo {CHECK_DONE}'
+    )
+
+
+def built_commit(orch, mori_dir):
+    """The short commit checked out in ``mori_dir`` on the head node, or None when it is not a checkout."""
+    out = orch.exec_on_head(f'git -C {shlex.quote(mori_dir)} rev-parse --short HEAD 2>/dev/null', timeout=60)
+    commit = (next(iter(out.values()), '') or '').strip()
+    return commit if re.fullmatch(r'[0-9a-f]{7,40}', commit) else None
+
 
 def _convert_value(val: str):
     """Convert string to int or float."""
@@ -212,11 +334,12 @@ class MoriBenchmark:
         self.run_log_dir = f"{self.log_dir}/{time.strftime('%Y%m%d_%H%M%S')}"
         self.expected_results_dict = self.mori_dict['expected_results']
         # Exported inline rather than via container.env so the same prefix works under baremetal.
-        # benchmark.py imports tests.python.* from mori_dir, so that PYTHONPATH entry is exported
-        # last: it then stacks on any PYTHONPATH from env instead of being replaced by it.
+        # install_mori builds the mori package into mori_dir/site, which must win over the
+        # environment's own MoRI; benchmark.py imports tests.python.* from mori_dir. Exported last,
+        # so it stacks on any PYTHONPATH from env instead of being replaced by it.
         exports = [
             env_lib.build_env_prefix(self.env),
-            env_lib.build_env_prefix({'PYTHONPATH': f'{self.mori_dir}:$PYTHONPATH'}),
+            env_lib.build_env_prefix({'PYTHONPATH': f'{self.mori_dir}/site:{self.mori_dir}:$PYTHONPATH'}),
         ]
         self.env_prefix = ' ; '.join(e for e in exports if e) + '; '
 
