@@ -1,6 +1,7 @@
 # Support-matrix compatibility gate — design
 
-Status: accepted (single-data-file design); implementation in progress.
+Status: accepted (single-data-file design); implemented and wired into the training
+and inference suites.
 Branch: `solaiys/dtni-hwsw-support-matrix-check`
 Scope: Inference and Training workload suites run through CVS.
 
@@ -54,10 +55,14 @@ Top level of a data file:
 }
 ```
 
-Lookup at run time: `frameworks[framework].models[model]`. The model is matched on
-the normalized key (lower-cased, trimmed) or any entry in its optional `aliases`
-list (so a suite can pass either a short name like `llama-3.1-8b` or an HF id like
-`meta-llama/Llama-3.1-70B`).
+Lookup at run time: `frameworks[framework].models[model]`. Matching is
+**separator- and path-insensitive**: the model string is lower-cased, reduced to the
+basename of a path or `org/model` HF id, and stripped of `-`, `_`, `.` and spaces.
+So one entry keyed `llama-3.1-8b` matches every spelling the suites actually pass —
+jaxmaxtext `llama3.1-8b`, megatron `llama3.1_8B`, torchtitan `llama3_1_8b`, a local
+path `/root/models/Llama-3.1-8B`, and the HF id `meta-llama/Llama-3.1-8B`. An
+`aliases` entry is needed only for a genuinely different name (e.g. a MaxText preset
+like `deepseek2-16b`). The matrix lists **only models that have an input config**.
 
 A framework or model **absent** from the file is **allowed to run** (never
 blocked), and the gate logs:
@@ -75,7 +80,7 @@ entry.
 "llama-3.1-8b": {
   "aliases": ["meta-llama/Llama-3.1-8B"],
   "unsupported_gpu_arch": [],
-  "required_rocm_min_version": "7.0",
+  "required_rocm_min_version": "",
   "required_rocm_max_version": "",
   "unsupported_params": {
     "precision": {
@@ -92,10 +97,13 @@ Field semantics (every rule is a **deny**; the run is stopped if any matches):
 - **`unsupported_gpu_arch`** (model-level deny / Check-A): the model does not run
   on these archs at all. Detected arch in this list → stop. Empty `[]` → the model
   runs on every arch. Kept present (even when empty) so the field is discoverable.
+  An **undetected GPU is itself a violation** (the gate cannot certify a GPU it
+  cannot identify) — see §6.
 - **`required_rocm_min_version`** / **`required_rocm_max_version`** (Check-B):
   detected ROCm (inside the container, where the workload runs) must be within
-  `[min, max]`. An empty string `""` means that bound is unset. `max` is left `""`
-  until a model is **deprecated** — set it then to gate newer ROCm.
+  `[min, max]`. An empty string `""` means that bound is unset; **both are empty by
+  default**, so ROCm is not gated until a model owner sets a real minimum (or a
+  `max` when a model is **deprecated**).
 - **`unsupported_params.<param>.<value>`** (Check-C, per parameter): the **list of
   archs on which that parameter value is not supported**. If the run uses
   `precision=mxfp4` and the detected arch is in
@@ -144,6 +152,9 @@ CVS_SUPPORT_MATRIX_GATE = 1 | 0 | ON | OFF | TRUE | FALSE   (case-insensitive)
   and continues, plus a one-line NOTE that `CVS_SUPPORT_MATRIX_GATE` is disabled.
   This lets a user do an experiment run without being blocked by the gate.
 
+A data file that fails to load is itself treated as a violation: the stage fails
+when the gate is on, and warns-and-continues when it is off.
+
 This switch is documented for users in `README.md` in this folder.
 
 ## 6. Where and how the gate runs
@@ -157,15 +168,21 @@ the first workload stage. The stage:
    sweeps). It calls the library:
    `run_support_matrix_gate("training", framework, model, params, orch)`.
 2. The library **detects at run time on every participating node**, through the same
-   `orch` handle (its `.exec()` routes into the launched container):
-   - GPU arch via `rocm-smi` → `get_model_from_rocm_smi_output()` (existing helper in
-     `cvs/lib/utils_lib.py`), normalized to a canonical token.
+   `orch` handle (its `.exec()` routes into the launched container), with a short
+   probe timeout:
+   - GPU arch via `rocm-smi`, falling back to `amd-smi` — both parsed by the existing
+     `get_model_from_rocm_smi_output()` (`cvs/lib/utils_lib.py`) and normalized to a
+     canonical token. That helper defaults to `mi300x` for unrecognized output, so
+     the gate trusts `mi300x` only when the probe actually names it; anything else
+     (a banner, or an arch the parser does not know) is reported as **undetected**,
+     never defaulted.
    - ROCm version via `cat /opt/rocm/.info/version`, falling back to
      `amd-smi version --json` then `hipconfig --version`.
 3. It looks up `frameworks[framework].models[model]` and evaluates Check-A
    (`unsupported_gpu_arch`), Check-B (ROCm range), and Check-C (`unsupported_params`)
    against each node's detected arch/ROCm — each is a deny rule, so a match is a
-   violation.
+   violation. An **undetected GPU arch is a violation**; undetected ROCm is only a
+   warning (a model gates ROCm only when it declares a min/max).
 4. It applies the env switch: enforce → return "must stop" with the violation list;
    OFF → log warnings + the disabled-NOTE and return "may proceed". An absent
    framework/model logs the not-characterized message and proceeds.
@@ -198,11 +215,14 @@ cluster).
 
 ## 8. Data today
 
-`training_support_matrix.json` carries **jaxmaxtext** data transcribed from the DTNI
-tracker (MXFP4/MXFP8 denied on MI300X/MI325X for Llama-3.1-8B; FP8 denied on MI300X
-for Llama-3.3-70B; Llama-3.1-405B model-level deny on MI300X). The megatron and
-torchtitan blocks, and the whole `inference_support_matrix.json`, are present but
-empty — owners fill them later.
+Each framework lists only the models that have an input config (pruned to the
+config-backed set). `training_support_matrix.json` carries **jaxmaxtext** deny data
+transcribed from the DTNI tracker (MXFP4/MXFP8 denied on MI300X/MI325X for
+Llama-3.1-8B; FP8 denied on MI300X for Llama-3.3-70B; Llama-3.1-405B model-level deny
+on MI300X), with MaxText-preset aliases where a config uses a different name. The
+megatron and torchtitan models, and the whole `inference_support_matrix.json`, are
+present as empty templates (no denies, `required_rocm_min_version` empty) for owners
+to fill later.
 
 ## 9. Config filenames are not used
 
