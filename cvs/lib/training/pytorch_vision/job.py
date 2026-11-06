@@ -26,8 +26,9 @@ from cvs.lib.utils.gpu import agg_readings, start_gpu_poller, stop_and_collect_g
 log = globals.log
 
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-# Printed by benchmark._start_distributed once NCCL is up on every rank.
-STARTUP_OK = "PYTORCH_VISION_STARTUP_OK"
+# Printed by benchmark once warmup ends, and with the metrics on success.
+WARMUP_OK = "PYTORCH_VISION_WARMUP_OK"
+RUN_OK = "PYTORCH_VISION_OK "
 
 
 def _normalized_hardware_name(value):
@@ -55,7 +56,7 @@ class _BoundedHostHandle:
                 "awk '$0 !~ /ALLOWED|DENIED|IPVS: .*no destination available/'"
             )
         else:
-            command = command.replace("sudo dmesg", "sudo -n dmesg")
+            command = command.replace("sudo dmesg", "sudo -n dmesg").replace("| sudo tee ", "| sudo -n tee ")
         result = self._handle.exec(
             command,
             timeout=60,
@@ -98,6 +99,7 @@ class PyTorchVisionJob:
             checkpoint_root = f"{checkpoint_root}/{self.sweep.label}/{run_id}"
         self.checkpoint_path = f"{checkpoint_root}/checkpoint.pt"
         self.training_start_time = None
+        self._dmesg_window = None
         self.monitor_metrics = {}
         self.run_elapsed_seconds = None
 
@@ -444,14 +446,14 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
                 # Each attempt is judged on its own kernel log; a failed start's
                 # segfault is kept in startup_failure*.log and counted instead.
                 if self.variant.training.verify_dmesg:
-                    self.training_start_time = self._host_date()
+                    self._open_dmesg_window(attempt + 1)
                 started = time.monotonic()
                 result = self._launch()
-                if attempt == retries or not self._failed_to_start(result):
+                if attempt == retries or not self._failed_before_measuring(result):
                     break
                 self._keep_failed_start(attempt + 1)
                 log.warning(
-                    "%s: no rank finished NCCL startup on attempt %d; relaunching",
+                    "%s: launch ended before warmup finished on attempt %d; relaunching",
                     self.sweep_name,
                     attempt + 1,
                 )
@@ -484,15 +486,16 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
         return self.orch.exec(self.build_command(), timeout=timeout, detailed=True)
 
     @staticmethod
-    def _failed_to_start(result):
-        """True when no node got past NCCL startup.
+    def _failed_before_measuring(result):
+        """True when the launch ended before the measured window began.
 
-        The startup probe is an all-reduce over every rank, so after a real
-        start every node prints STARTUP_OK; a failure later in the run is never
-        mistaken for a failed start.
+        Warmup is where FSDP and the HF Trainer create their remaining
+        communicators, and the libdrm_amdgpu segfault that breaks NCCL starts
+        lands there too. Rank 0 prints WARMUP_OK as the measured window opens,
+        so a failure inside that window is never relaunched.
         """
         outputs = [_output_text(host_result) for host_result in (result or {}).values()]
-        return bool(outputs) and not any(STARTUP_OK in text for text in outputs)
+        return bool(outputs) and not any(WARMUP_OK in text or RUN_OK in text for text in outputs)
 
     def _keep_failed_start(self, attempt):
         """Stop leftover ranks and keep the failed attempt's logs for the report."""
@@ -516,19 +519,26 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
             raise RuntimeError("AMD-SMI memory tracking did not report per-device used memory")
         self.monitor_metrics = {"training.peak_memory_used_mb": peak_used}
 
+    def _open_dmesg_window(self, attempt):
+        from cvs.lib.verify_lib import DmesgWindow
+
+        # Markers rather than `date`: dmesg's ISO clock drifts seconds ahead of
+        # wall time with uptime, which put a failed start's crash inside the
+        # relaunch's clock window.
+        label = f"PyTorch Vision {self.sweep_name} {os.path.basename(self.output_dir)} attempt {attempt}"
+        handle = getattr(self.orch, "all", None)
+        if handle is None or not hasattr(handle, "exec"):
+            raise RuntimeError("container orchestrator does not expose a host execution handle")
+        self._dmesg_window = DmesgWindow(_BoundedHostHandle(handle, self.orch.hosts), label, use_markers=True)
+        self._dmesg_window.open()
+        self.training_start_time = self._dmesg_window.start_time
+
     def scan_dmesg_for_errors(self):
         if not self.variant.training.verify_dmesg:
             return
-        if not self.training_start_time:
-            raise RuntimeError("cannot verify dmesg without a training start time")
-        from cvs.lib.verify_lib import verify_dmesg_for_errors
-
-        verify_dmesg_for_errors(
-            _BoundedHostHandle(self.orch.all, self.orch.hosts),
-            self.training_start_time,
-            self._host_date(),
-            till_end_flag=False,
-        )
+        if self._dmesg_window is None:
+            raise RuntimeError("cannot verify dmesg without a training start marker")
+        self._dmesg_window.close_and_scan()
 
     def verify_training_log(self):
         patterns = self.variant.training.error_patterns
@@ -738,12 +748,3 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
                 failures[host] = _output_text(host_result)[-1500:]
         if failures:
             raise RuntimeError(f"{action} failed: {failures}")
-
-    def _host_date(self):
-        handle = getattr(self.orch, "all", None)
-        if handle is None or not hasattr(handle, "exec"):
-            raise RuntimeError("container orchestrator does not expose a host execution handle")
-        result = handle.exec("date", timeout=30, print_console=False)
-        if not result:
-            raise RuntimeError("host timestamp probe returned no results")
-        return result

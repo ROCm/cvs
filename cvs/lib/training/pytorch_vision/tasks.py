@@ -981,6 +981,7 @@ def run_task(bench, args, rank, world_size, device, local_rank):
         _step()
     torch.cuda.synchronize(device)
     dist.barrier()
+    bench._mark_warmup_done(rank)
     torch.cuda.reset_peak_memory_stats(device)
 
     milestones = {int(v) for v in args.milestone_steps.split(",") if v.strip()}

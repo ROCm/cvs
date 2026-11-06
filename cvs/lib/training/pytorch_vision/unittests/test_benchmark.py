@@ -311,13 +311,23 @@ class TestCoordinatedExit(unittest.TestCase):
 
 
 @unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")
+class TestWarmupMarker(unittest.TestCase):
+    def test_rank_zero_prints_the_marker_the_launcher_reads(self):
+        from cvs.lib.training.pytorch_vision.job import WARMUP_OK
+
+        self.assertEqual(benchmark.WARMUP_OK, WARMUP_OK)
+        printed = []
+        with mock.patch("builtins.print", side_effect=lambda text, **_: printed.append(text)):
+            benchmark._mark_warmup_done(1)
+            benchmark._mark_warmup_done(0)
+        self.assertEqual(printed, [WARMUP_OK])
+
+
+@unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")
 class TestStartDistributed(unittest.TestCase):
     """A failed NCCL start must leave at once and say so; a good one says so too."""
 
     def _start(self, init_error=None, hang=False):
-        from cvs.lib.training.pytorch_vision.job import STARTUP_OK
-
-        self.assertEqual(benchmark.STARTUP_OK, STARTUP_OK)
         exited = threading.Event()
         printed = []
 

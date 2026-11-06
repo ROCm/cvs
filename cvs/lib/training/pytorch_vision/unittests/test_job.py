@@ -433,15 +433,39 @@ class TestPyTorchVisionJob(unittest.TestCase):
         ):
             PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").run_benchmark()
 
-    def test_run_captures_host_timestamp(self):
+    def test_run_opens_marked_dmesg_window(self):
         orch = FakeOrchestrator()
         readings = [{"gpu.used_vram": 16, "gpu.max_used_vram": 2}]
+        job = PyTorchVisionJob(orch, _variant(), "w1")
         with (
             patch("cvs.lib.training.pytorch_vision.job.start_gpu_poller"),
             patch("cvs.lib.training.pytorch_vision.job.stop_and_collect_gpu_poller", return_value=readings),
         ):
-            PyTorchVisionJob(orch, _variant(), "w1").run_benchmark()
-        self.assertEqual(orch.commands[0][0], "date")
+            job.run_benchmark()
+        self.assertIn("| sudo -n tee /dev/kmsg", orch.commands[0][0])
+        self.assertIn("attempt 1", orch.commands[0][0])
+        self.assertTrue(job._dmesg_window.use_markers)
+        self.assertEqual(job.training_start_time, {"node0": ""})
+
+    def test_each_startup_attempt_gets_its_own_marker(self):
+        variant = _variant()
+        variant.training.startup_retries = 1
+        orch = FakeOrchestrator()
+        job = PyTorchVisionJob(orch, variant, "w1")
+        launches = [{"node0": {"exit_code": 0, "output": text}} for text in ("segfault", "PYTORCH_VISION_WARMUP_OK")]
+        with (
+            patch("cvs.lib.training.pytorch_vision.job.start_gpu_poller"),
+            patch("cvs.lib.training.pytorch_vision.job.stop_and_collect_gpu_poller"),
+            patch.object(job, "_set_monitor_metrics"),
+            patch.object(job, "_launch", side_effect=launches),
+            patch.object(job, "_keep_failed_start"),
+        ):
+            job.run_benchmark()
+        markers = [command for command, _ in orch.commands if "/dev/kmsg" in command]
+        self.assertEqual(len(markers), 2)
+        self.assertIn("attempt 1", markers[0])
+        self.assertIn("attempt 2", markers[1])
+        self.assertTrue(job._dmesg_window.start_marker.endswith("attempt 2"))
 
     def test_monitor_records_maximum_per_device_used_memory(self):
         job = PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1")
@@ -460,17 +484,21 @@ class TestPyTorchVisionJob(unittest.TestCase):
         PyTorchVisionJob(orch, variant, "w1").scan_dmesg_for_errors()
         self.assertEqual(orch.commands, [])
 
-    def test_scans_dmesg_over_training_window(self):
-        orch = FakeOrchestrator({"node0": "Mon Jan  2 03:04:05 UTC 2026"})
+    def test_scans_dmesg_between_attempt_markers(self):
+        orch = FakeOrchestrator()
         job = PyTorchVisionJob(orch, _variant(), "w1")
-        job.training_start_time = {"node0": "Mon Jan  2 03:03:05 UTC 2026"}
-        with patch("cvs.lib.verify_lib.verify_dmesg_for_errors") as verify:
+        job._open_dmesg_window(2)
+        with patch("cvs.lib.verify_lib.verify_dmesg_during_test") as verify:
             job.scan_dmesg_for_errors()
         args = verify.call_args.args
         self.assertIs(args[0]._handle, orch.all)
-        self.assertEqual(args[1], job.training_start_time)
-        self.assertEqual(args[2], {"node0": "Mon Jan  2 03:04:05 UTC 2026"})
-        self.assertFalse(verify.call_args.kwargs["till_end_flag"])
+        self.assertEqual(args[1], job._dmesg_window.start_marker)
+        self.assertEqual(args[2], job._dmesg_window.end_marker)
+        self.assertTrue(args[1].endswith("attempt 2"))
+
+    def test_dmesg_scan_requires_an_opened_window(self):
+        with self.assertRaisesRegex(RuntimeError, "start marker"):
+            PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1").scan_dmesg_for_errors()
 
     def test_bounded_host_handle_forces_noninteractive_sudo(self):
         orch = FakeOrchestrator({"node0": {"exit_code": 0, "output": "clean"}})
@@ -532,11 +560,17 @@ class TestWorkloadIsolation(unittest.TestCase):
         self.assertIn("training.node1.log", job.build_command(node_rank=1))
         self.assertNotIn("training.node0.log", job.build_command(node_rank=1))
 
-    def test_a_start_no_rank_finished_is_a_failed_start(self):
-        self.assertTrue(PyTorchVisionJob._failed_to_start({"n0": "segfault", "n1": ""}))
-        self.assertTrue(PyTorchVisionJob._failed_to_start({"n0": {"exit_code": 1, "output": "x"}}))
-        self.assertFalse(PyTorchVisionJob._failed_to_start({"n0": "PYTORCH_VISION_STARTUP_OK\nTraceback", "n1": ""}))
-        self.assertFalse(PyTorchVisionJob._failed_to_start({}))
+    def test_a_launch_that_ends_before_warmup_finished_is_relaunchable(self):
+        self.assertTrue(PyTorchVisionJob._failed_before_measuring({"n0": "segfault", "n1": ""}))
+        self.assertTrue(PyTorchVisionJob._failed_before_measuring({"n0": {"exit_code": 1, "output": "x"}}))
+        self.assertTrue(
+            PyTorchVisionJob._failed_before_measuring({"n0": "PYTORCH_VISION_STARTUP_OK\nTraceback", "n1": ""})
+        )
+        self.assertFalse(
+            PyTorchVisionJob._failed_before_measuring({"n0": "PYTORCH_VISION_WARMUP_OK\nTraceback", "n1": ""})
+        )
+        self.assertFalse(PyTorchVisionJob._failed_before_measuring({"n0": 'PYTORCH_VISION_OK {"x": 1}'}))
+        self.assertFalse(PyTorchVisionJob._failed_before_measuring({}))
 
     def _run_with_launches(self, retries, outputs):
         variant = _variant()
@@ -555,13 +589,19 @@ class TestWorkloadIsolation(unittest.TestCase):
         return job, launch, keep
 
     def test_failed_start_is_relaunched_and_counted(self):
-        job, launch, keep = self._run_with_launches(2, ["segfault", "PYTORCH_VISION_STARTUP_OK"])
+        job, launch, keep = self._run_with_launches(2, ["segfault", "PYTORCH_VISION_WARMUP_OK"])
         self.assertEqual(launch.call_count, 2)
         keep.assert_called_once_with(1)
         self.assertEqual(job.startup_retries_used, 1)
 
-    def test_failure_after_startup_is_not_relaunched(self):
-        job, launch, keep = self._run_with_launches(2, ["PYTORCH_VISION_STARTUP_OK\nTraceback"])
+    def test_failure_during_warmup_is_relaunched(self):
+        outputs = ["PYTORCH_VISION_STARTUP_OK\nSignal 11", "PYTORCH_VISION_STARTUP_OK\nPYTORCH_VISION_WARMUP_OK"]
+        job, launch, keep = self._run_with_launches(2, outputs)
+        self.assertEqual(launch.call_count, 2)
+        self.assertEqual(job.startup_retries_used, 1)
+
+    def test_failure_after_warmup_is_not_relaunched(self):
+        job, launch, keep = self._run_with_launches(2, ["PYTORCH_VISION_WARMUP_OK\nTraceback"])
         self.assertEqual(launch.call_count, 1)
         keep.assert_not_called()
         self.assertEqual(job.startup_retries_used, 0)

@@ -1256,6 +1256,7 @@ def _run_hf_trainer(args, rank, world_size, device, local_rank):
             # starts after warmup. That also scopes energy to the measured
             # window, as on the native path.
             if not energy and state.global_step >= max(1, args.warmup_steps):
+                _mark_warmup_done(rank)
                 energy["tracker"], energy["payload"] = _start_codecarbon(args, rank, torch.cuda.device_count())
 
         def on_log(self, _a, state, _c, logs=None, **_kw):
@@ -1536,6 +1537,7 @@ def main():
         scheduler.step()
     torch.cuda.synchronize(device)
     dist.barrier()
+    _mark_warmup_done(rank)
     torch.cuda.reset_peak_memory_stats(device)
     if rocal_loader is not None:
         rocal_loader.reset()
@@ -1823,6 +1825,19 @@ def _finish(rank, world_size, artifact_error, timeout_s):
 
 STARTUP_OK = "PYTORCH_VISION_STARTUP_OK"
 STARTUP_FAILED = "PYTORCH_VISION_STARTUP_FAILED"
+WARMUP_OK = "PYTORCH_VISION_WARMUP_OK"
+
+
+def _mark_warmup_done(rank):
+    """Tell the launcher that the measured window has begun.
+
+    FSDP and the HF Trainer create their remaining communicators during warmup,
+    where the libdrm_amdgpu segfault described in _start_distributed also
+    lands, so a launch that ends before this line is relaunched like a failed
+    start.
+    """
+    if rank == 0:
+        print(WARMUP_OK, flush=True)
 
 
 def _start_distributed(device, local_rank, collective_timeout_s, startup_timeout_s):
