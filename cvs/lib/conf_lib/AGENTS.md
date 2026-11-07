@@ -41,8 +41,9 @@ The schema blocks every suite composes. `config_loader.py` re-exports `_Forbid`,
 - Validates with `context={"placeholders": "reject", "config_path": Path(config_path)}`. There is
   no switch to allow placeholders.
 - Reads no threshold file. A schema that uses one attaches it in a `mode="before"` validator with
-  `attach_threshold_file(data, info.context)`, as `schemas/vllm.py` does; a config with no
-  threshold file then gets `{}`, and the schema's own coverage rules decide.
+  `attach_threshold_file(data, info.context)`, as `schemas/vllm.py` does. A config with no
+  threshold file then gets `{}` and `enforce_thresholds` false, so it runs record-only; with a
+  file, the schema's own coverage rules apply.
 - `ValidationError` becomes `ConfigError` (a `ValueError`) with one `loc: msg` line per error,
   built from `errors(include_input=False)`; never put input values in a message.
 - `container`: cluster `container` with `config.container.model_dump()` deep-merged on top

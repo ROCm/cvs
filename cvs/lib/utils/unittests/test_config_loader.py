@@ -479,14 +479,17 @@ class TestAttachThresholdFile(unittest.TestCase):
         given = {"threshold_json": "missing_threshold.json", "thresholds": {"cell": {}}}
         self.assertIs(attach_threshold_file(given, {"config_path": self.config_path}), given)
 
-    def test_config_with_no_threshold_file_gets_empty_thresholds(self):
-        attached = attach_threshold_file({"threshold_json": ""}, {"config_path": self.config_path})
-        self.assertEqual(attached, {"threshold_json": "", "thresholds": {}})
+    def test_config_with_no_threshold_file_records_without_gating(self):
+        with self.assertLogs(level="WARNING"):
+            attached = attach_threshold_file({"threshold_json": ""}, {"config_path": self.config_path})
+        self.assertEqual(attached, {"threshold_json": "", "thresholds": {}, "enforce_thresholds": False})
 
-    def test_named_threshold_file_is_read_without_comment_keys(self):
+    def test_named_threshold_file_is_read_and_keeps_enforcement(self):
         (self.config_path.parent / "a_threshold.json").write_text(json.dumps({"_comment": "x", "cell": {"m": {}}}))
-        attached = attach_threshold_file({"threshold_json": "a_threshold.json"}, {"config_path": self.config_path})
+        data = {"threshold_json": "a_threshold.json", "enforce_thresholds": True}
+        attached = attach_threshold_file(data, {"config_path": self.config_path})
         self.assertEqual(attached["thresholds"], {"cell": {"m": {}}})
+        self.assertIs(attached["enforce_thresholds"], True)
 
     def test_named_threshold_file_that_is_missing_raises(self):
         with self.assertRaises(FileNotFoundError):

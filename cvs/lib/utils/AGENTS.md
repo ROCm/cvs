@@ -64,8 +64,9 @@ before any subclass coverage check runs on a config that will be rejected anyway
 `substitute_placeholders(config_path, cluster_dict, all_placeholders=False)` is the same without the
 threshold file: it returns only the substituted dict, and `load_config` uses it.
 `attach_threshold_file(data, context)` finds the file the same way for a schema's `mode="before"`
-validator, and gives `{}` when the config names no file and has no sibling. It runs after
-substitution, so a placeholder in `threshold_json` expands there.
+validator. When the config names no file and has no sibling it gives `{}`, sets
+`enforce_thresholds` false (record-only) and logs a warning; a named file that is missing raises.
+It runs after substitution, so a placeholder in `threshold_json` expands there.
 
 - **Accepts**: path to a variant `_config.json` + a resolved cluster dict
 - **Threshold file**: required; a missing one raises `FileNotFoundError`

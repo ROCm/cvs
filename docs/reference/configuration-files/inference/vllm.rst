@@ -89,10 +89,10 @@ A vLLM configuration file has these top-level keys:
      - Description
    * - ``enforce_thresholds``
      - no (default ``true``)
-     - When ``false``, metrics record and no threshold spec is asserted. Packaged Llama files set ``false``.
+     - When ``false``, or when there is no threshold file, metrics record and no threshold spec is asserted. Packaged Llama files set ``false``.
    * - ``threshold_json``
-     - yes
-     - Explicit path to the threshold file. See :ref:`vllm-threshold-discovery`.
+     - no
+     - Path to the threshold file. See :ref:`vllm-threshold-discovery`.
    * - ``container``
      - yes
      - Container/Docker settings. See :ref:`vllm-container`.
@@ -785,7 +785,7 @@ Thresholds are keyed by canonical cell, then by a bare metric name:
 The ``4000`` and ``500`` figures only illustrate the grammar. Packaged threshold files use ``0``.
 
 A cell may contain any subset of the registry, including an empty object. When
-``enforce_thresholds`` is true, every selected run must have a threshold cell,
+``enforce_thresholds`` is true and a threshold file is loaded, every selected run must have a threshold cell,
 but only specs present in that cell create verification subtests. When it is
 false, recorded metrics keep status ``pass`` and no threshold subtest is
 emitted.
@@ -817,7 +817,12 @@ Threshold file discovery
 Set ``threshold_json`` to the threshold file. A relative path resolves against
 the configuration file's directory. If that file is missing, CVS warns and
 uses the packaged file of the same name. Copy the sibling beside the config
-when you want to edit the numbers.
+when you want to edit the numbers. A ``threshold_json`` that names a missing
+file with no packaged copy fails the load.
+
+Without ``threshold_json``, CVS uses a sole ``*threshold.json`` beside the
+configuration file. With no threshold file at all, metrics record without
+gating, as if ``enforce_thresholds`` were ``false``, and CVS logs a warning.
 
 There are 33 packaged threshold files. Every numeric ``value`` in them is
 ``0``. Those zeros are uncalibrated placeholders, not measured limits. The

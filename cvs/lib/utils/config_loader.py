@@ -44,6 +44,7 @@ from typing import Any, Dict
 from pydantic import Field, model_validator
 from typing_extensions import Literal
 
+from cvs.lib import globals
 from cvs.lib.conf_lib.config_blocks import (  # noqa: F401 - re-exported for suite loaders
     ContainerSpec,
     ModelSpec,
@@ -53,6 +54,8 @@ from cvs.lib.conf_lib.config_blocks import (  # noqa: F401 - re-exported for sui
     _Forbid,
 )
 from cvs.lib.utils_lib import config_placeholder_map
+
+log = globals.log
 
 
 # ---------- pydantic models (generic) ----------
@@ -223,15 +226,20 @@ def _read_thresholds(threshold_path):
 def attach_threshold_file(data, context):
     """Add ``thresholds`` from the config's threshold file, for a schema's ``mode="before"`` validator.
 
-    Applies only when the validation context holds the ``config_path`` that
+    For a schema with ``thresholds`` and ``enforce_thresholds`` fields. Applies
+    only when the validation context holds the ``config_path`` that
     `load_config` passes and the data has no ``thresholds`` yet. The file is
-    found as `substitute_config` finds it; a config with none gets ``{}``.
+    found as `substitute_config` finds it. A config with no threshold file
+    gets ``{}`` and ``enforce_thresholds`` false, so it runs record-only.
     """
     config_path = (context or {}).get("config_path")
     if config_path is None or not isinstance(data, dict) or "thresholds" in data:
         return data
     threshold_path = _find_threshold_file(data, Path(config_path))
-    return {**data, "thresholds": _read_thresholds(threshold_path) if threshold_path else {}}
+    if threshold_path is None:
+        log.warning("%s has no threshold file; metrics are recorded without gating", config_path)
+        return {**data, "thresholds": {}, "enforce_thresholds": False}
+    return {**data, "thresholds": _read_thresholds(threshold_path)}
 
 
 def _read_config(config_path):

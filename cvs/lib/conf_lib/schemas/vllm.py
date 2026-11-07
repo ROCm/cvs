@@ -292,7 +292,7 @@ class ResolvedRun:
 
 class VariantConfig(_Forbid):
     enforce_thresholds: bool = True
-    threshold_json: str
+    threshold_json: str = ""
     ib_hca_devices: Union[Literal["auto"], List[str], None] = "auto"
     ib_netdev: Optional[str] = None
     paths: Paths

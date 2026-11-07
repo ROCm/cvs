@@ -334,12 +334,22 @@ class TestThresholdFile(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             load_config(VariantConfig, self._write(threshold_json="no_such_threshold_xyz.json"), {"username": "test"})
 
-    def test_no_threshold_file_loads_unless_thresholds_are_enforced(self):
-        variant = load_config(VariantConfig, self._write(threshold_json=""), {"username": "test"}).config
-        self.assertEqual(variant.thresholds, {})
+    def test_no_threshold_file_runs_record_only_even_when_enforced(self):
+        path = self._write(enforce_thresholds=True)
+        config = json.loads(path.read_text())
+        del config["threshold_json"]
+        path.write_text(json.dumps(config))
+        with self.assertLogs(level="WARNING"):
+            variant = load_config(VariantConfig, path, {"username": "test"}).config
+        self.assertEqual((variant.thresholds, variant.enforce_thresholds), ({}, False))
+
+    def test_enforced_threshold_file_must_cover_every_selected_run(self):
+        second = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=32"
+        (self.tmp / "threshold.json").write_text(json.dumps({CELL: {}}))
+        path = self._write(enforce_thresholds=True, sweeps={CELL: {}, second: {}}, runs=[CELL, second])
         with self.assertRaises(ConfigError) as ctx:
-            load_config(VariantConfig, self._write(threshold_json="", enforce_thresholds=True), {"username": "test"})
-        self.assertIn("selected runs missing threshold coverage", str(ctx.exception))
+            load_config(VariantConfig, path, {"username": "test"})
+        self.assertIn(f"selected runs missing threshold coverage: ['{second}']", str(ctx.exception))
 
 
 class TestContainerForOrchestrator(unittest.TestCase):
