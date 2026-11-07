@@ -225,13 +225,13 @@ def attach_threshold_file(data, context):
 
     For a schema with ``thresholds`` and ``enforce_thresholds`` fields. Applies
     only when the validation context holds the ``config_path`` that
-    `load_config` passes and the data has no ``thresholds`` yet. Only a named
-    ``threshold_json`` is read, as `substitute_config` reads it; no sibling
-    file is looked for. A config that names none gets ``{}`` and
-    ``enforce_thresholds`` false, so it runs record-only.
+    `load_config` passes. Only a named ``threshold_json`` is read; no sibling
+    file is looked for, and any ``thresholds`` in the config itself is
+    replaced. A config that names none gets ``{}`` and ``enforce_thresholds``
+    false, so it runs record-only.
     """
     config_path = (context or {}).get("config_path")
-    if config_path is None or not isinstance(data, dict) or "thresholds" in data:
+    if config_path is None or not isinstance(data, dict):
         return data
     if not (data.get("threshold_json") or "").strip():
         log.warning("%s names no threshold_json; metrics are recorded without gating", config_path)

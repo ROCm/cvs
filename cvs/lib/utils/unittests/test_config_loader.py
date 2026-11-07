@@ -473,11 +473,18 @@ class TestAttachThresholdFile(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.config_path = Path(self._tmp.name) / "config.json"
 
-    def test_data_is_unchanged_without_a_config_path_or_with_thresholds(self):
-        data = {"threshold_json": "missing_threshold.json"}
+    def test_data_is_unchanged_without_a_config_path(self):
+        data = {"threshold_json": "missing_threshold.json", "thresholds": {"cell": {}}}
         self.assertIs(attach_threshold_file(data, None), data)
-        given = {"threshold_json": "missing_threshold.json", "thresholds": {"cell": {}}}
-        self.assertIs(attach_threshold_file(given, {"config_path": self.config_path}), given)
+
+    def test_thresholds_in_the_config_never_replace_threshold_json(self):
+        (self.config_path.parent / "a_threshold.json").write_text(json.dumps({"file": {}}))
+        context = {"config_path": self.config_path}
+        named = attach_threshold_file({"threshold_json": "a_threshold.json", "thresholds": {"inline": {}}}, context)
+        self.assertEqual(named["thresholds"], {"file": {}})
+        with self.assertLogs(level="WARNING"):
+            unnamed = attach_threshold_file({"thresholds": {"inline": {}}, "enforce_thresholds": True}, context)
+        self.assertEqual((unnamed["thresholds"], unnamed["enforce_thresholds"]), ({}, False))
 
     def test_unnamed_threshold_file_is_not_discovered_and_records_without_gating(self):
         (self.config_path.parent / "a_threshold.json").write_text(json.dumps({"cell": {"m": {}}}))
