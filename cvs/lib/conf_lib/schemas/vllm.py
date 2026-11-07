@@ -24,6 +24,7 @@ from cvs.lib.conf_lib.config_blocks import (
     has_placeholder,
     placeholders_rejected,
 )
+from cvs.lib.utils.config_loader import attach_threshold_file
 
 _CELL_RE = re.compile(
     r"^ISL=(?P<isl>[1-9]\d*),OSL=(?P<osl>[1-9]\d*),TP=(?P<tp>[1-9]\d*),PP=(?P<pp>[1-9]\d*),CONC=(?P<concurrency>[1-9]\d*)$"
@@ -304,6 +305,11 @@ class VariantConfig(_Forbid):
     accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
     _effective_topology: Any = PrivateAttr(default=None)
     _run_cells: Dict[str, RunCell] = PrivateAttr(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _attach_threshold_file(cls, data, info):
+        return attach_threshold_file(data, info.context)
 
     @field_validator("sweeps", mode="before")
     @classmethod

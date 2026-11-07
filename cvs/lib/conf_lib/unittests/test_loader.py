@@ -15,7 +15,6 @@ from unittest.mock import patch
 from cvs.core.run_layout import RunLayout
 from cvs.lib.conf_lib.config_blocks import Paths, _Forbid
 from cvs.lib.conf_lib.loader import ConfigError, load_config
-from cvs.lib.conf_lib.schemas.vllm import VariantConfig
 from cvs.lib.utils.config_loader import BaseVariantConfig
 from cvs.unittests.support import FAKE_CRED
 
@@ -70,8 +69,11 @@ class TestLoadConfig(unittest.TestCase):
         from_path = load_config(BaseVariantConfig, config_path, str(cluster_path))
         self.assertEqual(from_path.cluster, from_dict.cluster)
         self.assertNotIn("{user-id}", from_path.cluster["priv_key_file"])
-        self.assertEqual(from_path.config.thresholds, {"cell": {"m": {}}})
         self.assertEqual(from_path.container, from_dict.container)
+
+    def test_threshold_file_is_left_to_the_schema(self):
+        loaded = load_config(BaseVariantConfig, self._write_config(_base_config_dict()), {})
+        self.assertEqual(loaded.config.thresholds, {})
 
     def test_changeme_in_the_cluster_file_still_exits(self):
         config_path = self._write_config(_base_config_dict())
@@ -96,11 +98,6 @@ class TestLoadConfig(unittest.TestCase):
         )
         self.assertEqual(loaded.config.log_dir, "/home/jdoe/logs")
         self.assertEqual(loaded.config.expected_results, {"io_read": {}})
-
-    def test_vllm_model_still_needs_a_threshold_file(self):
-        config_path = self._write_config_without_threshold_file(_base_config_dict())
-        with self.assertRaises(FileNotFoundError):
-            load_config(VariantConfig, config_path, {})
 
     def test_config_container_is_merged_onto_the_cluster_container(self):
         config = _base_config_dict()

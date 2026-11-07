@@ -312,6 +312,36 @@ class TestShippedTemplates(unittest.TestCase):
         )
 
 
+class TestThresholdFile(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+
+    def _write(self, **overrides):
+        config = _config(**overrides)
+        del config["thresholds"]
+        path = self.tmp / "config.json"
+        path.write_text(json.dumps(config))
+        return path
+
+    def test_template_loads_its_named_threshold_file(self):
+        template = CONFIG_DIR / "mi3xx_vllm_llama33-70b_fp8_single.json"
+        variant = load_config(VariantConfig, write_filled_config(template, self.tmp), {"username": "test"}).config
+        self.assertEqual(sorted(set(variant.thresholds) - {"accuracy"}), sorted(variant.runs))
+
+    def test_named_threshold_file_that_is_missing_fails_the_load(self):
+        with self.assertRaises(FileNotFoundError):
+            load_config(VariantConfig, self._write(threshold_json="no_such_threshold_xyz.json"), {"username": "test"})
+
+    def test_no_threshold_file_loads_unless_thresholds_are_enforced(self):
+        variant = load_config(VariantConfig, self._write(threshold_json=""), {"username": "test"}).config
+        self.assertEqual(variant.thresholds, {})
+        with self.assertRaises(ConfigError) as ctx:
+            load_config(VariantConfig, self._write(threshold_json="", enforce_thresholds=True), {"username": "test"})
+        self.assertIn("selected runs missing threshold coverage", str(ctx.exception))
+
+
 class TestContainerForOrchestrator(unittest.TestCase):
     def test_cluster_env_volumes_and_shm_size_merge_without_aliasing(self):
         with tempfile.TemporaryDirectory() as tmp:

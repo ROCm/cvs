@@ -8,7 +8,8 @@ Holds the 3-pass placeholder substitution, the `enforce_thresholds` gate
 carried on `BaseVariantConfig`, and the `substitute_config` helper that reads
 a variant `config.json` + sibling `*threshold.json` and resolves placeholders.
 The schema blocks live in `cvs.lib.conf_lib.config_blocks` and are re-exported
-here; `cvs.lib.conf_lib.loader.load_config` builds on `substitute_config`.
+here; `cvs.lib.conf_lib.loader.load_config` builds on `substitute_placeholders`,
+and a schema that uses a threshold file loads it with `attach_threshold_file`.
 A per-framework module subclasses `BaseVariantConfig` or composes the blocks
 directly and adds its own params, sweep and `cell_key`.
 
@@ -169,11 +170,14 @@ def _find_packaged_threshold(name):
 
 
 def _find_threshold_file(raw, config_path):
-    """Return the threshold file a variant config names or sits next to.
+    """Return the threshold file a variant config names or sits next to, or None.
 
     Supports both layouts:
     - ``threshold_json`` in the config (literal path; vllm_single style), or
     - a sole ``*threshold.json`` sibling next to the config (atom style).
+
+    None means the config names no file and has no sibling. A named file that
+    is missing, with no packaged copy, raises.
     """
     threshold_json = (raw.get("threshold_json") or "").strip()
     if "<changeme>" in threshold_json.lower():
@@ -204,37 +208,71 @@ def _find_threshold_file(raw, config_path):
     else:
         threshold_candidates = sorted(config_path.parent.glob("*threshold.json"))
         if not threshold_candidates:
-            raise FileNotFoundError(f"no *threshold.json next to config: {config_path.parent}")
+            return None
         if len(threshold_candidates) > 1:
             raise ValueError(f"multiple *threshold.json files next to config (ambiguous): {threshold_candidates}")
         threshold_path = threshold_candidates[0]
     return threshold_path
 
 
-def substitute_config(config_path, cluster_dict, all_placeholders=False, load_thresholds=True):
-    """Read a variant config + sibling threshold file and resolve placeholders.
+def _read_thresholds(threshold_path):
+    thresholds = json.loads(threshold_path.read_text())
+    return {k: v for k, v in thresholds.items() if not k.startswith("_")}
 
-    Returns `(raw_dict, thresholds)`: the substituted config dict (NOT yet
-    validated -- the caller's per-framework `VariantConfig(**raw)` does that)
-    and the parsed, comment-stripped threshold dict. With `load_thresholds`
-    false, no threshold file is looked up and `thresholds` is `{}`, for suites
-    that keep their thresholds in the config itself.
+
+def attach_threshold_file(data, context):
+    """Add ``thresholds`` from the config's threshold file, for a schema's ``mode="before"`` validator.
+
+    Applies only when the validation context holds the ``config_path`` that
+    `load_config` passes and the data has no ``thresholds`` yet. The file is
+    found as `substitute_config` finds it; a config with none gets ``{}``.
+    """
+    config_path = (context or {}).get("config_path")
+    if config_path is None or not isinstance(data, dict) or "thresholds" in data:
+        return data
+    threshold_path = _find_threshold_file(data, Path(config_path))
+    return {**data, "thresholds": _read_thresholds(threshold_path) if threshold_path else {}}
+
+
+def _read_config(config_path):
+    config_path = Path(config_path)
+    if not config_path.is_file():
+        raise FileNotFoundError(f"variant config not found: {config_path}")
+    return json.loads(config_path.read_text())
+
+
+def substitute_placeholders(config_path, cluster_dict, all_placeholders=False):
+    """Read a config file and resolve its placeholders, without any threshold file.
 
     Pass 1 expands only `{user-id}` unless `all_placeholders` is true; then it
     expands the `utils_lib.config_placeholder_map` set that
     `resolve_test_config_placeholders` uses, without its `<changeme>` exit.
+    Top-level `_` keys are dropped. The result is not validated.
+    """
+    return _substitute(_read_config(config_path), cluster_dict, all_placeholders)
+
+
+def substitute_config(config_path, cluster_dict, all_placeholders=False):
+    """Read a variant config + sibling threshold file and resolve placeholders.
+
+    Returns `(raw_dict, thresholds)`: `substitute_placeholders` of the config
+    (NOT yet validated -- the caller's per-framework `VariantConfig(**raw)` does
+    that) and the parsed, comment-stripped threshold dict. The threshold file
+    is required.
 
     This is the framework-neutral body of the old `load_variant`: file read +
     3-pass substitution + threshold read. Per-framework loaders call it, attach
     ``thresholds``, then build their typed config.
     """
     config_path = Path(config_path)
-    if not config_path.is_file():
-        raise FileNotFoundError(f"variant config not found: {config_path}")
+    raw = _read_config(config_path)
+    threshold_path = _find_threshold_file(raw, config_path)
+    if threshold_path is None:
+        raise FileNotFoundError(f"no *threshold.json next to config: {config_path.parent}")
+    return _substitute(raw, cluster_dict, all_placeholders), _read_thresholds(threshold_path)
 
-    raw = json.loads(config_path.read_text())
-    thresholds = json.loads(_find_threshold_file(raw, config_path).read_text()) if load_thresholds else {}
 
+def _substitute(raw, cluster_dict, all_placeholders):
     # Pass 1: cluster placeholders ({user-id}, or the full test-config set) everywhere.
     if all_placeholders:
         cluster_map = config_placeholder_map(raw, _without_blank_username(cluster_dict))
@@ -260,7 +298,4 @@ def substitute_config(config_path, cluster_dict, all_placeholders=False, load_th
     raw = _walk_substitute(raw, flat_map)
 
     # Drop comment keys (e.g. "_comment") before framework/threshold validation.
-    raw = {k: v for k, v in raw.items() if not k.startswith("_")}
-    thresholds = {k: v for k, v in thresholds.items() if not k.startswith("_")}
-
-    return raw, thresholds
+    return {k: v for k, v in raw.items() if not k.startswith("_")}

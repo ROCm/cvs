@@ -10,8 +10,9 @@ Covers the public contract described in the spec:
   - substitute_config reads the threshold file from ``threshold_json`` when set
     (literal absolute path), or discovers a sole sibling ``*threshold.json``.
   - substitute_config raises FileNotFoundError when ``threshold_json`` names a
-    non-existent file, or when no sibling threshold exists and the field is empty,
-    unless ``load_thresholds=False`` skips the threshold file.
+    non-existent file, or when no sibling threshold exists and the field is empty.
+  - substitute_placeholders reads no threshold file; attach_threshold_file gives
+    a config with no threshold file empty thresholds.
   - Multiple sibling ``*threshold.json`` files raise ValueError (ambiguous).
 
 Framework: unittest.TestCase + self.subTest + unittest.mock (no pytest).
@@ -32,7 +33,9 @@ from cvs.lib.utils.config_loader import (
     ModelSpec,
     Paths,
     _find_packaged_threshold,
+    attach_threshold_file,
     substitute_config,
+    substitute_placeholders,
 )
 
 # ---------------------------------------------------------------------------
@@ -350,19 +353,19 @@ class TestSubstituteConfigThresholdJsonField(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 substitute_config(config_path, {})
 
-    def test_load_thresholds_false_skips_the_threshold_file(self):
+    def test_substitute_placeholders_needs_no_threshold_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = _base_config_dict()
             cfg["paths"]["log_dir"] = "/home/{user-id}/logs"
             config_path = self._write_config(Path(tmp), cfg)
-            raw, thresholds = substitute_config(config_path, {"username": "jdoe"}, load_thresholds=False)
-            self.assertEqual(thresholds, {})
+            raw = substitute_placeholders(config_path, {"username": "jdoe"})
             self.assertEqual(raw["paths"]["log_dir"], "/home/jdoe/logs")
+            self.assertNotIn("thresholds", raw)
 
     def test_config_without_paths_gets_no_paths_block(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = self._write_config(Path(tmp), {"log_dir": "/home/{user-id}/logs"})
-            raw, _ = substitute_config(config_path, {"username": "jdoe"}, load_thresholds=False)
+            raw = substitute_placeholders(config_path, {"username": "jdoe"})
             self.assertEqual(raw, {"log_dir": "/home/jdoe/logs"})
 
     def test_threshold_json_as_absolute_path_no_sibling_glob(self):
@@ -462,6 +465,32 @@ class TestSubstituteConfigThresholdJsonField(unittest.TestCase):
             _, thresholds = substitute_config(config_path, {})
             self.assertNotIn("_comment", thresholds)
             self.assertIn("cell1", thresholds)
+
+
+class TestAttachThresholdFile(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.config_path = Path(self._tmp.name) / "config.json"
+
+    def test_data_is_unchanged_without_a_config_path_or_with_thresholds(self):
+        data = {"threshold_json": "missing_threshold.json"}
+        self.assertIs(attach_threshold_file(data, None), data)
+        given = {"threshold_json": "missing_threshold.json", "thresholds": {"cell": {}}}
+        self.assertIs(attach_threshold_file(given, {"config_path": self.config_path}), given)
+
+    def test_config_with_no_threshold_file_gets_empty_thresholds(self):
+        attached = attach_threshold_file({"threshold_json": ""}, {"config_path": self.config_path})
+        self.assertEqual(attached, {"threshold_json": "", "thresholds": {}})
+
+    def test_named_threshold_file_is_read_without_comment_keys(self):
+        (self.config_path.parent / "a_threshold.json").write_text(json.dumps({"_comment": "x", "cell": {"m": {}}}))
+        attached = attach_threshold_file({"threshold_json": "a_threshold.json"}, {"config_path": self.config_path})
+        self.assertEqual(attached["thresholds"], {"cell": {"m": {}}})
+
+    def test_named_threshold_file_that_is_missing_raises(self):
+        with self.assertRaises(FileNotFoundError):
+            attach_threshold_file({"threshold_json": "no_such_threshold_xyz.json"}, {"config_path": self.config_path})
 
 
 class TestFindPackagedThreshold(unittest.TestCase):
