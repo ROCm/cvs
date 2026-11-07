@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.
-- vLLM `threshold_json` is optional: a config with no threshold file now records metrics without gating, even with `enforce_thresholds: true`, instead of failing to load. A `threshold_json` that names a missing file still fails.
+- vLLM `threshold_json` is optional, and only a named threshold file is read: a config without one now records metrics without gating, even with `enforce_thresholds: true`, instead of failing to load or using a threshold file beside the config. A `threshold_json` that names a missing file still fails.
 
 ### Fixed
 

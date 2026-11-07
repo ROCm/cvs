@@ -11,8 +11,8 @@ Covers the public contract described in the spec:
     (literal absolute path), or discovers a sole sibling ``*threshold.json``.
   - substitute_config raises FileNotFoundError when ``threshold_json`` names a
     non-existent file, or when no sibling threshold exists and the field is empty.
-  - substitute_placeholders reads no threshold file; attach_threshold_file gives
-    a config with no threshold file empty thresholds.
+  - substitute_placeholders reads no threshold file; attach_threshold_file reads
+    only a named threshold_json and runs a config that names none record-only.
   - Multiple sibling ``*threshold.json`` files raise ValueError (ambiguous).
 
 Framework: unittest.TestCase + self.subTest + unittest.mock (no pytest).
@@ -479,7 +479,8 @@ class TestAttachThresholdFile(unittest.TestCase):
         given = {"threshold_json": "missing_threshold.json", "thresholds": {"cell": {}}}
         self.assertIs(attach_threshold_file(given, {"config_path": self.config_path}), given)
 
-    def test_config_with_no_threshold_file_records_without_gating(self):
+    def test_unnamed_threshold_file_is_not_discovered_and_records_without_gating(self):
+        (self.config_path.parent / "a_threshold.json").write_text(json.dumps({"cell": {"m": {}}}))
         with self.assertLogs(level="WARNING"):
             attached = attach_threshold_file({"threshold_json": ""}, {"config_path": self.config_path})
         self.assertEqual(attached, {"threshold_json": "", "thresholds": {}, "enforce_thresholds": False})

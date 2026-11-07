@@ -334,7 +334,8 @@ class TestThresholdFile(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             load_config(VariantConfig, self._write(threshold_json="no_such_threshold_xyz.json"), {"username": "test"})
 
-    def test_no_threshold_file_runs_record_only_even_when_enforced(self):
+    def test_unnamed_threshold_file_runs_record_only_even_when_enforced(self):
+        (self.tmp / "sibling_threshold.json").write_text(json.dumps({CELL: {}}))
         path = self._write(enforce_thresholds=True)
         config = json.loads(path.read_text())
         del config["threshold_json"]

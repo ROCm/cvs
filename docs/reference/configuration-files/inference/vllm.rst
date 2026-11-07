@@ -89,10 +89,10 @@ A vLLM configuration file has these top-level keys:
      - Description
    * - ``enforce_thresholds``
      - no (default ``true``)
-     - When ``false``, or when there is no threshold file, metrics record and no threshold spec is asserted. Packaged Llama files set ``false``.
+     - When ``false``, or without ``threshold_json``, metrics record and no threshold spec is asserted. Packaged Llama files set ``false``.
    * - ``threshold_json``
      - no
-     - Path to the threshold file. See :ref:`vllm-threshold-discovery`.
+     - Path to the threshold file. See :ref:`vllm-threshold-file`.
    * - ``container``
      - yes
      - Container/Docker settings. See :ref:`vllm-container`.
@@ -809,10 +809,10 @@ boolean, string, collection, NaN, or infinity fails for every datasource.
 The optional top-level ``accuracy`` block remains task-qualified and is exempt
 from these vLLM sweep-name and spec rules.
 
-.. _vllm-threshold-discovery:
+.. _vllm-threshold-file:
 
-Threshold file discovery
-------------------------
+Threshold file
+--------------
 
 Set ``threshold_json`` to the threshold file. A relative path resolves against
 the configuration file's directory. If that file is missing, CVS warns and
@@ -820,9 +820,9 @@ uses the packaged file of the same name. Copy the sibling beside the config
 when you want to edit the numbers. A ``threshold_json`` that names a missing
 file with no packaged copy fails the load.
 
-Without ``threshold_json``, CVS uses a sole ``*threshold.json`` beside the
-configuration file. With no threshold file at all, metrics record without
-gating, as if ``enforce_thresholds`` were ``false``, and CVS logs a warning.
+Without ``threshold_json``, metrics record without gating, as if
+``enforce_thresholds`` were ``false``, and CVS logs a warning. CVS does not
+look for a threshold file beside the configuration file.
 
 There are 33 packaged threshold files. Every numeric ``value`` in them is
 ``0``. Those zeros are uncalibrated placeholders, not measured limits. The

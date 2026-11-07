@@ -173,14 +173,11 @@ def _find_packaged_threshold(name):
 
 
 def _find_threshold_file(raw, config_path):
-    """Return the threshold file a variant config names or sits next to, or None.
+    """Return the threshold file a variant config names or sits next to.
 
     Supports both layouts:
     - ``threshold_json`` in the config (literal path; vllm_single style), or
     - a sole ``*threshold.json`` sibling next to the config (atom style).
-
-    None means the config names no file and has no sibling. A named file that
-    is missing, with no packaged copy, raises.
     """
     threshold_json = (raw.get("threshold_json") or "").strip()
     if "<changeme>" in threshold_json.lower():
@@ -211,7 +208,7 @@ def _find_threshold_file(raw, config_path):
     else:
         threshold_candidates = sorted(config_path.parent.glob("*threshold.json"))
         if not threshold_candidates:
-            return None
+            raise FileNotFoundError(f"no *threshold.json next to config: {config_path.parent}")
         if len(threshold_candidates) > 1:
             raise ValueError(f"multiple *threshold.json files next to config (ambiguous): {threshold_candidates}")
         threshold_path = threshold_candidates[0]
@@ -228,18 +225,18 @@ def attach_threshold_file(data, context):
 
     For a schema with ``thresholds`` and ``enforce_thresholds`` fields. Applies
     only when the validation context holds the ``config_path`` that
-    `load_config` passes and the data has no ``thresholds`` yet. The file is
-    found as `substitute_config` finds it. A config with no threshold file
-    gets ``{}`` and ``enforce_thresholds`` false, so it runs record-only.
+    `load_config` passes and the data has no ``thresholds`` yet. Only a named
+    ``threshold_json`` is read, as `substitute_config` reads it; no sibling
+    file is looked for. A config that names none gets ``{}`` and
+    ``enforce_thresholds`` false, so it runs record-only.
     """
     config_path = (context or {}).get("config_path")
     if config_path is None or not isinstance(data, dict) or "thresholds" in data:
         return data
-    threshold_path = _find_threshold_file(data, Path(config_path))
-    if threshold_path is None:
-        log.warning("%s has no threshold file; metrics are recorded without gating", config_path)
+    if not (data.get("threshold_json") or "").strip():
+        log.warning("%s names no threshold_json; metrics are recorded without gating", config_path)
         return {**data, "thresholds": {}, "enforce_thresholds": False}
-    return {**data, "thresholds": _read_thresholds(threshold_path)}
+    return {**data, "thresholds": _read_thresholds(_find_threshold_file(data, Path(config_path)))}
 
 
 def _read_config(config_path):
@@ -275,8 +272,6 @@ def substitute_config(config_path, cluster_dict, all_placeholders=False):
     config_path = Path(config_path)
     raw = _read_config(config_path)
     threshold_path = _find_threshold_file(raw, config_path)
-    if threshold_path is None:
-        raise FileNotFoundError(f"no *threshold.json next to config: {config_path.parent}")
     return _substitute(raw, cluster_dict, all_placeholders), _read_thresholds(threshold_path)
 
 
