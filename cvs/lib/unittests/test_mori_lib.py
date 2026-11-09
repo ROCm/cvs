@@ -76,7 +76,7 @@ def _default_responder(cmd, host):
 
 
 class _BaremetalFakeOrch:
-    """Records commands. Like BaremetalOrchestrator it has no ``exec_cmd_list``."""
+    """Records commands. Like BaremetalOrchestrator, ``exec_cmd_list`` goes through the ``all`` host handle."""
 
     orchestrator_type = 'baremetal'
 
@@ -97,6 +97,9 @@ class _BaremetalFakeOrch:
             text = self.responder(cmd, host)
             out[host] = {'output': text, 'exit_code': self.exit_code} if detailed else text
         return out
+
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+        return self.all.exec_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
 
     def _run_cmd_list(self, cmd_list, timeout=None, print_console=True):
         self.cmd_list_calls.append({'cmds': list(cmd_list), 'timeout': timeout})
@@ -383,10 +386,12 @@ class TestMoriIoLaunch(_MoriBenchCase):
         self.assertIn('10.0.0.9', globals.error_list[0])
         self.assertEqual(orch.all_commands(), [])
 
-    def test_baremetal_uses_host_handle_for_cmd_list(self):
+    def test_baremetal_runs_cmd_list_through_orchestrator(self):
         orch = _BaremetalFakeOrch()
-        MoriBenchmark(orch, _mori_dict()).run_mori_torch_io_test()
-        self.assertTrue(orch.all.exec_cmd_list.called)
+        with patch.object(orch, 'exec_cmd_list', wraps=orch.exec_cmd_list) as exec_cmd_list:
+            MoriBenchmark(orch, _mori_dict()).run_mori_torch_io_test()
+        self.assertTrue(exec_cmd_list.called)
+        self.assertEqual(exec_cmd_list.call_count, orch.all.exec_cmd_list.call_count)
         self.assertEqual(globals.error_list, [])
 
     def test_poll_waits_until_every_host_reports(self):
