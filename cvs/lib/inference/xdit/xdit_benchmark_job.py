@@ -1,8 +1,6 @@
 """
 Shared PyTorch xDiT orchestrated torchrun benchmark job base (FLUX, WAN, etc.).
 
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
 """
 
 from __future__ import annotations

@@ -14,8 +14,6 @@ WAN checkpoints use either the native Wan2.2 layout (``Wan-AI/Wan2.2-I2V-A14B`` 
 ``/app/Wan2.2/run.py``) or the Diffusers layout (``Wan-AI/Wan2.2-I2V-A14B-Diffusers`` via
 ``/app/Wan/run.py``). Model format is inferred from ``model_repo`` or ``model_index.json``.
 
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
 """
 
 from __future__ import annotations

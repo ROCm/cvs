@@ -5,8 +5,6 @@ A point is one Frechet Inception Distance at one step count (NFE). One image
 is not a distribution, so a curve needs at least two step counts and more than
 one sample at each count. The latency run does not produce that curve.
 
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
 """
 
 import base64

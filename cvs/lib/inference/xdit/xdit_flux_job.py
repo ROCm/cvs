@@ -14,8 +14,6 @@ FLUX.2-dev and FLUX.1-dev run the CVS launchers bind-mounted at
 ``/benchmark/flux2_example.py`` and ``/benchmark/run_usp.py``. The copies baked into
 the image do not accept the benchmark arguments.
 
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
 """
 
 from __future__ import annotations

@@ -2,7 +2,6 @@
 # from https://github.com/chengzeyi/ParaAttention/blob/main/examples/run_flux.py
 
 import functools
-from typing import Optional
 import os
 import sys
 import json
@@ -59,7 +58,7 @@ def parallelize_transformer(pipe: DiffusionPipeline):
     def new_forward(
         self,
         hidden_states: torch.Tensor,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
+        encoder_hidden_states=None,
         *args,
         timestep: torch.LongTensor = None,
         img_ids: torch.Tensor = None,

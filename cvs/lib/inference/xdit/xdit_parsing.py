@@ -1,8 +1,6 @@
 """
 xDiT metric vocabulary for Run Deck reporting.
 
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
 """
 
 XDIT_METRIC_UNITS = {

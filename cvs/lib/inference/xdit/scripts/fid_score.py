@@ -7,8 +7,6 @@ Each directory needs at least two images, or frames taken from videos.
 uses the highest step-count directory this run wrote under ``--generated-root``.
 ``--inception`` is a local Inception-v3 checkpoint. This script does not download weights.
 
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
 """
 
 import argparse
