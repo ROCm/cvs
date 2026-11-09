@@ -6,10 +6,13 @@ Unit tests for cvs.lib.conf_lib.loader.
 '''
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from cvs.core.run_layout import RunLayout
 from cvs.lib.conf_lib.config_blocks import Paths, _Forbid
 from cvs.lib.conf_lib.loader import ConfigError, load_config
 from cvs.lib.utils.config_loader import BaseVariantConfig
@@ -127,6 +130,47 @@ class TestLoadConfig(unittest.TestCase):
         self.assertIn("paths.token", str(ctx.exception))
         self.assertIn("container.env.HF_HOME", str(ctx.exception))
         self.assertNotIn(FAKE_CRED, str(ctx.exception))
+
+    def test_every_test_config_placeholder_expands(self):
+        RunLayout._reset()
+        self.addCleanup(RunLayout._reset)
+        layout = RunLayout.get(str(self.tmp / "workspace"))
+        config = _base_config_dict()
+        config["paths"] = {
+            "shared_fs": "/{home-mount-dir}/{user}",
+            "models_dir": "{shared_fs}/{node-dir-name}/models",
+            "log_dir": "{run_dir}/logs",
+            "hf_token_file": "{home}/.hf_token",
+        }
+        config["container"]["name"] = "vllm-{user-id}"
+        config["container"]["env"] = {"LOG_DIR": "{paths.log_dir}"}
+        cluster = {"username": "jdoe", "home_mount_dir_name": "mnt", "node_dir_name": "node7"}
+        with patch("cvs.lib.utils_lib.os.path.expanduser", side_effect=lambda p: "/nfs/jdoe" if p == "~jdoe" else p):
+            loaded = load_config(BaseVariantConfig, self._write_config(config), cluster)
+        paths = loaded.config.paths
+        self.assertEqual(
+            (paths.shared_fs, paths.models_dir, paths.log_dir, paths.hf_token_file),
+            ("/mnt/jdoe", "/mnt/jdoe/node7/models", f"{layout.run_dir}/logs", "/nfs/jdoe/.hf_token"),
+        )
+        self.assertEqual(loaded.container["name"], "vllm-jdoe")
+        self.assertEqual(loaded.container["env"], {"LOG_DIR": f"{layout.run_dir}/logs"})
+
+    def test_config_without_run_dir_creates_no_run_layout(self):
+        RunLayout._reset()
+        self.addCleanup(RunLayout._reset)
+        config = _base_config_dict()
+        config["paths"]["log_dir"] = "/{home-mount-dir}/{user}/logs"
+        loaded = load_config(BaseVariantConfig, self._write_config(config), {"username": "jdoe"})
+        self.assertEqual(loaded.config.paths.log_dir, "/home/jdoe/logs")
+        self.assertIsNone(RunLayout._instance)
+
+    def test_blank_cluster_username_resolves_to_the_user_env(self):
+        config = _base_config_dict()
+        config["paths"]["shared_fs"] = "/home/{user-id}"
+        with patch.dict(os.environ, {"USER": "envuser"}):
+            loaded = load_config(BaseVariantConfig, self._write_config(config), {"username": ""})
+        self.assertEqual(loaded.config.paths.shared_fs, "/home/envuser")
+        self.assertEqual(loaded.cluster["username"], "")
 
 
 if __name__ == "__main__":
