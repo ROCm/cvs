@@ -347,7 +347,7 @@ class TestBuildCmd(_TmpDirCase):
         os.makedirs(fake_bin)
         with open(os.path.join(fake_bin, 'python3'), 'w') as f:
             f.write('#!/bin/sh\necho "BUILD_EXAMPLES=$BUILD_EXAMPLES $*"\nexit 3\n')
-        os.chmod(os.path.join(fake_bin, 'python3'), 0o755)
+        os.chmod(os.path.join(fake_bin, 'python3'), 0o700)
         mori_dir = os.path.join(self.tmp, 'mori')
         os.makedirs(mori_dir)
         log_path = os.path.join(self.tmp, 'install_mori_n0.log')
@@ -366,7 +366,7 @@ class TestVerifyBuildCmd(_TmpDirCase):
         for name in ('dist_write', 'concurrent_put_thread', 'concurrent_put_imm_thread'):
             path = os.path.join(mori_dir, 'build', 'examples', name)
             open(path, 'w').close()
-            os.chmod(path, 0o755)
+            os.chmod(path, 0o700)
         out = _bash(verify_build_cmd(mori_dir), env={'PATH': os.environ['PATH']}).stdout
         self.assertEqual(parse_missing({'n0': out})['n0'], ['build/examples/concurrent_put_signal_thread', 'site/mori'])
 
@@ -381,7 +381,7 @@ class TestVerifyBuildCmd(_TmpDirCase):
         ):
             path = os.path.join(mori_dir, 'build', 'examples', name)
             open(path, 'w').close()
-            os.chmod(path, 0o755)
+            os.chmod(path, 0o700)
         os.makedirs(os.path.join(mori_dir, 'site', 'mori'))
         open(os.path.join(mori_dir, 'site', 'mori', '__init__.py'), 'w').close()
         out = _bash(verify_build_cmd(mori_dir), env={'PATH': os.environ['PATH']}).stdout
