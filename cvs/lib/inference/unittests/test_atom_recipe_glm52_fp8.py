@@ -55,6 +55,9 @@ class TestAtomRecipeGlm52Fp8(unittest.TestCase):
         self.assertEqual(sglang_pp.params.nnodes, "2")
         self.assertEqual(sglang_pp.params.pipeline_parallel_size, "2")
         self.assertEqual(sglang.roles.server.env["SGLANG_EXTERNAL_MODEL_PACKAGE"], "atom.plugin.sglang.models")
+        for stem in (sglang, sglang_pp):
+            args = stem.roles.server.sglang_args
+            self.assertEqual(args[args.index("--context-length") + 1], "16384")
 
 
 if __name__ == "__main__":

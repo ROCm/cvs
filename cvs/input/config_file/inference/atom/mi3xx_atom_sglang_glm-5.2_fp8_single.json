@@ -50,6 +50,8 @@
     "inference_poll_iterations": "80",
     "context_length": "16384",
     "add_flags": [
+      "--context-length",
+      "16384",
       "--trust-remote-code",
       "--mem-fraction-static",
       "0.8",
