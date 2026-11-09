@@ -38,7 +38,7 @@ The block below is the shipped file with the ``_example_*`` and ``_comment_*`` n
         "container": {
             "image": "<changeme>",
             "name": "mori_container",
-            "lifetime": "per_run",
+            "lifetime": "persistent",
             "runtime": {
                 "name": "docker",
                 "args": {
@@ -92,7 +92,7 @@ The block below is the shipped file with the ``_example_*`` and ``_comment_*`` n
 Parameters the run uses
 =======================
 
-The MORI config's ``container`` object is deep-merged over the cluster file's ``container``. ``orchestrator`` in this file overrides the cluster file when it is set.
+Set the whole ``container`` block in this file: ``image``, ``name``, ``lifetime`` and ``runtime``. Its values win over the cluster file's ``container``, which only adds ``runtime.args`` and ``env`` keys this block leaves out. A missing ``image``, ``name`` or ``runtime`` fails with a ``ConfigError``, and a missing ``lifetime`` means ``per_run`` whatever the cluster file says. With no ``container`` block here, the cluster file's block is used as it is. ``orchestrator`` in this file overrides the cluster file when it is set.
 
 .. list-table::
    :widths: 3 3 5
@@ -111,11 +111,11 @@ The MORI config's ``container`` object is deep-merged over the cluster file's ``
      - ``mori_container``
      - Container name. A ``per_run`` launch removes a container of this name before starting.
    * - ``container.lifetime``
-     - ``per_run``
-     - ``per_run`` starts a container and force-removes it at teardown. ``persistent`` attaches when that name is already running on every node, and starts one when it is absent on every node. A mix of running and absent nodes fails setup. ``no_launch`` only checks that the named container is already running.
+     - ``persistent``
+     - ``install_mori`` needs ``persistent`` or ``no_launch``. ``per_run`` starts a container and force-removes it at teardown. ``persistent`` attaches when that name is already running on every node, and starts one when it is absent on every node. A mix of running and absent nodes fails setup. ``no_launch`` only checks that the named container is already running.
    * - ``container.runtime.name``
      - ``docker``
-     - Container runtime. Omitted, the runtime is Docker.
+     - Container runtime. Required.
    * - ``container.runtime.args.devices``
      - ``/dev/dri``, ``/dev/kfd``
      - Extra devices, merged with the orchestrator defaults ``/dev/kfd`` and ``/dev/dri``. A Docker launch also passes each host's ``/dev/infiniband/*`` nodes.

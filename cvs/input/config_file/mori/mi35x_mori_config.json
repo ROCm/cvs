@@ -7,7 +7,7 @@
     {
         "image": "<changeme>",
         "name": "mori_container",
-        "lifetime": "per_run",
+        "lifetime": "persistent",
         "runtime":
         {
             "name": "docker",

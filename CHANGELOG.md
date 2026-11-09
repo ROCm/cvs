@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- MORI configs are validated when the suite starts: a leftover `<changeme>`, an unknown key or a wrong type fails every test with one `ConfigError` naming each field, instead of exiting at the first placeholder. The shipped `mori_dir` is now `/home/{user-id}/INSTALL/mori`.
+- MORI configs are validated when the suite starts: a leftover `<changeme>`, an unknown key or a wrong type fails every test with one `ConfigError` naming each field, instead of exiting at the first placeholder. A MORI `container` block must now set `image`, `name`, `lifetime` and `runtime` itself, because the cluster file's block no longer fills in the keys it leaves out. The shipped `mori_dir` is now `/home/{user-id}/INSTALL/mori` and the shipped `container.lifetime` is `persistent`.
 
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.
 

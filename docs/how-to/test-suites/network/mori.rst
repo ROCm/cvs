@@ -40,7 +40,7 @@ Set up config
 
    Keys whose names start with ``_`` are notes. ``_example_env`` is not copied into ``env``. Edit ``env`` itself.
 
-   In container mode, set ``container.lifetime`` to ``persistent`` so the container ``install_mori`` builds in is still there for the benchmark.
+   In container mode, keep the whole ``container`` block (``image``, ``name``, ``lifetime``, ``runtime``) in this file. The cluster file's ``container`` block doesn't fill in keys left out here. Keep the shipped ``lifetime`` ``persistent``, so the container ``install_mori`` builds in is still there for the benchmark.
 
 3. Put the nodes in the cluster file. Changing ``no_of_nodes`` does not add or remove nodes.
 
@@ -153,7 +153,7 @@ Benchmark logs are on the hosts under ``log_dir``, in a new directory named ``YY
 - ``io_<op>_<buffer>_<batch>_<qp>_node<rank>.log`` for each I/O case. Rank 0 is ``master_addr``.
 - ``<name>_$(hostname).log`` for the SHMEM, concurrent-put, and IBGDA tests.
 
-The shipped config mounts ``/home/{user-id}`` into the container and sets ``log_dir`` under that home, so a ``per_run`` container can exit and the logs remain on the host. ``test_teardown`` removes a ``per_run`` container. ``persistent`` and ``no_launch`` leave it running.
+The shipped config mounts ``/home/{user-id}`` into the container and sets ``log_dir`` under that home, so the logs stay on the host after the container is gone. ``test_teardown`` removes a ``per_run`` container. ``persistent``, as shipped, and ``no_launch`` leave it running; remove a ``persistent`` container yourself when you are done.
 
 Troubleshooting
 ===============
@@ -167,7 +167,7 @@ Search the pytest log for ``FAIL -``. The test then ends with ``Following FAILUR
    * - What you see
      - What it means
    * - ``<config> is not a valid config`` (``ConfigError``)
-     - Each following line names a field that still has ``<changeme>``, has the wrong type, or is not a MORI setting. Fix those fields in the file you copied.
+     - Each following line names a field that still has ``<changeme>``, is missing, has the wrong type, or is not a MORI setting. Fix those fields in the file you copied.
    * - ``container.lifetime is per_run``
      - ``install_mori`` needs ``persistent`` or ``no_launch``.
    * - ``MoRI build dependencies missing on node``
