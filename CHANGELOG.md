@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `cvs run atom` can run `zai-org/GLM-5.1-FP8` with the vLLM driver on one mi3xx node (`mi3xx_atom_vllm_glm-5.1_fp8_single`, TP8) or two nodes (`mi3xx_atom_vllm_glm-5.1_fp8_distributed`, TP8, PP2). Thresholds stay unenforced.
 - Run Deck for most suites: health, platform, preflight, ibperf, MORI, ANC, ARC, RCCL, training and inference runs write a Run Deck beside the pytest HTML report. Install suites do not.
 - `cvs run` supports Slurm and SPUR: launch it with `srun` or `spur run`, and supported suites run without passwordless SSH.
 - ibperf:
