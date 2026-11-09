@@ -9,7 +9,7 @@ import unittest
 
 
 def _load_validator():
-    script = os.path.join(os.path.dirname(__file__), "..", "..", "tests", "anc", "resources", "validate_exe_paths.py")
+    script = os.path.join(os.path.dirname(__file__), "..", "resources", "validate_exe_paths.py")
     spec = importlib.util.spec_from_file_location("validate_exe_paths", os.path.abspath(script))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -34,6 +34,8 @@ def _run(content_dir):
 
 
 class TestValidateExePaths(unittest.TestCase):
+    # TODO: exe_path: null
+
     def test_string_path_that_exists(self):
         with tempfile.TemporaryDirectory() as tmp:
             present = os.path.join(tmp, "sbin")
