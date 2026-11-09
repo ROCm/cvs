@@ -37,6 +37,18 @@ from cvs.lib.inference.xdit.xdit_clipscore import (
     validate_mean_frame_clip_score,
     wan_clip_video_name,
 )
+from cvs.lib.inference.xdit.xdit_fid import (
+    FID_SCORE_TIMEOUT_S,
+    build_fid_score_cmd,
+    fid_absent_skip_reason,
+    fid_curve_container_path,
+    fid_manifest_container_path,
+    fid_samples_container_root,
+    fid_viewer_curves,
+    iter_fid_points,
+    parse_fid_curve_text,
+    parse_fid_nfe_steps,
+)
 from cvs.lib.inference.xdit.xdit_flux import FluxOutputParser
 from cvs.lib.inference.xdit.xdit_flux_job import (
     build_output_cleanup_cmd,
@@ -72,14 +84,16 @@ XDIT_TEST_ORDER = {
     "test_run_benchmark": 4,
     "test_parse_thresholds": 5,
     "test_clip_score": 6,
-    "test_print_results": 7,
-    "test_teardown": 8,
+    "test_fid_curve": 7,
+    "test_print_results": 8,
+    "test_teardown": 9,
 }
 
 
 class Lifecycle:
     def __init__(self):
         self.failed = False
+        self.failure_stage = ""
         self.torn_down = False
         self.report = {}
         self.report_results = {}
@@ -90,8 +104,8 @@ class Lifecycle:
         elapsed = time.monotonic() - started
         self.report.setdefault(request.node.nodeid, []).append((label, elapsed, "s"))
 
-    def skip_if_failed(self):
-        if self.failed:
+    def skip_if_failed(self, ignore_stages=()):
+        if self.failed and self.failure_stage not in ignore_stages:
             pytest.skip("a prior xDiT lifecycle stage failed")
 
 
@@ -164,6 +178,8 @@ def scoped_cluster_dict(cluster_dict, hosts):
 
 def _complete(lifecycle, request, label, started):
     lifecycle.record(request, label, started)
+    if globals.error_list and not lifecycle.failed:
+        lifecycle.failure_stage = label
     if globals.error_list:
         lifecycle.failed = True
     update_test_result()
@@ -536,9 +552,7 @@ def _is_flux2_workload(variant, params):
 
 def _output_parser(spec, params, output_dir, variant):
     if spec["family"] == "flux":
-        expected_repetitions = None
-        if not _is_flux2_workload(variant, params):
-            expected_repetitions = _configured_count(params.get("num_repetitions"))
+        expected_repetitions = _configured_count(params.get("num_repetitions"))
         return FluxOutputParser(
             output_dir,
             expected_image_pattern="flux_*.png",
@@ -701,8 +715,8 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
         reported_dir = reported_by_host.get(host) or output_dir
         _attach_benchmark_artifacts(request, host, output_dir)
         parser = _output_parser(spec, params, output_dir, variant)
-        if spec["family"] == "flux" and not _is_flux2_workload(variant, params) and parser.expected_repetitions is None:
-            failures.append(f"{host}: FLUX.1 requires num_repetitions")
+        if spec["family"] == "flux" and parser.expected_repetitions is None:
+            failures.append(f"{host}: FLUX requires num_repetitions")
             continue
         if spec["family"] == "wan" and not spec["diffusers"] and parser.expected_steps is None:
             failures.append(f"{host}: native WAN requires num_benchmark_steps")
@@ -877,7 +891,8 @@ def _merge_clip_threshold(variant, cell_id, metric, spec):
 def clip_score_stage(orch, variant, gpu_type, spec, lifecycle, request):
     if spec["family"] not in {"flux", "wan"}:
         return
-    lifecycle.skip_if_failed()
+    # A latency miss still leaves media to score. An earlier stage failure does not.
+    lifecycle.skip_if_failed(ignore_stages=("parse_thresholds",))
     globals.error_list = []
     started = time.monotonic()
     inference = inference_from_variant(variant)
@@ -965,6 +980,252 @@ def clip_score_stage(orch, variant, gpu_type, spec, lifecycle, request):
     for failure in failures:
         fail_test(failure)
     _complete(lifecycle, request, "clip_score", started)
+
+
+def _manifest_blocks_fid(manifest):
+    if not isinstance(manifest, dict) or not manifest.get("stopped_early"):
+        return False
+    ready = 0
+    for count in (manifest.get("counts") or {}).values():
+        try:
+            if int(count) >= 2:
+                ready += 1
+        except (TypeError, ValueError):
+            continue
+    return ready < 2
+
+
+def _read_json_on_nodes(orch, hosts, output_dir, relative_path, container_path):
+    local = Path(str(output_dir)) / relative_path
+    if local.is_file():
+        return json.loads(local.read_text(encoding="utf-8")), None
+    path = container_path
+    errors = []
+    for host in hosts:
+        try:
+            raw = orch.exec(
+                f"cat {shlex.quote(path)}",
+                hosts=[host],
+                timeout=60,
+                detailed=True,
+                print_console=False,
+            )
+        except Exception as exc:
+            errors.append(f"{host}: {exc}")
+            continue
+        text, exit_code = _exec_detail((raw or {}).get(host))
+        if exit_code not in (None, 0) or not text.strip():
+            errors.append(f"{host}: no {path}")
+            continue
+        try:
+            return json.loads(text), None
+        except json.JSONDecodeError as exc:
+            errors.append(f"{host}: {exc}")
+    return None, "; ".join(errors) or f"{container_path} not found"
+
+
+def _read_fid_curve_file(orch, hosts, output_dir):
+    return _read_json_on_nodes(
+        orch,
+        hosts,
+        output_dir,
+        "results/fid_curve.json",
+        fid_curve_container_path(output_dir),
+    )
+
+
+def _read_fid_manifest(orch, hosts, output_dir):
+    payload, _error = _read_json_on_nodes(
+        orch,
+        hosts,
+        output_dir,
+        "results/fid/manifest.json",
+        fid_manifest_container_path(output_dir),
+    )
+    return payload
+
+
+def _parse_fid_score_output(host, value):
+    if value is None:
+        return None, f"{host}: FID command failed (no output)"
+    text, exit_code = _exec_detail(value)
+    try:
+        payload = parse_fid_curve_text(text)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return None, f"{host}: {exc}"
+    if payload is not None and exit_code in (None, 0):
+        return payload, None
+    tail = " | ".join(line.strip() for line in text.splitlines() if line.strip())[-500:]
+    return None, f"{host}: FID command failed ({tail or 'no output'})"
+
+
+def _score_host_order(orch, writers):
+    known = getattr(orch, "hosts", None)
+    if isinstance(known, (list, tuple)) and known and set(writers).issubset(set(known)):
+        return list(known)
+    return list(writers)
+
+
+def _score_fid_groups(orch, jobs, reference_dir, inception_path, sampler):
+    """Score every pending directory in one parallel exec. One writer per directory."""
+    if not jobs:
+        return {}
+    writer_for = {}
+    for label, output_dir, hosts in jobs:
+        writer = label if label in hosts else hosts[0]
+        writer_for[writer] = (label, output_dir)
+    host_order = _score_host_order(orch, list(writer_for))
+    commands = []
+    for host in host_order:
+        job = writer_for.get(host)
+        if job is None:
+            commands.append("true")
+            continue
+        _label, output_dir = job
+        commands.append(
+            build_fid_score_cmd(
+                reference_dir,
+                fid_samples_container_root(output_dir),
+                inception_path,
+                fid_curve_container_path(output_dir),
+                sampler,
+            )
+        )
+    try:
+        raw = orch.exec_cmd_list(commands, timeout=FID_SCORE_TIMEOUT_S, print_console=False) or {}
+    except Exception as exc:
+        return {label: (None, f"{hosts[0]}: {exc}") for label, _output_dir, hosts in jobs}
+    scored = {}
+    for label, _output_dir, hosts in jobs:
+        writer = label if label in hosts else hosts[0]
+        scored[label] = _parse_fid_score_output(writer, raw.get(writer))
+    return scored
+
+
+def fid_curve_stage(orch, variant, gpu_type, spec, lifecycle, request):
+    if spec["family"] not in {"flux", "wan"}:
+        return
+    lifecycle.skip_if_failed(ignore_stages=("parse_thresholds",))
+    params = _workload_params(variant, spec)
+    try:
+        steps = parse_fid_nfe_steps(params)
+    except ValueError as exc:
+        fail_test(str(exc))
+        _complete(lifecycle, request, "fid_curve", time.monotonic())
+        return
+    if not steps:
+        pytest.skip(
+            "FID vs NFE is off. Set benchmark_params.fid_nfe_steps to two or more sampling "
+            "step counts and fid_inception_path to a local Inception-v3 checkpoint. Put one directory of "
+            "generated images per step under results/fid/<steps>/, or write results/fid_curve.json."
+        )
+
+    started = time.monotonic()
+    globals.error_list = []
+    inference = inference_from_variant(variant)
+    groups = _container_output_groups(inference, lifecycle)
+    if not groups:
+        fail_test("xDiT benchmark did not publish container output directories for FID")
+        _complete(lifecycle, request, "fid_curve", started)
+        return
+
+    reference_dir = str(params.get("fid_reference_dir") or "").strip()
+    inception_path = str(params.get("fid_inception_path") or "").strip()
+    sampler = str(params.get("fid_sampler") or "").strip()
+    model_id, _shape, _steps, _backend, nnodes, cell_id = _report_dimensions(variant, params, spec)
+    topology = "distributed" if spec["distributed"] else "single"
+    ulysses_degree, ring_degree = _ulysses_ring(params, spec)
+    cell = lifecycle.report_results.setdefault((model_id, gpu_type, _shape, _steps, cell_id, str(nnodes)), {})
+    node_dirs = inference.get("_test_node_output_dirs_by_node") or {}
+    failures = []
+    skipped = []
+    recorded = False
+    pending = []
+    loaded = {}
+    for label, output_dir, hosts in groups:
+        payload, _error = _read_fid_curve_file(orch, hosts, output_dir)
+        manifest = _read_fid_manifest(orch, hosts, output_dir)
+        if payload is None and _manifest_blocks_fid(manifest):
+            skipped.append(
+                (
+                    label,
+                    "FID sweep stopped before the benchmark time limit and saved fewer than "
+                    f"two step counts with two samples. counts={manifest.get('counts')}",
+                )
+            )
+            continue
+        if payload is None:
+            reason = fid_absent_skip_reason(inception_path)
+            if reason:
+                skipped.append((label, reason))
+                continue
+            pending.append((label, output_dir, hosts))
+            continue
+        loaded[label] = payload
+    scored = _score_fid_groups(orch, pending, reference_dir, inception_path, sampler) if pending else {}
+    for label, output_dir, hosts in groups:
+        if label in loaded:
+            payload, error = loaded[label], None
+        elif label not in scored:
+            continue
+        else:
+            payload, error = scored[label]
+        if payload is None:
+            reason = fid_absent_skip_reason(inception_path, error)
+            if reason:
+                skipped.append((label, reason))
+                continue
+            if error and "no step directory with 2 images" in error:
+                skipped.append(
+                    (
+                        label,
+                        f"FID sweep saved no step directory with two images before the benchmark time limit. {error}",
+                    )
+                )
+                continue
+            failures.append(f"{label}: {error}")
+            continue
+        points = list(iter_fid_points(payload))
+        if len(points) < 2:
+            failures.append(f"{label}: FID curve needs at least two NFE points")
+            continue
+        curves = fid_viewer_curves(payload)
+        if not curves:
+            failures.append(f"{label}: FID curve needs at least two NFE points")
+            continue
+        reported_dir = node_dirs.get(label) or output_dir
+        host_row = cell.setdefault(label, {})
+        extra = dict(host_row.get("_extra_curves") or {})
+        extra.update(curves)
+        host_row["_extra_curves"] = extra
+        recorded = True
+        host_row.setdefault("output_dir", reported_dir)
+        for point_sampler, nfe, fid in points:
+            recorded_sampler = point_sampler or sampler
+            lifecycle.results.append(
+                (
+                    label,
+                    model_id,
+                    topology,
+                    ulysses_degree,
+                    ring_degree,
+                    reported_dir,
+                    "fid",
+                    fid,
+                    None,
+                    f"NFE {int(nfe)}" + (f" sampler {recorded_sampler}" if recorded_sampler else ""),
+                )
+            )
+            log.info("FID on %s at NFE %s: %.3f", label, int(nfe), fid)
+
+    for label, reason in skipped:
+        cell.setdefault(label, {})["_fid_skip"] = reason
+        log.info("FID skipped on %s: %s", label, reason)
+    if not recorded and not failures and skipped:
+        pytest.skip(" ".join(f"{label}: {reason}" for label, reason in skipped))
+    for failure in failures:
+        fail_test(failure)
+    _complete(lifecycle, request, "fid_curve", started)
 
 
 def print_results_stage(lifecycle):

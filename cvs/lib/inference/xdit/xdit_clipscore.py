@@ -6,8 +6,6 @@ exist. Remote artifact staging copies media names only, so the controller
 reads the one-line ``CVS_CLIP_SCORE`` record from that command. WAN scores
 sampled video frames and gates on ``mean_frame_clip_score``.
 
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
 """
 
 import base64

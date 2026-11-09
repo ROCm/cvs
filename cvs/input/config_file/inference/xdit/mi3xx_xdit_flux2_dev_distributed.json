@@ -5,14 +5,14 @@
   "threshold_json": "xdit_flux2_dev_distributed_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
-    "models_dir": "/home/{user-id}/.cache/huggingface",
+    "models_dir": "<changeme> /data/models",
     "log_dir": "{home}/cvs_flux2_output",
     "hf_token_file": "/home/{user-id}/.hf_token"
   },
   "container": {
     "lifetime": "per_run",
     "name": "flux2-benchmark_distributed",
-    "_image_example": "rocm/ufb-private:xdit-gfx942-py3.12-prereleases-rocm10.0.0rc3-2805c93",
+    "_image_example": "rocm/pytorch-xdit:v26.9",
     "_image_comment": "The image needs to support the FLUX.2-dev model.",
     "image": "<changeme>",
     "runtime": {
@@ -27,6 +27,7 @@
           "{paths.models_dir}:/hf_home",
           "{paths.log_dir}:/outputs",
           "/home/{user-id}/cvs/cvs/lib/inference/xdit/scripts/flux2_example.py:/benchmark/flux2_example.py",
+          "/home/{user-id}/cvs/cvs/lib/inference/xdit/scripts/fid_sweep.py:/benchmark/fid_sweep.py",
           "/dev/infiniband:/dev/infiniband",
           "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
           "/usr/lib/x86_64-linux-gnu/libibverbs.so.1:/usr/lib/x86_64-linux-gnu/libibverbs.so.1:ro",
@@ -53,10 +54,13 @@
   },
   "benchmark_params": {
     "model_type": "flux2",
+    "clip_model": "/hf_home/clip-vit-base-patch32",
     "guidance_scale": 4.0,
     "prompt": "A small cat",
     "seed": 42,
     "num_inference_steps": 50,
+    "fid_nfe_steps": [10, 50],
+    "fid_inception_path": "/hf_home/inception_v3.pth",
     "max_sequence_length": 512,
     "no_use_resolution_binning": true,
     "warmup_steps": 1,
@@ -66,7 +70,7 @@
     "width": 1024,
     "ulysses_degree": 8,
     "ring_degree": 2,
-    "use_torch_compile": true,
+    "use_torch_compile": false,
     "torchrun_nproc": 8
   }
 }

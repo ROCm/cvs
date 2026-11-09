@@ -8,6 +8,10 @@
     "max_avg_pipe_time_s": 8.0,
     "min_clip_score": 20.0
   },
+  "mi325": {
+    "max_avg_pipe_time_s": 8.0,
+    "min_clip_score": 20.0
+  },
   "mi350": {
     "max_avg_pipe_time_s": 7.0,
     "min_clip_score": 20.0

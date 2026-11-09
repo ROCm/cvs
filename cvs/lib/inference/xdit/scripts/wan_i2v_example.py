@@ -17,6 +17,8 @@ import torch
 import torch.distributed as dist
 
 _RANK_STRING_FIELDS = ("determinism_check_report_ranks",)
+# rocm/pytorch-xdit ships ffmpeg without libx264, and imageio does not raise when that encoder is missing.
+_VIDEO_CODECS = ("libx264", "libopenh264", "mpeg4")
 
 _EXTRA_PYPACKAGES = os.environ.get("CVS_WAN_XFUSER_PYPACKAGES", "").strip()
 if _EXTRA_PYPACKAGES and _EXTRA_PYPACKAGES not in sys.path:
@@ -49,6 +51,9 @@ def parse_args():
         default="results/timing.json",
         help="Flux-style timing JSON: list of {\"pipe_time\": seconds} entries.",
     )
+    parser.add_argument("--fid_steps", default="")
+    parser.add_argument("--fid_samples", type=int, default=2)
+    parser.add_argument("--fid_deadline", type=float, default=0)
     return parser.parse_args()
 
 
@@ -62,12 +67,15 @@ def _extract_video_frames(run_output):
     output = _unwrap_run_output(run_output)
     if output is None:
         return None
-    if hasattr(output, "videos") and output.videos:
-        videos = output.videos
-        return videos[0] if isinstance(videos, list) and videos else videos
-    if hasattr(output, "frames") and output.frames:
-        frames = output.frames
-        return frames[0] if isinstance(frames, list) and frames else frames
+    for name in ("videos", "frames", "images"):
+        value = getattr(output, name, None)
+        if not _nonempty(value):
+            continue
+        if isinstance(value, (list, tuple)):
+            return value[0]
+        return value
+    if isinstance(output, (list, tuple)) and output:
+        return output
     return None
 
 
@@ -137,6 +145,43 @@ def _iter_frames(raw_frames):
     return [_normalize_single_frame(arr)]
 
 
+def _write_sample_frames(arrays, save_path, limit=8):
+    """The FID scorer needs two images per step. One video's frames cover that if the mp4 will not decode."""
+    if not arrays or not save_path.lower().endswith(".mp4"):
+        return
+    parent = os.path.dirname(save_path)
+    stem = os.path.splitext(os.path.basename(save_path))[0]
+    chosen = np.linspace(0, len(arrays) - 1, num=min(limit, len(arrays)), dtype=int)
+    try:
+        from PIL import Image
+    except ImportError:
+        return
+    for slot, index in enumerate(chosen):
+        Image.fromarray(arrays[int(index)]).save(os.path.join(parent, f"{stem}_frame_{slot}.png"))
+
+
+def _write_mp4(arrays, save_path, fps):
+    import imageio
+
+    errors = []
+    for codec in _VIDEO_CODECS:
+        if os.path.isfile(save_path):
+            os.remove(save_path)
+        try:
+            writer = imageio.get_writer(save_path, fps=fps, codec=codec, macro_block_size=1)
+            for arr in arrays:
+                writer.append_data(arr)
+            writer.close()
+        except Exception as exc:
+            errors.append(f"{codec}: {exc}")
+            continue
+        if os.path.isfile(save_path) and os.path.getsize(save_path) > 0:
+            return codec
+        errors.append(f"{codec}: encoder produced no file")
+    print(f"Video export failed: {'; '.join(errors)}", file=sys.stderr)
+    return None
+
+
 def _export_video(run_output, save_path, fps):
     raw = _extract_video_frames(run_output)
     arrays = _iter_frames(raw)
@@ -147,23 +192,49 @@ def _export_video(run_output, save_path, fps):
     parent = os.path.dirname(save_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-
-    try:
-        import imageio
-
-        writer = imageio.get_writer(save_path, fps=fps, codec="libx264")
-        for arr in arrays:
-            writer.append_data(arr)
-        writer.close()
-        print(f"Saved video to {save_path} ({len(arrays)} frames)")
-        return True
-    except Exception as exc:
-        print(f"Video export failed: {exc}", file=sys.stderr)
+    _write_sample_frames(arrays, save_path)
+    codec = _write_mp4(arrays, save_path, fps)
+    if codec is None:
         return False
+    print(f"Saved video to {save_path} ({len(arrays)} frames, {codec})")
+    return True
+
+
+def _nonempty(value):
+    if value is None:
+        return False
+    try:
+        return len(value) > 0
+    except TypeError:
+        return True
+
+
+def _output_has_media(output):
+    if output is None:
+        return False
+    for name in ("videos", "frames", "images"):
+        if _nonempty(getattr(output, name, None)):
+            return True
+    return isinstance(output, (list, tuple)) and len(output) > 0
+
+
+def _media_owner_rank(output):
+    """Pick one rank that holds decoded frames. Parallel VAE decode is not always rank 0."""
+    if not dist.is_initialized():
+        return 0 if _output_has_media(output) else None
+    rank = dist.get_rank()
+    holder = torch.tensor([rank if _output_has_media(output) else -1], dtype=torch.int64, device="cuda")
+    dist.all_reduce(holder, op=dist.ReduceOp.MAX)
+    chosen = int(holder.item())
+    if chosen < 0:
+        return None
+    return chosen
 
 
 def _copy_first_mp4(output_directory, save_path):
-    mp4_files = sorted(glob.glob(os.path.join(output_directory, "*.mp4")))
+    mp4_files = sorted(glob.glob(os.path.join(output_directory, "**", "*.mp4"), recursive=True))
+    save_abs = os.path.abspath(save_path)
+    mp4_files = [path for path in mp4_files if os.path.abspath(path) != save_abs]
     if not mp4_files:
         return False
     parent = os.path.dirname(save_path)
@@ -211,6 +282,52 @@ def _write_timing_json(timing_json_path, pipe_times):
     with open(timing_json_path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
     print(f"Wrote timing JSON to {timing_json_path}")
+
+
+def _run_wan_fid_sweep(args, runner, input_args, rank, last_wall_s):
+    raw_steps = str(getattr(args, "fid_steps", "") or "").strip()
+    if not raw_steps:
+        return
+    from fid_sweep import rewrite_manifest_from_disk, run_fid_sweep, seconds_until
+
+    steps = [int(part) for part in raw_steps.split(",") if part.strip()]
+    samples = int(args.fid_samples)
+    budget_s = seconds_until(getattr(args, "fid_deadline", 0))
+    base_seed = int(getattr(args, "seed", 0) or 0)
+    manifest_path = os.path.join(args.output_directory, "results", "fid", "manifest.json")
+
+    def generate_one(nfe, sample_index):
+        run_args = dict(input_args)
+        run_args["num_inference_steps"] = int(nfe)
+        run_args["seed"] = base_seed + sample_index + 1
+        torch.cuda.synchronize()
+        wall_start = time.time()
+        output, _timings = runner.run(run_args)
+        torch.cuda.synchronize()
+        elapsed = time.time() - wall_start
+        dest = os.path.join(args.output_directory, "results", "fid", f"nfe_{int(nfe)}", f"seed_{sample_index}.mp4")
+        owner = _media_owner_rank(output)
+        if owner is not None and rank == owner:
+            _export_video(output, dest, args.video_fps)
+        return elapsed
+
+    try:
+        run_fid_sweep(
+            rank,
+            steps,
+            samples,
+            budget_s,
+            time.monotonic(),
+            last_wall_s if rank == 0 else 0.0,
+            int(args.num_inference_steps),
+            generate_one,
+            manifest_path,
+        )
+    except Exception as exc:
+        print(f"FID sweep failed after the timed benchmark: {exc}")
+    finally:
+        if rank == 0:
+            rewrite_manifest_from_disk(manifest_path, steps, samples, budget_s)
 
 
 def main():
@@ -269,6 +386,7 @@ def main():
 
         rank = dist.get_rank() if dist.is_initialized() else 0
         local_rank = int(torch.cuda.current_device())
+        elapsed = 0.0
 
         for step in range(max(int(args.num_repetitions), 1)):
             torch.cuda.synchronize()
@@ -287,13 +405,32 @@ def main():
 
         if rank == 0:
             _write_timing_json(args.timing_json_path, pipe_times)
-            try:
-                runner.save(output=last_output, timings=last_timings)
-            except Exception as exc:
-                print(f"xFuser save() failed: {exc}", file=sys.stderr)
-            if args.output_type == "pil":
-                if not _export_video(last_output, args.save_video_path, args.video_fps):
-                    _copy_first_mp4(args.output_directory, args.save_video_path)
+
+        # save() selects the rank that owns the frames and may all_reduce, so every rank must call it.
+        try:
+            runner.save(output=last_output, timings=last_timings)
+        except Exception as exc:
+            print(f"rank {rank}: xFuser save() failed: {exc}", file=sys.stderr)
+
+        owner = _media_owner_rank(last_output)
+        if (
+            args.output_type == "pil"
+            and owner is not None
+            and rank == owner
+            and not os.path.isfile(args.save_video_path)
+        ):
+            if not _export_video(last_output, args.save_video_path, args.video_fps):
+                _copy_first_mp4(args.output_directory, args.save_video_path)
+
+        if dist.is_initialized():
+            dist.barrier()
+
+        if rank == 0 and args.output_type == "pil" and not os.path.isfile(args.save_video_path):
+            if not _copy_first_mp4(args.output_directory, args.save_video_path):
+                print(f"video was not written to {args.save_video_path}", file=sys.stderr)
+                raise SystemExit(1)
+
+        _run_wan_fid_sweep(args, runner, input_args, rank, elapsed)
     finally:
         runner.cleanup()
 

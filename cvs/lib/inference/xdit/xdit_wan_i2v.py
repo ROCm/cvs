@@ -4,8 +4,6 @@ PyTorch XDit Wan I2V (xFuser) output parser.
 Locates and parses ``results/timing.json`` from Wan xFuser I2V runs, validates
 ``video_i2v.mp4``, and checks thresholds using Flux-style ``pipe_time`` metrics.
 
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
 """
 
 from __future__ import annotations

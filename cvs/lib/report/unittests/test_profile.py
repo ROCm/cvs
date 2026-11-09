@@ -285,14 +285,17 @@ class TestProfile(unittest.TestCase):
             "xdit_flux_dev_single",
             "xdit_flux_dev_distributed",
             "xdit_wan22_14b_single",
-            "xdit_wan22_14b_diffusers_single",
-            "xdit_wan22_14b_diffusers_distributed",
+            "xdit_wan22_i2v_14b_diffusers_single",
+            "xdit_wan22_i2v_14b_diffusers_distributed",
+            "xdit_wan21_t2v_14b_diffusers_single",
+            "xdit_wan21_t2v_14b_diffusers_distributed",
         )
         for stem in stems:
             with self.subTest(stem=stem):
                 profile = load_json_profile(stem)
                 self.assertEqual(profile["suite_id"], "xdit")
                 self.assertEqual(profile["report_basename"], "xdit_run_deck")
+                self.assertTrue(profile["interactive_viewer"])
 
     def test_xdit_profile_resolves_latency_metrics(self):
         from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile

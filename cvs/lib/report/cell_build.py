@@ -183,6 +183,8 @@ class CellRecordBuilder:
         multi_host: bool,
     ) -> dict:
         model, gpu, isl, osl, policy, conc = key
+        actuals = dict(actuals)
+        extra_curves = actuals.pop("_extra_curves", None)
         is_canonical_key = isinstance(policy, str) and policy.startswith(("ISL=", "SIZE="))
         cell_id = policy if is_canonical_key else variant_config.cell_key(isl, osl, conc)
         thresholds_map = getattr(variant_config, "thresholds", {}) or {}
@@ -231,7 +233,7 @@ class CellRecordBuilder:
         self._ctx_lifecycle = lifecycle_report
         pytest_links = self.resolve_pytest_nodeids(conc, cell_id if is_canonical_key else "")
 
-        return {
+        cell = {
             "model": model,
             "gpu": gpu,
             "isl": isl,
@@ -243,10 +245,13 @@ class CellRecordBuilder:
             "cell_id": cell_id,
             "metrics": metrics,
             "tiers": tiers,
-            "actuals": dict(actuals),
+            "actuals": actuals,
             "cell_lifecycle": self.lifecycle_for_cell(lifecycle_report, conc, cell_id if is_canonical_key else ""),
             **pytest_links,
         }
+        if isinstance(extra_curves, dict) and extra_curves:
+            cell["extra_curves"] = extra_curves
+        return cell
 
     def build_all(
         self,

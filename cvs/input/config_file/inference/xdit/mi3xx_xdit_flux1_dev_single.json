@@ -1,18 +1,18 @@
 {
-  "_comment": "FLUX.1-dev single-node xDiT workload. Thresholds live in the sibling threshold JSON. Download model before run.",
+  "_comment": "FLUX.1-dev single-node xDiT workload. Bind-mounts run_usp.py. Thresholds live in the sibling threshold JSON. Download model before run.",
   "gpu_name" : "<changeme> mi325",
   "enforce_thresholds": true,
   "threshold_json": "xdit_flux1_dev_single_threshold.json",
   "paths": {
     "shared_fs": "{home}",
-    "models_dir": "{home}/.cache/huggingface",
+    "models_dir": "<changeme> /data/models",
     "log_dir": "{home}/cvs_flux1_output",
     "hf_token_file": "{home}/.hf_token"
   },
   "container": {
     "lifetime": "per_run",
     "name": "flux-benchmark_single",
-    "_image_example": "amdsiloai/pytorch-xdit:v25.11.2",
+    "_image_example": "rocm/pytorch-xdit:v26.9",
     "image": "<changeme>",
     "runtime": {
       "name": "docker",
@@ -23,7 +23,10 @@
         "shm_size": "128G",
         "volumes": [
           "{paths.models_dir}:/hf_home",
-          "{paths.log_dir}:/outputs"
+          "{paths.log_dir}:/outputs",
+          "{home}/cvs/cvs/lib/inference/xdit/scripts/run_usp.py:/benchmark/run_usp.py",
+          "{home}/cvs/cvs/lib/inference/xdit/scripts/flux_utils.py:/benchmark/flux_utils.py",
+          "{home}/cvs/cvs/lib/inference/xdit/scripts/fid_sweep.py:/benchmark/fid_sweep.py"
         ],
         "devices": ["/dev/dri", "/dev/kfd"],
         "env": {
@@ -40,8 +43,11 @@
   },
   "benchmark_params": {
     "prompt": "A small cat",
+    "clip_model": "/hf_home/clip-vit-base-patch32",
     "seed": 42,
     "num_inference_steps": 25,
+    "fid_nfe_steps": [10, 25],
+    "fid_inception_path": "/hf_home/inception_v3.pth",
     "max_sequence_length": 256,
     "no_use_resolution_binning": true,
     "warmup_steps": 1,
