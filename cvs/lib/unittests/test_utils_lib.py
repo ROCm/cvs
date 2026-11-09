@@ -151,6 +151,11 @@ class TestConfigPlaceholderMap(unittest.TestCase):
             resolved = utils_lib.resolve_test_config_placeholders(raw, cluster)
         self.assertEqual(resolved['path'], 'jdoe:jdoe:/homes/jdoe:/mnt/node7')
 
+    def test_resolver_keeps_a_blank_username_as_is(self):
+        with patch.dict(os.environ, {'USER': 'envuser'}):
+            resolved = utils_lib.resolve_test_config_placeholders({'path': '/home/{user-id}'}, {'username': ''})
+        self.assertEqual(resolved['path'], '/home/')
+
 
 class TestResolveRunDirPlaceholder(unittest.TestCase):
     """{run_dir} comes from RunLayout, the single source of truth for the paths.

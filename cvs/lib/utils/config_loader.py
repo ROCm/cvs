@@ -129,6 +129,17 @@ def _flatten_paths(d, prefix=""):
     return out
 
 
+def _without_blank_username(cluster_dict):
+    """The cluster without a blank or null ``username``, which then falls back as a missing one does.
+
+    `resolve_test_config_placeholders` keeps a blank username as is, so the
+    shared `config_placeholder_map` is left unchanged and only this path drops it.
+    """
+    if cluster_dict.get("username"):
+        return cluster_dict
+    return {k: v for k, v in cluster_dict.items() if k != "username"}
+
+
 def _resolve_cluster_mapping(cluster_dict):
     raw = cluster_dict.get("username") or "{user-id}"
     user = getpass.getuser() if raw == "{user-id}" else raw
@@ -219,7 +230,7 @@ def substitute_config(config_path, cluster_dict, all_placeholders=False):
 
     # Pass 1: cluster placeholders ({user-id}, or the full test-config set) everywhere.
     if all_placeholders:
-        cluster_map = config_placeholder_map(raw, cluster_dict)
+        cluster_map = config_placeholder_map(raw, _without_blank_username(cluster_dict))
     else:
         cluster_map = _resolve_cluster_mapping(cluster_dict)
     raw = _walk_substitute(raw, cluster_map)

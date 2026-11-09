@@ -17,9 +17,12 @@ Framework: unittest.TestCase + self.subTest + unittest.mock (no pytest).
 '''
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
 from pydantic import ValidationError
 
 from cvs.lib.utils.config_loader import (
@@ -509,6 +512,16 @@ class TestSubstituteConfigPlaceholders(unittest.TestCase):
             cluster = {"username": "jdoe", "home_mount_dir_name": "mnt", "node_dir_name": "node7"}
             raw, _ = substitute_config(config_path, cluster, all_placeholders=True)
             self.assertEqual(raw["paths"]["log_dir"], "/mnt/jdoe/node7/jdoe")
+
+    def test_all_placeholders_treats_a_blank_username_as_unset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_base = _base_config_dict()
+            cfg_base["paths"]["log_dir"] = "/home/{user-id}/{user}"
+            config_path = self._write_files(Path(tmp), cfg_base)
+            for username in ("", None):
+                with self.subTest(username=username), patch.dict(os.environ, {"USER": "envuser"}):
+                    raw, _ = substitute_config(config_path, {"username": username}, all_placeholders=True)
+                    self.assertEqual(raw["paths"]["log_dir"], "/home/envuser/envuser")
 
 
 if __name__ == "__main__":

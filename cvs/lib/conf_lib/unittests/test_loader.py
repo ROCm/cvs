@@ -6,6 +6,7 @@ Unit tests for cvs.lib.conf_lib.loader.
 '''
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -162,6 +163,14 @@ class TestLoadConfig(unittest.TestCase):
         loaded = load_config(BaseVariantConfig, self._write_config(config), {"username": "jdoe"})
         self.assertEqual(loaded.config.paths.log_dir, "/home/jdoe/logs")
         self.assertIsNone(RunLayout._instance)
+
+    def test_blank_cluster_username_resolves_to_the_user_env(self):
+        config = _base_config_dict()
+        config["paths"]["shared_fs"] = "/home/{user-id}"
+        with patch.dict(os.environ, {"USER": "envuser"}):
+            loaded = load_config(BaseVariantConfig, self._write_config(config), {"username": ""})
+        self.assertEqual(loaded.config.paths.shared_fs, "/home/envuser")
+        self.assertEqual(loaded.cluster["username"], "")
 
 
 if __name__ == "__main__":
