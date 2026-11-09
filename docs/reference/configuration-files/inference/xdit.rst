@@ -61,10 +61,10 @@ MI300X, MI325X, and MI350X (``gpu_name`` hint ``mi325``). ``mi35x`` covers MI355
      - ``xdit_wan22_14b_single``
    * - ``mi3xx_xdit_wan22_14b_diffusers_single.json``, ``mi35x_xdit_wan22_14b_diffusers_single.json``
      - ``xdit_wan22_14b_diffusers_single_threshold.json``
-     - ``xdit_wan22_14b_diffusers_single``
+     - ``xdit_wan22_i2v_14b_diffusers_single``
    * - ``mi3xx_xdit_wan22_14b_diffusers_distributed.json``, ``mi35x_xdit_wan22_14b_diffusers_distributed.json``
      - ``xdit_wan22_14b_diffusers_distributed_threshold.json``
-     - ``xdit_wan22_14b_diffusers_distributed``
+     - ``xdit_wan22_i2v_14b_diffusers_distributed``
    * - ``mi3xx_xdit_wan21_t2v_14b_diffusers_single.json``, ``mi35x_xdit_wan21_t2v_14b_diffusers_single.json``
      - ``xdit_wan21_t2v_14b_diffusers_single_threshold.json``
      - ``xdit_wan21_t2v_14b_diffusers_single``

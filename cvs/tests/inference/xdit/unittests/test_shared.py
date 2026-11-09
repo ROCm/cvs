@@ -92,7 +92,7 @@ class TestSuiteSpec(unittest.TestCase):
 
     def test_wan_diffusers_distributed(self):
         self.assertEqual(
-            suite_spec("xdit_wan22_14b_diffusers_distributed"),
+            suite_spec("xdit_wan22_i2v_14b_diffusers_distributed"),
             {"family": "wan", "distributed": True, "diffusers": True},
         )
 

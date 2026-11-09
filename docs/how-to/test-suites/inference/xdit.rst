@@ -47,11 +47,11 @@ The following suites are available. Every suite runs the same stages except
    * - ``xdit_wan22_14b_single``
      - ``xdit_wan22_14b_single.py``
      - WAN 2.2 I2V native (``/app/Wan2.2/run.py``); one job per cluster node. No FID vs steps stage.
-   * - ``xdit_wan22_14b_diffusers_single``
-     - ``xdit_wan22_14b_diffusers_single.py``
+   * - ``xdit_wan22_i2v_14b_diffusers_single``
+     - ``xdit_wan22_i2v_14b_diffusers_single.py``
      - WAN Diffusers xFuser (``wan_i2v_example.py``); one job per cluster node.
-   * - ``xdit_wan22_14b_diffusers_distributed``
-     - ``xdit_wan22_14b_diffusers_distributed.py``
+   * - ``xdit_wan22_i2v_14b_diffusers_distributed``
+     - ``xdit_wan22_i2v_14b_diffusers_distributed.py``
      - Unified WAN Diffusers xFuser torchrun across ``nnodes``.
    * - ``xdit_wan21_t2v_14b_diffusers_single``
      - ``xdit_wan21_t2v_14b_diffusers_single.py``
@@ -160,9 +160,9 @@ Shipped config templates and the suites they target:
    * - ``mi3xx_xdit_wan22_14b_single.json`` or ``mi35x_xdit_wan22_14b_single.json``
      - ``xdit_wan22_14b_single``
    * - ``mi3xx_xdit_wan22_14b_diffusers_single.json`` or ``mi35x_xdit_wan22_14b_diffusers_single.json``
-     - ``xdit_wan22_14b_diffusers_single``
+     - ``xdit_wan22_i2v_14b_diffusers_single``
    * - ``mi3xx_xdit_wan22_14b_diffusers_distributed.json`` or ``mi35x_xdit_wan22_14b_diffusers_distributed.json``
-     - ``xdit_wan22_14b_diffusers_distributed``
+     - ``xdit_wan22_i2v_14b_diffusers_distributed``
    * - ``mi3xx_xdit_wan21_t2v_14b_diffusers_single.json`` or ``mi35x_xdit_wan21_t2v_14b_diffusers_single.json``
      - ``xdit_wan21_t2v_14b_diffusers_single``
    * - ``mi3xx_xdit_wan21_t2v_14b_diffusers_distributed.json`` or ``mi35x_xdit_wan21_t2v_14b_diffusers_distributed.json``
@@ -258,12 +258,12 @@ WAN Diffusers:
 
 .. code:: bash
 
-  cvs run xdit_wan22_14b_diffusers_single \
+  cvs run xdit_wan22_i2v_14b_diffusers_single \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/inference/xdit/mi3xx_xdit_wan22_14b_diffusers_single.json \
     -vvv
 
-  cvs run xdit_wan22_14b_diffusers_distributed \
+  cvs run xdit_wan22_i2v_14b_diffusers_distributed \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/inference/xdit/mi35x_xdit_wan22_14b_diffusers_distributed.json \
     -vvv
