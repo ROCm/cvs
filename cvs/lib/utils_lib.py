@@ -307,8 +307,8 @@ def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
 
     Args:
       target_dict: Dictionary (or nested dict/list/str) where placeholders should be replaced
-      replacements: Dictionary mapping placeholder strings to their replacement values
-                   Example: {'{user-id}': 'master', '{home}': '/home/master'}
+      replacements: Dictionary mapping placeholder names, without braces, to their replacement values
+                   Example: {'user-id': 'master', 'home': '/home/master'}
       context_name: Optional context name for logging (e.g., "cluster", "config")
 
     Returns:
@@ -319,7 +319,7 @@ def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
 
     Example:
       target = {"path": "/home/{user-id}/files", "user": "{user-id}"}
-      replacements = {"{user-id}": "john"}
+      replacements = {"user-id": "john"}
       result = _resolve_placeholders_in_dict(target, replacements)
       # Returns: {"path": "/home/john/files", "user": "john"}
     """
@@ -348,8 +348,8 @@ def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
 
         # Perform placeholder replacement
         result = value
-        for placeholder, replacement in replacements.items():
-            result = result.replace(placeholder, replacement)
+        for name, replacement in replacements.items():
+            result = result.replace(f'{{{name}}}', replacement)
         return result
 
     def replace_recursive(obj, path=""):
@@ -372,7 +372,7 @@ def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
 
     # Log the resolution operation
     if context_name:
-        placeholder_summary = ', '.join([f'{k}={v}' for k, v in replacements.items()])
+        placeholder_summary = ', '.join([f'{{{k}}}={v}' for k, v in replacements.items()])
         log.info(f'Resolving {context_name} placeholders: {placeholder_summary}')
 
     resolved_dict = replace_recursive(target_dict)
@@ -406,7 +406,7 @@ def resolve_cluster_config_placeholders(cluster_dict):
 
     # Define replacement mapping - only resolve {user-id} in cluster config
     replacements = {
-        '{user-id}': username,
+        'user-id': username,
     }
 
     resolved_cluster = _resolve_placeholders_in_dict(cluster_dict, replacements)
@@ -432,9 +432,10 @@ def config_placeholder_map(config_dict, cluster_dict):
     """
     Build the test-config placeholder replacements for a cluster.
 
-    Returns a dict keyed by the placeholder text, such as ``{'{user-id}': 'master'}``
-    for a cluster whose ``username`` is ``master``, covering {user-id}, {user},
-    {home}, {home-mount-dir}, {node-dir-name} and {run_dir}. {run_dir} is the empty string unless config_dict mentions it.
+    Returns a dict keyed by placeholder name without the braces, such as
+    ``{'user-id': 'master'}`` for a cluster whose ``username`` is ``master``,
+    covering {user-id}, {user}, {home}, {home-mount-dir}, {node-dir-name} and
+    {run_dir}. {run_dir} is the empty string unless config_dict mentions it.
     resolve_test_config_placeholders and load_config both expand exactly this set.
     """
     username = cluster_dict.get('username', os.getenv('USER', 'root'))
@@ -457,12 +458,12 @@ def config_placeholder_map(config_dict, cluster_dict):
         run_dir = str(RunLayout.get().run_dir)
 
     return {
-        '{user-id}': username,
-        '{user}': username,
-        '{home}': home_dir,
-        '{home-mount-dir}': home_mount_dir_name,
-        '{node-dir-name}': node_dir_name,
-        '{run_dir}': run_dir,
+        'user-id': username,
+        'user': username,
+        'home': home_dir,
+        'home-mount-dir': home_mount_dir_name,
+        'node-dir-name': node_dir_name,
+        'run_dir': run_dir,
     }
 
 
@@ -504,8 +505,8 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
     replacements = config_placeholder_map(config_dict, cluster_dict)
 
     log.info(
-        f'Resolving config path placeholders with username: {replacements["{user-id}"]}, '
-        f'home: {replacements["{home}"]}, home_mount_dir: {replacements["{home-mount-dir}"]}'
+        f'Resolving config path placeholders with username: {replacements["user-id"]}, '
+        f'home: {replacements["home"]}, home_mount_dir: {replacements["home-mount-dir"]}'
     )
 
     resolved_config = _resolve_placeholders_in_dict(config_dict, replacements, context_name="test config")

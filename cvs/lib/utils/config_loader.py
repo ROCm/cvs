@@ -219,7 +219,7 @@ def substitute_config(config_path, cluster_dict, all_placeholders=False):
 
     # Pass 1: cluster placeholders ({user-id}, or the full test-config set) everywhere.
     if all_placeholders:
-        cluster_map = {key[1:-1]: value for key, value in config_placeholder_map(raw, cluster_dict).items()}
+        cluster_map = config_placeholder_map(raw, cluster_dict)
     else:
         cluster_map = _resolve_cluster_mapping(cluster_dict)
     raw = _walk_substitute(raw, cluster_map)

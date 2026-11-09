@@ -131,18 +131,25 @@ class TestConfigPlaceholderMap(unittest.TestCase):
         self.assertEqual(
             mapping,
             {
-                '{user-id}': 'envuser',
-                '{user}': 'envuser',
-                '{home}': '/homes/envuser',
-                '{home-mount-dir}': 'home',
-                '{node-dir-name}': 'root',
-                '{run_dir}': '',
+                'user-id': 'envuser',
+                'user': 'envuser',
+                'home': '/homes/envuser',
+                'home-mount-dir': 'home',
+                'node-dir-name': 'root',
+                'run_dir': '',
             },
         )
         with patch.dict(os.environ, {}):
             os.environ.pop("USER", None)
             mapping = utils_lib.config_placeholder_map({}, {})
-        self.assertEqual((mapping['{user-id}'], mapping['{user}']), ('root', 'root'))
+        self.assertEqual((mapping['user-id'], mapping['user']), ('root', 'root'))
+
+    def test_resolver_expands_every_name_in_the_map(self):
+        cluster = {'username': 'jdoe', 'home_mount_dir_name': 'mnt', 'node_dir_name': 'node7'}
+        raw = {'path': '{user-id}:{user}:{home}:/{home-mount-dir}/{node-dir-name}'}
+        with patch('cvs.lib.utils_lib.os.path.expanduser', side_effect=lambda p: f"/homes/{p[1:]}"):
+            resolved = utils_lib.resolve_test_config_placeholders(raw, cluster)
+        self.assertEqual(resolved['path'], 'jdoe:jdoe:/homes/jdoe:/mnt/node7')
 
 
 class TestResolveRunDirPlaceholder(unittest.TestCase):
