@@ -4,7 +4,7 @@ All rights reserved.
 
 Shared helpers and ordering for the SGLang inference suites (single-node and disaggregated).
 
-Used by ``sglang_single.py``, ``sglang_distributed.py``, ``sglang_wide_ep.py``,
+Used by ``sglang_single.py``, ``sglang_distributed.py``, ``sglang_wide_ep_distributed.py``,
 and ``sglang_disagg_distributed.py``.
 Each suite has its own stage order (single-node, unified multi-node, wide-EP, or PD disagg).
 '''
@@ -91,7 +91,7 @@ SGLANG_DISTRIBUTED_TEST_ORDER = {
     "test_teardown": 13,
 }
 
-# Stable test order for sglang_wide_ep (unified multi-node expert parallel, no PD).
+# Stable test order for sglang_wide_ep_distributed (unified multi-node expert parallel, no PD).
 SGLANG_WIDE_EP_TEST_ORDER = {
     "test_launch_container": 0,
     "test_rms_norm": 1,

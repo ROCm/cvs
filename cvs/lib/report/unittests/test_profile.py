@@ -208,7 +208,12 @@ class TestProfile(unittest.TestCase):
             )
 
     def test_sglang_stems_share_one_profile(self):
-        for stem in ("sglang_single", "sglang_distributed", "sglang_wide_ep", "sglang_disagg_distributed"):
+        for stem in (
+            "sglang_single",
+            "sglang_distributed",
+            "sglang_wide_ep_distributed",
+            "sglang_disagg_distributed",
+        ):
             profile = load_json_profile(stem)
             self.assertIsNotNone(profile, stem)
             self.assertEqual(profile["suite_id"], "sglang")

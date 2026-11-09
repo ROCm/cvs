@@ -31,12 +31,15 @@ from cvs.lib.inference.sglang.sglang_common import (
     DEFAULT_SGLANG_PREFILL_COORD_PORT,
     DEFAULT_SGLANG_PREFILL_SERV_PORT,
     DEFAULT_SGLANG_SERVE_PORT,
+    WIDE_EP_REQUIRED_KEYS,
+    WIDE_EP_SUITE_NAME,
     _DISAGG_PINNED_ROLE_KEYS,
     perf_enforce_thresholds,
     resolve_disagg_execution_roles,
     resolve_distributed_execution_hosts,
     resolve_single_execution_hosts,
     stamp_disagg_roles,
+    validate_wide_ep_layout,
 )
 from cvs.lib.utils.config_loader import (
     BaseVariantConfig,
@@ -485,14 +488,7 @@ class SglangSingleVariantConfig(BaseVariantConfig):
             "single": (),
             "distributed": ("nnodes",),
             "disaggregated": ("nnodes",),
-            "wide_ep": (
-                "nnodes",
-                "tensor_parallelism",
-                "pipeline_parallelism",
-                "expert_parallelism",
-                "attn_data_parallelism",
-                "moe_a2a_backend",
-            ),
+            "wide_ep": ("nnodes",) + WIDE_EP_REQUIRED_KEYS,
         }[self.topology]
         missing = [key for key in required if not self.inference.get(key)]
         if missing:
@@ -513,23 +509,8 @@ class SglangSingleVariantConfig(BaseVariantConfig):
         if self.topology == "wide_ep":
             nnodes = int(self.inference.get("nnodes") or 0)
             if nnodes < 2:
-                raise ValueError(f"wide_ep SGLang requires nnodes >= 2, got {nnodes}")
-            tp = int(self.inference.get("tensor_parallelism") or 0)
-            pp = int(self.inference.get("pipeline_parallelism") or 0)
-            ep = int(self.inference.get("expert_parallelism") or 0)
-            attn_dp = int(self.inference.get("attn_data_parallelism") or 0)
-            if pp != 1:
-                raise ValueError(f"wide_ep SGLang requires pipeline_parallelism 1, got {pp}")
-            if ep != tp:
-                raise ValueError(
-                    "wide_ep SGLang requires expert_parallelism == tensor_parallelism "
-                    f"(MORI all-to-all), got expert_parallelism={ep} tensor_parallelism={tp}"
-                )
-            if attn_dp != ep:
-                raise ValueError(
-                    "wide_ep SGLang requires attn_data_parallelism == expert_parallelism "
-                    f"so attention stays data-parallel, got attn_data_parallelism={attn_dp} expert_parallelism={ep}"
-                )
+                raise ValueError(f"{WIDE_EP_SUITE_NAME} requires nnodes >= 2, got {nnodes}")
+            validate_wide_ep_layout(self.inference)
         return self
 
 
@@ -820,7 +801,7 @@ def _load_unified_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> 
         inference.pop("server_node_list", None)
         inference.pop("benchmark_serv_node", None)
         if cluster_dict.get("node_dict"):
-            suite_name = "sglang_wide_ep" if raw.get("topology") == "wide_ep" else "sglang_distributed"
+            suite_name = WIDE_EP_SUITE_NAME if raw.get("topology") == "wide_ep" else "sglang_distributed"
             hosts = resolve_distributed_execution_hosts(cluster_dict, inference, suite_name=suite_name)
             inference["_execution_hosts"] = list(hosts)
             inference["server_node_list"] = list(hosts)

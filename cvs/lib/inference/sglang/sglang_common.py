@@ -235,7 +235,7 @@ def resolve_distributed_execution_hosts(cluster_dict, inference, suite_name="sgl
     """First ``nnodes`` hosts from ``cluster.json``; rank-0 is master and benchmark.
 
     Ignores ``server_node_list`` and ``benchmark_serv_node``. Fails if ``nnodes``
-    is larger than the cluster. ``sglang_wide_ep`` uses the same host rule.
+    is larger than the cluster. ``sglang_wide_ep_distributed`` uses the same host rule.
     """
     hosts = [host for host in (cluster_dict.get("node_dict") or {}) if host]
     nnodes = int(inference.get("nnodes") or 0)
@@ -244,6 +244,43 @@ def resolve_distributed_execution_hosts(cluster_dict, inference, suite_name="sgl
     if len(hosts) < nnodes:
         raise ValueError(f"{suite_name} requests {nnodes} nodes but cluster.json only has {len(hosts)}")
     return hosts[:nnodes]
+
+
+WIDE_EP_SUITE_NAME = "sglang_wide_ep_distributed"
+WIDE_EP_REQUIRED_KEYS = (
+    "tensor_parallelism",
+    "pipeline_parallelism",
+    "expert_parallelism",
+    "attn_data_parallelism",
+    "moe_a2a_backend",
+)
+
+
+def validate_wide_ep_layout(params):
+    """Reject parallel layouts the wide-EP launch cannot run.
+
+    MORI all-to-all needs the expert group to equal the TP world. Attention stays
+    data-parallel across those same ranks, and pipeline parallel is not used.
+    """
+    missing = [key for key in WIDE_EP_REQUIRED_KEYS if params.get(key) in (None, "")]
+    if missing:
+        raise ValueError(f"{WIDE_EP_SUITE_NAME} requires {', '.join(missing)}")
+    tp = int(params["tensor_parallelism"])
+    pp = int(params["pipeline_parallelism"])
+    ep = int(params["expert_parallelism"])
+    attn_dp = int(params["attn_data_parallelism"])
+    if pp != 1:
+        raise ValueError(f"{WIDE_EP_SUITE_NAME} requires pipeline_parallelism 1, got {pp}")
+    if ep != tp:
+        raise ValueError(
+            f"{WIDE_EP_SUITE_NAME} requires expert_parallelism == tensor_parallelism "
+            f"(MORI all-to-all), got expert_parallelism={ep} tensor_parallelism={tp}"
+        )
+    if attn_dp != ep:
+        raise ValueError(
+            f"{WIDE_EP_SUITE_NAME} requires attn_data_parallelism == expert_parallelism "
+            f"so attention stays data-parallel, got attn_data_parallelism={attn_dp} expert_parallelism={ep}"
+        )
 
 
 def assign_disagg_pd_roles(hosts, nnodes):

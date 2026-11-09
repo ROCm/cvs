@@ -31,8 +31,8 @@ CVS ships four SGLang suite variants, one per deployment topology.
    * - ``sglang_distributed``
      - ``sglang_distributed.py``
      - One unified multi-node server. The first ``server_params.nnodes`` hosts in ``cluster.json`` are the ranks. Rank 0 is the benchmark node.
-   * - ``sglang_wide_ep``
-     - ``sglang_wide_ep.py``
+   * - ``sglang_wide_ep_distributed``
+     - ``sglang_wide_ep_distributed.py``
      - Wide expert parallel for DeepSeek-R1-0528. One server group on the first ``nnodes`` hosts. Attention is data-parallel and experts are sharded across those ranks.
    * - ``sglang_disagg_distributed``
      - ``sglang_disagg_distributed.py``
@@ -89,7 +89,7 @@ MI35x configs use the ``mi355_sglang_*_threshold.json`` files.
    * - ``distributed``
      - ``sglang_distributed``
    * - ``wide_ep``
-     - ``sglang_wide_ep``
+     - ``sglang_wide_ep_distributed``
    * - ``disaggregated``
      - ``sglang_disagg_distributed``
 
@@ -178,12 +178,12 @@ Example run:
     --config_file ~/cvs_workspace/mi3xx_sglang_llama_70b_distributed.json \
     -vvv
 
-``sglang_wide_ep`` stages
--------------------------
+``sglang_wide_ep_distributed`` stages
+-------------------------------------
 
 .. code:: text
 
-  Available tests in sglang_wide_ep:
+  Available tests in sglang_wide_ep_distributed:
     - test_launch_container
     - test_rms_norm
     - test_launch_server
@@ -203,7 +203,7 @@ Example run:
 
 .. code:: bash
 
-  cvs run sglang_wide_ep \
+  cvs run sglang_wide_ep_distributed \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/mi35x_sglang_deepseek_r1_0528_wide_ep.json \
     -vvv

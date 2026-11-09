@@ -992,6 +992,42 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertIn('completion_endpoint', fail.call_args.args[0])
 
 
+class TestValidateWideEPLayout(unittest.TestCase):
+    _VALID = {
+        'tensor_parallelism': '16',
+        'pipeline_parallelism': '1',
+        'expert_parallelism': '16',
+        'attn_data_parallelism': '16',
+        'moe_a2a_backend': 'mori',
+    }
+
+    def test_accepts_matching_expert_and_attention_sizes(self):
+        sglang_common.validate_wide_ep_layout(dict(self._VALID))
+
+    def test_rejects_missing_key_before_checking_sizes(self):
+        params = dict(self._VALID)
+        del params['moe_a2a_backend']
+        with self.assertRaisesRegex(ValueError, 'sglang_wide_ep_distributed requires moe_a2a_backend'):
+            sglang_common.validate_wide_ep_layout(params)
+
+    def test_rejects_blank_value_as_missing(self):
+        params = dict(self._VALID, expert_parallelism='')
+        with self.assertRaisesRegex(ValueError, 'requires expert_parallelism'):
+            sglang_common.validate_wide_ep_layout(params)
+
+    def test_rejects_pipeline_parallel(self):
+        with self.assertRaisesRegex(ValueError, 'pipeline_parallelism 1, got 2'):
+            sglang_common.validate_wide_ep_layout(dict(self._VALID, pipeline_parallelism='2'))
+
+    def test_rejects_expert_size_that_differs_from_tensor_parallel(self):
+        with self.assertRaisesRegex(ValueError, 'expert_parallelism == tensor_parallelism'):
+            sglang_common.validate_wide_ep_layout(dict(self._VALID, expert_parallelism='8', attn_data_parallelism='8'))
+
+    def test_rejects_attention_dp_that_differs_from_expert_size(self):
+        with self.assertRaisesRegex(ValueError, 'attn_data_parallelism == expert_parallelism'):
+            sglang_common.validate_wide_ep_layout(dict(self._VALID, attn_data_parallelism='8'))
+
+
 class TestSglangGpuTopology(unittest.TestCase):
     def test_topology_requests_only_the_mem_usage_section(self):
         """A bare `amd-smi metric` also reads --xgmi-err, which resets the xGMI error counters on MI200 and older."""

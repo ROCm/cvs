@@ -26,7 +26,7 @@ PROFILE_STEM_ALIASES: dict[str, str] = {
     "aorta_distributed": "aorta",
     "sglang_single": "sglang",
     "sglang_distributed": "sglang",
-    "sglang_wide_ep": "sglang",
+    "sglang_wide_ep_distributed": "sglang",
     "sglang_disagg_distributed": "sglang",
     "vllm_single": "vllm",
     "vllm_distributed": "vllm",

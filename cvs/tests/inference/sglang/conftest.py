@@ -3,7 +3,7 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
 Fixtures and hooks for SGLang inference suites (``sglang_single``, ``sglang_distributed``,
-``sglang_wide_ep``, and ``sglang_disagg_distributed``).
+``sglang_wide_ep_distributed``, and ``sglang_disagg_distributed``).
 
 Both suites use ``ContainerOrchestrator`` (vLLM-style) via ``cluster_container.json`` and
 ``load_variant()`` from ``sglang_config_loader``.
@@ -12,8 +12,8 @@ Both suites use ``ContainerOrchestrator`` (vLLM-style) via ``cluster_container.j
 cluster.json host only).
 ``sglang_distributed.py`` — ``SglangDistributed`` (unified multi-node TP/PP; first
 ``nnodes`` hosts from cluster.json, rank-0 is master and benchmark).
-``sglang_wide_ep.py`` — ``SglangWideEP`` (unified multi-node expert parallel for
-DeepSeek-R1-0528; same host rule as distributed, ``topology`` must be ``wide_ep``).
+``sglang_wide_ep_distributed.py`` — ``SglangWideEP`` (unified multi-node expert parallel;
+same host rule as distributed, ``topology`` must be ``wide_ep``).
 ``sglang_disagg_distributed.py`` — ``SglangDisaggPD`` (equal prefill/decode groups
 from the first even ``nnodes`` hosts in cluster.json; rank-0 is proxy/benchmark).
 
@@ -35,7 +35,7 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir
+from cvs.lib.inference.sglang.sglang_common import WIDE_EP_SUITE_NAME, cleanup_sglang_log_dir
 from cvs.lib.inference.sglang.sglang_config_loader import (
     SglangSingleVariantConfig,
     flat_expected_from_specs,
@@ -93,8 +93,16 @@ def _use_sglang_distributed(request):
 
 
 def _use_sglang_wide_ep(request):
-    """``sglang_wide_ep.py`` uses unified multi-node ``SglangWideEP``."""
-    return _sglang_suite_stem(getattr(request.module, "__name__", "")) == "sglang_wide_ep"
+    """``sglang_wide_ep_distributed.py`` uses unified multi-node ``SglangWideEP``."""
+    return _sglang_suite_stem(getattr(request.module, "__name__", "")) == WIDE_EP_SUITE_NAME
+
+
+SGLANG_SUITE_TOPOLOGIES = {
+    "sglang_single": ("single",),
+    "sglang_distributed": ("distributed",),
+    WIDE_EP_SUITE_NAME: ("wide_ep",),
+    "sglang_disagg_distributed": ("disaggregated",),
+}
 
 
 def _deep_merge(base, override):
@@ -198,6 +206,15 @@ def pytest_generate_tests(metafunc):
         return
 
     cluster_dict = _cluster_dict_for_collection(metafunc)
+
+    allowed = SGLANG_SUITE_TOPOLOGIES.get(_sglang_suite_stem(metafunc.module.__name__))
+    if allowed:
+        topology = load_variant(config_file, cluster_dict).topology
+        if topology not in allowed:
+            pytest.fail(
+                f"{_sglang_suite_stem(metafunc.module.__name__)} needs topology {allowed[0]!r}, "
+                f"but {config_file!r} is {topology!r}. Pick the matching suite or config."
+            )
 
     if "perf_cell" in metafunc.fixturenames:
         variant = load_variant(config_file, cluster_dict)
@@ -348,10 +365,9 @@ def orch(request, cluster_dict, variant_config, lifecycle):
     elif _use_sglang_distributed(request) or _use_sglang_wide_ep(request):
         hosts = _execution_hosts_from_variant(inf, min_hosts=2)
         cluster = _cluster_dict_for_disagg_roles(cluster_dict, hosts, hosts[0])
-        suite = "sglang_wide_ep" if _use_sglang_wide_ep(request) else "sglang_distributed"
         log.info(
             "%s: first nnodes=%s hosts=%s master/benchmark=%s",
-            suite,
+            _sglang_suite_stem(request.module.__name__),
             inf.get("nnodes"),
             hosts,
             inf.get("benchmark_serv_node") or hosts[0],
@@ -429,13 +445,6 @@ def im_obj(
             gpu_type=gpu_type,
         )
     if _use_sglang_wide_ep(request):
-        if variant_config.topology != "wide_ep":
-            pytest.fail(
-                "sglang_wide_ep requires a config with topology \"wide_ep\" "
-                f"(got {variant_config.topology!r}). "
-                "Use mi3xx_sglang_deepseek_r1_0528_wide_ep.json or "
-                "mi35x_sglang_deepseek_r1_0528_wide_ep.json."
-            )
         return SglangWideEP(
             model_name,
             variant_config.inference,
@@ -444,8 +453,6 @@ def im_obj(
             gpu_type=gpu_type,
         )
     if _use_sglang_distributed(request):
-        if variant_config.topology == "wide_ep":
-            pytest.fail("this config is wide_ep; run cvs run sglang_wide_ep")
         return SglangDistributed(
             model_name,
             variant_config.inference,
@@ -472,7 +479,7 @@ def pytest_collection_modifyitems(items):
             order = SGLANG_SINGLE_TEST_ORDER
         elif stem == "sglang_distributed":
             order = SGLANG_DISTRIBUTED_TEST_ORDER
-        elif stem == "sglang_wide_ep":
+        elif stem == WIDE_EP_SUITE_NAME:
             order = SGLANG_WIDE_EP_TEST_ORDER
         else:
             order = SGLANG_TEST_ORDER

@@ -14,10 +14,12 @@ import time
 
 from cvs.lib import globals
 from cvs.lib.inference.sglang.sglang_common import (
+    WIDE_EP_SUITE_NAME,
     add_cli_flags_block,
     collect_sglang_gpu_topology,
     format_sglang_gpu_topology_lines,
     stage_and_start_launch_script,
+    validate_wide_ep_layout,
 )
 from cvs.lib.inference.sglang.sglang_distributed_lib import SglangDistributed
 
@@ -27,7 +29,7 @@ log = globals.log
 class SglangWideEP(SglangDistributed):
     """Wide-EP SGLang serve + benchmark. Host placement matches ``SglangDistributed``."""
 
-    suite_name = "sglang_wide_ep"
+    suite_name = WIDE_EP_SUITE_NAME
 
     def __init__(
         self,
@@ -56,36 +58,8 @@ class SglangWideEP(SglangDistributed):
         self.bp_dict.setdefault('moe_a2a_backend', 'mori')
         self.bp_dict.setdefault('deepep_mode', 'normal')
 
-    def _require_parallel_int(self, key):
-        raw = self.bp_dict.get(key)
-        if raw is None or str(raw).strip() == '':
-            raise ValueError(f"sglang_wide_ep requires {key}")
-        return int(raw)
-
     def _validate_wide_ep_parallelism(self):
-        """MORI all-to-all only runs when the expert group equals the TP world.
-
-        Attention DP equals that same group so each rank keeps its own KV cache
-        and pipeline parallel stays unused.
-        """
-        tp = self._require_parallel_int('tensor_parallelism')
-        pp = self._require_parallel_int('pipeline_parallelism')
-        ep = self._require_parallel_int('expert_parallelism')
-        attn_dp = self._require_parallel_int('attn_data_parallelism')
-        if pp != 1:
-            raise ValueError(f"sglang_wide_ep requires pipeline_parallelism 1, got {pp}")
-        if ep != tp:
-            raise ValueError(
-                "sglang_wide_ep requires expert_parallelism == tensor_parallelism "
-                f"(MORI all-to-all), got expert_parallelism={ep} tensor_parallelism={tp}"
-            )
-        if attn_dp != ep:
-            raise ValueError(
-                "sglang_wide_ep requires attn_data_parallelism == expert_parallelism "
-                f"so attention stays data-parallel, got attn_data_parallelism={attn_dp} expert_parallelism={ep}"
-            )
-        if not str(self.bp_dict.get('moe_a2a_backend') or '').strip():
-            raise ValueError("sglang_wide_ep requires moe_a2a_backend")
+        validate_wide_ep_layout(self.bp_dict)
 
     def _server_env_body(self):
         body = super()._server_env_body()
