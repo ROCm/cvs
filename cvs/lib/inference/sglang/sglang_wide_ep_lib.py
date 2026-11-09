@@ -5,9 +5,11 @@ All rights reserved.
 Wide expert-parallel SGLang inference controller.
 
 One unified ``sglang.launch_server`` group on the first ``nnodes`` hosts.
-Attention is data-parallel (``--attn-dp-size``) and experts are sharded across
-every rank (``--ep-size``). Pipeline parallel stays 1. MORI all-to-all requires
-``expert_parallelism == tensor_parallelism``.
+Attention is data-parallel (``--dp-size`` with ``--enable-dp-attention``) and
+experts are sharded across every rank (``--ep-size``). Pipeline parallel stays
+1. MORI all-to-all requires ``expert_parallelism == tensor_parallelism``.
+The ROCm SGLang images reject ``--attn-dp-size``; newer SGLang rewrites this
+older pair to that flag.
 '''
 
 import time
@@ -99,7 +101,8 @@ class SglangWideEP(SglangDistributed):
                 f"    --tp-size {self.bp_dict['tensor_parallelism']} \\\n"
                 f"    --pp-size {self.bp_dict['pipeline_parallelism']} \\\n"
                 f"    --ep-size {self.bp_dict['expert_parallelism']} \\\n"
-                f"    --attn-dp-size {self.bp_dict['attn_data_parallelism']} \\\n"
+                f"    --dp-size {self.bp_dict['attn_data_parallelism']} \\\n"
+                f"    --enable-dp-attention \\\n"
                 f"    --moe-a2a-backend {self.bp_dict['moe_a2a_backend']} \\\n"
                 f"    --deepep-mode {self.bp_dict['deepep_mode']} \\\n"
                 f"    --nnodes {self.nnodes} \\\n"
