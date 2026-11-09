@@ -432,9 +432,9 @@ def config_placeholder_map(config_dict, cluster_dict):
     """
     Build the test-config placeholder replacements for a cluster.
 
-    Returns a dict keyed by the placeholder text, such as ``{'{user-id}': 'master'}``,
-    covering {user-id}, {user}, {home}, {home-mount-dir}, {node-dir-name} and
-    {run_dir}. {run_dir} is the empty string unless config_dict mentions it.
+    Returns a dict keyed by the placeholder text, such as ``{'{user-id}': 'master'}``
+    for a cluster whose ``username`` is ``master``, covering {user-id}, {user},
+    {home}, {home-mount-dir}, {node-dir-name} and {run_dir}. {run_dir} is the empty string unless config_dict mentions it.
     resolve_test_config_placeholders and load_config both expand exactly this set.
     """
     username = cluster_dict.get('username', os.getenv('USER', 'root'))
