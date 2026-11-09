@@ -1,3 +1,12 @@
+"""
+Shared helpers for the FLUX xDiT launchers.
+Builds the argument parser with the FID and profiling flags, prepares pipeline
+kwargs from the parsed config, times one pipeline call with CUDA events, and
+prints the model settings. run_usp.py imports these at startup, and the
+bind-mount for this file is what makes that import work in the container.
+
+"""
+
 import torch
 
 from xfuser import xFuserArgs
