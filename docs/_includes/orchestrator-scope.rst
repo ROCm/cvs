@@ -19,6 +19,6 @@ Suites do not all follow the key.
    * - Honors the cluster key. A first test step starts the container; GPU and NIC discovery, the perftest build and perftest then run inside it. sshd is not started. Dmesg and AFM vPOD discovery stay on the host.
      - ``ib_perf_bw_test``, ``install_ibperf_tools``
    * - Forces ``container`` and ignores the cluster key. The workload runs inside the container. vLLM does not start sshd. ATOM does. Aorta, SGLang, xDiT, Megatron (``megatron_single`` / ``megatron_distributed``), TorchTitan, and JAX MaxText launch the container and do not call sshd setup.
-     - ``aorta_single``, ``aorta_distributed``, ``vllm_single``, ``vllm_distributed``, ``sglang_single``, ``sglang_distributed``, ``sglang_disagg_distributed``, the ``xdit_*`` suites, ``atom``, ``megatron_single``, ``megatron_distributed``, ``torchtitan_single``, ``torchtitan_distributed``, ``jaxmaxtext_single``, ``jaxmaxtext_distributed``
+     - ``aorta_single``, ``aorta_distributed``, ``vllm_single``, ``vllm_distributed``, ``sglang_single``, ``sglang_distributed``, ``sglang_wide_ep``, ``sglang_disagg_distributed``, the ``xdit_*`` suites, ``atom``, ``megatron_single``, ``megatron_distributed``, ``torchtitan_single``, ``torchtitan_distributed``, ``jaxmaxtext_single``, ``jaxmaxtext_distributed``
    * - Ignores ``orchestrator``. The command runs on the host over SSH.
      - ``cvs exec``, ``cvs scp``
