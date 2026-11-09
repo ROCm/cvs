@@ -1,6 +1,5 @@
 {
-  "_comment": "GLM-5.2-FP8 vLLM recipe for MI300X/MI308X, TP8. Bring-up thresholds.",
-  "gpu_arch": "mi3xx",
+  "_comment": "GLM-5.2-FP8 vLLM on one mi3xx node, TP8. Thresholds stay unenforced.",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_vllm_glm-5.2_fp8_single_threshold.json",
   "paths": {
@@ -11,8 +10,7 @@
   },
   "model": {
     "id": "zai-org/GLM-5.2-FP8",
-    "remote": 0,
-    "precision": "fp8"
+    "remote": 0
   },
   "container": {
     "lifetime": "per_run",

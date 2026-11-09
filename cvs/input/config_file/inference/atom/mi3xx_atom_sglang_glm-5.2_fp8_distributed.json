@@ -1,6 +1,5 @@
 {
-  "_comment": "GLM-5.2-FP8 SGLang recipe for MI300X/MI308X, TP8. Bring-up thresholds. Distributed PP=2.",
-  "gpu_arch": "mi3xx",
+  "_comment": "GLM-5.2-FP8 SGLang on two mi3xx nodes, TP8 PP2. Thresholds stay unenforced.",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_sglang_glm-5.2_fp8_distributed_threshold.json",
   "paths": {
@@ -11,8 +10,7 @@
   },
   "model": {
     "id": "zai-org/GLM-5.2-FP8",
-    "remote": 0,
-    "precision": "fp8"
+    "remote": 0
   },
   "container": {
     "lifetime": "per_run",

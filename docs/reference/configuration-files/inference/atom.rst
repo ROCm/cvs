@@ -92,14 +92,14 @@ still runs with ``cvs run atom``.
      - ``_single``
      - vLLM parity for V4-Flash FP8 TP8; fp8_e4m3 KV cache and block size 256; bring-up thresholds
    * - ``mi3xx_atom_glm-5.2_fp8``
-     - ``_single`` (``perf`` + ``mtp3``)
-     - Native ATOM MI300X/MI308X TP8; MI325X perf and mtp3 passed smoke, health, recipe cells, and GSM8K; bring-up thresholds
+     - ``_single`` (``perf``, ``mtp3``)
+     - ``atom`` (TP8)
    * - ``mi3xx_atom_vllm_glm-5.2_fp8``
      - ``_single``, ``_distributed``
-     - vLLM MI300X/MI308X TP8; distributed PP=2; bring-up thresholds
+     - ``vllm_atom`` (TP8; distributed is PP=2)
    * - ``mi3xx_atom_sglang_glm-5.2_fp8``
      - ``_single``, ``_distributed``
-     - SGLang MI300X/MI308X TP8; distributed PP=2; bring-up thresholds
+     - ``sglang`` (TP8; distributed is PP=2)
    * - ``mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8``
      - ``_single``, ``_distributed``
      - Qwen FP8 vLLM parity; ``_single`` lab-validated; distributed PP=2 pending
