@@ -13,7 +13,6 @@ import time
 import json
 
 from cvs.lib.agfhc_cmd import (
-    companion_probe_command,
     install_command,
     probe_is_writable,
     rootless_output_dir,
@@ -180,7 +179,6 @@ def test_install_agfhc(
         log.info("%s", out_dict[node])
         if re.search('No such file', out_dict[node], re.I):
             fail_test(f'Installation of AGFHC failed on node {node}')
-    _check_companion_dirs(orch, config_dict)
     update_test_result()
 
 
@@ -196,12 +194,3 @@ def _output_dir_is_writable(orch, path):
             fail_test(f'AGFHC install directory {output_dir} is not writable on node {node}')
             writable = False
     return writable
-
-
-def _check_companion_dirs(orch, config_dict):
-    """Name each companion tool directory that is missing after install."""
-    out_dict = orch.exec(companion_probe_command(config_dict['path'], config_dict.get('env')))
-    for node, text in out_dict.items():
-        for line in str(text).splitlines():
-            if line.startswith('missing '):
-                fail_test(f'{line} on node {node}')

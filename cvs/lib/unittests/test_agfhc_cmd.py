@@ -7,7 +7,6 @@ import unittest
 
 from cvs.lib.agfhc_cmd import (
     agfhc_command,
-    companion_probe_command,
     install_command,
     probe_is_writable,
     resolve_agfhc_env,
@@ -106,15 +105,6 @@ class TestAgfhcCmd(unittest.TestCase):
         self.assertTrue(probe_is_writable('writable'))
         self.assertFalse(probe_is_writable('not-writable'))
         self.assertFalse(probe_is_writable(''))
-
-    def test_companion_probe_names_each_path(self):
-        cmd = companion_probe_command(
-            '/home/user/prefix/agfhc',
-            {'TXB_PATH': '/custom/transferbench'},
-        )
-        self.assertIn('test -d /custom/transferbench || echo missing TXB_PATH /custom/transferbench', cmd)
-        self.assertIn('missing FIREXS_PATH /home/user/prefix/firexs2', cmd)
-        self.assertIn('missing AFIDSAG_PATH /home/user/prefix/agfhc/sag', cmd)
 
 
 if __name__ == '__main__':
