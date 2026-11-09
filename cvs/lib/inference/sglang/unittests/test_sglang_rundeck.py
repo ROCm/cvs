@@ -61,6 +61,32 @@ class TestSglangRunCard(unittest.TestCase):
         self.assertEqual(rows["Proxy router"], "n0")
         self.assertEqual(rows["Benchmark node"], "n0")
 
+    def test_wide_ep_lists_expert_parallel_sizes(self):
+        variant = SimpleNamespace(
+            model=SimpleNamespace(id="/root/models/DeepSeek-R1-0528"),
+            gpu_arch="mi355",
+            topology="wide_ep",
+            inference={
+                "nnodes": "2",
+                "_execution_hosts": ["node-a", "node-b"],
+                "benchmark_serv_node": "node-a",
+            },
+            benchmark_params={
+                "tensor_parallelism": "16",
+                "pipeline_parallelism": "1",
+                "expert_parallelism": "16",
+                "attn_data_parallelism": "16",
+                "moe_a2a_backend": "mori",
+            },
+            enforce_thresholds=False,
+        )
+        rows = {label: value for label, value, _ in sglang_run_card_display(variant, {})}
+        self.assertEqual(rows["Server nodes"], "node-a, node-b")
+        self.assertEqual(rows["EP"], "16")
+        self.assertEqual(rows["Attn DP"], "16")
+        self.assertEqual(rows["MoE all-to-all"], "mori")
+        self.assertEqual(rows["PP"], "1")
+
 
 if __name__ == "__main__":
     unittest.main()

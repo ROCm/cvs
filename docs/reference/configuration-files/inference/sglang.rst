@@ -1,12 +1,12 @@
 .. meta::
-  :description: Reference for CVS SGLang inference benchmark configuration, covering single-node, distributed, and disaggregated prefill-decode topology and threshold files.
-  :keywords: CVS, SGLang, inference, ROCm, LLM, GPU, AMD, distributed, disaggregated, prefill, decode, JSON, benchmark
+  :description: Reference for CVS SGLang inference benchmark configuration, covering single-node, distributed, wide expert-parallel, and disaggregated prefill-decode topology and threshold files.
+  :keywords: CVS, SGLang, inference, ROCm, LLM, GPU, AMD, distributed, disaggregated, wide-EP, prefill, decode, JSON, benchmark
 
 *************************************************************************
 SGLang inference benchmark configuration for Cluster Validation Suite (CVS)
 *************************************************************************
 
-CVS ships three SGLang inference suites for AMD MI30x and MI35x clusters. Each suite reads a JSON
+CVS ships four SGLang inference suites for AMD MI30x and MI35x clusters. Each suite reads a JSON
 configuration file from |cvs-input-config-file-inference-sglang|_ and a matching
 threshold file referenced by top-level ``threshold_json``. Hosts come from ``cluster.json``
 ``node_dict`` order. Role lists in the workload JSON are ignored.
@@ -24,6 +24,9 @@ threshold file referenced by top-level ``threshold_json``. Hosts come from ``clu
    * - ``sglang_distributed``
      - |cvs-tests-inference-sglang-distributed-py|_
      - One unified multi-node server. The first ``server_params.nnodes`` hosts are the ranks. Rank 0 is the benchmark node.
+   * - ``sglang_wide_ep``
+     - |cvs-tests-inference-sglang-wide-ep-py|_
+     - Wide expert parallel for DeepSeek-R1-0528. The first ``nnodes`` hosts are one server group. Rank 0 is the benchmark node.
    * - ``sglang_disagg_distributed``
      - |cvs-tests-inference-sglang-disagg-distributed-py|_
      - Disaggregated prefill/decode. The first even ``nnodes`` hosts split into equal prefill and decode groups. Rank 0 is prefill coordinator, proxy, and benchmark. Rank 1 is decode coordinator.
@@ -63,7 +66,9 @@ Model and topology templates
 
 Templates are named ``<gpu>_sglang_<model>_<topology>.json``. ``<model>`` is
 ``llama_70b``, ``deepseek_r1_0528``, or ``qwen35_397b``. ``<topology>`` is ``single``,
-``distributed``, or ``disaggregated``.
+``distributed``, ``disaggregated``, or ``wide_ep``. ``wide_ep`` is shipped as
+``mi3xx_sglang_deepseek_r1_0528_wide_ep.json`` and
+``mi35x_sglang_deepseek_r1_0528_wide_ep.json``.
 
 .. list-table::
    :widths: 2 3 3
@@ -89,6 +94,8 @@ Templates are named ``<gpu>_sglang_<model>_<topology>.json``. ``<model>`` is
      - ``sglang_single``
    * - ``distributed``
      - ``sglang_distributed``
+   * - ``wide_ep``
+     - ``sglang_wide_ep``
    * - ``disaggregated``
      - ``sglang_disagg_distributed``
 
@@ -107,13 +114,13 @@ threshold file through top-level ``threshold_json`` (a filename beside the confi
    * - ``mi325_sglang_llama_70b_threshold.json``
      - MI30x Llama 3.1 70B configs (single, distributed, disaggregated)
    * - ``mi325_sglang_deepseek_r1_0528_threshold.json``
-     - MI30x DeepSeek-R1-0528 configs (single, distributed, disaggregated)
+     - MI30x DeepSeek-R1-0528 configs (single, distributed, disaggregated, wide expert parallel)
    * - ``mi325_sglang_qwen35_397b_threshold.json``
      - MI30x Qwen3.5-397B configs (single, distributed, disaggregated)
    * - ``mi355_sglang_llama_70b_threshold.json``
      - MI35x Llama 3.1 70B configs (single, distributed, disaggregated)
    * - ``mi355_sglang_deepseek_r1_0528_threshold.json``
-     - MI35x DeepSeek-R1-0528 configs (single, distributed, disaggregated)
+     - MI35x DeepSeek-R1-0528 configs (single, distributed, disaggregated, wide expert parallel)
    * - ``mi355_sglang_qwen35_397b_threshold.json``
      - MI35x Qwen3.5-397B configs (single, distributed, disaggregated)
 
@@ -299,6 +306,13 @@ The suite takes the first ``nnodes`` hosts from ``cluster.json``. Rank 0 is the 
    * - Other scalar ``env`` entries
      - Copied into the in-container ``export`` block. The NCCL, Gloo, and ``HSA_FORCE_FINE_GRAIN_PCIE`` keys above are applied on their own and are not duplicated in that block.
 
+Wide expert parallel (``sglang_wide_ep``)
+------------------------------------------
+
+Same host rule as ``sglang_distributed``: the first ``nnodes`` hosts, rank 0 is the benchmark node. Shipped templates are ``mi3xx_sglang_deepseek_r1_0528_wide_ep.json`` and ``mi35x_sglang_deepseek_r1_0528_wide_ep.json``. They reuse ``mi325_sglang_deepseek_r1_0528_threshold.json`` and ``mi355_sglang_deepseek_r1_0528_threshold.json``. ``enforce_thresholds`` is false on both templates.
+
+Set ``topology`` to ``wide_ep``. ``expert_parallelism`` must equal ``tensor_parallelism``. ``pipeline_parallelism`` must be ``1``. ``attn_data_parallelism`` must equal ``expert_parallelism``. ``moe_a2a_backend`` is ``mori`` on the shipped templates, and ``deepep_mode`` is ``normal``. Sweep combo keys stay ``ISL,OSL,TP,PP,CONC`` and do not relaunch the server.
+
 Disaggregated prefill-decode (``sglang_disagg_distributed``)
 ------------------------------------------------------------
 
@@ -467,7 +481,7 @@ Troubleshooting
 
 **Host selection**
   Put hosts in ``cluster.json`` in rank order. The config does not choose nodes.
-  ``sglang_single`` uses the first host. ``sglang_distributed`` uses the first ``nnodes``
+  ``sglang_single`` uses the first host. ``sglang_distributed`` and ``sglang_wide_ep`` use the first ``nnodes``
   hosts. ``sglang_disagg_distributed`` needs an even ``nnodes`` and splits that prefix
   into equal prefill and decode groups.
 
@@ -490,6 +504,9 @@ Troubleshooting
 
 .. |cvs-tests-inference-sglang-distributed-py| replace:: ``cvs/tests/inference/sglang/sglang_distributed.py``
 .. _cvs-tests-inference-sglang-distributed-py: https://github.com/ROCm/cvs/blob/main/cvs/tests/inference/sglang/sglang_distributed.py
+
+.. |cvs-tests-inference-sglang-wide-ep-py| replace:: ``cvs/tests/inference/sglang/sglang_wide_ep.py``
+.. _cvs-tests-inference-sglang-wide-ep-py: https://github.com/ROCm/cvs/blob/main/cvs/tests/inference/sglang/sglang_wide_ep.py
 
 .. |cvs-tests-inference-sglang-disagg-distributed-py| replace:: ``cvs/tests/inference/sglang/sglang_disagg_distributed.py``
 .. _cvs-tests-inference-sglang-disagg-distributed-py: https://github.com/ROCm/cvs/blob/main/cvs/tests/inference/sglang/sglang_disagg_distributed.py

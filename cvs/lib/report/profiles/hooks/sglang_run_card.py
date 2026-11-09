@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Unified SGLang run-card hook for all single / distributed / disagg suite stems.
+Unified SGLang run-card hook for single, distributed, wide-EP, and disagg suite stems.
 '''
 
 from __future__ import annotations
@@ -63,9 +63,17 @@ def sglang_run_card_display(variant: Any, provenance: dict) -> List[Tuple[str, s
         [
             ("TP", str(bp.get("tensor_parallelism", "-")), False),
             ("PP", str(bp.get("pipeline_parallelism", "-")), False),
-            thresholds_run_card_row(variant),
         ]
     )
+    if bp.get("expert_parallelism"):
+        rows.extend(
+            [
+                ("EP", str(bp.get("expert_parallelism")), False),
+                ("Attn DP", str(bp.get("attn_data_parallelism", "-")), False),
+                ("MoE all-to-all", str(bp.get("moe_a2a_backend", "-")), False),
+            ]
+        )
+    rows.append(thresholds_run_card_row(variant))
     rows.extend(provenance_link_rows(provenance))
     return rows
 

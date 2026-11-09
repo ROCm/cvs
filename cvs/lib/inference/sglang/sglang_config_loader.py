@@ -445,7 +445,7 @@ class SglangSingleVariantConfig(BaseVariantConfig):
 
     framework: Literal["sglang", "sglang_single"] = "sglang"
     gpu_arch: str = "mi30x"
-    topology: Literal["single", "distributed", "disaggregated"] = "single"
+    topology: Literal["single", "distributed", "disaggregated", "wide_ep"] = "single"
     variant_key: str = ""
     config_path: str = ""
     params: SglangParams = Field(default_factory=SglangParams)
@@ -485,6 +485,14 @@ class SglangSingleVariantConfig(BaseVariantConfig):
             "single": (),
             "distributed": ("nnodes",),
             "disaggregated": ("nnodes",),
+            "wide_ep": (
+                "nnodes",
+                "tensor_parallelism",
+                "pipeline_parallelism",
+                "expert_parallelism",
+                "attn_data_parallelism",
+                "moe_a2a_backend",
+            ),
         }[self.topology]
         missing = [key for key in required if not self.inference.get(key)]
         if missing:
@@ -501,6 +509,26 @@ class SglangSingleVariantConfig(BaseVariantConfig):
             if nnodes % 2:
                 raise ValueError(
                     f"disaggregated SGLang requires an even nnodes so prefill and decode counts match, got {nnodes}"
+                )
+        if self.topology == "wide_ep":
+            nnodes = int(self.inference.get("nnodes") or 0)
+            if nnodes < 2:
+                raise ValueError(f"wide_ep SGLang requires nnodes >= 2, got {nnodes}")
+            tp = int(self.inference.get("tensor_parallelism") or 0)
+            pp = int(self.inference.get("pipeline_parallelism") or 0)
+            ep = int(self.inference.get("expert_parallelism") or 0)
+            attn_dp = int(self.inference.get("attn_data_parallelism") or 0)
+            if pp != 1:
+                raise ValueError(f"wide_ep SGLang requires pipeline_parallelism 1, got {pp}")
+            if ep != tp:
+                raise ValueError(
+                    "wide_ep SGLang requires expert_parallelism == tensor_parallelism "
+                    f"(MORI all-to-all), got expert_parallelism={ep} tensor_parallelism={tp}"
+                )
+            if attn_dp != ep:
+                raise ValueError(
+                    "wide_ep SGLang requires attn_data_parallelism == expert_parallelism "
+                    f"so attention stays data-parallel, got attn_data_parallelism={attn_dp} expert_parallelism={ep}"
                 )
         return self
 
@@ -788,11 +816,12 @@ def _load_unified_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> 
             hosts = resolve_single_execution_hosts(cluster_dict)
             inference["_execution_hosts"] = list(hosts)
             inference["benchmark_serv_node"] = hosts[0]
-    elif raw.get("topology") == "distributed":
+    elif raw.get("topology") in ("distributed", "wide_ep"):
         inference.pop("server_node_list", None)
         inference.pop("benchmark_serv_node", None)
         if cluster_dict.get("node_dict"):
-            hosts = resolve_distributed_execution_hosts(cluster_dict, inference)
+            suite_name = "sglang_wide_ep" if raw.get("topology") == "wide_ep" else "sglang_distributed"
+            hosts = resolve_distributed_execution_hosts(cluster_dict, inference, suite_name=suite_name)
             inference["_execution_hosts"] = list(hosts)
             inference["server_node_list"] = list(hosts)
             inference["benchmark_serv_node"] = hosts[0]

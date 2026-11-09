@@ -420,12 +420,14 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
             config_paths += sorted(config_dir.glob(f'{prefix}_sglang_*_single.json'))
             config_paths += sorted(config_dir.glob(f'{prefix}_sglang_*_distributed.json'))
             config_paths += sorted(config_dir.glob(f'{prefix}_sglang_*_disaggregated.json'))
+            config_paths += sorted(config_dir.glob(f'{prefix}_sglang_*_wide_ep.json'))
         self.assertEqual(
             {path.name for path in config_paths},
             {
                 'mi35x_sglang_deepseek_r1_0528_disaggregated.json',
                 'mi35x_sglang_deepseek_r1_0528_distributed.json',
                 'mi35x_sglang_deepseek_r1_0528_single.json',
+                'mi35x_sglang_deepseek_r1_0528_wide_ep.json',
                 'mi35x_sglang_llama_70b_disaggregated.json',
                 'mi35x_sglang_llama_70b_distributed.json',
                 'mi35x_sglang_llama_70b_single.json',
@@ -435,6 +437,7 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                 'mi3xx_sglang_deepseek_r1_0528_disaggregated.json',
                 'mi3xx_sglang_deepseek_r1_0528_distributed.json',
                 'mi3xx_sglang_deepseek_r1_0528_single.json',
+                'mi3xx_sglang_deepseek_r1_0528_wide_ep.json',
                 'mi3xx_sglang_llama_70b_disaggregated.json',
                 'mi3xx_sglang_llama_70b_distributed.json',
                 'mi3xx_sglang_llama_70b_single.json',
@@ -525,6 +528,16 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                     self.assertEqual(variant.inference['prefill_coordinator_port'], '40001')
                     self.assertEqual(variant.inference['decode_coordinator_port'], '40002')
                     self.assertNotIn('prefill_node_list', variant.inference)
+                    self.assertNotIn('benchmark_serv_node', variant.inference)
+                elif variant.topology == 'wide_ep':
+                    self.assertEqual(str(variant.inference['nnodes']), '2')
+                    self.assertEqual(variant.inference['tensor_parallelism'], '16')
+                    self.assertEqual(variant.inference['pipeline_parallelism'], '1')
+                    self.assertEqual(variant.inference['expert_parallelism'], '16')
+                    self.assertEqual(variant.inference['attn_data_parallelism'], '16')
+                    self.assertEqual(variant.inference['moe_a2a_backend'], 'mori')
+                    self.assertEqual(variant.inference['deepep_mode'], 'normal')
+                    self.assertNotIn('server_node_list', variant.inference)
                     self.assertNotIn('benchmark_serv_node', variant.inference)
                 else:
                     self.fail(f'unexpected topology {variant.topology!r}')
@@ -621,6 +634,44 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
         self.assertEqual(variant.inference['_execution_hosts'], ['node-a', 'node-b'])
         self.assertEqual(variant.inference['benchmark_serv_node'], 'node-a')
         self.assertEqual(variant.inference['server_node_list'], ['node-a', 'node-b'])
+
+    def test_wide_ep_selects_first_nnodes_from_cluster(self):
+        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
+        config_path = config_dir / 'mi35x_sglang_deepseek_r1_0528_wide_ep.json'
+        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
+        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
+        cluster = {
+            'username': 'test',
+            'node_dict': {
+                'node-a': {'mgmt_ip': 'node-a'},
+                'node-b': {'mgmt_ip': 'node-b'},
+                'node-c': {'mgmt_ip': 'node-c'},
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_config = Path(tmp) / config_path.name
+            temp_config.write_text(json.dumps(raw), encoding='utf-8')
+            variant = loader.load_variant(str(temp_config), cluster)
+
+        self.assertEqual(variant.topology, 'wide_ep')
+        self.assertEqual(variant.inference['_execution_hosts'], ['node-a', 'node-b'])
+        self.assertEqual(variant.inference['benchmark_serv_node'], 'node-a')
+        self.assertEqual(variant.benchmark_params['expert_parallelism'], '16')
+        self.assertEqual(variant.benchmark_params['moe_a2a_backend'], 'mori')
+
+    def test_wide_ep_rejects_expert_size_that_differs_from_tensor_parallel(self):
+        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
+        config_path = config_dir / 'mi35x_sglang_deepseek_r1_0528_wide_ep.json'
+        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
+        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
+        raw['server_params']['expert_parallelism'] = '8'
+
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_config = Path(tmp) / config_path.name
+            temp_config.write_text(json.dumps(raw), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'expert_parallelism == tensor_parallelism'):
+                loader.load_variant(str(temp_config), {'username': 'test'})
 
     def test_distributed_fails_when_cluster_is_smaller_than_nnodes(self):
         config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'

@@ -1,12 +1,12 @@
 .. meta::
-  :description: Run SGLang LLM inference benchmarks with CVS on AMD Instinct GPU clusters, covering single-node, distributed, and disaggregated prefill/decode topologies.
-  :keywords: CVS, SGLang, inference, benchmark, AMD Instinct, ROCm, AMD, GPU, LLM, disaggregated, distributed, Llama
+  :description: Run SGLang LLM inference benchmarks with CVS on AMD Instinct GPU clusters, covering single-node, distributed, wide expert-parallel, and disaggregated prefill/decode topologies.
+  :keywords: CVS, SGLang, inference, benchmark, AMD Instinct, ROCm, AMD, GPU, LLM, disaggregated, distributed, wide-EP, DeepSeek, Llama
 
 ***********************************************************************
 Run SGLang LLM inference benchmarks with Cluster Validation Suite (CVS)
 ***********************************************************************
 
-CVS provides three SGLang suites under |cvs-tests-inference-sglang|_. Each suite is a
+CVS provides four SGLang suites under |cvs-tests-inference-sglang|_. Each suite is a
 separate pytest module; pick the one that matches your topology, then point ``--config_file``
 at a template from |cvs-input-config-file-inference-sglang|_.
 
@@ -16,7 +16,7 @@ For the full configuration schema, threshold format, and parameter reference, se
 Test suites
 ===========
 
-CVS ships three SGLang suite variants, one per deployment topology.
+CVS ships four SGLang suite variants, one per deployment topology.
 
 .. list-table::
    :widths: 2 3 5
@@ -31,6 +31,9 @@ CVS ships three SGLang suite variants, one per deployment topology.
    * - ``sglang_distributed``
      - ``sglang_distributed.py``
      - One unified multi-node server. The first ``server_params.nnodes`` hosts in ``cluster.json`` are the ranks. Rank 0 is the benchmark node.
+   * - ``sglang_wide_ep``
+     - ``sglang_wide_ep.py``
+     - Wide expert parallel for DeepSeek-R1-0528. One server group on the first ``nnodes`` hosts. Attention is data-parallel and experts are sharded across those ranks.
    * - ``sglang_disagg_distributed``
      - ``sglang_disagg_distributed.py``
      - Disaggregated prefill/decode. The first even ``nnodes`` hosts are split into equal prefill and decode groups. Rank 0 is prefill coordinator, proxy, and benchmark. Rank 1 is decode coordinator.
@@ -70,7 +73,9 @@ Set up config
 Shipped templates are named ``mi3xx_sglang_<model>_<topology>.json`` and
 ``mi35x_sglang_<model>_<topology>.json``. ``<model>`` is ``llama_70b``,
 ``deepseek_r1_0528``, or ``qwen35_397b``. ``<topology>`` is ``single``, ``distributed``,
-or ``disaggregated``. MI30x configs use the ``mi325_sglang_*_threshold.json`` files.
+``disaggregated``, or ``wide_ep``. ``wide_ep`` is shipped as
+``mi3xx_sglang_deepseek_r1_0528_wide_ep.json`` and
+``mi35x_sglang_deepseek_r1_0528_wide_ep.json``. MI30x configs use the ``mi325_sglang_*_threshold.json`` files.
 MI35x configs use the ``mi355_sglang_*_threshold.json`` files.
 
 .. list-table::
@@ -83,6 +88,8 @@ MI35x configs use the ``mi355_sglang_*_threshold.json`` files.
      - ``sglang_single``
    * - ``distributed``
      - ``sglang_distributed``
+   * - ``wide_ep``
+     - ``sglang_wide_ep``
    * - ``disaggregated``
      - ``sglang_disagg_distributed``
 
@@ -170,6 +177,38 @@ Example run:
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/mi3xx_sglang_llama_70b_distributed.json \
     -vvv
+
+``sglang_wide_ep`` stages
+-------------------------
+
+.. code:: text
+
+  Available tests in sglang_wide_ep:
+    - test_launch_container
+    - test_rms_norm
+    - test_launch_server
+    - test_poll_for_server_ready
+    - test_scan_inference_logs_for_failure
+    - test_openai_compatible_http_endpoints
+    - test_run_lm_eval_hellaswag_benchmark_test
+    - test_run_lm_eval_gsm8k_benchmark_test
+    - test_run_performance_benchmark_test
+    - test_verify_dmesg_after_benchmark
+    - test_wide_ep_gpu_topology
+    - test_scan_inference_logs_after_workload
+    - test_print_results_table
+    - test_teardown
+
+Example run:
+
+.. code:: bash
+
+  cvs run sglang_wide_ep \
+    --cluster_file ~/cvs_workspace/cluster.json \
+    --config_file ~/cvs_workspace/mi35x_sglang_deepseek_r1_0528_wide_ep.json \
+    -vvv
+
+MI30x clusters use ``mi3xx_sglang_deepseek_r1_0528_wide_ep.json`` with the same command.
 
 ``sglang_disagg_distributed`` stages
 ------------------------------------

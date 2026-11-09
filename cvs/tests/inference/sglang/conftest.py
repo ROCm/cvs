@@ -3,7 +3,7 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
 Fixtures and hooks for SGLang inference suites (``sglang_single``, ``sglang_distributed``,
-and ``sglang_disagg_distributed``).
+``sglang_wide_ep``, and ``sglang_disagg_distributed``).
 
 Both suites use ``ContainerOrchestrator`` (vLLM-style) via ``cluster_container.json`` and
 ``load_variant()`` from ``sglang_config_loader``.
@@ -12,6 +12,8 @@ Both suites use ``ContainerOrchestrator`` (vLLM-style) via ``cluster_container.j
 cluster.json host only).
 ``sglang_distributed.py`` — ``SglangDistributed`` (unified multi-node TP/PP; first
 ``nnodes`` hosts from cluster.json, rank-0 is master and benchmark).
+``sglang_wide_ep.py`` — ``SglangWideEP`` (unified multi-node expert parallel for
+DeepSeek-R1-0528; same host rule as distributed, ``topology`` must be ``wide_ep``).
 ``sglang_disagg_distributed.py`` — ``SglangDisaggPD`` (equal prefill/decode groups
 from the first even ``nnodes`` hosts in cluster.json; rank-0 is proxy/benchmark).
 
@@ -43,6 +45,7 @@ from cvs.lib.inference.sglang.sglang_config_loader import (
 )
 from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
 from cvs.lib.inference.sglang.sglang_distributed_lib import SglangDistributed
+from cvs.lib.inference.sglang.sglang_wide_ep_lib import SglangWideEP
 from cvs.lib.inference.sglang.sglang_parsing import SGLANG_RESULTS_COLUMNS
 from cvs.lib.inference.sglang.sglang_single_lib import SglangSingle
 from cvs.lib.report.benchmark_metric_registry import (
@@ -64,6 +67,7 @@ from cvs.tests.inference.sglang._shared import (
     SGLANG_DISTRIBUTED_TEST_ORDER,
     SGLANG_SINGLE_TEST_ORDER,
     SGLANG_TEST_ORDER,
+    SGLANG_WIDE_EP_TEST_ORDER,
 )
 
 log = globals.log
@@ -86,6 +90,11 @@ def _use_sglang_single(request):
 def _use_sglang_distributed(request):
     """``sglang_distributed.py`` uses unified multi-node ``SglangDistributed``."""
     return _sglang_suite_stem(getattr(request.module, "__name__", "")) == "sglang_distributed"
+
+
+def _use_sglang_wide_ep(request):
+    """``sglang_wide_ep.py`` uses unified multi-node ``SglangWideEP``."""
+    return _sglang_suite_stem(getattr(request.module, "__name__", "")) == "sglang_wide_ep"
 
 
 def _deep_merge(base, override):
@@ -336,11 +345,13 @@ def orch(request, cluster_dict, variant_config, lifecycle):
         hosts = _execution_hosts_from_variant(inf)
         cluster = _cluster_dict_for_disagg_roles(cluster_dict, hosts, hosts[0])
         log.info("sglang_single: first cluster host only hosts=%s", hosts)
-    elif _use_sglang_distributed(request):
+    elif _use_sglang_distributed(request) or _use_sglang_wide_ep(request):
         hosts = _execution_hosts_from_variant(inf, min_hosts=2)
         cluster = _cluster_dict_for_disagg_roles(cluster_dict, hosts, hosts[0])
+        suite = "sglang_wide_ep" if _use_sglang_wide_ep(request) else "sglang_distributed"
         log.info(
-            "sglang_distributed: first nnodes=%s hosts=%s master/benchmark=%s",
+            "%s: first nnodes=%s hosts=%s master/benchmark=%s",
+            suite,
             inf.get("nnodes"),
             hosts,
             inf.get("benchmark_serv_node") or hosts[0],
@@ -376,7 +387,7 @@ def gpu_type(request, orch, variant_config):
     if _use_sglang_single(request):
         smi_out_dict = orch.all.exec("rocm-smi -a | head -30")
         smi_out = next(iter(smi_out_dict.values()))
-    elif _use_sglang_distributed(request):
+    elif _use_sglang_distributed(request) or _use_sglang_wide_ep(request):
         probe_node = (variant_config.inference.get("_execution_hosts") or orch.hosts)[0]
         smi_out_dict = orch.all.exec("rocm-smi -a | head -30")
         smi_out = smi_out_dict.get(probe_node) or next(iter(smi_out_dict.values()))
@@ -417,7 +428,24 @@ def im_obj(
             orch=orch,
             gpu_type=gpu_type,
         )
+    if _use_sglang_wide_ep(request):
+        if variant_config.topology != "wide_ep":
+            pytest.fail(
+                "sglang_wide_ep requires a config with topology \"wide_ep\" "
+                f"(got {variant_config.topology!r}). "
+                "Use mi3xx_sglang_deepseek_r1_0528_wide_ep.json or "
+                "mi35x_sglang_deepseek_r1_0528_wide_ep.json."
+            )
+        return SglangWideEP(
+            model_name,
+            variant_config.inference,
+            variant_config.benchmark_params,
+            orch=orch,
+            gpu_type=gpu_type,
+        )
     if _use_sglang_distributed(request):
+        if variant_config.topology == "wide_ep":
+            pytest.fail("this config is wide_ep; run cvs run sglang_wide_ep")
         return SglangDistributed(
             model_name,
             variant_config.inference,
@@ -444,6 +472,8 @@ def pytest_collection_modifyitems(items):
             order = SGLANG_SINGLE_TEST_ORDER
         elif stem == "sglang_distributed":
             order = SGLANG_DISTRIBUTED_TEST_ORDER
+        elif stem == "sglang_wide_ep":
+            order = SGLANG_WIDE_EP_TEST_ORDER
         else:
             order = SGLANG_TEST_ORDER
         return order.get(item.originalname or item.name.split("[")[0], 99)

@@ -231,18 +231,18 @@ def resolve_single_execution_hosts(cluster_dict):
     return hosts[:1]
 
 
-def resolve_distributed_execution_hosts(cluster_dict, inference):
+def resolve_distributed_execution_hosts(cluster_dict, inference, suite_name="sglang_distributed"):
     """First ``nnodes`` hosts from ``cluster.json``; rank-0 is master and benchmark.
 
     Ignores ``server_node_list`` and ``benchmark_serv_node``. Fails if ``nnodes``
-    is larger than the cluster.
+    is larger than the cluster. ``sglang_wide_ep`` uses the same host rule.
     """
     hosts = [host for host in (cluster_dict.get("node_dict") or {}) if host]
     nnodes = int(inference.get("nnodes") or 0)
     if nnodes < 2:
-        raise ValueError(f"sglang_distributed requires nnodes >= 2, got {nnodes}")
+        raise ValueError(f"{suite_name} requires nnodes >= 2, got {nnodes}")
     if len(hosts) < nnodes:
-        raise ValueError(f"sglang_distributed requests {nnodes} nodes but cluster.json only has {len(hosts)}")
+        raise ValueError(f"{suite_name} requests {nnodes} nodes but cluster.json only has {len(hosts)}")
     return hosts[:nnodes]
 
 
@@ -1140,8 +1140,14 @@ def format_sglang_gpu_topology_lines(
     configured_pp: int,
     groups: Mapping[str, dict[str, Any]],
     configured_nnodes: int | None = None,
+    configured_ep: int | None = None,
+    configured_attn_dp: int | None = None,
 ) -> list[str]:
     lines = ["", f"Configured TP: {configured_tp}", f"Configured PP: {configured_pp}"]
+    if configured_ep is not None:
+        lines.append(f"Configured EP: {configured_ep}")
+    if configured_attn_dp is not None:
+        lines.append(f"Configured attention DP: {configured_attn_dp}")
     if configured_nnodes is not None:
         lines.append(f"Configured nnodes: {configured_nnodes}")
     for label, stats in groups.items():

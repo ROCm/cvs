@@ -4,8 +4,9 @@ All rights reserved.
 
 Shared helpers and ordering for the SGLang inference suites (single-node and disaggregated).
 
-Used by ``sglang_single.py``, ``sglang_distributed.py``, and ``sglang_disagg_distributed.py``.
-Each suite has its own stage order (single-node, unified multi-node, or PD disagg).
+Used by ``sglang_single.py``, ``sglang_distributed.py``, ``sglang_wide_ep.py``,
+and ``sglang_disagg_distributed.py``.
+Each suite has its own stage order (single-node, unified multi-node, wide-EP, or PD disagg).
 '''
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ __all__ = [
     "SGLANG_TEST_ORDER",
     "SGLANG_SINGLE_TEST_ORDER",
     "SGLANG_DISTRIBUTED_TEST_ORDER",
+    "SGLANG_WIDE_EP_TEST_ORDER",
     "test_print_results_table",
     "run_scan_inference_logs_after_workload",
 ]
@@ -84,6 +86,24 @@ SGLANG_DISTRIBUTED_TEST_ORDER = {
     "test_run_performance_benchmark_test": 8,
     "test_verify_dmesg_after_benchmark": 9,
     "test_distributed_gpu_topology": 10,
+    "test_scan_inference_logs_after_workload": 11,
+    "test_print_results_table": 12,
+    "test_teardown": 13,
+}
+
+# Stable test order for sglang_wide_ep (unified multi-node expert parallel, no PD).
+SGLANG_WIDE_EP_TEST_ORDER = {
+    "test_launch_container": 0,
+    "test_rms_norm": 1,
+    "test_launch_server": 2,
+    "test_poll_for_server_ready": 3,
+    "test_scan_inference_logs_for_failure": 4,
+    "test_openai_compatible_http_endpoints": 5,
+    "test_run_lm_eval_hellaswag_benchmark_test": 6,
+    "test_run_lm_eval_gsm8k_benchmark_test": 7,
+    "test_run_performance_benchmark_test": 8,
+    "test_verify_dmesg_after_benchmark": 9,
+    "test_wide_ep_gpu_topology": 10,
     "test_scan_inference_logs_after_workload": 11,
     "test_print_results_table": 12,
     "test_teardown": 13,

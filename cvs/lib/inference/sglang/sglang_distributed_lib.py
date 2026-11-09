@@ -52,6 +52,8 @@ log = globals.log
 class SglangDistributed:
     """Unified multi-node SGLang serve + benchmark via ``ContainerOrchestrator``."""
 
+    suite_name = "sglang_distributed"
+
     def __init__(
         self,
         model_name,
@@ -63,7 +65,7 @@ class SglangDistributed:
         priv_key_file=None,
     ):
         if orch is None:
-            raise ValueError("SglangDistributed requires orch= (ContainerOrchestrator)")
+            raise ValueError(f"{type(self).__name__} requires orch= (ContainerOrchestrator)")
 
         self.orch = orch
         self.user_name = user_name
@@ -85,7 +87,7 @@ class SglangDistributed:
         self.nnodes = int(self.inf_dict.get('nnodes') or len(self.server_node_list))
         if self.nnodes != len(self.server_node_list):
             raise ValueError(
-                f"sglang_distributed nnodes={self.nnodes} must match "
+                f"{self.suite_name} nnodes={self.nnodes} must match "
                 f"server node count {len(self.server_node_list)} ({self.server_node_list!r})"
             )
         self.rank0_node = self.server_node_list[0]
@@ -119,12 +121,12 @@ class SglangDistributed:
     def _resolve_server_nodes(self):
         hosts = list(self.inf_dict.get('_execution_hosts') or self.orch.hosts or [])
         if not hosts:
-            raise ValueError("sglang_distributed requires orchestrator hosts from cluster.json")
+            raise ValueError(f"{self.suite_name} requires orchestrator hosts from cluster.json")
         nnodes = int(self.inf_dict.get('nnodes') or 0)
         if nnodes < 2:
-            raise ValueError(f"sglang_distributed requires nnodes >= 2, got {nnodes}")
+            raise ValueError(f"{self.suite_name} requires nnodes >= 2, got {nnodes}")
         if nnodes > len(hosts):
-            raise ValueError(f"sglang_distributed requests {nnodes} nodes but the cluster only has {len(hosts)}")
+            raise ValueError(f"{self.suite_name} requests {nnodes} nodes but the cluster only has {len(hosts)}")
         return hosts[:nnodes]
 
     def _resolve_dist_init_addr(self):
@@ -373,10 +375,7 @@ class SglangDistributed:
         time.sleep(5)
         self.poll_for_inference_completion()
 
-        tp = int(self.bp_dict.get('tensor_parallelism', 1))
-        pp = int(self.bp_dict.get('pipeline_parallelism', 1))
-        # --tp-size and --pp-size are the job-wide rank counts. nnodes only places those ranks.
-        num_gpus = tp * pp
+        num_gpus = self._configured_gpu_count()
         peak_tflops = float(i_dict.get('peak_gpu_tflops', 1300))
         num_params = float(i_dict.get('model_num_params', 70e9))
         for node, m in (self.inference_results_dict or {}).items():
@@ -474,6 +473,12 @@ class SglangDistributed:
             enforce_thresholds=perf_enforce_thresholds(self.bp_dict),
         )
         return all_passed
+
+    def _configured_gpu_count(self):
+        # --tp-size and --pp-size are the job-wide rank counts. nnodes only places those ranks.
+        tp = int(self.bp_dict.get('tensor_parallelism', 1))
+        pp = int(self.bp_dict.get('pipeline_parallelism', 1))
+        return tp * pp
 
     def sglang_distributed_gpu_counts(self, mem_threshold_mb=5000):
         tp = int(self.bp_dict["tensor_parallelism"])
