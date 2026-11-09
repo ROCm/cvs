@@ -28,6 +28,35 @@ The schema blocks every suite composes. `config_loader.py` re-exports `_Forbid`,
 - `ThresholdSpec` is a union on `kind`; `ThresholdFile` is the cells plus free-form `accuracy`.
   The verdict engine does not read them yet.
 
+### `schemas/inference.py`
+
+The base inference suite schemas extend. No suite uses it yet.
+
+- `InferenceConfig`: what every inference suite shares (vLLM, SGLang, ATOM, xDiT):
+  `enforce_thresholds`, `threshold_json`, `thresholds` (attached with `attach_threshold_file`; free-form
+  shape), `paths`, `container` and `server_params.model`. `container.env` is the only env block:
+  `runtime.args` is strict and rejects `env`, and a Hugging Face token name in `container.env` raises
+  `ContainerEnvTokenError`, not a `ValueError`, so its value never reaches a `ValidationError`.
+- `ServingConfig(InferenceConfig)`: what the LLM serving engines share (vLLM, SGLang, ATOM). Adds
+  `server_params` `tp`/`pp`/`dp`/`ep` (`ep` above 1 is rejected while reserved), `benchmark_params`,
+  `sweeps`, `runs` (nonempty, unique, each a `sweeps` key) and `accuracy`. Cell keys are
+  `ISL=,OSL=,TP=,PP=[,DP=][,EP=],CONC=` and must match `server_params`; `DP=1` is rejected, so a
+  cell has one spelling. A `sweeps` value is merged onto `benchmark_params` (`engine_args` merged by
+  key, `a-b` and `a_b` as one option) and validated as it; `run_benchmark_params(key)` returns the
+  result. Threshold cells match sweep keys exactly and every cell's specs must be `ThresholdSpec`s.
+  `_comment*`/`_example*` metric keys are dropped from the stored cells; any other `_` key fails.
+  With enforcement on, every run needs a cell.
+- `server_params` and `benchmark_params` are strict. What CVS only passes to the engine goes in
+  `engine_args`: lowercase snake or kebab names, two spellings of one option rejected, `false` and
+  nested lists rejected, `<changeme>` rejected, `_` keys dropped. Ports, `max_model_len` and the poll
+  fields default to `None`; the engine subclass sets its own defaults. Rendering `engine_args`
+  stays in each engine.
+- An engine schema subclasses `ServingConfig` (or `InferenceConfig`) and its param blocks, adds only
+  fields CVS reads for that engine, and extends two class hooks: `reserved_engine_args()` on a param
+  block and `non_cell_threshold_keys()` on the config. Every field of a param block, a subclass's
+  included, is already reserved in its `engine_args`; the hook adds the engine's spellings of flags
+  CVS renders, with `-` written as `_`. Its metric-name rules go in its own `thresholds` validator.
+
 ### `loader.py`
 
 #### `load_config(model_cls, config_path, cluster) -> LoadedConfig(config, cluster, container)`
