@@ -34,14 +34,12 @@ CVS supports the following Linux distributions and ROCm versions.
      - 10.1.0
      - 3.12
      - 01.26.01.03 (or later)
-
        01.26.00.02
    * - Ubuntu 22.04.5
      - 5.15 [GA], 6.8 [HWE]
      - 10.1.0
      - 3.10
      - 01.26.01.03 (or later)
-
        01.26.00.02
 
 Install CVS
