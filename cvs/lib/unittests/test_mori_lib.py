@@ -307,6 +307,30 @@ class TestEnvMoriGuard(_TmpDirCase):
     def test_no_mori_passes_even_from_inside_mori_dir(self):
         self.assertNotIn(MORI_IN_DIR, self._check(''))
 
+    def test_namespace_package_mori_is_found_by_its_search_location(self):
+        for where, trips in (('ns_in', True), ('ns_out', False)):
+            with self.subTest(where=where):
+                root = os.path.join(self.tmp, 'mori' if trips else 'elsewhere', where)
+                os.makedirs(os.path.join(root, 'mori'))
+                out = self._check(root)
+                self.assertEqual(MORI_IN_DIR in out, trips, out)
+                shutil.rmtree(os.path.join(self.tmp, 'mori'))
+                shutil.rmtree(os.path.join(self.tmp, 'other'))
+
+    def test_spec_with_no_origin_or_search_location_reports_no_location(self):
+        # importlib lets a finder return a bare spec; the guard must still print instead of raising.
+        hook = os.path.join(self.tmp, 'hook')
+        os.makedirs(hook)
+        with open(os.path.join(hook, 'sitecustomize.py'), 'w') as f:
+            f.write(
+                'import importlib.machinery, sys\n'
+                'class _Bare:\n'
+                '    def find_spec(self, name, path=None, target=None):\n'
+                '        return importlib.machinery.ModuleSpec(name, None) if name == "mori" else None\n'
+                'sys.meta_path.insert(0, _Bare())\n'
+            )
+        self.assertIn('MORI_AT=None', self._check('{tmp}/hook'))
+
 
 class TestCheckoutCmd(_TmpDirCase):
     def setUp(self):

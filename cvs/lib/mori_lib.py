@@ -66,7 +66,8 @@ BUILD_DEPS = (
 _ENV_MORI_PY = (
     'import importlib.util, os, sys\n'
     's = importlib.util.find_spec("mori")\n'
-    'd = s and os.path.realpath(os.path.dirname(s.origin) if s.origin else list(s.submodule_search_locations)[0])\n'
+    'where = s and (os.path.dirname(s.origin) if s.origin else next(iter(s.submodule_search_locations or []), None))\n'
+    'd = where and os.path.realpath(where)\n'
     'm = os.path.realpath(sys.argv[1])\n'
     f'print("{MORI_IN_DIR}" if d and (d == m or d.startswith(m + os.sep)) else "MORI_AT=%s" % d)\n'
 )
