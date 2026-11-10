@@ -60,7 +60,7 @@
     "tokenizer_mode": "auto",
     "inference_poll_iterations": "16",
     "context_length": "205000",
-    "add_flags": ["--attention-backend aiter"]
+    "add_flags": ["--attention-backend aiter", "--moe-a2a-backend mooncake"]
   },
   "benchmark_params": {
         "backend": "sglang",
