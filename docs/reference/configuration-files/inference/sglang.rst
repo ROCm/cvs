@@ -74,8 +74,10 @@ DeepSeek-R1-0528 and Qwen3.5-397B-A17B as
 ``mi35x_sglang_qwen35_397b_wide_ep.json``. MORI KV transfer is shipped as
 ``mi3xx_sglang_deepseek_r1_0528_mori_disaggregated.json``,
 ``mi3xx_sglang_qwen35_397b_mori_disaggregated.json``,
-``mi35x_sglang_deepseek_r1_0528_mori_disaggregated.json``, and
-``mi35x_sglang_qwen35_397b_mori_disaggregated.json``.
+``mi3xx_sglang_llama_70b_mori_disaggregated.json``,
+``mi35x_sglang_deepseek_r1_0528_mori_disaggregated.json``,
+``mi35x_sglang_qwen35_397b_mori_disaggregated.json``, and
+``mi35x_sglang_llama_70b_mori_disaggregated.json``.
 
 .. list-table::
    :widths: 2 3 3
@@ -119,13 +121,13 @@ threshold file through top-level ``threshold_json`` (a filename beside the confi
    * - Threshold file
      - Referenced by
    * - ``mi325_sglang_llama_70b_threshold.json``
-     - MI30x Llama 3.1 70B configs (single, distributed, disaggregated)
+     - MI30x Llama 3.1 70B configs (single, distributed, disaggregated, MORI KV transfer)
    * - ``mi325_sglang_deepseek_r1_0528_threshold.json``
      - MI30x DeepSeek-R1-0528 configs (single, distributed, disaggregated, MORI KV transfer, wide expert parallel)
    * - ``mi325_sglang_qwen35_397b_threshold.json``
      - MI30x Qwen3.5-397B configs (single, distributed, disaggregated, MORI KV transfer, wide expert parallel)
    * - ``mi355_sglang_llama_70b_threshold.json``
-     - MI35x Llama 3.1 70B configs (single, distributed, disaggregated)
+     - MI35x Llama 3.1 70B configs (single, distributed, disaggregated, MORI KV transfer)
    * - ``mi355_sglang_deepseek_r1_0528_threshold.json``
      - MI35x DeepSeek-R1-0528 configs (single, distributed, disaggregated, MORI KV transfer, wide expert parallel)
    * - ``mi355_sglang_qwen35_397b_threshold.json``
