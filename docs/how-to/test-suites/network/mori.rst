@@ -62,7 +62,7 @@ Run ``install_mori`` with the same files before ``mori_benchmark_test``, and aga
 
 - In container mode ``container.lifetime`` must be ``persistent`` or ``no_launch``. With ``per_run``, ``test_launch_mori_container`` fails at once, because the container and everything built in it would be removed when ``install_mori`` ends.
 - MoRI is built into ``<mori_dir>/site`` and ``<mori_dir>/build``. The image's or host's own MoRI is not changed, and ``install_mori`` fails if the MoRI that ``python3`` finds already lives under ``mori_dir``.
-- An existing checkout in ``mori_dir`` is not fetched. ``install_mori`` checks out ``git_ref`` in it.
+- ``install_mori`` fetches ``git_url`` into ``mori_dir`` on every run, then checks out ``git_ref``. If the fetch fails, as on a node without network, it uses the existing checkout.
 - When every node sees ``mori_dir``, the head node builds once. When each node has its own, every node builds.
 - A missing build package fails the test, which lists it per node. With ``install_system_packages`` true, ``install_mori`` first apt-installs what it can: inside the container, or on bare metal with passwordless sudo. It never installs ROCm, torch, pip, or NIC libraries.
 - Each building node writes ``<log_dir>/install_mori_<hostname>.log``, which starts with the MoRI commit. The benchmark's run card shows that commit.

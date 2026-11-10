@@ -114,15 +114,18 @@ def env_mori_check_cmd(mori_dir):
 
 
 def checkout_cmd(mori_dir, git_url, git_ref):
-    """Clone ``git_url`` into ``mori_dir`` unless it is already a checkout, then check out ``git_ref`` and its submodules.
+    """Fetch ``git_url`` into ``mori_dir``, then check out ``git_ref`` and its submodules.
 
-    An existing checkout is not fetched, so a node without internet can use one cloned in advance.
-    The clone is ``git init`` plus fetch because mori_dir may already hold the storage marker.
+    The remote URL is reset every run, so fixing a wrong ``git_url`` recovers a checkout whose
+    first fetch failed. A failed fetch is not fatal, so a node without internet can use a checkout
+    made in advance. The clone is ``git init`` plus fetch because mori_dir may already hold the
+    storage marker.
     """
     md, url, ref = (shlex.quote(value) for value in (mori_dir, git_url, git_ref))
     return (
-        f'mkdir -p {md} && cd {md} && '
-        f'{{ [ -d .git ] || {{ git init -q && git remote add origin {url} && git fetch -q --tags origin; }}; }} && '
+        f'mkdir -p {md} && cd {md} && {{ [ -d .git ] || git init -q; }} && '
+        f'{{ git remote set-url origin {url} 2>/dev/null || git remote add origin {url}; }} && '
+        '{ git fetch -q --tags origin || echo "git fetch failed; using the existing checkout" >&2; } && '
         f'{{ git checkout -q --detach origin/{ref} 2>/dev/null || git checkout -q --detach {ref}; }} && '
         'git submodule update -q --init --recursive'
     )

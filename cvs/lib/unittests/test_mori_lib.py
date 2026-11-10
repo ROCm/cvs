@@ -320,12 +320,29 @@ class TestCheckoutCmd(_TmpDirCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.mori_dir = os.path.join(self.tmp, 'mori')
+        self.missing_repo = os.path.join(self.tmp, 'no-such-repo')
 
-    def _checkout(self, ref):
-        result = _bash(checkout_cmd(self.mori_dir, self.repo, ref))
+    def _checkout(self, ref, url=None):
+        result = _bash(checkout_cmd(self.mori_dir, url or self.repo, ref))
         self.assertEqual(result.returncode, 0, result.stderr)
         with open(os.path.join(self.mori_dir, 'f')) as f:
             return f.read().strip()
+
+    def test_corrected_git_url_recovers_after_a_failed_first_clone(self):
+        self.assertNotEqual(_bash(checkout_cmd(self.mori_dir, self.missing_repo, 'main')).returncode, 0)
+        self.assertEqual(self._checkout('main'), '2')
+
+    def test_rerun_fetches_new_commits_and_tags(self):
+        self._checkout('main')
+        git = 'git -c user.name=t -c user.email=t@example.com'
+        _bash(f'cd {self.repo} && echo 3 > f && {git} commit -qam three && git tag v3')
+        self.assertEqual(self._checkout('main'), '3')
+        self.assertEqual(self._checkout('v1'), '1')
+        self.assertEqual(self._checkout('v3'), '3')
+
+    def test_unreachable_remote_falls_back_to_the_existing_checkout(self):
+        self._checkout('main')
+        self.assertEqual(self._checkout('v1', url=self.missing_repo), '1')
 
     def test_clones_a_missing_directory_at_the_branch_head(self):
         self.assertEqual(self._checkout('main'), '2')
