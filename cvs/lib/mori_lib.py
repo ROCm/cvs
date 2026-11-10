@@ -151,11 +151,16 @@ def build_cmd(mori_dir, log_dir):
 def verify_build_cmd(mori_dir):
     """Print ``MISSING:`` for each example binary and for a ``mori`` that ``site`` does not provide, then ``CHECK_DONE``."""
     md = shlex.quote(mori_dir)
-    site = shlex.quote(f'{mori_dir}/site/')
+    site = shlex.quote(f'{mori_dir}/site')
+    # Python normalizes PYTHONPATH entries, so compare real paths, not the configured spelling.
+    in_site = (
+        'import mori, os, sys; '
+        'sys.exit(not os.path.realpath(mori.__file__).startswith(os.path.realpath(sys.argv[1]) + os.sep))'
+    )
     return (
         f'for b in {" ".join(EXAMPLES)}; do [ -x {md}/build/examples/$b ] || echo MISSING:build/examples/$b; done; '
-        f'cd / && PYTHONPATH={site} python3 -c "import mori, sys; sys.exit(not mori.__file__.startswith(sys.argv[1]))" '
-        f'{site} >/dev/null || echo MISSING:site/mori; echo {CHECK_DONE}'
+        f'cd / && PYTHONPATH={site} python3 -c {shlex.quote(in_site)} {site} >/dev/null || echo MISSING:site/mori; '
+        f'echo {CHECK_DONE}'
     )
 
 

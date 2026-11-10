@@ -419,8 +419,10 @@ class TestVerifyBuildCmd(_TmpDirCase):
             os.chmod(path, 0o700)
         os.makedirs(os.path.join(mori_dir, 'site', 'mori'))
         open(os.path.join(mori_dir, 'site', 'mori', '__init__.py'), 'w').close()
-        out = _bash(verify_build_cmd(mori_dir), env={'PATH': os.environ['PATH']}).stdout
-        self.assertEqual(parse_missing({'n0': out})['n0'], [])
+        for spelling in (mori_dir, mori_dir + '/', os.path.join(self.tmp, '.', 'mori')):
+            with self.subTest(mori_dir=spelling):
+                out = _bash(verify_build_cmd(spelling), env={'PATH': os.environ['PATH']}).stdout
+                self.assertEqual(parse_missing({'n0': out})['n0'], [])
 
 
 class TestBuiltCommit(unittest.TestCase):
