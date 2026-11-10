@@ -45,7 +45,8 @@
             "best_gpu0_bw": "480.0",
             "32_cu_local_read": "1650",
             "32_cu_local_write": "1250.0",
-            "32_cu_local_copy": "1250.0",
+            "_comment_32_cu_local_copy": "A copy reads and writes the same HBM, so its ceiling is roughly half the write rate; 800 leaves about 10% margin below the ~890 GB/s measured on MI300X.",
+            "32_cu_local_copy": "800.0",
             "32_cu_rem_read": "48.0",
             "32_cu_rem_write": "48.0",
             "32_cu_rem_copy": "48.0"
