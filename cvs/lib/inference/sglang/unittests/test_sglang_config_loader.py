@@ -436,6 +436,7 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                 'mi35x_sglang_qwen35_397b_mori_disaggregated.json',
                 'mi35x_sglang_qwen35_397b_distributed.json',
                 'mi35x_sglang_qwen35_397b_single.json',
+                'mi35x_sglang_qwen35_397b_wide_ep.json',
                 'mi3xx_sglang_deepseek_r1_0528_disaggregated.json',
                 'mi3xx_sglang_deepseek_r1_0528_mori_disaggregated.json',
                 'mi3xx_sglang_deepseek_r1_0528_distributed.json',
@@ -448,6 +449,7 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                 'mi3xx_sglang_qwen35_397b_mori_disaggregated.json',
                 'mi3xx_sglang_qwen35_397b_distributed.json',
                 'mi3xx_sglang_qwen35_397b_single.json',
+                'mi3xx_sglang_qwen35_397b_wide_ep.json',
             },
         )
 

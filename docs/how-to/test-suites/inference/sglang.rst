@@ -73,9 +73,12 @@ Set up config
 Shipped templates are named ``mi3xx_sglang_<model>_<topology>.json`` and
 ``mi35x_sglang_<model>_<topology>.json``. ``<model>`` is ``llama_70b``,
 ``deepseek_r1_0528``, or ``qwen35_397b``. ``<topology>`` is ``single``, ``distributed``,
-``disaggregated``, or ``wide_ep``. ``wide_ep`` is shipped as
-``mi3xx_sglang_deepseek_r1_0528_wide_ep.json`` and
-``mi35x_sglang_deepseek_r1_0528_wide_ep.json``. MI30x configs use the ``mi325_sglang_*_threshold.json`` files.
+``disaggregated``, or ``wide_ep``. ``wide_ep`` is shipped for DeepSeek-R1-0528 and Qwen3.5-397B-A17B as
+``mi3xx_sglang_deepseek_r1_0528_wide_ep.json``,
+``mi35x_sglang_deepseek_r1_0528_wide_ep.json``,
+``mi3xx_sglang_qwen35_397b_wide_ep.json``, and
+``mi35x_sglang_qwen35_397b_wide_ep.json``.
+MI30x configs use the ``mi325_sglang_*_threshold.json`` files.
 MI35x configs use the ``mi355_sglang_*_threshold.json`` files.
 
 .. list-table::
@@ -208,7 +211,9 @@ Example run:
     --config_file ~/cvs_workspace/mi35x_sglang_deepseek_r1_0528_wide_ep.json \
     -vvv
 
-MI30x clusters use ``mi3xx_sglang_deepseek_r1_0528_wide_ep.json`` with the same command.
+Qwen3.5-397B-A17B uses ``mi35x_sglang_qwen35_397b_wide_ep.json`` with the same command.
+MI30x clusters use ``mi3xx_sglang_deepseek_r1_0528_wide_ep.json`` or
+``mi3xx_sglang_qwen35_397b_wide_ep.json``.
 
 ``sglang_disagg_distributed`` stages
 ------------------------------------

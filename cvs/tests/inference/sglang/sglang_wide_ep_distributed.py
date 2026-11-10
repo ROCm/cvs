@@ -13,8 +13,10 @@ Run:
     --html=~/cvs_results/sglang_wide_ep_distributed.html
 
 The shipped workloads are DeepSeek-R1-0528
-(``mi3xx_sglang_deepseek_r1_0528_wide_ep.json`` or
-``mi35x_sglang_deepseek_r1_0528_wide_ep.json``). Set ``topology`` to ``wide_ep``
+(``mi3xx_sglang_deepseek_r1_0528_wide_ep.json``,
+``mi35x_sglang_deepseek_r1_0528_wide_ep.json``,
+``mi3xx_sglang_qwen35_397b_wide_ep.json``, or
+``mi35x_sglang_qwen35_397b_wide_ep.json``). Set ``topology`` to ``wide_ep``
 and ``nnodes`` in that config. The suite takes that many hosts from
 ``cluster.json`` (in ``node_dict`` order). The first host is rank-0, the dist-init
 master, and the benchmark node.

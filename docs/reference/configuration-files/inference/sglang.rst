@@ -66,9 +66,12 @@ Model and topology templates
 
 Templates are named ``<gpu>_sglang_<model>_<topology>.json``. ``<model>`` is
 ``llama_70b``, ``deepseek_r1_0528``, or ``qwen35_397b``. ``<topology>`` is ``single``,
-``distributed``, ``disaggregated``, or ``wide_ep``. ``wide_ep`` is shipped as
-``mi3xx_sglang_deepseek_r1_0528_wide_ep.json`` and
-``mi35x_sglang_deepseek_r1_0528_wide_ep.json``. MORI KV transfer is shipped as
+``distributed``, ``disaggregated``, or ``wide_ep``. ``wide_ep`` is shipped for
+DeepSeek-R1-0528 and Qwen3.5-397B-A17B as
+``mi3xx_sglang_deepseek_r1_0528_wide_ep.json``,
+``mi35x_sglang_deepseek_r1_0528_wide_ep.json``,
+``mi3xx_sglang_qwen35_397b_wide_ep.json``, and
+``mi35x_sglang_qwen35_397b_wide_ep.json``. MORI KV transfer is shipped as
 ``mi3xx_sglang_deepseek_r1_0528_mori_disaggregated.json``,
 ``mi3xx_sglang_qwen35_397b_mori_disaggregated.json``,
 ``mi35x_sglang_deepseek_r1_0528_mori_disaggregated.json``, and
@@ -120,13 +123,13 @@ threshold file through top-level ``threshold_json`` (a filename beside the confi
    * - ``mi325_sglang_deepseek_r1_0528_threshold.json``
      - MI30x DeepSeek-R1-0528 configs (single, distributed, disaggregated, MORI KV transfer, wide expert parallel)
    * - ``mi325_sglang_qwen35_397b_threshold.json``
-     - MI30x Qwen3.5-397B configs (single, distributed, disaggregated, MORI KV transfer)
+     - MI30x Qwen3.5-397B configs (single, distributed, disaggregated, MORI KV transfer, wide expert parallel)
    * - ``mi355_sglang_llama_70b_threshold.json``
      - MI35x Llama 3.1 70B configs (single, distributed, disaggregated)
    * - ``mi355_sglang_deepseek_r1_0528_threshold.json``
      - MI35x DeepSeek-R1-0528 configs (single, distributed, disaggregated, MORI KV transfer, wide expert parallel)
    * - ``mi355_sglang_qwen35_397b_threshold.json``
-     - MI35x Qwen3.5-397B configs (single, distributed, disaggregated, MORI KV transfer)
+     - MI35x Qwen3.5-397B configs (single, distributed, disaggregated, MORI KV transfer, wide expert parallel)
 
 Threshold keys use the form ``ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>``. Each value is a
 metric map (for example ``output_throughput_per_sec``, ``mean_ttft_ms``, ``mean_tpot_ms``,
@@ -313,7 +316,7 @@ The suite takes the first ``nnodes`` hosts from ``cluster.json``. Rank 0 is the 
 Wide expert parallel (``sglang_wide_ep_distributed``)
 -----------------------------------------------------
 
-Same host rule as ``sglang_distributed``: the first ``nnodes`` hosts, rank 0 is the benchmark node. Shipped templates are ``mi3xx_sglang_deepseek_r1_0528_wide_ep.json`` and ``mi35x_sglang_deepseek_r1_0528_wide_ep.json``. They reuse ``mi325_sglang_deepseek_r1_0528_threshold.json`` and ``mi355_sglang_deepseek_r1_0528_threshold.json``. ``enforce_thresholds`` is false on both templates.
+Same host rule as ``sglang_distributed``: the first ``nnodes`` hosts, rank 0 is the benchmark node. Shipped templates are ``mi3xx_sglang_deepseek_r1_0528_wide_ep.json``, ``mi35x_sglang_deepseek_r1_0528_wide_ep.json``, ``mi3xx_sglang_qwen35_397b_wide_ep.json``, and ``mi35x_sglang_qwen35_397b_wide_ep.json``. They reuse the DeepSeek or Qwen threshold file for that GPU family. ``enforce_thresholds`` is false on these templates.
 
 Set ``topology`` to ``wide_ep``. ``expert_parallelism`` must equal ``tensor_parallelism``. ``pipeline_parallelism`` must be ``1``. ``attn_data_parallelism`` must equal ``expert_parallelism``. The launcher passes that size as ``--dp-size`` with ``--enable-dp-attention``. The all-to-all backend is an ``add_flags`` entry; the shipped templates include ``--moe-a2a-backend mori``. ``deepep_mode`` is ``normal``. Sweep combo keys stay ``ISL,OSL,TP,PP,CONC`` and do not relaunch the server.
 
