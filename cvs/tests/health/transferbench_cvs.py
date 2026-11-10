@@ -467,7 +467,7 @@ def parse_tb_schmoo_bw(out_dict, exp_dict):
 _TB_HEALTHCHECK_FAIL_RE = re.compile(r'(?m)^[ \t]*Testing\s+(.+?)\s*\.{2,}\s*FAIL(?:\s*\((\d+)\s+test\(s\)\))?')
 
 
-def parse_tb_healthcheck(results, expected_hosts=()):
+def parse_tb_healthcheck(results, expected_hosts):
     """Fail on a non-zero TransferBench healthcheck exit code, naming failed sub-tests from the output.
 
     Sharded SSH runs omit hosts pruned as unreachable earlier, so every expected host must have a result.

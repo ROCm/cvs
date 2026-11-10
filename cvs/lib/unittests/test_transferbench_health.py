@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from cvs.core.runtimes.docker import DockerRuntime
+from cvs.lib import utils_lib
 
 _TB_PATH = Path(__file__).resolve().parents[2] / 'tests' / 'health' / 'transferbench_cvs.py'
 _SPEC = importlib.util.spec_from_file_location('transferbench_cvs_under_test', _TB_PATH)
@@ -253,12 +254,12 @@ FAIL (56 test(s))
 class TestParseTbHealthcheck(unittest.TestCase):
     def test_all_pass_does_not_fail(self):
         with patch.object(tb, 'fail_test') as fail_test:
-            tb.parse_tb_healthcheck({'nodeA': {'output': HEALTHCHECK_ALL_PASS, 'exit_code': 0}})
+            tb.parse_tb_healthcheck({'nodeA': {'output': HEALTHCHECK_ALL_PASS, 'exit_code': 0}}, ['nodeA'])
         fail_test.assert_not_called()
 
     def test_failed_subtest_is_named(self):
         with patch.object(tb, 'fail_test') as fail_test:
-            tb.parse_tb_healthcheck({'nodeA': {'output': HEALTHCHECK_ONE_FAIL, 'exit_code': 2}})
+            tb.parse_tb_healthcheck({'nodeA': {'output': HEALTHCHECK_ONE_FAIL, 'exit_code': 2}}, ['nodeA'])
         fail_test.assert_called_once()
         message = fail_test.call_args.args[0]
         self.assertIn('all-to-all XGMI copies', message)
@@ -267,26 +268,22 @@ class TestParseTbHealthcheck(unittest.TestCase):
 
     def test_nonzero_exit_without_fail_line_fails(self):
         with patch.object(tb, 'fail_test') as fail_test:
-            tb.parse_tb_healthcheck({'nodeA': {'output': HEALTHCHECK_VERBOSE_FAIL, 'exit_code': 2}})
+            tb.parse_tb_healthcheck({'nodeA': {'output': HEALTHCHECK_VERBOSE_FAIL, 'exit_code': 2}}, ['nodeA'])
         fail_test.assert_called_once()
         self.assertIn('exited with code 2', fail_test.call_args.args[0])
 
     def test_expected_host_without_result_fails(self):
         with patch.object(tb, 'fail_test') as fail_test:
-            tb.parse_tb_healthcheck(
-                {'nodeA': {'output': HEALTHCHECK_ALL_PASS, 'exit_code': 0}}, expected_hosts=['nodeA', 'nodeB']
-            )
+            tb.parse_tb_healthcheck({'nodeA': {'output': HEALTHCHECK_ALL_PASS, 'exit_code': 0}}, ['nodeA', 'nodeB'])
         fail_test.assert_called_once()
         self.assertIn('no result for node nodeB', fail_test.call_args.args[0])
 
     def test_no_results_fails_every_expected_host(self):
         with patch.object(tb, 'fail_test') as fail_test:
-            tb.parse_tb_healthcheck({}, expected_hosts=['nodeA', 'nodeB'])
+            tb.parse_tb_healthcheck({}, ['nodeA', 'nodeB'])
         self.assertEqual(fail_test.call_count, 2)
 
     def test_generic_scan_misses_healthcheck_failure(self):
-        from cvs.lib import utils_lib
-
         with patch('cvs.lib.utils_lib.fail_test') as fail_test:
             utils_lib.scan_test_results({'nodeA': HEALTHCHECK_ONE_FAIL})
         fail_test.assert_not_called()
