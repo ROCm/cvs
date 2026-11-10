@@ -252,15 +252,15 @@ WIDE_EP_REQUIRED_KEYS = (
     "pipeline_parallelism",
     "expert_parallelism",
     "attn_data_parallelism",
-    "moe_a2a_backend",
 )
 
 
 def validate_wide_ep_layout(params):
     """Reject parallel layouts the wide-EP launch cannot run.
 
-    MORI all-to-all needs the expert group to equal the TP world. Attention stays
-    data-parallel across those same ranks, and pipeline parallel is not used.
+    The expert group must equal the TP world. Attention stays data-parallel
+    across those same ranks, and pipeline parallel is not used. The all-to-all
+    backend is an ``add_flags`` entry, not a layout field.
     """
     missing = [key for key in WIDE_EP_REQUIRED_KEYS if params.get(key) in (None, "")]
     if missing:
@@ -273,8 +273,8 @@ def validate_wide_ep_layout(params):
         raise ValueError(f"{WIDE_EP_SUITE_NAME} requires pipeline_parallelism 1, got {pp}")
     if ep != tp:
         raise ValueError(
-            f"{WIDE_EP_SUITE_NAME} requires expert_parallelism == tensor_parallelism "
-            f"(MORI all-to-all), got expert_parallelism={ep} tensor_parallelism={tp}"
+            f"{WIDE_EP_SUITE_NAME} requires expert_parallelism == tensor_parallelism, "
+            f"got expert_parallelism={ep} tensor_parallelism={tp}"
         )
     if attn_dp != ep:
         raise ValueError(

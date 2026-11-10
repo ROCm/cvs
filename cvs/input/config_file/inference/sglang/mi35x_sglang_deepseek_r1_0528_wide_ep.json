@@ -1,5 +1,5 @@
 {
-    "_comment": "SGLang wide expert-parallel DeepSeek-R1-0528 workload. Two nodes, TP=EP=16, attention DP=16, PP=1, MORI all-to-all. Reuses the MI355 DeepSeek threshold file; enforce_thresholds stays false until wide-EP bars are measured.",
+    "_comment": "SGLang wide expert-parallel DeepSeek-R1-0528 workload. Two nodes, TP=EP=16, attention DP=16, PP=1. The all-to-all backend is an add_flags entry. Reuses the MI355 DeepSeek threshold file; enforce_thresholds stays false until wide-EP bars are measured.",
     "topology": "wide_ep",
     "enforce_thresholds": false,
     "gpu_name" : "<changeme> mi355",
@@ -60,7 +60,6 @@
       "pipeline_parallelism": "1",
       "expert_parallelism": "16",
       "attn_data_parallelism": "16",
-      "moe_a2a_backend": "mori",
       "deepep_mode": "normal",
       "memory_fraction": "0.7",
       "tokenizer_mode": "auto",

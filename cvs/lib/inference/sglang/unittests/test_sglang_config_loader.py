@@ -535,7 +535,8 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                     self.assertEqual(variant.inference['pipeline_parallelism'], '1')
                     self.assertEqual(variant.inference['expert_parallelism'], '16')
                     self.assertEqual(variant.inference['attn_data_parallelism'], '16')
-                    self.assertEqual(variant.inference['moe_a2a_backend'], 'mori')
+                    self.assertIn('--moe-a2a-backend mooncake', variant.inference['add_flags'])
+                    self.assertNotIn('moe_a2a_backend', variant.inference)
                     self.assertEqual(variant.inference['deepep_mode'], 'normal')
                     self.assertNotIn('server_node_list', variant.inference)
                     self.assertNotIn('benchmark_serv_node', variant.inference)
@@ -658,7 +659,7 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
         self.assertEqual(variant.inference['_execution_hosts'], ['node-a', 'node-b'])
         self.assertEqual(variant.inference['benchmark_serv_node'], 'node-a')
         self.assertEqual(variant.benchmark_params['expert_parallelism'], '16')
-        self.assertEqual(variant.benchmark_params['moe_a2a_backend'], 'mori')
+        self.assertIn('--moe-a2a-backend mooncake', variant.benchmark_params['add_flags'])
 
     def test_wide_ep_rejects_expert_size_that_differs_from_tensor_parallel(self):
         config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'

@@ -76,7 +76,6 @@ class TestSglangRunCard(unittest.TestCase):
                 "pipeline_parallelism": "1",
                 "expert_parallelism": "16",
                 "attn_data_parallelism": "16",
-                "moe_a2a_backend": "mori",
             },
             enforce_thresholds=False,
         )
@@ -84,7 +83,7 @@ class TestSglangRunCard(unittest.TestCase):
         self.assertEqual(rows["Server nodes"], "node-a, node-b")
         self.assertEqual(rows["EP"], "16")
         self.assertEqual(rows["Attn DP"], "16")
-        self.assertEqual(rows["MoE all-to-all"], "mori")
+        self.assertNotIn("MoE all-to-all", rows)
         self.assertEqual(rows["PP"], "1")
 
 

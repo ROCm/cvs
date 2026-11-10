@@ -70,7 +70,6 @@ def sglang_run_card_display(variant: Any, provenance: dict) -> List[Tuple[str, s
             [
                 ("EP", str(bp.get("expert_parallelism")), False),
                 ("Attn DP", str(bp.get("attn_data_parallelism", "-")), False),
-                ("MoE all-to-all", str(bp.get("moe_a2a_backend", "-")), False),
             ]
         )
     rows.append(thresholds_run_card_row(variant))

@@ -25,7 +25,6 @@ def _benchmark(**overrides):
         'pipeline_parallelism': '1',
         'expert_parallelism': '16',
         'attn_data_parallelism': '16',
-        'moe_a2a_backend': 'mori',
         'deepep_mode': 'normal',
         'memory_fraction': '0.7',
         'inference_poll_iterations': '1',
@@ -48,7 +47,7 @@ class TestSglangWideEP(unittest.TestCase):
         obj = SglangWideEP(
             'DeepSeek-R1-0528',
             _inference(),
-            _benchmark(add_flags=['--attention-backend aiter']),
+            _benchmark(add_flags=['--attention-backend aiter', '--moe-a2a-backend mooncake']),
             orch=_orch(),
         )
         with (
@@ -66,7 +65,7 @@ class TestSglangWideEP(unittest.TestCase):
         self.assertIn('--dp-size 16', body)
         self.assertIn('--enable-dp-attention', body)
         self.assertNotIn('--attn-dp-size', body)
-        self.assertIn('--moe-a2a-backend mori', body)
+        self.assertIn('--moe-a2a-backend mooncake', body)
         self.assertIn('--deepep-mode normal', body)
         self.assertIn('--disable-cuda-graph', body)
         self.assertIn('--attention-backend aiter', body)
@@ -76,12 +75,22 @@ class TestSglangWideEP(unittest.TestCase):
         self.assertIn('--node-rank 1', rank1)
         self.assertEqual(obj._configured_gpu_count(), 16)
 
+    def test_launch_server_omits_all_to_all_backend_unless_add_flags_sets_it(self):
+        obj = SglangWideEP('DeepSeek-R1-0528', _inference(), _benchmark(), orch=_orch())
+        with (
+            mock.patch('cvs.lib.inference.sglang.sglang_wide_ep_lib.time.sleep'),
+            mock.patch('cvs.lib.inference.sglang.sglang_wide_ep_lib.stage_and_start_launch_script') as stage,
+        ):
+            obj.launch_server()
+        body = stage.call_args_list[0].args[3]
+        self.assertNotIn('--moe-a2a-backend', body)
+
     def test_server_env_exports_expert_parallel_sizes(self):
         obj = SglangWideEP('DeepSeek-R1-0528', _inference(), _benchmark(), orch=_orch())
         body = obj._server_env_body()
         self.assertIn('export EP=16\n', body)
         self.assertIn('export ATTN_DP=16\n', body)
-        self.assertIn('export MOE_A2A_BACKEND=mori\n', body)
+        self.assertNotIn('MOE_A2A_BACKEND', body)
         self.assertIn('export TP=16\n', body)
         self.assertIn('export PP=1\n', body)
 
@@ -127,7 +136,7 @@ class TestSglangWideEP(unittest.TestCase):
         self.assertEqual(result['configured_ep'], 16)
         self.assertEqual(result['configured_attn_dp'], 16)
         self.assertEqual(result['configured_pp'], 1)
-        self.assertEqual(result['moe_a2a_backend'], 'mori')
+        self.assertNotIn('moe_a2a_backend', result)
         self.assertEqual(result['total_occupied_gpus'], 16)
 
 

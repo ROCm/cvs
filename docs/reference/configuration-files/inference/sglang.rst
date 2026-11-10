@@ -311,7 +311,7 @@ Wide expert parallel (``sglang_wide_ep_distributed``)
 
 Same host rule as ``sglang_distributed``: the first ``nnodes`` hosts, rank 0 is the benchmark node. Shipped templates are ``mi3xx_sglang_deepseek_r1_0528_wide_ep.json`` and ``mi35x_sglang_deepseek_r1_0528_wide_ep.json``. They reuse ``mi325_sglang_deepseek_r1_0528_threshold.json`` and ``mi355_sglang_deepseek_r1_0528_threshold.json``. ``enforce_thresholds`` is false on both templates.
 
-Set ``topology`` to ``wide_ep``. ``expert_parallelism`` must equal ``tensor_parallelism``. ``pipeline_parallelism`` must be ``1``. ``attn_data_parallelism`` must equal ``expert_parallelism``. The launcher passes that size as ``--dp-size`` with ``--enable-dp-attention``. ``moe_a2a_backend`` is ``mori`` on the shipped templates, and ``deepep_mode`` is ``normal``. Sweep combo keys stay ``ISL,OSL,TP,PP,CONC`` and do not relaunch the server.
+Set ``topology`` to ``wide_ep``. ``expert_parallelism`` must equal ``tensor_parallelism``. ``pipeline_parallelism`` must be ``1``. ``attn_data_parallelism`` must equal ``expert_parallelism``. The launcher passes that size as ``--dp-size`` with ``--enable-dp-attention``. The all-to-all backend is an ``add_flags`` entry; the shipped templates include ``--moe-a2a-backend mooncake``. ``deepep_mode`` is ``normal``. Sweep combo keys stay ``ISL,OSL,TP,PP,CONC`` and do not relaunch the server.
 
 Disaggregated prefill-decode (``sglang_disagg_distributed``)
 ------------------------------------------------------------

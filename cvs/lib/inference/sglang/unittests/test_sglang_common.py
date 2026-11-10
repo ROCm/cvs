@@ -998,7 +998,6 @@ class TestValidateWideEPLayout(unittest.TestCase):
         'pipeline_parallelism': '1',
         'expert_parallelism': '16',
         'attn_data_parallelism': '16',
-        'moe_a2a_backend': 'mori',
     }
 
     def test_accepts_matching_expert_and_attention_sizes(self):
@@ -1006,8 +1005,8 @@ class TestValidateWideEPLayout(unittest.TestCase):
 
     def test_rejects_missing_key_before_checking_sizes(self):
         params = dict(self._VALID)
-        del params['moe_a2a_backend']
-        with self.assertRaisesRegex(ValueError, 'sglang_wide_ep_distributed requires moe_a2a_backend'):
+        del params['attn_data_parallelism']
+        with self.assertRaisesRegex(ValueError, 'sglang_wide_ep_distributed requires attn_data_parallelism'):
             sglang_common.validate_wide_ep_layout(params)
 
     def test_rejects_blank_value_as_missing(self):

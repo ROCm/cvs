@@ -7,7 +7,8 @@ Wide expert-parallel SGLang inference controller.
 One unified ``sglang.launch_server`` group on the first ``nnodes`` hosts.
 Attention is data-parallel (``--dp-size`` with ``--enable-dp-attention``) and
 experts are sharded across every rank (``--ep-size``). Pipeline parallel stays
-1. MORI all-to-all requires ``expert_parallelism == tensor_parallelism``.
+1, and ``expert_parallelism`` must equal ``tensor_parallelism``. The all-to-all
+backend comes from ``add_flags`` (shipped templates use ``--moe-a2a-backend mooncake``).
 The ROCm SGLang images reject ``--attn-dp-size``; newer SGLang rewrites this
 older pair to that flag.
 '''
@@ -57,7 +58,6 @@ class SglangWideEP(SglangDistributed):
     def _apply_bp_defaults(self):
         super()._apply_bp_defaults()
         self.bp_dict.setdefault('pipeline_parallelism', '1')
-        self.bp_dict.setdefault('moe_a2a_backend', 'mori')
         self.bp_dict.setdefault('deepep_mode', 'normal')
 
     def _validate_wide_ep_parallelism(self):
@@ -69,7 +69,6 @@ class SglangWideEP(SglangDistributed):
             f"{body}"
             f"export EP={self.bp_dict['expert_parallelism']}\n"
             f"export ATTN_DP={self.bp_dict['attn_data_parallelism']}\n"
-            f"export MOE_A2A_BACKEND={self.bp_dict['moe_a2a_backend']}\n"
         )
 
     def _configured_gpu_count(self):
@@ -78,13 +77,12 @@ class SglangWideEP(SglangDistributed):
     def launch_server(self, dtype='auto', kv_cache_dtype='auto'):
         """Launch one wide-EP ``sglang.launch_server`` group (no PD disagg)."""
         log.info(
-            'Launch wide-EP SGLang on %d nodes (rank0=%s:%s ep=%s attn_dp=%s backend=%s)',
+            'Launch wide-EP SGLang on %d nodes (rank0=%s:%s ep=%s attn_dp=%s)',
             self.nnodes,
             self.rank0_node,
             self.router_serv_port,
             self.bp_dict['expert_parallelism'],
             self.bp_dict['attn_data_parallelism'],
-            self.bp_dict['moe_a2a_backend'],
         )
         flags_block = add_cli_flags_block(self.bp_dict, indent='    ')
         for i, node in enumerate(self.server_node_list):
@@ -103,7 +101,6 @@ class SglangWideEP(SglangDistributed):
                 f"    --ep-size {self.bp_dict['expert_parallelism']} \\\n"
                 f"    --dp-size {self.bp_dict['attn_data_parallelism']} \\\n"
                 f"    --enable-dp-attention \\\n"
-                f"    --moe-a2a-backend {self.bp_dict['moe_a2a_backend']} \\\n"
                 f"    --deepep-mode {self.bp_dict['deepep_mode']} \\\n"
                 f"    --nnodes {self.nnodes} \\\n"
                 f"    --node-rank {i} \\\n"
@@ -141,7 +138,6 @@ class SglangWideEP(SglangDistributed):
             "configured_ep": ep,
             "configured_attn_dp": attn_dp,
             "configured_nnodes": self.nnodes,
-            "moe_a2a_backend": self.bp_dict['moe_a2a_backend'],
             "server_per_node": server["per_node"],
             "total_occupied_gpus": topo["total_occupied_gpus"],
         }
