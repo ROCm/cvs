@@ -1287,7 +1287,6 @@ class RcclJob:
                 result_out = self.read_results(result_file)
             self._check_reported_topology(result_out, self.test_name, gpus_per_rank=threads)
         finally:
-            self.launcher.cleanup()
             self._save_topology_checks(result_file)
         if not result_out:
             return []
@@ -1332,7 +1331,6 @@ class RcclJob:
             else:
                 log.error('Failed to save combined results to %s on head node %s', result_file, self.head_node)
         finally:
-            self.launcher.cleanup()
             self._save_topology_checks(result_file)
 
         if not raw_results:
