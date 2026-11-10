@@ -199,6 +199,27 @@ class TestInstallRules(_InstallCase):
         self.assertEqual(orch.ran('BUILD_EXAMPLES=ON'), [])
 
 
+class TestConfigDefaults(_InstallCase):
+    def test_config_without_install_keys_clones_mori_main_and_allows_apt(self):
+        orch = _FakeOrch(orchestrator_type='container', missing={'n1': ['git']})
+        config = {k: v for k, v in MORI_DICT.items() if k not in ('git_url', 'git_ref', 'install_system_packages')}
+        suite.test_install_mori(orch, config, _Lifecycle())
+        (checkout,) = [cmd for _, cmd, _ in orch.calls if 'git checkout' in cmd]
+        self.assertIn('git remote add origin https://github.com/ROCm/mori', checkout)
+        self.assertIn('origin/main', checkout)
+        self.assertEqual(orch.ran('apt-get install'), [('all', ['n1'])])
+
+    def test_install_system_packages_accepts_strings_and_booleans(self):
+        for value, runs_apt in (('False', False), ('false', False), (False, False), ('True', True), (True, True)):
+            with self.subTest(value=value):
+                orch = _FakeOrch(orchestrator_type='container', missing={'n1': ['git']})
+                if runs_apt:
+                    self._install(orch, install_system_packages=value)
+                else:
+                    self._install_fails(orch, install_system_packages=value)
+                self.assertEqual(bool(orch.ran('apt-get install')), runs_apt)
+
+
 class TestCleanup(_InstallCase):
     def test_marker_is_removed_after_a_build(self):
         orch = _FakeOrch()

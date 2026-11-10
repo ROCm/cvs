@@ -22,6 +22,15 @@ APT_TIMEOUT = 900
 CHECKOUT_TIMEOUT = 900
 BUILD_TIMEOUT = 3600
 
+# Defaults for the keys MORI configs from earlier releases don't have.
+DEFAULT_GIT_URL = 'https://github.com/ROCm/mori'
+DEFAULT_GIT_REF = 'main'
+
+
+def _install_system_packages(mori_dict):
+    """``install_system_packages`` as a bool: JSON true/false or the strings "True"/"False"; true when absent."""
+    return str(mori_dict.get('install_system_packages', True)).lower() == 'true'
+
 
 NOT_APT_HINT = (
     'the ROCm dev stack and torch must come from the image or host; CVS never installs them, pip or the NIC libraries'
@@ -108,7 +117,7 @@ def test_install_mori(orch, mori_dict, lifecycle):
             )
     update_test_result()
 
-    _check_deps(orch, mori_dict['install_system_packages'])
+    _check_deps(orch, _install_system_packages(mori_dict))
     update_test_result()
 
     marker = shlex.quote(f'{mori_dir}/.cvs_storage_probe')
@@ -131,8 +140,9 @@ def test_install_mori(orch, mori_dict, lifecycle):
             'the head node' if head_only else 'every node',
         )
 
-        checkout = mori_lib.checkout_cmd(mori_dir, mori_dict['git_url'], mori_dict['git_ref'])
-        _run(orch, f'checkout of {mori_dict["git_ref"]}', checkout, CHECKOUT_TIMEOUT, head_only)
+        git_ref = mori_dict.get('git_ref', DEFAULT_GIT_REF)
+        checkout = mori_lib.checkout_cmd(mori_dir, mori_dict.get('git_url', DEFAULT_GIT_URL), git_ref)
+        _run(orch, f'checkout of {git_ref}', checkout, CHECKOUT_TIMEOUT, head_only)
         log_dir = shlex.quote(mori_dict['log_dir'])
         build = f'mkdir -p {log_dir} && ' + mori_lib.build_cmd(mori_dir, f'{log_dir}/install_mori_$(hostname).log')
         _run(orch, f'MoRI build (see {mori_dict["log_dir"]}/install_mori_<host>.log)', build, BUILD_TIMEOUT, head_only)

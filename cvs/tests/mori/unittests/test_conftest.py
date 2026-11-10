@@ -8,7 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import os
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from _pytest.outcomes import Failed, Skipped
@@ -94,6 +94,44 @@ class TestCollectionOrder(unittest.TestCase):
         items = [_item('test_teardown')] + [_item(c) for c in cases]
         mori_conftest.pytest_collection_modifyitems(items)
         self.assertEqual([it.name for it in items], cases + ['test_teardown'])
+
+
+class TestOrchContainerMerge(unittest.TestCase):
+    def test_partial_mori_container_block_keeps_the_cluster_files_keys(self):
+        cluster = {
+            'container': {
+                'lifetime': 'persistent',
+                'name': 'cluster_c',
+                'image': 'cluster:1',
+                'runtime': {'name': 'docker', 'args': {'shm_size': '64g', 'volumes': ['/c:/c']}},
+            }
+        }
+        mori_dict = {
+            'orchestrator': 'container',
+            'container': {'image': 'mori:1', 'runtime': {'args': {'volumes': ['/m:/m']}}},
+        }
+        captured = {}
+
+        def from_configs(cluster_dict, testsuite_config):
+            captured.update(testsuite_config)
+            return SimpleNamespace(orchestrator='container')
+
+        with (
+            patch.object(mori_conftest.OrchestratorConfig, 'from_configs', side_effect=from_configs),
+            patch.object(mori_conftest.OrchestratorFactory, 'create_orchestrator', return_value=MagicMock()),
+        ):
+            fixture = mori_conftest.orch.__wrapped__(cluster, mori_dict, _Lifecycle())
+            next(fixture)
+        self.assertEqual(captured['orchestrator'], 'container')
+        self.assertEqual(
+            captured['container'],
+            {
+                'lifetime': 'persistent',
+                'name': 'cluster_c',
+                'image': 'mori:1',
+                'runtime': {'name': 'docker', 'args': {'shm_size': '64g', 'volumes': ['/m:/m']}},
+            },
+        )
 
 
 class TestRunDeckFixtures(unittest.TestCase):

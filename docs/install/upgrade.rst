@@ -94,7 +94,7 @@ Expected output (suite names and totals vary by version):
       • install_ibperf_tools
   <<truncated>>
   ================================================================================
-  Total: 59 test suites across 1 package(s)
+  Total: 61 test suites across 1 package(s)
 
 If ``cvs --version`` prints the updated version number and ``cvs list`` shows available test suites, the upgrade was successful.
 

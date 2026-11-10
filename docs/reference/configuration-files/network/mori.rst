@@ -19,7 +19,7 @@ The suite checks:
 .. note::
 
   - ``{user-id}`` is replaced with the cluster file ``username``, then ``$USER``, then ``root``. ``{user}``, ``{home}``, ``{home-mount-dir}``, ``{node-dir-name}``, and ``{run_dir}`` are replaced in the same pass.
-  - A ``<changeme>`` left in ``mori_dir``, ``git_url``, ``git_ref``, ``master_addr``, ``log_dir``, an ``env`` value, or ``container.name``, ``container.image`` or a ``container.env`` value fails every test with one ``ConfigError`` that names each such field. So does a key the suite does not know, or a value of the wrong type.
+  - Any string that still contains ``<changeme>`` stops the run with ``Unresolved placeholder found in test config``.
   - A key whose name starts with ``_`` is not a setting. ``_example_env`` is not merged into ``env``.
 
 ``mi35x_mori_config.json``
@@ -92,7 +92,7 @@ The block below is the shipped file with the ``_example_*`` and ``_comment_*`` n
 Parameters the run uses
 =======================
 
-Set the whole ``container`` block in this file: ``image``, ``name``, ``lifetime`` and ``runtime``. Its values win over the cluster file's ``container``, which only adds ``runtime.args`` and ``env`` keys this block leaves out. A missing ``image``, ``name`` or ``runtime`` fails with a ``ConfigError``, and a missing ``lifetime`` means ``per_run`` whatever the cluster file says. With no ``container`` block here, the cluster file's block is used as it is. ``orchestrator`` in this file overrides the cluster file when it is set.
+The MORI config's ``container`` object is deep-merged over the cluster file's ``container``. ``orchestrator`` in this file overrides the cluster file when it is set.
 
 .. list-table::
    :widths: 3 3 5
@@ -115,7 +115,7 @@ Set the whole ``container`` block in this file: ``image``, ``name``, ``lifetime`
      - ``install_mori`` needs ``persistent`` or ``no_launch``. ``per_run`` starts a container and force-removes it at teardown. ``persistent`` attaches when that name is already running on every node, and starts one when it is absent on every node. A mix of running and absent nodes fails setup. ``no_launch`` only checks that the named container is already running.
    * - ``container.runtime.name``
      - ``docker``
-     - Container runtime. Required.
+     - Container runtime. Omitted, the runtime is Docker.
    * - ``container.runtime.args.devices``
      - ``/dev/dri``, ``/dev/kfd``
      - Extra devices, merged with the orchestrator defaults ``/dev/kfd`` and ``/dev/dri``. A Docker launch also passes each host's ``/dev/infiniband/*`` nodes.
@@ -148,7 +148,7 @@ Set the whole ``container`` block in this file: ``image``, ``name``, ``lifetime`
      - Parent of the per-run log directory ``<log_dir>/YYYYMMDD_HHMMSS``. Required.
    * - ``expected_results``
      - See below
-     - Thresholds. Required, also by ``install_mori``. The lookup shape is below.
+     - Thresholds. Required once a benchmark test builds ``MoriBenchmark``. The lookup shape is below.
    * - ``gpu_name``
      - ``mi35x``
      - Shown on the HTML run card only. It does not change binaries, devices, or thresholds.

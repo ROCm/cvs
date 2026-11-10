@@ -36,11 +36,11 @@ Set up config
 
    ``mori_dir`` is where ``install_mori`` builds MoRI, ``/home/{user-id}/INSTALL/mori`` in the shipped file. To run a MoRI tree you built yourself, set ``mori_dir`` to it and skip ``install_mori``. ``git_ref`` picks the tag, branch, or commit to build.
 
-   ``{user-id}`` in ``mori_dir``, ``log_dir``, and the home volume becomes the cluster file ``username`` (then ``$USER``, then ``root``). A leftover ``<changeme>`` fails every test with a ``ConfigError`` that names each such field.
+   ``{user-id}`` in ``mori_dir``, ``log_dir``, and the home volume becomes the cluster file ``username`` (then ``$USER``, then ``root``). A leftover ``<changeme>`` exits at startup with ``Unresolved placeholder found in test config``.
 
    Keys whose names start with ``_`` are notes. ``_example_env`` is not copied into ``env``. Edit ``env`` itself.
 
-   In container mode, keep the whole ``container`` block (``image``, ``name``, ``lifetime``, ``runtime``) in this file. The cluster file's ``container`` block doesn't fill in keys left out here. Keep the shipped ``lifetime`` ``persistent``, so the container ``install_mori`` builds in is still there for the benchmark.
+   In container mode, keep the shipped ``container.lifetime`` ``persistent``, so the container ``install_mori`` builds in is still there for the benchmark.
 
 3. Put the nodes in the cluster file. Changing ``no_of_nodes`` does not add or remove nodes.
 
@@ -166,8 +166,8 @@ Search the pytest log for ``FAIL -``. The test then ends with ``Following FAILUR
 
    * - What you see
      - What it means
-   * - ``<config> is not a valid config`` (``ConfigError``)
-     - Each following line names a field that still has ``<changeme>``, is missing, has the wrong type, or is not a MORI setting. Fix those fields in the file you copied.
+   * - ``Unresolved placeholder found in test config``
+     - A ``<changeme>`` remains. Replace it in the file you copied.
    * - ``container.lifetime is per_run``
      - ``install_mori`` needs ``persistent`` or ``no_launch``.
    * - ``MoRI build dependencies missing on node``
