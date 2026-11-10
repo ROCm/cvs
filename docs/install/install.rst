@@ -21,21 +21,28 @@ CVS supports these GPUs:
 CVS supports the following Linux distributions and ROCm versions.
 
 .. list-table::
-   :widths: 3 3 4 4
+   :widths: 3 3 4 4 4
    :header-rows: 1
 
    * - Operating system
      - Kernel
      - ROCm version (tested on)
      - Python version (tested on)
+     - BKC Firmware Version
    * - Ubuntu 24.04.4
      - 6.8 [GA], 6.14 [HWE]
      - 10.1.0
      - 3.12
+     - 01.26.01.03 (or later)
+
+       01.26.00.02
    * - Ubuntu 22.04.5
      - 5.15 [GA], 6.8 [HWE]
      - 10.1.0
      - 3.10
+     - 01.26.01.03 (or later)
+
+       01.26.00.02
 
 Install CVS
 ===========
