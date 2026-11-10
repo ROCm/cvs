@@ -95,12 +95,3 @@ def writable_dir_commands(directory, sudo_prefix=''):
 def probe_is_writable(text):
     body = str(text)
     return 'not-writable' not in body and 'writable' in body
-
-
-def companion_probe_command(path, env):
-    """One shell that names each companion directory that is not a directory."""
-    resolved = resolve_agfhc_env(path, env)
-    checks = [
-        f'test -d {shlex.quote(directory)} || echo missing {key} {directory}' for key, directory in resolved.items()
-    ]
-    return 'bash -c ' + shlex.quote('; '.join(checks))
