@@ -7,6 +7,10 @@ Disaggregated (PD) SGLang benchmark: first even ``nnodes`` hosts from
 Rank-1 is decode coordinator. Remaining hosts split equally into prefill and
 decode (1P/1D, 2P/2D, 3P/3D, ...). Odd ``nnodes`` fails immediately.
 
+``*_mori_disaggregated.json`` transfers the KV cache with MORI for Llama 3.1 70B,
+DeepSeek-R1-0528, and Qwen3.5-397B on MI30x and MI35x. Set ``MORI_RDMA_DEVICES``
+in that config. The other ``*_disaggregated.json`` templates use Mooncake.
+
 Run:
   pytest cvs/tests/inference/sglang/sglang_disagg_distributed.py \\
     --cluster_file cvs/input/cluster_file/cluster_container.json \\

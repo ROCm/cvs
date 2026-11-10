@@ -26,10 +26,10 @@ threshold file referenced by top-level ``threshold_json``. Hosts come from ``clu
      - One unified multi-node server. The first ``server_params.nnodes`` hosts are the ranks. Rank 0 is the benchmark node.
    * - ``sglang_wide_ep_distributed``
      - |cvs-tests-inference-sglang-wide-ep-py|_
-     - Wide expert parallel for DeepSeek-R1-0528. The first ``nnodes`` hosts are one server group. Rank 0 is the benchmark node.
+     - Wide expert parallel for DeepSeek-R1-0528 and Qwen3.5-397B-A17B. The first ``nnodes`` hosts are one server group. Rank 0 is the benchmark node.
    * - ``sglang_disagg_distributed``
      - |cvs-tests-inference-sglang-disagg-distributed-py|_
-     - Disaggregated prefill/decode. The first even ``nnodes`` hosts split into equal prefill and decode groups. Rank 0 is prefill coordinator, proxy, and benchmark. Rank 1 is decode coordinator.
+     - Disaggregated prefill/decode for Llama 3.1 70B, DeepSeek-R1-0528, and Qwen3.5-397B. The first even ``nnodes`` hosts split into equal prefill and decode groups. Rank 0 is prefill coordinator, proxy, and benchmark. Rank 1 is decode coordinator. ``*_mori_disaggregated.json`` transfers the KV cache with MORI. The other disaggregated templates use Mooncake.
 
 See :doc:`/how-to/test-suites/inference/sglang`  for more information on running these tests.
 
@@ -459,7 +459,11 @@ SGLang disaggregated prefill-decode separates inference into:
 2. **Decode nodes** — autoregressive token generation from cached KV states.
 3. **Proxy router** — routes requests between prefill and decode clusters.
 
-Use ``sglang_disagg_distributed`` with a ``*_disaggregated.json`` template. Unified
+Use ``sglang_disagg_distributed`` with a ``*_disaggregated.json`` template. Templates named
+``*_mori_disaggregated.json`` pass ``--disaggregation-transfer-backend mori`` and require
+``MORI_RDMA_DEVICES``. They are shipped for Llama 3.1 70B, DeepSeek-R1-0528, and
+Qwen3.5-397B on MI30x and MI35x. The other disaggregated templates leave the transfer
+backend unset, so SGLang uses Mooncake. Unified
 multi-node serving (no PD split) uses ``sglang_distributed``. The node split follows
 ``cluster.json`` order and ``server_params.nnodes``, as described above.
 

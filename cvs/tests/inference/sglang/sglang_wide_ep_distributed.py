@@ -12,7 +12,7 @@ Run:
     --config_file <sglang_wide_ep_config.json> \\
     --html=~/cvs_results/sglang_wide_ep_distributed.html
 
-The shipped workloads are DeepSeek-R1-0528
+The shipped workloads are DeepSeek-R1-0528 and Qwen3.5-397B-A17B
 (``mi3xx_sglang_deepseek_r1_0528_wide_ep.json``,
 ``mi35x_sglang_deepseek_r1_0528_wide_ep.json``,
 ``mi3xx_sglang_qwen35_397b_wide_ep.json``, or

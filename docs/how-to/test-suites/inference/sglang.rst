@@ -33,10 +33,10 @@ CVS ships four SGLang suite variants, one per deployment topology.
      - One unified multi-node server. The first ``server_params.nnodes`` hosts in ``cluster.json`` are the ranks. Rank 0 is the benchmark node.
    * - ``sglang_wide_ep_distributed``
      - ``sglang_wide_ep_distributed.py``
-     - Wide expert parallel for DeepSeek-R1-0528. One server group on the first ``nnodes`` hosts. Attention is data-parallel and experts are sharded across those ranks.
+     - Wide expert parallel for DeepSeek-R1-0528 and Qwen3.5-397B-A17B. One server group on the first ``nnodes`` hosts. Attention is data-parallel and experts are sharded across those ranks.
    * - ``sglang_disagg_distributed``
      - ``sglang_disagg_distributed.py``
-     - Disaggregated prefill/decode. The first even ``nnodes`` hosts are split into equal prefill and decode groups. Rank 0 is prefill coordinator, proxy, and benchmark. Rank 1 is decode coordinator.
+     - Disaggregated prefill/decode for Llama 3.1 70B, DeepSeek-R1-0528, and Qwen3.5-397B. The first even ``nnodes`` hosts are split into equal prefill and decode groups. Rank 0 is prefill coordinator, proxy, and benchmark. Rank 1 is decode coordinator. ``*_mori_disaggregated.json`` transfers the KV cache with MORI. The other disaggregated templates use Mooncake.
 
 .. _sglang-set-up-config:
 
@@ -78,6 +78,14 @@ Shipped templates are named ``mi3xx_sglang_<model>_<topology>.json`` and
 ``mi35x_sglang_deepseek_r1_0528_wide_ep.json``,
 ``mi3xx_sglang_qwen35_397b_wide_ep.json``, and
 ``mi35x_sglang_qwen35_397b_wide_ep.json``.
+MORI KV transfer for Llama 3.1 70B, DeepSeek-R1-0528, and Qwen3.5-397B is shipped as
+``mi3xx_sglang_llama_70b_mori_disaggregated.json``,
+``mi3xx_sglang_deepseek_r1_0528_mori_disaggregated.json``,
+``mi3xx_sglang_qwen35_397b_mori_disaggregated.json``,
+``mi35x_sglang_llama_70b_mori_disaggregated.json``,
+``mi35x_sglang_deepseek_r1_0528_mori_disaggregated.json``, and
+``mi35x_sglang_qwen35_397b_mori_disaggregated.json``.
+Set ``MORI_RDMA_DEVICES`` before a MORI run. The other ``*_disaggregated.json`` templates use Mooncake.
 MI30x configs use the ``mi325_sglang_*_threshold.json`` files.
 MI35x configs use the ``mi355_sglang_*_threshold.json`` files.
 
