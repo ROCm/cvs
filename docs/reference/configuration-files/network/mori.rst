@@ -43,7 +43,11 @@ The block below is the shipped file with the ``_example_*`` and ``_comment_*`` n
                 "name": "docker",
                 "args": {
                     "devices": [ "/dev/dri", "/dev/kfd" ],
-                    "volumes": [ "/home/{user-id}:/home/{user-id}" ]
+                    "volumes": [
+                        "/home/{user-id}:/home/{user-id}",
+                        "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+                        "/usr/lib/x86_64-linux-gnu/libibverbs.so.1:/usr/lib/x86_64-linux-gnu/libibverbs.so.1:ro"
+                    ]
                 }
             }
         },
@@ -120,8 +124,8 @@ The MORI config's ``container`` object is deep-merged over the cluster file's ``
      - ``/dev/dri``, ``/dev/kfd``
      - Extra devices, merged with the orchestrator defaults ``/dev/kfd`` and ``/dev/dri``. A Docker launch also passes each host's ``/dev/infiniband/*`` nodes.
    * - ``container.runtime.args.volumes``
-     - ``/home/{user-id}:/home/{user-id}``
-     - Extra ``host:container`` mounts, appended after ``/home/<user running cvs>/.ssh:/host_ssh``. Add a mount here when the image needs a host library.
+     - ``/home/{user-id}:/home/{user-id}`` and the two Broadcom Thor2 mounts
+     - Extra ``host:container`` mounts, appended after ``/home/<user running cvs>/.ssh:/host_ssh``. The Broadcom Thor2 entries, labeled by ``_comment_bnxt_mount``, mount the host ``libbnxt_re-rdmav34.so`` and ``libibverbs.so.1`` read-only so the provider runs with the libibverbs it was built for. Delete them when the nodes have no Thor2 library. ``docker run`` fails when a listed host path is missing.
    * - ``env``
      - See the sample
      - Exported on every benchmark command. This is separate from ``container.env``. ``MORI_RDMA_DEVICES`` is the device list checked in ``ibv_devinfo``. ``LD_LIBRARY_PATH`` can append ``$LD_LIBRARY_PATH``. ``NCCL_SOCKET_IFNAME`` and ``GLOO_SOCKET_IFNAME`` are exported the same way.

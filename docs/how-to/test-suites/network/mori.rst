@@ -36,6 +36,8 @@ Set up config
 
    ``mori_dir`` is where ``install_mori`` builds MoRI, ``/home/{user-id}/INSTALL/mori`` in the shipped file. To run a MoRI tree you built yourself, set ``mori_dir`` to it and skip ``install_mori``. ``git_ref`` picks the tag, branch, or commit to build.
 
+   Delete the ``libbnxt_re-rdmav34.so`` and ``libibverbs.so.1`` volume lines if the nodes have no Broadcom Thor2 library. ``docker run`` fails when a listed host path is missing.
+
    ``{user-id}`` in ``mori_dir``, ``log_dir``, and the home volume becomes the cluster file ``username`` (then ``$USER``, then ``root``). A leftover ``<changeme>`` exits at startup with ``Unresolved placeholder found in test config``.
 
    Keys whose names start with ``_`` are notes. ``_example_env`` is not copied into ``env``. Edit ``env`` itself.

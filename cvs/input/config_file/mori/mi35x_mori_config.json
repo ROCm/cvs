@@ -14,9 +14,12 @@
             "args":
             {
                 "devices": [ "/dev/dri", "/dev/kfd" ],
+                "_comment_bnxt_mount": "Broadcom Thor2 (bnxt_re). Bind-mounts the host /usr/local/lib/libbnxt_re-rdmav34.so onto the container libibverbs provider path and the host libibverbs.so.1 over the image's, both read-only, so the provider runs with the libibverbs it was built for. Delete these entries when the nodes have no Thor2 library; docker run fails if a host path is missing.",
                 "volumes":
                 [
-                    "/home/{user-id}:/home/{user-id}"
+                    "/home/{user-id}:/home/{user-id}",
+                    "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+                    "/usr/lib/x86_64-linux-gnu/libibverbs.so.1:/usr/lib/x86_64-linux-gnu/libibverbs.so.1:ro"
                 ]
             }
         }
