@@ -342,21 +342,39 @@ class TestCheckoutCmd(_TmpDirCase):
 
 
 class TestBuildCmd(_TmpDirCase):
-    def test_builds_examples_into_site_and_tees_to_the_log(self):
+    def setUp(self):
+        super().setUp()
         fake_bin = os.path.join(self.tmp, 'bin')
         os.makedirs(fake_bin)
+        self.pip_ran = os.path.join(self.tmp, 'pip_ran')
         with open(os.path.join(fake_bin, 'python3'), 'w') as f:
-            f.write('#!/bin/sh\necho "BUILD_EXAMPLES=$BUILD_EXAMPLES $*"\nexit 3\n')
+            f.write(f'#!/bin/sh\ntouch {self.pip_ran}\necho "BUILD_EXAMPLES=$BUILD_EXAMPLES $*"\nexit 3\n')
         os.chmod(os.path.join(fake_bin, 'python3'), 0o700)
-        mori_dir = os.path.join(self.tmp, 'mori')
-        os.makedirs(mori_dir)
-        log_path = os.path.join(self.tmp, 'install_mori_n0.log')
-        result = _bash(build_cmd(mori_dir, log_path), env={'PATH': f'{fake_bin}:{os.environ["PATH"]}'})
-        self.assertEqual(result.returncode, 3)
-        with open(log_path) as f:
+        self.mori_dir = os.path.join(self.tmp, 'mori')
+        os.makedirs(self.mori_dir)
+        self.env = {'PATH': f'{fake_bin}:{os.environ["PATH"]}'}
+
+    def _sh(self, cmd):
+        # On managed compute the HTTP agent runs commands through /bin/sh, which is dash on Ubuntu.
+        return run_trusted(['sh', '-c', cmd], env=self.env, capture_output=True, text=True)
+
+    def test_builds_examples_into_site_and_tees_to_the_log_under_sh(self):
+        log_dir = os.path.join(self.tmp, 'logs')
+        result = self._sh(build_cmd(self.mori_dir, log_dir))
+        self.assertEqual(result.returncode, 3, result.stderr)
+        (log_name,) = os.listdir(log_dir)
+        self.assertTrue(log_name.startswith('install_mori_') and log_name.endswith('.log'), log_name)
+        with open(os.path.join(log_dir, log_name)) as f:
             logged = f.read()
-        self.assertIn(f'BUILD_EXAMPLES=ON -m pip install --upgrade --target {mori_dir}/site .', logged)
+        self.assertIn(f'BUILD_EXAMPLES=ON -m pip install --upgrade --target {self.mori_dir}/site .', logged)
         self.assertIn('MoRI commit', logged)
+
+    def test_log_dir_that_cannot_be_created_stops_before_the_build(self):
+        not_a_dir = os.path.join(self.tmp, 'file')
+        open(not_a_dir, 'w').close()
+        result = self._sh(build_cmd(self.mori_dir, os.path.join(not_a_dir, 'logs')))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(os.path.exists(self.pip_ran))
 
 
 class TestVerifyBuildCmd(_TmpDirCase):

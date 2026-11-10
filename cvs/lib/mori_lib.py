@@ -128,18 +128,21 @@ def checkout_cmd(mori_dir, git_url, git_ref):
     )
 
 
-def build_cmd(mori_dir, log_path):
-    """Build MoRI and its examples into ``<mori_dir>/site``, teeing the commit and build output to ``log_path``.
+def build_cmd(mori_dir, log_dir):
+    """Build MoRI and its examples into ``<mori_dir>/site``, teeing the commit and build output to
+    ``<log_dir>/install_mori_<hostname>.log``.
 
-    ``--target`` keeps pip away from the environment's own MoRI. ``log_path`` is not quoted, so it
-    may use ``$(hostname)``.
+    ``--target`` keeps pip away from the environment's own MoRI. The command runs in its own
+    ``bash -o pipefail``, because managed-compute agents run commands through ``/bin/sh``.
     """
-    md = shlex.quote(mori_dir)
-    return (
-        f'set -o pipefail; cd {md} && '
+    md, ld = shlex.quote(mori_dir), shlex.quote(log_dir)
+    inner = (
+        f'mkdir -p {ld} && cd {md} && '
         f'{{ echo "MoRI commit $(git rev-parse HEAD)"; '
-        f'BUILD_EXAMPLES=ON python3 -m pip install --upgrade --target {md}/site .; }} 2>&1 | tee {log_path}'
+        f'BUILD_EXAMPLES=ON python3 -m pip install --upgrade --target {md}/site .; }} 2>&1 '
+        f'| tee {ld}/install_mori_$(hostname).log'
     )
+    return f'bash -o pipefail -c {shlex.quote(inner)}'
 
 
 def verify_build_cmd(mori_dir):

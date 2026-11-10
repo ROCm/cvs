@@ -143,8 +143,7 @@ def test_install_mori(orch, mori_dict, lifecycle):
         git_ref = mori_dict.get('git_ref', DEFAULT_GIT_REF)
         checkout = mori_lib.checkout_cmd(mori_dir, mori_dict.get('git_url', DEFAULT_GIT_URL), git_ref)
         _run(orch, f'checkout of {git_ref}', checkout, CHECKOUT_TIMEOUT, head_only)
-        log_dir = shlex.quote(mori_dict['log_dir'])
-        build = f'mkdir -p {log_dir} && ' + mori_lib.build_cmd(mori_dir, f'{log_dir}/install_mori_$(hostname).log')
+        build = mori_lib.build_cmd(mori_dir, mori_dict['log_dir'])
         _run(orch, f'MoRI build (see {mori_dict["log_dir"]}/install_mori_<host>.log)', build, BUILD_TIMEOUT, head_only)
         if orch.orchestrator_type != 'container':
             pip = f'python3 -m pip install --target {md}/site prettytable'
