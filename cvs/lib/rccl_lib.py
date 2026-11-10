@@ -1289,7 +1289,6 @@ class RcclJob:
         finally:
             self.launcher.cleanup()
             self._save_topology_checks(result_file)
-            self.launcher.cleanup()
         if not result_out:
             return []
         self.collect_gpu_info()
@@ -1335,7 +1334,6 @@ class RcclJob:
         finally:
             self.launcher.cleanup()
             self._save_topology_checks(result_file)
-            self.launcher.cleanup()
 
         if not raw_results:
             return []
