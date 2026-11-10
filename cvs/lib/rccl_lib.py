@@ -9,6 +9,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import hashlib
 import json
 import os
+import posixpath
 import re
 import shlex
 import tempfile
@@ -379,6 +380,20 @@ def configured_collectives(config):
     return config.get('rccl_collective', DEFAULT_COLLECTIVES)
 
 
+_MPIRUN_HOSTFILE_PREFIX = 'rccl_hosts_file_'
+
+
+def _result_payload(result):
+    """Normalize detailed exec output to (stdout, exit_code). Missing codes are failures."""
+    if isinstance(result, dict) and ('output' in result or 'exit_code' in result):
+        output = result.get('output') or ''
+        exit_code = result.get('exit_code')
+        if exit_code is None:
+            return output, -1
+        return output, exit_code
+    return result or '', -1
+
+
 class OpenMPI:
     """Open MPI configuration consumed by rccl-tests during MPI_Init."""
 
@@ -480,13 +495,15 @@ class OpenMPI:
 class MpiRun:
     """Launch rccl-tests through Open MPI's mpirun in the orchestrator environment."""
 
-    def __init__(self, openmpi, orch, cluster_nodes, vpc_nodes, global_ranks):
+    def __init__(self, openmpi, orch, cluster_nodes, vpc_nodes, global_ranks, head_node):
         self.openmpi = openmpi
         self.orch = orch
         self.cluster_nodes = cluster_nodes
         self.vpc_nodes = vpc_nodes
         self.global_ranks = global_ranks
+        self.head_node = head_node
         self.hosts_file_path = ''
+        self.hosts_file_cleanup_pending = False
 
     def topology(self):
         """Return the topology requested by -np and the uniform hostfile slots."""
@@ -494,17 +511,57 @@ class MpiRun:
         return {'nodes': nodes, 'ranks': self.global_ranks, 'ranksPerNode': self.global_ranks // nodes}
 
     def prepare(self):
+        """Create the mpirun hostfile on the head node once.
+
+        mktemp creates the file exclusively with a random name and mode 0600, so
+        another user on a shared head node cannot pre-place or redirect it.
+        """
+        if self.hosts_file_cleanup_pending:
+            self.cleanup()
+            if self.hosts_file_path:
+                raise RuntimeError(f'Could not remove stale MPI hostfile on {self.head_node}: {self.hosts_file_path}')
         if self.hosts_file_path:
             return self
         slots = self.topology()['ranksPerNode']
         host_file = ''.join(f'{node} slots={slots}\n' for node in self.vpc_nodes)
-        self.hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
-        self.orch.exec_on_head(f'rm -f {self.hosts_file_path}')
-        self.orch.exec_on_head(f'echo "{host_file}" > {self.hosts_file_path}')
+        cmd = (
+            '(umask 077 && f=$(mktemp -p "${TMPDIR:-/tmp}" ' + _MPIRUN_HOSTFILE_PREFIX + 'XXXXXXXXXX)'
+            f' && printf %s {shlex.quote(host_file)} > "$f" && printf %s "$f")'
+        )
+        result = self.orch.exec_on_head(cmd, timeout=30, detailed=True)
+        output, exit_code = _result_payload((result or {}).get(self.head_node))
+        path = output.strip()
+        if (
+            exit_code != 0
+            or not posixpath.isabs(path)
+            or not posixpath.basename(path).startswith(_MPIRUN_HOSTFILE_PREFIX)
+        ):
+            raise RuntimeError(f'Could not create MPI hostfile on {self.head_node} (exit {exit_code}): {output}')
+        self.hosts_file_path = path
         return self
 
     def cleanup(self):
-        """MpiRun has no launcher-owned process or session state to remove."""
+        """Remove the hostfile created by prepare()."""
+        if not self.hosts_file_path:
+            return
+        self.hosts_file_cleanup_pending = True
+        try:
+            result = self.orch.exec_on_head(f'rm -f -- {shlex.quote(self.hosts_file_path)}', timeout=30, detailed=True)
+            output, exit_code = _result_payload((result or {}).get(self.head_node))
+        except Exception as exc:
+            log.warning('Could not remove MPI hostfile %s on %s: %r', self.hosts_file_path, self.head_node, exc)
+            return
+        if exit_code != 0:
+            log.warning(
+                'Could not remove MPI hostfile %s on %s (exit %s): %s',
+                self.hosts_file_path,
+                self.head_node,
+                exit_code,
+                output,
+            )
+            return
+        self.hosts_file_path = ''
+        self.hosts_file_cleanup_pending = False
 
     def command(self, binary_cmd, env_file=None, env_overrides=None):
         self.prepare()
@@ -520,7 +577,7 @@ class MpiRun:
             f'{self.openmpi.prefix}/bin/mpirun',
             '--allow-run-as-root',
             f'-np {self.global_ranks}',
-            f'--hostfile {self.hosts_file_path}',
+            f'--hostfile {shlex.quote(self.hosts_file_path)}',
             '--bind-to numa',
         ]
         if self.orch.ssh_port != 22:
@@ -736,6 +793,7 @@ class RcclJob:
                 cluster_node_list,
                 vpc_node_list,
                 self.no_of_global_ranks,
+                self.head_node,
             )
         self.output_flag = ''
         self.prepared = False
@@ -907,7 +965,7 @@ class RcclJob:
         )
         try:
             result = self.orch.exec_on_head(cmd, timeout=30, detailed=True)
-            output, exit_code = self._result_payload((result or {}).get(self.head_node))
+            output, exit_code = _result_payload((result or {}).get(self.head_node))
             if exit_code != 0:
                 raise OSError(f'head-node directory check failed (exit {exit_code}): {output}')
 
@@ -960,16 +1018,19 @@ class RcclJob:
 
     def execute(self, binary_cmd, reason, env_overrides=None):
         """Build and execute one collective command, returning launch output."""
-        cmd = self.launch_command(binary_cmd, env_overrides)
-        log.info('%%%%%%%%%%%%%%%%')
-        log.info("%s", cmd)
-        log.info('%%%%%%%%%%%%%%%%')
         error_count_before = len(globals.error_list)
         try:
+            cmd = self.launch_command(binary_cmd, env_overrides)
+        except Exception as error:
+            return self._fail(reason, f'RCCL launch for {binary_cmd} raised {error!r}', cleanup_processes=False)
+        try:
+            log.info('%%%%%%%%%%%%%%%%')
+            log.info("%s", cmd)
+            log.info('%%%%%%%%%%%%%%%%')
             out_dict = self.orch.exec_on_head(cmd, timeout=self.cvs_exec_timeout, detailed=True)
             if not out_dict or self.head_node not in out_dict:
                 return self._fail(reason, f'RCCL launch produced no result from {self.head_node}: {cmd}')
-            output, exit_code = self._result_payload(out_dict[self.head_node])
+            output, exit_code = _result_payload(out_dict[self.head_node])
             if exit_code != 0:
                 return self._fail(reason, f'RCCL launch failed with exit code {exit_code}: {cmd}')
             RcclVerifier.scan_logs(output)
@@ -977,11 +1038,26 @@ class RcclJob:
                 return self._fail(reason, f'RCCL launch output failed checks: {cmd}')
             return output
         except Exception as error:
-            return self._fail(reason, f'Hit Exceptions with rccl cmd {cmd} - exception {error!r}')
+            return self._fail(reason, f'RCCL launch for {binary_cmd} raised {error!r}')
 
-    def _fail(self, reason, message):
+    def _fail(self, reason, message, cleanup_processes=True):
         log.error("%s", message)
-        self._cleanup_stale_processes(reason)
+        if cleanup_processes:
+            self._cleanup_stale_processes(reason)
+        else:
+            self.launcher.cleanup()
+        self.verdicts.append(
+            {
+                'check': 'launch',
+                'size': None,
+                'dtype': None,
+                'actual': None,
+                'threshold': None,
+                'unit': None,
+                'status': 'fail',
+                'message': message,
+            }
+        )
         fail_test(message)
         return None
 
@@ -996,23 +1072,12 @@ class RcclJob:
         job binary; they must not match srun or spur.
         """
         log.warning(f'Cleaning up stale RCCL/mpirun processes on all reachable hosts ({reason})')
-        for pattern in ('prterun', 'mpirun.*rccl_hosts_file', self.test_name):
+        for pattern in ('prterun', f'mpirun.*{_MPIRUN_HOSTFILE_PREFIX}', self.test_name):
             try:
                 self.orch.exec(f"pkill -9 -f '{pattern}' || true", timeout=30)
             except Exception as kill_exc:
                 log.warning(f'Cleanup pkill for pattern {pattern!r} raised {kill_exc!r} (continuing)')
         self.launcher.cleanup()
-
-    @staticmethod
-    def _result_payload(result):
-        """Normalize detailed exec output to (stdout, exit_code). Missing codes are failures."""
-        if isinstance(result, dict) and ('output' in result or 'exit_code' in result):
-            output = result.get('output') or ''
-            exit_code = result.get('exit_code')
-            if exit_code is None:
-                return output, -1
-            return output, exit_code
-        return result or '', -1
 
     def _detect_output_flag(self, binary_path):
         """Return -X if the binary supports --rccl_output_file, else legacy -x."""
@@ -1191,7 +1256,15 @@ class RcclJob:
     def run_regression(self):
         self.verdicts = []
         self._validate_regression_result_paths()
-        self.prepare()
+        try:
+            self.prepare()
+        except RuntimeError as error:
+            self._fail(
+                f'exception in rccl_regression: {self.test_name}',
+                f'RCCL preparation failed: {error}',
+                cleanup_processes=False,
+            )
+            return []
         self.topology_checks = []
         params = self.rccl_test_params
         threads = int(params.get('threads_per_gpu', 1))
@@ -1214,6 +1287,7 @@ class RcclJob:
                 result_out = self.read_results(result_file)
             self._check_reported_topology(result_out, self.test_name, gpus_per_rank=threads)
         finally:
+            self.launcher.cleanup()
             self._save_topology_checks(result_file)
             self.launcher.cleanup()
         if not result_out:
@@ -1228,7 +1302,15 @@ class RcclJob:
     def run_perf(self):
         self.verdicts = []
         self._validate_perf_result_paths()
-        self.prepare()
+        try:
+            self.prepare()
+        except RuntimeError as error:
+            self._fail(
+                f'exception in rccl_perf: {self.test_name}',
+                f'RCCL preparation failed: {error}',
+                cleanup_processes=False,
+            )
+            return []
         self.topology_checks = []
         params = self.rccl_test_params
         data_types = params.get('data_types', ['float'])
@@ -1251,6 +1333,7 @@ class RcclJob:
             else:
                 log.error('Failed to save combined results to %s on head node %s', result_file, self.head_node)
         finally:
+            self.launcher.cleanup()
             self._save_topology_checks(result_file)
             self.launcher.cleanup()
 
