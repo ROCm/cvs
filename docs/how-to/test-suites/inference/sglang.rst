@@ -243,6 +243,13 @@ Example run:
     --config_file ~/cvs_workspace/mi3xx_sglang_llama_70b_disaggregated.json \
     -vvv
 
+MORI KV transfer uses the same command with
+``mi3xx_sglang_deepseek_r1_0528_mori_disaggregated.json``,
+``mi3xx_sglang_qwen35_397b_mori_disaggregated.json``,
+``mi35x_sglang_deepseek_r1_0528_mori_disaggregated.json``, or
+``mi35x_sglang_qwen35_397b_mori_disaggregated.json``. Set ``MORI_RDMA_DEVICES``
+before the run.
+
 Direct pytest invocation
 ------------------------
 

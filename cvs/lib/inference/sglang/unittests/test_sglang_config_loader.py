@@ -425,6 +425,7 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
             {path.name for path in config_paths},
             {
                 'mi35x_sglang_deepseek_r1_0528_disaggregated.json',
+                'mi35x_sglang_deepseek_r1_0528_mori_disaggregated.json',
                 'mi35x_sglang_deepseek_r1_0528_distributed.json',
                 'mi35x_sglang_deepseek_r1_0528_single.json',
                 'mi35x_sglang_deepseek_r1_0528_wide_ep.json',
@@ -432,9 +433,11 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                 'mi35x_sglang_llama_70b_distributed.json',
                 'mi35x_sglang_llama_70b_single.json',
                 'mi35x_sglang_qwen35_397b_disaggregated.json',
+                'mi35x_sglang_qwen35_397b_mori_disaggregated.json',
                 'mi35x_sglang_qwen35_397b_distributed.json',
                 'mi35x_sglang_qwen35_397b_single.json',
                 'mi3xx_sglang_deepseek_r1_0528_disaggregated.json',
+                'mi3xx_sglang_deepseek_r1_0528_mori_disaggregated.json',
                 'mi3xx_sglang_deepseek_r1_0528_distributed.json',
                 'mi3xx_sglang_deepseek_r1_0528_single.json',
                 'mi3xx_sglang_deepseek_r1_0528_wide_ep.json',
@@ -442,6 +445,7 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                 'mi3xx_sglang_llama_70b_distributed.json',
                 'mi3xx_sglang_llama_70b_single.json',
                 'mi3xx_sglang_qwen35_397b_disaggregated.json',
+                'mi3xx_sglang_qwen35_397b_mori_disaggregated.json',
                 'mi3xx_sglang_qwen35_397b_distributed.json',
                 'mi3xx_sglang_qwen35_397b_single.json',
             },
@@ -535,7 +539,7 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                     self.assertEqual(variant.inference['pipeline_parallelism'], '1')
                     self.assertEqual(variant.inference['expert_parallelism'], '16')
                     self.assertEqual(variant.inference['attn_data_parallelism'], '16')
-                    self.assertIn('--moe-a2a-backend mooncake', variant.inference['add_flags'])
+                    self.assertIn('--moe-a2a-backend mori', variant.inference['add_flags'])
                     self.assertNotIn('moe_a2a_backend', variant.inference)
                     self.assertEqual(variant.inference['deepep_mode'], 'normal')
                     self.assertNotIn('server_node_list', variant.inference)
@@ -659,7 +663,7 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
         self.assertEqual(variant.inference['_execution_hosts'], ['node-a', 'node-b'])
         self.assertEqual(variant.inference['benchmark_serv_node'], 'node-a')
         self.assertEqual(variant.benchmark_params['expert_parallelism'], '16')
-        self.assertIn('--moe-a2a-backend mooncake', variant.benchmark_params['add_flags'])
+        self.assertIn('--moe-a2a-backend mori', variant.benchmark_params['add_flags'])
 
     def test_wide_ep_rejects_expert_size_that_differs_from_tensor_parallel(self):
         config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'

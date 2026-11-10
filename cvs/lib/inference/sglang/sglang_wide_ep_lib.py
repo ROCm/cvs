@@ -8,7 +8,7 @@ One unified ``sglang.launch_server`` group on the first ``nnodes`` hosts.
 Attention is data-parallel (``--dp-size`` with ``--enable-dp-attention``) and
 experts are sharded across every rank (``--ep-size``). Pipeline parallel stays
 1, and ``expert_parallelism`` must equal ``tensor_parallelism``. The all-to-all
-backend comes from ``add_flags`` (shipped templates use ``--moe-a2a-backend mooncake``).
+backend comes from ``add_flags`` (shipped templates use ``--moe-a2a-backend mori``).
 The ROCm SGLang images reject ``--attn-dp-size``; newer SGLang rewrites this
 older pair to that flag.
 '''

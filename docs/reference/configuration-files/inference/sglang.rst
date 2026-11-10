@@ -68,7 +68,11 @@ Templates are named ``<gpu>_sglang_<model>_<topology>.json``. ``<model>`` is
 ``llama_70b``, ``deepseek_r1_0528``, or ``qwen35_397b``. ``<topology>`` is ``single``,
 ``distributed``, ``disaggregated``, or ``wide_ep``. ``wide_ep`` is shipped as
 ``mi3xx_sglang_deepseek_r1_0528_wide_ep.json`` and
-``mi35x_sglang_deepseek_r1_0528_wide_ep.json``.
+``mi35x_sglang_deepseek_r1_0528_wide_ep.json``. MORI KV transfer is shipped as
+``mi3xx_sglang_deepseek_r1_0528_mori_disaggregated.json``,
+``mi3xx_sglang_qwen35_397b_mori_disaggregated.json``,
+``mi35x_sglang_deepseek_r1_0528_mori_disaggregated.json``, and
+``mi35x_sglang_qwen35_397b_mori_disaggregated.json``.
 
 .. list-table::
    :widths: 2 3 3
@@ -114,15 +118,15 @@ threshold file through top-level ``threshold_json`` (a filename beside the confi
    * - ``mi325_sglang_llama_70b_threshold.json``
      - MI30x Llama 3.1 70B configs (single, distributed, disaggregated)
    * - ``mi325_sglang_deepseek_r1_0528_threshold.json``
-     - MI30x DeepSeek-R1-0528 configs (single, distributed, disaggregated, wide expert parallel)
+     - MI30x DeepSeek-R1-0528 configs (single, distributed, disaggregated, MORI KV transfer, wide expert parallel)
    * - ``mi325_sglang_qwen35_397b_threshold.json``
-     - MI30x Qwen3.5-397B configs (single, distributed, disaggregated)
+     - MI30x Qwen3.5-397B configs (single, distributed, disaggregated, MORI KV transfer)
    * - ``mi355_sglang_llama_70b_threshold.json``
      - MI35x Llama 3.1 70B configs (single, distributed, disaggregated)
    * - ``mi355_sglang_deepseek_r1_0528_threshold.json``
-     - MI35x DeepSeek-R1-0528 configs (single, distributed, disaggregated, wide expert parallel)
+     - MI35x DeepSeek-R1-0528 configs (single, distributed, disaggregated, MORI KV transfer, wide expert parallel)
    * - ``mi355_sglang_qwen35_397b_threshold.json``
-     - MI35x Qwen3.5-397B configs (single, distributed, disaggregated)
+     - MI35x Qwen3.5-397B configs (single, distributed, disaggregated, MORI KV transfer)
 
 Threshold keys use the form ``ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>``. Each value is a
 metric map (for example ``output_throughput_per_sec``, ``mean_ttft_ms``, ``mean_tpot_ms``,
@@ -311,7 +315,7 @@ Wide expert parallel (``sglang_wide_ep_distributed``)
 
 Same host rule as ``sglang_distributed``: the first ``nnodes`` hosts, rank 0 is the benchmark node. Shipped templates are ``mi3xx_sglang_deepseek_r1_0528_wide_ep.json`` and ``mi35x_sglang_deepseek_r1_0528_wide_ep.json``. They reuse ``mi325_sglang_deepseek_r1_0528_threshold.json`` and ``mi355_sglang_deepseek_r1_0528_threshold.json``. ``enforce_thresholds`` is false on both templates.
 
-Set ``topology`` to ``wide_ep``. ``expert_parallelism`` must equal ``tensor_parallelism``. ``pipeline_parallelism`` must be ``1``. ``attn_data_parallelism`` must equal ``expert_parallelism``. The launcher passes that size as ``--dp-size`` with ``--enable-dp-attention``. The all-to-all backend is an ``add_flags`` entry; the shipped templates include ``--moe-a2a-backend mooncake``. ``deepep_mode`` is ``normal``. Sweep combo keys stay ``ISL,OSL,TP,PP,CONC`` and do not relaunch the server.
+Set ``topology`` to ``wide_ep``. ``expert_parallelism`` must equal ``tensor_parallelism``. ``pipeline_parallelism`` must be ``1``. ``attn_data_parallelism`` must equal ``expert_parallelism``. The launcher passes that size as ``--dp-size`` with ``--enable-dp-attention``. The all-to-all backend is an ``add_flags`` entry; the shipped templates include ``--moe-a2a-backend mori``. ``deepep_mode`` is ``normal``. Sweep combo keys stay ``ISL,OSL,TP,PP,CONC`` and do not relaunch the server.
 
 Disaggregated prefill-decode (``sglang_disagg_distributed``)
 ------------------------------------------------------------
@@ -339,7 +343,9 @@ Uses the multi-node network env fields above. The loader drops any configured ro
    * - ``server_params.prefill_policy``, ``decode_policy``
      - PD routing policy. Shipped templates use ``cache_aware``.
    * - ``MC_GID_INDEX``, ``MC_DISABLE_HIP``
-     - Mooncake Transfer Engine settings on MI35x disaggregated templates (``container.runtime.args.env``). ``MC_GID_INDEX`` is the RoCEv2 GID index shared by the configured HCAs. ``MC_DISABLE_HIP=1`` keeps cross-node KV transfer on RDMA. SGLang selects Mooncake when ``--disaggregation-transfer-backend`` is omitted.
+     - Mooncake Transfer Engine settings on the MI35x disaggregated templates that leave the transfer backend unset (``container.runtime.args.env``). ``MC_GID_INDEX`` is the RoCEv2 GID index shared by the configured HCAs. ``MC_DISABLE_HIP=1`` keeps cross-node KV transfer on RDMA. SGLang selects Mooncake when ``--disaggregation-transfer-backend`` is omitted.
+   * - ``MORI_RDMA_DEVICES``
+     - RDMA device list for the MORI KV-transfer templates. Replace the ``<changeme>`` value with the names from ``ibv_devinfo``. Those templates pass ``--disaggregation-transfer-backend mori`` in ``add_flags`` to both prefill and decode.
    * - ``server_params.lng_ctx_activate``
      - When true, ``test_run_long_context_accuracy`` runs the ``long_ctx_niah`` probe. Shipped templates set this to false, so the stage skips.
 
@@ -378,7 +384,7 @@ Benchmark and model configuration parameters are listed below.
      - ``16``
      - Server-ready poll attempts. The poll looks for ``server is fired up and ready to roll`` in the server log.
    * - ``container.runtime.args.env``, ``server_params.add_flags``
-     - Scalar env such as ``SGLANG_USE_AITER``, ``AMDGCN_USE_BUFFER_OPS``, and ``ROCM_QUICK_REDUCE_QUANTIZATION``, plus ``--attention-backend aiter``. MI30x DeepSeek templates and MI30x multi-node Qwen templates set ``GPU_ARCHS=gfx942``. MI35x disaggregated templates use SGLang's default Mooncake transfer backend and set ``MC_GID_INDEX`` and ``MC_DISABLE_HIP``.
+     - Scalar env such as ``SGLANG_USE_AITER``, ``AMDGCN_USE_BUFFER_OPS``, and ``ROCM_QUICK_REDUCE_QUANTIZATION``, plus ``--attention-backend aiter``. MI30x DeepSeek templates and MI30x multi-node Qwen templates set ``GPU_ARCHS=gfx942``. MI35x disaggregated templates that omit the transfer backend use Mooncake and set ``MC_GID_INDEX`` and ``MC_DISABLE_HIP``. The ``mori_disaggregated`` templates pass ``--disaggregation-transfer-backend mori`` and set ``MORI_RDMA_DEVICES``.
    * - ``server_params.context_length``
      - ``205000`` or ``163840``
      - Long-context cap on distributed (``205000``) and disaggregated (``163840``) templates.
