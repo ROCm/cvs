@@ -5,18 +5,18 @@ All rights reserved.
 Turns a config file and a cluster file into a validated config, the resolved
 cluster, and the merged container block.
 
-Substitution and threshold loading come from
-``cvs.lib.utils.config_loader.substitute_config``, which older suite loaders
-still call directly.
+Substitution comes from ``cvs.lib.utils.config_loader.substitute_placeholders``.
+Threshold files are not loaded here; a schema that uses one attaches it.
 '''
 
 import copy
 import json
 from collections import namedtuple
+from pathlib import Path
 
 from pydantic import ValidationError
 
-from cvs.lib.utils.config_loader import substitute_config
+from cvs.lib.utils.config_loader import substitute_placeholders
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
 
@@ -61,6 +61,8 @@ def load_config(model_cls, config_path, cluster):
     the config raises `ConfigError` listing each field that still has one.
     The config gets the placeholders `resolve_test_config_placeholders` expands,
     such as `{home}` and `{run_dir}`, plus `{shared_fs}` and `{paths.*}`.
+    Validation gets ``config_path`` in its context, so a schema can read files
+    named relative to the config, such as its threshold file.
 
     Returns `LoadedConfig(config, cluster, container)`. `container` is the
     cluster file's container block with the config's `container.model_dump()`
@@ -73,11 +75,9 @@ def load_config(model_cls, config_path, cluster):
         with open(cluster) as fp:
             cluster = json.load(fp)
     cluster = resolve_cluster_config_placeholders(cluster)
-    raw, thresholds = substitute_config(config_path, cluster, all_placeholders=True)
-    if "thresholds" in model_cls.model_fields:
-        raw["thresholds"] = thresholds
+    raw = substitute_placeholders(config_path, cluster, all_placeholders=True)
     try:
-        config = model_cls.model_validate(raw, context={"placeholders": "reject"})
+        config = model_cls.model_validate(raw, context={"placeholders": "reject", "config_path": Path(config_path)})
     except ValidationError as exc:
         raise ConfigError(config_path, _problem_lines(exc)) from None
     spec = getattr(config, "container", None)

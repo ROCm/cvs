@@ -42,6 +42,11 @@ class _PathsOnlyConfig(_Forbid):
     paths: Paths
 
 
+class _InlineThresholdsConfig(_Forbid):
+    log_dir: str
+    expected_results: dict
+
+
 class TestLoadConfig(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -64,8 +69,11 @@ class TestLoadConfig(unittest.TestCase):
         from_path = load_config(BaseVariantConfig, config_path, str(cluster_path))
         self.assertEqual(from_path.cluster, from_dict.cluster)
         self.assertNotIn("{user-id}", from_path.cluster["priv_key_file"])
-        self.assertEqual(from_path.config.thresholds, {"cell": {"m": {}}})
         self.assertEqual(from_path.container, from_dict.container)
+
+    def test_threshold_file_is_left_to_the_schema(self):
+        loaded = load_config(BaseVariantConfig, self._write_config(_base_config_dict()), {})
+        self.assertEqual(loaded.config.thresholds, {})
 
     def test_changeme_in_the_cluster_file_still_exits(self):
         config_path = self._write_config(_base_config_dict())
@@ -76,6 +84,20 @@ class TestLoadConfig(unittest.TestCase):
         loaded = load_config(_PathsOnlyConfig, self._write_config({"paths": _paths_dict()}), {})
         self.assertIsNone(loaded.container)
         self.assertEqual(loaded.config.paths.log_dir, "/data/logs")
+
+    def _write_config_without_threshold_file(self, config):
+        empty = Path(tempfile.mkdtemp(dir=self.tmp))
+        path = empty / "config.json"
+        path.write_text(json.dumps(config))
+        return path
+
+    def test_model_without_thresholds_or_paths_loads_with_no_threshold_file(self):
+        config = {"log_dir": "/home/{user-id}/logs", "expected_results": {"io_read": {}}}
+        loaded = load_config(
+            _InlineThresholdsConfig, self._write_config_without_threshold_file(config), {"username": "jdoe"}
+        )
+        self.assertEqual(loaded.config.log_dir, "/home/jdoe/logs")
+        self.assertEqual(loaded.config.expected_results, {"io_read": {}})
 
     def test_config_container_is_merged_onto_the_cluster_container(self):
         config = _base_config_dict()

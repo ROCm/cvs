@@ -8,7 +8,8 @@ Holds the 3-pass placeholder substitution, the `enforce_thresholds` gate
 carried on `BaseVariantConfig`, and the `substitute_config` helper that reads
 a variant `config.json` + sibling `*threshold.json` and resolves placeholders.
 The schema blocks live in `cvs.lib.conf_lib.config_blocks` and are re-exported
-here; `cvs.lib.conf_lib.loader.load_config` builds on `substitute_config`.
+here; `cvs.lib.conf_lib.loader.load_config` builds on `substitute_placeholders`,
+and a schema that uses a threshold file loads it with `attach_threshold_file`.
 A per-framework module subclasses `BaseVariantConfig` or composes the blocks
 directly and adds its own params, sweep and `cell_key`.
 
@@ -43,6 +44,7 @@ from typing import Any, Dict
 from pydantic import Field, model_validator
 from typing_extensions import Literal
 
+from cvs.lib import globals
 from cvs.lib.conf_lib.config_blocks import (  # noqa: F401 - re-exported for suite loaders
     ContainerSpec,
     ModelSpec,
@@ -52,6 +54,8 @@ from cvs.lib.conf_lib.config_blocks import (  # noqa: F401 - re-exported for sui
     _Forbid,
 )
 from cvs.lib.utils_lib import config_placeholder_map
+
+log = globals.log
 
 
 # ---------- pydantic models (generic) ----------
@@ -168,31 +172,13 @@ def _find_packaged_threshold(name):
     return matches[0] if matches else None
 
 
-def substitute_config(config_path, cluster_dict, all_placeholders=False):
-    """Read a variant config + sibling threshold file and resolve placeholders.
+def _find_threshold_file(raw, config_path):
+    """Return the threshold file a variant config names or sits next to.
 
-    Returns `(raw_dict, thresholds)`: the substituted config dict (NOT yet
-    validated -- the caller's per-framework `VariantConfig(**raw)` does that)
-    and the parsed, comment-stripped threshold dict.
-
-    Pass 1 expands only `{user-id}` unless `all_placeholders` is true; then it
-    expands the `utils_lib.config_placeholder_map` set that
-    `resolve_test_config_placeholders` uses, without its `<changeme>` exit.
-
-    Threshold discovery supports both layouts:
+    Supports both layouts:
     - ``threshold_json`` in the config (literal path; vllm_single style), or
     - a sole ``*threshold.json`` sibling next to the config (atom style).
-
-    This is the framework-neutral body of the old `load_variant`: file read +
-    3-pass substitution + threshold read. Per-framework loaders call it, attach
-    ``thresholds``, then build their typed config.
     """
-    config_path = Path(config_path)
-    if not config_path.is_file():
-        raise FileNotFoundError(f"variant config not found: {config_path}")
-
-    raw = json.loads(config_path.read_text())
-
     threshold_json = (raw.get("threshold_json") or "").strip()
     if "<changeme>" in threshold_json.lower():
         raise ValueError(
@@ -216,7 +202,7 @@ def substitute_config(config_path, cluster_dict, all_placeholders=False):
             warnings.warn(
                 f"threshold_json '{threshold_path.name}' not found next to the config "
                 f"({config_path.parent}); using the packaged copy at {packaged}",
-                stacklevel=2,
+                stacklevel=3,
             )
             threshold_path = packaged
     else:
@@ -226,8 +212,70 @@ def substitute_config(config_path, cluster_dict, all_placeholders=False):
         if len(threshold_candidates) > 1:
             raise ValueError(f"multiple *threshold.json files next to config (ambiguous): {threshold_candidates}")
         threshold_path = threshold_candidates[0]
-    thresholds = json.loads(threshold_path.read_text())
+    return threshold_path
 
+
+def _read_thresholds(threshold_path):
+    thresholds = json.loads(threshold_path.read_text())
+    return {k: v for k, v in thresholds.items() if not k.startswith("_")}
+
+
+def attach_threshold_file(data, context):
+    """Add ``thresholds`` from the config's threshold file, for a schema's ``mode="before"`` validator.
+
+    For a schema with ``thresholds`` and ``enforce_thresholds`` fields. Applies
+    only when the validation context holds the ``config_path`` that
+    `load_config` passes. Only a named ``threshold_json`` is read; no sibling
+    file is looked for, and any ``thresholds`` in the config itself is
+    replaced. A config that names none gets ``{}`` and ``enforce_thresholds``
+    false, so it runs record-only.
+    """
+    config_path = (context or {}).get("config_path")
+    if config_path is None or not isinstance(data, dict):
+        return data
+    if not (data.get("threshold_json") or "").strip():
+        log.warning("%s names no threshold_json; metrics are recorded without gating", config_path)
+        return {**data, "thresholds": {}, "enforce_thresholds": False}
+    return {**data, "thresholds": _read_thresholds(_find_threshold_file(data, Path(config_path)))}
+
+
+def _read_config(config_path):
+    config_path = Path(config_path)
+    if not config_path.is_file():
+        raise FileNotFoundError(f"variant config not found: {config_path}")
+    return json.loads(config_path.read_text())
+
+
+def substitute_placeholders(config_path, cluster_dict, all_placeholders=False):
+    """Read a config file and resolve its placeholders, without any threshold file.
+
+    Pass 1 expands only `{user-id}` unless `all_placeholders` is true; then it
+    expands the `utils_lib.config_placeholder_map` set that
+    `resolve_test_config_placeholders` uses, without its `<changeme>` exit.
+    Top-level `_` keys are dropped. The result is not validated.
+    """
+    return _substitute(_read_config(config_path), cluster_dict, all_placeholders)
+
+
+def substitute_config(config_path, cluster_dict, all_placeholders=False):
+    """Read a variant config + sibling threshold file and resolve placeholders.
+
+    Returns `(raw_dict, thresholds)`: `substitute_placeholders` of the config
+    (NOT yet validated -- the caller's per-framework `VariantConfig(**raw)` does
+    that) and the parsed, comment-stripped threshold dict. The threshold file
+    is required.
+
+    This is the framework-neutral body of the old `load_variant`: file read +
+    3-pass substitution + threshold read. Per-framework loaders call it, attach
+    ``thresholds``, then build their typed config.
+    """
+    config_path = Path(config_path)
+    raw = _read_config(config_path)
+    threshold_path = _find_threshold_file(raw, config_path)
+    return _substitute(raw, cluster_dict, all_placeholders), _read_thresholds(threshold_path)
+
+
+def _substitute(raw, cluster_dict, all_placeholders):
     # Pass 1: cluster placeholders ({user-id}, or the full test-config set) everywhere.
     if all_placeholders:
         cluster_map = config_placeholder_map(raw, _without_blank_username(cluster_dict))
@@ -236,7 +284,7 @@ def substitute_config(config_path, cluster_dict, all_placeholders=False):
     raw = _walk_substitute(raw, cluster_map)
 
     # Pass 2: self-reference within paths ({shared_fs} inside paths.*).
-    paths_block = raw.get("paths", {})
+    paths_block = raw.get("paths")
     if isinstance(paths_block, dict):
         for _ in range(len(paths_block) + 1):
             new = {
@@ -253,7 +301,4 @@ def substitute_config(config_path, cluster_dict, all_placeholders=False):
     raw = _walk_substitute(raw, flat_map)
 
     # Drop comment keys (e.g. "_comment") before framework/threshold validation.
-    raw = {k: v for k, v in raw.items() if not k.startswith("_")}
-    thresholds = {k: v for k, v in thresholds.items() if not k.startswith("_")}
-
-    return raw, thresholds
+    return {k: v for k, v in raw.items() if not k.startswith("_")}

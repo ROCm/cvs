@@ -1,6 +1,7 @@
 # cvs/lib/unittests/test_rccl_lib.py
 import os
 import json
+import re
 import shlex
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ from cvs.core.run_layout import RunLayout
 from cvs.unittests.support import TMP
 
 GUIDE_BARS = {'mi300x_rccl_single_node_config.json': 304.0, 'mi350x_rccl_single_node_config.json': 350.0}
+HOSTFILE = '/tmp/rccl_hosts_file_Ab12Cd34Ef'
 
 
 def _download_writes_suffixed_path(content, host='head'):
@@ -35,6 +37,10 @@ class _FakeOrch:
         self.all = MagicMock()
         self.head = MagicMock()
         self.ssh_port = ssh_port
+
+
+def _exec_ok(nodes):
+    return {node: {'output': '', 'exit_code': 0} for node in nodes}
 
 
 class TestRcclLib(unittest.TestCase):
@@ -1411,10 +1417,28 @@ class TestRcclLib(unittest.TestCase):
         openmpi.prepared = True
         return openmpi
 
+    def _mpirun_orch(self, ssh_port=22, path=HOSTFILE):
+        orch = _FakeOrch(ssh_port=ssh_port)
+        orch.exec_on_head.return_value = {'head': {'output': f'{path}\n', 'exit_code': 0}}
+        return orch
+
+    def _mpirun(self, orch=None, openmpi=None, global_ranks=16):
+        return rccl_lib.MpiRun(
+            openmpi or self._openmpi(),
+            orch or self._mpirun_orch(),
+            ['n1', 'n2'],
+            ['v1', 'v2'],
+            global_ranks,
+            'head',
+        )
+
     def _srun(self, nodes, no_of_nodes, local_ranks, global_ranks, openmpi=None, orch=None):
+        if orch is None:
+            orch = _FakeOrch()
+            orch.exec.return_value = _exec_ok(nodes)
         return rccl_lib.Srun(
             openmpi or self._openmpi(),
-            orch or _FakeOrch(),
+            orch,
             nodes,
             no_of_nodes,
             local_ranks,
@@ -1422,7 +1446,7 @@ class TestRcclLib(unittest.TestCase):
         )
 
     def test_mpirun_command(self):
-        launcher = rccl_lib.MpiRun(self._openmpi(), _FakeOrch(), ['n1', 'n2'], ['v1', 'v2'], 16)
+        launcher = self._mpirun()
         cmd = launcher.command('all_reduce_perf')
         self.assertIn('mpirun', cmd)
         self.assertIn('--hostfile /tmp/rccl_hosts_file_', cmd)
@@ -1431,14 +1455,107 @@ class TestRcclLib(unittest.TestCase):
         self.assertNotIn('spur run', cmd)
 
     def test_mpirun_command_env_overrides_win_over_env_file(self):
-        launcher = rccl_lib.MpiRun(self._openmpi(), _FakeOrch(), ['n1', 'n2'], ['v1', 'v2'], 16)
+        launcher = self._mpirun()
         cmd = launcher.command('all_reduce_perf', '/home/user/env.sh', {'NCCL_ALGO': 'Ring'})
         self.assertIn('source /home/user/env.sh && export NCCL_ALGO=Ring && all_reduce_perf', cmd)
         self.assertNotIn('-x NCCL_ALGO', cmd)
 
     def test_mpirun_command_wraps_binary_without_env_file(self):
-        launcher = rccl_lib.MpiRun(self._openmpi(), _FakeOrch(), ['n1', 'n2'], ['v1', 'v2'], 16)
+        launcher = self._mpirun()
         self.assertIn("bash -c all_reduce_perf", launcher.command('all_reduce_perf'))
+
+    def test_mpirun_prepare_creates_private_random_hostfile(self):
+        orch = self._mpirun_orch()
+        launcher = self._mpirun(orch)
+        self.assertIs(launcher.prepare(), launcher)
+        orch.exec_on_head.assert_called_once()
+        self.assertEqual(orch.exec_on_head.call_args.kwargs, {'timeout': 30, 'detailed': True})
+        cmd = orch.exec_on_head.call_args.args[0]
+        for fragment in ('umask 077', 'mktemp', 'rccl_hosts_file_XXXXXXXXXX', shlex.quote('v1 slots=8\nv2 slots=8\n')):
+            self.assertIn(fragment, cmd)
+        for fragment in ('rm -f', 'echo', 'rccl_hosts_file_cvsuser'):
+            self.assertNotIn(fragment, cmd)
+        self.assertEqual(launcher.hosts_file_path, HOSTFILE)
+        self.assertIs(launcher.prepare(), launcher)
+        orch.exec_on_head.assert_called_once()
+
+    def test_mpirun_prepare_raises_when_hostfile_not_created(self):
+        for result in (
+            {},
+            {'head': {'output': 'mktemp: failed', 'exit_code': 1}},
+            {'head': {'output': '', 'exit_code': 0}},
+            {'head': {'output': '/tmp/other_name', 'exit_code': 0}},
+            {'head': 'no exit code'},
+        ):
+            with self.subTest(result=result):
+                orch = self._mpirun_orch()
+                orch.exec_on_head.return_value = result
+                launcher = self._mpirun(orch)
+                with self.assertRaisesRegex(RuntimeError, 'MPI hostfile'):
+                    launcher.prepare()
+                self.assertEqual(launcher.hosts_file_path, '')
+
+    def test_mpirun_command_quotes_hostfile_path(self):
+        orch = self._mpirun_orch(path='/tmp/my dir/rccl_hosts_file_x')
+        cmd = self._mpirun(orch).command('all_reduce_perf')
+        self.assertIn("--hostfile '/tmp/my dir/rccl_hosts_file_x'", cmd)
+
+    def test_mpirun_cleanup_removes_hostfile(self):
+        orch = self._mpirun_orch()
+        launcher = self._mpirun(orch)
+        launcher.prepare()
+        orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
+        launcher.cleanup()
+        self.assertEqual(orch.exec_on_head.call_args.args[0], f'rm -f -- {HOSTFILE}')
+        self.assertEqual(orch.exec_on_head.call_args.kwargs, {'timeout': 30, 'detailed': True})
+        self.assertEqual(launcher.hosts_file_path, '')
+        self.assertFalse(launcher.hosts_file_cleanup_pending)
+        launcher.cleanup()
+        self.assertEqual(orch.exec_on_head.call_count, 2)
+        orch.exec_on_head.return_value = {'head': {'output': f'{HOSTFILE}\n', 'exit_code': 0}}
+        launcher.command('x')
+        self.assertEqual(orch.exec_on_head.call_count, 3)
+        self.assertIn('mktemp', orch.exec_on_head.call_args.args[0])
+
+    def test_mpirun_cleanup_retains_path_when_exec_raises(self):
+        orch = self._mpirun_orch()
+        launcher = self._mpirun(orch)
+        launcher.prepare()
+        orch.exec_on_head.side_effect = RuntimeError('ssh down')
+        with self.assertLogs(rccl_lib.log, level='WARNING') as warnings:
+            launcher.cleanup()
+        self.assertEqual(launcher.hosts_file_path, HOSTFILE)
+        self.assertTrue(launcher.hosts_file_cleanup_pending)
+        self.assertIn(HOSTFILE, warnings.output[0])
+        with self.assertLogs(rccl_lib.log, level='WARNING'):
+            with self.assertRaisesRegex(RuntimeError, 'Could not remove stale MPI hostfile'):
+                launcher.command('x')
+        self.assertEqual(orch.exec_on_head.call_count, 3)
+        self.assertTrue(all('rm -f --' in call.args[0] for call in orch.exec_on_head.call_args_list[1:]))
+
+        orch.exec_on_head.side_effect = [
+            {'head': {'output': '', 'exit_code': 0}},
+            {'head': {'output': f'{HOSTFILE}\n', 'exit_code': 0}},
+        ]
+        self.assertIn(f'--hostfile {HOSTFILE}', launcher.command('x'))
+        self.assertEqual(orch.exec_on_head.call_count, 5)
+        self.assertFalse(launcher.hosts_file_cleanup_pending)
+
+    def test_mpirun_cleanup_retains_path_when_rm_fails(self):
+        orch = self._mpirun_orch()
+        launcher = self._mpirun(orch)
+        launcher.prepare()
+        orch.exec_on_head.return_value = {'head': {'output': 'permission denied', 'exit_code': 1}}
+        with self.assertLogs(rccl_lib.log, level='WARNING') as warnings:
+            launcher.cleanup()
+        self.assertEqual(launcher.hosts_file_path, HOSTFILE)
+        self.assertTrue(launcher.hosts_file_cleanup_pending)
+        self.assertIn(HOSTFILE, warnings.output[0])
+        self.assertIn('exit 1', warnings.output[0])
+        orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
+        launcher.cleanup()
+        self.assertEqual(launcher.hosts_file_path, '')
+        self.assertFalse(launcher.hosts_file_cleanup_pending)
 
     @patch('cvs.lib.rccl_lib.scheduler_hosts', return_value=['n1', 'n2'])
     @patch('cvs.lib.rccl_lib.Srun._cpus_per_nested_task', return_value=None)
@@ -1570,23 +1687,97 @@ class TestRcclLib(unittest.TestCase):
         self.assertIn('export UCX_TLS=rc,self,sm,tcp', joined)
         self.assertNotIn('NCCL_', joined)
 
-    @patch.dict(os.environ, {'USER': 'cvsuser', 'SLURM_JOB_ID': '4242'}, clear=False)
+    @patch.dict(os.environ, {'USER': 'cvsuser', 'SLURM_JOB_ID': '4242'}, clear=True)
     def test_srun_prepare_creates_session_dir_once_per_node(self):
         orch = _FakeOrch()
+        orch.exec.return_value = _exec_ok(['n1', 'n2'])
         launcher = self._srun(['n1', 'n2'], 2, 8, 16, orch=orch)
         self.assertIs(launcher.prepare(), launcher)
         launcher.prepare()
-        self.assertEqual(launcher.session_dir, f'{TMP}/cvsuser/ompi-4242')
         orch.exec.assert_called_once()
+        self.assertRegex(launcher.session_dir, r'^/tmp/ompi-cvsuser-4242-[0-9a-f]{16}$')
         mkdir_cmd = orch.exec.call_args[0][0]
-        self.assertIn('mkdir -p -m 700 /tmp/cvsuser', mkdir_cmd)
-        self.assertIn(f'{TMP}/cvsuser/ompi-4242', mkdir_cmd)
+        self.assertEqual(mkdir_cmd, f'mkdir -m 700 -- {launcher.session_dir}')
+        self.assertTrue(orch.exec.call_args.kwargs['detailed'])
+        self.assertEqual(orch.exec.call_args.kwargs['hosts'], ['n1', 'n2'])
+        for text in ('-p', '|| true', '/tmp/cvsuser/'):
+            self.assertNotIn(text, mkdir_cmd)
 
-    @patch.dict(os.environ, {'USER': 'cvsuser', 'SLURM_JOB_ID': '4242'}, clear=False)
+    def test_srun_session_dir_is_unpredictable_per_launcher(self):
+        first = self._srun(['n1'], 1, 8, 8).prepare()
+        second = self._srun(['n1'], 1, 8, 8).prepare()
+        first_path = first.session_dir
+        self.assertNotEqual(first_path, second.session_dir)
+        first.cleanup()
+        first.prepare()
+        self.assertNotEqual(first_path, first.session_dir)
+
+    def test_srun_session_dir_without_slurm_job_id_uses_pid(self):
+        with (
+            patch.dict(os.environ, {'USER': 'cvsuser'}, clear=True),
+            patch('cvs.lib.rccl_lib.os.getpid', return_value=777),
+        ):
+            launcher = self._srun(['n1'], 1, 8, 8).prepare()
+        self.assertRegex(launcher.session_dir, r'^/tmp/ompi-cvsuser-cvs-777-[0-9a-f]{16}$')
+
+    def test_srun_prepare_fails_closed_when_mkdir_fails_on_a_node(self):
+        orch = _FakeOrch()
+        orch.exec.side_effect = [
+            {
+                'n1': {'output': '', 'exit_code': 0},
+                'n2': {'output': 'mkdir: cannot create directory: File exists', 'exit_code': 1},
+            },
+            {},
+        ]
+        launcher = self._srun(['n1', 'n2'], 2, 8, 16, orch=orch)
+        with self.assertRaisesRegex(RuntimeError, 'n2'):
+            launcher.prepare()
+        self.assertEqual(launcher.session_dir, '')
+        self.assertTrue(orch.exec.call_args_list[1].args[0].startswith('rm -rf /tmp/ompi-'))
+        self.assertEqual([call.kwargs['hosts'] for call in orch.exec.call_args_list], [['n1', 'n2']] * 2)
+
+    def test_srun_prepare_fails_closed_when_node_is_missing_from_results(self):
+        orch = _FakeOrch()
+        orch.exec.side_effect = [_exec_ok(['n1']), {}]
+        launcher = self._srun(['n1', 'n2'], 2, 8, 16, orch=orch)
+        with self.assertRaisesRegex(RuntimeError, 'n2'):
+            launcher.prepare()
+        self.assertEqual(launcher.session_dir, '')
+        self.assertTrue(orch.exec.call_args_list[1].args[0].startswith('rm -rf /tmp/ompi-'))
+        self.assertEqual([call.kwargs['hosts'] for call in orch.exec.call_args_list], [['n1', 'n2']] * 2)
+
+    def test_srun_prepare_fails_closed_without_exit_code(self):
+        orch = _FakeOrch()
+        orch.exec.side_effect = [{'n1': {'output': ''}}, {}]
+        launcher = self._srun(['n1'], 1, 8, 8, orch=orch)
+        with self.assertRaisesRegex(RuntimeError, 'n1'):
+            launcher.prepare()
+        self.assertEqual(launcher.session_dir, '')
+
+    def test_srun_prepare_fails_closed_on_unreachable_node(self):
+        orch = _FakeOrch()
+        orch.exec.side_effect = [
+            {'n1': {'output': '', 'exit_code': 0}, 'n2': {'output': 'ABORT: Host Unreachable Error', 'exit_code': -1}},
+            {},
+        ]
+        launcher = self._srun(['n1', 'n2'], 2, 8, 16, orch=orch)
+        with self.assertRaisesRegex(RuntimeError, 'n2'):
+            launcher.prepare()
+        self.assertEqual(launcher.session_dir, '')
+
+    def test_srun_prepare_fails_closed_without_exec_results(self):
+        orch = _FakeOrch()
+        orch.exec.side_effect = [{}, {}]
+        launcher = self._srun(['n1', 'n2'], 2, 8, 16, orch=orch)
+        with self.assertRaisesRegex(RuntimeError, 'n1, n2 \\(no exec results\\)'):
+            launcher.prepare()
+        self.assertEqual(launcher.session_dir, '')
+
+    @patch.dict(os.environ, {'USER': 'cvsuser', 'SLURM_JOB_ID': '4242'}, clear=True)
     def test_srun_exports_literal_session_dir(self):
         joined = ' && '.join(self._srun(['n1'], 1, 8, 8).prepare().mpi_init_exports())
-        self.assertIn('export OMPI_MCA_orte_tmpdir_base=/tmp/cvsuser/ompi-4242', joined)
-        self.assertIn('export OMPI_MCA_orte_top_session_dir=/tmp/cvsuser/ompi-4242', joined)
+        self.assertRegex(joined, r'export OMPI_MCA_orte_tmpdir_base=/tmp/ompi-cvsuser-4242-[0-9a-f]{16}( |$)')
+        self.assertRegex(joined, r'export OMPI_MCA_orte_top_session_dir=/tmp/ompi-cvsuser-4242-[0-9a-f]{16}( |$)')
         self.assertNotIn('TMPDIR=', joined)
         self.assertNotIn('export TMP=', joined)
         self.assertNotIn('mkdir', joined)
@@ -1594,10 +1785,12 @@ class TestRcclLib(unittest.TestCase):
 
     def test_srun_cleanup_removes_session_dir(self):
         orch = _FakeOrch()
+        orch.exec.return_value = _exec_ok(['n1'])
         launcher = self._srun(['n1'], 1, 8, 8, orch=orch).prepare()
         session_dir = launcher.session_dir
         launcher.cleanup()
         self.assertIn(f'rm -rf {session_dir}', orch.exec.call_args[0][0])
+        self.assertEqual(orch.exec.call_args.kwargs['hosts'], ['n1'])
         self.assertEqual(launcher.session_dir, '')
 
     def test_wrap_rccl_test_cmd_mpi_setup_before_env_script(self):
@@ -1619,10 +1812,11 @@ class TestRcclLib(unittest.TestCase):
     def test_mpirun_normalizes_mpi_dir_bin(self):
         launcher = rccl_lib.MpiRun(
             rccl_lib.OpenMPI({'mpi_dir': '/opt/openmpi/bin'}),
-            _FakeOrch(),
+            self._mpirun_orch(),
             ['n1'],
             ['v1'],
             8,
+            'head',
         )
         cmd = launcher.command('all_reduce_perf')
         self.assertIn('/opt/openmpi/bin/mpirun', cmd)
@@ -1656,6 +1850,88 @@ class TestRcclLib(unittest.TestCase):
                 [head],
                 [head],
             )
+
+    def test_mpirun_hostfile_failure_records_launch_verdict(self):
+        for method in ('run_perf', 'run_regression'):
+            with self.subTest(method=method):
+                orch = self._mpirun_orch()
+                orch.exec_on_head.return_value = {'head': {'output': 'mktemp failed', 'exit_code': 1}}
+                with patch('cvs.lib.rccl_lib.is_managed_compute', return_value=False):
+                    job = rccl_lib.RcclJob(
+                        orch,
+                        'all_reduce_perf',
+                        '/dev/null',
+                        {'mpi_pml': 'ob1'},
+                        {},
+                        {'rccl_result_file': '/shared/rccl.json'},
+                        ['head'],
+                        ['head'],
+                    )
+                with (
+                    patch.object(job, '_prepare_result_directory'),
+                    patch.object(job.openmpi, 'prepare'),
+                    patch.object(job, '_fail', wraps=job._fail) as fail,
+                ):
+                    self.assertEqual(getattr(job, method)(), [])
+                fail.assert_called_once()
+                self.assertIn('MPI hostfile', fail.call_args.args[1])
+                self.assertEqual([(v['check'], v['status']) for v in job.verdicts], [('launch', 'fail')])
+                self.assertIn('MPI hostfile', job.verdicts[0]['message'])
+                self.assertIn('MPI hostfile', rccl_lib.globals.error_list[-1])
+                orch.exec.assert_not_called()
+                orch.exec_on_head.assert_called_once()
+                self.assertEqual(job.launcher.hosts_file_path, '')
+
+    def test_execute_catches_launch_command_failure_before_cmd_is_bound(self):
+        orch = _FakeOrch()
+        job = self._job(orch)
+        with (
+            patch.object(job, 'launch_command', side_effect=RuntimeError('hostfile failed')),
+            patch.object(job, '_fail', wraps=job._fail) as fail,
+            patch.object(job.launcher, 'cleanup') as cleanup,
+        ):
+            self.assertIsNone(job.execute('all_reduce_perf', 'unit'))
+        fail.assert_called_once()
+        cleanup.assert_called_once_with()
+        orch.exec.assert_not_called()
+        self.assertEqual(job.verdicts[0]['status'], 'fail')
+        self.assertIn('hostfile failed', job.verdicts[0]['message'])
+
+    def test_run_regression_cleans_up_launcher(self):
+        for launch_output in (None, 'ok'):
+            with self.subTest(launch_output=launch_output):
+                job = self._job(_FakeOrch())
+                with (
+                    patch.object(job, '_validate_regression_result_paths'),
+                    patch.object(job, 'prepare'),
+                    patch.object(job, '_save_topology_checks'),
+                    patch.object(job, '_check_reported_topology'),
+                    patch.object(job, 'execute', return_value=launch_output),
+                    patch.object(job, 'read_results', return_value=[]),
+                    patch.object(job.launcher, 'cleanup') as cleanup,
+                ):
+                    self.assertEqual(job.run_regression(), [])
+                cleanup.assert_called_once_with()
+
+    def test_run_perf_cleans_up_launcher_on_early_return_and_exception(self):
+        for outcome in ((None, None), RuntimeError('run failed')):
+            with self.subTest(outcome=outcome):
+                job = self._job(_FakeOrch())
+                with (
+                    patch.object(job, '_validate_perf_result_paths'),
+                    patch.object(job, 'prepare'),
+                    patch.object(job, '_save_topology_checks'),
+                    patch.object(job, '_run_perf_dtype') as run_dtype,
+                    patch.object(job.launcher, 'cleanup') as cleanup,
+                ):
+                    if isinstance(outcome, Exception):
+                        run_dtype.side_effect = outcome
+                        with self.assertRaises(RuntimeError):
+                            job.run_perf()
+                    else:
+                        run_dtype.return_value = outcome
+                        self.assertEqual(job.run_perf(), [])
+                cleanup.assert_called_once_with()
 
     def test_exec_rccl_launch_nonzero_exit_does_not_scan(self):
         rccl_lib.globals.error_list = []
@@ -1710,6 +1986,7 @@ class TestRcclLib(unittest.TestCase):
             'SPUR_NODES': 'n1,n2',
         }
         orch = _FakeOrch()
+        orch.exec.return_value = _exec_ok(['n1', 'n2'])
         orch.exec_on_head.side_effect = [
             {'n1': 'NEW'},
             {'n1': {'output': '# Avg bus bandwidth : 1.8\n', 'exit_code': 3}},
@@ -1762,16 +2039,39 @@ class TestRcclLib(unittest.TestCase):
         orch.all.exec.assert_not_called()
         orch.head.exec.assert_not_called()
 
+    def test_stale_process_cleanup_matches_mpirun_hostfile_and_removes_it(self):
+        orch = self._mpirun_orch()
+        with patch('cvs.lib.rccl_lib.is_managed_compute', return_value=False):
+            job = rccl_lib.RcclJob(
+                orch,
+                'all_reduce_perf',
+                '/dev/null',
+                {'mpi_pml': 'ob1'},
+                {},
+                {'rccl_result_file': '/shared/rccl.json'},
+                ['head'],
+                ['head'],
+            )
+        job.launcher.prepare()
+        cmd = job.launcher.command('all_reduce_perf')
+        orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
+        job._cleanup_stale_processes('unit')
+        patterns = [re.search(r"pkill -9 -f '([^']+)'", call.args[0]).group(1) for call in orch.exec.call_args_list]
+        self.assertIn('mpirun.*rccl_hosts_file_', patterns)
+        self.assertTrue(any(re.search(pattern, cmd) for pattern in patterns))
+        self.assertEqual(orch.exec_on_head.call_args.args[0], f'rm -f -- {HOSTFILE}')
+        self.assertEqual(job.launcher.hosts_file_path, '')
+
     def test_mpirun_uses_container_ssh_port_and_head_environment(self):
-        orch = _FakeOrch(ssh_port=2224)
-        launcher = rccl_lib.MpiRun(self._openmpi(), orch, ['n1', 'n2'], ['v1', 'v2'], 16)
+        orch = self._mpirun_orch(ssh_port=2224)
+        launcher = self._mpirun(orch)
         cmd = launcher.command('all_reduce_perf')
         args = shlex.split(cmd)
         self.assertEqual(
             args[args.index('plm_rsh_args') + 1],
             '-p 2224 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null',
         )
-        self.assertEqual(orch.exec_on_head.call_count, 2)
+        self.assertEqual(orch.exec_on_head.call_count, 1)
         self.assertIn('v1 slots=8\nv2 slots=8', orch.exec_on_head.call_args.args[0])
         orch.head.exec.assert_not_called()
         orch.all.exec.assert_not_called()
@@ -2268,6 +2568,7 @@ class TestRcclTopology(unittest.TestCase):
             managed=False,
         )
         self.assertEqual(job.launcher.topology(), {'nodes': 4, 'ranks': 32, 'ranksPerNode': 8})
+        job.orch.exec_on_head.return_value = {'n1': {'output': f'{HOSTFILE}\n', 'exit_code': 0}}
         job.launcher.prepare()
         self.assertIn('n4 slots=8', job.orch.exec_on_head.call_args.args[0])
         self.assertEqual(job.orch.exec_on_head.call_args.args[0].count('slots=8'), 4)
@@ -2554,6 +2855,32 @@ class TestRcclTopology(unittest.TestCase):
         self.assertIn('/results/rccl_all_reduce_perf.json', self.job.execute.call_args.args[0])
         self.assertEqual(self.job.read_results.call_args.args[0], '/results/rccl_all_reduce_perf.json')
         self.assertEqual(set(saved), {'/results/rccl_all_reduce_perf_topology_check.json'})
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_run_perf_releases_launcher_session_dir(self, fail):
+        self._mock_run([deepcopy(self.row)])
+        with patch.object(self.job.launcher, 'cleanup') as cleanup:
+            self.job.run_perf()
+        cleanup.assert_called_once()
+        fail.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_run_perf_releases_launcher_session_dir_on_failed_launch(self, _fail):
+        self._mock_run([deepcopy(self.row)])
+        with (
+            patch.object(self.job, 'execute', return_value=None),
+            patch.object(self.job.launcher, 'cleanup') as cleanup,
+        ):
+            self.job.run_perf()
+        cleanup.assert_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_run_regression_releases_launcher_session_dir(self, fail):
+        self._mock_run([deepcopy(self.row)])
+        with patch.object(self.job.launcher, 'cleanup') as cleanup:
+            self.job.run_regression()
+        cleanup.assert_called_once()
+        fail.assert_not_called()
 
     def test_perf_strict_records_failure_and_still_saves_results(self):
         saved = self._mock_run([self.row])

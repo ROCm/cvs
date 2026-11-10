@@ -312,6 +312,54 @@ class TestShippedTemplates(unittest.TestCase):
         )
 
 
+class TestThresholdFile(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+
+    def _write(self, **overrides):
+        config = _config(**overrides)
+        del config["thresholds"]
+        path = self.tmp / "config.json"
+        path.write_text(json.dumps(config))
+        return path
+
+    def test_template_loads_its_named_threshold_file(self):
+        template = CONFIG_DIR / "mi3xx_vllm_llama33-70b_fp8_single.json"
+        variant = load_config(VariantConfig, write_filled_config(template, self.tmp), {"username": "test"}).config
+        self.assertEqual(sorted(set(variant.thresholds) - {"accuracy"}), sorted(variant.runs))
+
+    def test_named_threshold_file_that_is_missing_fails_the_load(self):
+        with self.assertRaises(FileNotFoundError):
+            load_config(VariantConfig, self._write(threshold_json="no_such_threshold_xyz.json"), {"username": "test"})
+
+    def test_thresholds_in_the_config_do_not_hide_a_missing_named_file(self):
+        config = _config(threshold_json="no_such_threshold_xyz.json", enforce_thresholds=True, thresholds={CELL: {}})
+        path = self.tmp / "config.json"
+        path.write_text(json.dumps(config))
+        with self.assertRaises(FileNotFoundError):
+            load_config(VariantConfig, path, {"username": "test"})
+
+    def test_unnamed_threshold_file_runs_record_only_even_when_enforced(self):
+        (self.tmp / "sibling_threshold.json").write_text(json.dumps({CELL: {}}))
+        path = self._write(enforce_thresholds=True)
+        config = json.loads(path.read_text())
+        del config["threshold_json"]
+        path.write_text(json.dumps(config))
+        with self.assertLogs(level="WARNING"):
+            variant = load_config(VariantConfig, path, {"username": "test"}).config
+        self.assertEqual((variant.thresholds, variant.enforce_thresholds), ({}, False))
+
+    def test_enforced_threshold_file_must_cover_every_selected_run(self):
+        second = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=32"
+        (self.tmp / "threshold.json").write_text(json.dumps({CELL: {}}))
+        path = self._write(enforce_thresholds=True, sweeps={CELL: {}, second: {}}, runs=[CELL, second])
+        with self.assertRaises(ConfigError) as ctx:
+            load_config(VariantConfig, path, {"username": "test"})
+        self.assertIn(f"selected runs missing threshold coverage: ['{second}']", str(ctx.exception))
+
+
 class TestContainerForOrchestrator(unittest.TestCase):
     def test_cluster_env_volumes_and_shm_size_merge_without_aliasing(self):
         with tempfile.TemporaryDirectory() as tmp:

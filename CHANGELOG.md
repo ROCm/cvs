@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `test_install_agfhc` no longer fails a node when a companion tool directory is missing (`TXB_PATH`, `MINIHPL_PATH`, `MEMROCKER_PATH`, `FIREXS_PATH`, or `AFIDSAG_PATH`). Those paths are still exported when AGFHC is launched.
+- The health TransferBench `healthcheck` test fails when TransferBench reports a failed sub-test or exits with an error. It previously passed, and only the Run Deck showed the failure.
 - ibperf: when a node pair is excluded, the remaining pairs no longer wait out the perftest timeouts or report extra failures for the excluded nodes.
+- The health sample config's TransferBench schmoo `32_cu_local_copy` threshold is lowered so healthy MI300X nodes pass; configs copied from the old sample still fail and must lower `32_cu_local_copy`.
 
 ### Removed
 
@@ -25,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `cvs run atom` can run `zai-org/GLM-5.1-FP8` with the vLLM driver on one mi3xx node (`mi3xx_atom_vllm_glm-5.1_fp8_single`, TP8) or two nodes (`mi3xx_atom_vllm_glm-5.1_fp8_distributed`, TP8, PP2). Thresholds stay unenforced.
 - Run Deck for most suites: health, platform, preflight, ibperf, MORI, ANC, ARC, RCCL, training and inference runs write a Run Deck beside the pytest HTML report. Install suites do not.
 - `cvs run` supports Slurm and SPUR: launch it with `srun` or `spur run`, and supported suites run without passwordless SSH.
 - ibperf:
@@ -84,6 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A perftest process that exits non-zero fails the test.
 - RCCL:
   - Perf and regression thresholds and dip checks read the configured top-level `rccl.results` table, and regression reads its collectives from `rccl_test_params`.
+  - Runs launched with mpirun create a private, randomly named MPI hostfile and attempt to remove it when the run finishes. Hostfile creation failures fail the test.
   - NIC- and rank-keyed `results` entries are validated like flat entries, and invalid values fail with their config path.
   - Bus-bandwidth verification fails when a configured message size has no result row, instead of skipping it.
   - Perf and regression result files include the collective name, so a run keeps every collective's results instead of only the last. Tools that read the old result paths must use the new names.

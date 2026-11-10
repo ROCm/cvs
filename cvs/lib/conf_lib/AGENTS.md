@@ -3,8 +3,9 @@
 Suite schemas are built from `config_blocks.py`, live in `schemas/` (one module per suite, such
 as `schemas/vllm.py`), and are loaded with `loader.load_config`. A suite with a schema here calls
 `load_config` directly; it has no loader module of its own.
-Substitution (`substitute_config`) and `BaseVariantConfig` stay in
-`cvs/lib/utils/config_loader.py`, which older suite loaders import.
+Substitution (`substitute_placeholders`, and `substitute_config` with its threshold file),
+`attach_threshold_file` and `BaseVariantConfig` stay in `cvs/lib/utils/config_loader.py`,
+which older suite loaders import.
 
 `__init__.py` must stay empty: `config_loader.py` imports `config_blocks`, and `loader.py`
 imports `config_loader`, so a package-level re-export of `load_config` is an import cycle.
@@ -33,12 +34,17 @@ The schema blocks every suite composes. `config_loader.py` re-exports `_Forbid`,
 
 - `cluster`: path or dict, resolved with `resolve_cluster_config_placeholders` (a cluster
   `<changeme>` still exits). The cluster is not schema-validated.
-- Runs `substitute_config(..., all_placeholders=True)`, so pass 1 expands the
+- Runs `substitute_placeholders(..., all_placeholders=True)`, so pass 1 expands the
   `utils_lib.config_placeholder_map` set (`{user-id}`, `{user}`, `{home}`, `{home-mount-dir}`,
   `{node-dir-name}`, `{run_dir}`) that `resolve_test_config_placeholders` uses. Do not call that
   resolver here: it exits at the first `<changeme>`.
-- Attaches `thresholds` when the model has that field, and validates
-  with `context={"placeholders": "reject"}`. There is no switch to allow placeholders.
+- Validates with `context={"placeholders": "reject", "config_path": Path(config_path)}`. There is
+  no switch to allow placeholders.
+- Reads no threshold file. A schema that uses one attaches it in a `mode="before"` validator with
+  `attach_threshold_file(data, info.context)`, as `schemas/vllm.py` does. Only a named
+  `threshold_json` is read, with no sibling lookup. A config that names none gets `{}` and
+  `enforce_thresholds` false, so it runs record-only; with a file, the schema's own coverage
+  rules apply.
 - `ValidationError` becomes `ConfigError` (a `ValueError`) with one `loc: msg` line per error,
   built from `errors(include_input=False)`; never put input values in a message.
 - `container`: cluster `container` with `config.container.model_dump()` deep-merged on top

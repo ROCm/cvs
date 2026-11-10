@@ -61,7 +61,16 @@ before any subclass coverage check runs on a config that will be rejected anyway
 
 #### `substitute_config(config_path, cluster_dict, all_placeholders=False) -> (raw_dict, thresholds)`
 
+`substitute_placeholders(config_path, cluster_dict, all_placeholders=False)` is the same without the
+threshold file: it returns only the substituted dict, and `load_config` uses it.
+`attach_threshold_file(data, context)` is for a schema's `mode="before"` validator and reads only a
+named `threshold_json` (relative to the config, with the packaged-copy fallback); it never looks
+for a sibling. When the config names none it gives `{}`, sets `enforce_thresholds` false
+(record-only) and logs a warning; a named file that is missing raises. It runs after
+substitution, so a placeholder in `threshold_json` expands there.
+
 - **Accepts**: path to a variant `_config.json` + a resolved cluster dict
+- **Threshold file**: required; a missing one raises `FileNotFoundError`
 - **`threshold_json` handling**: read as a literal absolute path from the raw (un-substituted) config
   before any substitution pass runs — **no placeholder substitution of any kind is applied to it**
 - **3-pass substitution**:
