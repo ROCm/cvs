@@ -43,6 +43,7 @@ class _FakeOrch:
         self.missing = {host: list((missing or {}).get(host, [])) for host in self.hosts}
         self.env_mori = {}
         self.build_exit = 0
+        self.checkout_exit = 0
         self.calls = []
         self.token = None
         self._sudo = sudo
@@ -68,6 +69,8 @@ class _FakeOrch:
             return (self.token if host in self.sees_marker else ''), 0
         if 'BUILD_EXAMPLES=ON' in cmd:
             return 'build output', self.build_exit
+        if 'git checkout' in cmd:
+            return '', self.checkout_exit
         if 'rev-parse --short' in cmd:
             return '38dbdd8f', 0
         return '', 0
@@ -225,6 +228,14 @@ class TestCleanup(_InstallCase):
         orch = _FakeOrch()
         self._install(orch)
         self.assertEqual(orch.calls[-1][:1], ('head',))
+        self.assertIn('rm -f /m/.cvs_storage_probe', orch.calls[-1][1])
+
+    def test_failed_checkout_builds_nothing_and_removes_the_marker(self):
+        orch = _FakeOrch()
+        orch.checkout_exit = 128
+        self.assertIn('checkout of main failed on node n0 with exit code 128', self._install_fails(orch))
+        self.assertEqual(orch.ran('BUILD_EXAMPLES=ON'), [])
+        self.assertEqual(orch.ran('build/examples'), [])
         self.assertIn('rm -f /m/.cvs_storage_probe', orch.calls[-1][1])
 
     def test_marker_is_removed_after_a_failed_build(self):
