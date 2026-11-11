@@ -406,7 +406,12 @@ def im_obj(
     orch,
     gpu_type,
     variant_config,
+    lifecycle,
 ):
+    # Every sglang workload stage depends on im_obj, so skipping here when an
+    # earlier stage failed (e.g. the support-matrix gate) stops the rest of the
+    # run -- the same lifecycle.failed guard the other suites use per stage.
+    lifecycle.skip_if_prior_failure()
     model_name = variant_config.benchmark_params["model"]
 
     if _use_sglang_single(request):
