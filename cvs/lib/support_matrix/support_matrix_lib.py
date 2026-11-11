@@ -169,39 +169,64 @@ def _norm_model(name):
     return re.sub(r"[\s._-]+", "", text)
 
 
+# The config key that names the model is not unified across suites yet: training
+# and inference configs use different spellings. Try all of them, at the top level
+# and inside the common sub-blocks, so the model is found wherever it lives.
+# ``model_repo`` is intentionally excluded: it is a filesystem path, not a model id.
+# (Unifying these keys in the configs is a separate follow-up.)
+_MODEL_KEYS = ("model_id", "hf_model_id", "model_name", "hf_model_name", "model")
+_MODEL_CONTAINERS = ("model", "server_params", "model_params", "train_params", "inference", "tokenizer")
+
+
+def _field(obj, key):
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _as_model_string(value):
+    '''Coerce a candidate field into a model-name string, or None.
+
+    Accepts a bare string, or an object/dict that itself carries the id under one
+    of the known keys (e.g. a ``model`` block with ``.id``).
+    '''
+    if isinstance(value, str):
+        return value.strip() or None
+    if value is None:
+        return None
+    for key in ("id",) + _MODEL_KEYS:
+        inner = _field(value, key)
+        if isinstance(inner, str) and inner.strip():
+            return inner.strip()
+    return None
+
+
 def served_model_name(variant_config):
     '''Best-effort served-model identifier from a suite's variant config.
 
-    Handles the shapes used across suites: a ``model`` object with ``.id`` (or a
-    bare string), ``server_params.model`` (dict or object), and an ``inference``
-    dict carrying ``model`` / ``model_repo``. Returns "" when none is found, in
-    which case the gate treats the workload as not-in-matrix (unchecked).
+    The key that names the model varies across training and inference configs
+    (``model_id``, ``hf_model_id``, ``model_name``, ``hf_model_name``, ``model``,
+    ``model_repo``), and it may sit at the top level or inside ``model`` /
+    ``server_params`` / ``model_params`` / ``train_params`` / ``inference`` /
+    ``tokenizer``. This tries each key in each place and returns the first match;
+    "" when none is found (the gate then treats the workload as not-in-matrix,
+    i.e. unchecked).
     '''
-
-    def _field(obj, key):
-        if isinstance(obj, dict):
-            return obj.get(key)
-        return getattr(obj, key, None)
-
-    model = getattr(variant_config, "model", None)
-    if isinstance(model, str) and model.strip():
-        return model.strip()
-    if model is not None:
-        mid = _field(model, "id")
-        if mid:
-            return str(mid)
-
-    server_params = getattr(variant_config, "server_params", None)
-    if server_params is not None:
-        val = _field(server_params, "model")
-        if val:
-            return str(val)
-
-    inference = getattr(variant_config, "inference", None)
-    if isinstance(inference, dict):
-        val = inference.get("model") or inference.get("model_repo")
-        if val:
-            return str(val)
+    for key in _MODEL_KEYS:
+        found = _as_model_string(_field(variant_config, key))
+        if found:
+            return found
+    for container_name in _MODEL_CONTAINERS:
+        container = _field(variant_config, container_name)
+        if container is None:
+            continue
+        found = _as_model_string(container)
+        if found:
+            return found
+        for key in _MODEL_KEYS:
+            found = _as_model_string(_field(container, key))
+            if found:
+                return found
     return ""
 
 
