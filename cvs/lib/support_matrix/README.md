@@ -47,6 +47,10 @@ reflect the container the workload will run in:
 - **ROCm version** via `cat /opt/rocm/.info/version`, falling back to
   `amd-smi version --json`, then `hipconfig --version`.
 
+The probe output is parsed by the library and **not echoed to the console or log**
+(the `rocm-smi -a` / `amd-smi` dump would otherwise be hundreds of lines per node on
+a large cluster); only the parsed `detected={host: {arch, rocm}}` summary is logged.
+
 It then evaluates three independent deny checks against each node's detected
 arch/ROCm; any match is a violation:
 
@@ -158,7 +162,8 @@ config carries (matching is separator/path-insensitive — see `aliases` above),
 the deny fields that apply, and add an alias only for a genuinely different preset
 name. The matrix lists **only models that have an input config**. Today jaxmaxtext
 carries the transcribed deny data; megatron, torchtitan and the inference frameworks
-are present as empty templates for their owners to fill.
+list their config-backed models with empty deny fields (and aliases) for their
+owners to fill.
 
 ## Turning the gate off (experiment runs)
 
@@ -230,7 +235,6 @@ support_matrix_lib.py            the whole library
 training_support_matrix.json     data: training frameworks
 inference_support_matrix.json    data: inference frameworks
 README.md                        this document (canonical reference)
-DESIGN.md                        design rationale (may be removed later; README is canonical)
 unittests/test_support_matrix_lib.py
 ```
 

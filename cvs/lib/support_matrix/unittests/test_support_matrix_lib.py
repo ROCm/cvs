@@ -111,6 +111,13 @@ class DetectPlatformTests(unittest.TestCase):
         sm.detect_platform(handle)
         self.assertTrue(all("timeout" in c.kwargs for c in handle.exec.call_args_list))
 
+    def test_probe_suppresses_console_echo(self):
+        # The probes dump rocm-smi -a / amd-smi for every GPU on every node; the
+        # library parses that itself, so it must not be echoed to the console/log.
+        handle = _handle("AMD Instinct MI300X", "7.0.0")
+        sm.detect_platform(handle)
+        self.assertTrue(all(c.kwargs.get("print_console") is False for c in handle.exec.call_args_list))
+
 
 _ENTRY = {
     "unsupported_gpu_arch": ["mi300x"],
