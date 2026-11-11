@@ -90,6 +90,8 @@
 
         "_comment_min_up_ports_per_gpu": "Minimum enabled IFoE ports each GPU must report in its station mask. Defaults to 2 (one enabled station) so a node with no scale-up fabric fails admission. Set to 0 only for a diagnostic run that should admit an un-provisioned fabric.",
 
+        "_comment_expected_station_mask": "Optional 18-nibble station mask every GPU must report, e.g. \"expected_station_mask\": \"000fff333000fff333\" on Helios-P (f = full station, 3 or c = half station, 0 = off). A mismatch fails admission; a match is not reported as a degraded fabric.",
+
         "_comment_policy": "CVS owns afmctl discovery, privilege handling, BDF and port discovery, strict coverage, traffic selection, and timeout derivation.",
 
         "l2ping": {

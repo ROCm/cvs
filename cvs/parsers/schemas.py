@@ -1674,8 +1674,9 @@ class PreflightIfoeConfig(BaseModel):
         "default 2 (one station) fails an un-provisioned fabric, 0 admits it for diagnostics",
     )
     reject_partial_stations: bool = Field(
-        default=True,
-        description="Fail when any station mask nibble indicates a partial station",
+        default=False,
+        description="Fail when a station mask has a half station (nibble 3 or c); "
+        "off by default because some platforms program half stations on purpose",
     )
     allow_disabled_stations: bool = Field(
         default=True,
@@ -1684,6 +1685,12 @@ class PreflightIfoeConfig(BaseModel):
     expected_station_masks: Dict[str, str] = Field(
         default_factory=dict,
         description="Optional per-GPU BDF expected 18-nibble station masks",
+    )
+    expected_station_mask: Optional[str] = Field(
+        default=None,
+        pattern=r"^[0-9a-fA-F]{18}$",
+        description="Optional 18-nibble station mask every GPU must report, for example "
+        "000fff333000fff333 on Helios-P; a matching mask is not reported as degraded",
     )
     require_uniform_station_mask: bool = Field(
         default=False,

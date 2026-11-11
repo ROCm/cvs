@@ -162,6 +162,7 @@ _STATION_POLICY_IFOE_KEYS = frozenset(
         'reject_partial_stations',
         'allow_disabled_stations',
         'expected_station_masks',
+        'expected_station_mask',
         'require_uniform_station_mask',
         'agent_process_name',
     }
