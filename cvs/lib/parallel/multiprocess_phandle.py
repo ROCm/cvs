@@ -5,7 +5,7 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-from cvs.lib.env_lib import build_env_prefix
+from cvs.lib.env_lib import build_env_prefix, redact_secrets
 from cvs.lib.parallel.phandle import ParallelHandle, _select_reachable_hosts
 from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.phandle_sharder import ParallelHandleSharder
@@ -128,7 +128,7 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
         self.env_prefix = build_env_prefix(env_vars)
         self.process_output = True  # Default to True for compatibility
         self.client = None
-        self.log.debug(f"Environ vars: {self.env_prefix}")
+        self.log.debug(f"Environ vars: {redact_secrets(self.env_prefix)}")
 
     def _shard_init_kwargs(self):
         """Create initialization kwargs for shard workers (host_list will be added by create_payloads).
@@ -191,6 +191,8 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
         if not print_console:
             return
         idx = {h: i for i, h in enumerate(cmd_hosts)} if cmd_hosts is not None else {}
+        logged_cmds = [redact_secrets(c) for c in cmd_list] if cmd_list is not None else None
+        logged_cmd = None if cmd_list is not None else redact_secrets(cmd)
         for host in self.host_list:
             if host not in cmd_output:
                 continue
@@ -198,9 +200,9 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
             self.log.info(f'Host == {host} ==')
             self.log.info('#----------------------------------------------------------#')
             if cmd_list is not None:
-                self.log.debug("%s", cmd_list[idx[host]])
+                self.log.debug("%s", logged_cmds[idx[host]])
             else:
-                self.log.debug("%s", cmd)
+                self.log.debug("%s", logged_cmd)
             for line in cmd_output[host].splitlines():
                 self.log.info("%s", line)
 
@@ -227,21 +229,22 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
         else:
             full_cmd = cmd
 
-        (self.log.info if print_console else self.log.debug)(f'cmd = {full_cmd}')
+        logged_cmd = redact_secrets(full_cmd)
+        (self.log.info if print_console else self.log.debug)(f'cmd = {logged_cmd}')
 
         # Log command execution
         if self.log:
             if inactivity_timeout is not None:
                 self.log.debug(
                     f"Executing command on {len(self.reachable_hosts)} host(s) "
-                    f"[inactivity_timeout={inactivity_timeout}s]: {full_cmd}"
+                    f"[inactivity_timeout={inactivity_timeout}s]: {logged_cmd}"
                 )
             elif timeout is not None:
                 self.log.debug(
-                    f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}"
+                    f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {logged_cmd}"
                 )
             else:
-                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
+                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {logged_cmd}")
 
         # Use sharder for sharded execution
         host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
@@ -263,8 +266,9 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
 
         # Log per-host execution completion
         if self.log:
+            logged_cmd = redact_secrets(cmd)
             for host in cmd_output.keys():
-                self.log.debug(f"Command completed on {host}: {cmd}")
+                self.log.debug(f"Command completed on {host}: {logged_cmd}")
 
         return cmd_output
 
@@ -307,7 +311,7 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
         command_by_host = dict(zip(cmd_hosts, raw_commands))
         filtered_commands = [command_by_host[h] for h in self.reachable_hosts if h in command_by_host]
 
-        (self.log.info if print_console else self.log.debug)("%s", filtered_commands)
+        (self.log.info if print_console else self.log.debug)("%s", [redact_secrets(cmd) for cmd in filtered_commands])
 
         # Log command list execution
         if self.log:
@@ -352,8 +356,8 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
 
         # Log per-host command execution
         if self.log:
-            for host, cmd in zip(cmd_hosts, expanded):
-                self.log.debug(f"Command on {host}: {cmd}")
+            for host, logged in zip(cmd_hosts, [redact_secrets(cmd) for cmd in expanded]):
+                self.log.debug(f"Command on {host}: {logged}")
 
         return cmd_output
 

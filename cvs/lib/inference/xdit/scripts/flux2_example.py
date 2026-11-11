@@ -26,8 +26,74 @@ def detect_pipeline_class(model_path):
         return xFuserFlux2Pipeline, "dev"
 
 
+def _fid_png_count(directory):
+    if not os.path.isdir(directory):
+        return 0
+    return sum(1 for name in os.listdir(directory) if name.lower().endswith(".png"))
+
+
+def _run_flux2_fid_sweep(args, pipe, input_config, elapsed_time):
+    raw_steps = str(getattr(args, "fid_steps", "") or "").strip()
+    if not raw_steps:
+        return
+    from fid_sweep import run_fid_sweep, seconds_until
+
+    steps = [int(part) for part in raw_steps.split(",") if part.strip()]
+    samples = int(getattr(args, "fid_samples", 2))
+    rank = get_world_group().rank
+    output_root = os.path.abspath("results")
+    pipe_s = float(elapsed_time) if elapsed_time and elapsed_time > 0 else 0.0
+
+    def generate_one(nfe, sample_index):
+        wall_start = time.time()
+        generated = pipe(
+            height=input_config.height,
+            width=input_config.width,
+            prompt=input_config.prompt,
+            num_inference_steps=int(nfe),
+            output_type=input_config.output_type,
+            max_sequence_length=input_config.max_sequence_length,
+            guidance_scale=input_config.guidance_scale,
+            generator=torch.Generator(device="cuda").manual_seed(int(input_config.seed) + sample_index + 1),
+        )
+        torch.cuda.synchronize()
+        elapsed = time.time() - wall_start
+        images = list(getattr(generated, "images", None) or [])
+        if pipe.is_dp_last_group() and images:
+            dest = os.path.join(output_root, "fid", f"nfe_{int(nfe)}")
+            os.makedirs(dest, exist_ok=True)
+            for index, image in enumerate(images):
+                image.save(os.path.join(dest, f"seed_{sample_index}_{index}.png"))
+            print(f"FID wrote {len(images)} png(s) to {dest}", flush=True)
+        return elapsed
+
+    budget_s = seconds_until(getattr(args, "fid_deadline", 0))
+    try:
+        run_fid_sweep(
+            rank,
+            steps,
+            samples,
+            budget_s,
+            time.monotonic(),
+            pipe_s if rank == 0 else 0.0,
+            int(input_config.num_inference_steps),
+            generate_one,
+            os.path.join(output_root, "fid", "manifest.json"),
+        )
+        if rank == 0:
+            for step in steps:
+                dest = os.path.join(output_root, "fid", f"nfe_{int(step)}")
+                print(f"FID samples at {dest}: {_fid_png_count(dest)} png(s)", flush=True)
+    except Exception as exc:
+        print(f"FID sweep failed after the timed benchmark: {exc}")
+
+
 def main():
     parser = FlexibleArgumentParser(description="xFuser Arguments")
+    parser.add_argument("--fid_steps", default="")
+    parser.add_argument("--fid_samples", type=int, default=2)
+    parser.add_argument("--fid_deadline", type=float, default=0)
+    parser.add_argument("--num_repetitions", type=int, default=1)
     args = xFuserArgs.add_cli_args(parser).parse_args()
     engine_args = xFuserArgs.from_cli_args(args)
     engine_config, input_config = engine_args.create_config()
@@ -54,21 +120,33 @@ def main():
     parameter_peak_memory = torch.cuda.max_memory_allocated(device=f"cuda:{local_rank}")
     pipe.prepare_run(input_config)
 
-    torch.cuda.reset_peak_memory_stats()
-    start_time = time.time()
-    output = pipe(
-        height=input_config.height,
-        width=input_config.width,
-        prompt=input_config.prompt,
-        num_inference_steps=input_config.num_inference_steps,
-        output_type=input_config.output_type,
-        max_sequence_length=input_config.max_sequence_length,
-        guidance_scale=input_config.guidance_scale,
-        generator=torch.Generator(device="cuda").manual_seed(input_config.seed),
-    )
-    end_time = time.time()
-    elapsed_time = end_time - start_time
-    peak_memory = torch.cuda.max_memory_allocated(device=f"cuda:{local_rank}")
+    repetitions = max(int(args.num_repetitions), 1)
+    pipe_times = []
+    output = None
+    peak_memory = 0
+    for _step in range(repetitions):
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.synchronize()
+        start_time = time.time()
+        output = pipe(
+            height=input_config.height,
+            width=input_config.width,
+            prompt=input_config.prompt,
+            num_inference_steps=input_config.num_inference_steps,
+            output_type=input_config.output_type,
+            max_sequence_length=input_config.max_sequence_length,
+            guidance_scale=input_config.guidance_scale,
+            generator=torch.Generator(device="cuda").manual_seed(input_config.seed),
+        )
+        torch.cuda.synchronize()
+        elapsed_time = time.time() - start_time
+        pipe_times.append(elapsed_time)
+        peak_memory = torch.cuda.max_memory_allocated(device=f"cuda:{local_rank}")
+        if get_world_group().rank == get_world_group().world_size - 1:
+            print(
+                f"epoch time: {elapsed_time:.2f} sec, parameter memory: {parameter_peak_memory / 1e9:.2f} GB, memory: {peak_memory / 1e9:.2f} GB"
+            )
+    elapsed_time = pipe_times[-1]
 
     parallel_info = (
         f"dp{engine_args.data_parallel_degree}_cfg{engine_config.parallel_config.cfg_degree}_"
@@ -90,9 +168,10 @@ def main():
                 print(f"image {i} saved to ./results/{image_name}")
 
     if get_world_group().rank == get_world_group().world_size - 1:
-        print(
-            f"epoch time: {elapsed_time:.2f} sec, parameter memory: {parameter_peak_memory / 1e9:.2f} GB, memory: {peak_memory / 1e9:.2f} GB"
-        )
+        os.makedirs("results", exist_ok=True)
+        with open("results/timing.json", "w", encoding="utf-8") as handle:
+            json.dump([{"pipe_time": float(value)} for value in pipe_times], handle)
+    _run_flux2_fid_sweep(args, pipe, input_config, elapsed_time)
     get_runtime_state().destroy_distributed_env()
 
 

@@ -10,7 +10,9 @@ import pytest
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import verify_dmesg_for_errors
 from cvs.lib import mori_lib
+from cvs.lib import mori_reporting
 from cvs.lib import globals
+from cvs.tests.mori.conftest import launch_mori_container, teardown_mori_container
 
 log = globals.log
 
@@ -29,16 +31,19 @@ log = globals.log
 #   orch      : Orchestrator (container or baremetal) from the suite conftest
 #   mori_dict : Configuration dictionary for MORI benchmark parameters
 #   lifecycle : Cross-test state; a failed container launch skips every user
+#   mori_variant_config : Run-card fields; gets the built MoRI commit here
 #
 # Side effects:
 #   - Resets global error list at fixture creation time to ensure a clean
 #     error state before any tests are executed.
+#   - Sets mori_variant_config["mori_commit"], which needs the launched container.
 # -----------------------------------------------------------------------------
 @pytest.fixture(scope="module")
-def mori_obj(orch, mori_dict, lifecycle):
+def mori_obj(orch, mori_dict, lifecycle, mori_variant_config):
     if lifecycle.failed:
         pytest.skip("mori container launch failed")
     globals.error_list = []
+    mori_variant_config["mori_commit"] = mori_lib.built_commit(orch, mori_dict["mori_dir"])
     return mori_lib.MoriBenchmark(orch, mori_dict)
 
 
@@ -50,20 +55,7 @@ def test_cleanup_stale_containers(orch):
 
 
 def test_launch_mori_container(orch, lifecycle):
-    if orch.orchestrator_type != "container":
-        pytest.skip("baremetal orchestrator: no container to launch")
-    image = orch.container_config.get("image")
-    if not image:
-        lifecycle.failed = True
-        pytest.fail("container.image is not set in the mori config")
-    name = orch.get_container_name(orch.container_config, image)
-    lifecycle.torn_down = False
-    if not orch.setup_containers():
-        lifecycle.failed = True
-        pytest.fail(f"setup_containers() returned False for {name}")
-    if not orch.verify_containers_running(name):
-        lifecycle.failed = True
-        pytest.fail(f"container {name} not running after setup_containers()")
+    launch_mori_container(orch, lifecycle)
 
 
 # Ensure the MORI RDMA devices show up where the benchmarks run
@@ -122,9 +114,14 @@ def test_concurrent_put_signal_thread(mori_obj):
     update_test_result()
 
 
-def test_ibgda_write_test(mori_obj):
+def test_ibgda_write_test(mori_obj, cvs_results_dict, mori_variant_config):
     globals.error_list = []
-    mori_obj.run_ibgda_dist_write(no_of_procs=2, min_val=2, max_val='64m', ctas=2, threads=256, qp_count=4, iters=1)
+    # dist_write allocates max_val per thread (2 CTAs x 256 threads); 4m keeps that at 2 GiB per GPU.
+    parsed_results = mori_obj.run_ibgda_dist_write(
+        no_of_procs=2, min_val=2, max_val='4m', ctas=2, threads=256, qp_count=4, iters=1
+    )
+    status = "fail" if globals.error_list else "pass"
+    mori_reporting.record_ibgda_results(cvs_results_dict, parsed_results, status=status, variant=mori_variant_config)
 
     update_test_result()
 
@@ -133,7 +130,8 @@ def test_ibgda_write_test(mori_obj):
 # Input Test Matrix
 #
 # This matrix defines combinations of:
-#   - buffer_size              : Size of the IO buffer (bytes)
+#   - buffer_size              : Largest message size (bytes); each case sweeps
+#                                8 B doubling up to it
 #   - transfer_batch_size      : Number of transfers grouped per batch
 #   - no_of_qp_per_transfer    : Number of Queue Pairs used per transfer
 #
@@ -141,18 +139,19 @@ def test_ibgda_write_test(mori_obj):
 # The matrix is used by pytest.parametrize to generate multiple test cases,
 # allowing systematic coverage of different IO and parallelism settings.
 #
-# These combinations are chosen to:
-#   - Exercise different buffer sizes
-#   - Validate single-QP vs multi-QP transfers
-#   - Test multiple batch sizes for scalability
+# Two sweeps with the same batch size would only repeat each other's smaller
+# sizes, so each size range gets its own batch size:
+#   - up to 128 KiB at batch 256: paged KV-cache blocks (one block of one layer
+#     per transfer, hundreds of blocks per request)
+#   - up to 4 MiB at batch 128: coalesced per-layer KV regions; the link is
+#     saturated well before 4 MiB, so larger sizes add runtime, not information
+#   - single-QP vs multi-QP for each
 # -----------------------------------------------------------------------------
 input_test_matrix = [
-    (16384, 128, 1),
-    (16384, 128, 8),
-    (32768, 128, 1),
-    (32768, 128, 8),
-    (32768, 256, 1),
-    (32768, 256, 8),
+    (131072, 256, 1),
+    (131072, 256, 8),
+    (4194304, 128, 1),
+    (4194304, 128, 8),
 ]
 
 
@@ -171,10 +170,24 @@ input_test_matrix = [
 # independent test cases, one per input configuration.
 # -----------------------------------------------------------------------------
 @pytest.mark.parametrize("buffer_size,transfer_batch_size,no_of_qp_per_transfer", input_test_matrix)
-def test_io_read(mori_obj, buffer_size, transfer_batch_size, no_of_qp_per_transfer):
+def test_io_read(
+    mori_obj, cvs_results_dict, mori_variant_config, buffer_size, transfer_batch_size, no_of_qp_per_transfer
+):
     globals.error_list = []
-    mori_obj.run_mori_torch_io_test(
-        op_type='read', enable_sess=True, buffer_size=buffer_size, transfer_batch_size=transfer_batch_size
+    parsed_results = mori_obj.run_mori_torch_io_test(
+        op_type='read',
+        enable_sess=True,
+        buffer_size=buffer_size,
+        transfer_batch_size=transfer_batch_size,
+        no_of_qp_per_transfer=no_of_qp_per_transfer,
+    )
+    status = "fail" if globals.error_list else "pass"
+    mori_reporting.record_io_results(
+        cvs_results_dict,
+        parsed_results,
+        case_qp_count=no_of_qp_per_transfer,
+        status=status,
+        variant=mori_variant_config,
     )
     update_test_result()
 
@@ -189,10 +202,24 @@ def test_io_read(mori_obj, buffer_size, transfer_batch_size, no_of_qp_per_transf
 # Each parameter combination produces a separate pytest test case.
 # -----------------------------------------------------------------------------
 @pytest.mark.parametrize("buffer_size,transfer_batch_size,no_of_qp_per_transfer", input_test_matrix)
-def test_io_write(mori_obj, buffer_size, transfer_batch_size, no_of_qp_per_transfer):
+def test_io_write(
+    mori_obj, cvs_results_dict, mori_variant_config, buffer_size, transfer_batch_size, no_of_qp_per_transfer
+):
     globals.error_list = []
-    mori_obj.run_mori_torch_io_test(
-        op_type='write', enable_sess=True, buffer_size=buffer_size, transfer_batch_size=transfer_batch_size
+    parsed_results = mori_obj.run_mori_torch_io_test(
+        op_type='write',
+        enable_sess=True,
+        buffer_size=buffer_size,
+        transfer_batch_size=transfer_batch_size,
+        no_of_qp_per_transfer=no_of_qp_per_transfer,
+    )
+    status = "fail" if globals.error_list else "pass"
+    mori_reporting.record_io_results(
+        cvs_results_dict,
+        parsed_results,
+        case_qp_count=no_of_qp_per_transfer,
+        status=status,
+        variant=mori_variant_config,
     )
     update_test_result()
 
@@ -211,16 +238,4 @@ def test_verify_dmesg(orch, lifecycle):
 
 
 def test_teardown(orch, lifecycle):
-    if orch.orchestrator_type != "container":
-        lifecycle.torn_down = True
-        pytest.skip("baremetal orchestrator: no container to tear down")
-    image = orch.container_config.get("image")
-    if not image:
-        lifecycle.torn_down = True
-        pytest.skip("container.image is not set in the mori config: no container was launched")
-    name = orch.get_container_name(orch.container_config, image)
-    orch.teardown_containers()
-    lifecycle.torn_down = True
-    # no_launch / persistent containers are left running by design.
-    if orch.container_config.get("lifetime", "per_run") == "per_run" and orch.verify_containers_running(name):
-        pytest.fail(f"container {name} still running after teardown_containers()")
+    teardown_mori_container(orch, lifecycle)

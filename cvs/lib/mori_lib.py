@@ -37,6 +37,140 @@ REMOTE_TIMEOUT_MARKER = 'MORI_REMOTE_TIMEOUT after '
 # Seconds precision: verify_dmesg_for_errors' node-scraper path treats the end time as an exclusive cutoff.
 DMESG_DATE_CMD = 'date +"%a %b %e %H:%M:%S"'
 
+CHECK_DONE = 'MORI_CHECK_DONE'
+MORI_IN_DIR = 'MORI_IN_MORI_DIR'
+EXAMPLES = ('dist_write', 'concurrent_put_thread', 'concurrent_put_imm_thread', 'concurrent_put_signal_thread')
+
+# (item, shell test that passes when it is present, apt package or None). CVS never installs the
+# None items: the ROCm stack, torch, the Python env and the NIC libraries are the platform under test.
+# cmake and ninja are not listed: pip's isolated build env fetches them.
+BUILD_DEPS = (
+    ('git', 'command -v git', 'git'),
+    ('g++', 'command -v g++', 'g++'),
+    ('mpicc', 'command -v mpicc', 'libopenmpi-dev'),
+    ('mpiexec', 'command -v mpiexec', 'openmpi-bin'),
+    ('ibv_devinfo', 'command -v ibv_devinfo', 'ibverbs-utils'),
+    ('verbs.h', 'test -f /usr/include/infiniband/verbs.h', 'libibverbs-dev'),
+    ('numa.h', 'test -f /usr/include/numa.h', 'libnuma-dev'),
+    ('libdrm', 'test -d /usr/include/libdrm', 'libdrm-dev'),
+    # Ubuntu 24.04's libpci-dev puts the header in the multiarch include dir.
+    ('pci.h', 'test -f /usr/include/pci/pci.h || test -f /usr/include/x86_64-linux-gnu/pci/pci.h', 'libpci-dev'),
+    ('hipcc', 'test -x "${ROCM_PATH:-/opt/rocm}/bin/hipcc"', None),
+    ('hip-lang', 'test -f "${ROCM_PATH:-/opt/rocm}/lib/cmake/hip-lang/hip-lang-config.cmake"', None),
+    ('libibverbs', '/sbin/ldconfig -p | grep -q libibverbs.so.1', None),
+    ('pip', 'python3 -m pip --version', None),
+    ('torch', 'python3 -c "import torch"', None),
+)
+
+# Locates the mori package without importing it, so a mori that fails to load still trips the guard.
+_ENV_MORI_PY = (
+    'import importlib.util, os, sys\n'
+    's = importlib.util.find_spec("mori")\n'
+    'where = s and (os.path.dirname(s.origin) if s.origin else next(iter(s.submodule_search_locations or []), None))\n'
+    'd = where and os.path.realpath(where)\n'
+    'm = os.path.realpath(sys.argv[1])\n'
+    f'print("{MORI_IN_DIR}" if d and (d == m or d.startswith(m + os.sep)) else "MORI_AT=%s" % d)\n'
+)
+
+
+def deps_check_cmd():
+    """Print ``MISSING:<item>`` for each missing build dependency, then ``CHECK_DONE``."""
+    checks = ' '.join(f'{{ {test}; }} >/dev/null 2>&1 || echo MISSING:{item};' for item, test, _ in BUILD_DEPS)
+    return f'{checks} echo {CHECK_DONE}'
+
+
+def parse_missing(out_dict):
+    """Map each node to the items its check printed as ``MISSING:``, or to None when the check did not finish."""
+    return {
+        node: re.findall(r'MISSING:(\S+)', out) if out and CHECK_DONE in out else None for node, out in out_dict.items()
+    }
+
+
+def apt_packages(missing):
+    """The apt packages that provide the ``missing`` items; items CVS never installs map to none."""
+    packages = {item: package for item, _, package in BUILD_DEPS if package}
+    return sorted({packages[item] for item in missing if item in packages})
+
+
+def storage_layout(seen, head):
+    """``shared`` when every node sees the marker the head wrote into mori_dir, ``local`` when only the head does.
+
+    ``seen`` maps each node to whether it sees the marker. Raises ValueError naming the nodes
+    that cannot see it when the storage is neither.
+    """
+    blind = sorted(node for node, ok in seen.items() if not ok)
+    if not blind:
+        return 'shared'
+    if set(blind) == set(seen) - {head}:
+        return 'local'
+    raise ValueError(
+        f'mori_dir is not visible from node(s) {", ".join(blind)} while other nodes share it; '
+        'put mori_dir on storage that every node or only one node sees'
+    )
+
+
+def env_mori_check_cmd(mori_dir):
+    """Print ``MORI_IN_DIR`` when the ``mori`` that python3 finds outside CVS lives under ``mori_dir``."""
+    return f'cd / && python3 -c {shlex.quote(_ENV_MORI_PY)} {shlex.quote(mori_dir)}'
+
+
+def checkout_cmd(mori_dir, git_url, git_ref):
+    """Fetch ``git_url`` into ``mori_dir``, then check out ``git_ref`` and its submodules.
+
+    The remote URL is reset every run, so fixing a wrong ``git_url`` recovers a checkout whose
+    first fetch failed. A failed fetch is not fatal, so a node without internet can use a checkout
+    made in advance. The clone is ``git init`` plus fetch because mori_dir may already hold the
+    storage marker.
+    """
+    md, url, ref = (shlex.quote(value) for value in (mori_dir, git_url, git_ref))
+    return (
+        f'mkdir -p {md} && cd {md} && {{ [ -d .git ] || git init -q; }} && '
+        f'{{ git remote set-url origin {url} 2>/dev/null || git remote add origin {url}; }} && '
+        '{ git fetch -q --tags origin || echo "git fetch failed; using the existing checkout" >&2; } && '
+        f'{{ git checkout -q --detach origin/{ref} 2>/dev/null || git checkout -q --detach {ref}; }} && '
+        'git submodule update -q --init --recursive'
+    )
+
+
+def build_cmd(mori_dir, log_dir):
+    """Build MoRI and its examples into ``<mori_dir>/site``, teeing the commit and build output to
+    ``<log_dir>/install_mori_<hostname>.log``.
+
+    ``--target`` keeps pip away from the environment's own MoRI. The command runs in its own
+    ``bash -o pipefail``, because managed-compute agents run commands through ``/bin/sh``.
+    """
+    md, ld = shlex.quote(mori_dir), shlex.quote(log_dir)
+    inner = (
+        f'mkdir -p {ld} && cd {md} && '
+        f'{{ echo "MoRI commit $(git rev-parse HEAD)"; '
+        f'BUILD_EXAMPLES=ON python3 -m pip install --upgrade --target {md}/site .; }} 2>&1 '
+        f'| tee {ld}/install_mori_$(hostname).log'
+    )
+    return f'bash -o pipefail -c {shlex.quote(inner)}'
+
+
+def verify_build_cmd(mori_dir):
+    """Print ``MISSING:`` for each example binary and for a ``mori`` that ``site`` does not provide, then ``CHECK_DONE``."""
+    md = shlex.quote(mori_dir)
+    site = shlex.quote(f'{mori_dir}/site')
+    # Python normalizes PYTHONPATH entries, so compare real paths, not the configured spelling.
+    in_site = (
+        'import mori, os, sys; '
+        'sys.exit(not os.path.realpath(mori.__file__).startswith(os.path.realpath(sys.argv[1]) + os.sep))'
+    )
+    return (
+        f'for b in {" ".join(EXAMPLES)}; do [ -x {md}/build/examples/$b ] || echo MISSING:build/examples/$b; done; '
+        f'cd / && PYTHONPATH={site} python3 -c {shlex.quote(in_site)} {site} >/dev/null || echo MISSING:site/mori; '
+        f'echo {CHECK_DONE}'
+    )
+
+
+def built_commit(orch, mori_dir):
+    """The short commit checked out in ``mori_dir`` on the head node, or None when it is not a checkout."""
+    out = orch.exec_on_head(f'git -C {shlex.quote(mori_dir)} rev-parse --short HEAD 2>/dev/null', timeout=60)
+    commit = (next(iter(out.values()), '') or '').strip()
+    return commit if re.fullmatch(r'[0-9a-f]{7,40}', commit) else None
+
 
 def _convert_value(val: str):
     """Convert string to int or float."""
@@ -167,6 +301,11 @@ def parse_ibgda_output(text: str) -> Tuple[Dict, List[Dict]]:
     return metadata, results
 
 
+def io_initiator(mori_dict, orch):
+    """Host that runs torchrun node rank 0, which mori's IO benchmark makes the initiator."""
+    return mori_dict.get('master_addr') or orch.head_node
+
+
 class MoriBenchmark:
     """Runs the MORI benchmarks through an orchestrator.
 
@@ -198,7 +337,7 @@ class MoriBenchmark:
         self.host_list = list(orch.hosts)
         self.nnodes = len(self.host_list)
         self.mori_dict = mori_dict
-        self.master_addr = self.mori_dict.get('master_addr') or orch.head_node
+        self.master_addr = io_initiator(self.mori_dict, orch)
         self.master_port = self.mori_dict['master_port']
         self.mori_dir = self.mori_dict['mori_dir']
         self.env = dict(self.mori_dict.get('env') or {})
@@ -207,11 +346,12 @@ class MoriBenchmark:
         self.run_log_dir = f"{self.log_dir}/{time.strftime('%Y%m%d_%H%M%S')}"
         self.expected_results_dict = self.mori_dict['expected_results']
         # Exported inline rather than via container.env so the same prefix works under baremetal.
-        # benchmark.py imports tests.python.* from mori_dir, so that PYTHONPATH entry is exported
-        # last: it then stacks on any PYTHONPATH from env instead of being replaced by it.
+        # install_mori builds the mori package into mori_dir/site, which must win over the
+        # environment's own MoRI; benchmark.py imports tests.python.* from mori_dir. Exported last,
+        # so it stacks on any PYTHONPATH from env instead of being replaced by it.
         exports = [
             env_lib.build_env_prefix(self.env),
-            env_lib.build_env_prefix({'PYTHONPATH': f'{self.mori_dir}:$PYTHONPATH'}),
+            env_lib.build_env_prefix({'PYTHONPATH': f'{self.mori_dir}/site:{self.mori_dir}:$PYTHONPATH'}),
         ]
         self.env_prefix = ' ; '.join(e for e in exports if e) + '; '
 
@@ -240,12 +380,6 @@ class MoriBenchmark:
         if log_name:
             full += f' 2>&1 | tee {self.run_log_dir}/{log_name}_$(hostname).log'
         return full
-
-    def _exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
-        # BaremetalOrchestrator has no exec_cmd_list; its host handle does.
-        if self.is_container:
-            return self.orch.exec_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
-        return self.orch.all.exec_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
 
     def create_run_log_dir(self):
         out_dict = self.orch.exec(f'mkdir -p {self.run_log_dir}', timeout=self.SETUP_TIMEOUT, detailed=True)
@@ -298,11 +432,13 @@ class MoriBenchmark:
         )
         out_dict = self.orch.exec(cmd, timeout=self.IBGDA_TIMEOUT)
         exp_res_dict = self.expected_results_dict['ibgda_write']
+        node_results = {}
         for node in out_dict.keys():
             if not re.search(r'Index\s+Size', out_dict[node], re.I):
                 fail_test(f'ERROR - dist_write did not complete properly on node {node} - results not seen')
             else:
                 meta_data, results = parse_ibgda_output(out_dict[node])
+                node_results[node] = {"metadata": meta_data, "rows": results}
                 log.info("%s", results)
                 m_key = f'''PROCS:{no_of_procs},CTAS:{ctas},THREADS:{threads},QP_COUNT:{qp_count}'''
                 if m_key in exp_res_dict.keys():
@@ -327,6 +463,15 @@ class MoriBenchmark:
                                       PROCS:{no_of_procs},CTAS:{ctas},THREADS:{threads},QP_COUNT:{qp_count} \
                                       expected = {exp_bw}, actual = {actual_bw}'
                                     )
+        return {
+            "operation": "ibgda_write",
+            "processes": no_of_procs,
+            "ctas": ctas,
+            "threads": threads,
+            "qp_count": qp_count,
+            "iterations": iters,
+            "nodes": node_results,
+        }
 
     def run_dispatch_combine(
         self,
@@ -468,7 +613,7 @@ class MoriBenchmark:
         while True:
             remaining = deadline - time.monotonic()
             poll_timeout = min(self.SETUP_TIMEOUT, max(self.IO_POLL_MIN_TIMEOUT, math.ceil(remaining)))
-            out_dict = self._exec_cmd_list(cmd_list, timeout=poll_timeout, print_console=False)
+            out_dict = self.orch.exec_cmd_list(cmd_list, timeout=poll_timeout, print_console=False)
             for host in self.host_list:
                 match = re.search(rf'{IO_EXIT_MARKER}(\d+)', out_dict.get(host) or '')
                 if match:
@@ -510,10 +655,14 @@ class MoriBenchmark:
         - Verifies bandwidth and latency against expected baselines
 
         Args:
-        op_type (str): IO operation type ('read' or 'write'), used to select
-                       expected results.
+        op_type (str): IO operation type ('read' or 'write'), passed to
+                       benchmark.py as --op-type and used to select expected results.
         enable_sess (bool): Enable MORI session mode if True.
-        buffer_size (int): Size of the IO buffer in bytes.
+        buffer_size (int): Largest message size in bytes, passed as both --buffer-size
+                           and --sweep-max-size. Under --all, benchmark.py sizes its buffer
+                           to max(--buffer-size, --sweep-max-size) and sweeps 8 B doubling
+                           up to --sweep-max-size (default 1 MiB), so --buffer-size alone
+                           never changes a result.
         transfer_batch_size (int): Number of transfers batched together.
         no_of_qp_per_transfer (int): Number of Queue Pairs per transfer.
         no_of_initiators (int): Number of initiator devices.
@@ -525,7 +674,8 @@ class MoriBenchmark:
 
         # Build command-line options for the MORI benchmark
         # These options control IO batching, buffer sizing, and device topology
-        cmd_opts = f'--enable-batch-transfer --buffer-size {buffer_size} '
+        cmd_opts = f'--op-type {op_type} --enable-batch-transfer --buffer-size {buffer_size} '
+        cmd_opts = cmd_opts + f' --sweep-max-size {buffer_size}'
         cmd_opts = cmd_opts + f' --transfer-batch-size {transfer_batch_size}'
         cmd_opts = cmd_opts + f' --num-qp-per-transfer {no_of_qp_per_transfer}'
         cmd_opts = cmd_opts + f' --num-initiator-dev {no_of_initiators}'
@@ -536,7 +686,7 @@ class MoriBenchmark:
         case_name = f'io_{op_type}_{buffer_size}_{transfer_batch_size}_{no_of_qp_per_transfer}'
         cmd_list, log_paths = self.build_io_launch_cmds(case_name, cmd_opts)
         try:
-            self._exec_cmd_list(cmd_list, timeout=self.IO_LAUNCH_TIMEOUT)
+            self.orch.exec_cmd_list(cmd_list, timeout=self.IO_LAUNCH_TIMEOUT)
             exit_codes = self.poll_io_completion(log_paths)
         finally:
             # fail_test records without raising, so a launch/poll exception already in flight stays the reported one.
@@ -573,6 +723,17 @@ class MoriBenchmark:
         # ------------------------------------------------------------------
         # act_res_dict = parse_pretty_table_to_dict( script_out )
         act_res_dict = parse_pretty_tables_multi_rank(script_out)
+        act_res_dict.update(
+            {
+                "operation": f"io_{op_type}",
+                "buffer_size": buffer_size,
+                "transfer_batch_size": transfer_batch_size,
+                "qp_count": no_of_qp_per_transfer,
+                "initiators": no_of_initiators,
+                "targets": no_of_targets,
+                "session_enabled": enable_sess,
+            }
+        )
         if op_type == "read":
             op_key = "io_read"
         elif op_type == "write":
@@ -635,3 +796,4 @@ class MoriBenchmark:
                                       expected Avg Lat {exp_avg_lat}, \
                                       buffer_size,transfer_batch_size,no_of_qp_per_transfer = \
                                       {m_key}''')
+        return act_res_dict

@@ -618,6 +618,7 @@ def parse_afmctl_show_device_json(output: str) -> Tuple[List[Dict], List[str]]:
                 "virtualization_mode": _json_first_value(
                     flattened, ("virtualization_mode", "virtualisation_mode", "virt_mode", "virtualization")
                 ),
+                "firmware_version": _json_first_value(flattened, ("firmware_version", "fw_version", "firmware")),
                 "parse_errors": errors,
             }
         )
@@ -646,6 +647,190 @@ def parse_afmctl_show_device_output(
 def parse_afmctl_show_device(output: str) -> List[Dict]:
     """Compatibility convenience wrapper around :func:`parse_afmctl_show_device_output`."""
     return parse_afmctl_show_device_output(output, allow_text_fallback=True)[0]
+
+
+_FIRMWARE_KEYS = ("firmware_version", "fw_version", "firmware")
+_BDF_KEYS = ("bdf", "device_bdf", "pci_bdf")
+
+
+def _record_own_bdf(record):
+    """Return the BDF declared directly on this dict (a ``bdf`` key), or None.
+
+    Only immediate keys are consulted, not the flattened subtree, so a nested
+    device's BDF cannot be mistaken for this record's own.
+    """
+    for key in _BDF_KEYS:
+        normalized = _normalize_bdf(record.get(key))
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def _collect_firmware_by_bdf(node, bdf_in_scope, firmware_by_bdf):
+    """Walk ``node`` tracking the BDF in scope, binding firmware within its boundary.
+
+    A dict that declares its own ``bdf`` key, or a value reached through a BDF-keyed
+    envelope key, opens a new device boundary; firmware scalars are bound to whichever
+    BDF is in scope where they appear. Descending into another device switches scope,
+    so one device's firmware is never associated with a sibling that omits its own.
+    """
+    if isinstance(node, Mapping):
+        scope = _record_own_bdf(node) or bdf_in_scope
+        if scope is not None:
+            firmware_by_bdf.setdefault(scope, None)
+            for key in _FIRMWARE_KEYS:
+                value = node.get(key)
+                if value not in (None, "") and firmware_by_bdf.get(scope) in (None, ""):
+                    firmware_by_bdf[scope] = value
+        for key, child in node.items():
+            keyed_bdf = _normalize_bdf(key)
+            if keyed_bdf is not None:
+                firmware_by_bdf.setdefault(keyed_bdf, None)
+                _collect_firmware_by_bdf(child, keyed_bdf, firmware_by_bdf)
+            else:
+                _collect_firmware_by_bdf(child, scope, firmware_by_bdf)
+    elif isinstance(node, list):
+        for child in node:
+            _collect_firmware_by_bdf(child, bdf_in_scope, firmware_by_bdf)
+
+
+def parse_afmctl_firmware_by_bdf(output: str) -> Tuple[Dict[str, Optional[str]], List[str]]:
+    """Map every reported AFM device BDF to its firmware version (or ``None``).
+
+    Unlike :func:`parse_afmctl_show_device_json`, which filters to records carrying an
+    accelerator/vPOD descriptor (the shape ibperf's vPOD discovery needs), this counts
+    *every* BDF the tool reports so a firmware check can flag a device that reports no
+    version. Firmware is bound within each device's own boundary, so a device that
+    omits its version maps to ``None`` even when a sibling carries one. Returns
+    ``(firmware_by_bdf, errors)``.
+    """
+    raw = (output or "").strip()
+    if not raw:
+        return {}, ["Empty afmctl show device output"]
+    try:
+        document = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return {}, [f"Invalid afmctl show device JSON: {exc.msg}"]
+
+    firmware_by_bdf: Dict[str, Optional[str]] = {}
+    _collect_firmware_by_bdf(document, None, firmware_by_bdf)
+    if not firmware_by_bdf:
+        return {}, ["afmctl show device JSON contained no device BDFs"]
+    return firmware_by_bdf, []
+
+
+# A denial is identified only from a line that is unambiguously sudo's own, so a
+# benign ``sudo:`` warning (for example ``sudo: unable to resolve host``) or afmctl's
+# own error text that happens to contain one of these words is not mistaken for an
+# authorization failure. Two line-anchored forms, matched under ``LC_ALL=C`` so sudo's
+# own diagnostics are English:
+#   - a ``sudo:`` program line that also states an authorization reason, and
+#   - a sudoers policy refusal, which sudo prints without the ``sudo:`` prefix.
+# afmctl's errors carry neither, so a tool failure passes through unchanged.
+_SUDO_PREFIX_AUTH_PATTERNS = (
+    "a password is required",
+    "a terminal is required",
+    "no askpass program specified",
+    "you must have a tty",
+)
+_SUDOERS_POLICY_PATTERNS = (
+    "is not allowed to execute",
+    "is not allowed to run sudo",
+    "is not in the sudoers file",
+)
+
+
+def _sudo_denial_grep():
+    """A ``grep -Eq`` test that is true only for sudo's own authorization refusal.
+
+    Authorization phrases are anchored to a ``^sudo:`` line; sudoers policy refusals
+    (printed without the prefix) are matched as whole lines. Line anchoring is what
+    keeps a bare ``sudo:`` warning or afmctl error text from reading as a denial.
+    """
+    prefix_alt = "|".join(re.escape(p) for p in _SUDO_PREFIX_AUTH_PATTERNS)
+    policy_alt = "|".join(re.escape(p) for p in _SUDOERS_POLICY_PATTERNS)
+    pattern = f"^sudo:.*({prefix_alt})|({policy_alt})"
+    return f"printf '%s' \"$_cvs_out\" | grep -Eq {shlex.quote(pattern)}"
+
+
+def _afmctl_read(sudo_target, arguments, denied_marker):
+    """Build the ``LC_ALL=C sudo -n <target> <arguments>`` read, flagging an auth denial.
+
+    ``LC_ALL=C`` pins sudo's own diagnostics to English. When ``denied_marker`` is set,
+    the real read runs inside a failure check: a failure whose stderr is a sudo
+    authorization refusal (see :func:`_sudo_denial_grep`) prints
+    ``<denied_marker> <stderr>``; any other nonzero exit (afmctl itself failing while
+    sudo succeeded) passes its diagnostic through unchanged, so a tool error is not
+    misreported as a sudo-configuration problem. Checking the real read also means a
+    user with NOPASSWD for afmctl but not for an unrelated command is not misreported.
+    """
+    read = f"LC_ALL=C sudo -n {sudo_target} {arguments}"
+    if denied_marker is None:
+        return read
+    marker = shlex.quote(denied_marker)
+    return (
+        f"if ! _cvs_out=$({read} 2>&1); then "
+        f"if {_sudo_denial_grep()}; then printf '%s %s\\n' {marker} \"$_cvs_out\"; "
+        "else printf '%s\\n' \"$_cvs_out\"; fi; "
+        "else printf '%s\\n' \"$_cvs_out\"; fi"
+    )
+
+
+def build_afmctl_command(
+    arguments,
+    afmctl_path="afmctl",
+    *,
+    fallbacks=(),
+    denied_marker=None,
+    missing_marker=None,
+):
+    """Build a privileged ``afmctl`` shell command that survives sudo's secure_path.
+
+    ``sudo -n`` runs with its own ``secure_path``, so a relative ``afmctl`` on the
+    SSH user's PATH but outside ``secure_path`` must be resolved to an absolute path
+    before sudo sees it. ``command -v`` (which prints the resolved location, not the
+    tool's output) is tried first; when it misses, each path in ``fallbacks`` is
+    probed with ``-x``. Every interpolated value is ``shlex.quote``-d.
+
+    Markers:
+      - ``denied_marker``: the actual ``sudo -n afmctl`` read is checked, and a refused
+        read prints ``<denied_marker> <stderr>`` so a denial is recorded from the real
+        invocation (not a ``sudo -n true`` surrogate that misreports NOPASSWD scopes).
+      - ``missing_marker``: printed when the binary cannot be resolved. When ``None``
+        the command instead prints a human message to stderr and exits 127 (the
+        legacy ibperf missing-binary contract, a distinct eval signal).
+
+    ``arguments`` is the already-safe afmctl sub-command string (for example
+    ``show device --json``). Output is wrapped in ``{ ...; } 2>&1`` so stderr from a
+    failed probe is captured alongside stdout.
+    """
+    afmctl_path = str(afmctl_path or "afmctl")
+    executable = shlex.quote(afmctl_path)
+
+    if afmctl_path.startswith("/"):
+        command = _afmctl_read(executable, arguments, denied_marker)
+        return f"{{ {command}; }} 2>&1"
+
+    if missing_marker is not None:
+        unresolved = f"printf '%s\\n' {shlex.quote(missing_marker)}; exit 0"
+    else:
+        unresolved = "printf '%s\\n' 'Resolved afmctl path is not absolute' >&2; exit 127"
+
+    resolve = f'_cvs_afmctl="$(command -v {executable} 2>/dev/null)"; '
+    if fallbacks:
+        probes = " ".join(shlex.quote(path) for path in fallbacks)
+        resolve += (
+            f'[ -n "$_cvs_afmctl" ] || for _cvs_c in {probes}; do '
+            '[ -x "$_cvs_c" ] && { _cvs_afmctl="$_cvs_c"; break; }; done; '
+        )
+    elif missing_marker is None:
+        # Preserve the legacy ibperf form: command -v failure exits 127 directly.
+        missing = shlex.quote(f"Unable to find {afmctl_path} in PATH")
+        resolve = f'_cvs_afmctl="$(command -v {executable})" || {{ printf \'%s\\n\' {missing} >&2; exit 127; }}; '
+
+    resolved_read = _afmctl_read('"$_cvs_afmctl"', arguments, denied_marker)
+    command = f'{resolve}case "$_cvs_afmctl" in /*) ;; *) {unresolved} ;; esac; {resolved_read}'
+    return f"{{ {command}; }} 2>&1"
 
 
 class AfmctlPortParser:

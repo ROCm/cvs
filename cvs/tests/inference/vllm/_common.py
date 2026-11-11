@@ -8,7 +8,8 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.inference.utils.vllm_config_loader import load_variant
+from cvs.lib.conf_lib.loader import load_config
+from cvs.lib.conf_lib.schemas.vllm import VariantConfig
 from cvs.lib.inference.utils.vllm_metrics import (
     METRIC_REGISTRY,
     VLLM_RESULTS_COLUMNS,
@@ -42,7 +43,7 @@ def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file:
         return
-    variant = load_variant(config_file, {})
+    variant = load_config(VariantConfig, config_file, {}).config
     runs = variant.resolved_runs()
     ids = [run.cell.key for run in runs]
     if "accuracy_task" in metafunc.fixturenames:
@@ -193,13 +194,12 @@ def _record_junit_metrics(node, actuals_by_host):
     node.user_properties = properties
 
 
-def openai_compatible_smoke(orch, variant_config, hf_token, vllm_targets, lifecycle, request):
+def openai_compatible_smoke(orch, variant_config, vllm_targets, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     job = VllmJob(
         orch=orch,
         variant=variant_config,
-        hf_token=hf_token,
         isl=_SMOKE_ISL,
         osl=_SMOKE_OSL,
         concurrency=1,
@@ -224,7 +224,7 @@ def openai_compatible_smoke(orch, variant_config, hf_token, vllm_targets, lifecy
     log.info("OpenAI-compatible smoke results:\n%s", "\n".join(summary))
 
 
-def vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_res_dict, lifecycle, request, subtests):
+def vllm_inference(orch, variant_config, vllm_targets, run, inf_res_dict, lifecycle, request, subtests):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     isl = run.cell.isl
@@ -237,7 +237,6 @@ def vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_res_di
         job = VllmJob(
             orch=orch,
             variant=variant_config,
-            hf_token=hf_token,
             isl=isl,
             osl=osl,
             concurrency=run.cell.concurrency,

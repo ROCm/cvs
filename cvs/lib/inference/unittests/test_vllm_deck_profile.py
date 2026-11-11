@@ -3,11 +3,13 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 '''
 
+import tempfile
 import unittest
 from pathlib import Path
 
 from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
-from cvs.lib.inference.utils.vllm_config_loader import load_variant
+from cvs.lib.conf_lib.loader import load_config
+from cvs.lib.conf_lib.schemas.vllm import VariantConfig
 from cvs.lib.inference.utils.vllm_metrics import (
     CLIENT_METRICS,
     METRIC_CATEGORIES,
@@ -20,6 +22,7 @@ from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.registry import get_resolved_profile, resolve_suite_report_config
 from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
 from cvs.lib.report.inference import build_inference_report_payload
+from cvs.unittests.support import write_filled_config
 
 
 class TestVllmDeckProfile(unittest.TestCase):
@@ -121,10 +124,11 @@ class TestVllmDeckProfile(unittest.TestCase):
 
     def test_distributed_cell_uses_bound_threshold_key(self):
         root = Path(__file__).resolve().parents[3]
-        variant = load_variant(
-            root / "input/config_file/inference/vllm/mi3xx_vllm_llama33-70b_fp8_distributed.json",
-            {"username": "test"},
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            config = write_filled_config(
+                root / "input/config_file/inference/vllm/mi3xx_vllm_llama33-70b_fp8_distributed.json", tmp
+            )
+            variant = load_config(VariantConfig, config, {"username": "test"}).config
         variant.bind_effective_topology(EffectiveVllmTopology("distributed", ("node0", "node1"), 2))
         cell_id = variant.expected_cells()[0]
         variant.enforce_thresholds = True

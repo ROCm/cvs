@@ -15,7 +15,7 @@ log = logging.getLogger()
 # NullHandler unless enable_host_logger() is called -- which CVS never does --
 # but `log` above is the ROOT logger, so propagation delivers those lines to
 # CVS's handlers anyway. The result is that every line is logged twice: once by
-# pssh, once by Pssh._process_output (cvs/lib/parallel/pssh.py). Dropping the
+# pssh, once by ParallelHandle._process_output (cvs/lib/parallel/phandle.py). Dropping the
 # pssh copy keeps the _process_output one, which is the one that honors
 # print_console and can therefore be suppressed for bulk-data commands.
 #

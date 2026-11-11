@@ -201,6 +201,16 @@ tr.changed td { background: rgba(255,107,53,0.1); }
 .matrix-fail { background: rgba(255,92,106,0.15); color: var(--fail); }
 .matrix-record { background: rgba(107,159,255,0.1); color: var(--record); }
 .matrix-na { color: var(--muted); }
+.rd-pager { display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem;
+  margin-top: 0.75rem; font-size: 0.8rem; color: var(--muted); }
+.rd-pager button { background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer; }
+.rd-pager button:hover { border-color: var(--accent); }
+footer.page-foot { text-align: center; margin-top: 2rem; }
+.to-top { display: block; width: max-content; margin: 0.85rem auto 0; padding: 0.3rem 0.75rem;
+  border: 1px solid var(--border); border-radius: 6px; background: #12151f; color: var(--accent2);
+  text-decoration: none; font-size: 0.8rem; }
+.to-top:hover { border-color: var(--accent); }
 @media (max-width: 640px) {
   body { padding: 0.75rem; }
   .chart-grid { grid-template-columns: 1fr; }
@@ -208,7 +218,7 @@ tr.changed td { background: rgba(255,107,53,0.1); }
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="wrap" id="top">
 <header class="hero">
   <div>
     <h1>__TITLE__</h1>
@@ -391,6 +401,7 @@ tr.changed td { background: rgba(255,107,53,0.1); }
     <table class="data"><thead><tr id="cells-header"></tr></thead><tbody id="rows"></tbody></table>
   </div>
 </section>
+<footer class="page-foot"><a class="to-top" href="#top">Go to top</a></footer>
 </div>
 
 __EMBEDDED_JSON__
@@ -424,8 +435,28 @@ const STEP_CHARTS = [
 
 function stepSpecId(spec) { return spec.id || spec.field; }
 function stepSpecLabel(spec) { return spec.yTitle || stepSpecId(spec); }
+function extraCurveRaw(cell, tag) {
+  return (cell.extra_curves || {})[tag];
+}
+function extraCurvePoints(raw) {
+  if (raw && !Array.isArray(raw) && Array.isArray(raw.points)) return raw.points;
+  return raw;
+}
+function extraCurveOption(tag, field) {
+  let value = null;
+  allCells.some(cell => {
+    const raw = extraCurveRaw(cell, tag);
+    if (raw && !Array.isArray(raw) && raw[field] != null && raw[field] !== '') {
+      value = raw[field];
+      return true;
+    }
+    return false;
+  });
+  return value;
+}
 function stepSpecCurve(cell, spec) {
-  return spec.extraTag ? (cell.extra_curves || {})[spec.extraTag] : cell[spec.field];
+  if (!spec.extraTag) return cell[spec.field];
+  return extraCurvePoints(extraCurveRaw(cell, spec.extraTag));
 }
 
 function stepChartTheme() {
@@ -458,6 +489,8 @@ function extraStepSpecs() {
   [...tags].sort().forEach(tag => {
     const slug = 'extra-' + tag.replace(/[^A-Za-z0-9_-]/g, '_');
     const panelId = slug + '-panel';
+    const markedTitle = extraCurveOption(tag, 'x_title');
+    const xTitle = markedTitle ? String(markedTitle) : 'Step';
     if (!document.getElementById(panelId)) {
       const panel = document.createElement('section');
       panel.className = 'panel';
@@ -465,12 +498,21 @@ function extraStepSpecs() {
       panel.style.display = 'none';
       panel.innerHTML = '<h2>' + escapeHtmlText(tag) + '</h2>'
         + '<p class="subsection-hint">' + escapeHtmlText(tag)
-        + ' vs step · one series per filtered combo · scroll to zoom · shift+drag to pan</p>'
+        + ' vs ' + escapeHtmlText(xTitle) + ' · one series per filtered combo · scroll to zoom · shift+drag to pan</p>'
         + '<article class="chart-card chart-card-wide"><div class="chart-wrap chart-wrap-loss" id="'
         + slug + '-wrap"></div></article>';
       host.appendChild(panel);
     }
-    specs.push({ panel: panelId, wrap: slug + '-wrap', nav: null, extraTag: tag, yTitle: tag, id: 'extra:' + tag });
+    specs.push({
+      panel: panelId,
+      wrap: slug + '-wrap',
+      nav: null,
+      extraTag: tag,
+      yTitle: tag,
+      xTitle: xTitle,
+      id: 'extra:' + tag,
+      defaultOn: !!extraCurveOption(tag, 'default_on'),
+    });
   });
   extraStepSpecsCache = specs;
   return specs;
@@ -497,7 +539,12 @@ function initStepChartControls() {
   });
   const specs = allStepSpecs();
   const defaults = STEP_CHARTS.map(s => s.field);
-  if (selectedStepMetrics === null) selectedStepMetrics = new Set(defaults);
+  if (selectedStepMetrics === null) {
+    selectedStepMetrics = new Set(defaults);
+    specs.forEach(spec => {
+      if (spec.defaultOn) selectedStepMetrics.add(stepSpecId(spec));
+    });
+  }
 
   const list = $('metric-pick-list');
   if (list) {
@@ -523,7 +570,7 @@ function initStepChartControls() {
     selectedStepMetrics = new Set();
     specs.forEach(spec => {
       const id = stepSpecId(spec);
-      const pick = mode === 'all' ? true : (mode === 'defaults' ? defaults.includes(id) : false);
+      const pick = mode === 'all' ? true : (mode === 'defaults' ? (defaults.includes(id) || spec.defaultOn) : false);
       if (pick) selectedStepMetrics.add(id);
     });
     if (list) {
@@ -858,7 +905,10 @@ function cellColumnHtml(c, col) {
 
 function cellColumnCsv(c, col) {
   if (col.computed === 'status') return cellStatus(c);
-  if (col.metric) return metricNum(c, col.metric) ?? '';
+  if (col.metric) {
+    const raw = (c.actuals || {})[col.metric];
+    return typeof raw === 'string' ? raw : (metricNum(c, col.metric) ?? '');
+  }
   return c[col.field] ?? '';
 }
 
@@ -877,6 +927,7 @@ function cellStatus(cell) {
 function metricVal(cell, key) {
   const v = (cell.actuals || {})[key];
   if (v == null) return '—';
+  if (typeof v === 'string') return escapeHtmlText(v);
   return Math.abs(v) >= 1000
     ? Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 })
     : Number(v).toFixed(1);
@@ -1072,34 +1123,57 @@ function buildOverview() {
   badge.className = 'status-badge status-' + status;
 }
 
-const LINE_DASHES = [[], [7, 4], [3, 3], [10, 4, 2, 4]];
+const LINE_DASHES = [[], [8, 4], [2, 3], [12, 4, 3, 4]];
 const LINE_POINT_STYLES = ['circle', 'rect', 'triangle', 'rectRot'];
-const CHART_COLORS = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#f0c040', '#ff5c6a'];
+const CHART_COLORS = [
+  '#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#f0c040', '#ff5c6a',
+  '#2ec4b6', '#e879f9', '#a3e635', '#818cf8', '#22d3ee', '#f472b6',
+];
 
 function shapeLabel(isl, osl) {
   return shapeLabelFromParts([isl, osl]);
 }
 
-function buildLineDataset(series, index, color) {
-  const dashed = LINE_DASHES[index % LINE_DASHES.length];
+function lineStyle(index) {
+  return {
+    color: CHART_COLORS[index % CHART_COLORS.length],
+    // A repeated color gets the next dash, so line 13 is not the same mark as line 1.
+    dash: LINE_DASHES[Math.floor(index / CHART_COLORS.length) % LINE_DASHES.length],
+    point: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
+  };
+}
+
+function lineLegendLabels(textColor) {
+  return {
+    color: textColor || '#e8eaef',
+    usePointStyle: true,
+    pointStyle: 'line',
+    boxWidth: 28,
+    boxHeight: 6,
+    font: { size: 11 },
+  };
+}
+
+function buildLineDataset(series, index) {
+  const style = lineStyle(index);
   return {
     label: series.label,
     data: series.values != null ? series.values : series.data,
-    borderColor: color,
-    backgroundColor: color,
+    borderColor: style.color,
+    backgroundColor: style.color,
     borderWidth: 2.5,
-    borderDash: dashed,
+    borderDash: style.dash,
     tension: 0.2,
     fill: false,
     pointRadius: 5,
     pointHoverRadius: 7,
-    pointStyle: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
-    pointBackgroundColor: color,
+    pointStyle: style.point,
+    pointBackgroundColor: style.color,
     pointBorderColor: '#1a1d27',
     pointBorderWidth: 2,
     spanGaps: true,
     // Dashed / alternate styles draw on top so overlapping trends stay visible.
-    order: dashed.length ? index : index + 10,
+    order: style.dash.length ? index : index + 10,
   };
 }
 
@@ -1155,7 +1229,11 @@ function makeChart(canvas, type, labels, datasets, unit, title) {
         intersect: false,
       },
       plugins: {
-        legend: { labels: { color: '#e8eaef', boxWidth: 12, font: { size: 11 } } },
+        legend: {
+          labels: type === 'line'
+            ? lineLegendLabels()
+            : { color: '#e8eaef', boxWidth: 12, font: { size: 11 } },
+        },
         title: title ? { display: true, text: title, color: '#9aa3b5', font: { size: 11, weight: '600' }, padding: { bottom: 8 } } : undefined,
         tooltip: {
           backgroundColor: '#2a3142',
@@ -1535,7 +1613,7 @@ function makeInteractivityChart(canvas, datasets, logY, showLabels) {
       interaction: { mode: 'nearest', intersect: true },
       onClick: onInteractivityChartClick,
       plugins: {
-        legend: { labels: { color: '#e8eaef', boxWidth: 12, font: { size: 11 } } },
+        legend: { labels: lineLegendLabels() },
         tooltip: {
           enabled: false,
           external: interactivityExternalTooltip,
@@ -1629,24 +1707,23 @@ function buildInteractivityChart(rows) {
       .sort((a, b) => a.conc - b.conc);
     if (!points.length) return;
 
-    const color = CHART_COLORS[index % CHART_COLORS.length];
-    const dashed = LINE_DASHES[index % LINE_DASHES.length];
+    const style = lineStyle(index);
     datasets.push({
       label: label,
       data: points,
       showLine: points.length > 1,
       tension: 0.15,
-      borderColor: color,
-      backgroundColor: color,
+      borderColor: style.color,
+      backgroundColor: style.color,
       borderWidth: 2.5,
-      borderDash: dashed,
+      borderDash: style.dash,
       pointRadius: 5,
       pointHoverRadius: 7,
-      pointStyle: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
-      pointBackgroundColor: points.map(p => (p.status === 'fail' ? '#ff5c6a' : color)),
+      pointStyle: style.point,
+      pointBackgroundColor: points.map(p => (p.status === 'fail' ? '#ff5c6a' : style.color)),
       pointBorderColor: '#1a1d27',
       pointBorderWidth: 2,
-      order: dashed.length ? index : index + 10,
+      order: style.dash.length ? index : index + 10,
     });
   });
 
@@ -1735,8 +1812,9 @@ function parseLossPoints(curve) {
   return parseCurvePoints(curve);
 }
 
-function makeStepChart(canvas, datasets, yTitle) {
+function makeStepChart(canvas, datasets, yTitle, xTitle) {
   const t = stepChartTheme();
+  const xLabel = xTitle || 'Step';
   const ch = new Chart(canvas, {
     type: 'line',
     data: { datasets },
@@ -1751,7 +1829,7 @@ function makeStepChart(canvas, datasets, yTitle) {
         tooltip: { callbacks: { label: ctx => {
           const y = ctx.parsed && ctx.parsed.y;
           const x = ctx.parsed && ctx.parsed.x;
-          return (ctx.dataset.label || '') + ': step ' + x + '  ' + yTitle + ' ' + y;
+          return (ctx.dataset.label || '') + ': ' + xLabel + ' ' + x + '  ' + yTitle + ' ' + y;
         } } },
         zoom: {
           limits: {
@@ -1781,7 +1859,7 @@ function makeStepChart(canvas, datasets, yTitle) {
       scales: {
         x: {
           type: 'linear',
-          title: { display: true, text: 'Step', color: t.title, font: { size: 11 } },
+          title: { display: true, text: xLabel, color: t.title, font: { size: 11 } },
           ticks: { color: t.tick },
           grid: { color: t.grid },
         },
@@ -1820,24 +1898,20 @@ function buildStepChart(rows, spec) {
     const pts = parseCurvePoints(stepSpecCurve(c, spec), warmupStepFor(plannedStepsFor(c), warmupPercent()));
     if (!pts.length) return;
     const color = CHART_COLORS[index % CHART_COLORS.length];
-    const dashed = LINE_DASHES[index % LINE_DASHES.length];
     datasets.push({
-      label: c.subtitle || c.cell_id || ('combo ' + index),
+      label: (c.show_host_in_label && c.host ? c.host + ' · ' : '') + (c.subtitle || c.model || c.cell_id || ('combo ' + index)),
       data: pts,
       borderColor: color,
       backgroundColor: color,
       borderWidth: 2,
-      borderDash: dashed,
       tension: 0.15,
       fill: false,
       pointRadius: pts.length > 40 ? 0 : 3,
       pointHoverRadius: 5,
-      pointStyle: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
       pointBackgroundColor: color,
       pointBorderColor: '#1a1d27',
       pointBorderWidth: 1,
       spanGaps: true,
-      order: dashed.length ? index : index + 10,
     });
   });
 
@@ -1845,7 +1919,7 @@ function buildStepChart(rows, spec) {
 
   const canvas = document.createElement('canvas');
   wrap.appendChild(canvas);
-  const ch = makeStepChart(canvas, datasets, spec.yTitle);
+  const ch = makeStepChart(canvas, datasets, spec.yTitle, spec.xTitle);
   if (spec.field === 'loss_curve') lossChart = ch;
   panel.style.display = 'block';
   if (nav) nav.style.display = '';
@@ -1894,7 +1968,7 @@ function buildMarginCharts(rows) {
       const hit = s.points.find(p => String(p[0]) === String(c));
       return hit ? hit[1] : null;
     }),
-  }, i, CHART_COLORS[i % CHART_COLORS.length]));
+  }, i));
   datasets.push(gateReferenceDataset(labels));
 
   const metricLabel = metricMeta(marginMetricKey).label || 'Gate margin';
@@ -1940,7 +2014,7 @@ function buildComparisonCharts(rows) {
           borderWidth: 1,
         };
       }
-      return buildLineDataset(s, i, color);
+      return buildLineDataset(s, i);
     });
 
     const card = document.createElement('article');
@@ -2132,12 +2206,15 @@ function renderTable(rows) {
   }).join('');
 }
 
+__PAGE_TABLES_JS__
+
 function render() {
   const rows = filteredCells();
   renderTable(rows);
   buildCharts(rows);
   buildHeatmap(rows);
   buildGateMatrix(rows);
+  pageLongTables(document);
 }
 
 function exportCsv() {

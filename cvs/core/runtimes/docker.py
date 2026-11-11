@@ -7,6 +7,8 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import shlex
 
+from cvs.lib.env_lib import redact_secrets
+
 
 class DockerRuntime:
     """Docker container runtime implementation."""
@@ -74,9 +76,8 @@ class DockerRuntime:
         """Set up long-running Docker containers on all nodes.
 
         AMD GPU passthrough is provided by the device flags auto-injected from
-        ``DEFAULT_CONTAINER_ARGS`` (``/dev/kfd``, ``/dev/dri``,
-        ``/dev/infiniband``). CVS is AMD-only, so no NVIDIA-style ``--gpus all``
-        flag is emitted.
+        ``DEFAULT_CONTAINER_ARGS`` (``/dev/kfd``, ``/dev/dri``). CVS is
+        AMD-only, so no NVIDIA-style ``--gpus all`` flag is emitted.
 
         Args:
             container_config: Container configuration dictionary. Recognized
@@ -151,9 +152,13 @@ class DockerRuntime:
             all_args.append(device_expansion)
         all_args_str = ' '.join(arg for arg in all_args if arg)
 
+        # Resolve the image once; skip registry login and pull when it is already local
+        # (air-gapped / docker load / pre-pulled benchmark images — AIMVT-443).
+        image_on_all_hosts = self.check_image_exists(image)
+
         # Load image from tar if specified
         if 'image_tar' in container_config:
-            if not self.check_image_exists(container_config['image']):
+            if not image_on_all_hosts:
                 self.log.info(f"Loading image from tar: {container_config['image_tar']}")
                 load_result = self.load_image(container_config['image_tar'], timeout=300)
                 failed_load = [host for host, res in load_result.items() if res.get('exit_code') != 0]
@@ -166,9 +171,10 @@ class DockerRuntime:
                         'reason': 'image tar load failed',
                     }
                     return False
+                image_on_all_hosts = self.check_image_exists(image)
             else:
                 self.log.info(f"Image {container_config['image']} already exists, skipping tar load")
-        elif runtime_args_config.get('registry'):
+        elif runtime_args_config.get('registry') and not image_on_all_hosts:
             # No local tar to load: this run needs a registry pull, so log in
             # first for private images (e.g. rocm/ufb-private).
             self.log.info("Logging in to Docker registry before pulling image")
@@ -176,7 +182,7 @@ class DockerRuntime:
                 self.last_setup_error = {'image': image, 'failed_hosts': [], 'reason': 'registry login failed'}
                 return False
 
-        if not self.check_image_exists(image):
+        if not image_on_all_hosts:
             self.log.info(f"Image {image} not present on all hosts; pulling before start")
             pull_result = self.pull_image(image, timeout=600)
             failed_pull = [host for host, res in pull_result.items() if res.get('exit_code') != 0]
@@ -192,7 +198,7 @@ class DockerRuntime:
         )
 
         self.log.info(f"Starting long-running containers on {len(self.orchestrator.hosts)} nodes: {container_name}")
-        self.log.debug(f"Container start command: {cmd}")
+        self.log.debug(f"Container start command: {redact_secrets(cmd)}")
 
         # Remove any existing container with the same name
         remove_cmd = f"{self.orchestrator.sudo_prefix()}docker rm -f {container_name} || true"

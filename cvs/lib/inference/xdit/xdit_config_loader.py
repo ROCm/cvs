@@ -1,8 +1,6 @@
 """
 xDiT configuration loader for unified and legacy inference configurations.
 
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
 """
 
 import json

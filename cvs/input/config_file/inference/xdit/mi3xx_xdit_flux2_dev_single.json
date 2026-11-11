@@ -5,14 +5,14 @@
   "threshold_json": "xdit_flux2_dev_single_threshold.json",
   "paths": {
     "shared_fs": "{home}",
-    "models_dir": "{home}/.cache/huggingface",
+    "models_dir": "<changeme> /data/models",
     "log_dir": "{home}/cvs_flux2_output",
     "hf_token_file": "{home}/.hf_token"
   },
   "container": {
     "lifetime": "per_run",
     "name": "flux2-benchmark_single",
-    "_image_example": "rocm/ufb-private:xdit-gfx942-py3.12-prereleases-rocm10.0.0rc3-2805c93",
+    "_image_example": "rocm/pytorch-xdit:v26.9",
     "_image_comment": "The image needs to support the FLUX.2-dev model.",
     "image": "<changeme>",
     "runtime": {
@@ -25,7 +25,8 @@
         "volumes": [
           "{paths.models_dir}:/hf_home",
           "{paths.log_dir}:/outputs",
-          "{home}/cvs/cvs/lib/inference/xdit/scripts/flux2_example.py:/benchmark/flux2_example.py"
+          "{home}/cvs/cvs/lib/inference/xdit/scripts/flux2_example.py:/benchmark/flux2_example.py",
+          "{home}/cvs/cvs/lib/inference/xdit/scripts/fid_sweep.py:/benchmark/fid_sweep.py"
         ],
         "devices": ["/dev/dri", "/dev/kfd"],
         "env": {
@@ -42,10 +43,13 @@
   },
   "benchmark_params": {
     "model_type": "flux2",
+    "clip_model": "/hf_home/clip-vit-base-patch32",
     "guidance_scale": 4.0,
     "prompt": "A small cat",
     "seed": 42,
     "num_inference_steps": 50,
+    "fid_nfe_steps": [10, 50],
+    "fid_inception_path": "/hf_home/inception_v3.pth",
     "max_sequence_length": 512,
     "no_use_resolution_binning": true,
     "warmup_steps": 1,

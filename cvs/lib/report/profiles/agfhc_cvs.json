@@ -28,8 +28,10 @@
   },
   "cards": [
     {
+      "type": "table",
       "id": "results",
-      "hint": "Columns are executed AGFHC recipes. Open a cell for the return code. Individual tests are listed only when the output includes them."
+      "bind": "datasets.status_matrix.results_table",
+      "columns": ["Node", "Check", "Result", "Status", "Message"]
     }
   ]
 }

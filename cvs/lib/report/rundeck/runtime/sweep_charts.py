@@ -12,6 +12,8 @@ class SweepChartRenderer:
     """Render static concurrency bar charts and series charts for Run Deck."""
 
     _ACCENTS = ("accent", "accent2", "accent3")
+    # Past this, a tick under every bar collapses into a column of broken letters.
+    _MAX_LABELED_BARS = 8
 
     @staticmethod
     def _group_keys(chart_cfg: list, chart_series: dict) -> List[Tuple[str, str, str]]:
@@ -84,6 +86,7 @@ class SweepChartRenderer:
             f"<span class='chart-hline' style='bottom:{self._value_pct(t, domain_min, domain_max):.2f}%'></span>"
             for t in ticks
         )
+        labeled = len(points) <= self._MAX_LABELED_BARS
         bars = []
         x_ticks = []
         for i, (conc, val) in enumerate(points):
@@ -102,16 +105,22 @@ class SweepChartRenderer:
                 f"<div class='chart-bar chart-bar-{accent} chart-has-tip' style='height:{h:.1f}%' "
                 f"data-tip='{tip}' tabindex='0' role='img' aria-label='{tip}'></div></div>"
             )
-            lines = "".join(f"<span class='chart-xlbl-line'>{html.escape(part)}</span>" for part in str(tick).split())
-            x_ticks.append(f"<span class='chart-xlbl'>{lines}</span>")
+            if labeled:
+                lines = "".join(
+                    f"<span class='chart-xlbl-line'>{html.escape(part)}</span>" for part in str(tick).split()
+                )
+                x_ticks.append(f"<span class='chart-xlbl'>{lines}</span>")
+        bars_class = "chart-bars chart-bars-dense" if not labeled else "chart-bars"
+        viz_class = "chart-viz chart-viz-dense" if not labeled else "chart-viz"
+        xrow = f"<div class='chart-xrow'>{''.join(x_ticks)}</div>" if labeled else ""
         return (
             f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
-            f"<div class='chart-viz'>"
+            f"<div class='{viz_class}'>"
             f"<div class='chart-ywrap'><div class='chart-ylabels'>{y_labels}</div></div>"
             f"<div class='chart-main'>"
             f"<div class='chart-plotbox'><div class='chart-hgrid' aria-hidden='true'>{grid}</div>"
-            f"<div class='chart-bars'>{''.join(bars)}</div></div>"
-            f"<div class='chart-xrow'>{''.join(x_ticks)}</div></div></div>"
+            f"<div class='{bars_class}'>{''.join(bars)}</div></div>"
+            f"{xrow}</div></div>"
             f"<div class='chart-unit'>{html.escape(unit)}</div></div>"
         )
 

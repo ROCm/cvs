@@ -8,8 +8,6 @@ controller parses; ``clipscore.json`` is the copy left next to the media.
 WAN output is an MP4, so the video path samples frames and reports
 ``mean_frame_clip_score`` instead of an image ``clip_score``.
 
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
 """
 
 import argparse

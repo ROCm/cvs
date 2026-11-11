@@ -18,10 +18,22 @@ from unittest.mock import MagicMock, patch
 
 from cvs.lib import globals
 from cvs.lib.mori_lib import (
+    CHECK_DONE,
     IO_EXIT_MARKER,
+    MORI_IN_DIR,
     REMOTE_TIMEOUT_MARKER,
     MoriBenchmark,
+    apt_packages,
+    build_cmd,
+    built_commit,
+    checkout_cmd,
+    deps_check_cmd,
+    env_mori_check_cmd,
+    io_initiator,
+    parse_missing,
     parse_pretty_tables_multi_rank,
+    storage_layout,
+    verify_build_cmd,
 )
 from cvs.unittests.support import run_trusted
 
@@ -75,7 +87,7 @@ def _default_responder(cmd, host):
 
 
 class _BaremetalFakeOrch:
-    """Records commands. Like BaremetalOrchestrator it has no ``exec_cmd_list``."""
+    """Records commands. Like BaremetalOrchestrator, ``exec_cmd_list`` goes through the ``all`` host handle."""
 
     orchestrator_type = 'baremetal'
 
@@ -96,6 +108,9 @@ class _BaremetalFakeOrch:
             text = self.responder(cmd, host)
             out[host] = {'output': text, 'exit_code': self.exit_code} if detailed else text
         return out
+
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+        return self.all.exec_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
 
     def _run_cmd_list(self, cmd_list, timeout=None, print_console=True):
         self.cmd_list_calls.append({'cmds': list(cmd_list), 'timeout': timeout})
@@ -141,6 +156,21 @@ class _MoriBenchCase(unittest.TestCase):
         self.assertEqual(globals.error_list, [])
 
 
+class TestIoInitiator(unittest.TestCase):
+    def test_master_addr_wins_and_empty_falls_back_to_head_node(self):
+        orch = _BaremetalFakeOrch(hosts=('n0', 'n1'))
+        for value, expected in (('n1', 'n1'), ('', 'n0'), (None, 'n0')):
+            with self.subTest(master_addr=value):
+                self.assertEqual(io_initiator({'master_addr': value}, orch), expected)
+        self.assertEqual(io_initiator({}, orch), 'n0')
+
+    def test_benchmark_launches_rank_zero_on_the_initiator(self):
+        orch = _BaremetalFakeOrch(hosts=('n0', 'n1'))
+        bench = MoriBenchmark(orch, _mori_dict(master_addr='n1'))
+        self.assertEqual(bench.master_addr, 'n1')
+        self.assertEqual(bench.io_rank_hosts(), ['n1', 'n0'])
+
+
 class TestEnvPrefix(unittest.TestCase):
     def _run(self, prefix):
         env = {'PATH': '/usr/bin:/bin', 'PYTHONPATH': '/pre', 'LD_LIBRARY_PATH': '/ld'}
@@ -160,22 +190,280 @@ class TestEnvPrefix(unittest.TestCase):
             'GLOO_SOCKET_IFNAME': 'eno0',
         }
         prefix = self._bench('/opt/mori dir', env).env_prefix
-        self.assertEqual(self._run(prefix), '/opt/mori dir:/pre|/torch/lib:/ld|rdma0,rdma1|eno0')
+        self.assertEqual(self._run(prefix), '/opt/mori dir/site:/opt/mori dir:/pre|/torch/lib:/ld|rdma0,rdma1|eno0')
 
     def test_code_adds_only_pythonpath(self):
         prefix = self._bench('/m', {}).env_prefix
-        self.assertEqual(self._run(prefix), '/m:/pre|/ld||')
+        self.assertEqual(self._run(prefix), '/m/site:/m:/pre|/ld||')
         self.assertEqual(re.findall(r'export (\w+)=', prefix), ['PYTHONPATH'])
 
-    def test_env_pythonpath_does_not_drop_mori_dir(self):
+    def test_site_comes_first_and_stacks_on_env_pythonpath(self):
         prefix = self._bench('/m', {'PYTHONPATH': '/x:$PYTHONPATH'}).env_prefix
-        self.assertEqual(self._run(prefix).split('|')[0], '/m:/x:/pre')
+        self.assertEqual(self._run(prefix).split('|')[0], '/m/site:/m:/x:/pre')
 
     def test_missing_env_block_still_builds_a_runnable_prefix(self):
         d = _mori_dict()
         del d['env']
         bench = MoriBenchmark(_BaremetalFakeOrch(), d)
-        self.assertEqual(self._run(bench.env_prefix), '/sgl-workspace/mori:/pre|/ld||')
+        self.assertEqual(self._run(bench.env_prefix), '/sgl-workspace/mori/site:/sgl-workspace/mori:/pre|/ld||')
+
+
+def _bash(script, env=None, cwd=None):
+    return run_trusted(['bash', '-c', script], env=env, cwd=cwd, capture_output=True, text=True)
+
+
+class TestParseMissing(unittest.TestCase):
+    def test_missing_lines_are_read_per_node(self):
+        out = {
+            'n0': f'{CHECK_DONE}\n',
+            'n1': f'MISSING:git\nMISSING:verbs.h\n{CHECK_DONE}',
+        }
+        self.assertEqual(parse_missing(out), {'n0': [], 'n1': ['git', 'verbs.h']})
+
+    def test_node_whose_check_did_not_finish_counts_as_failed(self):
+        self.assertEqual(
+            parse_missing({'n0': '', 'n1': None, 'n2': 'MISSING:git'}), {'n0': None, 'n1': None, 'n2': None}
+        )
+
+    def _missing_with_files(self, *present):
+        # A shell function named test shadows the builtin, so the check sees only these files.
+        exists = ' || '.join(f'[ "$2" = {path} ]' for path in present) or 'false'
+        out = _bash(f'test() {{ [ "$1" = -f ] && {{ {exists}; }}; }}; ' + deps_check_cmd()).stdout
+        return parse_missing({'n0': out})['n0']
+
+    def test_pci_header_in_either_include_dir_is_found(self):
+        for path in ('/usr/include/pci/pci.h', '/usr/include/x86_64-linux-gnu/pci/pci.h'):
+            with self.subTest(path=path):
+                self.assertNotIn('pci.h', self._missing_with_files(path))
+
+    def test_pci_header_in_neither_include_dir_is_missing(self):
+        self.assertIn('pci.h', self._missing_with_files('/usr/include/numa.h'))
+
+    def test_deps_check_prints_done_after_its_checks(self):
+        out = _bash('export PATH=/nonexistent ROCM_PATH=/nonexistent; ' + deps_check_cmd()).stdout
+        missing = parse_missing({'n0': out})['n0']
+        self.assertIn('git', missing)
+        self.assertIn('hipcc', missing)
+        self.assertTrue(out.rstrip().endswith(CHECK_DONE))
+
+
+class TestAptPackages(unittest.TestCase):
+    def test_only_missing_items_are_installed(self):
+        self.assertEqual(apt_packages(['mpicc', 'verbs.h']), ['libibverbs-dev', 'libopenmpi-dev'])
+
+    def test_rocm_torch_python_and_nic_items_are_never_mapped(self):
+        self.assertEqual(apt_packages(['hipcc', 'hip-lang', 'torch', 'pip', 'libibverbs']), [])
+
+    def test_nothing_missing_installs_nothing(self):
+        self.assertEqual(apt_packages([]), [])
+
+
+class TestStorageLayout(unittest.TestCase):
+    def test_every_node_seeing_the_marker_is_shared(self):
+        self.assertEqual(storage_layout({'n0': True, 'n1': True, 'n2': True}, 'n0'), 'shared')
+
+    def test_only_the_head_seeing_it_is_local(self):
+        self.assertEqual(storage_layout({'n0': True, 'n1': False, 'n2': False}, 'n0'), 'local')
+
+    def test_some_nodes_seeing_it_raises_naming_the_others(self):
+        with self.assertRaises(ValueError) as ctx:
+            storage_layout({'n0': True, 'n1': True, 'n2': False, 'n3': False}, 'n0')
+        self.assertIn('n2, n3', str(ctx.exception))
+        self.assertNotIn('n1', str(ctx.exception))
+
+    def test_head_not_seeing_its_own_marker_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            storage_layout({'n0': False, 'n1': False}, 'n0')
+        self.assertIn('n0', str(ctx.exception))
+
+    def test_single_node_is_shared(self):
+        self.assertEqual(storage_layout({'n0': True}, 'n0'), 'shared')
+
+
+class _TmpDirCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+
+
+class TestEnvMoriGuard(_TmpDirCase):
+    def _check(self, pythonpath):
+        mori_dir = os.path.join(self.tmp, 'mori')
+        os.makedirs(os.path.join(mori_dir, 'python', 'mori'))
+        open(os.path.join(mori_dir, 'python', 'mori', '__init__.py'), 'w').close()
+        os.makedirs(os.path.join(self.tmp, 'other', 'mori'))
+        open(os.path.join(self.tmp, 'other', 'mori', '__init__.py'), 'w').close()
+        env = {'PATH': os.environ['PATH'], 'PYTHONPATH': pythonpath.format(tmp=self.tmp)}
+        result = _bash(env_mori_check_cmd(mori_dir), env=env, cwd=os.path.join(mori_dir, 'python'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def test_mori_under_mori_dir_trips_the_guard(self):
+        self.assertIn(MORI_IN_DIR, self._check('{tmp}/mori/python'))
+
+    def test_mori_elsewhere_passes(self):
+        self.assertNotIn(MORI_IN_DIR, self._check('{tmp}/other'))
+
+    def test_no_mori_passes_even_from_inside_mori_dir(self):
+        self.assertNotIn(MORI_IN_DIR, self._check(''))
+
+    def test_namespace_package_mori_is_found_by_its_search_location(self):
+        for where, trips in (('ns_in', True), ('ns_out', False)):
+            with self.subTest(where=where):
+                root = os.path.join(self.tmp, 'mori' if trips else 'elsewhere', where)
+                os.makedirs(os.path.join(root, 'mori'))
+                out = self._check(root)
+                self.assertEqual(MORI_IN_DIR in out, trips, out)
+                shutil.rmtree(os.path.join(self.tmp, 'mori'))
+                shutil.rmtree(os.path.join(self.tmp, 'other'))
+
+    def test_spec_with_no_origin_or_search_location_reports_no_location(self):
+        # importlib lets a finder return a bare spec; the guard must still print instead of raising.
+        hook = os.path.join(self.tmp, 'hook')
+        os.makedirs(hook)
+        with open(os.path.join(hook, 'sitecustomize.py'), 'w') as f:
+            f.write(
+                'import importlib.machinery, sys\n'
+                'class _Bare:\n'
+                '    def find_spec(self, name, path=None, target=None):\n'
+                '        return importlib.machinery.ModuleSpec(name, None) if name == "mori" else None\n'
+                'sys.meta_path.insert(0, _Bare())\n'
+            )
+        self.assertIn('MORI_AT=None', self._check('{tmp}/hook'))
+
+
+class TestCheckoutCmd(_TmpDirCase):
+    def setUp(self):
+        super().setUp()
+        self.repo = os.path.join(self.tmp, 'repo')
+        git = 'git -c user.name=t -c user.email=t@example.com'
+        result = _bash(
+            f'git init -q {self.repo} && cd {self.repo} && git checkout -q -b main && '
+            f'echo 1 > f && git add f && {git} commit -qm one && git tag v1 && '
+            f'echo 2 > f && {git} commit -qam two'
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.mori_dir = os.path.join(self.tmp, 'mori')
+        self.missing_repo = os.path.join(self.tmp, 'no-such-repo')
+
+    def _checkout(self, ref, url=None):
+        result = _bash(checkout_cmd(self.mori_dir, url or self.repo, ref))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(os.path.join(self.mori_dir, 'f')) as f:
+            return f.read().strip()
+
+    def test_corrected_git_url_recovers_after_a_failed_first_clone(self):
+        self.assertNotEqual(_bash(checkout_cmd(self.mori_dir, self.missing_repo, 'main')).returncode, 0)
+        self.assertEqual(self._checkout('main'), '2')
+
+    def test_rerun_fetches_new_commits_and_tags(self):
+        self._checkout('main')
+        git = 'git -c user.name=t -c user.email=t@example.com'
+        _bash(f'cd {self.repo} && echo 3 > f && {git} commit -qam three && git tag v3')
+        self.assertEqual(self._checkout('main'), '3')
+        self.assertEqual(self._checkout('v1'), '1')
+        self.assertEqual(self._checkout('v3'), '3')
+
+    def test_unreachable_remote_falls_back_to_the_existing_checkout(self):
+        self._checkout('main')
+        self.assertEqual(self._checkout('v1', url=self.missing_repo), '1')
+
+    def test_clones_a_missing_directory_at_the_branch_head(self):
+        self.assertEqual(self._checkout('main'), '2')
+
+    def test_clones_into_a_directory_holding_only_the_storage_marker(self):
+        os.makedirs(self.mori_dir)
+        open(os.path.join(self.mori_dir, '.cvs_storage_probe'), 'w').close()
+        self.assertEqual(self._checkout('v1'), '1')
+
+    def test_existing_checkout_switches_to_the_ref(self):
+        self._checkout('main')
+        self.assertEqual(self._checkout('v1'), '1')
+        self.assertEqual(self._checkout('main'), '2')
+
+
+class TestBuildCmd(_TmpDirCase):
+    def setUp(self):
+        super().setUp()
+        fake_bin = os.path.join(self.tmp, 'bin')
+        os.makedirs(fake_bin)
+        self.pip_ran = os.path.join(self.tmp, 'pip_ran')
+        with open(os.path.join(fake_bin, 'python3'), 'w') as f:
+            f.write(f'#!/bin/sh\ntouch {self.pip_ran}\necho "BUILD_EXAMPLES=$BUILD_EXAMPLES $*"\nexit 3\n')
+        os.chmod(os.path.join(fake_bin, 'python3'), 0o700)
+        self.mori_dir = os.path.join(self.tmp, 'mori')
+        os.makedirs(self.mori_dir)
+        self.env = {'PATH': f'{fake_bin}:{os.environ["PATH"]}'}
+
+    def _sh(self, cmd):
+        # On managed compute the HTTP agent runs commands through /bin/sh, which is dash on Ubuntu.
+        return run_trusted(['sh', '-c', cmd], env=self.env, capture_output=True, text=True)
+
+    def test_builds_examples_into_site_and_tees_to_the_log_under_sh(self):
+        log_dir = os.path.join(self.tmp, 'logs')
+        result = self._sh(build_cmd(self.mori_dir, log_dir))
+        self.assertEqual(result.returncode, 3, result.stderr)
+        (log_name,) = os.listdir(log_dir)
+        self.assertTrue(log_name.startswith('install_mori_') and log_name.endswith('.log'), log_name)
+        with open(os.path.join(log_dir, log_name)) as f:
+            logged = f.read()
+        self.assertIn(f'BUILD_EXAMPLES=ON -m pip install --upgrade --target {self.mori_dir}/site .', logged)
+        self.assertIn('MoRI commit', logged)
+
+    def test_log_dir_that_cannot_be_created_stops_before_the_build(self):
+        not_a_dir = os.path.join(self.tmp, 'file')
+        open(not_a_dir, 'w').close()
+        result = self._sh(build_cmd(self.mori_dir, os.path.join(not_a_dir, 'logs')))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(os.path.exists(self.pip_ran))
+
+
+class TestVerifyBuildCmd(_TmpDirCase):
+    def test_reports_each_missing_example_and_the_site_import(self):
+        mori_dir = os.path.join(self.tmp, 'mori')
+        os.makedirs(os.path.join(mori_dir, 'build', 'examples'))
+        for name in ('dist_write', 'concurrent_put_thread', 'concurrent_put_imm_thread'):
+            path = os.path.join(mori_dir, 'build', 'examples', name)
+            open(path, 'w').close()
+            os.chmod(path, 0o700)
+        out = _bash(verify_build_cmd(mori_dir), env={'PATH': os.environ['PATH']}).stdout
+        self.assertEqual(parse_missing({'n0': out})['n0'], ['build/examples/concurrent_put_signal_thread', 'site/mori'])
+
+    def test_complete_build_reports_nothing(self):
+        mori_dir = os.path.join(self.tmp, 'mori')
+        os.makedirs(os.path.join(mori_dir, 'build', 'examples'))
+        for name in (
+            'dist_write',
+            'concurrent_put_thread',
+            'concurrent_put_imm_thread',
+            'concurrent_put_signal_thread',
+        ):
+            path = os.path.join(mori_dir, 'build', 'examples', name)
+            open(path, 'w').close()
+            os.chmod(path, 0o700)
+        os.makedirs(os.path.join(mori_dir, 'site', 'mori'))
+        open(os.path.join(mori_dir, 'site', 'mori', '__init__.py'), 'w').close()
+        for spelling in (mori_dir, mori_dir + '/', os.path.join(self.tmp, '.', 'mori')):
+            with self.subTest(mori_dir=spelling):
+                out = _bash(verify_build_cmd(spelling), env={'PATH': os.environ['PATH']}).stdout
+                self.assertEqual(parse_missing({'n0': out})['n0'], [])
+
+
+class TestBuiltCommit(unittest.TestCase):
+    def _orch(self, out):
+        orch = MagicMock()
+        orch.exec_on_head.return_value = {'n0': out}
+        return orch
+
+    def test_returns_the_head_nodes_short_commit(self):
+        orch = self._orch('38dbdd8f\n')
+        self.assertEqual(built_commit(orch, '/m dir'), '38dbdd8f')
+        self.assertIn("git -C '/m dir' rev-parse --short HEAD", orch.exec_on_head.call_args.args[0])
+
+    def test_not_a_checkout_returns_none(self):
+        for out in ('', 'fatal: not a git repository'):
+            with self.subTest(out=out):
+                self.assertIsNone(built_commit(self._orch(out), '/m'))
 
 
 class TestParsePrettyTables(unittest.TestCase):
@@ -367,10 +655,12 @@ class TestMoriIoLaunch(_MoriBenchCase):
         self.assertIn('10.0.0.9', globals.error_list[0])
         self.assertEqual(orch.all_commands(), [])
 
-    def test_baremetal_uses_host_handle_for_cmd_list(self):
+    def test_baremetal_runs_cmd_list_through_orchestrator(self):
         orch = _BaremetalFakeOrch()
-        MoriBenchmark(orch, _mori_dict()).run_mori_torch_io_test()
-        self.assertTrue(orch.all.exec_cmd_list.called)
+        with patch.object(orch, 'exec_cmd_list', wraps=orch.exec_cmd_list) as exec_cmd_list:
+            MoriBenchmark(orch, _mori_dict()).run_mori_torch_io_test()
+        self.assertTrue(exec_cmd_list.called)
+        self.assertEqual(exec_cmd_list.call_count, orch.all.exec_cmd_list.call_count)
         self.assertEqual(globals.error_list, [])
 
     def test_poll_waits_until_every_host_reports(self):
@@ -501,6 +791,32 @@ class TestMoriIoLaunch(_MoriBenchCase):
         self.assertIn('BW is lower than expected', globals.error_list[0])
         self.assertIn('Latency is higher than expected', globals.error_list[1])
 
+    def test_op_type_and_qp_count_reach_benchmark(self):
+        # Without these, test_io_write ran reads and the 8-QP cases repeated the 1-QP ones.
+        orch = _ContainerFakeOrch()
+        MoriBenchmark(orch, _mori_dict()).run_mori_torch_io_test(
+            op_type='write', buffer_size=32768, transfer_batch_size=256, no_of_qp_per_transfer=8
+        )
+        launch = orch.cmd_list_calls[0]['cmds']
+        for cmd in launch:
+            self.assertIn('--op-type write ', cmd)
+            self.assertIn('--num-qp-per-transfer 8 ', cmd)
+            self.assertNotIn('--op-type read', cmd)
+            self.assertIn('io_write_32768_256_8_node', cmd)
+
+    def test_buffer_size_caps_the_sweep(self):
+        # Without --sweep-max-size, --all sweeps to benchmark.py's 1 MiB default whatever the buffer size.
+        for buffer_size in (131072, 4194304):
+            with self.subTest(buffer_size=buffer_size):
+                orch = _ContainerFakeOrch()
+                MoriBenchmark(orch, _mori_dict()).run_mori_torch_io_test(
+                    op_type='read', buffer_size=buffer_size, transfer_batch_size=128
+                )
+                for cmd in orch.cmd_list_calls[0]['cmds']:
+                    self.assertIn('--all ', cmd)
+                    self.assertEqual(re.findall(r'--buffer-size (\d+)', cmd), [str(buffer_size)])
+                    self.assertEqual(re.findall(r'--sweep-max-size (\d+)', cmd), [str(buffer_size)])
+
     def test_kill_patterns_match_benchmark_but_not_the_kill_shell(self):
         # pkill -f would otherwise kill the bash running it (docker exec / ssh), losing the result.
         orch = _ContainerFakeOrch()
@@ -515,6 +831,45 @@ class TestMoriIoLaunch(_MoriBenchCase):
         for pattern in patterns:
             self.assertIsNone(re.search(pattern, cmd), pattern)
             self.assertIsNotNone(re.search(pattern, benchmark_proc), pattern)
+
+
+class TestResultCapture(_MoriBenchCase):
+    def test_ibgda_run_returns_parsed_metrics_per_node(self):
+        def responder(cmd, host):
+            if 'dist_write' in cmd and host == 'n0':
+                return (
+                    'Blocks: 2, Threads: 256, Iterations: 1, QPs: 4\n'
+                    'Index Size(B) bw(GB) Time(ms) Rate(Mpps)\n0 33554432 46.10 0.73 0.01'
+                )
+            return ''
+
+        result = MoriBenchmark(_ContainerFakeOrch(responder=responder), _mori_dict()).run_ibgda_dist_write(
+            no_of_procs=2, ctas=2, threads=256, qp_count=4, iters=1
+        )
+        self.assertEqual(
+            {k: v for k, v in result.items() if k != 'nodes'},
+            {'operation': 'ibgda_write', 'processes': 2, 'ctas': 2, 'threads': 256, 'qp_count': 4, 'iterations': 1},
+        )
+        # A node without a result table fails the test and contributes no rows.
+        self.assertEqual(list(result['nodes']), ['n0'])
+        self.assertEqual(result['nodes']['n0']['metadata']['qps'], 4)
+        self.assertEqual(
+            result['nodes']['n0']['rows'],
+            [{'size_bytes': 33554432, 'bandwidth_gb': 46.1, 'time_ms': 0.73, 'rate_mpps': 0.01}],
+        )
+        self.assertEqual(len(globals.error_list), 1)
+        self.assertIn('node n1', globals.error_list[0])
+
+    def test_io_run_returns_rank_metrics_with_effective_parameters(self):
+        result = MoriBenchmark(_ContainerFakeOrch(), _mori_dict()).run_mori_torch_io_test(
+            op_type='write', buffer_size=16384, transfer_batch_size=128, no_of_qp_per_transfer=4
+        )
+        self.assertEqual(result['operation'], 'io_write')
+        self.assertEqual(result['buffer_size'], 16384)
+        self.assertEqual(result['transfer_batch_size'], 128)
+        self.assertEqual(result['qp_count'], 4)
+        self.assertEqual(result['ranks'][0]['rows'][0]['Avg_BW_GBps'], 44.0)
+        self.assertEqual(globals.error_list, [])
 
 
 if __name__ == '__main__':

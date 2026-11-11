@@ -31,10 +31,6 @@
     {
       "id": "metrics",
       "title": "Perf sanity"
-    },
-    {
-      "id": "results",
-      "hint": "Columns are preflight checks. Open a cell for the per-node detail recorded for that check. N/A means the check was skipped or Primus did not score it."
     }
   ]
 }

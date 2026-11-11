@@ -121,6 +121,42 @@ class TestResolveTestConfigPlaceholdersPaths(unittest.TestCase):
         self.assertEqual(resolved["aorta_path"], "/opt/my-aorta")
 
 
+class TestConfigPlaceholderMap(unittest.TestCase):
+    def test_cluster_without_user_keys_falls_back_to_user_env_then_root(self):
+        with (
+            patch.dict(os.environ, {"USER": "envuser"}),
+            patch('cvs.lib.utils_lib.os.path.expanduser', side_effect=lambda p: f"/homes/{p[1:]}"),
+        ):
+            mapping = utils_lib.config_placeholder_map({"path": "/opt"}, {})
+        self.assertEqual(
+            mapping,
+            {
+                'user-id': 'envuser',
+                'user': 'envuser',
+                'home': '/homes/envuser',
+                'home-mount-dir': 'home',
+                'node-dir-name': 'root',
+                'run_dir': '',
+            },
+        )
+        with patch.dict(os.environ, {}):
+            os.environ.pop("USER", None)
+            mapping = utils_lib.config_placeholder_map({}, {})
+        self.assertEqual((mapping['user-id'], mapping['user']), ('root', 'root'))
+
+    def test_resolver_expands_every_name_in_the_map(self):
+        cluster = {'username': 'jdoe', 'home_mount_dir_name': 'mnt', 'node_dir_name': 'node7'}
+        raw = {'path': '{user-id}:{user}:{home}:/{home-mount-dir}/{node-dir-name}'}
+        with patch('cvs.lib.utils_lib.os.path.expanduser', side_effect=lambda p: f"/homes/{p[1:]}"):
+            resolved = utils_lib.resolve_test_config_placeholders(raw, cluster)
+        self.assertEqual(resolved['path'], 'jdoe:jdoe:/homes/jdoe:/mnt/node7')
+
+    def test_resolver_keeps_a_blank_username_as_is(self):
+        with patch.dict(os.environ, {'USER': 'envuser'}):
+            resolved = utils_lib.resolve_test_config_placeholders({'path': '/home/{user-id}'}, {'username': ''})
+        self.assertEqual(resolved['path'], '/home/')
+
+
 class TestResolveRunDirPlaceholder(unittest.TestCase):
     """{run_dir} comes from RunLayout, the single source of truth for the paths.
 

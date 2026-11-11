@@ -2,12 +2,17 @@
   :description: Complete reference for the CVS command-line interface, covering cvs run, cvs exec, cvs scp, cvs list, cvs monitor, and cvs generate commands.
   :keywords: CVS, CLI, cvs run, cvs exec, cvs scp, cvs list, cvs monitor, cvs generate, ROCm, cluster, JSON
 
-**********************************************************
+*********************************************************************
 Cluster Validation Suite (CVS) command-line interface (CLI) reference
-**********************************************************
+*********************************************************************
+
+Complete option reference for all ``cvs`` commands. For step-by-step usage,
+see the how-to guides linked at the end of each section.
 
 Top-level commands
 ==================
+
+CVS provides the following top-level commands.
 
 .. list-table::
    :header-rows: 1
@@ -112,7 +117,8 @@ See :doc:`/how-to/test-suites/network/rccl`.
 ``cvs config``
 ==============
 
-Subcommands: ``list-dirs``, ``list``, ``copy``.
+Browse and copy bundled configuration templates for test suites and cluster
+files. Subcommands: ``list-dirs``, ``list``, ``copy``.
 
 ``list-dirs [path]``
 --------------------
@@ -159,10 +165,19 @@ Required options:
 
    * - Option
      - Description
-   * - ``--cluster_file PATH``
-     - Cluster JSON (nodes, SSH credentials, backend). Required outside a scheduler-managed (Slurm/spur) run.
    * - ``--config_file PATH``
      - Suite-specific test configuration JSON.
+
+Conditionally required options:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Option
+     - Description
+   * - ``--cluster_file PATH``
+     - Cluster JSON: nodes, SSH credentials, and the ``orchestrator`` key. Suites differ on whether they follow that key; see :doc:`/reference/cluster/cluster-file`. Required unless ``cvs run`` is launched as a Slurm/SPUR job step; then CVS writes ``<run_dir>/cluster_agents.json`` and an optional file supplies extra metadata. See :doc:`/how-to/run-on-managed-compute`.
 
 Optional options:
 
@@ -173,7 +188,7 @@ Optional options:
    * - Option
      - Description
    * - ``--workspace PATH``
-     - Shared-filesystem root; run dir is ``<workspace>/cvs_runs/<run_id>``. Falls back to ``$CVS_WORKSPACE``, then the venv parent directory. Scheduler-managed runs in a container must set this explicitly. HTML and log reports default to this run directory.
+     - Shared-filesystem root; run dir is ``<workspace>/cvs_runs/<run_id>``. Falls back to ``$CVS_WORKSPACE``, then the venv parent directory. Every scheduler-managed run must set this or ``CVS_WORKSPACE`` to storage shared by all nodes. HTML and log reports default to this run directory.
    * - ``--html PATH``
      - Pytest HTML report path. Defaults to ``<run_dir>/<test-file-stem>.html`` (self-contained). Parent directories are created automatically.
    * - ``--no-html``
@@ -192,6 +207,10 @@ Optional options:
 Omit ``--html`` and ``--log-file`` to use the run-directory defaults. Pass either flag with a path to override. ``--no-html`` and ``--no-log-file`` suppress generation.
 
 All other pytest flags pass through. Run ``pytest --help`` for the full list.
+
+``CVS_SCHEDULER`` overrides scheduler detection with ``spur``, ``slurm`` or
+``bare_metal``. ``CVS_WORKSPACE`` supplies the workspace when ``--workspace``
+is omitted. See :doc:`/how-to/run-on-managed-compute` for managed runs.
 
 See :doc:`/how-to/test-suites/index`.
 
@@ -224,6 +243,8 @@ Run ``cvs monitor`` with no arguments to list available monitors.
 
 Subcommand: ``check_cluster_health``
 
+``check_cluster_health`` accepts the following options.
+
 .. list-table::
    :header-rows: 1
    :widths: 28 72
@@ -245,6 +266,9 @@ See :doc:`Health reports </how-to/monitor/health-reports/index>` and :doc:`Live 
 
 ``cvs exec``
 ============
+
+Run a shell command on all cluster nodes (or a selected subset) in parallel
+over SSH and print the output grouped by node.
 
 Required options:
 
@@ -282,6 +306,9 @@ See :doc:`/how-to/execute-cluster-commands`.
 
 ``cvs scp``
 ===========
+
+Copy a local file or directory to the same path on every cluster node in
+parallel.
 
 Required options:
 

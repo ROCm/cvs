@@ -2,11 +2,11 @@
   :description: Get started with CVS on ROCm: install on AMD Instinct GPU clusters, configure SSH, and run your first cluster-wide command in minutes.
   :keywords: CVS, ROCm, quickstart, install, exec, AMD Instinct, GPU, AMD, SSH, cluster, Linux, getting started
 
-*******************************************************************************
+*************************************************************************************
 Cluster Validation Suite (CVS) quickstart: install and run your first cluster command
-*******************************************************************************
+*************************************************************************************
 
-This guide gets you from zero to your first cluster-wide ``cvs exec`` in about 15 minutes.
+This guide helps you run your first cluster-wide ``cvs exec`` in about 15 minutes.
 
 Prerequisites
 =============
@@ -22,7 +22,7 @@ The following prerequisites are required before you begin:
 Step 1: Install CVS
 ===================
 
-Clone the repository and install:
+Clone the repository and install CVS:
 
 .. code:: bash
 
@@ -36,7 +36,7 @@ Clone the repository and install:
 Step 2: Copy the cluster file
 =============================
 
-Every CVS command needs a ``cluster.json`` that lists your nodes and SSH credentials.
+This SSH quickstart needs a ``cluster.json`` that lists your nodes and SSH credentials:
 
 .. code:: bash
 
@@ -110,12 +110,13 @@ Successful output from each node looks like this:
 
 Every node should report its GPU devices. A node that returns no GPUs or an error indicates a driver or device access issue to resolve before testing.
 
-What to do next
-===============
+Next steps
+==========
 
 CVS is installed and your cluster is connected. The next step is to run a test suite.
 
 - :doc:`/how-to/test-suites/index` — choose a test suite and run it against the cluster. Start with :doc:`Preflight </how-to/test-suites/burn-in-diag/preflight>` to smoke-test all nodes, or jump straight to the suite that matches your validation goal.
+- :doc:`/how-to/run-on-managed-compute` — run suites as a Slurm or SPUR job step instead of over SSH.
 - :doc:`/how-to/configure/test-suite-config/index` — every test suite requires a config file with cluster-specific values such as interface names, model paths, and thresholds. Copy a template, fill in your values, and pass it with ``--config_file``.
 - :doc:`/how-to/configure/cluster-config` — if your cluster topology changes (new nodes, rack layout, container backend), update the cluster file here.
 - :doc:`/install/uninstall` — uninstall or downgrade CVS on the head node.

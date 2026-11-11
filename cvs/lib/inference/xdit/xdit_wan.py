@@ -4,8 +4,6 @@ PyTorch XDit WAN output parser.
 Locates and parses benchmark JSONs (rank0_step*.json) from WAN inference runs.
 Computes average total_time and validates against thresholds.
 
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
 """
 
 import json

@@ -3,7 +3,9 @@
 import unittest
 from contextlib import contextmanager
 from types import SimpleNamespace
+from unittest.mock import patch
 
+import cvs.lib.rccl_lib as rccl_lib
 from cvs.lib.report import benchmark_metric_registry as registry
 from cvs.tests.rccl._case_report import RcclCaseReporter
 
@@ -79,6 +81,27 @@ class TestRcclCaseReporter(unittest.TestCase):
         )
         self.assertEqual(self.fake.calls[1], {'collective': 'all_reduce_perf', 'check': 'bus_bw'})
 
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_missing_size_verdict_reports_gate_without_measurement(self, mock_fail_test):
+        verifier = rccl_lib.RcclVerifier(
+            'all_reduce_perf',
+            [{'size': 1024, 'inPlace': 1, 'busBw': 1.0}],
+            {'8589934592': {'bus_bw': 350.0}},
+            {'verify_bus_bw': 'True', 'bus_bw_tolerance': '1.0'},
+        )
+        verifier.check()
+        self.reporter.report_verdicts(verifier.verdicts, 'all_reduce_perf')
+        self.assertEqual(self.rows()[0]['label'], 'all_reduce_perf bus_bw size=8589934592')
+        self.assertIsNone(self.rows()[0]['actual'])
+        self.assertEqual(self.rows()[0]['spec'], {'kind': '>=', 'value': 350.0})
+        self.assertEqual(self.rows()[0]['status'], 'fail')
+        self.assertEqual(
+            self.fake.calls,
+            [{'collective': 'all_reduce_perf', 'check': 'bus_bw', 'size': '8589934592'}],
+        )
+        self.assertEqual(self.fake.failures, [verifier.verdicts[0]['message']])
+        mock_fail_test.assert_called_once_with(verifier.verdicts[0]['message'])
+
     def test_duplicate_verdicts_keep_distinct_rows(self):
         verdict = {
             'check': 'bus_bw',
@@ -92,6 +115,38 @@ class TestRcclCaseReporter(unittest.TestCase):
         }
         self.reporter.report_verdicts([verdict, verdict], 'all_reduce_perf')
         self.assertEqual(len(self.rows()), 2)
+
+    def test_fail_closed_and_invalid_tolerance_verdicts_report_under_their_check(self):
+        rows = [{'size': 1024, 'type': 'float', 'inPlace': 1, 'busBw': 10.0, 'time': 1.0}]
+        params = {'verify_bus_bw': 'True', 'verify_bw_dip': 'True', 'verify_lat_dip': 'True'}
+        with patch('cvs.lib.rccl_lib.fail_test'):
+            verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, None, params)
+            verifier.check()
+        self.reporter.report_verdicts(verifier.verdicts, 'all_reduce_perf')
+        self.assertEqual(
+            self.fake.calls,
+            [{'collective': 'all_reduce_perf', 'check': check} for check in ('bus_bw', 'bw_dip', 'lat_dip')],
+        )
+        self.assertEqual(len(self.fake.failures), 3)
+        self.assertIn('BW dip', self.fake.failures[1])
+        self.assertIn('latency dip', self.fake.failures[2])
+        self.assertEqual(
+            [row['label'] for row in self.rows()],
+            ['all_reduce_perf bus_bw', 'all_reduce_perf bw_dip', 'all_reduce_perf lat_dip'],
+        )
+
+        self.setUp()
+        with patch('cvs.lib.rccl_lib.fail_test'):
+            verifier = rccl_lib.RcclVerifier(
+                'all_reduce_perf',
+                rows,
+                {'1024': {'bus_bw': 100.0}},
+                {'verify_bus_bw': 'True', 'bus_bw_tolerance': '95'},
+            )
+            verifier.check()
+        self.reporter.report_verdicts(verifier.verdicts, 'all_reduce_perf')
+        self.assertEqual(self.fake.calls, [{'collective': 'all_reduce_perf', 'check': 'bus_bw'}])
+        self.assertIn('bus_bw_tolerance', self.fake.failures[0])
 
     def test_report_phase_labels(self):
         self.reporter.report_phase(

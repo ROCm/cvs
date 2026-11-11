@@ -11,6 +11,7 @@ import time
 import pytest
 
 from cvs.lib import globals, host_configs_rundeck, linux_utils
+from cvs.lib.preflight.ifoe_l2_connectivity import build_afmctl_command
 from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 from cvs.lib.rocm_plib import *
 from cvs.lib.utils_lib import *
@@ -327,6 +328,89 @@ def test_check_gpu_fw_version(orch, config_dict, host_res_dict, cluster_dict, li
     update_test_result()
 
 
+def _resolve_tool(var, tool, fallbacks):
+    '''Resolve ``tool`` to an absolute path in ``var``, trying ``fallbacks`` in order.
+
+    A non-login SSH PATH may omit a tool's directory (for example ``modinfo`` in
+    /usr/sbin), so the path is captured from ``command -v`` (which prints the resolved
+    location, not the tool's output) and each known install path in ``fallbacks`` is
+    probed with ``-x`` when that misses. This runs only after the module-presence gate,
+    so an unresolved tool on a loaded-module node is a read failure
+    (``CVS_IFOE_READER_MISSING``), not the absent-module sentinel.
+    '''
+    candidates = ' '.join(fallbacks)
+    return (
+        f'{var}="$(command -v {tool} 2>/dev/null)"; '
+        f'[ -n "${var}" ] || for _cvs_c in {candidates}; do '
+        f'[ -x "$_cvs_c" ] && {{ {var}="$_cvs_c"; break; }}; done; '
+        f'case "${var}" in /*) ;; *) echo CVS_IFOE_READER_MISSING; exit 0 ;; esac; '
+    )
+
+
+# The ifoe kernel module loaded is the single "IFoE present on this node" signal for
+# both checks. When it is absent the node is not an IFoE compute tray, so the outer
+# branch emits CVS_IFOE_ABSENT and the evals record NA. When it is loaded, the shared
+# build_afmctl_command resolves afmctl around sudo's secure_path (the same mechanism
+# ibperf uses for AFM discovery) and reads ``show device --json``. The denied_marker
+# checks the actual afmctl read, so a refused sudo for afmctl itself emits
+# CVS_CMD_DENIED (recorded as a denial); an unresolved binary emits
+# CVS_IFOE_READER_MISSING, so the check fails as unreadable rather than recording NA.
+_IFOE_FW_CMD = (
+    'if [ -d /sys/module/ifoe ]; then '
+    + build_afmctl_command(
+        'show device --json',
+        'afmctl',
+        fallbacks=('/usr/sbin/afmctl', '/opt/amd/afm/bin/afmctl'),
+        denied_marker='CVS_CMD_DENIED',
+        missing_marker=host_configs_rundeck.CVS_IFOE_READER_MISSING,
+    )
+    + '; else echo CVS_IFOE_ABSENT; fi'
+)
+# modinfo reports the on-disk .ko metadata whether or not the module is loaded, so
+# gate on the loaded state first. A loaded module with no version line yields empty
+# output (a recorded "could not be read"), not NA. modinfo lives in /usr/sbin, which
+# a non-login ssh PATH may omit, so resolve its absolute path the same way.
+_IFOE_KMOD_CMD = (
+    'if [ -d /sys/module/ifoe ]; then '
+    + _resolve_tool('_mi', 'modinfo', ['/usr/sbin/modinfo', '/sbin/modinfo'])
+    + '"$_mi" ifoe 2>/dev/null | grep -E \'^(version|srcversion):\' || true; '
+    'else echo CVS_IFOE_ABSENT; fi'
+)
+
+
+def test_check_ifoe_sw_details(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
+    """
+    Report and validate the host IFoE software details on each node.
+
+    Collects two per-node attributes, each recorded as its own Run Deck row:
+      - IFoE/AFM device firmware version from ``afmctl show device --json``.
+      - ``ifoe`` kernel module version from ``modinfo ifoe``.
+
+    Validation is hybrid for both: when the matching config key
+    (``ifoe_fw_version`` / ``ifoe_kmod_version``) is set the detected version must
+    equal it, otherwise the detected version is recorded and passes only when it is
+    a well-formed version string. A node without IFoE (``/sys/module/ifoe`` absent)
+    reports NA and does not fail. Both rows are captured before the single pass/fail
+    verdict, so one attribute failing still records the other.
+    """
+    globals.error_list = []
+    log.info('Testcase check IFoE software details (firmware, kmod version)')
+
+    with timed_stage(lifecycle, host_configs_rundeck.IFOE_FW):
+        fw_out = orch.all.exec(_IFOE_FW_CMD)
+    fw_records, fw_messages = host_configs_rundeck.eval_ifoe_firmware(fw_out, config_dict.get('ifoe_fw_version'))
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.IFOE_FW, fw_records)
+
+    with timed_stage(lifecycle, host_configs_rundeck.IFOE_KMOD):
+        kmod_out = orch.all.exec(_IFOE_KMOD_CMD)
+    kmod_records, kmod_messages = host_configs_rundeck.eval_ifoe_kmod(kmod_out, config_dict.get('ifoe_kmod_version'))
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.IFOE_KMOD, kmod_records)
+
+    _fail_messages(fw_messages)
+    _fail_messages(kmod_messages)
+    update_test_result()
+
+
 def test_check_pci_realloc(orch, config_dict, host_res_dict, cluster_dict, lifecycle):
     """
     Verify that the kernel command line contains the expected PCI realloc flag.
@@ -518,7 +602,12 @@ def test_check_gpu_pcie_speed_width(orch, config_dict, host_res_dict, cluster_di
     # and all nodes have same PCI Bus number
     with timed_stage(lifecycle, host_configs_rundeck.GPU_PCIE):
         out_dict = get_gpu_pcie_bus_dict(orch.all, use_sudo=False)
-        for card_no in host_configs_rundeck.pcie_card_list(out_dict):
+        card_list = host_configs_rundeck.pcie_card_list(out_dict)
+        if not card_list:
+            message = 'No GPU PCIe bus ids reported by any node (rocm-smi/amd-smi missing or returned no GPUs)'
+            fail_test(message)
+            records = host_configs_rundeck.config_error_records(orch.hosts, 'gpu_pcie_bus', message)
+        for card_no in card_list:
             cmd_list, present = _link_cmds_for_card(out_dict, card_no, 'PCI Bus', records)
             pci_dict = orch.all.exec_cmd_list(cmd_list)
             pci_dict = {node: pci_dict[node] for node in present}
@@ -536,7 +625,7 @@ def test_check_be_nic_pcie_speed_width(orch, config_dict, host_res_dict, cluster
     Verify PCIe link speed and width for each Backend NIC on all nodes.
 
     Reads 'nic_pcie_speed' and 'nic_pcie_width' from config_dict.
-    Uses get_gpu_nic_mapping_dict(orch.all, use_sudo=False) to get NIC BDF per card per node.
+    Uses get_gpu_nic_mapping_dict(orch.all, use_sudo=False, active_only=False) to get NIC BDF per card per node.
     Reads each NIC's sysfs link speed and width and prints an LnkSta line.
     Checks Speed, Width, and absence of 'downgrade' in the output.
     """
@@ -554,7 +643,8 @@ def test_check_be_nic_pcie_speed_width(orch, config_dict, host_res_dict, cluster
     records = {}
 
     with timed_stage(lifecycle, host_configs_rundeck.NIC_PCIE):
-        out_dict = linux_utils.get_gpu_nic_mapping_dict(orch.all, use_sudo=False)
+        # A NIC's PCIe link is up whether or not its network link is.
+        out_dict = linux_utils.get_gpu_nic_mapping_dict(orch.all, use_sudo=False, active_only=False)
         for card_no in host_configs_rundeck.pcie_card_list(out_dict):
             cmd_list, present = _link_cmds_for_card(out_dict, card_no, 'nic_bdf', records)
             pci_dict = orch.all.exec_cmd_list(cmd_list)
@@ -644,10 +734,9 @@ def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dic
     """
     Check dmesg for AMDGPU driver errors and reset/hang lines on each node.
 
-    The default parser is node-scraper (CVS_DMESG_PARSER). Healthy zero-valued
-    status fields (WALKER_ERROR: 0x0, MAPPING_ERROR: 0x0) and hypervisor
-    ``[Firmware Bug]:`` warnings are not failures. CVS_DMESG_PARSER=legacy
-    keeps the historical amdgpu grep, with those same status fields ignored.
+    dmesg is parsed with node-scraper. Healthy zero-valued status fields
+    (WALKER_ERROR: 0x0, MAPPING_ERROR: 0x0) and hypervisor ``[Firmware Bug]:``
+    warnings are not failures.
 
     Args:
       phdl: Remote execution handle with exec(cmd: str) -> dict[node, str].
@@ -659,50 +748,28 @@ def test_check_dmesg_driver_errors(orch, config_dict, host_res_dict, cluster_dic
     """
 
     globals.error_list = []
-    if use_node_scraper_dmesg():
-        # One dmesg read feeds both checks. Split that shared time evenly so
-        # neither stage clock owns the whole command.
-        started = time.perf_counter()
-        out_dict = orch.all.exec(
-            linux_utils._sudo_n_or_denied(
-                'sudo -n /usr/bin/dmesg --time-format iso -x',
-                "egrep -v 'ALLOWED|DENIED' --color=never",
-            )
-        )
-        denied_nodes = [node for node, output in out_dict.items() if 'CVS_CMD_DENIED' in str(output)]
-        readable = {node: output for node, output in out_dict.items() if node not in denied_nodes}
-        events_by_node = parse_dmesg_nodes(readable)
-        driver_records, driver_messages, reset_records, reset_messages = host_configs_rundeck.eval_dmesg_node_events(
-            events_by_node, denied_nodes=denied_nodes
-        )
-        each_stage = (time.perf_counter() - started) / 2.0
-        _record_stage(lifecycle, host_configs_rundeck.DMESG_DRIVER, each_stage)
-        _fail_messages(driver_messages)
-        _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_DRIVER, driver_records)
-        update_test_result()
-        _record_stage(lifecycle, host_configs_rundeck.DMESG_RESET, each_stage)
-        _fail_messages(reset_messages)
-        _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_RESET, reset_records)
-        update_test_result()
-        return
-
-    with timed_stage(lifecycle, host_configs_rundeck.DMESG_DRIVER):
-        out_dict = orch.all.exec(
-            linux_utils._sudo_n_or_denied(
-                'sudo -n /usr/bin/dmesg -T', "grep -i amdgpu | egrep -i 'fail|error' --color=never"
-            )
-        )
-    records, messages = host_configs_rundeck.eval_dmesg_driver(out_dict)
-    _fail_messages(messages)
-    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_DRIVER, records)
+    # One dmesg read feeds both checks. Split that shared time evenly so
+    # neither stage clock owns the whole command.
+    started = time.perf_counter()
+    out_dict = orch.all.exec(
+        linux_utils._sudo_n_or_denied(
+            'sudo -n /usr/bin/dmesg --time-format iso -x',
+            "egrep -v 'ALLOWED|DENIED' --color=never",
+        ),
+        print_console=False,
+    )
+    denied_nodes = [node for node, output in out_dict.items() if 'CVS_CMD_DENIED' in str(output)]
+    readable = {node: output for node, output in out_dict.items() if node not in denied_nodes}
+    events_by_node = parse_dmesg_nodes(readable)
+    driver_records, driver_messages, reset_records, reset_messages = host_configs_rundeck.eval_dmesg_node_events(
+        events_by_node, denied_nodes=denied_nodes
+    )
+    each_stage = (time.perf_counter() - started) / 2.0
+    _record_stage(lifecycle, host_configs_rundeck.DMESG_DRIVER, each_stage)
+    _fail_messages(driver_messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_DRIVER, driver_records)
     update_test_result()
-    with timed_stage(lifecycle, host_configs_rundeck.DMESG_RESET):
-        out_dict = orch.all.exec(
-            linux_utils._sudo_n_or_denied(
-                'sudo -n /usr/bin/dmesg -T', "grep -i amdgpu | egrep -i 'reset|hang|traceback' --color=never"
-            )
-        )
-    records, messages = host_configs_rundeck.eval_dmesg_reset(out_dict)
-    _fail_messages(messages)
-    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_RESET, records)
+    _record_stage(lifecycle, host_configs_rundeck.DMESG_RESET, each_stage)
+    _fail_messages(reset_messages)
+    _capture_host_rundeck(host_res_dict, cluster_dict, host_configs_rundeck.DMESG_RESET, reset_records)
     update_test_result()

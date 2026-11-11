@@ -24,9 +24,7 @@ come from collected results, including when only part of a suite runs.
 Pairwise series retain their Phase 0/1/2 labels, and its run card lists the
 node and MPI rank counts used across those runs.
 
-Reporting does not change qualification checks. The deck uses the existing
-graph conversion: when several rows share a series and message size, the
-last row wins across in-place/out-of-place, data type, and cycle dimensions.
+Reporting does not change qualification checks. Graph conversion charts the rows the checks evaluate: in-place rows, or out-of-place rows for `alltoall_perf`/`alltoallv_perf`. Cycles of the same data type and message size are averaged, and message sizes are listed in ascending order. A series with several data types is split into one series per type, labelled `<series> [type=<dtype>]`; a single-type series keeps its plain name.
 The Thresholds row reflects the configured `verify_*` switches; it does not
 confirm that a bus-bandwidth threshold was found or applied. Existing
 threshold configuration mismatches still require separate correction.
@@ -83,14 +81,14 @@ The rccl-tests reporter sets `gpusPerRank` to `nThreads * nGpus`, as shown in
 The expected total is therefore `threads_per_gpu` on both paths. For example,
 `threads_per_gpu: "8"` means `gpusPerRank=8` for both `-g 8` and `-t 8`.
 
-CVS writes `<result_file_stem>_topology_check.json` beside the result files on the
-head node. For example, `/results/rccl.json` produces
-`/results/rccl_topology_check.json`. Performance runs write one audit file containing
-one check entry per data type. Each `run_regression()` invocation writes one audit
-file beside the configured result file. The regression suite currently reuses
-`rccl_result_file` across cases, so later cases overwrite the earlier result and
-audit files. Callers using `RcclJob` directly can set a distinct `rccl_result_file`
-per case to retain every audit. Each check entry contains
+Perf writes `<result_file_stem>_<collective>_topology_check.json` beside the result
+files on the head node. For example, `/results/rccl.json` produces
+`/results/rccl_all_reduce_perf_topology_check.json` for `all_reduce_perf`, with one
+check entry per data type. Regression writes
+`<result_file_stem>_<collective>[_<case-hash>]_topology_check.json` beside the
+configured result file. The case hash is a stable digest of the sorted regression
+environment overrides and is present when overrides are configured, so each
+parameterized case keeps its result and audit files. Each check entry contains
 `label`, `requested`, `reported` (the first row that contains any topology field, not
 necessarily row 0), `mismatches`, `mode`, and `verdict` (`pass`, `mismatch`, or
 `skipped`). Skipped entries include a `reason`; differences in later rows appear in
@@ -136,10 +134,12 @@ Heatmap config requires:
 ## Configuration
 
 Start from [`rccl_config.json`](../../input/config_file/rccl/rccl_config.json). Replace any `<changeme>` values and configure paths, interfaces, node counts, and reference bandwidths for your cluster.
+For the single-node 8-GPU `all_reduce` guide bar, start from `mi300x_rccl_single_node_config.json` or `mi350x_rccl_single_node_config.json` instead (`cvs config copy rccl/<file>`), and replace only the `<changeme>` site paths.
 
 - `mpi_params.no_of_nodes` and `no_of_local_ranks` set the MPI topology explicitly. For a single-node run, set `no_of_nodes` to `1` and provide a one-node cluster or allocation.
 - `mpi_params.mpi_dir` names the Open MPI installation prefix; a trailing `/bin` is accepted. `mpi_pml`, `mpi_oob_port`, `net_dev_list`, and `ucx_tls` control Open MPI/UCX discovery and initialization.
 - `rccl_test_params.rccl_tests_dir` names the directory containing the collective binaries. Message sizes, iteration counts, and optional `rccl_timeout`/`output_algo_proto_channels` flags belong in this object.
+- `rccl_test_params.rccl_collective` lists rccl-tests binary names from `rccl_tests_dir`. Thresholds in `results`, report series, and sub-test labels are keyed by these names, not by the collective name in the rccl-tests JSON. Optional binaries can be added to the list; for example, `all_reduce_bias_perf` (requires an RCCL build that exports `ncclAllReduceWithBias`) reports its rows as `AllReduce`, so give it its own `results.all_reduce_bias_perf` entry rather than relying on `all_reduce_perf` thresholds.
 - `env_source_script` names one existing script, available at the same path on every participating node or container. Use `/dev/null` or `"none"` when no script is needed. Regression overrides are applied after sourcing it.
 - `cvs_params.cvs_exec_timeout` caps the outer collective launch (default 2400 seconds).
 
@@ -155,14 +155,20 @@ For thresholds that depend on NIC, data types, and MPI rank count, use this form
 "results": {
   "thor": {
     "all_reduce_perf-float-16": {
-      "8589934592": {"bus_bw": "<changeme>"},
-      "17179869184": {"bus_bw": "<changeme>"}
-    }
+      "8589934592": {"bus_bw": "<changeme>"}
+    },
+    "all_gather_perf-float-16": null
   }
 }
 ```
 
 NIC keys are `ainic`, `thor`, and `connectx`, selected from `cvs_params.nic_model`. The result key is `<collective>-<data_types joined with underscores>-<total MPI ranks>`. Perf uses its configured data types in order; regression uses `float`, the rccl-tests default for its command. Pairwise uses the rank count of the current subset. A NIC/rank reference is used only when its full key matches.
+
+`cvs_params.fabric` selects `scale_out` (the default when omitted) or `scale_up`. Matching is case-insensitive; hyphens, underscores, and spaces are ignored. `scale_out` looks up the NIC key from `nic_model`, then the flat table. `scale_up` reads only `results.scale_up.<collective>-<data_types>-<total ranks>`; NIC-keyed and flat references are never used. The rank suffix follows the GPU count, for example `all_reduce_perf-float-4` for a 4-GPU tray. A missing scale-up key logs a warning with the exact path and fails the test when `verify_bus_bw` is `"True"`. Unknown fabric values warn and fall back to `scale_out`.
+
+```json
+"scale_up": {"all_reduce_perf-float-8": {"8589934592": {"bus_bw": "350"}}}
+```
 
 Both suites also accept the shipped legacy flat format:
 
@@ -174,9 +180,24 @@ Both suites also accept the shipped legacy flat format:
 }
 ```
 
-A matching NIC/rank reference takes precedence over a flat reference. Flat references apply regardless of data type or rank count, so calibrate them for every topology you test. The sample numbers are examples for two nodes, not qualification targets for other clusters. Pairwise/incremental sub-runs drop flat references entirely, since a threshold calibrated for the full cluster does not apply at pairwise node counts; only NIC/rank-keyed references, already scoped by rank count, are honored there.
+A matching NIC/rank reference takes precedence over a flat reference. Flat references apply regardless of data type or rank count, so calibrate them for every topology you test. The shipped `results.thor` entries cover the published MI350X/MI355X scale-out range of 2–16 nodes at 8 ranks per node: `all_reduce_perf-float-16`, `-24`, through `-128`, each require at least 350 GB/s at 8589934592 bytes. This includes 4 nodes × 8 ranks (32 total) and 8 nodes × 8 ranks (64 total). The sample sets `bus_bw_tolerance` to `"1.0"`, enforcing this bar exactly. Set each all_reduce entry to 304 for MI300X. The guide lists both 304 and 350 for MI355X; the correct bar is still open. Its "8 GB" size is interpreted here as 8 GiB (8589934592 bytes), which is also open. The other nine collectives have no published bar, so their entries are `null` for each covered rank count. The flat table contains generic two-node examples, which are also compared without slack at the sample tolerance of 1.0. Other NICs and unlisted total-rank counts use the flat examples unless you add calibrated NIC/rank entries. Since keys use total ranks, another topology with a covered rank count also resolves to the guide entry and must override it. Pairwise/incremental sub-runs drop flat references entirely, since a threshold calibrated for the full cluster does not apply at pairwise node counts; only NIC/rank-keyed references, already scoped by rank count, are honored there. With `verify_bus_bw` on, 2-node pairs at 8 ranks per node are gated by the `-16` entry.
 
-Set `cvs_params.verify_bus_bw` to `"True"` to enforce bandwidth thresholds. Measurements below 95% of the configured reference fail, and a missing threshold for a requested collective also fails. Dip checks stay off unless `verify_bw_dip` or `verify_lat_dip` is `"True"`; either flag uses the resolved reference message sizes. Dip checks compare consecutive reference sizes within one data type (and, for unaggregated rows, one rccl-tests cycle), in ascending size order; rows of different data types are never compared with each other. With no matching reference, these checks have no reference data to validate.
+Set `cvs_params.verify_bus_bw` to `"True"` to enforce bandwidth thresholds. A measurement fails below `bus_bw × cvs_params.bus_bw_tolerance`. The tolerance defaults to 0.95 when absent, must be a fraction in (0, 1], and an invalid value is reported as one failing `bus_bw` case. The guide-backed sample config uses 1.0. A configured size with no matching in-place row (out-of-place for alltoall/alltoallv) fails, so `start_msg_size` and `end_msg_size` must cover every configured size. A collective with no entry fails. A `null` entry logs `No published threshold for <collective>; bus_bw not gated` and is not gated. Invalid entries fail with the full `rccl.results.<nic>.<key>.<size>` path. `verify_bus_bw` is off in the sample because other NICs and unlisted rank counts fall back to flat examples, MI300X needs 304, and regression and pairwise reuse these entries. Enable it after checking the results for your GPU, NIC, and rank count. Dip checks stay off unless `verify_bw_dip` or `verify_lat_dip` is `"True"`; either flag uses the resolved reference message sizes and keeps a fixed 5% tolerance independent of `bus_bw_tolerance`. Dip checks compare consecutive reference sizes within one data type (and, for unaggregated rows, one rccl-tests cycle), in ascending size order; rows of different data types are never compared with each other. An enabled dip check with no resolved reference fails. Bus-bandwidth failure messages end with the data type of the failing row, for example `[type=bfloat16]`.
+
+### Single-node guide bars
+
+| Config | Platform | Bar | Tolerance |
+|---|---|---|---|
+| `mi300x_rccl_single_node_config.json` | MI300X | 304 GB/s | `1.0` |
+| `mi350x_rccl_single_node_config.json` | MI350X | 350 GB/s | `1.0` |
+
+Both bars are for `all_reduce_perf`, 8 GiB, in-place, float, on 1 node with 8 ranks. These configs are for `rccl_perf` only.
+
+**Open item:** The guide gives both 304 and 350 GB/s as the MI355X bar at 8 GiB in-place. CVS ships no MI355X bar until this is resolved; do not use the MI350X config as an MI355X gate.
+
+**Open item:** MI4xx scale-up references still need a published, validated bar; none is shipped.
+
+When `cvs_params.report_ecc_delta` is `"True"` (default `"False"`), `rccl_perf` and `rccl_regression` capture UMC/SDMA/GFX/MMHUB/PCIE_BIF/HDP/XGMI_WAFL CE/UE/DE counters and log one post-test INFO table per node. Optionally set `cvs_params.report_ecc_blocks` to a list of block names (for example `["UMC", "XGMI_WAFL"]`) to limit capture and delta reporting to those blocks; omit or leave empty for all blocks. An unknown block name fails the test. Allowed names are UMC, SDMA, GFX, MMHUB, PCIE_BIF, HDP, and XGMI_WAFL. An increase is a warning and does not fail the test. A GPU present in only one snapshot is warned as missing data (`MISSING_BEFORE` or `MISSING_AFTER`) and is not reported as a counter change. A node whose amd-smi capture returns no GPUs, bad JSON, or times out is reported as `NO_DATA`. `report_ecc_delta` stays a warning when `cluster_snapshot_debug` is also enabled. That debug snapshot still records a test failure if the RAS or PCIE `amd-smi` JSON cannot be parsed. Grep the pytest log for `ECC_BLOCKS`. This requires passwordless sudo.
 
 ### Regression combinations
 
@@ -196,7 +217,7 @@ CVS takes the Cartesian product of the environment axes and configured collectiv
 
 ### Result storage
 
-`cvs_params.rccl_result_file` defaults to `{run_dir}/rccl_result_file.json`. CVS resolves `{run_dir}` under `<workspace>/cvs_runs/<run_id>/`; managed jobs use the scheduler job ID. Perf also writes files with data-type and `_aggregated` suffixes. Regression writes to the configured result path. Successive collective runs reuse these names, so preserve JSON files separately when comparing individual cases. Pairwise runs one `all_reduce_perf` job per phase/candidate pair against this same path, so each sub-run's combined/aggregated JSON overwrites the previous one — only the last phase's files survive on disk. Pass/fail is unaffected, since pairwise verifies each sub-run's in-memory result immediately after it runs; copy the files out between sub-runs if you need every phase's artifacts.
+`cvs_params.rccl_result_file` defaults to `{run_dir}/rccl_result_file.json`. CVS resolves `{run_dir}` under `<workspace>/cvs_runs/<run_id>/`; managed jobs use the scheduler job ID. Perf writes `<stem>_<collective>.json`, `<stem>_<collective>_<dtype>.json`, `<stem>_<collective>_aggregated.json` and `<stem>_<collective>_topology_check.json`, so each collective in a `rccl_perf` run keeps its own files. Regression writes `<stem>_<collective>[_<case-hash>].json` and its matching topology audit, so every collective and environment override combination keeps its files. The case hash is a stable digest of sorted regression environment overrides and is present when overrides are configured. Characters outside the unreserved filename set are percent-encoded in collective and data type names (for example, `/` becomes `%2F`), and CVS rejects configs whose derived perf paths collide. Derived names always use `.json`, even when the configured path has another suffix. Pairwise runs one `all_reduce_perf` job per phase/candidate pair against this same path, so each sub-run overwrites the previous `<stem>_all_reduce_perf*.json` files — only the last phase's files survive on disk. Pass/fail is unaffected, since pairwise verifies each sub-run's in-memory result immediately after it runs; copy the files out between sub-runs if you need every phase's artifacts.
 
 Every run — managed or not, bare metal or container — requires the result directory to be writable and reachable through the same head-host transfer interface RCCL uses to save results. During preparation, CVS writes a unique sentinel through the head-node orchestrator, then reads it back with `download_from_head` and checks the round trip. An unavailable directory fails before launching RCCL and names `--workspace`/`CVS_WORKSPACE` in the error. This checks the result path between CVS and the head; it does not certify every mount on every allocated node.
 
@@ -255,7 +276,8 @@ Use paths and node counts appropriate to your allocation. Repeat for `rccl_regre
 
 Perf and regression add their charts to the pytest HTML report. CVS writes a timestamped suite ZIP beside the HTML report. Pairwise also records phase membership in `cvs_params.pairwise_results_file`; choose a persistent path if needed.
 
-When `verify_bus_bw`, `verify_bw_dip`, or `verify_lat_dip` is enabled, perf and regression report each comparison as a pytest sub-test labelled with the collective, check (`bus_bw`, `bw_dip`, `lat_dip`, or `results`), data type, and message size when known. Pairwise reports each Phase 0/1/2 candidate with phase and node labels. Each parent row in the HTML report expands into pass/fail case rows showing measurements and thresholds, and the filter bar shows sub-test totals. Failing cases appear as `SUBFAILED(...)` in the terminal and add a message-only `<failure>` to JUnit. Parent failure counts stay the same. With all verification flags off, perf and regression emit no sub-tests.
+When `verify_bus_bw`, `verify_bw_dip`, or `verify_lat_dip` is enabled, perf and regression report each comparison as a pytest sub-test labelled with the collective, check (`bus_bw`, `bw_dip`, `lat_dip`, or `results`), data type, and message size when known. A configured message size with no result row is reported as a failing `bus_bw` case for that size, showing the threshold and no measurement. A collective whose `results` entry is `null` adds no `bus_bw` case. Pairwise reports each Phase 0/1/2 candidate with phase and node labels. Each parent row in the HTML report expands into pass/fail case rows showing measurements and thresholds, and the filter bar shows sub-test totals. Failing cases appear as `SUBFAILED(...)` in the terminal and add a message-only `<failure>` to JUnit. Parent failure counts stay the same. With all verification flags off, perf and regression emit no sub-tests.
+A missing reference for an enabled check, or an invalid `bus_bw_tolerance`, is reported as one failing case for that check (`bus_bw`, `bw_dip`, or `lat_dip`) without a size label.
 
 For cluster validation, retain before/after bare-metal result JSONs and HTML bundles, record each managed suite's pass/fail/skip outcome, and check that results can be read from shared storage. SPUR pairwise validation must record the observed version and subset behavior. Upload report bundles outside CVS, for example:
 

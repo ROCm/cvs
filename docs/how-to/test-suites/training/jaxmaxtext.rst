@@ -2,16 +2,29 @@
   :description: Run JAX MaxText training benchmarks with CVS on AMD Instinct GPUs for single-node and distributed LLM pre-training performance validation with ROCm.
   :keywords: CVS, JAX, MaxText, training, benchmark, AMD Instinct, ROCm, AMD, GPU, distributed, RDMA, Llama
 
-**************************************************
-Run JAX MaxText training benchmarks with CVS
-**************************************************
+*****************************************************************
+Run JAX MaxText training benchmarks with CVS on AMD Instinct GPUs
+*****************************************************************
 
-JAX training in CVS is **jaxmaxtext**. The legacy ``jax_llama3_1_*`` suites have
+JAX training in CVS is ``jaxmaxtext``. The legacy ``jax_llama3_1_*`` suites have
 been removed. Use ``jaxmaxtext_single`` with a single-node config and
 ``jaxmaxtext_distributed`` with a distributed config; the mode is inferred from
 the config (distributed configs carry the NCCL RDMA device-selection vars in
 ``container.env``, single-node configs omit them). Copy the matching
 ``*_threshold.json`` into the same directory as the suite config.
+
+Prerequisites
+=============
+
+In addition to the :ref:`common training prerequisites <training-common-prerequisites>`:
+
+- The container image must bundle MaxText and JAX for ROCm.
+- A Hugging Face token file at ``paths.hf_token_file`` when any enabled run
+  downloads a tokenizer. The nodes need network access for that download. A run
+  where every enabled sweep uses ``dataset_type: synthetic`` does not need the
+  token.
+- A shared filesystem at ``paths.shared_fs``, reachable from every node, for the
+  models cache and logs.
 
 .. _jax-set-up-config:
 
@@ -41,7 +54,7 @@ Set up config
    OOMs, lower ``per_device_batch_size`` (the ``BS`` in the sweep key) — the ``mi3xx_*`` configs
    ship the larger MI325X batch sizes.
 
-Full parameter list: :doc:`/reference/configuration-files/training/jaxmaxtext`.
+See :doc:`/reference/configuration-files/training/jaxmaxtext` for the full parameter list.
 
 .. _jax-run-tests:
 
@@ -108,19 +121,10 @@ stage), while single-node configs omit them. Run single-node configs with
 ``jaxmaxtext_single`` and distributed configs with ``jaxmaxtext_distributed`` —
 the suite must match the config.
 
-Prerequisites
-=============
+Run on managed compute
+----------------------
 
-The following prerequisites are required.
-
-- Passwordless SSH from the control host to each node (key in the cluster file),
-  and Docker available on the nodes.
-- A container image bundling MaxText/JAX for ROCm (config ``container.image``).
-- A Hugging Face token file at ``paths.hf_token_file`` (used to fetch the
-  tokenizer; needs network access on the nodes). Skipped when every enabled run
-  uses ``dataset_type: synthetic``.
-- A shared filesystem (``paths.shared_fs``) reachable from all nodes for the
-  models cache and logs.
+Follow :doc:`/how-to/run-on-managed-compute` to run JAX MaxText on managed compute.
 
 Test lifecycle
 ==============

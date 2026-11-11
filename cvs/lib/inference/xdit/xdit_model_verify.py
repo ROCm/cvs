@@ -1,8 +1,6 @@
 """
 Offline model-tree verification helpers for PyTorch XDit inference tests.
 
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
 """
 
 from __future__ import annotations

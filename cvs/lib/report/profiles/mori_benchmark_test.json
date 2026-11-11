@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "profile_id": "mori_benchmark_test_rundeck",
+  "suite_id": "mori_benchmark_test",
+  "metric_contract": {"id": "mori-network-performance", "version": 1},
+  "report_basename": "mori_benchmark_test_run_deck",
+  "title": "Mori Benchmark Run Deck",
+  "subtitle": "Torch IO and IBGDA network performance across message sizes",
+  "footer": "CVS Mori · render-only · does not affect validation gates",
+  "link_name": "Mori Benchmark Run Deck",
+  "dataset_builder": "status_matrix",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "cvs_results_dict",
+    "variant": "mori_variant_config"
+  },
+  "hooks": {
+    "run_card_display": "cvs.lib.report.profiles.hooks.mori_run_card:mori_run_card_display"
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {
+      "type": "table",
+      "id": "failed-tests",
+      "title": "Failed tests",
+      "bind": "datasets.status_matrix.meta.failed_tests",
+      "when_empty": "hide"
+    },
+    {
+      "type": "metric_charts",
+      "id": "ranks",
+      "title": "MORI-IO per rank",
+      "bind": "datasets.status_matrix.meta.rank_grid",
+      "when_empty": "hide",
+      "heatmap_heading": false
+    },
+    {
+      "type": "metric_charts",
+      "id": "charts",
+      "title": "MORI-IO and IBGDA by message size",
+      "bind": "datasets.status_matrix.metric_charts"
+    },
+    {
+      "type": "table",
+      "id": "results",
+      "title": "Full results",
+      "bind": "datasets.status_matrix.meta.results_table",
+      "max_height": "480px"
+    }
+  ]
+}

@@ -56,7 +56,7 @@ class TestCspQualAgfhcDeck(unittest.TestCase):
         types = [card["type"] for card in self.profile["cards"]]
         self.assertEqual(
             types,
-            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "status_matrix"],
+            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "table"],
         )
         metrics = next(card for card in self.profile["cards"] if card["type"] == "metric_charts")
         self.assertEqual(metrics["when_empty"], "hide")
@@ -65,7 +65,11 @@ class TestCspQualAgfhcDeck(unittest.TestCase):
         self.assertEqual(self.profile["dataset_builder"], "status_matrix")
         self.assertEqual(self.profile["suite_id"], "csp_qual_agfhc")
         self.assertIn("Pass rate", self.html)
-        self.assertIn("Columns are executed CSP qualification steps", self.html)
+        self.assertIn("results-table", self.html)
+        self.assertIn("<th>Message</th>", self.html)
+        self.assertNotIn("<th>Value</th>", self.html)
+        self.assertNotIn("<th>Unit</th>", self.html)
+        self.assertNotIn("<th>Threshold</th>", self.html)
         self.assertIn("csp_qual_agfhc_run_deck_viewer.html", self.html)
         self.assertNotIn("Measurements", self.html)
 
@@ -94,7 +98,7 @@ class TestCspQualAgfhcDeck(unittest.TestCase):
         self.assertNotIn("ANC version", self.html)
 
     def test_status_matrix_shows_failed_recipe(self):
-        self.assertIn("status-matrix", self.html)
+        self.assertIn("results-table", self.html)
         self.assertIn("hbm_lvl5", self.html)
         self.assertIn("node-a", self.html)
         self.assertIn("hbm_bw", self.html)

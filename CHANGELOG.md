@@ -5,60 +5,118 @@ All notable changes to ROCm Cluster Validation Suite (CVS) are documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - Unreleased
+## [0.4.0] - Unreleased
 
 ### Added
 
-- RCCL perf, regression and pairwise report each bandwidth or dip check per collective, data type and message size, or pairwise phase and node, as a pytest sub-test. The HTML report expands each parent row into per-case pass/fail rows.
-- Aorta `aorta_single` and `aorta_distributed` write an Aorta Run Deck (`<suite>_html/aorta_run_deck.html` and `.json`) beside the pytest HTML report, with a run card showing each configured threshold's verdict from the threshold gate, a lifecycle timeline, a threshold gate matrix, per-rank time and ratio charts, and a full results table. Pass/fail gating is unchanged.
+- `install_mori` builds MoRI from `git_url` at `git_ref` into `mori_dir`, using the MORI config, before `mori_benchmark_test` runs. In container mode it needs `container.lifetime` `persistent` or `no_launch`. The MORI run card shows the built commit.
 
 ### Changed
 
-- ibperf now probes every test node's perftest binary for ROCm DMA-BUF support before launching. It fails with the node, the binary path and the build flag when support is missing, unless `ibperf.require_dmabuf` is `"False"`. Whether DMA-BUF was used is recorded as a `dmabuf` user property and in the Excel sheet headings. `run_ib_perf_bw_test` / `run_ib_perf_lat_test` no longer take `shdl` and accept `use_dmabuf`. `check_perftest_dmabuf_support` is replaced by `check_perftest_dmabuf`.
-- Aorta threshold validation and trace collection report each threshold and each node as a pytest sub-test, shown as rows of the parent test in the HTML report, with the measured value next to each threshold, and as `cvs_aorta_subtest` properties in JUnit XML that carry the outcome, measured value, gate and failure message. JUnit `<testcase>` names and count are unchanged, but each sub-test adds one to the `testsuite` `tests` total, and a failed sub-test adds its own `<failure>` to the parent `<testcase>` next to the parent's failure, so `failures` counts both.
-- RCCL perf, regression, and pairwise suites use the orchestrator for workload execution, including container-aware launches and cleanup. `RcclJob` and `RcclJob.from_config` now take one `orch` argument in place of the previous two execution handles; `OpenMPI.prepare`, `MpiRun`, and `Srun` callers must also migrate.
-- RCCL result files default to the run directory. Every run verifies shared result-path access via a sentinel round-trip through `download_from_head` before launching, and result-save failures fail the test. Container runs require the result directory mounted at the same host/container path.
-- `Orchestrator` now declares `exec_on_host`, `upload_to_head`, `download_from_head`, and `download_file` as required methods. RCCL uses the first three for host diagnostics and result transfers instead of reaching through internal handles; Aorta uses `download_file` for per-host artifact pickup. Custom orchestrator subclasses must implement all four methods.
-- Node Smoke Tier 1, Tier 2, and Tier 3 now run by default. Set `node_smoke_tier1.connectivity_mode` or `node_smoke_tier3.connectivity_mode` to `"skip"` to disable a tier, or set `node_smoke_tier1.tier2_perf` to `false` to disable Tier 2 only. Previously all three were opt-in (`connectivity_mode` defaulted to `"skip"` and `tier2_perf` defaulted to `false`).
-- `cvs run` writes a self-contained pytest HTML report and a text log under `<workspace>/cvs_runs/<run_id>/` by default. `--html` and `--log-file` override those paths; `--no-html` and `--no-log-file` suppress them.
-- ANC artifacts now all live under the run directory. Collected ANC logs land at `<run_dir>/anc_logs/<node>/<test_name>/<timestamp>/` instead of a configured prefix, and the HTML/log reports come from `cvs run`'s standard paths. The `anc.log_folder_path` and `anc.COLLECT_HTML_REPORTS` config keys are removed (ANC no longer self-collects HTML; use `--no-html` to suppress the report).
-- A scheduler-managed `cvs run` must now set an explicit workspace on shared storage (`--workspace` or `CVS_WORKSPACE`); it no longer silently falls back to the venv parent, which is node-local in a container and loses collected artifacts at job teardown.
+- The shipped MORI config sets `mori_dir` to `/home/{user-id}/INSTALL/mori` and `container.lifetime` to `persistent`, so `install_mori` works with it as shipped. It also mounts the host Broadcom Thor2 `libbnxt_re-rdmav34.so` and `libibverbs.so.1`; delete those mounts on nodes without Thor2.
+
+- Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.
 
 ### Fixed
 
-- ibperf `verify_bw` now enforces `expected_results`. Previously the bandwidth and latency
-  thresholds were never evaluated, so `ib_perf_bw_test` passed regardless of measured performance.
-  Every GPU instance is checked against the threshold for its message size and QP count, and
-  thresholds outside `msg_size_list`/`qp_count_list` are logged as warnings. The unreachable
-  `ib_write_bw` 8388608-byte sample threshold is removed. Existing configs with `verify_bw` set to
-  `"True"` may now report failures; re-baseline thresholds for your cluster.
-- Platform `host_configs_cvs` now checks the network link speed of every backend NIC (`test_check_be_nic_link_speed`) against `nic_link_speed` (default `400000` Mb/s) and reports node, interface and actual speed on mismatch. Set `nic_link_interfaces` to the backend netdev names; without it the backend NICs are auto-detected, and a node with fewer backend NICs than another node fails. Existing configs without `nic_link_speed` gate at 400000 and will fail on NICs running at another speed.
-- Pytest sub-test reports no longer write their own per-test log file or Full Log link, which could replace the parent test's Full Log link.
+- `test_install_agfhc` no longer fails a node when a companion tool directory is missing (`TXB_PATH`, `MINIHPL_PATH`, `MEMROCKER_PATH`, `FIREXS_PATH`, or `AFIDSAG_PATH`). Those paths are still exported when AGFHC is launched.
+- The health TransferBench `healthcheck` test fails when TransferBench reports a failed sub-test or exits with an error. It previously passed, and only the Run Deck showed the failure.
+- ibperf: when a node pair is excluded, the remaining pairs no longer wait out the perftest timeouts or report extra failures for the excluded nodes.
+- The health sample config's TransferBench schmoo `32_cu_local_copy` threshold is lowered so healthy MI300X nodes pass; configs copied from the old sample still fail and must lower `32_cu_local_copy`.
 
-- RCCL bandwidth thresholds and dip checks now read the configured `rccl.results` table.
-  The shipped dip-check defaults are now `"False"`. Existing configs with
-  `verify_bw_dip` or `verify_lat_dip` set to `"True"`, including copies of the
-  previous defaults, will begin running those checks and may report failures.
-  Re-baseline the thresholds for your cluster before enabling bandwidth verification.
-- RCCL regression reads configured collectives from `rccl_test_params`, with a fallback for older configurations. Both perf and regression consult top-level `results`, accepting NIC/data-type/rank references and legacy flat bandwidth thresholds.
-- RCCL `mpirun` uses the orchestrator's non-default SSH port for container launches.
-- RCCL pairwise/incremental runs no longer inherit the full cluster's legacy flat bandwidth thresholds; only NIC/rank-keyed thresholds (already scoped to node count) carry over to the pairwise sub-cluster run.
-- `RcclJob` no longer requires `cluster_node_list` to start with the orchestrator's head node; the orchestrator's own head node is used regardless of list order.
-- RCCL result-directory sentinel check reads the per-host path `download_from_head` returns instead of the unsuffixed path passed in, so the probe no longer rejects a valid shared/bind-mounted directory before every run.
-- Preflight HTML rows for Node Smoke pass or fail only when Primus reported that check. A node-level result no longer marks unreported Tier 1 GPU slots or Tier 3 collector names as passed.
-- A Node Smoke tier failure stays in the pytest-html report when the per-check rows do not already show it.
-- Preflight failure messages name the hosts that failed. Config sections such as `vpod_membership` and `setup_results` are no longer reported as node names.
-- RCCL: compare reported topology with launcher settings in performance and regression runs, with configurable `warn` (default), `strict`, and `off` modes and a separate JSON audit that preserves producer metadata. Count GPUs across all threads in regression launches, and skip topology checks when every row omits topology.
-- RCCL: accept single-node results without a topology block, reject mixed result shapes regardless of row order, and report malformed JSON result structures without crashing row processing.
-- RCCL: return cleanly when a run produces no result rows instead of raising `IndexError` from the bandwidth-dip check. Log scanning still fails these runs for missing bandwidth numbers.
-- IB topology discovery recognizes AMD Pollara (Ionic) HCA names such as `ionic_0`. Previously they were filtered out, so callers found no HCAs on Ionic clusters.
-- vLLM: the DeepSeek V4 sample configs no longer set `HF_HUB_OFFLINE` or `TRANSFORMERS_OFFLINE`. With those flags, an accuracy task added to a copy of a sample failed at the end of the sweep because lm-eval could not load its dataset. The vLLM configuration reference now says to set them only on clusters without Hub access, with accuracy datasets pre-cached, and that `distributed_executor_backend` and `dist_init_port` are ignored on one host.
-- vLLM suites accept the `spec_decode_*` statistics that `vllm bench serve` reports for speculative decoding, instead of failing the first cell and skipping the rest of the sweep.
-- vLLM and ATOM GPU metric snapshots and polls no longer reset the xGMI error counters. They ran a bare `amd-smi metric --json`, which also reads `--xgmi-err` and so clears the counters on every call; they now request only the `--usage` and `--mem-usage` sections they read. The raw `gpu.energy_j` snapshot field, which no suite reads, is now always `None`.
-- SGLang: the GPU occupancy check runs `amd-smi metric --mem-usage --json` instead of a bare `amd-smi metric --json`, so it reads only the VRAM section it uses and no longer reads the xGMI error section, which resets the xGMI error counters on MI200 and older GPUs.
-- vLLM: `vllm_single` accepts `pipeline_parallel_size` greater than 1 instead of rejecting it, and `vllm_distributed` on a one-host cluster now serves with the configured pipeline width instead of 1.
-- vLLM: a server that exits during startup, or whose launch never created its log, now fails the cell at the next startup check instead of being polled for the whole readiness budget (about 66 minutes by default). A `vllm serve` launch lost in transport is retried up to twice when it left no server log or `server.pid` behind.
-- IB Perf sample config: `duration` is now `10` (was `30`). The bandwidth test reads perftest results about 20 seconds after launch, so 30-second runs were reported as failures; configs copied from the old sample must lower `duration` as well.
+### Removed
+
+
+## [0.3.0] - 2026-11-02
+
+### Added
+
+- `cvs run atom` can run `zai-org/GLM-5.1-FP8` with the vLLM driver on one mi3xx node (`mi3xx_atom_vllm_glm-5.1_fp8_single`, TP8) or two nodes (`mi3xx_atom_vllm_glm-5.1_fp8_distributed`, TP8, PP2). Thresholds stay unenforced.
+- Run Deck for most suites: health, platform, preflight, ibperf, MORI, ANC, ARC, RCCL, training and inference runs write a Run Deck beside the pytest HTML report. Install suites do not.
+- `cvs run` supports Slurm and SPUR: launch it with `srun` or `spur run`, and supported suites run without passwordless SSH.
+- ibperf:
+  - vPOD-aware node pairing (`ibperf.pairing_mode`).
+  - With `"orchestrator": "container"`, the install and test suites run inside the container. See the IB Perf page for the container settings they need.
+- RCCL:
+  - Scale-up bandwidth references (`cvs_params.fabric`).
+  - Bus-bandwidth tolerance (`cvs_params.bus_bw_tolerance`, default `0.95`).
+  - Perf and regression compare the reported topology with the launched topology (`cvs_params.topology_check`, default `warn`).
+  - Perf and regression can scan each node's dmesg between that test's start and end markers (`cvs_params.dmesg_during_test`, default `"False"`).
+  - The sample config gates scale-out `all_reduce_perf` at the published MI350X/MI355X acceptance bar in `results.thor`; MI300X clusters must override those entries. `verify_bus_bw` remains `"False"` by default.
+  - Single-node 8-GPU guide configs `mi300x_rccl_single_node_config.json` and `mi350x_rccl_single_node_config.json`.
+- Platform `test_check_be_nic_link_speed` checks backend NIC link speed against `nic_link_speed` (default `400000` Mb/s). Existing configs fail on NICs running at another speed, or on a node with fewer backend NICs unless `nic_link_interfaces` is set.
+- Platform host config `fw_dict` includes `PLDM_BUNDLE`. Set it to the version reported by `amd-smi firmware` before the GPU firmware check; the check looks up every firmware ID `amd-smi` reports.
+- Platform `test_check_ifoe_sw_details` reports the host IFoE/AFM device firmware (`afmctl show device`) and `ifoe` kernel module (`modinfo ifoe`) versions per node. Set the optional `ifoe_fw_version` / `ifoe_kmod_version` to require an exact match; leave them blank to record the detected version. Nodes without IFoE report NA.
+- Primus Megatron configs accept `train_params.primus_cli_overrides` as either a raw CLI string or a JSON object rendered as `--key value` pairs. Primus 405B auto-splits decoder first/last pipeline layers from `train_params.pipeline_parallelism` when needed.
+
+### Changed
+
+- vLLM configs that set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` in `container.env` now fail to load; set `paths.hf_token_file` instead, on a path mounted in the container on each node.
+- ATOM reads the Hugging Face token from `paths.hf_token_file` and mounts that file read-only in the container. The file must exist and be non-empty on every node. If that mount is missing inside the container, the server env script fails instead of starting the server without a token. `HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, and `HUGGINGFACE_HUB_TOKEN` in the container environment are dropped.
+- ibperf's install check and the cluster health monitor require `amd-smi` for GPU discovery. The GPU PCIe bus map shared by ibperf's GPU-NIC pairing and the platform host config check reads `rocm-smi` when present and only falls back to `amd-smi` when `rocm-smi` is absent; the platform check (`test_check_gpu_pcie_speed_width`) now fails, instead of passing without checking a link, when neither tool reports any GPU.
+- ibperf:
+  - A node with no partner in the discovered NIC set fails and is excluded, instead of running as a server with no client.
+  - Each node's perftest binary must support ROCm DMA-BUF, unless `ibperf.require_dmabuf` is `"False"`.
+  - The install suite no longer runs `apt` on every node. Set `ibperf.install_system_packages` to `"True"` to install the build and runtime packages. Install fails before the build when `numactl`, `lshw`, `rdma`, `libibverbs` or `librdmacm` is still missing, including after `apt`. It always fails on a node without `amd-smi`, which GPU discovery needs and `apt` never installs.
+  - The tests follow `ib_bw_test_list` and `ib_lat_test_list`. With the shipped sample, `ib_read_bw` no longer runs and `ib_read_lat` does.
+  - Each GPU uses an active backend NIC in its own PCI domain when GPU and NIC domains overlap. A GPU with none fails the test before perftest starts.
+  - `ibperf.gid_index` and `ibperf.gid_type` are checked on every NIC before perftest starts; a mismatch fails the test.
+- RCCL:
+  - Perf, regression and pairwise run through the orchestrator, so they also run with the container backend.
+  - Result files default to the run directory, and each run checks that the directory is shared before launching. Container runs need it mounted at the same host and container path.
+  - The shipped `verify_bw_dip` and `verify_lat_dip` defaults are now `"False"`. With either set to `"True"` and no matching `results` reference, the test fails instead of warning and skipping; re-baseline thresholds first.
+  - A `null` `results` entry means "no published threshold" and skips the bandwidth gate; absent or empty entries still fail.
+  - Graphs and result tables chart the rows the checks evaluate, with one series per data type (`<collective> [type=<dtype>]`) when several `data_types` are configured. Heatmap reference JSONs saved from such runs must be regenerated.
+- RCCL and Aorta report each check as a pytest sub-test, shown as per-case rows in the HTML report and in JUnit XML. Sub-tests add to the JUnit `tests` total, and a failed one adds its own `<failure>`.
+- Custom `Orchestrator` subclasses must implement `exec_on_host`, `upload_to_head`, `download_from_head` and `download_file`.
+- Node Smoke Tier 1, Tier 2 and Tier 3 now run by default. To keep them off, set `node_smoke_tier1.connectivity_mode` and `node_smoke_tier3.connectivity_mode` to `"skip"`.
+- `cvs run` writes a self-contained pytest HTML report and a text log under `<workspace>/cvs_runs/<run_id>/` by default; `--no-html` and `--no-log-file` suppress them.
+- Generic ANC install and log helpers moved to `cvs/lib/amdtools_lib.py`; `anc_lib` names unchanged.
+- ANC `anc_release_url` is now optional. Each suite checks for an existing install (at `ANC_INSTALL_PATH` when set, else `/opt/amdtools`) and runs against the installed version; a URL is needed only to install ANC when it is absent or below `anc_version`. `anc_installation` fails if an install is required but no usable URL is given, while group/item suites proceed with the installed version. `anc_release_url`, `anc_version`, and `ANC_INSTALL_PATH` are validated only when used. A release candidate is treated as its base release (`1.7.0-rc.1` as `1.7.0`); the rc number is no longer compared.
+- Logged command lines show `<redacted>` in place of the values of token, password, secret and API-key variables and flags; the commands sent to nodes are unchanged.
+
+### Fixed
+
+- Aorta script mode (the `aorta_single` default) now applies `training_overrides`; previously runs silently used the YAML values. The applied config is saved as `effective_config.yaml`.
+- Kernel-log health checks no longer echo each node's full dmesg or journal into the run log and HTML report. Each scan logs one summary line, and detected errors are still reported.
+- TorchTitan no longer writes the Hugging Face token into tokenizer-download or training commands. Each node reads `paths.hf_token_file` inside the container when that command runs. If that file is missing, empty, or not mounted, the stage fails and later stages are skipped.
+- Megatron and Primus no longer write the Hugging Face token into training, tokenizer-download, or job-launch commands. Each node reads `paths.hf_token_file` inside the container when that command runs. If that file is missing, empty, or not mounted, Megatron fails the test and the remaining training stages are skipped. Primus exports an empty `HF_TOKEN` and the run continues.
+- jaxmaxtext no longer writes the Hugging Face token into the per-node launcher script or tokenizer-download command. Each node reads `paths.hf_token_file` inside the container when that command runs. If that file is missing, empty, or not mounted, the stage fails and later stages are skipped.
+- ibperf:
+  - Runs on nodes with fewer than 8 GPUs instead of failing with `KeyError: 'card4'`.
+  - `verify_bw` now enforces `expected_results`; previously tests passed regardless of measured bandwidth. Configs with `verify_bw` set to `"True"` may now fail; re-baseline thresholds for your cluster.
+  - The sample config sets `duration` to `10` (was `30`), which caused failures; lower it in configs copied from the old sample.
+  - Latency tests run the perftest latency binaries; previously each latency case ran a bandwidth binary.
+  - `--use_rocm` selects the GPU local to each NIC, instead of the GPU with the same card number.
+  - A perftest process that exits non-zero fails the test.
+- RCCL:
+  - Perf and regression thresholds and dip checks read the configured top-level `rccl.results` table, and regression reads its collectives from `rccl_test_params`.
+  - Runs launched with mpirun create a private, randomly named MPI hostfile and attempt to remove it when the run finishes. Hostfile creation failures fail the test.
+  - NIC- and rank-keyed `results` entries are validated like flat entries, and invalid values fail with their config path.
+  - Bus-bandwidth verification fails when a configured message size has no result row, instead of skipping it.
+  - Perf and regression result files include the collective name, so a run keeps every collective's results instead of only the last. Tools that read the old result paths must use the new names.
+  - Pairwise and incremental runs no longer apply the full cluster's flat bandwidth thresholds to each sub-run; only NIC- and rank-keyed thresholds carry over.
+  - Malformed JSON results are reported, and a run with no result rows fails on missing bandwidth, instead of crashing.
+- Preflight:
+  - Node Smoke rows pass or fail only for checks Primus reported, and a tier failure stays in the HTML report when the rows do not show it.
+  - Failure messages name the hosts that failed, not config sections such as `vpod_membership`.
+  - The preflight report pytest row fails when the summary overall status is FAIL. It previously passed after logging a warning.
+  - A failed, blocked, or error check in the preflight summary, and the line that an overall failure was detected, are logged at error level. A warning check, such as unreachable nodes or a TransferBench skip-budget warning, is logged at warning level. Those lines were previously info, and the overall-failure line was a warning.
+  - A check marked skipped, including one recorded with status SKIPPED and no skipped flag, is not scored as a pass. A check that tested no nodes is an error, and that error fails the preflight report.
+- vLLM:
+  - DeepSeek V4 sample configs no longer set `HF_HUB_OFFLINE` or `TRANSFORMERS_OFFLINE`, which broke accuracy tasks.
+  - Suites accept the `spec_decode_*` statistics that `vllm bench serve` reports, instead of failing the sweep.
+  - `vllm_single` accepts `pipeline_parallel_size` greater than 1, and `vllm_distributed` on one host serves with the configured pipeline width.
+  - A server that exits during startup fails the cell at once, instead of waiting out the readiness timeout.
+- vLLM, ATOM and SGLang no longer reset the xGMI error counters when reading GPU metrics.
+- Pytest sub-test reports no longer replace the parent test's Full Log link.
+- IB topology discovery recognizes AMD Pollara (Ionic) HCA names such as `ionic_0`.
+- Containers with `runtime.args.privileged: false` start on hosts without `/dev/infiniband`; InfiniBand devices are passed only where the host has them.
+- The platform `test_check_dmesg_driver_errors` check no longer fails on err-level `[Firmware Bug]:` lines or zero-valued `WALKER_ERROR`, `MAPPING_ERROR` and `PROTECTION_FAULT_STATUS` lines. Non-zero values still fail.
+
+### Removed
+
+- The legacy dmesg parser. Every dmesg and kernel-journal scan, including the platform `test_check_dmesg_driver_errors` check, now uses AMD node-scraper. `CVS_DMESG_PARSER` is no longer read; remove it from run scripts.
 
 ## [0.2.0] - 2026-09-23
 
@@ -117,3 +175,4 @@ First public CVS release (`release/cvs-0.1.0`).
 - Optional `NCCL_SOCKET_IFNAME` pass-through; OpenMPI older than 5.x uses `--mca oob_tcp_if_include`.
 - `env_source_script` compatibility; Hugging Face token from `hf_token_file`; Megatron master address localhost handling.
 - Custom `gst_single.conf` for MI355X / MI350X.
+

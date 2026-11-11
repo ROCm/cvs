@@ -18,7 +18,7 @@ from cvs.lib.preflight.mtu_check import RdmaMtuCheck, DEFAULT_MIN_NETDEV_MTU, DE
 from cvs.lib.preflight.version_check import RocmVersionCheck
 from cvs.lib.preflight.interface_consistency import InterfaceConsistencyCheck
 from cvs.lib.preflight.ifoe_l2_connectivity import IfoeL2ConnectivityCheck
-from cvs.lib.preflight.scaleup_fabric import NodeHealthCheck
+from cvs.lib.preflight.scaleup_fabric import DEFAULT_MIN_UP_PORTS_PER_GPU, NodeHealthCheck
 from cvs.lib.preflight.transferbench_smoke import TransferBenchSmokeCheck
 from cvs.lib.preflight.node_smoke import (
     NODE_SMOKE_TIER1_LABEL,
@@ -154,15 +154,43 @@ def _reject_flat_preflight_checks(config_dict):
         )
 
 
+_NODE_CHECK_STATION_POLICY_KEYS = frozenset({'min_up_ports_per_gpu'})
+
+_STATION_POLICY_IFOE_KEYS = frozenset(
+    {
+        'min_up_ports_per_gpu',
+        'reject_partial_stations',
+        'allow_disabled_stations',
+        'expected_station_masks',
+        'require_uniform_station_mask',
+        'agent_process_name',
+    }
+)
+
+
+def _node_health_station_policy_kwargs(config_dict, *, fabric_checks):
+    """Map customer-facing station-policy knobs to ``NodeHealthCheck`` kwargs."""
+    if not fabric_checks:
+        return {}
+    ifoe = _ifoe_config(config_dict)
+    kwargs = {}
+    for key in _STATION_POLICY_IFOE_KEYS:
+        if key == 'min_up_ports_per_gpu':
+            continue
+        if key in ifoe:
+            kwargs[key] = ifoe[key]
+    kwargs['min_up_ports_per_gpu'] = _station_mask_min_up_ports(config_dict)
+    return kwargs
+
+
 def _node_check_config(config_dict):
     """Return the customer-facing generic node-check configuration."""
     _reject_flat_preflight_checks(config_dict)
     config = config_dict.get('node_check', {}) if isinstance(config_dict, dict) else {}
     if not isinstance(config, dict):
         raise ValueError("preflight.node_check must be an object")
-    unknown = sorted(
-        key for key in set(config) - {'enabled', 'gpus_per_node', 'expected_rocm_version'} if not key.startswith('_')
-    )
+    allowed = {'enabled', 'gpus_per_node', 'expected_rocm_version'} | _NODE_CHECK_STATION_POLICY_KEYS
+    unknown = sorted(key for key in set(config) - allowed if not key.startswith('_'))
     if unknown:
         raise ValueError("Unsupported preflight.node_check option(s): " + ', '.join(unknown))
     return config
@@ -174,9 +202,8 @@ def _ifoe_config(config_dict):
     config = get_nested_config(config_dict, 'connectivity_check', 'ifoe', {})
     if not isinstance(config, dict):
         raise ValueError("preflight.connectivity_check.ifoe must be an object")
-    unknown = sorted(
-        key for key in set(config) - {'fabric_checks', 'l2ping', 'transferbench'} if not key.startswith('_')
-    )
+    allowed = {'fabric_checks', 'l2ping', 'transferbench'} | _STATION_POLICY_IFOE_KEYS
+    unknown = sorted(key for key in set(config) - allowed if not key.startswith('_'))
     if unknown:
         raise ValueError("Unsupported preflight.connectivity_check.ifoe option(s): " + ', '.join(unknown))
     return config
@@ -202,6 +229,39 @@ def _node_health_fabric_checks_enabled(config_dict):
     if enabled and not _node_health_enabled(config_dict):
         raise ValueError("preflight.connectivity_check.ifoe.fabric_checks requires node_check.enabled=true")
     return enabled
+
+
+def _station_mask_min_up_ports(config_dict):
+    """Resolve the IFoE station-mask admission floor from the preflight config.
+
+    Defaults to :data:`DEFAULT_MIN_UP_PORTS_PER_GPU` so a node with no enabled
+    IFoE ports (an un-provisioned scale-up fabric) is rejected.  A diagnostic
+    profile may set ``min_up_ports_per_gpu: 0`` to admit such a node on purpose.
+    """
+    ifoe = _ifoe_config(config_dict)
+    node_check = _node_check_config(config_dict)
+    if 'min_up_ports_per_gpu' in ifoe:
+        raw = ifoe['min_up_ports_per_gpu']
+        option = 'preflight.connectivity_check.ifoe.min_up_ports_per_gpu'
+    elif 'min_up_ports_per_gpu' in node_check:
+        raw = node_check['min_up_ports_per_gpu']
+        option = 'preflight.node_check.min_up_ports_per_gpu'
+    else:
+        return DEFAULT_MIN_UP_PORTS_PER_GPU
+    # Reject bool (a bool is an int in Python) and anything that is not an exact
+    # integer; the run path loads config via raw json.load, so int() truncation
+    # of 0.5 or 2.9 would silently weaken or disable the floor.
+    if isinstance(raw, bool):
+        raise ValueError(f"{option} must be an integer, not a boolean")
+    if isinstance(raw, float) and not raw.is_integer():
+        raise ValueError(f"{option} must be a whole number")
+    try:
+        min_up_ports = int(raw) if not isinstance(raw, str) else int(raw.strip())
+    except (TypeError, ValueError):
+        raise ValueError(f"{option} must be an integer")
+    if min_up_ports < 0:
+        raise ValueError(f"{option} must not be negative")
+    return min_up_ports
 
 
 def _node_health_admission_failed(config_dict):
@@ -568,6 +628,7 @@ def test_node_health(orch, config_dict, cluster_dict, lifecycle=None):
         expected_gpus_per_node=gpus_per_node,
         fabric_checks=fabric_checks,
         config_dict=config_dict,
+        **_node_health_station_policy_kwargs(config_dict, fabric_checks=fabric_checks),
     )
     results = checker.run()
     declared_nodes = sorted(cluster_dict.get('node_dict', {}).keys())
@@ -602,7 +663,30 @@ def test_node_health(orch, config_dict, cluster_dict, lifecycle=None):
         log.info("Mandatory node-health and MI4XX fabric admission PASS; AFM vPOD accelerators=%s", vpod)
     else:
         log.info("Mandatory generic GPU node-health admission PASS")
+    _log_degraded_fabric_banner(results)
     preflight_update_test_result(results)
+
+
+def _log_degraded_fabric_banner(results):
+    """Emit a prominent WARNING when any admitted node runs on a reduced IFoE fabric.
+
+    The node still passes admission (fit for processing), but scale-up throughput
+    is below full fabric, so the warning must be impossible to miss in the log.
+    """
+    warnings_by_node = {
+        node: result['warnings']
+        for node, result in (results.get('node_results') or {}).items()
+        if result.get('status') == 'PASS' and result.get('warnings')
+    }
+    if not warnings_by_node:
+        return
+    log.warning("!" * 78)
+    log.warning("!!  DEGRADED IFoE FABRIC -- node(s) FIT FOR PROCESSING but at REDUCED THROUGHPUT")
+    log.warning("!" * 78)
+    for node, warnings in warnings_by_node.items():
+        for warning in warnings:
+            log.warning("Node %s: %s", node, warning)
+    log.warning("!" * 78)
 
 
 @_timed_stage(ROCM_VERSIONS)
@@ -1720,15 +1804,29 @@ def test_generate_preflight_report(orch, config_dict, request):
 
     preflight_results['summary'] = summary
 
-    # Log summary to console
+    # FAIL, BLOCKED, and ERROR are errors. WARNING does not fail the run, but it is not a pass.
     log.info("=== PREFLIGHT CHECK SUMMARY ===")
     for check_name, check_summary in summary['checks'].items():
-        status_icon = "✅" if check_summary['status'] == 'PASS' else "❌"
-        log.info(
-            f"{status_icon} {preflight_check_display_name(check_name)}: {check_summary['status']} - {check_summary['summary']}"
-        )
+        status = check_summary['status']
+        if status == 'PASS':
+            status_icon = "✅"
+        elif status == 'WARNING':
+            status_icon = "⚠️"
+        else:
+            status_icon = "❌"
+        line = f"{status_icon} {preflight_check_display_name(check_name)}: {status} - {check_summary['summary']}"
+        if status in ('FAIL', 'BLOCKED', 'ERROR'):
+            log.error(line)
+        elif status == 'WARNING':
+            log.warning(line)
+        else:
+            log.info(line)
 
-    log.info(f"\nOverall Status: {summary['overall_status']}")
+    overall_line = f"\nOverall Status: {summary['overall_status']}"
+    if summary['overall_status'] == 'FAIL':
+        log.error(overall_line)
+    else:
+        log.info(overall_line)
 
     if summary['recommendations']:
         log.info("\nRecommendations:")
@@ -1778,18 +1876,23 @@ def test_generate_preflight_report(orch, config_dict, request):
             log.warning(f"Failed to add preflight report to bundle: {e}")
             log.info(f"Preflight report available at: {html_report_path}")
 
-    # A mandatory node-health admission failure is deliberately reported only after
-    # report artifacts are written, so downstream checks can be marked
-    # BLOCKED with actionable diagnostics rather than disappearing from the
-    # preflight output.
+    # Publish before the row fails so the Run Deck matches the written report.
+    # Node-health stays its own failure: downstream checks are marked BLOCKED
+    # with diagnostics instead of disappearing from that report.
+    preflight_update_test_result()
+
     node_health_results = preflight_results.get('node_health') or {}
     if _node_health_enabled(config_dict) and node_health_results.get('status') != 'PASS':
         pytest.fail("Mandatory node-health admission gate failed; see preflight report")
 
-    # Report overall status but don't fail generic/report-only preflight profiles.
     if summary['overall_status'] == 'FAIL':
-        log.warning("One or more preflight checks detected issues - see detailed results above")
-        log.info("Preflight report generated successfully - review HTML report for detailed analysis")
-    else:
-        log.info("All preflight checks passed - cluster is ready for performance testing")
-    preflight_update_test_result()
+        failed_checks = [
+            preflight_check_display_name(name)
+            for name, check in summary['checks'].items()
+            if check.get('status') in ('FAIL', 'BLOCKED', 'ERROR')
+        ]
+        detail = f" ({', '.join(failed_checks)})" if failed_checks else ""
+        log.error("One or more preflight checks detected issues - see detailed results above")
+        pytest.fail(f"Preflight overall status is FAIL{detail}; see preflight report")
+
+    log.info("All preflight checks passed - cluster is ready for performance testing")

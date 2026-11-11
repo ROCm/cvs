@@ -23,14 +23,22 @@ from cvs.lib.preflight.ifoe_l2_connectivity import AfmctlPortParser, parse_afmct
 
 _BDF_KEYS = ("bdf", "device_bdf", "pci_bdf")
 _GPU_ID_KEYS = ("gpu_id", "gpu", "id", "index")
+
+# Each fully-enabled IFoE station (nibble ``f``) carries two ports.  A node that
+# reports zero enabled ports has no scale-up fabric at all, which is the single
+# worst state to admit to a benchmark, so the default floor is one station.
+_IFOE_PORTS_PER_STATION = 2
+DEFAULT_MIN_UP_PORTS_PER_GPU = _IFOE_PORTS_PER_STATION
 _BDF_RE = re.compile(r"^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$")
 
-_KERNEL_FAILURE_RE = re.compile(
-    r"(?:MES\([^)]*\).*SET_HW_RSRC|hw_init.*failed|Fatal error during GPU init|"
+_KERNEL_FAILURE_PATTERN = (
+    r"MES\([^)]*\).*SET_HW_RSRC|hw_init.*failed|Fatal error during GPU init|"
     r"fw_status\s*0xffffffff|memory training failed|hbm .*test failed|"
-    r"(?:wafl|xgmi).*link training failed|discovery failed|probe with driver amdgpu failed)",
-    re.IGNORECASE,
+    r"(wafl|xgmi).*link training failed|discovery failed|probe with driver amdgpu failed"
 )
+_KERNEL_FAILURE_RE = re.compile(_KERNEL_FAILURE_PATTERN, re.IGNORECASE)
+# Remote ``grep -E`` does not accept ``\s``; keep aligned with ``_KERNEL_FAILURE_PATTERN``.
+_KERNEL_FAILURE_GREP_PATTERN = _KERNEL_FAILURE_PATTERN.replace(r"\s", "[[:space:]]")
 
 
 def _normalise_key(value: Any) -> str:
@@ -218,7 +226,7 @@ class NodeHealthCheck(PreflightCheck):
         poll_interval_seconds: int = 15,
         allow_disabled_stations: bool = True,
         reject_partial_stations: bool = True,
-        min_up_ports_per_gpu: int = 0,
+        min_up_ports_per_gpu: int = DEFAULT_MIN_UP_PORTS_PER_GPU,
         require_uniform_station_mask: bool = False,
         expected_station_masks: Optional[Mapping[str, str]] = None,
         expected_virtualization_mode: str = "bare-metal",
@@ -360,7 +368,8 @@ class NodeHealthCheck(PreflightCheck):
         return f"pgrep -af -- {shlex.quote(regex)} || true"
 
     def _kernel_command(self) -> str:
-        reader = "journalctl -k -b --no-pager"
+        grep_pattern = shlex.quote(_KERNEL_FAILURE_GREP_PATTERN)
+        reader = f"journalctl -k -b --no-pager | grep -Ei {grep_pattern} || true"
         if self.use_sudo:
             reader = "sudo -n " + reader
         return f"{reader} 2>&1 || true"
@@ -369,6 +378,11 @@ class NodeHealthCheck(PreflightCheck):
     def _add_error(result: Dict[str, Any], message: str) -> None:
         result["errors"].append(message)
         result["status"] = "FAIL"
+
+    @staticmethod
+    def _add_warning(result: Dict[str, Any], message: str) -> None:
+        # Warnings flag degraded-but-usable fabric; they never flip a PASS to FAIL.
+        result.setdefault("warnings", []).append(message)
 
     def _evaluate_host_prerequisites(self, host_outputs: Dict[str, Dict[str, str]]) -> None:
         for node, result in self.results.items():
@@ -484,7 +498,6 @@ class NodeHealthCheck(PreflightCheck):
 
     def _evaluate_station_masks(self) -> None:
         outputs = self._exec_all(self.build_station_mask_command())
-        all_masks: Dict[str, str] = {}
         for node, result in self.results.items():
             masks, errors = parse_station_masks(str(outputs.get(node, "")))
             result["station_masks"] = masks
@@ -506,24 +519,33 @@ class NodeHealthCheck(PreflightCheck):
                 disallowed = sorted(set(mask) - permitted)
                 if disallowed:
                     self._add_error(result, f"{gpu_bdf}: disallowed station-mask values {','.join(disallowed)}")
-                enabled_ports = mask.count("f") * 2
+                enabled_stations = mask.count("f")
+                enabled_ports = enabled_stations * _IFOE_PORTS_PER_STATION
                 if enabled_ports < self.min_up_ports_per_gpu:
                     self._add_error(
                         result,
                         f"{gpu_bdf}: {enabled_ports} enabled IFoE ports is below min_up_ports_per_gpu="
                         f"{self.min_up_ports_per_gpu}",
                     )
+                elif enabled_stations < len(mask):
+                    # Reached only when the floor did not already fail the GPU, so this
+                    # also covers a zero-station mask admitted by a diagnostic floor of 0
+                    # -- a degraded fabric must never pass without a visible signal.
+                    self._add_warning(
+                        result,
+                        f"{gpu_bdf}: only {enabled_stations}/{len(mask)} IFoE stations enabled "
+                        f"({enabled_ports}/{len(mask) * _IFOE_PORTS_PER_STATION} scale-up ports); "
+                        "node is fit for processing but scale-up throughput is reduced",
+                    )
                 expected = self.expected_station_masks.get(gpu_bdf) or self.expected_station_masks.get(
                     gpu_bdf[:-1] + "1"
                 )
                 if expected and mask != expected:
                     self._add_error(result, f"{gpu_bdf}: station mask {mask} does not match configured {expected}")
-                all_masks[f"{node}:{gpu_bdf}"] = mask
-        if self.require_uniform_station_mask and all_masks:
-            unique_masks = set(all_masks.values())
-            if len(unique_masks) != 1:
-                for result in self.results.values():
-                    self._add_error(result, "Station masks are not uniform across selected MI4XX GPUs")
+            if self.require_uniform_station_mask and masks:
+                unique_masks = set(masks.values())
+                if len(unique_masks) != 1:
+                    self._add_error(result, "Station masks are not uniform across GPUs on this node")
 
     def _cross_check_port_inventory(self) -> None:
         commands: Dict[str, str] = {}
@@ -633,6 +655,7 @@ class NodeHealthCheck(PreflightCheck):
             node: {
                 "status": "PASS",
                 "errors": [],
+                "warnings": [],
                 "gpu_inventory": [],
                 "afm_devices": [],
                 "station_masks": {},
@@ -686,11 +709,17 @@ class NodeHealthCheck(PreflightCheck):
                 "message": "MI4XX fabric checks are disabled",
             }
         failures = [node for node, result in self.results.items() if result["status"] == "FAIL"]
+        # A node is "degraded but fit" only if it otherwise PASSED; a FAIL node that
+        # happens to carry a station-mask warning must not be advertised as usable.
+        warned_nodes = [
+            node for node, result in self.results.items() if result["status"] == "PASS" and result.get("warnings")
+        ]
         return {
             "status": "FAIL" if failures or (self.fabric_checks and membership["status"] != "PASS") else "PASS",
             "fabric_checks": self.fabric_checks,
             "node_results": self.results,
             "failed_nodes": failures,
+            "warned_nodes": warned_nodes,
             "vpod_membership": membership,
             "errors": membership["errors"],
         }

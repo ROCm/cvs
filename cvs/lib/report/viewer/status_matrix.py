@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from cvs.lib.report.artifacts import export_payload
+from cvs.lib.report.viewer.paging import page_tables_js
 
 _TEMPLATE_PATH = Path(__file__).with_name("status_matrix.html")
 
@@ -35,6 +36,7 @@ def write_status_matrix_viewer(out_html, *, json_basename, title, subtitle="", e
         .replace("__SUBTITLE__", html.escape(subtitle))
         .replace("__JSON_PATH__", json.dumps(json_basename))
         .replace("__EMBEDDED_JSON__", embedded)
+        .replace("__PAGE_TABLES_JS__", page_tables_js())
     )
     out_html.write_text(doc, encoding="utf-8")
     return out_html

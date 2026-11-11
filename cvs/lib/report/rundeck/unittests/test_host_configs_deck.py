@@ -56,7 +56,7 @@ class TestHostConfigsDeck(unittest.TestCase):
         types = [card["type"] for card in self.profile["cards"]]
         self.assertEqual(
             types,
-            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "status_matrix"],
+            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "table"],
         )
         metrics = next(card for card in self.profile["cards"] if card["type"] == "metric_charts")
         self.assertEqual(metrics["bind"], "datasets.status_matrix.metric_charts")
@@ -67,7 +67,7 @@ class TestHostConfigsDeck(unittest.TestCase):
         self.assertEqual(self.profile["dataset_builder"], "status_matrix")
         self.assertEqual(self.profile["report_basename"], "host_configs_run_deck")
         self.assertIn("Pass rate", self.html)
-        self.assertIn("Columns are host configuration checks", self.html)
+        self.assertIn("results-table", self.html)
         self.assertIn("host_configs_run_deck_viewer.html", self.html)
         self.assertNotIn("Measurements", self.html)
         self.assertNotIn("item breakdown", self.html)
@@ -97,7 +97,7 @@ class TestHostConfigsDeck(unittest.TestCase):
         self.assertNotIn("ANC version", self.html)
 
     def test_status_matrix_shows_failed_check(self):
-        self.assertIn("status-matrix", self.html)
+        self.assertIn("results-table", self.html)
         self.assertIn("os_release", self.html)
         self.assertIn("node-a", self.html)
         self.assertIn("os_version", self.html)

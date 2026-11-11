@@ -28,13 +28,9 @@
       "nic_link",
       "pci_acs",
       "dmesg_driver",
-      "dmesg_reset"
+      "dmesg_reset",
+      "ifoe_fw",
+      "ifoe_kmod"
     ]
-  },
-  "cards": [
-    {
-      "id": "results",
-      "hint": "Columns are host configuration checks. Open a cell for the expected value and what the node reported."
-    }
-  ]
+  }
 }

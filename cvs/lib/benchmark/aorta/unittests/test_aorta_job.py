@@ -8,13 +8,120 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from cvs.lib import globals
+import yaml
+
+from cvs.lib import globals, verify_lib
 from cvs.lib.benchmark.aorta.aorta_artifacts import pack_traces
 from cvs.lib.benchmark.aorta.aorta_config_loader import AortaVariantConfig
-from cvs.lib.benchmark.aorta.aorta_job import AortaJob, _text
+from cvs.lib.benchmark.aorta.aorta_job import AortaJob, _expand_aliases, _text, overlay_training_overrides
 from cvs.lib.utils.log_poller import LogPollTimeout
 from cvs.lib.benchmark.aorta.unittests.fixtures import variant_dict
 from cvs.unittests.support import TMP, run_trusted
+
+
+class TestOverlayTrainingOverrides(unittest.TestCase):
+    BASE = "training:\n  max_steps: 12\n  lr: 1e-4\nprofiling:\n  active: 4\nmodel: x\n"
+
+    def assertNoAnchors(self, text):
+        self.assertNotIn("&", text)
+        self.assertNotIn("*", text)
+
+    def test_shared_anchor_override_changes_only_training(self):
+        base = "defaults: &d {max_steps: 12, lr: 0.1}\ntraining: *d\neval: *d\n"
+        with patch("cvs.lib.benchmark.aorta.aorta_job.log") as mock_log:
+            result = overlay_training_overrides(base, {"training.max_steps": 15})
+        data = yaml.safe_load(result)
+        self.assertEqual(data["training"], {"max_steps": 15, "lr": 0.1})
+        self.assertEqual(data["eval"], {"max_steps": 12, "lr": 0.1})
+        self.assertEqual(data["defaults"], {"max_steps": 12, "lr": 0.1})
+        self.assertEqual(list(data), ["defaults", "training", "eval"])
+        mock_log.warning.assert_not_called()
+        self.assertNoAnchors(result)
+
+    def test_nested_shared_mapping_override_changes_only_training(self):
+        base = "scheduler: &s\n  total_steps: 100\n  warmup: 5\ntraining:\n  max_steps: 12\n  sched: *s\n"
+        result = overlay_training_overrides(base, {"training.sched.total_steps": 15})
+        data = yaml.safe_load(result)
+        self.assertEqual(data["training"], {"max_steps": 12, "sched": {"total_steps": 15, "warmup": 5}})
+        self.assertEqual(data["scheduler"], {"total_steps": 100, "warmup": 5})
+        self.assertNoAnchors(result)
+
+    def test_merge_key_override_changes_only_training(self):
+        base = "defaults: &d\n  max_steps: 12\n  optim:\n    lr: 0.1\ntraining:\n  <<: *d\n"
+        with patch("cvs.lib.benchmark.aorta.aorta_job.log") as mock_log:
+            result = overlay_training_overrides(base, {"training.max_steps": 15, "training.optim.lr": 0.2})
+        data = yaml.safe_load(result)
+        self.assertEqual(data["training"], {"max_steps": 15, "optim": {"lr": 0.2}})
+        self.assertEqual(data["defaults"], {"max_steps": 12, "optim": {"lr": 0.1}})
+        self.assertNotIn("<<", result)
+        self.assertNoAnchors(result)
+        mock_log.warning.assert_not_called()
+
+    def test_aliased_lists_are_expanded(self):
+        base = "a: &x [1, {k: 1}]\nb: *x\n"
+        with patch("cvs.lib.benchmark.aorta.aorta_job.log") as mock_log:
+            result = overlay_training_overrides(base, {"c": 1})
+        data = yaml.safe_load(result)
+        self.assertEqual(data["a"], [1, {"k": 1}])
+        self.assertEqual(data["b"], [1, {"k": 1}])
+        self.assertEqual(data["c"], 1)
+        self.assertNoAnchors(result)
+        mock_log.warning.assert_called_once()
+
+        shared = {"k": [1]}
+        out = _expand_aliases({"a": [shared], "b": [shared]})
+        self.assertEqual(out, {"a": [{"k": [1]}], "b": [{"k": [1]}]})
+        self.assertIsNot(out["a"][0], out["b"][0])
+        self.assertIsNot(out["a"][0]["k"], out["b"][0]["k"])
+        self.assertIsNot(out["a"][0], shared)
+
+    def test_nested_override_preserves_types_and_siblings(self):
+        with patch("cvs.lib.benchmark.aorta.aorta_job.log") as mock_log:
+            result = overlay_training_overrides(self.BASE, {"training.max_steps": 15, "profiling.active": 6})
+        data = yaml.safe_load(result)
+        self.assertEqual(data["training"]["max_steps"], 15)
+        self.assertIsInstance(data["training"]["max_steps"], int)
+        self.assertEqual(data["profiling"]["active"], 6)
+        self.assertIsInstance(data["profiling"]["active"], int)
+        self.assertEqual(data["training"]["lr"], yaml.safe_load(self.BASE)["training"]["lr"])
+        self.assertEqual(data["model"], "x")
+        self.assertEqual(list(data), ["training", "profiling", "model"])
+        mock_log.warning.assert_not_called()
+
+    def test_string_value_with_quotes_round_trips(self):
+        result = overlay_training_overrides(self.BASE, {"output_dir": "space and 'quote"})
+        self.assertEqual(yaml.safe_load(result)["output_dir"], "space and 'quote")
+
+    def test_typo_key_warns_and_leaves_real_key(self):
+        with patch("cvs.lib.benchmark.aorta.aorta_job.log") as mock_log:
+            result = overlay_training_overrides(self.BASE, {"training.max_stepz": 15})
+        mock_log.warning.assert_called_once()
+        self.assertIn("training.max_stepz", mock_log.warning.call_args.args)
+        data = yaml.safe_load(result)
+        self.assertEqual(data["training"]["max_steps"], 12)
+        self.assertEqual(data["training"]["max_stepz"], 15)
+
+    def test_missing_intermediate_is_created_with_warning(self):
+        with patch("cvs.lib.benchmark.aorta.aorta_job.log") as mock_log:
+            result = overlay_training_overrides(self.BASE, {"newsec.k": 2})
+        self.assertEqual(yaml.safe_load(result)["newsec"], {"k": 2})
+        mock_log.warning.assert_called_once()
+        self.assertIn("newsec.k", mock_log.warning.call_args.args)
+
+    def test_rejects_invalid_inputs(self):
+        cases = (
+            ("- a\n- b\n", {"a": 1}),
+            ("a: [\n", {"a": 1}),
+            (self.BASE, {"model.x": 1}),
+            (self.BASE, {"a..b": 1}),
+            ("a: &a\n  b: *a\n", {"c": 1}),
+        )
+        for base, overrides in cases:
+            with self.subTest(base=base, overrides=overrides), self.assertRaises(ValueError):
+                overlay_training_overrides(base, overrides)
+
+    def test_empty_base_document(self):
+        self.assertEqual(yaml.safe_load(overlay_training_overrides("", {"a.b": 1})), {"a": {"b": 1}})
 
 
 class TestAortaJob(unittest.TestCase):
@@ -73,14 +180,74 @@ class TestAortaJob(unittest.TestCase):
     def test_overrides_grouped_once_and_quoted(self):
         self.raw["training_overrides"] = {"training.max_steps": 15, "output_dir": "space and 'quote"}
         job = self.job()
+        cmd = job._build_experiment_command("/mnt/config/distributed.yaml")
+        self.assertEqual(shlex.split(cmd)[2], "/mnt/config/distributed.yaml")
         for command in (
-            job._build_experiment_command(),
+            cmd,
             shlex.split(job._build_torchrun_command(0, "master", 29500))[2],
         ):
             argv = shlex.split(command)
             self.assertEqual(argv.count("--override"), 1)
             self.assertIn("training.max_steps=15", argv)
             self.assertIn("output_dir=space and 'quote", argv)
+
+    def test_script_mode_launches_with_effective_config(self):
+        self.orch.hosts = ["node-a"]
+        self.raw["base_config"] = "config/profile_overlap_2gpu.yaml"
+        self.raw["training_overrides"] = {"training.max_steps": 15, "profiling.active": 6}
+        self.orch.exec.return_value = {"node-a": {"exit_code": 0, "output": ""}}
+        self.orch.exec_cmd_list.return_value = {"node-a": "CVS_AORTA_COMMAND_OK\n"}
+
+        def fake_download(remote, local, hosts=None):
+            Path(local).write_text("training:\n  max_steps: 12\nprofiling:\n  active: 4\n")
+            return {"node-a": local}
+
+        self.orch.download_file.side_effect = fake_download
+        job = self.job()
+        commands = job.build_launch_cmd()
+        self.assertEqual(
+            self.orch.download_file.call_args.args[0], "/scratch/tester/repo/config/profile_overlap_2gpu.yaml"
+        )
+        self.assertEqual(self.orch.download_file.call_args.kwargs["hosts"], ["node-a"])
+        argv = shlex.split(commands[0])
+        self.assertEqual(argv[2], f"/mnt/.cvs-aorta/{job.run_id}/node_0/profile_overlap_2gpu.yaml")
+        self.assertEqual(argv.count("--override"), 1)
+        write = shlex.split(self.orch.exec.call_args.args[0])
+        self.assertEqual(write[:2], ["printf", "%s"])
+        self.assertEqual(write[3:], [">", argv[2]])
+        data = yaml.safe_load(write[2])
+        self.assertEqual(data["training"]["max_steps"], 15)
+        self.assertEqual(data["profiling"]["active"], 6)
+        self.assertEqual(job.get_artifact("effective_config").read_text(), write[2])
+
+    def test_script_mode_without_overrides_uses_base_config(self):
+        self.orch.hosts = ["node-a"]
+        job = self.job()
+        commands = job.build_launch_cmd()
+        self.assertEqual(shlex.split(commands[0])[2], "/mnt/config/distributed.yaml")
+        self.orch.download_file.assert_not_called()
+        self.orch.exec.assert_not_called()
+        self.orch.exec_cmd_list.assert_not_called()
+
+    def test_script_mode_fails_when_base_config_download_missing(self):
+        self.orch.hosts = ["node-a"]
+        self.raw["training_overrides"] = {"training.max_steps": 15}
+        self.orch.exec_cmd_list.return_value = {"node-a": "CVS_AORTA_COMMAND_OK\n"}
+        self.orch.download_file.return_value = {}
+        job = self.job()
+        with self.assertRaisesRegex(RuntimeError, "base config"):
+            job.build_launch_cmd()
+        self.assertEqual(job.launch_commands, [])
+
+    def test_torchrun_mode_does_not_write_effective_config(self):
+        self.raw["training_overrides"] = {"training.max_steps": 15, "profiling.active": 6}
+        self.raw["multi_node"] = {"master_port": 29500}
+        job = self.job()
+        commands = job.build_launch_cmd()
+        self.orch.download_file.assert_not_called()
+        for command in commands:
+            self.assertEqual(shlex.split(shlex.split(command)[2]).count("--override"), 1)
+        self.assertIsNone(job.get_artifact("effective_config"))
 
     def test_environment_computation_and_extra_values(self):
         self.raw["training_overrides"] = {"training.max_steps": 15, "profiling.active": 6}
@@ -452,24 +619,32 @@ class TestAortaJob(unittest.TestCase):
             "node-a": "Wed Sep 23 12:01:00",
             "node-b": "Wed Sep 23 12:02:00",
         }
+
+        def kernel_line(clock, message):
+            stamp = verify_lib._parse_cvs_time(clock).isoformat(timespec="microseconds").replace(".", ",", 1)
+            return f"kern  :err   : {stamp} {message}\n"
+
         outputs = {
-            "node-a": {"exit_code": 0, "output": "GPU reset begin"},
+            "node-a": {
+                "exit_code": 0,
+                "output": kernel_line("Wed Sep 23 11:59:00", "amdgpu: GPU hang before the workload")
+                + kernel_line("Wed Sep 23 12:00:30", "amdgpu: GPU reset begin")
+                + kernel_line("Wed Sep 23 12:01:30", "amdgpu: GPU hang after the window"),
+            },
             "node-b": {"exit_code": 0, "output": "ordinary kernel event"},
         }
-        with (
-            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
-            patch.object(job, "_exec", return_value=ends) as execute,
-        ):
+        with patch.object(job, "_exec", return_value=ends) as execute:
             self.orch.exec_on_host.return_value = outputs
             job.check_kernel_errors()
         self.assertEqual(execute.call_args_list[0].args[0], "date +'%a %b %e %H:%M:%S'")
         self.assertEqual(execute.call_args_list[0].kwargs, {"on_host": True})
-        self.assertEqual(len(globals.error_list), 1)
-        self.assertIn("GPU reset begin", globals.error_list[0])
+        self.assertTrue(globals.error_list)
+        for error in globals.error_list:
+            self.assertIn("node-a", error)
+            self.assertIn("GPU reset begin", error)
         command = self.orch.exec_on_host.call_args.args[0]
-        self.assertIn("Wed Sep 23 12:00", command)
-        self.assertIn("Wed Sep 23 12:01", command)
-        self.assertIn("awk", command)
+        self.assertIn("--time-format iso -x", command)
+        self.assertNotIn("awk", command)
         self.assertEqual(
             self.orch.exec_on_host.call_args.kwargs,
             {"hosts": self.orch.hosts, "timeout": 120, "detailed": True, "print_console": False},
@@ -480,7 +655,6 @@ class TestAortaJob(unittest.TestCase):
         job.kernel_start = {host: "Wed Sep 23 12:00:00" for host in self.orch.hosts}
         ends = {host: "Wed Sep 23 12:01:00" for host in self.orch.hosts}
         with (
-            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
             patch.object(job, "_exec", return_value=ends),
         ):
             self.orch.exec_on_host.side_effect = RuntimeError("node-b unreachable")
@@ -495,7 +669,6 @@ class TestAortaJob(unittest.TestCase):
         job.kernel_start = {host: "Wed Sep 23 12:00:00" for host in self.orch.hosts}
         ends = {host: "Wed Sep 23 12:01:00" for host in self.orch.hosts}
         with (
-            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
             patch.object(job, "_exec", return_value=ends),
         ):
             self.orch.exec_on_host.return_value = {"node-a": {"exit_code": 0, "output": ""}}
@@ -507,7 +680,6 @@ class TestAortaJob(unittest.TestCase):
         job.kernel_start = {host: "Wed Sep 23 12:00:00" for host in self.orch.hosts}
         ends = {host: "Wed Sep 23 12:01:00" for host in self.orch.hosts}
         with (
-            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
             patch.object(job, "_exec", return_value=ends),
         ):
             self.orch.exec_on_host.return_value = {
@@ -524,7 +696,6 @@ class TestAortaJob(unittest.TestCase):
         job.kernel_start = {host: "Wed Sep 23 12:00:00" for host in self.orch.hosts}
         ends = {host: "Wed Sep 23 12:01:00" for host in self.orch.hosts}
         with (
-            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
             patch.object(job, "_exec", return_value=ends),
         ):
             self.orch.exec_on_host.return_value = {host: {"exit_code": 1, "output": ""} for host in self.orch.hosts}
@@ -535,7 +706,6 @@ class TestAortaJob(unittest.TestCase):
             "node-b": {"exit_code": 2, "output": ""},
         }
         with (
-            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
             patch.object(job, "_exec", return_value=ends),
         ):
             with self.assertRaisesRegex(RuntimeError, "failed hosts.*node-b"):

@@ -13,7 +13,7 @@ Suite owners enable Run Deck by adding `profiles/<stem>.json` (matching the
 2. Pytest auto-loads **`profiles/<stem>.json`** when present (matches `cvs run` stem).
 3. At session finish, **`rundeck/generate_rundeck.py`** builds datasets, renders HTML/JSON,
    and optionally an interactive viewer when `interactive_viewer` is true
-   (`sweep`, `training_sweep`, or `status_matrix`).
+   (`sweep`, `training_sweep`, `status_matrix`, or `series`).
 
 ```mermaid
 flowchart LR
@@ -119,7 +119,7 @@ Artifacts next to the pytest HTML report:
 | File | When |
 | ---- | ---- |
 | `{report_basename}.html` + `.json` | Profile registered and results present |
-| `{report_basename}_viewer.html` | `interactive_viewer: true` and builder is `sweep`, `training_sweep`, or `status_matrix` |
+| `{report_basename}_viewer.html` | `interactive_viewer: true` and builder is `sweep`, `training_sweep`, `status_matrix`, or `series` |
 | `{report_basename}_summary.html` | `sweep` CI one-pager |
 
 The interactive viewer includes a **Token Throughput per GPU vs. Interactivity**
@@ -151,6 +151,16 @@ hide` drops the card when all three lists are empty). The `status_matrix` card
 accepts an optional `hint` string; otherwise it shows generic item-breakdown
 help. The deck nav links the viewer from `summary.viewer_html`, the same way
 sweep decks do.
+
+`series` profiles with `interactive_viewer: true` (for example `profiles/rccl.json`)
+use `viewer/series.html` via `write_series_viewer`. The page opens with a filter card
+(series select, table search, row/series counts, and a **Reset zoom** button for every
+chart) in place of the run card, then draws one Chart.js chart per `line_chart` card
+(title, unit and `y_field` from the card, one line per series from
+`datasets.series.charts[y_field]`, x-axis zoom/pan) and the results table from the
+embedded payload and `deck_profile.cards`. The series select filters the charts and the
+table; the search box filters the table. The shared table pager is applied once, and the
+**Go to top** footer is kept.
 
 Health suites can extend `profiles/health_status_base.json` for the shared run
 card, lifecycle timeline, overview, optional measurements (`when_empty: hide`),
@@ -258,6 +268,8 @@ cvs/lib/report/
     interactive.html         # sweep and training_sweep explorer
     status_matrix.html       # status_matrix health explorer
     status_matrix.py         # write_status_matrix_viewer
+    series.html              # series deck explorer (RCCL)
+    series.py                # write_series_viewer
   profiles/schema.json
   pytest_hooks.py            # session fixture binding
   registry.py                # session store + profile registration

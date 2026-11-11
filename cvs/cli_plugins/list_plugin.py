@@ -41,8 +41,8 @@ class ListPlugin(SubcommandPlugin):
 
         # Directories that hold suite-adjacent files, not runnable test suites.
         # Pruned from the walk so e.g. tests/anc/resources/validate_exe_paths.py
-        # does not show up as a bogus "resources" suite in `cvs list`.
-        skip_dirs = {"resources", "__pycache__"}
+        # or a suite's unittests/ do not show up as suites in `cvs list`.
+        skip_dirs = {"resources", "unittests", "__pycache__"}
 
         # Discover tests from all directories
         for pkg_name, tests_path, tests_dir in all_tests_dirs:

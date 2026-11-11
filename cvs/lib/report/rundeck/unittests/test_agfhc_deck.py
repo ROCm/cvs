@@ -56,7 +56,7 @@ class TestAgfhcDeck(unittest.TestCase):
         types = [card["type"] for card in self.profile["cards"]]
         self.assertEqual(
             types,
-            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "status_matrix"],
+            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "table"],
         )
         metrics = next(card for card in self.profile["cards"] if card["type"] == "metric_charts")
         self.assertEqual(metrics["bind"], "datasets.status_matrix.metric_charts")
@@ -66,7 +66,11 @@ class TestAgfhcDeck(unittest.TestCase):
         self.assertEqual(self.profile["sources"]["lifecycle"], "lifecycle")
         self.assertEqual(self.profile["dataset_builder"], "status_matrix")
         self.assertIn("Pass rate", self.html)
-        self.assertIn("Columns are executed AGFHC recipes", self.html)
+        self.assertIn("results-table", self.html)
+        self.assertIn("<th>Status</th>", self.html)
+        self.assertNotIn("<th>Value</th>", self.html)
+        self.assertNotIn("<th>Unit</th>", self.html)
+        self.assertNotIn("<th>Threshold</th>", self.html)
         self.assertIn("agfhc_run_deck_viewer.html", self.html)
         self.assertNotIn("Measurements", self.html)
         self.assertNotIn("item breakdown", self.html)
@@ -94,7 +98,7 @@ class TestAgfhcDeck(unittest.TestCase):
         self.assertNotIn("ANC version", self.html)
 
     def test_status_matrix_shows_failed_recipe(self):
-        self.assertIn("status-matrix", self.html)
+        self.assertIn("results-table", self.html)
         self.assertIn("hbm", self.html)
         self.assertIn("node-a", self.html)
         self.assertIn("hbm_bw", self.html)
@@ -102,6 +106,14 @@ class TestAgfhcDeck(unittest.TestCase):
     def test_no_inference_gate_vocabulary(self):
         self.assertNotIn("Gate matrix", self.html)
         self.assertNotIn("hover for tier status", self.html)
+
+    def test_sidecar_publishes_the_health_results(self):
+        self.assertEqual(self.payload["results_table"]["rows"][0][2], "hbm_bw")
+        self.assertEqual(self.payload["run_card_display"][0][0], "Cluster")
+        self.assertEqual(self.payload["report"]["session_lifecycle_labels"][0], "hbm")
+        self.assertNotIn("headline_metric", self.payload["report"])
+        self.assertNotIn("cells", self.payload)
+        self.assertNotIn("gate_matrix", self.payload)
 
 
 if __name__ == "__main__":

@@ -4,16 +4,18 @@ All rights reserved.
 
 Framework-agnostic config machinery shared by every CVS suite.
 
-Holds the generic half of what used to be one monolithic loader: the
-container/paths/model/image schema, the 3-pass placeholder substitution, the
-`enforce_thresholds` gate carried on `BaseVariantConfig`, and the
-`substitute_config` helper that reads a variant `config.json` + sibling
-`*threshold.json` and resolves placeholders. A per-framework module subclasses
-`BaseVariantConfig` and adds its own `Params`/`Sweep`/`cell_key` (see
-`cvs.lib.inference.utils.vllm_config_loader` for the vllm flavour).
+Holds the 3-pass placeholder substitution, the `enforce_thresholds` gate
+carried on `BaseVariantConfig`, and the `substitute_config` helper that reads
+a variant `config.json` + sibling `*threshold.json` and resolves placeholders.
+The schema blocks live in `cvs.lib.conf_lib.config_blocks` and are re-exported
+here; `cvs.lib.conf_lib.loader.load_config` builds on `substitute_placeholders`,
+and a schema that uses a threshold file loads it with `attach_threshold_file`.
+A per-framework module subclasses `BaseVariantConfig` or composes the blocks
+directly and adds its own params, sweep and `cell_key`.
 
 3-pass placeholder substitution:
-  1. cluster placeholders (`{user-id}`) anywhere
+  1. cluster placeholders (`{user-id}`, or with `all_placeholders` the full
+     `resolve_test_config_placeholders` set) anywhere
   2. self-reference within `paths` (e.g. `{shared_fs}`)
   3. cross-block (`{paths.models_dir}`, etc.) into the rest of the doc
 
@@ -21,8 +23,8 @@ A loaded variant's `container` field (`lifetime`, `name`, `image`, `runtime`)
 matches the dict shape that `cvs.core.orchestrators.factory.OrchestratorConfig`
 already understands. `runtime` is a nested `RuntimeSpec`, not a flat dict;
 `container.model_dump()` serialises it to the `runtime: {name, args}` shape the
-factory consumes (the vllm conftest does exactly this before building the
-orchestrator). The loaded variant also carries a `thresholds` field with the
+factory consumes; `load_config` merges that dump onto the cluster file's
+container block. The loaded variant also carries a `thresholds` field with the
 parsed threshold contents.
 
 `model.remote=1` raises NotImplementedError for suites other than xDiT.
@@ -39,53 +41,24 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
 from typing_extensions import Literal
+
+from cvs.lib import globals
+from cvs.lib.conf_lib.config_blocks import (  # noqa: F401 - re-exported for suite loaders
+    ContainerSpec,
+    ModelSpec,
+    Paths,
+    RuntimeSpec,
+    _Allow,
+    _Forbid,
+)
+from cvs.lib.utils_lib import config_placeholder_map
+
+log = globals.log
 
 
 # ---------- pydantic models (generic) ----------
-
-
-class _Forbid(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class _Allow(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-
-class Paths(_Forbid):
-    shared_fs: str
-    models_dir: str
-    log_dir: str
-    hf_token_file: str
-    # Host-user-namespaced scratch (jaxmaxtext launchers/yml). Optional so
-    # inference configs that omit it still load; jaxmaxtext configs set it to
-    # /tmp/{user-id}/jaxmaxtext so container-root /tmp/root is never used.
-    temp_dir: str = ""
-
-
-class ModelSpec(_Forbid):
-    id: str
-    remote: Literal[0, 1]
-    precision: str = ""
-
-
-class RuntimeSpec(_Allow):
-    name: str
-    args: Dict[str, Any] = Field(default_factory=dict)
-
-
-class ContainerSpec(_Forbid):
-    lifetime: Literal["no_launch", "per_run", "persistent"] = "per_run"
-    name: str
-    image: str
-    runtime: RuntimeSpec
-    # Environment variables passed to the container at `docker run` time (as
-    # `-e KEY=VALUE`, merged with the orchestrator defaults). The container
-    # orchestrator reads `container_config['env']`; carrying it on the spec means
-    # `container.model_dump()` forwards it verbatim to the runtime.
-    env: Dict[str, str] = Field(default_factory=dict)
 
 
 class BaseVariantConfig(_Forbid):
@@ -160,6 +133,17 @@ def _flatten_paths(d, prefix=""):
     return out
 
 
+def _without_blank_username(cluster_dict):
+    """The cluster without a blank or null ``username``, which then falls back as a missing one does.
+
+    `resolve_test_config_placeholders` keeps a blank username as is, so the
+    shared `config_placeholder_map` is left unchanged and only this path drops it.
+    """
+    if cluster_dict.get("username"):
+        return cluster_dict
+    return {k: v for k, v in cluster_dict.items() if k != "username"}
+
+
 def _resolve_cluster_mapping(cluster_dict):
     raw = cluster_dict.get("username") or "{user-id}"
     user = getpass.getuser() if raw == "{user-id}" else raw
@@ -188,27 +172,13 @@ def _find_packaged_threshold(name):
     return matches[0] if matches else None
 
 
-def substitute_config(config_path, cluster_dict):
-    """Read a variant config + sibling threshold file and resolve placeholders.
+def _find_threshold_file(raw, config_path):
+    """Return the threshold file a variant config names or sits next to.
 
-    Returns `(raw_dict, thresholds)`: the substituted config dict (NOT yet
-    validated -- the caller's per-framework `VariantConfig(**raw)` does that)
-    and the parsed, comment-stripped threshold dict.
-
-    Threshold discovery supports both layouts:
+    Supports both layouts:
     - ``threshold_json`` in the config (literal path; vllm_single style), or
     - a sole ``*threshold.json`` sibling next to the config (atom style).
-
-    This is the framework-neutral body of the old `load_variant`: file read +
-    3-pass substitution + threshold read. Per-framework loaders call it, attach
-    ``thresholds``, then build their typed config.
     """
-    config_path = Path(config_path)
-    if not config_path.is_file():
-        raise FileNotFoundError(f"variant config not found: {config_path}")
-
-    raw = json.loads(config_path.read_text())
-
     threshold_json = (raw.get("threshold_json") or "").strip()
     if "<changeme>" in threshold_json.lower():
         raise ValueError(
@@ -232,7 +202,7 @@ def substitute_config(config_path, cluster_dict):
             warnings.warn(
                 f"threshold_json '{threshold_path.name}' not found next to the config "
                 f"({config_path.parent}); using the packaged copy at {packaged}",
-                stacklevel=2,
+                stacklevel=3,
             )
             threshold_path = packaged
     else:
@@ -242,14 +212,79 @@ def substitute_config(config_path, cluster_dict):
         if len(threshold_candidates) > 1:
             raise ValueError(f"multiple *threshold.json files next to config (ambiguous): {threshold_candidates}")
         threshold_path = threshold_candidates[0]
-    thresholds = json.loads(threshold_path.read_text())
+    return threshold_path
 
-    # Pass 1: cluster placeholders ({user-id}) everywhere.
-    cluster_map = _resolve_cluster_mapping(cluster_dict)
+
+def _read_thresholds(threshold_path):
+    thresholds = json.loads(threshold_path.read_text())
+    return {k: v for k, v in thresholds.items() if not k.startswith("_")}
+
+
+def attach_threshold_file(data, context):
+    """Add ``thresholds`` from the config's threshold file, for a schema's ``mode="before"`` validator.
+
+    For a schema with ``thresholds`` and ``enforce_thresholds`` fields. Applies
+    only when the validation context holds the ``config_path`` that
+    `load_config` passes. Only a named ``threshold_json`` is read; no sibling
+    file is looked for, and any ``thresholds`` in the config itself is
+    replaced. A config that names none gets ``{}`` and ``enforce_thresholds``
+    false, so it runs record-only.
+    """
+    config_path = (context or {}).get("config_path")
+    if config_path is None or not isinstance(data, dict):
+        return data
+    if not (data.get("threshold_json") or "").strip():
+        log.warning("%s names no threshold_json; metrics are recorded without gating", config_path)
+        return {**data, "thresholds": {}, "enforce_thresholds": False}
+    return {**data, "thresholds": _read_thresholds(_find_threshold_file(data, Path(config_path)))}
+
+
+def _read_config(config_path):
+    config_path = Path(config_path)
+    if not config_path.is_file():
+        raise FileNotFoundError(f"variant config not found: {config_path}")
+    return json.loads(config_path.read_text())
+
+
+def substitute_placeholders(config_path, cluster_dict, all_placeholders=False):
+    """Read a config file and resolve its placeholders, without any threshold file.
+
+    Pass 1 expands only `{user-id}` unless `all_placeholders` is true; then it
+    expands the `utils_lib.config_placeholder_map` set that
+    `resolve_test_config_placeholders` uses, without its `<changeme>` exit.
+    Top-level `_` keys are dropped. The result is not validated.
+    """
+    return _substitute(_read_config(config_path), cluster_dict, all_placeholders)
+
+
+def substitute_config(config_path, cluster_dict, all_placeholders=False):
+    """Read a variant config + sibling threshold file and resolve placeholders.
+
+    Returns `(raw_dict, thresholds)`: `substitute_placeholders` of the config
+    (NOT yet validated -- the caller's per-framework `VariantConfig(**raw)` does
+    that) and the parsed, comment-stripped threshold dict. The threshold file
+    is required.
+
+    This is the framework-neutral body of the old `load_variant`: file read +
+    3-pass substitution + threshold read. Per-framework loaders call it, attach
+    ``thresholds``, then build their typed config.
+    """
+    config_path = Path(config_path)
+    raw = _read_config(config_path)
+    threshold_path = _find_threshold_file(raw, config_path)
+    return _substitute(raw, cluster_dict, all_placeholders), _read_thresholds(threshold_path)
+
+
+def _substitute(raw, cluster_dict, all_placeholders):
+    # Pass 1: cluster placeholders ({user-id}, or the full test-config set) everywhere.
+    if all_placeholders:
+        cluster_map = config_placeholder_map(raw, _without_blank_username(cluster_dict))
+    else:
+        cluster_map = _resolve_cluster_mapping(cluster_dict)
     raw = _walk_substitute(raw, cluster_map)
 
     # Pass 2: self-reference within paths ({shared_fs} inside paths.*).
-    paths_block = raw.get("paths", {})
+    paths_block = raw.get("paths")
     if isinstance(paths_block, dict):
         for _ in range(len(paths_block) + 1):
             new = {
@@ -266,7 +301,4 @@ def substitute_config(config_path, cluster_dict):
     raw = _walk_substitute(raw, flat_map)
 
     # Drop comment keys (e.g. "_comment") before framework/threshold validation.
-    raw = {k: v for k, v in raw.items() if not k.startswith("_")}
-    thresholds = {k: v for k, v in thresholds.items() if not k.startswith("_")}
-
-    return raw, thresholds
+    return {k: v for k, v in raw.items() if not k.startswith("_")}

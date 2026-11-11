@@ -34,7 +34,7 @@ Llama 3.1 8B, Llama 3.3 70B, and DeepSeek V2 Lite run on **both** Megatron-LM an
   - ``{user-id}`` will be resolved to the cluster username (or the local OS user as fallback). You can also set this value yourself.
   - Keys prefixed with ``_`` (for example ``_checkpoint_comment``) are inline comments and are ignored by the loader.
   - ``sweep.runs`` is required when ``sweep.combinations`` is non-empty. It must be a non-empty subset of (or equal to) those keys; an empty ``runs`` list is a load error. Omitting ``sweep`` entirely (or using empty ``combinations``) runs one implicit ``default`` cell; ``train_params.micro_batch_size``, ``global_batch_size``, and ``precision`` are then required.
-  - Each key in ``sweep.combinations`` must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``. The suite parses those three values from the key; do not repeat them in the combination body. The body may overlay extras such as ``training_iterations``, ``tensor_parallelism``, and ``pipeline_parallelism``.
+  - Each key in ``sweep.combinations`` must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``. The suite parses those three values from the key; do not repeat them in the combination body. The body can overlay extras such as ``training_iterations``, ``tensor_parallelism``, and ``pipeline_parallelism``.
 
 Available configurations
 ========================
@@ -70,8 +70,6 @@ The table below maps each supported model to its configuration file and availabl
 
 Single-node configs set ``container.env.MASTER_ADDR`` to ``127.0.0.1``. ``NNODES`` is not in the JSON: the suite sets it from the cluster host count into ``docker run -e``. Distributed configs require ``MASTER_ADDR`` and ``NCCL_IB_HCA`` and add a ``scaling_baseline`` section and ``checkpoint_dir`` to the ``checkpoint`` block. NIC type is not in the JSON: Megatron-LM defaults to ``thor2`` for MI300X/MI325X and ``ainic`` for MI355X from ``gpu_name``.
 
-Leftover files ``mi3xx_megatron_llama_*.json`` and ``mi35x_megatron_llama_single.json`` are nested-schema configs for the legacy ``megatron_llama3_1_*`` suites only. Do not pass them to ``megatron_single`` or ``megatron_distributed``.
-
 Required edits
 ==============
 
@@ -84,7 +82,8 @@ The following fields must be customized to match your cluster and hardware befor
 * ``container.image`` — Megatron-LM or Primus ROCm image on all nodes.
 * ``train_params.training_iterations`` — default training steps (for example ``"30"``). Each ``sweep.combinations`` body sets ``training_iterations`` (packaged value ``"20"``); that overlay wins for that cell.
 * ``train_params.micro_batch_size`` / ``global_batch_size`` / ``precision`` — required when ``sweep`` is omitted. Packaged files already set them; with a declared sweep the combination key supplies those values for each cell.
-* ``paths.hf_token_file`` — Hugging Face token path on the nodes.
+* ``train_params.primus_cli_overrides`` — optional Primus-only extra ``primus-cli`` args. Set as a raw string (for example ``"--use_backend triton"``) or as a JSON object rendered to ``--key value`` pairs.
+* ``paths.hf_token_file`` — Hugging Face token file, read inside the container on each node when the tokenizer download or training command runs. CVS does not read it on the machine running ``cvs run``. The path must be mounted into the container. If the file is not visible inside the container, Megatron fails that stage and sets ``lifecycle.failed``, so later stages are skipped. Primus exports an empty ``HF_TOKEN`` and the run continues.
 * ``container.env.NCCL_SOCKET_IFNAME`` / ``GLOO_SOCKET_IFNAME`` / ``NCCL_IB_GID_INDEX`` / ``NCCL_DEBUG`` — templates include example values plus ``<changeme>`` (for example ``enp193s0f1np1 <changeme>``, ``3 <changeme>``, ``ERROR <changeme>``). Remove ``<changeme>`` and keep or edit the example. Required on single-node and distributed.
 * ``sweep.runs`` — combination keys to execute (same ``MBS=…,GBS=…,PRECISION=…`` strings as in ``sweep.combinations``). Must be non-empty when ``combinations`` is present.
 * Do not set ``NNODES`` in JSON.
@@ -421,6 +420,19 @@ Llama 3.1 405B
 
 Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X; distributed only). Unlike the other models, 405B runs on **Primus only**: ``container.image`` must contain ``primus``. Megatron-LM does not support 405B.
 
+For Primus 405B, when total decoder layers (126) are not evenly divisible by
+``train_params.pipeline_parallelism`` (pipeline stage count), CVS
+automatically appends
+``--decoder_first_pipeline_num_layers`` and
+``--decoder_last_pipeline_num_layers`` to keep middle stages evenly split.
+Example: with ``pipeline_parallelism=4``, CVS appends ``31`` and ``31`` so the
+middle stages get ``32`` and ``32``. ``pipeline_parallelism`` may differ from
+node count when data parallelism is greater than 1. If layers are already
+evenly divisible, those flags are not added. If no integer first/last split is
+possible for the configured pipeline stage count, the test fails and asks you
+to set both flags explicitly in ``primus_cli_overrides``. User-provided decoder
+split flags in ``primus_cli_overrides`` take precedence.
+
 .. dropdown:: ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (representative)
 
   .. code:: json
@@ -506,6 +518,11 @@ Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X; 
    * - ``training_iterations``
      - ``<changeme>``
      - Training steps.
+   * - ``primus_cli_overrides``
+     - ``{}``
+     - Optional Primus-only extra CLI args appended to ``primus-cli direct``.
+       Accepts either a raw string (for example ``"--use_backend triton"``)
+       or an object rendered as ``--key value`` pairs.
 
 
 Common parameters
@@ -516,7 +533,7 @@ These sections appear in all config files. The parameter names and semantics are
 ``paths``
 ---------
 
-Host paths used by the job. They must be volume-mounted into the container (typically via the home-directory bind mount).
+Host paths used by the job. They must be volume-mounted into the container (typically through the home-directory bind mount).
 
 .. list-table::
    :widths: 3 3 5
@@ -527,7 +544,7 @@ Host paths used by the job. They must be volume-mounted into the container (typi
      - Description
    * - ``hf_token_file``
      - ``/home/{user-id}/.hf_token``
-     - Path to a Hugging Face token file for gated models and datasets.
+     - Path to a Hugging Face token file for gated models and datasets, as seen inside the container. CVS does not read the file on the machine running ``cvs run``. Each node reads it when the tokenizer download or training command runs. The packaged ``/home/{user-id}/.hf_token`` path works when that home directory is bind-mounted. If the file is not visible inside the container, Megatron fails that stage and sets ``lifecycle.failed``, so later stages are skipped. Primus exports an empty ``HF_TOKEN`` and the run continues.
    * - ``log_dir``
      - ``/home/{user-id}/LOGS/megatron``
      - Host path where per-node training logs are written. Megatron-LM writes ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``; Primus writes ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``. On disk ``<combo_id>`` is the sanitized combination key (see `Backends`_).
@@ -747,7 +764,7 @@ Controls ``test_smoke``: a small fixed cell (not a ``sweep.runs`` entry) that lo
      - Dict of sweep cells. The key must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>`` (the ``sweep_name`` pytest ID and threshold cell).
    * - ``combinations.*.training_iterations``
      - ``"20"``
-     - Per-cell step count. Overrides ``train_params.training_iterations`` for that run. Other ``train_params`` keys may also appear in the body.
+     - Per-cell step count. Overrides ``train_params.training_iterations`` for that run. Other ``train_params`` keys can also appear in the body.
    * - ``runs``
      - N/A
      - Ordered list of combination keys to execute. Required and non-empty when ``combinations`` is non-empty. Omit ``sweep`` (or leave ``combinations`` empty) to run the implicit ``default`` cell.
@@ -757,7 +774,7 @@ Pytest parametrizes ``sweep_name`` from ``sweep.runs``. The suite parses ``micro
 Threshold files
 ---------------
 
-Each suite JSON names a sibling file in ``threshold_json``. With a declared ``sweep``, top-level cell keys must be the same ``MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>`` strings as ``sweep.runs`` (unused ``combinations`` keys are not required). With no ``sweep`` (generic / implicit ``default`` run), the threshold cell is the literal key ``default`` — not an ``MBS=…`` string built from ``train_params``. A missing or extra cell fails load when ``enforce_thresholds`` is ``true``. When it is ``false``, the ``default`` cell may be omitted: the loader warns and ``test_metric`` is record-only.
+Each suite JSON names a sibling file in ``threshold_json``. With a declared ``sweep``, top-level cell keys must be the same ``MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>`` strings as ``sweep.runs`` (unused ``combinations`` keys are not required). With no ``sweep`` (generic or implicit ``default`` run), the threshold cell is the literal key ``default`` — not an ``MBS=…`` string built from ``train_params``. A missing or extra cell fails load when ``enforce_thresholds`` is ``true``. When it is ``false``, the ``default`` cell can be omitted: the loader warns and ``test_metric`` is record-only.
 
 A metric is gated only when ``enforce_thresholds`` is ``true`` and the cell has a numeric spec:
 
@@ -779,3 +796,4 @@ A metric is gated only when ``enforce_thresholds`` is ``true`` and the cell has 
      - if true, Megatron ``test_metric`` skips the metric when it is missing or None; a present value is still gated by ``kind``.
 
 Tracked metrics (namespace ``training.*``): ``throughput_per_gpu``, ``tokens_per_gpu``, ``elapsed_time_per_iteration``, ``mem_usage`` (Megatron-LM ``mem usages:``; Primus does not emit it; packaged specs set ``optional: true``), and on distributed configs ``scaling_efficiency_pct`` (``kind: info`` and ``optional: true`` in packaged files).
+

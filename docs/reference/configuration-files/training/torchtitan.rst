@@ -6,7 +6,7 @@
 TorchTitan training configuration files for Cluster Validation Suite (CVS)
 ************************************************************************
 
-TorchTitan configs live under ``cvs/input/config_file/training/torchtitan/``. Each config has a sibling ``*_threshold.json`` referenced by ``threshold_json``. One config file can hold multiple precision sweeps (BF16, FP8, MXFP8, MXFP4) for the same model.
+TorchTitan configs live under |cvs-input-config-file-training-torchtitan|_. Each config has a sibling ``*_threshold.json`` referenced by ``threshold_json``. One config file can hold multiple precision sweeps (BF16, FP8, MXFP8, MXFP4) for the same model.
 
 Keys prefixed with ``_`` (for example ``_scaling_baseline_comment``) are inline comments and are ignored by the loader.
 
@@ -89,7 +89,7 @@ Cluster-specific edits
      - Your TorchTitan ROCm image tag, accessible on all nodes.
    * - ``config``
      - ``hf_token_file``
-     - Path to your Hugging Face token file on the nodes.
+     - Path to your Hugging Face token file, as seen inside the container. CVS does not read it on the machine running ``cvs run``.
    * - ``config``
      - ``log_dir`` / ``scripts_dir`` / ``data_cache_dir``
      - Replace ``{user-id}`` with your username.
@@ -171,7 +171,7 @@ Top-level fields
      - Description
    * - ``hf_token_file``
      - ``/home/{user-id}/.hf_token``
-     - Hugging Face access token file path.
+     - Hugging Face access token file, as seen inside the container. Each node reads it when the tokenizer download or training command runs. CVS does not read the file on the machine running ``cvs run``. The packaged home path works when that directory is bind-mounted. A missing, empty, or unmounted file fails ``test_download_tokenizer`` and sets ``lifecycle.failed``, so later stages are skipped. ``test_teardown`` still runs.
    * - ``log_dir``
      - ``/home/{user-id}/LOGS/torchtitan``
      - Training log output directory.
@@ -314,3 +314,7 @@ Threshold files map each sweep combo to per-metric pass/fail limits. Cell keys u
 Threshold kinds: ``min`` (actual ≥ value), ``max`` (actual ≤ value), ``min_ratio`` (actual / reference ≥ value).
 
 How to run: :doc:`/how-to/test-suites/training/torchtitan`.
+
+
+.. |cvs-input-config-file-training-torchtitan| replace:: ``cvs/input/config_file/training/torchtitan/``
+.. _cvs-input-config-file-training-torchtitan: https://github.com/ROCm/cvs/tree/main/cvs/input/config_file/training/torchtitan/

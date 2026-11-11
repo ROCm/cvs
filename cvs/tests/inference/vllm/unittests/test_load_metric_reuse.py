@@ -97,7 +97,6 @@ class TestLoadMetricReuse(unittest.TestCase):
             _common.vllm_inference(
                 mock.Mock(),
                 self.variant,
-                "",
                 (("head",),),
                 run,
                 self.results,
@@ -243,7 +242,6 @@ class TestLoadMetricReuse(unittest.TestCase):
             _common.vllm_inference(
                 mock.Mock(),
                 self.variant,
-                "",
                 (("head",),),
                 run,
                 self.results,
@@ -354,7 +352,6 @@ class TestLoadMetricReuse(unittest.TestCase):
             _common.vllm_inference(
                 mock.Mock(),
                 self.variant,
-                "",
                 (("head",),),
                 run,
                 self.results,
@@ -390,7 +387,6 @@ class TestLoadMetricReuse(unittest.TestCase):
             _common.vllm_inference(
                 mock.Mock(),
                 self.variant,
-                "",
                 (("head",),),
                 run,
                 self.results,

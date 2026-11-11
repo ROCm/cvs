@@ -11,15 +11,20 @@ Covers the public contract described in the spec:
     (literal absolute path), or discovers a sole sibling ``*threshold.json``.
   - substitute_config raises FileNotFoundError when ``threshold_json`` names a
     non-existent file, or when no sibling threshold exists and the field is empty.
+  - substitute_placeholders reads no threshold file; attach_threshold_file reads
+    only a named threshold_json and runs a config that names none record-only.
   - Multiple sibling ``*threshold.json`` files raise ValueError (ambiguous).
 
 Framework: unittest.TestCase + self.subTest + unittest.mock (no pytest).
 '''
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
 from pydantic import ValidationError
 
 from cvs.lib.utils.config_loader import (
@@ -28,7 +33,9 @@ from cvs.lib.utils.config_loader import (
     ModelSpec,
     Paths,
     _find_packaged_threshold,
+    attach_threshold_file,
     substitute_config,
+    substitute_placeholders,
 )
 
 # ---------------------------------------------------------------------------
@@ -346,6 +353,21 @@ class TestSubstituteConfigThresholdJsonField(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 substitute_config(config_path, {})
 
+    def test_substitute_placeholders_needs_no_threshold_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = _base_config_dict()
+            cfg["paths"]["log_dir"] = "/home/{user-id}/logs"
+            config_path = self._write_config(Path(tmp), cfg)
+            raw = substitute_placeholders(config_path, {"username": "jdoe"})
+            self.assertEqual(raw["paths"]["log_dir"], "/home/jdoe/logs")
+            self.assertNotIn("thresholds", raw)
+
+    def test_config_without_paths_gets_no_paths_block(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = self._write_config(Path(tmp), {"log_dir": "/home/{user-id}/logs"})
+            raw = substitute_placeholders(config_path, {"username": "jdoe"})
+            self.assertEqual(raw, {"log_dir": "/home/jdoe/logs"})
+
     def test_threshold_json_as_absolute_path_no_sibling_glob(self):
         """The threshold file must be read from the explicit path, not discovered
         via glob. Even when no sibling *threshold.json exists, a valid explicit
@@ -445,6 +467,43 @@ class TestSubstituteConfigThresholdJsonField(unittest.TestCase):
             self.assertIn("cell1", thresholds)
 
 
+class TestAttachThresholdFile(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.config_path = Path(self._tmp.name) / "config.json"
+
+    def test_data_is_unchanged_without_a_config_path(self):
+        data = {"threshold_json": "missing_threshold.json", "thresholds": {"cell": {}}}
+        self.assertIs(attach_threshold_file(data, None), data)
+
+    def test_thresholds_in_the_config_never_replace_threshold_json(self):
+        (self.config_path.parent / "a_threshold.json").write_text(json.dumps({"file": {}}))
+        context = {"config_path": self.config_path}
+        named = attach_threshold_file({"threshold_json": "a_threshold.json", "thresholds": {"inline": {}}}, context)
+        self.assertEqual(named["thresholds"], {"file": {}})
+        with self.assertLogs(level="WARNING"):
+            unnamed = attach_threshold_file({"thresholds": {"inline": {}}, "enforce_thresholds": True}, context)
+        self.assertEqual((unnamed["thresholds"], unnamed["enforce_thresholds"]), ({}, False))
+
+    def test_unnamed_threshold_file_is_not_discovered_and_records_without_gating(self):
+        (self.config_path.parent / "a_threshold.json").write_text(json.dumps({"cell": {"m": {}}}))
+        with self.assertLogs(level="WARNING"):
+            attached = attach_threshold_file({"threshold_json": ""}, {"config_path": self.config_path})
+        self.assertEqual(attached, {"threshold_json": "", "thresholds": {}, "enforce_thresholds": False})
+
+    def test_named_threshold_file_is_read_and_keeps_enforcement(self):
+        (self.config_path.parent / "a_threshold.json").write_text(json.dumps({"_comment": "x", "cell": {"m": {}}}))
+        data = {"threshold_json": "a_threshold.json", "enforce_thresholds": True}
+        attached = attach_threshold_file(data, {"config_path": self.config_path})
+        self.assertEqual(attached["thresholds"], {"cell": {"m": {}}})
+        self.assertIs(attached["enforce_thresholds"], True)
+
+    def test_named_threshold_file_that_is_missing_raises(self):
+        with self.assertRaises(FileNotFoundError):
+            attach_threshold_file({"threshold_json": "no_such_threshold_xyz.json"}, {"config_path": self.config_path})
+
+
 class TestFindPackagedThreshold(unittest.TestCase):
     """The packaged-threshold fallback lookup used when a copied config lacks
     its sibling threshold file."""
@@ -492,6 +551,33 @@ class TestSubstituteConfigPlaceholders(unittest.TestCase):
             config_path = self._write_files(tmp_dir, cfg_base)
             raw, _ = substitute_config(config_path, {})
             self.assertEqual(raw["paths"]["log_dir"], "/logs/{unknown-token}/run")
+
+    def test_default_leaves_test_config_placeholders_verbatim(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_base = _base_config_dict()
+            cfg_base["paths"]["log_dir"] = "/{home-mount-dir}/{user}/{node-dir-name}/{user-id}"
+            config_path = self._write_files(Path(tmp), cfg_base)
+            raw, _ = substitute_config(config_path, {"username": "jdoe", "home_mount_dir_name": "mnt"})
+            self.assertEqual(raw["paths"]["log_dir"], "/{home-mount-dir}/{user}/{node-dir-name}/jdoe")
+
+    def test_all_placeholders_expands_the_test_config_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_base = _base_config_dict()
+            cfg_base["paths"]["log_dir"] = "/{home-mount-dir}/{user}/{node-dir-name}/{user-id}"
+            config_path = self._write_files(Path(tmp), cfg_base)
+            cluster = {"username": "jdoe", "home_mount_dir_name": "mnt", "node_dir_name": "node7"}
+            raw, _ = substitute_config(config_path, cluster, all_placeholders=True)
+            self.assertEqual(raw["paths"]["log_dir"], "/mnt/jdoe/node7/jdoe")
+
+    def test_all_placeholders_treats_a_blank_username_as_unset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_base = _base_config_dict()
+            cfg_base["paths"]["log_dir"] = "/home/{user-id}/{user}"
+            config_path = self._write_files(Path(tmp), cfg_base)
+            for username in ("", None):
+                with self.subTest(username=username), patch.dict(os.environ, {"USER": "envuser"}):
+                    raw, _ = substitute_config(config_path, {"username": username}, all_placeholders=True)
+                    self.assertEqual(raw["paths"]["log_dir"], "/home/envuser/envuser")
 
 
 if __name__ == "__main__":

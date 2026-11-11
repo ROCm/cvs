@@ -72,6 +72,34 @@ class TestRcclSchemaValidation(unittest.TestCase):
         parsed = RcclTestsMultinodeRaw.model_validate(payload)
         self.assertEqual(parsed.model_dump(), {**payload, 'wrong': 0})
 
+    def test_all_reduce_bias_row_validates_as_allreduce(self):
+        """rccl-tests registers all_reduce_bias_perf as AllReduce."""
+        payload = {
+            'numCycle': 0,
+            'name': 'AllReduce',
+            'nodes': 1,
+            'ranks': 4,
+            'ranksPerNode': 4,
+            'gpusPerRank': 1,
+            'size': 1024,
+            'type': 'float',
+            'redop': 'sum',
+            'inPlace': 0,
+            'time': 5399.35,
+            'algBw': 0.000190,
+            'busBw': 0.000284,
+            'wrong': '0',
+        }
+        parsed = RcclTestsMultinodeRaw.model_validate(payload)
+        self.assertEqual(parsed.model_dump(), {**payload, 'wrong': 0})
+
+    def test_unreported_bias_collective_name_is_rejected(self):
+        """The schema accepts reported collective names, not binary names."""
+        for name in ('AllReduceBias', 'all_reduce_bias_perf'):
+            with self.subTest(name=name):
+                with self.assertRaises(ValidationError):
+                    RcclTests.model_validate({**self._base_payload(), 'name': name, 'wrong': 0})
+
 
 if __name__ == "__main__":
     unittest.main()

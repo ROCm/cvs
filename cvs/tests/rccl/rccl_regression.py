@@ -23,6 +23,31 @@ log = globals.log
 
 
 rccl_res_dict = {}
+_ecc_after_carry = {'blocks': None, 'snapshot': None}
+
+
+def _ecc_snapshot_reusable(snapshot):
+    return bool(snapshot) and all(isinstance(gpus, dict) for gpus in snapshot.values())
+
+
+def _ecc_before_snapshot(phdl, blocks):
+    carry = _ecc_after_carry
+    if carry['blocks'] == blocks and _ecc_snapshot_reusable(carry['snapshot']):
+        snapshot = carry['snapshot']
+        carry['blocks'] = None
+        carry['snapshot'] = None
+        log.debug('ECC_BLOCKS before: reusing previous after snapshot')
+        return snapshot
+    return capture_ecc_blocks_snapshot(phdl, 'before', blocks=blocks)
+
+
+def _remember_ecc_after(blocks, snapshot):
+    if _ecc_snapshot_reusable(snapshot):
+        _ecc_after_carry['blocks'] = blocks
+        _ecc_after_carry['snapshot'] = snapshot
+        return
+    _ecc_after_carry['blocks'] = None
+    _ecc_after_carry['snapshot'] = None
 
 
 def pytest_generate_tests(metafunc):
@@ -192,17 +217,21 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
       - request, subtests: pytest reporting fixtures.
 
     Flow:
-      1) Capture start time to bound dmesg checks later.
+      1) Mark the test start in dmesg (marker and timestamp) when sudo is available.
       2) Optionally snapshot cluster metrics before the test (for debugging/compare).
-      3) Build env_overrides dict from all regression parameters.
-      4) Invoke RcclJob.from_config(...).run_regression() with parameters built from config and fixtures.
-      4a) Report each verification verdict as a pytest sub-test and HTML case row.
-      5) Capture end time and verify dmesg for errors between start/end.
-      6) Optionally snapshot metrics again and compare before/after.
-      7) Call update_test_result() to finalize test status.
+      3) Optionally capture ECC_BLOCKS counters before the test. Later cases reuse the previous after snapshot.
+      4) Build env_overrides dict from all regression parameters.
+      5) Invoke RcclJob.from_config(...).run_regression() with parameters built from config and fixtures.
+      5a) Report each verification verdict as a pytest sub-test and HTML case row.
+      6) Optionally capture ECC_BLOCKS after the test, log deltas, and warn on increases.
+      7) Scan this test's dmesg: kmsg markers when dmesg_during_test, else the clock window.
+      8) Optionally snapshot metrics again and compare before/after.
+      9) Call update_test_result() to finalize test status.
 
     Notes:
-      - cluster_snapshot_debug controls whether before/after snapshots are taken.
+      - cluster_snapshot_debug controls whether before/after cluster snapshots are taken.
+      - report_ecc_delta (default False) logs a post-test ECC_BLOCKS table (CE/UE/DE before, after, Delta).
+      - report_ecc_blocks (optional list) limits capture/compare to named blocks when report_ecc_delta is True.
     """
 
     globals.error_list = []
@@ -211,23 +240,27 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
     if not can_use_sudo:
         no_sudo_nodes = [node for node, ok in sudo_status.items() if not ok]
         log.warning(
-            "Skipping dmesg markers/verification and sudo-only snapshots because passwordless sudo is unavailable "
-            "on nodes: %s",
+            'Skipping %s because passwordless sudo is unavailable on nodes: %s',
+            skipped_sudo_work(config_dict),
             no_sudo_nodes,
         )
 
+    cvs_params = config_dict.get('cvs_params', {})
     params_str = ' '.join(f'{k}={v}' for k, v in regression_params.items())
+    dmesg_window = None
     if can_use_sudo:
-        orch.all.exec(f'sudo echo "Starting Test {rccl_collective} {params_str}" | sudo tee /dev/kmsg')
-
-    # Minute precision can drop kernel events from the end of the test window.
-    start_time = orch.all.exec('date +"%a %b %e %H:%M:%S"')
+        dmesg_window = DmesgWindow(orch.all, f'{rccl_collective} {params_str}', dmesg_during_test_enabled(config_dict))
+        dmesg_window.open()
 
     # Get cluster snapshot ..
-    if can_use_sudo and re.search(
-        'True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I
-    ):
+    if can_use_sudo and re.search('True', cvs_params.get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_before = create_cluster_metrics_snapshot(orch.all)
+
+    report_ecc_delta = ecc_delta_check_enabled(config_dict)
+    ecc_blocks = resolve_ecc_blocks(config_dict) if report_ecc_delta else None
+    ecc_before = {}
+    if can_use_sudo and report_ecc_delta:
+        ecc_before = _ecc_before_snapshot(orch.all, ecc_blocks)
 
     # Build env_overrides from all regression parameters (convert values to strings)
     env_overrides = {k: str(v) for k, v in regression_params.items()}
@@ -247,22 +280,16 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
     key_name = f'{rccl_collective}-{params_str}'
     rccl_res_dict[key_name] = result_dict
 
-    # Scan dmesg between start and end times cluster wide ..
-    if can_use_sudo:
-        orch.all.exec(f'sudo echo "End of Test {rccl_collective} {params_str}" | sudo tee /dev/kmsg')
+    if can_use_sudo and report_ecc_delta:
+        ecc_after = capture_ecc_blocks_snapshot(orch.all, 'after', blocks=ecc_blocks)
+        compare_ecc_blocks_snapshots(ecc_before, ecc_after, collective=rccl_collective, blocks=ecc_blocks)
+        _remember_ecc_after(ecc_blocks, ecc_after)
 
-    end_time = orch.all.exec('date +"%a %b %e %H:%M:%S"')
-    if can_use_sudo:
-        # Bound dmesg scan to this test's own start..end window (per-test).
-        # till_end_flag=True scans from start_time to the end of the dmesg
-        # buffer, which causes earlier-test kernel events (e.g. a scatter_perf
-        # segfault) to repeatedly fail every subsequent parametrized test.
-        verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=False)
+    if dmesg_window:
+        dmesg_window.close_and_scan()
 
     # Get new cluster snapshot and compare ..
-    if can_use_sudo and re.search(
-        'True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I
-    ):
+    if can_use_sudo and re.search('True', cvs_params.get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_after = create_cluster_metrics_snapshot(orch.all)
         compare_cluster_metrics_snapshots(cluster_dict_before, cluster_dict_after)
 

@@ -4,8 +4,6 @@ PyTorch XDit Flux output parser.
 Locates and parses timing.json from Flux inference runs.
 Computes average pipe_time and validates against thresholds.
 
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
 """
 
 import json

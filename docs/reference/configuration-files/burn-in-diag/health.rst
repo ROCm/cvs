@@ -25,7 +25,15 @@ See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on runni
             "path": "/opt/amd/agfhc",
             "package_tar_ball": "/home/{user-id}/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
             "install_dir": "/home/{user-id}/INSTALL/agfhc/",
-            "_comments_log_dir": "log_dir has to be a NON NFS local file system",
+            "_comment_env": "Companion-tool paths. Defaults match an /opt/amd install. Update every value when path changes. A missing key falls back to the directory next to path. FIREXS2_APP_PATH and LD_LIBRARY_PATH are derived from FIREXS_PATH.",
+            "env": {
+                "TXB_PATH": "/opt/amd/transferbench",
+                "MINIHPL_PATH": "/opt/amd/minihpl",
+                "MEMROCKER_PATH": "/opt/amd/memrocker",
+                "FIREXS_PATH": "/opt/amd/firexs2",
+                "AFIDSAG_PATH": "/opt/amd/afid"
+            },
+            "_comments_log_dir": "log_dir has to be a NON NFS local file system. CVS runs mkdir -p and test -w on each node before the recipes.",
             "log_dir": "/root/agfhc_logs",
             "hbm_test_duration": "00:01:30"
         },
@@ -52,7 +60,7 @@ See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on runni
               "best_gpu0_bw": "480.0",
               "32_cu_local_read": "1650",
               "32_cu_local_write": "1250.0",
-              "32_cu_local_copy": "1250.0",
+              "32_cu_local_copy": "800.0",
               "32_cu_rem_read": "48.0",
               "32_cu_rem_write": "48.0",
               "32_cu_rem_copy": "48.0"
@@ -151,9 +159,12 @@ The following parameters are available in the health configuration file.
 
 AGFHC
 -----
+
 .. |br| raw:: html
 
     <br />
+
+AGFHC configuration parameters and their defaults are listed below.
 
 .. list-table::
    :widths: 3 3 5
@@ -164,22 +175,27 @@ AGFHC
      - Description
    * - ``path``
      - ``/opt/amd/agfhc``
-     - Path where AGFHC is installed
+     - Directory that contains the ``agfhc`` executable. Any other path runs ``./install --rocm-tar -o`` on the parent of ``path``, without sudo. That parent must be writable on the nodes.
    * - ``package_tar_ball``
      - ``/home/{user-id}/`` |br| ``PACKAGES/agfhc-mi300x`` |br| ``_1.22.0_ub2204.tar.bz2``
      - Path where the tar ball is downloaded
    * - ``install_dir``
      - ``/home/{user-id}/INSTALL/agfhc/``
      - Path where AGFHC runs
+   * - ``env``
+     - ``TXB_PATH=/opt/amd/transferbench``, ``MINIHPL_PATH=/opt/amd/minihpl``, ``MEMROCKER_PATH=/opt/amd/memrocker``, ``FIREXS_PATH=/opt/amd/firexs2``, ``AFIDSAG_PATH=/opt/amd/afid``
+     - Companion-tool paths exported for every AGFHC run, including ``/opt/amd``. Update them when ``path`` changes. A missing key falls back to ``<parent of path>/transferbench``, ``minihpl``, ``memrocker``, ``firexs2``, or ``<path>/sag`` for ``AFIDSAG_PATH``. ``FIREXS2_APP_PATH`` and ``LD_LIBRARY_PATH`` are derived from ``FIREXS_PATH``.
    * - ``log_dir``
      - ``/root/agfhc_logs``
-     - Log directory
+     - Local, non-NFS log directory. CVS runs ``mkdir -p`` and ``test -w`` on each node before the recipes.
    * - ``hbm_test_duration``
      - 00:01:30
      - HBM test duration
 
 TransferBench
 -------------
+
+TransferBench configuration parameters and their defaults are listed below.
 
 .. list-table::
    :widths: 3 3 5
@@ -240,7 +256,7 @@ TransferBench
      - 1250.0
      - Local memory write bandwidth (GB/s) using 32 CUs
    * - ``32_cu_local_copy``
-     - 1250.0
+     - 800.0
      - Local memory copy bandwidth (GB/s) using 32 CUs
    * - ``32_cu_rem_read``
      - 48.0
@@ -254,6 +270,8 @@ TransferBench
 
 ROCm Validation Suite (RVS)
 ---------------------------
+
+RVS configuration parameters and their defaults are listed below.
 
 .. list-table::
    :widths: 3 3 5

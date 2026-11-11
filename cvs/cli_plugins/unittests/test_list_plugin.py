@@ -4,6 +4,7 @@ import os
 import tempfile
 
 from cvs.cli_plugins.list_plugin import ListPlugin
+from cvs.extension import CORE_PKG_NAME
 
 
 class TestListPlugin(unittest.TestCase):
@@ -104,6 +105,25 @@ class TestListPluginExtension(unittest.TestCase):
                 # Should have tests from extension
                 self.assertIn("test_extension_pkg", test_map)
                 self.assertIn("test_extension", test_map["test_extension_pkg"])
+
+    @patch("cvs.cli_plugins.list_plugin.ExtensionConfig")
+    def test_unittests_dirs_are_not_suites(self, mock_config_class):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ext_tests_dir = os.path.join(tmpdir, "ext_tests")
+            for rel in ("suite_a.py", os.path.join("unittests", "test_suite_a.py")):
+                path = os.path.join(ext_tests_dir, "net", rel)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w") as f:
+                    f.write("def test_dummy(): pass")
+            mock_config = mock_config_class.return_value
+            mock_config.get_tests_dirs.return_value = [("ext_pkg.ext_tests", ext_tests_dir)]
+            mock_config.get_package_name.return_value = "ext_pkg"
+
+            test_map = ListPlugin.discover_tests()
+
+        self.assertEqual(test_map["ext_pkg"], {"suite_a": "ext_pkg.ext_tests.net.suite_a"})
+        self.assertFalse(any(".unittests." in path for path in test_map[CORE_PKG_NAME].values()))
+        self.assertIn("rccl_perf", test_map[CORE_PKG_NAME])
 
     @patch("cvs.cli_plugins.list_plugin.ExtensionConfig")
     def test_extension_tests_dirs_appended(self, mock_config_class):

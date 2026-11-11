@@ -12,7 +12,7 @@ import shutil
 html_theme = "rocm_docs_theme"
 html_theme_options = {
     "flavor": "generic",
-    "header_title": "Cluster Validation Suite 0.3.0",
+    "header_title": "Cluster Validation Suite 0.4.0",
     "header_link": False,
     "link_main_doc": True,
     "version_list_link": "https://rocm.docs.amd.com/projects/cvs/en/latest/release.html",
@@ -55,7 +55,7 @@ with open('../CMakeLists.txt', encoding='utf-8') as f:
 # for PDF output on Read the Docs
 project = "Cluster Validation Suite"
 author = "Advanced Micro Devices, Inc."
-copyright = "Copyright (c) 2025 Advanced Micro Devices, Inc. All rights reserved."
+copyright = "Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved."
 version = version_number
 release = version_number
 

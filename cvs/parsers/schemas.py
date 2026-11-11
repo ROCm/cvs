@@ -530,6 +530,27 @@ class PytorchXditWan22Benchmarks(BaseModel):
         default=None,
         description="xFuser output_type for xfuser_example (defaults to pil for ufb-private video export).",
     )
+    wan_xfuser_model: Optional[str] = Field(
+        default=None,
+        description="xFuser registry model name. Wan2.1-T2V selects the text-to-video launcher and skips the input image.",
+    )
+    guidance_scale: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Classifier-free guidance scale for WAN text-to-video.",
+    )
+    flow_shift: Optional[float] = Field(
+        default=None,
+        description="Scheduler flow shift for WAN text-to-video.",
+    )
+    attention_backend: Optional[str] = Field(
+        default=None,
+        description="xFuser attention backend for WAN text-to-video, such as AITER.",
+    )
+    cross_attention_backend: Optional[str] = Field(
+        default=None,
+        description="xFuser cross-attention backend for WAN text-to-video.",
+    )
     wan_diffusers_save_video_path: Optional[str] = Field(
         default=None,
         description="In-container MP4 path for xfuser_example (default /outputs/results/video_i2v.mp4).",
@@ -553,6 +574,30 @@ class PytorchXditWan22Benchmarks(BaseModel):
             "CLIP model id or local path used to score sampled WAN video frames. "
             "Defaults to openai/clip-vit-base-patch32 when omitted."
         ),
+    )
+    fid_nfe_steps: Optional[List[int]] = Field(
+        default=None,
+        description="Sampling step counts for an optional FID vs NFE curve. Omit to skip test_fid_curve.",
+    )
+    fid_samples: Optional[int] = Field(
+        default=None,
+        ge=2,
+        description="Images or videos to save at each fid_nfe_steps value. The sweep stops early so the benchmark command stays inside its timeout.",
+    )
+    fid_reference_dir: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional in-container directory of real images for the FID reference set. When it is missing "
+            "or has fewer than two images, the highest step-count samples from the run are used."
+        ),
+    )
+    fid_inception_path: Optional[str] = Field(
+        default=None,
+        description="Local Inception-v3 checkpoint. The FID test does not download weights.",
+    )
+    fid_sampler: Optional[str] = Field(
+        default=None,
+        description="Sampler name drawn as its own FID series. Omit for a single line labeled by the model.",
     )
     clip_sample_frames: Optional[int] = Field(
         default=None,
@@ -617,7 +662,7 @@ class PytorchXditFlux1DevBenchmarks(BaseModel):
         default=None,
         gt=0,
         description=(
-            "Classifier-free guidance scale for run_usp.py. Defaults to 4.0 for FLUX.2-dev "
+            "Classifier-free guidance scale for the FLUX launcher. Defaults to 4.0 for FLUX.2-dev "
             "and 2.5 for FLUX.1-Kontext when omitted; not passed for FLUX.1-dev."
         ),
     )
@@ -642,6 +687,30 @@ class PytorchXditFlux1DevBenchmarks(BaseModel):
             "CLIP model id or local path used to score saved FLUX images. "
             "Defaults to openai/clip-vit-base-patch32, the CLIPScore paper model, when omitted."
         ),
+    )
+    fid_nfe_steps: Optional[List[int]] = Field(
+        default=None,
+        description="Sampling step counts for an optional FID vs NFE curve. Omit to skip test_fid_curve.",
+    )
+    fid_samples: Optional[int] = Field(
+        default=None,
+        ge=2,
+        description="Images or videos to save at each fid_nfe_steps value. The sweep stops early so the benchmark command stays inside its timeout.",
+    )
+    fid_reference_dir: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional in-container directory of real images for the FID reference set. When it is missing "
+            "or has fewer than two images, the highest step-count samples from the run are used."
+        ),
+    )
+    fid_inception_path: Optional[str] = Field(
+        default=None,
+        description="Local Inception-v3 checkpoint. The FID test does not download weights.",
+    )
+    fid_sampler: Optional[str] = Field(
+        default=None,
+        description="Sampler name drawn as its own FID series. Omit for a single line labeled by the model.",
     )
     expected_results: Optional[Dict[str, PytorchXditFluxExpectedResults]] = Field(
         default=None,
@@ -1399,6 +1468,11 @@ class PreflightNodeCheckConfig(BaseModel):
     enabled: bool = Field(default=True, description="Enable generic GPU node health and ROCm validation")
     gpus_per_node: int = Field(default=4, ge=1, description="Expected AMD GPU count on each node")
     expected_rocm_version: str = Field(default="6.2.0", description="Expected ROCm version across all cluster nodes")
+    min_up_ports_per_gpu: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=("Optional MI4XX fabric admission override; prefer connectivity_check.ifoe.min_up_ports_per_gpu"),
+    )
 
 
 class PreflightRdmaConfig(BaseModel):
@@ -1592,6 +1666,32 @@ class PreflightIfoeConfig(BaseModel):
     fabric_checks: bool = Field(
         default=False,
         description="Enable MI4XX AIFM, AFM, vPOD, station-mask, and IFoE port admission",
+    )
+    min_up_ports_per_gpu: int = Field(
+        default=2,
+        ge=0,
+        description="Minimum enabled IFoE ports each GPU's station mask must report; "
+        "default 2 (one station) fails an un-provisioned fabric, 0 admits it for diagnostics",
+    )
+    reject_partial_stations: bool = Field(
+        default=True,
+        description="Fail when any station mask nibble indicates a partial station",
+    )
+    allow_disabled_stations: bool = Field(
+        default=True,
+        description="Allow station masks that intentionally disable ports",
+    )
+    expected_station_masks: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Optional per-GPU BDF expected 18-nibble station masks",
+    )
+    require_uniform_station_mask: bool = Field(
+        default=False,
+        description="Require identical station masks across all GPUs on a node",
+    )
+    agent_process_name: str = Field(
+        default="inb-node-agent",
+        description="Process name checked for the AIFM in-band node agent",
     )
     l2ping: PreflightL2PingConfig = Field(
         default_factory=PreflightL2PingConfig,

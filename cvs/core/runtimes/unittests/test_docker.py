@@ -12,8 +12,8 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # Pinned invariants:
 #   - User-supplied runtime.args.volumes must NOT be double-listed.
 #   - --gpus all must NEVER be emitted: CVS is AMD-only and AMD GPU access
-#     comes from the auto-injected --device /dev/kfd /dev/dri /dev/infiniband
-#     in DEFAULT_CONTAINER_ARGS. The flag is NVIDIA/CDI-specific and breaks
+#     comes from the auto-injected --device /dev/kfd /dev/dri in
+#     DEFAULT_CONTAINER_ARGS. The flag is NVIDIA/CDI-specific and breaks
 #     AMD-only docker without the AMD container toolkit.
 #   - Every privileged command is built from a single deterministic
 #     orchestrator.sudo_prefix() prefix -- never the old `cmd || sudo -n cmd`
@@ -27,7 +27,7 @@ from unittest.mock import MagicMock, patch
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.core.runtimes.docker import DockerRuntime
-from cvs.unittests.support import TMP
+from cvs.unittests.support import FAKE_CRED, TMP
 
 
 def _make_runtime(captured, sudo_prefix=""):
@@ -294,8 +294,8 @@ class TestDockerRuntimeSetupContainers(unittest.TestCase):
         #   1. minimal config, no GPU-related keys
         #   2. legacy config that sets gpu_passthrough=True (must be ignored)
         #   3. config with extra runtime args
-        # AMD GPU access is provided by --device /dev/kfd /dev/dri /dev/infiniband
-        # via DEFAULT_CONTAINER_ARGS -- not by --gpus all.
+        # AMD GPU access is provided by --device /dev/kfd /dev/dri via
+        # DEFAULT_CONTAINER_ARGS -- not by --gpus all.
         for label, cfg in [
             ("minimal", _container_config()),
             ("legacy_gpu_passthrough_true", _container_config(gpu_passthrough=True)),
@@ -446,6 +446,8 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
 
         def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
             calls.append(cmd)
+            if "docker images" in cmd and "grep" in cmd:
+                return {"host1": {"output": "", "exit_code": 1}}
             return {"host1": {"output": "", "exit_code": 0}}
 
         orchestrator = MagicMock()
@@ -462,11 +464,40 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
 
         self.assertTrue(result)
         login_calls = [c for c in calls if "docker login" in c]
+        pull_calls = [c for c in calls if "docker pull" in c]
         run_calls = [c for c in calls if "docker run" in c]
         self.assertEqual(len(login_calls), 1)
+        self.assertEqual(len(pull_calls), 1)
         self.assertEqual(len(run_calls), 1)
         # Login must happen before the run that needs the pull.
         self.assertLess(calls.index(login_calls[0]), calls.index(run_calls[0]))
+
+    def test_setup_containers_skips_pull_and_login_when_image_present(self):
+        """Regression for AIMVT-443: pre-loaded images must not hit the registry or pull."""
+        calls = []
+
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            calls.append(cmd)
+            if "docker images" in cmd and "grep" in cmd:
+                return {"host1": {"output": "", "exit_code": 0}}
+            return {"host1": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        cfg = _container_config(
+            image="rocm/ufb-private:latest",
+            extra_runtime_args={"registry": {"username": "myuser", "password_file": f"{TMP}/token"}},
+        )
+        result = rt.setup_containers(container_config=cfg, container_name="cvs_iter_test", volumes=[])
+
+        self.assertTrue(result)
+        self.assertFalse(any("docker pull" in c for c in calls))
+        self.assertFalse(any("docker login" in c for c in calls))
+        self.assertTrue(any("docker run" in c for c in calls))
 
     def test_setup_containers_skips_login_when_image_tar_present(self):
         # A tar load never needs a registry pull, so no login should be attempted
@@ -721,6 +752,21 @@ class TestDockerRuntimeExecSubsetHandleCleanup(unittest.TestCase):
                         rt.exec("cvs_iter_test", "sleep 300", hosts=["host1"], timeout=1)
 
                 mock_pssh.destroy_clients.assert_called_once_with()
+
+
+class TestDockerRuntimeStartCommandRedaction(unittest.TestCase):
+    """The logged `docker run` masks secret env values; the executed command keeps them."""
+
+    def test_start_command_log(self):
+        captured = []
+        rt = _make_runtime(captured)
+        environment = {"HF_TOKEN": FAKE_CRED, "WANDB_API_KEY": f"{FAKE_CRED} x"}
+        rt.setup_containers(_container_config(), "cvs_iter_test", environment=environment)
+
+        self.assertIn(f"-e HF_TOKEN={FAKE_CRED} -e 'WANDB_API_KEY={FAKE_CRED} x'", captured[0])
+        logged = [str(c.args[0]) for c in rt.log.debug.call_args_list if "Container start command" in str(c.args[0])]
+        self.assertNotIn(FAKE_CRED, logged[0])
+        self.assertIn("-e HF_TOKEN=<redacted> -e 'WANDB_API_KEY=<redacted>'", logged[0])
 
 
 if __name__ == "__main__":

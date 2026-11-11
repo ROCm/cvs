@@ -50,11 +50,17 @@ class TestAncInstallPreTasks:
     def test_download_install_anc_on_nodes(self, orch, cluster_dict, config_dict):
         '''
         Install ANC on all nodes, dispatching by release-archive flavour
-        (deb/rpm/tar) with an optional anc_version precheck / post-verify.
+        (deb/rpm/tar), with a post-install version verify when anc_version is set.
 
-        See cvs.lib.anc_lib.install_anc for the full behaviour.
+        Runs install_anc in STRICT mode: this suite exists to install ANC, so it
+        fails when install is required but impossible or unsatisfiable -- ANC
+        absent with no anc_release_url to install from, a configured anc_version
+        the URL is too old to provide, or an installed version below anc_version
+        with no usable URL to upgrade -- and when an attempted install fails. (The
+        non-strict group/item suites instead proceed against whatever ANC is
+        present; see cvs.lib.anc_lib.install_anc for the full decision table.)
         '''
-        anc_lib.install_anc(orch, cluster_dict, config_dict)
+        anc_lib.install_anc(orch, cluster_dict, config_dict, strict=True)
 
 
 class TestAncInstallCoreTasks:

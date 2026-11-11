@@ -2,9 +2,9 @@
   :description: Run CVS platform host configuration check tests to verify OS, kernel, ROCm, BIOS, PCIe, and GPU firmware versions across AMD Instinct cluster nodes.
   :keywords: CVS, platform, AMD Instinct, ROCm, AMD, GPU, Linux, Ubuntu, BIOS, PCIe, kernel, host configuration
 
-***********************************************
-Run CVS platform host configuration check tests
-***********************************************
+************************************************************************
+Run CVS platform host configuration check tests on AMD Instinct clusters
+************************************************************************
 
 Platform tests validate host OS configuration, BIOS version, firmware, driver, PCIe settings, and GPU health on each cluster node. Run platform tests before burn-in to catch configuration mismatches early.
 
@@ -60,6 +60,7 @@ You can list all available host check test cases using the CLI:
     - test_check_be_nic_link_speed
     - test_check_pci_acs
     - test_check_dmesg_driver_errors
+    - test_check_ifoe_sw_details
 
 Run the platform host check suite:
 
@@ -69,3 +70,8 @@ Run the platform host check suite:
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/platform/host_config.json \
     --capture=tee-sys -vvv -s
+
+Run on managed compute
+~~~~~~~~~~~~~~~~~~~~~~
+
+See :doc:`/how-to/run-on-managed-compute` for guidance on running these platform tests on managed compute.

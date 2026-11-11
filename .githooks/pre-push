@@ -1,0 +1,173 @@
+#!/bin/sh
+#
+# Copyright 2025 Advanced Micro Devices, Inc.
+# All rights reserved.
+#
+# CVS pre-push gate. Two BLOCKING checks (exit 1) before any push reaches
+# GitHub:
+#   1. Security scan of every commit being pushed -- internal AMD endpoints,
+#      real cluster hostnames, exposed https ports, committed secrets/tokens.
+#   2. The full unit-test suite against the content of each pushed tip (the SHA
+#      actually being sent), not the working tree -- the same suite CI runs via
+#      `make test`. A dirty tree, or `git push <remote> <otherbranch>` while
+#      checked out elsewhere, therefore cannot green-pass commits CI will fail.
+#
+# The suite imports cvs from the source tree; the venv only supplies
+# dependencies. Interpreter preference:
+#   1. .test_venv  (created by `make test-venv` / `make installtest`)
+#   2. .cvs_venv   (created by `make install`)
+#   3. python3 / python on PATH (deps must already be importable)
+#
+# Bypass with `git push --no-verify` (checks still run in CI).
+
+ZERO="0000000000000000000000000000000000000000"
+
+# Git passes the destination remote name (or URL) as the hook's first argument.
+REMOTE_NAME="$1"
+
+# Collect the pushed tips here (one SHA per line) so the test step can run
+# against the exact content being sent; the scan loop runs in a stdin subshell,
+# so persist across it via a file rather than a variable.
+tips_file="$(mktemp 2>/dev/null)"
+test_root="$(mktemp -d 2>/dev/null)"
+cleanup_prepush() {
+    [ -n "$tips_file" ] && rm -f "$tips_file"
+    [ -n "$test_root" ] && rm -rf "$test_root"
+}
+trap cleanup_prepush EXIT HUP INT TERM
+
+# Fail closed: if the temp files cannot be created, we cannot record tips or
+# stage the test content, which would silently skip the unit-test gate.
+if [ -z "$tips_file" ] || [ ! -w "$tips_file" ] || [ -z "$test_root" ]; then
+    echo "" >&2
+    echo "pre-push: ERROR: could not create temporary files for the test gate." >&2
+    echo "pre-push: or bypass with 'git push --no-verify'." >&2
+    echo "" >&2
+    exit 1
+fi
+
+if [ -x ".test_venv/bin/python" ]; then
+    PY=".test_venv/bin/python"
+elif [ -x ".cvs_venv/bin/python" ]; then
+    PY=".cvs_venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PY="python3"
+elif command -v python >/dev/null 2>&1; then
+    PY="python"
+else
+    echo "" >&2
+    echo "pre-push: ERROR: no python interpreter found." >&2
+    echo "pre-push: run 'make test-venv installtest' to create .test_venv, then retry." >&2
+    echo "pre-push: or bypass with 'git push --no-verify'." >&2
+    echo "" >&2
+    exit 1
+fi
+
+# Security scan: scan every commit this push adds. Git feeds
+# "<local ref> <local sha> <remote ref> <remote sha>" lines on stdin. We
+# enumerate the new commits with rev-list, then scan each commit's own diff.
+# Scanning per-commit -- rather than the net range diff -- also catches a secret
+# that one commit adds and a later commit removes, since the history still
+# carries it.
+#
+# For a new branch (remote sha all-zero) we bound the walk to commits not
+# already on the DESTINATION remote only (`--not --remotes=<name>`), not every
+# remote: a branch already tracked on a private remote must still be scanned
+# when it is published to a public one. If the destination has no tracking refs
+# yet, the walk falls back to the branch's full reachable history.
+#
+# Fail closed: if rev-list or git show cannot read history/a diff (non-zero
+# exit), block the push rather than letting an unscanned commit through.
+scan_rc=0
+echo "pre-push: scanning pushed commits for infra/secret leaks ..."
+while read -r _local_ref local_sha _remote_ref remote_sha ; do
+    [ -z "$local_sha" ] && continue
+    [ "$local_sha" = "$ZERO" ] && continue  # branch deletion
+    # Record the pushed tip for the test step. Fail closed if the write fails
+    # (e.g. the temp filesystem filled up) -- otherwise the later emptiness
+    # check would silently skip the unit-test gate for this tip.
+    if ! printf '%s\n' "$local_sha" >> "$tips_file" ; then
+        echo "" >&2
+        echo "pre-push: ERROR: could not record pushed tip $local_sha for testing." >&2
+        echo "pre-push: or bypass with 'git push --no-verify'." >&2
+        echo "" >&2
+        exit 1
+    fi
+    if [ "$remote_sha" = "$ZERO" ]; then
+        if [ -n "$REMOTE_NAME" ]; then
+            commits="$(git rev-list "$local_sha" --not --remotes="$REMOTE_NAME")"
+        else
+            commits="$(git rev-list "$local_sha")"
+        fi
+    else
+        commits="$(git rev-list "$remote_sha..$local_sha")"
+    fi
+    if [ "$?" -ne 0 ]; then
+        echo "" >&2
+        echo "pre-push: ERROR: could not enumerate commits for $local_sha." >&2
+        scan_rc=1
+        continue
+    fi
+    for sha in $commits ; do
+        # -m emits an ordinary per-parent patch for merge commits (default is a
+        # combined diff with @@@ headers the scanner does not parse), so an
+        # addition made only during merge resolution is still scanned.
+        commit_diff="$(git show --no-color -m --unified=0 --format= "$sha")"
+        if [ "$?" -ne 0 ]; then
+            echo "" >&2
+            echo "pre-push: ERROR: could not read diff for commit $sha." >&2
+            scan_rc=1
+            continue
+        fi
+        [ -z "$commit_diff" ] && continue
+        printf '%s\n' "$commit_diff" | "$PY" build_tools/security_scan.py --stdin || scan_rc=1
+    done
+done
+
+if [ "$scan_rc" -ne 0 ]; then
+    echo "" >&2
+    echo "pre-push: ERROR: security scan found leaks -- push aborted." >&2
+    echo "pre-push: scrub the values above, or bypass with 'git push --no-verify'." >&2
+    echo "" >&2
+    exit 1
+fi
+
+# Run the unit suite against the content of each pushed tip, extracted with
+# `git archive`, so the tested content is exactly what is being sent -- not the
+# working tree, which may be dirty or on a different branch. The interpreter is
+# from a venv that only supplies dependencies; resolve it to an absolute path
+# since the suite runs from the extraction dir.
+PY_ABS="$PY"
+case "$PY_ABS" in .*) PY_ABS="$PWD/${PY_ABS#./}" ;; esac
+
+if [ ! -s "$tips_file" ]; then
+    echo "pre-push: no pushed tips to test."
+    exit 0
+fi
+
+tested=""
+for tip in $(sort -u "$tips_file") ; do
+    case " $tested " in *" $tip "*) continue ;; esac  # de-dup
+    tested="$tested $tip"
+    workdir="$test_root/$tip"
+    mkdir -p "$workdir"
+    if ! git archive "$tip" | tar -x -C "$workdir" ; then
+        echo "" >&2
+        echo "pre-push: ERROR: could not extract pushed tip $tip for testing." >&2
+        echo "pre-push: or bypass with 'git push --no-verify'." >&2
+        echo "" >&2
+        exit 1
+    fi
+    short="$(printf '%s' "$tip" | cut -c1-10)"
+    echo "pre-push: running unit tests on pushed tip $short ..."
+    if ! ( cd "$workdir" && "$PY_ABS" run_all_unittests.py ) ; then
+        echo "" >&2
+        echo "pre-push: ERROR: unit tests failed on pushed content -- push aborted." >&2
+        echo "pre-push: fix the failures above, or bypass with 'git push --no-verify'." >&2
+        echo "" >&2
+        exit 1
+    fi
+done
+
+echo "pre-push: unit tests passed."
+exit 0

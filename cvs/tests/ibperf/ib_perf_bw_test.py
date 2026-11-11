@@ -5,18 +5,18 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import pytest
-
 import logging
 import re
 import json
 import os
 
+import pytest
 
-from cvs.lib import ibperf_lib
+from cvs.lib import ibperf_lib, ibperf_reporting
+from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib.rdma_gid_lib import DEFAULT_GID_TYPE
+from cvs.tests.ibperf.conftest import close_orch, launch_containers, teardown_containers
 
-from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -50,199 +50,95 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize('lat_test', ibperf_lib.configured_lat_tests(ibperf_config))
 
 
-# Importing additional cmd line args to script ..
-@pytest.fixture(scope="module")
-def cluster_file(pytestconfig):
-    """
-    Return the path to the cluster configuration JSON file passed via pytest CLI.
-
-    Expects:
-      - pytest to be invoked with: --cluster_file <path>
-
-    Args:
-      pytestconfig: Built-in pytest config object used to access CLI options.
-
-    Returns:
-      str: Filesystem path to the cluster configuration file.
-    """
-    return pytestconfig.getoption("cluster_file")
+def _fail_unmapped_gpus(orch):
+    """Map GPUs to RDMA NICs on orch, failing each card left without one before perftest starts."""
+    gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(orch, use_sudo=False)
+    for node, card_dict in gpu_nic_dict.items():
+        for card, nic_info in card_dict.items():
+            if not nic_info.get('rdma_dev'):
+                fail_test(
+                    f'No active backend RDMA NIC in the PCI domain of {card} '
+                    f'(GPU {nic_info.get("gpu_bdf")}) on node {node}; not running perftest over a NIC outside it'
+                )
+    return gpu_nic_dict
 
 
-@pytest.fixture(scope="module")
-def config_file(pytestconfig):
-    """
-    Return the path to the test configuration JSON file passed via pytest CLI.
-
-    Expects:
-      - pytest to be invoked with: --config_file <path>
-
-    Args:
-      pytestconfig: Built-in pytest config object used to access CLI options.
-
-    Returns:
-      str: Filesystem path to the test configuration file.
-    """
-    return pytestconfig.getoption("config_file")
+def _create_orch(cluster_dict, nodes):
+    node_dict = {node: cluster_dict['node_dict'][node] for node in nodes}
+    cfg = OrchestratorConfig.from_configs({**cluster_dict, 'node_dict': node_dict}, {})
+    return OrchestratorFactory.create_orchestrator(log, cfg)
 
 
 @pytest.fixture(scope="module")
-def cluster_dict(cluster_file):
-    """
-    Load and expose full cluster configuration for the test module.
+def node_pairing(cluster_dict, config_dict):
+    """Resolve server/client pairs from the cluster and ibperf configuration."""
+    node_list = list(cluster_dict['node_dict'])
+    discovery_orchs = []
 
-    Behavior:
-      - Opens the JSON at cluster_file and parses it into a Python dict.
-      - Logs the parsed dictionary for visibility and debugging.
-      - Returns the entire cluster configuration (node list, credentials, etc.).
+    def make_handle(nodes):
+        discovery_orch = _create_orch(cluster_dict, nodes)
+        discovery_orchs.append(discovery_orch)
+        if not discovery_orch.sudo_prefix():
+            raise ValueError('ibperf.vpod_source afm needs passwordless sudo for afmctl')
+        return discovery_orch.all
 
-    Args:
-      cluster_file (str): Path to the cluster configuration JSON.
-
-    Returns:
-      dict: Parsed cluster configuration. Expected keys include:
-            - 'node_dict': Map of node name -> node metadata
-            - 'username': SSH username
-            - 'priv_key_file': Path to SSH private key
-    """
-    with open(cluster_file) as json_file:
-        cluster_dict = json.load(json_file)
-
-    # Resolve path placeholders like {user-id} in cluster config
-    cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info(
-        'Loaded cluster config: %d nodes, user=%s',
-        len(cluster_dict.get('node_dict', {})),
-        cluster_dict.get('username'),
-    )
-    log.debug('Cluster config: %s', cluster_dict)
-    return cluster_dict
+    try:
+        return ibperf_lib.resolve_ibperf_node_pairing(node_list, config_dict, cluster_dict, phdl_factory=make_handle)
+    finally:
+        for discovery_orch in discovery_orchs:
+            discovery_orch.close()
 
 
 @pytest.fixture(scope="module")
-def config_dict(config_file, cluster_dict):
-    """
-    Load and return the RCCL-specific configuration dictionary for the test module.
-
-    Args:
-      config_file (str): Path to a JSON config file provided by another fixture.
-
-    Notes:
-      - Expects the JSON file to contain a top-level key "ibperf".
-      - Uses module scope so the config is parsed once per test module.
-    """
-    with open(config_file) as json_file:
-        config_dict_t = json.load(json_file)
-    config_dict = config_dict_t['ibperf']
-
-    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
-    config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
-    log.info(
-        'Loaded ibperf config: install_dir=%s, msg_sizes=%s, qp_counts=%s, bw_tests=%s, lat_tests=%s',
-        config_dict.get('install_dir'),
-        config_dict.get('msg_size_list'),
-        config_dict.get('qp_count_list'),
-        config_dict.get('ib_bw_test_list'),
-        config_dict.get('ib_lat_test_list'),
-    )
-    if re.search('True', config_dict.get('verify_bw', ''), re.I):
-        for path in ibperf_lib.find_unmatched_thresholds(
-            config_dict.get('expected_results', {}),
-            config_dict.get('msg_size_list', []),
-            config_dict.get('qp_count_list', []),
-        ):
-            log.warning(
-                'expected_results.%s is not covered by msg_size_list/qp_count_list and will not be checked', path
-            )
-    log.debug('Ibperf config: %s', config_dict)
-    return config_dict
+def orch(cluster_dict, node_pairing, lifecycle):
+    """Orchestrator over the paired nodes only; overrides the suite conftest's even-prefix ``orch``."""
+    node_list = [node for pair in node_pairing['pairs'] for node in pair]
+    log.info('Connecting to %d paired cluster nodes', len(node_list))
+    log.debug('Paired cluster nodes: %s', node_list)
+    o = _create_orch(cluster_dict, node_list)
+    yield o
+    close_orch(o, lifecycle)
 
 
-@pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    """
-    Build and return a parallel SSH handle (Pssh) for all cluster nodes.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture containing:
-        - node_dict: dict of node_name -> node_details
-        - username: SSH username
-        - priv_key_file: path to SSH private key
-
-    Returns:
-      Pssh: Handle configured for all nodes (for broadcast/parallel operations).
-
-    Notes:
-      - Prints the cluster_dict for quick debugging; consider replacing with log.debug.
-      - Module-scoped so a single shared handle is used across all tests in the module.
-      - nhdl_dict is currently unused; it can be removed unless used elsewhere.
-      - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
-    """
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    log.info('Connecting to %d cluster nodes via parallel SSH', len(node_list))
-    log.debug('Cluster nodes: %s', node_list)
-
-    if len(node_list) < 2:
-        raise ValueError("At least 2 nodes are required to run this test")
-
-    if len(node_list) % 2 != 0:
-        log.info(
-            'Odd number of nodes (%d); excluding last node %s to form server/client pairs',
-            len(node_list),
-            node_list[-1],
-        )
-        node_list.pop()
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
+def test_launch_containers(orch, lifecycle):
+    launch_containers(orch, lifecycle)
 
 
-@pytest.fixture(scope="module")
-def vpc_node_list(cluster_dict):
-    """
-    Collect and return a list of VPC IPs for all nodes in the cluster.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture containing node_dict with vpc_ip per node.
-
-    Returns:
-      list[str]: List of VPC IP addresses in the cluster, ordered by node_dict iteration.
-
-    Notes:
-      - Iteration order depends on the insertion order of node_dict.
-      - Consider validating that each node entry contains a 'vpc_ip' key.
-    """
-    vpc_node_list = []
-    node_list = list(cluster_dict['node_dict'].keys())
-    if len(node_list) < 2:
-        raise ValueError('At least 2 nodes are required to run this test')
-    if len(node_list) % 2 != 0:
-        node_list.pop()
-    for node in node_list:
-        vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
-    return vpc_node_list
+def can_read_dmesg(orch):
+    if all(get_passwordless_sudo_status(orch.all).values()):
+        return True
+    log.warning('SKIPPING the dmesg error check: no passwordless sudo to read dmesg on one or more nodes')
+    return False
 
 
-# Start of test cases.
+def _note_run_facts(variant, use_dmabuf, gpu_nic_dict):
+    variant.update(dmabuf=use_dmabuf, nic_count=max((len(cards) for cards in gpu_nic_dict.values()), default=None))
 
 
-def test_ib_bw_perf(phdl, bw_test, config_dict, request):
+def test_ib_bw_perf(orch, bw_test, config_dict, request, cvs_results_dict, ibperf_variant_config, node_pairing):
     globals.error_list = []
     ib_bw_dict[bw_test] = {}
-    rocm_path = ibperf_lib.detect_rocm_path(phdl, config_dict.get('rocm_dir', ''))
+    scan_dmesg = can_read_dmesg(orch)
+    rocm_path = ibperf_lib.detect_rocm_path(orch, config_dict.get('rocm_dir', ''))
     app_path = f'{config_dict["install_dir"]}/perftest/bin'
     use_dmabuf = ibperf_lib.check_perftest_dmabuf(
-        phdl, f'{app_path}/{bw_test}', rocm_path=rocm_path, require_dmabuf=ibperf_lib.is_dmabuf_required(config_dict)
+        orch,
+        f'{app_path}/{bw_test}',
+        rocm_path=rocm_path,
+        require_dmabuf=ibperf_lib.is_dmabuf_required(config_dict),
     )
     ib_dmabuf_dict[bw_test] = use_dmabuf
     request.node.user_properties.append(("dmabuf", "on" if use_dmabuf else "off"))
     update_test_result()
 
-    gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
-    gpu_numa_dict = linux_utils.get_gpu_numa_dict(phdl)
-    hip_dev_dict = ibperf_lib.get_hip_device_dict(phdl, gpu_nic_dict)
+    gpu_nic_dict = _fail_unmapped_gpus(orch)
+    update_test_result()
+    gpu_numa_dict = linux_utils.get_gpu_numa_dict(orch, use_sudo=False)
+    hip_dev_dict = ibperf_lib.get_hip_device_dict(orch, gpu_nic_dict)
+    _note_run_facts(ibperf_variant_config, use_dmabuf, gpu_nic_dict)
 
-    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(phdl)
-    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(phdl)
+    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(orch, use_sudo=False)
+    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(orch)
 
     bck_nic_dict = {}
     for node in rdma_nic_dict.keys():
@@ -252,7 +148,7 @@ def test_ib_bw_perf(phdl, bw_test, config_dict, request):
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
     gid_index = ibperf_lib.resolve_gid_index(
-        phdl,
+        orch,
         ibperf_lib.get_ibperf_rdma_devices(gpu_nic_dict, bck_nic_dict),
         config_dict.get('gid_index'),
         config_dict.get('gid_type', DEFAULT_GID_TYPE),
@@ -261,13 +157,14 @@ def test_ib_bw_perf(phdl, bw_test, config_dict, request):
     for msg_size in config_dict['msg_size_list']:
         ib_bw_dict[bw_test][msg_size] = {}
         for qp_count in config_dict['qp_count_list']:
-            start_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
-            phdl.exec(
-                f'echo "Starting Test {bw_test} for {msg_size} and QP count {qp_count}" | sudo -n tee /dev/kmsg',
-                print_console=False,
-            )
+            start_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
+            if scan_dmesg:
+                orch.all.exec(
+                    f'echo "Starting Test {bw_test} for {msg_size} and QP count {qp_count}" | sudo -n tee /dev/kmsg',
+                    print_console=False,
+                )
             ib_bw_dict[bw_test][msg_size][qp_count] = ibperf_lib.run_ib_perf_bw_test(
-                phdl,
+                orch,
                 bw_test,
                 gpu_numa_dict,
                 gpu_nic_dict,
@@ -281,9 +178,19 @@ def test_ib_bw_perf(phdl, bw_test, config_dict, request):
                 rocm_path=rocm_path,
                 use_dmabuf=use_dmabuf,
                 hip_dev_dict=hip_dev_dict,
+                node_pairs=node_pairing['pairs'],
             )
-            end_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
-            verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
+            ibperf_reporting.record_bw_results(
+                cvs_results_dict,
+                bw_test,
+                msg_size,
+                qp_count,
+                ib_bw_dict[bw_test][msg_size][qp_count],
+                ibperf_variant_config,
+            )
+            end_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
+            if scan_dmesg:
+                verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=True)
             if re.search('True', config_dict.get('verify_bw', ''), re.I):
                 ibperf_lib.verify_expected_bw(
                     bw_test,
@@ -294,27 +201,35 @@ def test_ib_bw_perf(phdl, bw_test, config_dict, request):
                 )
 
     log.debug('ib_bw_dict: %s', ib_bw_dict)
+    for err in node_pairing['errors']:
+        fail_test(err)
     update_test_result()
 
 
-def test_ib_lat_perf(phdl, lat_test, config_dict, request):
+def test_ib_lat_perf(orch, lat_test, config_dict, request, cvs_results_dict, ibperf_variant_config, node_pairing):
     globals.error_list = []
     ib_lat_dict[lat_test] = {}
-    rocm_path = ibperf_lib.detect_rocm_path(phdl, config_dict.get('rocm_dir', ''))
+    scan_dmesg = can_read_dmesg(orch)
+    rocm_path = ibperf_lib.detect_rocm_path(orch, config_dict.get('rocm_dir', ''))
     app_path = f'{config_dict["install_dir"]}/perftest/bin'
     use_dmabuf = ibperf_lib.check_perftest_dmabuf(
-        phdl, f'{app_path}/{lat_test}', rocm_path=rocm_path, require_dmabuf=ibperf_lib.is_dmabuf_required(config_dict)
+        orch,
+        f'{app_path}/{lat_test}',
+        rocm_path=rocm_path,
+        require_dmabuf=ibperf_lib.is_dmabuf_required(config_dict),
     )
     ib_dmabuf_dict[lat_test] = use_dmabuf
     request.node.user_properties.append(("dmabuf", "on" if use_dmabuf else "off"))
     update_test_result()
 
-    gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
-    gpu_numa_dict = linux_utils.get_gpu_numa_dict(phdl)
-    hip_dev_dict = ibperf_lib.get_hip_device_dict(phdl, gpu_nic_dict)
+    gpu_nic_dict = _fail_unmapped_gpus(orch)
+    update_test_result()
+    gpu_numa_dict = linux_utils.get_gpu_numa_dict(orch, use_sudo=False)
+    hip_dev_dict = ibperf_lib.get_hip_device_dict(orch, gpu_nic_dict)
+    _note_run_facts(ibperf_variant_config, use_dmabuf, gpu_nic_dict)
 
-    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(phdl)
-    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(phdl)
+    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(orch, use_sudo=False)
+    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(orch)
 
     bck_nic_dict = {}
     for node in rdma_nic_dict.keys():
@@ -324,7 +239,7 @@ def test_ib_lat_perf(phdl, lat_test, config_dict, request):
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
     gid_index = ibperf_lib.resolve_gid_index(
-        phdl,
+        orch,
         ibperf_lib.get_ibperf_rdma_devices(gpu_nic_dict, bck_nic_dict),
         config_dict.get('gid_index'),
         config_dict.get('gid_type', DEFAULT_GID_TYPE),
@@ -332,13 +247,14 @@ def test_ib_lat_perf(phdl, lat_test, config_dict, request):
     update_test_result()
     for msg_size in config_dict['msg_size_list']:
         ib_lat_dict[lat_test][msg_size] = {}
-        start_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
-        phdl.exec(
-            f'echo "Starting Test {lat_test} for {msg_size}" | sudo -n tee /dev/kmsg',
-            print_console=False,
-        )
+        start_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
+        if scan_dmesg:
+            orch.all.exec(
+                f'echo "Starting Test {lat_test} for {msg_size}" | sudo -n tee /dev/kmsg',
+                print_console=False,
+            )
         ib_lat_dict[lat_test][msg_size] = ibperf_lib.run_ib_perf_lat_test(
-            phdl,
+            orch,
             lat_test,
             gpu_numa_dict,
             gpu_nic_dict,
@@ -350,32 +266,39 @@ def test_ib_lat_perf(phdl, lat_test, config_dict, request):
             rocm_path=rocm_path,
             use_dmabuf=use_dmabuf,
             hip_dev_dict=hip_dev_dict,
+            node_pairs=node_pairing['pairs'],
         )
-        end_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
-        verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
+        ibperf_reporting.record_lat_results(
+            cvs_results_dict, lat_test, msg_size, ib_lat_dict[lat_test][msg_size], ibperf_variant_config
+        )
+        end_time = orch.all.exec('date +"%a %b %e %H:%M"', print_console=False)
+        if scan_dmesg:
+            verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=True)
         if re.search('True', config_dict.get('verify_bw', ''), re.I):
             ibperf_lib.verify_expected_lat(
                 lat_test, msg_size, ib_lat_dict[lat_test][msg_size], config_dict.get('expected_results', {})
             )
 
     log.debug('ib_lat_dict: %s', ib_lat_dict)
+    for err in node_pairing['errors']:
+        fail_test(err)
     update_test_result()
 
 
-def test_build_ib_bw_perf_chart(
-    phdl,
-):
+def test_build_ib_bw_perf_chart():
     globals.error_list = []
     ibperf_lib.generate_ibperf_bw_chart(ib_bw_dict, excel_file='ib_bw_pps_perf.xlsx', dmabuf_dict=ib_dmabuf_dict)
     update_test_result()
 
 
-def test_build_ib_lat_perf_chart(
-    phdl,
-):
+def test_build_ib_lat_perf_chart():
     globals.error_list = []
     try:
         ibperf_lib.generate_ibperf_lat_chart(ib_lat_dict, excel_file='ib_lat_perf.xlsx', dmabuf_dict=ib_dmabuf_dict)
     except ValueError as exc:
         fail_test(str(exc))
     update_test_result()
+
+
+def test_teardown_containers(orch, lifecycle):
+    teardown_containers(orch, lifecycle)

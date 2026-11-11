@@ -21,12 +21,12 @@ Set up config
 
      cvs config copy anc/anc_config.json --output ~/cvs_workspace/anc/anc_config.json
 
-2. Replace every ``<changeme>`` placeholder:
+2. Optionally set the install-related keys (all three are optional):
 
-   - ``anc_release_url`` — URL of the ANC release archive to download and install
-   - ``anc_version`` — minimum required ANC version (the version in ``anc_release_url`` must be >= this). Install is skipped only when **all** expected nodes already satisfy it; if any node is below the minimum, the installer runs across all nodes.
+   - ``anc_release_url`` — URL of the ANC release archive to download and install. Set it only when ANC must be installed (absent on a node, or below ``anc_version`` with a URL new enough to upgrade); leave blank when ANC is preinstalled.
+   - ``anc_version`` — optional minimum ANC version. When set, a node below it is upgraded only if ``anc_release_url`` can satisfy it; otherwise the ``anc_installation`` suite fails, while the group/item suites proceed with the installed version.
 
-3. Optionally set ``ANC_INSTALL_PATH`` for relocatable **tar** installs. Deb and rpm packages ignore this key and always install under ``/opt/amdtools``.
+3. Optionally set ``ANC_INSTALL_PATH`` for relocatable **tar** installs; each suite also probes this path for an existing install. Deb and rpm packages ignore this key and always install under ``/opt/amdtools``.
 
 For the complete field reference including release URL, install path, and log collection options, see :doc:`/reference/configuration-files/burn-in-diag/anc`.
 
@@ -35,7 +35,7 @@ For the complete field reference including release URL, install path, and log co
 Run tests
 =========
 
-List the install suite and the CPU / GPU group suites:
+List the install suite and the CPU and GPU group suites:
 
 .. code:: bash
 
@@ -47,7 +47,7 @@ List the install suite and the CPU / GPU group suites:
 Install ANC
 ~~~~~~~~~~~
 
-Every CPU / GPU group and individual-item run installs ANC as a session-cached pre-task, so a separate install step is optional. Run ``anc_installation`` when you want to install or refresh ANC without running a validation group:
+Every CPU group, GPU group, and individual-item run installs ANC as a session-cached pre-task, so a separate install step is optional. Run ``anc_installation`` when you want to install or refresh ANC without running a validation group:
 
 .. code:: bash
 
@@ -126,7 +126,22 @@ Run a single GPU group:
 Individual items
 ~~~~~~~~~~~~~~~~
 
-Individual ANC items are exposed as per-family suites, each item its own ``test_<item>`` function run as ``sudo ./anc.py -i <item>``: ``anc_test_computerocker`` (24), ``anc_test_memrocker`` (10), ``anc_test_oblex`` (8), ``anc_test_gemm`` (3), ``anc_test_xgmi`` (3), ``anc_test_ualink`` (3), ``anc_test_pcie`` (3), ``anc_test_babel`` (2), and ``anc_test_basic`` (18 one-off items such as ``test_ampttk``, ``test_hdrt``, ``test_no_op``, ``test_sdma_bidi_peak``). ``cvs list anc_test_<family>`` reports a suite's items; the per-family lists live in ``cvs/lib/anc_lib.py``.
+Individual ANC items are exposed as per-family suites, each item its own
+``test_<item>`` function run as ``sudo ./anc.py -i <item>``:
+
+- ``anc_test_computerocker`` (24 items)
+- ``anc_test_memrocker`` (10 items)
+- ``anc_test_oblex`` (8 items)
+- ``anc_test_gemm`` (3 items)
+- ``anc_test_xgmi`` (3 items)
+- ``anc_test_ualink`` (3 items)
+- ``anc_test_pcie`` (3 items)
+- ``anc_test_babel`` (2 items)
+- ``anc_test_basic`` (18 one-off items: ``test_ampttk``, ``test_hdrt``,
+  ``test_no_op``, ``test_sdma_bidi_peak``, and others)
+
+``cvs list anc_test_<family>`` reports a suite's items; the per-family lists
+live in |cvs-lib-anc-lib-py|_.
 
 Run a whole item family:
 
@@ -145,13 +160,19 @@ Run a single item:
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/anc/anc_config.json
 
+Run on managed compute
+~~~~~~~~~~~~~~~~~~~~~~
+
+See :doc:`/how-to/run-on-managed-compute` for guidance on running ANC on managed compute.
+
 Pass and fail
 =============
 
 A node passes only when ANC started (a ``Log directory`` line is present), ``console.log`` was collected, and the **final** return-code line in ``console.log`` is ``ANC_SUCCESS [0]``. Failures on multiple nodes are aggregated into a single test failure.
 
 Logs land under ``<run_dir>/anc_logs/<ip>_<hostname>/<test_name>/<timestamp>/``.
-``cvs run`` also writes a self-contained pytest HTML report and a text log under
-``<run_dir>`` by default (see :doc:`/reference/cli/cvs-run`); pass ``--html`` /
-``--log-file`` to redirect them or ``--no-html`` / ``--no-log-file`` to suppress
-them. ``<run_dir>`` is ``<workspace>/cvs_runs/<run_id>/``.
+``cvs run`` also writes the pytest HTML report and text log described in :ref:`pytest-html-report-and-bundle`.
+
+
+.. |cvs-lib-anc-lib-py| replace:: ``cvs/lib/anc_lib.py``
+.. _cvs-lib-anc-lib-py: https://github.com/ROCm/cvs/blob/main/cvs/lib/anc_lib.py

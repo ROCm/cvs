@@ -20,6 +20,7 @@ import re
 import shlex
 
 from cvs.lib import dmesg_noise
+from cvs.lib.preflight.ifoe_l2_connectivity import parse_afmctl_firmware_by_bdf
 
 _STATUSES = ('pass', 'fail', 'na')
 
@@ -40,6 +41,8 @@ NIC_LINK = 'nic_link'
 PCI_ACS = 'pci_acs'
 DMESG_DRIVER = 'dmesg_driver'
 DMESG_RESET = 'dmesg_reset'
+IFOE_FW = 'ifoe_fw'
+IFOE_KMOD = 'ifoe_kmod'
 CHECK_IDS = (
     OS_RELEASE,
     KERNEL_VERSION,
@@ -57,6 +60,8 @@ CHECK_IDS = (
     PCI_ACS,
     DMESG_DRIVER,
     DMESG_RESET,
+    IFOE_FW,
+    IFOE_KMOD,
 )
 
 _OS_ACTUAL_RE = re.compile(r'VERSION="(([0-9.\-_A-Z]+)\s+)', re.I)
@@ -70,6 +75,20 @@ DEFAULT_NIC_LINK_SPEED = 400000
 _SPEED_UNKNOWN = (-1, 4294967295)
 _NIC_LINK_RE = re.compile(r'^\s*(\S+)[ \t]+speed=(\S*)[ \t]+operstate=(\S*)[ \t]+flags=(\S*)\s*$')
 _IFF_UP = 0x1
+
+# Emitted by the host_configs_cvs IFoE commands when the ifoe kernel module is not
+# loaded, so a non-MI4XX node reports NA instead of failing.
+CVS_IFOE_ABSENT = 'CVS_IFOE_ABSENT'
+# Emitted when the module is loaded (an IFoE node) but the reader binary (afmctl /
+# modinfo) could not be resolved. This is a read failure, not an absent module, so
+# the check fails as unreadable rather than silently recording NA.
+CVS_IFOE_READER_MISSING = 'CVS_IFOE_READER_MISSING'
+# ``modinfo ifoe`` prints a ``version:`` line (dotted/dash build string).
+_IFOE_KMOD_RE = re.compile(r'^version:\s*(\S+)', re.I | re.M)
+# A well-formed firmware version is dotted digits (e.g. 0.14.15); reject garbled data.
+_IFOE_FW_FORMAT_RE = re.compile(r'^\d+(?:\.\d+)+$')
+# A well-formed kmod version token: alphanumerics with dots/dashes/underscores, no spaces.
+_IFOE_KMOD_FORMAT_RE = re.compile(r'^[0-9A-Za-z][0-9A-Za-z._-]*$')
 
 
 def make_meta(cluster_dict, suite_name, version=None):
@@ -300,6 +319,118 @@ def eval_firmware(out_dict, fw_dict):
         else:
             records[str(node)] = _pass_record('firmware matched')
     return records, messages
+
+
+def _na_record(summary='not applicable'):
+    return build_node_record('na', [], summary)
+
+
+def _extract_ifoe_firmware(text):
+    '''Return (firmware_versions, device_count) from ``afmctl show device --json``.
+
+    ``device_count`` is the number of AFM device BDFs the tool reports, counted
+    independently of the accelerator-descriptor filter that ibperf's vPOD discovery
+    uses; a reported BDF without a firmware version contributes to the count but not
+    to the value list, so the caller fails an incomplete read even when the missing
+    device carries no accelerator descriptor.
+    '''
+    firmware_by_bdf, _errors = parse_afmctl_firmware_by_bdf(text)
+    versions = [str(fw).strip() for fw in firmware_by_bdf.values() if fw]
+    return versions, len(firmware_by_bdf)
+
+
+def _extract_ifoe_kmod(text):
+    '''Return (kmod_versions, device_count) from ``modinfo ifoe`` output.
+
+    The kernel module is not per-device, so ``device_count`` matches the number of
+    version lines found and the incomplete-device check never fires.
+    '''
+    versions = _IFOE_KMOD_RE.findall(text)
+    return versions, len(versions)
+
+
+def _eval_ifoe_version(out_dict, expected, extract, format_re, item_name, label):
+    '''Shared IFoE firmware/kmod evaluation.
+
+    Per node:
+      - absent sentinel in output -> ``na`` record, no fail message.
+      - denial token in output -> fail (the privileged read was refused).
+      - reader-missing marker in output -> fail (module loaded but reader not found).
+      - more reported devices than detected versions -> fail (a reported device is
+        missing its version), so a healthy device cannot mask a sibling that reports no
+        version.
+      - ``expected`` set -> every detected value must equal it, else fail.
+      - ``expected`` blank -> inventory mode: pass only when every detected value is a
+        well-formed version (``format_re``); a missing or garbled value fails.
+
+    ``extract`` returns ``(values, device_count)`` for one node's output; a divergence
+    between devices fails rather than passing on the first value alone.
+    '''
+    records = {}
+    messages = []
+    want = str(expected).strip() if expected not in (None, '') else ''
+    for node, output in out_dict.items():
+        text = str(output or '')
+        if CVS_IFOE_ABSENT in text:
+            records[str(node)] = _na_record()
+            continue
+        if 'CVS_CMD_DENIED' in text:
+            message = f'{label} could not be read on node {node}'
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'denied')
+            continue
+        if CVS_IFOE_READER_MISSING in text:
+            message = f'{label} reader not found on node {node}'
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'unavailable')
+            continue
+        detected, device_count = extract(text)
+        if not detected:
+            message = f'{label} could not be read on node {node}'
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'unavailable')
+            continue
+        if device_count > len(detected):
+            message = f'{label} missing for {device_count - len(detected)} of {device_count} device(s) on node {node}'
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'incomplete')
+            continue
+        unique = list(dict.fromkeys(detected))
+        if len(unique) > 1:
+            joined = ', '.join(unique)
+            message = f'{label} differs across devices on node {node}: {joined}'
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'divergent')
+            continue
+        value = unique[0]
+        if want:
+            if value == want:
+                records[str(node)] = _pass_record(value)
+            else:
+                message = f'Installed {label} {value} not matching expected version {want} on node {node}'
+                messages.append(message)
+                records[str(node)] = _fail_record(item_name, message, value)
+        elif format_re.match(value):
+            records[str(node)] = _pass_record(value)
+        else:
+            message = f'{label} {value!r} on node {node} is not a well-formed version'
+            messages.append(message)
+            records[str(node)] = _fail_record(item_name, message, 'malformed')
+    return records, messages
+
+
+def eval_ifoe_firmware(out_dict, expected):
+    '''Return (node_records, fail_messages) for the IFoE/AFM device firmware version.'''
+    return _eval_ifoe_version(
+        out_dict, expected, _extract_ifoe_firmware, _IFOE_FW_FORMAT_RE, 'ifoe_fw_version', 'IFoE firmware version'
+    )
+
+
+def eval_ifoe_kmod(out_dict, expected):
+    '''Return (node_records, fail_messages) for the ifoe kernel module version.'''
+    return _eval_ifoe_version(
+        out_dict, expected, _extract_ifoe_kmod, _IFOE_KMOD_FORMAT_RE, 'ifoe_kmod_version', 'IFoE kmod version'
+    )
 
 
 def eval_pci_realloc(out_dict, expected):
@@ -636,43 +767,15 @@ def _actionable_amdgpu_blob(event):
     amdgpu, or node-scraper tagged the event ``SW_DRIVER``.
     '''
     # Imported here so the rest of this module does not load the analyzer.
-    from cvs.lib.node_scraper_adapter import event_match_lines
+    from cvs.lib.node_scraper_adapter import event_match_lines, event_match_text
 
+    if dmesg_noise.dmesg_line_is_benign(event_match_text(event)):
+        return ''
     lines = event_match_lines([event])
     blob = lines[0] if lines else ''
-    if dmesg_noise.dmesg_line_is_benign(blob):
-        return ''
     if 'amdgpu' not in blob.lower() and event.get('category') != 'SW_DRIVER':
         return ''
     return blob
-
-
-def eval_dmesg_driver(out_dict):
-    '''Return (node_records, fail_messages) for actionable amdgpu fail/error lines.
-
-    Zero-valued status fields such as ``WALKER_ERROR: 0x0`` and
-    ``MAPPING_ERROR: 0x0`` are not driver errors.
-    '''
-    denied_records, denied_messages, rest = _take_denied(
-        out_dict,
-        'CVS_CMD_DENIED',
-        'amdgpu',
-        lambda node: f'Dmesg check could not run on node {node}',
-    )
-    filtered = {}
-    for node, output in rest.items():
-        kept = [line for line in (output or '').splitlines() if dmesg_noise.line_indicates_driver_error(line)]
-        filtered[node] = '\n'.join(kept)
-    records, messages = _must_not_match(
-        filtered,
-        'fail|error',
-        'amdgpu',
-        lambda node: f'Dmesg has amdgpu driver errors on node {node}',
-        'clean',
-    )
-    records.update(denied_records)
-    messages.extend(denied_messages)
-    return records, messages
 
 
 def _hit_record(hits, message):
@@ -726,19 +829,6 @@ def eval_dmesg_driver_events(events_by_node):
     '''Return (node_records, fail_messages) from node-scraper dmesg events.'''
     records, messages, _, _ = eval_dmesg_node_events(events_by_node)
     return records, messages
-
-
-def eval_dmesg_reset(out_dict):
-    '''Return (node_records, fail_messages) for amdgpu reset/hang/traceback lines.'''
-    return _must_not_match_with_denial(
-        out_dict,
-        'CVS_CMD_DENIED',
-        'reset|hang|traceback',
-        'amdgpu',
-        lambda node: f'Dmesg check could not run on node {node}',
-        lambda node: f'Dmesg has amdgpu reset/hang errors on node {node}',
-        'clean',
-    )
 
 
 def eval_dmesg_reset_events(events_by_node):

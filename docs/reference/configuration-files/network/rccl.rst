@@ -70,6 +70,7 @@ Main config file used by ``rccl_perf`` and ``rccl_regression``:
           "verify_bw_dip": "False",
           "verify_lat_dip": "False",
           "cluster_snapshot_debug": "False",
+          "report_ecc_delta": "False",
           "rccl_result_file": "/home/{user-id}/rccl_result_file.json"
         },
         "results": {}
@@ -138,7 +139,7 @@ Configuration parameters for RCCL suites:
      - RCCL collectives to execute.
    * - ``rccl_result_file``
      - ``"/tmp/rccl_result.json"``
-     - Output file path for RCCL parsed results.
+     - Base path for RCCL result JSON. Perf writes per-collective files named ``<stem>_<collective>[_<dtype>|_aggregated|_topology_check].json`` beside it; regression writes ``<stem>_<collective>[_<case-hash>].json``. The regression hash identifies sorted environment overrides. Characters outside the unreserved filename set are percent-encoded, and colliding derived perf paths fail before launch.
    * - ``start_msg_size``
      - ``"1024"``
      - Start message size for sweep.
@@ -192,7 +193,16 @@ Configuration parameters for RCCL suites:
      - Description
    * - ``verify_bus_bw``
      - ``"False"``
-     - Enable bus-bandwidth threshold validation.
+     - Enable bus-bandwidth threshold validation. Off by default; enable for qualification after confirming the ``results`` entry for your GPU, NIC and rank count.
+   * - ``nic_model``
+     - ``"thor"``
+     - Selects NIC-keyed ``results.<nic>`` references for scale-out runs.
+   * - ``fabric``
+     - ``"scale_out"``
+     - ``scale_out`` or ``scale_up``; selects the ``results`` namespace.
+   * - ``bus_bw_tolerance``
+     - ``"0.95"`` (sample: ``"1.0"``)
+     - Fraction in (0, 1] of the reference bus bandwidth a measurement must reach. Default 0.95 when absent; an invalid value fails the test. The guide configs use 1.0. Dip checks keep a fixed 5% tolerance.
    * - ``verify_bw_dip``
      - ``"False"``
      - Enable bandwidth-dip validation.
@@ -202,15 +212,25 @@ Configuration parameters for RCCL suites:
    * - ``cluster_snapshot_debug``
      - ``"False"``
      - Enables before/after cluster metric snapshots around tests.
+   * - ``report_ecc_delta``
+     - ``"False"``
+     - Capture ``amd-smi metric -g all --json`` before and after each RCCL test. After the test, logs one INFO table per node with UMC, SDMA, GFX, MMHUB, PCIE_BIF, HDP, and XGMI_WAFL counters (CE/UE/DE before, after, and Delta). Warns if any counter increases. Does not fail the test. Skipped without passwordless sudo. Independent of ``cluster_snapshot_debug``. Raw ``amd-smi`` JSON and capture one-liners are DEBUG.
+   * - ``report_ecc_blocks``
+     - ``[]``
+     - Optional block list used when ``report_ecc_delta`` is true. Empty means all blocks.
+   * - ``dmesg_during_test``
+     - ``"False"``
+     - Perf and regression only. Scan each node's dmesg between the ``Starting Test`` and ``End of Test`` markers CVS writes around each test, instead of the clock window taken from the first node. Use it when node clocks are not tightly synchronized. A node whose start marker is no longer in dmesg is scanned over the clock window; a node with no end marker is scanned to the end of dmesg. Skipped without passwordless sudo.
 
 Expected results format
 -----------------------
 
-The ``results`` section is a sibling of ``cvs_params`` under ``rccl``. Values are keyed by collective and message size (bytes), with expected bus bandwidth in GB/s. Re-baseline the shipped values for your cluster before enabling checks. The shipped values assume two nodes with eight ranks per node.
+The ``results`` section is a sibling of ``cvs_params`` under ``rccl``. Values are keyed by collective and message size (bytes), with expected bus bandwidth in GB/s. NIC/rank keys have the form ``<nic>.<collective>-<data_types>-<total ranks>``; ``cvs_params.nic_model`` selects ``ainic``, ``thor`` or ``connectx``. A matching NIC/rank entry takes precedence over the flat entry. The shipped ``thor`` entries cover the MI350X/MI355X scale-out guide range of 2–16 nodes at 8 ranks per node: total rank keys 16 through 128 in steps of 8 use the 350 GB/s all_reduce bar at 8589934592 bytes. The sample tolerance of 1.0 enforces it exactly. MI300X clusters must set each all_reduce entry to 304. The guide lists both 304 and 350 for MI355X, an open question; its "8 GB" is interpreted as 8 GiB (8589934592 bytes), also open. The other nine collectives have null entries over the same rank range because no guide bar is published. Other thor platforms must override the all_reduce entries. Flat values are generic two-node examples, compared without slack at tolerance 1.0. Other NICs and unlisted total-rank counts fall back to these examples. Since keys use total ranks, another topology with a covered count also resolves to the guide entry and must override it.
 
-Set ``verify_bus_bw`` to ``"True"`` to require actual bandwidth to reach at least 95% of the configured value. A missing collective threshold fails the test when this check is enabled. Set ``verify_bw_dip`` or ``verify_lat_dip`` to ``"True"`` to check for bandwidth or latency dips at the configured message sizes; either check can fail the test.
+Set ``verify_bus_bw`` to ``"True"`` to require actual bandwidth to reach ``bus_bw × cvs_params.bus_bw_tolerance``. The tolerance defaults to 0.95 when absent, must be a fraction in (0, 1], and an invalid value fails the test. The sample uses 1.0. A missing collective threshold or a configured size without a matching in-place result row (out-of-place for alltoall/alltoallv) fails; ensure ``start_msg_size`` and ``end_msg_size`` cover every configured size. A ``null`` entry marks a collective with no published threshold, logs ``No published threshold for <collective>; bus_bw not gated``, and skips its bus-bandwidth gate. Invalid entries fail with their full ``rccl.results.<nic>.<key>.<size>`` path. Verification is off in the sample because other NICs and rank counts use flat examples, MI300X needs 304, and regression and pairwise reuse the same entries. Enable it after checking the results for your GPU, NIC and rank count. Set ``verify_bw_dip`` or ``verify_lat_dip`` to ``"True"`` to check for bandwidth or latency dips at the configured message sizes; either check can fail the test. An enabled dip check with no resolved reference fails.
 
 Each enabled check is reported per message size and data type as a pytest sub-test, and the parent row in the HTML report expands into one row per check with its actual value and threshold.
+A missing reference or an invalid ``bus_bw_tolerance`` is reported as one failing case for its check.
 
 .. dropdown:: ``results`` snippet
 
@@ -225,15 +245,47 @@ Each enabled check is reported per message size and data type as a pytest sub-te
       }
     }
 
+.. dropdown:: NIC/rank-keyed results snippet
+
+  .. code:: json
+
+    "results": {
+      "thor": {
+        "all_reduce_perf-float-16": {
+          "8589934592": {"bus_bw": "350.00"}
+        },
+        "all_gather_perf-float-16": null
+      }
+    }
+
+Single-node guide configs
+-------------------------
+
+``mi300x_rccl_single_node_config.json`` requires 304 GB/s and ``mi350x_rccl_single_node_config.json`` requires 350 GB/s. Both are for ``rccl_perf`` only: ``all_reduce_perf``, 8 GiB, in-place, float, 1 node with 8 ranks, with ``fabric`` set to ``scale_up``, ``verify_bus_bw`` set to ``"True"``, and ``bus_bw_tolerance`` set to ``"1.0"``.
+
+.. code:: json
+
+  "scale_up": {"all_reduce_perf-float-8": {"8589934592": {"bus_bw": "350"}}}
+
+The scale_up key's rank suffix follows the GPU count, e.g. ``all_reduce_perf-float-4`` for a 4-GPU tray.
+
+.. note::
+
+  The guide gives both 304 and 350 GB/s as the MI355X bar at 8 GiB in-place. CVS ships no MI355X bar until this is resolved; do not use the MI350X config as an MI355X gate.
+
+  MI4xx scale-up references still need a published, validated bar; none is shipped.
+
 Collective meanings
 -------------------
 
 The following collectives can be specified in the ``results`` block; each name maps to a distinct RCCL operation.
 
 - ``all_reduce_perf``: all ranks reduce then receive the reduced result.
+- ``all_reduce_bias_perf``: all-reduce with a bias buffer (``ncclAllReduceWithBias``). Not run by default; add it to ``rccl_collective`` when your RCCL build exports ``ncclAllReduceWithBias``. rccl-tests reports these rows as ``AllReduce``, so set thresholds under ``all_reduce_bias_perf``.
 - ``all_gather_perf``: each rank receives data from all ranks.
 - ``scatter_perf``: root rank distributes shards to all ranks.
 - ``gather_perf``: all ranks send data to a root rank.
+- ``reduce_perf``: all ranks reduce to a root rank.
 - ``reduce_scatter_perf``: reduction followed by scatter.
 - ``sendrecv_perf``: point-to-point pair communication.
 - ``alltoall_perf``: equal-sized all-to-all exchange.
@@ -337,7 +389,7 @@ it instead takes a CUDA-style code path that additionally requires
 ``NCCL_CUMEM_ENABLE`` defaults to ``0`` on ROCm/RCCL, that condition is never
 met, so RCCL silently falls through to a plain (non-DMA-BUF) ``ibv_reg_mr_iova2``
 call on a raw GPU device pointer. Without a peer-memory kernel module,
-``bnxt_re``'s driver cannot pin that pointer via ``get_user_pages`` and rejects
+``bnxt_re``'s driver cannot pin that pointer using ``get_user_pages`` and rejects
 it with ``EFAULT`` ("Bad address").
 
 **Fix:** Set ``NCCL_CUMEM_ENABLE=1`` (alongside ``NCCL_DMABUF_ENABLE=1``) in the

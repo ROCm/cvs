@@ -68,7 +68,7 @@ Expected output (suite names and totals vary by version):
 .. code:: text
   
   (.cvs_venv) user@head-node:~/cvs$ cvs --version
-  cvs: 0.3.0
+  cvs: 0.4.0
 
   (.cvs_venv) user@head-node:~/cvs$ cvs list
 
@@ -94,7 +94,7 @@ Expected output (suite names and totals vary by version):
       • install_ibperf_tools
   <<truncated>>
   ================================================================================
-  Total: 47 test suites across 1 package(s)
+  Total: 61 test suites across 1 package(s)
 
 If ``cvs --version`` prints the updated version number and ``cvs list`` shows available test suites, the upgrade was successful.
 

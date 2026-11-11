@@ -119,6 +119,40 @@ class TestBuildRemoteCommand(unittest.TestCase):
         self.assertIn("NCCL_IB_HCA=rdma0,rdma1", cmd)
         self.assertIn("NCCL_IB_GID_INDEX=3", cmd)
 
+    def test_reads_this_nodes_json_from_a_shared_dump_path(self):
+        """Every node writes smoke/<short host>.json to one shared dir; read only our own."""
+        import json
+        import socket
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            primus = os.path.join(root, "Primus")
+            os.makedirs(os.path.join(primus, "runner"))
+            cli = os.path.join(primus, "runner", "primus-cli")
+            with open(cli, "w") as f:
+                f.write("#!/bin/sh\nexit 0\n")
+            os.chmod(cli, 0o700)
+            dump = os.path.join(root, "node_smoke")
+            os.makedirs(os.path.join(dump, "smoke"))
+            me = socket.gethostname().split(".")[0]
+            for host in ("0000-sorts-first", me):
+                with open(os.path.join(dump, "smoke", f"{host}.json"), "w") as f:
+                    json.dump({"host": host, "status": "PASS"}, f)
+            cmd = build_remote_node_smoke_command(
+                primus_dir=primus,
+                venv_activate="/dev/null",
+                node_rank=1,
+                nnodes=2,
+                master_addr="node0",
+                master_port=1234,
+                gpus_per_node=8,
+                dump_path=dump,
+                smoke_flags="",
+            )
+            out = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, check=True).stdout
+        self.assertEqual(parse_node_smoke_output(out)["node_payload"]["host"], me)
+
 
 class TestParseNodeSmokeOutput(unittest.TestCase):
     def test_parse_status_from_log_line(self):

@@ -88,6 +88,8 @@
         "fabric_checks": false,
         "_comment_fabric_checks": "Enable MI4XX-only AIFM/AFM/vPOD, station-mask, and IFoE port admission checks.",
 
+        "_comment_min_up_ports_per_gpu": "Minimum enabled IFoE ports each GPU must report in its station mask. Defaults to 2 (one enabled station) so a node with no scale-up fabric fails admission. Set to 0 only for a diagnostic run that should admit an un-provisioned fabric.",
+
         "_comment_policy": "CVS owns afmctl discovery, privilege handling, BDF and port discovery, strict coverage, traffic selection, and timeout derivation.",
 
         "l2ping": {

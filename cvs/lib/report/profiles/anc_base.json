@@ -14,6 +14,12 @@
   },
   "cards": [
     {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "datasets.status_matrix.run_card_display"},
-    {"type": "status_matrix", "id": "results", "title": "Full results", "bind": "datasets.status_matrix"}
+    {
+      "type": "table",
+      "id": "results",
+      "title": "Full results",
+      "bind": "datasets.status_matrix.results_table",
+      "columns": ["Node", "Check", "Result", "Passed", "Failed", "Status", "Message", "Logs"]
+    }
   ]
 }

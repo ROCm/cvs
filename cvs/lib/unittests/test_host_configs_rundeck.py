@@ -1,5 +1,6 @@
 '''Unit tests for cvs.lib.host_configs_rundeck (Run Deck capture for host config checks).'''
 
+import json
 import shlex
 import unittest
 
@@ -190,25 +191,21 @@ class TestHostFlags(unittest.TestCase):
         self.assertEqual(dirty['n1']['status'], 'fail')
         self.assertEqual(dirty_messages, ['PCIe ACS not disabled on node n1'])
 
-    def test_dmesg_records_sudo_denial_before_error_patterns(self):
-        denied = 'CVS_CMD_DENIED sudo: a password is required\n'
-        driver, driver_messages = host_configs_rundeck.eval_dmesg_driver({'n1': denied})
-        reset, reset_messages = host_configs_rundeck.eval_dmesg_reset({'n1': denied})
-        self.assertEqual(driver['n1']['status'], 'fail')
-        self.assertEqual(driver_messages, ['Dmesg check could not run on node n1'])
-        self.assertEqual(reset['n1']['status'], 'fail')
-        self.assertEqual(reset_messages, ['Dmesg check could not run on node n1'])
+    @staticmethod
+    def _event(match_content, category='OS'):
+        return {'priority': 'ERROR', 'description': 'x', 'match_content': match_content, 'category': category}
 
     def test_dmesg_driver_and_reset_use_different_patterns(self):
-        driver, driver_messages = host_configs_rundeck.eval_dmesg_driver({'n1': 'amdgpu: ring timeout error\n'})
-        reset, reset_messages = host_configs_rundeck.eval_dmesg_reset({'n1': 'amdgpu: Traceback\n'})
-        hung, hung_messages = host_configs_rundeck.eval_dmesg_reset({'n1': 'amdgpu: GPU reset\n'})
-        self.assertEqual(driver['n1']['status'], 'fail')
-        self.assertEqual(driver_messages, ['Dmesg has amdgpu driver errors on node n1'])
-        self.assertEqual(reset['n1']['status'], 'fail')
-        self.assertEqual(reset_messages, ['Dmesg has amdgpu reset/hang errors on node n1'])
-        self.assertEqual(hung['n1']['status'], 'fail')
-        self.assertEqual(hung_messages, ['Dmesg has amdgpu reset/hang errors on node n1'])
+        cases = (
+            ('amdgpu: ring timeout error', 'fail', 'pass'),
+            ('amdgpu: Traceback', 'pass', 'fail'),
+            ('amdgpu: GPU reset', 'pass', 'fail'),
+        )
+        for line, driver_status, reset_status in cases:
+            with self.subTest(line=line):
+                driver, _, reset, _ = host_configs_rundeck.eval_dmesg_node_events({'n1': [self._event(line)]})
+                self.assertEqual(driver['n1']['status'], driver_status)
+                self.assertEqual(reset['n1']['status'], reset_status)
 
     def test_dmesg_node_events_record_denied_nodes(self):
         driver, driver_messages, reset, reset_messages = host_configs_rundeck.eval_dmesg_node_events(
@@ -222,13 +219,29 @@ class TestHostFlags(unittest.TestCase):
         self.assertEqual(driver_messages, ['Dmesg check could not run on node n2'])
         self.assertEqual(reset_messages, ['Dmesg check could not run on node n2'])
 
+    def test_dmesg_events_ignore_benign_unknown_errors(self):
+        events = [
+            {'priority': 'ERROR', 'description': 'Unknown dmesg error', 'match_content': line, 'category': 'UNKNOWN'}
+            for line in (
+                'amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x0',
+                'amdgpu 0000:03:00.0: amdgpu: [Firmware Bug]: APIC register already in use',
+            )
+        ]
+        driver, driver_messages, reset, reset_messages = host_configs_rundeck.eval_dmesg_node_events({'n1': events})
+        self.assertEqual(driver['n1']['status'], 'pass')
+        self.assertEqual(reset['n1']['status'], 'pass')
+        self.assertEqual(driver_messages + reset_messages, [])
+
     def test_dmesg_driver_ignores_zero_status_fields(self):
-        text = 'amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x0\namdgpu 0000:03:00.0: amdgpu: MAPPING_ERROR: 0x0\n'
-        records, messages = host_configs_rundeck.eval_dmesg_driver({'n236': text})
+        clean = [
+            self._event('amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x0'),
+            self._event('amdgpu 0000:03:00.0: amdgpu: MAPPING_ERROR: 0x0'),
+        ]
+        records, messages = host_configs_rundeck.eval_dmesg_driver_events({'n236': clean})
         self.assertEqual(records['n236']['status'], 'pass')
         self.assertEqual(messages, [])
-        dirty, dirty_messages = host_configs_rundeck.eval_dmesg_driver(
-            {'n236': 'amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x1\n'}
+        dirty, dirty_messages = host_configs_rundeck.eval_dmesg_driver_events(
+            {'n236': [self._event('amdgpu 0000:03:00.0: amdgpu: WALKER_ERROR: 0x1')]}
         )
         self.assertEqual(dirty['n236']['status'], 'fail')
         self.assertEqual(dirty_messages, ['Dmesg has amdgpu driver errors on node n236'])
@@ -642,6 +655,200 @@ class TestRecordGroup(unittest.TestCase):
             {'n1': host_configs_rundeck.build_node_record('pass', [], 'iommu=pt')},
         )
         self.assertEqual(results['groups']['iommu_pt']['nodes']['n1']['status'], 'pass')
+
+
+def _ifoe_json(*firmware_versions, accel_base=0):
+    '''Build one ``afmctl show device --json`` payload, one device per version.
+
+    A ``None`` version yields a device block with no firmware field, exercising the
+    incomplete-read path. The structure mirrors real afmctl: firmware nests under a
+    per-device ``status`` block.
+    '''
+    devices = []
+    for index, version in enumerate(firmware_versions):
+        device = {
+            'bdf': f'000{index + 1}:01:00.1',
+            'spec': {'accelerator_id': str(accel_base + index)},
+        }
+        status = {'lib_version': '0.1.0'}
+        if version is not None:
+            status['firmware_version'] = version
+        device['status'] = status
+        devices.append(device)
+    return json.dumps({'device': devices})
+
+
+class TestIfoeFirmware(unittest.TestCase):
+    def test_compare_match_passes(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _ifoe_json('0.14.15')}, '0.14.15')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n1']['items_summary'], '0.14.15')
+        self.assertEqual(messages, [])
+
+    def test_compare_mismatch_fails_with_detected(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _ifoe_json('0.14.15')}, '0.14.16')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], '0.14.15')
+        self.assertEqual(
+            messages,
+            ['Installed IFoE firmware version 0.14.15 not matching expected version 0.14.16 on node n1'],
+        )
+
+    def test_inventory_wellformed_passes(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _ifoe_json('0.14.15')}, '')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n1']['items_summary'], '0.14.15')
+        self.assertEqual(messages, [])
+
+    def test_inventory_garbled_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _ifoe_json('not-a-version!!')}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'malformed')
+        self.assertIn('not a well-formed version', messages[0])
+
+    def test_absent_node_is_na_without_failure(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': 'CVS_IFOE_ABSENT\n'}, '0.14.15')
+        self.assertEqual(records['n1']['status'], 'na')
+        self.assertEqual(records['n1']['items_summary'], 'not applicable')
+        self.assertEqual(messages, [])
+
+    def test_denied_sudo_fails_as_denial(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware(
+            {'n1': 'CVS_CMD_DENIED sudo: a password is required\n'}, ''
+        )
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'denied')
+        self.assertEqual(messages, ['IFoE firmware version could not be read on node n1'])
+
+    def test_unreadable_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': ''}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['IFoE firmware version could not be read on node n1'])
+
+    def test_reader_missing_fails_even_with_expected_version(self):
+        # The module is loaded (past the gate) but afmctl could not be resolved: this
+        # is a read failure, not an absent module, so it must fail rather than record
+        # NA and silently skip the configured-version check.
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': 'CVS_IFOE_READER_MISSING\n'}, '0.24.2')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'unavailable')
+        self.assertEqual(messages, ['IFoE firmware version reader not found on node n1'])
+
+    def test_multi_device_all_matching_passes(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware(
+            {'n1': _ifoe_json('0.14.15', '0.14.15', '0.14.15', '0.14.15')}, '0.14.15'
+        )
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(messages, [])
+
+    def test_multi_device_divergent_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _ifoe_json('0.14.15', '0.14.16')}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'divergent')
+        self.assertIn('differs across devices', messages[0])
+        self.assertIn('0.14.15', messages[0])
+        self.assertIn('0.14.16', messages[0])
+
+    def test_partial_device_missing_firmware_fails_inventory(self):
+        # Second device reports no firmware field: the node has 2 devices but only 1
+        # version, so it must fail rather than pass on the first device's value.
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _ifoe_json('0.14.15', None)}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'incomplete')
+        self.assertIn('missing for 1 of 2 device(s)', messages[0])
+
+    def test_partial_device_missing_firmware_fails_exact_match(self):
+        # The same gap must fail in exact-match mode, not pass because the present
+        # device happens to match the expected version.
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': _ifoe_json('0.14.15', None)}, '0.14.15')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'incomplete')
+        self.assertIn('missing for 1 of 2 device(s)', messages[0])
+
+    def test_incomplete_device_without_accelerator_descriptor_fails(self):
+        # The firmware count must include a reported BDF even when it carries no
+        # accelerator descriptor (the shape the accel-filtered parser drops), so a
+        # healthy device cannot mask an unreadable sibling in inventory or exact-match.
+        payload = json.dumps(
+            {
+                'device': [
+                    {'bdf': '0001:01:00.1', 'spec': {'accelerator_id': '0'}, 'status': {'firmware_version': '0.24.2'}},
+                    {'bdf': '0002:01:00.1', 'status': {}},
+                ]
+            }
+        )
+        for expected in ('', '0.24.2'):
+            records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': payload}, expected)
+            self.assertEqual(records['n1']['status'], 'fail')
+            self.assertEqual(records['n1']['items_summary'], 'incomplete')
+            self.assertIn('missing for 1 of 2 device(s)', messages[0])
+
+    def test_bdf_keyed_envelope_missing_firmware_fails(self):
+        # BDF-keyed envelope where the last device omits its firmware: the version must
+        # not cross from the first device's boundary, so the read fails as incomplete
+        # rather than passing both the inventory and exact-match checks.
+        payload = json.dumps(
+            {
+                '0001:01:00.1': {'spec': {'accelerator_id': '0'}, 'status': {'firmware_version': '0.24.2'}},
+                '0002:01:00.1': {'spec': {'accelerator_id': '1'}, 'status': {'lib_version': '0.1.0'}},
+            }
+        )
+        for expected in ('', '0.24.2'):
+            records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': payload}, expected)
+            self.assertEqual(records['n1']['status'], 'fail')
+            self.assertEqual(records['n1']['items_summary'], 'incomplete')
+            self.assertIn('missing for 1 of 2 device(s)', messages[0])
+
+    def test_invalid_json_fails_unreadable(self):
+        records, messages = host_configs_rundeck.eval_ifoe_firmware({'n1': 'not json at all\n'}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'unavailable')
+        self.assertEqual(messages, ['IFoE firmware version could not be read on node n1'])
+
+
+class TestIfoeKmod(unittest.TestCase):
+    def test_compare_match_passes(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'version:        1.0.0\n'}, '1.0.0')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(messages, [])
+
+    def test_inventory_wellformed_passes(self):
+        text = 'version:        1.0.0-5\nsrcversion:     ABCDEF0123456789\n'
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': text}, '')
+        self.assertEqual(records['n1']['status'], 'pass')
+        self.assertEqual(records['n1']['items_summary'], '1.0.0-5')
+        self.assertEqual(messages, [])
+
+    def test_absent_node_is_na(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'CVS_IFOE_ABSENT\n'}, '')
+        self.assertEqual(records['n1']['status'], 'na')
+        self.assertEqual(messages, [])
+
+    def test_reader_missing_fails_not_na(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'CVS_IFOE_READER_MISSING\n'}, '1.0.0')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'unavailable')
+        self.assertEqual(messages, ['IFoE kmod version reader not found on node n1'])
+
+    def test_compare_mismatch_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'version:        1.0.0\n'}, '2.0.0')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], '1.0.0')
+        self.assertEqual(
+            messages,
+            ['Installed IFoE kmod version 1.0.0 not matching expected version 2.0.0 on node n1'],
+        )
+
+    def test_inventory_garbled_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'version:        @@@bad!!!\n'}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(records['n1']['items_summary'], 'malformed')
+        self.assertIn('not a well-formed version', messages[0])
+
+    def test_missing_version_line_fails(self):
+        records, messages = host_configs_rundeck.eval_ifoe_kmod({'n1': 'srcversion: ABCDEF\n'}, '')
+        self.assertEqual(records['n1']['status'], 'fail')
+        self.assertEqual(messages, ['IFoE kmod version could not be read on node n1'])
 
 
 if __name__ == '__main__':
