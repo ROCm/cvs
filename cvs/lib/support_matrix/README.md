@@ -216,7 +216,10 @@ Everything lives in one module, `support_matrix_lib.py`:
   `(violations, warnings)`; the core logic, trivially unit-tested.
 - `gate_enforced()` — reads `CVS_SUPPORT_MATRIX_GATE`.
 - `served_model_name(variant_config)` — best-effort served-model id from a suite's
-  config (`model.id`, `server_params.model`, or an `inference` dict).
+  config. The key that names the model is not unified across suites yet, so it tries
+  `model_id` / `hf_model_id` / `model_name` / `hf_model_name` / `model` both at the
+  top level and inside `model` / `server_params` / `model_params` / `train_params` /
+  `inference` / `tokenizer`. (`model_repo` is excluded — it is a filesystem path.)
 - `load_matrix(category)`, `find_model_entry(matrix, framework, model)` (lenient,
   separator/path-insensitive), `normalize_arch(token)`, `parse_version(text)`.
 

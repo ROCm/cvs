@@ -166,12 +166,35 @@ class ServedModelNameTests(unittest.TestCase):
         vc.server_params = {"model": "openai/gpt-oss-120b"}
         self.assertEqual(sm.served_model_name(vc), "openai/gpt-oss-120b")
 
-    def test_inference_dict_model_repo(self):
+    def test_inference_dict_model(self):
         vc = MagicMock(spec=["model", "server_params", "inference"])
         vc.model = None
         vc.server_params = None
-        vc.inference = {"model_repo": "black-forest-labs/FLUX.1-dev"}
-        self.assertEqual(sm.served_model_name(vc), "black-forest-labs/FLUX.1-dev")
+        vc.inference = {"model": "deepseek-ai/DeepSeek-R1-0528"}
+        self.assertEqual(sm.served_model_name(vc), "deepseek-ai/DeepSeek-R1-0528")
+
+    def test_model_repo_path_is_ignored(self):
+        # model_repo is a filesystem path, not a model id, so it is not used.
+        vc = MagicMock(spec=["model", "server_params", "inference"])
+        vc.model = None
+        vc.server_params = None
+        vc.inference = {"model_repo": "/data/models/FLUX.1-dev"}
+        self.assertEqual(sm.served_model_name(vc), "")
+
+    def test_top_level_model_name(self):
+        vc = MagicMock(spec=["model_name"])
+        vc.model_name = "llama3.1_8B"
+        self.assertEqual(sm.served_model_name(vc), "llama3.1_8B")
+
+    def test_top_level_hf_model_id(self):
+        vc = MagicMock(spec=["hf_model_id"])
+        vc.hf_model_id = "meta-llama/Llama-3.1-8B"
+        self.assertEqual(sm.served_model_name(vc), "meta-llama/Llama-3.1-8B")
+
+    def test_train_params_model_name(self):
+        vc = MagicMock(spec=["train_params"])
+        vc.train_params = {"model_name": "deepseek_v2_lite"}
+        self.assertEqual(sm.served_model_name(vc), "deepseek_v2_lite")
 
     def test_none_found(self):
         vc = MagicMock(spec=[])
