@@ -243,9 +243,17 @@ _PROBE_TIMEOUT_S = 30
 
 
 def _exec(handle, cmd, timeout=_PROBE_TIMEOUT_S):
-    '''Run ``handle.exec`` with a short timeout; fall back if the backend lacks it.'''
+    '''Run ``handle.exec`` with a short timeout, suppressing the per-host console/log
+    echo of the probe output.
+
+    The arch/ROCm probes dump ``rocm-smi -a`` (and amd-smi) for every GPU on every
+    node; logging that scales to hundreds of lines per node on a large cluster. The
+    library parses the output itself, so ``print_console=False`` keeps the returned
+    output while dropping the echo -- only the single parsed ``detected=...`` summary
+    is logged. Fall back if the backend's ``exec`` lacks either keyword.
+    '''
     try:
-        return handle.exec(cmd, timeout=timeout)
+        return handle.exec(cmd, timeout=timeout, print_console=False)
     except TypeError:
         return handle.exec(cmd)
 
