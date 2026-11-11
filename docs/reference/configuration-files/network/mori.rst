@@ -6,7 +6,7 @@
 MORI network configuration file reference for Cluster Validation Suite (CVS)
 ****************************************************************************
 
-MORI (Memory-Oriented RDMA Interface) benchmarks run from ``mori_dir`` through the orchestrator. The shipped file is ``input/config_file/mori/mi35x_mori_config.json``.
+MORI (Memory-Oriented RDMA Interface) benchmarks run from ``mori_dir`` through the orchestrator. ``install_mori`` builds MoRI into ``mori_dir`` with the same file. The shipped file is ``input/config_file/mori/mi35x_mori_config.json``.
 
 The suite checks:
 
@@ -25,7 +25,7 @@ The suite checks:
 ``mi35x_mori_config.json``
 ==========================
 
-The block below is the shipped file with the ``_example_*`` notes removed. Those notes are still in the file on disk and are not applied.
+The block below is the shipped file with the ``_example_*`` and ``_comment_*`` notes removed. Those notes are still in the file on disk and are not applied.
 
 .. dropdown:: ``mi35x_mori_config.json``
 
@@ -38,12 +38,16 @@ The block below is the shipped file with the ``_example_*`` notes removed. Those
         "container": {
             "image": "<changeme>",
             "name": "mori_container",
-            "lifetime": "per_run",
+            "lifetime": "persistent",
             "runtime": {
                 "name": "docker",
                 "args": {
                     "devices": [ "/dev/dri", "/dev/kfd" ],
-                    "volumes": [ "/home/{user-id}:/home/{user-id}" ]
+                    "volumes": [
+                        "/home/{user-id}:/home/{user-id}",
+                        "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+                        "/usr/lib/x86_64-linux-gnu/libibverbs.so.1:/usr/lib/x86_64-linux-gnu/libibverbs.so.1:ro"
+                    ]
                 }
             }
         },
@@ -53,7 +57,9 @@ The block below is the shipped file with the ``_example_*`` notes removed. Those
             "MORI_RDMA_DEVICES": "<changeme>",
             "LD_LIBRARY_PATH": "/usr/local/lib/python3.12/dist-packages/torch/lib:$LD_LIBRARY_PATH"
         },
-        "mori_dir": "<changeme>",
+        "mori_dir": "/home/{user-id}/INSTALL/mori",
+        "git_ref": "main",
+        "install_system_packages": true,
         "master_addr": "<changeme>",
         "master_port": "1234",
         "log_dir": "/home/{user-id}/LOGS/mori",
@@ -109,8 +115,8 @@ The MORI config's ``container`` object is deep-merged over the cluster file's ``
      - ``mori_container``
      - Container name. A ``per_run`` launch removes a container of this name before starting.
    * - ``container.lifetime``
-     - ``per_run``
-     - ``per_run`` starts a container and force-removes it at teardown. ``persistent`` attaches when that name is already running on every node, and starts one when it is absent on every node. A mix of running and absent nodes fails setup. ``no_launch`` only checks that the named container is already running.
+     - ``persistent``
+     - ``install_mori`` needs ``persistent`` or ``no_launch``. ``per_run`` starts a container and force-removes it at teardown. ``persistent`` attaches when that name is already running on every node, and starts one when it is absent on every node. A mix of running and absent nodes fails setup. ``no_launch`` only checks that the named container is already running.
    * - ``container.runtime.name``
      - ``docker``
      - Container runtime. Omitted, the runtime is Docker.
@@ -118,14 +124,23 @@ The MORI config's ``container`` object is deep-merged over the cluster file's ``
      - ``/dev/dri``, ``/dev/kfd``
      - Extra devices, merged with the orchestrator defaults ``/dev/kfd`` and ``/dev/dri``. A Docker launch also passes each host's ``/dev/infiniband/*`` nodes.
    * - ``container.runtime.args.volumes``
-     - ``/home/{user-id}:/home/{user-id}``
-     - Extra ``host:container`` mounts, appended after ``/home/<user running cvs>/.ssh:/host_ssh``. Add a mount here when the image needs a host library.
+     - ``/home/{user-id}:/home/{user-id}`` and the two Broadcom Thor2 mounts
+     - Extra ``host:container`` mounts, appended after ``/home/<user running cvs>/.ssh:/host_ssh``. The Broadcom Thor2 entries, labeled by ``_comment_bnxt_mount``, mount the host ``libbnxt_re-rdmav34.so`` and ``libibverbs.so.1`` read-only so the provider runs with the libibverbs it was built for. Delete them when the nodes have no Thor2 library. ``docker run`` fails when a listed host path is missing.
    * - ``env``
      - See the sample
      - Exported on every benchmark command. This is separate from ``container.env``. ``MORI_RDMA_DEVICES`` is the device list checked in ``ibv_devinfo``. ``LD_LIBRARY_PATH`` can append ``$LD_LIBRARY_PATH``. ``NCCL_SOCKET_IFNAME`` and ``GLOO_SOCKET_IFNAME`` are exported the same way.
    * - ``mori_dir``
-     - ``<changeme>``
-     - Working directory. I/O runs ``<mori_dir>/tests/python/io/benchmark.py``. IBGDA and the put binaries run under ``<mori_dir>/build/examples/``. Required.
+     - ``/home/{user-id}/INSTALL/mori``
+     - Where ``install_mori`` builds MoRI, and the benchmarks' working directory. I/O runs ``<mori_dir>/tests/python/io/benchmark.py``. IBGDA and the put binaries run under ``<mori_dir>/build/examples/``. Benchmarks import ``mori`` from ``<mori_dir>/site`` first. Required.
+   * - ``git_url``
+     - Not shipped
+     - Repository ``install_mori`` clones. Default ``https://github.com/ROCm/mori``.
+   * - ``git_ref``
+     - ``main``
+     - Tag, branch, or commit ``install_mori`` checks out and builds. Default ``main``.
+   * - ``install_system_packages``
+     - ``true``
+     - Lets ``install_mori`` apt-install missing build packages inside the container, or on bare metal with passwordless sudo. Never in a Slurm or SPUR job step. Default ``true``. The string forms ``"True"`` and ``"False"`` are accepted.
    * - ``master_addr``
      - ``<changeme>``
      - Torchrun node rank 0 and the I/O initiator. It must be one of the cluster hosts. Omitted, the cluster head node is used.
@@ -147,7 +162,7 @@ Shipped keys the checker does not read
 
 - ``no_of_nodes`` is in the shipped file and is not read. The node list is the cluster file.
 - ``gpu_name`` is not used as a threshold or a device filter.
-- ``_example_options_orchestrator``, ``_example_env``, and ``_example_mori_dir`` are not applied. ``_example_mori_dir`` (``/sgl-workspace/mori``) is an illustration in the file, not the path the suite opens.
+- ``_example_options_orchestrator``, ``_example_env``, and the ``_comment_*`` keys are not applied.
 - There is no ``nic_type``, ``oob_port``, ``mori_device_list``, ``torchlib_dir``, or ``container_config`` key. Devices are ``env.MORI_RDMA_DEVICES``. The out-of-band interface is whatever you export in ``env``.
 
 ``expected_results``

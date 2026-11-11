@@ -14,8 +14,8 @@ Suites do not all follow the key.
      - ``preflight_checks``, ``host_configs_cvs``, ``install_ompi``
    * - Honors the key and skips the suite when the value is ``container``. Baremetal commands run on the host.
      - ``anc_installation`` and the ``anc_test_*`` suites
-   * - Honors the cluster key unless the MORI config sets ``orchestrator``. A test starts the container; the benchmark then runs inside it. sshd is not started. Dmesg stays on the host.
-     - ``mori_benchmark_test``
+   * - Honors the cluster key unless the MORI config sets ``orchestrator``. A test starts the container; the build or benchmark then runs inside it. sshd is not started. Dmesg stays on the host.
+     - ``mori_benchmark_test``, ``install_mori``
    * - Honors the cluster key. A first test step starts the container; GPU and NIC discovery, the perftest build and perftest then run inside it. sshd is not started. Dmesg and AFM vPOD discovery stay on the host.
      - ``ib_perf_bw_test``, ``install_ibperf_tools``
    * - Forces ``container`` and ignores the cluster key. The workload runs inside the container. vLLM does not start sshd. ATOM does. Aorta, SGLang, xDiT, Megatron (``megatron_single`` / ``megatron_distributed``), TorchTitan, and JAX MaxText launch the container and do not call sshd setup.

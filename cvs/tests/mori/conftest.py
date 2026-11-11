@@ -98,6 +98,39 @@ def orch(cluster_dict, mori_dict, lifecycle):
         o.close()
 
 
+def launch_mori_container(orch, lifecycle):
+    if orch.orchestrator_type != "container":
+        pytest.skip("baremetal orchestrator: no container to launch")
+    image = orch.container_config.get("image")
+    if not image:
+        lifecycle.failed = True
+        pytest.fail("container.image is not set in the mori config")
+    name = orch.get_container_name(orch.container_config, image)
+    lifecycle.torn_down = False
+    if not orch.setup_containers():
+        lifecycle.failed = True
+        pytest.fail(f"setup_containers() returned False for {name}")
+    if not orch.verify_containers_running(name):
+        lifecycle.failed = True
+        pytest.fail(f"container {name} not running after setup_containers()")
+
+
+def teardown_mori_container(orch, lifecycle):
+    if orch.orchestrator_type != "container":
+        lifecycle.torn_down = True
+        pytest.skip("baremetal orchestrator: no container to tear down")
+    image = orch.container_config.get("image")
+    if not image:
+        lifecycle.torn_down = True
+        pytest.skip("container.image is not set in the mori config: no container was launched")
+    name = orch.get_container_name(orch.container_config, image)
+    orch.teardown_containers()
+    lifecycle.torn_down = True
+    # no_launch / persistent containers are left running by design.
+    if orch.container_config.get("lifetime", "per_run") == "per_run" and orch.verify_containers_running(name):
+        pytest.fail(f"container {name} still running after teardown_containers()")
+
+
 @pytest.fixture(scope="module")
 def cvs_results_dict(request):
     """The Run Deck store, shared with pytest_runtest_makereport whichever of them needs it first."""
@@ -125,26 +158,29 @@ def mori_variant_config(mori_dict, orch):
         "container_image": orch.container_config.get("image") if orch.orchestrator_type == "container" else None,
         "hosts": list(orch.hosts),
         "initiator": io_initiator(mori_dict, orch),
+        # The Run Deck resolves this fixture before the container is up; mori_obj fills it in after launch.
+        "mori_commit": None,
     }
 
 
 def pytest_collection_modifyitems(items):
-    """Pin lifecycle order: cleanup → launch → setup → single-node → I/O → dmesg → teardown."""
+    """Pin lifecycle order: cleanup → launch → install → setup → single-node → I/O → dmesg → teardown."""
     rank = {
         "test_cleanup_stale_containers": 0,
         "test_launch_mori_container": 1,
-        "test_setup_ibv_devices": 2,
-        "test_install_container_packages": 3,
-        "test_setup_env": 4,
-        "test_shmem_api": 5,
-        "test_concurrent_put_threads": 6,
-        "test_concurrent_put_imm_threads": 7,
-        "test_concurrent_put_signal_thread": 8,
-        "test_ibgda_write_test": 9,
-        "test_io_read": 10,
-        "test_io_write": 11,
-        "test_verify_dmesg": 12,
-        "test_teardown": 13,
+        "test_install_mori": 2,
+        "test_setup_ibv_devices": 3,
+        "test_install_container_packages": 4,
+        "test_setup_env": 5,
+        "test_shmem_api": 6,
+        "test_concurrent_put_threads": 7,
+        "test_concurrent_put_imm_threads": 8,
+        "test_concurrent_put_signal_thread": 9,
+        "test_ibgda_write_test": 10,
+        "test_io_read": 11,
+        "test_io_write": 12,
+        "test_verify_dmesg": 13,
+        "test_teardown": 14,
     }
 
     def key(it):

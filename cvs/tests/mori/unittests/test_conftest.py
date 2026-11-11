@@ -8,14 +8,19 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import os
 import unittest
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
+from _pytest.outcomes import Failed, Skipped
 
+from cvs.core.orchestrators.container import ContainerOrchestrator
 from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.tests.mori import conftest as mori_conftest
+from cvs.tests.mori.conftest import _Lifecycle
 
 _MORI_FILE = os.path.join(mori_conftest._HERE, 'mori_benchmark_test.py')
+_INSTALL_FILE = os.path.join(mori_conftest._HERE, 'install_mori.py')
 _OTHER_FILE = os.path.join(os.path.dirname(mori_conftest._HERE), 'rccl', 'rccl_perf.py')
 
 
@@ -75,6 +80,15 @@ class TestCollectionOrder(unittest.TestCase):
             ],
         )
 
+    def test_install_runs_between_launch_and_teardown(self):
+        items = [
+            _item(name, _INSTALL_FILE) for name in ('test_teardown', 'test_install_mori', 'test_launch_mori_container')
+        ]
+        mori_conftest.pytest_collection_modifyitems(items)
+        self.assertEqual(
+            [it.name for it in items], ['test_launch_mori_container', 'test_install_mori', 'test_teardown']
+        )
+
     def test_parametrized_cases_keep_their_relative_order(self):
         cases = [f'test_io_read[{p}]' for p in ('32768-256-8', '16384-128-1', '32768-128-1')]
         items = [_item('test_teardown')] + [_item(c) for c in cases]
@@ -82,12 +96,51 @@ class TestCollectionOrder(unittest.TestCase):
         self.assertEqual([it.name for it in items], cases + ['test_teardown'])
 
 
+class TestOrchContainerMerge(unittest.TestCase):
+    def test_partial_mori_container_block_keeps_the_cluster_files_keys(self):
+        cluster = {
+            'container': {
+                'lifetime': 'persistent',
+                'name': 'cluster_c',
+                'image': 'cluster:1',
+                'runtime': {'name': 'docker', 'args': {'shm_size': '64g', 'volumes': ['/c:/c']}},
+            }
+        }
+        mori_dict = {
+            'orchestrator': 'container',
+            'container': {'image': 'mori:1', 'runtime': {'args': {'volumes': ['/m:/m']}}},
+        }
+        captured = {}
+
+        def from_configs(cluster_dict, testsuite_config):
+            captured.update(testsuite_config)
+            return SimpleNamespace(orchestrator='container')
+
+        with (
+            patch.object(mori_conftest.OrchestratorConfig, 'from_configs', side_effect=from_configs),
+            patch.object(mori_conftest.OrchestratorFactory, 'create_orchestrator', return_value=MagicMock()),
+        ):
+            fixture = mori_conftest.orch.__wrapped__(cluster, mori_dict, _Lifecycle())
+            next(fixture)
+        self.assertEqual(captured['orchestrator'], 'container')
+        self.assertEqual(
+            captured['container'],
+            {
+                'lifetime': 'persistent',
+                'name': 'cluster_c',
+                'image': 'mori:1',
+                'runtime': {'name': 'docker', 'args': {'shm_size': '64g', 'volumes': ['/m:/m']}},
+            },
+        )
+
+
 class TestRunDeckFixtures(unittest.TestCase):
     def _variant(self, mori_dict, orchestrator_type, image='img:1'):
+        # No exec methods: the Run Deck resolves this fixture before the container exists.
         orch = SimpleNamespace(
             orchestrator_type=orchestrator_type, hosts=['n0', 'n1'], head_node='n0', container_config={'image': image}
         )
-        return mori_conftest.mori_variant_config.__wrapped__(mori_dict, orch)
+        return mori_conftest.mori_variant_config.__wrapped__(dict({'mori_dir': '/m'}, **mori_dict), orch)
 
     def test_container_variant_reads_config_and_orch(self):
         mori_dict = {'gpu_name': 'mi325x', 'env': {'MORI_RDMA_DEVICES': 'rdma0,rdma1'}}
@@ -100,6 +153,7 @@ class TestRunDeckFixtures(unittest.TestCase):
                 'container_image': 'img:1',
                 'hosts': ['n0', 'n1'],
                 'initiator': 'n0',
+                'mori_commit': None,
             },
         )
 
@@ -114,6 +168,63 @@ class TestRunDeckFixtures(unittest.TestCase):
         self.assertIsNone(variant['container_image'])
         self.assertIsNone(variant['gpu_name'])
         self.assertIsNone(variant['mori_device_list'])
+
+
+def _container_orch(container_config, running=True):
+    orch = MagicMock()
+    orch.orchestrator_type = 'container'
+    orch.container_config = container_config
+    orch.get_container_name.side_effect = ContainerOrchestrator.get_container_name
+    orch.setup_containers.return_value = True
+    orch.verify_containers_running.return_value = running
+    return orch
+
+
+class TestLaunchMoriContainer(unittest.TestCase):
+    def test_missing_image_fails_and_marks_launch_failed(self):
+        # Without lifecycle.failed every benchmark test would run against a container that doesn't exist.
+        for config in ({'name': 'mori_c'}, {'name': 'mori_c', 'image': ''}):
+            with self.subTest(config=config):
+                orch, lifecycle = _container_orch(config), _Lifecycle()
+                with self.assertRaises(Failed) as ctx:
+                    mori_conftest.launch_mori_container(orch, lifecycle)
+                self.assertIn('container.image', str(ctx.exception))
+                self.assertTrue(lifecycle.failed)
+                orch.setup_containers.assert_not_called()
+
+    def test_launch_with_image_sets_up_and_verifies_the_named_container(self):
+        orch, lifecycle = _container_orch({'name': 'mori_c', 'image': 'img'}), _Lifecycle()
+        mori_conftest.launch_mori_container(orch, lifecycle)
+        orch.setup_containers.assert_called_once_with()
+        orch.verify_containers_running.assert_called_once_with('mori_c')
+        self.assertFalse(lifecycle.failed)
+
+    def test_container_not_running_after_setup_fails(self):
+        orch, lifecycle = _container_orch({'name': 'mori_c', 'image': 'img'}, running=False), _Lifecycle()
+        with self.assertRaises(Failed):
+            mori_conftest.launch_mori_container(orch, lifecycle)
+        self.assertTrue(lifecycle.failed)
+
+
+class TestTeardown(unittest.TestCase):
+    def test_missing_image_skips_and_disarms_the_leak_guard(self):
+        orch, lifecycle = _container_orch({'name': 'mori_c'}), _Lifecycle()
+        with self.assertRaises(Skipped):
+            mori_conftest.teardown_mori_container(orch, lifecycle)
+        self.assertTrue(lifecycle.torn_down)
+        orch.teardown_containers.assert_not_called()
+
+    def test_per_run_container_still_running_fails(self):
+        orch, lifecycle = _container_orch({'name': 'mori_c', 'image': 'img'}, running=True), _Lifecycle()
+        with self.assertRaises(Failed):
+            mori_conftest.teardown_mori_container(orch, lifecycle)
+        orch.teardown_containers.assert_called_once_with()
+        self.assertTrue(lifecycle.torn_down)
+
+    def test_per_run_container_removed_passes(self):
+        orch, lifecycle = _container_orch({'name': 'mori_c', 'image': 'img'}, running=False), _Lifecycle()
+        mori_conftest.teardown_mori_container(orch, lifecycle)
+        orch.verify_containers_running.assert_called_once_with('mori_c')
 
 
 class TestFailedTestHook(unittest.TestCase):
