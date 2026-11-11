@@ -7,19 +7,26 @@ A comprehensive validation system for GPU clusters before running performance te
 The preflight checks system validates essential cluster health and configuration consistency across all nodes. It performs the following validations, in the order they run:
 
 1. **Node Health** - Validates AMDGPU/KFD, GPU visibility, and kernel health, with optional MI4XX fabric admission
-2. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
-3. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(opt-in)*
-4. **IFoE TransferBench Smoketest** - Runs the TransferBench candidate-branch `smoketest`
+2. **Host Readiness** *(each runs when its `host_readiness` section is present)*:
+   - **GPU Idle State** - No GPU processes, near-zero utilization and VRAM use, and temperatures under the limit (`amd-smi`)
+   - **Host Kernel Parameters** - Required and forbidden `/proc/cmdline` parameters, vendor-specific ones such as `intel_iommu=on`, and runtime `numa_balancing`
+   - **Host OS Tuning** - Deep CPU idle states disabled on every CPU, optional C-state parameters and CPU governor
+   - **Host Persistent Environment** - Required variables such as `HIP_FORCE_DEV_KERNARG` set persistently (default `/etc/environment`) and seen by sessions
+   - **Host Inventory** - CPU sockets and cores, DIMMs, RAM, NVMe and frontend NICs against named SKU profiles, plus a per-node inventory JSON export
+   - **Host Platform Extras** - Large BAR, PCIe AtomicOps, `cwsr_enable`, `limits.conf` memlock/nofile, RDMA modules, and an optional ROCm `ldd` scan
+3. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
+4. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(opt-in)*
+5. **IFoE TransferBench Smoketest** - Runs the TransferBench candidate-branch `smoketest`
    preset to validate the IFoE scale-up data path (using MI4XX AFM admission or,
    for generic profiles, an `amd-smi fabric --json` single-vPod precondition)
    *(AIMVT-181; opt-in)*
-5. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
-6. **GID Consistency** - Ensures RDMA interfaces have populated Global Identifier entries of the expected type
-7. **RDMA MTU** - Checks the active MTU on configured RDMA interfaces, and the netdev MTU (jumbo frames) on RoCE ports
-8. **Node Smoke Tier 1** - Per-node GPU/RDMA operational roll-call via Primus `node_smoke`
-9. **Node Smoke Tier 2** - Per-node perf sanity (GEMM, HBM, local RCCL). Runs by default; set `tier2_perf` to `false` to disable it
-10. **Node Smoke Tier 3** - Cluster-wide Host/GPU/Network inventory via Primus `preflight --host --gpu --network`
-11. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
+6. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
+7. **GID Consistency** - Ensures RDMA interfaces have populated Global Identifier entries of the expected type
+8. **RDMA MTU** - Checks the active MTU on configured RDMA interfaces, and the netdev MTU (jumbo frames) on RoCE ports
+9. **Node Smoke Tier 1** - Per-node GPU/RDMA operational roll-call via Primus `node_smoke`
+10. **Node Smoke Tier 2** - Per-node perf sanity (GEMM, HBM, local RCCL). Runs by default; set `tier2_perf` to `false` to disable it
+11. **Node Smoke Tier 3** - Cluster-wide Host/GPU/Network inventory via Primus `preflight --host --gpu --network`
+12. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
 ## Quick Start
 

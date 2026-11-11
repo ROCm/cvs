@@ -7,6 +7,8 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import functools
 import inspect
+import os
+import time
 
 import pytest
 import json
@@ -27,6 +29,13 @@ from cvs.lib.preflight.node_smoke import (
     NodeSmokeCheck,
 )
 from cvs.lib.preflight.tier3_info import NodeSmokeTier3Check
+from cvs.lib.preflight.gpu_idle_state import GpuIdleStateCheck
+from cvs.lib.preflight.host_env import PersistentEnvCheck
+from cvs.lib.preflight.host_inventory import HostInventoryCheck, export_inventory
+from cvs.lib.preflight.host_kernel_params import KernelParamsCheck
+from cvs.lib.preflight.host_os_tuning import OsTuningCheck
+from cvs.lib.preflight.host_platform_extras import PlatformExtrasCheck
+from cvs.lib.preflight.node_smoke import DEFAULT_ARTIFACTS_ROOT_DIR
 from cvs.lib.preflight.node_smoke_rows import (
     build_tier1_metric_rows,
     build_tier2_metric_rows,
@@ -41,6 +50,12 @@ from cvs.lib.preflight.node_smoke_rows import (
 from cvs.lib.preflight.report import PreflightReportGenerator, preflight_check_display_name
 from cvs.lib.preflight.rundeck import (
     GID_CONSISTENCY,
+    GPU_IDLE_STATE,
+    HOST_INVENTORY,
+    HOST_KERNEL_PARAMS,
+    HOST_OS_TUNING,
+    HOST_PERSISTENT_ENV,
+    HOST_PLATFORM_EXTRAS,
     RDMA_MTU,
     IFOE_L2,
     INTERFACE_NAMES,
@@ -58,10 +73,13 @@ from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.parsers.schemas import (
+    PreflightHostReadinessConfig,
     normalize_legacy_preflight_node_smoke_sections,
     normalize_legacy_preflight_rdma_config,
+    strip_preflight_metadata,
     validate_config_file,
 )
+from pydantic import ValidationError
 
 from cvs.lib import globals
 
@@ -687,6 +705,192 @@ def _log_degraded_fabric_banner(results):
         for warning in warnings:
             log.warning("Node %s: %s", node, warning)
     log.warning("!" * 78)
+
+
+def _host_readiness_section(config_dict, section):
+    """Return ``(settings, skip_reason)`` for one ``host_readiness`` section.
+
+    Raises ``ValidationError`` for a malformed section so the operator sees the bad key.
+    """
+    raw = get_nested_config(config_dict, 'host_readiness', section, None)
+    if raw is None:
+        return None, f'host_readiness.{section} is not configured'
+    model = PreflightHostReadinessConfig.model_validate({section: strip_preflight_metadata(raw)})
+    settings = getattr(model, section).model_dump()
+    if not settings['enabled']:
+        return None, f'host_readiness.{section} is disabled'
+    return settings, None
+
+
+def _run_host_readiness(check_id, section, config_dict, build_check, after_run=None):
+    """Run one host readiness check, store its flat per-node results and report the row."""
+    label = preflight_check_display_name(check_id)
+    try:
+        settings, skip_reason = _host_readiness_section(config_dict, section)
+    except ValidationError as exc:
+        preflight_results[check_id] = {'status': 'FAIL', 'message': f'Invalid host_readiness.{section}: {exc}'}
+        log.error(preflight_results[check_id]['message'])
+        preflight_update_test_result(preflight_results[check_id])
+        return
+    if settings is None:
+        preflight_results[check_id] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': f'{label} skipped: {skip_reason}',
+        }
+        preflight_update_test_result(preflight_results[check_id])
+        return
+
+    results = build_check(settings).run()
+    preflight_results[check_id] = results
+    failed = []
+    for node, result in results.items():
+        for error in result.get('errors') or []:
+            log.error("Node %s %s: %s", node, label, error)
+        for warning in result.get('warnings') or []:
+            log.warning("Node %s %s: %s", node, label, warning)
+        if result.get('status') != 'PASS':
+            failed.append(node)
+    log.info("%s results: %d/%d nodes pass", label, len(results) - len(failed), len(results))
+    if after_run:
+        after_run(settings, results)
+    preflight_update_test_result(results)
+
+
+@_timed_stage(GPU_IDLE_STATE)
+def test_gpu_idle_state(orch, config_dict, lifecycle=None):
+    """Assert GPUs are idle (no processes, low utilization and temperature) before any preflight workload."""
+    _run_host_readiness(
+        GPU_IDLE_STATE,
+        'idle_state',
+        config_dict,
+        lambda s: GpuIdleStateCheck(
+            orch,
+            samples=s['samples'],
+            interval_sec=s['interval_sec'],
+            gfx_util_max_pct=s['gfx_util_max_pct'],
+            mem_util_max_pct=s['mem_util_max_pct'],
+            vram_used_max_pct=s['vram_used_max_pct'],
+            temp_max_c=s['temp_max_c'],
+            fail_on_gpu_processes=s['fail_on_gpu_processes'],
+            allowed_procs=s['allowed_procs'],
+            on_mismatch=s['on_mismatch'],
+            config_dict=config_dict,
+        ),
+    )
+
+
+@_timed_stage(HOST_KERNEL_PARAMS)
+def test_host_kernel_params(orch, config_dict, lifecycle=None):
+    """Check required and forbidden kernel command-line parameters on every node."""
+    _run_host_readiness(
+        HOST_KERNEL_PARAMS,
+        'kernel_params',
+        config_dict,
+        lambda s: KernelParamsCheck(
+            orch,
+            s['required'],
+            required_intel=s['required_intel'],
+            required_amd=s['required_amd'],
+            forbidden=s['forbidden'],
+            on_mismatch=s['on_mismatch'],
+            config_dict=config_dict,
+        ),
+    )
+
+
+@_timed_stage(HOST_OS_TUNING)
+def test_host_os_tuning(orch, config_dict, lifecycle=None):
+    """Check CPU idle states, optional C-state kernel parameters and the CPU governor."""
+    _run_host_readiness(
+        HOST_OS_TUNING,
+        'os_tuning',
+        config_dict,
+        lambda s: OsTuningCheck(
+            orch,
+            disable_idle_states_from=s['disable_idle_states_from'],
+            max_cstate_params=s['max_cstate_params'],
+            cpu_governor=s['cpu_governor'],
+            on_mismatch=s['on_mismatch'],
+            config_dict=config_dict,
+        ),
+    )
+
+
+@_timed_stage(HOST_PERSISTENT_ENV)
+def test_host_persistent_env(orch, config_dict, lifecycle=None):
+    """Check that required environment variables are set persistently on every host."""
+    in_container = getattr(orch, 'orchestrator_type', None) == 'container'
+    _run_host_readiness(
+        HOST_PERSISTENT_ENV,
+        'env',
+        config_dict,
+        lambda s: PersistentEnvCheck(
+            orch,
+            s['required'],
+            s['sources'],
+            check_session=s['check_session'],
+            check_container=in_container,
+            on_mismatch=s['on_mismatch'],
+            config_dict=config_dict,
+        ),
+    )
+
+
+def _export_host_inventory(config_dict, settings, results):
+    if not settings['export_json'] or not results:
+        return
+    root = get_nested_config(config_dict, 'reporting', 'artifacts_root_dir', DEFAULT_ARTIFACTS_ROOT_DIR)
+    out_dir = os.path.join(root, f"host_inventory_{time.strftime('%Y%m%d_%H%M%S')}")
+    try:
+        path = export_inventory(results, out_dir)
+    except OSError as exc:
+        log.warning("Could not write host inventory JSON under %s: %s", out_dir, exc)
+        return
+    preflight_results['host_inventory_export'] = path
+    log.info("Host inventory JSON written to %s", path)
+
+
+@_timed_stage(HOST_INVENTORY)
+def test_host_inventory(orch, config_dict, lifecycle=None):
+    """Gate nodes on their SKU profile inventory and export per-node inventory JSON."""
+    backend_rdma_devices = get_nested_config(config_dict, 'connectivity_check.rdma', 'interfaces', [])
+    _run_host_readiness(
+        HOST_INVENTORY,
+        'inventory',
+        config_dict,
+        lambda s: HostInventoryCheck(
+            orch,
+            sku_profiles=s['sku_profiles'],
+            default_profile=s['default_profile'],
+            backend_rdma_devices=backend_rdma_devices,
+            on_mismatch=s['on_mismatch'],
+            config_dict=config_dict,
+        ),
+        after_run=lambda s, results: _export_host_inventory(config_dict, s, results),
+    )
+
+
+@_timed_stage(HOST_PLATFORM_EXTRAS)
+def test_host_platform_extras(orch, config_dict, lifecycle=None):
+    """Check Large BAR, PCIe AtomicOps, cwsr_enable, limits.conf, RDMA modules and ROCm library deps."""
+    _run_host_readiness(
+        HOST_PLATFORM_EXTRAS,
+        'platform_extras',
+        config_dict,
+        lambda s: PlatformExtrasCheck(
+            orch,
+            large_bar=s['large_bar'],
+            atomic_ops=s['atomic_ops'],
+            cwsr_enable=s['cwsr_enable'],
+            limits=s['limits'],
+            rdma_modules=s['rdma_modules'],
+            rocm_lib_deps=s['rocm_lib_deps'] if s['rocm_lib_deps']['enabled'] else None,
+            rocm_path=s['rocm_path'],
+            on_mismatch=s['on_mismatch'],
+            config_dict=config_dict,
+        ),
+    )
 
 
 @_timed_stage(ROCM_VERSIONS)
@@ -1779,6 +1983,12 @@ def test_generate_preflight_report(orch, config_dict, request):
     # Ensure we have results from all checks
     required_checks = [
         'node_health',
+        'gpu_idle_state',
+        'host_kernel_params',
+        'host_os_tuning',
+        'host_persistent_env',
+        'host_inventory',
+        'host_platform_extras',
         'gid_consistency',
         'rdma_mtu',
         'rocm_versions',

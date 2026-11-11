@@ -15,6 +15,12 @@
     "session_labels": [
       "node_reachability",
       "node_health",
+      "gpu_idle_state",
+      "host_kernel_params",
+      "host_os_tuning",
+      "host_persistent_env",
+      "host_inventory",
+      "host_platform_extras",
       "rocm_versions",
       "ifoe_l2_connectivity",
       "transferbench_smoke",

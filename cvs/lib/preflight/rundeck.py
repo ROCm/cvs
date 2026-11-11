@@ -38,10 +38,26 @@ NODE_SMOKE_TIER1 = 'node_smoke_tier1'
 NODE_SMOKE_TIER2 = 'node_smoke_tier2'
 NODE_SMOKE_TIER3 = 'node_smoke_tier3'
 RDMA_CONNECTIVITY = 'rdma_connectivity'
+GPU_IDLE_STATE = 'gpu_idle_state'
+HOST_KERNEL_PARAMS = 'host_kernel_params'
+HOST_OS_TUNING = 'host_os_tuning'
+HOST_PERSISTENT_ENV = 'host_persistent_env'
+HOST_INVENTORY = 'host_inventory'
+HOST_PLATFORM_EXTRAS = 'host_platform_extras'
+
+HOST_READINESS_IDS = (
+    GPU_IDLE_STATE,
+    HOST_KERNEL_PARAMS,
+    HOST_OS_TUNING,
+    HOST_PERSISTENT_ENV,
+    HOST_INVENTORY,
+    HOST_PLATFORM_EXTRAS,
+)
 
 CHECK_IDS = (
     NODE_REACHABILITY,
     NODE_HEALTH,
+    *HOST_READINESS_IDS,
     ROCM_VERSIONS,
     IFOE_L2,
     TRANSFERBENCH,
@@ -57,6 +73,12 @@ CHECK_IDS = (
 LIFECYCLE_BY_TEST = {
     'test_node_reachability': NODE_REACHABILITY,
     'test_node_health': NODE_HEALTH,
+    'test_gpu_idle_state': GPU_IDLE_STATE,
+    'test_host_kernel_params': HOST_KERNEL_PARAMS,
+    'test_host_os_tuning': HOST_OS_TUNING,
+    'test_host_persistent_env': HOST_PERSISTENT_ENV,
+    'test_host_inventory': HOST_INVENTORY,
+    'test_host_platform_extras': HOST_PLATFORM_EXTRAS,
     'test_rocm_version_consistency': ROCM_VERSIONS,
     'test_ifoe_l2_connectivity': IFOE_L2,
     'test_ifoe_transferbench_smoke': TRANSFERBENCH,
@@ -208,7 +230,7 @@ def _known_nodes(results, cluster_dict):
         if key in (ROCM_VERSIONS, INTERFACE_NAMES, GID_CONSISTENCY, RDMA_MTU) or _flat_node_map(block):
             for name in _flat_node_map(block):
                 add(name)
-    for key in (ROCM_VERSIONS, INTERFACE_NAMES, GID_CONSISTENCY, RDMA_MTU):
+    for key in (ROCM_VERSIONS, INTERFACE_NAMES, GID_CONSISTENCY, RDMA_MTU, *HOST_READINESS_IDS):
         for name in _flat_node_map(results.get(key)):
             add(name)
     return nodes
@@ -383,6 +405,23 @@ def _rocm_records(results, nodes):
         return _fail_items(entry.get('errors'), 'rocm_version')
 
     return _node_map_records(block, nodes, 'rocm_version', _summary, _items)
+
+
+def _host_readiness_builder(check_id):
+    def _summary(entry):
+        errors = entry.get('errors') or []
+        if errors:
+            return errors[0]
+        warnings = entry.get('warnings') or []
+        return f"pass with warning: {warnings[0]}" if warnings else 'pass'
+
+    def _items(entry):
+        return _fail_items(entry.get('errors'), check_id)
+
+    def _build(results, nodes):
+        return _node_map_records(results.get(check_id), nodes, check_id, _summary, _items)
+
+    return _build
 
 
 def _ifoe_records(results, nodes):
@@ -748,4 +787,5 @@ _BUILDERS = {
     NODE_SMOKE_TIER2: _tier2_records,
     NODE_SMOKE_TIER3: _tier3_records,
     RDMA_CONNECTIVITY: _rdma_records,
+    **{check_id: _host_readiness_builder(check_id) for check_id in HOST_READINESS_IDS},
 }

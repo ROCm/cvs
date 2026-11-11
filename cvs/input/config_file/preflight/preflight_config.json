@@ -296,6 +296,103 @@
       "_comment_extra_args": "Additional preflight CLI flags forwarded to primus-cli."
     },
 
+    "host_readiness": {
+      "_comment": "Host configuration and environment checks. Each section is optional; an absent section is reported as SKIPPED. Every section accepts 'enabled' and 'on_mismatch' ('fail' or 'warn'). Probe or permission errors always fail.",
+
+      "idle_state": {
+        "_comment": "Asserts GPUs are idle before any preflight workload. Uses 'amd-smi metric --usage --mem-usage --temperature' (never bare 'amd-smi metric', which resets xGMI error counters) and 'amd-smi process'.",
+        "enabled": true,
+        "on_mismatch": "fail",
+        "samples": 3,
+        "interval_sec": 2,
+        "_comment_samples": "Utilization limits use the lowest of the samples so one transient spike does not fail a node; temperatures use the highest.",
+        "gfx_util_max_pct": 5,
+        "mem_util_max_pct": 5,
+        "vram_used_max_pct": 5,
+        "temp_max_c": {"hotspot": 85, "mem": 85, "edge": 85},
+        "_comment_temp_max_c": "Highest allowed idle temperature per amd-smi sensor in C. Sensors reporting N/A are skipped; set a sensor to null to ignore it.",
+        "fail_on_gpu_processes": true,
+        "allowed_procs": "gpuagent,rocm-smi-daemon,amd-smi,dcgm-exporter"
+      },
+
+      "kernel_params": {
+        "_comment": "Checks /proc/cmdline. Tokens are 'key=value' or a bare 'key'. Comma-list parameters (pci=, modprobe.blacklist=) match by option, so 'pci=realloc=off,bfsort' satisfies both pci tokens.",
+        "enabled": true,
+        "on_mismatch": "fail",
+        "required": ["pci=realloc=off", "pci=bfsort", "iommu=pt", "numa_balancing=disable", "modprobe.blacklist=amdgpu"],
+        "required_intel": ["intel_iommu=on"],
+        "_comment_required_intel": "Added on hosts whose CPU vendor is GenuineIntel. 'required_amd' does the same for AuthenticAMD.",
+        "required_amd": [],
+        "forbidden": []
+      },
+
+      "os_tuning": {
+        "_comment": "CPU idle-state tuning. Fix a failure with 'cpupower idle-set -d <index>' for each listed state, made persistent by your provisioning.",
+        "enabled": true,
+        "on_mismatch": "fail",
+        "disable_idle_states_from": 2,
+        "_comment_disable_idle_states_from": "Every cpuidle state with this index or higher must be disabled on all CPUs. null skips. A host without an active cpuidle driver passes with a note.",
+        "max_cstate_params": [],
+        "_example_max_cstate_params": ["processor.max_cstate=1"],
+        "cpu_governor": null,
+        "_example_cpu_governor": "performance"
+      },
+
+      "env": {
+        "_comment": "Persistent environment variables. Sources are parsed statically (never sourced); a directory means its *.sh files. The last definition wins, as when a login shell reads them.",
+        "enabled": true,
+        "on_mismatch": "fail",
+        "required": {"HIP_FORCE_DEV_KERNARG": "1", "HSA_OVERRIDE_CPU_AFFINITY_DEBUG": "0"},
+        "sources": ["/etc/environment"],
+        "_example_sources": ["/etc/environment", "/etc/profile.d"],
+        "check_session": true,
+        "_comment_check_session": "Also compare the value a remote command sees. With the container orchestrator the value inside the container is checked as well."
+      },
+
+      "inventory": {
+        "_comment": "Hardware inventory gate. Each node uses the profile that lists it in 'nodes', else the first profile whose dmi_product_name matches /sys/class/dmi/id/product_name, else default_profile. With no profiles the inventory is recorded and exported only. A null field is recorded but not checked.",
+        "enabled": true,
+        "on_mismatch": "fail",
+        "default_profile": "",
+        "sku_profiles": [],
+        "_example_sku_profiles": [
+          {
+            "name": "gpu-node",
+            "nodes": [],
+            "dmi_product_name": "",
+            "cpu_sockets": 2,
+            "min_cpu_cores": 128,
+            "dimm_count": 24,
+            "dimm_size_gb": 64,
+            "nvme_count": 8,
+            "nvme_min_size_gb": 3000,
+            "frontend_nic_count": 1,
+            "frontend_nic_interfaces": [],
+            "min_ram_gb": 1500
+          }
+        ],
+        "export_json": true,
+        "_comment_export_json": "Write per-node inventory JSON to <reporting.artifacts_root_dir>/host_inventory_<timestamp>/. DIMM details need passwordless 'sudo dmidecode'; without it DIMM counts fall back to EDAC sysfs."
+      },
+
+      "platform_extras": {
+        "_comment": "Platform checks derived from ROCm Deployment Health Check.",
+        "enabled": true,
+        "on_mismatch": "fail",
+        "large_bar": true,
+        "atomic_ops": true,
+        "_comment_atomic_ops": "Reads AtomicOpsCtl with passwordless 'sudo lspci -vvv'; a refused sudo fails the node with a hint.",
+        "cwsr_enable": null,
+        "_comment_cwsr_enable": "Required amdgpu cwsr_enable value; null records it only.",
+        "limits": {"memlock": "unlimited", "nofile_min": 1048576},
+        "_comment_limits": "Effective soft and hard limits for the SSH user from /etc/security/limits.conf and limits.d, with pam_limits precedence. null skips.",
+        "rdma_modules": ["ib_core", "ib_uverbs", "rdma_ucm", "rdma_cm"],
+        "rocm_path": "/opt/rocm",
+        "rocm_lib_deps": {"enabled": false, "max_depth": 1, "timeout_sec": 300},
+        "_comment_rocm_lib_deps": "Runs ldd over <rocm_path>/lib and reports unresolved dependencies."
+      }
+    },
+
     "reporting": {
       "_comment": "Post-test reporting and output",
 

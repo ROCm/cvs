@@ -49,6 +49,30 @@ PREFLIGHT_CHECK_DISPLAY_NAMES = {
     'node_smoke_tier3': NODE_SMOKE_TIER3_LABEL,
     'node_smoke': NODE_SMOKE_TIER1_LABEL,
     'tier3_info': NODE_SMOKE_TIER3_LABEL,
+    'gpu_idle_state': 'GPU Idle State',
+    'host_kernel_params': 'Host Kernel Parameters',
+    'host_os_tuning': 'Host OS Tuning',
+    'host_persistent_env': 'Host Persistent Environment',
+    'host_inventory': 'Host Inventory',
+    'host_platform_extras': 'Host Platform Extras',
+}
+
+HOST_READINESS_CHECKS = (
+    'gpu_idle_state',
+    'host_kernel_params',
+    'host_os_tuning',
+    'host_persistent_env',
+    'host_inventory',
+    'host_platform_extras',
+)
+
+HOST_READINESS_RECOMMENDATIONS = {
+    'gpu_idle_state': "Stop stray GPU workloads and let GPUs cool to idle before running preflight workloads",
+    'host_kernel_params': "Fix the kernel command line (GRUB) on the listed nodes and reboot before benchmarking",
+    'host_os_tuning': "Disable deep CPU idle states (for example 'cpupower idle-set -d 2') persistently on the listed nodes",
+    'host_persistent_env': "Set the required environment variables persistently (for example in /etc/environment)",
+    'host_inventory': "Resolve hardware inventory mismatches against the node's SKU profile before qualification",
+    'host_platform_extras': "Fix the listed BIOS/driver/limits settings (Large BAR, AtomicOps, limits.conf, RDMA modules)",
 }
 
 
@@ -167,6 +191,10 @@ class PreflightReportGenerator(PreflightCheck):
             'checks': {
                 'ssh_reachability': self._summarize_reachability_results(reachability_results),
                 'node_health': self._summarize_node_health_results(node_health_results),
+                **{
+                    check: self._summarize_host_readiness_results(check, self.results.get(check))
+                    for check in HOST_READINESS_CHECKS
+                },
                 'gid_consistency': self._summarize_gid_results(gid_results),
                 'rdma_mtu': self._summarize_rdma_mtu_results(mtu_results),
                 'node_smoke_tier1': self._summarize_node_smoke_tier1_results(node_smoke_tier1_results),
@@ -202,6 +230,10 @@ class PreflightReportGenerator(PreflightCheck):
             summary['recommendations'].append(
                 "Restore GPU node health and, when enabled, MI4XX AIFM/AFM/vPOD fabric state before scale-up"
             )
+
+        for check in HOST_READINESS_CHECKS:
+            if summary['checks'][check]['status'] in ('FAIL', 'ERROR'):
+                summary['recommendations'].append(HOST_READINESS_RECOMMENDATIONS[check])
 
         if summary['checks']['ifoe_l2_connectivity']['status'] == 'FAIL':
             summary['recommendations'].append(
@@ -585,6 +617,39 @@ class PreflightReportGenerator(PreflightCheck):
             'consistent_nodes': consistent_nodes,
             'failed_nodes': failed_nodes,
             'summary': f"{consistent_nodes}/{total_nodes} nodes have consistent ROCm version",
+        }
+
+    def _summarize_host_readiness_results(self, check, results):
+        """Summarize a flat per-node host readiness result map."""
+        label = preflight_check_display_name(check)
+        inactive = _inactive_check_summary(
+            results,
+            f'{label} skipped',
+            f'{label} blocked',
+            {'total_nodes': 0, 'passed_nodes': 0, 'failed_nodes': [], 'warning_nodes': []},
+            missing_message='Not run',
+        )
+        if inactive:
+            return inactive
+        node_results = {node: value for node, value in results.items() if isinstance(value, dict)}
+        if not node_results:
+            return _empty_tested_summary(
+                results.get('message') or f'{label} recorded no nodes',
+                {'total_nodes': 0, 'passed_nodes': 0, 'failed_nodes': [], 'warning_nodes': []},
+            )
+        failed = [node for node, value in node_results.items() if value.get('status') != 'PASS']
+        warned = [node for node, value in node_results.items() if node not in failed and value.get('warnings')]
+        total = len(node_results)
+        text = f"{total - len(failed)}/{total} nodes pass"
+        if warned:
+            text += f" ({len(warned)} with warnings)"
+        return {
+            'status': 'FAIL' if failed else 'PASS',
+            'total_nodes': total,
+            'passed_nodes': total - len(failed),
+            'failed_nodes': failed,
+            'warning_nodes': warned,
+            'summary': text,
         }
 
     def _summarize_interface_results(self, interface_results):
@@ -1114,6 +1179,8 @@ class PreflightReportGenerator(PreflightCheck):
 
             {self._generate_executive_summary_html(summary)}
             {self._generate_node_health_html(results.get('node_health', {}))}
+            {''.join(self._generate_host_readiness_html(check, results.get(check)) for check in HOST_READINESS_CHECKS)}
+            {self._generate_host_inventory_export_html(results.get('host_inventory_export'))}
             {self._generate_gid_consistency_html(results.get('gid_consistency', {}))}
             {self._generate_rdma_mtu_html(results.get('rdma_mtu', {}))}
             {self._generate_node_smoke_tier1_html(results.get('node_smoke_tier1') or results.get('node_smoke', {}))}
@@ -2898,6 +2965,45 @@ class PreflightReportGenerator(PreflightCheck):
         </section>
         """
         return html
+
+    def _generate_host_readiness_html(self, check, results):
+        """Render failed and warned nodes for one host readiness check."""
+        if _result_disposition(results) != 'ran':
+            return ""
+        rows = []
+        for node, result in results.items():
+            if not isinstance(result, dict):
+                continue
+            errors = result.get('errors') or []
+            warnings = result.get('warnings') or []
+            if result.get('status') == 'PASS' and not warnings:
+                continue
+            status = 'FAIL' if result.get('status') != 'PASS' else 'WARNING'
+            issues = ''.join(f"<li>{html.escape(str(message))}</li>" for message in errors)
+            issues += ''.join(f"<li>warning: {html.escape(str(message))}</li>" for message in warnings)
+            rows.append(
+                f"<tr><td>{html.escape(str(node))}</td>"
+                f"<td class=\"status-{status.lower()}\">{status}</td><td><ul>{issues}</ul></td></tr>"
+            )
+        if not rows:
+            return ""
+        return f"""
+        <section>
+            <h2>{html.escape(preflight_check_display_name(check))}</h2>
+            <table>
+                <thead><tr><th>Node</th><th>Status</th><th>Findings</th></tr></thead>
+                <tbody>{''.join(rows)}</tbody>
+            </table>
+        </section>
+        """
+
+    def _generate_host_inventory_export_html(self, export_path):
+        if not export_path:
+            return ""
+        return (
+            "<section><h2>Host Inventory Export</h2>"
+            f"<p>Per-node inventory JSON: <code>{html.escape(str(export_path))}</code></p></section>"
+        )
 
     def _generate_interface_names_html(self, interface_results):
         """Generate RDMA interface inconsistencies section - only show failed nodes."""

@@ -1875,6 +1875,180 @@ class PreflightReportingConfig(BaseModel):
     )
 
 
+class PreflightHostReadinessSection(BaseModel):
+    """Fields shared by every host readiness check."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(default=True, description="Run this host readiness check")
+    on_mismatch: str = Field(
+        default="fail",
+        description="'fail' fails the node on a configuration mismatch; 'warn' records it as a warning",
+    )
+
+    @field_validator("on_mismatch")
+    @classmethod
+    def validate_on_mismatch(cls, v):
+        if v not in ("fail", "warn"):
+            raise ValueError("on_mismatch must be 'fail' or 'warn'")
+        return v
+
+
+class PreflightKernelParamsConfig(PreflightHostReadinessSection):
+    """Kernel command-line parameters checked against /proc/cmdline."""
+
+    required: List[str] = Field(
+        default_factory=lambda: [
+            "pci=realloc=off",
+            "pci=bfsort",
+            "iommu=pt",
+            "numa_balancing=disable",
+            "modprobe.blacklist=amdgpu",
+        ],
+        description="key=value (or bare key) tokens every node must have on its kernel command line",
+    )
+    required_intel: List[str] = Field(
+        default_factory=lambda: ["intel_iommu=on"], description="Additional tokens required on Intel CPU hosts"
+    )
+    required_amd: List[str] = Field(default_factory=list, description="Additional tokens required on AMD CPU hosts")
+    forbidden: List[str] = Field(default_factory=list, description="Tokens that must not be on the kernel command line")
+
+
+class PreflightOsTuningConfig(PreflightHostReadinessSection):
+    """CPU idle-state and governor tuning."""
+
+    disable_idle_states_from: Optional[int] = Field(
+        default=2,
+        ge=0,
+        description="Every cpuidle state with this index or higher must be disabled on all CPUs; null skips",
+    )
+    max_cstate_params: List[str] = Field(
+        default_factory=list,
+        description="Optional kernel command-line tokens limiting C-states, for example processor.max_cstate=1",
+    )
+    cpu_governor: Optional[str] = Field(
+        default=None, description="Required cpufreq scaling governor on every CPU; null skips"
+    )
+
+
+class PreflightEnvConfig(PreflightHostReadinessSection):
+    """Persistent environment variables."""
+
+    required: Dict[str, str] = Field(
+        default_factory=lambda: {"HIP_FORCE_DEV_KERNARG": "1", "HSA_OVERRIDE_CPU_AFFINITY_DEBUG": "0"},
+        description="Variables and values that must be set persistently on every node",
+    )
+    sources: List[str] = Field(
+        default_factory=lambda: ["/etc/environment"],
+        description="Files (or directories of *.sh files) parsed statically for persistent definitions",
+    )
+    check_session: bool = Field(
+        default=True, description="Also compare the value seen by a remote command session on each node"
+    )
+
+    @field_validator("required")
+    @classmethod
+    def validate_names(cls, v):
+        bad = [name for name in v if not name or not (name[0].isalpha() or name[0] == "_")]
+        bad += [name for name in v if not all(ch.isalnum() or ch == "_" for ch in name)]
+        if bad:
+            raise ValueError(f"Invalid environment variable name(s): {', '.join(sorted(set(bad)))}")
+        return v
+
+
+class PreflightIdleStateConfig(PreflightHostReadinessSection):
+    """GPU idle-state assertion before any preflight workload."""
+
+    samples: int = Field(default=3, ge=1, le=60, description="amd-smi samples taken per node")
+    interval_sec: int = Field(default=2, ge=0, le=60, description="Seconds between samples")
+    gfx_util_max_pct: Optional[float] = Field(default=5, ge=0, le=100, description="Idle GFX activity limit (%)")
+    mem_util_max_pct: Optional[float] = Field(default=5, ge=0, le=100, description="Idle memory activity limit (%)")
+    vram_used_max_pct: Optional[float] = Field(default=5, ge=0, le=100, description="Idle VRAM used limit (%)")
+    temp_max_c: Dict[str, Optional[float]] = Field(
+        default_factory=lambda: {"hotspot": 85, "mem": 85, "edge": 85},
+        description="Highest allowed idle temperature per amd-smi sensor (C); sensors reporting N/A are skipped",
+    )
+    fail_on_gpu_processes: bool = Field(default=True, description="Fail a node when a GPU process is running")
+    allowed_procs: str = Field(
+        default="gpuagent,rocm-smi-daemon,amd-smi,dcgm-exporter",
+        description="Comma-separated process names allowed on an idle GPU",
+    )
+
+
+class PreflightSkuProfileConfig(BaseModel):
+    """Expected hardware inventory for one node SKU. A null value is recorded but not checked."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(description="Profile name referenced by default_profile")
+    nodes: List[str] = Field(default_factory=list, description="Cluster node names that use this profile")
+    dmi_product_name: str = Field(
+        default="", description="Match nodes whose /sys/class/dmi/id/product_name equals this value"
+    )
+    cpu_sockets: Optional[int] = Field(default=None, ge=1)
+    min_cpu_cores: Optional[int] = Field(default=None, ge=1)
+    dimm_count: Optional[int] = Field(default=None, ge=0)
+    dimm_size_gb: Optional[float] = Field(default=None, gt=0)
+    nvme_count: Optional[int] = Field(default=None, ge=0)
+    nvme_min_size_gb: Optional[float] = Field(default=None, ge=0)
+    frontend_nic_count: Optional[int] = Field(default=None, ge=0)
+    frontend_nic_interfaces: List[str] = Field(default_factory=list)
+    min_ram_gb: Optional[float] = Field(default=None, gt=0)
+
+
+class PreflightInventoryConfig(PreflightHostReadinessSection):
+    """Hardware inventory gate by SKU profile."""
+
+    default_profile: str = Field(default="", description="Profile for nodes no other rule matches")
+    sku_profiles: List[PreflightSkuProfileConfig] = Field(default_factory=list)
+    export_json: bool = Field(default=True, description="Write per-node inventory JSON under artifacts_root_dir")
+
+
+class PreflightRocmLibDepsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(default=False, description="Scan ROCm libraries with ldd for unresolved dependencies")
+    max_depth: int = Field(default=1, ge=1, le=10, description="find -maxdepth under <rocm_path>/lib")
+    timeout_sec: int = Field(default=300, ge=10, description="Upper bound for the ldd scan on each node")
+
+
+class PreflightLimitsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    memlock: Optional[str] = Field(default="unlimited", description="Required soft and hard memlock; null skips")
+    nofile_min: Optional[int] = Field(default=1048576, ge=1, description="Minimum soft and hard nofile; null skips")
+
+
+class PreflightPlatformExtrasConfig(PreflightHostReadinessSection):
+    """Platform checks derived from ROCm Deployment Health Check."""
+
+    large_bar: bool = Field(default=True, description="Require CPU-visible VRAM to equal total VRAM on every GPU")
+    atomic_ops: bool = Field(default=True, description="Require PCIe AtomicOps requests enabled on every GPU")
+    cwsr_enable: Optional[int] = Field(default=None, description="Required amdgpu cwsr_enable value; null records only")
+    limits: Optional[PreflightLimitsConfig] = Field(
+        default_factory=PreflightLimitsConfig, description="Persistent limits.conf requirements; null skips"
+    )
+    rdma_modules: List[str] = Field(
+        default_factory=lambda: ["ib_core", "ib_uverbs", "rdma_ucm", "rdma_cm"],
+        description="Kernel modules that must be loaded; an empty list skips the RDMA module check",
+    )
+    rocm_path: str = Field(default="/opt/rocm", description="ROCm install prefix used by the library scan")
+    rocm_lib_deps: PreflightRocmLibDepsConfig = Field(default_factory=PreflightRocmLibDepsConfig)
+
+
+class PreflightHostReadinessConfig(BaseModel):
+    """Host and environment readiness checks. An absent section is skipped."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kernel_params: Optional[PreflightKernelParamsConfig] = None
+    os_tuning: Optional[PreflightOsTuningConfig] = None
+    env: Optional[PreflightEnvConfig] = None
+    idle_state: Optional[PreflightIdleStateConfig] = None
+    inventory: Optional[PreflightInventoryConfig] = None
+    platform_extras: Optional[PreflightPlatformExtrasConfig] = None
+
+
 class PreflightConfigFile(BaseModel):
     """
     Schema for preflight check configuration file.
@@ -1901,6 +2075,9 @@ class PreflightConfigFile(BaseModel):
     )
     reporting: PreflightReportingConfig = Field(
         default_factory=PreflightReportingConfig, description="Report generation and output settings"
+    )
+    host_readiness: Optional[PreflightHostReadinessConfig] = Field(
+        default=None, description="Host and environment readiness checks"
     )
 
     @model_validator(mode="before")

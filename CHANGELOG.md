@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Preflight host readiness checks configured under `preflight.host_readiness`: GPU idle state, kernel command-line parameters, CPU idle states, persistent environment variables, hardware inventory against SKU profiles with a per-node JSON export, and platform extras (Large BAR, PCIe AtomicOps, `limits.conf`, RDMA modules). Configs without the section report these checks as skipped.
+
 ### Changed
 
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.

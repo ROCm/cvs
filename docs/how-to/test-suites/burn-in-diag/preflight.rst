@@ -23,6 +23,8 @@ Follow these steps to set up the preflight configuration.
 
 2. Edit paths, thresholds, and Node Smoke settings. Replace every ``<changeme>`` placeholder. Node Smoke runs unless ``connectivity_mode`` is ``"skip"``.
 
+3. Review the ``host_readiness`` sections: kernel parameters, CPU idle states, persistent environment variables, GPU idle state, hardware inventory, and platform extras. Add ``sku_profiles`` that describe your node hardware to gate inventory. Without profiles, inventory is only recorded. DIMM and PCIe AtomicOps checks need passwordless ``sudo`` for ``dmidecode`` and ``lspci`` on every node.
+
 For the complete field reference including Node Smoke tier options and RDMA inventory settings, see :doc:`/reference/configuration-files/burn-in-diag/preflight`.
 
 .. _preflight-run-tests:

@@ -94,6 +94,7 @@ preflight/
 │       └── transferbench/     # IFoE data-path validation
 ├── node_smoke_tier1/          # Node Smoke Tier 1/2 per-node JSON artifacts
 ├── node_smoke_tier3/          # Node Smoke Tier 3 cluster markdown report
+├── host_readiness/            # Host configuration, environment, idle state, inventory
 ├── reporting/                 # Output and report generation
 └── debug/                     # Debug and troubleshooting options
 ```
@@ -103,12 +104,13 @@ Legacy config keys `node_smoke` and `tier3_info` are still accepted and normaliz
 
 ### Execution Flow
 1. **node_check** - Validate individual nodes and, when enabled, MI4XX scale-up fabric admission
-2. **connectivity_check.ifoe.l2ping** - Enforce strict L2 connectivity
-3. **connectivity_check.ifoe.transferbench** - Validate the IFoE data path
-4. **node_smoke_tier1** - Run Node Smoke Tier 1 (and Tier 2 when `tier2_perf` is enabled) per node
-5. **node_smoke_tier3** - Run Node Smoke Tier 3 cluster inventory (independent of Tier 1)
-6. **connectivity_check.rdma** - Validate RDMA inventory, GIDs, and connectivity unless skipped
-7. **reporting** - Generate reports and outputs
+2. **host_readiness** - GPU idle state, kernel parameters, OS tuning, persistent environment, inventory, platform extras
+3. **connectivity_check.ifoe.l2ping** - Enforce strict L2 connectivity
+4. **connectivity_check.ifoe.transferbench** - Validate the IFoE data path
+5. **node_smoke_tier1** - Run Node Smoke Tier 1 (and Tier 2 when `tier2_perf` is enabled) per node
+6. **node_smoke_tier3** - Run Node Smoke Tier 3 cluster inventory (independent of Tier 1)
+7. **connectivity_check.rdma** - Validate RDMA inventory, GIDs, and connectivity unless skipped
+8. **reporting** - Generate reports and outputs
 
 ## Node Smoke tiers and test counts
 
@@ -454,6 +456,27 @@ Runs Node Smoke Tier 3 (`primus-cli direct -- preflight --host --gpu --network`)
 - **`extra_args`** (default: `[]`) — additional flags forwarded to `primus-cli`
 
 Legacy config key `tier3_info` is accepted as an alias for `node_smoke_tier3`.
+
+### Host Readiness Settings (`host_readiness`)
+
+Each section is optional; an absent section or `"enabled": false` reports the check as SKIPPED.
+Every section accepts `enabled` and `on_mismatch` (`"fail"` or `"warn"`). Probe errors, such as
+a missing `amd-smi` or a refused `sudo -n`, always fail the node.
+
+- **`idle_state`** (`test_gpu_idle_state`) - `samples`, `interval_sec`, `gfx_util_max_pct`,
+  `mem_util_max_pct`, `vram_used_max_pct`, `temp_max_c` (per sensor), `fail_on_gpu_processes`, `allowed_procs`
+- **`kernel_params`** (`test_host_kernel_params`) - `required`, `required_intel`, `required_amd`, `forbidden`
+  (`key=value` or bare `key`; `pci=` and `modprobe.blacklist=` match per comma option)
+- **`os_tuning`** (`test_host_os_tuning`) - `disable_idle_states_from`, `max_cstate_params`, `cpu_governor`
+- **`env`** (`test_host_persistent_env`) - `required` (name to value), `sources` (default `/etc/environment`), `check_session`
+- **`inventory`** (`test_host_inventory`) - `sku_profiles`, `default_profile`, `export_json`. Profile fields:
+  `name`, `nodes`, `dmi_product_name`, `cpu_sockets`, `min_cpu_cores`, `dimm_count`, `dimm_size_gb`,
+  `nvme_count`, `nvme_min_size_gb`, `frontend_nic_count`, `frontend_nic_interfaces`, `min_ram_gb`.
+  A `null` field is recorded but not checked. Inventory JSON goes to `<artifacts_root_dir>/host_inventory_<timestamp>/`.
+- **`platform_extras`** (`test_host_platform_extras`) - `large_bar`, `atomic_ops`, `cwsr_enable`,
+  `limits` (`memlock`, `nofile_min`), `rdma_modules`, `rocm_path`, `rocm_lib_deps` (`enabled`, `max_depth`, `timeout_sec`)
+
+DIMM details and PCIe AtomicOps need passwordless `sudo` for `dmidecode` and `lspci`.
 
 ### Reporting Settings (`reporting`)
 
