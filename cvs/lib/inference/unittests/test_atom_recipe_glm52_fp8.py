@@ -29,6 +29,8 @@ class TestAtomRecipeGlm52Fp8(unittest.TestCase):
         self.assertEqual(variant.params.tensor_parallelism, "8")
         self.assertNotIn("--method", variant.roles.server.atom_args)
         self.assertEqual(variant.container.image, "<changeme>")
+        self.assertFalse(variant.enforce_thresholds)
+        self.assertEqual(variant.roles.server.env["AITER_QUICK_REDUCE_QUANTIZATION"], "INT4")
         for cell in variant.expected_cells():
             self.assertIn(cell, variant.thresholds)
 
@@ -39,7 +41,7 @@ class TestAtomRecipeGlm52Fp8(unittest.TestCase):
         self.assertEqual(args[args.index("--method") + 1], "mtp")
         self.assertEqual(args[args.index("--num-speculative-tokens") + 1], "3")
 
-    def test_vllm_and_sglang_keep_single_and_pp2(self):
+    def test_vllm_single_and_distributed_topology(self):
         single = _load("mi3xx_atom_vllm_glm-5.2_fp8_single.json")
         distributed = _load("mi3xx_atom_vllm_glm-5.2_fp8_distributed.json")
         self.assertEqual(single.params.nnodes, "1")
@@ -48,13 +50,18 @@ class TestAtomRecipeGlm52Fp8(unittest.TestCase):
         self.assertEqual(distributed.params.pipeline_parallel_size, "2")
         self.assertEqual(single.params.tensor_parallelism, distributed.params.tensor_parallelism)
         self.assertIn("ptpc_fp8", single.roles.server.serve_args["additional-config"])
+
+    def test_sglang_single_and_distributed_topology(self):
         sglang = _load("mi3xx_atom_sglang_glm-5.2_fp8_single.json")
         sglang_pp = _load("mi3xx_atom_sglang_glm-5.2_fp8_distributed.json")
         self.assertEqual(sglang.params.driver, "sglang")
         self.assertEqual(sglang.params.nnodes, "1")
         self.assertEqual(sglang_pp.params.nnodes, "2")
         self.assertEqual(sglang_pp.params.pipeline_parallel_size, "2")
-        self.assertEqual(sglang.roles.server.env["SGLANG_EXTERNAL_MODEL_PACKAGE"], "atom.plugin.sglang.models")
+        self.assertEqual(
+            sglang.roles.server.env["SGLANG_EXTERNAL_MODEL_PACKAGE"],
+            "atom.plugin.sglang.models",
+        )
         for stem in (sglang, sglang_pp):
             args = stem.roles.server.sglang_args
             self.assertEqual(args[args.index("--context-length") + 1], "16384")

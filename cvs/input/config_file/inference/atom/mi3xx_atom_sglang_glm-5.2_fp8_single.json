@@ -1,5 +1,5 @@
 {
-  "_comment": "GLM-5.2-FP8 SGLang on one mi3xx node, TP8. Thresholds stay unenforced.",
+  "_comment": "GLM-5.2-FP8 SGLang on one mi3xx node, TP8. Thresholds stay unenforced. memory_fraction is not forwarded to launch_server; the server uses --mem-fraction-static 0.8.",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_sglang_glm-5.2_fp8_single_threshold.json",
   "paths": {
