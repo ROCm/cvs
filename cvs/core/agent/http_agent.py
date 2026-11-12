@@ -64,6 +64,16 @@ def _load_exec_spec(spec_dir, spec_id):
         raise ExecSpecError(f"invalid exec spec {path}: {reasons}") from exc
 
 
+def _resolve_under(path, root):
+    '''Resolve path to a real path and verify it equals root or lies beneath it, or raise ValueError.'''
+    if not os.path.isabs(path):
+        raise ValueError(f"{path} is not an absolute path")
+    resolved = os.path.realpath(path)
+    if resolved != root and not resolved.startswith(os.path.join(root, "")):
+        raise ValueError(f"{path} is outside the run directory {root}")
+    return resolved
+
+
 def _read_secret(file_path: Path) -> str:
     with open(file_path) as file:
         return file.readline().strip()
@@ -224,7 +234,7 @@ async def _spawn_process(
     return process
 
 
-async def _run_cmd(request: messages.ExecRequest, spec, registry: ProcessRegistry) -> messages.ExecResponse:
+async def _run_cmd(request: messages.ExecRequest, spec, out_dir, registry: ProcessRegistry) -> messages.ExecResponse:
     if request.output_mode == messages.ExecOutputMode.EXIT_CODE_ONLY:
         process = await _spawn_process(
             request, spec, registry, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
@@ -284,9 +294,9 @@ async def _run_cmd(request: messages.ExecRequest, spec, registry: ProcessRegistr
         stderr_text = stderr_bytes.decode(errors="replace")
         stdout_path = None
         stderr_path = None
-        if request.out_path:
-            stdout_path = request.out_path / f"{request.cmd_id}.stdout"
-            stderr_path = request.out_path / f"{request.cmd_id}.stderr"
+        if out_dir is not None:
+            stdout_path = Path(out_dir) / f"{request.cmd_id}.stdout"
+            stderr_path = Path(out_dir) / f"{request.cmd_id}.stderr"
             await _write_text(stdout_path, stdout_text)
             await _write_text(stderr_path, stderr_text)
         return messages.ExecResponse(
@@ -339,6 +349,8 @@ def create_app(
     app.state.process_registry = ProcessRegistry()
     app.state.exec_busy = False
     app.state.exec_spec_dir = agent_dir / messages.EXEC_SPEC_DIRNAME
+    # RunLayout nests agent_dir directly under run_dir, the parent of the client's FILE-mode exec_output dir.
+    app.state.work_root = os.path.realpath(agent_dir.parent)
 
     @app.post(messages.REGISTER_PATH)
     async def register_agent(request: messages.RegisterRequest, http_request: Request) -> messages.RegisterResponse:
@@ -356,6 +368,14 @@ def create_app(
     @app.post(messages.EXEC_PATH)
     async def run_cmd(request: messages.ExecRequest, http_request: Request) -> messages.ExecResponse:
         '''Run cmd on host'''
+        try:
+            out_dir = (
+                _resolve_under(request.out_path, http_request.app.state.work_root)
+                if request.out_path is not None
+                else None
+            )
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
         # Checked and set with no `await` in between: the event loop can't switch to another
         # request's coroutine mid-way, so this is race-free without needing an explicit lock.
         if http_request.app.state.exec_busy:
@@ -369,7 +389,7 @@ def create_app(
                 logged_reason = str(exc).replace("\r", "").replace("\n", "")
                 logger.warning("Rejected exec spec %s: %s", logged_id, logged_reason)
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-            return await _run_cmd(request, spec, http_request.app.state.process_registry)
+            return await _run_cmd(request, spec, out_dir, http_request.app.state.process_registry)
         finally:
             http_request.app.state.exec_busy = False
 

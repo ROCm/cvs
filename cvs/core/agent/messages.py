@@ -75,7 +75,7 @@ class ExecRequest(BaseModel):
     spec_id: str = Field(pattern=EXEC_SPEC_ID_PATTERN)
     timeout: int | None  # some tests / benchmarks are long running require None timeout
     inactivity_timeout: int | None  # None disables the inactivity bound
-    cmd_id: str
+    cmd_id: str = Field(pattern=r"^[A-Za-z0-9_-]+$")  # becomes a filename under out_path; no separators or dots
     out_path: Path | None  # directory for cmd_id.stdout/cmd_id.stderr; required when output_mode is FILE
     output_mode: ExecOutputMode
 
