@@ -16,6 +16,20 @@ from cvs.lib import globals
 
 log = globals.log
 
+# rocminfo also prints generic ISA names (gfx9-4-generic, gfx12-generic). A token
+# match on those sorts ahead of the real target, so only the agent Name line counts.
+_AGENT_GPU_ARCH_RE = re.compile(r'^\s*Name:\s+(gfx[0-9a-f]+)\s*$')
+
+
+def _gpu_archs_from_rocminfo(output):
+    """Return sorted unique GPU archs from rocminfo agent Name lines."""
+    found = set()
+    for line in output.splitlines():
+        match = _AGENT_GPU_ARCH_RE.match(line)
+        if match:
+            found.add(match.group(1))
+    return sorted(found)
+
 
 @pytest.fixture(scope="module")
 def cluster_file(pytestconfig):
@@ -172,7 +186,8 @@ def _detect_gpu_arch(hdl, config_dict):
     Return the GPU architecture string (e.g. 'gfx942') for RCCL/rccl-tests builds.
 
     Uses config gpu_arch when set. Otherwise runs rocminfo on every node reached
-    by hdl, warns if architectures differ across nodes, and returns the detected arch.
+    by hdl and reads the agent Name (for example gfx942). Generic ISA names such
+    as gfx9-4-generic are ignored. Warns if architectures differ across nodes.
     Returns empty string on failure so callers can skip the flag gracefully.
     """
     config_arch = str(config_dict.get("gpu_arch") or "").strip()
@@ -181,7 +196,7 @@ def _detect_gpu_arch(hdl, config_dict):
         return config_arch
 
     rocm_path = config_dict.get("rocm_path", "/opt/rocm").rstrip("/")
-    rocminfo_cmd = f"{rocm_path}/bin/rocminfo 2>/dev/null | grep -oP 'gfx[0-9a-f]+' | sort -u"
+    rocminfo_cmd = f"{rocm_path}/bin/rocminfo 2>/dev/null"
     log.info("Auto-detecting GPU architecture via rocminfo")
     try:
         out_dict = hdl.exec(rocminfo_cmd, timeout=60, print_console=False)
@@ -191,7 +206,7 @@ def _detect_gpu_arch(hdl, config_dict):
 
     arch_per_node = {}
     for node, output in out_dict.items():
-        archs = [a.strip() for a in output.strip().splitlines() if a.strip()]
+        archs = _gpu_archs_from_rocminfo(output)
         if archs:
             arch_per_node[node] = archs[0]
         else:
