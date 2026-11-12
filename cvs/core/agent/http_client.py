@@ -6,6 +6,9 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 import asyncio
+import contextlib
+import json
+import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +29,19 @@ _DEFAULT_READ_TIMEOUT_SECONDS = 5.0
 _DEFAULT_CONNECT_TIMEOUT_SECONDS = 5.0
 # Shutdown waits out the agent's process-group termination grace before returning.
 _SHUTDOWN_READ_TIMEOUT_SECONDS = messages.TERMINATE_GRACE_PERIOD_SECONDS + _EXEC_RESPONSE_BUFFER_SECONDS
+
+
+def _write_exec_spec(path, spec):
+    '''Write owner-only because the agent rejects broader access and commands may carry secrets.'''
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write(spec.model_dump_json())
+
+
+def _remove_exec_spec(path):
+    # A leftover owner-only spec in this run is harmless; failing a finished command over it is not.
+    with contextlib.suppress(OSError):
+        path.unlink()
 
 
 def _agent_timeout_seconds(timeout: float | None, name: str) -> int | None:
@@ -96,7 +112,21 @@ def _classify_exception(exc: Exception) -> Exception:
     cvs/lib/parallel/pssh.py's prune_unreachable_hosts draws for SSH via pssh.exceptions.'''
     if isinstance(exc, httpx.TransportError):
         wrapped: Exception = HTTPConnectionError(str(exc))
-    elif isinstance(exc, (httpx.HTTPStatusError, messages.MessageParseError)):
+    elif isinstance(exc, httpx.HTTPStatusError):
+        message = str(exc)
+        body = exc.response.text.strip()
+        if body:
+            try:
+                parsed = exc.response.json()
+            except ValueError:
+                pass
+            else:
+                if isinstance(parsed, dict) and "detail" in parsed:
+                    detail = parsed["detail"]
+                    body = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
+            message = f"{message}: {body[:300]}"
+        wrapped = HTTPProtocolError(message)
+    elif isinstance(exc, messages.MessageParseError):
         wrapped = HTTPProtocolError(str(exc))
     else:
         return exc
@@ -182,7 +212,7 @@ class ParallelHTTPClient:
         env: dict[str, str] | None,
         inactivity_timeout: float | None,
         output_mode: messages.ExecOutputMode,
-    ) -> dict[str, messages.ExecRequest]:
+    ):
         # Imported here, not at module level: cvs.core.run_layout pulls in cvs/core/__init__.py's
         # orchestrator factory, which reaches back into cvs/core/agent/ in ways that risk a cycle
         # (same reasoning as cvs/lib/utils_lib.py's lazy import of RunLayout).
@@ -195,24 +225,32 @@ class ParallelHTTPClient:
             commands = [cmd % args for args in host_args]
         else:
             commands = [cmd] * len(hosts)
-        run_dir = RunLayout.get().run_dir
+        layout = RunLayout.get()
+        run_dir = layout.run_dir
+        spec_dir = layout.agent_dir / messages.EXEC_SPEC_DIRNAME
+        spec_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         out_dir = None
         if output_mode == messages.ExecOutputMode.FILE:
             out_dir = run_dir / "exec_output"
             out_dir.mkdir(parents=True, exist_ok=True)
-        return {
-            host: messages.ExecRequest(
-                cmd=command,
-                env=env or {},
-                cwd=run_dir,
+        requests = {}
+        specs = {}
+        spec_ids = {}
+        for host, command in zip(hosts, commands):
+            # exec() sends one command to every host, so large clusters need only one shared-FS write.
+            if command not in spec_ids:
+                spec_id = uuid.uuid4().hex
+                spec_ids[command] = spec_id
+                specs[spec_dir / f"{spec_id}.json"] = messages.ExecSpec(cmd=command, env=env or {}, cwd=run_dir)
+            requests[host] = messages.ExecRequest(
+                spec_id=spec_ids[command],
                 timeout=_agent_timeout_seconds(read_timeout, "read_timeout"),
                 inactivity_timeout=_agent_timeout_seconds(inactivity_timeout, "inactivity_timeout"),
                 cmd_id=uuid.uuid4().hex,
                 out_path=out_dir,
                 output_mode=output_mode,
             )
-            for host, command in zip(hosts, commands)
-        }
+        return requests, specs
 
     async def _collect_output(
         self, request: messages.ExecRequest, exec_response: messages.ExecResponse
@@ -274,11 +312,21 @@ class ParallelHTTPClient:
         inactivity_timeout: float | None = None,
         output_mode: messages.ExecOutputMode = messages.ExecOutputMode.INLINE,
     ) -> list[HostOutput]:
-        requests = self._build_exec_requests(cmd, host_args, read_timeout, env, inactivity_timeout, output_mode)
+        requests, specs = self._build_exec_requests(cmd, host_args, read_timeout, env, inactivity_timeout, output_mode)
         client = self._get_client()
-        outputs = await asyncio.gather(
-            *(self._run_one(client, host, self._agent_urls[host], request) for host, request in requests.items())
-        )
+        try:
+            written = await asyncio.gather(
+                *(asyncio.to_thread(_write_exec_spec, path, spec) for path, spec in specs.items()),
+                return_exceptions=True,
+            )
+            failures = [result for result in written if isinstance(result, BaseException)]
+            if failures:
+                raise failures[0]
+            outputs = await asyncio.gather(
+                *(self._run_one(client, host, self._agent_urls[host], request) for host, request in requests.items())
+            )
+        finally:
+            await asyncio.gather(*(asyncio.to_thread(_remove_exec_spec, path) for path in specs))
         if stop_on_errors:
             failed = [output for output in outputs if output.exception is not None]
             if failed:

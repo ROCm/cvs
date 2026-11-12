@@ -15,13 +15,22 @@ import tempfile
 import threading
 import time
 import unittest
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from cvs.core.agent import messages
-from cvs.core.agent.http_agent import AgentInfo, AgentRegistry, create_app, _terminate_process_group
+from cvs.core.agent.http_agent import (
+    AgentInfo,
+    AgentRegistry,
+    ExecSpecError,
+    _load_exec_spec,
+    create_app,
+    _terminate_process_group,
+)
+from cvs.core.agent.http_client import _write_exec_spec
 from cvs.unittests.support import TMP
 
 
@@ -78,6 +87,7 @@ class HttpAgentTestBase(unittest.TestCase):
         tmp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(tmp_dir.cleanup)
         agent_dir = Path(tmp_dir.name)
+        self.agent_dir = agent_dir
         (agent_dir / messages.AUTH_TOKEN_FILENAME).write_text(self.AUTH_FIXTURE + "\n")
         app = create_app(
             agent_dir=agent_dir,
@@ -90,6 +100,28 @@ class HttpAgentTestBase(unittest.TestCase):
         client.__enter__()  # runs the app's lifespan startup so app.state.auth_token is populated
         self.addCleanup(client.__exit__, None, None, None)
         return client
+
+    def _write_spec(self, cmd, env=None, cwd=None):
+        spec_dir = self.agent_dir / messages.EXEC_SPEC_DIRNAME
+        spec_dir.mkdir(mode=0o700, exist_ok=True)
+        spec_id = uuid.uuid4().hex
+        _write_exec_spec(spec_dir / f"{spec_id}.json", messages.ExecSpec(cmd=cmd, env=env or {}, cwd=cwd or Path(TMP)))
+        return spec_id
+
+    DEFAULT_CMD_ID = "cmd-1"
+    DEFAULT_OUTPUT_MODE = messages.ExecOutputMode.EXIT_CODE_ONLY
+
+    def _exec_request(self, cmd="true", env=None, cwd=None, **overrides):
+        kwargs = dict(
+            spec_id=self._write_spec(cmd, env, cwd),
+            timeout=None,
+            inactivity_timeout=None,
+            cmd_id=self.DEFAULT_CMD_ID,
+            out_path=None,
+            output_mode=self.DEFAULT_OUTPUT_MODE,
+        )
+        kwargs.update(overrides)
+        return messages.ExecRequest(**kwargs)
 
     def _auth_headers(self, auth: str | None = None) -> dict[str, str]:
         return {
@@ -169,20 +201,134 @@ class TestRankZeroSelfRegistration(HttpAgentTestBase):
             self.assertEqual(app.state.registry.snapshot(), {0: AgentInfo(hostname="rank0-host", port=9000)})
 
 
+class TestLoadExecSpec(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.spec_dir = Path(self.tmp.name)
+        self.spec_id = "a" * 32
+        self.path = self.spec_dir / f"{self.spec_id}.json"
+
+    def _write_valid(self):
+        spec = messages.ExecSpec(cmd="echo hello", env={"FOO": "bar"}, cwd=Path(TMP))
+        _write_exec_spec(self.path, spec)
+        return spec
+
+    def test_accepts_owner_only_spec(self):
+        spec = self._write_valid()
+        self.assertEqual(_load_exec_spec(self.spec_dir, self.spec_id), spec)
+
+    def test_rejects_missing_file(self):
+        with self.assertRaises(ExecSpecError):
+            _load_exec_spec(self.spec_dir, self.spec_id)
+
+    def test_rejects_group_or_other_access(self):
+        for mode in (0o640, 0o604):
+            with self.subTest(mode=mode):
+                self._write_valid()
+                self.path.chmod(mode)
+                with self.assertRaises(ExecSpecError):
+                    _load_exec_spec(self.spec_dir, self.spec_id)
+                self.path.unlink()
+
+    def test_rejects_symlink(self):
+        target = self.spec_dir / "target.json"
+        _write_exec_spec(target, messages.ExecSpec(cmd="true", env={}, cwd=Path(TMP)))
+        self.path.symlink_to(target)
+        with self.assertRaises(ExecSpecError):
+            _load_exec_spec(self.spec_dir, self.spec_id)
+
+    def test_rejects_directory(self):
+        self.path.mkdir()
+        with self.assertRaises(ExecSpecError):
+            _load_exec_spec(self.spec_dir, self.spec_id)
+
+    def test_rejects_fifo_without_blocking(self):
+        os.mkfifo(self.path)
+        with self.assertRaises(ExecSpecError):
+            _load_exec_spec(self.spec_dir, self.spec_id)
+
+    def test_rejects_wrong_owner(self):
+        self._write_valid()
+        with patch("cvs.core.agent.http_agent.os.geteuid", return_value=os.geteuid() + 1):
+            with self.assertRaises(ExecSpecError):
+                _load_exec_spec(self.spec_dir, self.spec_id)
+
+    def test_rejects_path_escape(self):
+        with self.assertRaises(ExecSpecError):
+            _load_exec_spec(self.spec_dir, "../escape")
+
+    def test_rejects_invalid_json(self):
+        self.path.write_text("not json")
+        self.path.chmod(0o600)
+        with self.assertRaises(ExecSpecError):
+            _load_exec_spec(self.spec_dir, self.spec_id)
+
+    def test_validation_error_does_not_expose_spec_contents(self):
+        marker = "payload-should-be-hidden"
+        self.path.write_text(f'{{"cmd":"echo {marker}","env":{{"PROBE":["{marker}"]}},"cwd":"/tmp"}}')
+        self.path.chmod(0o600)
+        with self.assertRaises(ExecSpecError) as raised:
+            _load_exec_spec(self.spec_dir, self.spec_id)
+        self.assertIn("env.PROBE", str(raised.exception))
+        self.assertNotIn(marker, str(raised.exception))
+
+
 class TestExec(HttpAgentTestBase):
-    def _exec_request(self, **overrides) -> messages.ExecRequest:
-        kwargs = dict(
-            cmd="true",
-            env={},
-            cwd=Path(TMP),
-            timeout=None,
-            inactivity_timeout=None,
-            cmd_id="cmd-1",
-            out_path=None,
-            output_mode=messages.ExecOutputMode.EXIT_CODE_ONLY,
-        )
-        kwargs.update(overrides)
-        return messages.ExecRequest(**kwargs)
+    def test_unknown_spec_id_returns_400_and_spawns_nothing(self):
+        client = self._make_client(world_rank=0)
+        req = self._exec_request()
+        missing = req.model_copy(update={"spec_id": "f" * 32})
+        response = client.post(messages.EXEC_PATH, content=missing.model_dump_json(), headers=self._auth_headers())
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(client.app.state.process_registry.snapshot(), {})
+        response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        self.assertEqual(response.status_code, 200)
+
+    def test_request_carrying_cmd_is_rejected_with_422(self):
+        client = self._make_client(world_rank=0)
+        body = self._exec_request().model_dump(mode="json")
+        body["cmd"] = "id"
+        response = client.post(messages.EXEC_PATH, json=body, headers=self._auth_headers())
+        self.assertEqual(response.status_code, 422)
+
+    def test_malformed_spec_id_is_rejected_with_422(self):
+        client = self._make_client(world_rank=0)
+        body = self._exec_request().model_dump(mode="json")
+        body["spec_id"] = "../escape"
+        response = client.post(messages.EXEC_PATH, json=body, headers=self._auth_headers())
+        self.assertEqual(response.status_code, 422)
+
+    def test_group_readable_spec_is_rejected_with_400(self):
+        client = self._make_client(world_rank=0)
+        marker = "payload-should-be-hidden"
+        req = self._exec_request(cmd=f"echo {marker}")
+        (self.agent_dir / messages.EXEC_SPEC_DIRNAME / f"{req.spec_id}.json").chmod(0o640)
+        with self.assertLogs("cvs.core.agent.http_agent", level="WARNING") as logs:
+            response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(req.spec_id, logs.output[0])
+        self.assertIn("open to group or other", logs.output[0])
+        self.assertNotIn(marker, logs.output[0])
+
+    def test_rejected_spec_warning_strips_newlines_from_path(self):
+        client = self._make_client(world_rank=0)
+        req = self._exec_request()
+        client.app.state.exec_spec_dir = self.agent_dir / "exec\r\nextra-line"
+        with self.assertLogs("cvs.core.agent.http_agent", level="WARNING") as logs:
+            response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(req.spec_id, logs.output[0])
+        self.assertIn("cannot open exec spec", logs.output[0])
+        self.assertNotIn("\r", logs.output[0])
+        self.assertNotIn("\n", logs.output[0])
+
+    def test_command_runs_under_bin_sh_like_before(self):
+        client = self._make_client(world_rank=0)
+        req = self._exec_request(cmd="echo $0", output_mode=messages.ExecOutputMode.INLINE)
+        response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(messages.ExecResponse(**response.json()).stdout, ["/bin/sh"])
 
     def test_exit_code_only_reports_success(self):
         client = self._make_client(world_rank=0)
@@ -274,19 +420,7 @@ class TestExec(HttpAgentTestBase):
 
 
 class TestExecTimeouts(HttpAgentTestBase):
-    def _exec_request(self, **overrides) -> messages.ExecRequest:
-        kwargs = dict(
-            cmd="true",
-            env={},
-            cwd=Path(TMP),
-            timeout=None,
-            inactivity_timeout=None,
-            cmd_id="cmd-timeout",
-            out_path=None,
-            output_mode=messages.ExecOutputMode.EXIT_CODE_ONLY,
-        )
-        kwargs.update(overrides)
-        return messages.ExecRequest(**kwargs)
+    DEFAULT_CMD_ID = "cmd-timeout"
 
     def test_exit_code_only_completes_normally_within_timeout(self):
         client = self._make_client(world_rank=0)
@@ -362,19 +496,8 @@ class TestExecTimeouts(HttpAgentTestBase):
 
 
 class TestInlineExec(HttpAgentTestBase):
-    def _exec_request(self, **overrides) -> messages.ExecRequest:
-        kwargs = dict(
-            cmd="true",
-            env={},
-            cwd=Path(TMP),
-            timeout=None,
-            inactivity_timeout=None,
-            cmd_id="cmd-inline",
-            out_path=None,
-            output_mode=messages.ExecOutputMode.INLINE,
-        )
-        kwargs.update(overrides)
-        return messages.ExecRequest(**kwargs)
+    DEFAULT_CMD_ID = "cmd-inline"
+    DEFAULT_OUTPUT_MODE = messages.ExecOutputMode.INLINE
 
     def test_reports_full_stdout_and_stderr_untruncated(self):
         client = self._make_client(world_rank=0)
@@ -414,20 +537,6 @@ class TestInlineExec(HttpAgentTestBase):
 
 
 class TestExecConcurrency(HttpAgentTestBase):
-    def _exec_request(self, **overrides) -> messages.ExecRequest:
-        kwargs = dict(
-            cmd="true",
-            env={},
-            cwd=Path(TMP),
-            timeout=None,
-            inactivity_timeout=None,
-            cmd_id="cmd-1",
-            out_path=None,
-            output_mode=messages.ExecOutputMode.EXIT_CODE_ONLY,
-        )
-        kwargs.update(overrides)
-        return messages.ExecRequest(**kwargs)
-
     def test_concurrent_exec_is_rejected_with_409_and_flag_resets_after(self):
         client = self._make_client(world_rank=0)
         with tempfile.TemporaryDirectory() as marker_dir:
