@@ -168,7 +168,8 @@ Prerequisites
 - Network access from that system to every cluster node over SSH.
 - A cluster file and test configuration file prepared as described below.
 - An SSH private key that the cluster file references. Do not copy the key into
-  the image; mount it read-only at runtime.
+  the image; mount it read-only at runtime. The key must be readable by the
+  container user configured in the build step below.
 
 Build and verify the image
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -177,9 +178,21 @@ From the repository root, build the image and verify the installed CLI:
 
 .. code:: bash
 
-  docker build --tag cvs:local .
+  docker build --tag cvs:local \
+    --build-arg CVS_USER="$(id -un)" \
+    --build-arg CVS_UID="$(id -u)" \
+    --build-arg CVS_GID="$(id -g)" \
+    .
   docker run --rm cvs:local --version
   docker run --rm cvs:local config list-dirs
+
+The image runs CVS as a non-root user. These build arguments give that user
+your name, UID and GID, so it can read your mounted SSH key and write your
+mounted workspace. With the sample cluster file, ``{user-id}`` resolves to that
+user.
+Without them, the user is ``cvs`` with UID and GID 1000. The build refuses
+UID 0. From a root shell, omit the arguments and give UID 1000 read access
+to the key and write access to the workspace.
 
 Choose a container run mode
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -257,6 +270,15 @@ cluster nodes. CVS's normal bare-metal execution does not need a Docker socket
 inside this image. When the cluster file selects the CVS container backend,
 the image still communicates with the remote nodes over SSH; those remote SSH
 users need Docker access as documented in :doc:`/how-to/run-with-containers`.
+Output paths used only on the head node must be writable by the container user,
+for example under ``/workspace`` or that user's home directory.
+
+Preflight also writes ``reporting.artifacts_root_dir`` on every cluster node, so
+that path must be writable by the container user and the SSH user on each node.
+If the cluster file ``username`` differs from your host user, build with
+``CVS_USER`` set to the cluster username and ``CVS_UID`` and ``CVS_GID`` set to
+your host IDs. The default ``/home/{user-id}/preflight`` then resolves to the
+same username in both places.
 
 
 Next steps

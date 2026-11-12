@@ -60,12 +60,39 @@ ENV VIRTUAL_ENV=/opt/cvs-venv \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# CVS only needs SSH access to the cluster, so it runs as a non-root user.
+# Build with the head-node user's name, UID and GID so bind-mounted SSH keys
+# and workspaces keep their host ownership and {user-id} resolves to the
+# same user as a venv install.
+ARG CVS_USER=cvs
+ARG CVS_UID=1000
+ARG CVS_GID=1000
+
 # /workspace receives user-provided cluster and suite configuration; /results
 # is a convenient bind-mount target for reports and logs. The existing CVS
 # defaults remain available for callers that use /tmp/cvs or /var/www/html/cvs.
-RUN mkdir -p /workspace /results /tmp/cvs /var/www/html/cvs
+# /opt/cvs_runs holds run directories when --workspace is not given (the venv's
+# parent); the venv itself stays root-owned.
+RUN if [ "${CVS_UID}" -eq 0 ] || [ "${CVS_GID}" -eq 0 ]; then \
+        echo "CVS_UID and CVS_GID must be non-zero; the image does not run as root" >&2; \
+        exit 1; \
+    fi \
+    && if ! getent group "${CVS_GID}" >/dev/null; then \
+        groupadd --gid "${CVS_GID}" "${CVS_USER}"; \
+    fi \
+    && useradd --no-log-init --create-home --shell /bin/bash \
+        --uid "${CVS_UID}" --gid "${CVS_GID}" "${CVS_USER}" \
+    && install --directory --mode=0700 --owner="${CVS_UID}" --group="${CVS_GID}" \
+        "/home/${CVS_USER}/.ssh" \
+    && install --directory --owner="${CVS_UID}" --group="${CVS_GID}" \
+        /workspace /results /tmp/cvs /var/www/html/cvs /opt/cvs_runs
+
+ENV HOME=/home/${CVS_USER} \
+    USER=${CVS_USER}
 
 WORKDIR /workspace
+
+USER ${CVS_UID}:${CVS_GID}
 
 ENTRYPOINT ["cvs"]
 CMD ["--help"]
