@@ -105,6 +105,34 @@ class TestUtilsLib(unittest.TestCase):
         )
 
 
+class TestConvertPhdlJsonToDict(unittest.TestCase):
+    JSON = '{"card0": {"PCI Bus": "0000:05:00.0"}}'
+    PARSED = {'card0': {'PCI Bus': '0000:05:00.0'}}
+    WARNING = 'WARNING: ROCm-SMI is fully deprecated as of ROCm 10.1. Please switch to AMD-SMI.'
+
+    @patch('cvs.lib.utils_lib.fail_test')
+    def test_plain_json_parses(self, mock_fail_test):
+        self.assertEqual(utils_lib.convert_phdl_json_to_dict({'n1': self.JSON + '\n'}), {'n1': self.PARSED})
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.utils_lib.fail_test')
+    def test_warning_after_json_is_dropped(self, mock_fail_test):
+        out = utils_lib.convert_phdl_json_to_dict({'n1': self.JSON + '\n' + self.WARNING + '\n'})
+        self.assertEqual(out, {'n1': self.PARSED})
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.utils_lib.fail_test')
+    def test_warning_before_json_is_dropped(self, mock_fail_test):
+        out = utils_lib.convert_phdl_json_to_dict({'n1': self.WARNING + '\n' + self.JSON + '\n'})
+        self.assertEqual(out, {'n1': self.PARSED})
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.utils_lib.fail_test')
+    def test_warning_only_output_fails(self, mock_fail_test):
+        self.assertEqual(utils_lib.convert_phdl_json_to_dict({'n1': self.WARNING + '\n'}), {'n1': {}})
+        mock_fail_test.assert_called_once_with('ERROR converting Json output to dict for node n1')
+
+
 class TestResolveTestConfigPlaceholdersPaths(unittest.TestCase):
     """Path substitution is independent of a suite-specific config schema."""
 
