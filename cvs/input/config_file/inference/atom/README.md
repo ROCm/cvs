@@ -33,6 +33,9 @@ Configs are lab-validated unless a row is marked pending or bring-up.
 | `mi3xx_atom_vllm_gpt-oss-120b_mxfp4` | `_single` | `vllm_atom` (serving schema) |
 | `mi3xx_atom_vllm_glm-5.1_fp8` | `_single`, `_distributed` | `vllm_atom` (recipe serve is one server, TP8; distributed is PP=2; MI325X single-node and PP2 lab-run) |
 | `mi3xx_atom_vllm_deepseek-v4-flash_fp8` | `_single` | `vllm_atom` (serving schema; bring-up thresholds) |
+| `mi3xx_atom_glm-5.2_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` (TP8; MI325X perf and mtp3 lab-run) |
+| `mi3xx_atom_vllm_glm-5.2_fp8` | `_single`, `_distributed` | `vllm_atom` (TP8; distributed is PP=2; MI325X single-node lab-run) |
+| `mi3xx_atom_sglang_glm-5.2_fp8` | `_single`, `_distributed` | `sglang` (TP8; distributed is PP=2; MI325X single-node lab-run) |
 | `mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `vllm_atom` (serving schema; `_single` lab-validated; `_distributed` pending) |
 | `mi355x_atom_vllm_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `vllm_atom` (MI355X; bring-up thresholds) |
 | `mi3xx_atom_sglang_deepseek-r1_fp8` | `_single`, `_distributed` | `sglang` (serving schema) |

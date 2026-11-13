@@ -135,6 +135,15 @@ List the directory with ``cvs config list inference/atom``. Each config's ``thre
    * - ``mi3xx_atom_vllm_deepseek-v4-flash_fp8``
      - ``_single``
      - ``vllm_atom``
+   * - ``mi3xx_atom_glm-5.2_fp8``
+     - ``_single`` (``perf``, ``mtp3``)
+     - ``atom`` (TP8)
+   * - ``mi3xx_atom_vllm_glm-5.2_fp8``
+     - ``_single``, ``_distributed``
+     - ``vllm_atom`` (TP8; distributed is PP=2)
+   * - ``mi3xx_atom_sglang_glm-5.2_fp8``
+     - ``_single``, ``_distributed``
+     - ``sglang`` (TP8; distributed is PP=2)
    * - ``mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8``
      - ``_single``, ``_distributed``
      - ``vllm_atom``
