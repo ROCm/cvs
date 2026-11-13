@@ -1,8 +1,11 @@
-'''Unit tests for rccl-tests install GPU architecture detection.'''
+'''Unit tests for rccl-tests install GPU architecture detection and early exit.'''
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+from _pytest.outcomes import Failed
+
+from cvs.tests.rccl import install_rccl_tests as install_mod
 from cvs.tests.rccl.install_rccl_tests import _detect_gpu_arch, _gpu_archs_from_rocminfo
 
 
@@ -56,3 +59,30 @@ class TestDetectGpuArch(unittest.TestCase):
         hdl = MagicMock()
         hdl.exec.side_effect = OSError("rocminfo missing")
         self.assertEqual(_detect_gpu_arch(hdl, {}), "")
+
+
+class TestInstallRcclTestsEarlyExit(unittest.TestCase):
+    def test_rccl_lib_failure_skips_rccl_tests_build(self):
+        orch = MagicMock()
+        config = {
+            "nfs_install": "True",
+            "rccl_lib_install": "True",
+            "rccl_lib_install_dir": "/tmp/rccl-build",
+            "rccl_tests_install_dir": "/tmp/rccl-tests",
+            "rccl_repository": "https://example.com/rccl.git",
+            "ompi_install_dir": "/opt/ompi",
+        }
+
+        def _lib_failed(*_args, **_kwargs):
+            install_mod.fail_test("RCCL library build failed")
+            return None, ""
+
+        with (
+            patch.object(install_mod, "_check_install_build_deps"),
+            patch.object(install_mod, "_check_ompi_installed", return_value=True),
+            patch.object(install_mod, "_install_rccl_lib", side_effect=_lib_failed),
+            patch.object(install_mod, "_install_rccl_tests") as build_tests,
+        ):
+            with self.assertRaises(Failed):
+                install_mod.test_install_rccl_tests(orch, config)
+        build_tests.assert_not_called()

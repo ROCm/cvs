@@ -542,6 +542,7 @@ def _install_rccl_lib(hdl, config_dict):
     failed = [node for node, res in result.items() if res.get('exit_code') != 0]
     if failed:
         fail_test(f"RCCL library build (cmake/make) failed on nodes {failed}: {result[failed[0]].get('output', '')}")
+        return None, ""
     nccl_home = rccl_build_dir
     search_roots = [rccl_build_dir, rccl_project_dir]
 
@@ -654,8 +655,9 @@ def test_install_rccl_tests(orch, config_dict):
       3. Verify the user-supplied OMPI installation is present and functional.
          Bail out immediately if the check fails.
       4. If rccl_lib_install=True, clone and build the RCCL library from
-         source for rccl-tests. If rccl_lib_install=False, use bundled ROCm
-         RCCL from rocm_path/lib (rccl_lib_install_dir is ignored).
+         source for rccl-tests. Bail out if that build fails. If
+         rccl_lib_install=False, use bundled ROCm RCCL from rocm_path/lib
+         (rccl_lib_install_dir is ignored).
       5. Clone and build rccl-tests against the resolved RCCL and OMPI paths.
          GPU architecture is passed explicitly (AMDGPU_TARGETS / GPU_TARGETS)
          either from config gpu_arch or auto-detected via rocminfo.
@@ -728,6 +730,9 @@ def test_install_rccl_tests(orch, config_dict):
     custom_rccl_lib_path = ""
     if rccl_lib_install:
         rccl_lib_prefix, custom_rccl_lib_path = _install_rccl_lib(hdl, config_dict)
+        if not rccl_lib_prefix:
+            update_test_result()
+            return
         use_custom_rccl_lib = True
     else:
         rccl_lib_prefix = detect_rocm_path(hdl, config_dict.get("rocm_path", ""))
