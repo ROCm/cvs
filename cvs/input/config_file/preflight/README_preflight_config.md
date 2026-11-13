@@ -309,7 +309,7 @@ They now follow this fixed policy:
   - Set to `true` only on MI4XX systems; it remains disabled for MI3XX systems
   - Requires `node_check.enabled: true`
 - **`min_up_ports_per_gpu`** (default: `2`)
-  - Minimum enabled IFoE ports each GPU must report in its station mask; one enabled station carries two ports
+  - Minimum enabled IFoE ports each GPU must report in its station mask; a full station carries two ports and a half station one
   - The default fails a node whose scale-up fabric is un-provisioned (no enabled stations)
   - Set to `0` only for a diagnostic run that should admit an un-provisioned fabric
   - Applies only when `fabric_checks: true`
@@ -318,16 +318,34 @@ They now follow this fixed policy:
 configured `min_up_ports_per_gpu` floor and passes the other fabric checks. A GPU
 whose enabled IFoE ports fall **below** the floor fails the node (at the default
 floor of `2`, that is any fully-dark mask; raise the floor to require more). A GPU
-that meets the floor but has **fewer than all** stations enabled still **passes**
+that meets the floor but has **fewer than all** ports enabled still **passes**
 (it is fit for processing), and preflight emits a prominent warning in the log and
 a banner in the HTML report: local GPU compute is unaffected, yet scale-up data
 transfer (multi-GPU collectives) runs below full-fabric throughput. With the
 diagnostic floor of `0`, a fully-dark mask is admitted but still raises that same
-degraded-fabric warning rather than passing silently.
+degraded-fabric warning rather than passing silently. A mask that equals the
+configured `expected_station_mask` is the platform's normal fabric and raises no
+warning.
 
-- **`reject_partial_stations`** (default: `true`) — Fail when station-mask nibbles indicate partial stations
+**Station-mask format.** The mask has 18 hex digits, one per IFoE station, and
+each digit is that station's 4-lane enable mask. A station carries two ports of
+two lanes each:
+
+| Nibble | Meaning | Ports required UP |
+|---|---|---|
+| `f` | Full station | Both |
+| `3` or `c` | Half station, one port enabled; the other is powered off by design | One |
+| `0` | Station programmed off | None |
+| anything else | Lanes of one port split; always fails | — |
+
+Some platforms program half stations on purpose: Helios-P reports
+`000fff333000fff333` on a healthy tray. Admission fails when a port the mask
+enables is not UP, not because a station is half-enabled.
+
+- **`reject_partial_stations`** (default: `false`) — Fail when a mask has a half station (nibble `3` or `c`); set `true` only on a platform whose stations must all be full
 - **`allow_disabled_stations`** (default: `true`) — Allow masks that intentionally disable ports
-- **`expected_station_masks`** (default: `{}`) — Map of GPU BDF to expected 18-nibble station masks
+- **`expected_station_mask`** (default: unset) — 18-nibble mask every GPU must report, for example `000fff333000fff333` on Helios-P; a mismatch fails and a match is not reported as degraded
+- **`expected_station_masks`** (default: `{}`) — Map of GPU BDF to expected 18-nibble station masks; an entry overrides `expected_station_mask` for that GPU
 - **`require_uniform_station_mask`** (default: `false`) — Require identical masks across GPUs on a node
 - **`agent_process_name`** (default: `"inb-node-agent"`) — AIFM in-band node agent process name to verify
 

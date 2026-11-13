@@ -24,10 +24,17 @@ from cvs.lib.preflight.ifoe_l2_connectivity import AfmctlPortParser, parse_afmct
 _BDF_KEYS = ("bdf", "device_bdf", "pci_bdf")
 _GPU_ID_KEYS = ("gpu_id", "gpu", "id", "index")
 
-# Each fully-enabled IFoE station (nibble ``f``) carries two ports.  A node that
-# reports zero enabled ports has no scale-up fabric at all, which is the single
-# worst state to admit to a benchmark, so the default floor is one station.
+# A station-mask nibble is the 4-lane enable mask of one IFoE station, and a
+# station carries two ports of two lanes each.  ``f`` enables both ports, ``3``
+# and ``c`` enable one port (a half station), ``0`` enables none.  Half stations
+# are a programmed platform profile (the Helios-P mask is
+# ``000fff333000fff333``), not a fault.  Any other nibble splits a port's lanes.
+# A node that reports zero enabled ports has no scale-up fabric at all, which is
+# the single worst state to admit to a benchmark, so the default floor is one
+# full station.
 _IFOE_PORTS_PER_STATION = 2
+_STATION_NIBBLE_PORTS = {"0": 0, "3": 1, "c": 1, "f": 2}
+_STATION_MASK_RE = re.compile(r"[0-9a-f]{18}")
 DEFAULT_MIN_UP_PORTS_PER_GPU = _IFOE_PORTS_PER_STATION
 _BDF_RE = re.compile(r"^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$")
 
@@ -171,6 +178,24 @@ def parse_amd_smi_gpu_json(output: str) -> Tuple[List[Dict[str, Any]], List[str]
     return gpus, errors
 
 
+def station_mask_enabled_ports(mask: str) -> Dict[int, int]:
+    """Return ``{station index: enabled port count}`` for the stations a mask enables.
+
+    Nibbles that are not port-aligned are left out; the admission policy
+    reports them separately.
+    """
+    return {
+        index: _STATION_NIBBLE_PORTS[nibble] for index, nibble in enumerate(mask) if _STATION_NIBBLE_PORTS.get(nibble)
+    }
+
+
+def _validated_station_mask(raw_mask: Any, label: str) -> str:
+    mask = str(raw_mask).strip().lower()
+    if not _STATION_MASK_RE.fullmatch(mask):
+        raise ValueError(f"{label}: expected station mask must contain exactly 18 hexadecimal nibbles")
+    return mask
+
+
 def parse_station_masks(output: str) -> Tuple[Dict[str, str], List[str]]:
     """Parse ``GPU-BDF station-mask`` lines emitted by :meth:`build_station_mask_command`."""
     masks: Dict[str, str] = {}
@@ -225,10 +250,11 @@ class NodeHealthCheck(PreflightCheck):
         readiness_timeout_seconds: int = 600,
         poll_interval_seconds: int = 15,
         allow_disabled_stations: bool = True,
-        reject_partial_stations: bool = True,
+        reject_partial_stations: bool = False,
         min_up_ports_per_gpu: int = DEFAULT_MIN_UP_PORTS_PER_GPU,
         require_uniform_station_mask: bool = False,
         expected_station_masks: Optional[Mapping[str, str]] = None,
+        expected_station_mask: Optional[str] = None,
         expected_virtualization_mode: str = "bare-metal",
         config_dict: Optional[Dict[str, Any]] = None,
     ) -> None:
@@ -265,10 +291,11 @@ class NodeHealthCheck(PreflightCheck):
             bdf = _normalize_bdf(raw_bdf)
             if not bdf:
                 raise ValueError(f"Invalid expected station-mask BDF {raw_bdf!r}")
-            mask = str(raw_mask).strip().lower()
-            if not re.fullmatch(r"[0-9a-f]{18}", mask):
-                raise ValueError(f"{raw_bdf}: expected station mask must contain exactly 18 hexadecimal nibbles")
-            self.expected_station_masks[bdf] = mask
+            self.expected_station_masks[bdf] = _validated_station_mask(raw_mask, str(raw_bdf))
+        # One mask for every GPU: the platform profile.  A per-BDF entry wins.
+        self.expected_station_mask = (
+            _validated_station_mask(expected_station_mask, "expected_station_mask") if expected_station_mask else None
+        )
         self.expected_virtualization_mode = _normalise_virtualization_mode(expected_virtualization_mode)
 
     def _privileged_parts(self, executable: str) -> List[str]:
@@ -507,41 +534,47 @@ class NodeHealthCheck(PreflightCheck):
             if len(masks) != self.expected_gpus_per_node:
                 self._add_error(result, f"Expected {self.expected_gpus_per_node} station masks, found {len(masks)}")
             for gpu_bdf, mask in masks.items():
+                unaligned = sorted(set(mask) - set(_STATION_NIBBLE_PORTS))
+                if unaligned:
+                    self._add_error(
+                        result,
+                        f"{gpu_bdf}: station mask {mask} has lane masks that are not port-aligned: "
+                        + ",".join(unaligned),
+                    )
                 if self.reject_partial_stations and any(nibble in {"3", "c"} for nibble in mask):
                     self._add_error(result, f"{gpu_bdf}: partial IFoE station in mask {mask}")
-                permitted = {"f", "0"} if self.allow_disabled_stations else {"f"}
-                if not self.reject_partial_stations:
-                    # This is retained for diagnostic profiles only.  A strict
-                    # MI4XX benchmark profile should always reject c/3, because
-                    # AFM does not expose a safe full-path interpretation for a
-                    # half-enabled station.
-                    permitted.update({"c", "3"})
-                disallowed = sorted(set(mask) - permitted)
-                if disallowed:
-                    self._add_error(result, f"{gpu_bdf}: disallowed station-mask values {','.join(disallowed)}")
-                enabled_stations = mask.count("f")
-                enabled_ports = enabled_stations * _IFOE_PORTS_PER_STATION
+                if not self.allow_disabled_stations and "0" in mask:
+                    self._add_error(result, f"{gpu_bdf}: disabled IFoE station in mask {mask}")
+                expected = (
+                    self.expected_station_masks.get(gpu_bdf)
+                    or self.expected_station_masks.get(gpu_bdf[:-1] + "1")
+                    or self.expected_station_mask
+                )
+                if expected and mask != expected:
+                    self._add_error(result, f"{gpu_bdf}: station mask {mask} does not match configured {expected}")
+                station_ports = station_mask_enabled_ports(mask)
+                enabled_ports = sum(station_ports.values())
+                total_ports = len(mask) * _IFOE_PORTS_PER_STATION
                 if enabled_ports < self.min_up_ports_per_gpu:
                     self._add_error(
                         result,
                         f"{gpu_bdf}: {enabled_ports} enabled IFoE ports is below min_up_ports_per_gpu="
                         f"{self.min_up_ports_per_gpu}",
                     )
-                elif enabled_stations < len(mask):
+                elif enabled_ports < total_ports and mask != expected:
                     # Reached only when the floor did not already fail the GPU, so this
                     # also covers a zero-station mask admitted by a diagnostic floor of 0
-                    # -- a degraded fabric must never pass without a visible signal.
+                    # -- a reduced fabric must never pass without a visible signal.  A
+                    # mask that matches the configured one is the platform's normal
+                    # fabric, so it is not reported as degraded.
+                    full_stations = sum(1 for ports in station_ports.values() if ports == _IFOE_PORTS_PER_STATION)
+                    half_stations = len(station_ports) - full_stations
                     self._add_warning(
                         result,
-                        f"{gpu_bdf}: only {enabled_stations}/{len(mask)} IFoE stations enabled "
-                        f"({enabled_ports}/{len(mask) * _IFOE_PORTS_PER_STATION} scale-up ports); "
+                        f"{gpu_bdf}: only {enabled_ports}/{total_ports} scale-up ports enabled "
+                        f"({full_stations} full and {half_stations} half of {len(mask)} IFoE stations); "
                         "node is fit for processing but scale-up throughput is reduced",
                     )
-                expected = self.expected_station_masks.get(gpu_bdf) or self.expected_station_masks.get(
-                    gpu_bdf[:-1] + "1"
-                )
-                if expected and mask != expected:
-                    self._add_error(result, f"{gpu_bdf}: station mask {mask} does not match configured {expected}")
             if self.require_uniform_station_mask and masks:
                 unique_masks = set(masks.values())
                 if len(unique_masks) != 1:
@@ -577,7 +610,7 @@ class NodeHealthCheck(PreflightCheck):
                     scoped = {}
                     self._add_error(result, f"{ifoe_bdf}: AFM port JSON contained no scoped inventory")
 
-                expected_stations = {index for index, nibble in enumerate(mask) if nibble == "f"}
+                expected_stations = station_mask_enabled_ports(mask)
                 ports_by_station: Dict[int, List[Dict[str, Any]]] = {}
                 missing_station_ids = []
                 for port in scoped.values():
@@ -593,37 +626,51 @@ class NodeHealthCheck(PreflightCheck):
                         + ", ".join(str(port) for port in sorted(missing_station_ids)),
                     )
 
-                enabled_station_ports = [
-                    port for station in expected_stations for port in ports_by_station.get(station, [])
-                ]
-                up_enabled_station_ports = [port for port in enabled_station_ports if port.get("is_up")]
+                # A full station admits both of its ports.  A half station admits
+                # only its UP port: AFM powers the other one off by design.
+                admitted_ports: List[Dict[str, Any]] = []
+                enabled_station_up_ports = 0
+                for station, needed in sorted(expected_stations.items()):
+                    station_ports = ports_by_station.get(station, [])
+                    up_ports = [port for port in station_ports if port.get("is_up")]
+                    enabled_station_up_ports += min(len(up_ports), needed)
+                    if needed == _IFOE_PORTS_PER_STATION:
+                        admitted_ports.extend(station_ports)
+                        if len(station_ports) != _IFOE_PORTS_PER_STATION:
+                            self._add_error(
+                                result,
+                                f"{ifoe_bdf}: AFM reports {len(station_ports)} port(s) for enabled station "
+                                f"{station}, expected {_IFOE_PORTS_PER_STATION}",
+                            )
+                            continue
+                        down_ports = [
+                            f"{port.get('port')} ({port.get('state')})"
+                            for port in station_ports
+                            if not port.get("is_up")
+                        ]
+                        if down_ports:
+                            self._add_error(
+                                result,
+                                f"{ifoe_bdf}: enabled station {station} has non-UP port(s): " + ", ".join(down_ports),
+                            )
+                        continue
+                    admitted_ports.extend(up_ports)
+                    if not up_ports:
+                        self._add_error(
+                            result,
+                            f"{ifoe_bdf}: half-enabled station {station} has no UP port "
+                            f"(AFM reports {len(station_ports)} port(s))",
+                        )
                 inventories[ifoe_bdf] = {
                     "raw_output": raw,
                     "parsed": parsed,
                     "up_ports": len([port for port in scoped.values() if port.get("is_up")]),
-                    "enabled_station_up_ports": len(up_enabled_station_ports),
-                    "expected_enabled_ports": len(expected_stations) * 2,
+                    "enabled_station_up_ports": enabled_station_up_ports,
+                    "expected_enabled_ports": sum(expected_stations.values()),
                     "mask_enabled_port_ids": sorted(
-                        port["port"] for port in enabled_station_ports if port.get("port") is not None
+                        port["port"] for port in admitted_ports if port.get("port") is not None
                     ),
                 }
-                for station in sorted(expected_stations):
-                    station_ports = ports_by_station.get(station, [])
-                    if len(station_ports) != 2:
-                        self._add_error(
-                            result,
-                            f"{ifoe_bdf}: AFM reports {len(station_ports)} port(s) for enabled station "
-                            f"{station}, expected 2",
-                        )
-                        continue
-                    down_ports = [
-                        f"{port.get('port')} ({port.get('state')})" for port in station_ports if not port.get("is_up")
-                    ]
-                    if down_ports:
-                        self._add_error(
-                            result,
-                            f"{ifoe_bdf}: enabled station {station} has non-UP port(s): " + ", ".join(down_ports),
-                        )
             result["afm_port_inventory"] = inventories
 
     def _reconcile_cluster_vpod(self) -> Dict[str, Any]:
@@ -736,4 +783,5 @@ __all__ = [
     "parse_afmctl_device_json",
     "parse_amd_smi_gpu_json",
     "parse_station_masks",
+    "station_mask_enabled_ports",
 ]
