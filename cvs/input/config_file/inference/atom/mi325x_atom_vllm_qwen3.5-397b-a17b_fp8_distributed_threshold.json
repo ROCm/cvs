@@ -315,7 +315,7 @@
     "hellaswag": {
       "hellaswag.acc_norm__none": {
         "kind": "info",
-        "value": 0.0
+        "value": 0.9139
       }
     },
     "mmlu_pro": {
