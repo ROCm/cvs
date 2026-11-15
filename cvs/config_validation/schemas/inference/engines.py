@@ -72,7 +72,7 @@ SERVER_RESERVED = frozenset(
     }
 )
 
-# Each name is a benchmark_params field or a flag the harness sets on vllm bench serve.
+# Each name is a benchmark_params field, a former field name, or a flag the harness sets on vllm bench serve.
 CLIENT_RESERVED = frozenset(
     {
         "backend",
@@ -198,24 +198,9 @@ class VllmContainerSpec(ContainerSpec):
         return bool(_SOCKET_ENV & set(self.env))
 
 
-class VllmServerParams(ServingServerParams):
-    """The shared server fields plus the old server wait, a warmup then readiness polls."""
-
-    server_poll_iterations: int = 60
-    server_poll_wait_s: int = 60
-    server_warmup_wait_s: int = 330
-
-
-class VllmBenchmarkParams(ServingBenchmarkParams):
-    """The shared client fields plus the old client wait, an initial wait then polls."""
-
-    client_poll_iterations: int = 20
-    client_poll_wait_s: int = 60
-    client_initial_wait_s: int = 120
-
-    def options(self):
-        """The fields and ``client_args`` as one map, as the client command reads them."""
-        return {**self.model_dump(exclude={"client_args"}), **self.client_args}
+def client_options(benchmark_params):
+    """``benchmark_params``' fields and ``client_args`` as one map, as the client command reads them."""
+    return {**benchmark_params.model_dump(exclude={"client_args"}), **benchmark_params.client_args}
 
 
 class VllmThreshold(Threshold):
@@ -340,8 +325,6 @@ class VllmConfig(LlmServingConfig):
     axes = _AXES
 
     container: VllmContainerSpec
-    server_params: VllmServerParams
-    benchmark_params: VllmBenchmarkParams
     thresholds: VllmThresholds = Field(default_factory=dict)
     vllm: VllmBlock
 
@@ -414,7 +397,7 @@ class VllmConfig(LlmServingConfig):
         for key in self.runs:
             cell = cells[key]
             options = {
-                **self.benchmark_params.options(),
+                **client_options(self.benchmark_params),
                 **self.sweeps[key],
                 "random_input_len": cell.isl,
                 "random_output_len": cell.osl,

@@ -26,13 +26,8 @@ from cvs.cli_plugins.config_plugin import ConfigPlugin
 from cvs.config_validation.loaders.suite_config import UNMAPPED_FIELD_MESSAGE
 from cvs.config_validation.migrate.engine import migrate, migrate_many, old_paths
 from cvs.config_validation.migrate.maps import vllm
-from cvs.config_validation.schemas.inference.engines import (
-    CLIENT_RESERVED,
-    SERVER_RESERVED,
-    VllmBenchmarkParams,
-    VllmConfig,
-    VllmServerParams,
-)
+from cvs.config_validation.schemas.inference.engines import CLIENT_RESERVED, SERVER_RESERVED, VllmConfig
+from cvs.config_validation.schemas.inference.llm_serving import ServingBenchmarkParams, ServingServerParams
 from cvs.lib.conf_lib.config_blocks import has_placeholder
 from cvs.unittests.support import FAKE_CRED
 
@@ -40,6 +35,43 @@ OLD_DIR = Path(__file__).resolve().parents[2] / "unittests" / "old"
 FIXTURE = OLD_DIR / "mi3xx_vllm_llama33-70b_fp8_distributed.json"
 SHIPPED_DIR = Path(__file__).resolve().parents[4] / "input" / "config_file" / "inference" / "vllm"
 GOLDEN = Path(__file__).resolve().parents[4] / "tests" / "inference" / "vllm" / "unittests" / "golden_commands.json"
+
+# (server_ready_s, client_s) of each shipped config: the totals its six wait fields gave before they became timeouts.
+SHIPPED_TIMEOUTS = {
+    "mi3xx_vllm_deepseek-r1-0528_fp8_distributed.json": (5430, 7210),
+    "mi3xx_vllm_deepseek-r1-0528_fp8_single.json": (3930, 5520),
+    "mi3xx_vllm_deepseek-r1-0528_mxfp4_distributed.json": (3630, 5410),
+    "mi3xx_vllm_deepseek-v4-flash_fp8_distributed.json": (3630, 5410),
+    "mi3xx_vllm_deepseek-v4-flash_fp8_single.json": (3930, 5520),
+    "mi3xx_vllm_deepseek-v4-pro_fp8_distributed.json": (5430, 7210),
+    "mi3xx_vllm_deepseek-v4-pro_fp8_single.json": (3930, 5520),
+    "mi3xx_vllm_glm-51_bf16_distributed.json": (7230, 7210),
+    "mi3xx_vllm_glm-51_fp8_distributed.json": (3630, 5410),
+    "mi3xx_vllm_glm-51_fp8_single.json": (3930, 5520),
+    "mi3xx_vllm_glm-52_fp8_distributed.json": (5430, 5410),
+    "mi3xx_vllm_glm-52_fp8_single.json": (3930, 5520),
+    "mi3xx_vllm_gpt-oss-120b_mxfp4_distributed.json": (3630, 5410),
+    "mi3xx_vllm_gpt-oss-120b_mxfp4_single.json": (3930, 5520),
+    "mi3xx_vllm_kimi-k25_w4a8_distributed.json": (5430, 7210),
+    "mi3xx_vllm_kimi-k25_w4a8_single.json": (3930, 5520),
+    "mi3xx_vllm_kimi-k26_mxfp4_distributed.json": (5430, 7210),
+    "mi3xx_vllm_kimi-k26_mxfp4_single.json": (3930, 5520),
+    "mi3xx_vllm_kimi-k27-code_mxfp4_distributed.json": (5430, 7210),
+    "mi3xx_vllm_kimi-k27-code_mxfp4_single.json": (3930, 5520),
+    "mi3xx_vllm_llama33-70b_fp8_distributed.json": (3630, 5410),
+    "mi3xx_vllm_llama33-70b_fp8_single.json": (3930, 5520),
+    "mi3xx_vllm_mimo-v25-pro_fp8_distributed.json": (3930, 5520),
+    "mi3xx_vllm_mimo-v25-pro_fp8_single.json": (3930, 5520),
+    "mi3xx_vllm_minimax-m3_bf16_distributed.json": (3630, 5410),
+    "mi3xx_vllm_minimax-m3_bf16_single.json": (3930, 5520),
+    "mi3xx_vllm_mistral-large-3_bf16_distributed.json": (3930, 5520),
+    "mi3xx_vllm_mistral-large-3_bf16_single.json": (3930, 5520),
+    "mi3xx_vllm_mistral-large-3_fp8_distributed.json": (5430, 7210),
+    "mi3xx_vllm_qwen35-397b-a17b_bf16_distributed.json": (3630, 5410),
+    "mi3xx_vllm_qwen35-397b-a17b_bf16_single.json": (3930, 5520),
+    "mi3xx_vllm_qwen35-397b-a17b_mxfp4_distributed.json": (3630, 5410),
+    "mi4xx_vllm_deepseek-v4-flash_fp8_single.json": (2430, 3620),
+}
 
 KEY = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
 OTHER_KEY = "ISL=8192,OSL=1024,TP=8,PP=2,CONC=64"
@@ -185,12 +217,18 @@ class TestMapModule(unittest.TestCase):
                 "server_params.tensor_parallel_size",
                 "server_params.pipeline_parallel_size",
                 "server_params.dist_init_port",
+                "server_params.server_poll_iterations",
+                "server_params.server_poll_wait_s",
+                "server_params.server_warmup_wait_s",
                 "server_params.distributed_executor_backend",
                 "server_params.max_model_len",
                 "benchmark_params.backend",
                 "benchmark_params.dataset_name",
                 "benchmark_params.trust_remote_code",
                 "benchmark_params.ignore_eos",
+                "benchmark_params.client_poll_iterations",
+                "benchmark_params.client_poll_wait_s",
+                "benchmark_params.client_initial_wait_s",
                 "accuracy.tasks",
             ],
         )
@@ -198,6 +236,7 @@ class TestMapModule(unittest.TestCase):
             old_paths({"ib_hca_devices": "auto", "ib_netdev": None}, vllm.CONFIG), ["ib_hca_devices", "ib_netdev"]
         )
         self.assertEqual(old_paths(NEW, vllm.CONFIG), [])
+        self.assertEqual(VllmConfig.old_keys(old), old_paths(old, vllm.CONFIG))
 
 
 class TestOldFixture(_MapCase):
@@ -218,9 +257,6 @@ class TestOldFixture(_MapCase):
                 "nnodes": 2,
                 "port": "8888",
                 "master_port": "29501",
-                "server_poll_iterations": 360,
-                "server_poll_wait_s": 10,
-                "server_warmup_wait_s": 30,
                 "engine_args": {"kv_cache_dtype": "fp8", "max_num_seqs": 16, "gpu_memory_utilization": 0.5},
                 "max_model_length": 2056,
                 "_comment_context": server["_comment_context"],
@@ -228,7 +264,8 @@ class TestOldFixture(_MapCase):
             },
         )
         self.assertEqual(new["vllm"], {"distributed_executor_backend": "mp"})
-        dropped = ("backend", "dataset_name", "trust_remote_code", "ignore_eos", "temperature")
+        waits = ("client_poll_iterations", "client_poll_wait_s", "client_initial_wait_s")
+        dropped = ("backend", "dataset_name", "trust_remote_code", "ignore_eos", "temperature", *waits)
         self.assertEqual(
             new["benchmark_params"],
             {
@@ -238,7 +275,8 @@ class TestOldFixture(_MapCase):
         )
         self.assertEqual((new["sweeps"], new["runs"]), (old["sweeps"], old["runs"]))
         self.assertEqual(new["accuracy"], {"lm_eval": old["accuracy"]})
-        moved = ("server_params", "benchmark_params", "accuracy", "vllm")
+        self.assertEqual(new["timeouts"], {"server_ready_s": 30 + 360 * 10, "client_s": 10 + 540 * 10})
+        moved = ("server_params", "benchmark_params", "accuracy", "vllm", "timeouts")
         self.assertEqual(
             {key: value for key, value in new.items() if key not in moved},
             {key: value for key, value in old.items() if key not in moved},
@@ -246,6 +284,7 @@ class TestOldFixture(_MapCase):
 
         config = _validate(new, threshold_file)
         self.assertEqual((config.server_params.tp, config.server_params.port), (8, 8888))
+        self.assertEqual((config.timeouts.server_ready_s, config.timeouts.client_s), (3630, 5410))
         self.assertEqual(list(config.thresholds), [KEY, "accuracy"])
         self.assertEqual(
             list(config.thresholds["accuracy"]["lm_eval"]), [task["id"] for task in old["accuracy"]["tasks"]]
@@ -288,13 +327,7 @@ class TestRenames(_MapCase):
 
 class TestFlags(_MapCase):
     def test_every_other_server_key_moves_into_engine_args_unchanged_and_fields_and_comments_stay(self):
-        fields = {
-            "port": 8010,
-            "master_port": 29700,
-            "server_poll_iterations": 360,
-            "server_poll_wait_s": 10,
-            "server_warmup_wait_s": 30,
-        }
+        fields = {"port": 8010, "master_port": 29700}
         server = {
             "_comment": "kept",
             "model": "org/model",
@@ -344,6 +377,94 @@ class TestFlags(_MapCase):
                 code, lines, new = self._migrate(_old(benchmark_params=bench))
                 self.assertEqual((code, lines), (1, [f"_unmapped.benchmark_params.{field}: {UNMAPPED_FIELD_MESSAGE}"]))
                 self.assertEqual(new["_unmapped"], {f"benchmark_params.{field}": value})
+
+
+class TestNicFields(_MapCase):
+    def test_a_value_that_acts_as_the_default_today_is_left_out(self):
+        for key, value in (("ib_hca_devices", "auto"), ("ib_netdev", "")):
+            with self.subTest(key=key, value=value):
+                self.assertEqual(self._migrate(_old(**{key: value})), (0, [], NEW))
+
+    def test_other_values_go_to_unmapped(self):
+        for key, value in (("ib_netdev", FAKE_CRED), ("ib_netdev", "auto")):
+            with self.subTest(key=key, value=value):
+                code, lines, new = self._migrate(_old(**{key: value}))
+                self.assertEqual((code, lines), (1, [f"_unmapped.{key}: {UNMAPPED_FIELD_MESSAGE}"]))
+                self.assertEqual(new, {"_unmapped": {key: value}, **NEW})
+
+
+class TestTimeouts(_MapCase):
+    def _old_with_waits(self, server=None, bench=None):
+        old = _old()
+        old["server_params"].update(server or {})
+        old["benchmark_params"].update(bench or {})
+        return old
+
+    def test_each_wait_becomes_its_first_wait_plus_poll_count_times_poll_wait(self):
+        old = self._old_with_waits(
+            {"server_warmup_wait_s": 7, "server_poll_iterations": 3, "server_poll_wait_s": 11},
+            {"client_initial_wait_s": 5, "client_poll_iterations": 4, "client_poll_wait_s": 13},
+        )
+        self.assertEqual(self._migrate(old), (0, [], {**NEW, "timeouts": {"server_ready_s": 40, "client_s": 57}}))
+
+    def test_a_wait_field_left_out_counts_at_its_old_default(self):
+        for block, name, value, total in (
+            ("server_params", "server_warmup_wait_s", 7, {"server_ready_s": 7 + 60 * 60}),
+            ("server_params", "server_poll_iterations", 3, {"server_ready_s": 330 + 3 * 60}),
+            ("server_params", "server_poll_wait_s", 11, {"server_ready_s": 330 + 60 * 11}),
+            ("benchmark_params", "client_initial_wait_s", 5, {"client_s": 5 + 20 * 60}),
+            ("benchmark_params", "client_poll_iterations", 4, {"client_s": 120 + 4 * 60}),
+            ("benchmark_params", "client_poll_wait_s", 13, {"client_s": 120 + 20 * 13}),
+        ):
+            with self.subTest(name=name):
+                old = _old()
+                old[block][name] = value
+                self.assertEqual(self._migrate(old), (0, [], {**NEW, "timeouts": total}))
+
+    def test_quoted_and_whole_float_seconds_are_read_as_numbers(self):
+        old = self._old_with_waits(
+            {"server_warmup_wait_s": "30", "server_poll_iterations": "360", "server_poll_wait_s": 10.0}
+        )
+        code, lines, new = self._migrate(old)
+        self.assertEqual((code, lines, new["timeouts"]), (0, [], {"server_ready_s": 3630}))
+        self.assertIs(type(new["timeouts"]["server_ready_s"]), int)
+
+    def test_a_config_with_no_wait_fields_gets_no_timeouts_block(self):
+        self.assertNotIn("timeouts", self._migrate(_old())[2])
+
+    def test_an_unreadable_wait_sends_that_waits_fields_to_unmapped_and_the_other_wait_converts(self):
+        for value in (FAKE_CRED, "<changeme>", None, -10, 1.5):
+            with self.subTest(value=value):
+                old = self._old_with_waits(
+                    {"server_poll_iterations": 360, "server_poll_wait_s": value}, {"client_poll_iterations": 4}
+                )
+                code, lines, new = self._migrate(old)
+                self.assertEqual(code, 1)
+                self.assertEqual(
+                    lines,
+                    [
+                        f"_unmapped.server_params.server_poll_iterations: {UNMAPPED_FIELD_MESSAGE}",
+                        f"_unmapped.server_params.server_poll_wait_s: {UNMAPPED_FIELD_MESSAGE}",
+                    ],
+                )
+                self.assertEqual(
+                    new["_unmapped"],
+                    {"server_params.server_poll_iterations": 360, "server_params.server_poll_wait_s": value},
+                )
+                self.assertEqual(new["timeouts"], {"client_s": 120 + 4 * 60})
+
+    def test_waits_that_total_zero_are_named_by_the_new_field(self):
+        old = self._old_with_waits({"server_warmup_wait_s": 0, "server_poll_iterations": 0})
+        code, lines, new = self._migrate(old)
+        self.assertEqual(
+            (code, lines, new["timeouts"]),
+            (1, ["timeouts.server_ready_s: Input should be greater than 0"], {"server_ready_s": 0}),
+        )
+
+    def test_a_new_format_config_still_holding_a_wait_field_converts(self):
+        new = copy.deepcopy(NEW)
+        new["benchmark_params"]["client_poll_wait_s"] = 30
+        self.assertEqual(self._migrate(new), (0, [], {**NEW, "timeouts": {"client_s": 120 + 20 * 30}}))
 
 
 class TestNicFields(_MapCase):
@@ -431,6 +552,14 @@ class TestShippedConfigs(_MapCase):
                 self.assertEqual(config.vllm.distributed_executor_backend, "ray" if distributed else "mp")
                 self.assertEqual(config.server_params.nnodes, 2 if distributed else None)
 
+    def test_each_shipped_config_waits_as_long_as_its_old_wait_fields_allowed(self):
+        configs = {path.name: path for path in SHIPPED_DIR.glob("*.json") if not path.name.endswith("threshold.json")}
+        self.assertEqual(set(configs), set(SHIPPED_TIMEOUTS))
+        for name, totals in SHIPPED_TIMEOUTS.items():
+            with self.subTest(config=name):
+                timeouts = json.loads(configs[name].read_text())["timeouts"]
+                self.assertEqual((timeouts["server_ready_s"], timeouts["client_s"]), totals)
+
     def test_the_reserved_names_are_the_fields_their_old_names_and_each_flag_the_harness_sets(self):
         golden = json.loads(GOLDEN.read_text())
         harness = {"serve": set(), "bench serve": set()}
@@ -444,8 +573,8 @@ class TestShippedConfigs(_MapCase):
                 for kind, flags in _vllm_flags(command):
                     harness[kind] |= flags - own[kind]
         for kind, block, model, reserved in (
-            ("serve", "server_params", VllmServerParams, SERVER_RESERVED),
-            ("bench serve", "benchmark_params", VllmBenchmarkParams, CLIENT_RESERVED),
+            ("serve", "server_params", ServingServerParams, SERVER_RESERVED),
+            ("bench serve", "benchmark_params", ServingBenchmarkParams, CLIENT_RESERVED),
         ):
             with self.subTest(command=f"vllm {kind}"):
                 old_names = {path.removeprefix(f"{block}.") for path in vllm.CONFIG if path.startswith(f"{block}.")}

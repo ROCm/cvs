@@ -39,7 +39,7 @@ import shlex
 import time
 from typing import Optional
 
-from cvs.config_validation.schemas.inference.engines import serialize_cli_options
+from cvs.config_validation.schemas.inference.engines import client_options, serialize_cli_options
 from cvs.lib import globals
 from cvs.lib.inference.utils.vllm_metrics import project_vllm_metrics
 from cvs.lib.utils.model_query_lib import OpenAIProbe
@@ -47,6 +47,25 @@ from cvs.lib.utils.model_query_lib import OpenAIProbe
 log = globals.log
 _PERCENTILE_METRICS = "ttft,tpot,itl,e2el"
 _METRIC_PERCENTILES = "50,90,95,99"
+
+# As long as the earlier defaults allowed: 330 s + 60 x 60 s to ready, 120 s + 20 x 60 s per client run.
+DEFAULT_SERVER_READY_S = 3930
+DEFAULT_CLIENT_S = 1320
+POLL_INTERVAL_S = 10
+
+
+def _poll_times(budget_s):
+    """Sleep one poll interval, or what is left of ``budget_s``, before each poll, and yield the seconds slept so far.
+
+    Only the sleeps count against ``budget_s``, so the time each poll takes comes
+    on top. The last poll comes once the sleeps add up to ``budget_s``.
+    """
+    slept = 0
+    while slept < budget_s:
+        wait = min(POLL_INTERVAL_S, budget_s - slept)
+        time.sleep(wait)
+        slept += wait
+        yield slept
 
 
 def scrape_vllm_metrics(orch, base_url: str, port_no: str, timeout_s: "float | None" = None) -> "str | None":
@@ -146,7 +165,7 @@ class VllmJob:
         p = variant.server_params
         b = dict(benchmark_params or {})
         if not b:
-            b = variant.benchmark_params.options()
+            b = client_options(variant.benchmark_params)
         self.tp = str(p.tp)
         self.pp = str(topology.pipeline_parallel_size) if topology is not None else str(p.pp)
         self.master_addr = self.hosts[0]
@@ -188,12 +207,9 @@ class VllmJob:
         self._precheck_wait = 30
         self._launch_retries = 2
         self._launch_retry_wait = 10
-        self._warmup_wait = p.server_warmup_wait_s
-        self._server_poll_count = p.server_poll_iterations
-        self._server_poll_wait = p.server_poll_wait_s
-        self._client_initial_wait = int(b["client_initial_wait_s"])
-        self._client_poll_count = int(b["client_poll_iterations"])
-        self._client_poll_wait = int(b["client_poll_wait_s"])
+        timeouts = variant.timeouts
+        self._server_ready_s = DEFAULT_SERVER_READY_S if timeouts.server_ready_s is None else timeouts.server_ready_s
+        self._client_s = DEFAULT_CLIENT_S if timeouts.client_s is None else timeouts.client_s
 
     # ---------- derived builders ----------
 
@@ -482,18 +498,12 @@ class VllmJob:
 
         self._check_early_failure(emit_tail=True)
 
-        log.info("warmup wait %ds", self._warmup_wait)
-        time.sleep(self._warmup_wait)
-
-        self._check_early_failure(emit_tail=True)
-
-        for it in range(self._server_poll_count):
-            log.info("readiness poll iter=%d/%d", it, self._server_poll_count - 1)
+        for slept in _poll_times(self._server_ready_s):
+            log.info("readiness poll after %ds of %ds waiting", slept, self._server_ready_s)
             if self.is_ready():
-                log.info("server ready (iter=%d)", it)
+                log.info("server ready after %ds of waiting", slept)
                 return
             self._check_early_failure()
-            time.sleep(self._server_poll_wait)
         raise RuntimeError("vllm server did not become ready before timeout")
 
     def stop_server(self):
@@ -626,9 +636,8 @@ class VllmJob:
         Polls silently (no per-iteration log dump) to keep the captured section
         clean. After completion, dump_client_log() emits the full log once.
         """
-        log.info("client initial wait %ds", self._client_initial_wait)
-        time.sleep(self._client_initial_wait)
-        for it in range(self._client_poll_count):
+        log.info("waiting up to %ds for the client", self._client_s)
+        for slept in _poll_times(self._client_s):
             # print_console=False: this poll re-reads the same growing log every
             # iteration. dump_client_log() emits it in full on every exit path
             # below, so logging each poll only duplicates that.
@@ -663,10 +672,9 @@ class VllmJob:
                 self.dump_client_log()
                 raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
             if done and all(done):
-                log.info("client complete (iter=%d)", it)
+                log.info("client complete after %ds of waiting", slept)
                 self.dump_client_log()
                 return
-            time.sleep(self._client_poll_wait)
         self.dump_client_log()
         raise RuntimeError("client did not complete before poll cap")
 

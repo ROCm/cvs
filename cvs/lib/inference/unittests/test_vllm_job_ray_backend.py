@@ -1046,12 +1046,12 @@ class TestVllmJobParseResults(unittest.TestCase):
 @mock.patch("cvs.lib.inference.vllm_job.time.sleep")
 class TestVllmJobWaitReady(unittest.TestCase):
     """wait_ready() drives the sequence: precheck-wait -> early-failure-check ->
-    warmup-wait -> early-failure-check -> poll-loop(is_ready) -> RuntimeError on
-    timeout. is_ready() and _check_early_failure() are unit-tested in isolation
+    poll-loop(is_ready, early-failure-check) -> RuntimeError once the sleeps add
+    up to the budget. is_ready() and _check_early_failure() are unit-tested in isolation
     elsewhere; here they are mocked on the instance so the ORCHESTRATION itself is
-    what is exercised: that is_ready is actually polled, that an exhausted poll
+    what is exercised: that is_ready is actually polled, that an exhausted time
     budget raises (not swallowed), that the early-failure check runs before the
-    poll loop, and that a failure surfaced during warmup aborts before polling.
+    poll loop, and that a failure surfaced during the precheck aborts before polling.
     time.sleep is patched at the module seam so no real waiting occurs."""
 
     def test_returns_when_ready_and_stops_polling(self, mock_sleep):
@@ -1068,17 +1068,14 @@ class TestVllmJobWaitReady(unittest.TestCase):
         self.assertEqual(job.is_ready.call_count, 3, "wait_ready must poll is_ready until it returns True, then stop")
         self.assertTrue(job._check_early_failure.called, "wait_ready must run the early-failure check")
 
-    def test_timeout_raises_after_exhausting_poll_budget(self, mock_sleep):
+    def test_timeout_raises_once_the_server_ready_budget_has_passed(self, mock_sleep):
         # Liveness/termination: is_ready never becomes True. wait_ready must NOT
         # spin forever and must NOT swallow the failure -- it raises RuntimeError
-        # once the poll budget (server_poll_count) is exhausted, having polled
-        # is_ready exactly server_poll_count times.
-        # server_poll_count is bound at construction, so set it via the documented
-        # constructor parameter (a small budget keeps the test fast and pins the
-        # expected poll count without depending on the internal attribute name).
-        poll_count = 3
+        # once the sleeps after the precheck add up to timeouts.server_ready_s,
+        # having polled is_ready after every 10 s sleep. The patched sleep returns
+        # at once, so the slept total is the loop's only exit.
         variant = _variant(serve_args={}, pp="1")
-        variant.server_params.server_poll_iterations = poll_count
+        variant.timeouts.server_ready_s = 30
         job = VllmJob(
             orch=RecordingOrch(responder=_responder_ok(), hosts=[HEAD]),
             variant=variant,
@@ -1092,9 +1089,9 @@ class TestVllmJobWaitReady(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             job.wait_ready()
         self.assertEqual(
-            job.is_ready.call_count,
-            poll_count,
-            "on timeout wait_ready must have polled is_ready exactly server_poll_count times",
+            (job.is_ready.call_count, [call.args[0] for call in mock_sleep.call_args_list]),
+            (3, [30, 10, 10, 10]),
+            "on timeout wait_ready must have polled is_ready after each 10 s sleep of the 30 s budget",
         )
 
     def test_early_failure_check_runs_before_polling(self, mock_sleep):
@@ -1109,9 +1106,9 @@ class TestVllmJobWaitReady(unittest.TestCase):
         self.assertIn("ready", order, "is_ready must be polled")
         self.assertEqual(order[0], "check", "early-failure check must run before the first is_ready poll")
 
-    def test_failure_detected_during_warmup_aborts_before_polling(self, mock_sleep):
-        # If _check_early_failure raises (a fatal log line found during precheck/
-        # warmup), wait_ready must propagate it and NOT proceed to poll is_ready --
+    def test_failure_detected_during_precheck_aborts_before_polling(self, mock_sleep):
+        # If _check_early_failure raises (a fatal log line found during the
+        # precheck), wait_ready must propagate it and NOT proceed to poll is_ready --
         # the server is already known dead.
         job = _job(serve_args={}, nnodes="1", pp="1")
         job._check_early_failure = mock.Mock(side_effect=RuntimeError("vllm server fatal error (rank 0)"))

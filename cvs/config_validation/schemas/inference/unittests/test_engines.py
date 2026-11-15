@@ -193,9 +193,6 @@ class TestVllmServerParams(unittest.TestCase):
                 "max_model_length": None,
                 "long_context": {"chunked_prefill_size": None, "max_prefill_tokens": None},
                 "engine_args": {},
-                "server_poll_iterations": 60,
-                "server_poll_wait_s": 60,
-                "server_warmup_wait_s": 330,
             },
         )
 
@@ -224,9 +221,6 @@ class TestVllmBenchmarkParams(unittest.TestCase):
                 "tokenizer_mode": "auto",
                 "scaling_baseline_output_throughput": None,
                 "client_args": {},
-                "client_poll_iterations": 20,
-                "client_poll_wait_s": 60,
-                "client_initial_wait_s": 120,
             },
         )
 
@@ -442,6 +436,20 @@ class TestVllmConfigThroughTheLoader(unittest.TestCase):
         self.assertIn("server_params.distributed_executor_backend", problem)
         self.assertIn(", accuracy.tasks;", problem)
         self.assertTrue(problem.endswith(f"; run cvs config migrate vllm {OLD_CONFIG} <new config>"))
+
+    def test_a_wait_field_left_in_a_new_config_fails_as_an_old_key_not_as_a_flag(self):
+        config = _config()
+        config["server_params"]["server_poll_wait_s"] = 10
+        config["benchmark_params"]["client_initial_wait_s"] = 10
+        with self.assertRaises(ConfigError) as ctx:
+            self._load(config, {KEY: _cell()})
+        self.assertEqual(
+            ctx.exception.problems,
+            [
+                "old config format: server_params.server_poll_wait_s, benchmark_params.client_initial_wait_s; "
+                f"run cvs config migrate vllm {self.tmp / 'vllm.json'} <new config>"
+            ],
+        )
 
     def test_a_changeme_fails_naming_each_field_and_never_its_value(self):
         config = _config()

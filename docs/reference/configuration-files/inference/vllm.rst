@@ -105,6 +105,9 @@ A vLLM configuration file has these top-level keys:
    * - ``benchmark_params``
      - yes
      - Benchmark fields. ``client_args`` holds every other ``vllm bench serve`` option. See :ref:`vllm-params`.
+   * - ``timeouts``
+     - no
+     - Seconds the server and client waits may take. See :ref:`vllm-timeouts`.
    * - ``sweeps``
      - yes
      - Each cell key, mapped to that cell's overrides. See :ref:`vllm-sweep`.
@@ -139,6 +142,8 @@ these moves:
   not set it gets an empty ``vllm`` block, so it runs on ``ray``; set ``mp``
   there to keep the old launch.
 - ``server_params.max_model_len`` to ``server_params.max_model_length``.
+- The three server wait fields to ``timeouts.server_ready_s`` and the three
+  client wait fields to ``timeouts.client_s``, as described below.
 - ``accuracy.tasks`` to ``accuracy.lm_eval.tasks``. In a threshold file, each
   task-id section under ``accuracy`` moves under ``accuracy.lm_eval``.
 - A ``pipeline_parallel_size`` above 1 also sets ``server_params.nnodes`` to
@@ -160,12 +165,19 @@ Move each field that migrate leaves in ``_unmapped`` as follows:
   ``engine_args``.
 - ``server_params.backend`` or ``benchmark_params.backend`` other than
   ``vllm``: delete it.
+- A server or client wait field, including one inside a ``sweeps`` override:
+  set ``timeouts.server_ready_s`` to ``server_warmup_wait_s`` +
+  ``server_poll_iterations`` × ``server_poll_wait_s``, and
+  ``timeouts.client_s`` to ``client_initial_wait_s`` +
+  ``client_poll_iterations`` × ``client_poll_wait_s``. Count a missing field
+  at its old default: 330, 60, and 60 for the server, and 120, 20, and 60 for
+  the client. See :ref:`vllm-timeouts`.
 
 .. important::
 
   Top-level keys, ``paths``, ``container``, ``container.runtime``,
-  ``container.runtime.args``, ``server_params``, ``benchmark_params``, and
-  ``vllm`` **forbid unknown keys**. Other ``vllm serve`` options go in
+  ``container.runtime.args``, ``server_params``, ``benchmark_params``,
+  ``vllm``, and ``timeouts`` **forbid unknown keys**. Other ``vllm serve`` options go in
   ``server_params.engine_args``, and other ``vllm bench serve`` options in
   ``benchmark_params.client_args``, as snake-case names. CVS converts them to
   kebab-case CLI flags. ``null`` omits a flag, ``true`` emits a bare flag,
@@ -534,11 +546,12 @@ Server role
 
 ``server_params`` controls the ``vllm serve`` process. Its fields are
 ``model``, ``tp``, ``pp``, ``dp``, ``ep``, ``port``, ``master_port``,
-``nnodes``, ``prefill_nnodes``, ``max_model_length``, ``long_context``, the
-server wait fields, and ``engine_args``. Every other ``vllm serve`` option
+``nnodes``, ``prefill_nnodes``, ``max_model_length``, ``long_context``, and
+``engine_args``. Every other ``vllm serve`` option
 goes in ``engine_args``; a key outside this table fails config load. The
 executor backend is set in the top-level ``vllm`` block; see
-:ref:`vllm-backends`.
+:ref:`vllm-backends`. The wait before the server is ready is set in
+:ref:`vllm-timeouts`.
 
 .. list-table::
    :widths: 3 2 5
@@ -584,15 +597,6 @@ executor backend is set in the top-level ``vllm`` block; see
      - ``{}``
      - Server flags for long-context evals, ``chunked_prefill_size`` and
        ``max_prefill_tokens``. vLLM does not use them.
-   * - ``server_poll_iterations``
-     - ``60``
-     - Readiness polls after warmup. The packaged Llama single file keeps 60; the distributed file sets 360.
-   * - ``server_poll_wait_s``
-     - ``60``
-     - Seconds between readiness polls, including after the last unreadiness check. Packaged Llama single keeps 60; distributed sets 10.
-   * - ``server_warmup_wait_s``
-     - ``330``
-     - Seconds after a 30-second log precheck and before the readiness polls. Packaged Llama single keeps 330; distributed sets 30.
    * - ``engine_args``
      - ``{}``
      - Every other ``vllm serve`` option, as snake-case names. These names
@@ -601,8 +605,10 @@ executor backend is set in the top-level ``vllm`` block; see
        ``tensor_parallel_size``, ``pipeline_parallel_size``, and
        ``max_model_len``; ``backend``, ``dist_init_port``, and
        ``distributed_executor_backend``; and the flags CVS sets on
-       multi-host mp, ``master_addr``, ``node_rank``, and ``headless``.
-       ``trust_remote_code: true`` here also gives the benchmark client
+       multi-host mp, ``master_addr``, ``node_rank``, and ``headless``. The
+       old server wait fields, ``server_warmup_wait_s``,
+       ``server_poll_iterations``, and ``server_poll_wait_s``, fail the same
+       way. ``trust_remote_code: true`` here also gives the benchmark client
        ``--trust-remote-code``.
 
 How engine_args and client_args are flattened
@@ -750,15 +756,6 @@ percentile reporting.
    * - ``tokenizer_mode``
      - ``"auto"``
      - Tokenizer mode.
-   * - ``client_poll_iterations``
-     - ``20``
-     - Client completion polls. Packaged Llama single sets 90; distributed sets 540.
-   * - ``client_poll_wait_s``
-     - ``60``
-     - Seconds between client polls. Packaged Llama single keeps 60; distributed sets 10.
-   * - ``client_initial_wait_s``
-     - ``120``
-     - Seconds before the first client poll. Packaged Llama single keeps 120; distributed sets 10.
    * - ``scaling_baseline_output_throughput``
      - ``null``
      - Not implemented for vLLM. Setting it fails config load with
@@ -771,15 +768,47 @@ The client always gets ``--dataset-name random`` and ``--ignore-eos``. It gets
 ``--trust-remote-code`` exactly when ``server_params.engine_args.trust_remote_code``
 is true.
 
-``base_url`` is not a config key. ``VllmJob`` always uses ``http://0.0.0.0``. In ``client_args``, a field in this table other than ``scaling_baseline_output_throughput``, or a flag CVS sets itself, fails load with ``cannot set harness fields``. Those flags are ``backend``, ``base_url``, ``model``, ``dataset_name``, ``max_concurrency``, ``random_input_len``, ``random_output_len``, ``save_result``, ``result_dir``, ``result_filename``, ``percentile_metrics``, ``metric_percentiles``, ``ignore_eos``, and ``trust_remote_code``. For the names ``engine_args`` refuses, see :ref:`vllm-roles`.
+``base_url`` is not a config key. ``VllmJob`` always uses ``http://0.0.0.0``. In ``client_args``, a field in this table other than ``scaling_baseline_output_throughput``, or a flag CVS sets itself, fails load with ``cannot set harness fields``. Those flags are ``backend``, ``base_url``, ``model``, ``dataset_name``, ``max_concurrency``, ``random_input_len``, ``random_output_len``, ``save_result``, ``result_dir``, ``result_filename``, ``percentile_metrics``, ``metric_percentiles``, ``ignore_eos``, and ``trust_remote_code``. The old client wait fields, ``client_initial_wait_s``, ``client_poll_iterations``, and ``client_poll_wait_s``, fail the same way. For the names ``engine_args`` refuses, see :ref:`vllm-roles`.
 
-The client gives up with ``client did not complete before poll cap`` after the initial wait plus one sleep per poll. The server gives up with ``vllm server did not become ready before timeout`` after a fixed 30-second log precheck, the warmup, and one sleep per unreadiness poll. Failed requests above 1 percent raise ``client failed:``, including ``Failed requests: <n>/<total> (<percent>)``. At or below 1 percent the cell continues.
+Failed requests above 1 percent raise ``client failed:``, including ``Failed requests: <n>/<total> (<percent>)``. At or below 1 percent the cell continues.
 
 .. tip::
 
   Snake-case keys under ``benchmark_params.client_args`` are translated to
   ``vllm bench serve`` options. They cannot override model, endpoint, sequence
   lengths, concurrency, result paths, or harness-owned percentile reporting.
+
+.. _vllm-timeouts:
+
+Timeouts
+========
+
+``timeouts`` sets how long each wait may take, in whole seconds greater than
+zero. A budget counts the waiting time between checks, so the time each check
+takes comes on top. A field left out or set to ``null`` uses its default.
+
+.. list-table::
+   :widths: 3 2 5
+   :header-rows: 1
+
+   * - Key
+     - Default
+     - Description
+   * - ``server_ready_s``
+     - ``3930``
+     - Waiting time for the server to become ready. CVS first waits a fixed 30
+       seconds for the server log, outside this budget, then checks readiness
+       every 10 seconds until those waits add up to ``server_ready_s``. The
+       packaged Llama single file sets 3930; the distributed file sets 3630.
+   * - ``client_s``
+     - ``1320``
+     - Waiting time for one cell's benchmark client to print its result,
+       checked every 10 seconds until those waits add up to ``client_s``. The
+       packaged Llama single file sets 5520; the distributed file sets 5410.
+
+The server gives up with ``vllm server did not become ready before timeout``,
+and the client with ``client did not complete before poll cap``. A server that
+exits or logs a fatal error, or a client that crashes, stops its wait early.
 
 .. _vllm-sweep:
 
@@ -1248,9 +1277,9 @@ Common error messages and their causes and fixes are listed below.
    * - ``ib_discovery preflight: requested HCA devices <missing> not found on <host>``
      - ``vllm_distributed`` only. A name in ``NCCL_IB_HCA`` is absent on that node. Preflight does not check socket-interface names, GID index, or link state, and it does not run for ``vllm_single``.
    * - ``vllm server did not become ready before timeout``
-     - Readiness polls were exhausted. See ``server_poll_iterations``, ``server_poll_wait_s``, and ``server_warmup_wait_s``, plus the fixed 30-second log precheck.
+     - The server was not ready once the waits between readiness checks, after the fixed 30-second log precheck, added up to ``timeouts.server_ready_s``. See :ref:`vllm-timeouts`.
    * - ``client did not complete before poll cap``
-     - The benchmark client did not print a serving result before ``client_initial_wait_s`` plus ``client_poll_iterations`` × ``client_poll_wait_s``.
+     - The benchmark client did not print a serving result before the waits between checks added up to ``timeouts.client_s``. See :ref:`vllm-timeouts`.
    * - ``client failed:`` … ``Failed requests:``
      - Failed requests were more than 1% of successful plus failed requests.
    * - ``Container image not specified in config``

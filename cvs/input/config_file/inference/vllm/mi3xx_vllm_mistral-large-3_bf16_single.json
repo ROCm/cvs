@@ -51,9 +51,6 @@
     "pp": 1,
     "port": 8888,
     "master_port": 29501,
-    "server_poll_iterations": 60,
-    "server_poll_wait_s": 60,
-    "server_warmup_wait_s": 330,
     "engine_args": {
       "tokenizer_mode": "mistral",
       "config_format": "mistral",
@@ -68,10 +65,11 @@
     "tokenizer_mode": "mistral",
     "seed": 0,
     "random_range_ratio": 0.0,
-    "random_prefix_len": 0,
-    "client_poll_iterations": 90,
-    "client_poll_wait_s": 60,
-    "client_initial_wait_s": 120
+    "random_prefix_len": 0
+  },
+  "timeouts": {
+    "server_ready_s": 3930,
+    "client_s": 5520
   },
   "_comment_runs": "Sweeps keys to run, in order; each runs with benchmark_params and its own overrides.",
   "sweeps": {

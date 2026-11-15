@@ -63,9 +63,6 @@
     "port": 8947,
     "master_port": 28947,
     "max_model_length": 20480,
-    "server_poll_iterations": 120,
-    "server_poll_wait_s": 20,
-    "server_warmup_wait_s": 30,
     "engine_args": {
       "trust_remote_code": true,
       "kv_cache_dtype": "fp8",
@@ -80,12 +77,13 @@
     "request_rate": "inf",
     "seed": 1234,
     "random_range_ratio": 0.0,
-    "client_initial_wait_s": 20,
-    "client_poll_wait_s": 10,
-    "client_poll_iterations": 360,
     "client_args": {
       "temperature": 0
     }
+  },
+  "timeouts": {
+    "server_ready_s": 2430,
+    "client_s": 3620
   },
   "_comment_runs": "Sweeps keys to run, in order; each runs with benchmark_params and its own overrides.",
   "sweeps": {

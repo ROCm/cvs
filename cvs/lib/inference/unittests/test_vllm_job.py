@@ -3,7 +3,7 @@ Copyright 2026 Advanced Micro Devices, Inc.
 All rights reserved.
 
 Unit tests for cvs/lib/inference/vllm_job.py: server PID file, lost-launch retry,
-and fail-fast startup checks.
+fail-fast startup checks, and the server and client time budgets.
 '''
 
 import os
@@ -70,7 +70,29 @@ class ServerScript:
         return queue.pop(0) if len(queue) > 1 else queue[0]
 
 
-def _variant(log_dir, pp):
+class FakeClock:
+    """Stands in for ``time.sleep`` and records each sleep.
+
+    ``now`` is the wall time: each sleep moves it, and ``advance`` moves it for
+    the time a command takes.
+    """
+
+    def __init__(self):
+        self.now = 0
+        self.sleeps = []
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+    def advance(self, seconds):
+        self.now += seconds
+
+    def patch(self):
+        return mock.patch("cvs.lib.inference.vllm_job.time.sleep", side_effect=self.sleep)
+
+
+def _variant(log_dir, pp, timeouts=None):
     cell = f"ISL=1024,OSL=1024,TP=8,PP={pp},CONC=16"
     return VllmConfig(
         enforce_thresholds=False,
@@ -82,15 +104,16 @@ def _variant(log_dir, pp):
         sweeps={cell: {}},
         runs=[cell],
         vllm={"distributed_executor_backend": "mp"},
+        timeouts=timeouts or {},
     )
 
 
-def _job(responder=None, hosts=(HEAD,), log_dir="/logs"):
+def _job(responder=None, hosts=(HEAD,), log_dir="/logs", timeouts=None):
     orch = FakeOrch(hosts=list(hosts))
     orch.exec = responder or ServerScript()
     return VllmJob(
         orch=orch,
-        variant=_variant(log_dir, pp=len(hosts)),
+        variant=_variant(log_dir, pp=len(hosts), timeouts=timeouts),
         isl="1024",
         osl="1024",
         concurrency="16",
@@ -162,6 +185,162 @@ class TestWaitReadyFailsFast(unittest.TestCase):
         script = ServerScript(state={HEAD: [ALIVE], WORKER: [DEAD]})
         with self.assertRaisesRegex(RuntimeError, f"exited during startup on {WORKER} \\(rank 1\\)"):
             _job(script, hosts=(HEAD, WORKER)).wait_ready()
+
+
+def _timed_server(clock, ready_from=None, state=(ALIVE,), poll_seconds=0):
+    """A ServerScript that notes when each probe and readiness grep runs.
+
+    It reports ready from the ``ready_from``-th readiness grep on, and each grep
+    takes ``poll_seconds`` of the clock.
+    """
+    script = ServerScript(state=state)
+    script.timeline = []
+
+    def respond(cmd, hosts=None, detailed=False, **kwargs):
+        if cmd.startswith("grep -qiE "):
+            grep_count = sum(kind == "ready_grep" for kind, _ in script.timeline) + 1
+            script.ready = ready_from is not None and grep_count >= ready_from
+        result = script(cmd, hosts=hosts, detailed=detailed, **kwargs)
+        if script.events[-1] in ("probe", "ready_grep"):
+            script.timeline.append((script.events[-1], clock.now))
+        if script.events[-1] == "ready_grep":
+            clock.advance(poll_seconds)
+        return result
+
+    return script, respond
+
+
+def _polls(script):
+    return [now for kind, now in script.timeline if kind == "ready_grep"]
+
+
+class TestWaitReadyBudget(unittest.TestCase):
+    def test_ready_on_an_early_poll_returns_there_after_the_30_s_precheck(self):
+        clock = FakeClock()
+        script, respond = _timed_server(clock, ready_from=2)
+        with clock.patch():
+            _job(respond, timeouts={"server_ready_s": 3630}).wait_ready()
+        self.assertEqual(clock.sleeps, [30, 10, 10])
+        self.assertEqual(script.timeline, [("probe", 30), ("ready_grep", 40), ("probe", 40), ("ready_grep", 50)])
+
+    def test_never_ready_raises_once_the_sleeps_after_the_precheck_add_up_to_the_budget_with_a_last_poll_there(self):
+        clock = FakeClock()
+        script, respond = _timed_server(clock)
+        with clock.patch(), self.assertRaisesRegex(RuntimeError, "^vllm server did not become ready before timeout$"):
+            _job(respond, timeouts={"server_ready_s": 25}).wait_ready()
+        self.assertEqual((clock.sleeps, _polls(script)), ([30, 10, 10, 5], [40, 50, 55]))
+        self.assertEqual(sum(clock.sleeps[1:]), 25)
+
+    def test_the_precheck_sleeps_30_s_even_when_the_budget_is_shorter(self):
+        clock = FakeClock()
+        script, respond = _timed_server(clock)
+        with clock.patch(), self.assertRaises(RuntimeError):
+            _job(respond, timeouts={"server_ready_s": 5}).wait_ready()
+        self.assertEqual((clock.sleeps, _polls(script)), ([30, 5], [35]))
+
+    def test_time_spent_polling_comes_on_top_of_the_budget(self):
+        clock = FakeClock()
+        script, respond = _timed_server(clock, poll_seconds=4)
+        with clock.patch(), self.assertRaises(RuntimeError):
+            _job(respond, timeouts={"server_ready_s": 25}).wait_ready()
+        self.assertEqual((clock.sleeps, _polls(script)), ([30, 10, 10, 5], [40, 54, 63]))
+        self.assertEqual(clock.now, 30 + 25 + 3 * 4)
+
+    def test_a_server_that_dies_while_polling_raises_on_that_poll(self):
+        clock = FakeClock()
+        script, respond = _timed_server(clock, state=[ALIVE, ALIVE, DEAD])
+        with clock.patch(), self.assertRaisesRegex(RuntimeError, "vllm server exited during startup"):
+            _job(respond, timeouts={"server_ready_s": 3630}).wait_ready()
+        self.assertEqual(_polls(script), [40, 50])
+
+    def test_without_a_server_ready_s_the_budget_is_the_old_default_total(self):
+        clock = FakeClock()
+        script, respond = _timed_server(clock)
+        with clock.patch(), self.assertRaises(RuntimeError):
+            _job(respond, timeouts={"server_ready_s": None}).wait_ready()
+        self.assertEqual(sum(clock.sleeps[1:]), 330 + 60 * 60)
+        self.assertEqual(len(_polls(script)), (330 + 60 * 60) // 10)
+        self.assertEqual(max(clock.sleeps[1:]), 10)
+
+
+COMPLETE = "Successful requests: 64\nServing Benchmark Result\n"
+
+
+def _timed_client(clock, logs, tail_seconds=0):
+    """exec_on_head giving the next of ``logs`` for each client-log tail, the last one repeating.
+
+    Returns the clock times of the tails, the commands, and the responder;
+    each tail takes ``tail_seconds`` of the clock.
+    """
+    tails, commands = [], []
+
+    def respond(cmd, **kwargs):
+        commands.append(cmd)
+        if cmd.startswith("tail "):
+            tails.append(clock.now)
+            clock.advance(tail_seconds)
+        return {HEAD: logs[min(len(tails), len(logs)) - 1]}
+
+    return tails, commands, respond
+
+
+def _client_job(respond, timeouts):
+    job = _job(timeouts=timeouts)
+    job.orch.exec_on_head = respond
+    return job
+
+
+class TestWaitClientBudget(unittest.TestCase):
+    def test_a_client_that_completes_returns_on_that_poll_with_the_first_poll_after_one_interval(self):
+        clock = FakeClock()
+        tails, commands, respond = _timed_client(clock, ["", "INFO running", COMPLETE])
+        with clock.patch():
+            _client_job(respond, {"client_s": 5410}).wait_client_complete()
+        self.assertEqual((tails, clock.sleeps), ([10, 20, 30], [10, 10, 10]))
+        self.assertTrue(commands[-1].startswith("cat "))
+
+    def test_a_client_that_never_completes_raises_once_the_sleeps_add_up_to_the_budget_with_a_last_poll_there(self):
+        clock = FakeClock()
+        tails, commands, respond = _timed_client(clock, ["INFO running"])
+        with clock.patch(), self.assertRaisesRegex(RuntimeError, "^client did not complete before poll cap$"):
+            _client_job(respond, {"client_s": 25}).wait_client_complete()
+        self.assertEqual((tails, clock.sleeps), ([10, 20, 25], [10, 10, 5]))
+        self.assertTrue(commands[-1].startswith("cat "))
+
+    def test_time_spent_polling_comes_on_top_of_the_budget(self):
+        clock = FakeClock()
+        tails, _, respond = _timed_client(clock, ["INFO running"], tail_seconds=4)
+        with clock.patch(), self.assertRaises(RuntimeError):
+            _client_job(respond, {"client_s": 25}).wait_client_complete()
+        self.assertEqual((tails, clock.sleeps, clock.now), ([10, 24, 33], [10, 10, 5], 25 + 3 * 4))
+
+    def test_a_crash_or_too_many_failed_requests_raises_on_the_poll_that_sees_it(self):
+        for log, message in (
+            ("Traceback (most recent call last):\n  KeyError: x\n", "client failed: .*Traceback"),
+            ("Successful requests: 98\nFailed requests: 2\n", r"client failed: .*Failed requests: 2/100 \(2\.0%\)"),
+        ):
+            with self.subTest(log=log):
+                clock = FakeClock()
+                tails, _, respond = _timed_client(clock, ["INFO running", log])
+                with clock.patch(), self.assertRaisesRegex(RuntimeError, message):
+                    _client_job(respond, {"client_s": 5410}).wait_client_complete()
+                self.assertEqual(tails, [10, 20])
+
+    def test_failed_requests_within_one_percent_keep_polling_until_completion(self):
+        clock = FakeClock()
+        tolerated = "Successful requests: 199\nFailed requests: 1\n"
+        tails, _, respond = _timed_client(clock, [tolerated, tolerated + "Serving Benchmark Result\n"])
+        with clock.patch():
+            _client_job(respond, {"client_s": 5410}).wait_client_complete()
+        self.assertEqual(tails, [10, 20])
+
+    def test_without_a_client_s_the_budget_is_the_old_default_total(self):
+        clock = FakeClock()
+        tails, _, respond = _timed_client(clock, ["INFO running"])
+        with clock.patch(), self.assertRaises(RuntimeError):
+            _client_job(respond, {"client_s": None}).wait_client_complete()
+        self.assertEqual(sum(clock.sleeps), 120 + 20 * 60)
+        self.assertEqual((len(tails), max(clock.sleeps)), ((120 + 20 * 60) // 10, 10))
 
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "the server probe reads /proc")

@@ -296,26 +296,23 @@ Per-cell logs land under ``paths.log_dir``. For the packaged file that is
 Packaged time budget
 ~~~~~~~~~~~~~~~~~~~~
 
-These sleeps are in addition to model load and the benchmark itself. The
-server path always waits 30 seconds for the log to appear
-(``_precheck_wait``), then the warmup, then one sleep after every
-unreadiness poll including the last one.
+The ``timeouts`` block sets how long the server and each cell's client may
+wait, in seconds; :ref:`vllm-timeouts` explains how each budget counts and
+its defaults.
 
 .. list-table::
    :header-rows: 1
-   :widths: 3 4 5
+   :widths: 3 4 4
 
    * - File
-     - Server sleeps before timeout
-     - Client sleeps before timeout
+     - ``server_ready_s``
+     - ``client_s``
    * - Llama single
-     - 30 s + ``server_warmup_wait_s`` 330 + 60 × ``server_poll_wait_s``
-       60 = 3960 s
-     - ``client_initial_wait_s`` 120 + 90 × ``client_poll_wait_s`` 60
-       = 5520 s
+     - 3930 s
+     - 5520 s
    * - Llama distributed
-     - 30 s + warmup 30 + 360 × 10 s = 3660 s
-     - initial 10 s + 540 × 10 s = 5410 s
+     - 3630 s
+     - 5410 s
 
 Timeout errors:
 

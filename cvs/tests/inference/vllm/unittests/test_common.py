@@ -11,7 +11,10 @@ from unittest import mock
 import pytest
 
 import cvs
+from cvs.config_validation.schemas.inference.engines import VllmConfig
 from cvs.lib.conf_lib.loader import ConfigError
+from cvs.lib.inference.unittests.fake_orch import FakeOrch
+from cvs.lib.inference.vllm_job import VllmJob
 from cvs.lib.report import benchmark_metric_registry as registry
 from cvs.tests.inference.vllm import _common
 from cvs.unittests.support import write_filled_config
@@ -66,6 +69,59 @@ class TestPytestGenerateTests(unittest.TestCase):
             _common.pytest_generate_tests(metafunc)
         self.assertTrue(ctx.exception.problems[0].endswith(f"run cvs config migrate vllm {OLD_CONFIG} <new config>"))
         metafunc.parametrize.assert_not_called()
+
+
+def _smoke_variant(timeouts):
+    return VllmConfig(
+        enforce_thresholds=False,
+        threshold_json="threshold.json",
+        paths={"shared_fs": "/logs", "models_dir": "/models", "log_dir": "/logs", "hf_token_file": "/models/.hf"},
+        container={"name": "test", "image": "test"},
+        server_params={"engine": "vllm", "model": "/models/test-model", "tp": 8, "pp": 1, "port": 8000},
+        cells=["ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"],
+        timeouts=timeouts,
+    )
+
+
+class TestOpenaiCompatibleSmoke(unittest.TestCase):
+    def _smoke_against_a_server_that_never_gets_ready(self, timeouts):
+        """Return the clock when the smoke gives up and the clock at each readiness poll."""
+        clock = {"now": 0}
+        polls = []
+
+        def sleep(seconds):
+            clock["now"] += seconds
+
+        def is_ready(job):
+            polls.append(clock["now"])
+            return False
+
+        lifecycle = SimpleNamespace(failed=False, record=mock.Mock())
+        request = SimpleNamespace(node=SimpleNamespace(nodeid="vllm_single.py::test_openai_compatible_smoke"))
+        server = mock.patch.multiple(
+            VllmJob,
+            stop_server=mock.DEFAULT,
+            build_server_cmd=mock.DEFAULT,
+            start_server=mock.DEFAULT,
+            dump_server_log=mock.DEFAULT,
+            _check_early_failure=mock.DEFAULT,
+            is_ready=is_ready,
+        )
+        sleeps = mock.patch("cvs.lib.inference.vllm_job.time.sleep", side_effect=sleep)
+        with server, sleeps, self.assertRaisesRegex(RuntimeError, "did not become ready before timeout"):
+            _common.openai_compatible_smoke(
+                FakeOrch(hosts=["10.0.0.1"]), _smoke_variant(timeouts), [], lifecycle, request
+            )
+        self.assertTrue(lifecycle.failed)
+        return clock["now"], polls
+
+    def test_the_smoke_waits_the_configs_server_ready_s_after_the_precheck(self):
+        gave_up, polls = self._smoke_against_a_server_that_never_gets_ready({"server_ready_s": 50, "client_s": 10})
+        self.assertEqual((gave_up, polls), (30 + 50, [40, 50, 60, 70, 80]))
+
+    def test_without_a_server_ready_s_the_smoke_waits_the_default(self):
+        gave_up, _ = self._smoke_against_a_server_that_never_gets_ready({"client_s": 10})
+        self.assertEqual(gave_up, 30 + 330 + 60 * 60)
 
 
 class TestInferenceCellMetrics(unittest.TestCase):

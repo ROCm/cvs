@@ -137,6 +137,20 @@ class ServingBenchmarkParams(StrictBlock):
         return check_flags(client_args)
 
 
+Seconds = Annotated[int, Field(gt=0)]
+
+
+class Timeouts(StrictBlock):
+    """How long each wait may take, in seconds; None uses the engine's default.
+
+    ``server_ready_s`` covers server launch to ready, and ``client_s`` one
+    benchmark cell's client run.
+    """
+
+    server_ready_s: Optional[Seconds] = None
+    client_s: Optional[Seconds] = None
+
+
 def _cluster_hosts(cluster):
     nodes = cluster.get("node_dict") or {}
     return list(nodes) if isinstance(nodes, dict) else [node.get("mgmt_ip") for node in nodes]
@@ -153,6 +167,7 @@ class LlmServingConfig(Accuracy, SweepsAndRuns, Thresholds, WorkloadConfig):
     thresholds: ThresholdFile = Field(default_factory=ThresholdFile)
     server_params: ServingServerParams
     benchmark_params: ServingBenchmarkParams
+    timeouts: Timeouts = Field(default_factory=Timeouts)
 
     # Before validation, so a pydantic error never carries the env values.
     @model_validator(mode="before")

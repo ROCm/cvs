@@ -69,9 +69,6 @@
     "port": 8888,
     "master_port": 29501,
     "max_model_length": 6032,
-    "server_poll_iterations": 540,
-    "server_poll_wait_s": 10,
-    "server_warmup_wait_s": 30,
     "engine_args": {
       "trust_remote_code": true,
       "kv_cache_dtype": "fp8_e4m3",
@@ -83,7 +80,7 @@
       "max_num_batched_tokens": 256
     },
     "_comment_context": "max_model_length covers the fixed ISL plus OSL with eight tokens of padding; update it when changing the ISL or OSL in sweeps.",
-    "_comment_startup": "The readiness polling budget allows slow checkpoint loading; it does not resolve tokenizer, backend or runtime compatibility failures."
+    "_comment_startup": "timeouts.server_ready_s allows slow checkpoint loading; it does not resolve tokenizer, backend or runtime compatibility failures."
   },
   "benchmark_params": {
     "_comment": "vllm bench serve settings every cell runs with; client_args holds every other vllm bench serve option.",
@@ -93,10 +90,11 @@
     "tokenizer_mode": "deepseek_v4",
     "seed": 0,
     "random_range_ratio": 0.0,
-    "random_prefix_len": 0,
-    "client_poll_iterations": 720,
-    "client_poll_wait_s": 10,
-    "client_initial_wait_s": 10
+    "random_prefix_len": 0
+  },
+  "timeouts": {
+    "server_ready_s": 5430,
+    "client_s": 7210
   },
   "_comment_runs": "Sweeps keys to run, in order; each runs with benchmark_params and its own overrides.",
   "sweeps": {

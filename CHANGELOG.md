@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- The old vLLM config format: a vLLM config or threshold file from an earlier release fails to load; convert it with `cvs config migrate vllm`, then move a reported `ib_netdev` to the socket variables and `ib_hca_devices` to `NCCL_IB_HCA` in `container.env`. `benchmark_params.dataset_name`, `ignore_eos` and `trust_remote_code` are gone; the client always runs the random dataset with `--ignore-eos`, and trusts remote code when `server_params.engine_args.trust_remote_code` is true.
+- The old vLLM config format: a vLLM config or threshold file from an earlier release fails to load; convert it with `cvs config migrate vllm`, which also turns the six wait fields (`server_warmup_wait_s`, `server_poll_iterations`, `server_poll_wait_s`, `client_initial_wait_s`, `client_poll_iterations`, `client_poll_wait_s`) into one `timeouts` block of seconds, then move a reported `ib_netdev` to the socket variables and `ib_hca_devices` to `NCCL_IB_HCA` in `container.env`. `benchmark_params.dataset_name`, `ignore_eos` and `trust_remote_code` are gone; the client always runs the random dataset with `--ignore-eos`, and trusts remote code when `server_params.engine_args.trust_remote_code` is true.
 
 ## [0.3.0] - 2026-11-02
 
