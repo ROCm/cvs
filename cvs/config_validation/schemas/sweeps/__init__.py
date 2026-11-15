@@ -2,8 +2,9 @@
 Copyright 2026 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Sweeps and runs: benchmark points named by cell keys such as
-``ISL=1024,OSL=1024,TP=4,PP=1,CONC=16``.
+Benchmark points named by cell keys such as ``ISL=1024,OSL=1024,TP=4,PP=1,CONC=16``:
+``SweepsAndRuns`` maps keys to per-cell overrides and names the ones to run, and
+``Cells`` lists the keys to run.
 
 Each ``NAME=value`` part of a key is an axis. A key names every axis its config
 class declares, once each and in the declared order, with a positive integer
@@ -97,3 +98,31 @@ class SweepsAndRuns(StrictBlock):
     def cells(self):
         """Each sweeps key, in order, as a named tuple of ``key`` and one field per axis."""
         return {key: parse_cell_key(key, self.axes) for key in self.sweeps}
+
+
+class Cells(StrictBlock):
+    """``cells`` lists the cell keys to run, in order, each once.
+
+    A config class sets ``axes`` to the ``Axis`` tuple its keys use; keys follow
+    the same rules as ``SweepsAndRuns`` keys.
+    """
+
+    axes: ClassVar[Tuple[Axis, ...]] = ()
+    cells: List[str]
+
+    @field_validator("cells")
+    @classmethod
+    def _check_cell_keys(cls, cells):
+        if not cells:
+            raise ValueError("needs at least one cell key")
+        seen = set()
+        for key in cells:
+            parse_cell_key(key, cls.axes)
+            if key in seen:
+                raise ValueError(f"cell key {key!r} is listed more than once")
+            seen.add(key)
+        return cells
+
+    def parsed_cells(self):
+        """Each cell key, in order, as a named tuple of ``key`` and one field per axis."""
+        return {key: parse_cell_key(key, self.axes) for key in self.cells}
