@@ -1,6 +1,6 @@
 #!/bin/bash
 # Test script for CVS package
-# This script tests the cvs list, generate, copy-config, monitor, and exec commands
+# This script tests the cvs list, generate, copy-config, monitor, exec, and config migrate commands
 
 # Use the CVS environment variable if set, otherwise default to 'cvs'
 CVS="${CVS:-cvs}"
@@ -97,6 +97,9 @@ done
 
 # Test: cvs exec --help
 run_test "cvs exec --help" "$CVS exec --help"
+
+# Test: cvs config migrate --help
+run_test "cvs config migrate --help" "$CVS config migrate --help"
 
 # Wait for all tests to complete and collect results
 echo "Waiting for all tests to complete..."

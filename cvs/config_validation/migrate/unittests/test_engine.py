@@ -371,21 +371,27 @@ class TestFlagsFromList(unittest.TestCase):
 
 
 class TestSuiteMaps(unittest.TestCase):
-    def test_each_public_module_in_the_maps_package_is_a_suite(self):
+    def test_each_public_module_in_the_maps_package_is_a_suite_imported_only_when_looked_up(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "zeta.py").write_text("CONFIG = {'a': 'b'}\n")
             (root / "alpha.py").write_text("CONFIG = {}\n")
+            (root / "broken.py").write_text("raise RuntimeError('broken map')\n")
             (root / "_helpers.py").write_text("raise AssertionError('a private module is not a map')\n")
             (root / "unittests").mkdir()
             (root / "unittests" / "__init__.py").write_text("raise AssertionError('a package is not a map')\n")
-            self.addCleanup(self._forget, "alpha", "zeta")
+            self.addCleanup(self._forget, "alpha", "zeta", "broken")
             with mock.patch.object(maps, "__path__", [str(root)]):
                 found = suite_maps()
-                names = suite_names()
-        self.assertEqual(names, ["alpha", "zeta"])
-        self.assertEqual(sorted(found), ["alpha", "zeta"])
-        self.assertEqual(found["zeta"].CONFIG, {"a": "b"})
+                self.assertEqual(suite_names(), ["alpha", "broken", "zeta"])
+                self.assertEqual(list(found), ["alpha", "broken", "zeta"])
+                self.assertIn("broken", found)
+                self.assertNotIn("_helpers", found)
+                self.assertEqual(found["zeta"].CONFIG, {"a": "b"})
+                with self.assertRaisesRegex(RuntimeError, "broken map"):
+                    found["broken"]
+                with self.assertRaises(KeyError):
+                    found["_helpers"]
 
     @staticmethod
     def _forget(*names):

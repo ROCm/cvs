@@ -1,4 +1,7 @@
+import argparse
 import sys
+
+from cvs.config_validation.migrate import maps
 
 from .base import SubcommandPlugin
 from . import config_files
@@ -7,7 +10,24 @@ CONFIG_COMMANDS = (
     ("list", "List config files grouped by directory"),
     ("list-dirs", "List config directories grouped by category"),
     ("copy", "Copy bundled config file(s) to --output"),
+    ("migrate", "Convert an old suite config or threshold file to the new format"),
 )
+
+MIGRATE_EXIT_CODES = (
+    "exit status: 0 when the new file is written, or the input is already in the new format; "
+    "1 when the new file is written with fields to fix; 2 when nothing is written"
+)
+
+
+def _known_suite(suites):
+    """An argparse ``type`` that accepts only a name in ``suites`` and lists them otherwise."""
+
+    def check(name):
+        if name not in suites:
+            raise argparse.ArgumentTypeError(f"unknown suite {name}; available suites: {', '.join(suites) or 'none'}")
+        return name
+
+    return check
 
 
 class ConfigPlugin(SubcommandPlugin):
@@ -17,7 +37,7 @@ class ConfigPlugin(SubcommandPlugin):
     def get_parser(self, subparsers):
         parser = subparsers.add_parser(
             "config",
-            help="Browse or copy bundled CVS config templates",
+            help="Browse, copy or migrate CVS config files",
         )
         config_subparsers = parser.add_subparsers(dest="config_command")
 
@@ -63,7 +83,28 @@ class ConfigPlugin(SubcommandPlugin):
         copy_parser.add_argument("--force", action="store_true", help="Force overwrite of existing files")
         copy_parser.prog = "cvs config copy"
 
+        suites = maps.suite_names()
+        migrate_parser = config_subparsers.add_parser(
+            "migrate",
+            help=CONFIG_COMMANDS[3][1],
+            description=f"{CONFIG_COMMANDS[3][1]}. The input file is never changed.",
+            epilog=MIGRATE_EXIT_CODES,
+        )
+        migrate_parser.add_argument(
+            "suite",
+            type=_known_suite(suites),
+            help=f"Suite the file belongs to (available: {', '.join(suites) or 'none yet'})",
+        )
+        migrate_parser.add_argument("input", metavar="input.json", help="Old config or threshold file")
+        migrate_parser.add_argument(
+            "output",
+            help="File to write, or a directory to write it in under the input's file name",
+        )
+        migrate_parser.add_argument("--force", action="store_true", help="Force overwrite of an existing output file")
+        migrate_parser.prog = "cvs config migrate"
+
         self._copy_parser = copy_parser
+        self._migrate_parser = migrate_parser
         parser.set_defaults(_plugin=self)
         return parser
 
@@ -77,7 +118,8 @@ Config Commands:
   cvs config list <configDir1>/<configDir2>            List config files under a directory
   cvs config copy --all --output <destDir>             Copy all bundled configs
   cvs config copy <configPath> --output <dest>         Copy a specific config file
-  cvs config copy --all --output <destDir> --force     Copy all bundled configs, overwrite existing"""
+  cvs config copy --all --output <destDir> --force     Copy all bundled configs, overwrite existing
+  cvs config migrate <suite> <input.json> <output>     Convert an old config or threshold file"""
 
     def _print_command_catalog(self):
         print("Available config commands:")
@@ -92,6 +134,8 @@ Config Commands:
             self._run_list_dirs(args.path or "")
         elif command == "copy":
             self._run_copy(args)
+        elif command == "migrate":
+            self._run_migrate(args)
         else:
             self._print_command_catalog()
 
@@ -207,3 +251,11 @@ Config Commands:
             return
 
         config_files.copy_single_config(roots, path, args.output, force=args.force)
+
+    def _run_migrate(self, args):
+        if args.extra_pytest_args:
+            self._migrate_parser.error(f"unrecognized arguments: {' '.join(args.extra_pytest_args)}")
+        # Imported here so the engine and the suite's map load only for this command.
+        from cvs.config_validation.migrate import engine
+
+        sys.exit(engine.migrate(args.suite, args.input, args.output, force=args.force))

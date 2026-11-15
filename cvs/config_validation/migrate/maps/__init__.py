@@ -39,3 +39,12 @@ A map module defines:
 
 When several paths match one key, the first written applies.
 '''
+
+import pkgutil
+
+
+def suite_names():
+    """The suites ``cvs config migrate`` converts, one per map module here, sorted; imports none of them."""
+    return sorted(
+        info.name for info in pkgutil.iter_modules(__path__) if not info.ispkg and not info.name.startswith("_")
+    )

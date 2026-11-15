@@ -51,8 +51,8 @@ import copy
 import importlib
 import json
 import os
-import pkgutil
 import shlex
+from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -87,18 +87,35 @@ class _Stop(Exception):
         self.code = code
 
 
+class _SuiteMaps(Mapping):
+    """Suite name to map module, importing a map only when it is looked up."""
+
+    def __init__(self, names):
+        self._names = list(names)
+
+    def __getitem__(self, suite):
+        if suite not in self._names:
+            raise KeyError(suite)
+        return importlib.import_module(f"{maps.__name__}.{suite}")
+
+    def __contains__(self, suite):
+        return suite in self._names
+
+    def __iter__(self):
+        return iter(self._names)
+
+    def __len__(self):
+        return len(self._names)
+
+
 def suite_maps():
-    """Each suite's map module in ``cvs.config_validation.migrate.maps``, by suite name."""
-    return {
-        info.name: importlib.import_module(f"{maps.__name__}.{info.name}")
-        for info in pkgutil.iter_modules(maps.__path__)
-        if not info.ispkg and not info.name.startswith("_")
-    }
+    """Each suite's map module in ``cvs.config_validation.migrate.maps``, by suite name, imported on lookup."""
+    return _SuiteMaps(suite_names())
 
 
 def suite_names():
-    """The suites ``migrate`` converts, one per map module, sorted."""
-    return sorted(suite_maps())
+    """The suites ``migrate`` converts, one per map module, sorted, without importing them."""
+    return maps.suite_names()
 
 
 def old_paths(raw, renames):
