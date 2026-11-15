@@ -65,8 +65,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from cvs.lib.conf_lib.loader import load_config
-from cvs.lib.conf_lib.schemas.vllm import VariantConfig
+from cvs.config_validation.loaders.suite_config import load_suite_config
+from cvs.config_validation.schemas.inference.engines import VllmConfig
 from cvs.lib.inference.utils import inference_suite_lifecycle
 from cvs.lib.inference.vllm_job import VllmJob
 from cvs.lib.inference.vllm_topology import resolve_vllm_topology, scope_vllm_cluster
@@ -114,8 +114,8 @@ def _write_filled_config(template, out_dir):
 def _load_config(template, out_dir, cluster_file):
     """Load one shipped config for the suite. Returns (config_file, config, container)."""
     config_file = _write_filled_config(template, out_dir)
-    loaded = load_config(VariantConfig, config_file, cluster_file)
-    return config_file, loaded.config, loaded.container
+    loaded = load_suite_config(VllmConfig, config_file, cluster_file, mock.Mock())
+    return config_file, loaded.config, loaded.orch_inputs["container"]
 
 
 def _shipped_configs():

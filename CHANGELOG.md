@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `install_mori` builds MoRI from `git_url` at `git_ref` into `mori_dir`, using the MORI config, before `mori_benchmark_test` runs. In container mode it needs `container.lifetime` `persistent` or `no_launch`. The MORI run card shows the built commit.
 - Training (jaxmaxtext, megatron, torchtitan) and inference (vLLM, SGLang, ATOM, xDiT) suites run a `test_support_matrix_gate` stage after the container launches that stops the run when the framework/model is unsupported on the detected GPU architecture or ROCm version (for example MXFP4 on MI300X/MI325X). Support is declared in `cvs/lib/support_matrix/{training,inference}_support_matrix.json`. Set `CVS_SUPPORT_MATRIX_GATE=OFF` to log violations and continue instead of stopping; a framework or model with no entry runs unchecked. See `cvs/lib/support_matrix/README.md`.
+- `cvs config migrate <suite> <old> <new>` converts a config or threshold file from the old format to the new one; it supports `vllm`. vLLM threshold files now accept `info` specs, which record a metric without gating it.
 
 ### Changed
 
@@ -30,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The old vLLM config format: a vLLM config from an earlier release fails to load; convert it with `cvs config migrate vllm <old> <new>`. Move a reported `ib_netdev` to the socket variables and `ib_hca_devices` to `NCCL_IB_HCA` in `container.env`; per-cell `sweeps` overrides are gone.
 
 ## [0.3.0] - 2026-11-02
 

@@ -48,22 +48,23 @@
     }
   },
   "server_params": {
-    "_comment": "Harness fields plus snake-case vllm serve options.",
-    "backend": "vllm",
+    "engine": "vllm",
+    "_comment": "Harness fields; engine_args holds every other vllm serve option.",
     "model": "<changeme>",
-    "tensor_parallel_size": "4",
-    "pipeline_parallel_size": "1",
+    "tp": "4",
+    "pp": "1",
     "port": "8888",
-    "dist_init_port": "29501",
+    "master_port": "29501",
     "server_poll_iterations": "60",
     "server_poll_wait_s": "60",
     "server_warmup_wait_s": "330",
     "distributed_executor_backend": "mp",
-    "trust_remote_code": true
+    "engine_args": {
+      "trust_remote_code": true
+    }
   },
   "benchmark_params": {
-    "_comment": "Default vllm bench serve settings; per-cell values in sweeps override these defaults.",
-    "backend": "vllm",
+    "_comment": "vllm bench serve settings every cell runs with; client_args holds every other vllm bench serve option.",
     "dataset_name": "random",
     "num_prompts": "320",
     "request_rate": "inf",
@@ -78,13 +79,8 @@
     "trust_remote_code": true,
     "ignore_eos": true
   },
-  "_comment_sweeps": "Canonical run cells; entries override benchmark_params for that cell.",
-  "sweeps": {
-    "ISL=1024,OSL=1024,TP=4,PP=1,CONC=16": {},
-    "ISL=1024,OSL=1024,TP=4,PP=1,CONC=32": {}
-  },
-  "_comment_runs": "Explicit ordered run cells to execute.",
-  "runs": [
+  "_comment_cells": "Canonical cell keys to run, in order; every cell runs with benchmark_params.",
+  "cells": [
     "ISL=1024,OSL=1024,TP=4,PP=1,CONC=16",
     "ISL=1024,OSL=1024,TP=4,PP=1,CONC=32"
   ],

@@ -7,9 +7,9 @@ import time
 
 import pytest
 
+from cvs.config_validation.loaders.suite_config import load_suite_config_with_cluster
+from cvs.config_validation.schemas.inference.engines import VllmConfig
 from cvs.lib import globals
-from cvs.lib.conf_lib.loader import load_config
-from cvs.lib.conf_lib.schemas.vllm import VariantConfig
 from cvs.lib.inference.utils.vllm_metrics import (
     METRIC_REGISTRY,
     VLLM_RESULTS_COLUMNS,
@@ -44,7 +44,8 @@ def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file:
         return
-    variant = load_config(VariantConfig, config_file, {}).config
+    # Collection runs before any fixture reads the cluster file, so no cluster here.
+    variant = load_suite_config_with_cluster(VllmConfig, config_file, {}, log).config
     runs = variant.resolved_runs()
     ids = [run.cell.key for run in runs]
     if "accuracy_task" in metafunc.fixturenames:
@@ -110,15 +111,14 @@ def discover_topology(orch, variant_config, vllm_targets, lifecycle, request):
         lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - started)
         pytest.fail(str(exc))
     container_hcas = variant_config.container.nccl_ib_hcas
-    requested = container_hcas if container_hcas is not None else variant_config.ib_hca_devices
-    if requested and requested != "auto":
+    if container_hcas:
         try:
-            validate_ib_hca_preflight(discovered, requested)
+            validate_ib_hca_preflight(discovered, container_hcas)
         except RuntimeError as exc:
             lifecycle.failed = True
             lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - started)
             pytest.fail(str(exc))
-        lifecycle.ib_hcas = [] if container_hcas is not None else requested
+        lifecycle.ib_hcas = []
     else:
         lifecycle.ib_hcas = next(iter(discovered.values()))
     lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - started)
@@ -359,4 +359,3 @@ def teardown(orch, lifecycle, request):
     lifecycle.record(request.node.nodeid, "teardown", time.monotonic() - started)
     if orch.verify_containers_running(name):
         pytest.fail(f"container {name} still running after teardown_containers()")
-    lifecycle.torn_down = True

@@ -378,18 +378,22 @@ def validate_threshold_spec(metric, spec):
     definition = METRICS_BY_NAME.get(metric)
     if definition is None:
         raise ValueError(f'unknown vLLM threshold metric {metric!r}')
-    if type(spec.get('kind')) is not str or spec['kind'] != definition.direction:
-        raise ValueError(f'{metric} threshold kind must be {definition.direction!r}, got {spec.get("kind")!r}')
+    if type(spec.get('kind')) is not str or spec['kind'] not in (definition.direction, 'info'):
+        raise ValueError(
+            f'{metric} threshold kind must be {definition.direction!r} or \'info\', got {spec.get("kind")!r}'
+        )
     if not is_finite_number(spec.get('value')):
         raise ValueError(f'{metric} threshold value must be a finite built-in int or float')
 
 
 def metric_verdict(metric, actual, spec):
-    '''Evaluate one canonical vLLM min/max threshold without coercion.'''
+    '''Evaluate one canonical vLLM min/max threshold without coercion; an ``info`` spec always passes.'''
     try:
         validate_threshold_spec(metric, spec)
     except (AttributeError, KeyError, ValueError) as exc:
         return 'fail', str(exc)
+    if spec['kind'] == 'info':
+        return 'pass', ''
     if not is_finite_number(actual):
         return 'fail', f'{metric}: actual must be a finite built-in int or float, got {actual!r}'
 

@@ -7,12 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
-from cvs.lib import globals
-from cvs.lib.inference.vllm_topology import resolve_vllm_topology, scope_vllm_cluster
+from cvs.config_validation.schemas.inference.engines import VllmConfig
+from cvs.lib.inference.vllm_topology import resolve_vllm_topology
 from cvs.lib.inference.utils.vllm_metrics import VLLM_RESULTS_COLUMNS
-from cvs.lib.conf_lib.loader import load_config
-from cvs.lib.conf_lib.schemas.vllm import VariantConfig
 from cvs.lib.report.benchmark_metric_registry import (
     benchmark_metric_columns_for_nodeid,
     benchmark_metric_rows_from_item,
@@ -28,7 +25,6 @@ from cvs.lib.report.render.perf_metric_table import (
 from cvs.lib.report.subtest_reports import called_from_subtest_context, is_subtest_report
 from cvs.tests.inference.vllm._shared import validate_vllm_execution_mode
 
-log = globals.log
 VLLM_INFERENCE_TEST = 'test_vllm_inference'
 
 
@@ -68,19 +64,13 @@ def _attach_metric_panel(report, rows) -> None:
 
 
 @pytest.fixture(scope="module")
-def loaded_config(pytestconfig):
-    cluster_file = pytestconfig.getoption("cluster_file")
-    if not cluster_file:
-        pytest.fail("--cluster_file is required")
-    config_file = pytestconfig.getoption("config_file")
-    if not config_file:
-        pytest.fail("--config_file is required")
-    return load_config(VariantConfig, config_file, cluster_file)
+def config_schema():
+    return VllmConfig
 
 
 @pytest.fixture(scope="module")
-def variant_config(loaded_config):
-    return loaded_config.config
+def variant_config(suite_config):
+    return suite_config.config
 
 
 class _Lifecycle:
@@ -89,15 +79,13 @@ class _Lifecycle:
     The container launch / sshd / fetch / teardown stages are individual tests
     (so each is a timed, pass/fail row in the HTML) rather than fixture body
     code. They share this object: `failed` lets a broken stage skip the rest
-    instead of cascading; `torn_down` lets the explicit teardown test suppress
-    the fixture's leak-guard finalizer; `report` maps a test's nodeid to the
+    instead of cascading; `report` maps a test's nodeid to the
     rows it recorded, each carrying its own unit, so attach_inference_suite_lifecycle_table
     renders only that test's stages -- not every stage on every row.
     """
 
     def __init__(self):
         self.failed = False
-        self.torn_down = False
         self.report = {}  # nodeid -> list[(label, value, unit)]
         self.live_server_sig = None
         self.live_server_job = None
@@ -114,47 +102,9 @@ def lifecycle():
 
 
 @pytest.fixture(scope="module")
-def orch(loaded_config, lifecycle, vllm_mode):
-    """Construct a ContainerOrchestrator and own ONLY its teardown safety net.
-
-    The actual launch/sshd happen in test_launch_container / test_setup_sshd
-    so they appear as timed rows. This fixture builds the object and registers a
-    leak-guard finalizer: if a mid-sweep test fails before test_teardown runs,
-    the container is still torn down here. When test_teardown ran successfully
-    it sets lifecycle.torn_down, so the finalizer no-ops (no double teardown).
-    """
-    # from_configs replaces top-level keys, so the container block passed here must
-    # already hold the cluster's container settings; load_config merged them.
-    suite_cluster = scope_vllm_cluster(vllm_mode, loaded_config.cluster)
-    testsuite_config = {
-        "orchestrator": "container",
-        "container": loaded_config.container,
-    }
-    cfg = OrchestratorConfig.from_configs(suite_cluster, testsuite_config)
-    o = OrchestratorFactory.create_orchestrator(log, cfg)
-    yield o
+def vllm_targets(orch, variant_config, suite_mode):
     try:
-        if not lifecycle.torn_down:
-            log.info("orch fixture leak-guard: tearing down container (explicit teardown did not run)")
-            o.teardown_containers()
-    finally:
-        o.close()
-
-
-@pytest.fixture(scope="module")
-def vllm_mode(request):
-    stem = request.module.__name__.rsplit(".", 1)[-1]
-    if stem == "vllm_single":
-        return "single"
-    if stem == "vllm_distributed":
-        return "distributed"
-    pytest.fail(f"vLLM suite must be vllm_single or vllm_distributed, got {stem!r}")
-
-
-@pytest.fixture(scope="module")
-def vllm_targets(orch, variant_config, vllm_mode):
-    try:
-        topology = resolve_vllm_topology(vllm_mode, variant_config, orch.hosts)
+        topology = resolve_vllm_topology(suite_mode, variant_config, orch.hosts)
     except ValueError as exc:
         pytest.fail(str(exc))
 

@@ -75,7 +75,15 @@ def load_suite_config(schema, config_file, cluster_file, log):
     Unlike the older loaders, it never falls back to a lone ``*threshold.json``
     beside the config. ``orch_inputs`` gets the config as ``read_raw`` returned it.
     """
-    cluster = read_cluster(cluster_file)
+    return load_suite_config_with_cluster(schema, config_file, read_cluster(cluster_file), log)
+
+
+def load_suite_config_with_cluster(schema, config_file, cluster, log):
+    """``load_suite_config`` with the cluster file already read into ``cluster``.
+
+    With ``{}``, a suite's collection hook can run every check before any
+    fixture reads the cluster file.
+    """
     written = _read_json(config_file)
     raw = schema.read_raw(config_file, cluster)
     _refuse_before_schema(schema, config_file, schema.old_keys(raw), written, raw)

@@ -15,8 +15,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+from cvs.config_validation.schemas.inference.engines import VllmConfig
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
-from cvs.lib.conf_lib.schemas.vllm import VariantConfig
 from cvs.lib.inference.vllm_job import VllmJob
 from cvs.unittests.support import FAKE_CRED, TMP, run_trusted
 
@@ -72,19 +72,13 @@ class ServerScript:
 
 def _variant(log_dir, pp):
     cell = f"ISL=1024,OSL=1024,TP=8,PP={pp},CONC=16"
-    return VariantConfig(
+    return VllmConfig(
         enforce_thresholds=False,
         threshold_json="threshold.json",
         paths={"shared_fs": log_dir, "models_dir": "/models", "log_dir": log_dir, "hf_token_file": FAKE_CRED_FILE},
         container={"name": "test", "image": "test"},
-        server_params={
-            "model": "/models/test-model",
-            "tensor_parallel_size": 8,
-            "pipeline_parallel_size": pp,
-            "port": 8000,
-        },
-        sweeps={cell: {}},
-        runs=[cell],
+        server_params={"engine": "vllm", "model": "/models/test-model", "tp": 8, "pp": pp, "port": 8000},
+        cells=[cell],
     )
 
 

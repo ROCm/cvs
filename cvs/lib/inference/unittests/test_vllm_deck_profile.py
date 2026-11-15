@@ -6,10 +6,11 @@ All rights reserved.
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from cvs.config_validation.loaders.suite_config import load_suite_config_with_cluster
+from cvs.config_validation.schemas.inference.engines import VllmConfig
 from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
-from cvs.lib.conf_lib.loader import load_config
-from cvs.lib.conf_lib.schemas.vllm import VariantConfig
 from cvs.lib.inference.utils.vllm_metrics import (
     CLIENT_METRICS,
     METRIC_CATEGORIES,
@@ -128,9 +129,9 @@ class TestVllmDeckProfile(unittest.TestCase):
             config = write_filled_config(
                 root / "input/config_file/inference/vllm/mi3xx_vllm_llama33-70b_fp8_distributed.json", tmp
             )
-            variant = load_config(VariantConfig, config, {"username": "test"}).config
+            variant = load_suite_config_with_cluster(VllmConfig, config, {"username": "test"}, mock.Mock()).config
         variant.bind_effective_topology(EffectiveVllmTopology("distributed", ("node0", "node1"), 2))
-        cell_id = variant.expected_cells()[0]
+        cell_id = variant.cells[0]
         variant.enforce_thresholds = True
         variant.thresholds = {cell_id: {"output_throughput": {"kind": "min", "value": 1000.0}}}
         run = variant.resolved_runs()[0]

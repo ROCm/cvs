@@ -4,7 +4,7 @@ All rights reserved.
 
 Unit tests for the Ray distributed-executor-backend support added to
 cvs.lib.inference.vllm_job.VllmJob and
-cvs.lib.conf_lib.schemas.vllm.VariantConfig.
+cvs.config_validation.schemas.inference.engines.VllmConfig.
 
 These tests were originally derived from the Ray execution contract before
 implementation and retain coverage of its observable behavior.
@@ -31,7 +31,7 @@ Coverage-gap additions (post-review, impl-blind against the same spec):
 Round-2 coverage-gap additions (impl-blind against the same spec):
   6  empty/None exec silent-success guard ......... TestStartServerRayBootstrap
   7  nnodes=3 worker loop (all bootstrap; fail last) TestStartServerRayBootstrap
-  8  ray+pp>1 through the REAL VariantConfig ....... TestVariantConfigRayConsistency
+  8  ray+pp>1 through the REAL VllmConfig .......... TestVariantConfigRayConsistency
   9  stop-after-failed-start asserts teardown calls  TestVllmJobRayLifecycle
   10 FATAL_LOG_RE grep -> "vllm server fatal error"  TestCheckEarlyFailureRayWorkerSkip
 
@@ -59,8 +59,8 @@ import unittest.mock as mock
 
 from pydantic import ValidationError
 
+from cvs.config_validation.schemas.inference.engines import VllmConfig, serialize_cli_options
 from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
-from cvs.lib.conf_lib.schemas.vllm import VariantConfig, serialize_cli_options
 from cvs.lib.inference.vllm_job import VllmJob
 
 RAY = {"distributed-executor-backend": "ray"}
@@ -219,17 +219,14 @@ def _responder_readiness(exit_code=0, empty=False):
     return r
 
 
-def _variant(
-    serve_args=None, pp="2", ib_netdev="enp159s0np0", tp="8", master_addr="10.0.0.1", env=None, **server_extra
-):
+def _variant(serve_args=None, pp="2", tp="8", master_addr="10.0.0.1", env=None, **server_extra):
     """Minimal real vLLM variant using the refactored public contract."""
     options = {key.replace("-", "_"): value for key, value in (serve_args or {}).items()}
     distributed_executor_backend = options.pop("distributed_executor_backend", "mp")
     cell = f"ISL=1024,OSL=1024,TP={tp},PP={pp},CONC=16"
-    return VariantConfig(
+    return VllmConfig(
         enforce_thresholds=False,
         threshold_json="threshold.json",
-        ib_netdev=ib_netdev,
         paths={"shared_fs": "/logs", "models_dir": "/models", "log_dir": "/logs", "hf_token_file": FAKE_CRED_FILE},
         container={
             "name": "test",
@@ -238,17 +235,17 @@ def _variant(
             "runtime": {"name": "docker", "args": {}},
         },
         server_params={
+            "engine": "vllm",
             "model": "/models/test-model",
-            "tensor_parallel_size": tp,
-            "pipeline_parallel_size": pp,
+            "tp": tp,
+            "pp": pp,
             "port": 8000,
-            "dist_init_port": 29501,
+            "master_port": 29501,
             "distributed_executor_backend": distributed_executor_backend,
-            **options,
+            "engine_args": options,
             **server_extra,
         },
-        sweeps={cell: {}},
-        runs=[cell],
+        cells=[cell],
     )
 
 
@@ -257,7 +254,6 @@ def _job(
     serve_args=None,
     nnodes="2",
     pp="2",
-    ib_netdev="enp159s0np0",
     concurrency=16,
     isl="1024",
     osl="1024",
@@ -272,7 +268,7 @@ def _job(
         orch.hosts = list(orch.hosts[: int(nnodes)])
     return VllmJob(
         orch=orch,
-        variant=_variant(serve_args, pp, ib_netdev, tp, master_addr, env),
+        variant=_variant(serve_args, pp, tp, master_addr, env),
         isl=isl,
         osl=osl,
         concurrency=concurrency,
@@ -281,8 +277,8 @@ def _job(
     )
 
 
-def _vc(pp="1", serve_args=None, ib_netdev="eth0", tp="8", **params_extra):
-    return _variant(serve_args=serve_args, pp=pp, ib_netdev=ib_netdev, tp=tp, **params_extra)
+def _vc(pp="1", serve_args=None, tp="8", **params_extra):
+    return _variant(serve_args=serve_args, pp=pp, tp=tp, **params_extra)
 
 
 # --------------------------------------------------------------------------- #
@@ -316,12 +312,12 @@ def _all_cmds(orch):
 # --------------------------------------------------------------------------- #
 class TestVariantConfigRayConsistency(unittest.TestCase):
     def test_accepts_topology_agnostic_variants(self):
-        _vc(pp="1", serve_args=RAY, ib_netdev=None)
-        _vc(pp="2", serve_args={}, ib_netdev="eth0")
+        _vc(pp="1", serve_args=RAY)
+        _vc(pp="2", serve_args={})
 
     def test_rejects_removed_nnodes_field(self):
         with self.assertRaises(ValidationError) as ctx:
-            _vc(pp="1", serve_args={}, ib_netdev=None, nnodes="2")
+            _vc(pp="1", serve_args={}, nnodes="2")
         self.assertIn("nnodes", str(ctx.exception))
 
 
@@ -336,14 +332,14 @@ class TestCellKeyRayMultiNode(unittest.TestCase):
             with self.subTest(mode=mode, pp=pp):
                 vc = _vc(pp=pp, tp="8")
                 vc.bind_effective_topology(EffectiveVllmTopology(mode, hosts, int(pp)))
-                self.assertEqual(vc.cell_key("1024", "1024", "16", pipeline_parallel_size=pp), expected)
+                self.assertEqual(vc.cell_key("1024", "1024", "16"), expected)
 
-    def test_bound_topology_drives_three_argument_key_and_expected_cells(self):
+    def test_bound_topology_drives_three_argument_key_and_cells(self):
         vc = _vc(pp="2", tp="8")
         vc.bind_effective_topology(EffectiveVllmTopology("distributed", ("node0", "node1"), 2))
         expected = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
         self.assertEqual(vc.cell_key("1024", "1024", "16"), expected)
-        self.assertEqual(vc.expected_cells(), [expected])
+        self.assertEqual(vc.cells, [expected])
 
     def test_cell_key_is_config_defined_without_bound_topology(self):
         self.assertEqual(_vc(pp="2", tp="8").cell_key("1024", "1024", "16"), "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16")
@@ -571,7 +567,7 @@ class TestStartServerRayBootstrap(unittest.TestCase):
     def test_single_node_ray_no_bootstrap(self):
         # AC14: 1-node ray issues no ray start and exactly one vllm serve launch.
         orch = RecordingOrch(responder=_responder_ok(), hosts=[HEAD])
-        _job(orch=orch, serve_args=RAY, nnodes="1", pp="1", ib_netdev=None).start_server()
+        _job(orch=orch, serve_args=RAY, nnodes="1", pp="1").start_server()
         self.assertEqual([c for c in _all_cmds(orch) if "ray start" in c], [])
         serves = [c for c in _all_cmds(orch) if "vllm serve" in c]
         self.assertEqual(len(serves), 1, f"expected exactly one serve launch, got {serves}")
@@ -778,7 +774,7 @@ class TestStopServerRayTeardown(unittest.TestCase):
     def test_single_node_ray_no_ray_stop(self, mock_sleep):
         # AC21
         orch = RecordingOrch(hosts=[HEAD])
-        _job(orch=orch, serve_args=RAY, nnodes="1", pp="1", ib_netdev=None).stop_server()
+        _job(orch=orch, serve_args=RAY, nnodes="1", pp="1").stop_server()
         self.assertEqual([c for c, _ in orch.calls if "ray stop" in c], [])
 
 
@@ -808,7 +804,7 @@ class TestCheckEarlyFailureRayWorkerSkip(unittest.TestCase):
         # returns clean text so the EARLY_FAILURE_RE branch does NOT pre-empt the
         # FATAL_LOG_RE branch under test.
         orch = RecordingOrch(responder=_responder_fatal_grep({HEAD}), hosts=[HEAD])
-        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1", ib_netdev=None)
+        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1")
         with self.assertRaises(RuntimeError) as ctx:
             job._check_early_failure()
         msg = str(ctx.exception)
@@ -950,18 +946,18 @@ class TestVllmJobIsReady(unittest.TestCase):
 
     def test_true_when_readiness_found(self):
         orch = RecordingOrch(responder=_responder_readiness(exit_code=0), hosts=[HEAD])
-        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1", ib_netdev=None)
+        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1")
         self.assertTrue(job.is_ready())
 
     def test_false_when_readiness_absent(self):
         orch = RecordingOrch(responder=_responder_readiness(exit_code=1), hosts=[HEAD])
-        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1", ib_netdev=None)
+        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1")
         self.assertFalse(job.is_ready())
 
     def test_false_when_result_empty(self):
         # `not out` branch: an empty/None exec result must read as NOT ready.
         orch = RecordingOrch(responder=_responder_readiness(empty=True), hosts=[HEAD])
-        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1", ib_netdev=None)
+        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1")
         self.assertFalse(job.is_ready())
 
     def test_multinode_skips_workers_and_only_checks_rank0(self):
@@ -989,13 +985,13 @@ class TestVllmJobParseResults(unittest.TestCase):
 
     def test_empty_artifact_raises_runtimeerror(self):
         orch = RecordingOrch(head_responder=lambda cmd: {HEAD: ""}, hosts=[HEAD])
-        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1", ib_netdev=None)
+        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1")
         with self.assertRaises(RuntimeError):
             job.parse_results()
 
     def test_unparseable_json_raises_runtimeerror(self):
         orch = RecordingOrch(head_responder=lambda cmd: {HEAD: "not-json{"}, hosts=[HEAD])
-        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1", ib_netdev=None)
+        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1")
         with self.assertRaises(RuntimeError):
             job.parse_results()
 
@@ -1009,7 +1005,7 @@ class TestVllmJobParseResults(unittest.TestCase):
         # output and Jira ticket bodies, where the failure text is pasted.
         artifact = 'oh no\nline two\rline three\tand a tab'
         orch = RecordingOrch(head_responder=lambda cmd: {HEAD: artifact}, hosts=[HEAD])
-        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1", ib_netdev=None)
+        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1")
         with self.assertRaises(RuntimeError) as ctx:
             job.parse_results()
 
@@ -1045,7 +1041,7 @@ class TestVllmJobParseResults(unittest.TestCase):
         for pp in ("1", "2"):
             with self.subTest(pp=pp):
                 orch = RecordingOrch(head_responder=lambda cmd: {HEAD: _json.dumps(raw)}, hosts=[HEAD])
-                job = _job(orch=orch, serve_args={}, nnodes="1", pp=pp, ib_netdev=None, isl="1024")
+                job = _job(orch=orch, serve_args={}, nnodes="1", pp=pp, isl="1024")
                 with mock.patch("cvs.lib.inference.vllm_job.project_vllm_metrics") as projector:
                     projector.return_value = sentinel
                     result = job.parse_results()
@@ -1080,7 +1076,7 @@ class TestVllmJobWaitReady(unittest.TestCase):
         # Happy path: is_ready flips True on the 3rd poll; wait_ready must return
         # (no raise) and must stop polling immediately once ready (the side_effect
         # list has no 4th element, so a spurious extra poll raises StopIteration).
-        job = _job(serve_args={}, nnodes="1", pp="1", ib_netdev=None)
+        job = _job(serve_args={}, nnodes="1", pp="1")
         job._check_early_failure = mock.Mock()
         job.is_ready = mock.Mock(side_effect=[False, False, True])
         try:
@@ -1099,7 +1095,7 @@ class TestVllmJobWaitReady(unittest.TestCase):
         # constructor parameter (a small budget keeps the test fast and pins the
         # expected poll count without depending on the internal attribute name).
         poll_count = 3
-        variant = _variant(serve_args={}, pp="1", ib_netdev=None)
+        variant = _variant(serve_args={}, pp="1")
         variant.server_params.server_poll_iterations = poll_count
         job = VllmJob(
             orch=RecordingOrch(responder=_responder_ok(), hosts=[HEAD]),
@@ -1122,7 +1118,7 @@ class TestVllmJobWaitReady(unittest.TestCase):
     def test_early_failure_check_runs_before_polling(self, mock_sleep):
         # Ordering: the early-failure check must precede the is_ready poll loop, so a
         # crash detectable in the log is surfaced before spending the poll budget.
-        job = _job(serve_args={}, nnodes="1", pp="1", ib_netdev=None)
+        job = _job(serve_args={}, nnodes="1", pp="1")
         order = []
         job._check_early_failure = mock.Mock(side_effect=lambda *a, **k: order.append("check"))
         job.is_ready = mock.Mock(side_effect=lambda: (order.append("ready"), True)[1])
@@ -1135,7 +1131,7 @@ class TestVllmJobWaitReady(unittest.TestCase):
         # If _check_early_failure raises (a fatal log line found during precheck/
         # warmup), wait_ready must propagate it and NOT proceed to poll is_ready --
         # the server is already known dead.
-        job = _job(serve_args={}, nnodes="1", pp="1", ib_netdev=None)
+        job = _job(serve_args={}, nnodes="1", pp="1")
         job._check_early_failure = mock.Mock(side_effect=RuntimeError("vllm server fatal error (rank 0)"))
         job.is_ready = mock.Mock(return_value=True)
         with self.assertRaises(RuntimeError):
@@ -1154,8 +1150,8 @@ class TestVllmJobBuildServerCmd(unittest.TestCase):
     """build_server_cmd() writes an env-script (broadcast to all nodes) and issues
     per-rank mkdir commands. Its documented equivalence classes (per discipline
     rule B, driven by subTest tables): ib_hcas present vs empty/None (the
-    NCCL_IB_HCA line is emitted or not), ib_netdev present vs None (the socket
-    interface exports are emitted or not), the server_env pass-through loop, and the
+    NCCL_IB_HCA line is emitted or not), socket interfaces never exported (they
+    come from container.env only), the server_env pass-through loop, and the
     per-rank mkdir loop bounded by nnodes. Assertions target stable, named tokens
     (NCCL_IB_HCA, SOCKET_IFNAME, the env keys, mkdir) rather than exact shell
     formatting, and are collected from every command the method emits (whether
@@ -1207,35 +1203,19 @@ class TestVllmJobBuildServerCmd(unittest.TestCase):
         self.assertNotIn("NCCL_IB_HCA", script)
         self.assertEqual(job.variant.container.env["NCCL_IB_HCA"], "rdma0,rdma1")
 
-    def test_socket_ifname_exports_present_only_when_ib_netdev_set(self):
-        # ib_netdev set -> the socket-interface exports are emitted (all three name
-        # the device); ib_netdev None -> none are emitted.
-        orch_set = RecordingOrch()
-        _job(orch=orch_set, serve_args={}, nnodes="2", pp="2", ib_netdev="eth0").build_server_cmd()
-        script_set = self._script(orch_set, None)
-        self.assertEqual(
-            script_set.count("SOCKET_IFNAME"),
-            3,
-            "ib_netdev must emit exactly the three socket-ifname exports",
-        )
-        self.assertIn("eth0", script_set, "the configured ib_netdev must reach the export value")
-
-        orch_none = RecordingOrch()
-        _job(orch=orch_none, serve_args={}, nnodes="2", pp="2", ib_netdev=None).build_server_cmd()
-        script_none = self._script(orch_none, None)
-        self.assertNotIn("SOCKET_IFNAME", script_none, "no ib_netdev -> no socket-ifname exports")
-
-    def test_container_socket_environment_is_not_overwritten_by_legacy_ib_netdev(self):
+    def test_socket_interfaces_are_never_exported_and_container_env_is_kept(self):
         env = {
             "NCCL_SOCKET_IFNAME": "eno0",
             "GLOO_SOCKET_IFNAME": "eno0",
             "TP_SOCKET_IFNAME": "eno0",
         }
-        orch = RecordingOrch()
-        job = _job(orch=orch, serve_args={}, nnodes="2", pp="2", ib_netdev="eth0", env=env)
-        job.build_server_cmd()
-        self.assertNotIn("SOCKET_IFNAME", self._script(orch, None))
-        self.assertEqual({name: job.variant.container.env[name] for name in env}, env)
+        for container_env in ({}, env):
+            with self.subTest(container_env=container_env):
+                orch = RecordingOrch()
+                job = _job(orch=orch, serve_args={}, nnodes="2", pp="2", env=container_env)
+                job.build_server_cmd()
+                self.assertNotIn("SOCKET_IFNAME", self._script(orch, None))
+                self.assertEqual(dict(job.variant.container.env), container_env)
 
     def test_static_environment_is_kept_on_container_config(self):
         orch = RecordingOrch()
@@ -1255,9 +1235,9 @@ class TestVllmJobBuildServerCmd(unittest.TestCase):
         # The per-rank mkdir loop is bounded by nnodes: a 3-node job must issue
         # strictly more mkdir commands than a single-node job (all else equal).
         orch1 = RecordingOrch(hosts=[HEAD])
-        _job(orch=orch1, serve_args={}, nnodes="1", pp="1", ib_netdev=None).build_server_cmd()
+        _job(orch=orch1, serve_args={}, nnodes="1", pp="1").build_server_cmd()
         orch3 = RecordingOrch(hosts=[HEAD, WORKER, HOST2])
-        _job(orch=orch3, serve_args={}, nnodes="3", pp="1", ib_netdev="eth0").build_server_cmd()
+        _job(orch=orch3, serve_args={}, nnodes="3", pp="1").build_server_cmd()
         mk1 = self._script(orch1, None).count("mkdir")
         mk3 = self._script(orch3, None).count("mkdir")
         self.assertGreater(mk1, 0, "build_server_cmd must create at least the rank-0 log dir")

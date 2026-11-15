@@ -1,12 +1,80 @@
-'''Unit tests for vLLM pytest-html metric hooks.'''
+'''Unit tests for the vLLM suite conftest: its schema and orch wiring, and its pytest-html metric hooks.'''
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from cvs.config_validation.schemas.inference.engines import VllmConfig
+from cvs.core.orchestrators.factory import OrchestratorFactory
 from cvs.lib.report import benchmark_metric_registry as registry
 from cvs.lib.report.render.perf_metric_table import is_benchmark_metrics_extra
+from cvs.tests import conftest as root_conftest
 from cvs.tests.inference.vllm import conftest as vllm_conftest
+from cvs.unittests.support import write_filled_config
+
+CONFIG_DIR = Path(__file__).resolve().parents[4] / "input" / "config_file" / "inference" / "vllm"
+# The cluster file's head is not its first node, so a missed head rewrite for vllm_single shows.
+CLUSTER = {
+    "username": "u",
+    "priv_key_file": "/keys/id",
+    "node_dict": {"n1": {"vpc_ip": "v1"}, "n0": {"vpc_ip": "v0"}},
+    "head_node_dict": {"mgmt_ip": "n0"},
+}
+
+
+class TestVllmOrch(unittest.TestCase):
+    """The suite's orch comes from the root fixture through VllmConfig and launches nothing itself."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+        cluster_file = self.tmp / "cluster.json"
+        cluster_file.write_text(json.dumps(CLUSTER))
+        self.options = {"cluster_file": str(cluster_file)}
+        self.pytestconfig = mock.Mock()
+        self.pytestconfig.getoption.side_effect = lambda name: self.options[name]
+        self.orch = mock.MagicMock(orchestrator_type="container")
+        patcher = mock.patch.object(OrchestratorFactory, "create_orchestrator", return_value=self.orch)
+        self.create = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _check_orch(self, module, config_name, hosts, head):
+        schema = vllm_conftest.config_schema.__wrapped__()
+        self.options["config_file"] = str(write_filled_config(CONFIG_DIR / config_name, self.tmp))
+        loaded = root_conftest.suite_config.__wrapped__(self.pytestconfig, schema)
+        lifecycle = vllm_conftest._Lifecycle()
+        request = SimpleNamespace(
+            module=SimpleNamespace(__name__=f"cvs.tests.inference.vllm.{module}"),
+            getfixturevalue=mock.Mock(return_value=lifecycle),
+        )
+        mode = root_conftest.suite_mode.__wrapped__(request, schema)
+        gen = root_conftest.orch.__wrapped__(request, self.pytestconfig, loaded, mode)
+
+        self.assertIs(next(gen), self.orch)
+        (_, cfg), _ = self.create.call_args
+        self.assertEqual((list(cfg.node_dict), cfg.head_node_dict["mgmt_ip"]), (hosts, head))
+        self.assertEqual(cfg.orchestrator, "container")
+        self.assertIs(self.orch.suite_config, loaded.config)
+        request.getfixturevalue.assert_called_once_with("lifecycle")
+        # The launch and sshd setup are tests of their own, so the fixture calls nothing before it yields.
+        self.assertEqual(self.orch.method_calls, [])
+
+        with self.assertRaises(StopIteration):
+            next(gen)
+        self.assertEqual(self.orch.method_calls, [mock.call.teardown_containers(), mock.call.close()])
+
+    def test_config_schema_is_vllm_config(self):
+        self.assertIs(vllm_conftest.config_schema.__wrapped__(), VllmConfig)
+
+    def test_vllm_single_runs_on_the_first_node_as_head(self):
+        self._check_orch("vllm_single", "mi3xx_vllm_llama33-70b_fp8_single.json", ["n1"], "n1")
+
+    def test_vllm_distributed_keeps_every_node_and_the_cluster_head(self):
+        self._check_orch("vllm_distributed", "mi3xx_vllm_llama33-70b_fp8_distributed.json", ["n1", "n0"], "n0")
 
 
 class _FakeStash(dict):

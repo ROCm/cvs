@@ -54,23 +54,26 @@
     }
   },
   "server_params": {
-    "_comment": "Harness fields plus snake-case vllm serve options.",
+    "engine": "vllm",
+    "_comment": "Harness fields; engine_args holds every other vllm serve option.",
     "model": "<changeme>",
-    "tensor_parallel_size": 4,
+    "tp": 4,
     "port": 8947,
-    "dist_init_port": 28947,
+    "master_port": 28947,
     "server_poll_iterations": 120,
     "server_poll_wait_s": 20,
     "server_warmup_wait_s": 30,
-    "trust_remote_code": true,
-    "kv_cache_dtype": "fp8",
-    "max_model_len": 20480,
-    "gpu_memory_utilization": 0.9,
-    "max_num_seqs": 256,
-    "no_enable_prefix_caching": true
+    "engine_args": {
+      "trust_remote_code": true,
+      "kv_cache_dtype": "fp8",
+      "max_model_len": 20480,
+      "gpu_memory_utilization": 0.9,
+      "max_num_seqs": 256,
+      "no_enable_prefix_caching": true
+    }
   },
   "benchmark_params": {
-    "_comment": "Default vllm bench serve settings; per-cell values in sweeps override these defaults.",
+    "_comment": "vllm bench serve settings every cell runs with; client_args holds every other vllm bench serve option.",
     "dataset_name": "random",
     "num_prompts": 750,
     "request_rate": "inf",
@@ -81,19 +84,12 @@
     "client_poll_iterations": 360,
     "trust_remote_code": true,
     "ignore_eos": true,
-    "temperature": 0
+    "client_args": {
+      "temperature": 0
+    }
   },
-  "_comment_sweeps": "Canonical run cells; entries override benchmark_params for that cell.",
-  "sweeps": {
-    "ISL=1024,OSL=256,TP=4,PP=1,CONC=64": {},
-    "ISL=16384,OSL=128,TP=4,PP=1,CONC=4": {},
-    "ISL=1024,OSL=1024,TP=4,PP=1,CONC=16": {},
-    "ISL=1024,OSL=1024,TP=4,PP=1,CONC=32": {},
-    "ISL=1024,OSL=1024,TP=4,PP=1,CONC=64": {},
-    "ISL=8192,OSL=1024,TP=4,PP=1,CONC=32": {}
-  },
-  "_comment_runs": "Explicit ordered run cells to execute.",
-  "runs": [
+  "_comment_cells": "Canonical cell keys to run, in order; every cell runs with benchmark_params.",
+  "cells": [
     "ISL=1024,OSL=256,TP=4,PP=1,CONC=64",
     "ISL=16384,OSL=128,TP=4,PP=1,CONC=4",
     "ISL=1024,OSL=1024,TP=4,PP=1,CONC=16",

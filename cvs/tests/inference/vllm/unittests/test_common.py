@@ -1,15 +1,24 @@
 '''Unit tests for shared vLLM metric verification stages.'''
 
 import json
+import tempfile
 import unittest
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
 import pytest
 
+import cvs
+from cvs.lib.conf_lib.loader import ConfigError
 from cvs.lib.report import benchmark_metric_registry as registry
 from cvs.tests.inference.vllm import _common
+from cvs.unittests.support import write_filled_config
+
+PACKAGE_DIR = Path(cvs.__file__).resolve().parent
+OLD_CONFIG = PACKAGE_DIR / "config_validation/migrate/unittests/old/mi3xx_vllm_llama33-70b_fp8_distributed.json"
+SHIPPED_CONFIG = PACKAGE_DIR / "input/config_file/inference/vllm/mi3xx_vllm_llama33-70b_fp8_distributed.json"
 
 
 class _FakeStash(dict):
@@ -29,6 +38,34 @@ class _CapturingSubtests:
             yield
         except pytest.fail.Exception as exc:
             self.failures.append(str(exc))
+
+
+def _metafunc(config_file):
+    return SimpleNamespace(
+        config=SimpleNamespace(getoption={"config_file": str(config_file)}.get),
+        fixturenames=["run"],
+        parametrize=mock.Mock(),
+    )
+
+
+class TestPytestGenerateTests(unittest.TestCase):
+    def test_each_cell_is_one_run_in_cells_order_and_no_cluster_file_is_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_file = write_filled_config(SHIPPED_CONFIG, tmp)
+            cells = json.loads(config_file.read_text())["cells"]
+            metafunc = _metafunc(config_file)
+            with mock.patch("cvs.config_validation.loaders.suite_config.read_cluster") as read:
+                _common.pytest_generate_tests(metafunc)
+        read.assert_not_called()
+        (name, runs), kwargs = metafunc.parametrize.call_args
+        self.assertEqual((name, [run.cell.key for run in runs], kwargs["ids"]), ("run", cells, cells))
+
+    def test_an_old_format_config_fails_at_collection_naming_the_migrate_command(self):
+        metafunc = _metafunc(OLD_CONFIG)
+        with self.assertRaises(ConfigError) as ctx:
+            _common.pytest_generate_tests(metafunc)
+        self.assertTrue(ctx.exception.problems[0].endswith(f"run cvs config migrate vllm {OLD_CONFIG} <new config>"))
+        metafunc.parametrize.assert_not_called()
 
 
 class TestInferenceCellMetrics(unittest.TestCase):

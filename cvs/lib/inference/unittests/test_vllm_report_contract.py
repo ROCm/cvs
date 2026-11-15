@@ -30,7 +30,7 @@ def _variant(actual_thresholds=None, enforce=True):
         model_id="model",
         enforce_thresholds=enforce,
         thresholds={CELL: actual_thresholds or {}},
-        server_params=SimpleNamespace(model="model", tensor_parallel_size=1),
+        server_params=SimpleNamespace(model="model", tp=1),
         cell_key=lambda _isl, _osl, _conc: CELL,
     )
 

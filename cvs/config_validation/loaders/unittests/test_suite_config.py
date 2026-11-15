@@ -22,6 +22,7 @@ from cvs.config_validation.loaders.suite_config import (
     UNMAPPED_FIELD_MESSAGE,
     LoadedSuiteConfig,
     load_suite_config,
+    load_suite_config_with_cluster,
     mode_from_module,
     read_cluster,
 )
@@ -240,6 +241,20 @@ class TestLoadSuiteConfig(_LoaderCase):
         with self.assertRaises(ConfigError) as ctx:
             load_suite_config(_Serving, self.config_file, self.cluster_file, self.log)
         self.assertEqual(str(ctx.exception), f"{threshold} is not a valid config:\n  {problem}")
+
+    def test_with_the_cluster_given_no_cluster_file_is_read_and_every_check_still_runs(self):
+        config = self._threshold_config({CELL: {"output_throughput": _spec()}})
+        self._write("configs/suite.json", config)
+        old = {**config, "server_params": {**VALID["server_params"], "tensor_parallel_size": 8}}
+        self._write("configs/old.json", old)
+        with mock.patch("cvs.config_validation.loaders.suite_config.read_cluster") as read:
+            loaded = load_suite_config_with_cluster(_Hooked, self.config_file, {}, self.log)
+            with self.assertRaises(ConfigError) as ctx:
+                load_suite_config_with_cluster(_Hooked, str(self.tmp / "configs" / "old.json"), {}, self.log)
+        read.assert_not_called()
+        self.assertEqual(loaded.cluster, {})
+        self.assertEqual(loaded.orch_inputs[2:], ([CELL], {}))
+        self.assertIn("run cvs config migrate demo", ctx.exception.problems[0])
 
 
 class TestCheckOrder(_LoaderCase):

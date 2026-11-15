@@ -14,7 +14,7 @@ Unit tests for cvs.lib.inference.vllm_job.VllmJob server-command construction:
 import json
 import unittest
 import unittest.mock as mock
-from cvs.lib.conf_lib.schemas.vllm import VariantConfig, serialize_cli_options
+from cvs.config_validation.schemas.inference.engines import VllmConfig, serialize_cli_options
 from cvs.lib.inference.vllm_job import VllmJob
 from cvs.unittests.support import TMP
 
@@ -90,27 +90,26 @@ def _make_job_for_check(tail_output="", grep_exit=1):
     )
 
 
-def _variant(serve_args=None, benchmark_params=None, sweep_options=None):
+def _variant(serve_args=None, benchmark_params=None):
     options = {key.replace("-", "_"): value for key, value in (serve_args or {}).items()}
     distributed_executor_backend = options.pop("distributed_executor_backend", "mp")
     cell = f"ISL=1024,OSL=1024,TP={_TP},PP={_PP},CONC=16"
-    return VariantConfig(
+    return VllmConfig(
         enforce_thresholds=False,
         threshold_json="threshold.json",
-        ib_netdev="enp159s0np0",
         paths={"shared_fs": "/logs", "models_dir": "/models", "log_dir": "/logs", "hf_token_file": FAKE_CRED_FILE},
         container={"name": "test", "image": "test", "env": {}, "runtime": {"name": "docker", "args": {}}},
         server_params={
+            "engine": "vllm",
             "model": "/models/Kimi-K2.5-W4A8",
-            "tensor_parallel_size": _TP,
-            "pipeline_parallel_size": _PP,
+            "tp": _TP,
+            "pp": _PP,
             "port": 8000,
             "distributed_executor_backend": distributed_executor_backend,
-            **options,
+            "engine_args": options,
         },
         benchmark_params=benchmark_params or {},
-        sweeps={cell: sweep_options or {}},
-        runs=[cell],
+        cells=[cell],
     )
 
 
@@ -148,11 +147,8 @@ class TestMaxModelLenFallback(unittest.TestCase):
                 self.assertEqual(argv.count("--max-model-len"), 1)
                 self.assertEqual(argv[idx + 1], expected)
 
-    def test_uses_effective_per_cell_range_and_prefix_overrides(self):
-        variant = _variant(
-            benchmark_params={"random_range_ratio": 0.8, "random_prefix_len": 64},
-            sweep_options={"random_range_ratio": 0.25, "random_prefix_len": 7},
-        )
+    def test_uses_the_resolved_runs_range_and_prefix(self):
+        variant = _variant(benchmark_params={"random_range_ratio": 0.25, "random_prefix_len": 7})
         (run,) = variant.resolved_runs()
         job = VllmJob(
             orch=FakeOrch(),
@@ -263,12 +259,15 @@ class TestRunClientTrustRemoteCode(unittest.TestCase):
         job = _job("1024", "1024", 8)
         self.assertNotIn("--trust-remote-code", self._bench_cmd(job))
 
-    def test_resolved_cell_flags_override_benchmark_defaults(self):
-        for base, override, present in ((False, True, True), (True, False, False)):
-            with self.subTest(base=base, override=override):
+    def test_resolved_run_carries_the_benchmark_flags_and_client_args(self):
+        for present in (True, False):
+            with self.subTest(present=present):
                 variant = _variant(
-                    benchmark_params={"ignore_eos": base, "trust_remote_code": base},
-                    sweep_options={"ignore_eos": override, "trust_remote_code": override},
+                    benchmark_params={
+                        "ignore_eos": present,
+                        "trust_remote_code": present,
+                        "client_args": {"temperature": 0.0},
+                    }
                 )
                 (run,) = variant.resolved_runs()
                 job = VllmJob(
@@ -283,6 +282,7 @@ class TestRunClientTrustRemoteCode(unittest.TestCase):
                 command = self._bench_cmd(job)
                 self.assertEqual("--ignore-eos" in command, present)
                 self.assertEqual("--trust-remote-code" in command, present)
+                self.assertIn("--temperature 0.0", command)
 
 
 class TestSerializeServeArgs(unittest.TestCase):

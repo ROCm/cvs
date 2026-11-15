@@ -10,8 +10,8 @@ reaches the suite unchanged.
 
 Shipped configs are templates: ``<changeme>`` and ``<changeme-...>`` mark the
 values a user fills in for their setup. A ``ConfigStr`` field rejects them only
-when validated with ``context={"placeholders": "reject"}``, which
-``cvs.lib.conf_lib.loader.load_config`` always passes.
+when validated with ``context={"placeholders": "reject"}``; without it the field
+is a plain ``str``, so suites that validate a template directly keep working.
 '''
 
 from __future__ import annotations

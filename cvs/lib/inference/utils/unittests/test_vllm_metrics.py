@@ -304,6 +304,23 @@ class TestStrictMetricVerdict(unittest.TestCase):
                 self.assertEqual(status, "fail")
                 self.assertIn("finite built-in", reason)
 
+    def test_info_spec_passes_whatever_the_actual(self):
+        for metric, actual in (("output_throughput", 0), ("mean_ttft_ms", 1e9), ("output_throughput", None)):
+            with self.subTest(metric=metric, actual=actual):
+                self.assertEqual(metric_verdict(metric, actual, {"kind": "info", "value": 1000}), ("pass", ""))
+
+    def test_kind_against_the_metrics_direction_or_an_old_kind_fails(self):
+        for metric, kind in (("output_throughput", "max"), ("mean_ttft_ms", "min"), ("mean_ttft_ms", "max_ms")):
+            with self.subTest(metric=metric, kind=kind):
+                status, reason = metric_verdict(metric, 1, {"kind": kind, "value": 1})
+                self.assertEqual(status, "fail")
+                self.assertIn(f"{metric} threshold kind must be", reason)
+                self.assertIn("'info'", reason)
+
+    def test_info_spec_still_needs_a_finite_value_and_a_known_metric(self):
+        self.assertEqual(metric_verdict("output_throughput", 1, {"kind": "info", "value": "1"})[0], "fail")
+        self.assertEqual(metric_verdict("output_throughputs", 1, {"kind": "info", "value": 1})[0], "fail")
+
     def test_finite_number_excludes_bool_and_subclasses(self):
         class IntSubclass(int):
             pass

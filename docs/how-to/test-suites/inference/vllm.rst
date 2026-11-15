@@ -67,6 +67,16 @@ uses the packaged copy.
   cvs config copy inference/vllm/mi325x_vllm_llama33-70b_fp8_distributed_threshold.json \
     --output /tmp/cvs/mi325x_vllm_llama33-70b_fp8_distributed_threshold.json
 
+A vLLM config from an earlier CVS release is in the old format and fails to
+load. Convert it once, then edit the new file:
+
+.. code:: bash
+
+  cvs config migrate vllm <old config.json> <new config.json>
+
+See :doc:`Convert an old configuration file </reference/configuration-files/inference/index>`
+for the fields to fix when the command reports any.
+
 Copy a cluster file. Use the container template, since the vLLM suite always
 runs inside a container:
 
@@ -83,9 +93,8 @@ unless the cluster file sets ``username``.
 
 In the **cluster file**, set your SSH user, private key path, and node
 addresses. Unresolved ``<changeme>`` strings in the cluster file stop
-startup. The vLLM loader does not apply the same hard-exit to the workload
-file, except when ``threshold_json`` itself still contains ``<changeme>``.
-An unreplaced image name or mount fails later, at pull or ``docker run``.
+startup. A ``<changeme>`` left in the vLLM config or its threshold file fails
+config load, and the error names every such field.
 See :doc:`/how-to/run-with-containers` for the cluster-file walkthrough.
 
 In the **Llama single-node file**, replace these placeholders:
@@ -310,13 +319,13 @@ Going multinode
 
 ``vllm_distributed`` with one host calls ``resolve_vllm_topology`` and gets an effective ``single`` topology. That path does not raise. ``vllm serve`` is the single-node command: no ``--node-rank``, ``--master-addr``, ``--master-port``, ``--nnodes``, or ``--distributed-executor-backend``. ``--pipeline-parallel-size`` is added only when pipeline parallel size is greater than 1. Ray is not started.
 
-Two or more hosts on the default ``mp`` backend require pipeline parallel size greater than 1. The JSON key is ``server_params.distributed_executor_backend`` (snake case). The exact error text still uses a hyphen:
+Two or more hosts on the default ``mp`` backend require ``server_params.pp`` greater than 1. Otherwise the run fails with:
 
 .. code:: text
 
-  vllm_distributed requires pipeline_parallel_size>1 unless distributed-executor-backend=ray
+  vllm_distributed requires server_params.pp>1 unless distributed_executor_backend=ray
 
-Set the value to the lowercase string ``"ray"`` to take the Ray path, or raise ``pipeline_parallel_size``. Other strings are rejected when the config loads.
+Set ``server_params.distributed_executor_backend`` to the lowercase string ``"ray"`` to take the Ray path, or raise ``server_params.pp``. Other strings are rejected when the config loads.
 
 Multi-host runs also require a socket interface. The exact error is:
 
@@ -324,7 +333,7 @@ Multi-host runs also require a socket interface. The exact error is:
 
   vllm_distributed requires container.env.NCCL_SOCKET_IFNAME on multi-host clusters
 
-A legacy top-level ``ib_netdev`` also satisfies that check. Set ``GLOO_SOCKET_IFNAME`` and ``TP_SOCKET_IFNAME`` as well: if you set any one of the three, the config load requires all three.
+Set ``GLOO_SOCKET_IFNAME`` and ``TP_SOCKET_IFNAME`` as well: if you set any one of the three, the config load requires all three.
 
 HCA preflight
 -------------
@@ -335,7 +344,7 @@ On a multi-host run it checks:
 
 - Each node has a non-empty HCA list, from ``ibv_devinfo -l``, or from ``/sys/class/infiniband`` when that command is missing or empty.
 - The discovered name lists match across nodes.
-- Every name in ``container.env.NCCL_IB_HCA`` (or a legacy ``ib_hca_devices`` list) is present on every node. A miss fails with ``ib_discovery preflight: requested HCA devices <missing> not found on <host>. Available: <devs>``.
+- Every name in ``container.env.NCCL_IB_HCA`` is present on every node. A miss fails with ``ib_discovery preflight: requested HCA devices <missing> not found on <host>. Available: <devs>``.
 
 It does not check that the socket-interface names exist, that ``NCCL_IB_GID_INDEX`` is valid, or that the links are up. When ``NCCL_IB_HCA`` is set, preflight does not rewrite it; the container environment keeps the value you wrote.
 
@@ -357,8 +366,8 @@ If you set nothing else, the suite uses ``mp``. Two or more hosts require pipeli
         }
       },
       "server_params": {
-        "tensor_parallel_size": 8,
-        "pipeline_parallel_size": 2,
+        "tp": 8,
+        "pp": 2,
         "distributed_executor_backend": "mp"
       }
     }
@@ -374,13 +383,13 @@ Ray is opt-in. Set the snake_case key ``distributed_executor_backend`` to ``"ray
 
     {
       "server_params": {
-        "tensor_parallel_size": 8,
-        "pipeline_parallel_size": 1,
+        "tp": 8,
+        "pp": 1,
         "distributed_executor_backend": "ray"
       }
     }
 
-CVS then bootstraps a Ray cluster before serving: ``ray start --head --port=<dist_init_port>`` on rank 0, ``ray start --address=<head>:<dist_init_port>`` on each worker, and ``ray stop`` at teardown. Only the head node runs ``vllm serve``, so worker nodes produce no server log. ``--pipeline-parallel-size`` is added only when pipeline parallel size is greater than 1.
+CVS then bootstraps a Ray cluster before serving: ``ray start --head --port=<master_port>`` on rank 0, ``ray start --address=<head>:<master_port>`` on each worker, and ``ray stop`` at teardown. Only the head node runs ``vllm serve``, so worker nodes produce no server log. ``--pipeline-parallel-size`` is added only when pipeline parallel size is greater than 1.
 
 .. note::
 
@@ -398,16 +407,18 @@ Troubleshooting
    * - Problem
      - Cause and fix
    * - Validation error on startup
-     - ``container``, ``paths``, and the top-level config reject unknown
-       keys. ``server_params``, ``benchmark_params``, and sweep overrides
-       accept extra snake_case vLLM options. Keys such as ``image_tar``,
+     - ``container``, ``paths``, ``server_params``, ``benchmark_params``,
+       and the top-level config reject unknown keys. Put other vLLM options
+       in ``server_params.engine_args`` or ``benchmark_params.client_args``.
+       A config in the old format names the ``cvs config migrate vllm``
+       command that converts it. Keys such as ``image_tar``,
        ``registry``, ``shm_size``, and ``cap_add`` belong on the cluster
        file, not in the vLLM config. See :doc:`/reference/cluster/cluster-file`.
-   * - ``vllm_distributed requires pipeline_parallel_size>1 unless
-       distributed-executor-backend=ray``
+   * - ``vllm_distributed requires server_params.pp>1 unless
+       distributed_executor_backend=ray``
      - Two or more hosts are configured on ``mp`` without pipeline
-       parallelism. Raise ``pipeline_parallel_size``, or set
-       ``distributed_executor_backend`` to ``"ray"``.
+       parallelism. Raise ``server_params.pp``, or set
+       ``server_params.distributed_executor_backend`` to ``"ray"``.
    * - ``vllm_distributed requires container.env.NCCL_SOCKET_IFNAME on
        multi-host clusters``
      - Set the socket interface. If you set any of
@@ -432,7 +443,7 @@ Troubleshooting
    * - Sweep is slower than expected
      - Cells that differ only in concurrency reuse the running server.
        Changing ISL, OSL, TP, PP, or any server argument forces a
-       restart and a weight reload. Order ``runs`` so concurrency varies
+       restart and a weight reload. Order ``cells`` so concurrency varies
        fastest to avoid needless reloads. The packaged single-node file
        already does this (concurrency 16, then 32).
    * - ``runtime.name`` is not ``docker``

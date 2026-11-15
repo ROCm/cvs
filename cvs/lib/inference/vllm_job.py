@@ -26,8 +26,7 @@ IB device config (distributed only):
   NCCL_IB_HCA: inherited from container.env when configured there. Otherwise,
       ib_hcas discovered by test_discover_topology are written into the
       per-node env script.
-  Socket interfaces: inherited from container.env. The legacy top-level
-      ib_netdev fallback is written into the per-node environment script.
+  Socket interfaces: inherited from container.env.
 '''
 
 from __future__ import annotations
@@ -40,8 +39,8 @@ import shlex
 import time
 from typing import Optional
 
+from cvs.config_validation.schemas.inference.engines import serialize_cli_options
 from cvs.lib import globals
-from cvs.lib.conf_lib.schemas.vllm import serialize_cli_options
 from cvs.lib.inference.utils.vllm_metrics import project_vllm_metrics
 from cvs.lib.utils.model_query_lib import OpenAIProbe
 
@@ -147,12 +146,11 @@ class VllmJob:
         p = variant.server_params
         b = dict(benchmark_params or {})
         if not b:
-            b = variant.benchmark_params.model_dump()
-            b.update(variant.benchmark_params.extra_options())
-        self.tp = str(p.tensor_parallel_size)
-        self.pp = str(topology.pipeline_parallel_size) if topology is not None else str(p.pipeline_parallel_size)
+            b = variant.benchmark_params.options()
+        self.tp = str(p.tp)
+        self.pp = str(topology.pipeline_parallel_size) if topology is not None else str(p.pp)
         self.master_addr = self.hosts[0]
-        self.master_port = str(p.dist_init_port)
+        self.master_port = str(p.master_port)
         self.nnodes = str(topology.nnodes) if topology is not None else str(len(self.hosts))
         self.port_no = str(p.port)
         self.random_range_ratio = str(b["random_range_ratio"])
@@ -163,13 +161,13 @@ class VllmJob:
         self.tokenizer_mode = str(b["tokenizer_mode"])
         self.base_url = "http://0.0.0.0"
         self.dataset_name = str(b["dataset_name"])
-        self.backend = str(b["backend"])
+        self.backend = "vllm"
         self.ignore_eos = bool(b["ignore_eos"])
         self.trust_remote_code = bool(b["trust_remote_code"])
 
         self.model_id = p.model
         self.log_dir = variant.paths.log_dir
-        self.serve_args = p.extra_options()
+        self.serve_args = dict(p.engine_args)
         self.distributed_executor_backend = p.distributed_executor_backend
         self.benchmark_options = {
             key: value
@@ -180,7 +178,6 @@ class VllmJob:
         self.server_env = {}
         self.models_dir = variant.paths.models_dir
         self.hf_token_file = variant.paths.hf_token_file
-        self.ib_netdev = None if variant.container.socket_env_configured else variant.ib_netdev
 
         self.out_dir = f"{self.log_dir}/{self.log_subdir}/out-node0/isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
         self.server_log = f"{self.out_dir}/vllm_serve_server.log"
@@ -301,10 +298,6 @@ class VllmJob:
         ]
         if self.ib_hcas:
             env_lines.append(f"export NCCL_IB_HCA={shlex.quote(','.join(self.ib_hcas))}")
-        if self.ib_netdev:
-            env_lines.append(f"export NCCL_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
-            env_lines.append(f"export GLOO_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
-            env_lines.append(f"export TP_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
         for k, v in self.server_env.items():
             env_lines.append(f"export {k}={shlex.quote(str(v))}")
         env_script = "\n".join(env_lines) + "\n"

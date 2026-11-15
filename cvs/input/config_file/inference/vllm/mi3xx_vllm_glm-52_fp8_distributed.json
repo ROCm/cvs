@@ -57,27 +57,28 @@
     "_comment_gpu_arch": "These backend settings were exercised on MI325X (gfx942); revalidate them before using another GPU architecture."
   },
   "server_params": {
-    "_comment": "Harness fields plus snake-case vllm serve options.",
-    "backend": "vllm",
+    "engine": "vllm",
+    "_comment": "Harness fields; engine_args holds every other vllm serve option.",
     "model": "<changeme>",
-    "tensor_parallel_size": 8,
-    "pipeline_parallel_size": 2,
+    "tp": 8,
+    "pp": 2,
     "port": "8888",
-    "dist_init_port": "29501",
+    "master_port": "29501",
     "server_poll_iterations": 540,
     "server_poll_wait_s": 10,
     "server_warmup_wait_s": 30,
     "distributed_executor_backend": "mp",
-    "trust_remote_code": true,
-    "max_model_len": 2056,
-    "max_num_seqs": 64,
-    "gpu_memory_utilization": 0.85,
-    "_comment_context": "max_model_len covers the fixed ISL plus OSL with eight tokens of padding; update it when changing the sweep lengths.",
+    "engine_args": {
+      "trust_remote_code": true,
+      "max_model_len": 2056,
+      "max_num_seqs": 64,
+      "gpu_memory_utilization": 0.85
+    },
+    "_comment_context": "engine_args.max_model_len covers the fixed ISL plus OSL with eight tokens of padding; update it when changing the ISL or OSL in cells.",
     "_comment_startup": "The readiness polling budget allows slow checkpoint loading; it does not resolve tokenizer, backend or runtime compatibility failures."
   },
   "benchmark_params": {
-    "_comment": "Default vllm bench serve settings; per-cell values in sweeps override these defaults.",
-    "backend": "vllm",
+    "_comment": "vllm bench serve settings every cell runs with; client_args holds every other vllm bench serve option.",
     "dataset_name": "random",
     "num_prompts": 256,
     "request_rate": "inf",
@@ -92,14 +93,8 @@
     "trust_remote_code": true,
     "ignore_eos": true
   },
-  "_comment_sweeps": "Canonical run cells; entries override benchmark_params for that cell.",
-  "sweeps": {
-    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": {},
-    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=32": {},
-    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64": {}
-  },
-  "_comment_runs": "Explicit ordered run cells to execute.",
-  "runs": [
+  "_comment_cells": "Canonical cell keys to run, in order; every cell runs with benchmark_params.",
+  "cells": [
     "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16",
     "ISL=1024,OSL=1024,TP=8,PP=2,CONC=32",
     "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64"

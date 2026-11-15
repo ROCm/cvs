@@ -9,7 +9,8 @@ Inference-only symbols belong in `cvs/lib/inference/utils/`; single-framework sy
 
 ### `config_loader.py`
 
-`config_blocks.py` and `load_config` live in `cvs/lib/conf_lib/`; see `cvs/lib/conf_lib/AGENTS.md`.
+`config_blocks.py` and `ConfigError` live in `cvs/lib/conf_lib/`; see `cvs/lib/conf_lib/AGENTS.md`.
+Opt-in suite schemas and `load_suite_config` live in `cvs/config_validation/`.
 
 #### Schema classes
 
@@ -62,7 +63,7 @@ before any subclass coverage check runs on a config that will be rejected anyway
 #### `substitute_config(config_path, cluster_dict, all_placeholders=False) -> (raw_dict, thresholds)`
 
 `substitute_placeholders(config_path, cluster_dict, all_placeholders=False)` is the same without the
-threshold file: it returns only the substituted dict, and `load_config` uses it.
+threshold file: it returns only the substituted dict, and `VllmConfig.read_raw` uses it.
 `attach_threshold_file(data, context)` is for a schema's `mode="before"` validator and reads only a
 named `threshold_json` (relative to the config, with the packaged-copy fallback); it never looks
 for a sibling. When the config names none it gives `{}`, sets `enforce_thresholds` false
@@ -75,7 +76,7 @@ substitution, so a placeholder in `threshold_json` expands there.
   before any substitution pass runs — **no placeholder substitution of any kind is applied to it**
 - **3-pass substitution**:
   1. Cluster placeholders resolved everywhere in the document: `{user-id}` only by default;
-     with `all_placeholders=True` (what `load_config` passes), the
+     with `all_placeholders=True` (what `VllmConfig.read_raw` passes), the
      `utils_lib.config_placeholder_map` set that `resolve_test_config_placeholders` uses
   2. Self-reference within the `paths` block (`{shared_fs}` expanded inside other `paths.*` values)
   3. Cross-block references (`{paths.models_dir}`, etc.) resolved anywhere in the document
@@ -255,8 +256,8 @@ Contract for new suite authors:
 `_check_remote_not_implemented` always fires first — do not add a base validator that
 assumes a valid config before this check passes.
 
-**`load_variant`:** call `load_config(YourVariantConfig, config_path, cluster)` — never
-reimplement file-read, substitution, placeholder checks or the container merge. Older
+**`load_variant`:** a new schema subclasses `SuiteConfig` in `cvs/config_validation/` and loads
+through `load_suite_config` — never reimplement file-read, substitution or placeholder checks. Older
 loaders still call `substitute_config`, attach `thresholds`, and build
 `YourVariantConfig(**raw)`; they do not reject `<changeme>`.
 

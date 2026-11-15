@@ -11,7 +11,7 @@ Tests performed (in order):
 8. test_print_results_table       - Console summary table
 9. test_teardown                  - Tear the container down
 
-Cells are parametrized from the config's `runs`; the shared stage logic lives
+Cells are parametrized from the config's `cells`; the shared stage logic lives
 in _common.py.
 '''
 
