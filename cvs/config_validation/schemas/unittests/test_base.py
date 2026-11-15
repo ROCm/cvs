@@ -9,6 +9,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from pydantic import ValidationError, model_validator
 
@@ -20,6 +21,8 @@ from cvs.config_validation.schemas.base import (
     drop_comment_keys,
     problem_lines,
 )
+from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
+from cvs.core.orchestrators.container import ContainerOrchestrator
 from cvs.lib.conf_lib.config_blocks import PLACEHOLDER_MESSAGE
 from cvs.lib.conf_lib.loader import ConfigError
 from cvs.unittests.support import FAKE_CRED
@@ -77,6 +80,14 @@ class _RaisesTokenError(SuiteConfig):
     @classmethod
     def _refuse(cls, data):
         raise _TokenError("refused")
+
+
+def _errors(model, data, context=None):
+    try:
+        model.model_validate(data, context=context)
+    except ValidationError as exc:
+        return [(error["loc"], error["type"]) for error in exc.errors()]
+    raise AssertionError(f"{model.__name__} accepted {data!r}")
 
 
 class TestDropCommentKeys(unittest.TestCase):
@@ -164,6 +175,13 @@ class TestSuiteConfigHooks(unittest.TestCase):
         self.config_file.write_text(json.dumps(written))
         self.assertEqual(_Suite.read_raw(self.config_file, {"username": "jdoe"}), written)
 
+    def test_suite_modes_default_mode_and_launch_in_fixture_are_class_settings_not_config_fields(self):
+        self.assertEqual((_Suite.suite, _Suite.modes, _Suite.default_mode), (None, {}, None))
+        self.assertIs(_Suite.launch_in_fixture, True)
+        for key in ("suite", "modes", "default_mode", "launch_in_fixture"):
+            with self.subTest(key=key):
+                self.assertEqual(_errors(_Suite, {"name": "a", key: "x"}), [((key,), "extra_forbidden")])
+
     def test_old_keys_reports_none_by_default(self):
         self.assertEqual(_Suite.old_keys({"tensor_parallel_size": "4", "_unmapped": {"a": 1}}), [])
 
@@ -196,6 +214,33 @@ class TestSuiteConfigHooks(unittest.TestCase):
     def test_validate_config_lets_non_validation_errors_escape_unwrapped(self):
         with self.assertRaises(_TokenError):
             _RaisesTokenError.validate_config({}, self.config_file)
+
+
+class TestSuiteConfigOrchHooks(unittest.TestCase):
+    def setUp(self):
+        self.config = _Suite(name="a")
+
+    def test_select_hosts_picks_every_node_in_any_mode(self):
+        cluster = {"node_dict": {"n0": {}, "n1": {}}}
+        for mode in (None, "single", "distributed"):
+            with self.subTest(mode=mode):
+                self.assertIsNone(_Suite.select_hosts(self.config, cluster, mode))
+
+    def test_after_orch_leaves_the_orchestrator_alone(self):
+        orch = mock.Mock(orchestrator_type="container")
+        self.assertIsNone(_Suite.after_orch(orch, self.config, mock.Mock()))
+        self.assertEqual(orch.mock_calls, [])
+
+    def test_teardown_removes_containers_for_a_container_orchestrator(self):
+        orch = mock.Mock(spec=ContainerOrchestrator, orchestrator_type="container")
+        _Suite.teardown(orch, self.config, None)
+        self.assertEqual(orch.mock_calls, [mock.call.teardown_containers()])
+
+    def test_teardown_does_nothing_for_a_baremetal_orchestrator_which_has_no_containers(self):
+        # The spec makes a teardown_containers call fail, as it would on a real BaremetalOrchestrator.
+        orch = mock.Mock(spec=BaremetalOrchestrator, orchestrator_type="baremetal")
+        _Suite.teardown(orch, self.config, None)
+        self.assertEqual(orch.mock_calls, [])
 
 
 if __name__ == "__main__":

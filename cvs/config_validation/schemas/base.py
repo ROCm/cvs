@@ -2,7 +2,7 @@
 Copyright 2026 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Base models, strings and load hooks every opt-in suite schema is built from.
+Base models, strings, and the load and orch hooks every opt-in suite schema is built from.
 
 Keys that start with ``_`` are comments. Each block drops them at its own level
 only, so a ``_`` key inside a free-form map such as ``env`` reaches the suite
@@ -70,12 +70,13 @@ class OpenBlock(StrictBlock):
 
 
 class SuiteConfig(StrictBlock):
-    """A suite's top-level config and the hooks its loader calls.
+    """A suite's top-level config and the hooks its loader and the shared ``orch`` fixture call.
 
     The defaults read the file as written, report no old keys, validate without
-    rejecting placeholders, and give the orchestrator the raw config, as the
-    shared ``orch`` fixture does for a suite without a schema. A suite overrides
-    only the hooks it needs.
+    rejecting placeholders, give the orchestrator the raw config, use every
+    node, launch containers in the fixture and tear them down after the module,
+    as the shared ``orch`` fixture does for a suite without a schema. A suite
+    overrides only the hooks it needs.
 
     ``validate_config`` raises ``ConfigError`` with one line per problem that
     names the field and never its value, which can be a credential.
@@ -83,11 +84,18 @@ class SuiteConfig(StrictBlock):
     ``suite`` is the name ``cvs config migrate`` takes for this schema.
     ``modes`` maps a test module name's suffix to the suite's mode, and
     ``default_mode`` is the mode when no suffix matches.
+
+    ``launch_in_fixture`` False means the suite launches its containers in its
+    own tests, so the fixture builds the orchestrator without launching and
+    hands the suite's ``lifecycle`` fixture to ``after_orch`` and ``teardown``;
+    otherwise they get None. ``select_hosts`` returns the hosts to run on, in
+    the cluster file's ``node_dict`` order, or None for every node.
     """
 
     suite: ClassVar[Optional[str]] = None
     modes: ClassVar[Dict[str, str]] = {}
     default_mode: ClassVar[Optional[str]] = None
+    launch_in_fixture: ClassVar[bool] = True
 
     @classmethod
     def read_raw(cls, config_file, cluster):
@@ -114,3 +122,17 @@ class SuiteConfig(StrictBlock):
     @classmethod
     def orch_inputs(cls, raw, config, cluster):
         return raw
+
+    @classmethod
+    def select_hosts(cls, config, cluster, mode):
+        return None
+
+    @classmethod
+    def after_orch(cls, orch, config, lifecycle):
+        pass
+
+    @classmethod
+    def teardown(cls, orch, config, lifecycle):
+        # A no-op once a suite's own teardown test has removed the container.
+        if orch.orchestrator_type == "container":
+            orch.teardown_containers()
