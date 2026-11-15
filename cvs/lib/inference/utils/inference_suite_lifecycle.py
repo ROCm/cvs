@@ -6,7 +6,8 @@ Reusable **lifecycle-as-tests** helpers for DTNI inference suites.
 
 ``atom`` imports the stage tests from here today; other suites
 (``vllm_single``, future IX parity frameworks) can reuse the same module instead
-of copying launch / sshd / model-fetch / teardown blocks.
+of copying launch / sshd / model-fetch / teardown blocks. Launch, sshd and teardown are
+defined in :mod:`cvs.lib.utils.container_stages` and re-exported here.
 
 **Suite module** — import stage tests so pytest collects them::
 
@@ -49,6 +50,11 @@ except ImportError:
 from cvs.lib import globals
 from cvs.lib.inference.utils.cache_probe import du_bytes
 from cvs.lib.inference.utils.lm_eval_job import run_accuracy_tasks
+from cvs.lib.utils.container_stages import (
+    test_launch_container,  # noqa: F401
+    test_setup_sshd,  # noqa: F401
+    test_teardown,  # noqa: F401
+)
 from cvs.lib.utils.verdict import evaluate_all
 
 log = globals.log
@@ -80,46 +86,6 @@ def sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency):
         seq_combo.get("name", "default"),
         concurrency,
     )
-
-
-def test_launch_container(orch, variant_config, lifecycle, request):
-    """Stage 1: launch the container."""
-    t = time.monotonic()
-    ok = orch.setup_containers()
-    launch_s = time.monotonic() - t
-    lifecycle.record(request.node.nodeid, "container_launch", launch_s)
-    lifecycle.record(request.node.nodeid, "server.container_launch_s", launch_s, "s")
-    if not ok:
-        lifecycle.failed = True
-        name = orch.get_container_name(orch.container_config, orch.container_config["image"])
-        pytest.fail(f"setup_containers() returned False for {name}")
-    name = orch.get_container_name(orch.container_config, orch.container_config["image"])
-    if not orch.verify_containers_running(name):
-        lifecycle.failed = True
-        pytest.fail(f"container {name} not running after setup_containers()")
-
-
-def test_setup_sshd(orch, lifecycle, request):
-    if lifecycle.failed:
-        pytest.skip("a prior lifecycle stage failed")
-    from cvs.core.orchestrators.container import sshd_port_listen_ok, sshd_port_listen_probe_cmd
-
-    t = time.monotonic()
-    ok = orch.setup_sshd()
-    lifecycle.record(request.node.nodeid, "sshd_setup", time.monotonic() - t)
-    if not ok:
-        lifecycle.failed = True
-        pytest.fail("setup_sshd() returned False")
-    # Spur skips sshd on purpose (srun, not port 2224). Probing here fails every multinode run.
-    from cvs.core.scheduler import is_managed_compute
-
-    if is_managed_compute():
-        return
-    if len(orch.hosts) > 1:
-        probe = orch.exec(sshd_port_listen_probe_cmd(getattr(orch, "ssh_port", 2224)))
-        if not any(sshd_port_listen_ok(v) for v in (probe or {}).values()):
-            lifecycle.failed = True
-            pytest.fail("sshd not listening on 2224 after setup_sshd()")
 
 
 def test_model_fetch(orch, variant_config, lifecycle, request):
@@ -238,16 +204,6 @@ def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):
         return
     accuracy_thresholds = (variant_config.thresholds or {}).get("accuracy", {})
     evaluate_all(actual, accuracy_thresholds.get(accuracy_task, {}))
-
-
-def test_teardown(orch, lifecycle, request):
-    name = orch.get_container_name(orch.container_config, orch.container_config["image"])
-    t = time.monotonic()
-    orch.teardown_containers()
-    lifecycle.record(request.node.nodeid, "teardown", time.monotonic() - t)
-    if orch.verify_containers_running(name):
-        pytest.fail(f"container {name} still running after teardown_containers()")
-    lifecycle.torn_down = True
 
 
 def sort_lifecycle_items(items, rank):
