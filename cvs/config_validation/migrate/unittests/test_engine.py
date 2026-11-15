@@ -37,7 +37,13 @@ from cvs.config_validation.migrate.engine import (
     suite_maps,
     suite_names,
 )
-from cvs.config_validation.schemas.base import OpenBlock, StrictBlock, SuiteConfig, drop_comment_keys
+from cvs.config_validation.schemas.base import (
+    OpenBlock,
+    SecretInputError,
+    StrictBlock,
+    SuiteConfig,
+    drop_comment_keys,
+)
 from cvs.config_validation.schemas.inference.llm_serving import LlmServingConfig, ServingServerParams
 from cvs.config_validation.schemas.sweeps import Axis
 from cvs.config_validation.schemas.thresholds import Threshold
@@ -143,6 +149,15 @@ class _CoveredConfig(_DemoConfig):
         if self.enforce_thresholds and any(cell not in self.thresholds.model_extra for cell in self.runs):
             raise ValueError("with enforce_thresholds, every cell needs a threshold cell")
         return self
+
+
+class _SecretRefusingConfig(_DemoConfig):
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_api_token(cls, data):
+        if isinstance(data, dict) and "api_token" in data:
+            raise SecretInputError("api_token must not be set in a config")
+        return data
 
 
 class _OtherConfig(SuiteConfig):
@@ -888,6 +903,13 @@ class TestNothingWritten(_MigrateCase):
             "notes is both in the input's _unmapped block and set in the input, with different values; "
             "keep one, then run cvs config migrate again",
         )
+
+    def test_a_secret_input_error_from_the_schema_stops_it_with_its_message(self):
+        refusing = _map_with(DEMO_MAP, SCHEMA=_SecretRefusingConfig)
+        with mock.patch.object(engine, "suite_maps", return_value={"demo": refusing}):
+            self.assertEqual(
+                self._stopped({**OLD_DISTRIBUTED, "api_token": FAKE_CRED}), "api_token must not be set in a config"
+            )
 
     def test_a_threshold_task_id_both_old_and_under_lm_eval_stops_it(self):
         old = copy.deepcopy(OLD_THRESHOLDS)

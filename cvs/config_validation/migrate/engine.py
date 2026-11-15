@@ -24,7 +24,8 @@ changed.
    found as the loader finds it from the input's folder, or records only when it
    names none. A refused key moves to ``_unmapped`` under its old dotted path, a
    missing required field is written as ``<changeme>``, and any other problem,
-   including one in the threshold file, is named.
+   including one in the threshold file, is named. A ``SecretInputError``, such
+   as a token in a field that must not hold one, stops it.
 6. Write the output through a temporary file beside it, ``_unmapped`` first,
    holding any ``_unmapped`` block the input had, and print one line per field
    to fix.
@@ -66,6 +67,7 @@ from cvs.config_validation.loaders.suite_config import (
     _with_thresholds,
 )
 from cvs.config_validation.migrate import maps
+from cvs.config_validation.schemas.base import SecretInputError
 from cvs.config_validation.schemas.thresholds import ACCURACY_SECTIONS, ThresholdFile, Thresholds
 from cvs.lib.conf_lib.config_blocks import has_placeholder
 from cvs.lib.conf_lib.loader import ConfigError
@@ -461,6 +463,7 @@ class _Conversion:
         """Validate the tree as the loader would, with placeholders allowed, and return each field to fix.
 
         A refused key moves to ``_unmapped`` and a missing field is written as ``<changeme>``.
+        A ``SecretInputError`` stops the conversion with its message, which names fields only.
         """
         data, threshold_problems = self._validation_input()
         context = None if self.config_path is None else {"config_path": self.config_path}
@@ -469,6 +472,8 @@ class _Conversion:
             errors = []
         except ValidationError as exc:
             errors = exc.errors()
+        except SecretInputError as exc:
+            raise _Stop(str(exc)) from None
         problems = []
         for error in errors:
             loc = tuple(error["loc"])
