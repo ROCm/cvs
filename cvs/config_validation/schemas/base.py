@@ -16,7 +16,7 @@ forms.
 
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, ClassVar, Dict, Optional
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, ValidationError, model_validator
 
@@ -79,10 +79,24 @@ class SuiteConfig(StrictBlock):
 
     ``validate_config`` raises ``ConfigError`` with one line per problem that
     names the field and never its value, which can be a credential.
+
+    ``suite`` is the name ``cvs config migrate`` takes for this schema.
+    ``modes`` maps a test module name's suffix to the suite's mode, and
+    ``default_mode`` is the mode when no suffix matches.
     """
+
+    suite: ClassVar[Optional[str]] = None
+    modes: ClassVar[Dict[str, str]] = {}
+    default_mode: ClassVar[Optional[str]] = None
 
     @classmethod
     def read_raw(cls, config_file, cluster):
+        """The config to check and validate; by default, the file as written.
+
+        The loader looks for old keys and ``<changeme>`` in what this returns,
+        so an override may substitute values and drop ``_`` comment keys but
+        keeps every other key. The ``_unmapped`` check reads the file itself.
+        """
         with open(config_file) as fp:
             return json.load(fp)
 
