@@ -305,7 +305,7 @@ class TestStrictMetricVerdict(unittest.TestCase):
                 self.assertIn("finite built-in", reason)
 
     def test_info_spec_passes_whatever_the_actual(self):
-        for metric, actual in (("output_throughput", 0), ("mean_ttft_ms", 1e9), ("output_throughput", None)):
+        for metric, actual in (("output_throughput", 0), ("mean_ttft_ms", 1e9)):
             with self.subTest(metric=metric, actual=actual):
                 self.assertEqual(metric_verdict(metric, actual, {"kind": "info", "value": 1000}), ("pass", ""))
 

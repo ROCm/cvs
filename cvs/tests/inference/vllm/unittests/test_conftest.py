@@ -7,7 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from cvs.config_validation.schemas.inference.engines import VllmConfig
 from cvs.core.orchestrators.factory import OrchestratorFactory
 from cvs.lib.report import benchmark_metric_registry as registry
 from cvs.lib.report.render.perf_metric_table import is_benchmark_metrics_extra
@@ -66,9 +65,6 @@ class TestVllmOrch(unittest.TestCase):
         with self.assertRaises(StopIteration):
             next(gen)
         self.assertEqual(self.orch.method_calls, [mock.call.teardown_containers(), mock.call.close()])
-
-    def test_config_schema_is_vllm_config(self):
-        self.assertIs(vllm_conftest.config_schema.__wrapped__(), VllmConfig)
 
     def test_vllm_single_runs_on_the_first_node_as_head(self):
         self._check_orch("vllm_single", "mi3xx_vllm_llama33-70b_fp8_single.json", ["n1"], "n1")

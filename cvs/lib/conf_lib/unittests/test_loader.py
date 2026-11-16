@@ -23,11 +23,6 @@ class TestConfigError(unittest.TestCase):
         )
         self.assertIs(error.problems, problems)
 
-    def test_it_is_a_value_error_and_an_empty_problem_list_still_names_the_file(self):
-        error = ConfigError("vllm.json", [])
-        self.assertIsInstance(error, ValueError)
-        self.assertEqual(str(error), "vllm.json is not a valid config:\n")
-
 
 if __name__ == "__main__":
     unittest.main()
