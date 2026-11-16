@@ -67,13 +67,17 @@ class Orchestrator(ABC):
 
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
         """
-        Run cmd_list[i] on the i-th host, in parallel, using the orchestrator's execution strategy.
+        Run different commands on hosts using the orchestrator's execution strategy.
+
+        cmd_list holds one command per host in hosts order, or one per currently
+        reachable host (all.reachable_hosts order). Commands for hosts pruned as
+        unreachable are not run; those hosts appear in the result as unreachable.
 
         Not abstract, so subclasses written before it keep working. Default
         implementation raises NotImplementedError.
 
         Args:
-            cmd_list: List of commands, one per host in host order
+            cmd_list: Commands in configured or reachable host order
             timeout: Command timeout in seconds
             print_console: See exec().
 

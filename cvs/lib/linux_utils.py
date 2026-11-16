@@ -562,9 +562,8 @@ def get_nic_ethtool_stats_dict(phdl, vendor=None):
     no_of_nics = max((len(eth_dev_dict[node]) for node in node_list), default=0)
 
     # For each NIC index, generate one command per node so they can be executed in parallel.
-    # exec_cmd_list pairs cmd_list[k] with the k-th reachable host positionally, so every
-    # batch needs exactly one entry per node even when a node has no interface at this
-    # index; give it a harmless no-op and skip its (nonexistent) result below.
+    # Each batch needs one entry per node in result/host order, so a node with no
+    # interface at this index gets a harmless no-op; skip its result below.
     for i in range(0, no_of_nics):
         cmd_dict[i] = []
         for node in node_list:
