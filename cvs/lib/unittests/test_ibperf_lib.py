@@ -443,6 +443,71 @@ class TestGetIbBwPps(unittest.TestCase):
         self.assertEqual(phdl.exec.call_count, 2)
         mock_fail.assert_not_called()
 
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_node_in_nodes_without_output_fails(self, mock_fail):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': BW_LOG}
+
+        res = ibperf_lib.get_ib_bw_pps(
+            phdl, 8192, 'cat /tmp/ib_perf_0_logs', instance_no=0, running=[], nodes=['node1', 'node2']
+        )
+
+        self.assertEqual(res, {'node1': {'bw': '517.14', 'pps': '7.89'}})
+        self.assertEqual(phdl.exec.call_count, 2)
+        self.assertEqual(
+            mock_fail.call_args_list,
+            [
+                mock_call(
+                    'ERROR !!! on node node2 Client did not complete for msg size 8192: no output read from node'
+                ),
+                mock_call('ERROR !!! pls check log file for errors on node node2'),
+            ],
+        )
+
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_node_dropped_after_first_read_is_not_reported_as_missing(self, mock_fail):
+        phdl = MagicMock()
+        phdl.exec.side_effect = [
+            {'node1': BW_LOG, 'node2': '8192 bytes of GPU buffer\n'},
+            {'node1': BW_LOG},
+        ]
+
+        res = ibperf_lib.get_ib_bw_pps(phdl, 8192, 'cat /tmp/ib_perf_0_logs', running=[], nodes=['node1', 'node2'])
+
+        self.assertEqual(res, {'node1': {'bw': '517.14', 'pps': '7.89'}})
+        self.assertEqual(
+            mock_fail.call_args_list,
+            [
+                mock_call(
+                    'ERROR !!! on node node2 Client did not complete for msg size 8192: '
+                    'perftest exited without a result'
+                ),
+                mock_call('ERROR !!! pls check log file for errors on node node2'),
+            ],
+        )
+
+    @patch.object(ibperf_lib, 'PERFTEST_BW_RESULT_TIMEOUT_S', 0)
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_missing_running_node_is_polled_until_timeout(self, mock_fail):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': BW_LOG}
+
+        res = ibperf_lib.get_ib_bw_pps(
+            phdl, 8192, 'cat /tmp/ib_perf_0_logs', running=['node2'], nodes=['node1', 'node2']
+        )
+
+        self.assertEqual(res, {'node1': {'bw': '517.14', 'pps': '7.89'}})
+        self.assertEqual(phdl.exec.call_count, 2)
+        self.assertEqual(
+            mock_fail.call_args_list,
+            [
+                mock_call(
+                    'ERROR !!! on node node2 Client did not complete for msg size 8192: no output read from node'
+                ),
+                mock_call('ERROR !!! pls check log file for errors on node node2'),
+            ],
+        )
+
     @patch.object(ibperf_lib, 'PERFTEST_BW_RESULT_TIMEOUT_S', 0)
     @patch.object(ibperf_lib, 'fail_test')
     def test_fails_once_per_node_after_retries_run_out(self, mock_fail):
