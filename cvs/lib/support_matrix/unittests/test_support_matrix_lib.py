@@ -149,6 +149,26 @@ class EvaluateTests(unittest.TestCase):
         violations, _ = sm.evaluate(entry, {}, {"n0": {"arch": "mi355x", "rocm": "7.1.0"}})
         self.assertTrue(any("above the supported maximum" in v for v in violations))
 
+    def test_rocm_range_is_inclusive_at_both_bounds(self):
+        # The [min, max] contract is inclusive: ROCm exactly at min or max passes.
+        entry = {
+            "unsupported_gpu_arch": [],
+            "required_rocm_min_version": "7.0.0",
+            "required_rocm_max_version": "7.2.0",
+            "unsupported_params": {},
+        }
+        at_min, _ = sm.evaluate(entry, {}, {"n0": {"arch": "mi355x", "rocm": "7.0.0"}})
+        at_max, _ = sm.evaluate(entry, {}, {"n0": {"arch": "mi355x", "rocm": "7.2.0"}})
+        self.assertEqual(at_min, [])
+        self.assertEqual(at_max, [])
+
+    def test_multinode_reports_per_node_violation(self):
+        # node-0 is fine, node-1 is a denied arch: only node-1 is reported, by name.
+        platform = {"n0": {"arch": "mi355x", "rocm": "7.0"}, "n1": {"arch": "mi300x", "rocm": "7.0"}}
+        violations, _ = sm.evaluate(_ENTRY, {}, platform)
+        self.assertTrue(any(v.startswith("n1:") and "not supported for this model" in v for v in violations))
+        self.assertFalse(any(v.startswith("n0:") for v in violations))
+
     def test_undetected_arch_is_violation(self):
         violations, _ = sm.evaluate(_ENTRY, {"precision": ["mxfp4"]}, {"n0": {"arch": None, "rocm": "7.0"}})
         self.assertTrue(any("could not detect a supported GPU arch" in v for v in violations))
@@ -244,10 +264,23 @@ class LoadMatrixValidationTests(unittest.TestCase):
 
     def test_unknown_arch_token_rejected(self):
         bad = {
+            "schema_version": 1,
             "known_arch_tokens": ["mi300x"],
             "frameworks": {"f": {"models": {"m": {"unsupported_gpu_arch": ["mi999x"]}}}},
         }
         with patch("builtins.open"), patch("json.load", return_value=bad):
+            with self.assertRaises(ValueError):
+                sm.load_matrix("training")
+
+    def test_wrong_schema_version_rejected(self):
+        # A future v2 data file must not be silently consumed by v1 code.
+        future = {"schema_version": 2, "frameworks": {}}
+        with patch("builtins.open"), patch("json.load", return_value=future):
+            with self.assertRaises(ValueError):
+                sm.load_matrix("training")
+
+    def test_missing_schema_version_rejected(self):
+        with patch("builtins.open"), patch("json.load", return_value={"frameworks": {}}):
             with self.assertRaises(ValueError):
                 sm.load_matrix("training")
 
@@ -260,6 +293,16 @@ class RunGateTests(unittest.TestCase):
         self.assertTrue(result.passed)
         self.assertTrue(result.not_in_matrix)
         handle.exec.assert_not_called()
+
+    def test_empty_model_warns_and_allows(self):
+        # A blank model name (config key rename / schema drift) must warn, not pass silently.
+        handle = _handle("MI300X", "7.14.0")
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertLogs(sm.log, level="WARNING") as cm:
+                result = sm.run_support_matrix_gate("training", "jaxmaxtext", "", {}, handle)
+        self.assertTrue(result.passed)
+        self.assertTrue(result.not_in_matrix)
+        self.assertTrue(any("no model name resolved" in line for line in cm.output))
 
     def test_supported_passes(self):
         handle = _handle("AMD Instinct MI355X", "7.14.0")

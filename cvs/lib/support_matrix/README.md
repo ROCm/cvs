@@ -224,7 +224,7 @@ Everything lives in one module, `support_matrix_lib.py`:
   config. The key that names the model is not unified across suites yet, so it tries
   `model_id` / `hf_model_id` / `model_name` / `hf_model_name` / `model` both at the
   top level and inside `model` / `server_params` / `model_params` / `train_params` /
-  `inference` / `tokenizer`. (`model_repo` is excluded — it is a filesystem path.)
+  `inference`. (`model_repo` is excluded — it is a filesystem path.)
 - `load_matrix(category)`, `find_model_entry(matrix, framework, model)` (lenient,
   separator/path-insensitive), `normalize_arch(token)`, `parse_version(text)`.
 
