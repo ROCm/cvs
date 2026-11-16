@@ -269,6 +269,10 @@ Smoke profiles, one node:
      - 1,158
      - 39.4%
      - bf16 master weights
+   * - W12 Qwen3-30B-A3B BF16
+     - 3,701
+     - 7.9%
+     - Eager HF expert loop
    * - W13 GPT-OSS-20B BF16
      - 7,385
      - 13.6%
@@ -281,4 +285,5 @@ Smoke profiles, one node:
 Every smoke run restored the checkpoint with an exact state match and a loss
 delta of 0. W2 perf measured 9,889 tokens/s/GPU at GBS128 (GA4) and 9,827 at
 GA1, so accumulation costs nothing measurable. On two nodes the W2 smoke ran
-at 9,735 tokens/s/GPU, 99% of the one-node rate.
+at 9,735 tokens/s/GPU, 99% of the one-node rate, and W2 perf on four nodes
+at 9,785 tokens/s/GPU, 98.9% scaling efficiency against the one-node perf run.
