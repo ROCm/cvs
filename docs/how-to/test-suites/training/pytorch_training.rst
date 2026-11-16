@@ -227,6 +227,12 @@ See :ref:`training-common-prerequisites`. In addition:
   weights for ``init: pretrained``.
 - The WikiText-103 parquet files under ``<changeme-training-data-host-path>``.
   The prepare stage writes the token cache beside them.
+- For train-5k, FineWeb-Edu shards as ``train-*.parquet`` and
+  ``test-*.parquet`` under ``datasets/fineweb-edu/sample-10BT``. WikiText-103's
+  120M tokens would be about 44 epochs of a 5,000-step W2 run; eight
+  sample-10BT shards (17 GB) hold about 6B tokens, and their Llama-3.1 token
+  cache needs about 24 GB more. On a multi-node run the first node tokenizes
+  and the others reuse its cache.
 - Node-local scratch space for checkpoints: 12 bytes per parameter.
 
 See :doc:`/reference/configuration-files/training/pytorch_training` for the
