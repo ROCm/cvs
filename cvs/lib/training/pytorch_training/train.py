@@ -45,9 +45,10 @@ def _parse_args():
     p.add_argument("--seq-len", type=int, required=True)
     p.add_argument("--micro-batch-size", type=int, required=True)
     p.add_argument("--gradient-accumulation-steps", type=int, required=True)
-    p.add_argument("--activation-checkpointing", action="store_true")
+    p.add_argument("--activation-checkpointing-every", type=int, default=1)
     p.add_argument("--master-weights", choices=["fp32", "bf16"], default="fp32")
     p.add_argument("--attn-implementation", default="sdpa")
+    p.add_argument("--compile", action="store_true")
     p.add_argument("--data-mode", choices=["tokens", "synthetic"], default="tokens")
     p.add_argument("--train-tokens", default="")
     p.add_argument("--eval-tokens", default="")
@@ -165,15 +166,7 @@ def _micro_batch_indices(step, micro, args, rank, world_size):
 
 
 def _decoder_layers(model):
-    for path in ("model.layers", "model.decoder.layers", "transformer.h"):
-        node = model
-        for part in path.split("."):
-            node = getattr(node, part, None)
-            if node is None:
-                break
-        if node is not None:
-            return list(node)
-    raise RuntimeError(f"cannot locate the decoder layers of {type(model).__name__}")
+    return list(_layer_container(model))
 
 
 def _expert_count(config):
@@ -252,6 +245,35 @@ def _apply_precision(model, args):
     return {"recipe": f"torchao-mx-{args.precision.lower()}"}
 
 
+def _layer_container(model):
+    for path in ("model.layers", "model.decoder.layers", "transformer.h"):
+        parent, _, attr = path.rpartition(".")
+        node = model
+        for part in parent.split("."):
+            node = getattr(node, part, None)
+            if node is None:
+                break
+        if node is not None and hasattr(node, attr):
+            return getattr(node, attr)
+    raise RuntimeError(f"cannot locate the decoder layers of {type(model).__name__}")
+
+
+def _apply_activation_checkpointing(model, every):
+    """Recompute every ``every``-th decoder layer in backward; 0 disables.
+
+    Checkpointing a subset spends spare HBM on stored activations instead of
+    a second forward through every layer.
+    """
+    if every <= 0:
+        return
+    from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper
+
+    layers = _layer_container(model)
+    for index in range(len(layers)):
+        if index % every == 0:
+            layers[index] = checkpoint_wrapper(layers[index], preserve_rng_state=False)
+
+
 def _init_random_weights(model, config):
     std = float(getattr(config, "initializer_range", 0.02) or 0.02)
     touched = set()
@@ -325,10 +347,14 @@ def build_model(args, device, mesh, rank):
     buffers = {name: buf.detach().clone() for name, buf in model.named_buffers()}
     flops, total_params, active_params = training_flops_per_token(model, config, args.seq_len)
     precision_info = _apply_precision(model, args)
-    if args.activation_checkpointing:
-        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    _apply_activation_checkpointing(model, args.activation_checkpointing_every)
     policy = MixedPrecisionPolicy(param_dtype=torch.bfloat16, reduce_dtype=torch.float32)
     for layer in _decoder_layers(model):
+        if args.compile:
+            # Per layer, as TorchTitan does: one graph per block reuses the
+            # compiled code for every layer and fuses the norm, rotary, and
+            # gated-MLP elementwise kernels that eager HF code runs one by one.
+            layer.compile()
         fully_shard(layer, mesh=mesh, mp_policy=policy)
     fully_shard(model, mesh=mesh, mp_policy=policy)
     model.to_empty(device=device)
@@ -897,7 +923,7 @@ def run(args, rank, local_rank, world_size, device):
         "run_mode": args.run_mode,
         "data_mode": args.data_mode,
         "fsdp_strategy": args.fsdp_strategy,
-        "activation_checkpointing": args.activation_checkpointing,
+        "activation_checkpointing_every": args.activation_checkpointing_every,
         "master_weights": args.master_weights,
         "attn_implementation": args.attn_implementation,
         "training_flops_per_token": flops_per_token,

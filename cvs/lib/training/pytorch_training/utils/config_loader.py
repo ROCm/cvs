@@ -105,6 +105,9 @@ class BenchmarkConfig(_Forbid):
     # Per-task sample cap; None scores the full task.
     limit: Optional[int] = Field(default=None, ge=1)
     batch_size: str = "auto"
+    # One model replica per GPU; set false when one GPU cannot hold the model
+    # and lm-eval should spread a single replica over the node instead.
+    data_parallel: bool = True
     timeout_s: int = Field(default=14400, gt=0)
 
     @model_validator(mode="after")
@@ -133,11 +136,15 @@ class TrainingSweep(_Forbid):
     # topology, while a fixed accumulation count holds the per-rank recipe.
     global_batch_size: Optional[int] = Field(default=None, gt=0)
     gradient_accumulation_steps: Optional[int] = Field(default=None, ge=1)
-    activation_checkpointing: bool = True
+    # Recompute every Nth decoder layer in backward (1 = all, 0 = none).
+    # Checkpointing fewer layers spends spare HBM on stored activations.
+    activation_checkpointing_every: int = Field(default=1, ge=0)
     # fp32 keeps an fp32 master copy and computes in bf16; bf16 halves the
     # parameter, gradient, and optimizer state for models that do not fit.
     master_weights: Literal["fp32", "bf16"] = "fp32"
-    attn_implementation: Literal["sdpa", "flash_attention_2", "eager"] = "sdpa"
+    attn_implementation: Literal["sdpa", "flash_attention_2", "eager"] = "flash_attention_2"
+    # torch.compile each decoder layer.
+    compile: bool = True
     data_mode: Literal["tokens", "synthetic"] = "tokens"
     # Overrides the FLOPs/token derived from the model config.
     training_flops_per_token: Optional[float] = Field(default=None, gt=0)
