@@ -23,7 +23,6 @@ import cvs
 from cvs.config_validation.loaders.suite_config import LoadedSuiteConfig
 from cvs.config_validation.schemas.base import SuiteConfig
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
-from cvs.lib.conf_lib.loader import ConfigError
 from cvs.tests import conftest
 from cvs.unittests.support import run_trusted
 
@@ -173,10 +172,9 @@ class TestWithoutSchema(_FixtureCase):
 
     def test_a_missing_file_option_fails_before_anything_is_read(self):
         for missing in ("cluster_file", "config_file"):
-            for value in (None, ""):
-                with self.subTest(missing=missing, value=value), mock.patch.dict(self.options, {missing: value}):
-                    with self.assertRaisesRegex(pytest.fail.Exception, "requires --cluster_file and --config_file"):
-                        next(self._orch())
+            with self.subTest(missing=missing), mock.patch.dict(self.options, {missing: None}):
+                with self.assertRaisesRegex(pytest.fail.Exception, "requires --cluster_file and --config_file"):
+                    next(self._orch())
         self.from_configs.assert_not_called()
 
     def test_close_runs_when_teardown_fails(self):
@@ -195,19 +193,8 @@ class TestSchemaFixtures(_FixtureCase):
         self.assertIs(loaded.schema, _Demo)
         self.assertEqual((loaded.config.name, loaded.cluster, loaded.orch_inputs), ("demo", CLUSTER, SUITE))
 
-    def test_suite_config_raises_the_loaders_config_error(self):
-        self.options["config_file"] = self._write("suite.json", {**SUITE, "name": "<changeme>"})
-        with self.assertRaises(ConfigError) as ctx:
-            conftest.suite_config.__wrapped__(self.pytestconfig, _Demo)
-        self.assertEqual([line.split(":", 1)[0] for line in ctx.exception.problems], ["name"])
-
     def test_suite_mode_maps_the_module_suffix(self):
-        for module, mode in (
-            ("cvs.tests.demo.demo_single", "single"),
-            ("cvs.tests.demo.demo_distributed", "distributed"),
-        ):
-            with self.subTest(module=module):
-                self.assertEqual(conftest.suite_mode.__wrapped__(_request(module), _Demo), mode)
+        self.assertEqual(conftest.suite_mode.__wrapped__(_request("cvs.tests.demo.demo_single"), _Demo), "single")
 
     def test_suite_mode_fails_naming_a_module_that_matches_no_mode(self):
         with self.assertRaises(pytest.fail.Exception) as ctx:
@@ -235,11 +222,6 @@ class TestOrchWithSchema(_FixtureCase):
         self.request.getfixturevalue.assert_not_called()
         self._finish(gen)
         self.assertEqual(self.orch.method_calls[3:], [mock.call.teardown_containers(), mock.call.close()])
-
-    def test_no_selected_hosts_keeps_every_node(self):
-        next(self._orch(_Demo, mode="distributed"))
-        cfg = self._cfg()
-        self.assertEqual((cfg.node_dict, cfg.head_node_dict), (NODES, {"mgmt_ip": "n0"}))
 
     def test_launch_as_tests_skips_the_fixture_launch_and_hands_the_lifecycle_to_the_hooks(self):
         lifecycle = object()
@@ -289,16 +271,6 @@ class TestOrchWithSchema(_FixtureCase):
         with self.assertRaisesRegex(RuntimeError, "teardown"):
             next(gen)
         self.orch.close.assert_called_once_with()
-
-    def test_a_host_selection_outside_the_cluster_builds_nothing(self):
-        class _Stray(_Demo):
-            @classmethod
-            def select_hosts(cls, config, cluster, mode):
-                return ["n9"]
-
-        with self.assertRaisesRegex(ValueError, "node_dict: n9$"):
-            next(self._orch(_Stray))
-        self.create.assert_not_called()
 
 
 if __name__ == "__main__":

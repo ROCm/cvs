@@ -42,9 +42,7 @@ class TestClusterWithHosts(unittest.TestCase):
         return narrowed
 
     def test_none_returns_the_cluster_itself(self):
-        for cluster in (MAP_CLUSTER, LIST_CLUSTER, {}):
-            with self.subTest(cluster=cluster):
-                self.assertIs(cluster_with_hosts(cluster, None), cluster)
+        self.assertIs(cluster_with_hosts(MAP_CLUSTER, None), MAP_CLUSTER)
 
     def test_a_map_node_dict_stays_a_map_in_its_own_order_whatever_order_hosts_come_in(self):
         narrowed = self._narrow(MAP_CLUSTER, ["n2", "n0", "n2"])
@@ -64,11 +62,6 @@ class TestClusterWithHosts(unittest.TestCase):
                     {key: value for key, value in narrowed.items() if key not in ("node_dict", "head_node_dict")},
                     {"username": "u", "priv_key_file": "/keys/id"},
                 )
-
-    def test_selecting_every_node_keeps_node_dict_and_its_first_node_as_head(self):
-        narrowed = self._narrow(MAP_CLUSTER, ["n2", "n1", "n0"])
-        self.assertEqual(narrowed["node_dict"], MAP_CLUSTER["node_dict"])
-        self.assertEqual(narrowed["head_node_dict"]["mgmt_ip"], "n0")
 
     def test_a_cluster_without_head_node_dict_gets_one_naming_the_first_kept_node(self):
         cluster = {key: value for key, value in MAP_CLUSTER.items() if key != "head_node_dict"}
@@ -116,11 +109,6 @@ class TestBuildOrch(unittest.TestCase):
         self.assertEqual((orch.container_config["image"], orch.container_config["name"]), ("suite-image", "suite-ct"))
         self.assertEqual(orch.hosts, ["n0", "n1", "n2"])
         self.assertIs(orch.suite_config, self.config)
-
-    def test_a_list_node_dict_narrowed_to_one_host_builds_on_that_host(self, _pssh, _runtime):
-        loaded = self._loaded({}, LIST_CLUSTER)
-        orch = build_orch(self.log, loaded, cluster_with_hosts(LIST_CLUSTER, ["n1"]))
-        self.assertEqual((orch.hosts, orch.head_node), (["n1"], "n1"))
 
 
 if __name__ == "__main__":

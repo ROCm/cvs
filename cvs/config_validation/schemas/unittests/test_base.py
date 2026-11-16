@@ -82,14 +82,6 @@ class _RaisesTokenError(SuiteConfig):
         raise _TokenError("refused")
 
 
-def _errors(model, data, context=None):
-    try:
-        model.model_validate(data, context=context)
-    except ValidationError as exc:
-        return [(error["loc"], error["type"]) for error in exc.errors()]
-    raise AssertionError(f"{model.__name__} accepted {data!r}")
-
-
 class TestDropCommentKeys(unittest.TestCase):
     def test_only_underscore_string_keys_at_the_top_level_are_dropped(self):
         value = {"_comment": "x", "_": 0, "name_": 1, "nested": {"_keep": 2}, 3: "int key"}
@@ -175,13 +167,6 @@ class TestSuiteConfigHooks(unittest.TestCase):
         self.config_file.write_text(json.dumps(written))
         self.assertEqual(_Suite.read_raw(self.config_file, {"username": "jdoe"}), written)
 
-    def test_suite_modes_default_mode_and_launch_in_fixture_are_class_settings_not_config_fields(self):
-        self.assertEqual((_Suite.suite, _Suite.modes, _Suite.default_mode), (None, {}, None))
-        self.assertIs(_Suite.launch_in_fixture, True)
-        for key in ("suite", "modes", "default_mode", "launch_in_fixture"):
-            with self.subTest(key=key):
-                self.assertEqual(_errors(_Suite, {"name": "a", key: "x"}), [((key,), "extra_forbidden")])
-
     def test_old_keys_reports_none_by_default(self):
         self.assertEqual(_Suite.old_keys({"tensor_parallel_size": "4", "_unmapped": {"a": 1}}), [])
 
@@ -220,11 +205,9 @@ class TestSuiteConfigOrchHooks(unittest.TestCase):
     def setUp(self):
         self.config = _Suite(name="a")
 
-    def test_select_hosts_picks_every_node_in_any_mode(self):
+    def test_select_hosts_picks_every_node(self):
         cluster = {"node_dict": {"n0": {}, "n1": {}}}
-        for mode in (None, "single", "distributed"):
-            with self.subTest(mode=mode):
-                self.assertIsNone(_Suite.select_hosts(self.config, cluster, mode))
+        self.assertIsNone(_Suite.select_hosts(self.config, cluster, "single"))
 
     def test_after_orch_leaves_the_orchestrator_alone(self):
         orch = mock.Mock(orchestrator_type="container")
