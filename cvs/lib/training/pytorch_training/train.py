@@ -586,6 +586,44 @@ def _share_dcp_metadata(directory, rank, local_rank):
     dist.barrier()
 
 
+_REPLICATED_FILE = "replicated.pt"
+
+
+def _split_replicated(node):
+    """Split a state dict into its DTensor shards and everything else.
+
+    DCP deduplicates replicated entries (Adam step counts, param groups) and
+    spreads them over the ranks' files, so on node-local disks a reload needs
+    files that only another node holds. Saving just the shards through DCP
+    keeps every rank's reads in its own file.
+    """
+    if isinstance(node, dict):
+        sharded, replicated = {}, {}
+        for key, value in node.items():
+            s, r = _split_replicated(value)
+            if s is not None:
+                sharded[key] = s
+            if r is not None:
+                replicated[key] = r
+        return sharded or None, replicated or None
+    if hasattr(node, "to_local"):
+        return node, None
+    return None, node
+
+
+def _merge_replicated(sharded, replicated, template):
+    if isinstance(template, dict):
+        return {
+            key: _merge_replicated((sharded or {}).get(key), (replicated or {}).get(key), value)
+            for key, value in template.items()
+        }
+    if hasattr(template, "to_local"):
+        return sharded
+    if torch.is_tensor(template):
+        return replicated.to(device=template.device, dtype=template.dtype)
+    return replicated
+
+
 def _local_checkpoint_bytes(directory, rank):
     return sum(p.stat().st_size for p in Path(directory).glob(f"__{rank}_*.distcp"))
 
@@ -610,13 +648,19 @@ def checkpoint_roundtrip(model, optimizer, scheduler, data, step, args, rank, lo
     torch.cuda.synchronize()
     dist.barrier()
     start = time.perf_counter()
-    dcp.save({"model": model_state, "optim": optim_state}, checkpoint_id=str(directory))
+    sharded, replicated = _split_replicated({"model": model_state, "optim": optim_state})
+    # The overlapping loader stages through pinned host buffers, which ran
+    # out (hipErrorOutOfMemory) on Qwen3-30B-A3B's ~55k expert tensors.
+    writer = dcp.FileSystemWriter(str(directory), per_thread_copy_ahead=0)
+    dcp.save(sharded, storage_writer=writer)
+    if local_rank == 0:
+        torch.save(replicated, directory / _REPLICATED_FILE)
     dist.barrier()
     save_seconds = time.perf_counter() - start
     _share_dcp_metadata(directory, rank, local_rank)
     size = torch.tensor([_local_checkpoint_bytes(directory, rank)], dtype=torch.float64, device=device)
     dist.all_reduce(size)
-    del model_state, optim_state
+    del model_state, optim_state, sharded, replicated
 
     uninterrupted = [
         train_step(model, optimizer, scheduler, data, step + k, args, rank, world_size, device)[0]
@@ -627,8 +671,11 @@ def checkpoint_roundtrip(model, optimizer, scheduler, data, step, args, rank, lo
     dist.barrier()
     start = time.perf_counter()
     model_state, optim_state = get_state_dict(model, optimizer)
-    restored = {"model": model_state, "optim": optim_state}
-    dcp.load(restored, checkpoint_id=str(directory))
+    template = {"model": model_state, "optim": optim_state}
+    sharded, _ = _split_replicated(template)
+    dcp.load(sharded, checkpoint_id=str(directory))
+    replicated = torch.load(directory / _REPLICATED_FILE, map_location="cpu", weights_only=False)
+    restored = _merge_replicated(sharded, replicated, template)
     set_state_dict(model, optimizer, model_state_dict=restored["model"], optim_state_dict=restored["optim"])
     scheduler.load_state_dict(schedule)
     torch.cuda.synchronize()
@@ -636,7 +683,7 @@ def checkpoint_roundtrip(model, optimizer, scheduler, data, step, args, rank, lo
     load_seconds = time.perf_counter() - start
     model_state, optim_state = get_state_dict(model, optimizer)
     after, after_scalars = _fingerprint({"model": model_state, "optim": optim_state}, device)
-    del model_state, optim_state, restored
+    del model_state, optim_state, restored, template, sharded, replicated
     verdict = torch.tensor([1.0 if (before == after and before_scalars == after_scalars) else 0.0], device=device)
     dist.all_reduce(verdict, op=dist.ReduceOp.MIN)
 
