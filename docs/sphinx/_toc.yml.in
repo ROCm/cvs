@@ -66,6 +66,8 @@ subtrees:
             title: JAX MaxText tests
           - file: how-to/test-suites/training/megatron
             title: Megatron tests
+          - file: how-to/test-suites/training/pytorch_training
+            title: PyTorch Training (LLM) tests
           - file: how-to/test-suites/training/torchtitan
             title: TorchTitan tests
       - file: how-to/test-suites/inference/index
@@ -143,6 +145,8 @@ subtrees:
             title: JAX MaxText
           - file: reference/configuration-files/training/megatron
             title: Megatron
+          - file: reference/configuration-files/training/pytorch_training
+            title: PyTorch Training (LLM)
           - file: reference/configuration-files/training/torchtitan
             title: TorchTitan
           - file: reference/configuration-files/training/aorta

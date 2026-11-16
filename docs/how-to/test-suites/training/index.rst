@@ -24,6 +24,9 @@ Distributed training benchmarks validate multi-node GPU training before producti
    * - Megatron
      - :doc:`/how-to/test-suites/training/megatron`
      - :doc:`/reference/configuration-files/training/megatron`
+   * - PyTorch Training (LLM)
+     - :doc:`/how-to/test-suites/training/pytorch_training`
+     - :doc:`/reference/configuration-files/training/pytorch_training`
    * - TorchTitan
      - :doc:`/how-to/test-suites/training/torchtitan`
      - :doc:`/reference/configuration-files/training/torchtitan`

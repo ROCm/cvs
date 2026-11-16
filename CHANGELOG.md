@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `pytorch_training_single` and `pytorch_training_distributed` train HuggingFace LLMs (Llama, DeepSeek-V2-Lite, Qwen, GPT-OSS) with FSDP2 in BF16, FP8, and, on MI355X, MXFP8/MXFP4. They report throughput, MFU, memory, checkpoint round-trip exactness, loss and perplexity, energy, and lm-evaluation-harness scores. The image is built by `build_tools/pytorch_training/Dockerfile.primus-26.3`.
 - `install_mori` builds MoRI from `git_url` at `git_ref` into `mori_dir`, using the MORI config, before `mori_benchmark_test` runs. In container mode it needs `container.lifetime` `persistent` or `no_launch`. The MORI run card shows the built commit.
 
 ### Changed
