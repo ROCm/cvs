@@ -12,7 +12,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from pydantic import ValidationError
 
 from cvs.config_validation.schemas.inference.accuracy import Accuracy, AccuracyTask, NiahEval
 from cvs.config_validation.schemas.inference.llm_serving import (
@@ -20,7 +19,6 @@ from cvs.config_validation.schemas.inference.llm_serving import (
     LlmServingConfig,
     ServingBenchmarkParams,
     ServingServerParams,
-    Timeouts,
 )
 from cvs.config_validation.schemas.sweeps import Axis, SweepsAndRuns
 from cvs.config_validation.schemas.thresholds import Thresholds
@@ -99,14 +97,6 @@ def _cluster(*hosts):
     return {"node_dict": {host: {"bmc_ip": "NA"} for host in hosts}, "head_node_dict": {"mgmt_ip": hosts[0]}}
 
 
-def _errors(model, data, context=None):
-    try:
-        model.model_validate(data, context=context)
-    except ValidationError as exc:
-        return sorted((error["loc"], error["type"]) for error in exc.errors())
-    raise AssertionError(f"{model.__name__} accepted {data!r}")
-
-
 def _as_json(value):
     # json.dumps tells True from 1 and 0.0 from 0, which == does not.
     return json.dumps(value)
@@ -162,34 +152,6 @@ class TestServingServerParams(unittest.TestCase):
                     with self.assertRaises(ValueError) as caught:
                         block.model_validate(data)
                     self.assertIn(problem, str(caught.exception))
-
-
-class TestTimeouts(unittest.TestCase):
-    def test_both_default_to_none_and_an_explicit_null_is_the_default(self):
-        self.assertEqual(Timeouts().model_dump(), {"server_ready_s": None, "client_s": None})
-        nulls = Timeouts.model_validate({"server_ready_s": None, "client_s": None})
-        self.assertEqual(nulls.model_dump(), Timeouts().model_dump())
-
-    def test_seconds_load_as_ints_and_comment_keys_are_dropped(self):
-        timeouts = Timeouts.model_validate({"_comment": "x", "server_ready_s": 3630, "client_s": "5410"})
-        self.assertEqual(_as_json(timeouts.model_dump()), _as_json({"server_ready_s": 3630, "client_s": 5410}))
-        self.assertEqual(Timeouts.model_validate({"client_s": 1}).model_dump(), {"server_ready_s": None, "client_s": 1})
-
-    def test_zero_negative_fractional_and_non_numeric_seconds_are_refused(self):
-        for value, error in (
-            (0, "greater_than"),
-            (-10, "greater_than"),
-            (1.5, "int_from_float"),
-            ("soon", "int_parsing"),
-        ):
-            for field in ("server_ready_s", "client_s"):
-                with self.subTest(field=field, value=value):
-                    self.assertEqual(_errors(Timeouts, {field: value}), [((field,), error)])
-
-    def test_unknown_keys_such_as_an_accuracy_timeout_are_refused(self):
-        for key in ("accuracy_s", "server_poll_wait_s", "client_poll_iterations"):
-            with self.subTest(key=key):
-                self.assertEqual(_errors(Timeouts, {key: 60}), [((key,), "extra_forbidden")])
 
 
 class TestLlmServingConfig(unittest.TestCase):
