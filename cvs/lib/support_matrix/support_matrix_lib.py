@@ -33,6 +33,11 @@ log = globals.log
 
 GATE_ENV = "CVS_SUPPORT_MATRIX_GATE"
 
+# The on-disk data-file format this library understands. A data file that declares a
+# different schema_version is rejected at load so a future v2 file is never silently
+# consumed by v1 code.
+SCHEMA_VERSION = 1
+
 _DATA_DIR = Path(__file__).resolve().parent
 
 # rocm-smi reports mi300x/mi325/mi350/mi355; the data files use the canonical
@@ -108,6 +113,9 @@ def load_matrix(category):
     path = _DATA_DIR / f"{category}_support_matrix.json"
     with open(path) as fp:
         data = json.load(fp)
+    schema = data.get("schema_version")
+    if schema != SCHEMA_VERSION:
+        raise ValueError(f"{path.name}: unsupported schema_version {schema!r} (expected {SCHEMA_VERSION})")
     frameworks = data.get("frameworks")
     if not isinstance(frameworks, dict):
         raise ValueError(f"{path.name}: missing or malformed 'frameworks' object")
@@ -175,7 +183,7 @@ def _norm_model(name):
 # ``model_repo`` is intentionally excluded: it is a filesystem path, not a model id.
 # (Unifying these keys in the configs is a separate follow-up.)
 _MODEL_KEYS = ("model_id", "hf_model_id", "model_name", "hf_model_name", "model")
-_MODEL_CONTAINERS = ("model", "server_params", "model_params", "train_params", "inference", "tokenizer")
+_MODEL_CONTAINERS = ("model", "server_params", "model_params", "train_params", "inference")
 
 
 def _field(obj, key):
@@ -205,12 +213,11 @@ def served_model_name(variant_config):
     '''Best-effort served-model identifier from a suite's variant config.
 
     The key that names the model varies across training and inference configs
-    (``model_id``, ``hf_model_id``, ``model_name``, ``hf_model_name``, ``model``,
-    ``model_repo``), and it may sit at the top level or inside ``model`` /
-    ``server_params`` / ``model_params`` / ``train_params`` / ``inference`` /
-    ``tokenizer``. This tries each key in each place and returns the first match;
-    "" when none is found (the gate then treats the workload as not-in-matrix,
-    i.e. unchecked).
+    (``model_id``, ``hf_model_id``, ``model_name``, ``hf_model_name``, ``model``),
+    and it may sit at the top level or inside ``model`` / ``server_params`` /
+    ``model_params`` / ``train_params`` / ``inference``. This tries each key in each
+    place and returns the first match; "" when none is found (the gate then treats
+    the workload as not-in-matrix, i.e. unchecked).
     '''
     for key in _MODEL_KEYS:
         found = _as_model_string(_field(variant_config, key))
@@ -410,6 +417,16 @@ def run_support_matrix_gate(category, framework, model, params, handle):
         else:
             log.warning("SUPPORT-MATRIX: could not load %s matrix (%s); gate disabled, continuing", category, exc)
         return result
+
+    if not str(model or "").strip():
+        # An empty model name means the suite could not read the model id from the
+        # config (a key rename or schema drift). Warn so this does not silently pass
+        # as "not characterized" and skip the gate without anyone noticing.
+        log.warning(
+            "SUPPORT-MATRIX: no model name resolved for framework=%s; the config may not expose a "
+            "model id where expected. Treating as not-in-matrix (workload unchecked).",
+            framework,
+        )
 
     entry = find_model_entry(matrix, framework, model)
     if entry is None:

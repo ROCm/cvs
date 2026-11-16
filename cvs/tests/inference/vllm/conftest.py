@@ -183,8 +183,8 @@ def pytest_collection_modifyitems(config, items):
     validate_vllm_execution_mode(config)
     rank = {
         "test_launch_container": 0,
-        "test_setup_sshd": 1,
-        "test_support_matrix_gate": 2,
+        "test_support_matrix_gate": 1,
+        "test_setup_sshd": 2,
         "test_discover_topology": 3,
         "test_model_fetch": 4,
         "test_openai_compatible_smoke": 5,

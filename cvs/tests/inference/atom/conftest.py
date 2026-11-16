@@ -72,9 +72,9 @@ def config_profile(pytestconfig):
 
 LIFECYCLE_RANK = {
     "test_launch_container": 0,
-    "test_setup_sshd": 1,
-    "test_discover_topology": 2,
-    "test_support_matrix_gate": 3,
+    "test_support_matrix_gate": 1,
+    "test_setup_sshd": 2,
+    "test_discover_topology": 3,
     "test_model_fetch": 4,
     "test_openai_compatible_smoke": 5,
     "test_server_health": 5,
