@@ -95,6 +95,8 @@ class DataConfig(_Forbid):
     cache_dir: str = ""
     # Documents are joined with the tokenizer's EOS token between them.
     append_eos: bool = True
+    # Tokenizing a multi-billion-token corpus takes longer than WikiText.
+    prepare_timeout_s: int = Field(default=3600, gt=0)
 
 
 class BenchmarkConfig(_Forbid):

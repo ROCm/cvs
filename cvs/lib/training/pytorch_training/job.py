@@ -261,7 +261,15 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
                 *(["--append-eos"] if data.append_eos else []),
             ]
         )
-        result = self.orch.exec(command, timeout=3600, detailed=True, print_console=False)
+        hosts = list(self.orch.hosts)
+        if len(hosts) > 1:
+            # The cache is shared: one node tokenizes and the rest reuse it,
+            # rather than every node writing its own full temporary copy.
+            first = self.orch.exec(
+                command, hosts=hosts[:1], timeout=data.prepare_timeout_s, detailed=True, print_console=False
+            )
+            self._require_success(first, f"prepare token data for {self.sweep_name} on {hosts[0]}")
+        result = self.orch.exec(command, timeout=data.prepare_timeout_s, detailed=True, print_console=False)
         self._require_success(result, f"prepare token data for {self.sweep_name}")
         summaries = []
         for host, host_result in result.items():
