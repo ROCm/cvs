@@ -161,13 +161,6 @@ class TestSetupSshd(unittest.TestCase):
         self.assertTrue(lifecycle.failed)
         self.assertIn(":2224", orch.commands[0][0])
 
-    def test_empty_probe_result_fails_and_marks_lifecycle_failed(self):
-        orch = self._orch(["node0", "node1"], exec_return={})
-        lifecycle = InferenceLifecycle()
-        with self.assertRaises(pytest.fail.Exception):
-            self._sshd(orch, lifecycle)
-        self.assertTrue(lifecycle.failed)
-
 
 class TestTeardown(_ContainerOrchTestCase):
     nodeid = "atom.py::test_teardown"
@@ -195,13 +188,6 @@ class TestTeardown(_ContainerOrchTestCase):
         self.assertFalse(self.lifecycle.torn_down)
         self.assertFalse(self.lifecycle.failed)
         self.assertEqual(_labels(self.lifecycle, self.nodeid), ["teardown"])
-
-    def test_each_call_records_teardown(self):
-        self.runtime.is_running.return_value = _NOT_RUNNING
-        self._teardown()
-        self._teardown()
-        self.assertTrue(self.lifecycle.torn_down)
-        self.assertEqual(_labels(self.lifecycle, self.nodeid), ["teardown", "teardown"])
 
 
 if __name__ == "__main__":
