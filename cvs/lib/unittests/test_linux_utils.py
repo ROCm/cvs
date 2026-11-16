@@ -206,6 +206,19 @@ link rdma1/1 state DOWN physical_state LINK_DOWN netdev tw_eth1"""
 
 
 class TestGetNicEthtoolStatsDict(unittest.TestCase):
+    def test_ethtool_cmd_filters_bracket_lines_with_escaped_grep_pattern(self):
+        mock_phdl = MagicMock()
+        mock_phdl.exec_cmd_list.return_value = {'node1': 'rx_errors: 0'}
+        bck_nic_dict = {'node1': {'rdma0': {'eth_device': 'eth0'}}}
+
+        with patch.object(linux_utils, 'get_backend_rdma_nic_dict', return_value=bck_nic_dict):
+            linux_utils.get_nic_ethtool_stats_dict(mock_phdl)
+
+        cmd_list = mock_phdl.exec_cmd_list.call_args_list[0].args[0]
+        self.assertEqual(cmd_list, ['sudo ethtool -S eth0 | grep -v "\\[" --color=never'])
+        self.assertIn('\\[', cmd_list[0])
+        self.assertNotIn('\\\\[', cmd_list[0])
+
     def test_asymmetric_nic_counts_across_nodes(self):
         """Nodes with different backend RDMA NIC counts (e.g. a downed link) must not
         raise IndexError, and each node's stats must only contain its own interfaces."""

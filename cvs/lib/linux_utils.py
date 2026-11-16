@@ -570,7 +570,7 @@ def get_nic_ethtool_stats_dict(phdl, vendor=None):
         for node in node_list:
             if i < len(eth_dev_dict[node]):
                 intf_nam = eth_dev_dict[node][i]
-                cmd_dict[i].append(f'sudo ethtool -S {intf_nam} | grep -v "\[" --color=never')
+                cmd_dict[i].append(rf'sudo ethtool -S {intf_nam} | grep -v "\[" --color=never')
             else:
                 cmd_dict[i].append('true')
 
