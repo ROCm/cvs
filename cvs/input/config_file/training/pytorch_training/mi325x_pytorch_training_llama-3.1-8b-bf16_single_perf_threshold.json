@@ -1,0 +1,102 @@
+{
+  "W2-LLAMA-3.1-8B-BF16-SL8192-MBS4-GBS128": {
+    "training.tokens_per_sec": {
+      "kind": "info"
+    },
+    "training.tokens_per_sec_per_gpu": {
+      "kind": "info"
+    },
+    "training.step_time_ms_p95": {
+      "kind": "info"
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "info"
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "info"
+    },
+    "training.tflops_per_sec_per_gpu": {
+      "kind": "info"
+    },
+    "training.mfu_pct": {
+      "kind": "info"
+    },
+    "training.step_time_ms_mean": {
+      "kind": "info"
+    },
+    "training.step_time_ms_p50": {
+      "kind": "info"
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_save_seconds": {
+      "kind": "info"
+    },
+    "training.checkpoint_load_seconds": {
+      "kind": "info"
+    },
+    "training.checkpoint_io_seconds": {
+      "kind": "info"
+    },
+    "training.loss_final": {
+      "kind": "info"
+    }
+  },
+  "W2-LLAMA-3.1-8B-BF16-SL8192-MBS4-GA1": {
+    "training.tokens_per_sec": {
+      "kind": "info"
+    },
+    "training.tokens_per_sec_per_gpu": {
+      "kind": "info"
+    },
+    "training.step_time_ms_p95": {
+      "kind": "info"
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "info"
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "info"
+    },
+    "training.tflops_per_sec_per_gpu": {
+      "kind": "info"
+    },
+    "training.mfu_pct": {
+      "kind": "info"
+    },
+    "training.step_time_ms_mean": {
+      "kind": "info"
+    },
+    "training.step_time_ms_p50": {
+      "kind": "info"
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_save_seconds": {
+      "kind": "info"
+    },
+    "training.checkpoint_load_seconds": {
+      "kind": "info"
+    },
+    "training.checkpoint_io_seconds": {
+      "kind": "info"
+    },
+    "training.loss_final": {
+      "kind": "info"
+    }
+  }
+}
