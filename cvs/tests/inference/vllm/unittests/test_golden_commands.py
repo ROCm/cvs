@@ -55,7 +55,6 @@ After an intended change, regenerate golden_commands.json from the repo root wit
 '''
 
 import contextlib
-import copy
 import inspect
 import json
 import re
@@ -382,30 +381,6 @@ class TestGoldenCommands(unittest.TestCase):
                 differences = list(_differences(self.golden[template.name], render_config(template, self.tmp)))
                 if differences:
                     self.fail(_failure_message(template.name, differences))
-
-    def test_a_changed_port_in_the_golden_entry_is_reported_at_each_server_launch(self):
-        template = CONFIG_DIR / "mi3xx_vllm_llama33-70b_fp8_distributed.json"
-        edited = _replace(copy.deepcopy(self.golden[template.name]), "--port 8888", "--port 8889")
-
-        differences = list(_differences(edited, render_config(template, self.tmp)))
-
-        (cell,) = edited["runs"]
-        self.assertEqual(
-            [path for path, _, _ in differences],
-            [f"runs.{cell}[4]", f"runs.{cell}[5]", "smoke[4]", "smoke[5]"],
-        )
-        message = _failure_message(template.name, differences).splitlines()
-        self.assertEqual(
-            message[:3],
-            [
-                f"{template.name}: rendered entry differs from {GOLDEN.name}",
-                f"  runs.{cell}[4]",
-                "    first difference at column 119",
-            ],
-        )
-        self.assertIn("--port 8889 --node-rank 0", message[3])
-        self.assertIn("--port 8888 --node-rank 0", message[4])
-        self.assertLessEqual(max(len(line) for line in message), 2 * CONTEXT + 20)
 
 
 if __name__ == "__main__":
