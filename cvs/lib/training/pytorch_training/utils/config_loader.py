@@ -142,9 +142,14 @@ class TrainingSweep(_Forbid):
     # fp32 keeps an fp32 master copy and computes in bf16; bf16 halves the
     # parameter, gradient, and optimizer state for models that do not fit.
     master_weights: Literal["fp32", "bf16"] = "fp32"
-    attn_implementation: Literal["sdpa", "flash_attention_2", "eager"] = "flash_attention_2"
+    # GPT-OSS needs flex_attention: the flash_attention_2 path silently
+    # drops its attention sinks.
+    attn_implementation: Literal["sdpa", "flash_attention_2", "flex_attention", "eager"] = "flash_attention_2"
     # torch.compile each decoder layer.
     compile: bool = True
+    # Compute the loss over this many tokens at a time (0 = all at once).
+    # The fp32 logits of a large-vocabulary batch otherwise need tens of GB.
+    loss_chunk_tokens: int = Field(default=0, ge=0)
     data_mode: Literal["tokens", "synthetic"] = "tokens"
     # Overrides the FLOPs/token derived from the model config.
     training_flops_per_token: Optional[float] = Field(default=None, gt=0)

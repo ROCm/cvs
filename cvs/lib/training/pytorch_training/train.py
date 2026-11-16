@@ -49,6 +49,7 @@ def _parse_args():
     p.add_argument("--master-weights", choices=["fp32", "bf16"], default="fp32")
     p.add_argument("--attn-implementation", default="sdpa")
     p.add_argument("--compile", action="store_true")
+    p.add_argument("--loss-chunk-tokens", type=int, default=0)
     p.add_argument("--data-mode", choices=["tokens", "synthetic"], default="tokens")
     p.add_argument("--train-tokens", default="")
     p.add_argument("--eval-tokens", default="")
@@ -274,6 +275,43 @@ def _apply_activation_checkpointing(model, every):
             layers[index] = checkpoint_wrapper(layers[index], preserve_rng_state=False)
 
 
+def _has_experts(module):
+    return any(hasattr(m, "experts") for m in module.modules())
+
+
+def _compile_layer(layer):
+    """Compile one decoder layer, leaving any MoE expert block eager.
+
+    HF MoE blocks loop over experts in Python with data-dependent token
+    counts, so compiling them recompiles on every new routing and a
+    DeepSeek-V2-Lite warmup step never finished.
+    """
+    inner = getattr(layer, "_checkpoint_wrapped_module", layer)
+    if not _has_experts(inner):
+        layer.compile()
+        return
+    for child in inner.children():
+        if not _has_experts(child):
+            child.compile()
+
+
+def _touch_all_experts(module, inputs, output):
+    # HF MoE blocks skip experts that received no tokens, leaving their
+    # gradients None on that rank only; FSDP2 then reduce-scatters a
+    # different gradient set per rank and the collectives deadlock. A zero
+    # term gives every expert a (zero) gradient on every rank.
+    anchor = sum(p.reshape(-1)[0] for p in module.experts.parameters()) * 0.0
+    if isinstance(output, tuple):
+        return (output[0] + anchor.to(output[0].dtype),) + tuple(output[1:])
+    return output + anchor.to(output.dtype)
+
+
+def _register_expert_anchors(model):
+    for module in model.modules():
+        if isinstance(getattr(module, "experts", None), torch.nn.Module):
+            module.register_forward_hook(_touch_all_experts)
+
+
 def _init_random_weights(model, config):
     std = float(getattr(config, "initializer_range", 0.02) or 0.02)
     touched = set()
@@ -347,6 +385,7 @@ def build_model(args, device, mesh, rank):
     buffers = {name: buf.detach().clone() for name, buf in model.named_buffers()}
     flops, total_params, active_params = training_flops_per_token(model, config, args.seq_len)
     precision_info = _apply_precision(model, args)
+    _register_expert_anchors(model)
     _apply_activation_checkpointing(model, args.activation_checkpointing_every)
     policy = MixedPrecisionPolicy(param_dtype=torch.bfloat16, reduce_dtype=torch.float32)
     for layer in _decoder_layers(model):
@@ -354,7 +393,7 @@ def build_model(args, device, mesh, rank):
             # Per layer, as TorchTitan does: one graph per block reuses the
             # compiled code for every layer and fuses the norm, rotary, and
             # gated-MLP elementwise kernels that eager HF code runs one by one.
-            layer.compile()
+            _compile_layer(layer)
         fully_shard(layer, mesh=mesh, mp_policy=policy)
     fully_shard(model, mesh=mesh, mp_policy=policy)
     model.to_empty(device=device)
@@ -418,8 +457,24 @@ def build_optimizer(model, args):
 # ------------------------------------------------------------------ training
 
 
-def _cross_entropy(logits, labels):
-    return F.cross_entropy(logits.float().reshape(-1, logits.size(-1)), labels.reshape(-1))
+def _cross_entropy_sum(logits, labels):
+    return F.cross_entropy(logits.float(), labels, reduction="sum")
+
+
+def _cross_entropy(logits, labels, chunk_tokens=0):
+    flat = logits.reshape(-1, logits.size(-1))
+    targets = labels.reshape(-1)
+    if chunk_tokens <= 0 or flat.size(0) <= chunk_tokens:
+        return F.cross_entropy(flat.float(), targets)
+    from torch.utils.checkpoint import checkpoint
+
+    # Recomputed in backward so only one chunk's fp32 logits and softmax
+    # are alive at a time.
+    total = torch.zeros((), dtype=torch.float32, device=flat.device)
+    for start in range(0, flat.size(0), chunk_tokens):
+        end = start + chunk_tokens
+        total = total + checkpoint(_cross_entropy_sum, flat[start:end], targets[start:end], use_reentrant=False)
+    return total / (targets != -100).sum().clamp(min=1)
 
 
 def train_step(model, optimizer, scheduler, data, step, args, rank, world_size, device):
@@ -427,7 +482,7 @@ def train_step(model, optimizer, scheduler, data, step, args, rank, world_size, 
     for micro in range(args.gradient_accumulation_steps):
         inputs, labels = data.batch(_micro_batch_indices(step, micro, args, rank, world_size), device)
         logits = model(input_ids=inputs, use_cache=False).logits
-        loss = _cross_entropy(logits, labels) / args.gradient_accumulation_steps
+        loss = _cross_entropy(logits, labels, args.loss_chunk_tokens) / args.gradient_accumulation_steps
         del logits
         loss.backward()
         accumulated += loss.detach()
@@ -465,7 +520,7 @@ def evaluate(model, data, args, rank, world_size, device):
             index = batch * world_size + rank
             inputs, labels = data.batch([index], device, shuffle=False)
             logits = model(input_ids=inputs, use_cache=False).logits
-            totals[0] += _cross_entropy(logits, labels).double() * labels.numel()
+            totals[0] += _cross_entropy(logits, labels, args.loss_chunk_tokens).double() * labels.numel()
             totals[1] += labels.numel()
             del logits
     model.train()
@@ -926,6 +981,7 @@ def run(args, rank, local_rank, world_size, device):
         "activation_checkpointing_every": args.activation_checkpointing_every,
         "master_weights": args.master_weights,
         "attn_implementation": args.attn_implementation,
+        "loss_chunk_tokens": args.loss_chunk_tokens,
         "training_flops_per_token": flops_per_token,
         "derived_flops_per_token": derived_flops,
         "peak_tflops_per_gpu": args.peak_tflops_per_gpu,

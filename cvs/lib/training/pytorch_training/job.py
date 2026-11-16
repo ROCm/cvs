@@ -317,6 +317,8 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
             sweep.master_weights,
             "--attn-implementation",
             sweep.attn_implementation,
+            "--loss-chunk-tokens",
+            str(sweep.loss_chunk_tokens),
             "--data-mode",
             sweep.data_mode,
             "--warmup-steps",

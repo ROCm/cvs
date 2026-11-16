@@ -78,6 +78,16 @@ class TestSweepBatch(unittest.TestCase):
         with self.assertRaises(ValueError):
             TrainingSweep(**_sweep(global_batch_size=None))
 
+    def test_loss_chunk_tokens_defaults_off(self):
+        self.assertEqual(TrainingSweep(**_sweep()).loss_chunk_tokens, 0)
+        self.assertEqual(TrainingSweep(**_sweep(loss_chunk_tokens=8192)).loss_chunk_tokens, 8192)
+        with self.assertRaises(ValueError):
+            TrainingSweep(**_sweep(loss_chunk_tokens=-1))
+
+    def test_flex_attention_accepted(self):
+        sweep = TrainingSweep(**_sweep(attn_implementation="flex_attention"))
+        self.assertEqual(sweep.attn_implementation, "flex_attention")
+
 
 class TestVariantValidation(unittest.TestCase):
     def test_valid_config_loads(self):
