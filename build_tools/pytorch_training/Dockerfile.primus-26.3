@@ -1,0 +1,44 @@
+# PyTorch Training image: rocm/primus v26.3 plus the HF model zoo, CodeCarbon,
+# and lm-evaluation-harness.
+#
+# Primus already carries torch 2.10, torchao (FP8 training), Transformer
+# Engine, and flash-attn for ROCm, so the LLM workloads share one ROCm/PyTorch
+# baseline with the Megatron and TorchTitan suites. Its transformers predates
+# the DeepSeek-V2 and GPT-OSS model classes the scorecard needs.
+FROM rocm/primus:v26.3
+
+# Pinned because an unpinned model zoo or eval harness changes model code,
+# loss reporting, and benchmark prompts between runs.
+ARG TRANSFORMERS_VERSION=4.57.1
+ARG ACCELERATE_VERSION=1.10.1
+ARG DATASETS_VERSION=4.0.0
+ARG LM_EVAL_VERSION=0.4.9.2
+# The same CodeCarbon 3.2.4 commit as the PyTorch Vision images, whose AMDSMI
+# tracker reads MI3xx energy counters. Its wheel omits a data file that the
+# package opens at import time.
+ARG CODECARBON_COMMIT=31b4dacc65185bb985b6a6fed2b945ac8961b164
+
+RUN python -m pip install --no-cache-dir \
+        "transformers==${TRANSFORMERS_VERSION}" \
+        "accelerate==${ACCELERATE_VERSION}" \
+        "datasets==${DATASETS_VERSION}" \
+        "codecarbon @ git+https://github.com/mlco2/codecarbon.git@${CODECARBON_COMMIT}" \
+        "lm_eval[math]==${LM_EVAL_VERSION}" \
+    && CODECARBON_DATA="$(python -c 'import site; print(site.getsitepackages()[0])')/codecarbon/data/private_infra" \
+    && curl -fsSL \
+        "https://raw.githubusercontent.com/mlco2/codecarbon/${CODECARBON_COMMIT}/codecarbon/data/private_infra/nordic_emissions.json" \
+        -o "${CODECARBON_DATA}/nordic_emissions.json" \
+    && python -c "\
+import torch, transformers, accelerate, datasets, codecarbon, lm_eval, torchao;\
+from torch.distributed.fsdp import fully_shard;\
+from torchao.float8 import convert_to_float8_training;\
+from transformers import LlamaForCausalLM, MixtralForCausalLM, Qwen2ForCausalLM, Qwen3MoeForCausalLM;\
+from transformers import DeepseekV2ForCausalLM, GptOssForCausalLM;\
+print('torch', torch.__version__);\
+print('transformers', transformers.__version__);\
+print('torchao', torchao.__version__);\
+assert codecarbon.__version__ == '3.2.4', codecarbon.__version__;\
+print('codecarbon', codecarbon.__version__);\
+print('lm_eval', lm_eval.__version__)"
+
+LABEL org.opencontainers.image.version="primus26.3-torch2.10-hf4.57"
