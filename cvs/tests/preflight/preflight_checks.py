@@ -38,7 +38,7 @@ from cvs.lib.preflight.node_smoke_rows import (
 )
 
 # RdmaConnectivityCheck not used - using legacy function temporarily
-from cvs.lib.preflight.report import PreflightReportGenerator, preflight_check_display_name
+from cvs.lib.preflight.report import CRASHED_CHECKS_KEY, PreflightReportGenerator, preflight_check_display_name
 from cvs.lib.preflight.rundeck import (
     GID_CONSISTENCY,
     RDMA_MTU,
@@ -86,14 +86,19 @@ def _publish_preflight_rundeck():
 
 
 def _timed_stage(label):
-    """Record wall-clock for one preflight check. Missing lifecycle is a no-op."""
+    """Record wall-clock for one preflight check, and record it as crashed if it raises. Missing lifecycle is a no-op."""
 
     def deco(fn):
         @functools.wraps(fn)
         def wrapped(*args, **kwargs):
             lifecycle = inspect.signature(fn).bind_partial(*args, **kwargs).arguments.get('lifecycle')
             with timed_stage(lifecycle, label):
-                return fn(*args, **kwargs)
+                try:
+                    return fn(*args, **kwargs)
+                except Exception as exc:
+                    # pytest.fail/skip are BaseException: a recorded failure or skip is not a crash.
+                    _record_check_crash(label, exc)
+                    raise
 
         return wrapped
 
@@ -303,6 +308,19 @@ def _node_health_admitted_port_ids():
 
 # Global results storage for HTML report generation
 preflight_results = {}
+
+# Keeps the summary row readable; the full traceback is in the pytest log.
+_CRASH_MESSAGE_LIMIT = 300
+
+
+def _record_check_crash(label, exc):
+    """Remember that a check raised before it finished so the summary cannot score it as skipped or passed."""
+    detail = str(exc)
+    message = f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+    if len(message) > _CRASH_MESSAGE_LIMIT:
+        message = f"{message[:_CRASH_MESSAGE_LIMIT]}..."
+    preflight_results.setdefault(CRASHED_CHECKS_KEY, {})[label] = message
+    log.error("Preflight: %s did not finish: %s", preflight_check_display_name(label), message)
 
 
 def _prune_nodes_from_phdl(phdl, failed_nodes, reason):
@@ -1789,13 +1807,13 @@ def test_generate_preflight_report(orch, config_dict, request):
         'transferbench_smoke',
         'rdma_connectivity',
     ]
-    missing_checks = [check for check in required_checks if check not in preflight_results]
+    crashed = preflight_results.get(CRASHED_CHECKS_KEY) or {}
+    missing_checks = [check for check in required_checks if check not in preflight_results and check not in crashed]
 
     if missing_checks:
-        log.error(f"Missing results for checks: {', '.join(missing_checks)}")
-        # Create empty results for missing checks to allow report generation
+        log.warning(f"No results recorded for checks that did not run: {', '.join(missing_checks)}")
         for check in missing_checks:
-            preflight_results[check] = {'status': 'SKIPPED', 'message': 'Check was skipped due to earlier failures'}
+            preflight_results[check] = {'status': 'SKIPPED', 'message': 'Check did not run'}
 
     # Generate comprehensive summary using new report generator
     report_generator = PreflightReportGenerator(orch, preflight_results, config_dict)

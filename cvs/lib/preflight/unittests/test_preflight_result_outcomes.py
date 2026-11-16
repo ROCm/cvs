@@ -11,6 +11,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
 from cvs.lib.report.health_lifecycle import HealthLifecycle
+from cvs.lib.preflight.report import CRASHED_CHECKS_KEY
 from cvs.tests.preflight import preflight_checks
 
 
@@ -109,7 +110,7 @@ class TestTimedPreflightChecksSurfaceOutcomes(unittest.TestCase):
         preflight_checks.preflight_results.clear()
         preflight_checks.preflight_results.update(self.previous_results)
 
-    def test_decorated_check_fail_reaches_pytest_without_lifecycle(self):
+    def test_recorded_failure_is_not_a_crash(self):
         @preflight_checks._timed_stage(preflight_checks.GID_CONSISTENCY)
         def check(lifecycle=None):
             preflight_checks.preflight_update_test_result({'status': 'FAIL', 'message': 'GID index invalid'})
@@ -117,8 +118,9 @@ class TestTimedPreflightChecksSurfaceOutcomes(unittest.TestCase):
         with self.assertRaises(pytest.fail.Exception) as ctx:
             check()
         self.assertIn('GID index invalid', str(ctx.exception))
+        self.assertNotIn(CRASHED_CHECKS_KEY, preflight_checks.preflight_results)
 
-    def test_decorated_check_skip_reaches_pytest_without_lifecycle(self):
+    def test_configuration_skip_is_not_a_crash(self):
         @preflight_checks._timed_stage(preflight_checks.GID_CONSISTENCY)
         def check(lifecycle=None):
             preflight_checks.preflight_update_test_result({'status': 'SKIPPED', 'skipped': True, 'message': 'disabled'})
@@ -126,6 +128,52 @@ class TestTimedPreflightChecksSurfaceOutcomes(unittest.TestCase):
         with self.assertRaises(pytest.skip.Exception) as ctx:
             check()
         self.assertIn('disabled', str(ctx.exception))
+        self.assertNotIn(CRASHED_CHECKS_KEY, preflight_checks.preflight_results)
+
+    def test_decorated_check_records_crash_and_reraises(self):
+        @preflight_checks._timed_stage(preflight_checks.RDMA_CONNECTIVITY)
+        def check(lifecycle=None):
+            raise RuntimeError('Server startup failures: nodeA')
+
+        with self.assertRaises(RuntimeError):
+            check()
+        message = preflight_checks.preflight_results[CRASHED_CHECKS_KEY][preflight_checks.RDMA_CONNECTIVITY]
+        self.assertIn('RuntimeError', message)
+        self.assertIn('Server startup failures', message)
+        self.assertNotIn('rdma_connectivity', preflight_checks.preflight_results)
+
+    def test_decorated_check_crash_records_stage(self):
+        @preflight_checks._timed_stage(preflight_checks.RDMA_CONNECTIVITY)
+        def check(lifecycle=None):
+            raise RuntimeError('Server startup failures: nodeA')
+
+        lifecycle = HealthLifecycle()
+        with self.assertRaises(RuntimeError):
+            check(lifecycle=lifecycle)
+        self.assertEqual(lifecycle.report['health'][0][0], preflight_checks.RDMA_CONNECTIVITY)
+
+    def test_crash_message_is_truncated(self):
+        @preflight_checks._timed_stage(preflight_checks.RDMA_CONNECTIVITY)
+        def check(lifecycle=None):
+            raise ValueError('x' * 1000)
+
+        with self.assertRaises(ValueError):
+            check()
+        message = preflight_checks.preflight_results[CRASHED_CHECKS_KEY][preflight_checks.RDMA_CONNECTIVITY]
+        self.assertLessEqual(len(message), preflight_checks._CRASH_MESSAGE_LIMIT + 3)
+        self.assertTrue(message.endswith('...'))
+
+    def test_rdma_connectivity_crash_is_recorded(self):
+        orch = MagicMock()
+        orch.all.reachable_hosts = ['nodeA', 'nodeB']
+        config = {
+            'connectivity_check': {'rdma': {'connectivity_mode': 'basic', 'interfaces': ['eth0'], 'gid_index': '1'}}
+        }
+        with patch('cvs.lib.preflight.rdma_connectivity.RdmaConnectivityCheck') as checker:
+            checker.return_value.run.side_effect = RuntimeError('copy failed')
+            with self.assertRaises(RuntimeError):
+                preflight_checks.test_rdma_connectivity(orch, {}, config)
+        self.assertIn('rdma_connectivity', preflight_checks.preflight_results[CRASHED_CHECKS_KEY])
 
     def test_decorated_check_records_stage_when_failing(self):
         @preflight_checks._timed_stage(preflight_checks.GID_CONSISTENCY)
@@ -175,6 +223,75 @@ class TestPreflightReportOverallVerdict(unittest.TestCase):
         config = {'node_check': {'enabled': False}, 'reporting': {'generate_html_report': False}}
         self.assertIsNone(preflight_checks.test_generate_preflight_report(MagicMock(), config, self.request))
         self.assertEqual(preflight_checks.preflight_results['summary']['overall_status'], 'PASS')
+
+    def test_crashed_check_fails_overall_status(self):
+        orch = MagicMock()
+        orch.all.reachable_hosts = ['nodeA', 'nodeB']
+        rdma_config = {
+            'connectivity_check': {'rdma': {'connectivity_mode': 'basic', 'interfaces': ['eth0'], 'gid_index': '1'}}
+        }
+        with patch('cvs.lib.preflight.rdma_connectivity.RdmaConnectivityCheck') as checker:
+            checker.return_value.run.side_effect = RuntimeError('copy failed')
+            with self.assertRaises(RuntimeError):
+                preflight_checks.test_rdma_connectivity(orch, {}, rdma_config)
+
+        config = {'node_check': {'enabled': False}, 'reporting': {'generate_html_report': False}}
+        with (
+            patch.object(preflight_checks.log, 'error') as error,
+            patch.object(preflight_checks.log, 'info') as info,
+            self.assertRaises(pytest.fail.Exception) as ctx,
+        ):
+            preflight_checks.test_generate_preflight_report(MagicMock(), config, self.request)
+        summary = preflight_checks.preflight_results['summary']
+        self.assertIn('overall status is FAIL', str(ctx.exception))
+        self.assertIn('Rdma Connectivity', str(ctx.exception))
+        self.assertEqual(summary['checks']['rdma_connectivity']['status'], 'ERROR')
+        self.assertIn('did not finish', summary['checks']['rdma_connectivity']['summary'])
+        self.assertIn('copy failed', summary['checks']['rdma_connectivity']['summary'])
+        self.assertEqual(summary['overall_status'], 'FAIL')
+        self.assertNotIn('rdma_connectivity', preflight_checks.preflight_results)
+        self.assertFalse(any('ready for performance testing' in line for line in summary['recommendations']))
+        self.assertTrue(
+            any('Rdma Connectivity' in line and 'rerun preflight' in line for line in summary['recommendations'])
+        )
+        error_lines = [str(call.args[0]) for call in error.call_args_list if call.args]
+        info_lines = [str(call.args[0]) for call in info.call_args_list if call.args]
+        self.assertTrue(any('Rdma Connectivity: ERROR' in line for line in error_lines))
+        self.assertFalse(any('All preflight checks passed' in line for line in info_lines))
+
+    def test_configuration_skip_keeps_overall_pass(self):
+        rdma_config = {'connectivity_check': {'rdma': {'connectivity_mode': 'skip'}}}
+        with self.assertRaises(pytest.skip.Exception):
+            preflight_checks.test_rdma_connectivity(MagicMock(), {}, rdma_config)
+        config = {'node_check': {'enabled': False}, 'reporting': {'generate_html_report': False}}
+        self.assertIsNone(preflight_checks.test_generate_preflight_report(MagicMock(), config, self.request))
+        summary = preflight_checks.preflight_results['summary']
+        self.assertEqual(summary['checks']['rdma_connectivity']['status'], 'SKIPPED')
+        self.assertEqual(summary['overall_status'], 'PASS')
+        self.assertTrue(any('ready for performance testing' in line for line in summary['recommendations']))
+        self.assertNotIn(CRASHED_CHECKS_KEY, preflight_checks.preflight_results)
+
+    def test_not_run_check_is_backfilled_as_skipped(self):
+        config = {'node_check': {'enabled': False}, 'reporting': {'generate_html_report': False}}
+        self.assertIsNone(preflight_checks.test_generate_preflight_report(MagicMock(), config, self.request))
+        self.assertEqual(
+            preflight_checks.preflight_results['rdma_connectivity'],
+            {'status': 'SKIPPED', 'message': 'Check did not run'},
+        )
+        self.assertEqual(preflight_checks.preflight_results['summary']['overall_status'], 'PASS')
+
+    def test_crash_after_recorded_failure_keeps_fail(self):
+        preflight_checks.preflight_results['rdma_connectivity'] = {
+            'mode': 'basic',
+            'total_pairs': 2,
+            'successful_pairs': 1,
+            'failed_pairs': 1,
+        }
+        preflight_checks.preflight_results[CRASHED_CHECKS_KEY] = {'rdma_connectivity': 'KeyError: x'}
+        config = {'node_check': {'enabled': False}, 'reporting': {'generate_html_report': False}}
+        with self.assertRaises(pytest.fail.Exception):
+            preflight_checks.test_generate_preflight_report(MagicMock(), config, self.request)
+        self.assertEqual(preflight_checks.preflight_results['summary']['checks']['rdma_connectivity']['status'], 'FAIL')
 
     def test_failing_summary_fails_report_row(self):
         config = {'node_check': {'enabled': False}, 'reporting': {'generate_html_report': False}}
