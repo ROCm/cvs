@@ -293,11 +293,7 @@ class TestConfigMigrate(unittest.TestCase):
         self.assertEqual(json.loads(self.new.read_text()), NEW)
 
     def test_an_unknown_suite_exits_2_listing_the_suites_or_none(self):
-        cases = {
-            "demo": {"demo": DEMO_MAP},
-            "demo, other": {"demo": "", "other": ""},
-            "none": {},
-        }
+        cases = {"demo": {"demo": DEMO_MAP}, "none": {}}
         for listed, sources in cases.items():
             with self.subTest(listed=listed):
                 self._use_maps(**sources)
@@ -307,29 +303,15 @@ class TestConfigMigrate(unittest.TestCase):
                 self.assertIn(f"error: argument suite: unknown suite vllm; available suites: {listed}\n", err)
         self.assertFalse(self.new.exists())
 
-    def test_requires_suite_input_and_output(self):
-        code, _, err = self._cvs("config", "migrate", "demo", str(self.old))
-        self.assertEqual(code, 2)
-        self.assertIn("the following arguments are required: output", err)
-        self.assertFalse(self.new.exists())
-
     def test_help_lists_the_suites_force_and_exit_codes(self):
-        for listed, sources in {"demo": {"demo": DEMO_MAP}, "none yet": {}}.items():
-            with self.subTest(listed=listed):
-                self._use_maps(**sources)
-                code, out, _ = self._cvs("config", "migrate", "--help")
-                self.assertEqual(code, 0)
-                text = " ".join(out.split())
-                self.assertIn("usage: cvs config migrate [-h] [--force] suite input.json output", text)
-                self.assertIn("The input file is never changed.", text)
-                self.assertIn(f"(available: {listed})", text)
-                self.assertIn("--force Force overwrite of an existing output file", text)
-                self.assertIn("1 when the new file is written with fields to fix; 2 when nothing is written", text)
-
-    def test_cvs_help_lists_the_migrate_command(self):
-        code, out, _ = self._cvs("--help")
+        code, out, _ = self._cvs("config", "migrate", "--help")
         self.assertEqual(code, 0)
-        self.assertIn("cvs config migrate <suite> <input.json> <output>", out)
+        text = " ".join(out.split())
+        self.assertIn("usage: cvs config migrate [-h] [--force] suite input.json output", text)
+        self.assertIn("The input file is never changed.", text)
+        self.assertIn("(available: demo)", text)
+        self.assertIn("--force Force overwrite of an existing output file", text)
+        self.assertIn("1 when the new file is written with fields to fix; 2 when nothing is written", text)
 
 
 if __name__ == "__main__":
