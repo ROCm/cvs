@@ -7,8 +7,8 @@ builder from AGFHC stdout CVS already collects per node.
 
 The cell verdict matches ``scan_agfc_results``: missing ``code AGFHC_SUCCESS``
 fails the node, and so does any ``FAIL``, ``ERROR``, or ``ABORT`` line. CSP
-qualification also fails the cell when ``results.json`` does not contain
-``"total_failed": 0,``. Parsed test rows are drill-down only. Recipe-info
+qualification also fails the cell when ``results.json`` reports a nonzero
+``total_failed`` or cannot be read. Parsed test rows are drill-down only. Recipe-info
 contents (a test name, a title, and an approximate duration) are not results,
 so they stay out of the cell.
 
@@ -22,15 +22,14 @@ Shape (consumed by cvs/lib/report/rundeck/dataset_builders/status_matrix.py)::
 
 import re
 
+from cvs.lib.agfhc_results import classify_results_json
+
 _STATUSES = ("pass", "fail", "na")
 _RANK = {"na": 0, "pass": 1, "fail": 2}
 
 # Same indicators as scan_agfc_results. AGFHC_FAILURE matches FAIL inside the token.
 _SUCCESS_RE = re.compile(r"code AGFHC_SUCCESS", re.I)
 _SCAN_FAIL_RE = re.compile(r"FAIL|ERROR|ABORT", re.I)
-# Same gate as get_log_results. A clean stdout can still hide a failed qualification.
-_TOTAL_FAILED_ZERO_RE = re.compile(r'"total_failed":\s+0,', re.I)
-_TOTAL_FAILED_RE = re.compile(r'"total_failed"\s*:\s*\d+', re.I)
 _VERSION_RE = re.compile(r"(?is)agfhc version:\s*([0-9]+(?:\.[0-9A-Za-z]+)*)")
 _COUNTS_RE = re.compile(r"Tests:\s*(\d+)\s+Total,\s*(\d+)\s+Executed,\s*(\d+)\s+Skipped", re.I)
 
@@ -224,13 +223,12 @@ def _version(text):
 
 def _results_json_failure(text):
     '''Return a fail message when results.json would fail get_log_results, else None.'''
-    body = _text(text)
-    if _TOTAL_FAILED_ZERO_RE.search(body):
+    kind, detail = classify_results_json(_text(text))
+    if kind == 'pass':
         return None
-    found = _TOTAL_FAILED_RE.search(body)
-    if found:
-        return found.group(0)
-    return "total_failed is not zero"
+    if kind == 'nonzero':
+        return detail
+    return f'results.json could not be read: {detail}'
 
 
 def _with_results_json(status, items, summary, results_text):
@@ -249,8 +247,8 @@ def record_outputs(res_dict, group, out_dict, meta=None, results_json=None):
     '''Classify each node's output and merge the executed recipe group.
 
     ``results_json`` is optional per-node ``results.json`` text. CSP qualification
-    fails a node when that file does not contain ``"total_failed": 0,``. The
-    deck uses the same gate so a clean stdout cannot leave the cell green.
+    fails a node when that file reports a nonzero ``total_failed`` or cannot
+    be read. The deck uses the same gate so a clean stdout cannot leave the cell green.
     '''
     node_records = {}
     found_version = ""
