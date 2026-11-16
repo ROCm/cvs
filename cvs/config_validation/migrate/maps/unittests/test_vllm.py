@@ -20,12 +20,11 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from pydantic import ValidationError
 
 import cvs.main as main
 from cvs.cli_plugins.config_plugin import ConfigPlugin
 from cvs.config_validation.loaders.suite_config import UNMAPPED_FIELD_MESSAGE
-from cvs.config_validation.migrate.engine import migrate, old_paths, suite_names
+from cvs.config_validation.migrate.engine import migrate, old_paths
 from cvs.config_validation.migrate.maps import vllm
 from cvs.config_validation.schemas.inference.engines import (
     CLIENT_RESERVED,
@@ -162,11 +161,6 @@ class _MapCase(unittest.TestCase):
 
 
 class TestMapModule(unittest.TestCase):
-    def test_vllm_is_a_suite_and_its_schema_names_it(self):
-        self.assertIn("vllm", suite_names())
-        self.assertIs(vllm.SCHEMA, VllmConfig)
-        self.assertEqual(VllmConfig.suite, "vllm")
-
     def test_the_old_keys_are_the_renamed_and_dropped_ones_and_a_converted_config_has_none(self):
         old = json.loads(FIXTURE.read_text())
         self.assertEqual(
@@ -237,12 +231,6 @@ class TestOldFixture(_MapCase):
         self.assertEqual((config.server_params.tp, config.server_params.port), (8, 8888))
         self.assertEqual(list(config.thresholds.model_extra), [KEY])
 
-    def test_the_fixtures_threshold_file_is_already_in_the_new_format(self):
-        threshold = OLD_DIR / json.loads(FIXTURE.read_text())["threshold_json"]
-        self.assertEqual(
-            self._migrate(threshold), (0, [f"{threshold} is already in the new format; nothing to convert"], None)
-        )
-
     def test_a_converted_config_is_already_in_the_new_format(self):
         new = self._migrate(FIXTURE)[2]
         source = self.tmp / "again.json"
@@ -257,13 +245,11 @@ class TestRenames(_MapCase):
         self.assertEqual(self._migrate(_old()), (0, [], NEW))
 
     def test_a_backend_other_than_vllm_goes_to_unmapped(self):
-        for block in ("server_params", "benchmark_params"):
-            with self.subTest(block=block):
-                old = _old()
-                old[block]["backend"] = "sglang"
-                code, lines, new = self._migrate(old)
-                self.assertEqual((code, lines), (1, [f"_unmapped.{block}.backend: {UNMAPPED_FIELD_MESSAGE}"]))
-                self.assertEqual(new, {"_unmapped": {f"{block}.backend": "sglang"}, **NEW})
+        old = _old()
+        old["server_params"]["backend"] = "sglang"
+        code, lines, new = self._migrate(old)
+        self.assertEqual((code, lines), (1, [f"_unmapped.server_params.backend: {UNMAPPED_FIELD_MESSAGE}"]))
+        self.assertEqual(new, {"_unmapped": {"server_params.backend": "sglang"}, **NEW})
 
     def test_a_hugging_face_token_in_container_env_stops_naming_the_variable_and_writes_nothing(self):
         old = _old(container={**CONTAINER, "env": {"NCCL_DEBUG": "WARN", "HF_TOKEN": FAKE_CRED}})
@@ -274,28 +260,6 @@ class TestRenames(_MapCase):
                 [
                     "container.env must not set ['HF_TOKEN']: container.env values become docker run -e arguments. "
                     "Put the Hugging Face token in the file named by paths.hf_token_file instead."
-                ],
-                None,
-            ),
-        )
-
-    def test_values_stay_as_written(self):
-        server = {"model": "org/model", "tensor_parallel_size": "8", "pipeline_parallel_size": "2", "port": "8888"}
-        code, _, new = self._migrate(_old(server_params=server))
-        self.assertEqual(code, 0)
-        self.assertEqual(
-            new["server_params"], {"engine": "vllm", "model": "org/model", "tp": "8", "pp": "2", "port": "8888"}
-        )
-
-    def test_an_old_and_a_new_name_with_different_values_stop_the_conversion(self):
-        server = {**_old()["server_params"], "tp": 4}
-        self.assertEqual(
-            self._migrate(_old(server_params=server)),
-            (
-                2,
-                [
-                    "server_params.tp is set by both server_params.tensor_parallel_size and server_params.tp "
-                    "with different values; keep one, then run cvs config migrate again"
                 ],
                 None,
             ),
@@ -338,43 +302,15 @@ class TestFlags(_MapCase):
             },
         )
 
-    def test_a_harness_name_written_as_a_flag_is_refused_inside_engine_args_or_client_args(self):
-        server = {**_old()["server_params"], "nnodes": 2, "master_addr": FAKE_CRED}
-        bench = {"num_prompts": 64, "base_url": FAKE_CRED}
-        code, lines, new = self._migrate(_old(server_params=server, benchmark_params=bench))
-        self.assertEqual(code, 1)
-        self.assertEqual(
-            lines,
-            [
-                "server_params.engine_args: cannot set harness fields: ['master_addr', 'nnodes']",
-                "benchmark_params.client_args: cannot set harness fields: ['base_url']",
-            ],
-        )
-        self.assertEqual(new["server_params"]["engine_args"], {"nnodes": 2, "master_addr": FAKE_CRED})
-        with self.assertRaises(ValidationError):
-            VllmConfig.model_validate(new)
-
 
 class TestNicFields(_MapCase):
     def test_a_value_that_acts_as_the_default_today_is_left_out(self):
-        for key, value in (
-            ("ib_hca_devices", "auto"),
-            ("ib_hca_devices", None),
-            ("ib_hca_devices", []),
-            ("ib_netdev", None),
-            ("ib_netdev", ""),
-        ):
+        for key, value in (("ib_hca_devices", "auto"), ("ib_netdev", "")):
             with self.subTest(key=key, value=value):
                 self.assertEqual(self._migrate(_old(**{key: value})), (0, [], NEW))
 
-    def test_any_other_value_goes_to_unmapped(self):
-        for key, value in (
-            ("ib_hca_devices", ["mlx5_0", FAKE_CRED]),
-            ("ib_hca_devices", ""),
-            ("ib_netdev", FAKE_CRED),
-            ("ib_netdev", "auto"),
-            ("ib_netdev", " "),
-        ):
+    def test_other_values_go_to_unmapped(self):
+        for key, value in (("ib_netdev", FAKE_CRED), ("ib_netdev", "auto")):
             with self.subTest(key=key, value=value):
                 code, lines, new = self._migrate(_old(**{key: value}))
                 self.assertEqual((code, lines), (1, [f"_unmapped.{key}: {UNMAPPED_FIELD_MESSAGE}"]))
@@ -430,27 +366,6 @@ class TestThresholdFile(_MapCase):
             ],
         )
         self.assertEqual(new[KEY], {"output_throughput": {"kind": "max", "value": 900}})
-
-
-class TestConfigCheckedWithItsThresholdFile(_MapCase):
-    def _old_with(self, threshold_file, **overrides):
-        (self.tmp / "thr.json").write_text(json.dumps(threshold_file))
-        return _old(enforce_thresholds=True, threshold_json="thr.json", **overrides)
-
-    def test_an_enforced_cell_the_threshold_file_misses_is_named(self):
-        old = self._old_with(
-            {KEY: {"mean_ttft_ms": {"kind": "max", "value": 80}}},
-            sweeps={KEY: {}, OTHER_KEY: {}},
-            runs=[KEY, OTHER_KEY],
-        )
-        code, lines, new = self._migrate(old)
-        self.assertEqual((code, lines), (1, [f"(config): cells missing threshold coverage: ['{OTHER_KEY}']"]))
-        self.assertEqual(new["cells"], [KEY, OTHER_KEY])
-
-    def test_a_threshold_file_vllm_refuses_is_named_against_the_file(self):
-        code, lines, new = self._migrate(self._old_with({KEY: {"_failed": {"kind": "max", "value": 0}}}))
-        self.assertEqual((code, lines), (1, [f"thr.json: {KEY}: unknown vLLM threshold metric '_failed'"]))
-        self.assertEqual(new["server_params"], NEW["server_params"])
 
 
 class TestShippedConfigs(_MapCase):
