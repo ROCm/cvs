@@ -18,7 +18,7 @@ import json
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, ValidationError, model_validator
 
 from cvs.lib.conf_lib.config_blocks import PLACEHOLDER_MESSAGE, has_placeholder, placeholders_rejected
 from cvs.lib.conf_lib.loader import ConfigError
@@ -46,7 +46,6 @@ def reject_placeholder(value, info):
 
 
 ConfigStr = Annotated[str, AfterValidator(reject_placeholder)]
-Port = Annotated[int, Field(ge=1, le=65535)]
 
 
 class StrictBlock(BaseModel):

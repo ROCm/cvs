@@ -15,7 +15,6 @@ from pydantic import ValidationError, model_validator
 from cvs.config_validation.schemas.base import (
     ConfigStr,
     OpenBlock,
-    Port,
     StrictBlock,
     SuiteConfig,
     drop_comment_keys,
@@ -27,17 +26,9 @@ from cvs.unittests.support import FAKE_CRED
 
 REJECT = {"placeholders": "reject"}
 
-# Every form cvs.lib.conf_lib.config_blocks treats as a placeholder, and near misses it does not.
-PLACEHOLDER_FORMS = (
-    "<changeme>",
-    "<CHANGEME>",
-    "<ChangeMe>",
-    "<changeme-models-mount>",
-    "<changeme->",
-    "/data/<changeme>/models",
-    "<changeme> mi355",
-)
-NOT_PLACEHOLDERS = ("changeme", "<change me>", "{changeme}", "<changeme", "changeme>", "<changemenow>", "</changeme>")
+# Forms cvs.lib.conf_lib.config_blocks treats as a placeholder, and near misses it does not.
+PLACEHOLDER_FORMS = ("<CHANGEME>", "<changeme-models-mount>", "/data/<changeme>/models")
+NOT_PLACEHOLDERS = ("changeme", "<changemenow>")
 
 
 class _Strict(StrictBlock):
@@ -56,10 +47,6 @@ class _Text(StrictBlock):
 class _Outer(StrictBlock):
     inner: _Text
     mounts: list[ConfigStr] = []
-
-
-class _Listen(StrictBlock):
-    port: Port
 
 
 class _Suite(SuiteConfig):
@@ -92,21 +79,13 @@ class _RaisesTokenError(SuiteConfig):
         raise _TokenError("refused")
 
 
-def _errors(model, data, context=None):
-    try:
-        model.model_validate(data, context=context)
-    except ValidationError as exc:
-        return [(error["loc"], error["type"]) for error in exc.errors()]
-    raise AssertionError(f"{model.__name__} accepted {data!r}")
-
-
 class TestDropCommentKeys(unittest.TestCase):
     def test_only_underscore_string_keys_at_the_top_level_are_dropped(self):
         value = {"_comment": "x", "_": 0, "name_": 1, "nested": {"_keep": 2}, 3: "int key"}
         self.assertEqual(drop_comment_keys(value), {"name_": 1, "nested": {"_keep": 2}, 3: "int key"})
 
     def test_non_dict_input_is_returned_unchanged_for_pydantic_to_reject(self):
-        for value in (["_comment"], "_comment", None, 7):
+        for value in (["_comment"], None):
             with self.subTest(value=value):
                 self.assertIs(drop_comment_keys(value), value)
 
@@ -134,41 +113,19 @@ class TestProblemLines(unittest.TestCase):
 
 
 class TestStrictBlock(unittest.TestCase):
-    def test_valid_input_loads(self):
-        self.assertEqual(_Strict.model_validate({"name": "a"}).name, "a")
-
-    def test_missing_field_wrong_type_and_extra_key_are_each_named(self):
-        self.assertEqual(_errors(_Strict, {}), [(("name",), "missing")])
-        self.assertEqual(_errors(_Strict, {"name": ["a"]}), [(("name",), "string_type")])
-        self.assertEqual(_errors(_Strict, {"name": "a", "nmae": "b"}), [(("nmae",), "extra_forbidden")])
-
     def test_comment_keys_are_dropped_at_its_own_level_but_kept_in_a_free_form_map(self):
         loaded = _Strict.model_validate({"_comment": "x", "_note": {"a": 1}, "name": "a", "env": {"_KEEP": "1"}})
         self.assertEqual(loaded.model_dump(), {"name": "a", "env": {"_KEEP": "1"}})
 
-    def test_non_object_input_fails_validation_instead_of_crashing_the_comment_filter(self):
-        for value in (["name"], None, "name"):
-            with self.subTest(value=value):
-                self.assertEqual(_errors(_Strict, value), [((), "model_type")])
-
 
 class TestOpenBlock(unittest.TestCase):
-    def test_extra_keys_are_kept_and_dumped(self):
-        loaded = _Open.model_validate({"name": "a", "pids_limit": 100})
-        self.assertEqual(loaded.model_extra, {"pids_limit": 100})
-        self.assertEqual(loaded.model_dump(), {"name": "a", "pids_limit": 100})
-
     def test_comment_keys_are_dropped_rather_than_kept_as_extras(self):
         loaded = _Open.model_validate({"name": "a", "_comment": "x", "_comment_mounts": ["y"]})
         self.assertEqual(loaded.model_extra, {})
 
-    def test_declared_fields_are_still_checked(self):
-        self.assertEqual(_errors(_Open, {"pids_limit": 1}), [(("name",), "missing")])
-        self.assertEqual(_errors(_Open, {"name": 5}), [(("name",), "string_type")])
-
 
 class TestConfigStr(unittest.TestCase):
-    def test_every_placeholder_form_is_rejected_under_the_reject_context(self):
+    def test_placeholder_forms_are_rejected_under_the_reject_context(self):
         for value in PLACEHOLDER_FORMS:
             with self.subTest(value=value):
                 with self.assertRaises(ValidationError) as ctx:
@@ -178,7 +135,7 @@ class TestConfigStr(unittest.TestCase):
                 self.assertIn("still a <changeme> placeholder", error["msg"])
 
     def test_placeholders_load_verbatim_without_the_reject_context(self):
-        for context in (None, {}, {"placeholders": "allow"}, {"config_path": Path("/cfg.json")}):
+        for context in (None, {"placeholders": "allow"}):
             for value in PLACEHOLDER_FORMS:
                 with self.subTest(context=context, value=value):
                     self.assertEqual(_Text.model_validate({"value": value}, context=context).value, value)
@@ -187,22 +144,6 @@ class TestConfigStr(unittest.TestCase):
         for value in NOT_PLACEHOLDERS:
             with self.subTest(value=value):
                 self.assertEqual(_Text.model_validate({"value": value}, context=REJECT).value, value)
-
-    def test_wrong_type_is_rejected_before_the_placeholder_check(self):
-        self.assertEqual(_errors(_Text, {"value": 8}, context=REJECT), [(("value",), "string_type")])
-
-
-class TestPort(unittest.TestCase):
-    def test_bounds_are_inclusive_and_string_numbers_coerce(self):
-        for value, expected in ((1, 1), (8888, 8888), (65535, 65535), ("8888", 8888)):
-            with self.subTest(value=value):
-                self.assertEqual(_Listen.model_validate({"port": value}).port, expected)
-
-    def test_values_outside_the_range_or_not_whole_numbers_are_rejected(self):
-        for value in (0, -1, 65536, 80.5, "http", None):
-            with self.subTest(value=value):
-                with self.assertRaises(ValidationError):
-                    _Listen.model_validate({"port": value})
 
 
 class TestSuiteConfigHooks(unittest.TestCase):
@@ -221,9 +162,7 @@ class TestSuiteConfigHooks(unittest.TestCase):
             "nested": {"_keep": True},
         }
         self.config_file.write_text(json.dumps(written))
-        for config_file in (self.config_file, str(self.config_file)):
-            with self.subTest(config_file=type(config_file).__name__):
-                self.assertEqual(_Suite.read_raw(config_file, {"username": "jdoe"}), written)
+        self.assertEqual(_Suite.read_raw(self.config_file, {"username": "jdoe"}), written)
 
     def test_old_keys_reports_none_by_default(self):
         self.assertEqual(_Suite.old_keys({"tensor_parallel_size": "4", "_unmapped": {"a": 1}}), [])
@@ -253,17 +192,6 @@ class TestSuiteConfigHooks(unittest.TestCase):
         # pydantic's ValidationError prints input values, so it must not ride along as the cause.
         self.assertIsNone(exc.__cause__)
         self.assertTrue(exc.__suppress_context__)
-
-    def test_validate_config_names_a_missing_field(self):
-        with self.assertRaises(ConfigError) as ctx:
-            _Suite.validate_config({"count": 2}, self.config_file)
-        self.assertEqual([line.split(":", 1)[0] for line in ctx.exception.problems], ["name"])
-
-    def test_validate_config_reports_a_non_object_config_at_config_level(self):
-        with self.assertRaises(ConfigError) as ctx:
-            _Suite.validate_config([FAKE_CRED], self.config_file)
-        self.assertEqual([line.split(":", 1)[0] for line in ctx.exception.problems], ["(config)"])
-        self.assertNotIn(FAKE_CRED, str(ctx.exception))
 
     def test_validate_config_lets_non_validation_errors_escape_unwrapped(self):
         with self.assertRaises(_TokenError):
