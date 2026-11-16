@@ -142,7 +142,11 @@
         "attn_implementation": "flash_attention_2",
         "compile": true,
         "data_mode": "tokens",
-        "global_batch_size": 128
+        "global_batch_size": 128,
+        "scaling_baseline": {
+          "tokens_per_sec_total": 79109.6,
+          "num_nodes": 1
+        }
       }
     ],
     "enabled_sweep_list": [
