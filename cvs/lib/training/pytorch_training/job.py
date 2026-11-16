@@ -681,7 +681,13 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
     def cleanup_checkpoints(self):
         if self.variant.training.checkpoint.keep:
             return
-        self.orch.exec(f"rm -rf {shlex.quote(self.checkpoint_dir)}", timeout=600, detailed=True, print_console=False)
+        parent = shlex.quote(os.path.dirname(self.checkpoint_dir))
+        self.orch.exec(
+            f"rm -rf {shlex.quote(self.checkpoint_dir)}; rmdir {parent} 2>/dev/null; true",
+            timeout=600,
+            detailed=True,
+            print_console=False,
+        )
 
     def stop_training_processes(self):
         # Bracket the first character so pgrep/pkill cannot match themselves.
