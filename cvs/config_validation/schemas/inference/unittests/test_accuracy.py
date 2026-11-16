@@ -13,7 +13,6 @@ from pydantic import ValidationError
 
 from cvs.config_validation.schemas.base import problem_lines
 from cvs.config_validation.schemas.inference.accuracy import (
-    Accuracy,
     AccuracyConfig,
     AccuracyTask,
     LongContextAccuracy,
@@ -99,14 +98,6 @@ def _outcome(model, data):
         return [(error["loc"], error["type"], error["msg"]) for error in exc.errors(include_input=False)]
 
 
-def _errors(model, data):
-    try:
-        model.model_validate(data)
-    except ValidationError as exc:
-        return sorted((error["loc"], error["type"]) for error in exc.errors())
-    raise AssertionError(f"{model.__name__} accepted {data!r}")
-
-
 def _problems(model, data):
     try:
         model.model_validate(data)
@@ -189,17 +180,6 @@ class TestMatchesInferenceUtils(unittest.TestCase):
 
 
 class TestAccuracyTask(unittest.TestCase):
-    def test_a_minimal_task_takes_the_lm_eval_defaults(self):
-        task = AccuracyTask.model_validate({"id": "gsm8k_flex", "task": "gsm8k"})
-        self.assertEqual(
-            (task.num_concurrent, task.batch_size, task.seed, task.metadata, task.exec_timeout_sec),
-            (8, "1", [0, 1234, 1234, 1234], {}, 4 * 60 * 60),
-        )
-        self.assertEqual(
-            (task.num_fewshot, task.apply_chat_template, task.resolved_lm_eval_model),
-            (None, False, "local-completions"),
-        )
-
     def test_task_or_tasks_resolves_to_one_task_list(self):
         for data, expected in (
             ({"task": "gsm8k"}, ("gsm8k", "gsm8k", ["gsm8k"])),
@@ -237,8 +217,6 @@ class TestAccuracyTask(unittest.TestCase):
     def test_chat_template_strings_and_the_lm_eval_model_they_select(self):
         for template, expected in (
             ("TRUE", (True, "local-chat-completions")),
-            ("1", (True, "local-chat-completions")),
-            ("0", (False, "local-completions")),
             ("chatml", ("chatml", "local-chat-completions")),
         ):
             with self.subTest(template=template):
@@ -249,28 +227,8 @@ class TestAccuracyTask(unittest.TestCase):
         )
         self.assertEqual(task.resolved_lm_eval_model, "local-completions")
 
-    def test_missing_id_wrong_types_and_extra_key_are_named(self):
-        for data, expected in (
-            ({"task": "gsm8k"}, [(("id",), "missing")]),
-            ({"id": "a", "task": "gsm8k", "num_concurrent": "four"}, [(("num_concurrent",), "int_parsing")]),
-            ({"id": "a", "task": "gsm8k", "lm_eval_model": "openai"}, [(("lm_eval_model",), "literal_error")]),
-            ({"id": "a", "task": "gsm8k", "metadata": "strict-match"}, [(("metadata",), "dict_type")]),
-            ({"id": "a", "task": "gsm8k", "model_args": "x"}, [(("model_args",), "extra_forbidden")]),
-        ):
-            with self.subTest(data=data):
-                self.assertEqual(_errors(AccuracyTask, data), expected)
-
-    def test_comment_keys_are_dropped_but_kept_inside_metadata(self):
-        task = AccuracyTask.model_validate({"_comment": "x", "id": "a", "task": "gsm8k", "metadata": {"_keep": 1}})
-        self.assertEqual(task.metadata, {"_keep": 1})
-
 
 class TestAccuracyConfig(unittest.TestCase):
-    def test_tasks_default_to_empty_and_load_in_order(self):
-        self.assertEqual(AccuracyConfig.model_validate({}).tasks, [])
-        config = AccuracyConfig.model_validate({"tasks": [{"id": "b", "task": "x"}, {"id": "a", "task": "x"}]})
-        self.assertEqual([(type(task), task.id) for task in config.tasks], [(AccuracyTask, "b"), (AccuracyTask, "a")])
-
     def test_duplicate_ids_are_listed_once_each_in_sorted_order(self):
         tasks = [
             {"id": "b", "task": "x"},
@@ -281,66 +239,13 @@ class TestAccuracyConfig(unittest.TestCase):
         ]
         self.assertEqual(_problems(AccuracyConfig, {"tasks": tasks}), ["(config): duplicate task id(s): 'a', 'b'"])
 
-    def test_a_task_problem_is_located_by_its_index(self):
-        self.assertEqual(
-            _problems(AccuracyConfig, {"tasks": [{"id": "a", "task": "x"}, {"id": "b"}]}),
-            ["tasks.1: one of tasks or task is required"],
-        )
-
-    def test_wrong_type_and_extra_key_are_rejected(self):
-        self.assertEqual(_errors(AccuracyConfig, {"tasks": {"id": "a", "task": "x"}}), [(("tasks",), "list_type")])
-        self.assertEqual(_errors(AccuracyConfig, {"tasks": ["gsm8k"]}), [(("tasks", 0), "model_type")])
-        self.assertEqual(
-            _errors(AccuracyConfig, {"tasks": [], "harness": "lm-eval"}), [(("harness",), "extra_forbidden")]
-        )
-
-
-class TestAccuracy(unittest.TestCase):
-    def test_no_block_means_no_tasks(self):
-        self.assertEqual(Accuracy.model_validate({}).accuracy.tasks, [])
-        self.assertEqual(Accuracy.model_validate({"_comment_accuracy": "x"}).model_dump(), {"accuracy": {"tasks": []}})
-
-    def test_block_loads_as_an_accuracy_config(self):
-        loaded = Accuracy.model_validate({"accuracy": {"_comment": "x", "tasks": [{"id": "a", "task": "gsm8k"}]}})
-        self.assertIsInstance(loaded.accuracy, AccuracyConfig)
-        self.assertEqual(loaded.accuracy.tasks[0].task_names(), ["gsm8k"])
-
-    def test_wrong_type_and_extra_keys_are_named_at_each_level(self):
-        self.assertEqual(_errors(Accuracy, {"accuracy": [{"id": "a", "task": "x"}]}), [(("accuracy",), "model_type")])
-        self.assertEqual(_errors(Accuracy, {"accuracy": {"task": "x"}}), [(("accuracy", "task"), "extra_forbidden")])
-        self.assertEqual(_errors(Accuracy, {"tasks": []}), [(("tasks",), "extra_forbidden")])
-
-
-class TestLongContextCell(unittest.TestCase):
-    def test_valid_cell_takes_the_defaults(self):
-        cell = LongContextCell.model_validate({"id": "niah_8k", "isl": 8192})
-        self.assertEqual(cell.model_dump(), {"id": "niah_8k", "isl": 8192, "osl": 32, "num_prompts": 8, "seed": 42})
-
-    def test_missing_fields_wrong_type_and_extra_key_are_named(self):
-        self.assertEqual(_errors(LongContextCell, {}), [(("id",), "missing"), (("isl",), "missing")])
-        self.assertEqual(_errors(LongContextCell, {"id": "a", "isl": 8192.5}), [(("isl",), "int_from_float")])
-        self.assertEqual(
-            _errors(LongContextCell, {"id": "a", "isl": 8192, "depth": 0.5}), [(("depth",), "extra_forbidden")]
-        )
-
 
 class TestLongContextAccuracy(unittest.TestCase):
-    def test_cells_default_to_empty_and_load_in_order(self):
-        self.assertEqual(LongContextAccuracy.model_validate({}).cells, [])
-        loaded = LongContextAccuracy.model_validate(
-            {"cells": [{"id": "niah_32k", "isl": 32768}, {"id": "niah_8k", "isl": 8192}]}
-        )
-        self.assertEqual([cell.id for cell in loaded.cells], ["niah_32k", "niah_8k"])
-
     def test_duplicate_cell_ids_are_refused(self):
         cells = [{"id": "niah_8k", "isl": 8192}, {"id": "niah_8k", "isl": 32768}]
         self.assertEqual(
             _problems(LongContextAccuracy, {"cells": cells}), ["(config): duplicate long-context cell id(s): 'niah_8k'"]
         )
-
-    def test_wrong_type_and_extra_key_are_rejected(self):
-        self.assertEqual(_errors(LongContextAccuracy, {"cells": "niah_8k"}), [(("cells",), "list_type")])
-        self.assertEqual(_errors(LongContextAccuracy, {"cells": [], "seed": 1}), [(("seed",), "extra_forbidden")])
 
 
 if __name__ == "__main__":

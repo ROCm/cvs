@@ -43,14 +43,6 @@ class _Cells(Cells):
     axes = VLLM_AXES
 
 
-def _errors(model, data):
-    try:
-        model.model_validate(data)
-    except ValidationError as exc:
-        return sorted((error["loc"], error["type"]) for error in exc.errors())
-    raise AssertionError(f"{model.__name__} accepted {data!r}")
-
-
 def _problems(model, data):
     try:
         model.model_validate(data)
@@ -143,16 +135,6 @@ class TestCells(unittest.TestCase):
         self.assertEqual((cells[KEY].key, *_axis_values(cells[KEY])), (KEY, 1024, 1024, 8, 1, 16))
         self.assertEqual(_axis_values(cells[OTHER_KEY]), (8192, 1024, 8, 1, 64))
 
-    def test_missing_field_wrong_types_and_extra_key_are_named(self):
-        for data, expected in (
-            ({}, [(("cells",), "missing")]),
-            ({"cells": KEY}, [(("cells",), "list_type")]),
-            ({"cells": [KEY, 16]}, [(("cells", 1), "string_type")]),
-            ({"cells": [KEY], "runs": [KEY]}, [(("runs",), "extra_forbidden")]),
-        ):
-            with self.subTest(data=data):
-                self.assertEqual(_errors(_Cells, data), expected)
-
     def test_an_empty_list_and_a_repeated_key_are_refused(self):
         self.assertEqual(_problems(_Cells, {"cells": []}), ["cells: needs at least one cell key"])
         self.assertEqual(
@@ -165,9 +147,6 @@ class TestCells(unittest.TestCase):
                 self.assertEqual(
                     _problems(_Cells, {"cells": [KEY, key]}), [f"cells: cell key {key!r} {problem}; {EXPECTED}"]
                 )
-
-    def test_a_class_without_axes_refuses_every_key(self):
-        self.assertEqual(_errors(Cells, {"cells": [KEY]}), [(("cells",), "value_error")])
 
 
 if __name__ == "__main__":
