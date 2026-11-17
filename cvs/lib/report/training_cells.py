@@ -111,9 +111,9 @@ def _training_nnodes(variant_config):
 def hide_training_scaling_efficiency(variant_config, lifecycle_report=None, suite_stem=None):
     """True for single-node Megatron / TorchTitan (no scale-out to report)."""
     stem = str(suite_stem or "")
-    if "megatron_single" in stem or "torchtitan_single" in stem:
+    if "megatron_single" in stem or "torchtitan_single" in stem or "pytorch_vision_single" in stem:
         return True
-    if "megatron_distributed" in stem or "torchtitan_distributed" in stem:
+    if "megatron_distributed" in stem or "torchtitan_distributed" in stem or "pytorch_vision_distributed" in stem:
         return False
     nodeids = " ".join(str(k) for k in (lifecycle_report or {}))
     if "megatron_single.py" in nodeids or "torchtitan_single.py" in nodeids:

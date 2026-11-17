@@ -1,0 +1,689 @@
+import json
+import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from cvs.lib.training.pytorch_vision.job import _BoundedHostHandle, PyTorchVisionJob
+from cvs.lib.training.pytorch_vision.utils.metrics import ARTIFACT_METRICS
+
+
+class FakeOrchestrator:
+    def __init__(self, response=None):
+        self.hosts = ["node0"]
+        self.response = response or {"node0": {"exit_code": 0, "output": ""}}
+        self.commands = []
+        self.all = self
+
+    def exec(self, command, **kwargs):
+        self.commands.append((command, kwargs))
+        return self.response
+
+
+def _variant():
+    sweep = SimpleNamespace(
+        model_id="",
+        pretrained=False,
+        name="cell-w1",
+        label="W1-BF16-R224-B128",
+        model="resnet50",
+        backend="torchvision",
+        precision="BF16",
+        batch_size=128,
+        image_size=224,
+        gradient_accumulation_steps=1,
+        training_flops_per_image=24600000000,
+        data_mode="synthetic",
+        dataset_path="",
+        rocal_device="gpu",
+        augmentation="standard",
+        rocal_num_threads=8,
+        loader_warmup_steps=5,
+        loader_benchmark_steps=20,
+    )
+    training = SimpleNamespace(
+        enabled=True,
+        workload="W1",
+        distributed=False,
+        master_port=29500,
+        phase="performance",
+        run_mode="perf",
+        gpus_per_node=8,
+        warmup_steps=10,
+        steps=50,
+        max_epochs=None,
+        max_duration_seconds=None,
+        eval_enabled=False,
+        eval_every_epochs=1,
+        eval_steps=None,
+        eval_sample_count=50000,
+        milestone_steps=[100, 500, 1000, 5000],
+        num_classes=1000,
+        channels_last=True,
+        zero_init_residual=False,
+        label_smoothing=0.0,
+        learning_rate=0.1,
+        optimizer="sgd",
+        harness="native",
+        task="classification",
+        task_options={},
+        checkpoint_dir=None,
+        fsdp_strategy="full_shard",
+        momentum=0.9,
+        weight_decay=0.0001,
+        lr_schedule=SimpleNamespace(
+            name="constant",
+            warmup_epochs=0,
+            milestones_epochs=[],
+            gamma=0.1,
+        ),
+        timeout_s=1800,
+        startup_timeout_s=300,
+        setup_timeout_s=1800,
+        startup_retries=0,
+        omp_num_threads=1,
+        verify_dmesg=True,
+        peak_tflops_per_gpu=1307.4,
+        checkpoint_enabled=True,
+        checkpoint_keep_file=False,
+        checkpoint_loss_tolerance=1e-5,
+        loss_curve=SimpleNamespace(sample_every_steps=1, minimum_points=2),
+        accuracy=SimpleNamespace(target_top1_pct=None, target_top5_pct=None),
+        scaling_baseline=SimpleNamespace(
+            images_per_sec_total=0.0, num_nodes=1, accuracy_metric=None, accuracy_value=None
+        ),
+        convergence=SimpleNamespace(
+            target_top1_pct=None,
+            target_eval_loss=None,
+            target_train_loss=None,
+            stop_when_reached=False,
+        ),
+        codecarbon=SimpleNamespace(
+            enabled=False,
+            required=False,
+            measure_power_secs=5,
+            country_iso_code=None,
+        ),
+        gpu_poll_interval_seconds=5,
+        env_vars={"NCCL_DEBUG": "WARN"},
+        error_patterns={"Process crash": "SIGSEGV"},
+    )
+    return SimpleNamespace(
+        sweep=lambda _name: sweep,
+        scaling_baseline_for=lambda _name: getattr(sweep, "scaling_baseline", None) or training.scaling_baseline,
+        training=training,
+        paths=SimpleNamespace(log_dir="/tmp/logs"),
+        gpu_arch="MI325X",
+    )
+
+
+def _artifact(num_nodes=1):
+    artifact = {
+        "workload": "W1",
+        "model": "resnet50",
+        "backend": "torchvision",
+        "precision": "BF16",
+        "image_size": 224,
+        "batch_size_per_gpu": 128,
+        "gradient_accumulation_steps": 1,
+        "effective_global_batch_size": 1024 * num_nodes,
+        "world_size": 8 * num_nodes,
+        "phase": "performance",
+        "run_mode": "perf",
+        "synthetic_data": True,
+        "data_mode": "synthetic",
+        "rocal_device": "gpu",
+        "augmentation": "standard",
+        "lr_schedule": {
+            "name": "constant",
+            "warmup_epochs": 0,
+            "milestones_epochs": [],
+            "gamma": 0.1,
+        },
+        "metrics": {name: index + 1.0 for index, (name, _unit) in enumerate(ARTIFACT_METRICS)},
+    }
+    artifact["metrics"].update(
+        {
+            "learning_rate_initial": 0.1,
+            "learning_rate_final": 0.1,
+        }
+    )
+    return artifact
+
+
+class TestPyTorchVisionJob(unittest.TestCase):
+    def test_stages_packaged_benchmark(self):
+        orch = FakeOrchestrator()
+        job = PyTorchVisionJob(orch, _variant(), "w1")
+        job.stage_benchmark()
+        benchmark, tasks = (call[0] for call in orch.commands[-2:])
+        self.assertIn("base64 -d", benchmark)
+        self.assertIn("> /tmp/cvs_pytorch_vision_w1.py", benchmark)
+        self.assertIn("> /tmp/cvs_pytorch_vision_w1_tasks.py", tasks)
+        self.assertNotIn("_tasks.py", benchmark)
+
+    def test_verifies_exact_gpu_count(self):
+        info = {
+            "torch": "2.12",
+            "torchvision": "0.27",
+            "hip": "7.14",
+            "cuda": True,
+            "gpus": 8,
+            "devices": ["AMD Instinct MI325X"] * 8,
+            "architectures": ["gfx942"] * 8,
+        }
+        response = {
+            "node0": {
+                "exit_code": 0,
+                "output": "PYTORCH_VISION_ENV " + json.dumps(info),
+            }
+        }
+        summary = PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").verify_environment()
+        self.assertIn("gpus=8", summary)
+
+    def test_distributed_verify_installs_host_verbs(self):
+        info = {
+            "torch": "2.12",
+            "torchvision": "0.27",
+            "hip": "7.14",
+            "cuda": True,
+            "gpus": 8,
+            "devices": ["AMD Instinct MI325X"] * 8,
+            "architectures": ["gfx942"] * 8,
+        }
+        marker = "PYTORCH_VISION_ENV " + json.dumps(info)
+        response = {
+            "node0": {"exit_code": 0, "output": marker},
+            "node1": {"exit_code": 0, "output": marker},
+        }
+        variant = _variant()
+        variant.training.distributed = True
+        variant.training.env_vars = {"NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7"}
+        orch = FakeOrchestrator(response)
+        orch.hosts = ["node0", "node1"]
+        PyTorchVisionJob(orch, variant, "w1").verify_environment()
+        prepare = orch.commands[0][0]
+        self.assertIn("/opt/cvs-host/libibverbs.so.1", prepare)
+        self.assertIn("rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7", prepare)
+        self.assertIn("ibv_open_device", prepare)
+
+    def test_distributed_verify_rejects_missing_rails(self):
+        variant = _variant()
+        variant.training.distributed = True
+        orch = FakeOrchestrator()
+        orch.hosts = ["node0", "node1"]
+        with self.assertRaises(RuntimeError):
+            PyTorchVisionJob(orch, variant, "w1").verify_environment()
+        self.assertEqual(orch.commands, [])
+
+    def test_rejects_wrong_gpu_count(self):
+        info = {
+            "torch": "2.12",
+            "torchvision": "0.27",
+            "hip": "7.14",
+            "cuda": True,
+            "gpus": 4,
+            "devices": ["AMD Instinct MI325X"] * 4,
+            "architectures": ["gfx942"] * 4,
+        }
+        response = {
+            "node0": {
+                "exit_code": 0,
+                "output": "PYTORCH_VISION_ENV " + json.dumps(info),
+            }
+        }
+        with self.assertRaisesRegex(RuntimeError, "requires at least 8"):
+            PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").verify_environment()
+
+    def test_rejects_wrong_gpu_model(self):
+        info = {
+            "torch": "2.12",
+            "torchvision": "0.27",
+            "hip": "7.14",
+            "cuda": True,
+            "gpus": 8,
+            "devices": ["AMD Instinct MI300X"] * 8,
+            "architectures": ["gfx942"] * 8,
+        }
+        response = {
+            "node0": {
+                "exit_code": 0,
+                "output": "PYTORCH_VISION_ENV " + json.dumps(info),
+            }
+        }
+        with self.assertRaisesRegex(RuntimeError, "requires MI325X"):
+            PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").verify_environment()
+
+    def test_builds_bounded_eight_rank_command(self):
+        command = PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1").build_command()
+        self.assertIn("--nproc-per-node=8", command)
+        self.assertIn("--precision BF16", command)
+        self.assertIn("--gradient-accumulation-steps 1", command)
+        self.assertIn("--checkpoint-path", command)
+        self.assertIn("--peak-tflops-per-gpu 1307.4", command)
+        self.assertIn("--lr-schedule constant", command)
+        self.assertIn("timeout --signal=TERM", command)
+        self.assertIn("export NCCL_DEBUG=WARN", command)
+
+    def test_single_node_command_uses_standalone_rendezvous(self):
+        command = PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1").build_command()
+        self.assertIn("--standalone", command)
+        self.assertIn("--nnodes=1", command)
+        self.assertNotIn("--master-addr", command)
+        self.assertIn("export NNODES=1", command)
+        self.assertIn("export NODE_RANK=0", command)
+
+    def test_distributed_command_pins_rendezvous_and_per_node_rank(self):
+        variant = _variant()
+        variant.training.distributed = True
+        orch = FakeOrchestrator()
+        orch.hosts = ["node0", "node1"]
+        job = PyTorchVisionJob(orch, variant, "w1")
+
+        rank0 = job.build_command(node_rank=0)
+        rank1 = job.build_command(node_rank=1)
+
+        for command in (rank0, rank1):
+            self.assertNotIn("--standalone", command)
+            self.assertIn("--nnodes=2", command)
+            self.assertIn("--master-addr=node0", command)
+            self.assertIn("--master-port=29500", command)
+            self.assertIn("export NNODES=2", command)
+        self.assertIn("--node-rank=0", rank0)
+        self.assertIn("export NODE_RANK=0", rank0)
+        self.assertIn("--node-rank=1", rank1)
+        self.assertIn("export NODE_RANK=1", rank1)
+
+    def test_distributed_rank_overrides_configured_env_vars(self):
+        """A single-node NNODES/NODE_RANK left in the config must not leak into
+        a multi-node launch and silently collapse it to one rank."""
+        variant = _variant()
+        variant.training.distributed = True
+        variant.training.env_vars = {"NNODES": "1", "NODE_RANK": "0"}
+        orch = FakeOrchestrator()
+        orch.hosts = ["node0", "node1"]
+
+        command = PyTorchVisionJob(orch, variant, "w1").build_command(node_rank=1)
+
+        self.assertIn("export NNODES=2", command)
+        self.assertIn("export NODE_RANK=1", command)
+        self.assertNotIn("export NNODES=1", command)
+
+    def test_builds_target_accuracy_early_stop_command(self):
+        variant = _variant()
+        variant.training.run_mode = "train_to_accuracy"
+        variant.training.phase = "accuracy"
+        variant.training.max_epochs = 90
+        variant.training.accuracy = SimpleNamespace(
+            target_top1_pct=75.5,
+            target_top5_pct=92.5,
+        )
+        variant.training.convergence = SimpleNamespace(
+            target_top1_pct=75.5,
+            target_eval_loss=None,
+            target_train_loss=None,
+            stop_when_reached=True,
+        )
+        command = PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
+        self.assertIn("--max-epochs 90", command)
+        self.assertIn("--convergence-top1 75.5", command)
+        self.assertIn("--target-top5 92.5", command)
+        self.assertIn("--stop-on-convergence", command)
+
+    def test_parses_namespaced_artifact(self):
+        response = {
+            "node0": {
+                "exit_code": 0,
+                "output": json.dumps(_artifact()),
+            }
+        }
+        results = PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").parse_results()
+        self.assertEqual(results["node0"]["training.images_per_sec"], 1.0)
+
+    def test_scaling_efficiency_absent_without_a_calibrated_baseline(self):
+        """The default baseline is 0.0, so the metric must simply not appear
+        rather than show up as a zero that a threshold could gate on."""
+        response = {"node0": {"exit_code": 0, "output": json.dumps(_artifact())}}
+        results = PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").parse_results()
+        self.assertNotIn("training.scaling_efficiency_pct", results["node0"])
+
+    def test_scaling_efficiency_uses_node_count_and_configured_baseline(self):
+        variant = _variant()
+        # Artifact reports 1.0 images/sec; a 0.5 single-node reference over two
+        # nodes gives an ideal of 1.0, so efficiency is 100%.
+        variant.training.scaling_baseline = SimpleNamespace(
+            images_per_sec_total=0.5, num_nodes=1, accuracy_metric=None, accuracy_value=None
+        )
+        response = {"node0": {"exit_code": 0, "output": json.dumps(_artifact(num_nodes=2))}}
+        orch = FakeOrchestrator(response)
+        orch.hosts = ["node0", "node1"]
+
+        results = PyTorchVisionJob(orch, variant, "w1").parse_results()
+
+        self.assertAlmostEqual(results["node0"]["training.scaling_efficiency_pct"], 100.0)
+
+    def test_scale_parity_is_quality_minus_reference(self):
+        variant = _variant()
+        variant.training.scaling_baseline = SimpleNamespace(
+            images_per_sec_total=0.5, num_nodes=1, accuracy_metric="top1_accuracy_pct", accuracy_value=81.5
+        )
+        artifact = _artifact(num_nodes=2)
+        artifact["metrics"]["top1_accuracy_pct"] = 81.0
+        orch = FakeOrchestrator({"node0": {"exit_code": 0, "output": json.dumps(artifact)}})
+        orch.hosts = ["node0", "node1"]
+
+        results = PyTorchVisionJob(orch, variant, "w1").parse_results()
+
+        self.assertAlmostEqual(results["node0"]["training.scale_parity_accuracy_delta"], -0.5)
+
+    def test_energy_efficiency_uses_artifact_processed_image_count(self):
+        variant = _variant()
+        variant.training.codecarbon.enabled = True
+        artifact = _artifact()
+        artifact["processed_images"] = 1024
+        artifact["completed_steps"] = 1
+        artifact["codecarbon"] = {
+            "version": "3.2.4",
+            "tracker": "amdsmi",
+            "gpu_count": 8,
+            "active": True,
+            "emissions_kg_co2eq": 0.1,
+            "energy_kwh": 0.5,
+            "duration_seconds": 10,
+        }
+        response = {"node0": {"exit_code": 0, "output": json.dumps(artifact)}}
+        results = PyTorchVisionJob(FakeOrchestrator(response), variant, "w1").parse_results()
+        self.assertEqual(results["node0"]["training.images_per_kwh"], 2048)
+
+    def test_rejects_mismatched_artifact_metadata(self):
+        artifact = _artifact()
+        artifact["batch_size_per_gpu"] = 64
+        response = {"node0": {"exit_code": 0, "output": json.dumps(artifact)}}
+        with self.assertRaisesRegex(RuntimeError, "batch_size_per_gpu"):
+            PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").parse_results()
+
+    def test_rejects_wrong_learning_rate_trajectory(self):
+        artifact = _artifact()
+        artifact["metrics"]["learning_rate_final"] = 0.2
+        response = {"node0": {"exit_code": 0, "output": json.dumps(artifact)}}
+        with self.assertRaisesRegex(RuntimeError, "learning-rate trajectory"):
+            PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").parse_results()
+
+    def test_rejects_invalid_epoch_accounting(self):
+        variant = _variant()
+        variant.training.max_epochs = 1
+        artifact = _artifact()
+        artifact.update(
+            {
+                "completed_epochs": 1,
+                "samples_per_rank_per_epoch": 10,
+                "batches_per_epoch": 0,
+                "steps_per_epoch": 0,
+            }
+        )
+        response = {"node0": {"exit_code": 0, "output": json.dumps(artifact)}}
+        with self.assertRaisesRegex(RuntimeError, "epoch accounting"):
+            PyTorchVisionJob(FakeOrchestrator(response), variant, "w1").parse_results()
+
+    def test_rejects_nonzero_remote_exit(self):
+        response = {"node0": {"exit_code": 7, "output": "torchrun failed"}}
+        readings = [{"gpu.used_vram": 16, "gpu.max_used_vram": 2}]
+        with (
+            patch("cvs.lib.training.pytorch_vision.job.start_gpu_poller"),
+            patch("cvs.lib.training.pytorch_vision.job.stop_and_collect_gpu_poller", return_value=readings),
+            self.assertRaisesRegex(RuntimeError, "torchrun failed"),
+        ):
+            PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").run_benchmark()
+
+    def test_run_opens_marked_dmesg_window(self):
+        orch = FakeOrchestrator()
+        readings = [{"gpu.used_vram": 16, "gpu.max_used_vram": 2}]
+        job = PyTorchVisionJob(orch, _variant(), "w1")
+        with (
+            patch("cvs.lib.training.pytorch_vision.job.start_gpu_poller"),
+            patch("cvs.lib.training.pytorch_vision.job.stop_and_collect_gpu_poller", return_value=readings),
+        ):
+            job.run_benchmark()
+        self.assertIn("| sudo -n tee /dev/kmsg", orch.commands[0][0])
+        self.assertIn("attempt 1", orch.commands[0][0])
+        self.assertTrue(job._dmesg_window.use_markers)
+        self.assertEqual(job.training_start_time, {"node0": ""})
+
+    def test_each_startup_attempt_gets_its_own_marker(self):
+        variant = _variant()
+        variant.training.startup_retries = 1
+        orch = FakeOrchestrator()
+        job = PyTorchVisionJob(orch, variant, "w1")
+        launches = [{"node0": {"exit_code": 0, "output": text}} for text in ("segfault", "PYTORCH_VISION_WARMUP_OK")]
+        with (
+            patch("cvs.lib.training.pytorch_vision.job.start_gpu_poller"),
+            patch("cvs.lib.training.pytorch_vision.job.stop_and_collect_gpu_poller"),
+            patch.object(job, "_set_monitor_metrics"),
+            patch.object(job, "_launch", side_effect=launches),
+            patch.object(job, "_keep_failed_start"),
+        ):
+            job.run_benchmark()
+        markers = [command for command, _ in orch.commands if "/dev/kmsg" in command]
+        self.assertEqual(len(markers), 2)
+        self.assertIn("attempt 1", markers[0])
+        self.assertIn("attempt 2", markers[1])
+        self.assertTrue(job._dmesg_window.start_marker.endswith("attempt 2"))
+
+    def test_monitor_records_maximum_per_device_used_memory(self):
+        job = PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1")
+        job._set_monitor_metrics(
+            [
+                {"gpu.used_vram": 16, "gpu.max_used_vram": 2},
+                {"gpu.used_vram": 24, "gpu.max_used_vram": 4},
+            ]
+        )
+        self.assertEqual(job.monitor_metrics["training.peak_memory_used_mb"], 4)
+
+    def test_dmesg_scan_can_be_disabled(self):
+        variant = _variant()
+        variant.training.verify_dmesg = False
+        orch = FakeOrchestrator()
+        PyTorchVisionJob(orch, variant, "w1").scan_dmesg_for_errors()
+        self.assertEqual(orch.commands, [])
+
+    def test_scans_dmesg_between_attempt_markers(self):
+        orch = FakeOrchestrator()
+        job = PyTorchVisionJob(orch, _variant(), "w1")
+        job._open_dmesg_window(2)
+        with patch("cvs.lib.verify_lib.verify_dmesg_during_test") as verify:
+            job.scan_dmesg_for_errors()
+        args = verify.call_args.args
+        self.assertIs(args[0]._handle, orch.all)
+        self.assertEqual(args[1], job._dmesg_window.start_marker)
+        self.assertEqual(args[2], job._dmesg_window.end_marker)
+        self.assertTrue(args[1].endswith("attempt 2"))
+
+    def test_dmesg_scan_requires_an_opened_window(self):
+        with self.assertRaisesRegex(RuntimeError, "start marker"):
+            PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1").scan_dmesg_for_errors()
+
+    def test_bounded_host_handle_forces_noninteractive_sudo(self):
+        orch = FakeOrchestrator({"node0": {"exit_code": 0, "output": "clean"}})
+        output = _BoundedHostHandle(orch, orch.hosts).exec(
+            "sudo dmesg --time-format iso -x",
+            print_console=False,
+        )
+        self.assertEqual(output, {"node0": "clean"})
+        command, kwargs = orch.commands[-1]
+        self.assertIn("sudo -n dmesg", command)
+        self.assertIn("IPVS: .*no destination available", command)
+        self.assertEqual(kwargs["timeout"], 60)
+        self.assertTrue(kwargs["detailed"])
+        self.assertFalse(kwargs["print_console"])
+
+    def test_bounded_host_handle_rejects_remote_failure(self):
+        orch = FakeOrchestrator({"node0": {"exit_code": 1, "output": "denied"}})
+        with self.assertRaisesRegex(RuntimeError, "denied"):
+            _BoundedHostHandle(orch, orch.hosts).exec("sudo dmesg")
+
+    def test_rejects_invalid_environment_name(self):
+        variant = _variant()
+        variant.training.env_vars = {"BAD-NAME": "1"}
+        with self.assertRaisesRegex(ValueError, "invalid environment"):
+            PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
+
+    def test_rejects_configured_training_log_error(self):
+        response = {"node0": {"exit_code": 0, "output": "worker died with SIGSEGV"}}
+        with self.assertRaisesRegex(RuntimeError, "Process crash"):
+            PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").verify_training_log()
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class TestWorkloadIsolation(unittest.TestCase):
+    """Two workloads sharing a host must not collide."""
+
+    def test_staged_script_path_follows_the_workload(self):
+        w1 = _variant()
+        w3 = _variant()
+        w3.training.workload = "W3"
+
+        job1 = PyTorchVisionJob(FakeOrchestrator(), w1, "w1")
+        job3 = PyTorchVisionJob(FakeOrchestrator(), w3, "w1")
+
+        self.assertEqual(job1.benchmark_path, "/tmp/cvs_pytorch_vision_w1.py")
+        self.assertEqual(job3.benchmark_path, "/tmp/cvs_pytorch_vision_w3.py")
+
+    def test_workload_id_is_passed_to_the_launcher(self):
+        variant = _variant()
+        variant.training.workload = "W3"
+        command = PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
+        self.assertIn("--workload W3", command)
+
+    def test_each_node_tees_its_own_log(self):
+        job = PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1")
+        self.assertIn("training.node1.log", job.build_command(node_rank=1))
+        self.assertNotIn("training.node0.log", job.build_command(node_rank=1))
+
+    def test_a_launch_that_ends_before_warmup_finished_is_relaunchable(self):
+        self.assertTrue(PyTorchVisionJob._failed_before_measuring({"n0": "segfault", "n1": ""}))
+        self.assertTrue(PyTorchVisionJob._failed_before_measuring({"n0": {"exit_code": 1, "output": "x"}}))
+        self.assertTrue(
+            PyTorchVisionJob._failed_before_measuring({"n0": "PYTORCH_VISION_STARTUP_OK\nTraceback", "n1": ""})
+        )
+        self.assertFalse(
+            PyTorchVisionJob._failed_before_measuring({"n0": "PYTORCH_VISION_WARMUP_OK\nTraceback", "n1": ""})
+        )
+        self.assertFalse(PyTorchVisionJob._failed_before_measuring({"n0": 'PYTORCH_VISION_OK {"x": 1}'}))
+        self.assertFalse(PyTorchVisionJob._failed_before_measuring({}))
+
+    def _run_with_launches(self, retries, outputs):
+        variant = _variant()
+        variant.training.startup_retries = retries
+        variant.training.verify_dmesg = False
+        job = PyTorchVisionJob(FakeOrchestrator(), variant, "w1")
+        launches = [{"node0": {"exit_code": 0, "output": text}} for text in outputs]
+        with (
+            patch("cvs.lib.training.pytorch_vision.job.start_gpu_poller"),
+            patch("cvs.lib.training.pytorch_vision.job.stop_and_collect_gpu_poller"),
+            patch.object(job, "_set_monitor_metrics"),
+            patch.object(job, "_launch", side_effect=launches) as launch,
+            patch.object(job, "_keep_failed_start") as keep,
+        ):
+            job.run_benchmark()
+        return job, launch, keep
+
+    def test_failed_start_is_relaunched_and_counted(self):
+        job, launch, keep = self._run_with_launches(2, ["segfault", "PYTORCH_VISION_WARMUP_OK"])
+        self.assertEqual(launch.call_count, 2)
+        keep.assert_called_once_with(1)
+        self.assertEqual(job.startup_retries_used, 1)
+
+    def test_failure_during_warmup_is_relaunched(self):
+        outputs = ["PYTORCH_VISION_STARTUP_OK\nSignal 11", "PYTORCH_VISION_STARTUP_OK\nPYTORCH_VISION_WARMUP_OK"]
+        job, launch, keep = self._run_with_launches(2, outputs)
+        self.assertEqual(launch.call_count, 2)
+        self.assertEqual(job.startup_retries_used, 1)
+
+    def test_failure_after_warmup_is_not_relaunched(self):
+        job, launch, keep = self._run_with_launches(2, ["PYTORCH_VISION_WARMUP_OK\nTraceback"])
+        self.assertEqual(launch.call_count, 1)
+        keep.assert_not_called()
+        self.assertEqual(job.startup_retries_used, 0)
+
+    def test_relaunch_is_opt_in(self):
+        job, launch, keep = self._run_with_launches(0, ["segfault"])
+        self.assertEqual(launch.call_count, 1)
+        keep.assert_not_called()
+
+    def test_zero_init_residual_is_opt_in(self):
+        variant = _variant()
+        self.assertNotIn("--zero-init-residual", PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command())
+        variant.training.zero_init_residual = True
+        self.assertIn("--zero-init-residual", PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command())
+
+    def test_label_smoothing_is_opt_in(self):
+        variant = _variant()
+        self.assertNotIn("--label-smoothing", PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command())
+        variant.training.label_smoothing = 0.1
+        self.assertIn("--label-smoothing 0.1", PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command())
+
+    def test_optimizer_choice_is_passed_to_the_launcher(self):
+        variant = _variant()
+        variant.training.optimizer = "adamw"
+        command = PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
+        self.assertIn("--optimizer adamw", command)
+
+
+class TestDynamicTopology(unittest.TestCase):
+    """One config must run on any node count: world size and global batch are
+    derived from the cluster, never declared in the config."""
+
+    def _parse_with_nodes(self, num_nodes):
+        variant = _variant()
+        variant.training.distributed = num_nodes > 1
+        orch = FakeOrchestrator({"node0": {"exit_code": 0, "output": json.dumps(_artifact(num_nodes=num_nodes))}})
+        orch.hosts = [f"node{i}" for i in range(num_nodes)]
+        return PyTorchVisionJob(orch, variant, "w1").parse_results()
+
+    def test_same_sweep_parses_at_1n_2n_and_4n(self):
+        for nodes in (1, 2, 4):
+            with self.subTest(nodes=nodes):
+                results = self._parse_with_nodes(nodes)
+                self.assertIn("training.images_per_sec", results["node0"])
+
+    def test_mismatched_world_size_is_rejected(self):
+        """A 4-node cluster running a 2-node artifact must fail loudly rather
+        than silently reporting a scaled result."""
+        variant = _variant()
+        variant.training.distributed = True
+        orch = FakeOrchestrator({"node0": {"exit_code": 0, "output": json.dumps(_artifact(num_nodes=2))}})
+        orch.hosts = ["node0", "node1", "node2", "node3"]
+        with self.assertRaisesRegex(RuntimeError, "world_size"):
+            PyTorchVisionJob(orch, variant, "w1").parse_results()
+
+
+class TestHFTrainerHarness(unittest.TestCase):
+    """The hf_trainer harness hands the training loop to HF Trainer, so checks
+    that describe our own loop must not be asserted against it."""
+
+    def test_harness_and_model_id_reach_the_launcher(self):
+        variant = _variant()
+        variant.training.harness = "hf_trainer"
+        variant.sweep("cell-w1").model_id = "google/vit-base-patch16-224"
+        command = PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
+        self.assertIn("--harness hf_trainer", command)
+        self.assertIn("--model-id google/vit-base-patch16-224", command)
+
+    def test_fsdp_strategy_reaches_the_launcher(self):
+        variant = _variant()
+        variant.training.harness = "hf_trainer"
+        variant.training.fsdp_strategy = "hybrid_shard"
+        command = PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
+        self.assertIn("--fsdp-strategy hybrid_shard", command)
+
+    def test_pretrained_flag_is_opt_in(self):
+        variant = _variant()
+        self.assertNotIn("--pretrained", PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command())
+        variant.sweep("cell-w1").pretrained = True
+        self.assertIn("--pretrained", PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command())
+
+    def test_native_harness_is_the_default(self):
+        command = PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1").build_command()
+        self.assertIn("--harness native", command)

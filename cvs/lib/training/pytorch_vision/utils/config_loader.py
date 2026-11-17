@@ -1,0 +1,604 @@
+"""Typed configuration for the PyTorch Vision training suite."""
+
+from __future__ import annotations
+
+import re
+import warnings
+from collections import Counter
+from typing import Any, Dict, List, Optional
+
+from pydantic import field_validator, Field, model_validator
+from typing_extensions import Literal
+
+from cvs.lib.training.pytorch_vision.utils.metrics import GATED_METRICS, QUALITY_METRICS
+from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
+
+
+_ALLOWED_GPU_NAMES = ("MI300X", "MI325X", "MI355X")
+
+RUN_MODES = (
+    "smoke",
+    "perf",
+    "train_5k",
+    "finetune",
+    "train_to_accuracy",
+)
+LONG_RUN_MODES = {"train_to_accuracy"}
+
+
+class LossCurveConfig(_Forbid):
+    enabled: bool = True
+    sample_every_steps: int = Field(default=1, ge=1)
+    minimum_points: int = Field(default=2, ge=2)
+    require_decrease: bool = True
+
+
+class ConvergenceConfig(_Forbid):
+    enabled: bool = False
+    stop_when_reached: bool = False
+    target_top1_pct: Optional[float] = Field(default=None, ge=0, le=100)
+    target_eval_loss: Optional[float] = Field(default=None, gt=0)
+    # Checked at every sampled training step rather than at eval cadence, so
+    # convergence is measurable in a short run and without evaluation.
+    target_train_loss: Optional[float] = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_target(self):
+        if self.enabled and all(
+            t is None for t in (self.target_top1_pct, self.target_eval_loss, self.target_train_loss)
+        ):
+            raise ValueError("enabled convergence tracking requires a target")
+        return self
+
+
+class ScalingBaselineConfig(_Forbid):
+    """Reference (typically single-node) throughput for scaling-efficiency %.
+
+    ``images_per_sec_total`` is the TOTAL images/sec measured on a prior run of
+    ``num_nodes`` nodes, sourced from that run's results.json. Scaling
+    efficiency % = throughput_N / ((N / num_nodes) * images_per_sec_total) * 100.
+
+    Leave ``images_per_sec_total`` at 0.0 to disable the metric; it then reports
+    record-only rather than gating on an uncalibrated baseline.
+    """
+
+    images_per_sec_total: float = Field(default=0.0, ge=0)
+    num_nodes: int = Field(default=1, gt=0)
+    # Scale parity: the quality metric (top1_accuracy_pct, map_50_95,
+    # miou_pct, vlm_benchmark_score, ...) and its value on the reference run.
+    accuracy_metric: Optional[str] = None
+    accuracy_value: Optional[float] = None
+
+    @model_validator(mode="after")
+    def _validate_parity(self):
+        if (self.accuracy_metric is None) != (self.accuracy_value is None):
+            raise ValueError("scaling_baseline.accuracy_metric and accuracy_value must be set together")
+        if self.accuracy_metric is not None and self.accuracy_metric not in QUALITY_METRICS:
+            raise ValueError(f"scaling_baseline.accuracy_metric must be one of {sorted(QUALITY_METRICS)}")
+        return self
+
+
+class AccuracyConfig(_Forbid):
+    target_top1_pct: Optional[float] = Field(default=None, ge=0, le=100)
+    target_top5_pct: Optional[float] = Field(default=None, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def _validate_targets(self):
+        if (
+            self.target_top1_pct is not None
+            and self.target_top5_pct is not None
+            and self.target_top1_pct > self.target_top5_pct
+        ):
+            raise ValueError("accuracy target_top1_pct cannot exceed target_top5_pct")
+        return self
+
+
+class LearningRateScheduleConfig(_Forbid):
+    name: Literal["constant", "multistep"] = "constant"
+    warmup_epochs: int = Field(default=0, ge=0)
+    milestones_epochs: List[int] = Field(default_factory=list)
+    gamma: float = Field(default=0.1, gt=0, le=1)
+
+    @model_validator(mode="after")
+    def _validate_schedule(self):
+        if len(set(self.milestones_epochs)) != len(self.milestones_epochs):
+            raise ValueError("lr_schedule.milestones_epochs must not contain duplicates")
+        if any(b <= a for a, b in zip(self.milestones_epochs, self.milestones_epochs[1:])):
+            raise ValueError("lr_schedule.milestones_epochs must be strictly increasing")
+        if self.name == "constant" and (self.warmup_epochs or self.milestones_epochs):
+            raise ValueError("constant lr_schedule cannot define warmup or milestones")
+        if self.name == "multistep" and not self.milestones_epochs:
+            raise ValueError("multistep lr_schedule requires milestones_epochs")
+        return self
+
+
+class CodeCarbonConfig(_Forbid):
+    enabled: bool = False
+    required: bool = False
+    version: Literal["3.2.4"] = "3.2.4"
+    tracker: Literal["amdsmi"] = "amdsmi"
+    measure_power_secs: int = Field(default=5, ge=1)
+    country_iso_code: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _validate_required(self):
+        if self.required and not self.enabled:
+            raise ValueError("codecarbon.required=true requires codecarbon.enabled=true")
+        return self
+
+
+class DatasetStagingConfig(_Forbid):
+    """Copy a container volume's host directory onto each node before launch.
+
+    Reading ImageNet from a shared filesystem held W1 to 12k images/s on one
+    MI325X node; the same run read from ``/dev/shm`` reached 24k. When enabled,
+    the volume whose host side is ``source`` is mounted from ``destination``
+    instead. A verified copy is reused by later runs until the source changes.
+    """
+
+    enabled: bool = False
+    source: str = ""
+    destination: str = ""
+    parallel_copies: int = Field(default=48, ge=1, le=256)
+    timeout_s: int = Field(default=3600, gt=0)
+    # A copy in /dev/shm holds node RAM until it is removed; keeping it lets
+    # the next run skip the copy.
+    remove_after_run: bool = False
+
+    @model_validator(mode="after")
+    def _validate_paths(self):
+        if not self.enabled:
+            return self
+        source = self.source.rstrip("/")
+        destination = self.destination.rstrip("/")
+        if not source.startswith("/") or not destination.startswith("/"):
+            raise ValueError("dataset_staging source and destination must be absolute paths")
+        if destination.count("/") < 2:
+            raise ValueError("dataset_staging.destination must be a dedicated directory, not a top-level path")
+        if source == destination or destination.startswith(source + "/") or source.startswith(destination + "/"):
+            raise ValueError("dataset_staging source and destination must not contain each other")
+        return self
+
+
+class VisionSweep(_Forbid):
+    # HuggingFace model id, required by the hf_trainer harness.
+    model_id: str = ""
+    # Load pretrained weights, or train the same architecture from scratch.
+    pretrained: bool = False
+    name: str
+    label: str
+    model: str
+    # torchvision models, HF backbones (transformers), or Vision Mamba (mamba).
+    backend: Literal["torchvision", "transformers", "mamba"] = "torchvision"
+    precision: Literal["BF16", "FP16", "FP32"] = "BF16"
+    batch_size: int = Field(gt=0)
+    image_size: int = Field(default=224, gt=0)
+    gradient_accumulation_steps: int = Field(default=1, ge=1)
+    training_flops_per_image: float = Field(gt=0)
+    # "dataset" is read by the task harness through a torch DataLoader
+    # (COCO, ADE20K, ChartQA) rather than by rocAL.
+    data_mode: Literal["synthetic", "rocal", "dataset"] = "synthetic"
+    dataset_path: str = ""
+    rocal_device: Literal["cpu", "gpu"] = "gpu"
+    augmentation: Literal["standard", "heavy"] = "standard"
+    rocal_num_threads: int = Field(default=8, ge=1)
+    loader_warmup_steps: int = Field(default=5, ge=1)
+    loader_benchmark_steps: int = Field(default=20, ge=1)
+    # The 1-node run of this same cell. A distributed sweep must not borrow the
+    # workload-level baseline, because a different cell has a different
+    # throughput.
+    scaling_baseline: Optional[ScalingBaselineConfig] = None
+
+    @model_validator(mode="after")
+    def _validate_data(self):
+        if self.data_mode in {"rocal", "dataset"} and not self.dataset_path:
+            raise ValueError(f"{self.data_mode} sweeps require dataset_path")
+        return self
+
+
+def validate_sweep_selector(sweep_names, enabled_names, sweep_labels=None) -> None:
+    """Reject duplicate sweeps/labels and enabled selectors with no declared run."""
+    counts = Counter(sweep_names)
+    duplicates = sorted(key for key, count in counts.items() if count > 1)
+    if duplicates:
+        raise ValueError(f"duplicate training.sweeps names: {duplicates}")
+
+    known = set(counts)
+    unknown = sorted(ref for ref in enabled_names if ref not in known)
+    if unknown:
+        raise ValueError(f"training.enabled_sweep_list references unknown sweeps: {unknown} (known: {sorted(known)})")
+
+    if sweep_labels is not None:
+        label_counts = Counter(sweep_labels)
+        duplicate_labels = sorted(key for key, count in label_counts.items() if count > 1)
+        if duplicate_labels:
+            raise ValueError(f"duplicate training.sweeps labels: {duplicate_labels}")
+        collisions = sorted(known & set(sweep_labels))
+        if collisions:
+            raise ValueError(f"training sweep names and labels must be distinct: {collisions}")
+
+
+class VisionTrainingConfig(_Forbid):
+    # Scorecard workload id (W1 = ResNet-50, W3 = ViT-B/16, ...). Recorded in
+    # the result artifact and cross-checked on parse so a result cannot be
+    # attributed to the wrong workload row.
+    workload: str = Field(default="W1", pattern=r"^W\d+$")
+    distributed: bool = False
+    master_port: int = Field(default=29500, gt=1024, lt=65536)
+    enabled: bool = True
+    allow_long_run: bool = False
+    phase: Literal["smoke", "performance", "accuracy"] = "performance"
+    # finetune is a pretrained run of arbitrary length: the accuracy phase
+    # (eval, loss curve, convergence) without train_5k's 5000-step floor.
+    run_mode: Literal[
+        "smoke",
+        "perf",
+        "train_5k",
+        "finetune",
+        "train_to_accuracy",
+    ] = "perf"
+    gpus_per_node: int = Field(default=8, gt=0)
+    warmup_steps: int = Field(default=10, ge=0)
+    steps: int = Field(default=50, ge=1)
+    max_epochs: Optional[int] = Field(default=None, ge=1)
+    max_duration_seconds: Optional[int] = Field(default=None, ge=1)
+    eval_enabled: bool = False
+    eval_every_epochs: int = Field(default=1, ge=1)
+    eval_steps: Optional[int] = Field(default=None, ge=1)
+    eval_sample_count: int = Field(default=50_000, ge=1)
+    milestone_steps: List[int] = Field(default_factory=lambda: [100, 500, 1000, 5000])
+    num_classes: int = Field(default=1000, gt=1)
+    channels_last: bool = True
+    # Starts each residual block's last BatchNorm scale at zero, so every
+    # block begins as the identity (Goyal et al., 2017). Torchvision ResNets only.
+    zero_init_residual: bool = False
+    # Training loss only; the reported validation loss stays plain cross-entropy.
+    label_smoothing: float = Field(default=0.0, ge=0, lt=1)
+    learning_rate: float = Field(default=0.1, gt=0)
+    optimizer: Literal["sgd", "adamw"] = "sgd"
+    # "native" drives our own DDP loop; "hf_trainer" hands the loop to
+    # HuggingFace Trainer with FSDP and reconstructs the same metric contract
+    # from callbacks. hf_trainer requires an image carrying transformers.
+    # "task" runs tasks.py: detection, segmentation, or multimodal SFT.
+    harness: Literal["native", "hf_trainer", "task"] = "native"
+    task: Literal["classification", "detection", "segmentation", "vlm_sft"] = "classification"
+    # Free-form per-task knobs forwarded to the container as JSON (FSDP vs
+    # DDP, eval batch, VLM pixel budget, input normalization, ...).
+    task_options: Dict[str, Any] = Field(default_factory=dict)
+    # Where checkpoints are written. Defaults to the run's log dir; large
+    # models need a filesystem with room for a full sharded checkpoint.
+    checkpoint_dir: Optional[str] = None
+    # Sweeps read the same shards back to back, so a sweep's position decides
+    # how warm the page cache is when it runs. Repeating every sweep in a
+    # reshuffled order and reporting medians keeps that out of the comparison.
+    # 1 keeps the single-pass behaviour.
+    # full_shard spreads parameters over every rank; hybrid_shard shards within
+    # a node and replicates across nodes, which suits models small enough that
+    # cross-node all-gather dominates.
+    fsdp_strategy: Literal["full_shard", "hybrid_shard"] = "full_shard"
+    sweep_repeats: int = 1
+    sweep_order_seed: int = 2026
+    momentum: float = Field(default=0.9, ge=0)
+    weight_decay: float = Field(default=0.0001, ge=0)
+    lr_schedule: LearningRateScheduleConfig = Field(default_factory=LearningRateScheduleConfig)
+    timeout_s: int = Field(default=1800, gt=0)
+    # NCCL startup (init plus one all-reduce) must finish within
+    # startup_timeout_s. A start that no rank finishes is relaunched up to
+    # startup_retries times; the failed attempt's logs are kept and the
+    # relaunches are recorded in the report.
+    startup_timeout_s: int = Field(default=300, gt=0)
+    startup_retries: int = Field(default=0, ge=0, le=5)
+    # Per-rank setup (loader file scans, dataset builds, rank 0's weight read)
+    # is awaited through the rendezvous store for up to setup_timeout_s, so a
+    # node with a cold filesystem cache does not trip the collective timeout.
+    setup_timeout_s: int = Field(default=1800, gt=0)
+    omp_num_threads: int = Field(default=1, gt=0)
+    verify_dmesg: bool = True
+    peak_tflops_per_gpu: float = Field(gt=0)
+    checkpoint_enabled: Literal[True] = True
+    checkpoint_keep_file: bool = False
+    checkpoint_loss_tolerance: float = Field(default=1e-5, ge=0)
+    loss_curve: LossCurveConfig = Field(default_factory=LossCurveConfig)
+    accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
+    scaling_baseline: ScalingBaselineConfig = Field(default_factory=ScalingBaselineConfig)
+    convergence: ConvergenceConfig = Field(default_factory=ConvergenceConfig)
+    codecarbon: CodeCarbonConfig = Field(default_factory=CodeCarbonConfig)
+    dataset_staging: DatasetStagingConfig = Field(default_factory=DatasetStagingConfig)
+    env_vars: Dict[str, str] = Field(default_factory=dict)
+    error_patterns: Dict[str, str] = Field(default_factory=dict)
+    sweeps: List[VisionSweep]
+    enabled_sweep_list: List[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_sweeps(self):
+        if not self.sweeps:
+            raise ValueError("training.sweeps must contain at least one workload")
+        enabled = self.enabled_sweep_list or [sweep.name for sweep in self.sweeps]
+        validate_sweep_selector(
+            [sweep.name for sweep in self.sweeps],
+            enabled,
+            [sweep.label for sweep in self.sweeps],
+        )
+        by_name = {sweep.name: sweep for sweep in self.sweeps}
+        selected = [by_name[name] for name in enabled]
+        for sweep in selected:
+            if sweep.gradient_accumulation_steps == 1:
+                continue
+            effective_batch = sweep.batch_size * sweep.gradient_accumulation_steps * self.gpus_per_node
+            baselines = [
+                candidate
+                for candidate in selected
+                if candidate.gradient_accumulation_steps == 1
+                and candidate.model == sweep.model
+                and candidate.backend == sweep.backend
+                and candidate.precision == sweep.precision
+                and candidate.image_size == sweep.image_size
+                and candidate.batch_size * self.gpus_per_node == effective_batch
+                and candidate.data_mode == sweep.data_mode
+                and candidate.rocal_device == sweep.rocal_device
+                and candidate.augmentation == sweep.augmentation
+            ]
+            if len(baselines) != 1:
+                raise ValueError(
+                    f"enabled GA={sweep.gradient_accumulation_steps} sweep {sweep.name!r} requires exactly one "
+                    "enabled GA=1 sweep with the same model, precision, resolution, and effective global batch"
+                )
+        if self.zero_init_residual:
+            for sweep in selected:
+                if self.harness != "native" or sweep.model_id or not sweep.model.startswith("resnet"):
+                    raise ValueError(
+                        f"training.zero_init_residual applies to torchvision ResNets on the native harness; "
+                        f"sweep {sweep.name!r} uses model {sweep.model!r}"
+                    )
+        if self.label_smoothing and self.harness != "native":
+            raise ValueError("training.label_smoothing applies to the native harness only")
+        for name, pattern in self.error_patterns.items():
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"training.error_patterns[{name!r}] is invalid: {exc}") from exc
+        if len(set(self.milestone_steps)) != len(self.milestone_steps):
+            raise ValueError("training.milestone_steps must not contain duplicates")
+        if any(b <= a for a, b in zip(self.milestone_steps, self.milestone_steps[1:])):
+            raise ValueError("training.milestone_steps must be strictly increasing")
+        if self.lr_schedule.warmup_epochs or self.lr_schedule.milestones_epochs:
+            if self.max_epochs is None:
+                raise ValueError("epoch-based lr_schedule requires training.max_epochs")
+            if self.lr_schedule.warmup_epochs >= self.max_epochs:
+                raise ValueError("lr_schedule.warmup_epochs must be less than training.max_epochs")
+            if self.lr_schedule.milestones_epochs[-1] >= self.max_epochs:
+                raise ValueError("lr_schedule milestones must be less than training.max_epochs")
+            if (
+                self.lr_schedule.milestones_epochs
+                and self.lr_schedule.warmup_epochs >= self.lr_schedule.milestones_epochs[0]
+            ):
+                raise ValueError("lr_schedule warmup must finish before the first milestone")
+        if self.run_mode == "train_to_accuracy" and self.max_epochs is None:
+            raise ValueError("train_to_accuracy requires training.max_epochs as a safety cap")
+        if self.run_mode == "train_to_accuracy" and (
+            self.accuracy.target_top1_pct is None or self.accuracy.target_top5_pct is None
+        ):
+            raise ValueError("train_to_accuracy requires explicit Top-1 and Top-5 accuracy targets")
+        if self.run_mode == "train_to_accuracy" and self.convergence.target_top1_pct != self.accuracy.target_top1_pct:
+            raise ValueError("train_to_accuracy convergence Top-1 target must match the final Top-1 target")
+        if self.run_mode == "train_to_accuracy" and not self.convergence.stop_when_reached:
+            raise ValueError("train_to_accuracy requires convergence.stop_when_reached=true")
+        if self.sweep_repeats < 1:
+            raise ValueError(f"sweep_repeats must be >= 1, got {self.sweep_repeats}")
+        if self.harness in {"hf_trainer", "task"}:
+            missing = [s.name for s in self.enabled_sweeps() if not s.model_id]
+            if missing:
+                raise ValueError(f"{self.harness} harness requires sweep.model_id for: {missing}")
+        if (self.harness == "task") != (self.task != "classification"):
+            raise ValueError("training.task other than classification requires harness=task, and only then")
+        for sweep in self.enabled_sweeps():
+            if self.harness == "native":
+                expected = (
+                    "mamba" if sweep.model.startswith("vim_") else "transformers" if sweep.model_id else "torchvision"
+                )
+            else:
+                expected = "transformers" if self.harness == "task" else "torchvision"
+            if sweep.backend != expected:
+                raise ValueError(f"sweep {sweep.name!r} on harness {self.harness} requires backend {expected!r}")
+            if (sweep.data_mode == "dataset") != (self.harness == "task"):
+                raise ValueError(f"sweep {sweep.name!r}: data_mode 'dataset' is the task harness input, and only that")
+        if self.run_mode == "train_5k" and self.steps < 5000:
+            raise ValueError("train_5k requires training.steps>=5000")
+        expected_phase = {
+            "smoke": "smoke",
+            "perf": "performance",
+            "train_5k": "accuracy",
+            "finetune": "accuracy",
+            "train_to_accuracy": "accuracy",
+        }[self.run_mode]
+        if self.phase != expected_phase:
+            raise ValueError(f"{self.run_mode} requires training.phase={expected_phase!r}")
+        if self.phase == "accuracy" and self.warmup_steps:
+            raise ValueError(
+                "accuracy profiles require training.warmup_steps=0 so uncounted optimizer updates "
+                "cannot alter the training recipe"
+            )
+        if self.enabled and self.run_mode in LONG_RUN_MODES and not self.allow_long_run:
+            raise ValueError(
+                f"{self.run_mode} is a protected long run; set training.enabled=true and "
+                "training.allow_long_run=true explicitly"
+            )
+        if self.run_mode != "perf" and not self.eval_enabled:
+            raise ValueError(f"{self.run_mode} requires training.eval_enabled=true")
+        return self
+
+    def enabled_sweeps(self) -> List[VisionSweep]:
+        by_name = {sweep.name: sweep for sweep in self.sweeps}
+        names = self.enabled_sweep_list or list(by_name)
+        return [by_name[name] for name in names]
+
+
+class VisionVariantConfig(BaseVariantConfig):
+    schema_version: Literal[1]
+    framework: Literal["pytorch_vision_training"]
+    gpu_name: str
+    training: VisionTrainingConfig
+
+    @field_validator("gpu_name")
+    @classmethod
+    def _uppercase_gpu_name(cls, value: str) -> str:
+        name = value.strip().upper()
+        if name not in _ALLOWED_GPU_NAMES:
+            raise ValueError(f"gpu_name must be one of {list(_ALLOWED_GPU_NAMES)}, got {value!r}")
+        return name
+
+    @model_validator(mode="after")
+    def _validate_dataset_staging(self):
+        staging = self.training.dataset_staging
+        if not staging.enabled:
+            return self
+        volumes = self.container.runtime.args.get("volumes") or []
+        hosts = [str(volume).split(":", 1)[0].rstrip("/") for volume in volumes]
+        if staging.source.rstrip("/") not in hosts:
+            raise ValueError(
+                f"dataset_staging.source {staging.source!r} must be the host side of a container volume; "
+                f"volumes are {volumes}"
+            )
+        return self
+
+    @property
+    def gpu_arch(self) -> str:
+        """Alias kept for the shared report and orchestration layers."""
+        return self.gpu_name
+
+    def sweep(self, sweep_ref: str) -> VisionSweep:
+        for sweep in self.training.sweeps:
+            if sweep_ref in (sweep.name, sweep.label):
+                return sweep
+        raise KeyError(f"unknown PyTorch Vision sweep: {sweep_ref}")
+
+    def scaling_baseline_for(self, sweep_ref: str) -> ScalingBaselineConfig:
+        sweep = self.sweep(sweep_ref)
+        if sweep.scaling_baseline is not None:
+            return sweep.scaling_baseline
+        return self.training.scaling_baseline
+
+    def cell_key(self, sweep_ref: str, image_size=None, batch_size=None) -> str:
+        sweep = self.sweep(sweep_ref)
+        if image_size is not None and str(image_size) != str(sweep.image_size):
+            raise ValueError(f"report image size {image_size} does not match {sweep.label}: {sweep.image_size}")
+        if batch_size is not None and int(batch_size) != sweep.batch_size:
+            raise ValueError(f"report batch size {batch_size} does not match {sweep.label}: {sweep.batch_size}")
+        return sweep.name
+
+    def expected_cells(self) -> List[str]:
+        return [sweep.name for sweep in self.training.sweeps]
+
+    @model_validator(mode="after")
+    def _validate_threshold_coverage(self):
+        expected = set(self.expected_cells())
+        present = set(self.thresholds)
+        problems = []
+
+        missing_cells = sorted(expected - present)
+        extra_cells = sorted(present - expected)
+        if missing_cells:
+            problems.append(f"sweep cells with no threshold entry: {missing_cells}")
+        if extra_cells:
+            problems.append(f"threshold keys matching no sweep cell: {extra_cells}")
+
+        missing_metrics = {}
+        required_names = set(GATED_METRICS)
+        if self.training.run_mode == "train_to_accuracy":
+            required_names.update(
+                {
+                    "top1_accuracy_pct",
+                    "top5_accuracy_pct",
+                    "eval_completed",
+                    "eval_sample_count",
+                    "loss_curve_decreased",
+                    "convergence_step",
+                    "convergence_time_seconds",
+                    "learning_rate_initial",
+                    "learning_rate_final",
+                    "data_loader_images_per_sec",
+                    "codecarbon_tracking_active",
+                }
+            )
+        required = [f"training.{name}" for name in sorted(required_names)]
+        for cell in sorted(expected & present):
+            absent = [name for name in required if name not in (self.thresholds.get(cell) or {})]
+            if absent:
+                missing_metrics[cell] = absent
+        if missing_metrics:
+            problems.append(f"cells missing gated-metric specs: {missing_metrics}")
+        if self.training.run_mode == "train_to_accuracy":
+            expected_accuracy = {
+                "training.top1_accuracy_pct": self.training.accuracy.target_top1_pct,
+                "training.top5_accuracy_pct": self.training.accuracy.target_top5_pct,
+            }
+            for cell in sorted(expected & present):
+                cell_thresholds = self.thresholds.get(cell) or {}
+                for metric, target in expected_accuracy.items():
+                    spec = cell_thresholds.get(metric) or {}
+                    if spec.get("kind") != "min" or spec.get("value") != target:
+                        problems.append(f"{cell} {metric} must be a min gate matching configured target {target}")
+
+        if problems:
+            message = "threshold.json does not match the PyTorch Vision sweep; " + "; ".join(problems)
+            if self.enforce_thresholds:
+                raise ValueError(message)
+            warnings.warn(f"{message} (enforce_thresholds=false -> record-only)", stacklevel=3)
+        return self
+
+
+def _check_no_changeme(node: Any, path: str = "", offenders=None) -> None:
+    if offenders is None:
+        offenders = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            _check_no_changeme(value, f"{path}.{key}" if path else key, offenders)
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            _check_no_changeme(value, f"{path}[{index}]", offenders)
+    elif isinstance(node, str) and "<changeme>" in node:
+        offenders.append(path)
+    if not path and offenders:
+        raise ValueError(f"config has unfilled placeholder '<changeme>' in: {', '.join(offenders)}")
+
+
+def resolve_node_thresholds(thresholds, num_nodes):
+    """Select each spec's ``by_nodes`` entry for this cluster's node count.
+
+    Throughput falls as nodes are added, so one cell can carry a bound per
+    topology: ``{"kind": "min", "by_nodes": {"2": {"value": 4000}}}``. The
+    entry for ``num_nodes`` is merged over the spec's other fields. A node
+    count with no entry keeps the spec's own ``value`` if it has one and is
+    otherwise record-only, so an uncalibrated topology never gates on another
+    topology's numbers.
+    """
+    resolved = {}
+    for cell, specs in thresholds.items():
+        if not isinstance(specs, dict):
+            resolved[cell] = specs
+            continue
+        resolved[cell] = {}
+        for metric, spec in specs.items():
+            if not isinstance(spec, dict) or "by_nodes" not in spec:
+                resolved[cell][metric] = spec
+                continue
+            by_nodes = spec["by_nodes"]
+            if not isinstance(by_nodes, dict) or not all(
+                str(key).isdigit() and int(key) > 0 and isinstance(entry, dict) for key, entry in by_nodes.items()
+            ):
+                raise ValueError(f"{cell} {metric}: by_nodes must map node counts to threshold specs")
+            merged = {key: value for key, value in spec.items() if key != "by_nodes"}
+            merged.update(by_nodes.get(str(num_nodes), {}))
+            if "value" not in merged and merged.get("kind") != "info":
+                merged = {"kind": "info"}
+            resolved[cell][metric] = merged
+    return resolved
+
+
+def load_vision_variant(config_path, cluster_dict) -> VisionVariantConfig:
+    """Load, substitute, and validate a PyTorch Vision config/threshold pair."""
+    raw, thresholds = substitute_config(config_path, cluster_dict)
+    _check_no_changeme(raw)
+    num_nodes = len((cluster_dict or {}).get("node_dict") or {}) or 1
+    raw["thresholds"] = resolve_node_thresholds(thresholds, num_nodes)
+    return VisionVariantConfig(**raw)

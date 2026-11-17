@@ -1,0 +1,227 @@
+import unittest
+
+from cvs.lib.training.pytorch_vision.utils.metrics import (
+    compute_scaling_efficiency,
+    ARTIFACT_METRICS,
+    accuracy_from_counts,
+    codecarbon_tracking_active,
+    convergence_point,
+    gradient_accumulation_overhead_pct,
+    loss_curve_decreased,
+    parse_codecarbon_metrics,
+    required_metrics_for_run,
+    throughput_overhead_pct,
+    tier_metric_specs,
+    to_training_metrics,
+)
+
+
+class TestTrainingMetrics(unittest.TestCase):
+    def setUp(self):
+        self.raw = {"metrics": {name: index + 1.5 for index, (name, _unit) in enumerate(ARTIFACT_METRICS)}}
+
+    def test_namespaces_all_metrics(self):
+        actual = to_training_metrics(self.raw)
+        self.assertEqual(len(actual), len(ARTIFACT_METRICS))
+        self.assertEqual(actual["training.images_per_sec"], 1.5)
+
+    def test_rejects_missing_metric(self):
+        self.raw["metrics"].pop("loss_final")
+        with self.assertRaisesRegex(ValueError, "loss_final"):
+            to_training_metrics(self.raw)
+
+    def test_rejects_non_numeric_metric(self):
+        self.raw["metrics"]["images_per_sec"] = "fast"
+        with self.assertRaisesRegex(ValueError, "not numeric"):
+            to_training_metrics(self.raw)
+
+    def test_rejects_non_finite_metric(self):
+        self.raw["metrics"]["images_per_sec"] = float("nan")
+        with self.assertRaisesRegex(ValueError, "not finite"):
+            to_training_metrics(self.raw)
+
+    def test_rejects_missing_metrics_object(self):
+        with self.assertRaisesRegex(ValueError, "metrics object"):
+            to_training_metrics({})
+
+    def test_rejects_incomplete_evaluation_evidence(self):
+        self.raw["metrics"]["eval_completed"] = 0
+        self.raw["metrics"]["eval_sample_count"] = 0
+        with self.assertRaisesRegex(ValueError, "did not complete"):
+            to_training_metrics(self.raw)
+
+    def test_gradient_accumulation_overhead(self):
+        self.assertAlmostEqual(gradient_accumulation_overhead_pct(80.0, 88.0), 10.0)
+
+    def test_gradient_accumulation_overhead_rejects_bad_baseline(self):
+        with self.assertRaisesRegex(ValueError, "baseline"):
+            gradient_accumulation_overhead_pct(0.0, 88.0)
+
+    def test_throughput_overhead_uses_time_per_image(self):
+        self.assertAlmostEqual(throughput_overhead_pct(1000.0, 800.0), 25.0)
+        self.assertAlmostEqual(throughput_overhead_pct(1000.0, 1250.0), -20.0)
+
+    def test_throughput_overhead_rejects_bad_candidate(self):
+        with self.assertRaisesRegex(ValueError, "candidate"):
+            throughput_overhead_pct(1000.0, 0.0)
+
+    def test_distributed_accuracy_uses_summed_counts(self):
+        self.assertEqual(accuracy_from_counts(7, 9, 10), (70.0, 90.0))
+
+    def test_distributed_accuracy_rejects_invalid_counts(self):
+        with self.assertRaisesRegex(ValueError, "0 <= top1"):
+            accuracy_from_counts(9, 8, 10)
+
+    def test_loss_curve_and_convergence(self):
+        self.assertTrue(loss_curve_decreased([5.0, 4.5, 4.0]))
+        point = convergence_point(
+            [
+                {"step": 100, "time_seconds": 10, "top1_accuracy_pct": 60, "eval_loss": 2.0},
+                {"step": 200, "time_seconds": 20, "top1_accuracy_pct": 70, "eval_loss": 1.5},
+            ],
+            target_top1_pct=65,
+            target_eval_loss=1.6,
+        )
+        self.assertEqual(point, (200, 20.0))
+
+    def test_required_metrics_are_mode_aware(self):
+        perf = required_metrics_for_run("perf", "synthetic")
+        training = required_metrics_for_run("train_5k", "rocal", codecarbon_enabled=True)
+        self.assertNotIn("top1_accuracy_pct", perf)
+        self.assertIn("top1_accuracy_pct", training)
+        self.assertIn("data_loader_images_per_sec", training)
+        self.assertIn("codecarbon_tracking_active", training)
+
+    def test_required_metrics_follow_the_task(self):
+        detection = required_metrics_for_run("finetune", "dataset", task="detection")
+        segmentation = required_metrics_for_run("smoke", "dataset", task="segmentation")
+        vlm = required_metrics_for_run("finetune", "dataset", task="vlm_sft")
+        self.assertIn("map_50_95", detection)
+        self.assertNotIn("top1_accuracy_pct", detection)
+        self.assertIn("miou_pct", segmentation)
+        self.assertIn("vlm_benchmark_score", vlm)
+        self.assertIn("tokens_per_sec", vlm)
+        self.assertNotIn("data_loader_images_per_sec", vlm)
+        self.assertIn("loss_curve_decreased", detection)
+
+    def test_codecarbon_detection_and_parsing(self):
+        payload = {
+            "version": "3.2.4",
+            "tracker": "amdsmi",
+            "gpu_count": 8,
+            "active": True,
+            "emissions_kg_co2eq": 0.25,
+            "energy_kwh": 1.5,
+        }
+        self.assertTrue(codecarbon_tracking_active(payload, 8))
+        self.assertEqual(
+            parse_codecarbon_metrics(payload, 8)["training.codecarbon_tracking_active"],
+            1.0,
+        )
+        self.assertEqual(parse_codecarbon_metrics(payload, 8)["training.energy_kwh"], 1.5)
+
+    def test_codecarbon_never_maps_unavailable_to_zero(self):
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            parse_codecarbon_metrics({"active": False, "reason": "no AMDSMI"}, 8)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class TestScalingEfficiency(unittest.TestCase):
+    """P1 scorecard row: efficiency % = throughput_N / ((N/ref_N) * throughput_ref)."""
+
+    def test_perfectly_linear_scaling_is_100_pct(self):
+        self.assertAlmostEqual(compute_scaling_efficiency(20000.0, 2, 10000.0, 1), 100.0)
+
+    def test_sublinear_scaling_reports_below_100(self):
+        self.assertAlmostEqual(compute_scaling_efficiency(18000.0, 2, 10000.0, 1), 90.0)
+
+    def test_superlinear_scaling_reports_above_100(self):
+        self.assertAlmostEqual(compute_scaling_efficiency(21000.0, 2, 10000.0, 1), 105.0)
+
+    def test_honours_a_multi_node_reference(self):
+        """A 2-node reference scaled to 4 nodes must not be treated as 1-node."""
+        self.assertAlmostEqual(compute_scaling_efficiency(40000.0, 4, 20000.0, 2), 100.0)
+
+    def test_single_node_against_itself_is_100_pct(self):
+        self.assertAlmostEqual(compute_scaling_efficiency(10000.0, 1, 10000.0, 1), 100.0)
+
+    def test_uncalibrated_baseline_is_record_only(self):
+        """A zero baseline must report nothing rather than divide by zero or
+        invent a number that could then be gated on."""
+        self.assertIsNone(compute_scaling_efficiency(20000.0, 2, 0.0, 1))
+
+    def test_missing_throughput_is_record_only(self):
+        self.assertIsNone(compute_scaling_efficiency(None, 2, 10000.0, 1))
+        self.assertIsNone(compute_scaling_efficiency(0.0, 2, 10000.0, 1))
+
+    def test_missing_node_counts_are_record_only(self):
+        self.assertIsNone(compute_scaling_efficiency(20000.0, 0, 10000.0, 1))
+        self.assertIsNone(compute_scaling_efficiency(20000.0, 2, 10000.0, 0))
+
+
+class TestConvergenceSemantics(unittest.TestCase):
+    """Matches cvs.lib.training.jaxmaxtext's compute_convergence definition."""
+
+    EVALS = [
+        {"step": 1252, "top1_accuracy_pct": 2.1, "eval_loss": 9.9, "time_seconds": 160.0},
+        {"step": 2504, "top1_accuracy_pct": 4.2, "eval_loss": 9.4, "time_seconds": 317.0},
+        {"step": 5000, "top1_accuracy_pct": 6.5, "eval_loss": 9.0, "time_seconds": 615.0},
+    ]
+    SERIES = [
+        {"step": 100, "loss": 6.9, "time_seconds": 12.0},
+        {"step": 1000, "loss": 4.9, "time_seconds": 120.0},
+        {"step": 5000, "loss": 2.5, "time_seconds": 610.0},
+    ]
+
+    def test_no_target_is_not_a_criterion(self):
+        self.assertIsNone(convergence_point(self.EVALS))
+
+    def test_train_loss_target_needs_no_evaluations(self):
+        """The point of adopting the jax train-loss target: convergence becomes
+        measurable in a short run with eval disabled entirely."""
+        self.assertEqual(convergence_point([], loss_series=self.SERIES, target_train_loss=5.0), (1000, 120.0))
+
+    def test_eval_loss_target_uses_eval_cadence(self):
+        self.assertEqual(convergence_point(self.EVALS, target_eval_loss=9.5), (2504, 317.0))
+
+    def test_top1_target_uses_eval_cadence(self):
+        self.assertEqual(convergence_point(self.EVALS, target_top1_pct=4.0), (2504, 317.0))
+
+    def test_all_configured_targets_must_hold_so_the_later_point_wins(self):
+        point = convergence_point(self.EVALS, target_eval_loss=9.5, loss_series=self.SERIES, target_train_loss=2.6)
+        self.assertEqual(point, (5000, 610.0))
+
+    def test_unreached_target_yields_nothing_rather_than_a_partial_result(self):
+        self.assertIsNone(convergence_point(self.EVALS, target_top1_pct=75.5))
+        self.assertIsNone(convergence_point([], loss_series=self.SERIES, target_train_loss=0.1))
+        self.assertIsNone(
+            convergence_point(self.EVALS, target_eval_loss=9.5, loss_series=self.SERIES, target_train_loss=0.1)
+        )
+
+
+class TestTierMetricSpecs(unittest.TestCase):
+    CELL = {
+        "training.images_per_sec_per_gpu": {"kind": "min", "value": 3000},
+        "training.top1_accuracy_pct": {"kind": "min", "value": 75},
+        "training.vlm_benchmark_score": {"kind": "min", "value": 70},
+        "training.step_time_ms_p95": {"kind": "max", "value": 90},
+        "training.checkpoint_save_seconds": {"kind": "max", "value": 30},
+        "training.mfu_pct": {"kind": "info"},
+    }
+
+    def test_tiers_follow_the_run_deck_profile(self):
+        self.assertEqual(set(tier_metric_specs(self.CELL, "throughput")), {"training.images_per_sec_per_gpu"})
+        self.assertEqual(
+            set(tier_metric_specs(self.CELL, "convergence")),
+            {"training.top1_accuracy_pct", "training.vlm_benchmark_score"},
+        )
+        self.assertEqual(set(tier_metric_specs(self.CELL, "stability")), {"training.step_time_ms_p95"})
+        self.assertEqual(set(tier_metric_specs(self.CELL, "record")), {"training.checkpoint_save_seconds"})
+
+    def test_info_specs_and_missing_cells_gate_nothing(self):
+        self.assertNotIn("training.mfu_pct", tier_metric_specs(self.CELL, "throughput"))
+        self.assertEqual(tier_metric_specs(None, "throughput"), {})
+        self.assertEqual(tier_metric_specs(self.CELL, "nope"), {})
