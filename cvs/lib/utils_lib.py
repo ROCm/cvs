@@ -171,7 +171,8 @@ def convert_phdl_json_to_dict(dict_json):
 
     Behavior:
       - Iterates over each node key in dict_json.
-      - Attempts to parse the node's JSON payload using json_to_dict.
+      - Drops lines that start with 'WARNING:', such as the deprecation notice rocm-smi prints
+        since ROCm 10.1, then parses the rest using json_to_dict.
       - On parse error, prints/logs a failure message, calls fail_test, and assigns {} for that node.
 
     Assumptions:
@@ -186,7 +187,8 @@ def convert_phdl_json_to_dict(dict_json):
     for node in dict_json.keys():
         try:
             # Parse the JSON content for this node
-            out_dict[node] = json_to_dict(dict_json[node])
+            lines = dict_json[node].split('\n')
+            out_dict[node] = json_to_dict('\n'.join(line for line in lines if not line.lstrip().startswith('WARNING:')))
         except Exception:
             log.error(f'ERROR converting Json output to dict for node {node}')
             fail_test(f'ERROR converting Json output to dict for node {node}')
