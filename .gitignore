@@ -24,3 +24,6 @@ sample_reports/
 
 # Personal / local-only notes (not shared on branches)
 .local/
+
+# setuptools build output (produced by `pip install .`)
+/build/
