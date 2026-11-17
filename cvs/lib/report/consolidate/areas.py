@@ -1,0 +1,66 @@
+'''
+Copyright 2026 Advanced Micro Devices, Inc.
+All rights reserved.
+
+Areas that group suites in the consolidated report.
+
+A deck that records its own ``area`` keeps it. Decks written before that field
+existed are looked up by ``suite_id`` in ``AREA_BY_SUITE_ID``, which covers every
+suite that wrote a deck up to release 0.3.0. The table never grows: every newer
+deck writes its own area.
+'''
+
+AREAS = ("Burn-in / Diag", "Network", "Training", "Inference")
+UNCATEGORIZED = "Uncategorized"
+
+_ANC_TESTS = ("babel", "basic", "computerocker", "cpu", "gemm", "gpu", "memrocker", "oblex", "pcie", "ualink", "xgmi")
+_ARC_TESTS = ("anc", "diag", "disruptive", "disruptive_flows", "examples", "flows", "telemetry", "workload")
+
+SUITE_IDS_BY_AREA = {
+    "Burn-in / Diag": (
+        "agfhc_cvs",
+        "csp_qual_agfhc",
+        "rvs_cvs",
+        "transferbench_cvs",
+        "host_configs_cvs",
+        "preflight_checks",
+        *("anc_test_" + name for name in _ANC_TESTS),
+        *("arc_test_" + name for name in _ARC_TESTS),
+    ),
+    "Network": ("rccl", "ib_perf_bw_test", "mori_benchmark_test"),
+    "Training": ("aorta", "jaxmaxtext", "megatron", "torchtitan"),
+    "Inference": ("atom", "sglang", "vllm", "xdit"),
+}
+
+AREA_BY_SUITE_ID = {suite_id: area for area, suite_ids in SUITE_IDS_BY_AREA.items() for suite_id in suite_ids}
+
+
+def suite_id_for_stem(stem):
+    '''Return the known suite_id a test-file stem belongs to, e.g. ``rccl`` for ``rccl_perf``, or None.'''
+    if not stem:
+        return None
+    if stem in AREA_BY_SUITE_ID:
+        return stem
+    prefixes = [suite_id for suite_id in AREA_BY_SUITE_ID if stem.startswith(suite_id + "_")]
+    return max(prefixes, key=len) if prefixes else None
+
+
+def resolve_area(deck, stem=None):
+    '''Return the area of a deck, or None when it is unknown.
+
+    ``deck`` is the parsed deck JSON, or None when the file could not be read; the
+    test-file ``stem`` is used only in that case.
+    '''
+    if isinstance(deck, dict):
+        declared = deck.get("area")
+        if isinstance(declared, str) and declared.strip():
+            return declared.strip()
+        return AREA_BY_SUITE_ID.get(deck.get("suite_id"))
+    return AREA_BY_SUITE_ID.get(suite_id_for_stem(stem))
+
+
+def ordered_areas(used):
+    '''The report's areas in display order: the standard four, then any other declared area, then Uncategorized.'''
+    extra = sorted(area for area in set(used) if area not in AREAS and area != UNCATEGORIZED)
+    tail = [UNCATEGORIZED] if UNCATEGORIZED in used else []
+    return list(AREAS) + extra + tail

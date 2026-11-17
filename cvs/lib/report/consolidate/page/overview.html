@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>CVS consolidated report</title>
+<script>
+try {
+  document.documentElement.dataset.theme = localStorage.getItem('cvs-theme') ||
+    (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+} catch (e) {
+  document.documentElement.dataset.theme = 'dark';
+}
+</script>
+<style>__CSS__</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to report</a>
+<div id="app"></div>
+<noscript>This report needs JavaScript. summary.json in the same folder has the same results.</noscript>
+<script type="application/json" id="report-data">__DATA__</script>
+<script>__JS__</script>
+</body>
+</html>
