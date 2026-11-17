@@ -90,9 +90,6 @@
       "kind": "min",
       "value": 1
     },
-    "training.scaling_efficiency_pct": {
-      "kind": "info"
-    },
     "training.top1_accuracy_pct": {
       "kind": "min",
       "by_nodes": {

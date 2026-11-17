@@ -79,9 +79,6 @@
       "kind": "min",
       "value": 1
     },
-    "training.scaling_efficiency_pct": {
-      "kind": "info"
-    },
     "training.gradient_accumulation_overhead_pct": {
       "kind": "info"
     }
