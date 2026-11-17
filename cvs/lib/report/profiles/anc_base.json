@@ -2,6 +2,7 @@
   "schema_version": 1,
   "profile_id": "anc_base",
   "suite_id": "anc",
+  "area": "Burn-in / Diag",
   "report_basename": "anc_run_deck",
   "title": "ANC Run Deck",
   "subtitle": "AMD Node Check · group results across the cluster",

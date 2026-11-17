@@ -8,6 +8,10 @@
     "schema_version": { "type": "integer", "const": 1 },
     "profile_id": { "type": "string" },
     "suite_id": { "type": "string" },
+    "area": {
+      "enum": ["Burn-in / Diag", "Network", "Training", "Inference"],
+      "description": "Area that groups this suite in the consolidated report. Child profiles inherit it through extends."
+    },
     "metric_contract": {
       "type": "object",
       "required": ["id", "version"],

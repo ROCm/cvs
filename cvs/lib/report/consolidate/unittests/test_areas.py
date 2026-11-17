@@ -1,6 +1,5 @@
 '''Tests for the consolidated report's area table.'''
 
-import json
 import unittest
 from pathlib import Path
 
@@ -13,30 +12,75 @@ from cvs.lib.report.consolidate.areas import (
     resolve_area,
     suite_id_for_stem,
 )
+from cvs.lib.report.profile import load_json_profile
 
-# Shared base profiles that other profiles extend; no deck reports them as its own suite_id.
-BASE_PROFILE_SUITE_IDS = {"anc", "arc", "health_status"}
+# Every suite_id that wrote a Run Deck in releases 0.2.0 to 0.3.0, before decks recorded their own area.
+RELEASED_SUITE_IDS = (
+    "agfhc_cvs",
+    "csp_qual_agfhc",
+    "rvs_cvs",
+    "transferbench_cvs",
+    "host_configs_cvs",
+    "preflight_checks",
+    "anc_test_babel",
+    "anc_test_basic",
+    "anc_test_computerocker",
+    "anc_test_cpu",
+    "anc_test_gemm",
+    "anc_test_gpu",
+    "anc_test_memrocker",
+    "anc_test_oblex",
+    "anc_test_pcie",
+    "anc_test_ualink",
+    "anc_test_xgmi",
+    "arc_test_anc",
+    "arc_test_diag",
+    "arc_test_disruptive",
+    "arc_test_disruptive_flows",
+    "arc_test_examples",
+    "arc_test_flows",
+    "arc_test_telemetry",
+    "arc_test_workload",
+    "rccl",
+    "ib_perf_bw_test",
+    "mori_benchmark_test",
+    "aorta",
+    "jaxmaxtext",
+    "megatron",
+    "torchtitan",
+    "atom",
+    "sglang",
+    "vllm",
+    "xdit",
+)
+
+
+def _deck_profiles():
+    profiles = Path(report_package.__file__).with_name("profiles")
+    return {
+        path.stem: load_json_profile(path.stem) for path in sorted(profiles.glob("*.json")) if path.stem != "schema"
+    }
 
 
 class TestAreaTable(unittest.TestCase):
-    def test_every_profile_suite_id_has_an_area(self):
-        profiles = Path(report_package.__file__).with_name("profiles")
-        checked = 0
-        for path in sorted(profiles.glob("*.json")):
-            suite_id = json.loads(path.read_text(encoding="utf-8")).get("suite_id")
-            if suite_id is None or suite_id in BASE_PROFILE_SUITE_IDS:
-                continue
-            checked += 1
-            with self.subTest(profile=path.name):
-                self.assertIn(AREA_BY_SUITE_ID.get(suite_id), AREAS)
-        self.assertGreater(checked, 30)
+    def test_every_deck_profile_declares_an_area(self):
+        profiles = _deck_profiles()
+        self.assertGreater(len(profiles), 30)
+        for stem, profile in profiles.items():
+            with self.subTest(profile=stem):
+                self.assertIn(profile.get("area"), AREAS)
 
-    def test_suites_from_appendix_b_map_to_their_area(self):
-        self.assertEqual(AREA_BY_SUITE_ID["rvs_cvs"], "Burn-in / Diag")
-        self.assertEqual(AREA_BY_SUITE_ID["arc_test_disruptive_flows"], "Burn-in / Diag")
-        self.assertEqual(AREA_BY_SUITE_ID["mori_benchmark_test"], "Network")
-        self.assertEqual(AREA_BY_SUITE_ID["jaxmaxtext"], "Training")
-        self.assertEqual(AREA_BY_SUITE_ID["xdit"], "Inference")
+    def test_table_covers_exactly_the_suites_that_wrote_decks_before_decks_had_an_area(self):
+        self.assertEqual(set(AREA_BY_SUITE_ID), set(RELEASED_SUITE_IDS))
+        for suite_id in RELEASED_SUITE_IDS:
+            with self.subTest(suite_id=suite_id):
+                self.assertIn(AREA_BY_SUITE_ID[suite_id], AREAS)
+
+    def test_older_and_newer_decks_of_a_suite_land_in_the_same_area(self):
+        for stem, profile in _deck_profiles().items():
+            if profile["suite_id"] in AREA_BY_SUITE_ID:
+                with self.subTest(profile=stem):
+                    self.assertEqual(profile["area"], AREA_BY_SUITE_ID[profile["suite_id"]])
 
 
 class TestSuiteIdForStem(unittest.TestCase):

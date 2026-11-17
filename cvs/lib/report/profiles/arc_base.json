@@ -2,6 +2,7 @@
   "schema_version": 1,
   "profile_id": "arc_base",
   "suite_id": "arc",
+  "area": "Burn-in / Diag",
   "report_basename": "arc_run_deck",
   "title": "ARC Run Deck",
   "subtitle": "AMD Rack Check · flow and item results across rack controllers",

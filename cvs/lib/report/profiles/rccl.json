@@ -2,6 +2,7 @@
   "schema_version": 1,
   "profile_id": "rccl_rundeck",
   "suite_id": "rccl",
+  "area": "Network",
   "report_basename": "rccl_run_deck",
   "title": "RCCL Run Deck",
   "subtitle": "RCCL · bus/algorithm bandwidth and latency vs message size",
