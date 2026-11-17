@@ -1,6 +1,5 @@
 '''Tests for the series Run Deck viewer.'''
 
-import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,7 +9,7 @@ from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.rundeck.dataset_builders import series  # noqa: F401
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.lib.report.rundeck.unittests.test_rccl_payload import _graph
-from cvs.lib.report.viewer import series as series_viewer
+from cvs.lib.report.viewer.chart_libs import chart_scripts
 from cvs.lib.report.viewer.series import write_series_viewer
 
 
@@ -57,12 +56,10 @@ class TestSeriesViewer(unittest.TestCase):
         self.assertIn("all_reduce_perf", text)
         self.assertNotIn("metricLabels", text)
 
-    def test_loads_same_chartjs_and_zoom_scripts_as_interactive_viewer(self):
-        interactive = (Path(series_viewer.__file__).with_name("interactive.html")).read_text(encoding="utf-8")
+    def test_inlines_the_same_chartjs_and_zoom_plugin_as_the_interactive_viewer(self):
         text = self._write(title="RCCL")
-        for script in re.findall(r'<script src="[^"]*(?:chart\.umd|chartjs-plugin-zoom)[^"]*"></script>', interactive):
-            self.assertIn(script, text)
-        self.assertEqual(text.count('<script src="https://cdn.jsdelivr.net/npm/'), 2)
+        self.assertIn(chart_scripts(zoom=True), text)
+        self.assertNotIn("<script src=", text)
 
     def test_draws_zoomable_chartjs_line_charts_not_static_svg(self):
         text = self._write(title="RCCL")

@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from cvs.lib.report.artifacts import export_payload
+from cvs.lib.report.viewer.chart_libs import chart_scripts
 from cvs.lib.report.viewer.paging import page_tables_js
 
 _TEMPLATE_PATH = Path(__file__).with_name("status_matrix.html")
@@ -32,7 +33,8 @@ def write_status_matrix_viewer(out_html, *, json_basename, title, subtitle="", e
     embedded = _embedded_json_script(embed_payload) if embed_payload is not None else ""
     subtitle = subtitle or "Interactive health explorer (loads sibling JSON sidecar)"
     doc = (
-        template.replace("__TITLE__", html.escape(title))
+        template.replace("__CHART_LIBS__", chart_scripts())
+        .replace("__TITLE__", html.escape(title))
         .replace("__SUBTITLE__", html.escape(subtitle))
         .replace("__JSON_PATH__", json.dumps(json_basename))
         .replace("__EMBEDDED_JSON__", embedded)
