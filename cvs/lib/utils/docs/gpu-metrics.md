@@ -29,7 +29,8 @@ pass/fail result if a threshold is configured.
 The raw poll payload also preserves `gpu.max_used_vram`, the largest
 individual-device value in each poll. Training suites use the maximum of this
 field across polls when a scorecard requires per-GPU peak used memory rather
-than node-total memory.
+than node-total memory. Multi-node training runs poll every node, so the value
+is the busiest GPU in the cluster.
 
 ---
 

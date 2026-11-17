@@ -434,10 +434,14 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
         if not self.variant.training.enabled:
             raise RuntimeError("this PyTorch Vision profile is disabled")
         retries = self.variant.training.startup_retries
+        # Every node is polled so a distributed run reports the busiest GPU in
+        # the cluster. 5 s keeps an 8-hour run to a few thousand amd-smi reads
+        # on nodes that are being measured.
         poller = start_gpu_poller(
             self.orch,
             self.sweep.label,
-            poll_interval_s=1.0,
+            poll_interval_s=5.0,
+            nodes=list(self.orch.hosts) if self.variant.training.distributed else None,
             hard_cap_s=(self.variant.training.timeout_s + 120) * (retries + 1),
         )
         started = time.monotonic()

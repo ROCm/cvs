@@ -103,7 +103,6 @@ def _variant():
             measure_power_secs=5,
             country_iso_code=None,
         ),
-        gpu_poll_interval_seconds=5,
         env_vars={"NCCL_DEBUG": "WARN"},
         error_patterns={"Process crash": "SIGSEGV"},
     )
@@ -447,6 +446,21 @@ class TestPyTorchVisionJob(unittest.TestCase):
         self.assertIn("attempt 1", orch.commands[0][0])
         self.assertTrue(job._dmesg_window.use_markers)
         self.assertEqual(job.training_start_time, {"node0": ""})
+
+    def test_poller_covers_every_node_on_distributed_runs(self):
+        readings = [{"gpu.used_vram": 16, "gpu.max_used_vram": 2}]
+        for distributed, expected in ((False, None), (True, ["node0"])):
+            with self.subTest(distributed=distributed):
+                variant = _variant()
+                variant.training.distributed = distributed
+                with (
+                    patch("cvs.lib.training.pytorch_vision.job.start_gpu_poller") as start,
+                    patch("cvs.lib.training.pytorch_vision.job.stop_and_collect_gpu_poller", return_value=readings),
+                    patch.object(PyTorchVisionJob, "_launch", return_value={"node0": {"exit_code": 0, "output": ""}}),
+                ):
+                    PyTorchVisionJob(FakeOrchestrator(), variant, "w1").run_benchmark()
+                self.assertEqual(start.call_args.kwargs["nodes"], expected)
+                self.assertEqual(start.call_args.kwargs["poll_interval_s"], 5.0)
 
     def test_each_startup_attempt_gets_its_own_marker(self):
         variant = _variant()
