@@ -18,9 +18,15 @@ cvs/
 │       ├── test_verify_lib.py
 │       └── test_html_lib.py
 ├── tests/                       # cluster validation tests (Pytest)
-│   ├── health
-│   ├── ibperf
-│   ├── rccl
+│   ├── health/
+|       └-- unittests/           # Unit tests for the cluster validation tests
+|           └-- __init__.py
+|           └-- test_health.py
+│   └── rccl/
+|       └-- unittests/
+|           |-- __init__.py
+|           |-- test_case_report.py
+|           └-- test_rccl_subtests.py
 ├── conftest.py
 ├── pytest.ini
 ├── README.md
