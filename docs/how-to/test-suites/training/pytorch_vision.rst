@@ -517,10 +517,16 @@ against W2's 190%, and its overhead rows are plausible (1.65% accumulation,
 
 ``training.sweep_repeats`` addresses this. With a value above 1 the suite runs
 every enabled sweep once per round, reshuffling the order each round with
-``training.sweep_order_seed``, and reports the median per metric. Every sweep
-therefore takes a turn in each cache state instead of one sweep always reading
-cold. Repeating a sweep consecutively would not work, because it would leave
-that sweep in the same cache state for all of its repeats.
+``training.sweep_order_seed``, and reports the median throughput and step time.
+Every sweep therefore takes a turn in each cache state instead of one sweep
+always reading cold. Repeating a sweep consecutively would not work, because it
+would leave that sweep in the same cache state for all of its repeats.
+
+Checks take the worst repeat rather than the median: a checkpoint round trip
+that fails in one repeat fails the sweep, and peak memory and the checkpoint
+deltas are the largest any repeat produced. The schedule runs once. A sweep
+that fails is reported on its own row and drops out of later rounds while the
+other sweeps finish.
 
 W1 and W2's perf profiles use three repeats. On W2 this moved the CPU-decode
 overhead from -24.4% to 23.1% and the accumulation overhead from -3.6% to 41.3%,

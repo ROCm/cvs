@@ -169,35 +169,52 @@ def verify_environment(orch, variant_config, lifecycle, request):
 
 
 def _run_sweep_once(orch, variant_config, sweep_name):
-    """Run one sweep end to end and return its per-host metrics."""
+    """Run one sweep end to end and return the job, its per-host metrics, and
+    any dmesg errors seen during the run."""
     job = PyTorchVisionJob(orch, variant_config, sweep_name)
     globals.error_list = []
     try:
+        job.stage_benchmark()
+        job.run_benchmark()
+        job.verify_training_log()
+        host_results = job.parse_results()
+    finally:
         try:
-            job.stage_benchmark()
-            job.run_benchmark()
-            job.verify_training_log()
-            host_results = job.parse_results()
+            if job.training_start_time:
+                job.scan_dmesg_for_errors()
         finally:
-            try:
-                if job.training_start_time:
-                    job.scan_dmesg_for_errors()
-            finally:
-                job.stop_training_processes()
-        if globals.error_list:
-            pytest.fail("dmesg verification found errors: " + "; ".join(globals.error_list))
-    except Exception:
-        raise
-    return job, host_results
+            job.stop_training_processes()
+    return job, host_results, list(globals.error_list)
 
 
-def _median_across_repeats(repeats):
-    """Median each metric per host across repeats of the same sweep.
+# A repeat that fails a check must fail the sweep, and peak memory is the
+# largest any repeat needed; only throughput and timing take the median.
+_WORST_CASE_MAX = {
+    "peak_memory_allocated_mb",
+    "peak_memory_reserved_mb",
+    "peak_memory_used_mb",
+    "checkpoint_loss_delta",
+    "checkpoint_resume_model_max_abs_delta",
+    "checkpoint_resume_optimizer_max_abs_delta",
+}
+
+
+def _aggregate_metric(metric, values):
+    name = metric.removeprefix("training.")
+    if METRIC_UNITS.get(name) == "bool":
+        return min(values)
+    if name in _WORST_CASE_MAX:
+        return max(values)
+    return statistics.median(values)
+
+
+def _aggregate_repeats(repeats):
+    """Combine each metric per host across repeats of the same sweep.
 
     Sweeps read the same shards back to back, so a sweep's position in the run
     decides how much of its input is already in the page cache. Repeating the
-    sweeps in a reshuffled order each round and taking the median keeps that
-    from being attributed to the configuration under test.
+    sweeps in a reshuffled order each round and taking the median throughput
+    keeps that from being attributed to the configuration under test.
     """
     hosts = set()
     for run in repeats:
@@ -214,60 +231,63 @@ def _median_across_repeats(repeats):
         host_metrics = {}
         for metric, collected in values.items():
             numeric = [v for v in collected if isinstance(v, float)]
-            host_metrics[metric] = statistics.median(numeric) if numeric else collected[-1]
+            host_metrics[metric] = _aggregate_metric(metric, numeric) if numeric else collected[-1]
         merged[host] = host_metrics
     return merged
 
 
-def _execute_sweeps_with_repeats(orch, variant_config, training_results, loss_series):
-    """Run every enabled sweep ``sweep_repeats`` times, reshuffling each round."""
+def _execute_sweeps_with_repeats(orch, variant_config, training_results, loss_series, failures):
+    """Run every enabled sweep ``sweep_repeats`` times, reshuffling each round.
+
+    A sweep whose run raises is recorded in ``failures`` and dropped from later
+    rounds, and the other sweeps carry on, so one broken sweep neither stops
+    the schedule nor gets blamed on another sweep's row.
+    """
     training = variant_config.training
     names = [sweep.name for sweep in training.enabled_sweeps()]
     rng = random.Random(training.sweep_order_seed)
     collected = {name: [] for name in names}
     last_loss = {}
+    stopped = set()
     startup_retries = 0
-    for _round in range(training.sweep_repeats):
+    for round_index in range(training.sweep_repeats):
         order = list(names)
         rng.shuffle(order)
         for name in order:
-            job, host_results = _run_sweep_once(orch, variant_config, name)
+            if name in stopped:
+                continue
+            try:
+                job, host_results, errors = _run_sweep_once(orch, variant_config, name)
+            except Exception as exc:
+                log.exception("%s failed in round %d", name, round_index + 1)
+                failures[name] = f"round {round_index + 1}: {type(exc).__name__}: {exc}"
+                stopped.add(name)
+                continue
             collected[name].append(host_results)
             last_loss[name] = job.loss_series
             startup_retries += job.startup_retries_used
+            if errors:
+                failures.setdefault(
+                    name, f"round {round_index + 1}: dmesg verification found errors: " + "; ".join(errors)
+                )
     for name in names:
-        training_results[name] = _median_across_repeats(collected[name])
+        if name in stopped or not collected[name]:
+            continue
+        training_results[name] = _aggregate_repeats(collected[name])
         loss_series[name] = last_loss[name]
     _refresh_ga_overhead(variant_config, training_results)
     _refresh_pipeline_overheads(variant_config, training_results)
     return startup_retries
 
 
-def _execute_sweep(  # noqa: PLR0913
-    orch, variant_config, sweep_name, training_results, loss_series
-):
-    job = PyTorchVisionJob(orch, variant_config, sweep_name)
-    globals.error_list = []
-    try:
-        try:
-            job.stage_benchmark()
-            job.run_benchmark()
-            job.verify_training_log()
-            host_results = job.parse_results()
-            training_results[sweep_name] = host_results
-            loss_series[sweep_name] = job.loss_series
-            _refresh_ga_overhead(variant_config, training_results)
-            _refresh_pipeline_overheads(variant_config, training_results)
-        finally:
-            try:
-                if job.training_start_time:
-                    job.scan_dmesg_for_errors()
-            finally:
-                job.stop_training_processes()
-        if globals.error_list:
-            pytest.fail("dmesg verification found errors: " + "; ".join(globals.error_list))
-    except Exception:
-        raise
+def _execute_sweep(orch, variant_config, sweep_name, training_results, loss_series):
+    job, host_results, errors = _run_sweep_once(orch, variant_config, sweep_name)
+    training_results[sweep_name] = host_results
+    loss_series[sweep_name] = job.loss_series
+    _refresh_ga_overhead(variant_config, training_results)
+    _refresh_pipeline_overheads(variant_config, training_results)
+    if errors:
+        pytest.fail("dmesg verification found errors: " + "; ".join(errors))
     return job
 
 
@@ -304,16 +324,22 @@ def training(  # noqa: PLR0913
         pytest.skip("a prior lifecycle stage failed")
     start = time.monotonic()
     startup_retries = 0
-    if sweep_name not in training_results:
-        if variant_config.training.sweep_repeats > 1:
-            # Repeats are scheduled across all sweeps rather than per sweep, so
-            # every sweep takes a turn in each cache state.
-            startup_retries = _execute_sweeps_with_repeats(orch, variant_config, training_results, loss_series)
-        else:
-            job = _execute_sweep(orch, variant_config, sweep_name, training_results, loss_series)
-            startup_retries = job.startup_retries_used
+    if variant_config.training.sweep_repeats > 1:
+        # Repeats are scheduled across all sweeps rather than per sweep, so
+        # every sweep takes a turn in each cache state. The schedule runs once;
+        # later sweep rows read its results and failures.
+        if not lifecycle.repeat_schedule_done:
+            lifecycle.repeat_schedule_done = True
+            startup_retries = _execute_sweeps_with_repeats(
+                orch, variant_config, training_results, loss_series, lifecycle.sweep_failures
+            )
+    elif sweep_name not in training_results:
+        job = _execute_sweep(orch, variant_config, sweep_name, training_results, loss_series)
+        startup_retries = job.startup_retries_used
     lifecycle.record(request.node.nodeid, "training", time.monotonic() - start)
     _record_startup_retries(lifecycle, request, startup_retries)
+    if sweep_name in lifecycle.sweep_failures:
+        pytest.fail(f"{sweep_name} failed: {lifecycle.sweep_failures[sweep_name]}")
 
 
 def rocal_overhead_comparisons(variant_config, training_results):

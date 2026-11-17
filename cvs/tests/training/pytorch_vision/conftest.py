@@ -93,6 +93,8 @@ class Lifecycle:
     def __init__(self):
         self.failed = False
         self.torn_down = False
+        self.repeat_schedule_done = False
+        self.sweep_failures = {}
         self.report = {}
         self.artifacts = {}
 
