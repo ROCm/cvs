@@ -1,0 +1,72 @@
+{
+  "_comment": "Gates from at least three passing single-node runs on MI325X, each on a different node. Throughput >= 90% of the slowest run and quality >= 2 points under the lowest (both widened when runs vary by over 5%), P95 step time <= 1.25x and peak memory <= 1.10x the highest run. Metrics varying by over 25% between runs record without gating.",
+  "W1-5K-ROCAL-GPU-STANDARD": {
+    "training.images_per_sec": {
+      "kind": "min",
+      "value": 11100
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "min",
+      "value": 1390
+    },
+    "training.step_time_ms_p95": {
+      "kind": "max",
+      "value": 137
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "max",
+      "value": 11900
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "max",
+      "value": 12600
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.eval_completed": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.loss_step_100": {
+      "kind": "info"
+    },
+    "training.loss_step_500": {
+      "kind": "info"
+    },
+    "training.loss_step_1000": {
+      "kind": "info"
+    },
+    "training.loss_step_5000": {
+      "kind": "info"
+    },
+    "training.eval_sample_count": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.codecarbon_tracking_active": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.eval_label_classes_observed": {
+      "kind": "min",
+      "value": 1000
+    }
+  }
+}

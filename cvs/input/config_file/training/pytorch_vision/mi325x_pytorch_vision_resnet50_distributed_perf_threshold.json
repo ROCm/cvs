@@ -1,0 +1,430 @@
+{
+  "_comment": "Gates per node count (by_nodes) from 3-4 passing runs per count on MI325X, two node sets per count. Throughput >= 90% of the slowest run and quality >= 2 points under the lowest (both widened when runs vary by over 5%), P95 step time <= 1.25x and peak memory <= 1.10x the highest run. Other node counts record without gating.",
+  "STEPS=50,MODEL=resnet50,DATA=rocAL-GPU-STANDARD,PRECISION=BF16,MBS=128,GA=1,RES=224": {
+    "training.images_per_sec": {
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 40400
+        },
+        "4": {
+          "value": 74300
+        }
+      }
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 2520
+        },
+        "4": {
+          "value": 2320
+        }
+      }
+    },
+    "training.step_time_ms_p95": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 75.3
+        },
+        "4": {
+          "value": 81.0
+        }
+      }
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 7000
+        },
+        "4": {
+          "value": 7000
+        }
+      }
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 8010
+        },
+        "4": {
+          "value": 8010
+        }
+      }
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "max",
+      "value": 0.01
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    },
+    "training.augmentation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.rocal_cpu_overhead_pct": {
+      "kind": "info"
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "info"
+    }
+  },
+  "STEPS=50,MODEL=resnet50,DATA=rocAL-GPU,PRECISION=BF16,MBS=256,GA=1,RES=224": {
+    "training.images_per_sec": {
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 51900
+        },
+        "4": {
+          "value": 100000
+        }
+      }
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 3240
+        },
+        "4": {
+          "value": 3130
+        }
+      }
+    },
+    "training.step_time_ms_p95": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 103
+        },
+        "4": {
+          "value": 104
+        }
+      }
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 13400
+        },
+        "4": {
+          "value": 13400
+        }
+      }
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 15200
+        },
+        "4": {
+          "value": 15200
+        }
+      }
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "max",
+      "value": 0.01
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "info"
+    }
+  },
+  "STEPS=50,MODEL=resnet50,DATA=rocAL-GPU,PRECISION=BF16,MBS=64,GA=4,RES=224": {
+    "training.images_per_sec": {
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 30400
+        },
+        "4": {
+          "value": 58300
+        }
+      }
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 1900
+        },
+        "4": {
+          "value": 1820
+        }
+      }
+    },
+    "training.step_time_ms_p95": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 179
+        },
+        "4": {
+          "value": 183
+        }
+      }
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 4040
+        },
+        "4": {
+          "value": 4040
+        }
+      }
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 4680
+        },
+        "4": {
+          "value": 4680
+        }
+      }
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "max",
+      "value": 0.01
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "info"
+    }
+  },
+  "STEPS=50,MODEL=resnet50,DATA=rocAL-CPU-STANDARD,PRECISION=BF16,MBS=128,GA=1,RES=224": {
+    "training.images_per_sec": {
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 12900
+        },
+        "4": {
+          "value": 20900
+        }
+      }
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 810
+        },
+        "4": {
+          "value": 654
+        }
+      }
+    },
+    "training.step_time_ms_p95": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 273
+        },
+        "4": {
+          "value": 288
+        }
+      }
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 6910
+        },
+        "4": {
+          "value": 6910
+        }
+      }
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 7920
+        },
+        "4": {
+          "value": 7920
+        }
+      }
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "max",
+      "value": 0.01
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    },
+    "training.rocal_cpu_overhead_pct": {
+      "kind": "info"
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "info"
+    }
+  },
+  "STEPS=50,MODEL=resnet50,DATA=rocAL-GPU-HEAVY,PRECISION=BF16,MBS=128,GA=1,RES=224": {
+    "training.images_per_sec": {
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 39800
+        },
+        "4": {
+          "value": 73200
+        }
+      }
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "min",
+      "by_nodes": {
+        "2": {
+          "value": 2490
+        },
+        "4": {
+          "value": 2280
+        }
+      }
+    },
+    "training.step_time_ms_p95": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 78.30000000000001
+        },
+        "4": {
+          "value": 85.9
+        }
+      }
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 7000
+        },
+        "4": {
+          "value": 7000
+        }
+      }
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "max",
+      "by_nodes": {
+        "2": {
+          "value": 8010
+        },
+        "4": {
+          "value": 8010
+        }
+      }
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "max",
+      "value": 0.01
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    },
+    "training.augmentation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "info"
+    }
+  }
+}

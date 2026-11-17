@@ -1,0 +1,150 @@
+{
+  "_comment": "This run supplies the W6 scaling baseline. Gates from at least three passing single-node runs on MI325X, each on a different node. Throughput >= 90% of the slowest run and quality >= 2 points under the lowest (both widened when runs vary by over 5%), P95 step time <= 1.25x and peak memory <= 1.10x the highest run. Metrics varying by over 25% between runs record without gating.",
+  "W6-1N-HF-FSDP-BF16-R224-MBS64": {
+    "training.images_per_sec": {
+      "kind": "min",
+      "value": 8620
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "min",
+      "value": 1070
+    },
+    "training.step_time_ms_p95": {
+      "kind": "max",
+      "value": 68.9
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "max",
+      "value": 5780
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "max",
+      "value": 6540
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    },
+    "training.codecarbon_tracking_active": {
+      "kind": "min",
+      "value": 1
+    }
+  },
+  "W6-1N-HF-FSDP-HEAVY-BF16-R224-MBS64": {
+    "training.images_per_sec": {
+      "kind": "min",
+      "value": 8380
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "min",
+      "value": 1040
+    },
+    "training.step_time_ms_p95": {
+      "kind": "max",
+      "value": 71.7
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "max",
+      "value": 5780
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "max",
+      "value": 6540
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    },
+    "training.codecarbon_tracking_active": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.augmentation_overhead_pct": {
+      "kind": "info"
+    }
+  },
+  "W6-1N-HF-FSDP-BF16-R224-MBS64-GA2": {
+    "training.images_per_sec": {
+      "kind": "min",
+      "value": 5480
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "min",
+      "value": 685
+    },
+    "training.step_time_ms_p95": {
+      "kind": "max",
+      "value": 112
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "max",
+      "value": 3350
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "max",
+      "value": 3840
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    },
+    "training.codecarbon_tracking_active": {
+      "kind": "min",
+      "value": 1
+    }
+  }
+}
