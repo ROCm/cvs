@@ -38,7 +38,7 @@ from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
     evaluate_loss_decreasing,
     extract_checkpoint_timings,
 )
-from cvs.lib.training.jaxmaxtext.utils.loss_curve import render_loss_curve_png
+from cvs.lib.utils.loss_curve import render_loss_curve_png
 from cvs.lib.training.jaxmaxtext.utils.rundeck_adapter import flat_train_res_from_nested
 from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
 from cvs.lib.utils.verdict import evaluate_all, ThresholdViolation
