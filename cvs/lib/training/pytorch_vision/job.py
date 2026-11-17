@@ -88,8 +88,12 @@ class PyTorchVisionJob:
         self.loss_series = []
         # Workload-scoped so two workloads staging onto the same host cannot
         # overwrite each other's script or kill each other's ranks.
-        self.benchmark_path = f"/tmp/cvs_pytorch_vision_{variant.training.workload.lower()}.py"
-        self.tasks_path = self.benchmark_path.removesuffix(".py") + "_tasks.py"
+        if getattr(variant.training, "trainer", "staged") == "image":
+            self.benchmark_path = variant.training.image_script
+            self.tasks_path = ""
+        else:
+            self.benchmark_path = f"/tmp/cvs_pytorch_vision_{variant.training.workload.lower()}.py"
+            self.tasks_path = self.benchmark_path.removesuffix(".py") + "_tasks.py"
         # One log per node: output_dir is usually on the shared filesystem, and
         # nodes teeing into one file truncate and overwrite each other's lines.
         self.log_glob = f"{shlex.quote(self.output_dir)}/training.node*.log"
@@ -104,6 +108,14 @@ class PyTorchVisionJob:
         self.run_elapsed_seconds = None
 
     def stage_benchmark(self):
+        if getattr(self.variant.training, "trainer", "staged") == "image":
+            # The container is expected to carry the trainer. Fail here, before
+            # any GPU work, when that file is not in the image.
+            probe = "test -f " + shlex.quote(self.benchmark_path)
+            result = self.orch.exec(probe, timeout=30, detailed=True, print_console=False)
+            self._require_success(result, f"find image trainer {self.benchmark_path}")
+            return
+
         def _write(name, target):
             source = Path(__file__).with_name(name).read_bytes()
             encoded = base64.b64encode(gzip.compress(source, compresslevel=9)).decode("ascii")

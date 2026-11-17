@@ -100,6 +100,13 @@ Training block
 - ``learning_rate``, ``momentum``, ``weight_decay``: SGD settings.
 - ``lr_schedule``: constant or epoch-based multistep decay, with optional
   linear warmup and explicit epoch milestones.
+- ``trainer``: ``staged`` (default) copies this repository's ``benchmark.py``
+  into the container. ``image`` runs ``image_script``, a file already in the
+  container, and does not copy ours. That file has to accept this suite's
+  arguments. ``container.image`` chooses the image independently: the public
+  ROCm PyTorch image (and the rocAL image built on it) or
+  ``rocm/frameworks-internal``. The frameworks-internal tags ship torch and
+  torchvision and do not ship a trainer, so they use ``staged``.
 - ``timeout_s``: hard ``torchrun`` timeout.
 - ``startup_timeout_s``, ``startup_retries``: NCCL startup (init and one
   all-reduce) must finish within ``startup_timeout_s`` (default 300). A launch

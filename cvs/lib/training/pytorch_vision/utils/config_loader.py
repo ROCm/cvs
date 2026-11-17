@@ -261,6 +261,13 @@ class VisionTrainingConfig(_Forbid):
     # from callbacks. hf_trainer requires an image carrying transformers.
     # "task" runs tasks.py: detection, segmentation, or multimodal SFT.
     harness: Literal["native", "hf_trainer", "task"] = "native"
+    # staged copies this repo's benchmark into the container. image runs a
+    # script the container already has, at image_script, and does not copy ours.
+    # That script has to accept this suite's arguments and print the same
+    # result marker. The frameworks-internal PyTorch images ship torch and
+    # torchvision only, so they stay on staged.
+    trainer: Literal["staged", "image"] = "staged"
+    image_script: str = ""
     task: Literal["classification", "detection", "segmentation", "vlm_sft"] = "classification"
     # Free-form per-task knobs forwarded to the container as JSON (FSDP vs
     # DDP, eval batch, VLM pixel budget, input normalization, ...).
@@ -385,6 +392,10 @@ class VisionTrainingConfig(_Forbid):
             raise ValueError("train_to_accuracy requires convergence.stop_when_reached=true")
         if self.sweep_repeats < 1:
             raise ValueError(f"sweep_repeats must be >= 1, got {self.sweep_repeats}")
+        if self.trainer == "image" and not self.image_script.startswith("/"):
+            raise ValueError("trainer=image requires image_script to be an absolute path inside the container")
+        if self.trainer == "staged" and self.image_script:
+            raise ValueError("image_script is only used when trainer=image")
         if self.harness in {"hf_trainer", "task"}:
             missing = [s.name for s in self.enabled_sweeps() if not s.model_id]
             if missing:

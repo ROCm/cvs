@@ -160,6 +160,18 @@ class TestPyTorchVisionJob(unittest.TestCase):
         self.assertIn("> /tmp/cvs_pytorch_vision_w1_tasks.py", tasks)
         self.assertNotIn("_tasks.py", benchmark)
 
+    def test_image_trainer_uses_the_container_script(self):
+        variant = _variant()
+        variant.training.trainer = "image"
+        variant.training.image_script = "/opt/vision/benchmark.py"
+        orch = FakeOrchestrator()
+        job = PyTorchVisionJob(orch, variant, "w1")
+        job.stage_benchmark()
+        self.assertEqual(job.benchmark_path, "/opt/vision/benchmark.py")
+        self.assertIn("test -f /opt/vision/benchmark.py", orch.commands[-1][0])
+        self.assertNotIn("base64 -d", orch.commands[-1][0])
+        self.assertIn("/opt/vision/benchmark.py", job.build_command())
+
     def test_verifies_exact_gpu_count(self):
         info = {
             "torch": "2.12",

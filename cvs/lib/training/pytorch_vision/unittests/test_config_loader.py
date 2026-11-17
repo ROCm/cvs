@@ -223,6 +223,21 @@ class TestVisionConfigLoader(unittest.TestCase):
         self.assertEqual(variant.training.enabled_sweeps()[0].rocal_device, "cpu")
         self.assertEqual(variant.training.enabled_sweeps()[0].augmentation, "heavy")
 
+    def test_image_trainer_requires_a_container_path(self):
+        config = _config()
+        config["training"]["trainer"] = "image"
+        with self.assertRaisesRegex(ValueError, "image_script"):
+            self._load(config=config)
+        config["training"]["image_script"] = "/opt/vision/benchmark.py"
+        variant = self._load(config=config)
+        self.assertEqual(variant.training.image_script, "/opt/vision/benchmark.py")
+
+    def test_staged_trainer_rejects_an_image_script(self):
+        config = _config()
+        config["training"]["image_script"] = "/opt/vision/benchmark.py"
+        with self.assertRaisesRegex(ValueError, "image_script"):
+            self._load(config=config)
+
     def test_protects_long_profiles(self):
         config = _target_accuracy_config()
         with self.assertRaisesRegex(ValueError, "protected long run"):
