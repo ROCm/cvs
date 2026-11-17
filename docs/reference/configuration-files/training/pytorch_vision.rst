@@ -109,7 +109,9 @@ Training block
 - ``setup_timeout_s``: how long ranks wait for each other after per-rank setup
   (building data loaders, reading datasets, rank 0 loading model weights)
   before the first collective (default 1800). A node reading the dataset from
-  a cold cache can take minutes longer than the others.
+  a cold cache can take minutes longer than the others. The same limit covers
+  work rank 0 does alone after training (COCO evaluation and checkpoint round
+  trips), while the other ranks wait for it outside NCCL's collective timeout.
 - ``omp_num_threads``: CPU threads per rank.
 - ``verify_dmesg``: enables host-kernel error scanning. Each launch attempt
   writes its own start and end markers to the kernel log, so a relaunched

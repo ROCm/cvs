@@ -6,6 +6,7 @@ import argparse
 import contextlib
 import datetime
 import importlib.metadata
+import itertools
 import json
 import math
 import os
@@ -949,6 +950,7 @@ def _checkpoint_roundtrip(model, optimizer, scheduler, loss_fn, image_batches, l
                 except OSError as exc:
                     error = error or f"{type(exc).__name__}: {exc}"
 
+    _wait_for_rank0("checkpoint_roundtrip", args.setup_timeout_seconds)
     error_payload = [error]
     dist.broadcast_object_list(error_payload, src=0)
     if error_payload[0]:
@@ -1152,6 +1154,9 @@ def _hf_checkpoint_roundtrip(trainer, args, device, rank):
     original = _gather()
 
     timings = torch.zeros(2, dtype=torch.float64, device=device)
+    # Exact parity is checked on rank 0, which is the only rank holding the
+    # gathered state, then broadcast so the verdict is consistent everywhere.
+    verdict = torch.zeros(2, dtype=torch.float64, device=device)
     if rank == 0:
         path.parent.mkdir(parents=True, exist_ok=True)
         start = time.perf_counter()
@@ -1163,18 +1168,11 @@ def _hf_checkpoint_roundtrip(trainer, args, device, rank):
         start = time.perf_counter()
         restored = torch.load(path, map_location="cpu", weights_only=False)["model"]
         timings[1] = time.perf_counter() - start
-    else:
-        restored = None
-    dist.broadcast(timings, src=0)
 
-    # Exact parity is checked on rank 0, which is the only rank holding the
-    # gathered state, then broadcast so the verdict is consistent everywhere.
-    verdict = torch.zeros(2, dtype=torch.float64, device=device)
-    if rank == 0:
-        match = _nested_equal(original, restored)
-        delta = _nested_max_abs_delta(original, restored)
-        verdict[0] = 1.0 if match else 0.0
-        verdict[1] = float(delta)
+        verdict[0] = 1.0 if _nested_equal(original, restored) else 0.0
+        verdict[1] = float(_nested_max_abs_delta(original, restored))
+    _wait_for_rank0("hf_checkpoint_roundtrip", args.setup_timeout_seconds)
+    dist.broadcast(timings, src=0)
     dist.broadcast(verdict, src=0)
 
     if rank == 0 and not args.keep_checkpoint:
@@ -1890,6 +1888,21 @@ def _wait_for_all_ranks(name, timeout_s):
         if time.monotonic() > deadline:
             raise RuntimeError(f"not every rank finished {name} within {timeout_s}s")
         time.sleep(0.5)
+
+
+_RANK0_PHASES = itertools.count()
+
+
+def _wait_for_rank0(name, timeout_s):
+    """Hold the other ranks in the rendezvous store while rank 0 works alone.
+
+    The NCCL collective timeout stays short so a hung collective in training
+    fails fast. COCOeval over val2017 or a checkpoint written to a shared
+    filesystem can run past it on rank 0, so every rank meets here first and
+    enters the following broadcast together. Every rank calls this in the same
+    order, so the counter gives each call its own store key.
+    """
+    _wait_for_all_ranks(f"{name}/{next(_RANK0_PHASES)}", timeout_s)
 
 
 def _exit_cleanly():

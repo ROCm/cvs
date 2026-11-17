@@ -401,6 +401,17 @@ class TestWaitForAllRanks(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "not every rank finished setup within 600s"):
             self._wait(arrived=1, clock=[0.0, 300.0, 601.0])
 
+    def test_each_rank0_wait_uses_its_own_key(self):
+        # A repeated eval reusing one key would find the earlier count and
+        # release the ranks before rank 0 finished.
+        with mock.patch.object(benchmark, "_wait_for_all_ranks") as wait:
+            benchmark._wait_for_rank0("coco_eval", 1800)
+            benchmark._wait_for_rank0("coco_eval", 1800)
+        first, second = (call.args[0] for call in wait.call_args_list)
+        self.assertNotEqual(first, second)
+        self.assertTrue(first.startswith("coco_eval/"))
+        self.assertEqual(wait.call_args_list[0].args[1], 1800)
+
 
 @unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")
 class TestHFStepTimerWindow(unittest.TestCase):

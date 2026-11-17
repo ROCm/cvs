@@ -467,6 +467,7 @@ class DetectionTask(_Task):
                 evaluator.summarize()
             stats[0] = evaluator.stats[0] * 100.0
             stats[1] = evaluator.stats[1] * 100.0
+        self.bench._wait_for_rank0("coco_eval", self.args.setup_timeout_seconds)
         dist.broadcast(stats, src=0)
         return {
             "map_50_95": float(stats[0]),
@@ -687,6 +688,13 @@ class VLMTask(_Task):
         self.max_new_tokens = int(self.opts.get("max_new_tokens", 16))
         self.train_set = _ChartQA(_chartqa_rows(self.args.dataset_path, "train"))
         self.eval_set = _ChartQA(_chartqa_rows(self.args.dataset_path, "test", self.args.eval_sample_count))
+        # Evaluation splits the test slice evenly across ranks and drops the
+        # remainder, so fewer samples than ranks would score nothing.
+        if self.args.eval_enabled and len(self.eval_set) < self.world_size:
+            raise ValueError(
+                f"ChartQA eval has {len(self.eval_set)} samples for {self.world_size} ranks; "
+                f"raise eval_sample_count to at least {self.world_size}"
+            )
         self.val_set = _ChartQA(_chartqa_rows(self.args.dataset_path, "val", self.opts.get("eval_loss_samples", 256)))
         # Only global rank 0 reads the weights; every other rank builds on the
         # meta device and receives its shard from FSDP's rank-0 broadcast. A
@@ -822,7 +830,7 @@ TASKS = {
 }
 
 
-def _checkpoint_roundtrip(model, args, device, rank):
+def _checkpoint_roundtrip(model, args, device, rank, bench):
     """Save and reload the trained weights and require an exact match.
 
     DDP saves one full state dict from rank 0. FSDP writes a sharded
@@ -897,6 +905,7 @@ def _checkpoint_roundtrip(model, args, device, rank):
             )
             if not args.keep_checkpoint:
                 path.unlink(missing_ok=True)
+        bench._wait_for_rank0("checkpoint_roundtrip", args.setup_timeout_seconds)
         dist.broadcast(timings, src=0)
         dist.broadcast(verdict, src=0)
         match_value = float(verdict.item())
@@ -1031,7 +1040,7 @@ def run_task(bench, args, rank, world_size, device, local_rank):
     loss_initial = bench._reduce_mean(first_loss, world_size, device)
     loss_final = bench._reduce_mean(last_loss, world_size, device)
 
-    checkpoint = _checkpoint_roundtrip(model, args, device, rank) if args.checkpoint_path else {}
+    checkpoint = _checkpoint_roundtrip(model, args, device, rank, bench) if args.checkpoint_path else {}
     evaluation = task.evaluate(model) if args.eval_enabled else {}
 
     if rank != 0:
