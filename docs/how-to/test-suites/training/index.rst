@@ -1,6 +1,6 @@
 .. meta::
   :description: Run CVS distributed training test suites to benchmark multi-node GPU training throughput and scaling on AMD Instinct clusters before production jobs.
-  :keywords: CVS, training, distributed training, AMD Instinct, ROCm, AMD, GPU, JAX, Megatron, TorchTitan, Aorta, MaxText
+  :keywords: CVS, training, distributed training, AMD Instinct, ROCm, AMD, GPU, JAX, Megatron, TorchTitan, Aorta, MaxText, PyTorch Vision
 
 *****************************************************************
 Run Cluster Validation Suite (CVS) distributed training test suites
@@ -24,6 +24,9 @@ Distributed training benchmarks validate multi-node GPU training before producti
    * - Megatron
      - :doc:`/how-to/test-suites/training/megatron`
      - :doc:`/reference/configuration-files/training/megatron`
+   * - PyTorch Vision
+     - :doc:`/how-to/test-suites/training/pytorch_vision`
+     - :doc:`/reference/configuration-files/training/pytorch_vision`
    * - TorchTitan
      - :doc:`/how-to/test-suites/training/torchtitan`
      - :doc:`/reference/configuration-files/training/torchtitan`

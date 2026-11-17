@@ -1,0 +1,29 @@
+# PyTorch Vision HF image: the rocAL image plus the HuggingFace training stack.
+#
+# W6 (ViT-base-patch16-224, HF Trainer + FSDP) needs transformers, accelerate,
+# and datasets, none of which ship in the rocAL image. Built on top of it
+# rather than beside it so the rocAL workloads and the HF workloads share one
+# ROCm/PyTorch baseline and their numbers stay comparable.
+FROM cvs/pytorch-rocal:rocm7.2.4-py3.12-torch2.10-rocal2.5.0
+
+# Pinned for the same reason the base image is digest-pinned: an unpinned
+# Trainer changes step accounting and loss reporting between runs.
+ARG TRANSFORMERS_VERSION=4.57.1
+ARG ACCELERATE_VERSION=1.10.1
+ARG DATASETS_VERSION=4.0.0
+
+RUN python -m pip install --no-cache-dir \
+        "transformers==${TRANSFORMERS_VERSION}" \
+        "accelerate==${ACCELERATE_VERSION}" \
+        "datasets==${DATASETS_VERSION}" \
+    && python -c "\
+import torch, transformers, accelerate, datasets;\
+from torch.distributed.fsdp import FullyShardedDataParallel;\
+from transformers import Trainer, ViTForImageClassification;\
+print('torch', torch.__version__);\
+print('transformers', transformers.__version__);\
+print('accelerate', accelerate.__version__);\
+print('datasets', datasets.__version__);\
+print('FSDP', FullyShardedDataParallel.__name__)"
+
+LABEL org.opencontainers.image.version="rocm7.2.4-py3.12-torch2.10-hf"
