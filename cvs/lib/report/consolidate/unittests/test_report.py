@@ -73,8 +73,6 @@ class TestConsolidate(ReportCase):
         top, files = self.read_zip(result.zip_path)
         self.assertEqual(top, result.zip_path.stem)
         self.assertIn("index.html", files)
-        self.assertIn("fonts/fonts.css", files)
-        self.assertIn("fonts/OFL-Inter.txt", files)
 
         summary = json.loads(files["summary.json"])
         self.assertEqual(summary["schema_version"], 1)

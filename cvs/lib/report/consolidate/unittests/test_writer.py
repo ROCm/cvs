@@ -2,7 +2,6 @@
 
 import json
 import os
-import re
 import stat
 import tempfile
 import unittest
@@ -162,21 +161,6 @@ class TestRenderIndex(unittest.TestCase):
         page = writer.render_index({"summary": {}, "details": {}, "areas": []})
         self.assertIn(THEME_BOOT_SCRIPT, page)
         self.assertIn(tokens_css(), page)
-        self.assertIn('<link rel="stylesheet" href="fonts/fonts.css"/>', page)
-
-
-class TestFonts(WriterCase):
-    def test_fonts_ship_with_their_licenses(self):
-        writer.copy_fonts(self.report)
-        fonts = self.report / "fonts"
-        referenced = re.findall(r"url\(([^)]+)\)", (fonts / "fonts.css").read_text(encoding="utf-8"))
-        self.assertEqual(len(referenced), 9)
-        for name in referenced:
-            with self.subTest(font=name):
-                self.assertTrue((fonts / name).is_file())
-        for name in ("OFL-Inter.txt", "OFL-SpaceGrotesk.txt", "OFL-IBMPlexMono.txt"):
-            with self.subTest(license=name):
-                self.assertIn("SIL Open Font License", (fonts / name).read_text(encoding="utf-8"))
 
 
 class TestWriteZip(WriterCase):

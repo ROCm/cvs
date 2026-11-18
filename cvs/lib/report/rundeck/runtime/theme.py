@@ -21,9 +21,9 @@ THEME_STORAGE_KEY = "cvs-theme"
 OVERVIEW_LINK_MARKER = "<!--cvs-overview-link-->"
 
 _DARK_TOKENS = """
-  --f-display: 'Space Grotesk', 'Segoe UI', system-ui, Arial, sans-serif;
-  --f-body: Inter, 'Segoe UI', system-ui, Arial, sans-serif;
-  --f-mono: 'IBM Plex Mono', Consolas, Menlo, monospace;
+  --f-body: 'Segoe UI', system-ui, -apple-system, Roboto, Arial, sans-serif;
+  --f-display: var(--f-body);
+  --f-mono: Consolas, 'Cascadia Mono', ui-monospace, Menlo, monospace;
   --f-canvas: #0A0A0B; --f-surface-1: #121214; --f-surface-2: #1A1A1D; --f-surface-3: #232327;
   --f-border: #2E2E33; --f-border-strong: #3A3A41; --f-text: #F5F5F7; --f-text-2: #ADADB5; --f-text-3: #8A8A93;
   --f-brand-red: #ED1C24; --f-action-red: #C1121C; --f-ok: #00C39A; --f-warn: #FFB020; --f-crit: #FF453A;

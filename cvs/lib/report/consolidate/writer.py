@@ -22,7 +22,6 @@ from cvs.lib.report.rundeck.runtime.theme import OVERVIEW_LINK_MARKER, THEME_BOO
 log = globals.log
 
 PAGE_DIR = Path(__file__).with_name("page")
-FONTS_DIR = PAGE_DIR / "fonts"
 BACK_LINK_ID = "cvs-consolidated-report-link"
 LARGE_ZIP_BYTES = 500 * 1024 * 1024
 _HEADER_LINK = '<a id="%s" class="cvs-back" href="%s">&larr; Consolidated report</a>'
@@ -167,11 +166,6 @@ def render_index(page_data):
     payload = json.dumps(page_data, separators=(",", ":"), ensure_ascii=False).replace("<", "\\u003c")
     page = template.replace("__THEME_BOOT__", THEME_BOOT_SCRIPT).replace("__CSS__", css).replace("__JS__", script)
     return page.replace("__DATA__", payload)
-
-
-def copy_fonts(report_root):
-    '''Copy the overview's fonts and their licenses to ``fonts/`` in the report.'''
-    _copy_tree(FONTS_DIR, report_root / "fonts")
 
 
 def write_json(path, data):
