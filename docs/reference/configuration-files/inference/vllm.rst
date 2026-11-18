@@ -599,7 +599,7 @@ executor backend is set in the top-level ``vllm`` block; see
        fail config load with ``cannot set harness fields``: the fields above
        except ``prefill_nnodes`` and ``long_context``;
        ``tensor_parallel_size``, ``pipeline_parallel_size``, and
-       ``max_model_len``; ``backend``, ``engine``, ``dist_init_port``, and
+       ``max_model_len``; ``backend``, ``dist_init_port``, and
        ``distributed_executor_backend``; and the flags CVS sets on
        multi-host mp, ``master_addr``, ``node_rank``, and ``headless``.
        ``trust_remote_code: true`` here also gives the benchmark client

@@ -2,9 +2,8 @@
 
 Opt-in suite schemas, such as vLLM's `VllmConfig`, and their loader live in
 `cvs/config_validation/`, which raises `loader.ConfigError`.
-Substitution (`substitute_placeholders`, and `substitute_config` with its threshold file),
-`attach_threshold_file` and `BaseVariantConfig` stay in `cvs/lib/utils/config_loader.py`,
-which older suite loaders import.
+Substitution (`substitute_placeholders`, and `substitute_config` with its threshold file)
+and `BaseVariantConfig` stay in `cvs/lib/utils/config_loader.py`, which older suite loaders import.
 
 `__init__.py` must stay empty: `config_loader.py` imports `config_blocks`, so a package-level
 re-export is an import cycle.

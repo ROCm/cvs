@@ -208,7 +208,8 @@ def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):
     tasks_by_id = {task.id: task for task in tasks}
     task = tasks_by_id.get(accuracy_task)
     if task is None:
-        pytest.skip(f"accuracy task {accuracy_task!r} not present in accuracy.tasks")
+        section = "accuracy.lm_eval.tasks" if lm_eval is not None else "accuracy.tasks"
+        pytest.skip(f"accuracy task {accuracy_task!r} not present in {section}")
 
     if hasattr(variant_config, "server_params"):
         base_url = f"http://0.0.0.0:{variant_config.server_params.port}"

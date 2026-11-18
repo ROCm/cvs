@@ -435,9 +435,8 @@ Troubleshooting
        ``vllm``, and the top-level config reject unknown keys. Put other vLLM options
        in ``server_params.engine_args`` or ``benchmark_params.client_args``.
        A config in the old format names the ``cvs config migrate vllm``
-       command that converts it. Keys such as ``image_tar``,
-       ``registry``, ``shm_size``, and ``cap_add`` belong on the cluster
-       file, not in the vLLM config. See :doc:`/reference/cluster/cluster-file`.
+       command that converts it. ``image_tar`` belongs on the cluster file,
+       not in the vLLM config. See :doc:`/reference/cluster/cluster-file`.
    * - ``distributed runs need server_params.nnodes of 2 or more``, or
        ``the cluster file has <n> node(s); distributed needs <nnodes>``
      - Set ``server_params.nnodes`` to the node count, 2 or more, and list

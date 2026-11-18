@@ -9,8 +9,7 @@ carried on `BaseVariantConfig`, and the `substitute_config` helper that reads
 a variant `config.json` + sibling `*threshold.json` and resolves placeholders.
 The schema blocks live in `cvs.lib.conf_lib.config_blocks` and are re-exported
 here; `VllmConfig.read_raw` in `cvs.config_validation` builds on
-`substitute_placeholders`, and a schema that uses a threshold file can load it
-with `attach_threshold_file`.
+`substitute_placeholders`.
 A per-framework module subclasses `BaseVariantConfig` or composes the blocks
 directly and adds its own params, sweep and `cell_key`.
 
@@ -218,25 +217,6 @@ def _find_threshold_file(raw, config_path):
 def _read_thresholds(threshold_path):
     thresholds = json.loads(threshold_path.read_text())
     return {k: v for k, v in thresholds.items() if not k.startswith("_")}
-
-
-def attach_threshold_file(data, context):
-    """Add ``thresholds`` from the config's threshold file, for a schema's ``mode="before"`` validator.
-
-    For a schema with ``thresholds`` and ``enforce_thresholds`` fields. Applies
-    only when the validation context holds a ``config_path``. Only a named
-    ``threshold_json`` is read; no sibling
-    file is looked for, and any ``thresholds`` in the config itself is
-    replaced. A config that names none gets ``{}`` and ``enforce_thresholds``
-    false, so it runs record-only.
-    """
-    config_path = (context or {}).get("config_path")
-    if config_path is None or not isinstance(data, dict):
-        return data
-    if not (data.get("threshold_json") or "").strip():
-        log.warning("%s names no threshold_json; metrics are recorded without gating", config_path)
-        return {**data, "thresholds": {}, "enforce_thresholds": False}
-    return {**data, "thresholds": _read_thresholds(_find_threshold_file(data, Path(config_path)))}
 
 
 def _read_config(config_path):
