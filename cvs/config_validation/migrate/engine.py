@@ -148,7 +148,7 @@ def migrate(suite, input_path, output_path, force=False, out=print):
     if output_path.is_dir():
         output_path = output_path / input_path.name
     try:
-        conversion = _convert(suite, found, _read(input_path), input_path)
+        conversion = _convert(suite, found, _read(input_path), input_path, output_path)
         lines = conversion.settle()
     except _Stop as stop:
         out(str(stop))
@@ -168,6 +168,46 @@ def migrate(suite, input_path, output_path, force=False, out=print):
     for line in lines:
         out(f"  {line}")
     return 1 if lines else 0
+
+
+def migrate_many(suite, input_paths, output_path, force=False, out=print):
+    """``migrate`` for each of ``input_paths``; return the highest of their exit codes.
+
+    With one input, ``output_path`` is as ``migrate`` takes it. With more, it
+    must be an existing folder, each file is written there under its own name,
+    and the first line printed for each file names it. Threshold files go
+    first, so a config passed with its threshold file is checked against the
+    converted one. Inputs that share a file name stop the run before anything
+    is written.
+    """
+    input_paths, output_path = [Path(path) for path in input_paths], Path(output_path)
+    if len(input_paths) == 1:
+        return migrate(suite, input_paths[0], output_path, force=force, out=out)
+    if not output_path.is_dir():
+        out(f"{output_path} is not a folder; with several input files, the output must be an existing folder")
+        return 2
+    names = [path.name for path in input_paths]
+    shared = sorted({name for name in names if names.count(name) > 1})
+    if shared:
+        out(f"several input files are named {', '.join(shared)}; they would be written to one file")
+        return 2
+    codes = []
+    for path in sorted(input_paths, key=lambda path: not _holds_thresholds(path)):
+        lines = []
+        codes.append(migrate(suite, path, output_path, force=force, out=lines.append))
+        first, rest = (lines[0], lines[1:]) if lines else ("", [])
+        out(first if str(path) in first or str(output_path) in first else f"{path}: {first}")
+        for line in rest:
+            out(line)
+    return max(codes)
+
+
+def _holds_thresholds(path):
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(raw, dict) and _is_threshold_file(raw)
 
 
 def _read(path):
@@ -218,7 +258,7 @@ def _write(path, text):
                     folder.rmdir()
 
 
-def _convert(suite, found, raw, input_path):
+def _convert(suite, found, raw, input_path, output_path=None):
     suite_map = found[suite]
     if _is_threshold_file(raw):
         tree, old, unmapped = _rename_kinds(raw, suite_map.THRESHOLDS)
@@ -240,7 +280,9 @@ def _convert(suite, found, raw, input_path):
             )
         raise _already_new(input_path)
     fields = getattr(suite_map, "FIELDS", {})
-    conversion = _Conversion(suite_map.SCHEMA, suite_map.CONFIG, fields, raw, config_path=input_path)
+    conversion = _Conversion(
+        suite_map.SCHEMA, suite_map.CONFIG, fields, raw, config_path=input_path, output_path=output_path
+    )
     conversion.walk()
     conversion.set_engine(suite)
     if getattr(suite_map, "FILL_THRESHOLD_FROM_SIBLING", False):
@@ -255,16 +297,19 @@ def _already_new(input_path):
 class _Conversion:
     """The new tree for one input, built key by key, remembering where each moved key came from."""
 
-    def __init__(self, schema, renames, fields, raw, unmapped=None, config_path=None):
+    def __init__(self, schema, renames, fields, raw, unmapped=None, config_path=None, output_path=None):
         """``config_path`` is the input path when it is a config, which ``settle`` validates as the loader would.
 
-        It is None for a threshold file.
+        It is None for a threshold file. A threshold file the config names that
+        is already written beside ``output_path`` is the one it is checked
+        against, so a config converted with its threshold file sees the new one.
         """
         self.schema = schema
         self.renames = renames
         self.fields = fields
         self.raw = raw
         self.config_path = config_path
+        self.output_path = output_path
         self.tree = {}
         self.origins = {}
         self.slots = {}
@@ -445,13 +490,20 @@ class _Conversion:
         problems = []
         if not has_placeholder(name):
             try:
-                return _with_thresholds(self.schema, self.tree, self.config_path, _QUIET_LOG), []
+                return _with_thresholds(self.schema, self.tree, self._threshold_lookup(name), _QUIET_LOG), []
             except ConfigError as exc:
                 missing = [f"threshold_json: {MISSING_THRESHOLD_MESSAGE}"]
                 problems = exc.problems if exc.problems == missing else [f"{name}: {line}" for line in exc.problems]
         # A placeholder or refused threshold file can't be read, so the rest is checked as a config that records only.
         record_only = {**self.tree, "threshold_json": ""}
         return _with_thresholds(self.schema, record_only, self.config_path, _QUIET_LOG), problems
+
+    def _threshold_lookup(self, name):
+        """The path whose folder the named threshold file is looked up from: the output's when it is written there."""
+        if self.output_path is not None and isinstance(name, str) and name.strip():
+            if (self.output_path.parent / name).is_file() and not Path(name).is_absolute():
+                return self.output_path
+        return self.config_path
 
     def output(self):
         return {UNMAPPED: self.unmapped, **self.tree} if self.unmapped else self.tree

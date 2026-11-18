@@ -15,22 +15,23 @@ JSON configuration schemas for inference and serving benchmarks under ``cvs/inpu
 
 How to run these suites: :doc:`/how-to/test-suites/inference/index`.
 
-Convert an old configuration file
-=================================
+Convert old configuration files
+===============================
 
-``cvs config migrate`` converts a suite's configuration file, or its threshold file, from the old format to the new one. Run it once for each file:
+``cvs config migrate`` converts a suite's configuration files and threshold files from the old format to the new one:
 
 .. code:: bash
 
   cvs config migrate <suite> <input.json> <output> [--force]
+  cvs config migrate <suite> <input.json> [<input.json> ...] <output folder> [--force]
 
 - ``<suite>`` is the suite the file belongs to. A suite becomes available when it moves to the new format; ``cvs config migrate --help`` lists the available suites.
-- ``<input.json>`` is the old file. The command never changes it.
-- ``<output>`` is the file to write, or a directory, where the file gets the input's name. An existing file is replaced only with ``--force``.
+- ``<input.json>`` is an old configuration or threshold file. You can pass both kinds in one run; threshold files are converted first, so a configuration is checked against its converted threshold file. The command never changes an input.
+- ``<output>`` is the file to write, or a directory, where the file gets the input's name. With more than one input, it must be an existing directory, and each file is written there under its own name. An existing file is replaced only with ``--force``.
 
 A suite in the new format refuses an old file and prints the ``cvs config migrate`` command to run.
 
-The command exits with:
+The command prints one result line for each file, and exits with the highest status of any file:
 
 - ``0``: it wrote the new file, or wrote nothing because the input is already in the new format.
 - ``1``: it wrote the new file with fields to fix, and printed one line for each.

@@ -32,6 +32,7 @@ from cvs.config_validation.migrate.engine import (
     TO_UNMAPPED,
     flags_from_list,
     migrate,
+    migrate_many,
     old_paths,
     suite_maps,
     suite_names,
@@ -336,6 +337,68 @@ class _MigrateCase(unittest.TestCase):
         with self.assertRaises(ConfigError) as ctx:
             self._load(name, schema)
         return ctx.exception.problems
+
+
+class TestMigrateMany(_MigrateCase):
+    def _many(self, names, output, force=False):
+        lines = []
+        code = migrate_many(
+            "demo", [self.tmp / name for name in names], self.tmp / output, force=force, out=lines.append
+        )
+        return code, lines
+
+    def test_one_input_converts_as_migrate_does(self):
+        self._write("old.json", OLD_DISTRIBUTED)
+        self.assertEqual(self._many(["old.json"], "single.json"), (0, [f"wrote {self.tmp / 'single.json'}"]))
+        self.assertEqual(self._output("single.json"), NEW_DISTRIBUTED)
+
+    def test_each_input_gets_a_line_naming_it_and_the_highest_code_is_returned(self):
+        (self.tmp / "out").mkdir()
+        self._write("distributed.json", OLD_DISTRIBUTED)
+        self._write("limits.json", OLD_THRESHOLDS)
+        self._write("broken.json", "{")
+        code, lines = self._many(["distributed.json", "limits.json", "broken.json"], "out")
+        self.assertEqual(code, 2)
+        self.assertEqual(
+            lines[:2],
+            # Threshold files go first.
+            [f"wrote {self.tmp / 'out' / 'limits.json'}", f"wrote {self.tmp / 'out' / 'distributed.json'}"],
+        )
+        self.assertTrue(lines[2].startswith(f"{self.tmp / 'broken.json'}"), lines[2])
+        self.assertEqual(json.loads((self.tmp / "out" / "limits.json").read_text()), NEW_THRESHOLDS)
+        self.assertFalse((self.tmp / "out" / "broken.json").exists())
+
+    def test_a_config_passed_with_its_old_threshold_file_is_checked_against_the_converted_one(self):
+        (self.tmp / "out").mkdir()
+        self._write("demo_threshold.json", OLD_THRESHOLDS)
+        self._write("single.json", OLD_SINGLE)
+        code, lines = self._many(["single.json", "demo_threshold.json"], "out")
+        self.assertEqual(
+            (code, lines),
+            (0, [f"wrote {self.tmp / 'out' / 'demo_threshold.json'}", f"wrote {self.tmp / 'out' / 'single.json'}"]),
+        )
+        self.assertEqual(json.loads((self.tmp / "out" / "single.json").read_text()), NEW_SINGLE)
+        # Alone, the same config is checked against the old file beside it.
+        self.assertEqual(self._many(["single.json"], "alone.json")[0], 1)
+
+    def test_several_inputs_need_an_existing_folder_and_distinct_names(self):
+        self._write("a/old.json", OLD_DISTRIBUTED)
+        self._write("b/old.json", OLD_DISTRIBUTED)
+        code, lines = self._many(["a/old.json", "b/old.json"], "missing")
+        self.assertEqual(
+            (code, lines),
+            (
+                2,
+                [
+                    f"{self.tmp / 'missing'} is not a folder; with several input files, the output must be an existing folder"
+                ],
+            ),
+        )
+        code, lines = self._many(["a/old.json", "b/old.json"], ".")
+        self.assertEqual(
+            (code, lines), (2, ["several input files are named old.json; they would be written to one file"])
+        )
+        self.assertFalse((self.tmp / "old.json").exists())
 
 
 class TestFlagsFromList(unittest.TestCase):

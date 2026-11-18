@@ -10,12 +10,12 @@ CONFIG_COMMANDS = (
     ("list", "List config files grouped by directory"),
     ("list-dirs", "List config directories grouped by category"),
     ("copy", "Copy bundled config file(s) to --output"),
-    ("migrate", "Convert an old suite config or threshold file to the new format"),
+    ("migrate", "Convert old suite config or threshold files to the new format"),
 )
 
 MIGRATE_EXIT_CODES = (
-    "exit status: 0 when the new file is written, or the input is already in the new format; "
-    "1 when the new file is written with fields to fix; 2 when nothing is written"
+    "exit status, the highest over the input files: 0 when the new file is written, or the input is already in "
+    "the new format; 1 when the new file is written with fields to fix; 2 when nothing is written"
 )
 
 
@@ -87,7 +87,7 @@ class ConfigPlugin(SubcommandPlugin):
         migrate_parser = config_subparsers.add_parser(
             "migrate",
             help=CONFIG_COMMANDS[3][1],
-            description=f"{CONFIG_COMMANDS[3][1]}. The input file is never changed.",
+            description=f"{CONFIG_COMMANDS[3][1]}. The input files are never changed.",
             epilog=MIGRATE_EXIT_CODES,
         )
         migrate_parser.add_argument(
@@ -95,10 +95,11 @@ class ConfigPlugin(SubcommandPlugin):
             type=_known_suite(suites),
             help=f"Suite the file belongs to (available: {', '.join(suites) or 'none yet'})",
         )
-        migrate_parser.add_argument("input", metavar="input.json", help="Old config or threshold file")
+        migrate_parser.add_argument("inputs", metavar="input.json", nargs="+", help="Old config or threshold file")
         migrate_parser.add_argument(
             "output",
-            help="File to write, or a directory to write it in under the input's file name",
+            help="File to write, or a directory to write it in under the input's file name; "
+            "with several input files, an existing directory",
         )
         migrate_parser.add_argument("--force", action="store_true", help="Force overwrite of an existing output file")
         migrate_parser.prog = "cvs config migrate"
@@ -119,7 +120,8 @@ Config Commands:
   cvs config copy --all --output <destDir>             Copy all bundled configs
   cvs config copy <configPath> --output <dest>         Copy a specific config file
   cvs config copy --all --output <destDir> --force     Copy all bundled configs, overwrite existing
-  cvs config migrate <suite> <input.json> <output>     Convert an old config or threshold file"""
+  cvs config migrate <suite> <input.json> <output>     Convert an old config or threshold file
+  cvs config migrate <suite> <input.json>... <dir>     Convert several files into one directory"""
 
     def _print_command_catalog(self):
         print("Available config commands:")
@@ -258,4 +260,4 @@ Config Commands:
         # Imported here so the engine and the suite's map load only for this command.
         from cvs.config_validation.migrate import engine
 
-        sys.exit(engine.migrate(args.suite, args.input, args.output, force=args.force))
+        sys.exit(engine.migrate_many(args.suite, args.inputs, args.output, force=args.force))

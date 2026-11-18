@@ -54,7 +54,7 @@ class TestConfigPlugin(unittest.TestCase):
         self.assertIn("list - List config files grouped by directory", output)
         self.assertIn("list-dirs - List config directories grouped by category", output)
         self.assertIn("copy - Copy bundled config file(s) to --output", output)
-        self.assertIn("migrate - Convert an old suite config or threshold file to the new format", output)
+        self.assertIn("migrate - Convert old suite config or threshold files to the new format", output)
 
     def test_bare_config_copy_requires_output(self):
         parser = main.build_arg_parser(main.discover_plugins())
@@ -303,12 +303,47 @@ class TestConfigMigrate(unittest.TestCase):
                 self.assertIn(f"error: argument suite: unknown suite vllm; available suites: {listed}\n", err)
         self.assertFalse(self.new.exists())
 
+    def test_several_inputs_go_into_the_output_folder_with_the_highest_exit_code(self):
+        folder = self.tmp / "out"
+        folder.mkdir()
+        unmapped = self.tmp / "knob.json"
+        unmapped.write_text(json.dumps({"backend": "demo", "knob": 1}))
+        newer = self.tmp / "already.json"
+        newer.write_text(json.dumps(NEW))
+        code, out, err = self._cvs("config", "migrate", "demo", str(self.old), str(unmapped), str(newer), str(folder))
+        self.assertEqual((code, err), (1, ""))
+        self.assertEqual(json.loads((folder / "old.json").read_text()), NEW)
+        self.assertEqual(json.loads((folder / "knob.json").read_text()), {"_unmapped": {"knob": 1}, "tp": "<changeme>"})
+        self.assertFalse((folder / "already.json").exists())
+        lines = out.splitlines()
+        self.assertEqual(lines[0], f"wrote {folder / 'old.json'}")
+        self.assertEqual(lines[1], f"wrote {folder / 'knob.json'}; fix these fields before using it:")
+        self.assertEqual(lines[-1], f"{newer} is already in the new format; nothing to convert")
+
+        code, out, _ = self._cvs("config", "migrate", "demo", str(self.old), str(newer), str(folder))
+        self.assertEqual(code, 2)
+        self.assertEqual(out.splitlines()[0], f"{folder / 'old.json'} already exists; use --force to overwrite it")
+
+    def test_several_inputs_need_an_existing_folder_and_distinct_names(self):
+        other = self.tmp / "sub" / "old.json"
+        other.parent.mkdir()
+        other.write_text(json.dumps(OLD))
+        for argv, message in (
+            ([str(self.old), str(self.tmp / "second.json"), str(self.new)], f"{self.new} is not a folder"),
+            ([str(self.old), str(other), str(self.tmp)], "several input files are named old.json"),
+        ):
+            with self.subTest(message=message):
+                code, out, _ = self._cvs("config", "migrate", "demo", *argv)
+                self.assertEqual(code, 2)
+                self.assertIn(message, out)
+        self.assertFalse(self.new.exists())
+
     def test_help_lists_the_suites_force_and_exit_codes(self):
         code, out, _ = self._cvs("config", "migrate", "--help")
         self.assertEqual(code, 0)
         text = " ".join(out.split())
-        self.assertIn("usage: cvs config migrate [-h] [--force] suite input.json output", text)
-        self.assertIn("The input file is never changed.", text)
+        self.assertIn("usage: cvs config migrate [-h] [--force] suite input.json [input.json ...] output", text)
+        self.assertIn("The input files are never changed.", text)
         self.assertIn("(available: demo)", text)
         self.assertIn("--force Force overwrite of an existing output file", text)
         self.assertIn("1 when the new file is written with fields to fix; 2 when nothing is written", text)
