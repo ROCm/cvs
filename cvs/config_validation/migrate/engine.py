@@ -187,7 +187,7 @@ def _write(path, text):
     opened = written = False
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
         opened = True
         with os.fdopen(fd, "w", encoding="utf-8") as fp:
             fp.write(text)
