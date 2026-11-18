@@ -105,21 +105,68 @@ class TestRcclLib(unittest.TestCase):
         }
 
     @patch('cvs.lib.rccl_lib.fail_test')
-    def test_bus_bw_tolerance_defaults_to_five_percent(self, mock_fail_test):
-        rows = [{'size': 1024, 'inPlace': 1, 'busBw': 95.0}]
+    def test_bus_bw_tolerance_defaults_to_exact_reference(self, mock_fail_test):
+        rows = [{'size': 1024, 'inPlace': 1, 'busBw': 100.0}]
         expected = {'1024': {'bus_bw': 100.0}}
         verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, {})
-        self.assertEqual(verifier.bus_bw_tolerance(), 0.95)
+        self.assertEqual(rccl_lib.RcclVerifier.DEFAULT_BUS_BW_TOLERANCE, 1.0)
+        self.assertEqual(verifier.bus_bw_tolerance(), 1.0)
         verifier.check_bus_bw()
         mock_fail_test.assert_not_called()
         self.assertEqual(verifier.verdicts[0]['status'], 'pass')
-        self.assertAlmostEqual(verifier.verdicts[0]['threshold'], 95.0)
+        self.assertEqual(verifier.verdicts[0]['threshold'], 100.0)
 
-        rows[0]['busBw'] = 94.9
+        rows[0]['busBw'] = 99.9
         verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, {})
         verifier.check_bus_bw()
         mock_fail_test.assert_called_once()
-        self.assertIn('5% tolerance: 95.00', mock_fail_test.call_args.args[0])
+        self.assertIn('0% tolerance: 100.00', mock_fail_test.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_bus_bw_tolerance_below_one_warns(self, mock_fail_test):
+        rows = [{'size': 1024, 'inPlace': 1, 'busBw': 95.0}]
+        expected = {'1024': {'bus_bw': 100.0}}
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, {'bus_bw_tolerance': '0.95'})
+        with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+            verifier.check_bus_bw()
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn('bus_bw_tolerance', captured.output[0])
+        self.assertIn('5.0% below', captured.output[0])
+        self.assertEqual(verifier.verdicts[0]['status'], 'pass')
+        self.assertEqual(verifier.verdicts[0]['threshold'], 95.0)
+        mock_fail_test.assert_not_called()
+
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, {'bus_bw_tolerance': '1.0'})
+        with self.assertNoLogs(rccl_lib.log, level='WARNING'):
+            verifier.check_bus_bw()
+        mock_fail_test.assert_called_once()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_verify_bus_bw_defaults_on(self, mock_fail_test):
+        rows = [{'size': 8589934592, 'inPlace': 1, 'busBw': 349.9}]
+        expected = {'8589934592': {'bus_bw': 350.0}}
+        for params in ({}, None, {'nic_model': 'thor'}):
+            with self.subTest(params=params):
+                mock_fail_test.reset_mock()
+                verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, params)
+                verifier.check()
+                self.assertEqual(
+                    [(v['check'], v['size'], v['status']) for v in verifier.verdicts],
+                    [('bus_bw', 8589934592, 'fail')],
+                )
+                mock_fail_test.assert_called_once()
+
+        mock_fail_test.reset_mock()
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, {'verify_bus_bw': 'False'})
+        verifier.check()
+        self.assertEqual(verifier.verdicts, [])
+        mock_fail_test.assert_not_called()
+
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, None, {})
+        verifier.check()
+        self.assertEqual([(v['check'], v['status']) for v in verifier.verdicts], [('bus_bw', 'fail')])
+        self.assertIn('No bus bandwidth thresholds', verifier.verdicts[0]['message'])
+        mock_fail_test.assert_called_once()
 
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_bus_bw_tolerance_one_enforces_reference(self, mock_fail_test):
@@ -171,7 +218,9 @@ class TestRcclLib(unittest.TestCase):
             for expected in (None, {}):
                 with self.subTest(flag=flag, expected=expected):
                     mock_fail_test.reset_mock()
-                    verifier = rccl_lib.RcclVerifier('all_reduce_perf', self._taper_results(), expected, {flag: 'True'})
+                    verifier = rccl_lib.RcclVerifier(
+                        'all_reduce_perf', self._taper_results(), expected, {'verify_bus_bw': 'False', flag: 'True'}
+                    )
                     verifier.check()
                     mock_fail_test.assert_called_once()
                     self.assertIn(label, mock_fail_test.call_args.args[0])
@@ -289,6 +338,95 @@ class TestRcclLib(unittest.TestCase):
                 self.assertEqual(set(expected), {'8589934592'})
                 self.assertEqual(float(expected['8589934592']['bus_bw']), bar)
                 self.assertNotIn('<changeme>', json.dumps(config['results']))
+
+    def test_shipped_configs_sweep_ends_at_guide_size(self):
+        def parse_size(value):
+            value = str(value).lower()
+            suffix = value[-1]
+            return int(value[:-1]) * 1024 ** {'k': 1, 'm': 2, 'g': 3}[suffix] if suffix in 'kmg' else int(value)
+
+        for name in ('rccl_config.json', *GUIDE_BARS):
+            with self.subTest(config=name):
+                config = self._shipped_config() if name == 'rccl_config.json' else self._guide_config(name)
+                params = config['rccl_test_params']
+                self.assertEqual(params['end_msg_size'], rccl_lib.DEFAULT_END_MSG_SIZE)
+                self.assertEqual(params['end_msg_size'], '8g')
+                size = parse_size(params['start_msg_size'])
+                end = parse_size(params['end_msg_size'])
+                factor = int(params['step_function'])
+                sweep = []
+                while size <= end:
+                    sweep.append(size)
+                    size *= factor
+                self.assertEqual(sweep[-1], 8589934592)
+                for namespace, entries in config['results'].items():
+                    if namespace in (*rccl_lib.NIC_TYPES, 'scale_up'):
+                        entries_to_check = entries.values()
+                    else:
+                        entries_to_check = (entries,)
+                    for entry in entries_to_check:
+                        if entry is None:
+                            continue
+                        thresholds = entry.get('bus_bw', entry)
+                        self.assertTrue({int(key) for key in thresholds}.issubset(sweep))
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_shipped_config_gates_by_default_at_guide_size(self, mock_fail_test):
+        config = self._shipped_config()
+        self.assertEqual(config['cvs_params']['verify_bus_bw'], 'True')
+        self.assertEqual(config['cvs_params']['bus_bw_tolerance'], '1.0')
+        job = self._configured_job(config)
+        self.assertEqual(job.no_of_global_ranks, 16)
+        expected = job._expected_results(['float'])
+        self.assertEqual(expected, {'8589934592': {'bus_bw': 350.0}})
+        row = {'size': 8589934592, 'inPlace': 1, 'busBw': 349.99}
+        job._verify_results([row], expected)
+        self.assertEqual(len(job.verdicts), 1)
+        self.assertEqual(
+            (job.verdicts[0]['size'], job.verdicts[0]['threshold'], job.verdicts[0]['status']),
+            (8589934592, 350.0, 'fail'),
+        )
+        self.assertIn('msg size 8589934592', mock_fail_test.call_args.args[0])
+
+        mock_fail_test.reset_mock()
+        row['busBw'] = 350.0
+        job._verify_results([row], expected)
+        self.assertEqual((job.verdicts[0]['size'], job.verdicts[0]['status']), (8589934592, 'pass'))
+        mock_fail_test.assert_not_called()
+
+        del config['cvs_params']['bus_bw_tolerance']
+        del config['cvs_params']['verify_bus_bw']
+        job = self._configured_job(config)
+        row['busBw'] = 349.99
+        job._verify_results([row], job._expected_results(['float']))
+        self.assertEqual(
+            (job.verdicts[0]['size'], job.verdicts[0]['threshold'], job.verdicts[0]['status']),
+            (8589934592, 350.0, 'fail'),
+        )
+        mock_fail_test.assert_called_once()
+
+    def test_flat_shipped_thresholds_only_at_guide_size(self):
+        for collective, entry in self._flat_shipped_config()['results'].items():
+            with self.subTest(collective=collective):
+                self.assertEqual(set(entry['bus_bw']), {'8589934592'})
+
+    def test_default_end_msg_size_in_commands(self):
+        config = self._shipped_config()
+        del config['rccl_test_params']['end_msg_size']
+        for method in ('run_regression', 'run_perf'):
+            with self.subTest(method=method):
+                job = self._configured_job(config)
+                with (
+                    patch.object(job, 'prepare'),
+                    patch.object(job, 'execute', return_value=None) as execute,
+                    patch.object(job, 'read_results', return_value=[]),
+                    patch.object(job, '_save_topology_checks'),
+                    patch.object(job, 'save_results'),
+                    patch.object(job, 'collect_gpu_info'),
+                    patch.object(job.launcher, 'cleanup'),
+                ):
+                    getattr(job, method)()
+                self.assertIn(' -e 8g ', execute.call_args.args[0])
 
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_guide_configs_enforce_bar_at_8gib_in_place(self, mock_fail_test):
@@ -452,7 +590,7 @@ class TestRcclLib(unittest.TestCase):
         job = self._configured_job(config)
         self.assertEqual(
             job._expected_results(['float']),
-            {'8589934592': {'bus_bw': 330.0}, '17179869184': {'bus_bw': 350.0}},
+            {'8589934592': {'bus_bw': 330.0}},
         )
 
     def test_expected_results_accepts_transposed_shape(self):
@@ -571,7 +709,7 @@ class TestRcclLib(unittest.TestCase):
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_dip_flags_enable_their_checks(self, mock_fail_test):
         job = self._configured_job(self._flat_shipped_config())
-        expected = job._expected_results(['float'])
+        expected = {'8589934592': {'bus_bw': 330.0}, '17179869184': {'bus_bw': 350.0}}
         for flag, failure in (
             ('verify_bw_dip', 'BusBW'),
             ('verify_lat_dip', 'latency'),
@@ -605,14 +743,19 @@ class TestRcclLib(unittest.TestCase):
         self.assertEqual(mock_fail_test.call_count, 2)
 
     @patch('cvs.lib.rccl_lib.fail_test')
-    def test_shipped_verification_is_disabled(self, mock_fail_test):
+    def test_shipped_verification_gates_bus_bw_but_not_dips(self, mock_fail_test):
         job = self._configured_job(self._shipped_config())
-        for flag in ('verify_bus_bw', 'verify_bw_dip', 'verify_lat_dip'):
+        self.assertEqual(job.cvs_params['verify_bus_bw'], 'True')
+        for flag in ('verify_bw_dip', 'verify_lat_dip'):
             self.assertEqual(job.cvs_params[flag], 'False')
-        rccl_lib.RcclVerifier(
+        verifier = rccl_lib.RcclVerifier(
             job.test_name, self._taper_results(), job._expected_results(['float']), job.cvs_params
-        ).check()
-        mock_fail_test.assert_not_called()
+        )
+        verifier.check()
+        self.assertEqual(
+            [(v['check'], v['size'], v['status']) for v in verifier.verdicts], [('bus_bw', 8589934592, 'fail')]
+        )
+        mock_fail_test.assert_called_once()
 
     def test_shipped_collectives_have_numeric_thresholds(self):
         config = self._flat_shipped_config()
@@ -642,7 +785,7 @@ class TestRcclLib(unittest.TestCase):
         self.assertEqual([v['unit'] for v in verifier.verdicts], ['GB/s', 'GB/s'])
         for verdict in verifier.verdicts:
             self.assertEqual(verdict['check'], 'bus_bw')
-            self.assertAlmostEqual(verdict['threshold'], 76.0)
+            self.assertAlmostEqual(verdict['threshold'], 80.0)
         self.assertEqual(verifier.verdicts[0]['message'], '')
         mock_fail_test.assert_called_once_with(verifier.verdicts[1]['message'])
 
@@ -660,7 +803,7 @@ class TestRcclLib(unittest.TestCase):
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_dip_checks_record_verdicts_after_first_size(self, mock_fail_test):
         expected = {'8589934592': {'bus_bw': 330.0}, '17179869184': {'bus_bw': 350.0}}
-        params = {'verify_bw_dip': 'True', 'verify_lat_dip': 'True'}
+        params = {'verify_bus_bw': 'False', 'verify_bw_dip': 'True', 'verify_lat_dip': 'True'}
         verifier = rccl_lib.RcclVerifier('all_reduce_perf', self._taper_results(), expected, params)
         verifier.check()
         self.assertEqual(
@@ -693,7 +836,9 @@ class TestRcclLib(unittest.TestCase):
         self.assertEqual(mock_fail_test.call_count, 2)
 
     def test_disabled_checks_record_no_verdicts(self):
-        job = self._configured_job(self._shipped_config())
+        config = self._shipped_config()
+        config['cvs_params']['verify_bus_bw'] = 'False'
+        job = self._configured_job(config)
         verifier = rccl_lib.RcclVerifier(
             job.test_name, self._taper_results(), job._expected_results(['float']), job.cvs_params
         )
@@ -957,7 +1102,7 @@ class TestRcclLib(unittest.TestCase):
         verifier = rccl_lib.RcclVerifier('all_reduce_perf', rows, expected, {'verify_bus_bw': 'True'})
         verifier.check()
         mock_fail_test.assert_called_once()
-        self.assertTrue(mock_fail_test.call_args.args[0].endswith('(threshold with 5% tolerance: 76.00) [type=half]'))
+        self.assertTrue(mock_fail_test.call_args.args[0].endswith('(threshold with 0% tolerance: 80.00) [type=half]'))
         self.assertEqual([verdict['status'] for verdict in verifier.verdicts], ['pass', 'fail'])
 
         mock_fail_test.reset_mock()
@@ -969,7 +1114,7 @@ class TestRcclLib(unittest.TestCase):
         mock_fail_test.reset_mock()
         untyped_row = {key: value for key, value in raw_row.items() if key != 'type'}
         rccl_lib.RcclVerifier('all_reduce_perf', [untyped_row], expected, {'verify_bus_bw': 'True'}).check()
-        self.assertTrue(mock_fail_test.call_args.args[0].endswith('(threshold with 5% tolerance: 76.00)'))
+        self.assertTrue(mock_fail_test.call_args.args[0].endswith('(threshold with 0% tolerance: 80.00)'))
 
     # Tests for new verification functions
 
@@ -1103,9 +1248,7 @@ class TestRcclLib(unittest.TestCase):
                 "time": 12.3,
             }
         ]
-        exp_res_dict = {
-            "1024": {"bus_bw": 80.0}  # 95% threshold would be 76.0
-        }
+        exp_res_dict = {"1024": {"bus_bw": 80.0}}
 
         rccl_lib.RcclVerifier(test_name, output, exp_res_dict).check_bus_bw()
         mock_fail_test.assert_called()
@@ -1387,7 +1530,10 @@ class TestRcclLib(unittest.TestCase):
         aggregated = rccl_lib.RcclJob.aggregate_results(raw_rows)
         rows = rccl_lib.RcclJob._verification_results(aggregated, [])
         rccl_lib.RcclVerifier(
-            'all_reduce_perf', rows, expected, {'verify_bw_dip': 'True', 'verify_lat_dip': 'True'}
+            'all_reduce_perf',
+            rows,
+            expected,
+            {'verify_bus_bw': 'False', 'verify_bw_dip': 'True', 'verify_lat_dip': 'True'},
         ).check()
 
         self.assertEqual(len(aggregated), 4)

@@ -32,7 +32,7 @@
             ],
             "rccl_tests_dir": "/home/{user-id}/rccl-tests/build",
             "start_msg_size": "1024",
-            "end_msg_size": "16g",
+            "end_msg_size": "8g",
             "step_function": "2",
             "threads_per_gpu": "1",
             "warmup_iterations": "10",
@@ -57,9 +57,9 @@
             "_comment_report_ecc_blocks": "Optional list when report_ecc_delta is True. Only these ECC blocks are captured, compared, and reported (e.g. [\"UMC\", \"XGMI_WAFL\"]). Omit or leave empty for all blocks. An unknown name fails the test. Allowed: UMC, SDMA, GFX, MMHUB, PCIE_BIF, HDP, XGMI_WAFL.",
             "_comment_nic_model": "Selects NIC-keyed results.<nic> thresholds (thor, ainic, connectx). The shipped flat results table is used when no matching NIC/rank key exists.",
             "nic_model": "thor",
-            "_comment_verification": "Setting any verify_* flag to True enables that check and can fail the test. verify_bus_bw is False in this sample because only thor all_reduce float at 8 GiB is guide-backed: entries cover 2-16 nodes at 8 ranks per node (16-128 total ranks). Other NICs and unlisted rank counts fall back to flat examples (compared without slack at bus_bw_tolerance 1.0); a different topology with a listed total rank count resolves to the same entry and must override it. MI300X needs 304, and regression/pairwise reuse the same entries. Set it to True for qualification after checking results for your GPU, NIC and rank count.",
-            "verify_bus_bw": "False",
-            "_comment_bus_bw_tolerance": "Fraction in (0, 1] of the reference a measurement must reach; default 0.95. 1.0 enforces the published all_reduce bar exactly. With 1.0 the flat example table is also compared without slack; those values are examples, and verify_bus_bw is off by default.",
+            "_comment_verification": "verify_bus_bw is True by default and enforces every resolved results entry. Thor all_reduce float at 8589934592 bytes is guide-backed for 16-128 total ranks. Other NICs and unlisted rank counts fall back to flat examples, which are also enforced: calibrate them or add NIC/rank entries. MI300X must set all_reduce entries to 304. Regression and pairwise use the same entries. Set verify_bus_bw to False only for runs that are not qualification.",
+            "verify_bus_bw": "True",
+            "_comment_bus_bw_tolerance": "Fraction in (0, 1] of the reference a measurement must reach; default 1.0 (no slack). A value below 1.0 lets results under the published bar pass and logs a warning.",
             "bus_bw_tolerance": "1.0",
             "verify_bw_dip": "False",
             "verify_lat_dip": "False",
@@ -69,7 +69,7 @@
             "cvs_exec_timeout": "2400",
             "rccl_result_file": "{run_dir}/rccl_result_file.json",
             "pairwise_min_bw": "300",
-            "_comment_pairwise_min_bw": "Minimum bus BW in GB/s required for Phase 2 incremental admission (Phase 1 pairwise never gates on bandwidth, matching the original bash tool). Set to 0 to skip the BW check.",
+            "_comment_pairwise_min_bw": "Minimum bus BW in GB/s required for Phase 2 incremental admission; pairwise_min_bw gates only Phase 2. With verify_bus_bw True every pairwise run is also gated by its NIC/rank results entry. Set to 0 to skip the Phase 2 BW check.",
             "pairwise_results_file": "/tmp/rccl_pairwise_results.json",
             "_comment_pairwise_results_file": "Local JSON file where rccl_pairwise.py persists the Phase 1 pass/fail lists and the Phase 2 final valid/excluded host lists.",
             "fabric": "scale_out",
@@ -102,7 +102,7 @@
             ]
         },
         "_comments_results": "Both perf and regression read results here. NIC/rank entries (results.<nic>.<collective>-<data_types>-<total ranks>) take precedence over the legacy flat per-collective table, whose values are generic 2-node examples, not acceptance criteria. Each size entry is {\"bus_bw\": GB/s}; a measurement must reach bus_bw x cvs_params.bus_bw_tolerance. A null entry means no published threshold: with verify_bus_bw=True the collective is logged as not gated. A missing entry, or a configured message size with no result row, fails when verify_bus_bw=True.",
-        "_comments_results_thor": "The published MI350X/MI355X scale-out all_reduce bar is >= 350 GB/s at 8589934592 bytes for 2-16 nodes at 8 ranks per node. The table contains an exact rank key for every total rank count from 16 through 128 in steps of 8; each is enforced exactly because cvs_params.bus_bw_tolerance is 1.0. It applies when nic_model resolves to thor and data_types is [\"float\"]. Since keys use total ranks, another topology with the same rank count also resolves to the entry and must override it. Set every all_reduce entry to 304 for MI300X. The other nine collectives are null at the same rank counts because no bar is published. OPEN: the guide lists both 304 and 350 for MI355X; 350 is shipped pending confirmation. OPEN: the guide's \"8 GB\" is read as 8 GiB = 8589934592 bytes, the size rccl-tests emits with step factor 2. No MI455X/Helios bar is published; other thor platforms must override the all_reduce entries.",
+        "_comments_results_thor": "The published MI350X/MI355X scale-out all_reduce bar is >= 350 GB/s at 8589934592 bytes for 2-16 nodes at 8 ranks per node. The table contains an exact rank key for every total rank count from 16 through 128 in steps of 8; each is enforced exactly (bus_bw_tolerance 1.0). It applies when nic_model resolves to thor and data_types is [\"float\"]. Since keys use total ranks, another topology with the same rank count also resolves to the entry and must override it. Set every all_reduce entry to 304 for MI300X. The other nine collectives are null at the same rank counts because no bar is published. OPEN: the guide lists both 304 and 350 for MI355X; 350 is shipped pending confirmation. OPEN: the guide's \"8 GB\" is read as 8 GiB = 8589934592 bytes, the last size of the shipped 1024..8g sweep with step factor 2. No MI455X/Helios bar is published; other thor platforms must override the all_reduce entries.",
         "results": {
             "thor": {
                 "all_reduce_perf-float-16": {
@@ -318,62 +318,52 @@
             },
             "all_reduce_perf": {
                 "bus_bw": {
-                    "8589934592": "330.00",
-                    "17179869184": "350.00"
+                    "8589934592": "330.00"
                 }
             },
             "all_gather_perf": {
                 "bus_bw": {
-                    "8589934592": "330.00",
-                    "17179869184": "350.00"
+                    "8589934592": "330.00"
                 }
             },
             "gather_perf": {
                 "bus_bw": {
-                    "8589934592": "330.00",
-                    "17179869184": "350.00"
+                    "8589934592": "330.00"
                 }
             },
             "scatter_perf": {
                 "bus_bw": {
-                    "8589934592": "330.0",
-                    "17179869184": "350.0"
+                    "8589934592": "330.0"
                 }
             },
             "reduce_perf": {
                 "bus_bw": {
-                    "8589934592": "300.0",
-                    "17179869184": "310.00"
+                    "8589934592": "300.0"
                 }
             },
             "reduce_scatter_perf": {
                 "bus_bw": {
-                    "8589934592": "340.0",
-                    "17179869184": "360.00"
+                    "8589934592": "340.0"
                 }
             },
             "alltoall_perf": {
                 "bus_bw": {
-                    "8589934592": "45.00",
-                    "17179869184": "50.00"
+                    "8589934592": "45.00"
                 }
             },
             "alltoallv_perf": {
                 "bus_bw": {
-                    "8589934592": "45.00",
-                    "17179869184": "50.00"
+                    "8589934592": "45.00"
                 }
             },
             "sendrecv_perf": {
                 "bus_bw": {
-                    "8589934592": "47.00",
-                    "17179869184": "48.00"
+                    "8589934592": "47.00"
                 }
             },
             "broadcast_perf": {
                 "bus_bw": {
-                    "8589934592": "310.00",
-                    "17179869184": "312.00"
+                    "8589934592": "310.00"
                 }
             }
         }

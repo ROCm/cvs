@@ -25,10 +25,14 @@ def variant_from_config(config_dict, cluster_dict, suite_name=None, raw_results=
     mpi_params = {"no_of_nodes": "2", "no_of_local_ranks": "8"}
     mpi_params.update(config_dict.get("mpi_params") or {})
 
-    def _on(key):
-        return str(cvs_params.get(key) or "").lower() in ("true", "1", "yes")
+    def _on(key, default=""):
+        return str(cvs_params.get(key, default) or "").lower() in ("true", "1", "yes")
 
-    verify = _on("verify_bus_bw") or _on("verify_bw_dip") or _on("verify_lat_dip")
+    verify = (
+        _on("verify_bus_bw", rccl_lib.RcclVerifier.DEFAULT_VERIFY_BUS_BW)
+        or _on("verify_bw_dip")
+        or _on("verify_lat_dip")
+    )
     return SimpleNamespace(
         framework="rccl",
         gpu_arch=config_dict.get("gpu_arch") or "\u2014",

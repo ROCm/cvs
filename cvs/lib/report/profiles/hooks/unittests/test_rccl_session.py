@@ -41,9 +41,22 @@ class TestRcclSession(unittest.TestCase):
         for flag in ("verify_bus_bw", "verify_bw_dip", "verify_lat_dip"):
             for value in (True, "True", "1", "yes", False, "False"):
                 with self.subTest(flag=flag, value=value):
-                    variant = variant_from_config({"cvs_params": {flag: value}}, {"node_dict": {"n0": {}, "n1": {}}})
+                    params = {flag: value}
+                    if flag != "verify_bus_bw":
+                        params["verify_bus_bw"] = "False"
+                    variant = variant_from_config({"cvs_params": params}, {"node_dict": {"n0": {}, "n1": {}}})
                     self.assertEqual(variant.nnodes, 2)
                     self.assertEqual(variant.enforce_thresholds, value not in (False, "False"))
+
+    def test_bus_bw_gate_defaults_on(self):
+        self.assertTrue(variant_from_config({"cvs_params": {}}, {}).enforce_thresholds)
+        self.assertTrue(variant_from_config({}, {}).enforce_thresholds)
+        self.assertFalse(variant_from_config({"cvs_params": {"verify_bus_bw": "False"}}, {}).enforce_thresholds)
+        self.assertTrue(
+            variant_from_config(
+                {"cvs_params": {"verify_bus_bw": "False", "verify_bw_dip": "True"}}, {}
+            ).enforce_thresholds
+        )
 
     def test_publish_preserves_bound_store_identity_and_legacy_graph_values(self):
         store = {}
