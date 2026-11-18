@@ -499,8 +499,9 @@ def flags_from_list(flags):
 
     Each item is split as a shell would split it. ``--name`` starts a flag and
     the words after it, up to the next ``--name``, are its value: none makes it
-    True, one a string, more a list. ``--name=value`` works too. A word before
-    the first flag, or a flag given twice, raises ValueError naming it.
+    True, one a string, more a list. ``--name=value`` works too. A flag given
+    twice raises ValueError naming it; a word before the first flag raises
+    ValueError without the word, which may be a secret.
     """
     converted, name = {}, None
     for item in flags:
@@ -512,7 +513,7 @@ def flags_from_list(flags):
                     raise ValueError(f"--{flag} is given more than once")
                 converted[name] = [value] if has_value else []
             elif name is None:
-                raise ValueError(f"{word!r} comes before any --flag")
+                raise ValueError("a value comes before any --flag")
             else:
                 converted[name].append(word)
     return {key: True if not words else words[0] if len(words) == 1 else words for key, words in converted.items()}

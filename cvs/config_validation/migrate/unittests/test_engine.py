@@ -364,7 +364,7 @@ class TestFlagsFromList(unittest.TestCase):
         self.assertEqual(flags_from_list([]), {})
 
     def test_a_word_before_any_flag_and_a_repeated_flag_are_refused(self):
-        with self.assertRaisesRegex(ValueError, "'aiter' comes before any --flag"):
+        with self.assertRaisesRegex(ValueError, "^a value comes before any --flag$"):
             flags_from_list(["aiter --attention-backend"])
         with self.assertRaisesRegex(ValueError, "--tp is given more than once"):
             flags_from_list(["--tp 8", "--tp=4"])
@@ -542,6 +542,24 @@ class TestConvertsCleanly(_MigrateCase):
         self.assertEqual(
             {metric: spec.kind for metric, spec in cell.items()},
             {"output_throughput": "min", "mean_ttft_ms": "max", "p99_itl_ms": "max"},
+        )
+
+    def test_a_threshold_file_old_only_in_its_accuracy_layout_converts(self):
+        code, lines = self._run({**NEW_THRESHOLDS, "accuracy": OLD_THRESHOLDS["accuracy"]}, output="new_threshold.json")
+        self.assertEqual((code, lines), (0, [f"wrote {self.tmp / 'new_threshold.json'}"]))
+        self.assertEqual(self._output("new_threshold.json"), NEW_THRESHOLDS)
+
+    def test_old_task_ids_join_the_ids_already_under_lm_eval(self):
+        old = copy.deepcopy(OLD_THRESHOLDS)
+        old["accuracy"]["lm_eval"] = {"gsm8k_strict": {"exact_match": {"kind": "min", "value": 0.4}}}
+        code, _ = self._run(old, output="new_threshold.json")
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            self._output("new_threshold.json")["accuracy"]["lm_eval"],
+            {
+                "gsm8k_strict": {"exact_match": {"kind": "min", "value": 0.4}},
+                "gsm8k_flex": {"exact_match": {"kind": "min", "value": 0.5}},
+            },
         )
 
     def test_comments_and_placeholders_are_kept_as_written_even_in_a_typed_field(self):
