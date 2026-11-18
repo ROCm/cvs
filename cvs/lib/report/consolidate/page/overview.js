@@ -130,6 +130,7 @@
     var counts = suiteCounts(suites);
     var verdict = VERDICT[summary.verdict] || [summary.verdict, ''];
     var runs = suites.reduce(function (n, s) { return n + 1 + s.history.length; }, 0);
+    var facts = [suites.length + ' suites'].concat(runs !== suites.length ? [runs + ' runs'] : [], ['collection-wide verdict']);
     refs.statusButtons = {};
     var buttons = STATUS_ORDER.filter(function (k) { return k !== 'unknown' || counts.unknown; }).map(function (k) {
       var button = h('button', {
@@ -142,8 +143,8 @@
     return h('section', { class: 'health-summary panel', 'aria-label': 'Collection assessment' },
       h('div', { class: 'health-verdict' },
         h('span', { class: 'eyebrow' }, 'Collection assessment'),
-        h('h2', null, h('span', { class: 'headline-glyph verdict-' + summary.verdict, 'aria-hidden': 'true' }), verdict[0]),
-        h('p', null, verdict[1] + ' ' + suites.length + ' suites \u00b7 ' + runs + ' runs.')),
+        h('h2', { title: verdict[1] }, h('span', { class: 'headline-glyph verdict-' + summary.verdict, 'aria-hidden': 'true' }), verdict[0]),
+        h('p', null, facts.join(' \u00b7 '))),
       h('div', { class: 'health-outcomes' },
         h('p', null, 'Select a status to filter suites'),
         h('div', { class: 'status-filters', role: 'group', 'aria-label': 'Filter suites by status' }, buttons)));
