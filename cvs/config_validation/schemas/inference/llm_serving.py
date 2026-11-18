@@ -66,7 +66,7 @@ def check_flags(flags, reserved=frozenset()):
     """``flags`` if every name is snake_case and its value renders as a flag, and none is in ``reserved``.
 
     True writes the bare flag; False is refused as ambiguous. A list holds
-    scalars and a dict must be JSON.
+    scalars only.
     """
     for name, value in flags.items():
         if not _FLAG_NAME_RE.fullmatch(name):
@@ -75,11 +75,6 @@ def check_flags(flags, reserved=frozenset()):
             raise ValueError(f"{name}=false is ambiguous; omit it or use the flag's negative form")
         if isinstance(value, list) and any(isinstance(item, (list, dict)) for item in value):
             raise ValueError(f"{name}: lists may contain scalar values only")
-        if isinstance(value, dict):
-            try:
-                json.dumps(value, separators=(",", ":"))
-            except (TypeError, ValueError):
-                raise ValueError(f"{name} must be JSON serializable") from None
     collisions = sorted(reserved & set(flags))
     if collisions:
         raise ValueError(f"cannot set harness fields: {collisions}")

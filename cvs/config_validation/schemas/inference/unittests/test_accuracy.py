@@ -16,9 +16,7 @@ from cvs.config_validation.schemas.inference.accuracy import (
     AccuracyConfig,
     AccuracyTask,
     LmEval,
-    MtpQualityConfig,
     NiahEval,
-    QuantParityConfig,
 )
 from cvs.lib.inference.utils import accuracy_config, long_context_accuracy_config
 
@@ -273,8 +271,6 @@ class TestAccuracyConfig(unittest.TestCase):
                 "chat_template_expected_sha256": "",
             },
         )
-        self.assertEqual(_fields(QuantParityConfig)[0], ("enabled", False))
-        self.assertEqual(_fields(MtpQualityConfig)[0], ("enabled", False))
 
     def test_each_custom_eval_is_picked_by_its_type(self):
         config = AccuracyConfig.model_validate({"custom_eval": [{"type": "niah", "id": "niah_8k", "isl": 8192}]})
