@@ -454,7 +454,7 @@ class TestShippedConfigs(_MapCase):
                 # Every flag the harness passes and every old field name is reserved; nothing else but fields is.
                 self.assertLessEqual(harness[kind] | old_names, reserved)
                 fields = set(model.model_fields) - {"engine_args", "client_args"}
-                self.assertLessEqual(reserved - harness[kind] - old_names, fields | {"engine", "headless", "node_rank"})
+                self.assertLessEqual(reserved - harness[kind] - old_names, fields | {"headless", "node_rank"})
 
 
 class TestCli(unittest.TestCase):

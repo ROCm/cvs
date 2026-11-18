@@ -32,6 +32,7 @@ def _cell_type(fields):
 
 
 def parse_cell_key(key, axes):
+    """``key`` as a named tuple of ``key`` and one field per axis; a ValueError names what is wrong with it."""
     names = [axis.name for axis in axes]
 
     def refused(problem):

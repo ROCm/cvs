@@ -42,7 +42,6 @@ _METADATA_PREFIXES = ("_comment", "_example")
 SERVER_RESERVED = frozenset(
     {
         "backend",
-        "engine",
         "model",
         "tensor_parallel_size",
         "tp",
