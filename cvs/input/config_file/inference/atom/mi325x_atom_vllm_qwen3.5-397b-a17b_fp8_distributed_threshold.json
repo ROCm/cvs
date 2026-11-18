@@ -307,9 +307,13 @@
   },
   "accuracy": {
     "gsm8k_flex": {
+      "gsm8k.exact_match__strict-match": {
+        "kind": "info",
+        "value": 0.5618
+      },
       "gsm8k.exact_match__flexible-extract": {
         "kind": "info",
-        "value": 0.0
+        "value": 0.1804
       }
     },
     "hellaswag": {
