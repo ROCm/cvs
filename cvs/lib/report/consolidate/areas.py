@@ -2,12 +2,13 @@
 Copyright 2026 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Areas that group suites in the consolidated report.
+Areas that group suites in the consolidated report, and the test files behind older decks.
 
 A deck that records its own ``area`` keeps it. Decks written before that field
 existed are looked up by ``suite_id`` in ``AREA_BY_SUITE_ID``, which covers every
 suite that wrote a deck up to release 0.3.0. The table never grows: every newer
-deck writes its own area.
+deck writes its own area. The same goes for ``older_deck_stems``, because every
+newer deck also records the test file that wrote it.
 '''
 
 AREAS = ("Burn-in / Diag", "Network", "Training", "Inference")
@@ -33,6 +34,37 @@ SUITE_IDS_BY_AREA = {
 }
 
 AREA_BY_SUITE_ID = {suite_id: area for area, suite_ids in SUITE_IDS_BY_AREA.items() for suite_id in suite_ids}
+
+_STEMS_BY_SUITE_ID = {
+    "rccl": ("rccl_perf", "rccl_regression", "rccl_pairwise"),
+    "aorta": ("aorta_single", "aorta_distributed"),
+    "jaxmaxtext": ("jaxmaxtext_single", "jaxmaxtext_distributed"),
+    "megatron": ("megatron_single", "megatron_distributed"),
+    "torchtitan": ("torchtitan_single", "torchtitan_distributed"),
+    "sglang": ("sglang_single", "sglang_distributed", "sglang_disagg_distributed"),
+    "vllm": ("vllm_single", "vllm_distributed"),
+    "xdit": (
+        "xdit_flux_dev_single",
+        "xdit_flux_dev_distributed",
+        "xdit_wan22_14b_single",
+        "xdit_wan22_14b_diffusers_single",
+        "xdit_wan22_14b_diffusers_distributed",
+        "xdit_wan22_i2v_14b_diffusers_single",
+        "xdit_wan22_i2v_14b_diffusers_distributed",
+        "xdit_wan21_t2v_14b_diffusers_single",
+        "xdit_wan21_t2v_14b_diffusers_distributed",
+    ),
+}
+
+
+def older_deck_stems(suite_id):
+    '''The test-file stems that wrote decks of a known ``suite_id`` before decks recorded their stem, or None.
+
+    A suite_id not listed in ``_STEMS_BY_SUITE_ID`` came only from the test file of the same name.
+    '''
+    if suite_id not in AREA_BY_SUITE_ID:
+        return None
+    return _STEMS_BY_SUITE_ID.get(suite_id, (suite_id,))
 
 
 def suite_id_for_stem(stem):

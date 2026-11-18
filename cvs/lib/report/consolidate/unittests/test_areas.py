@@ -8,6 +8,7 @@ from cvs.lib.report.consolidate.areas import (
     AREA_BY_SUITE_ID,
     AREAS,
     UNCATEGORIZED,
+    older_deck_stems,
     ordered_areas,
     resolve_area,
     suite_id_for_stem,
@@ -97,6 +98,26 @@ class TestSuiteIdForStem(unittest.TestCase):
         self.assertIsNone(suite_id_for_stem("my_new_suite"))
         self.assertIsNone(suite_id_for_stem(""))
         self.assertIsNone(suite_id_for_stem(None))
+
+
+class TestOlderDeckStems(unittest.TestCase):
+    def test_suites_written_by_several_test_files(self):
+        self.assertEqual(older_deck_stems("rccl"), ("rccl_perf", "rccl_regression", "rccl_pairwise"))
+        self.assertIn("sglang_disagg_distributed", older_deck_stems("sglang"))
+
+    def test_other_suites_come_from_the_test_file_of_the_same_name(self):
+        self.assertEqual(older_deck_stems("rvs_cvs"), ("rvs_cvs",))
+        self.assertEqual(older_deck_stems("atom"), ("atom",))
+
+    def test_every_stem_belongs_to_its_suite_id(self):
+        for suite_id in RELEASED_SUITE_IDS:
+            for stem in older_deck_stems(suite_id):
+                with self.subTest(stem=stem):
+                    self.assertEqual(suite_id_for_stem(stem), suite_id)
+
+    def test_unknown_suite_id(self):
+        self.assertIsNone(older_deck_stems("brand_new"))
+        self.assertIsNone(older_deck_stems(None))
 
 
 class TestResolveArea(unittest.TestCase):

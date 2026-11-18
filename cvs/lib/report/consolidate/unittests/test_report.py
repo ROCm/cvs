@@ -116,6 +116,20 @@ class TestConsolidate(ReportCase):
         self.assertEqual([suite["name"] for suite in summary["suites"]], ["rccl \u00b7 pairwise", "rccl \u00b7 perf"])
         self.assertEqual(summary["verdict"], "evaluation_incomplete")
 
+    def test_rerun_with_a_renamed_pytest_report_is_the_same_suite(self):
+        renamed = {"pytest_html_path": "/home/u/cvs_reports/rvs_rc2/rvs_rc2.html"}
+        runs = {
+            "rc2": deck("rvs_cvs", "pass", generated_at="2026-11-09 08:00 UTC", provenance=renamed),
+            "preview": deck("rvs_cvs", "fail", generated_at="2026-11-10 08:00 UTC"),
+        }
+        for folder, data in runs.items():
+            (self.root / folder).mkdir()
+            (self.root / folder / "rvs_run_deck.json").write_bytes(json.dumps(data).encode("utf-8"))
+        summary = self.consolidate(str(self.root)).summary
+        self.assertEqual([suite["id"] for suite in summary["suites"]], ["rvs_cvs"])
+        rvs = summary["suites"][0]
+        self.assertEqual((rvs["status"], [run["status"] for run in rvs["history"]]), ("fail", ["pass"]))
+
     def test_several_directories_go_to_the_current_directory(self):
         write_run(self.root / "health", "rvs_cvs", deck("rvs_cvs"))
         write_run(self.root / "network", "rccl_perf", deck("rccl", "record", "series"))

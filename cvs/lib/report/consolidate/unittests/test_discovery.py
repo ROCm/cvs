@@ -143,6 +143,16 @@ class TestResolveStem(unittest.TestCase):
         data = deck("vllm", provenance={"pytest_html_path": "C:\\runs\\vllm_single.html"})
         self.assertEqual(resolve_stem(data, "vllm_run_deck.json"), "vllm_single")
 
+    def test_renamed_pytest_report_falls_back_to_the_suite_id(self):
+        data = deck("rvs_cvs", provenance={"pytest_html_path": "/home/u/cvs_reports/rvs_rc2/rvs_rc2.html"})
+        self.assertEqual(resolve_stem(data, "rvs_run_deck.json"), "rvs_cvs")
+        data = deck("sglang", provenance={"pytest_html_path": "/out/sglang_day2.html"})
+        self.assertEqual(resolve_stem(data, "sglang_run_deck.json"), "sglang")
+
+    def test_pytest_report_name_of_an_unknown_suite_is_kept(self):
+        data = deck("brand_new", provenance={"pytest_html_path": "/out/brand_new_single.html"})
+        self.assertEqual(resolve_stem(data, "brand_new_run_deck.json"), "brand_new_single")
+
     def test_bundle_name_then_suite_id(self):
         self.assertEqual(
             resolve_stem(deck("atom"), "atom_run_deck.json", Path("/r/atom_2026-11-10T193205.zip")), "atom"

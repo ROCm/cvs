@@ -15,6 +15,7 @@ import zlib
 from pathlib import Path, PurePosixPath
 
 from cvs.lib import globals
+from cvs.lib.report.consolidate.areas import older_deck_stems
 from cvs.lib.report.consolidate.warning_log import UNREADABLE_FILE
 
 log = globals.log
@@ -90,7 +91,8 @@ def resolve_stem(data, json_rel, bundle=None):
 
     In order: the deck's ``suite_stem``, the ``<stem>_html/`` folder holding it, the
     pytest report named in its provenance, the bundle name, then its ``suite_id``.
-    The folder comes before the pytest report because ``--html`` can rename the report.
+    ``--html`` can rename the pytest report, so its name counts only when it is a
+    test file known to write the deck's suite_id.
     '''
     if isinstance(data, dict):
         declared = data.get("suite_stem")
@@ -103,7 +105,11 @@ def resolve_stem(data, json_rel, bundle=None):
         provenance = data.get("provenance")
         pytest_html = provenance.get("pytest_html_path") if isinstance(provenance, dict) else None
         if isinstance(pytest_html, str) and pytest_html.strip():
-            return PurePosixPath(pytest_html.strip().replace("\\", "/")).stem
+            stem = PurePosixPath(pytest_html.strip().replace("\\", "/")).stem
+            suite_id = data.get("suite_id") if isinstance(data.get("suite_id"), str) else None
+            stems = older_deck_stems(suite_id)
+            if stems is None or stem in stems:
+                return stem
     if bundle is not None:
         match = BUNDLE_NAME.match(bundle.name)
         if match:
