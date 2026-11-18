@@ -86,6 +86,24 @@ def strip_benign_scan_noise(text):
     return ''.join(kept)
 
 
+# libibverbs probes every provider listed in /etc/libibverbs.d; on virtualized nodes the
+# VMware paravirtual provider is listed but not installed and not used. Match only that exact
+# dlopen-missing line so any other provider failure or error text is still scanned.
+# The quoted driver name may be the config name (vmw_pvrdma), the shared object name
+# (libvmw_pvrdma-rdmav34.so) or a path to it. The optional line prefix is the Open MPI
+# [rank,job]<stderr>: tag or an `srun --label` "N: " tag.
+_UNSELECTED_PVRDMA_WARNING_RE = re.compile(
+    r"(?:\[\d+,\d+\]<std(?:err|out)>:|\d+: )?\s*"
+    r"libibverbs: Warning: couldn't load driver '(?:[^'/]*/)*(?:lib)?vmw_pvrdma[^'/]*': "
+    r"\S+: cannot open shared object file: No such file or directory\s*"
+)
+
+
+def is_unselected_pvrdma_warning(line):
+    """Return True if line is only the libibverbs warning that the unused libvmw_pvrdma provider is missing."""
+    return bool(line) and _UNSELECTED_PVRDMA_WARNING_RE.fullmatch(line) is not None
+
+
 def scan_test_results(out_dict):
     """
     Scan test outputs from multiple hosts for failure indicators and report context.
