@@ -226,6 +226,7 @@ def _build_suite(variant, decks, report_root, warnings):
         "notes": result["notes"],
         "failedNodes": result["failed_nodes"],
         "nodes": result["nodes"],
+        "scope": result["scope"],
         "detailUrl": "data/details/%s.json" % variant,
         "jsonUrl": links["jsonUrl"],
         "reportUrl": links["reportUrl"],

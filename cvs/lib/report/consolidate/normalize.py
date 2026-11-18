@@ -98,6 +98,7 @@ def empty_result():
         "failed_nodes": [],
         "nodes": [],
         "host_rows": False,
+        "scope": None,
         "cluster": None,
     }
 
@@ -158,6 +159,10 @@ def _as_dict(value):
     return value if isinstance(value, dict) else {}
 
 
+def _count(number, noun):
+    return "%d %s%s" % (number, noun, "" if number == 1 else "s")
+
+
 def _status_matrix(data, matrix, result, detail):
     nodes = [text(node) for node in matrix.get("nodes") or []]
     groups = [text(group) for group in matrix.get("groups") or []]
@@ -177,6 +182,8 @@ def _status_matrix(data, matrix, result, detail):
                 detail["evidence"].append(_check_evidence(node, group, cell))
         rows[node] = row
     detail["matrix"] = {"nodes": nodes, "groups": groups, "grid": rows}
+    if nodes:
+        result["scope"] = _count(len(nodes), "node" if result["host_rows"] else "test case")
     result["total"] = len(nodes) * len(groups)
     if not result["total"]:
         _mark_partial(result, "Node/check details are unavailable.")
@@ -234,6 +241,9 @@ def _sweep(data, sweep, result, detail):
             )
         configurations.append({"label": label, "status": status, "tiers": tiers, "metrics": metrics})
     result["counts"]["unknown"] += result["total"] - len(cells)
+    hosts = result["nodes"]
+    if hosts:
+        result["scope"] = ", ".join(hosts) if len(hosts) <= 2 else _count(len(hosts), "host")
     detail["configurations"] = configurations
 
 

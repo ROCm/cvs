@@ -16,6 +16,7 @@
   };
   var REC_MARK = { failed_suite: 'fail', unavailable: 'unknown', record_only: 'record', not_evaluated: 'na', all_passed: 'pass' };
   var REC_ROWS = 5;
+  var FAILURE_ROWS = 3;
   var state = { area: 'all', status: 'all', query: '', sort: 'area', desc: false, recsOpen: {} };
   var refs = {};
   var byId = {};
@@ -394,12 +395,12 @@
     var evidence = d.evidence || [];
     if (!evidence.length) return null;
     var list = h('div', { class: 'evidence-list' });
-    evidence.slice(0, 8).forEach(function (e) { list.appendChild(evidenceItem(e)); });
+    evidence.slice(0, FAILURE_ROWS).forEach(function (e) { list.appendChild(evidenceItem(e)); });
     var more = null;
-    if (evidence.length > 8) {
-      more = h('button', { class: 'text-button', type: 'button' }, 'Show all ' + evidence.length);
+    if (evidence.length > FAILURE_ROWS) {
+      more = h('button', { class: 'text-button', type: 'button' }, 'View all ' + evidence.length + ' failures');
       more.addEventListener('click', function () {
-        evidence.slice(8).forEach(function (e) { list.appendChild(evidenceItem(e)); });
+        evidence.slice(FAILURE_ROWS).forEach(function (e) { list.appendChild(evidenceItem(e)); });
         more.remove();
       });
     }
@@ -438,12 +439,29 @@
         return h('li', null, mark(r.status), h('span', { class: 'mono' }, r.generated), link(r.reportUrl, 'Run Deck'));
       })));
   }
+  function withinSection(s) {
+    var counts = s.counts;
+    return h('section', { class: 'within' },
+      h('div', { class: 'eyebrow' }, 'Within this report'),
+      h('strong', { class: 'within-total' }, s.total ? s.total + ' ' + s.unit : 'No result counts'),
+      bar(counts),
+      h('div', { class: 'breakdown' }, STATUS_ORDER.filter(function (k) { return counts[k]; }).map(function (k) {
+        return h('span', null, h('strong', { class: 'mono' }, counts[k]), mark(k));
+      })),
+      h('p', { class: 'muted' }, 'These are result counts within this suite, separate from its overall verdict.'));
+  }
+  function factsRow(s) {
+    var facts = [['Cluster', s.cluster || 'Not specified'], ['Reported scope', s.scope || 'Not specified'], ['Generated', s.generated]];
+    return h('dl', { class: 'drawer-facts' }, facts.map(function (f) {
+      return h('div', null, h('dt', null, f[0]), h('dd', { class: 'mono' }, f[1]));
+    }));
+  }
   function contextSection(s, d) {
-    var rows = (d.metadata || []).slice();
-    function missing(label) { return !rows.some(function (r) { return String(r[0]).toLowerCase() === label.toLowerCase(); }); }
+    var inFacts = ['cluster', 'generated'];
+    var rows = (d.metadata || []).filter(function (r) { return inFacts.indexOf(String(r[0]).toLowerCase()) < 0; });
     var cvsVersion = (manifestById[s.id] || {}).cvs_version;
-    if (missing('Generated')) rows.push(['Generated', s.generated]);
-    if (cvsVersion && missing('CVS version')) rows.push(['CVS version', cvsVersion]);
+    if (cvsVersion && !rows.some(function (r) { return String(r[0]).toLowerCase() === 'cvs version'; })) rows.push(['CVS version', cvsVersion]);
+    if (!rows.length) return null;
     return h('section', { class: 'detail-section' },
       h('h3', null, 'Run context'),
       h('dl', { class: 'metadata' }, rows.map(function (r) { return h('div', null, h('dt', null, r[0]), h('dd', null, r[1])); })));
@@ -453,16 +471,10 @@
     closeDrawer();
     var d = details[s.id] || { metadata: [], evidence: [] };
     var lastFocus = document.activeElement;
-    var counts = s.counts;
-    var caption = s.unit === 'recorded result rows' ? s.total + ' recorded result rows'
-      : s.status === 'na' ? s.total + ' ' + s.unit + ' \u00b7 not evaluated'
-        : counts.fail + ' of ' + s.total + ' ' + s.unit + ' failed';
     var closeButton = h('button', { class: 'icon-button', type: 'button', 'aria-label': 'Close details', onclick: closeDrawer }, '\u00d7');
     var body = h('div', { class: 'drawer-body' },
-      h('div', { class: 'detail-status' }, mark(s.status), h('span', { class: 'mono' }, caption)),
-      h('div', { class: 'breakdown' }, STATUS_ORDER.filter(function (k) { return counts[k]; }).map(function (k) {
-        return h('span', null, h('strong', { class: 'mono' }, counts[k]), mark(k));
-      })),
+      withinSection(s),
+      factsRow(s),
       h('div', { class: 'artifact-actions' },
         link(s.reportUrl, 'Open Run Deck', true), link(s.viewerUrl, 'Interactive viewer'),
         link(s.pytestUrl, 'Pytest report'), link(s.logUrl, 'Run log'), link(s.jsonUrl, 'Source JSON')),
@@ -471,7 +483,7 @@
     var drawer = h('div', { class: 'drawer', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'drawer-title' },
       h('div', { class: 'drawer-header' },
         h('div', null, h('div', { class: 'eyebrow' }, s.category + ' / Run Deck'), h('h2', { id: 'drawer-title' }, s.name)),
-        closeButton),
+        h('div', { class: 'drawer-header-actions' }, mark(s.status), closeButton)),
       body);
     var layer = h('div', { class: 'drawer-layer' }, h('div', { class: 'drawer-backdrop', onclick: closeDrawer }), drawer);
     refs.drawer = { layer: layer, lastFocus: lastFocus };

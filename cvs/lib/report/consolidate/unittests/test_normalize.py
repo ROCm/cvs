@@ -33,6 +33,7 @@ class TestStatusMatrix(unittest.TestCase):
         self.assertEqual(result["nodes"], ["n1", "n2"])
         self.assertEqual(result["failed_nodes"], ["n1"])
         self.assertTrue(result["host_rows"])
+        self.assertEqual(result["scope"], "2 nodes")
         self.assertFalse(result["partial"])
         self.assertEqual(detail["matrix"]["grid"]["n1"], {"gst": "fail", "mem": "pass"})
 
@@ -79,11 +80,13 @@ class TestStatusMatrix(unittest.TestCase):
             with self.subTest(suite_id=suite_id):
                 result, _ = normalize(deck(suite_id, dataset=status_matrix({"case": {"bw": "pass"}})))
                 self.assertFalse(result["host_rows"])
+                self.assertEqual(result["scope"], "1 test case")
 
     def test_empty_matrix_is_partial(self):
         result, _ = normalize(deck("rvs_cvs", "na", dataset=status_matrix({})))
         self.assertTrue(result["partial"])
         self.assertIn("Node/check details are unavailable.", result["notes"])
+        self.assertIsNone(result["scope"])
 
 
 class TestSweep(unittest.TestCase):
@@ -99,6 +102,7 @@ class TestSweep(unittest.TestCase):
         self.assertEqual(result["total"], 3)
         self.assertEqual({k: v for k, v in result["counts"].items() if v}, {"pass": 1, "fail": 1, "record": 1})
         self.assertEqual(result["failed_nodes"], ["10.0.0.1"])
+        self.assertEqual(result["scope"], "10.0.0.1")
         self.assertEqual([c["label"] for c in detail["configurations"]], ["c1", "c2", "c3"])
         self.assertEqual(detail["evidence"][0]["subject"], "c2")
         self.assertEqual(detail["evidence"][0]["message"], "Failed gates: throughput")
@@ -111,6 +115,14 @@ class TestSweep(unittest.TestCase):
         self.assertEqual(result["counts"]["fail"], 1)
         self.assertEqual(detail["evidence"][0]["message"], "One or more measured metrics failed.")
         self.assertEqual(detail["evidence"][0]["metrics"][0]["target"], "\u2265 100")
+
+    def test_scope_names_up_to_two_hosts_and_counts_more(self):
+        two = [_sweep_cell("a", {"t": "pass"}, host="cluster"), _sweep_cell("b", {"t": "pass"}, host="node-01")]
+        result, _ = normalize(deck("megatron", "pass", "training_sweep", {"all_cells": two}))
+        self.assertEqual(result["scope"], "cluster, node-01")
+        three = [_sweep_cell(str(i), {"t": "pass"}, host="node-0%d" % i) for i in range(3)]
+        result, _ = normalize(deck("vllm", "pass", "sweep", {"all_cells": three}))
+        self.assertEqual(result["scope"], "3 hosts")
 
     def test_truncated_cells_without_all_cells_are_partial(self):
         data = deck("sglang", "pass", "sweep", {}, cells=[_sweep_cell("c1", {"throughput": "pass"})])
@@ -131,6 +143,7 @@ class TestSeries(unittest.TestCase):
         result, detail = normalize(deck("rccl", "record", "series", {"results_table": table}))
         self.assertEqual(result["unit"], UNIT_ROWS)
         self.assertEqual((result["total"], result["counts"]["record"]), (2, 2))
+        self.assertIsNone(result["scope"])
         self.assertEqual(detail["table"]["rows"][0], ["all_reduce", "1024", "101.25"])
         self.assertIn("Measurements are recorded without a pass/fail verdict.", result["notes"])
 
