@@ -137,6 +137,7 @@ def build_report(decks, report_root, warnings):
         detail = dict(details[suite["id"]], schema_version=SCHEMA_VERSION, summary=suite)
         writer.write_json(report_root / suite["detailUrl"], detail)
     writer.write_json(report_root / "summary.json", summary)
+    writer.copy_fonts(report_root)
     page_data = {
         "summary": summary,
         "details": details,
