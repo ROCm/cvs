@@ -2,7 +2,7 @@
   "schema_version": 1,
   "profile_id": "health_status_base",
   "suite_id": "health_status",
-  "area": "Burn-in / Diag",
+  "area": "Health",
   "report_basename": "health_status_run_deck",
   "title": "Health Run Deck",
   "subtitle": "Health results across the cluster",

@@ -83,9 +83,7 @@ class TestConsolidate(ReportCase):
         self.assertFalse(any(key.startswith("_") for suite in summary["suites"] for key in suite))
 
         rvs = suites["rvs_cvs"]
-        self.assertEqual(
-            (rvs["status"], rvs["category"], rvs["failedNodes"]), ("fail", "Burn-in / Diag", ["10.0.0.1_node-01"])
-        )
+        self.assertEqual((rvs["status"], rvs["category"], rvs["failedNodes"]), ("fail", "Health", ["10.0.0.1_node-01"]))
         self.assertEqual([run["status"] for run in rvs["history"]], ["pass"])
         self.assertIn(rvs["reportUrl"], files)
         self.assertIn(rvs["history"][0]["reportUrl"], files)

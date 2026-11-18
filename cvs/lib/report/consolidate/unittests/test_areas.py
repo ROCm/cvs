@@ -122,7 +122,7 @@ class TestOlderDeckStems(unittest.TestCase):
 
 class TestResolveArea(unittest.TestCase):
     def test_declared_area_wins(self):
-        self.assertEqual(resolve_area({"suite_id": "rvs_cvs", "area": " Health "}), "Health")
+        self.assertEqual(resolve_area({"suite_id": "rvs_cvs", "area": " Storage "}), "Storage")
 
     def test_older_deck_uses_the_table(self):
         self.assertEqual(resolve_area({"suite_id": "vllm"}, "vllm_single"), "Inference")
@@ -137,8 +137,8 @@ class TestResolveArea(unittest.TestCase):
 
 class TestOrderedAreas(unittest.TestCase):
     def test_standard_areas_then_declared_ones_then_uncategorized(self):
-        used = ["Network", UNCATEGORIZED, "Health", "Inference", "Health"]
-        self.assertEqual(ordered_areas(used), list(AREAS) + ["Health", UNCATEGORIZED])
+        used = ["Network", UNCATEGORIZED, "Storage", "Inference", "Storage"]
+        self.assertEqual(ordered_areas(used), list(AREAS) + ["Storage", UNCATEGORIZED])
 
     def test_uncategorized_only_when_used(self):
         self.assertEqual(ordered_areas(["Training"]), list(AREAS))

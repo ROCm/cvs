@@ -26,7 +26,7 @@ class TestDeckIdentity(unittest.TestCase):
     def test_child_profile_inherits_the_area_of_its_base(self):
         store = {"cvs_results_dict": {"groups": {"g": {"nodes": {"n1": {"status": "pass"}}}}}, "suite_stem": "rvs_cvs"}
         payload = build_rundeck_payload(profile=load_json_profile("rvs_cvs"), store=store)
-        self.assertEqual((payload["suite_stem"], payload["area"]), ("rvs_cvs", "Burn-in / Diag"))
+        self.assertEqual((payload["suite_stem"], payload["area"]), ("rvs_cvs", "Health"))
 
     def test_unknown_stem_and_area_are_left_out(self):
         payload = build_rundeck_payload(profile=generic_sweep_profile(), store=_sweep_store(), cvs_version="1")

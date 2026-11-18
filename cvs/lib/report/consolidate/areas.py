@@ -11,14 +11,14 @@ deck writes its own area. The same goes for ``older_deck_stems``, because every
 newer deck also records the test file that wrote it.
 '''
 
-AREAS = ("Burn-in / Diag", "Network", "Training", "Inference")
+AREAS = ("Health", "Network", "Training", "Inference")
 UNCATEGORIZED = "Uncategorized"
 
 _ANC_TESTS = ("babel", "basic", "computerocker", "cpu", "gemm", "gpu", "memrocker", "oblex", "pcie", "ualink", "xgmi")
 _ARC_TESTS = ("anc", "diag", "disruptive", "disruptive_flows", "examples", "flows", "telemetry", "workload")
 
 SUITE_IDS_BY_AREA = {
-    "Burn-in / Diag": (
+    "Health": (
         "agfhc_cvs",
         "csp_qual_agfhc",
         "rvs_cvs",
