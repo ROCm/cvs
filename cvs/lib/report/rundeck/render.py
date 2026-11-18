@@ -11,6 +11,7 @@ import html
 
 from cvs.lib.report.formatting import status_badge_html
 from cvs.lib.report.rundeck.payload import default_deck_cards
+from cvs.lib.report.rundeck.runtime.ailab import THEME_BOOT_SCRIPT, header_html
 from cvs.lib.report.rundeck.runtime.cards import close_gate_matrix_section, render_card, reset_table_ids
 from cvs.lib.report.rundeck.runtime.theme import report_css
 
@@ -99,7 +100,9 @@ def render_rundeck_html(payload: dict) -> str:
     document = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>{html.escape(report.get('title', 'Run Deck'))} &mdash; {html.escape(str(model_label))}</title>
+{THEME_BOOT_SCRIPT}
 <style>{report_css()}</style></head><body><div class="wrap" id="top">
+{header_html('Run Deck', toggle=True)}
 <div class="hero-head"><div><h1>{html.escape(report.get('title', 'Run Deck'))}</h1>
 <p class="subtitle">{html.escape(report.get('subtitle', ''))}</p></div>{status_badge_html(overall)}</div>
 {nav}

@@ -49,6 +49,8 @@ class TestViewerScaffold(unittest.TestCase):
             self.assertIn("Chart.js v4.4.1", text)
             self.assertIn("chartjs-plugin-zoom v2.0.1", text)
             self.assertNotIn("<script src=", text)
+            self.assertIn('<div class="ail-header"', text)
+            self.assertNotIn("__THEME_", text)
             self.assertIn("comparison-grid", text)
             self.assertIn("interactivity-block", text)
             self.assertIn("interactivity-panel", text)

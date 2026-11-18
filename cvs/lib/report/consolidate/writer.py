@@ -17,12 +17,15 @@ from pathlib import Path, PurePosixPath
 from cvs.lib import globals
 from cvs.lib.report.consolidate.discovery import ATTACHMENTS_SUFFIX
 from cvs.lib.report.consolidate.warning_log import UNREADABLE_FILE
+from cvs.lib.report.rundeck.runtime.ailab import OVERVIEW_LINK_MARKER, THEME_BOOT_SCRIPT, tokens_css
 
 log = globals.log
 
 PAGE_DIR = Path(__file__).with_name("page")
 BACK_LINK_ID = "cvs-consolidated-report-link"
 LARGE_ZIP_BYTES = 500 * 1024 * 1024
+_HEADER_LINK = '<a id="%s" class="ail-back" href="%s">&larr; Consolidated report</a>'
+# Decks written before the CVS header have no slot for the link, so it gets a bar of its own.
 _BACK_LINK = (
     '<nav id="%s" style="font:13px/1.5 system-ui,sans-serif;padding:8px 16px;'
     'border-bottom:1px solid rgba(128,128,128,.35)"><a href="%s">&larr; Consolidated report</a></nav>'
@@ -143,11 +146,14 @@ def add_back_link(page, report_root):
         return False
     if BACK_LINK_ID in document:
         return False
-    href = os.path.relpath(report_root / "index.html", page.parent).replace(os.sep, "/")
-    nav = _BACK_LINK % (BACK_LINK_ID, html.escape(href))
-    updated, count = _BODY_TAG.subn(lambda match: match.group(0) + nav, document, count=1)
-    if not count:
-        return False
+    href = html.escape(os.path.relpath(report_root / "index.html", page.parent).replace(os.sep, "/"))
+    if OVERVIEW_LINK_MARKER in document:
+        updated = document.replace(OVERVIEW_LINK_MARKER, _HEADER_LINK % (BACK_LINK_ID, href), 1)
+    else:
+        nav = _BACK_LINK % (BACK_LINK_ID, href)
+        updated, count = _BODY_TAG.subn(lambda match: match.group(0) + nav, document, count=1)
+        if not count:
+            return False
     page.write_text(updated, encoding="utf-8")
     return True
 
@@ -155,10 +161,11 @@ def add_back_link(page, report_root):
 def render_index(page_data):
     '''The overview page, with its data embedded so it opens from disk without a server.'''
     template = (PAGE_DIR / "overview.html").read_text(encoding="utf-8")
-    css = (PAGE_DIR / "overview.css").read_text(encoding="utf-8")
+    css = tokens_css() + (PAGE_DIR / "overview.css").read_text(encoding="utf-8")
     script = (PAGE_DIR / "overview.js").read_text(encoding="utf-8")
     payload = json.dumps(page_data, separators=(",", ":"), ensure_ascii=False).replace("<", "\\u003c")
-    return template.replace("__CSS__", css).replace("__JS__", script).replace("__DATA__", payload)
+    page = template.replace("__THEME_BOOT__", THEME_BOOT_SCRIPT).replace("__CSS__", css).replace("__JS__", script)
+    return page.replace("__DATA__", payload)
 
 
 def write_json(path, data):

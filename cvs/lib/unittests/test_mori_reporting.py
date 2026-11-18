@@ -6,6 +6,7 @@ from cvs.lib.mori_reporting import record_ibgda_results, record_io_results, reco
 from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.lib.report.rundeck.render import render_rundeck_html
+from cvs.lib.report.rundeck.runtime.ailab import THEME_BOOT_SCRIPT
 
 MIB = 1 << 20
 VARIANT = {"hosts": ["host-a", "host-b"], "initiator": "host-a", "mori_device_list": "rdma0,rdma1,rdma2"}
@@ -220,7 +221,7 @@ class TestMoriDeckProfile(unittest.TestCase):
             "MI355X",
         ):
             self.assertIn(text, document)
-        self.assertNotIn("<script", document)
+        self.assertNotIn("<script", document.replace(THEME_BOOT_SCRIPT, ""))
         self.assertNotIn("id='failed-tests'", document)
         self.assertNotIn("<table class='status-matrix'>", document)
         self.assertNotIn("Viewer</a>", document)

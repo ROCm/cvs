@@ -9,6 +9,7 @@ from cvs.lib.report.render.cell_card import CellCardConfig, CellCardRenderer
 from cvs.lib.report.render.gate_matrix import gate_heatmap_css, gate_matrix_table_css
 from cvs.lib.report.render.loss_chart import loss_chart_css
 from cvs.lib.report.render.sweep_charts import chart_tooltip_css
+from cvs.lib.report.rundeck.runtime.ailab import theme_css
 
 
 def report_css() -> str:
@@ -235,6 +236,7 @@ footer.page-foot { text-align: center; color: var(--muted); font-size: 0.75rem; 
 }
 """
         + gate_heatmap_css()
+        + theme_css("deck")
     )
 
 

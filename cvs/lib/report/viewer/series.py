@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from cvs.lib.report.artifacts import export_payload
+from cvs.lib.report.rundeck.runtime.ailab import header_html, viewer_theme_head
 from cvs.lib.report.viewer.chart_libs import chart_scripts
 from cvs.lib.report.viewer.paging import page_tables_js
 
@@ -34,6 +35,8 @@ def write_series_viewer(out_html, *, json_basename, title, subtitle="", embed_pa
     subtitle = subtitle or "Interactive series explorer (loads sibling JSON sidecar)"
     doc = (
         template.replace("__CHART_LIBS__", chart_scripts(zoom=True))
+        .replace("__THEME_HEAD__", viewer_theme_head())
+        .replace("__THEME_HEADER__", header_html("Run Deck viewer"))
         .replace("__TITLE__", html.escape(title))
         .replace("__SUBTITLE__", html.escape(subtitle))
         .replace("__JSON_PATH__", json.dumps(json_basename))
