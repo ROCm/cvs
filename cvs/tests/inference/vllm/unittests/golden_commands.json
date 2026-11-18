@@ -482,6 +482,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -827,6 +828,7 @@
     "suite": "vllm_single",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -1320,6 +1322,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -1816,6 +1819,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -2164,6 +2168,7 @@
     "suite": "vllm_single",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -2659,6 +2664,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -3007,6 +3013,7 @@
     "suite": "vllm_single",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -3502,6 +3509,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -3998,6 +4006,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -4346,6 +4355,7 @@
     "suite": "vllm_single",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -4841,6 +4851,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -5189,6 +5200,7 @@
     "suite": "vllm_single",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -5680,6 +5692,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -6025,6 +6038,7 @@
     "suite": "vllm_single",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -6522,6 +6536,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -6872,6 +6887,7 @@
     "suite": "vllm_single",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -7370,6 +7386,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -7715,6 +7732,7 @@
     "suite": "vllm_single",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -8213,6 +8231,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -8558,6 +8577,7 @@
     "suite": "vllm_single",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -8775,6 +8795,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -9118,6 +9139,7 @@
     "suite": "vllm_single",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -9472,6 +9494,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -9816,6 +9839,7 @@
     "suite": "vllm_single",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -10308,6 +10332,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -10653,6 +10678,7 @@
     "suite": "vllm_single",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -11007,6 +11033,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -11351,6 +11378,7 @@
     "suite": "vllm_single",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -11845,6 +11873,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -12337,6 +12366,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -12682,6 +12712,7 @@
     "suite": "vllm_single",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -13174,6 +13205,7 @@
     "suite": "vllm_distributed",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
@@ -13339,6 +13371,7 @@
     "suite": "vllm_single",
     "test_ids": [
       "test_launch_container",
+      "test_support_matrix_gate",
       "test_setup_sshd",
       "test_discover_topology",
       "test_model_fetch",
