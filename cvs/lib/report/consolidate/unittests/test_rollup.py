@@ -162,20 +162,30 @@ class TestRecommendations(unittest.TestCase):
         recs = recommendations(suites)
         self.assertEqual(
             recs[0],
-            {"kind": "repeat_host", "suite": None, "message": "node-01 failed in 2 suites: RVS, AGFHC.", "link": None},
+            {
+                "kind": "repeat_host",
+                "suite": None,
+                "message": "node-01 failed in 2 suites: RVS, AGFHC.",
+                "link": None,
+                "host": "node-01",
+                "failed_in": ["RVS", "AGFHC"],
+                "reported_by": ["RVS", "AGFHC"],
+            },
         )
 
     def test_failed_suite_message_counts_in_its_unit_and_names_nodes(self):
         nodes = ["n%d" % i for i in range(6)]
         failed = suite("rvs_cvs", "fail", name="RVS", total=24, nodes=nodes, failedNodes=nodes)
         failed["counts"]["fail"] = 6
-        message = recommendations([failed])[0]["message"]
-        self.assertEqual(message, "RVS: 6 of 24 node/check groups failed on n0, n1, n2, n3 and 2 more.")
+        rec = recommendations([failed])[0]
+        self.assertEqual(rec["message"], "RVS: 6 of 24 node/check groups failed on n0, n1, n2, n3 and 2 more.")
+        self.assertEqual(rec["detail"], "6 of 24 node/check groups failed on n0, n1, n2, n3 and 2 more.")
 
     def test_failed_suite_without_failed_rows_points_to_its_deck(self):
         failed = suite("rccl_perf", "fail", name="RCCL \u00b7 perf", unit="recorded result rows", _host_rows=False)
         rec = recommendations([failed])[0]
         self.assertEqual(rec["message"], "RCCL \u00b7 perf reported a failure; open its Run Deck for details.")
+        self.assertEqual(rec["detail"], "Reported a failure; open its Run Deck for details.")
         self.assertEqual(rec["link"], "runs/rccl_perf/r/deck.html")
 
     def test_unavailable_record_only_and_not_evaluated(self):
@@ -184,13 +194,18 @@ class TestRecommendations(unittest.TestCase):
             suite("c", "record", name="C"),
             suite("d", "na", name="D"),
         ]
-        kinds = [(rec["kind"], rec["message"]) for rec in recommendations(suites)]
+        kinds = [(rec["kind"], rec["message"], rec["detail"]) for rec in recommendations(suites)]
+        unreadable = "/runs/b/deck.json could not be read; rerun the suite or regenerate its Run Deck."
         self.assertEqual(
             kinds,
             [
-                ("unavailable", "B: /runs/b/deck.json could not be read; rerun the suite or regenerate its Run Deck."),
-                ("record_only", "C has no pass/fail gate; review its measurements."),
-                ("not_evaluated", "D: nothing was evaluated."),
+                ("unavailable", "B: " + unreadable, unreadable),
+                (
+                    "record_only",
+                    "C has no pass/fail gate; review its measurements.",
+                    "Has no pass/fail gate; review its measurements.",
+                ),
+                ("not_evaluated", "D: nothing was evaluated.", "Nothing was evaluated."),
             ],
         )
 

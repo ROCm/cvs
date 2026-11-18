@@ -162,11 +162,6 @@ def theme_css(page="deck"):
     return tokens_css(light=deck) + _BASE_CSS + _STATUS_MARKS_CSS + (_DECK_CSS if deck else "") + _PRINT_CSS
 
 
-def viewer_theme_head():
-    '''The ``<style>`` element that goes at the end of a viewer's ``<head>``.'''
-    return "<style>%s</style>" % theme_css("viewer")
-
-
 def header_html(context, toggle=False):
     '''The CVS header: brand, page context, the slot for the consolidated report's back-link, and a theme toggle.'''
     button = ""
@@ -180,6 +175,13 @@ def header_html(context, toggle=False):
         'Cluster Validation Suite</span></span><span class="cvs-divider" aria-hidden="true"></span>'
         '<span class="cvs-context">%s</span>%s%s</div>'
         % (_BRAND_MARK, html.escape(context), OVERVIEW_LINK_MARKER, button)
+    )
+
+
+def theme_viewer(template):
+    '''A viewer template with its theme stylesheet and CVS header filled in.'''
+    return template.replace("__THEME_HEAD__", "<style>%s</style>" % theme_css("viewer")).replace(
+        "__THEME_HEADER__", header_html("Run Deck viewer")
     )
 
 

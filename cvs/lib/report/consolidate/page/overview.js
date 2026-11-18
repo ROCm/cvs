@@ -154,22 +154,16 @@
   function recMark(value) {
     return h('span', { class: 'status status-' + value + ' rec-mark', 'aria-hidden': 'true' }, h('span', { class: 'status-glyph' }));
   }
-  function recDetail(r, suite) {
-    var message = r.message || '', rest = message;
-    if (message.indexOf(suite.name + ': ') === 0) rest = message.slice(suite.name.length + 2);
-    else if (message.indexOf(suite.name + ' ') === 0) rest = message.slice(suite.name.length + 1);
-    return rest.charAt(0).toUpperCase() + rest.slice(1);
-  }
-  function hostRec(x) {
-    var names = x.failed_in, detail = h('div', { class: 'rec-detail' }, names.slice(0, 3).join(', '));
+  function hostRec(r) {
+    var names = r.failed_in, detail = h('div', { class: 'rec-detail' }, names.slice(0, 3).join(', '));
     if (names.length > 3) {
       var more = h('button', { class: 'rec-more', type: 'button' }, '+' + (names.length - 3) + ' more');
       more.addEventListener('click', function () { clear(detail); add(detail, names.join(', ')); });
       add(detail, [' ', more]);
     }
     return h('li', null,
-      h('div', { class: 'rec-line' }, recMark('fail'), h('span', { class: 'rec-name mono' }, x.host),
-        h('span', { class: 'rec-meta' }, 'failed in ' + names.length + ' of ' + x.suites.length + ' suites')),
+      h('div', { class: 'rec-line' }, recMark('fail'), h('span', { class: 'rec-name mono' }, r.host),
+        h('span', { class: 'rec-meta' }, 'failed in ' + names.length + ' of ' + r.reported_by.length + ' suites')),
       detail);
   }
   function suiteRec(r) {
@@ -178,7 +172,7 @@
       h('div', { class: 'rec-line' }, recMark(REC_MARK[r.kind] || 'unknown'), suite
         ? h('button', { class: 'link-button rec-name', type: 'button', onclick: function () { openDrawer(suite); } }, suite.name)
         : h('span', { class: 'rec-name' }, r.message)),
-      suite ? h('div', { class: 'rec-detail' }, recDetail(r, suite)) : null);
+      suite ? h('div', { class: 'rec-detail' }, r.detail) : null);
   }
   function recGroup(key, label, items, render) {
     var list = h('ul', { class: 'rec-list' });
@@ -196,8 +190,7 @@
   }
   function recommendationsPanel() {
     var recs = summary.recommendations || [];
-    var hosts = ((summary.manifest || {}).hosts || []).filter(function (x) { return (x.failed_in || []).length >= 2; });
-    hosts.sort(function (a, b) { return b.failed_in.length - a.failed_in.length || (a.host < b.host ? -1 : a.host > b.host ? 1 : 0); });
+    var hosts = recs.filter(function (r) { return r.kind === 'repeat_host'; });
     var failed = recs.filter(function (r) { return r.kind === 'failed_suite'; });
     var review = recs.filter(function (r) { return ['unavailable', 'record_only', 'not_evaluated'].indexOf(r.kind) >= 0; });
     var passed = recs.filter(function (r) { return r.kind === 'all_passed'; })[0];

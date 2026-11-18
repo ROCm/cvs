@@ -120,50 +120,60 @@ def _hosts(suites):
     return hosts
 
 
-def _recommendation(kind, message, suite=None):
-    return {
+def _recommendation(kind, message, suite=None, **facts):
+    rec = {
         "kind": kind,
         "suite": suite["id"] if suite else None,
         "message": message,
         "link": suite["reportUrl"] if suite else None,
     }
+    rec.update(facts)
+    return rec
 
 
-def _failure_message(suite):
+def _suite_recommendation(kind, suite, detail, message=None):
+    '''``detail`` is shown under the suite's name; ``message`` states the fact alone, by default "<name>: <detail>".'''
+    return _recommendation(kind, message or "%s: %s" % (suite["name"], detail), suite, detail=detail)
+
+
+def _failed_suite(suite):
     if not suite["counts"]["fail"]:
-        return "%s reported a failure; open its Run Deck for details." % suite["name"]
+        return _suite_recommendation(
+            "failed_suite",
+            suite,
+            "Reported a failure; open its Run Deck for details.",
+            "%s reported a failure; open its Run Deck for details." % suite["name"],
+        )
     where = ""
     if suite["_host_rows"] and suite["failedNodes"]:
         shown = suite["failedNodes"][:MAX_HOSTS_IN_MESSAGE]
         more = len(suite["failedNodes"]) - len(shown)
         where = " on " + ", ".join(shown) + (" and %d more" % more if more else "")
-    return "%s: %d of %d %s failed%s." % (suite["name"], suite["counts"]["fail"], suite["total"], suite["unit"], where)
+    detail = "%d of %d %s failed%s." % (suite["counts"]["fail"], suite["total"], suite["unit"], where)
+    return _suite_recommendation("failed_suite", suite, detail)
 
 
 def recommendations(suites):
     '''Facts from the decks, with no thresholds of their own, in the order a reader should act on them.'''
     recs = []
-    repeated = [(host, entry["failed_in"]) for host, entry in _hosts(suites).items() if len(entry["failed_in"]) >= 2]
-    for host, names in sorted(repeated, key=lambda item: (-len(item[1]), item[0])):
-        recs.append(
-            _recommendation("repeat_host", "%s failed in %d suites: %s." % (host, len(names), ", ".join(names)))
-        )
+    repeated = [(host, entry) for host, entry in _hosts(suites).items() if len(entry["failed_in"]) >= 2]
+    for host, entry in sorted(repeated, key=lambda item: (-len(item[1]["failed_in"]), item[0])):
+        names = entry["failed_in"]
+        message = "%s failed in %d suites: %s." % (host, len(names), ", ".join(names))
+        recs.append(_recommendation("repeat_host", message, host=host, failed_in=names, reported_by=entry["suites"]))
     by_name = sorted(suites, key=lambda suite: suite["name"].lower())
-    for suite in by_name:
-        if suite["status"] == "fail":
-            recs.append(_recommendation("failed_suite", _failure_message(suite), suite))
+    recs.extend(_failed_suite(suite) for suite in by_name if suite["status"] == "fail")
     for suite in by_name:
         if not suite["available"]:
-            message = "%s: %s could not be read; rerun the suite or regenerate its Run Deck." % (
-                suite["name"],
-                suite["_source"],
-            )
-            recs.append(_recommendation("unavailable", message, suite))
+            detail = "%s could not be read; rerun the suite or regenerate its Run Deck." % suite["_source"]
+            recs.append(_suite_recommendation("unavailable", suite, detail))
         elif suite["status"] == "record":
+            detail = "Has no pass/fail gate; review its measurements."
             message = "%s has no pass/fail gate; review its measurements." % suite["name"]
-            recs.append(_recommendation("record_only", message, suite))
+            recs.append(_suite_recommendation("record_only", suite, detail, message))
         elif suite["status"] == "na":
-            recs.append(_recommendation("not_evaluated", "%s: nothing was evaluated." % suite["name"], suite))
+            message = "%s: nothing was evaluated." % suite["name"]
+            recs.append(_suite_recommendation("not_evaluated", suite, "Nothing was evaluated.", message))
     if not recs:
         recs.append(_recommendation("all_passed", "No action needed for the included suites."))
     return recs

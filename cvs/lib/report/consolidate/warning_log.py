@@ -25,6 +25,3 @@ class WarningLog:
     def add(self, code, message, file=None):
         log.warning("%s", message)
         self.entries.append({"code": code, "message": message, "file": str(file) if file else None})
-
-    def has(self, code):
-        return any(entry["code"] == code for entry in self.entries)

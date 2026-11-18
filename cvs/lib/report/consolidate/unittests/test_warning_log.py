@@ -22,14 +22,6 @@ class TestWarningLog(unittest.TestCase):
             warnings.add(TIED_TIMESTAMP, "Two runs tie.")
         self.assertIsNone(warnings.entries[0]["file"])
 
-    def test_has(self):
-        warnings = WarningLog()
-        self.assertFalse(warnings.has(INVALID_DECK))
-        with self.assertLogs(level="WARNING"):
-            warnings.add(INVALID_DECK, "bad")
-        self.assertTrue(warnings.has(INVALID_DECK))
-        self.assertFalse(warnings.has(TIED_TIMESTAMP))
-
 
 if __name__ == "__main__":
     unittest.main()

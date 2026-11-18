@@ -20,7 +20,7 @@ from cvs.lib.report.consolidate.warning_log import UNREADABLE_FILE
 
 log = globals.log
 
-SCHEMA_VERSION = 1
+DECK_SCHEMA_VERSION = 1
 OUTPUT_PREFIX = "consolidated_report_"
 WORK_PREFIX = ".consolidated_report"
 ATTACHMENTS_SUFFIX = "_html"
@@ -77,7 +77,7 @@ def is_candidate(data):
 def is_valid(data):
     return (
         is_candidate(data)
-        and data.get("schema_version") == SCHEMA_VERSION
+        and data.get("schema_version") == DECK_SCHEMA_VERSION
         and isinstance(data.get("overall_status"), str)
         and bool(data.get("overall_status"))
         and isinstance(data.get("datasets"), dict)

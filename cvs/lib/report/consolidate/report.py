@@ -36,10 +36,6 @@ class ConsolidationResult:
         self.found = found
         self.duplicates = duplicates
 
-    @property
-    def verdict(self):
-        return self.summary["verdict"]
-
 
 def resolve_log_dirs(log_dirs):
     '''Directories to search, from a comma-separated string or a list. Raises ConsolidationError for a missing one.'''

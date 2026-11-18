@@ -34,7 +34,11 @@ class TestThemeCss(unittest.TestCase):
         self.assertNotIn(".summary-stat", css)
         self.assertIn(".status-badge.status-fail::before", css)
         self.assertIn(".cvs-header", css)
-        self.assertEqual(theme.viewer_theme_head(), "<style>%s</style>" % css)
+
+    def test_viewer_template_gets_the_viewer_theme_and_header(self):
+        page = theme.theme_viewer("<head>__THEME_HEAD__</head><body>__THEME_HEADER__</body>")
+        self.assertIn("<style>%s</style></head>" % theme.theme_css("viewer"), page)
+        self.assertIn("<body>%s</body>" % theme.header_html("Run Deck viewer"), page)
 
     def test_deck_stylesheet_ends_with_the_theme(self):
         self.assertTrue(theme.report_css().endswith(theme.theme_css("deck")))
