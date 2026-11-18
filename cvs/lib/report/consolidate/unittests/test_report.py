@@ -255,7 +255,7 @@ class TestPublishedDecks(ReportCase):
         self.assertEqual(detail["evidence"][0]["message"], "fp8 low")
         for key in ("reportUrl", "viewerUrl"):
             with self.subTest(page=key):
-                self.assertIn(b'<a id="cvs-consolidated-report-link" class="ail-back"', files[rvs[key]])
+                self.assertIn(b'<a id="cvs-consolidated-report-link" class="cvs-back"', files[rvs[key]])
 
 
 if __name__ == "__main__":

@@ -11,9 +11,8 @@ import html
 
 from cvs.lib.report.formatting import status_badge_html
 from cvs.lib.report.rundeck.payload import default_deck_cards
-from cvs.lib.report.rundeck.runtime.ailab import THEME_BOOT_SCRIPT, header_html
 from cvs.lib.report.rundeck.runtime.cards import close_gate_matrix_section, render_card, reset_table_ids
-from cvs.lib.report.rundeck.runtime.theme import report_css
+from cvs.lib.report.rundeck.runtime.theme import THEME_BOOT_SCRIPT, header_html, report_css
 
 
 def _cards_from_payload(payload: dict) -> list[dict]:

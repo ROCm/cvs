@@ -4,7 +4,7 @@ import unittest
 
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.lib.report.rundeck.render import render_rundeck_html
-from cvs.lib.report.rundeck.runtime.ailab import OVERVIEW_LINK_MARKER, THEME_BOOT_SCRIPT
+from cvs.lib.report.rundeck.runtime.theme import OVERVIEW_LINK_MARKER, THEME_BOOT_SCRIPT
 from cvs.lib.report.testing.fixtures import generic_sweep_profile, generic_variant, two_cell_inf_res
 
 
@@ -16,9 +16,9 @@ class TestDeckPage(unittest.TestCase):
 
     def test_page_starts_with_the_cvs_header_and_theme_toggle(self):
         body = self.page.split("<body>", 1)[1]
-        self.assertTrue(body.startswith('<div class="wrap" id="top">\n<div class="ail-header"'))
+        self.assertTrue(body.startswith('<div class="wrap" id="top">\n<div class="cvs-header"'))
         self.assertIn(OVERVIEW_LINK_MARKER, body)
-        self.assertIn('class="ail-theme"', body)
+        self.assertIn('class="cvs-theme-toggle"', body)
 
     def test_theme_is_set_before_the_styles_apply(self):
         head = self.page.split("</head>", 1)[0]

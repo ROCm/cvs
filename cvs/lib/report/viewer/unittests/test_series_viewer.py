@@ -52,8 +52,8 @@ class TestSeriesViewer(unittest.TestCase):
         for placeholder in ("__TITLE__", "__SUBTITLE__", "__JSON_PATH__", "__EMBEDDED_JSON__", "__PAGE_TABLES_JS__"):
             self.assertNotIn(placeholder, text)
         self.assertNotIn("__THEME_", text)
-        self.assertIn('<div class="ail-header"', text)
-        self.assertNotIn("ail-theme", text)
+        self.assertIn('<div class="cvs-header"', text)
+        self.assertNotIn("cvs-theme-toggle", text)
         self.assertIn('id="embedded-report-json"', text)
         self.assertIn(chart_title, text)
         self.assertIn("all_reduce_perf", text)

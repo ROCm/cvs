@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from cvs.lib.report.artifacts import export_payload
-from cvs.lib.report.rundeck.runtime.ailab import header_html, viewer_theme_head
+from cvs.lib.report.rundeck.runtime.theme import header_html, viewer_theme_head
 from cvs.lib.report.viewer.chart_libs import chart_scripts
 from cvs.lib.report.viewer.paging import page_tables_js
 

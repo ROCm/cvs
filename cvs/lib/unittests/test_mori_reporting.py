@@ -6,7 +6,7 @@ from cvs.lib.mori_reporting import record_ibgda_results, record_io_results, reco
 from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.lib.report.rundeck.render import render_rundeck_html
-from cvs.lib.report.rundeck.runtime.ailab import THEME_BOOT_SCRIPT
+from cvs.lib.report.rundeck.runtime.theme import THEME_BOOT_SCRIPT
 
 MIB = 1 << 20
 VARIANT = {"hosts": ["host-a", "host-b"], "initiator": "host-a", "mori_device_list": "rdma0,rdma1,rdma2"}

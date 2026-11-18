@@ -17,7 +17,7 @@ from pathlib import Path, PurePosixPath
 from cvs.lib import globals
 from cvs.lib.report.consolidate.discovery import ATTACHMENTS_SUFFIX
 from cvs.lib.report.consolidate.warning_log import UNREADABLE_FILE
-from cvs.lib.report.rundeck.runtime.ailab import OVERVIEW_LINK_MARKER, THEME_BOOT_SCRIPT, tokens_css
+from cvs.lib.report.rundeck.runtime.theme import OVERVIEW_LINK_MARKER, THEME_BOOT_SCRIPT, tokens_css
 
 log = globals.log
 
@@ -25,7 +25,7 @@ PAGE_DIR = Path(__file__).with_name("page")
 FONTS_DIR = PAGE_DIR / "fonts"
 BACK_LINK_ID = "cvs-consolidated-report-link"
 LARGE_ZIP_BYTES = 500 * 1024 * 1024
-_HEADER_LINK = '<a id="%s" class="ail-back" href="%s">&larr; Consolidated report</a>'
+_HEADER_LINK = '<a id="%s" class="cvs-back" href="%s">&larr; Consolidated report</a>'
 # Decks written before the CVS header have no slot for the link, so it gets a bar of its own.
 _BACK_LINK = (
     '<nav id="%s" style="font:13px/1.5 system-ui,sans-serif;padding:8px 16px;'

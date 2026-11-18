@@ -14,7 +14,7 @@ from cvs.lib.report.consolidate import writer
 from cvs.lib.report.consolidate.discovery import discover
 from cvs.lib.report.consolidate.unittests.deck_fixtures import deck, write_run
 from cvs.lib.report.consolidate.warning_log import WarningLog
-from cvs.lib.report.rundeck.runtime.ailab import OVERVIEW_LINK_MARKER, THEME_BOOT_SCRIPT, tokens_css
+from cvs.lib.report.rundeck.runtime.theme import OVERVIEW_LINK_MARKER, THEME_BOOT_SCRIPT, tokens_css
 
 
 class WriterCase(unittest.TestCase):
@@ -126,13 +126,13 @@ class TestBackLink(WriterCase):
         page = self.report / "runs" / "rvs_cvs" / "local-1" / "rvs_cvs_html" / "deck.html"
         page.parent.mkdir(parents=True)
         page.write_text(
-            '<html><body><div class="ail-header">brand%s</div><h1>RVS</h1></body></html>' % OVERVIEW_LINK_MARKER,
+            '<html><body><div class="cvs-header">brand%s</div><h1>RVS</h1></body></html>' % OVERVIEW_LINK_MARKER,
             encoding="utf-8",
         )
         self.assertTrue(writer.add_back_link(page, self.report))
         self.assertFalse(writer.add_back_link(page, self.report))
         document = page.read_text(encoding="utf-8")
-        link = '<a id="%s" class="ail-back" href="../../../../index.html">' % writer.BACK_LINK_ID
+        link = '<a id="%s" class="cvs-back" href="../../../../index.html">' % writer.BACK_LINK_ID
         self.assertIn("brand" + link, document)
         self.assertNotIn(OVERVIEW_LINK_MARKER, document)
         self.assertNotIn("<nav", document)
