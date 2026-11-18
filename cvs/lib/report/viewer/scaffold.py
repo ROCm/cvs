@@ -9,7 +9,6 @@ from typing import Any, Mapping, Optional
 
 from cvs.lib.report.artifacts import export_payload
 from cvs.lib.report.rundeck.runtime.theme import header_html, viewer_theme_head
-from cvs.lib.report.viewer.chart_libs import chart_scripts
 from cvs.lib.report.viewer.paging import page_tables_js
 
 _TEMPLATE_PATH = Path(__file__).with_name("interactive.html")
@@ -41,8 +40,7 @@ def write_interactive_viewer(
     tier_js = "[" + ",".join(json.dumps(t) for t in tier_order) + "]"
     embedded = _embedded_json_script(embed_payload) if embed_payload is not None else ""
     doc = (
-        template.replace("__CHART_LIBS__", chart_scripts(zoom=True))
-        .replace("__THEME_HEAD__", viewer_theme_head())
+        template.replace("__THEME_HEAD__", viewer_theme_head())
         .replace("__THEME_HEADER__", header_html("Run Deck viewer"))
         .replace("__TITLE__", html.escape(title))
         .replace("__SUBTITLE__", html.escape(subtitle))
