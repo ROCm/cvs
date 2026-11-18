@@ -11,7 +11,7 @@ deck writes its own area. The same goes for ``older_deck_stems``, because every
 newer deck also records the test file that wrote it.
 '''
 
-AREAS = ("Health", "Network", "Training", "Inference")
+AREAS = ("Health", "AMD Node Check", "Network", "Training", "Inference")
 UNCATEGORIZED = "Uncategorized"
 
 _ANC_TESTS = ("babel", "basic", "computerocker", "cpu", "gemm", "gpu", "memrocker", "oblex", "pcie", "ualink", "xgmi")
@@ -25,9 +25,9 @@ SUITE_IDS_BY_AREA = {
         "transferbench_cvs",
         "host_configs_cvs",
         "preflight_checks",
-        *("anc_test_" + name for name in _ANC_TESTS),
         *("arc_test_" + name for name in _ARC_TESTS),
     ),
+    "AMD Node Check": tuple("anc_test_" + name for name in _ANC_TESTS),
     "Network": ("rccl", "ib_perf_bw_test", "mori_benchmark_test"),
     "Training": ("aorta", "jaxmaxtext", "megatron", "torchtitan"),
     "Inference": ("atom", "sglang", "vllm", "xdit"),

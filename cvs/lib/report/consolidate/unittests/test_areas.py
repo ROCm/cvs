@@ -126,6 +126,8 @@ class TestResolveArea(unittest.TestCase):
 
     def test_older_deck_uses_the_table(self):
         self.assertEqual(resolve_area({"suite_id": "vllm"}, "vllm_single"), "Inference")
+        self.assertEqual(resolve_area({"suite_id": "anc_test_cpu"}), "AMD Node Check")
+        self.assertEqual(resolve_area({"suite_id": "arc_test_diag"}), "Health")
 
     def test_unknown_suite_id_is_not_guessed_from_the_stem(self):
         self.assertIsNone(resolve_area({"suite_id": "brand_new"}, "rccl_perf"))
