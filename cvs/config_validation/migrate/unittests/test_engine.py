@@ -30,6 +30,7 @@ from cvs.config_validation.migrate import engine, maps
 from cvs.config_validation.migrate.engine import (
     MISSING_MESSAGE,
     TO_UNMAPPED,
+    flags_from_list,
     migrate,
     old_paths,
     suite_maps,
@@ -50,7 +51,6 @@ CLUSTER = {"username": "jdoe", "priv_key_file": "/home/jdoe/.ssh/id_rsa", "node_
 
 
 class _DemoServer(ServingServerParams):
-    engine: Literal["demo"]
     port: int = 8000
     master_port: int = 29500
 
@@ -85,16 +85,12 @@ def _auto_or_unmapped(value, config):
     return {} if value in ("auto", None) else TO_UNMAPPED
 
 
-def _cells_from_runs(value, config):
-    return {"cells": value or [key for key in config.get("sweeps", {}) if not key.startswith("_")]}
-
-
-def _no_cell_override(value, config):
-    return {} if value == {} else TO_UNMAPPED
+def _every_sweep_when_empty(value, config):
+    return {"runs": value or [key for key in config.get("sweeps", {}) if not key.startswith("_")]}
 
 
 def _fewshot_count(value, config):
-    return {"accuracy.tasks.*.num_fewshot": int(value)}
+    return {"accuracy.lm_eval.tasks.*.num_fewshot": int(value)}
 
 
 DEMO_MAP = SimpleNamespace(
@@ -106,11 +102,12 @@ DEMO_MAP = SimpleNamespace(
         "server_params.tensor_parallel_size": "server_params.tp",
         "server_params.pipeline_parallel_size": "server_params.pp",
         "server_params.dist_init_port": "server_params.master_port",
-        "server_params.kv_cache_dtype": "server_params.engine_args.kv-cache-dtype",
+        "server_params.kv_cache_dtype": "server_params.engine_args.kv_cache_dtype",
         "server_params.add_flags": "demo.add_flags",
         "benchmark_params.backend": None,
         "benchmark_params.temperature": "benchmark_params.client_args.temperature",
-        "sweep.runs.*.combo": "cells.*",
+        "sweep.runs.*.combo": "runs.*",
+        "accuracy.tasks.*.*": "accuracy.lm_eval.tasks.*.*",
         "policies.*": "demo.disaggregation.*",
         "router": "demo.router",
     },
@@ -118,8 +115,7 @@ DEMO_MAP = SimpleNamespace(
     FIELDS={
         "ib_hca_devices": _auto_or_unmapped,
         "ib_netdev": _auto_or_unmapped,
-        "runs": _cells_from_runs,
-        "sweeps.*": _no_cell_override,
+        "runs": _every_sweep_when_empty,
         "accuracy.tasks.*.fewshot": _fewshot_count,
     },
     FILL_THRESHOLD_FROM_SIBLING=True,
@@ -143,7 +139,7 @@ class _CoveredConfig(_DemoConfig):
     def _enforced_cells_need_threshold_cells(self, info):
         if not (info.context or {}).get("config_path"):
             raise ValueError("validated without the config's path")
-        if self.enforce_thresholds and any(cell not in self.thresholds.model_extra for cell in self.cells):
+        if self.enforce_thresholds and any(cell not in self.thresholds.model_extra for cell in self.runs):
             raise ValueError("with enforce_thresholds, every cell needs a threshold cell")
         return self
 
@@ -165,7 +161,7 @@ PATHS = {
     "log_dir": "{shared_fs}/LOGS",
     "hf_token_file": "{shared_fs}/.hf_token",
 }
-ACCURACY = {"tasks": [{"id": "gsm8k_flex", "task": "gsm8k", "num_fewshot": 5}]}
+ACCURACY = {"lm_eval": {"tasks": [{"id": "gsm8k_flex", "task": "gsm8k", "num_fewshot": 5}]}}
 RUNTIME = {"name": "docker", "args": {"volumes": ["/home/{user-id}:/home/{user-id}"], "devices": []}}
 SOCKET_ENV = {
     "NCCL_SOCKET_IFNAME": "eth0",
@@ -202,16 +198,17 @@ NEW_SINGLE = {
     "paths": PATHS,
     "container": {"name": "demo_{user-id}", "image": "registry.example/demo:1", "runtime": RUNTIME},
     "server_params": {
-        "engine": "demo",
         "_comment_ports": "port serves the clients.",
         "model": "org/model",
         "tp": 8,
         "port": 8010,
-        "engine_args": {"kv-cache-dtype": "fp8"},
+        "engine_args": {"kv_cache_dtype": "fp8"},
     },
     "benchmark_params": {"num_prompts": 320, "client_args": {"temperature": 0.0}},
-    "cells": [CELL, CELL2],
+    "sweeps": {"_comment": "Two cells.", CELL: {}, CELL2: {}},
+    "runs": [CELL, CELL2],
     "accuracy": ACCURACY,
+    "demo": {},
 }
 
 OLD_DISTRIBUTED = {
@@ -236,9 +233,11 @@ NEW_DISTRIBUTED = {
     "threshold_json": "",
     "paths": PATHS,
     "container": {"name": "demo", "image": "registry.example/demo:1", "runtime": {"name": "docker"}, "env": SOCKET_ENV},
-    "server_params": {"engine": "demo", "model": "org/model", "tp": 8, "pp": 2, "master_port": 29600},
+    "server_params": {"model": "org/model", "tp": 8, "pp": 2, "master_port": 29600},
     "benchmark_params": {"num_prompts": 640},
-    "cells": [DCELL],
+    "sweeps": {DCELL: {}},
+    "runs": [DCELL],
+    "demo": {},
 }
 
 OLD_DISAGGREGATED = {
@@ -256,14 +255,15 @@ NEW_DISAGGREGATED = {
     "_comment": "Demo prefill and decode config.",
     "threshold_json": "demo_disaggregated_threshold.json",
     "paths": PATHS,
-    "server_params": {"engine": "demo", "model": "org/model", "tp": 8},
+    "server_params": {"model": "org/model", "tp": 8},
     "demo": {
         "add_flags": ["--attention-backend aiter"],
         "disaggregation": {"prefill": "cache_aware", "decode": "round_robin"},
         "router": {"policy": "cache_aware"},
     },
     "benchmark_params": {"num_prompts": 64},
-    "cells": [CELL],
+    "sweeps": {CELL: {}},
+    "runs": [CELL],
 }
 
 OLD_THRESHOLDS = {
@@ -284,7 +284,7 @@ NEW_THRESHOLDS = {
         "p99_itl_ms": {"kind": "max", "value": 40},
         "_old": {"kind": "max_ms", "value": 1},
     },
-    "accuracy": {"_comment": "By task id.", "gsm8k_flex": {"exact_match": {"kind": "min", "value": 0.5}}},
+    "accuracy": {"_comment": "By task id.", "lm_eval": {"gsm8k_flex": {"exact_match": {"kind": "min", "value": 0.5}}}},
 }
 
 
@@ -336,6 +336,38 @@ class _MigrateCase(unittest.TestCase):
         with self.assertRaises(ConfigError) as ctx:
             self._load(name, schema)
         return ctx.exception.problems
+
+
+class TestFlagsFromList(unittest.TestCase):
+    def test_each_flag_takes_the_words_after_it_as_its_value(self):
+        self.assertEqual(
+            flags_from_list(
+                [
+                    "--attention-backend aiter",
+                    "--disable-custom-all-reduce",
+                    "--kv-cache-dtype",
+                    "fp8_e4m3",
+                    "--mem-fraction-static=0.9",
+                    "--chat-template 'a b'",
+                    "--lora-paths a b",
+                ]
+            ),
+            {
+                "attention_backend": "aiter",
+                "disable_custom_all_reduce": True,
+                "kv_cache_dtype": "fp8_e4m3",
+                "mem_fraction_static": "0.9",
+                "chat_template": "a b",
+                "lora_paths": ["a", "b"],
+            },
+        )
+        self.assertEqual(flags_from_list([]), {})
+
+    def test_a_word_before_any_flag_and_a_repeated_flag_are_refused(self):
+        with self.assertRaisesRegex(ValueError, "'aiter' comes before any --flag"):
+            flags_from_list(["aiter --attention-backend"])
+        with self.assertRaisesRegex(ValueError, "--tp is given more than once"):
+            flags_from_list(["--tp 8", "--tp=4"])
 
 
 class TestSuiteMaps(unittest.TestCase):
@@ -416,17 +448,18 @@ class TestConvertsCleanly(_MigrateCase):
     def test_a_single_config_converts_and_loads_with_its_named_threshold_file(self):
         self._write("demo_threshold.json", NEW_THRESHOLDS)
         config = self._converts(OLD_SINGLE, NEW_SINGLE)
-        self.assertEqual((config.server_params.engine, config.server_params.tp), ("demo", 8))
-        self.assertEqual(config.cells, [CELL, CELL2])
-        self.assertEqual(config.accuracy.tasks[0].num_fewshot, 5)
+        self.assertEqual((config.demo.add_flags, config.server_params.tp), ([], 8))
+        self.assertEqual(config.runs, [CELL, CELL2])
+        self.assertEqual(config.accuracy.lm_eval.tasks[0].num_fewshot, 5)
         self.assertEqual(config.thresholds.model_extra[CELL]["mean_ttft_ms"].kind, "max")
 
-    def test_a_renamed_key_takes_the_old_keys_place_and_the_engine_comes_first(self):
+    def test_a_renamed_key_takes_the_old_keys_place_and_the_engine_block_comes_last(self):
         self._write("demo_threshold.json", NEW_THRESHOLDS)
         self.assertEqual(self._run(OLD_SINGLE)[0], 0)
         new = self._output()
         self.assertEqual(list(new), list(NEW_SINGLE))
-        self.assertEqual(list(new["server_params"]), ["engine", "_comment_ports", "model", "tp", "port", "engine_args"])
+        self.assertEqual(list(new)[-1], "demo")
+        self.assertEqual(list(new["server_params"]), ["_comment_ports", "model", "tp", "port", "engine_args"])
 
     def test_a_distributed_config_converts_and_loads_record_only_without_a_threshold_file_beside_it(self):
         config = self._converts(OLD_DISTRIBUTED, NEW_DISTRIBUTED)
@@ -490,13 +523,13 @@ class TestConvertsCleanly(_MigrateCase):
         self.assertEqual(self._run({**OLD_DISTRIBUTED, "_unmapped": {}})[0], 0)
         self.assertEqual(self._output(), NEW_DISTRIBUTED)
 
-    def test_a_star_over_list_items_keeps_each_item_at_its_index_within_the_same_list(self):
+    def test_a_star_over_list_items_keeps_each_item_at_its_index_in_the_list_it_moves_to(self):
         self._write("demo_threshold.json", NEW_THRESHOLDS)
         old = copy.deepcopy(OLD_SINGLE)
         old["accuracy"]["tasks"] = [{"id": "a", "task": "gsm8k"}, {"id": "b", "task": "mmlu", "fewshot": "3"}]
         self.assertEqual(self._run(old)[0], 0)
         self.assertEqual(
-            self._output()["accuracy"]["tasks"],
+            self._output()["accuracy"]["lm_eval"]["tasks"],
             [{"id": "a", "task": "gsm8k"}, {"id": "b", "task": "mmlu", "num_fewshot": 3}],
         )
 
@@ -504,7 +537,7 @@ class TestConvertsCleanly(_MigrateCase):
         code, lines = self._run(OLD_THRESHOLDS, output="new_threshold.json")
         self.assertEqual((code, lines), (0, [f"wrote {self.tmp / 'new_threshold.json'}"]))
         self.assertEqual(self._output("new_threshold.json"), NEW_THRESHOLDS)
-        self._write("new.json", {**NEW_DISTRIBUTED, "threshold_json": "new_threshold.json"})
+        self._write("new.json", {**NEW_SINGLE, "threshold_json": "new_threshold.json"})
         cell = self._load().config.thresholds.model_extra[CELL]
         self.assertEqual(
             {metric: spec.kind for metric, spec in cell.items()},
@@ -531,20 +564,20 @@ class TestConvertsCleanly(_MigrateCase):
         old["container"]["env"] = {}
         old["container"]["runtime"]["args"] = {"devices": []}
         old["benchmark_params"]["client_args"] = {}
-        old["accuracy"] = {"tasks": []}
+        old["accuracy"] = {}
         code, _ = self._run(old)
         new = self._output()
         self.assertEqual(code, 0)
         self.assertNotIn("env", new["container"])
         self.assertEqual(new["benchmark_params"], {"num_prompts": 640})
-        self.assertNotIn("accuracy", new)
+        # The accuracy block's default holds its four sections, so an empty one is kept as written.
+        self.assertEqual(new["accuracy"], {})
         # runtime args default to unset, not to an empty list.
         self.assertEqual(new["container"]["runtime"]["args"], {"devices": []})
 
-    def test_an_old_and_a_new_key_with_the_same_value_or_engine_merge(self):
+    def test_an_old_and_a_new_key_with_the_same_value_merge(self):
         old = copy.deepcopy(OLD_DISTRIBUTED)
         old["server_params"]["tp"] = 8
-        old["server_params"]["engine"] = "demo"
         code, _ = self._run(old)
         self.assertEqual(code, 0)
         self.assertEqual(self._output(), NEW_DISTRIBUTED)
@@ -599,20 +632,16 @@ class TestFieldsToFix(_MigrateCase):
         # CONFIG would drop ib_netdev; its field function runs first and keeps a real value.
         old = copy.deepcopy(OLD_DISTRIBUTED)
         old["ib_netdev"] = FAKE_CRED
-        old["sweeps"][DCELL] = {"client_timeout_s": FAKE_CRED}
+        old["sweeps"][DCELL] = {"client_timeout_s": 60}
         old["ib_hca_devices"] = ["mlx5_0", FAKE_CRED]
         lines = self._fix(old)
-        unmapped = {
-            "ib_netdev": FAKE_CRED,
-            f"sweeps.{DCELL}": {"client_timeout_s": FAKE_CRED},
-            "ib_hca_devices": ["mlx5_0", FAKE_CRED],
-        }
+        unmapped = {"ib_netdev": FAKE_CRED, "ib_hca_devices": ["mlx5_0", FAKE_CRED]}
         expected = [f"_unmapped.{path}: {UNMAPPED_FIELD_MESSAGE}" for path in unmapped]
         self.assertEqual(lines, expected)
         new = self._output()
         self.assertEqual(new["_unmapped"], unmapped)
-        self.assertEqual(new["cells"], [DCELL])
-        self.assertNotIn("sweeps", new)
+        # A per-cell client flag stays with its cell.
+        self.assertEqual((new["sweeps"], new["runs"]), ({DCELL: {"client_timeout_s": 60}}, [DCELL]))
         self.assertEqual(self._refused(), expected)
 
     def test_a_key_left_beside_moved_keys_keeps_its_block_its_comment_and_its_list_position(self):
@@ -624,7 +653,7 @@ class TestFieldsToFix(_MigrateCase):
         self.assertEqual(
             new["_unmapped"], {"sweep": {"_comment": "Cells to run.", "runs": [{}, {"weight": FAKE_CRED}]}}
         )
-        self.assertEqual(new["cells"], [CELL, CELL2])
+        self.assertEqual(new["runs"], [CELL, CELL2])
 
     def test_a_missing_required_field_is_written_as_changeme(self):
         old = copy.deepcopy(OLD_DISTRIBUTED)
@@ -681,10 +710,10 @@ class TestFieldsToFix(_MigrateCase):
         threshold_path = self.tmp / "demo_threshold.json"
         missing = [f"threshold_json: {MISSING_THRESHOLD_MESSAGE}"]
         still_old = [
-            f"old config format: {CELL}.output_throughput, {CELL}.mean_ttft_ms; "
+            f"old config format: accuracy.gsm8k_flex, {CELL}.output_throughput, {CELL}.mean_ttft_ms; "
             f"run cvs config migrate demo {threshold_path} <new config>"
         ]
-        not_covering = ["(config): with enforce_thresholds, every cell needs a threshold cell"]
+        not_covering = [f"(config): runs missing threshold coverage: [{CELL2!r}]"]
         for thresholds, at_load, prefix in (
             (None, missing, ""),
             (OLD_THRESHOLDS, still_old, "demo_threshold.json: "),
@@ -717,7 +746,7 @@ class TestFieldsToFix(_MigrateCase):
         old["sweep"]["runs"] = [{"combo": CELL}, {"weight": FAKE_CRED}, {"combo": CELL2}]
         self.assertEqual(self._fix(old), [f"_unmapped.sweep: {UNMAPPED_FIELD_MESSAGE}"])
         new = self._output()
-        self.assertEqual(new["cells"], [CELL, CELL2])
+        self.assertEqual(new["runs"], [CELL, CELL2])
         self.assertEqual(new["_unmapped"]["sweep"]["runs"], [{}, {"weight": FAKE_CRED}])
 
 
@@ -759,12 +788,12 @@ class TestNothingWritten(_MigrateCase):
             "keep one, then run cvs config migrate again",
         )
 
-    def test_an_engine_other_than_the_suite_stops_it(self):
-        old = copy.deepcopy(OLD_DISTRIBUTED)
-        old["server_params"]["engine"] = FAKE_CRED
+    def test_a_threshold_task_id_both_old_and_under_lm_eval_stops_it(self):
+        old = copy.deepcopy(OLD_THRESHOLDS)
+        old["accuracy"]["lm_eval"] = {"gsm8k_flex": {}}
         self.assertEqual(
-            self._stopped(old),
-            "server_params.engine names an engine other than demo; remove it or use that suite's map",
+            self._stopped(old, output="new_threshold.json"),
+            "accuracy.lm_eval and accuracy hold the same task id: gsm8k_flex",
         )
 
     def test_an_unknown_suite_lists_the_suites_or_none(self):

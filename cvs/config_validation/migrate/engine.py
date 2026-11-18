@@ -15,9 +15,10 @@ changed.
    that reach one path with different values stop it.
 4. Copy every other key to the same path, except an empty ``{}`` or ``[]``
    whose new default is the same. A block whose keys all moved is left out with
-   its comments. Set ``server_params.engine`` to the suite name when the schema
-   has that field. When the map sets ``FILL_THRESHOLD_FROM_SIBLING``, fill an
-   empty ``threshold_json`` with the one ``*threshold.json`` beside the input.
+   its comments. When the schema has a block named for the suite, such as
+   ``vllm``, and the input has none, add it empty, since that block names the
+   engine. When the map sets ``FILL_THRESHOLD_FROM_SIBLING``, fill an empty
+   ``threshold_json`` with the one ``*threshold.json`` beside the input.
 5. Validate as ``load_suite_config`` does, with placeholders allowed: a schema
    with the ``Thresholds`` fields gets the threshold file the config names,
    found as the loader finds it from the input's folder, or records only when it
@@ -29,10 +30,15 @@ changed.
    to fix.
 
 A threshold file holds metric specs, objects with a ``kind``, in its top-level
-sections. Its old kinds are renamed through the map's ``THRESHOLDS``; a spec
-with no new kind, and a top-level entry that is not a section, go to
-``_unmapped``. It is validated as the schema's ``thresholds`` type, as the
-loader validates it, or as a ``ThresholdFile`` when the schema has none.
+sections and in the sections of its ``accuracy``. Its old kinds are renamed
+through the map's ``THRESHOLDS``; a spec with no new kind, and a top-level entry
+that is not a section, go to ``_unmapped``. An ``accuracy`` section keyed by
+task id, the old layout, moves under ``accuracy.lm_eval``. It is validated as
+the schema's ``thresholds`` type, as the loader validates it, or as a
+``ThresholdFile`` when the schema has none.
+
+``flags_from_list`` turns a flag list as old configs write it into a flag map,
+for a map's ``FIELDS`` function.
 
 ``migrate`` returns 0 when it writes a clean file, or writes nothing because
 the input is already in the new format; 1 when it writes a file with fields to
@@ -46,6 +52,7 @@ import importlib
 import json
 import os
 import pkgutil
+import shlex
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -59,7 +66,7 @@ from cvs.config_validation.loaders.suite_config import (
     _with_thresholds,
 )
 from cvs.config_validation.migrate import maps
-from cvs.config_validation.schemas.thresholds import ThresholdFile, Thresholds
+from cvs.config_validation.schemas.thresholds import ACCURACY_SECTIONS, ThresholdFile, Thresholds
 from cvs.lib.conf_lib.config_blocks import has_placeholder
 from cvs.lib.conf_lib.loader import ConfigError
 
@@ -199,6 +206,8 @@ def _convert(suite, found, raw, input_path):
     suite_map = found[suite]
     if _is_threshold_file(raw):
         tree, old, unmapped = _rename_kinds(raw, suite_map.THRESHOLDS)
+        tree, moved = _nest_accuracy_sections(tree)
+        old += moved
         if not old:
             raise _already_new(input_path)
         field = suite_map.SCHEMA.model_fields.get("thresholds")
@@ -372,14 +381,9 @@ class _Conversion:
                 del parent[path[-1]]
 
     def set_engine(self, suite):
-        if _field_at(self.schema, ("server_params", "engine")) is None:
+        if _field_at(self.schema, (suite,)) is None or suite in self.tree:
             return
-        server = self.tree.get("server_params", {})
-        if not isinstance(server, dict):
-            return
-        if server.get("engine", suite) != suite:
-            raise _Stop(f"server_params.engine names an engine other than {suite}; remove it or use that suite's map")
-        self.tree["server_params"] = {"engine": suite, **server}
+        self.tree[suite] = {}
 
     def fill_threshold_json(self, input_path):
         if _field_at(self.schema, ("threshold_json",)) is None:
@@ -465,10 +469,62 @@ def _rename_kinds(raw, kinds):
     return convert(raw, ()), old, unmapped
 
 
+def _nest_accuracy_sections(tree):
+    """``tree`` with each ``accuracy`` section keyed by task id moved under ``lm_eval``, and the moved paths."""
+    accuracy = tree.get("accuracy")
+    if not isinstance(accuracy, dict):
+        return tree, []
+    old = [key for key, value in accuracy.items() if not _is_comment(key) and key not in ACCURACY_SECTIONS]
+    if not old:
+        return tree, []
+    lm_eval = accuracy.get("lm_eval", {})
+    if not isinstance(lm_eval, dict):
+        raise _Stop("accuracy.lm_eval is not an object; fix it before converting")
+    clashing = sorted(key for key in old if key in lm_eval)
+    if clashing:
+        raise _Stop(f"accuracy.lm_eval and accuracy hold the same task id: {', '.join(clashing)}")
+    nested = {}
+    for key, value in accuracy.items():
+        if key in old or key == "lm_eval":
+            sections = nested.setdefault("lm_eval", dict(lm_eval))
+            if key in old:
+                sections[key] = value
+        else:
+            nested[key] = value
+    return {**tree, "accuracy": nested}, [("accuracy", key) for key in old]
+
+
+def flags_from_list(flags):
+    """A flag list such as ``["--attention-backend aiter", "--kv-cache-dtype", "fp8"]`` as a snake_case flag map.
+
+    Each item is split as a shell would split it. ``--name`` starts a flag and
+    the words after it, up to the next ``--name``, are its value: none makes it
+    True, one a string, more a list. ``--name=value`` works too. A word before
+    the first flag, or a flag given twice, raises ValueError naming it.
+    """
+    converted, name = {}, None
+    for item in flags:
+        for word in shlex.split(str(item)):
+            if word.startswith("--") and len(word) > 2:
+                flag, has_value, value = word[2:].partition("=")
+                name = flag.replace("-", "_")
+                if name in converted:
+                    raise ValueError(f"--{flag} is given more than once")
+                converted[name] = [value] if has_value else []
+            elif name is None:
+                raise ValueError(f"{word!r} comes before any --flag")
+            else:
+                converted[name].append(word)
+    return {key: True if not words else words[0] if len(words) == 1 else words for key, words in converted.items()}
+
+
 def _is_threshold_file(raw):
     sections = _entries(raw)
-    if isinstance(raw.get("accuracy"), dict):
-        sections += _entries(raw["accuracy"])
+    accuracy = raw.get("accuracy")
+    for key, value in accuracy.items() if isinstance(accuracy, dict) else ():
+        if _is_comment(key) or not isinstance(value, dict):
+            continue
+        sections += _entries(value) if key in ("lm_eval", "custom_eval") else [value]
     return any(
         isinstance(spec, dict) and "kind" in spec
         for section in sections
