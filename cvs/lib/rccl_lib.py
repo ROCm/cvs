@@ -52,6 +52,8 @@ rccl_err_dict = {
     'fs_err': 'No such file or directory',
 }
 
+DEFAULT_END_MSG_SIZE = '8g'
+
 
 class RcclVerifier:
     """Pass/fail checks on one RCCL result set. Log scan is separate (stdout).
@@ -59,7 +61,8 @@ class RcclVerifier:
     expected is None when nothing is configured and {} when the collective has no published threshold.
     """
 
-    DEFAULT_BUS_BW_TOLERANCE = 0.95
+    DEFAULT_BUS_BW_TOLERANCE = 1.0
+    DEFAULT_VERIFY_BUS_BW = 'True'
 
     def __init__(self, test_name, results, expected=None, cvs_params=None, resolver_failed=False):
         self.test_name = test_name
@@ -107,7 +110,7 @@ class RcclVerifier:
             fail_test('RCCL test did not complete successfully, no bandwidth numbers printed - pls check')
 
     def bus_bw_tolerance(self):
-        """Fraction of reference bus BW required by cvs_params.bus_bw_tolerance (default 0.95)."""
+        """Fraction of reference bus BW required by cvs_params.bus_bw_tolerance (default 1.0, no slack)."""
         value = self.cvs_params.get('bus_bw_tolerance', self.DEFAULT_BUS_BW_TOLERANCE)
         try:
             tolerance = float(value)
@@ -119,9 +122,16 @@ class RcclVerifier:
                 'bus_bw',
                 None,
                 False,
-                f'Invalid rccl.cvs_params.bus_bw_tolerance {value!r}; expected a fraction in (0, 1], e.g. "0.95"',
+                f'Invalid rccl.cvs_params.bus_bw_tolerance {value!r}; expected a fraction in (0, 1], e.g. "1.0"',
             )
             return None
+        if tolerance < 1:
+            log.warning(
+                'rccl.cvs_params.bus_bw_tolerance %s accepts bus BW up to %.1f%% below the reference; '
+                'the published acceptance bar is a minimum',
+                value,
+                (1 - tolerance) * 100,
+            )
         return tolerance
 
     def check_bus_bw(self):
@@ -248,7 +258,7 @@ class RcclVerifier:
         if not self.results:
             self._record('results', None, False, f'RCCL test {self.test_name} produced no result rows')
             return
-        if re.search('True', self.cvs_params.get('verify_bus_bw', 'False'), re.I):
+        if re.search('True', self.cvs_params.get('verify_bus_bw', self.DEFAULT_VERIFY_BUS_BW), re.I):
             if self.expected:
                 self.check_bus_bw()
             elif self.expected is not None:
@@ -1272,7 +1282,7 @@ class RcclJob:
         binary_cmd = (
             f'{self.rccl_tests_dir}/{self.test_name} '
             f'-b {params.get("start_msg_size", "1024")} '
-            f'-e {params.get("end_msg_size", "16g")} '
+            f'-e {params.get("end_msg_size", DEFAULT_END_MSG_SIZE)} '
             f'-f {params.get("step_function", 2)} '
             f'-t {threads} '
             f'-w {params.get("warmup_iterations", 10)} '
@@ -1354,7 +1364,7 @@ class RcclJob:
         binary_cmd = (
             f'{self.rccl_tests_dir}/{self.test_name} '
             f'-b {params.get("start_msg_size", "1024")} '
-            f'-e {params.get("end_msg_size", "16g")} '
+            f'-e {params.get("end_msg_size", DEFAULT_END_MSG_SIZE)} '
             f'-f {params.get("step_function", 2)} '
             f'-g {gpus_per_rank} '
             f'-c {params.get("check_iteration_count", 1)} '

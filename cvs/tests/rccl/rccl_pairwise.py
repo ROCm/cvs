@@ -146,8 +146,8 @@ def _extract_best_bw(result_dict):
     (schema cvs/schema/rccl.py:RcclTests), each keyed 'busBw' (float),
     'size' (int, bytes), and 'inPlace' (0 or 1) — NOT a 'bus_bw' dict.
     Selecting the largest-size, in-place row mirrors RcclVerifier.check_bus_bw's
-    in-place branch and matches bash's get_final_bw_only (last/largest
-    message-size row of a two-size 8G/16G sweep).
+    in-place branch and matches bash's get_final_bw_only at the largest swept
+    size. With the shipped end_msg_size of 8g, that is 8589934592 bytes.
     """
     if not result_dict:
         return None
@@ -177,9 +177,10 @@ def _is_pairwise_pass(result_dict, clean_run, min_bw_gbps, require_bw_check):
         the largest message size meets or exceeds min_bw_gbps.
 
     require_bw_check=False reproduces bash's Phase 1 semantics (clean exit
-    only, no bandwidth gate). require_bw_check=True reproduces bash's Phase 2
-    semantics (clean exit AND BusBW >= MIN_BW). min_bw_gbps <= 0 always skips
-    the bandwidth comparison regardless of require_bw_check.
+    only, no pairwise_min_bw gate). With verify_bus_bw on, clean_run is already
+    False when the NIC/rank results entry fails. require_bw_check=True
+    reproduces bash's Phase 2 semantics (clean exit AND BusBW >= MIN_BW).
+    min_bw_gbps <= 0 always skips the pairwise_min_bw comparison.
     """
     if not (clean_run and result_dict):
         return False
@@ -328,7 +329,7 @@ def test_rccl_pairwise(orch, node_list, config_dict, vpc_node_list, request, sub
             phase_label=label,
         )
 
-        # Phase 1 pass criterion matches bash: clean exit only, no bandwidth gate.
+        # Phase 1 does not add the Phase 2 pairwise_min_bw gate.
         passed = _is_pairwise_pass(result, clean_run, min_bw, require_bw_check=False)
         failure = f'Pairwise test failed: {label}'
         if passed:

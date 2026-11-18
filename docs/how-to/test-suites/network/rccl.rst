@@ -27,6 +27,7 @@ Set up config
 
    - ``rccl_dir``, ``rccl_tests_dir``, ``mpi_dir``
    - ``mpi_path_var``, ``rccl_path_var``, ``rocm_path_var``
+   - ``results`` thresholds for your GPU, NIC and rank count. ``cvs_params.verify_bus_bw`` is on by default, so each configured threshold is enforced exactly (MI300X: set the ``all_reduce`` entries to 304). See :doc:`/reference/configuration-files/network/rccl`.
 
 3. All three suites read the same file. ``rccl_regression`` additionally requires a non-empty ``regression`` object; ``rccl_pairwise`` uses ``cvs_params.pairwise_min_bw`` and ``cvs_params.pairwise_results_file``.
 
