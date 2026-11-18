@@ -8,8 +8,8 @@ Sweeps and runs: benchmark points named by cell keys such as
 Each ``NAME=value`` part of a key is an axis. A key names every axis its config
 class declares, once each and in the declared order, with a positive integer
 written without leading zeros. ``runs`` names the cells to run, in order: at
-least one, each a ``sweeps`` key, none repeated. Checks on per-cell overrides
-stay with each engine.
+least one, each a ``sweeps`` key, none repeated. Each config class that uses
+sweeps checks its own per-cell overrides.
 '''
 
 import functools
@@ -31,7 +31,7 @@ def _cell_type(fields):
     return namedtuple("Cell", ("key",) + fields)
 
 
-def _parse_cell_key(key, axes):
+def parse_cell_key(key, axes):
     names = [axis.name for axis in axes]
 
     def refused(problem):
@@ -74,7 +74,7 @@ class SweepsAndRuns(StrictBlock):
     @classmethod
     def _check_cell_keys(cls, sweeps):
         for key in sweeps:
-            _parse_cell_key(key, cls.axes)
+            parse_cell_key(key, cls.axes)
         return sweeps
 
     @field_validator("runs")
@@ -96,4 +96,4 @@ class SweepsAndRuns(StrictBlock):
 
     def cells(self):
         """Each sweeps key, in order, as a named tuple of ``key`` and one field per axis."""
-        return {key: _parse_cell_key(key, self.axes) for key in self.sweeps}
+        return {key: parse_cell_key(key, self.axes) for key in self.sweeps}

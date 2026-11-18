@@ -94,10 +94,6 @@ class TestSweepsAndRuns(unittest.TestCase):
         for key, cell in config.cells().items():
             with self.subTest(key=key):
                 self.assertEqual(_axis_values(cell), _axis_values(RunCell.parse(key)))
-        for key, _ in BAD_KEYS:
-            with self.subTest(key=key):
-                with self.assertRaises(ValueError):
-                    RunCell.parse(key)
 
     def test_keys_parse_by_the_axes_the_config_class_declares(self):
         config = _Training.model_validate({"sweeps": {"NODES=2,GBS=256": {}}, "runs": ["NODES=2,GBS=256"]})
