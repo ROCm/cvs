@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from pydantic import ValidationError
 
 from cvs.config_validation.schemas.inference.accuracy import Accuracy, AccuracyTask, NiahEval
 from cvs.config_validation.schemas.inference.llm_serving import (
@@ -22,6 +23,7 @@ from cvs.config_validation.schemas.inference.llm_serving import (
 )
 from cvs.config_validation.schemas.sweeps import Axis, SweepsAndRuns
 from cvs.config_validation.schemas.thresholds import Thresholds
+from cvs.lib.conf_lib.config_blocks import PLACEHOLDER_MESSAGE
 from cvs.lib.conf_lib.loader import ConfigError
 from cvs.unittests.support import FAKE_CRED
 
@@ -122,6 +124,18 @@ class TestServingServerParams(unittest.TestCase):
             (client.random_prefix_len, client.tokenizer_mode, client.scaling_baseline_output_throughput),
             (0, "auto", None),
         )
+
+    def test_a_placeholder_in_an_engine_arg_fails_only_when_placeholders_are_rejected(self):
+        for value in ("<changeme>", {"path": "<changeme-dir>"}):
+            with self.subTest(value=value):
+                data = {"model": "m", "tp": 8, "engine_args": {"download_dir": value}}
+                ServingServerParams.model_validate(data)
+                with self.assertRaises(ValidationError) as caught:
+                    ServingServerParams.model_validate(data, context={"placeholders": "reject"})
+                self.assertEqual(
+                    [(error["loc"], error["msg"]) for error in caught.exception.errors()],
+                    [(("engine_args", "download_dir"), f"Value error, {PLACEHOLDER_MESSAGE}")],
+                )
 
     def test_flag_maps_take_snake_case_names_with_renderable_values(self):
         for flags, problem in (
