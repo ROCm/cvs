@@ -14,11 +14,9 @@
     evaluation_incomplete: ['Evaluation incomplete', 'Nothing failed, but at least one suite was never judged pass or fail.'],
     all_passed: ['All suites passed', 'Every included suite passed.']
   };
-  var REC_KIND = {
-    repeat_host: 'Repeated host', failed_suite: 'Failed', unavailable: 'Unavailable',
-    record_only: 'Record only', not_evaluated: 'Not evaluated', all_passed: 'All passed'
-  };
-  var state = { area: 'all', status: 'all', query: '', sort: 'area', desc: false, allRecs: false };
+  var REC_MARK = { failed_suite: 'fail', unavailable: 'unknown', record_only: 'record', not_evaluated: 'na', all_passed: 'pass' };
+  var REC_ROWS = 5;
+  var state = { area: 'all', status: 'all', query: '', sort: 'area', desc: false, recsOpen: {} };
   var refs = {};
   var byId = {};
   var manifestById = {};
@@ -151,37 +149,64 @@
         h('div', { class: 'status-filters', role: 'group', 'aria-label': 'Filter suites by status' }, buttons)));
   }
 
-  function recItem(r) {
+  function recMark(value) {
+    return h('span', { class: 'status status-' + value + ' rec-mark', 'aria-hidden': 'true' }, h('span', { class: 'status-glyph' }));
+  }
+  function recDetail(r, suite) {
+    var message = r.message || '', rest = message;
+    if (message.indexOf(suite.name + ': ') === 0) rest = message.slice(suite.name.length + 2);
+    else if (message.indexOf(suite.name + ' ') === 0) rest = message.slice(suite.name.length + 1);
+    return rest.charAt(0).toUpperCase() + rest.slice(1);
+  }
+  function hostRec(x) {
+    var names = x.failed_in, detail = h('div', { class: 'rec-detail' }, names.slice(0, 3).join(', '));
+    if (names.length > 3) {
+      var more = h('button', { class: 'rec-more', type: 'button' }, '+' + (names.length - 3) + ' more');
+      more.addEventListener('click', function () { clear(detail); add(detail, names.join(', ')); });
+      add(detail, [' ', more]);
+    }
+    return h('li', null,
+      h('div', { class: 'rec-line' }, recMark('fail'), h('span', { class: 'rec-name mono' }, x.host),
+        h('span', { class: 'rec-meta' }, 'failed in ' + names.length + ' of ' + x.suites.length + ' suites')),
+      detail);
+  }
+  function suiteRec(r) {
     var suite = r.suite ? byId[r.suite] : null;
-    return h('li', { class: 'rec rec-' + r.kind },
-      h('span', { class: 'rec-kind' }, REC_KIND[r.kind] || r.kind),
-      suite
-        ? h('button', { class: 'link-button', type: 'button', onclick: function () { openDrawer(suite); } }, r.message)
-        : h('span', null, r.message));
+    return h('li', { title: r.message },
+      h('div', { class: 'rec-line' }, recMark(REC_MARK[r.kind] || 'unknown'), suite
+        ? h('button', { class: 'link-button rec-name', type: 'button', onclick: function () { openDrawer(suite); } }, suite.name)
+        : h('span', { class: 'rec-name' }, r.message)),
+      suite ? h('div', { class: 'rec-detail' }, recDetail(r, suite)) : null);
+  }
+  function recGroup(key, label, items, render) {
+    var list = h('ul', { class: 'rec-list' });
+    var toggle = items.length > REC_ROWS ? h('button', { class: 'text-button', type: 'button' }) : null;
+    function fill() {
+      clear(list);
+      (state.recsOpen[key] ? items : items.slice(0, REC_ROWS)).forEach(function (item) { list.appendChild(render(item)); });
+      if (toggle) { clear(toggle); add(toggle, state.recsOpen[key] ? 'Show fewer' : 'Show all ' + items.length); }
+    }
+    if (toggle) toggle.addEventListener('click', function () { state.recsOpen[key] = !state.recsOpen[key]; fill(); });
+    fill();
+    return h('section', { class: 'rec-group', 'aria-label': label },
+      h('div', { class: 'rec-group-head' }, h('span', { class: 'eyebrow' }, label), h('span', { class: 'rec-count mono' }, items.length)),
+      list, toggle);
   }
   function recommendationsPanel() {
     var recs = summary.recommendations || [];
-    var hosts = recs.filter(function (r) { return r.kind === 'repeat_host'; });
-    var others = recs.filter(function (r) { return r.kind !== 'repeat_host'; });
-    var list = h('ul', { class: 'rec-list' });
-    var toggle = h('button', { class: 'text-button', type: 'button' });
-    function fill() {
-      clear(list);
-      (state.allRecs ? others : others.slice(0, 6)).forEach(function (r) { list.appendChild(recItem(r)); });
-      clear(toggle);
-      add(toggle, state.allRecs ? 'Show fewer' : 'Show all ' + others.length);
-    }
-    toggle.addEventListener('click', function () { state.allRecs = !state.allRecs; fill(); });
-    fill();
+    var hosts = ((summary.manifest || {}).hosts || []).filter(function (x) { return (x.failed_in || []).length >= 2; });
+    hosts.sort(function (a, b) { return b.failed_in.length - a.failed_in.length || (a.host < b.host ? -1 : a.host > b.host ? 1 : 0); });
+    var failed = recs.filter(function (r) { return r.kind === 'failed_suite'; });
+    var review = recs.filter(function (r) { return ['unavailable', 'record_only', 'not_evaluated'].indexOf(r.kind) >= 0; });
+    var passed = recs.filter(function (r) { return r.kind === 'all_passed'; })[0];
     return h('section', { class: 'panel recs', 'aria-labelledby': 'recs-title' },
       h('div', { class: 'recs-heading' },
         h('h2', { id: 'recs-title' }, 'Recommendations'),
-        h('span', { class: 'inventory-count' }, 'Facts from each Run Deck. No thresholds are added.')),
-      hosts.length ? h('div', { class: 'rec-hosts' },
-        h('span', { class: 'eyebrow' }, 'Hosts that failed in more than one suite'),
-        h('ul', { class: 'rec-list' }, hosts.slice(0, 6).map(recItem))) : null,
-      list,
-      others.length > 6 ? toggle : null);
+        h('p', null, 'Facts from each Run Deck. No thresholds are added.')),
+      passed ? h('p', { class: 'rec-all-passed' }, recMark('pass'), passed.message) : h('div', { class: 'recs-grid' },
+        hosts.length ? recGroup('hosts', 'Hosts failing in 2+ suites', hosts, hostRec) : null,
+        failed.length ? recGroup('failed', 'Failed suites', failed, suiteRec) : null,
+        review.length ? recGroup('review', 'Needs review', review, suiteRec) : null));
   }
 
   function warningsNote() {
