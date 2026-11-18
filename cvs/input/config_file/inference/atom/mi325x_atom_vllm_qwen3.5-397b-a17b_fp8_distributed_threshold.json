@@ -321,7 +321,7 @@
     "mmlu_pro": {
       "mmlu_pro.exact_match__custom-extract": {
         "kind": "info",
-        "value": 0.0
+        "value": 0.7891
       }
     }
   }
