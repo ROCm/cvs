@@ -12,7 +12,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from cvs.config_validation.schemas.base import problem_lines
-from cvs.config_validation.schemas.sweeps import Axis, Cells, SweepsAndRuns
+from cvs.config_validation.schemas.sweeps import Axis, SweepsAndRuns
 from cvs.lib.conf_lib.schemas.vllm import RunCell
 
 VLLM_CONFIG_DIR = Path(__file__).resolve().parents[4] / "input" / "config_file" / "inference" / "vllm"
@@ -37,10 +37,6 @@ class _Serving(SweepsAndRuns):
 
 class _Training(SweepsAndRuns):
     axes = (Axis("NODES", "nodes"), Axis("GBS", "global_batch_size"))
-
-
-class _Cells(Cells):
-    axes = VLLM_AXES
 
 
 def _problems(model, data):
@@ -125,28 +121,6 @@ class TestSweepsAndRuns(unittest.TestCase):
             [f"(config): runs names cell keys that sweeps does not define: [{missing!r}]"],
         )
         self.assertEqual(_Serving.model_validate({"sweeps": sweeps, "runs": [OTHER_KEY]}).runs, [OTHER_KEY])
-
-
-class TestCells(unittest.TestCase):
-    def test_valid_input_parses_each_key_into_its_axis_fields_in_list_order(self):
-        config = _Cells.model_validate({"_comment_cells": "x", "cells": [OTHER_KEY, KEY]})
-        cells = config.parsed_cells()
-        self.assertEqual((config.cells, list(cells)), ([OTHER_KEY, KEY], [OTHER_KEY, KEY]))
-        self.assertEqual((cells[KEY].key, *_axis_values(cells[KEY])), (KEY, 1024, 1024, 8, 1, 16))
-        self.assertEqual(_axis_values(cells[OTHER_KEY]), (8192, 1024, 8, 1, 64))
-
-    def test_an_empty_list_and_a_repeated_key_are_refused(self):
-        self.assertEqual(_problems(_Cells, {"cells": []}), ["cells: needs at least one cell key"])
-        self.assertEqual(
-            _problems(_Cells, {"cells": [KEY, OTHER_KEY, KEY]}), [f"cells: cell key {KEY!r} is listed more than once"]
-        )
-
-    def test_each_bad_key_is_refused_with_the_same_problem_as_in_sweeps(self):
-        for key, problem in BAD_KEYS:
-            with self.subTest(key=key):
-                self.assertEqual(
-                    _problems(_Cells, {"cells": [KEY, key]}), [f"cells: cell key {key!r} {problem}; {EXPECTED}"]
-                )
 
 
 if __name__ == "__main__":

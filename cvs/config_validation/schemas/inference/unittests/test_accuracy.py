@@ -15,20 +15,23 @@ from cvs.config_validation.schemas.base import problem_lines
 from cvs.config_validation.schemas.inference.accuracy import (
     AccuracyConfig,
     AccuracyTask,
-    LongContextAccuracy,
-    LongContextCell,
+    LmEval,
+    MtpQualityConfig,
+    NiahEval,
+    QuantParityConfig,
 )
 from cvs.lib.inference.utils import accuracy_config, long_context_accuracy_config
 
 INFERENCE_CONFIG_DIR = Path(__file__).resolve().parents[4] / "input" / "config_file" / "inference"
 
-# Each new block beside the block it copies.
+# Each new block beside the block it copies. The new task drops the dead ``backend``,
+# and a niah eval names its ``type``; the comparisons leave both out.
 PAIRS = (
     (AccuracyTask, accuracy_config.AccuracyTask),
-    (AccuracyConfig, accuracy_config.AccuracyConfig),
-    (LongContextCell, long_context_accuracy_config.LongContextAccCell),
-    (LongContextAccuracy, long_context_accuracy_config.LongContextAccuracyConfig),
+    (LmEval, accuracy_config.AccuracyConfig),
+    (NiahEval, long_context_accuracy_config.LongContextAccCell),
 )
+NIAH = {"type": "niah"}
 
 # Valid and invalid inputs that reach every field type and validator of each pair.
 INPUTS = {
@@ -60,7 +63,7 @@ INPUTS = {
         {"task": "gsm8k"},
         {"id": 5, "task": "gsm8k"},
     ),
-    AccuracyConfig: (
+    LmEval: (
         {},
         {"tasks": [{"id": "b", "task": "gsm8k"}, {"id": "a", "task": "gsm8k"}]},
         {"tasks": [{"id": "b", "task": "x"}, {"id": "a", "task": "x"}, {"id": "b", "task": "y"}, {"id": "a"}]},
@@ -75,25 +78,29 @@ INPUTS = {
         {"tasks": {"id": "a", "task": "gsm8k"}},
         {"tasks": [], "harness": "lm-eval"},
     ),
-    LongContextCell: (
+    NiahEval: (
         {"id": "niah_8k", "isl": 8192},
         {"id": "niah_8k", "isl": "8192", "osl": 16, "num_prompts": 4, "seed": 7},
         {"id": "niah_8k"},
         {"id": "niah_8k", "isl": 8192.5},
         {"id": "niah_8k", "isl": 8192, "depth": 0.5, "_comment": "x"},
     ),
-    LongContextAccuracy: (
-        {},
-        {"cells": [{"id": "niah_8k", "isl": 8192}, {"id": "niah_32k", "isl": 32768}]},
-        {"cells": [{"id": "niah_8k", "isl": 8192}, {"id": "niah_8k", "isl": 32768}]},
-        {"cells": "niah_8k"},
-    ),
 }
 
 
+def _without(value, names):
+    if isinstance(value, dict):
+        return {key: _without(item, names) for key, item in value.items() if key not in names}
+    if isinstance(value, list):
+        return [_without(item, names) for item in value]
+    return value
+
+
 def _outcome(model, data):
+    if model is NiahEval and isinstance(data, dict):
+        data = {**NIAH, **data}
     try:
-        return model.model_validate(data).model_dump()
+        return _without(model.model_validate(data).model_dump(), {"backend", "type"})
     except ValidationError as exc:
         return [(error["loc"], error["type"], error["msg"]) for error in exc.errors(include_input=False)]
 
@@ -110,6 +117,7 @@ def _fields(model):
     return [
         (name, "required" if field.is_required() else field.get_default(call_default_factory=True))
         for name, field in model.model_fields.items()
+        if name not in ("backend", "type")
     ]
 
 
@@ -141,12 +149,12 @@ class TestMatchesInferenceUtils(unittest.TestCase):
     def test_field_types_match_the_blocks_they_copy(self):
         for new, old in (
             (AccuracyTask, accuracy_config.AccuracyTask),
-            (LongContextCell, long_context_accuracy_config.LongContextAccCell),
+            (NiahEval, long_context_accuracy_config.LongContextAccCell),
         ):
             with self.subTest(block=new.__name__):
                 self.assertEqual(
-                    {name: field.annotation for name, field in new.model_fields.items()},
-                    {name: field.annotation for name, field in old.model_fields.items()},
+                    {name: field.annotation for name, field in new.model_fields.items() if name != "type"},
+                    {name: field.annotation for name, field in old.model_fields.items() if name != "backend"},
                 )
 
     def test_each_input_loads_or_fails_the_same_in_both(self):
@@ -168,15 +176,24 @@ class TestMatchesInferenceUtils(unittest.TestCase):
                 )
 
     def test_every_shipped_vllm_and_atom_block_validates_the_same_in_both(self):
-        for name, new, old in (
-            ("accuracy", AccuracyConfig, accuracy_config.AccuracyConfig),
-            ("long_context_accuracy", LongContextAccuracy, long_context_accuracy_config.LongContextAccuracyConfig),
-        ):
-            blocks = _shipped_blocks(name)
-            self.assertTrue(blocks, f"no {name} blocks under {INFERENCE_CONFIG_DIR}")
-            for where, block in blocks:
-                with self.subTest(config=where, block=name):
-                    self.assertEqual(new.model_validate(block).model_dump(), old.model_validate(block).model_dump())
+        # Main's accuracy.tasks become accuracy.lm_eval.tasks and long_context_accuracy.cells niah custom evals.
+        blocks = _shipped_blocks("accuracy")
+        self.assertTrue(blocks, f"no accuracy blocks under {INFERENCE_CONFIG_DIR}")
+        for where, block in blocks:
+            tasks = block.get("lm_eval", block)
+            with self.subTest(config=where, block="accuracy"):
+                self.assertEqual(
+                    LmEval.model_validate(tasks).model_dump(),
+                    _without(accuracy_config.AccuracyConfig.model_validate(tasks).model_dump(), {"backend"}),
+                )
+        blocks = _shipped_blocks("long_context_accuracy")
+        self.assertTrue(blocks, f"no long_context_accuracy blocks under {INFERENCE_CONFIG_DIR}")
+        for where, block in blocks:
+            with self.subTest(config=where, block="long_context_accuracy"):
+                custom_eval = [{**NIAH, **cell} for cell in block.get("cells", [])]
+                loaded = AccuracyConfig.model_validate({"custom_eval": custom_eval}).custom_eval
+                old = long_context_accuracy_config.LongContextAccuracyConfig.model_validate(block).model_dump()
+                self.assertEqual(_without([item.model_dump() for item in loaded], {"type"}), old["cells"])
 
 
 class TestAccuracyTask(unittest.TestCase):
@@ -228,7 +245,7 @@ class TestAccuracyTask(unittest.TestCase):
         self.assertEqual(task.resolved_lm_eval_model, "local-completions")
 
 
-class TestAccuracyConfig(unittest.TestCase):
+class TestLmEval(unittest.TestCase):
     def test_duplicate_ids_are_listed_once_each_in_sorted_order(self):
         tasks = [
             {"id": "b", "task": "x"},
@@ -237,14 +254,50 @@ class TestAccuracyConfig(unittest.TestCase):
             {"id": "b", "task": "y"},
             {"id": "a", "task": "y"},
         ]
-        self.assertEqual(_problems(AccuracyConfig, {"tasks": tasks}), ["(config): duplicate task id(s): 'a', 'b'"])
+        self.assertEqual(_problems(LmEval, {"tasks": tasks}), ["(config): duplicate task id(s): 'a', 'b'"])
 
 
-class TestLongContextAccuracy(unittest.TestCase):
-    def test_duplicate_cell_ids_are_refused(self):
-        cells = [{"id": "niah_8k", "isl": 8192}, {"id": "niah_8k", "isl": 32768}]
+class TestAccuracyConfig(unittest.TestCase):
+    def test_defaults_run_nothing_and_leave_quant_parity_and_mtp_off(self):
+        config = AccuracyConfig.model_validate({})
+        self.assertEqual((config.lm_eval.tasks, config.custom_eval), ([], []))
         self.assertEqual(
-            _problems(LongContextAccuracy, {"cells": cells}), ["(config): duplicate long-context cell id(s): 'niah_8k'"]
+            config.quant_parity.model_dump(),
+            {"enabled": False, "probe_prompt": "The capital of France is", "reference_config_stem": ""},
+        )
+        self.assertEqual(
+            config.mtp_quality.model_dump(),
+            {
+                "enabled": False,
+                "chat_template_prompt": "Say hello in one short sentence.",
+                "chat_template_expected_sha256": "",
+            },
+        )
+        self.assertEqual(_fields(QuantParityConfig)[0], ("enabled", False))
+        self.assertEqual(_fields(MtpQualityConfig)[0], ("enabled", False))
+
+    def test_each_custom_eval_is_picked_by_its_type(self):
+        config = AccuracyConfig.model_validate({"custom_eval": [{"type": "niah", "id": "niah_8k", "isl": 8192}]})
+        self.assertEqual([(type(item), item.id, item.osl) for item in config.custom_eval], [(NiahEval, "niah_8k", 32)])
+        problems = _problems(AccuracyConfig, {"custom_eval": [{"type": "ruler", "id": "r", "isl": 8192}]})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("custom_eval.0", problems[0])
+        self.assertIn("'niah'", problems[0])
+        self.assertEqual(
+            _problems(AccuracyConfig, {"custom_eval": [{"id": "niah_8k", "isl": 8192}]}),
+            ["custom_eval.0: Unable to extract tag using discriminator 'type'"],
+        )
+
+    def test_custom_eval_ids_are_unique(self):
+        evals = [{"type": "niah", "id": "niah_8k", "isl": 8192}, {"type": "niah", "id": "niah_8k", "isl": 32768}]
+        self.assertEqual(
+            _problems(AccuracyConfig, {"custom_eval": evals}), ["(config): duplicate custom_eval id(s): 'niah_8k'"]
+        )
+
+    def test_the_old_flat_tasks_list_is_refused(self):
+        self.assertEqual(
+            _problems(AccuracyConfig, {"tasks": [{"id": "a", "task": "gsm8k"}]}),
+            ["tasks: Extra inputs are not permitted"],
         )
 
 

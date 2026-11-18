@@ -24,6 +24,14 @@ from cvs.lib.conf_lib.config_blocks import PLACEHOLDER_MESSAGE, has_placeholder,
 from cvs.lib.conf_lib.loader import ConfigError
 
 
+class SecretInputError(Exception):
+    """A config problem a validator raises when the input may be a secret; its message names fields only.
+
+    Not a ValueError, so pydantic raises it as is instead of wrapping it in a
+    ValidationError whose str(), errors() and json() would carry the input.
+    """
+
+
 def drop_comment_keys(value):
     if isinstance(value, dict):
         return {key: item for key, item in value.items() if not (isinstance(key, str) and key.startswith("_"))}

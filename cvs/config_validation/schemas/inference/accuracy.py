@@ -2,15 +2,20 @@
 Copyright 2026 Advanced Micro Devices, Inc.
 All rights reserved.
 
-lm-eval accuracy tasks and long-context accuracy cells for LLM serving configs.
+The ``accuracy`` block of LLM serving configs: lm-eval tasks, custom evals,
+quant parity and MTP quality.
 
 ``AccuracyTask`` describes an lm-evaluation-harness 0.4.12 run against the live
 server. CVS sets the endpoint, model, output path and sample logging; every
 other ``lm_eval run`` setting has a field at its 0.4.12 default.
+
+``custom_eval`` holds the other evals, each picked by its ``type``; a new eval
+is a new type in ``CustomEval``. ``quant_parity`` and ``mtp_quality`` are off by
+default, and only engines that implement them may turn them on.
 '''
 
 from collections import Counter
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import Field, field_validator, model_validator
 
@@ -31,7 +36,6 @@ class AccuracyTask(StrictBlock):
     task: Optional[str] = None
 
     # CVS always targets the live OpenAI-compatible server, so these are narrower than lm-eval's --model.
-    backend: str = ""
     lm_eval_model: Optional[Literal["local-completions", "local-chat-completions"]] = None
     extra_model_args: str = ""
     num_concurrent: int = 8
@@ -125,7 +129,9 @@ class AccuracyTask(StrictBlock):
         return "local-chat-completions" if self.apply_chat_template else "local-completions"
 
 
-class AccuracyConfig(StrictBlock):
+class LmEval(StrictBlock):
+    """lm-eval tasks, each keyed by its ``id`` in the threshold file's ``accuracy.lm_eval``; none runs no lm-eval."""
+
     tasks: List[AccuracyTask] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -136,13 +142,10 @@ class AccuracyConfig(StrictBlock):
         return self
 
 
-class Accuracy(StrictBlock):
-    """Mixin: the ``accuracy`` block. No tasks means no lm-eval run."""
+class NiahEval(StrictBlock):
+    """A needle-in-a-haystack eval at one input length, keyed by ``id`` in ``accuracy.custom_eval``."""
 
-    accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
-
-
-class LongContextCell(StrictBlock):
+    type: Literal["niah"]
     id: str
     isl: int
     osl: int = 32
@@ -150,12 +153,36 @@ class LongContextCell(StrictBlock):
     seed: int = 42
 
 
-class LongContextAccuracy(StrictBlock):
-    cells: List[LongContextCell] = Field(default_factory=list)
+CustomEval = Annotated[Union[NiahEval], Field(discriminator="type")]
+
+
+class QuantParityConfig(StrictBlock):
+    enabled: bool = False
+    probe_prompt: str = "The capital of France is"
+    reference_config_stem: str = ""
+
+
+class MtpQualityConfig(StrictBlock):
+    enabled: bool = False
+    chat_template_prompt: str = "Say hello in one short sentence."
+    chat_template_expected_sha256: str = ""
+
+
+class AccuracyConfig(StrictBlock):
+    lm_eval: LmEval = Field(default_factory=LmEval)
+    custom_eval: List[CustomEval] = Field(default_factory=list)
+    quant_parity: QuantParityConfig = Field(default_factory=QuantParityConfig)
+    mtp_quality: MtpQualityConfig = Field(default_factory=MtpQualityConfig)
 
     @model_validator(mode="after")
-    def _check_unique_cell_ids(self):
-        duplicates = _duplicate_ids(cell.id for cell in self.cells)
+    def _check_unique_custom_eval_ids(self):
+        duplicates = _duplicate_ids(evaluation.id for evaluation in self.custom_eval)
         if duplicates:
-            raise ValueError(f"duplicate long-context cell id(s): {duplicates}")
+            raise ValueError(f"duplicate custom_eval id(s): {duplicates}")
         return self
+
+
+class Accuracy(StrictBlock):
+    """Mixin: the ``accuracy`` block. No lm-eval tasks and no custom evals means no accuracy run."""
+
+    accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
