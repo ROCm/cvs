@@ -105,7 +105,7 @@
   function renderThemeButton() {
     var light = document.documentElement.dataset.theme === 'light';
     clear(refs.themeButton);
-    add(refs.themeButton, h('span', { 'aria-hidden': 'true' }, light ? '\u25D1' : '\u25D0'), light ? 'Dark' : 'Light');
+    add(refs.themeButton, [h('span', { 'aria-hidden': 'true' }, light ? '\u25D1' : '\u25D0'), light ? 'Dark' : 'Light']);
     refs.themeButton.setAttribute('aria-label', 'Switch to ' + (light ? 'dark' : 'light') + ' theme');
   }
 
