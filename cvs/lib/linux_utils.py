@@ -12,6 +12,18 @@ from cvs.lib.utils_lib import *
 # Some distros install rdma as /usr/sbin/rdma, which is off a non-root PATH.
 RDMA_BIN = '"$(command -v rdma || echo /usr/sbin/rdma)"'
 RDMA_LINK_CMD = f'{RDMA_BIN} link'
+IP_BIN = '"$(command -v ip || echo /usr/sbin/ip)"'
+# Default routes and the SSH session identify management ports; lower devices of bonds and VLANs inherit that role.
+MANAGEMENT_NETDEV_CMD = (
+    f'devs=$({{ {IP_BIN} -o route show default; {IP_BIN} -o -6 route show default; }} 2>/dev/null '
+    "| awk '{for(i=1;i<NF;i++) if($i==\"dev\") print $(i+1)}'); "
+    'set -- $SSH_CONNECTION; '
+    f'if [ -n "$3" ]; then devs="$devs $({IP_BIN} -o addr show to "$3" 2>/dev/null '
+    "| awk '{print $2}')\"; fi; "
+    'for d in $devs; do d=${d%%@*}; echo "mgmt $d"; '
+    'for l in /sys/class/net/"$d"/lower_*; do [ -e "$l" ] && echo "mgmt ${l##*/lower_}"; '
+    'done; done; true'
+)
 
 
 def _lshw_network_cmd(use_sudo=True):
@@ -349,41 +361,56 @@ def get_rdma_capable_devices_dict(phdl):
     return rdma_cap_dict
 
 
-def get_backend_nic_dict(phdl, use_sudo=True):
+def parse_management_netdevs(output):
+    """Return unique management netdev names from the discovery command."""
+    names = []
+    for line in str(output).splitlines():
+        match = re.fullmatch(r'mgmt\s+(\S+)\s*', line)
+        if match:
+            name = match.group(1).split('@', 1)[0]
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def get_management_netdev_dict(phdl):
+    """Find default-route and SSH netdevs, including lower devices, on each node."""
+    return {node: parse_management_netdevs(out) for node, out in phdl.exec(MANAGEMENT_NETDEV_CMD).items()}
+
+
+def select_backend_nics(lshw_node, rdma_netdevs, excluded=()):
+    """Return the largest same-description RDMA netdev group, preferring the first on ties."""
+    groups = {}
+    for name in rdma_netdevs:
+        if name in lshw_node and name not in excluded:
+            groups.setdefault(lshw_node[name]['description'], []).append(name)
+    if not groups:
+        return []
+    largest = max(map(len, groups.values()))
+    tied = [description for description, names in groups.items() if len(names) == largest]
+    if len(tied) > 1:
+        log.warning(f'Tied backend NIC descriptions: {tied}; selecting {tied[0]}')
+    return groups[tied[0]]
+
+
+def get_backend_nic_dict(phdl, use_sudo=True, exclude_management=False):
+    """Return node-to-netdev lists from the largest RDMA description group.
+
+    When requested, exclude default-route and SSH netdevs and their lower devices first.
+    """
     lshw_dict = get_lshw_network_dict(phdl, use_sudo=use_sudo)
     rdma_cap_devs = get_rdma_capable_devices_dict(phdl)
+    management = get_management_netdev_dict(phdl) if exclude_management else {}
     bck_net_dict = {}
     for node in lshw_dict.keys():
-        bck_net_dict[node] = []
-
-        # Debug output
-        log.info(f"Node: {node}")
-        log.info(f"RDMA-capable devices: {rdma_cap_devs.get(node, [])}")
-        log.info(f"lshw network interfaces: {list(lshw_dict[node].keys())}")
-
-        # Filter lshw_dict to only RDMA-capable devices
-        filtered_lshw = {intf: lshw_dict[node][intf] for intf in rdma_cap_devs.get(node, []) if intf in lshw_dict[node]}
-
-        log.info(f"Filtered lshw (RDMA-capable only): {list(filtered_lshw.keys())}")
-
-        # Now apply the heuristic on the filtered dict: group by description, pick the largest group
-        if not filtered_lshw:
+        rdma_names = rdma_cap_devs.get(node, [])
+        excluded = set(management.get(node, []))
+        found_management = [name for name in rdma_names if name in excluded]
+        if found_management:
+            log.info(f'Excluding management NIC(s) {found_management} on node {node}')
+        bck_net_dict[node] = select_backend_nics(lshw_dict[node], rdma_names, excluded)
+        if not bck_net_dict[node]:
             log.warning(f"WARNING: No RDMA-capable NICs found in lshw for node {node}")
-            continue  # No RDMA-capable NICs
-        list_a = []
-        list_b = []
-        for intf_name in filtered_lshw.keys():
-            if len(list_a) == 0:
-                list_a.append(intf_name)
-            else:
-                if filtered_lshw[intf_name]['description'] == filtered_lshw[list_a[0]]['description']:
-                    list_a.append(intf_name)
-                else:
-                    list_b.append(intf_name)
-        if len(list_a) > len(list_b):
-            bck_net_dict[node] = list_a
-        else:
-            bck_net_dict[node] = list_b
     return bck_net_dict
 
 

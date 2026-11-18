@@ -378,6 +378,68 @@ class TestGetRdmaCapableDevicesDict(unittest.TestCase):
         self.assertEqual(result['node15'], [f'eth{i}' for i in range(8)])
 
 
+class TestSelectBackendNics(unittest.TestCase):
+    def test_same_description_management_nic_is_excluded(self):
+        names = [f'eth{i}' for i in range(9)]
+        lshw = {name: {'description': 'MT2910 Family [ConnectX-7]'} for name in names}
+        self.assertEqual(linux_utils.select_backend_nics(lshw, names, excluded=['eth0']), names[1:])
+        self.assertEqual(linux_utils.select_backend_nics(lshw, names), names)
+
+    def test_management_nic_with_different_description(self):
+        names = [f'eth{i}' for i in range(9)]
+        lshw = {name: {'description': 'AINIC'} for name in names[:8]}
+        lshw['eth8'] = {'description': 'BCM57416 NetXtreme-E 10GBase-T'}
+        self.assertEqual(linux_utils.select_backend_nics(lshw, names), names[:8])
+
+    def test_three_descriptions_do_not_merge(self):
+        names = [f'eth{i}' for i in range(9)]
+        lshw = {name: {'description': 'A' if i < 5 else 'B' if i < 7 else 'C'} for i, name in enumerate(names)}
+        self.assertEqual(linux_utils.select_backend_nics(lshw, names), names[:5])
+        self.assertEqual(linux_utils.select_backend_nics(lshw, ['missing'] + names), names[:5])
+        self.assertEqual(linux_utils.select_backend_nics(lshw, []), [])
+
+    def test_tie_uses_first_seen_description(self):
+        lshw = {'eth0': {'description': 'A'}, 'eth1': {'description': 'B'}}
+        with patch.object(linux_utils.log, 'warning') as warning:
+            self.assertEqual(linux_utils.select_backend_nics(lshw, ['eth0', 'eth1']), ['eth0'])
+        warning.assert_called_once()
+
+
+class TestParseManagementNetdevs(unittest.TestCase):
+    def test_deduplicates_and_strips_veth_suffix(self):
+        output = 'mgmt eth0\nmgmt eth1\nmgmt bond0\nmgmt eth0.100@eth0\nmgmt eth0\nnoise\nmgmt bond0\n'
+        self.assertEqual(linux_utils.parse_management_netdevs(output), ['eth0', 'eth1', 'bond0', 'eth0.100'])
+
+
+class TestGetManagementNetdevDict(unittest.TestCase):
+    def test_one_exec_contains_routes_ssh_and_lower_devices(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'n1': 'mgmt eth0\nmgmt eth1\n', 'n2': 'mgmt bond0\n'}
+        self.assertEqual(linux_utils.get_management_netdev_dict(phdl), {'n1': ['eth0', 'eth1'], 'n2': ['bond0']})
+        phdl.exec.assert_called_once()
+        cmd = phdl.exec.call_args.args[0]
+        for part in ('route show default', 'SSH_CONNECTION', 'lower_'):
+            self.assertIn(part, cmd)
+        self.assertTrue(cmd.endswith('true'))
+
+
+class TestGetBackendNicDict(unittest.TestCase):
+    def test_excludes_same_description_management_on_every_node(self):
+        nodes = ['n1', 'n2']
+        lshw = '\n'.join(f'pci@0000:{i:02x}:00.0  eth{i}  network  MT2910 Family [ConnectX-7]' for i in range(9))
+        netdevs = '\n'.join(f'eth{i}' for i in range(9))
+
+        def fake_exec(cmd):
+            output = lshw if 'lshw' in cmd else 'mgmt eth0' if 'route show default' in cmd else netdevs
+            return {node: output for node in nodes}
+
+        phdl = MagicMock()
+        phdl.exec.side_effect = fake_exec
+        result = linux_utils.get_backend_nic_dict(phdl, exclude_management=True)
+        self.assertEqual(phdl.exec.call_count, 3)
+        self.assertEqual(result, {node: [f'eth{i}' for i in range(1, 9)] for node in nodes})
+
+
 class TestParsePciBdf(unittest.TestCase):
     def test_parses_domain_bus_device_function(self):
         self.assertEqual(linux_utils._parse_pci_bdf('0002:e1:1f.7'), (2, 0xE1, 0x1F, 7))

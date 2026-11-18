@@ -67,12 +67,35 @@ class TestCheckBeNicLinkSpeed(unittest.TestCase):
     def test_auto_detect_fails_node_with_fewer_nics(self):
         orch = _orch({'n1': _link('eth0') + _link('eth1'), 'n2': _link('eth0')})
         detected = {'n1': ['eth0', 'eth1'], 'n2': ['eth0']}
-        with patch.object(suite.linux_utils, 'get_backend_nic_dict', return_value=detected):
-            nodes, failure = self._run(orch, {'nic_link_interfaces': []})
+        with patch.object(suite.linux_utils, 'get_backend_nic_dict', return_value=detected) as backend:
+            nodes, failure = self._run(orch, {'nic_link_interfaces': [], 'backend_nic_count': '2'})
         self.assertEqual(nodes['n1']['status'], 'pass')
         self.assertEqual(nodes['n2']['status'], 'fail')
-        self.assertIn('Only 1 backend NIC(s) detected on node n2', failure)
+        self.assertIn('1 backend NIC(s) detected on node n2, expected 2', failure)
+        backend.assert_called_once_with(orch.all, exclude_management=True)
         orch.all.exec.assert_called_once()
+
+    def test_uniform_shortfall_fails_every_node(self):
+        orch = _orch({'n1': _link('eth0'), 'n2': _link('eth0')})
+        with patch.object(suite.linux_utils, 'get_backend_nic_dict', return_value={'n1': ['eth0'], 'n2': ['eth0']}):
+            nodes, _ = self._run(orch, {'nic_link_interfaces': [], 'backend_nic_count': '2'})
+        self.assertEqual([nodes[node]['status'] for node in ('n1', 'n2')], ['fail', 'fail'])
+
+    def test_missing_count_fails_before_exec(self):
+        orch = _orch({'n1': '', 'n2': ''})
+        with patch.object(suite.linux_utils, 'get_backend_nic_dict') as backend:
+            nodes, _ = self._run(orch, {'nic_link_interfaces': []})
+        for record in nodes.values():
+            self.assertEqual(record['items_summary'], 'config error')
+            self.assertEqual(record['items'][0]['name'], 'backend_nic_count')
+        orch.all.exec.assert_not_called()
+        backend.assert_not_called()
+
+    def test_count_and_interface_list_mismatch_fails_before_exec(self):
+        orch = _orch({'n1': '', 'n2': ''})
+        nodes, _ = self._run(orch, {'nic_link_interfaces': ['eth0'], 'backend_nic_count': '2'})
+        self.assertEqual([record['items_summary'] for record in nodes.values()], ['config error'] * 2)
+        orch.all.exec.assert_not_called()
 
     def test_configured_interfaces_skip_count_comparison(self):
         orch = _orch({'n1': _link('eth0'), 'n2': _link('eth0') + _link('eth1', '200000')})
