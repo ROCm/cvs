@@ -74,7 +74,7 @@ class TestSweepsAndRuns(unittest.TestCase):
     def test_comment_keys_are_dropped_from_both_levels_of_sweeps(self):
         # A comment beside the cells would otherwise fail as an unknown axis, or reach an engine as an override.
         config = _Serving.model_validate(
-            {"_comment_sweeps": "x", "sweeps": {"_comment": "y", KEY: {"_note": "z", "temperature": 0}}}
+            {"_comment_sweeps": "x", "sweeps": {"_comment": "y", KEY: {"_note": "z", "temperature": 0}}, "runs": [KEY]}
         )
         self.assertEqual(config.sweeps, {KEY: {"temperature": 0}})
         self.assertEqual(list(config.cells()), [KEY])
@@ -83,14 +83,14 @@ class TestSweepsAndRuns(unittest.TestCase):
         for key, problem in BAD_KEYS:
             with self.subTest(key=key):
                 self.assertEqual(
-                    _problems(_Serving, {"sweeps": {KEY: {}, key: {}}}),
+                    _problems(_Serving, {"sweeps": {KEY: {}, key: {}}, "runs": [KEY]}),
                     [f"sweeps: cell key {key!r} {problem}; {EXPECTED}"],
                 )
 
     def test_shipped_vllm_keys_and_bad_keys_parse_as_the_vllm_schema_parses_them(self):
         shipped = _shipped_vllm_cell_keys()
         self.assertTrue(shipped, f"no vLLM configs under {VLLM_CONFIG_DIR}")
-        config = _Serving.model_validate({"sweeps": {key: {} for key in shipped}})
+        config = _Serving.model_validate({"sweeps": {key: {} for key in shipped}, "runs": shipped})
         for key, cell in config.cells().items():
             with self.subTest(key=key):
                 self.assertEqual(_axis_values(cell), _axis_values(RunCell.parse(key)))
@@ -100,14 +100,31 @@ class TestSweepsAndRuns(unittest.TestCase):
                     RunCell.parse(key)
 
     def test_keys_parse_by_the_axes_the_config_class_declares(self):
-        config = _Training.model_validate({"sweeps": {"NODES=2,GBS=256": {}}})
+        config = _Training.model_validate({"sweeps": {"NODES=2,GBS=256": {}}, "runs": ["NODES=2,GBS=256"]})
         cell = config.cells()["NODES=2,GBS=256"]
         self.assertEqual((cell.nodes, cell.global_batch_size), (2, 256))
         self.assertFalse(hasattr(cell, "isl"))
         self.assertEqual(
-            _problems(_Training, {"sweeps": {KEY: {}}}),
+            _problems(_Training, {"sweeps": {KEY: {}}, "runs": [KEY]}),
             [f"sweeps: cell key {KEY!r} has unknown axis 'ISL'; expected NODES=<n>,GBS=<n>"],
         )
+
+    def test_runs_must_name_each_cell_to_run_once_from_sweeps(self):
+        sweeps = {KEY: {}, OTHER_KEY: {}}
+        self.assertEqual(_problems(_Serving, {"sweeps": sweeps}), ["runs: Field required"])
+        self.assertEqual(
+            _problems(_Serving, {"sweeps": sweeps, "runs": []}), ["runs: needs at least one sweeps key to run"]
+        )
+        self.assertEqual(
+            _problems(_Serving, {"sweeps": sweeps, "runs": [KEY, OTHER_KEY, KEY]}),
+            [f"runs: cell keys listed more than once: [{KEY!r}]"],
+        )
+        missing = "ISL=2048,OSL=1024,TP=8,PP=1,CONC=16"
+        self.assertEqual(
+            _problems(_Serving, {"sweeps": sweeps, "runs": [KEY, missing]}),
+            [f"(config): runs names cell keys that sweeps does not define: [{missing!r}]"],
+        )
+        self.assertEqual(_Serving.model_validate({"sweeps": sweeps, "runs": [OTHER_KEY]}).runs, [OTHER_KEY])
 
 
 if __name__ == "__main__":

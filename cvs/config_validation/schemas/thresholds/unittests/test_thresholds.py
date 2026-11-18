@@ -12,7 +12,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from cvs.config_validation.schemas.base import problem_lines
-from cvs.config_validation.schemas.thresholds import ThresholdFile
+from cvs.config_validation.schemas.thresholds import ACCURACY_SECTIONS, ThresholdFile
 from cvs.unittests.support import FAKE_CRED
 
 VLLM_CONFIG_DIR = Path(__file__).resolve().parents[4] / "input" / "config_file" / "inference" / "vllm"
@@ -48,23 +48,36 @@ class TestThreshold(unittest.TestCase):
 
 
 class TestThresholdFile(unittest.TestCase):
-    def test_cells_load_as_extras_and_accuracy_as_sections_by_task_id(self):
+    def test_cells_load_as_extras_and_accuracy_as_its_four_sections(self):
         loaded = ThresholdFile.model_validate(
             {
                 CELL: {
                     "output_throughput": {"kind": "min", "value": 900},
                     "mean_ttft_ms": {"kind": "max", "value": 80},
                 },
-                "accuracy": {"gsm8k_flex": {"exact_match": {"kind": "min", "value": 0.5}}, "gsm8k_strict": {}},
+                "accuracy": {
+                    "lm_eval": {"gsm8k_flex": {"exact_match": {"kind": "min", "value": 0.5}}, "gsm8k_strict": {}},
+                    "custom_eval": {"niah_128k": {"pass_rate": {"kind": "min", "value": 0.8}}},
+                    "quant_parity": {"quant_parity.probe_match": {"kind": "info", "value": 1}},
+                },
             }
         )
         self.assertEqual(list(loaded.model_extra), [CELL])
         self.assertEqual(
             _as_loaded(loaded.model_extra[CELL]), {"output_throughput": ("min", 900.0), "mean_ttft_ms": ("max", 80.0)}
         )
-        self.assertEqual(list(loaded.accuracy), ["gsm8k_flex", "gsm8k_strict"])
-        self.assertEqual(_as_loaded(loaded.accuracy["gsm8k_flex"]), {"exact_match": ("min", 0.5)})
-        self.assertEqual(loaded.accuracy["gsm8k_strict"], {})
+        accuracy = loaded.accuracy
+        self.assertEqual(list(accuracy.lm_eval), ["gsm8k_flex", "gsm8k_strict"])
+        self.assertEqual(_as_loaded(accuracy.lm_eval["gsm8k_flex"]), {"exact_match": ("min", 0.5)})
+        self.assertEqual(accuracy.lm_eval["gsm8k_strict"], {})
+        self.assertEqual(_as_loaded(accuracy.custom_eval["niah_128k"]), {"pass_rate": ("min", 0.8)})
+        self.assertEqual(_as_loaded(accuracy.quant_parity), {"quant_parity.probe_match": ("info", 1.0)})
+        self.assertEqual(accuracy.mtp_quality, {})
+
+    def test_an_accuracy_key_outside_the_four_sections_is_refused(self):
+        # The old layout keyed accuracy by task id directly; a stray id would otherwise gate nothing.
+        problems = _problems(ThresholdFile, {"accuracy": {"gsm8k_flex": {"exact_match": {"kind": "min", "value": 0}}}})
+        self.assertEqual(problems, ["accuracy.gsm8k_flex: Extra inputs are not permitted"])
 
     def test_comment_keys_are_dropped_at_every_level(self):
         # A comment left in would be read as a cell, a metric, a task or a spec field.
@@ -73,15 +86,23 @@ class TestThresholdFile(unittest.TestCase):
                 "_comment": "notes",
                 CELL: {"_comment": "x", "output_throughput": {"kind": "min", "value": 1, "_note": "y"}},
                 "accuracy": {
-                    "_comment_tasks": "z",
-                    "gsm8k_flex": {"_comment": "w", "exact_match": {"kind": "min", "value": 0}},
+                    "_comment_sections": "v",
+                    "lm_eval": {
+                        "_comment_tasks": "z",
+                        "gsm8k_flex": {"_comment": "w", "exact_match": {"kind": "min", "value": 0}},
+                    },
                 },
             }
         )
         self.assertEqual(
             loaded.model_dump(),
             {
-                "accuracy": {"gsm8k_flex": {"exact_match": {"kind": "min", "value": 0.0, "optional": False}}},
+                "accuracy": {
+                    "lm_eval": {"gsm8k_flex": {"exact_match": {"kind": "min", "value": 0.0, "optional": False}}},
+                    "custom_eval": {},
+                    "quant_parity": {},
+                    "mtp_quality": {},
+                },
                 CELL: {"output_throughput": {"kind": "min", "value": 1.0, "optional": False}},
             },
         )
@@ -92,18 +113,16 @@ class TestThresholdFile(unittest.TestCase):
         for path in files:
             with self.subTest(file=path.name):
                 raw = json.loads(path.read_text())
-                loaded = ThresholdFile.model_validate(raw)
+                accuracy = {key: value for key, value in raw.get("accuracy", {}).items() if not key.startswith("_")}
+                lm_eval = accuracy.get("lm_eval", {}) if set(accuracy) <= set(ACCURACY_SECTIONS) else accuracy
+                loaded = ThresholdFile.model_validate({**raw, "accuracy": {"lm_eval": lm_eval}})
                 cells = {key: specs for key, specs in raw.items() if key != "accuracy" and not key.startswith("_")}
                 self.assertEqual(list(loaded.model_extra), list(cells))
                 for key, specs in cells.items():
                     self.assertEqual(_as_loaded(loaded.model_extra[key]), _as_written(specs))
                 self.assertEqual(
-                    {task: _as_loaded(specs) for task, specs in loaded.accuracy.items()},
-                    {
-                        task: _as_written(specs)
-                        for task, specs in raw.get("accuracy", {}).items()
-                        if not task.startswith("_")
-                    },
+                    {task: _as_loaded(specs) for task, specs in loaded.accuracy.lm_eval.items()},
+                    {task: _as_written(specs) for task, specs in lm_eval.items() if not task.startswith("_")},
                 )
 
 

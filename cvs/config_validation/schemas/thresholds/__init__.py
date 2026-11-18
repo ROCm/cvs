@@ -6,6 +6,10 @@ Threshold specs, the kind-based threshold file, and the ``Thresholds`` mixin.
 
 A spec is a kind (``min``, ``max`` or ``info``) and a value; any other kind,
 such as ``max_ms``, ``min_tok_s``, ``within`` or ``min_ratio``, fails.
+
+``accuracy`` mirrors a config's ``accuracy`` block: one section of specs per
+lm-eval task id and per custom eval id, and one each for quant parity and MTP
+quality.
 '''
 
 from typing import Annotated, Dict, Literal
@@ -27,13 +31,24 @@ class Threshold(StrictBlock):
 ThresholdCell = Annotated[Dict[str, Threshold], BeforeValidator(drop_comment_keys)]
 
 
+ThresholdSections = Annotated[Dict[str, ThresholdCell], BeforeValidator(drop_comment_keys)]
+
+ACCURACY_SECTIONS = ("lm_eval", "custom_eval", "quant_parity", "mtp_quality")
+
+
+class ThresholdAccuracy(StrictBlock):
+    """A threshold file's ``accuracy``: specs by lm-eval task id, by custom eval id, and for quant parity and MTP."""
+
+    lm_eval: ThresholdSections = Field(default_factory=dict)
+    custom_eval: ThresholdSections = Field(default_factory=dict)
+    quant_parity: ThresholdCell = Field(default_factory=dict)
+    mtp_quality: ThresholdCell = Field(default_factory=dict)
+
+
 class ThresholdFile(OpenBlock):
-    """A threshold file: one cell of metric specs per cell key, plus ``accuracy``.
+    """A threshold file: one cell of metric specs per cell key, plus ``accuracy``."""
 
-    ``accuracy`` holds one section of metric specs per accuracy task id.
-    """
-
-    accuracy: Annotated[Dict[str, ThresholdCell], BeforeValidator(drop_comment_keys)] = Field(default_factory=dict)
+    accuracy: ThresholdAccuracy = Field(default_factory=ThresholdAccuracy)
     __pydantic_extra__: Dict[str, ThresholdCell]
 
 

@@ -7,8 +7,9 @@ Sweeps and runs: benchmark points named by cell keys such as
 
 Each ``NAME=value`` part of a key is an axis. A key names every axis its config
 class declares, once each and in the declared order, with a positive integer
-written without leading zeros. Checks on runs and per-cell overrides stay with
-each engine.
+written without leading zeros. ``runs`` names the cells to run, in order: at
+least one, each a ``sweeps`` key, none repeated. Checks on per-cell overrides
+stay with each engine.
 '''
 
 import functools
@@ -16,7 +17,7 @@ import re
 from collections import namedtuple
 from typing import Annotated, Any, ClassVar, Dict, List, Tuple
 
-from pydantic import BeforeValidator, Field, field_validator
+from pydantic import BeforeValidator, field_validator, model_validator
 
 from cvs.config_validation.schemas.base import StrictBlock, drop_comment_keys
 
@@ -67,7 +68,7 @@ class SweepsAndRuns(StrictBlock):
 
     axes: ClassVar[Tuple[Axis, ...]] = ()
     sweeps: Annotated[Dict[str, CellOverrides], BeforeValidator(drop_comment_keys)]
-    runs: List[str] = Field(default_factory=list)
+    runs: List[str]
 
     @field_validator("sweeps")
     @classmethod
@@ -75,6 +76,23 @@ class SweepsAndRuns(StrictBlock):
         for key in sweeps:
             _parse_cell_key(key, cls.axes)
         return sweeps
+
+    @field_validator("runs")
+    @classmethod
+    def _check_runs_listed_once(cls, runs):
+        if not runs:
+            raise ValueError("needs at least one sweeps key to run")
+        repeated = sorted({key for key in runs if runs.count(key) > 1})
+        if repeated:
+            raise ValueError(f"cell keys listed more than once: {repeated}")
+        return runs
+
+    @model_validator(mode="after")
+    def _check_runs_are_sweeps_keys(self):
+        missing = [key for key in self.runs if key not in self.sweeps]
+        if missing:
+            raise ValueError(f"runs names cell keys that sweeps does not define: {missing}")
+        return self
 
     def cells(self):
         """Each sweeps key, in order, as a named tuple of ``key`` and one field per axis."""
