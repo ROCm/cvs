@@ -381,6 +381,20 @@ class TestMigrateMany(_MigrateCase):
         # Alone, the same config is checked against the old file beside it.
         self.assertEqual(self._many(["single.json"], "alone.json")[0], 1)
 
+    def test_a_line_that_does_not_name_its_file_gets_the_input_path_even_with_the_output_folder_dot(self):
+        conflicting = copy.deepcopy(OLD_DISTRIBUTED)
+        conflicting["server_params"]["tp"] = 4
+        self._write("in/conflicting.json", conflicting)
+        self._write("in/limits.json", OLD_THRESHOLDS)
+        cwd = os.getcwd()
+        self.addCleanup(os.chdir, cwd)
+        os.chdir(self.tmp)
+        lines = []
+        code = migrate_many("demo", ["in/conflicting.json", "in/limits.json"], ".", out=lines.append)
+        self.assertEqual(code, 2)
+        self.assertEqual(lines[0], "wrote limits.json")
+        self.assertTrue(lines[1].startswith("in/conflicting.json: "), lines[1])
+
     def test_several_inputs_need_an_existing_folder_and_distinct_names(self):
         self._write("a/old.json", OLD_DISTRIBUTED)
         self._write("b/old.json", OLD_DISTRIBUTED)

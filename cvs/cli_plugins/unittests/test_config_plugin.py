@@ -324,20 +324,6 @@ class TestConfigMigrate(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(out.splitlines()[0], f"{folder / 'old.json'} already exists; use --force to overwrite it")
 
-    def test_several_inputs_need_an_existing_folder_and_distinct_names(self):
-        other = self.tmp / "sub" / "old.json"
-        other.parent.mkdir()
-        other.write_text(json.dumps(OLD))
-        for argv, message in (
-            ([str(self.old), str(self.tmp / "second.json"), str(self.new)], f"{self.new} is not a folder"),
-            ([str(self.old), str(other), str(self.tmp)], "several input files are named old.json"),
-        ):
-            with self.subTest(message=message):
-                code, out, _ = self._cvs("config", "migrate", "demo", *argv)
-                self.assertEqual(code, 2)
-                self.assertIn(message, out)
-        self.assertFalse(self.new.exists())
-
     def test_help_lists_the_suites_force_and_exit_codes(self):
         code, out, _ = self._cvs("config", "migrate", "--help")
         self.assertEqual(code, 0)

@@ -196,7 +196,8 @@ def migrate_many(suite, input_paths, output_path, force=False, out=print):
         lines = []
         codes.append(migrate(suite, path, output_path, force=force, out=lines.append))
         first, rest = (lines[0], lines[1:]) if lines else ("", [])
-        out(first if str(path) in first or str(output_path) in first else f"{path}: {first}")
+        names_file = str(path) in first or str(output_path / path.name) in first
+        out(first if names_file else f"{path}: {first}")
         for line in rest:
             out(line)
     return max(codes)
