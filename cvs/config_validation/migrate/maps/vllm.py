@@ -33,9 +33,7 @@ other key. Since ``FIELDS`` runs before ``CONFIG``, the renames for those
 blocks apply through ``FIELDS``; ``CONFIG`` keeps them as the old keys.
 '''
 
-from typing import Annotated
-
-from pydantic import Field, TypeAdapter, ValidationError
+from pydantic import NonNegativeInt, TypeAdapter, ValidationError
 
 from cvs.config_validation.migrate.engine import TO_UNMAPPED
 from cvs.config_validation.schemas.inference.engines import VllmConfig
@@ -72,7 +70,7 @@ _WAIT_DEFAULTS = {
     "timeouts.server_ready_s": {"server_warmup_wait_s": 330, "server_poll_iterations": 60, "server_poll_wait_s": 60},
     "timeouts.client_s": {"client_initial_wait_s": 120, "client_poll_iterations": 20, "client_poll_wait_s": 60},
 }
-_WAIT_SECONDS = TypeAdapter(Annotated[int, Field(ge=0)])
+_WAIT_SECONDS = TypeAdapter(NonNegativeInt)
 
 
 def _move_to(target):
@@ -99,7 +97,8 @@ def _total_wait(block, target):
             ]
         except ValidationError:
             return TO_UNMAPPED
-        return {target: first + count * wait}
+        seconds = first + count * wait
+        return {target: seconds} if seconds > 0 else TO_UNMAPPED
 
     return total
 

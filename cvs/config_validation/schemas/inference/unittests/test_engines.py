@@ -303,6 +303,10 @@ class TestVllmConfig(unittest.TestCase):
                 "benchmark_params.client_args cannot set harness fields: ['base_url']",
             ),
             (_config(sweeps={KEY: {"ignore_eos": True}}), f"sweeps.{KEY} cannot set harness fields: ['ignore_eos']"),
+            (
+                _config(sweeps={KEY: {"server_warmup_wait_s": 30, "client_poll_wait_s": 10}}),
+                f"sweeps.{KEY} cannot set harness fields: ['client_poll_wait_s', 'server_warmup_wait_s']",
+            ),
         ):
             with self.subTest(message=message):
                 self.assertEqual(_errors(VllmConfig, data), [("", f"Value error, {message}")])

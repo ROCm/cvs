@@ -165,13 +165,16 @@ Move each field that migrate leaves in ``_unmapped`` as follows:
   ``engine_args``.
 - ``server_params.backend`` or ``benchmark_params.backend`` other than
   ``vllm``: delete it.
-- A server or client wait field, including one inside a ``sweeps`` override:
+- A server or client wait field migrate could not read, or whose total is 0:
   set ``timeouts.server_ready_s`` to ``server_warmup_wait_s`` +
   ``server_poll_iterations`` × ``server_poll_wait_s``, and
   ``timeouts.client_s`` to ``client_initial_wait_s`` +
   ``client_poll_iterations`` × ``client_poll_wait_s``. Count a missing field
   at its old default: 330, 60, and 60 for the server, and 120, 20, and 60 for
   the client. See :ref:`vllm-timeouts`.
+
+A wait field inside a ``sweeps`` override fails with ``cannot set harness
+fields``; delete it, since ``timeouts`` covers every run.
 
 .. important::
 
@@ -859,8 +862,8 @@ A cell may not set a flag CVS sets itself or a client wait field: ``backend``,
 ``base_url``, ``model``, ``dataset_name``, ``random_input_len``,
 ``random_output_len``, ``max_concurrency``, ``save_result``, ``result_dir``,
 ``result_filename``, ``percentile_metrics``, ``metric_percentiles``,
-``ignore_eos``, ``trust_remote_code``, ``client_poll_iterations``,
-``client_poll_wait_s``, or ``client_initial_wait_s``. Those fail config load
+``ignore_eos``, ``trust_remote_code``, or a former wait field such as
+``client_poll_wait_s`` or ``server_warmup_wait_s``. Those fail config load
 with ``cannot set harness fields``.
 
 Cell keys

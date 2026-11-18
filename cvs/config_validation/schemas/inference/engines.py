@@ -43,32 +43,35 @@ _AXES = (ISL, OSL, TP, PP, CONC)
 _SOCKET_ENV = {"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"}
 _METADATA_PREFIXES = ("_comment", "_example")
 
+# Former server_params fields that timeouts.server_ready_s replaced.
+SERVER_WAIT_FIELDS = frozenset({"server_poll_iterations", "server_poll_wait_s", "server_warmup_wait_s"})
+
 # A server_params field, a former field name, or a flag the launcher sets; as a vllm
 # serve flag, each would repeat or contradict the harness.
-SERVER_RESERVED = frozenset(
-    {
-        "backend",
-        "model",
-        "tensor_parallel_size",
-        "tp",
-        "pipeline_parallel_size",
-        "pp",
-        "dp",
-        "ep",
-        "port",
-        "dist_init_port",
-        "master_port",
-        "master_addr",
-        "nnodes",
-        "node_rank",
-        "headless",
-        "max_model_len",
-        "max_model_length",
-        "server_poll_iterations",
-        "server_poll_wait_s",
-        "server_warmup_wait_s",
-        "distributed_executor_backend",
-    }
+SERVER_RESERVED = (
+    frozenset(
+        {
+            "backend",
+            "model",
+            "tensor_parallel_size",
+            "tp",
+            "pipeline_parallel_size",
+            "pp",
+            "dp",
+            "ep",
+            "port",
+            "dist_init_port",
+            "master_port",
+            "master_addr",
+            "nnodes",
+            "node_rank",
+            "headless",
+            "max_model_len",
+            "max_model_length",
+            "distributed_executor_backend",
+        }
+    )
+    | SERVER_WAIT_FIELDS
 )
 
 # Each name is a benchmark_params field, a former field name, or a flag the harness sets on vllm bench serve.
@@ -341,8 +344,8 @@ class VllmConfig(LlmServingConfig):
             collisions = sorted(reserved & set(flags))
             if collisions:
                 raise ValueError(f"{block} cannot set harness fields: {collisions}")
-        # A cell may change a shared client field such as num_prompts, but not a flag the harness sets.
-        harness_flags = CLIENT_RESERVED - set(ServingBenchmarkParams.model_fields)
+        # A cell may change a shared client field such as num_prompts, but not a flag the harness sets or an old wait.
+        harness_flags = (CLIENT_RESERVED - set(ServingBenchmarkParams.model_fields)) | SERVER_WAIT_FIELDS
         for key, overrides in self.sweeps.items():
             collisions = sorted(harness_flags & set(overrides))
             if collisions:

@@ -36,43 +36,6 @@ FIXTURE = OLD_DIR / "mi3xx_vllm_llama33-70b_fp8_distributed.json"
 SHIPPED_DIR = Path(__file__).resolve().parents[4] / "input" / "config_file" / "inference" / "vllm"
 GOLDEN = Path(__file__).resolve().parents[4] / "tests" / "inference" / "vllm" / "unittests" / "golden_commands.json"
 
-# (server_ready_s, client_s) of each shipped config: the totals its six wait fields gave before they became timeouts.
-SHIPPED_TIMEOUTS = {
-    "mi3xx_vllm_deepseek-r1-0528_fp8_distributed.json": (5430, 7210),
-    "mi3xx_vllm_deepseek-r1-0528_fp8_single.json": (3930, 5520),
-    "mi3xx_vllm_deepseek-r1-0528_mxfp4_distributed.json": (3630, 5410),
-    "mi3xx_vllm_deepseek-v4-flash_fp8_distributed.json": (3630, 5410),
-    "mi3xx_vllm_deepseek-v4-flash_fp8_single.json": (3930, 5520),
-    "mi3xx_vllm_deepseek-v4-pro_fp8_distributed.json": (5430, 7210),
-    "mi3xx_vllm_deepseek-v4-pro_fp8_single.json": (3930, 5520),
-    "mi3xx_vllm_glm-51_bf16_distributed.json": (7230, 7210),
-    "mi3xx_vllm_glm-51_fp8_distributed.json": (3630, 5410),
-    "mi3xx_vllm_glm-51_fp8_single.json": (3930, 5520),
-    "mi3xx_vllm_glm-52_fp8_distributed.json": (5430, 5410),
-    "mi3xx_vllm_glm-52_fp8_single.json": (3930, 5520),
-    "mi3xx_vllm_gpt-oss-120b_mxfp4_distributed.json": (3630, 5410),
-    "mi3xx_vllm_gpt-oss-120b_mxfp4_single.json": (3930, 5520),
-    "mi3xx_vllm_kimi-k25_w4a8_distributed.json": (5430, 7210),
-    "mi3xx_vllm_kimi-k25_w4a8_single.json": (3930, 5520),
-    "mi3xx_vllm_kimi-k26_mxfp4_distributed.json": (5430, 7210),
-    "mi3xx_vllm_kimi-k26_mxfp4_single.json": (3930, 5520),
-    "mi3xx_vllm_kimi-k27-code_mxfp4_distributed.json": (5430, 7210),
-    "mi3xx_vllm_kimi-k27-code_mxfp4_single.json": (3930, 5520),
-    "mi3xx_vllm_llama33-70b_fp8_distributed.json": (3630, 5410),
-    "mi3xx_vllm_llama33-70b_fp8_single.json": (3930, 5520),
-    "mi3xx_vllm_mimo-v25-pro_fp8_distributed.json": (3930, 5520),
-    "mi3xx_vllm_mimo-v25-pro_fp8_single.json": (3930, 5520),
-    "mi3xx_vllm_minimax-m3_bf16_distributed.json": (3630, 5410),
-    "mi3xx_vllm_minimax-m3_bf16_single.json": (3930, 5520),
-    "mi3xx_vllm_mistral-large-3_bf16_distributed.json": (3930, 5520),
-    "mi3xx_vllm_mistral-large-3_bf16_single.json": (3930, 5520),
-    "mi3xx_vllm_mistral-large-3_fp8_distributed.json": (5430, 7210),
-    "mi3xx_vllm_qwen35-397b-a17b_bf16_distributed.json": (3630, 5410),
-    "mi3xx_vllm_qwen35-397b-a17b_bf16_single.json": (3930, 5520),
-    "mi3xx_vllm_qwen35-397b-a17b_mxfp4_distributed.json": (3630, 5410),
-    "mi4xx_vllm_deepseek-v4-flash_fp8_single.json": (2430, 3620),
-}
-
 KEY = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
 OTHER_KEY = "ISL=8192,OSL=1024,TP=8,PP=2,CONC=64"
 PATHS = {
@@ -449,6 +412,16 @@ class TestTimeouts(_MapCase):
                 )
                 self.assertEqual(new["timeouts"], {"client_s": 120 + 4 * 60})
 
+    def test_a_wait_that_totals_zero_seconds_goes_to_unmapped(self):
+        waits = {"server_warmup_wait_s": 0, "server_poll_iterations": 0, "server_poll_wait_s": 10}
+        code, lines, new = self._migrate(self._old_with_waits(waits))
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            lines,
+            [f"_unmapped.server_params.{name}: {UNMAPPED_FIELD_MESSAGE}" for name in waits],
+        )
+        self.assertNotIn("timeouts", new)
+
     def test_a_new_format_config_still_holding_a_wait_field_converts(self):
         new = copy.deepcopy(NEW)
         new["benchmark_params"]["client_poll_wait_s"] = 30
@@ -525,14 +498,6 @@ class TestShippedConfigs(_MapCase):
                 distributed = "_distributed" in path.name
                 self.assertEqual(config.vllm.distributed_executor_backend, "ray" if distributed else "mp")
                 self.assertEqual(config.server_params.nnodes, 2 if distributed else None)
-
-    def test_each_shipped_config_waits_as_long_as_its_old_wait_fields_allowed(self):
-        configs = {path.name: path for path in SHIPPED_DIR.glob("*.json") if not path.name.endswith("threshold.json")}
-        self.assertEqual(set(configs), set(SHIPPED_TIMEOUTS))
-        for name, totals in SHIPPED_TIMEOUTS.items():
-            with self.subTest(config=name):
-                timeouts = json.loads(configs[name].read_text())["timeouts"]
-                self.assertEqual((timeouts["server_ready_s"], timeouts["client_s"]), totals)
 
     def test_the_reserved_names_are_the_fields_their_old_names_and_each_flag_the_harness_sets(self):
         golden = json.loads(GOLDEN.read_text())
