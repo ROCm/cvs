@@ -201,7 +201,7 @@ class TestRecordOutputs(unittest.TestCase):
         self.assertIn("total_failed", node["items"][-1]["message"])
         self.assertIn("14 total", node["items_summary"])
 
-    def test_results_json_missing_zero_pattern_fails(self):
+    def test_results_json_unread_fails_with_read_reason(self):
         results = {}
         agfhc_rundeck.record_outputs(
             results,
@@ -211,7 +211,21 @@ class TestRecordOutputs(unittest.TestCase):
         )
         node = results["groups"]["hbm_lvl5"]["nodes"]["n1"]
         self.assertEqual(node["status"], "fail")
-        self.assertEqual(node["items_summary"], "total_failed is not zero")
+        self.assertTrue(node["items_summary"].startswith('results.json could not be read:'))
+        self.assertIn('No such file or directory', node["items_summary"])
+        self.assertEqual(node["items"][-1]["name"], 'total_failed')
+
+    def test_results_json_empty_read_fails_with_no_output(self):
+        results = {}
+        agfhc_rundeck.record_outputs(
+            results,
+            'hbm_lvl5',
+            {'n1': _SUCCESS},
+            results_json={'n1': ''},
+        )
+        node = results['groups']['hbm_lvl5']['nodes']['n1']
+        self.assertEqual(node['status'], 'fail')
+        self.assertEqual(node['items_summary'], 'results.json could not be read: no output')
 
     def test_stdout_only_capture_ignores_missing_results_json(self):
         results = {}

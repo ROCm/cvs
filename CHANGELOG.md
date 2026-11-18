@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `csp_qual_agfhc`: a node whose `results.json` cannot be read (missing file, SSH error or empty read) now fails with `results.json could not be read on node <node>` and what the read returned, instead of reporting nonzero failed tests. The Run Deck cell shows the same reason.
 - `test_install_agfhc` no longer fails a node when a companion tool directory is missing (`TXB_PATH`, `MINIHPL_PATH`, `MEMROCKER_PATH`, `FIREXS_PATH`, or `AFIDSAG_PATH`). Those paths are still exported when AGFHC is launched.
 - The health TransferBench `healthcheck` test fails when TransferBench reports a failed sub-test or exits with an error. It previously passed, and only the Run Deck showed the failure.
 - ibperf: when a node pair is excluded, the remaining pairs no longer wait out the perftest timeouts or report extra failures for the excluded nodes.
