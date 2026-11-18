@@ -15,7 +15,6 @@ from unittest import mock
 
 from pydantic import Field, model_validator
 
-import cvs
 from cvs.config_validation.loaders.suite_config import (
     MISSING_THRESHOLD_MESSAGE,
     PLACEHOLDER_KEY_MESSAGE,
@@ -24,17 +23,15 @@ from cvs.config_validation.loaders.suite_config import (
     LoadedSuiteConfig,
     load_suite_config,
     mode_from_module,
-    old_threshold_paths,
     read_cluster,
 )
-from cvs.config_validation.schemas.base import ConfigStr, OpenBlock, StrictBlock, SuiteConfig
+from cvs.config_validation.schemas.base import ConfigStr, OpenBlock, SecretInputError, StrictBlock, SuiteConfig
 from cvs.config_validation.schemas.thresholds import ThresholdFile, Thresholds
 from cvs.lib.conf_lib.config_blocks import PLACEHOLDER_MESSAGE
 from cvs.lib.conf_lib.loader import ConfigError
 from cvs.lib.utils.config_loader import substitute_placeholders
 from cvs.unittests.support import FAKE_CRED
 
-PACKAGED_VLLM_DIR = Path(cvs.__file__).resolve().parent / "input" / "config_file" / "inference" / "vllm"
 CELL = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"
 CLUSTER = {
     "username": "{user-id}",
@@ -78,6 +75,19 @@ class _Serving(SuiteConfig, Thresholds):
 
 class _Unnamed(_Serving):
     suite = None
+
+
+class _TokenNameError(SecretInputError):
+    pass
+
+
+class _RefusesTokens(_Serving):
+    @model_validator(mode="before")
+    @classmethod
+    def _no_token_names(cls, data):
+        if "HF_TOKEN" in data.get("env", {}):
+            raise _TokenNameError("env: HF_TOKEN is a token name; use a token file")
+        return data
 
 
 class _Hooked(_Serving):
@@ -210,6 +220,26 @@ class TestLoadSuiteConfig(_LoaderCase):
         self.assertIs(validated, loaded.config)
         self.assertEqual(cells_when_called, [CELL])
         self.assertIs(cluster, loaded.cluster)
+
+    def test_a_secret_error_from_validation_is_refused_naming_the_file_and_never_the_value(self):
+        exc = self._refused({**VALID, "env": {"HF_TOKEN": FAKE_CRED}}, _RefusesTokens)
+        self.assertTrue(str(exc).startswith(f"{self.config_file} is not a valid config:"))
+        self.assertEqual(exc.problems, ["env: HF_TOKEN is a token name; use a token file"])
+        self.assertNotIn(FAKE_CRED, str(exc))
+
+    def test_a_config_or_threshold_file_that_is_not_json_is_refused_naming_it_and_the_position(self):
+        problem = "not valid JSON: Expecting property name enclosed in double quotes at line 1 column 2"
+        Path(self.config_file).parent.mkdir(parents=True, exist_ok=True)
+        Path(self.config_file).write_text("{threshold_json: x}")
+        with self.assertRaises(ConfigError) as ctx:
+            load_suite_config(_Serving, self.config_file, self.cluster_file, self.log)
+        self.assertEqual(str(ctx.exception), f"{self.config_file} is not a valid config:\n  {problem}")
+        threshold = self.tmp / "configs" / "demo_threshold.json"
+        threshold.write_text("{" + CELL + ": {}}")
+        self._write("configs/suite.json", {**VALID, "threshold_json": threshold.name})
+        with self.assertRaises(ConfigError) as ctx:
+            load_suite_config(_Serving, self.config_file, self.cluster_file, self.log)
+        self.assertEqual(str(ctx.exception), f"{threshold} is not a valid config:\n  {problem}")
 
 
 class TestCheckOrder(_LoaderCase):
@@ -395,20 +425,25 @@ class TestThresholdFile(_LoaderCase):
                     "%s names no threshold_json; metrics are recorded without gating", self.config_file
                 )
 
-    def test_a_name_missing_beside_the_config_falls_back_to_the_packaged_copy(self):
-        packaged = sorted(PACKAGED_VLLM_DIR.glob("*_threshold.json"))[0]
-        written = json.loads(packaged.read_text())
-        if old_threshold_paths(written):
-            # Shipped files still in the old layout are found, then refused as old.
-            with self.assertWarns(UserWarning):
-                exc = self._refused({**VALID, "threshold_json": packaged.name})
-            self.assertTrue(str(exc).startswith(f"{packaged} is not a valid config:"))
-            self.assertIn("old config format:", exc.problems[0])
-            return
+    def _packaged(self, thresholds):
+        packaged = self._write("package/demo_threshold.json", thresholds)
+        lookup = mock.patch("cvs.lib.utils.config_loader._find_packaged_threshold", return_value=packaged)
+        lookup.start()
+        self.addCleanup(lookup.stop)
+        return packaged
+
+    def test_a_name_missing_beside_the_config_loads_the_packaged_copy(self):
+        self._packaged({CELL: {"output_throughput": _spec()}})
         with self.assertWarns(UserWarning):
-            config = self._load({**VALID, "threshold_json": packaged.name}).config
-        self.assertEqual(config.thresholds, ThresholdFile.model_validate(written))
-        self.assertTrue(config.thresholds.model_extra)
+            config = self._load({**VALID, "threshold_json": "demo_threshold.json"}).config
+        self.assertEqual(list(config.thresholds.model_extra), [CELL])
+
+    def test_a_packaged_copy_in_the_old_format_is_refused_naming_that_copy(self):
+        packaged = self._packaged({"accuracy": {"gsm8k_flex": {"exact_match": _spec()}}})
+        with self.assertWarns(UserWarning):
+            exc = self._refused({**VALID, "threshold_json": "demo_threshold.json"})
+        self.assertTrue(str(exc).startswith(f"{packaged} is not a valid config:"))
+        self.assertIn("old config format:", exc.problems[0])
 
     def test_a_missing_file_with_no_packaged_copy_names_threshold_json_and_never_its_value(self):
         exc = self._refused({**VALID, "threshold_json": f"{FAKE_CRED}_threshold.json"})

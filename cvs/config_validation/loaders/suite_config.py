@@ -29,7 +29,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
 
-from cvs.config_validation.schemas.base import problem_lines
+from cvs.config_validation.schemas.base import SecretInputError, problem_lines
 from cvs.config_validation.schemas.thresholds import ACCURACY_SECTIONS, Thresholds
 from cvs.lib.conf_lib.config_blocks import PLACEHOLDER_MESSAGE, has_placeholder
 from cvs.lib.conf_lib.loader import ConfigError
@@ -55,6 +55,15 @@ def read_cluster(cluster_file):
         return resolve_cluster_config_placeholders(json.load(fp))
 
 
+def _read_json(path):
+    """The JSON in ``path``; a file that is not JSON raises ``ConfigError`` naming it and the position."""
+    try:
+        with open(path) as fp:
+            return json.load(fp)
+    except json.JSONDecodeError as exc:
+        raise ConfigError(path, [f"not valid JSON: {exc.msg} at line {exc.lineno} column {exc.colno}"]) from None
+
+
 def load_suite_config(schema, config_file, cluster_file, log):
     """Load ``config_file`` with the ``SuiteConfig`` subclass ``schema`` and return a ``LoadedSuiteConfig``.
 
@@ -67,12 +76,14 @@ def load_suite_config(schema, config_file, cluster_file, log):
     beside the config. ``orch_inputs`` gets the config as ``read_raw`` returned it.
     """
     cluster = read_cluster(cluster_file)
+    written = _read_json(config_file)
     raw = schema.read_raw(config_file, cluster)
-    with open(config_file) as fp:
-        written = json.load(fp)
     _refuse_before_schema(schema, config_file, schema.old_keys(raw), written, raw)
     config_input = _with_thresholds(schema, raw, config_file, log) if issubclass(schema, Thresholds) else raw
-    config = schema.validate_config(config_input, config_file)
+    try:
+        config = schema.validate_config(config_input, config_file)
+    except SecretInputError as exc:
+        raise ConfigError(config_file, [str(exc)]) from None
     return LoadedSuiteConfig(schema, config, cluster, schema.orch_inputs(raw, config, cluster))
 
 
@@ -112,8 +123,7 @@ def _with_thresholds(schema, raw, config_file, log):
         path = _find_threshold_file(raw, Path(config_file))
     except FileNotFoundError:
         raise ConfigError(config_file, [f"threshold_json: {MISSING_THRESHOLD_MESSAGE}"]) from None
-    with open(path) as fp:
-        written = json.load(fp)
+    written = _read_json(path)
     _refuse_before_schema(schema, path, old_threshold_paths(written), written, written)
     try:
         return {**raw, "thresholds": TypeAdapter(field.rebuild_annotation()).validate_python(written)}
