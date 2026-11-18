@@ -47,6 +47,8 @@ class TestViewerScaffold(unittest.TestCase):
             self.assertIn("all_cells", text)
             self.assertIn('"cell_id"', text)
             self.assertIn("chart.js", text)
+            self.assertIn("if (typeof Chart === 'undefined')", text)
+            self.assertIn("Chart.js could not be loaded; the tables below have the same data.", text)
             self.assertIn('<div class="cvs-header"', text)
             self.assertNotIn("__THEME_", text)
             self.assertIn("comparison-grid", text)

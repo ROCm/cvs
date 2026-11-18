@@ -2044,6 +2044,19 @@ function buildComparisonCharts(rows) {
 function buildCharts(rows) {
   destroyCharts();
   const chartsPanel = $('charts');
+  if (typeof Chart === 'undefined') {
+    $('comparison-block').style.display = 'none';
+    $('margin-block').style.display = 'none';
+    if (!$('charts-unavailable')) {
+      const note = document.createElement('p');
+      note.id = 'charts-unavailable';
+      note.className = 'subsection-hint';
+      note.textContent = 'Chart.js could not be loaded; the tables below have the same data.';
+      chartsPanel.appendChild(note);
+    }
+    chartsPanel.style.display = 'block';
+    return;
+  }
 
   buildInteractivityChart(rows);
   buildStepCharts(rows);
