@@ -24,7 +24,7 @@ from unittest import mock
 import cvs.main as main
 from cvs.cli_plugins.config_plugin import ConfigPlugin
 from cvs.config_validation.loaders.suite_config import UNMAPPED_FIELD_MESSAGE
-from cvs.config_validation.migrate.engine import migrate, old_paths
+from cvs.config_validation.migrate.engine import migrate, migrate_many, old_paths
 from cvs.config_validation.migrate.maps import vllm
 from cvs.config_validation.schemas.inference.engines import (
     CLIENT_RESERVED,
@@ -40,8 +40,6 @@ OLD_DIR = Path(__file__).resolve().parents[2] / "unittests" / "old"
 FIXTURE = OLD_DIR / "mi3xx_vllm_llama33-70b_fp8_distributed.json"
 SHIPPED_DIR = Path(__file__).resolve().parents[4] / "input" / "config_file" / "inference" / "vllm"
 GOLDEN = Path(__file__).resolve().parents[4] / "tests" / "inference" / "vllm" / "unittests" / "golden_commands.json"
-# The harness passes --max-model-len only when engine_args does not set it.
-USER_SETTABLE_FLAGS = {"max_model_len"}
 
 KEY = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
 OTHER_KEY = "ISL=8192,OSL=1024,TP=8,PP=2,CONC=64"
@@ -95,9 +93,11 @@ NEW = {
     "threshold_json": "",
     "paths": PATHS,
     "container": CONTAINER,
-    "server_params": {"engine": "vllm", "model": "org/model", "tp": 8, "pp": 2, "master_port": 29600},
+    "server_params": {"model": "org/model", "tp": 8, "pp": 2, "nnodes": 2, "master_port": 29600},
     "benchmark_params": {"num_prompts": 64},
-    "cells": [KEY],
+    "sweeps": {KEY: {}},
+    "runs": [KEY],
+    "vllm": {},
 }
 
 
@@ -128,8 +128,14 @@ def _vllm_flags(command):
 
 
 def _validate(config, threshold_file):
-    """Validate a converted config as ``VllmConfig`` with its threshold file attached, placeholders allowed."""
+    """Validate a converted config as ``VllmConfig`` with its converted threshold file attached, placeholders allowed."""
     return VllmConfig.model_validate({**config, "thresholds": json.loads(threshold_file.read_text())})
+
+
+def _with_threshold_file(config_path):
+    """``config_path`` and the threshold file it names beside it, as ``cvs config migrate`` takes them together."""
+    name = json.loads(config_path.read_text()).get("threshold_json")
+    return [config_path, config_path.parent / name] if name else [config_path]
 
 
 class _MapCase(unittest.TestCase):
@@ -159,6 +165,15 @@ class _MapCase(unittest.TestCase):
         self.assertTrue(lines[0].startswith(f"wrote {output}"))
         return code, [line.strip() for line in lines[1:]], json.loads(output.read_text())
 
+    def _migrate_with_thresholds(self, config_path):
+        """Migrate a config with its threshold file into one folder; return the code, the lines and both outputs."""
+        folder = self.tmp / "converted"
+        folder.mkdir(exist_ok=True)
+        lines = []
+        code = migrate_many("vllm", _with_threshold_file(config_path), folder, force=True, out=lines.append)
+        new = json.loads((folder / config_path.name).read_text())
+        return code, lines, new, folder / new["threshold_json"]
+
 
 class TestMapModule(unittest.TestCase):
     def test_the_old_keys_are_the_renamed_and_dropped_ones_and_a_converted_config_has_none(self):
@@ -170,8 +185,13 @@ class TestMapModule(unittest.TestCase):
                 "server_params.tensor_parallel_size",
                 "server_params.pipeline_parallel_size",
                 "server_params.dist_init_port",
+                "server_params.distributed_executor_backend",
+                "server_params.max_model_len",
                 "benchmark_params.backend",
-                "runs",
+                "benchmark_params.dataset_name",
+                "benchmark_params.trust_remote_code",
+                "benchmark_params.ignore_eos",
+                "accuracy.tasks",
             ],
         )
         self.assertEqual(
@@ -183,56 +203,54 @@ class TestMapModule(unittest.TestCase):
 class TestOldFixture(_MapCase):
     def test_the_fixture_converts_clean_and_validates_with_its_threshold_file(self):
         old = json.loads(FIXTURE.read_text())
-        code, lines, new = self._migrate(FIXTURE)
-        self.assertEqual((code, lines), (0, []))
+        code, lines, new, threshold_file = self._migrate_with_thresholds(FIXTURE)
+        self.assertEqual(code, 0, lines)
         self.assertNotIn("_unmapped", new)
         self.assertEqual(_placeholders(new), _placeholders(old))
-        self.assertEqual(next(iter(new["server_params"].items())), ("engine", "vllm"))
         server, bench = old["server_params"], old["benchmark_params"]
         self.assertEqual(
             new["server_params"],
             {
-                "engine": "vllm",
                 "_comment": server["_comment"],
                 "model": "<changeme>",
                 "tp": 8,
                 "pp": 2,
+                "nnodes": 2,
                 "port": "8888",
                 "master_port": "29501",
                 "server_poll_iterations": 360,
                 "server_poll_wait_s": 10,
                 "server_warmup_wait_s": 30,
-                "distributed_executor_backend": "mp",
-                "engine_args": {
-                    "kv_cache_dtype": "fp8",
-                    "max_model_len": 2056,
-                    "max_num_seqs": 16,
-                    "gpu_memory_utilization": 0.5,
-                },
+                "engine_args": {"kv_cache_dtype": "fp8", "max_num_seqs": 16, "gpu_memory_utilization": 0.5},
+                "max_model_length": 2056,
                 "_comment_context": server["_comment_context"],
                 "_comment_startup": server["_comment_startup"],
             },
         )
+        self.assertEqual(new["vllm"], {"distributed_executor_backend": "mp"})
+        dropped = ("backend", "dataset_name", "trust_remote_code", "ignore_eos", "temperature")
         self.assertEqual(
             new["benchmark_params"],
             {
-                **{key: value for key, value in bench.items() if key not in ("backend", "temperature")},
+                **{key: value for key, value in bench.items() if key not in dropped},
                 "client_args": {"temperature": 0.0},
             },
         )
-        self.assertEqual(new["cells"], old["runs"])
-        moved = ("server_params", "benchmark_params", "sweeps", "runs", "cells")
+        self.assertEqual((new["sweeps"], new["runs"]), (old["sweeps"], old["runs"]))
+        self.assertEqual(new["accuracy"], {"lm_eval": old["accuracy"]})
+        moved = ("server_params", "benchmark_params", "accuracy", "vllm")
         self.assertEqual(
             {key: value for key, value in new.items() if key not in moved},
             {key: value for key, value in old.items() if key not in moved},
         )
 
-        config = _validate(new, OLD_DIR / new["threshold_json"])
+        config = _validate(new, threshold_file)
         self.assertEqual((config.server_params.tp, config.server_params.port), (8, 8888))
         self.assertEqual(list(config.thresholds.model_extra), [KEY])
+        self.assertEqual(list(config.thresholds.accuracy.lm_eval), [task["id"] for task in old["accuracy"]["tasks"]])
 
     def test_a_converted_config_is_already_in_the_new_format(self):
-        new = self._migrate(FIXTURE)[2]
+        new = self._migrate_with_thresholds(FIXTURE)[2]
         source = self.tmp / "again.json"
         self.assertEqual(
             self._migrate(new, name=source.name),
@@ -274,33 +292,56 @@ class TestFlags(_MapCase):
             "server_poll_iterations": 360,
             "server_poll_wait_s": 10,
             "server_warmup_wait_s": 30,
-            "distributed_executor_backend": "ray",
         }
-        server = {"_comment": "kept", "model": "org/model", "tensor_parallel_size": 8, "pp": 2, **fields, **SERVE_FLAGS}
+        server = {
+            "_comment": "kept",
+            "model": "org/model",
+            "tensor_parallel_size": 8,
+            "pp": 2,
+            "distributed_executor_backend": "ray",
+            **fields,
+            **SERVE_FLAGS,
+        }
         code, lines, new = self._migrate(_old(server_params=server))
         self.assertEqual((code, lines), (0, []))
-        expected = {"engine": "vllm", "_comment": "kept", "model": "org/model", "tp": 8, "pp": 2, **fields}
-        self.assertEqual(new["server_params"], {**expected, "engine_args": SERVE_FLAGS})
-        self.assertEqual(json.dumps(new["server_params"]["engine_args"]), json.dumps(SERVE_FLAGS))
+        flags = {name: value for name, value in SERVE_FLAGS.items() if name != "max_model_len"}
+        expected = {"_comment": "kept", "model": "org/model", "tp": 8, "pp": 2, **fields}
+        self.assertEqual(new["server_params"], {**expected, "engine_args": flags, "max_model_length": 2056})
+        self.assertEqual(json.dumps(new["server_params"]["engine_args"]), json.dumps(flags))
+        self.assertEqual(new["vllm"], {"distributed_executor_backend": "ray"})
+
+    def test_a_pipeline_above_one_sets_nnodes_and_a_false_trust_remote_code_passes_no_flag(self):
+        server = {**_old()["server_params"], "pipeline_parallel_size": 1, "trust_remote_code": False}
+        new = self._migrate(_old(server_params=server))[2]
+        self.assertEqual(new["server_params"], {"model": "org/model", "tp": 8, "pp": 1, "master_port": 29600})
 
     def test_every_other_benchmark_key_moves_into_client_args_and_fields_stay(self):
         bench = {
             "backend": "vllm",
+            "dataset_name": "random",
             "num_prompts": 64,
+            "seed": 7,
+            "ignore_eos": True,
             "trust_remote_code": True,
             "temperature": 0.0,
             "goodput": ["ttft:500"],
         }
-        code, lines, new = self._migrate(_old(benchmark_params=bench))
+        server = {**_old()["server_params"], "trust_remote_code": True}
+        code, lines, new = self._migrate(_old(server_params=server, benchmark_params=bench))
         self.assertEqual((code, lines), (0, []))
         self.assertEqual(
             new["benchmark_params"],
-            {
-                "num_prompts": 64,
-                "trust_remote_code": True,
-                "client_args": {"temperature": 0.0, "goodput": ["ttft:500"]},
-            },
+            {"num_prompts": 64, "seed": 7, "client_args": {"temperature": 0.0, "goodput": ["ttft:500"]}},
         )
+        self.assertEqual(new["server_params"]["engine_args"], {"trust_remote_code": True})
+
+    def test_a_client_field_that_differs_from_what_the_harness_now_passes_goes_to_unmapped(self):
+        for field, value in (("dataset_name", "sharegpt"), ("ignore_eos", False), ("trust_remote_code", True)):
+            with self.subTest(field=field):
+                bench = {"num_prompts": 64, field: value}
+                code, lines, new = self._migrate(_old(benchmark_params=bench))
+                self.assertEqual((code, lines), (1, [f"_unmapped.benchmark_params.{field}: {UNMAPPED_FIELD_MESSAGE}"]))
+                self.assertEqual(new["_unmapped"], {f"benchmark_params.{field}": value})
 
 
 class TestNicFields(_MapCase):
@@ -318,17 +359,20 @@ class TestNicFields(_MapCase):
 
 
 class TestSweeps(_MapCase):
-    def test_empty_and_comment_only_cells_are_left_out_with_the_sweeps_block(self):
+    def test_sweeps_and_runs_keep_their_shape_and_comments(self):
         sweeps = {"_comment": "cells", KEY: {}, OTHER_KEY: {"_comment": "not run"}}
-        self.assertEqual(self._migrate(_old(sweeps=sweeps)), (0, [], NEW))
+        self.assertEqual(self._migrate(_old(sweeps=sweeps)), (0, [], {**NEW, "sweeps": sweeps}))
 
-    def test_a_per_cell_override_goes_to_unmapped(self):
-        sweeps = {KEY: {}, OTHER_KEY: {"num_prompts": 32, "client_poll_wait_s": FAKE_CRED}}
+    def test_a_per_cell_client_flag_is_kept_and_a_harness_flag_is_named(self):
+        sweeps = {KEY: {}, OTHER_KEY: {"num_prompts": 32, "temperature": 0.5}}
         code, lines, new = self._migrate(_old(sweeps=sweeps, runs=[KEY, OTHER_KEY]))
-        self.assertEqual((code, lines), (1, [f"_unmapped.sweeps.{OTHER_KEY}: {UNMAPPED_FIELD_MESSAGE}"]))
-        self.assertEqual(new["_unmapped"], {f"sweeps.{OTHER_KEY}": sweeps[OTHER_KEY]})
-        self.assertEqual(new["cells"], [KEY, OTHER_KEY])
-        self.assertNotIn("sweeps", new)
+        self.assertEqual((code, lines), (0, []))
+        self.assertEqual((new["sweeps"], new["runs"]), (sweeps, [KEY, OTHER_KEY]))
+        sweeps[OTHER_KEY] = {"ignore_eos": True}
+        code, lines, new = self._migrate(_old(sweeps=sweeps, runs=[KEY, OTHER_KEY]))
+        self.assertEqual(
+            (code, lines), (1, [f"(config): sweeps.{OTHER_KEY} cannot set harness fields: ['ignore_eos']"])
+        )
 
 
 class TestThresholdFile(_MapCase):
@@ -346,7 +390,7 @@ class TestThresholdFile(_MapCase):
         self.assertEqual(
             new[KEY], {"mean_ttft_ms": {"kind": "max", "value": 80}, "output_throughput": {"kind": "min", "value": 900}}
         )
-        self.assertEqual(new["accuracy"], old["accuracy"])
+        self.assertEqual(new["accuracy"], {"lm_eval": old["accuracy"]})
         self.assertEqual(list(_validate(NEW, self.tmp / "new_old_threshold.json").thresholds.model_extra), [KEY])
 
     def test_an_old_kind_against_the_metrics_direction_is_named_and_one_with_no_new_kind_goes_to_unmapped(self):
@@ -374,20 +418,26 @@ class TestShippedConfigs(_MapCase):
         self.assertEqual(len(configs), 33)
         for path in configs:
             with self.subTest(config=path.name):
-                code, lines, new = self._migrate(path)
-                self.assertEqual((code, lines), (0, []))
                 old = json.loads(path.read_text())
+                if "server_params" in old and "tensor_parallel_size" not in old["server_params"]:
+                    self.skipTest("shipped configs are already in the new format")
+                code, lines, new, threshold_file = self._migrate_with_thresholds(path)
+                self.assertEqual(code, 0, lines)
                 self.assertNotIn("_unmapped", new)
                 self.assertEqual(_placeholders(new), _placeholders(old))
-                config = _validate(new, SHIPPED_DIR / new["threshold_json"])
-                self.assertEqual(config.cells, old["runs"])
-                self.assertEqual(next(iter(new["server_params"].items())), ("engine", "vllm"))
+                config = _validate(new, threshold_file)
+                self.assertEqual(config.runs, old["runs"])
+                pp = old["server_params"].get("pipeline_parallel_size", 1)
+                self.assertEqual(config.server_params.nnodes, int(pp) if int(pp) > 1 else None)
 
     def test_the_reserved_names_are_the_fields_their_old_names_and_each_flag_the_harness_sets(self):
         golden = json.loads(GOLDEN.read_text())
         harness = {"serve": set(), "bench serve": set()}
         for name, recorded in golden.items():
-            new = self._migrate(SHIPPED_DIR / name)[2]
+            old = json.loads((SHIPPED_DIR / name).read_text())
+            if "tensor_parallel_size" not in old.get("server_params", {}):
+                self.skipTest("shipped configs are already in the new format")
+            new = self._migrate_with_thresholds(SHIPPED_DIR / name)[2]
             own = {
                 "serve": set(new["server_params"].get("engine_args", {})),
                 "bench serve": set(new.get("benchmark_params", {}).get("client_args", {})),
@@ -401,8 +451,10 @@ class TestShippedConfigs(_MapCase):
         ):
             with self.subTest(command=f"vllm {kind}"):
                 old_names = {path.removeprefix(f"{block}.") for path in vllm.CONFIG if path.startswith(f"{block}.")}
+                # Every flag the harness passes and every old field name is reserved; nothing else but fields is.
+                self.assertLessEqual(harness[kind] | old_names, reserved)
                 fields = set(model.model_fields) - {"engine_args", "client_args"}
-                self.assertEqual(reserved, (harness[kind] - USER_SETTABLE_FLAGS) | fields | old_names)
+                self.assertLessEqual(reserved - harness[kind] - old_names, fields | {"engine", "headless", "node_rank"})
 
 
 class TestCli(unittest.TestCase):
@@ -424,11 +476,15 @@ class TestCli(unittest.TestCase):
         before = FIXTURE.read_bytes()
         with tempfile.TemporaryDirectory() as tmp:
             written = Path(tmp) / FIXTURE.name
-            self.assertEqual(self._cvs("config", "migrate", "vllm", str(FIXTURE), tmp), (0, f"wrote {written}\n", ""))
+            config, threshold = _with_threshold_file(FIXTURE)
+            self.assertEqual(
+                self._cvs("config", "migrate", "vllm", str(config), str(threshold), tmp),
+                (0, f"wrote {Path(tmp) / threshold.name}\nwrote {written}\n", ""),
+            )
             new = json.loads(written.read_text())
         self.assertEqual(FIXTURE.read_bytes(), before)
-        self.assertEqual(next(iter(new["server_params"].items())), ("engine", "vllm"))
-        self.assertEqual(new["cells"], json.loads(before)["runs"])
+        self.assertEqual(new["vllm"], {"distributed_executor_backend": "mp"})
+        self.assertEqual(new["runs"], json.loads(before)["runs"])
         self.assertNotIn("_unmapped", new)
 
 

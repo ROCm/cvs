@@ -2,20 +2,21 @@
 Copyright 2026 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Engine configs on ``LlmServingConfig``: ``VllmConfig`` and its blocks.
+Engine configs on ``LlmServingConfig``: ``VllmConfig``, ``SglangConfig`` and
+``AtomConfig``, each with the one top-level block only its engine reads.
 
 ``vllm serve`` flags go in ``server_params.engine_args`` and ``vllm bench
 serve`` flags in ``benchmark_params.client_args``, in snake_case, the spelling
 the commands are built from. Neither may name a field the harness sets.
+``SglangConfig`` and ``AtomConfig`` hold only their blocks and the checks every
+engine without an implementation needs; their ports add the rest.
 '''
 
-import json
-import re
-from typing import Annotated, Any, Dict, List, Literal, Union
+from typing import Annotated, Dict, List, Literal
 
-from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field, model_validator
 
-from cvs.config_validation.schemas.base import ConfigStr, SecretInputError, drop_comment_keys
+from cvs.config_validation.schemas.base import ConfigStr, StrictBlock, drop_comment_keys
 from cvs.config_validation.schemas.common_training_inference import ContainerSpec, RuntimeArgs, RuntimeSpec
 from cvs.config_validation.schemas.inference.llm_serving import (
     LlmServingConfig,
@@ -24,7 +25,6 @@ from cvs.config_validation.schemas.inference.llm_serving import (
 )
 from cvs.config_validation.schemas.sweeps import Axis, parse_cell_key
 from cvs.config_validation.schemas.thresholds import Threshold, ThresholdFile
-from cvs.lib.conf_lib.config_blocks import PLACEHOLDER_MESSAGE, has_placeholder, placeholders_rejected
 from cvs.lib.inference.utils.vllm_metrics import METRICS_BY_NAME
 
 ISL = Axis("ISL", "isl")
@@ -35,9 +35,7 @@ CONC = Axis("CONC", "concurrency")
 _AXES = (ISL, OSL, TP, PP, CONC)
 
 _SOCKET_ENV = {"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"}
-_HF_TOKEN_ENV = {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"}
 _METADATA_PREFIXES = ("_comment", "_example")
-_FLAG_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 # A server_params field, a former field name, or a flag the launcher sets; as a vllm
 # serve flag, each would repeat or contradict the harness.
@@ -59,6 +57,8 @@ SERVER_RESERVED = frozenset(
         "nnodes",
         "node_rank",
         "headless",
+        "max_model_len",
+        "max_model_length",
         "server_poll_iterations",
         "server_poll_wait_s",
         "server_warmup_wait_s",
@@ -97,35 +97,22 @@ CLIENT_RESERVED = frozenset(
 )
 
 
-def _reject_flag_placeholder(value, info):
-    if not placeholders_rejected(info):
-        return value
-    text = value if isinstance(value, str) else json.dumps(value, default=str)
-    if has_placeholder(text):
-        raise ValueError(PLACEHOLDER_MESSAGE)
-    return value
-
-
-FlagValue = Annotated[Any, AfterValidator(_reject_flag_placeholder)]
-
-
-def _check_flags(flags, reserved):
-    for name, value in flags.items():
-        if not _FLAG_NAME_RE.fullmatch(name):
-            raise ValueError(f"flag names must be snake_case: {name!r}")
-        if value is False:
-            raise ValueError(f"{name}=false is ambiguous; omit it or use the flag's negative form")
-        if isinstance(value, list) and any(isinstance(item, (list, dict)) for item in value):
-            raise ValueError(f"{name}: lists may contain scalar values only")
-        if isinstance(value, dict):
-            try:
-                json.dumps(value, separators=(",", ":"))
-            except (TypeError, ValueError):
-                raise ValueError(f"{name} must be JSON serializable") from None
-    collisions = sorted(reserved & set(flags))
-    if collisions:
-        raise ValueError(f"cannot set harness fields: {collisions}")
-    return flags
+def _refuse_unimplemented(config, engine):
+    """Fail when ``config`` turns on an accuracy check or metric ``engine`` does not implement."""
+    unimplemented = [
+        name
+        for name, on in (
+            ("accuracy.quant_parity", config.accuracy.quant_parity.enabled),
+            ("accuracy.mtp_quality", config.accuracy.mtp_quality.enabled),
+            (
+                "benchmark_params.scaling_baseline_output_throughput",
+                config.benchmark_params.scaling_baseline_output_throughput is not None,
+            ),
+        )
+        if on
+    ]
+    if unimplemented:
+        raise ValueError(f"not implemented for {engine}: {', '.join(unimplemented)}")
 
 
 class VllmRuntimeArgs(RuntimeArgs):
@@ -137,15 +124,6 @@ class VllmRuntimeArgs(RuntimeArgs):
     volumes: List[ConfigStr] = Field(default_factory=list)
     devices: List[str] = Field(default_factory=list)
 
-    # container.env is the one env block, so the Hugging Face token check
-    # cannot be bypassed through docker run -e arguments built from here.
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_env(cls, data):
-        if isinstance(data, dict) and "env" in data:
-            raise ValueError("vLLM does not read runtime.args.env; set these variables in container.env")
-        return data
-
 
 class VllmRuntime(RuntimeSpec):
     model_config = ConfigDict(extra="forbid")
@@ -154,24 +132,8 @@ class VllmRuntime(RuntimeSpec):
     args: VllmRuntimeArgs = Field(default_factory=VllmRuntimeArgs)
 
 
-class ContainerEnvTokenError(SecretInputError):
-    """A Hugging Face token name in container.env."""
-
-
 class VllmContainerSpec(ContainerSpec):
     runtime: VllmRuntime = Field(default_factory=VllmRuntime)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_hf_token_env(cls, data):
-        env = data.get("env") if isinstance(data, dict) else None
-        tokens = sorted(name for name in env or {} if str(name).upper() in _HF_TOKEN_ENV)
-        if tokens:
-            raise ContainerEnvTokenError(
-                f"container.env must not set {tokens}: container.env values become docker run -e arguments. "
-                "Put the Hugging Face token in the file named by paths.hf_token_file instead."
-            )
-        return data
 
     @model_validator(mode="after")
     def _validate_network_env(self):
@@ -199,51 +161,19 @@ class VllmContainerSpec(ContainerSpec):
 
 
 class VllmServerParams(ServingServerParams):
-    """The ``vllm serve`` harness fields; ``engine_args`` holds every other serve flag.
+    """The shared server fields plus the old server wait, a warmup then readiness polls."""
 
-    vLLM has no data or expert parallel fields, so ``dp`` and ``ep`` stay 1;
-    their vLLM flags go in ``engine_args``.
-    """
-
-    engine: Literal["vllm"]
-    dp: Literal[1] = 1
-    ep: Literal[1] = 1
-    port: int = 8888
-    master_port: int = 29501
     server_poll_iterations: int = 60
     server_poll_wait_s: int = 60
     server_warmup_wait_s: int = 330
-    distributed_executor_backend: Literal["mp", "ray"] = "mp"
-    engine_args: Dict[str, FlagValue] = Field(default_factory=dict)
-
-    @field_validator("engine_args")
-    @classmethod
-    def _check_engine_args(cls, engine_args):
-        return _check_flags(engine_args, SERVER_RESERVED)
 
 
 class VllmBenchmarkParams(ServingBenchmarkParams):
-    """The ``vllm bench serve`` harness fields; ``client_args`` holds every other client flag."""
+    """The shared client fields plus the old client wait, an initial wait then polls."""
 
-    dataset_name: str = "random"
-    num_prompts: int = 3200
-    request_rate: Union[str, float] = "inf"
-    burstiness: float = 1.0
-    tokenizer_mode: str = "auto"
-    seed: int = 0
-    random_range_ratio: float = 0.0
-    random_prefix_len: int = 0
     client_poll_iterations: int = 20
     client_poll_wait_s: int = 60
     client_initial_wait_s: int = 120
-    trust_remote_code: bool = False
-    ignore_eos: bool = True
-    client_args: Dict[str, FlagValue] = Field(default_factory=dict)
-
-    @field_validator("client_args")
-    @classmethod
-    def _check_client_args(cls, client_args):
-        return _check_flags(client_args, CLIENT_RESERVED)
 
 
 class VllmThreshold(Threshold):
@@ -306,13 +236,19 @@ class VllmThresholdFile(ThresholdFile):
         return self
 
 
-class VllmConfig(LlmServingConfig):
-    """A vLLM suite config.
+class VllmBlock(StrictBlock):
+    """The keys only vLLM reads."""
 
-    The TP and PP of each cell, and of each threshold cell, equal
-    ``server_params``. A threshold cell need not be one of ``cells``, so a
-    config can run some of the cells its threshold file covers. With
-    ``enforce_thresholds`` every cell has a threshold cell.
+    distributed_executor_backend: Literal["mp", "ray"] = "ray"
+
+
+class VllmConfig(LlmServingConfig):
+    """A vLLM suite config: the shared serving blocks plus ``vllm``.
+
+    vLLM has no data or expert parallel fields, so ``dp`` and ``ep`` stay 1;
+    their vLLM flags go in ``engine_args``. ``engine_args`` and ``client_args``
+    name no field the harness sets, and every threshold metric is a registered
+    vLLM metric with its direction or ``info``.
     """
 
     suite = "vllm"
@@ -320,22 +256,62 @@ class VllmConfig(LlmServingConfig):
 
     container: VllmContainerSpec
     server_params: VllmServerParams
-    benchmark_params: VllmBenchmarkParams = Field(default_factory=VllmBenchmarkParams)
+    benchmark_params: VllmBenchmarkParams
     thresholds: VllmThresholdFile = Field(default_factory=VllmThresholdFile)
+    vllm: VllmBlock
 
     @model_validator(mode="after")
-    def _check_cells(self):
-        server = (self.server_params.tp, self.server_params.pp)
-        for cell in self.parsed_cells().values():
-            if (cell.tp, cell.pp) != server:
-                raise ValueError(f"cell {cell.key} conflicts with server_params.tp or server_params.pp")
-        threshold_cells = self.thresholds.model_extra or {}
-        for key in threshold_cells:
-            cell = parse_cell_key(key, self.axes)
-            if (cell.tp, cell.pp) != server:
-                raise ValueError(f"threshold cell {key} conflicts with server_params.tp or server_params.pp")
-        if self.enforce_thresholds:
-            missing = [key for key in self.cells if key not in threshold_cells]
-            if missing:
-                raise ValueError(f"cells missing threshold coverage: {missing}")
+    def _check_vllm(self):
+        server = self.server_params
+        if (server.dp, server.ep) != (1, 1):
+            raise ValueError("vLLM runs with server_params.dp and server_params.ep of 1; set its flags in engine_args")
+        for block, flags, reserved in (
+            ("server_params.engine_args", server.engine_args, SERVER_RESERVED),
+            ("benchmark_params.client_args", self.benchmark_params.client_args, CLIENT_RESERVED),
+        ):
+            collisions = sorted(reserved & set(flags))
+            if collisions:
+                raise ValueError(f"{block} cannot set harness fields: {collisions}")
+        # A cell may change a shared client field such as num_prompts, but not a flag the harness sets.
+        harness_flags = CLIENT_RESERVED - set(ServingBenchmarkParams.model_fields)
+        for key, overrides in self.sweeps.items():
+            collisions = sorted(harness_flags & set(overrides))
+            if collisions:
+                raise ValueError(f"sweeps.{key} cannot set harness fields: {collisions}")
+        _refuse_unimplemented(self, "vLLM")
+        return self
+
+
+class SglangBlock(StrictBlock):
+    pass
+
+
+class SglangConfig(LlmServingConfig):
+    """An SGLang suite config: the shared serving blocks plus ``sglang``, which has no keys and marks the engine."""
+
+    axes = _AXES
+
+    sglang: SglangBlock
+
+    @model_validator(mode="after")
+    def _check_sglang(self):
+        _refuse_unimplemented(self, "SGLang")
+        return self
+
+
+class AtomBlock(StrictBlock):
+    """The keys only ATOM reads: ``driver`` picks ATOM's coordinator and its native client."""
+
+    driver: Literal["atom", "vllm", "vllm_atom", "sglang"] = "vllm"
+
+
+class AtomConfig(LlmServingConfig):
+    """An ATOM suite config: the shared serving blocks plus ``atom``."""
+
+    axes = _AXES
+
+    atom: AtomBlock
+
+    @model_validator(mode="after")
+    def _check_atom(self):
         return self
