@@ -69,8 +69,8 @@ class TestVllmOrch(unittest.TestCase):
     def test_vllm_single_runs_on_the_first_node_as_head(self):
         self._check_orch("vllm_single", "mi3xx_vllm_llama33-70b_fp8_single.json", ["n1"], "n1")
 
-    def test_vllm_distributed_keeps_every_node_and_the_cluster_head(self):
-        self._check_orch("vllm_distributed", "mi3xx_vllm_llama33-70b_fp8_distributed.json", ["n1", "n0"], "n0")
+    def test_vllm_distributed_runs_on_the_first_nnodes_with_the_first_as_head(self):
+        self._check_orch("vllm_distributed", "mi3xx_vllm_llama33-70b_fp8_distributed.json", ["n1", "n0"], "n1")
 
 
 class _FakeStash(dict):

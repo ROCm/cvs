@@ -202,7 +202,10 @@ def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):
         pytest.skip("a prior lifecycle stage failed")
 
     accuracy_config = getattr(variant_config, "accuracy", None)
-    tasks_by_id = {task.id: task for task in (accuracy_config.tasks if accuracy_config else [])}
+    # A config on the shared schema keeps its tasks under accuracy.lm_eval; the older loaders keep them under accuracy.
+    lm_eval = getattr(accuracy_config, "lm_eval", None)
+    tasks = lm_eval.tasks if lm_eval is not None else (accuracy_config.tasks if accuracy_config else [])
+    tasks_by_id = {task.id: task for task in tasks}
     task = tasks_by_id.get(accuracy_task)
     if task is None:
         pytest.skip(f"accuracy task {accuracy_task!r} not present in accuracy.tasks")
@@ -237,6 +240,8 @@ def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):
     if not variant_config.enforce_thresholds:
         return
     accuracy_thresholds = (variant_config.thresholds or {}).get("accuracy", {})
+    if lm_eval is not None:
+        accuracy_thresholds = accuracy_thresholds.get("lm_eval", {})
     evaluate_all(actual, accuracy_thresholds.get(accuracy_task, {}))
 
 

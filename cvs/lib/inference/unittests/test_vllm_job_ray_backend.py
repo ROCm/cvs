@@ -223,6 +223,8 @@ def _variant(serve_args=None, pp="2", tp="8", master_addr="10.0.0.1", env=None, 
     """Minimal real vLLM variant using the refactored public contract."""
     options = {key.replace("-", "_"): value for key, value in (serve_args or {}).items()}
     distributed_executor_backend = options.pop("distributed_executor_backend", "mp")
+    if options.get("max_model_len") is not None:
+        server_extra.setdefault("max_model_length", options.pop("max_model_len"))
     cell = f"ISL=1024,OSL=1024,TP={tp},PP={pp},CONC=16"
     return VllmConfig(
         enforce_thresholds=False,
@@ -235,17 +237,18 @@ def _variant(serve_args=None, pp="2", tp="8", master_addr="10.0.0.1", env=None, 
             "runtime": {"name": "docker", "args": {}},
         },
         server_params={
-            "engine": "vllm",
             "model": "/models/test-model",
             "tp": tp,
             "pp": pp,
             "port": 8000,
             "master_port": 29501,
-            "distributed_executor_backend": distributed_executor_backend,
             "engine_args": options,
             **server_extra,
         },
-        cells=[cell],
+        benchmark_params={"num_prompts": 640},
+        sweeps={cell: {}},
+        runs=[cell],
+        vllm={"distributed_executor_backend": distributed_executor_backend},
     )
 
 
@@ -315,10 +318,11 @@ class TestVariantConfigRayConsistency(unittest.TestCase):
         _vc(pp="1", serve_args=RAY)
         _vc(pp="2", serve_args={})
 
-    def test_rejects_removed_nnodes_field(self):
+    def test_nnodes_is_the_shared_node_count_and_never_an_engine_flag(self):
+        self.assertEqual(_vc(pp="2", serve_args={}, nnodes=2).server_params.nnodes, 2)
         with self.assertRaises(ValidationError) as ctx:
-            _vc(pp="1", serve_args={}, nnodes="2")
-        self.assertIn("nnodes", str(ctx.exception))
+            _vc(pp="2", serve_args={"nnodes": 2})
+        self.assertIn("cannot set harness fields: ['nnodes']", str(ctx.exception))
 
 
 class TestCellKeyRayMultiNode(unittest.TestCase):
@@ -339,7 +343,7 @@ class TestCellKeyRayMultiNode(unittest.TestCase):
         vc.bind_effective_topology(EffectiveVllmTopology("distributed", ("node0", "node1"), 2))
         expected = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
         self.assertEqual(vc.cell_key("1024", "1024", "16"), expected)
-        self.assertEqual(vc.cells, [expected])
+        self.assertEqual(vc.runs, [expected])
 
     def test_cell_key_is_config_defined_without_bound_topology(self):
         self.assertEqual(_vc(pp="2", tp="8").cell_key("1024", "1024", "16"), "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16")

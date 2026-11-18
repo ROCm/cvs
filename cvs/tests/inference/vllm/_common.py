@@ -49,7 +49,7 @@ def pytest_generate_tests(metafunc):
     runs = variant.resolved_runs()
     ids = [run.cell.key for run in runs]
     if "accuracy_task" in metafunc.fixturenames:
-        tasks = [task.id for task in variant.accuracy.tasks]
+        tasks = [task.id for task in variant.accuracy.lm_eval.tasks]
         metafunc.parametrize("accuracy_task", tasks, ids=tasks)
     elif "run" in metafunc.fixturenames and runs:
         metafunc.parametrize("run", runs, ids=ids)
@@ -219,7 +219,8 @@ def openai_compatible_smoke(orch, variant_config, vllm_targets, lifecycle, reque
         num_prompts=1,
         ib_hcas=getattr(lifecycle, "ib_hcas", []),
     )
-    job.serve_args.setdefault("max_model_len", str(_SMOKE_MAX_MODEL_LEN))
+    if job.max_model_len is None:
+        job.serve_args["max_model_len"] = str(_SMOKE_MAX_MODEL_LEN)
     started = time.monotonic()
     try:
         job.stop_server()

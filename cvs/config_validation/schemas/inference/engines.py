@@ -12,20 +12,27 @@ the commands are built from. Neither may name a field the harness sets.
 engine without an implementation needs; their ports add the rest.
 '''
 
-from typing import Annotated, Dict, List, Literal
+import copy
+import json
+from collections import namedtuple
+from pathlib import Path
+from typing import Annotated, Any, Dict, List, Literal
 
-from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field, PrivateAttr, ValidationError, model_validator
 
-from cvs.config_validation.schemas.base import ConfigStr, StrictBlock, drop_comment_keys
+from cvs.config_validation.schemas.base import ConfigStr, StrictBlock, drop_comment_keys, problem_lines
 from cvs.config_validation.schemas.common_training_inference import ContainerSpec, RuntimeArgs, RuntimeSpec
 from cvs.config_validation.schemas.inference.llm_serving import (
     LlmServingConfig,
     ServingBenchmarkParams,
     ServingServerParams,
+    check_flags,
 )
 from cvs.config_validation.schemas.sweeps import Axis, parse_cell_key
 from cvs.config_validation.schemas.thresholds import Threshold, ThresholdFile
+from cvs.lib.conf_lib.loader import ConfigError
 from cvs.lib.inference.utils.vllm_metrics import METRICS_BY_NAME
+from cvs.lib.utils.config_loader import substitute_placeholders
 
 ISL = Axis("ISL", "isl")
 OSL = Axis("OSL", "osl")
@@ -114,6 +121,38 @@ def _refuse_unimplemented(config, engine):
         raise ValueError(f"not implemented for {engine}: {', '.join(unimplemented)}")
 
 
+def serialize_cli_options(options):
+    """The command-line arguments for a snake_case flag map such as ``engine_args`` or ``client_args``.
+
+    A None value is left out, True writes the bare flag, a list writes its
+    items after the flag and a dict writes compact JSON.
+    """
+    check_flags(options)
+    argv = []
+    for name, value in options.items():
+        if value is None:
+            continue
+        flag = f"--{name.replace('_', '-')}"
+        if value is True:
+            argv.append(flag)
+        elif isinstance(value, list):
+            argv.extend([flag, *(str(item) for item in value)])
+        elif isinstance(value, dict):
+            argv.extend([flag, json.dumps(value, separators=(",", ":"))])
+        else:
+            argv.extend([flag, str(value)])
+    return argv
+
+
+def _deep_merge(base, override):
+    if not (isinstance(base, dict) and isinstance(override, dict)):
+        return override
+    merged = dict(base)
+    for key, value in override.items():
+        merged[key] = _deep_merge(base[key], value) if key in base else value
+    return merged
+
+
 class VllmRuntimeArgs(RuntimeArgs):
     model_config = ConfigDict(extra="forbid")
 
@@ -173,6 +212,10 @@ class VllmBenchmarkParams(ServingBenchmarkParams):
     client_poll_iterations: int = 20
     client_poll_wait_s: int = 60
     client_initial_wait_s: int = 120
+
+    def options(self):
+        """The fields and ``client_args`` as one map, as the client command reads them."""
+        return {**self.model_dump(exclude={"client_args"}), **self.client_args}
 
 
 class VllmThreshold(Threshold):
@@ -235,6 +278,39 @@ class VllmThresholdFile(ThresholdFile):
         return self
 
 
+def _written_section(written, checked):
+    return {metric: written[metric] for metric in checked}
+
+
+def _thresholds_as_written(value):
+    """``value`` checked as a ``VllmThresholdFile``, returned as written without its comment keys.
+
+    The verdict and report code read cells and specs as dicts, and a spec keeps
+    the number it was written with, so an int value stays an int. ``accuracy``
+    keeps only its non-empty sections.
+    """
+    checked = VllmThresholdFile.model_validate(value)
+    written = {key: _written_section(value[key], cell) for key, cell in checked.model_extra.items()}
+    sections = value.get("accuracy", {}) if isinstance(value, dict) else {}
+    accuracy = {}
+    for name in ("lm_eval", "custom_eval"):
+        by_id = getattr(checked.accuracy, name)
+        if by_id:
+            accuracy[name] = {key: _written_section(sections[name][key], cell) for key, cell in by_id.items()}
+    for name in ("quant_parity", "mtp_quality"):
+        cell = getattr(checked.accuracy, name)
+        if cell:
+            accuracy[name] = _written_section(sections[name], cell)
+    if accuracy:
+        written["accuracy"] = accuracy
+    return written
+
+
+VllmThresholds = Annotated[Dict[str, Dict[str, Any]], BeforeValidator(_thresholds_as_written)]
+
+ResolvedRun = namedtuple("ResolvedRun", "cell benchmark_params")
+
+
 class VllmBlock(StrictBlock):
     """The keys only vLLM reads."""
 
@@ -248,16 +324,28 @@ class VllmConfig(LlmServingConfig):
     their vLLM flags go in ``engine_args``. ``engine_args`` and ``client_args``
     name no field the harness sets, and every threshold metric is a registered
     vLLM metric with its direction or ``info``.
+
+    ``thresholds`` is the threshold file as written, without comment keys: one
+    dict of metric specs per cell key, plus ``accuracy``.
+
+    The suite runs in mode ``single`` or ``distributed`` on the hosts the shared
+    host rule picks, and launches its container in its own tests. ``read_raw``
+    fills placeholders such as ``{user-id}`` and ``{shared_fs}`` before the
+    loader's checks.
     """
 
     suite = "vllm"
+    modes = {"_single": "single", "_distributed": "distributed"}
+    launch_in_fixture = False
     axes = _AXES
 
     container: VllmContainerSpec
     server_params: VllmServerParams
     benchmark_params: VllmBenchmarkParams
-    thresholds: VllmThresholdFile = Field(default_factory=VllmThresholdFile)
+    thresholds: VllmThresholds = Field(default_factory=dict)
     vllm: VllmBlock
+
+    _effective_topology = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def _check_vllm(self):
@@ -279,6 +367,61 @@ class VllmConfig(LlmServingConfig):
                 raise ValueError(f"sweeps.{key} cannot set harness fields: {collisions}")
         _refuse_unimplemented(self, "vLLM")
         return self
+
+    @classmethod
+    def read_raw(cls, config_file, cluster):
+        return substitute_placeholders(config_file, cluster, all_placeholders=True)
+
+    @classmethod
+    def old_keys(cls, raw):
+        # Imported here because the map imports this module for its schema.
+        from cvs.config_validation.migrate import engine
+        from cvs.config_validation.migrate.maps import vllm
+
+        return engine.old_paths(raw, vllm.CONFIG)
+
+    @classmethod
+    def validate_config(cls, raw, config_file):
+        try:
+            return cls.model_validate(raw, context={"placeholders": "reject", "config_path": Path(config_file)})
+        except ValidationError as exc:
+            raise ConfigError(config_file, problem_lines(exc)) from None
+
+    @classmethod
+    def orch_inputs(cls, raw, config, cluster):
+        """The container orchestrator, with the config's ``container`` merged onto the cluster file's.
+
+        The config wins on shared keys and replaces lists such as volumes. The
+        merged block is a copy, so changing it does not change the cluster.
+        """
+        container = copy.deepcopy(_deep_merge(cluster.get("container") or {}, config.container.model_dump()))
+        return {"orchestrator": "container", "container": container}
+
+    @property
+    def model_id(self):
+        return self.server_params.model
+
+    def bind_effective_topology(self, topology):
+        self._effective_topology = topology
+
+    def cell_key(self, isl, osl, concurrency, **_unused):
+        return f"ISL={isl},OSL={osl},TP={self.server_params.tp},PP={self.server_params.pp},CONC={concurrency}"
+
+    def resolved_runs(self):
+        """One ``ResolvedRun`` per run, in ``runs`` order: ``benchmark_params``, then the cell's own overrides."""
+        cells = self.cells()
+        runs = []
+        for key in self.runs:
+            cell = cells[key]
+            options = {
+                **self.benchmark_params.options(),
+                **self.sweeps[key],
+                "random_input_len": cell.isl,
+                "random_output_len": cell.osl,
+                "max_concurrency": cell.concurrency,
+            }
+            runs.append(ResolvedRun(cell, options))
+        return runs
 
 
 class SglangBlock(StrictBlock):

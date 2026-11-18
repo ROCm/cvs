@@ -131,7 +131,7 @@ class TestVllmDeckProfile(unittest.TestCase):
             )
             variant = load_suite_config_with_cluster(VllmConfig, config, {"username": "test"}, mock.Mock()).config
         variant.bind_effective_topology(EffectiveVllmTopology("distributed", ("node0", "node1"), 2))
-        cell_id = variant.cells[0]
+        cell_id = variant.runs[0]
         variant.enforce_thresholds = True
         variant.thresholds = {cell_id: {"output_throughput": {"kind": "min", "value": 1000.0}}}
         run = variant.resolved_runs()[0]

@@ -77,8 +77,11 @@ def _variant(log_dir, pp):
         threshold_json="threshold.json",
         paths={"shared_fs": log_dir, "models_dir": "/models", "log_dir": log_dir, "hf_token_file": FAKE_CRED_FILE},
         container={"name": "test", "image": "test"},
-        server_params={"engine": "vllm", "model": "/models/test-model", "tp": 8, "pp": pp, "port": 8000},
-        cells=[cell],
+        server_params={"model": "/models/test-model", "tp": 8, "pp": pp, "port": 8000},
+        benchmark_params={"num_prompts": 64},
+        sweeps={cell: {}},
+        runs=[cell],
+        vllm={"distributed_executor_backend": "mp"},
     )
 
 

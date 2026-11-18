@@ -1,6 +1,5 @@
 '''Effective vLLM topology derived from the selected suite and orchestrator.'''
 
-from copy import deepcopy
 from dataclasses import dataclass
 
 
@@ -25,34 +24,6 @@ def _socket_netdev_configured(variant):
     return bool(env.get("NCCL_SOCKET_IFNAME"))
 
 
-def scope_vllm_cluster(mode, cluster):
-    """Return the cluster used by the selected suite.
-
-    ``vllm_single`` is intentionally first-host-only. For mapping-style
-    ``node_dict``, "first" means JSON insertion order; the scoped head is
-    rewritten to that host. Distributed runs retain the complete cluster and
-    use their normal single-host fallback when needed.
-    """
-    if mode != "single":
-        return cluster
-
-    scoped = deepcopy(cluster)
-    nodes = scoped.get("node_dict")
-    if isinstance(nodes, dict) and nodes:
-        host, node = next(iter(nodes.items()))
-        scoped["node_dict"] = {host: node}
-    elif isinstance(nodes, list) and nodes:
-        node = nodes[0]
-        host = node.get("mgmt_ip")
-        scoped["node_dict"] = [node]
-    else:
-        raise ValueError("vllm_single requires at least one cluster node")
-    if not host:
-        raise ValueError("the first vllm_single cluster node has no management address")
-    scoped["head_node_dict"] = {**scoped.get("head_node_dict", {}), "mgmt_ip": host}
-    return scoped
-
-
 def resolve_vllm_topology(mode, variant, hosts) -> EffectiveVllmTopology:
     hosts = tuple(hosts)
     if not hosts:
@@ -65,9 +36,9 @@ def resolve_vllm_topology(mode, variant, hosts) -> EffectiveVllmTopology:
     if mode != "distributed":
         raise ValueError(f"unknown vLLM mode: {mode!r}")
     if len(hosts) == 1:
-        return EffectiveVllmTopology("single", hosts, variant.server_params.pp)
+        raise ValueError("vllm_distributed needs server_params.nnodes hosts of 2 or more; the orchestrator has one")
 
-    is_ray = variant.server_params.distributed_executor_backend == "ray"
+    is_ray = variant.vllm.distributed_executor_backend == "ray"
     effective_pp = variant.server_params.pp
     if effective_pp == 1 and not is_ray:
         raise ValueError("vllm_distributed requires server_params.pp>1 unless distributed_executor_backend=ray")

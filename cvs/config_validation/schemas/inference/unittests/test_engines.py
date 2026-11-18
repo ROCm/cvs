@@ -14,7 +14,7 @@ from unittest import mock
 
 from pydantic import ValidationError
 
-from cvs.config_validation.loaders.suite_config import load_suite_config
+from cvs.config_validation.loaders.suite_config import load_suite_config, mode_from_module
 from cvs.config_validation.schemas.base import SecretInputError
 from cvs.config_validation.schemas.inference.engines import (
     CLIENT_RESERVED,
@@ -26,8 +26,10 @@ from cvs.config_validation.schemas.inference.engines import (
     VllmContainerSpec,
     VllmServerParams,
     VllmThresholdFile,
+    serialize_cli_options,
 )
 from cvs.config_validation.schemas.inference.llm_serving import ContainerEnvTokenError
+from cvs.core.run_layout import RunLayout
 from cvs.lib.conf_lib.config_blocks import PLACEHOLDER_MESSAGE
 from cvs.lib.conf_lib.loader import ConfigError
 from cvs.unittests.support import FAKE_CRED
@@ -39,6 +41,13 @@ BAD_KEY = "ISL=1024,OSL=1024,TP=8,PP=2"
 EXPECTED = "ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>"
 SOCKET_ENV = {"NCCL_SOCKET_IFNAME": "eth0", "GLOO_SOCKET_IFNAME": "eth0", "TP_SOCKET_IFNAME": "eth0"}
 CLUSTER = {"username": "jdoe", "priv_key_file": "/home/jdoe/.ssh/id_rsa", "node_dict": {"node0": {}}}
+OLD_CONFIG = (
+    Path(__file__).resolve().parents[3]
+    / "migrate"
+    / "unittests"
+    / "old"
+    / "mi3xx_vllm_llama33-70b_fp8_distributed.json"
+)
 
 # Serve flags of every JSON type that today's shipped configs pass, written as they are today.
 ENGINE_ARGS = {
@@ -358,7 +367,7 @@ class TestVllmConfig(unittest.TestCase):
                 config = VllmConfig.model_validate(
                     _config(enforce_thresholds=enforce, thresholds={KEY: _cell(), OTHER_KEY: _cell()})
                 )
-                self.assertEqual((config.runs, list(config.thresholds.model_extra)), ([KEY], [KEY, OTHER_KEY]))
+                self.assertEqual((config.runs, list(config.thresholds)), ([KEY], [KEY, OTHER_KEY]))
 
     def test_a_run_without_thresholds_is_refused_only_when_thresholds_are_enforced(self):
         data = _config(sweeps={KEY: {}, OTHER_KEY: {}}, runs=[KEY, OTHER_KEY], thresholds={KEY: _cell()})
@@ -414,9 +423,7 @@ class TestVllmConfigThroughTheLoader(unittest.TestCase):
 
     def test_the_threshold_file_is_checked_with_vllms_rules_and_gates_coverage(self):
         loaded = self._load(_config(enforce_thresholds=True), {"_comment": "x", KEY: _cell()})
-        self.assertEqual(
-            list(loaded.config.thresholds.model_extra[KEY]), ["failed", "output_throughput", "mean_ttft_ms"]
-        )
+        self.assertEqual(list(loaded.config.thresholds[KEY]), ["failed", "output_throughput", "mean_ttft_ms"])
         with self.assertRaises(ConfigError) as ctx:
             self._load(_config(), {KEY: {"_failed": _spec("max")}})
         self.assertEqual(ctx.exception.problems, [f"{KEY}: unknown vLLM threshold metric '_failed'"])
@@ -424,6 +431,194 @@ class TestVllmConfigThroughTheLoader(unittest.TestCase):
             data = _config(enforce_thresholds=True, sweeps={KEY: {}, OTHER_KEY: {}}, runs=[KEY, OTHER_KEY])
             self._load(data, {KEY: _cell()})
         self.assertEqual(ctx.exception.problems, [f"(config): runs missing threshold coverage: ['{OTHER_KEY}']"])
+
+    def test_an_old_format_config_fails_naming_its_old_keys_and_the_migrate_command(self):
+        with self.assertRaises(ConfigError) as ctx:
+            load_suite_config(VllmConfig, str(OLD_CONFIG), str(self.cluster), mock.Mock())
+        (problem,) = ctx.exception.problems
+        self.assertTrue(
+            problem.startswith("old config format: server_params.backend, server_params.tensor_parallel_size")
+        )
+        self.assertIn("server_params.distributed_executor_backend", problem)
+        self.assertIn(", accuracy.tasks;", problem)
+        self.assertTrue(problem.endswith(f"; run cvs config migrate vllm {OLD_CONFIG} <new config>"))
+
+    def test_a_changeme_fails_naming_each_field_and_never_its_value(self):
+        config = _config()
+        config["container"]["runtime"] = {"args": {"volumes": ["<changeme>:/models"]}}
+        config["server_params"]["model"] = "<changeme>"
+        config["benchmark_params"]["client_args"] = {"tokenizer": "/data/<changeme>/tokenizer"}
+        with self.assertRaises(ConfigError) as ctx:
+            self._load(config, {KEY: _cell()})
+        self.assertEqual(
+            ctx.exception.problems,
+            [
+                f"container.runtime.args.volumes.0: {PLACEHOLDER_MESSAGE}",
+                f"server_params.model: {PLACEHOLDER_MESSAGE}",
+                f"benchmark_params.client_args.tokenizer: {PLACEHOLDER_MESSAGE}",
+            ],
+        )
+        self.assertNotIn("/data/", str(ctx.exception))
+
+    def test_schema_problems_name_each_field_and_never_its_value(self):
+        config = _config(server_params=_server(tp="eight"), token=FAKE_CRED)
+        with self.assertRaises(ConfigError) as ctx:
+            self._load(config, {KEY: _cell()})
+        exc = ctx.exception
+        self.assertEqual(sorted(line.split(":", 1)[0] for line in exc.problems), ["server_params.tp", "token"])
+        self.assertNotIn(FAKE_CRED, str(exc))
+        self.assertIsNone(exc.__cause__)
+        self.assertTrue(exc.__suppress_context__)
+
+    def test_every_placeholder_is_filled_before_the_checks(self):
+        RunLayout._reset()
+        self.addCleanup(RunLayout._reset)
+        layout = RunLayout.get(str(self.tmp / "workspace"))
+        config = _config()
+        config["paths"] = {
+            "shared_fs": "/{home-mount-dir}/{user}",
+            "models_dir": "{shared_fs}/{node-dir-name}/models",
+            "log_dir": "{run_dir}/logs",
+            "hf_token_file": "{home}/.hf_token",
+        }
+        config["container"]["name"] = "vllm-{user-id}"
+        config["container"]["env"] = {**SOCKET_ENV, "LOG_DIR": "{paths.log_dir}"}
+        self.cluster.write_text(json.dumps({**CLUSTER, "home_mount_dir_name": "mnt", "node_dir_name": "node7"}))
+        home = mock.patch(
+            "cvs.lib.utils_lib.os.path.expanduser", side_effect=lambda p: "/nfs/jdoe" if p == "~jdoe" else p
+        )
+        with home:
+            loaded = self._load(config, {KEY: _cell()})
+        paths = loaded.config.paths
+        self.assertEqual(
+            (paths.shared_fs, paths.models_dir, paths.log_dir, paths.hf_token_file),
+            ("/mnt/jdoe", "/mnt/jdoe/node7/models", f"{layout.run_dir}/logs", "/nfs/jdoe/.hf_token"),
+        )
+        self.assertEqual(loaded.orch_inputs["container"]["name"], "vllm-jdoe")
+        self.assertEqual(loaded.orch_inputs["container"]["env"]["LOG_DIR"], f"{layout.run_dir}/logs")
+
+    def test_a_config_without_run_dir_creates_no_run_layout(self):
+        RunLayout._reset()
+        self.addCleanup(RunLayout._reset)
+        self.assertEqual(self._load(_config(), {KEY: _cell()}).config.paths.log_dir, "/home/jdoe/LOGS")
+        self.assertIsNone(RunLayout._instance)
+
+    def test_orch_inputs_merge_the_config_container_onto_the_cluster_files_as_a_copy(self):
+        cluster_container = {
+            "name": "cluster-container",
+            "image": "cluster/image",
+            "env": {"A": "cluster", "B": "cluster"},
+            "runtime": {
+                "name": "docker",
+                "args": {"volumes": ["/cluster:/cluster"], "shm_size": "64g", "registry": {"username": "jdoe"}},
+            },
+        }
+        self.cluster.write_text(json.dumps({**CLUSTER, "container": cluster_container}))
+        config = _config()
+        config["container"]["env"] = {**SOCKET_ENV, "B": "config"}
+        config["container"]["runtime"] = {"args": {"volumes": ["/config:/config"]}}
+        loaded = self._load(config, {KEY: _cell()})
+        self.assertEqual(loaded.orch_inputs["orchestrator"], "container")
+        container = loaded.orch_inputs["container"]
+        self.assertEqual((container["name"], container["image"]), ("vllm", "rocm/vllm:latest"))
+        self.assertEqual(container["env"], {"A": "cluster", "B": "config", **SOCKET_ENV})
+        self.assertEqual(container["runtime"]["args"]["volumes"], ["/config:/config"])
+        self.assertEqual(container["runtime"]["args"]["shm_size"], "64g")
+        container["runtime"]["args"]["registry"]["username"] = "changed"
+        self.assertEqual(loaded.cluster["container"]["runtime"]["args"]["registry"], {"username": "jdoe"})
+
+
+class TestVllmConfigHooks(unittest.TestCase):
+    def test_the_module_name_picks_single_or_distributed_and_the_tests_launch_the_container(self):
+        self.assertEqual(mode_from_module(VllmConfig, "cvs.tests.inference.vllm.vllm_single"), "single")
+        self.assertEqual(mode_from_module(VllmConfig, "cvs.tests.inference.vllm.vllm_distributed"), "distributed")
+        with self.assertRaisesRegex(ValueError, "must end with one of: _single, _distributed"):
+            mode_from_module(VllmConfig, "cvs.tests.inference.vllm.vllm_disagg")
+        self.assertIs(VllmConfig.launch_in_fixture, False)
+
+    def test_old_keys_are_the_paths_migrate_would_move(self):
+        old = {"server_params": {"tensor_parallel_size": 8, "model": "m"}, "accuracy": {"tasks": []}}
+        self.assertEqual(VllmConfig.old_keys(old), ["server_params.tensor_parallel_size", "accuracy.tasks"])
+        self.assertEqual(VllmConfig.old_keys(_config()), [])
+
+    def test_single_takes_the_first_node_and_distributed_the_first_nnodes(self):
+        config = VllmConfig.model_validate(_config(server_params=_server(nnodes=2)))
+        by_name = {**CLUSTER, "node_dict": {"10.0.0.2": {}, "10.0.0.1": {}, "10.0.0.3": {}}}
+        as_list = {**CLUSTER, "node_dict": [{"mgmt_ip": "10.0.0.3"}, {"mgmt_ip": "10.0.0.1"}]}
+        self.assertEqual(VllmConfig.select_hosts(config, by_name, "single"), ["10.0.0.2"])
+        self.assertEqual(VllmConfig.select_hosts(config, as_list, "single"), ["10.0.0.3"])
+        self.assertEqual(VllmConfig.select_hosts(config, by_name, "distributed"), ["10.0.0.2", "10.0.0.1"])
+        with self.assertRaisesRegex(ValueError, "distributed needs 2"):
+            VllmConfig.select_hosts(config, CLUSTER, "distributed")
+
+    def test_resolved_runs_follow_runs_with_the_benchmark_options_each_cells_overrides_and_lengths(self):
+        sweeps = {KEY: {}, OTHER_KEY: {"num_prompts": 640, "temperature": 0.5}}
+        config = VllmConfig.model_validate(_config(sweeps=sweeps, runs=[OTHER_KEY, KEY], thresholds={}))
+        runs = config.resolved_runs()
+        self.assertEqual([run.cell.key for run in runs], [OTHER_KEY, KEY])
+        for run, lengths, prompts, temperature in zip(
+            runs, ((8192, 1024, 64), (1024, 1024, 16)), (640, 64), (0.5, 0.0)
+        ):
+            options = run.benchmark_params
+            self.assertEqual(
+                (options["random_input_len"], options["random_output_len"], options["max_concurrency"]), lengths
+            )
+            self.assertEqual((options["num_prompts"], options["temperature"]), (prompts, temperature))
+            self.assertNotIn("client_args", options)
+
+    def test_cell_key_reads_tp_and_pp_from_server_params_and_model_id_is_the_model(self):
+        config = VllmConfig.model_validate(_config())
+        self.assertEqual(config.cell_key(isl=1024, osl=1024, concurrency=16, num_prompts=640), KEY)
+        self.assertEqual(config.model_id, "meta-llama/Llama-3.3-70B-Instruct")
+
+    def test_thresholds_are_kept_as_written_without_comment_keys(self):
+        accuracy = {
+            "_comment": "sections",
+            "lm_eval": {
+                "gsm8k_flex": {"_comment": "z", "exact_match,flexible-extract": {**_spec("min", 0.5), "optional": True}}
+            },
+        }
+        cell = {"_comment": "y", "output_throughput": _spec("min", 900), "failed": _spec("info")}
+        config = VllmConfig.model_validate(_config(thresholds={"_comment": "x", KEY: cell, "accuracy": accuracy}))
+        self.assertEqual(
+            config.thresholds,
+            {
+                KEY: {"output_throughput": _spec("min", 900), "failed": _spec("info")},
+                "accuracy": {
+                    "lm_eval": {"gsm8k_flex": {"exact_match,flexible-extract": {**_spec("min", 0.5), "optional": True}}}
+                },
+            },
+        )
+        self.assertIs(type(config.thresholds[KEY]["output_throughput"]["value"]), int)
+
+
+class TestSerializeCliOptions(unittest.TestCase):
+    def test_each_value_type_is_written_as_the_command_line_reads_it(self):
+        options = {
+            "max_num_seqs": None,
+            "enforce_eager": True,
+            "cuda_graph_sizes": [1, 2],
+            "limit_mm_per_prompt": {"image": 0},
+            "max_model_len": 2056,
+        }
+        self.assertEqual(
+            serialize_cli_options(options),
+            [
+                "--enforce-eager",
+                "--cuda-graph-sizes",
+                "1",
+                "2",
+                "--limit-mm-per-prompt",
+                '{"image":0}',
+                "--max-model-len",
+                "2056",
+            ],
+        )
+
+    def test_false_a_non_snake_case_name_and_a_nested_list_are_refused(self):
+        for options in ({"enforce_eager": False}, {"max-model-len": 1}, {"sizes": [[1]]}):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                serialize_cli_options(options)
 
 
 if __name__ == "__main__":

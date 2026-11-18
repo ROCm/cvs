@@ -24,7 +24,7 @@ result with golden_commands.json:
 Each command reads "<target>: <command>", or "<target> [timeout=<s>]: <command>" when the exec
 passes a timeout; the target is "all", a host, or "head". Single configs get a one-host cluster
 file and distributed configs a two-host one; every shipped distributed config uses
-pipeline_parallel_size 2. Every shipped config must have an entry, and every entry must match.
+pp 2 and nnodes 2 on the Ray backend. Every shipped config must have an entry, and every entry must match.
 
 Mocked, so nothing waits or reads results: time.sleep, VllmJob.wait_ready,
 wait_client_complete, parse_results and probe_openai_endpoints, the GPU snapshot and poller,
@@ -69,7 +69,7 @@ from cvs.config_validation.loaders.suite_config import load_suite_config
 from cvs.config_validation.schemas.inference.engines import VllmConfig
 from cvs.lib.inference.utils import inference_suite_lifecycle
 from cvs.lib.inference.vllm_job import VllmJob
-from cvs.lib.inference.vllm_topology import resolve_vllm_topology, scope_vllm_cluster
+from cvs.lib.inference.vllm_topology import resolve_vllm_topology
 from cvs.tests.inference.vllm import _common
 from cvs.tests.inference.vllm import conftest as vllm_conftest
 from cvs.tests.inference.vllm import vllm_distributed, vllm_single
@@ -236,7 +236,7 @@ def _stage_mocks():
 
 
 def _render(mode, config_file, variant, container):
-    hosts = list(scope_vllm_cluster(mode, _cluster(mode))["node_dict"])
+    hosts = VllmConfig.select_hosts(variant, _cluster(mode), mode)
     topology = resolve_vllm_topology(mode, variant, hosts)
     variant.bind_effective_topology(topology)
     test_ids, values = _collect(SUITES[mode], config_file)

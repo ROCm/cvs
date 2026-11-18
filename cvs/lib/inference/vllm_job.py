@@ -160,15 +160,16 @@ class VllmJob:
         self.request_rate = str(b["request_rate"])
         self.tokenizer_mode = str(b["tokenizer_mode"])
         self.base_url = "http://0.0.0.0"
-        self.dataset_name = str(b["dataset_name"])
+        self.dataset_name = "random"
         self.backend = "vllm"
-        self.ignore_eos = bool(b["ignore_eos"])
-        self.trust_remote_code = bool(b["trust_remote_code"])
+        self.ignore_eos = True
+        self.trust_remote_code = p.engine_args.get("trust_remote_code") is True
 
         self.model_id = p.model
         self.log_dir = variant.paths.log_dir
         self.serve_args = dict(p.engine_args)
-        self.distributed_executor_backend = p.distributed_executor_backend
+        self.max_model_len = None if p.max_model_length is None else str(p.max_model_length)
+        self.distributed_executor_backend = variant.vllm.distributed_executor_backend
         self.benchmark_options = {
             key: value
             for key, value in b.items()
@@ -228,7 +229,7 @@ class VllmJob:
             str(self.port_no),
         ]
         if "max_model_len" not in self.serve_args:
-            argv += ["--max-model-len", self._derive_max_model_len()]
+            argv += ["--max-model-len", self.max_model_len or self._derive_max_model_len()]
         if int(self.nnodes) > 1 and not self._is_ray_backend:
             # mp multi-node: inject the full distributed-executor block.
             # Ray multi-node omits all of these (AC16); the backend flag arrives

@@ -145,6 +145,33 @@ class TestAccuracyEvalRun(unittest.TestCase):
         # shared lifecycle flag -- sibling task nodes must still run.
         self.assertFalse(lc.failed)
 
+    def test_a_shared_schema_config_reads_its_tasks_and_specs_under_lm_eval(self):
+        task = _task("gsm8k_flex")
+        vc = _variant_config(
+            tasks=None,
+            thresholds={
+                "accuracy": {
+                    "lm_eval": {"gsm8k_flex": {"exact_match": {"kind": "min", "value": 0.9}}},
+                    "gsm8k_flex": {"exact_match": {"kind": "min", "value": 0.0}},
+                }
+            },
+        )
+        vc.accuracy = SimpleNamespace(lm_eval=SimpleNamespace(tasks=[task]))
+        vc.server_params = SimpleNamespace(port=8888, model="org/model")
+        with mock.patch.object(
+            lifecycle_mod, "run_accuracy_tasks", return_value={"gsm8k_flex": {"exact_match": 0.5}}
+        ) as run:
+            with self.assertRaises(ThresholdViolation):
+                lifecycle_mod.test_accuracy_eval(
+                    orch=object(),
+                    variant_config=vc,
+                    accuracy_task="gsm8k_flex",
+                    lifecycle=_Lifecycle(),
+                    request=_request(),
+                )
+        self.assertEqual(run.call_args.kwargs["tasks"], [task])
+        self.assertEqual(run.call_args.kwargs["base_url"], "http://0.0.0.0:8888")
+
     def test_removed_task_stale_threshold_entry_ignored(self):
         # config.json only selects "mmlu"; threshold.json still has a stale
         # "gsm8k" entry from a since-removed task -- must not be looked up.

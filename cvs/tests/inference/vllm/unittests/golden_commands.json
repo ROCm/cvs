@@ -34,9 +34,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -453,11 +453,13 @@
     "runs": {
       "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 320 --random-input-len 1024 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode auto --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 --result-filename results --ignore-eos --trust-remote-code > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/client.log 2>&1 &'"
       ],
@@ -472,12 +474,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -521,9 +526,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -874,9 +879,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -1293,11 +1298,13 @@
     "runs": {
       "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --moe-backend emulation < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --moe-backend emulation < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --moe-backend emulation < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 256 --random-input-len 1024 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode auto --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 --result-filename results --ignore-eos --trust-remote-code > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/client.log 2>&1 &'"
       ],
@@ -1312,12 +1319,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --moe-backend emulation < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --moe-backend emulation < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --moe-backend emulation < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -1371,9 +1381,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -1790,11 +1800,13 @@
     "runs": {
       "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --kv-cache-dtype fp8_e4m3 --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --tokenizer-mode deepseek_v4 --moe-backend triton_unfused --enable-chunked-prefill --max-num-batched-tokens 256 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --kv-cache-dtype fp8_e4m3 --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --tokenizer-mode deepseek_v4 --moe-backend triton_unfused --enable-chunked-prefill --max-num-batched-tokens 256 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --kv-cache-dtype fp8_e4m3 --max-num-seqs 64 --gpu-memory-utilization 0.85 --tokenizer-mode deepseek_v4 --moe-backend triton_unfused --enable-chunked-prefill --max-num-batched-tokens 256 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 256 --random-input-len 1024 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode deepseek_v4 --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 --result-filename results --ignore-eos --trust-remote-code > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/client.log 2>&1 &'"
       ],
@@ -1809,12 +1821,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --kv-cache-dtype fp8_e4m3 --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --tokenizer-mode deepseek_v4 --moe-backend triton_unfused --enable-chunked-prefill --max-num-batched-tokens 256 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --kv-cache-dtype fp8_e4m3 --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --tokenizer-mode deepseek_v4 --moe-backend triton_unfused --enable-chunked-prefill --max-num-batched-tokens 256 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --kv-cache-dtype fp8_e4m3 --max-num-seqs 64 --gpu-memory-utilization 0.85 --tokenizer-mode deepseek_v4 --moe-backend triton_unfused --enable-chunked-prefill --max-num-batched-tokens 256 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -1861,9 +1876,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -2216,9 +2231,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -2635,11 +2650,13 @@
     "runs": {
       "ISL=5000,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl5000_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl5000_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl5000_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl5000_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl5000_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl5000_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --kv-cache-dtype fp8_e4m3 --max-model-len 6032 --max-num-seqs 64 --gpu-memory-utilization 0.85 --tokenizer-mode deepseek_v4 --moe-backend triton_unfused --enable-chunked-prefill --max-num-batched-tokens 256 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl5000_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl5000_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --kv-cache-dtype fp8_e4m3 --max-model-len 6032 --max-num-seqs 64 --gpu-memory-utilization 0.85 --tokenizer-mode deepseek_v4 --moe-backend triton_unfused --enable-chunked-prefill --max-num-batched-tokens 256 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl5000_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl5000_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 6032 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --kv-cache-dtype fp8_e4m3 --max-num-seqs 64 --gpu-memory-utilization 0.85 --tokenizer-mode deepseek_v4 --moe-backend triton_unfused --enable-chunked-prefill --max-num-batched-tokens 256 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl5000_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl5000_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl5000_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 256 --random-input-len 5000 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode deepseek_v4 --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl5000_osl1024_conc16 --result-filename results --ignore-eos --trust-remote-code > /home/cvs/LOGS/vllm/out-node0/isl5000_osl1024_conc16/client.log 2>&1 &'"
       ],
@@ -2654,12 +2671,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --kv-cache-dtype fp8_e4m3 --max-model-len 6032 --max-num-seqs 64 --gpu-memory-utilization 0.85 --tokenizer-mode deepseek_v4 --moe-backend triton_unfused --enable-chunked-prefill --max-num-batched-tokens 256 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --kv-cache-dtype fp8_e4m3 --max-model-len 6032 --max-num-seqs 64 --gpu-memory-utilization 0.85 --tokenizer-mode deepseek_v4 --moe-backend triton_unfused --enable-chunked-prefill --max-num-batched-tokens 256 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 6032 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --kv-cache-dtype fp8_e4m3 --max-num-seqs 64 --gpu-memory-utilization 0.85 --tokenizer-mode deepseek_v4 --moe-backend triton_unfused --enable-chunked-prefill --max-num-batched-tokens 256 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -2706,9 +2726,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -3061,9 +3081,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -3480,11 +3500,13 @@
     "runs": {
       "ISL=1024,OSL=8192,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl8192_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl8192_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl8192_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl8192_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl8192_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl8192_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 9224 --max-num-seqs 64 --gpu-memory-utilization 0.85 --dtype bfloat16 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl8192_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl8192_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 9224 --max-num-seqs 64 --gpu-memory-utilization 0.85 --dtype bfloat16 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl8192_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl8192_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 9224 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --dtype bfloat16 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl8192_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl8192_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl8192_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 64 --random-input-len 1024 --random-output-len 8192 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode auto --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl8192_conc16 --result-filename results --ignore-eos --trust-remote-code > /home/cvs/LOGS/vllm/out-node0/isl1024_osl8192_conc16/client.log 2>&1 &'"
       ],
@@ -3499,12 +3521,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 9224 --max-num-seqs 64 --gpu-memory-utilization 0.85 --dtype bfloat16 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 9224 --max-num-seqs 64 --gpu-memory-utilization 0.85 --dtype bfloat16 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 9224 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --dtype bfloat16 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -3558,9 +3583,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -3977,11 +4002,13 @@
     "runs": {
       "ISL=1024,OSL=4096,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl4096_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl4096_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl4096_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl4096_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl4096_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl4096_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 5128 --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl4096_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl4096_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 5128 --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl4096_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl4096_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 5128 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl4096_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl4096_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl4096_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 64 --random-input-len 1024 --random-output-len 4096 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode auto --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl4096_conc16 --result-filename results --ignore-eos --trust-remote-code > /home/cvs/LOGS/vllm/out-node0/isl1024_osl4096_conc16/client.log 2>&1 &'"
       ],
@@ -3996,12 +4023,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 5128 --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 5128 --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 5128 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -4048,9 +4078,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -4403,9 +4433,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -4822,11 +4852,13 @@
     "runs": {
       "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 256 --random-input-len 1024 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode auto --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 --result-filename results --ignore-eos --trust-remote-code > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/client.log 2>&1 &'"
       ],
@@ -4841,12 +4873,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -4893,9 +4928,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -5244,9 +5279,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -5663,11 +5698,13 @@
     "runs": {
       "ISL=8192,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl8192_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl8192_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl8192_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl8192_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl8192_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl8192_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --max-model-len 9224 --max-num-seqs 64 --gpu-memory-utilization 0.85 --moe-backend triton < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl8192_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl8192_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --max-model-len 9224 --max-num-seqs 64 --gpu-memory-utilization 0.85 --moe-backend triton < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl8192_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl8192_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 9224 --pipeline-parallel-size 2 --distributed-executor-backend ray --max-num-seqs 64 --gpu-memory-utilization 0.85 --moe-backend triton < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl8192_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl8192_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl8192_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 256 --random-input-len 8192 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode auto --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl8192_osl1024_conc16 --result-filename results --ignore-eos > /home/cvs/LOGS/vllm/out-node0/isl8192_osl1024_conc16/client.log 2>&1 &'"
       ],
@@ -5682,12 +5719,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --max-model-len 9224 --max-num-seqs 64 --gpu-memory-utilization 0.85 --moe-backend triton < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --max-model-len 9224 --max-num-seqs 64 --gpu-memory-utilization 0.85 --moe-backend triton < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 9224 --pipeline-parallel-size 2 --distributed-executor-backend ray --max-num-seqs 64 --gpu-memory-utilization 0.85 --moe-backend triton < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -5731,9 +5771,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -6088,9 +6128,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -6507,11 +6547,13 @@
     "runs": {
       "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 320 --random-input-len 1024 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode auto --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 --result-filename results --ignore-eos --trust-remote-code > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/client.log 2>&1 &'"
       ],
@@ -6526,12 +6568,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -6580,9 +6625,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -6938,9 +6983,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -7357,11 +7402,13 @@
     "runs": {
       "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --moe-backend emulation --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --moe-backend emulation --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --moe-backend emulation --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 320 --random-input-len 1024 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode auto --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 --result-filename results --ignore-eos --trust-remote-code > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/client.log 2>&1 &'"
       ],
@@ -7376,12 +7423,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --moe-backend emulation --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --moe-backend emulation --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --moe-backend emulation --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -7425,9 +7475,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -7783,9 +7833,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -8202,11 +8252,13 @@
     "runs": {
       "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --moe-backend emulation --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --moe-backend emulation --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --moe-backend emulation --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 320 --random-input-len 1024 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode auto --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 --result-filename results --ignore-eos --trust-remote-code > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/client.log 2>&1 &'"
       ],
@@ -8221,12 +8273,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --moe-backend emulation --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --moe-backend emulation --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0,\"video\":0}'\"'\"' --moe-backend emulation --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -8270,9 +8325,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -8621,9 +8676,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -8774,23 +8829,28 @@
     "runs": {
       "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --kv-cache-dtype fp8 --max-model-len 2056 --max-num-seqs 16 --gpu-memory-utilization 0.5 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --kv-cache-dtype fp8 --max-model-len 2056 --max-num-seqs 16 --gpu-memory-utilization 0.5 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --kv-cache-dtype fp8 --max-num-seqs 16 --gpu-memory-utilization 0.5 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 64 --random-input-len 1024 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode auto --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 --result-filename results --ignore-eos --temperature 0.0 > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/client.log 2>&1 &'"
       ]
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --kv-cache-dtype fp8 --max-model-len 2056 --max-num-seqs 16 --gpu-memory-utilization 0.5 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --kv-cache-dtype fp8 --max-model-len 2056 --max-num-seqs 16 --gpu-memory-utilization 0.5 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --kv-cache-dtype fp8 --max-num-seqs 16 --gpu-memory-utilization 0.5 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -8832,9 +8892,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -9183,9 +9243,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -9469,11 +9529,13 @@
     "runs": {
       "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 320 --random-input-len 1024 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode auto --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 --result-filename results --ignore-eos --trust-remote-code > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/client.log 2>&1 &'"
       ],
@@ -9484,12 +9546,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 512 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 512 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-model-len 512 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -9532,9 +9597,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -9884,9 +9949,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -10303,11 +10368,13 @@
     "runs": {
       "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --block-size 128 --attention-backend TRITON_ATTN < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --block-size 128 --attention-backend TRITON_ATTN < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --block-size 128 --attention-backend TRITON_ATTN < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 256 --random-input-len 1024 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode auto --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 --result-filename results --ignore-eos --trust-remote-code > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/client.log 2>&1 &'"
       ],
@@ -10322,12 +10389,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --block-size 128 --attention-backend TRITON_ATTN < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --block-size 128 --attention-backend TRITON_ATTN < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --block-size 128 --attention-backend TRITON_ATTN < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -10371,9 +10441,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -10722,9 +10792,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -11008,11 +11078,13 @@
     "runs": {
       "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --tokenizer-mode mistral --config-format mistral --load-format mistral < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --tokenizer-mode mistral --config-format mistral --load-format mistral < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --tokenizer-mode mistral --config-format mistral --load-format mistral < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 320 --random-input-len 1024 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode mistral --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 --result-filename results --ignore-eos > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/client.log 2>&1 &'"
       ],
@@ -11023,12 +11095,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --tokenizer-mode mistral --config-format mistral --load-format mistral --max-model-len 512 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --tokenizer-mode mistral --config-format mistral --load-format mistral --max-model-len 512 < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --pipeline-parallel-size 2 --distributed-executor-backend ray --tokenizer-mode mistral --config-format mistral --load-format mistral --max-model-len 512 < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -11071,9 +11146,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -11425,9 +11500,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -11844,11 +11919,13 @@
     "runs": {
       "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --tokenizer-mode mistral --config-format mistral --load-format mistral --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0}'\"'\"' < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --tokenizer-mode mistral --config-format mistral --load-format mistral --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0}'\"'\"' < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --tokenizer-mode mistral --config-format mistral --load-format mistral --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0}'\"'\"' < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 256 --random-input-len 1024 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode mistral --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 --result-filename results --ignore-eos --trust-remote-code > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/client.log 2>&1 &'"
       ],
@@ -11863,12 +11940,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --tokenizer-mode mistral --config-format mistral --load-format mistral --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0}'\"'\"' < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --tokenizer-mode mistral --config-format mistral --load-format mistral --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0}'\"'\"' < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --tokenizer-mode mistral --config-format mistral --load-format mistral --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '\"'\"'{\"image\":0}'\"'\"' < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -11918,9 +11998,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -12337,11 +12417,13 @@
     "runs": {
       "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 256 --random-input-len 1024 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode auto --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 --result-filename results --ignore-eos --trust-remote-code > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/client.log 2>&1 &'"
       ],
@@ -12356,12 +12438,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --language-model-only < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -12405,9 +12490,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -12757,9 +12842,9 @@
           "privileged": true,
           "volumes": [
             "/home/cvs:/home/cvs",
-            "filled-volumes-1:/models:ro",
+            "filled-volumes-1",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-3:/usr/lib/x86_64-linux-gnu/filled-volumes-3:ro",
+            "filled-volumes-3",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -13176,11 +13261,13 @@
     "runs": {
       "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": [
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
+        "all: ray stop",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid",
         "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16 && rm -f /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --language-model-only --moe-backend emulation < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
-        "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --language-model-only --moe-backend emulation < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl1024_osl1024_conc16/server.pid; }'",
+        "node0: ray start --head --port=29501",
+        "node1: ray start --address=node0:29501",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --language-model-only --moe-backend emulation < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/server.pid; }'",
         "head: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8888 --dataset-name random --num-prompts 256 --random-input-len 1024 --random-output-len 1024 --max-concurrency 16 --request-rate inf --burstiness 1.0 --tokenizer-mode auto --seed 0 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16 --result-filename results --ignore-eos --trust-remote-code > /home/cvs/LOGS/vllm/out-node0/isl1024_osl1024_conc16/client.log 2>&1 &'"
       ],
@@ -13195,12 +13282,15 @@
     },
     "smoke": [
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s /home/cvs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < /home/cvs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=/models\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
       "all: mkdir -p /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1 && rm -f /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 0 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --language-model-only --moe-backend emulation < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
-      "node1: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --node-rank 1 --master-addr node0 --master-port 29501 --nnodes 2 --pipeline-parallel-size 2 --distributed-executor-backend mp --headless --trust-remote-code --max-model-len 2056 --max-num-seqs 64 --gpu-memory-utilization 0.85 --language-model-only --moe-backend emulation < /dev/null > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node1/isl128_osl32_conc1/server.pid; }'",
-      "all: bash -c 'pkill -f \"vllm serve\" || true'"
+      "node0: ray start --head --port=29501",
+      "node1: ray start --address=node0:29501",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 8 --port 8888 --max-model-len 2056 --pipeline-parallel-size 2 --distributed-executor-backend ray --trust-remote-code --max-num-seqs 64 --gpu-memory-utilization 0.85 --language-model-only --moe-backend emulation < /dev/null > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > /home/cvs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "all: bash -c 'pkill -f \"vllm serve\" || true'",
+      "all: ray stop"
     ],
     "suite": "vllm_distributed",
     "test_ids": [
@@ -13262,7 +13352,7 @@
           "volumes": [
             "filled-shared_fs:filled-shared_fs",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
-            "/usr/lib/x86_64-linux-gnu/filled-volumes-2:/usr/lib/x86_64-linux-gnu/filled-volumes-2:ro",
+            "filled-volumes-2",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so:/usr/lib/x86_64-linux-gnu/libionic.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so:ro",
@@ -13348,7 +13438,7 @@
         "all: bash -c 'pkill -f \"vllm serve\" || true'",
         "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s filled-shared_fs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < filled-shared_fs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=filled-shared_fs/hf_cache\n'\"'\"' > /tmp/server_env_script.sh'",
         "all: mkdir -p filled-shared_fs/LOGS/vllm/out-node0/isl1024_osl256_conc64 && rm -f filled-shared_fs/LOGS/vllm/out-node0/isl1024_osl256_conc64/vllm_serve_server.log filled-shared_fs/LOGS/vllm/out-node0/isl1024_osl256_conc64/server.pid",
-        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 4 --port 8947 --trust-remote-code --kv-cache-dtype fp8 --max-model-len 20480 --gpu-memory-utilization 0.9 --max-num-seqs 256 --no-enable-prefix-caching < /dev/null > filled-shared_fs/LOGS/vllm/out-node0/isl1024_osl256_conc64/vllm_serve_server.log 2>&1 & echo $! > filled-shared_fs/LOGS/vllm/out-node0/isl1024_osl256_conc64/server.pid; }'",
+        "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 4 --port 8947 --max-model-len 20480 --trust-remote-code --kv-cache-dtype fp8 --gpu-memory-utilization 0.9 --max-num-seqs 256 --no-enable-prefix-caching < /dev/null > filled-shared_fs/LOGS/vllm/out-node0/isl1024_osl256_conc64/vllm_serve_server.log 2>&1 & echo $! > filled-shared_fs/LOGS/vllm/out-node0/isl1024_osl256_conc64/server.pid; }'",
         "head: mkdir -p filled-shared_fs/LOGS/vllm/out-node0/isl1024_osl256_conc64",
         "head: bash -c 'source /tmp/server_env_script.sh && vllm bench serve --model filled-model --backend vllm --base-url http://0.0.0.0:8947 --dataset-name random --num-prompts 750 --random-input-len 1024 --random-output-len 256 --max-concurrency 64 --request-rate inf --burstiness 1.0 --tokenizer-mode auto --seed 1234 --random-range-ratio 0.0 --random-prefix-len 0 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,95,99 --save-result --result-dir filled-shared_fs/LOGS/vllm/out-node0/isl1024_osl256_conc64 --result-filename results --ignore-eos --trust-remote-code --temperature 0 > filled-shared_fs/LOGS/vllm/out-node0/isl1024_osl256_conc64/client.log 2>&1 &'"
       ],
@@ -13365,7 +13455,7 @@
       "all: bash -c 'pkill -f \"vllm serve\" || true'",
       "all: bash -c 'printf '\"'\"'%s'\"'\"' '\"'\"'if [ -s filled-shared_fs/.hf_token ]; then export HF_TOKEN=\"$(tr -d '\"'\"'\"'\"'\"'\"'\"'\"'[:space:]'\"'\"'\"'\"'\"'\"'\"'\"' < filled-shared_fs/.hf_token)\"; else export HF_TOKEN=; fi\nexport HF_HUB_CACHE=filled-shared_fs/hf_cache\n'\"'\"' > /tmp/server_env_script.sh'",
       "all: mkdir -p filled-shared_fs/LOGS/vllm/out-node0/isl128_osl32_conc1 && rm -f filled-shared_fs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log filled-shared_fs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid",
-      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 4 --port 8947 --trust-remote-code --kv-cache-dtype fp8 --max-model-len 20480 --gpu-memory-utilization 0.9 --max-num-seqs 256 --no-enable-prefix-caching < /dev/null > filled-shared_fs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > filled-shared_fs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
+      "node0: bash -c 'source /tmp/server_env_script.sh && { nohup vllm serve filled-model --tensor-parallel-size 4 --port 8947 --max-model-len 20480 --trust-remote-code --kv-cache-dtype fp8 --gpu-memory-utilization 0.9 --max-num-seqs 256 --no-enable-prefix-caching < /dev/null > filled-shared_fs/LOGS/vllm/out-node0/isl128_osl32_conc1/vllm_serve_server.log 2>&1 & echo $! > filled-shared_fs/LOGS/vllm/out-node0/isl128_osl32_conc1/server.pid; }'",
       "all: bash -c 'pkill -f \"vllm serve\" || true'"
     ],
     "suite": "vllm_single",

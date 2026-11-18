@@ -49,10 +49,10 @@ def _metafunc(config_file):
 
 
 class TestPytestGenerateTests(unittest.TestCase):
-    def test_each_cell_is_one_run_in_cells_order_and_no_cluster_file_is_read(self):
+    def test_each_run_is_one_test_in_runs_order_and_no_cluster_file_is_read(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_file = write_filled_config(SHIPPED_CONFIG, tmp)
-            cells = json.loads(config_file.read_text())["cells"]
+            cells = json.loads(config_file.read_text())["runs"]
             metafunc = _metafunc(config_file)
             with mock.patch("cvs.config_validation.loaders.suite_config.read_cluster") as read:
                 _common.pytest_generate_tests(metafunc)

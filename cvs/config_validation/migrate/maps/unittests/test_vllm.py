@@ -4,8 +4,8 @@ All rights reserved.
 
 Unit tests for cvs.config_validation.migrate.maps.vllm, run through
 ``engine.migrate`` and ``cvs config migrate`` with the real maps package, on the
-old fixture in ``migrate/unittests/old/``, synthetic old configs and every
-shipped vLLM config.
+old fixture in ``migrate/unittests/old/`` and synthetic old configs, and a check
+that every shipped vLLM config is already in the new format.
 '''
 
 import copy
@@ -246,8 +246,10 @@ class TestOldFixture(_MapCase):
 
         config = _validate(new, threshold_file)
         self.assertEqual((config.server_params.tp, config.server_params.port), (8, 8888))
-        self.assertEqual(list(config.thresholds.model_extra), [KEY])
-        self.assertEqual(list(config.thresholds.accuracy.lm_eval), [task["id"] for task in old["accuracy"]["tasks"]])
+        self.assertEqual(list(config.thresholds), [KEY, "accuracy"])
+        self.assertEqual(
+            list(config.thresholds["accuracy"]["lm_eval"]), [task["id"] for task in old["accuracy"]["tasks"]]
+        )
 
     def test_a_converted_config_is_already_in_the_new_format(self):
         new = self._migrate_with_thresholds(FIXTURE)[2]
@@ -391,7 +393,7 @@ class TestThresholdFile(_MapCase):
             new[KEY], {"mean_ttft_ms": {"kind": "max", "value": 80}, "output_throughput": {"kind": "min", "value": 900}}
         )
         self.assertEqual(new["accuracy"], {"lm_eval": old["accuracy"]})
-        self.assertEqual(list(_validate(NEW, self.tmp / "new_old_threshold.json").thresholds.model_extra), [KEY])
+        self.assertEqual(list(_validate(NEW, self.tmp / "new_old_threshold.json").thresholds), [KEY, "accuracy"])
 
     def test_an_old_kind_against_the_metrics_direction_is_named_and_one_with_no_new_kind_goes_to_unmapped(self):
         old = {
@@ -413,31 +415,27 @@ class TestThresholdFile(_MapCase):
 
 
 class TestShippedConfigs(_MapCase):
-    def test_every_shipped_config_converts_clean_and_validates_with_its_threshold_file(self):
+    def test_every_shipped_config_is_in_the_new_format_and_validates_with_its_threshold_file(self):
         configs = sorted(path for path in SHIPPED_DIR.glob("*.json") if not path.name.endswith("threshold.json"))
         self.assertEqual(len(configs), 33)
         for path in configs:
             with self.subTest(config=path.name):
-                old = json.loads(path.read_text())
-                if "server_params" in old and "tensor_parallel_size" not in old["server_params"]:
-                    self.skipTest("shipped configs are already in the new format")
-                code, lines, new, threshold_file = self._migrate_with_thresholds(path)
-                self.assertEqual(code, 0, lines)
+                self.assertEqual(
+                    self._migrate(path), (0, [f"{path} is already in the new format; nothing to convert"], None)
+                )
+                new = json.loads(path.read_text())
                 self.assertNotIn("_unmapped", new)
-                self.assertEqual(_placeholders(new), _placeholders(old))
-                config = _validate(new, threshold_file)
-                self.assertEqual(config.runs, old["runs"])
-                pp = old["server_params"].get("pipeline_parallel_size", 1)
-                self.assertEqual(config.server_params.nnodes, int(pp) if int(pp) > 1 else None)
+                config = _validate(new, SHIPPED_DIR / new["threshold_json"])
+                self.assertTrue(config.runs)
+                distributed = "_distributed" in path.name
+                self.assertEqual(config.vllm.distributed_executor_backend, "ray" if distributed else "mp")
+                self.assertEqual(config.server_params.nnodes, 2 if distributed else None)
 
     def test_the_reserved_names_are_the_fields_their_old_names_and_each_flag_the_harness_sets(self):
         golden = json.loads(GOLDEN.read_text())
         harness = {"serve": set(), "bench serve": set()}
         for name, recorded in golden.items():
-            old = json.loads((SHIPPED_DIR / name).read_text())
-            if "tensor_parallel_size" not in old.get("server_params", {}):
-                self.skipTest("shipped configs are already in the new format")
-            new = self._migrate_with_thresholds(SHIPPED_DIR / name)[2]
+            new = json.loads((SHIPPED_DIR / name).read_text())
             own = {
                 "serve": set(new["server_params"].get("engine_args", {})),
                 "bench serve": set(new.get("benchmark_params", {}).get("client_args", {})),
@@ -454,7 +452,9 @@ class TestShippedConfigs(_MapCase):
                 # Every flag the harness passes and every old field name is reserved; nothing else but fields is.
                 self.assertLessEqual(harness[kind] | old_names, reserved)
                 fields = set(model.model_fields) - {"engine_args", "client_args"}
-                self.assertLessEqual(reserved - harness[kind] - old_names, fields | {"headless", "node_rank"})
+                # The mp launch flags stay reserved though the shipped Ray configs no longer render them.
+                launcher = {"headless", "node_rank", "master_addr"}
+                self.assertLessEqual(reserved - harness[kind] - old_names, fields | launcher)
 
 
 class TestCli(unittest.TestCase):

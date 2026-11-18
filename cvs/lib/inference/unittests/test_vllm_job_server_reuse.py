@@ -93,6 +93,7 @@ def _make_job_for_check(tail_output="", grep_exit=1):
 def _variant(serve_args=None, benchmark_params=None):
     options = {key.replace("-", "_"): value for key, value in (serve_args or {}).items()}
     distributed_executor_backend = options.pop("distributed_executor_backend", "mp")
+    max_model_length = options.pop("max_model_len", None)
     cell = f"ISL=1024,OSL=1024,TP={_TP},PP={_PP},CONC=16"
     return VllmConfig(
         enforce_thresholds=False,
@@ -100,16 +101,17 @@ def _variant(serve_args=None, benchmark_params=None):
         paths={"shared_fs": "/logs", "models_dir": "/models", "log_dir": "/logs", "hf_token_file": FAKE_CRED_FILE},
         container={"name": "test", "image": "test", "env": {}, "runtime": {"name": "docker", "args": {}}},
         server_params={
-            "engine": "vllm",
             "model": "/models/Kimi-K2.5-W4A8",
             "tp": _TP,
             "pp": _PP,
             "port": 8000,
-            "distributed_executor_backend": distributed_executor_backend,
+            "max_model_length": max_model_length,
             "engine_args": options,
         },
-        benchmark_params=benchmark_params or {},
-        cells=[cell],
+        benchmark_params={"num_prompts": 640, **(benchmark_params or {})},
+        sweeps={cell: {}},
+        runs=[cell],
+        vllm={"distributed_executor_backend": distributed_executor_backend},
     )
 
 
@@ -125,15 +127,11 @@ def _job(isl, osl, conc, serve_args=None, benchmark_params=None):
 
 
 class TestMaxModelLenFallback(unittest.TestCase):
-    def test_config_pin_wins_and_no_duplicate(self):
-        argv = _job("1024", "1024", 16, serve_args={"max_model_len": "16384"})._server_argv(0)
+    def test_max_model_length_wins_over_the_derived_value_and_appears_once(self):
+        argv = _job("1024", "1024", 16, serve_args={"max_model_len": 16384})._server_argv(0)
         idxs = [i for i, a in enumerate(argv) if a == "--max-model-len"]
-        self.assertEqual(len(idxs), 1, "config-pinned max-model-len must appear exactly once")
+        self.assertEqual(len(idxs), 1, "max_model_length must appear exactly once")
         self.assertEqual(argv[idxs[0] + 1], "16384", "config value must win")
-
-    def test_explicit_null_suppresses_fallback_and_emits_no_flag(self):
-        argv = _job("1024", "1024", 16, serve_args={"max_model_len": None})._server_argv(0)
-        self.assertNotIn("--max-model-len", argv)
 
     def test_derives_expected_catalog_lengths_when_omitted(self):
         for isl, osl, expected in (
@@ -201,8 +199,8 @@ class TestServerSignatureReuse(unittest.TestCase):
             _job("8192", "1024", 16, serve_args={}).server_signature(),
         )
 
-    def test_explicit_null_mml_reuses_across_isl_osl(self):
-        serve_args = {"max_model_len": None}
+    def test_a_set_max_model_length_reuses_across_isl_osl(self):
+        serve_args = {"max_model_len": 16384}
         self.assertEqual(
             _job("1024", "1024", 16, serve_args).server_signature(),
             _job("8192", "1024", 16, serve_args).server_signature(),
@@ -242,8 +240,8 @@ class TestRunClientEnsuresOutDir(unittest.TestCase):
 
 class TestRunClientTrustRemoteCode(unittest.TestCase):
     """Models with a custom tokenizer (e.g. Kimi-K2.6's auto_map) need the bench
-    client to pass --trust-remote-code, mirroring the server's serve_args, or the
-    client's tokenizer load raises ValueError before any request is sent."""
+    client to pass --trust-remote-code, exactly when the server's engine_args do,
+    or the client's tokenizer load raises ValueError before any request is sent."""
 
     def _bench_cmd(self, job):
         job.run_client()
@@ -251,23 +249,20 @@ class TestRunClientTrustRemoteCode(unittest.TestCase):
         self.assertTrue(bench, f"no bench client command issued; head cmds: {job.orch.head_cmds}")
         return bench[-1]
 
-    def test_trust_remote_code_passed_when_benchmark_enables_it(self):
-        job = _job("1024", "1024", 8, benchmark_params={"trust_remote_code": True})
+    def test_trust_remote_code_passed_when_the_server_trusts_remote_code(self):
+        job = _job("1024", "1024", 8, serve_args={"trust_remote_code": True})
         self.assertIn("--trust-remote-code", self._bench_cmd(job))
 
-    def test_trust_remote_code_absent_when_benchmark_omits_it(self):
+    def test_trust_remote_code_absent_when_the_server_does_not(self):
         job = _job("1024", "1024", 8)
         self.assertNotIn("--trust-remote-code", self._bench_cmd(job))
 
-    def test_resolved_run_carries_the_benchmark_flags_and_client_args(self):
+    def test_resolved_run_always_ignores_eos_and_carries_the_client_args(self):
         for present in (True, False):
             with self.subTest(present=present):
                 variant = _variant(
-                    benchmark_params={
-                        "ignore_eos": present,
-                        "trust_remote_code": present,
-                        "client_args": {"temperature": 0.0},
-                    }
+                    serve_args={"trust_remote_code": True} if present else {},
+                    benchmark_params={"client_args": {"temperature": 0.0}},
                 )
                 (run,) = variant.resolved_runs()
                 job = VllmJob(
@@ -280,7 +275,7 @@ class TestRunClientTrustRemoteCode(unittest.TestCase):
                     benchmark_params=run.benchmark_params,
                 )
                 command = self._bench_cmd(job)
-                self.assertEqual("--ignore-eos" in command, present)
+                self.assertIn("--ignore-eos", command)
                 self.assertEqual("--trust-remote-code" in command, present)
                 self.assertIn("--temperature 0.0", command)
 

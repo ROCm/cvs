@@ -13,13 +13,21 @@ from pydantic import ValidationError
 
 from cvs.config_validation.schemas.base import problem_lines
 from cvs.config_validation.schemas.sweeps import Axis, SweepsAndRuns
-from cvs.lib.conf_lib.schemas.vllm import RunCell
 
 VLLM_CONFIG_DIR = Path(__file__).resolve().parents[4] / "input" / "config_file" / "inference" / "vllm"
 VLLM_AXES = (Axis("ISL", "isl"), Axis("OSL", "osl"), Axis("TP", "tp"), Axis("PP", "pp"), Axis("CONC", "concurrency"))
 KEY = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"
 OTHER_KEY = "ISL=8192,OSL=1024,TP=8,PP=1,CONC=64"
 EXPECTED = "expected ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>"
+
+# Shipped vLLM cell keys with the (ISL, OSL, TP, PP, CONC) each must parse to.
+SHIPPED_VLLM_CELLS = {
+    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16": (1024, 1024, 8, 1, 16),
+    "ISL=1024,OSL=256,TP=4,PP=1,CONC=64": (1024, 256, 4, 1, 64),
+    "ISL=1024,OSL=8192,TP=8,PP=2,CONC=32": (1024, 8192, 8, 2, 32),
+    "ISL=16384,OSL=128,TP=4,PP=1,CONC=4": (16384, 128, 4, 1, 4),
+    "ISL=5000,OSL=1024,TP=8,PP=2,CONC=64": (5000, 1024, 8, 2, 64),
+}
 
 # One bad key for each parse problem, with the problem its error must name.
 BAD_KEYS = (
@@ -87,13 +95,12 @@ class TestSweepsAndRuns(unittest.TestCase):
                     [f"sweeps: cell key {key!r} {problem}; {EXPECTED}"],
                 )
 
-    def test_shipped_vllm_keys_and_bad_keys_parse_as_the_vllm_schema_parses_them(self):
+    def test_every_shipped_vllm_key_parses_and_each_listed_one_into_its_axis_values(self):
         shipped = _shipped_vllm_cell_keys()
-        self.assertTrue(shipped, f"no vLLM configs under {VLLM_CONFIG_DIR}")
-        config = _Serving.model_validate({"sweeps": {key: {} for key in shipped}, "runs": shipped})
-        for key, cell in config.cells().items():
-            with self.subTest(key=key):
-                self.assertEqual(_axis_values(cell), _axis_values(RunCell.parse(key)))
+        self.assertLessEqual(set(SHIPPED_VLLM_CELLS), set(shipped))
+        cells = _Serving.model_validate({"sweeps": {key: {} for key in shipped}, "runs": shipped}).cells()
+        self.assertEqual(list(cells), shipped)
+        self.assertEqual({key: _axis_values(cells[key]) for key in SHIPPED_VLLM_CELLS}, SHIPPED_VLLM_CELLS)
 
     def test_keys_parse_by_the_axes_the_config_class_declares(self):
         config = _Training.model_validate({"sweeps": {"NODES=2,GBS=256": {}}, "runs": ["NODES=2,GBS=256"]})
