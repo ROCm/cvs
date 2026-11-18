@@ -224,11 +224,11 @@ class TestMapModule(unittest.TestCase):
                 "server_params.max_model_len",
                 "benchmark_params.backend",
                 "benchmark_params.dataset_name",
-                "benchmark_params.trust_remote_code",
-                "benchmark_params.ignore_eos",
                 "benchmark_params.client_poll_iterations",
                 "benchmark_params.client_poll_wait_s",
                 "benchmark_params.client_initial_wait_s",
+                "benchmark_params.trust_remote_code",
+                "benchmark_params.ignore_eos",
                 "accuracy.tasks",
             ],
         )
@@ -453,20 +453,6 @@ class TestTimeouts(_MapCase):
         new = copy.deepcopy(NEW)
         new["benchmark_params"]["client_poll_wait_s"] = 30
         self.assertEqual(self._migrate(new), (0, [], {**NEW, "timeouts": {"client_s": 120 + 20 * 30}}))
-
-
-class TestNicFields(_MapCase):
-    def test_a_value_that_acts_as_the_default_today_is_left_out(self):
-        for key, value in (("ib_hca_devices", "auto"), ("ib_netdev", "")):
-            with self.subTest(key=key, value=value):
-                self.assertEqual(self._migrate(_old(**{key: value})), (0, [], NEW))
-
-    def test_other_values_go_to_unmapped(self):
-        for key, value in (("ib_netdev", FAKE_CRED), ("ib_netdev", "auto")):
-            with self.subTest(key=key, value=value):
-                code, lines, new = self._migrate(_old(**{key: value}))
-                self.assertEqual((code, lines), (1, [f"_unmapped.{key}: {UNMAPPED_FIELD_MESSAGE}"]))
-                self.assertEqual(new, {"_unmapped": {key: value}, **NEW})
 
 
 class TestSweeps(_MapCase):

@@ -21,14 +21,13 @@ from cvs.config_validation.schemas.inference.engines import (
     SERVER_RESERVED,
     AtomConfig,
     SglangConfig,
-    VllmBenchmarkParams,
     VllmConfig,
     VllmContainerSpec,
-    VllmServerParams,
     VllmThresholdFile,
+    client_options,
     serialize_cli_options,
 )
-from cvs.config_validation.schemas.inference.llm_serving import ContainerEnvTokenError
+from cvs.config_validation.schemas.inference.llm_serving import ContainerEnvTokenError, ServingBenchmarkParams
 from cvs.core.run_layout import RunLayout
 from cvs.lib.conf_lib.config_blocks import PLACEHOLDER_MESSAGE
 from cvs.lib.conf_lib.loader import ConfigError
@@ -175,52 +174,23 @@ class TestVllmContainerSpec(unittest.TestCase):
         self.assertEqual((spec.nccl_ib_hcas, spec.socket_env_configured), (None, True))
 
 
-class TestVllmServerParams(unittest.TestCase):
-    def test_the_shared_fields_and_the_old_wait_take_todays_defaults(self):
-        params = VllmServerParams.model_validate({"model": "m", "tp": 8})
-        self.assertEqual(
-            params.model_dump(),
-            {
-                "model": "m",
-                "tp": 8,
-                "pp": 1,
-                "dp": 1,
-                "ep": 1,
-                "port": 8888,
-                "master_port": 29501,
-                "nnodes": None,
-                "prefill_nnodes": None,
-                "max_model_length": None,
-                "long_context": {"chunked_prefill_size": None, "max_prefill_tokens": None},
-                "engine_args": {},
-            },
+class TestClientOptions(unittest.TestCase):
+    def test_the_benchmark_fields_and_client_args_make_one_flag_map(self):
+        params = ServingBenchmarkParams.model_validate(
+            {"num_prompts": 64, "seed": 3, "client_args": {"percentile_metrics": "ttft,tpot"}}
         )
-
-    def test_a_placeholder_in_an_engine_arg_fails_only_when_placeholders_are_rejected(self):
-        for value in ("<changeme>", {"path": "<changeme-dir>"}):
-            with self.subTest(value=value):
-                data = _server(engine_args={"download_dir": value})
-                VllmServerParams.model_validate(data)
-                self.assertEqual(
-                    _errors(VllmServerParams, data, REJECT),
-                    [("engine_args.download_dir", f"Value error, {PLACEHOLDER_MESSAGE}")],
-                )
-
-
-class TestVllmBenchmarkParams(unittest.TestCase):
-    def test_the_shared_fields_and_the_old_wait_take_todays_defaults(self):
         self.assertEqual(
-            VllmBenchmarkParams.model_validate({"num_prompts": 64}).model_dump(),
+            client_options(params),
             {
                 "num_prompts": 64,
                 "random_range_ratio": 0.0,
-                "seed": 0,
+                "seed": 3,
                 "request_rate": "inf",
                 "burstiness": 1.0,
                 "random_prefix_len": 0,
                 "tokenizer_mode": "auto",
                 "scaling_baseline_output_throughput": None,
-                "client_args": {},
+                "percentile_metrics": "ttft,tpot",
             },
         )
 

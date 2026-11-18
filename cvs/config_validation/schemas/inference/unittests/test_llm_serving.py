@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from pydantic import ValidationError
 
 from cvs.config_validation.schemas.inference.accuracy import Accuracy, AccuracyTask, NiahEval
 from cvs.config_validation.schemas.inference.llm_serving import (

@@ -77,8 +77,11 @@ def _smoke_variant(timeouts):
         threshold_json="threshold.json",
         paths={"shared_fs": "/logs", "models_dir": "/models", "log_dir": "/logs", "hf_token_file": "/models/.hf"},
         container={"name": "test", "image": "test"},
-        server_params={"engine": "vllm", "model": "/models/test-model", "tp": 8, "pp": 1, "port": 8000},
-        cells=["ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"],
+        server_params={"model": "/models/test-model", "tp": 8, "pp": 1, "port": 8000},
+        benchmark_params={"num_prompts": 64},
+        sweeps={"ISL=1024,OSL=1024,TP=8,PP=1,CONC=16": {}},
+        runs=["ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"],
+        vllm={"distributed_executor_backend": "mp"},
         timeouts=timeouts,
     )
 

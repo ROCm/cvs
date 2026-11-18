@@ -25,7 +25,6 @@ from cvs.config_validation.schemas.common_training_inference import ContainerSpe
 from cvs.config_validation.schemas.inference.llm_serving import (
     LlmServingConfig,
     ServingBenchmarkParams,
-    ServingServerParams,
     check_flags,
 )
 from cvs.config_validation.schemas.sweeps import Axis, parse_cell_key
