@@ -24,6 +24,7 @@ from cvs.config_validation.loaders.suite_config import (
     LoadedSuiteConfig,
     load_suite_config,
     mode_from_module,
+    old_threshold_paths,
     read_cluster,
 )
 from cvs.config_validation.schemas.base import ConfigStr, OpenBlock, StrictBlock, SuiteConfig
@@ -355,7 +356,7 @@ class TestThresholdFile(_LoaderCase):
         thresholds = {
             "_comment": "notes",
             CELL: {"output_throughput": _spec("min", 900), "mean_ttft_ms": _spec("max", 80)},
-            "accuracy": {"gsm8k_flex": {"exact_match": _spec("min", 0.5)}},
+            "accuracy": {"lm_eval": {"gsm8k_flex": {"exact_match": _spec("min", 0.5)}}},
         }
         for enforce in (True, False):
             with self.subTest(enforce=enforce):
@@ -396,9 +397,17 @@ class TestThresholdFile(_LoaderCase):
 
     def test_a_name_missing_beside_the_config_falls_back_to_the_packaged_copy(self):
         packaged = sorted(PACKAGED_VLLM_DIR.glob("*_threshold.json"))[0]
+        written = json.loads(packaged.read_text())
+        if old_threshold_paths(written):
+            # Shipped files still in the old layout are found, then refused as old.
+            with self.assertWarns(UserWarning):
+                exc = self._refused({**VALID, "threshold_json": packaged.name})
+            self.assertTrue(str(exc).startswith(f"{packaged} is not a valid config:"))
+            self.assertIn("old config format:", exc.problems[0])
+            return
         with self.assertWarns(UserWarning):
             config = self._load({**VALID, "threshold_json": packaged.name}).config
-        self.assertEqual(config.thresholds, ThresholdFile.model_validate(json.loads(packaged.read_text())))
+        self.assertEqual(config.thresholds, ThresholdFile.model_validate(written))
         self.assertTrue(config.thresholds.model_extra)
 
     def test_a_missing_file_with_no_packaged_copy_names_threshold_json_and_never_its_value(self):
@@ -415,17 +424,36 @@ class TestThresholdFile(_LoaderCase):
                 thresholds = {
                     "_unmapped": {"x": 1},
                     CELL: {"output_throughput": _spec("min", "<changeme>"), "mean_ttft_ms": spec},
-                    "accuracy": {"gsm8k_flex": {"exact_match": spec, "stderr": _spec("max", "0.1")}},
+                    "accuracy": {"lm_eval": {"gsm8k_flex": {"exact_match": spec, "stderr": _spec("max", "0.1")}}},
                 }
                 exc = self._refused(self._threshold_config(thresholds))
                 self.assertEqual(
                     exc.problems,
                     [
-                        f"old config format: {CELL}.mean_ttft_ms, accuracy.gsm8k_flex.exact_match; "
+                        f"old config format: {CELL}.mean_ttft_ms, accuracy.lm_eval.gsm8k_flex.exact_match; "
                         f"run cvs config migrate demo {threshold_path} <new config>"
                     ],
                 )
                 self.assertTrue(str(exc).startswith(f"{threshold_path} is not a valid config:"))
+
+    def test_accuracy_sections_by_task_id_are_reported_as_the_old_layout(self):
+        threshold_path = self.tmp / "configs" / "demo_threshold.json"
+        thresholds = {
+            CELL: {"output_throughput": _spec()},
+            "accuracy": {
+                "_comment": "notes",
+                "gsm8k_flex": {"exact_match": _spec("min", 0.5)},
+                "lm_eval": {},
+                "gsm8k_strict": {},
+            },
+        }
+        self.assertEqual(
+            self._refused(self._threshold_config(thresholds)).problems,
+            [
+                "old config format: accuracy.gsm8k_flex, accuracy.gsm8k_strict; "
+                f"run cvs config migrate demo {threshold_path} <new config>"
+            ],
+        )
 
     def test_old_kinds_under_comment_keys_load(self):
         thresholds = {

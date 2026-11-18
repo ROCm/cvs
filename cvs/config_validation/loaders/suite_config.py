@@ -9,8 +9,10 @@ the test module's name.
 fails, in this order: an old config format, an ``_unmapped`` block left by
 ``cvs config migrate``, a ``<changeme>`` placeholder, then the schema. Each
 line names a field and never its value. The threshold file a config names gets
-the same four checks, with an old threshold kind as its old format, before the
-config's schema runs, so the schema's validators see the file.
+the same four checks before the config's schema runs, so the schema's
+validators see the file. Its old format is an old threshold kind, or an
+``accuracy`` key outside ``lm_eval``, ``custom_eval``, ``quant_parity`` and
+``mtp_quality``, such as a task id the old layout put there directly.
 
 The ``_unmapped`` check reads the config file as written; the others read what
 the schema's ``read_raw`` returns.
@@ -28,7 +30,7 @@ from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 
 from cvs.config_validation.schemas.base import problem_lines
-from cvs.config_validation.schemas.thresholds import Thresholds
+from cvs.config_validation.schemas.thresholds import ACCURACY_SECTIONS, Thresholds
 from cvs.lib.conf_lib.config_blocks import PLACEHOLDER_MESSAGE, has_placeholder
 from cvs.lib.conf_lib.loader import ConfigError
 from cvs.lib.utils.config_loader import _find_threshold_file
@@ -112,7 +114,7 @@ def _with_thresholds(schema, raw, config_file, log):
         raise ConfigError(config_file, [f"threshold_json: {MISSING_THRESHOLD_MESSAGE}"]) from None
     with open(path) as fp:
         written = json.load(fp)
-    _refuse_before_schema(schema, path, _old_kind_paths(written), written, written)
+    _refuse_before_schema(schema, path, old_threshold_paths(written), written, written)
     try:
         return {**raw, "thresholds": TypeAdapter(field.rebuild_annotation()).validate_python(written)}
     except ValidationError as exc:
@@ -170,6 +172,17 @@ def _placeholder_lines(node, path=""):
             lines.append(f"{here}: {PLACEHOLDER_KEY_MESSAGE}")
         lines += _placeholder_lines(value, here)
     return lines
+
+
+def old_threshold_paths(written):
+    """The paths in a threshold file that only the old format has: accuracy sections by task id, then old kinds."""
+    accuracy = written.get("accuracy") if isinstance(written, dict) else None
+    sections = [
+        f"accuracy.{key}"
+        for key in (accuracy if isinstance(accuracy, dict) else {})
+        if not _is_comment(key) and key not in ACCURACY_SECTIONS
+    ]
+    return sections + _old_kind_paths(written)
 
 
 def _old_kind_paths(node, path=""):
