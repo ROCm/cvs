@@ -12,8 +12,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from pydantic import create_model
+
 from cvs.core.run_layout import RunLayout
-from cvs.lib.conf_lib.config_blocks import Paths, _Forbid
+from cvs.lib.conf_lib.config_blocks import ContainerSpec, Paths, _Forbid
 from cvs.lib.conf_lib.loader import ConfigError, load_config
 from cvs.lib.utils.config_loader import BaseVariantConfig
 from cvs.unittests.support import FAKE_CRED
@@ -35,6 +37,15 @@ def _base_config_dict():
         "model": {"id": "amd/Llama-3.1-70B-Instruct", "remote": 0},
         "container": {"name": "my-container", "image": "rocm/vllm-dev:nightly", "runtime": {"name": "docker"}},
     }
+
+
+# The conf lib's own blocks, whose ConfigStr fields load_config checks for placeholders.
+_ConfLibVariant = create_model(
+    "_ConfLibVariant",
+    __base__=BaseVariantConfig,
+    paths=(Paths, ...),
+    container=(ContainerSpec, ...),
+)
 
 
 class _PathsOnlyConfig(_Forbid):
@@ -139,7 +150,7 @@ class TestLoadConfig(unittest.TestCase):
         config["container"]["image"] = "<CHANGEME>"
         config["container"]["env"] = {"NCCL_SOCKET_IFNAME": "<changeme>", "NCCL_DEBUG": "INFO"}
         with self.assertRaises(ConfigError) as ctx:
-            load_config(BaseVariantConfig, self._write_config(config), {})
+            load_config(_ConfLibVariant, self._write_config(config), {})
         named = sorted(problem.split(":", 1)[0] for problem in ctx.exception.problems)
         self.assertEqual(named, ["container.env.NCCL_SOCKET_IFNAME", "container.image", "paths.models_dir"])
 

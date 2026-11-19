@@ -9,7 +9,9 @@ Inference-only symbols belong in `cvs/lib/inference/utils/`; single-framework sy
 
 ### `config_loader.py`
 
-`config_blocks.py` and `load_config` live in `cvs/lib/conf_lib/`; see `cvs/lib/conf_lib/AGENTS.md`.
+The schema blocks (`_Forbid`, `_Allow`, `Paths`, `ModelSpec`, `RuntimeSpec`, `ContainerSpec`) live in
+`cvs/parsers/schemas.py` and are re-exported here. `load_config` lives in `cvs/lib/conf_lib/`; see
+`cvs/lib/conf_lib/AGENTS.md`.
 
 #### Schema classes
 
