@@ -866,6 +866,24 @@ class TestLoadVariant(unittest.TestCase):
         self.assertNotIn("hf_FAKE123", str(caught.exception))
         self.assertEqual(collected["sweep"]["runs"], [{"combo": "isl1024_osl1024", "concurrency": 16}])
 
+    def test_old_threshold_file_alone_is_named_in_the_warning(self):
+        data = _atom_config_dict(threshold_json="t.json", enforce_thresholds=False)
+        old = {CELL: {"failed": {"kind": "max_ms", "value": 0}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(tmp, "mi3xx_atom_new.json", data, old)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                load_variant(path, _cluster_dict())
+            with warnings.catch_warnings(record=True) as collected:
+                warnings.simplefilter("always")
+                collection_variant_raw(path)
+        future = [str(w.message) for w in caught if w.category is FutureWarning]
+        self.assertEqual(len(future), 1)
+        self.assertIn(
+            "t.json, the threshold file of mi3xx_atom_new.json, uses old ATOM threshold keys: kinds", future[0]
+        )
+        self.assertEqual(collected, [])
+
     def test_token_name_in_old_env_fails_without_its_value(self):
         old = {
             "schema_version": 1,

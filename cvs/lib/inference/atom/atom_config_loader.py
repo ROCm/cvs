@@ -16,6 +16,7 @@ import json
 import math
 import re
 import shlex
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -271,15 +272,21 @@ def atom_config_from_raw(raw, thresholds, config_path, profile=None, context=Non
     holds ``old_keys=OLD_KEYS_QUIET``.
     """
     gpu_arch = _config_gpu_arch(raw, config_path)
+    original = raw
     try:
         raw, thresholds, message = resolve_old_atom_config(raw, thresholds, gpu_arch, profile)
     except ValueError as exc:
         raise ValueError(f"{Path(config_path).name}: {exc}") from None
     if message and (context or {}).get("old_keys") != OLD_KEYS_QUIET:
+        if raw is original:
+            threshold_name = str(raw.get("threshold_json") or "").strip() or "the threshold file"
+            where = f"{threshold_name}, the threshold file of {Path(config_path).name}, uses old ATOM threshold keys"
+            message = message.removeprefix("threshold file: ")
+        else:
+            where = f"{Path(config_path).name} uses old ATOM config keys"
         warn_old_keys(
-            f"{Path(config_path).name} uses old ATOM config keys: {message}. Rewrite it in the current format "
-            "(see the shipped configs in cvs/input/config_file/inference/atom); old keys will be removed in a "
-            "future release."
+            f"{where}: {message}. Rewrite it in the current format (see the shipped files in "
+            "cvs/input/config_file/inference/atom); old keys will be removed in a future release."
         )
     try:
         config = AtomConfig.model_validate({**raw, "thresholds": thresholds}, context=context)
@@ -301,7 +308,12 @@ def collection_variant_raw(config_file, profile=None):
     """The view fields pytest collection parametrizes on, read before the cluster file is known."""
     config_path = Path(config_file)
     raw, thresholds = substitute_config(config_path, {})
-    config, gpu_arch = atom_config_from_raw(raw, thresholds, config_path, profile, context={"old_keys": OLD_KEYS_QUIET})
+    # The fixture's load repeats every coverage warning, so collection stays quiet.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        config, gpu_arch = atom_config_from_raw(
+            raw, thresholds, config_path, profile, context={"old_keys": OLD_KEYS_QUIET}
+        )
     return atom_variant_raw(config, gpu_arch)
 
 

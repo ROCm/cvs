@@ -1124,6 +1124,20 @@ class TestATOMAtomIsReady(unittest.TestCase):
                 self.assertTrue(job.is_ready())
                 self.assertTrue(any("/health" in cmd for cmd, _hosts in orch.calls))
 
+    def test_atom_driver_probes_health_on_every_host_without_the_log(self):
+        orch = _RecordingOrch(responder=_readiness_responder(exit_code=1, health="OK"))
+        job = AtomJob(
+            orch=orch,
+            variant=_fake_variant(driver="atom", nnodes="2"),
+            hf_token=FAKE_CRED,
+            isl="512",
+            osl="512",
+            concurrency=16,
+            num_prompts=128,
+        )
+        self.assertTrue(job.is_ready())
+        self.assertEqual([(("/health" in cmd), hosts) for cmd, hosts in orch.calls], [(True, None)])
+
     def test_health_is_not_probed_before_the_log_line(self):
         job, orch = self._single_node_job("vllm_atom", _readiness_responder(exit_code=1, health="OK"))
         self.assertFalse(job.is_ready())
