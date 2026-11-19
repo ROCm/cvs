@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Dict, Generic, List, Literal, Optional, Tuple, TypeVar, Union
+import logging
 import math
 import re
 import warnings
@@ -2059,6 +2060,8 @@ class InferenceConfig(_Forbid):
 # Old Config Keys
 # =============================================================================
 
+logger = logging.getLogger(__name__)
+
 OLD_KEY_DROPPED = object()
 OLD_KEY_UNMAPPED = object()
 _OLD_VALUE = object()
@@ -2170,6 +2173,8 @@ def resolve_old_keys(
     input and ``None`` when no old key is present. An unmapped key raises
     ``ValueError`` naming its path, never its value. ``prefix`` is prepended to
     every path in messages. A parent left empty by a move stays in place.
+    Callers that load a config pass the combined message of all their calls to
+    ``warn_old_keys`` once.
     """
     if not isinstance(config, dict):
         return config, None
@@ -2206,6 +2211,19 @@ def resolve_old_keys(
         if present:
             changes.append(f"{old_name} -> {prefix}{'.'.join(row.new_path)}")
     return converted, message.replace("{keys}", ", ".join(changes))
+
+
+def warn_old_keys(message):
+    """Raise one ``FutureWarning`` with ``message`` and log the same text once.
+
+    Under ``cvs run`` pytest captures a warning raised during test setup, so
+    the log is what reaches the console and the run log. Does nothing when
+    ``message`` is empty or ``None``.
+    """
+    if not message:
+        return
+    logger.warning(message)
+    warnings.warn(message, FutureWarning, stacklevel=2)
 
 
 # =============================================================================

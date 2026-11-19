@@ -1,4 +1,6 @@
+import logging
 import unittest
+import warnings
 
 from cvs.parsers.schemas import (
     OLD_KEY_DROPPED,
@@ -7,7 +9,21 @@ from cvs.parsers.schemas import (
     normalize_legacy_preflight_node_smoke_sections,
     normalize_legacy_preflight_rdma_config,
     resolve_old_keys,
+    warn_old_keys,
 )
+
+
+def _logged_messages(action):
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    logger = logging.getLogger("cvs.parsers.schemas")
+    logger.addHandler(handler)
+    try:
+        action()
+    finally:
+        logger.removeHandler(handler)
+    return [record.getMessage() for record in records]
 
 
 def _switch_rule(config):
@@ -125,9 +141,31 @@ class TestResolveOldKeys(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "b must be an object to hold b.c"):
             resolve_old_keys({"a": 1, "b": 2}, {"a": "b.c"})
 
+    def test_converting_old_keys_logs_nothing(self):
+        self.assertEqual(_logged_messages(lambda: resolve_old_keys({"a": 1}, {"a": "b"})), [])
+
     def test_the_message_template_and_prefix_are_used(self):
         _, message = resolve_old_keys({"a": 1}, {"a": "b"}, message='Old: {keys}; e.g. {"b": 1}.', prefix="p.")
         self.assertEqual(message, 'Old: p.a -> p.b; e.g. {"b": 1}.')
+
+
+class TestWarnOldKeys(unittest.TestCase):
+    def test_one_future_warning_and_one_log_line_carry_the_same_text(self):
+        with self.assertLogs("cvs.parsers.schemas", level="WARNING") as logs:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                warn_old_keys("Deprecated config keys: a -> b.")
+        self.assertEqual(
+            [(w.category, str(w.message)) for w in caught], [(FutureWarning, "Deprecated config keys: a -> b.")]
+        )
+        self.assertEqual([r.getMessage() for r in logs.records], ["Deprecated config keys: a -> b."])
+
+    def test_no_message_neither_warns_nor_logs(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            logged = _logged_messages(lambda: warn_old_keys(None))
+        self.assertEqual(caught, [])
+        self.assertEqual(logged, [])
 
 
 class TestPreflightOldKeys(unittest.TestCase):
@@ -167,6 +205,13 @@ class TestPreflightOldKeys(unittest.TestCase):
             "Deprecated preflight Node Smoke section name(s) detected: preflight.node_smoke -> "
             "preflight.node_smoke_tier1. Prefer node_smoke_tier1 and node_smoke_tier3 in new configs.",
         )
+
+    def test_preflight_converters_leave_logging_to_their_caller(self):
+        def convert():
+            normalize_legacy_preflight_rdma_config({"node_check": {"gid_index": "3"}})
+            normalize_legacy_preflight_node_smoke_sections({"node_smoke": {"a": 1}})
+
+        self.assertEqual(_logged_messages(convert), [])
 
     def test_node_smoke_leaves_a_non_object_block_and_returns_the_input(self):
         config = {"tier3_info": "x"}
