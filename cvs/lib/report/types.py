@@ -85,6 +85,10 @@ class InferenceReportConfig:
     # declared metric (metric_units) instead of the fixed results_columns, so
     # frameworks with many metrics (jax) show them all.
     results_all_metrics: bool = False
+    # Inference decks show an ``info`` spec as passed, as the gate does. Training
+    # decks (training_sweep profiles) keep showing it as failed until training's
+    # Run Deck is changed on its own.
+    record_info_specs: bool = False
 
     @property
     def gated_tiers(self) -> tuple[str, ...]:

@@ -229,6 +229,7 @@ class ProfileConfigResolver:
             dimension_fields=dimension_fields,
             sweep_series_label=sweep.get("series_label") or "Megatron sweep",
             results_all_metrics=bool(sweep.get("results_all_metrics", False)),
+            record_info_specs=builder == "sweep",
             **kwargs,
         )
 

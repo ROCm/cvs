@@ -10,7 +10,7 @@ from cvs.lib.report.types import InferenceReportConfig
 from cvs.lib.report.verdict import _check_one
 
 
-def metric_pass(metric: str, actual: Any, spec: Optional[dict], evaluator=None) -> str:
+def metric_pass(metric: str, actual: Any, spec: Optional[dict], evaluator=None, record_info=False) -> str:
     if spec is None:
         return "na"
     if evaluator is not None:
@@ -18,6 +18,8 @@ def metric_pass(metric: str, actual: Any, spec: Optional[dict], evaluator=None) 
         return status
     if actual is None:
         return "na"
+    if spec.get("kind") == "info" and not record_info:
+        return "fail"
     err = _check_one(metric, actual, spec)
     return "fail" if err else "pass"
 
@@ -111,6 +113,7 @@ class CellRecordBuilder:
                 actuals.get(metric),
                 spec,
                 evaluator=self.config.metric_verdict,
+                record_info=self.config.record_info_specs,
             )
             if status == "fail":
                 return "fail"
@@ -209,6 +212,7 @@ class CellRecordBuilder:
                             actual,
                             spec,
                             evaluator=self.config.metric_verdict,
+                            record_info=self.config.record_info_specs,
                         )
                         if enforce and spec
                         else "record"

@@ -6,9 +6,17 @@ import math
 from types import SimpleNamespace
 
 from cvs.lib.inference.utils.vllm_metrics import metric_verdict as vllm_metric_verdict
-from cvs.lib.report.cell_build import bar_pct, build_all_cells, build_cell_record, resolve_pytest_nodeids_for_cell
+from cvs.lib.report.cell_build import (
+    bar_pct,
+    build_all_cells,
+    build_cell_record,
+    metric_pass,
+    resolve_pytest_nodeids_for_cell,
+)
 from cvs.lib.report.formatting import pytest_row_href
+from cvs.lib.report.rundeck.config_adapter import ProfileConfigResolver
 from cvs.lib.report.testing.fixtures import generic_inference_report_config, generic_variant
+from cvs.lib.report.verdict import _check_one
 
 
 class TestCellBuild(unittest.TestCase):
@@ -189,6 +197,28 @@ class TestCellBuild(unittest.TestCase):
             [(c["isl"], c["osl"], c["concurrency"]) for c in cells],
             [("128", "32", 1), ("128", "32", 16), ("1024", "128", 2), ("8192", "1024", 4)],
         )
+
+
+class TestInfoSpecs(unittest.TestCase):
+    def test_check_one_records_an_info_spec(self):
+        self.assertIsNone(_check_one("output_throughput", 1.0, {"kind": "info", "value": 0.0}))
+
+    def test_metric_pass_passes_info_on_inference_decks_and_keeps_training_unchanged(self):
+        spec = {"kind": "info", "value": 0.0}
+        self.assertEqual(metric_pass("output_throughput", 1.0, spec, record_info=True), "pass")
+        self.assertEqual(metric_pass("output_throughput", 1.0, spec), "fail")
+
+    def test_sweep_profiles_record_info_and_training_profiles_do_not(self):
+        for builder, expected in (("sweep", True), ("training_sweep", False)):
+            with self.subTest(builder=builder):
+                config = ProfileConfigResolver.from_profile_dict(
+                    {
+                        "dataset_builder": builder,
+                        "suite_id": "s",
+                        "hooks": {"tier_metric_specs": "cvs.lib.inference.sglang.sglang_parsing:tier_metric_specs"},
+                    }
+                )
+                self.assertIs(config.record_info_specs, expected)
 
 
 if __name__ == "__main__":
