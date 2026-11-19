@@ -156,6 +156,7 @@ class TestUnresolvedPlaceholderError(unittest.TestCase):
         with patch('cvs.lib.utils_lib.log') as mock_log, self.assertRaises(SystemExit) as ctx:
             resolve()
         self.assertEqual(ctx.exception.code, 1)
+        self.assertNotIn("hf_FAKE123", repr(mock_log.mock_calls))
         mock_log.error.assert_called_once()
         fmt, *args = mock_log.error.call_args.args
         return fmt % tuple(args)
