@@ -161,6 +161,31 @@ class TestRenderIndex(unittest.TestCase):
         page = writer.render_index({"summary": {}, "details": {}, "areas": []})
         self.assertIn(THEME_BOOT_SCRIPT, page)
         self.assertIn(tokens_css(), page)
+        self.assertLess(page.index("var cvsPage"), page.index("cvsPage.siteHeader("))
+
+
+class TestRenderSuitePage(unittest.TestCase):
+    def page_data(self, name="RVS"):
+        return {"deck": {}, "suite": {"name": name}, "metadata": [], "links": {}, "suites": [], "cvs_version": "1"}
+
+    def test_page_shares_the_overview_theme_and_helpers(self):
+        page = writer.render_suite_page(self.page_data())
+        self.assertIn(THEME_BOOT_SCRIPT, page)
+        self.assertIn(tokens_css(), page)
+        self.assertLess(page.index("var cvsPage"), page.index("cvsPage.siteHeader("))
+        self.assertIn("<title>RVS \u00b7 CVS consolidated report</title>", page)
+        self.assertIn('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>', page)
+        for placeholder in ("__TITLE__", "__THEME_BOOT__", "__CSS__", "__JS__", "__DATA__"):
+            self.assertNotIn(placeholder, page)
+
+    def test_deck_strings_cannot_close_the_data_block_or_the_title(self):
+        hostile = "</script><script>alert(1)</script>"
+        page = writer.render_suite_page(self.page_data(hostile))
+        self.assertNotIn(hostile, page)
+        self.assertIn("<title>&lt;/script&gt;", page)
+        data = page.split('<script type="application/json" id="suite-data">', 1)[1].split("</script>", 1)[0]
+        self.assertNotIn("<", data)
+        self.assertEqual(json.loads(data)["suite"]["name"], hostile)
 
 
 class TestWriteZip(WriterCase):

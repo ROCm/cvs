@@ -158,14 +158,26 @@ def add_back_link(page, report_root):
     return True
 
 
+def _render_page(template, css_files, js_files, page_data, title=None):
+    page = (PAGE_DIR / template).read_text(encoding="utf-8")
+    css = tokens_css() + "".join((PAGE_DIR / name).read_text(encoding="utf-8") for name in css_files)
+    script = "\n".join((PAGE_DIR / name).read_text(encoding="utf-8") for name in js_files)
+    payload = json.dumps(page_data, separators=(",", ":"), ensure_ascii=False).replace("<", "\\u003c")
+    page = page.replace("__THEME_BOOT__", THEME_BOOT_SCRIPT).replace("__CSS__", css).replace("__JS__", script)
+    if title is not None:
+        page = page.replace("__TITLE__", html.escape(title))
+    return page.replace("__DATA__", payload)
+
+
 def render_index(page_data):
     '''The overview page, with its data embedded so it opens from disk without a server.'''
-    template = (PAGE_DIR / "overview.html").read_text(encoding="utf-8")
-    css = tokens_css() + (PAGE_DIR / "overview.css").read_text(encoding="utf-8")
-    script = (PAGE_DIR / "overview.js").read_text(encoding="utf-8")
-    payload = json.dumps(page_data, separators=(",", ":"), ensure_ascii=False).replace("<", "\\u003c")
-    page = template.replace("__THEME_BOOT__", THEME_BOOT_SCRIPT).replace("__CSS__", css).replace("__JS__", script)
-    return page.replace("__DATA__", payload)
+    return _render_page("overview.html", ("overview.css",), ("shared.js", "overview.js"), page_data)
+
+
+def render_suite_page(page_data):
+    '''One suite's page in the AI Lab deck layout, built from its Run Deck JSON, with its data embedded.'''
+    title = "%s \u00b7 CVS consolidated report" % page_data["suite"]["name"]
+    return _render_page("suite.html", ("overview.css", "suite.css"), ("shared.js", "suite.js"), page_data, title)
 
 
 def write_json(path, data):
