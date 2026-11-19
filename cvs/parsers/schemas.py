@@ -2835,7 +2835,6 @@ SGLANG_METRIC_RENAMES = {
     **{f"{stat}_e2e_latency_ms": f"{stat}_e2el_ms" for stat in ("mean", "median", "p90", "p95", "p99")},
 }
 _SGLANG_DROPPED_METRICS = ("mfu",)
-_OLD_THRESHOLD_KINDS = {"max_ms": "max", "min_tok_s": "min"}
 _SGLANG_ACC_CELL_RE = re.compile(r"^ACC_ISL=([1-9]\d*),OSL=([1-9]\d*)$")
 
 SGLANG_OLD_KEYS = {
@@ -2864,7 +2863,7 @@ def _is_old_sglang_layout(config):
     return isinstance(server, dict) and "tp" not in server
 
 
-def _old_int(path, value):
+def _sglang_whole_number(path, value):
     try:
         number = float(str(value).strip())
     except ValueError:
@@ -2880,7 +2879,9 @@ def _old_tp_pp(config):
     pp = server.get("pp", server.get("pipeline_parallelism", 1))
     if tp is None:
         return None, None
-    return _old_int("server_params.tensor_parallelism", tp), _old_int("server_params.pipeline_parallelism", pp)
+    return _sglang_whole_number("server_params.tensor_parallelism", tp), _sglang_whole_number(
+        "server_params.pipeline_parallelism", pp
+    )
 
 
 def _old_run_combos(config):
@@ -2957,7 +2958,7 @@ def _sglang_port_rows(config):
     old_layout = _is_old_sglang_layout(config)
     rows = {}
     sources = [name for name in ("proxy_router_serv_port", "serve_port") if name in server]
-    port = _old_int(f"server_params.{sources[0]}", server[sources[0]]) if sources else server.get("port")
+    port = _sglang_whole_number(f"server_params.{sources[0]}", server[sources[0]]) if sources else server.get("port")
     if sources:
         rows[f"server_params.{sources[0]}"] = OldKey("server_params.port", value=port)
         rows.update({f"server_params.{name}": OLD_KEY_DROPPED for name in sources[1:]})
@@ -2968,7 +2969,8 @@ def _sglang_port_rows(config):
     rows.update(_drop_unless(config, "server_params.proxy_router_port", lambda value: str(value) == str(served)))
     if "dist_init_port" in server:
         rows["server_params.dist_init_port"] = OldKey(
-            "server_params.master_port", value=_old_int("server_params.dist_init_port", server["dist_init_port"])
+            "server_params.master_port",
+            value=_sglang_whole_number("server_params.dist_init_port", server["dist_init_port"]),
         )
     elif old_layout and "master_port" not in server:
         rows["server_params.dist_init_port"] = OldKey("server_params.master_port", value=_SGLANG_MASTER_PORT)
@@ -3020,8 +3022,8 @@ def _sglang_client_timeout_rows(config):
     present = [name for name in names if isinstance(server, dict) and name in server]
     if not present:
         return {}
-    polls = _old_int(f"server_params.{names[0]}", server.get(names[0], _SGLANG_POLL_ITERATIONS))
-    cap = _old_int(f"server_params.{names[1]}", server.get(names[1], _SGLANG_POLL_TOTAL_S))
+    polls = _sglang_whole_number(f"server_params.{names[0]}", server.get(names[0], _SGLANG_POLL_ITERATIONS))
+    cap = _sglang_whole_number(f"server_params.{names[1]}", server.get(names[1], _SGLANG_POLL_TOTAL_S))
     client_s = SGLANG_FIRST_POLL_WAIT_S + min(polls * SGLANG_POLL_PERIOD_S, cap)
     rows = {f"server_params.{present[0]}": OldKey("timeouts.client_s", value=client_s)}
     rows.update({f"server_params.{name}": OLD_KEY_DROPPED for name in present[1:]})
@@ -3188,7 +3190,7 @@ def _sglang_long_context_rows(config):
         rows.update({("thresholds", key): OLD_KEY_DROPPED for key in acc_cells})
         return rows
     rows = {
-        f"server_params.{name}": OldKey(new, value=_old_int(f"server_params.{name}", server[name]))
+        f"server_params.{name}": OldKey(new, value=_sglang_whole_number(f"server_params.{name}", server[name]))
         for name, new in moves.items()
         if name in server
     }
@@ -3208,8 +3210,10 @@ def _sglang_long_context_rows(config):
                 "id": eval_id,
                 "isl": isl,
                 "osl": osl,
-                "num_prompts": _old_int("long_ctx_niah.num_prompts", niah.get("num_prompts", _SGLANG_NIAH_NUM_PROMPTS)),
-                "seed": _old_int("long_ctx_niah.seed", niah.get("seed", _SGLANG_NIAH_SEED)),
+                "num_prompts": _sglang_whole_number(
+                    "long_ctx_niah.num_prompts", niah.get("num_prompts", _SGLANG_NIAH_NUM_PROMPTS)
+                ),
+                "seed": _sglang_whole_number("long_ctx_niah.seed", niah.get("seed", _SGLANG_NIAH_SEED)),
             }
         )
         rows[("thresholds", key)] = OldKey(

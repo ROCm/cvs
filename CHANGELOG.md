@@ -17,16 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The shipped MORI config sets `mori_dir` to `/home/{user-id}/INSTALL/mori` and `container.lifetime` to `persistent`, so `install_mori` works with it as shipped. It also mounts the host Broadcom Thor2 `libbnxt_re-rdmav34.so` and `libibverbs.so.1`; delete those mounts on nodes without Thor2.
 
-- SGLang configs use the shared inference names, such as `server_params.tp`, `server_params.engine_args`, `timeouts.client_s`, `accuracy.lm_eval.tasks` and `runs`, and are checked at load: an unknown key or a shared field SGLang does not run fails, naming the field. The suite's test module picks single, distributed or disaggregated, and each shipped distributed config has its own threshold file. An omitted `server_params.port` or `master_port` takes the shared default, 8888 or 29501, where SGLang used 8000 and 40001; shipped configs set both. The long-context stage runs the `niah` evals in `accuracy.custom_eval` in place of `server_params.lng_ctx_activate`, and the run card shows the detected GPU in place of `gpu_name`.
-- SGLang threshold files use the kinds `min`, `max` and `info` and the shared metric names, which SGLang results and Run Decks now report: `output_throughput`, `request_throughput`, `per_gpu_throughput`, `completed`, `duration`, `total_output_tokens` and `*_e2el_ms` replace `output_throughput_per_sec`, `request_throughput_per_sec`, `output_throughput_per_gpu_per_sec`, `successful_requests`, `benchmark_duration`, `total_generated_tokens` and `*_e2e_latency_ms`.
-
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.
 - The health sample config installs TransferBench `v1.71.01` (was `v1.67.00`), which fixes timing and DMA measurement errors in the older release. TransferBench results can differ from earlier runs; configs that set `transferbench.git_tag` keep their version.
 - vLLM spends each `timeouts` budget on the schedule main used for its suite: `vllm_single` checks readiness every 60 seconds after a 330-second warmup, and `vllm_distributed` every 10 seconds after 30 seconds. An old config with other warmup or poll intervals keeps its total time on that schedule, so its first readiness check and `model_load_s` can move. The vLLM client now passes `--trust-remote-code` whenever the server does. An old vLLM config fails to load, naming the key, when it sets `benchmark_params.dataset_name` or `ignore_eos` to a value other than the one CVS always passes, sets client waits per sweep cell, sets a `max_model_len` that is not a length, or uses `within` or `min_ratio` accuracy thresholds. Its `ib_hca_devices` and `ib_netdev` now reach the container through `container.env`, so recreate a `persistent` or `no_launch` container after upgrading.
+- SGLang configs use the shared inference names, such as `server_params.tp`, `server_params.engine_args`, `timeouts.client_s`, `accuracy.lm_eval.tasks` and `runs`, and are checked at load: an unknown key or a shared field SGLang does not run fails, naming the field. The suite's test module picks single, distributed or disaggregated, and each shipped distributed config has its own threshold file. An omitted `server_params.port` or `master_port` takes the shared default, 8888 or 29501, where SGLang used 8000 and 40001; shipped configs set both. The long-context stage runs the `niah` evals in `accuracy.custom_eval` in place of `server_params.lng_ctx_activate`, and the run card shows the detected GPU in place of `gpu_name`.
+- SGLang threshold files use the kinds `min`, `max` and `info` and the shared metric names, which SGLang results and Run Decks now report: `output_throughput`, `request_throughput`, `per_gpu_throughput`, `completed`, `duration`, `total_output_tokens` and `*_e2el_ms` replace `output_throughput_per_sec`, `request_throughput_per_sec`, `output_throughput_per_gpu_per_sec`, `successful_requests`, `benchmark_duration`, `total_generated_tokens` and `*_e2e_latency_ms`.
 
 ### Deprecated
 
-- vLLM config and threshold files use the shared inference key names given in the vLLM configuration reference. Files with the old names still load and log one `FutureWarning` that lists each old key and its new name; rename them before the old names are removed.
+- vLLM and SGLang config and threshold files use the shared inference key names given in their configuration references. Files with the old names still load and log one `FutureWarning` that lists each old key and its new name; rename them before the old names are removed. An old SGLang key whose value has no shared place, such as a non-default `long_ctx_niah` option, fails and names the key.
 
 ### Fixed
 
@@ -39,10 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The ATOM, SGLang and xDiT Run Decks show a metric whose threshold kind is `info` as passed instead of failed.
 - vLLM waits until the server answers on `/v1/models` before sending requests. A server still loading could pass the old readiness check, and the run then failed with `Connection refused`.
 - When preflight rejects the cluster file, the error names each invalid field and the problem without printing the field's value.
-
-### Deprecated
-
-- SGLang configs and threshold files with the old names still load, with one `FutureWarning` naming each old key; copy a shipped config to move to the new names. An old key whose value has no shared place, such as a non-default `long_ctx_niah` option, fails and names the key.
 
 ### Removed
 
