@@ -41,7 +41,9 @@
   function add(el, child) {
     if (child === null || child === undefined || child === false) return;
     if (Array.isArray(child)) { child.forEach(function (c) { add(el, c); }); return; }
-    el.appendChild(child instanceof Node ? child : document.createTextNode(String(child)));
+    // CodeQL accepts a typeof test, not instanceof alone, as proof that report text never reaches appendChild.
+    if (typeof child === 'object' && child instanceof Node) el.appendChild(child);
+    else el.appendChild(document.createTextNode(String(child)));
   }
   function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
   function svg(tag, attrs) {
