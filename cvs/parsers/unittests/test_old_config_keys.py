@@ -1,12 +1,26 @@
 import unittest
 
-from cvs.parsers.schemas import OLD_KEY_DROPPED, OLD_KEY_UNMAPPED, OldKey, resolve_old_keys
+from cvs.parsers.schemas import (
+    OLD_KEY_DROPPED,
+    OLD_KEY_UNMAPPED,
+    OldKey,
+    normalize_legacy_preflight_node_smoke_sections,
+    normalize_legacy_preflight_rdma_config,
+    resolve_old_keys,
+)
 
 
 def _switch_rule(config):
     if config.get("switch"):
         return {"switch": OLD_KEY_DROPPED, "x": "new.x"}
     return {"switch": OLD_KEY_DROPPED, "x": OLD_KEY_DROPPED}
+
+
+def _total_rule(config):
+    if "polls" not in config and "wait_s" not in config:
+        return {}
+    total = config.get("polls", 2) * config.get("wait_s", 5)
+    return {"polls": OldKey("timeouts.total_s", value=total), "wait_s": OLD_KEY_DROPPED}
 
 
 class TestResolveOldKeys(unittest.TestCase):
@@ -30,37 +44,65 @@ class TestResolveOldKeys(unittest.TestCase):
 
     def test_no_old_keys_return_the_input_and_no_message(self):
         config = {"b": 1}
-        converted, message = resolve_old_keys(config, {"a": "b", "x.y": OLD_KEY_DROPPED})
+        converted, message = resolve_old_keys(config, {"a": "b", "x.y": OLD_KEY_DROPPED}, rules=(_switch_rule,))
         self.assertIs(converted, config)
         self.assertIsNone(message)
+        self.assertEqual(resolve_old_keys([1], {"a": "b"}), ([1], None))
 
     def test_a_rule_moves_x_when_the_switch_is_on_and_drops_it_otherwise(self):
-        table = {("switch", "x"): _switch_rule}
-        on, on_message = resolve_old_keys({"switch": True, "x": 1}, table)
-        off, _ = resolve_old_keys({"switch": False, "x": 1}, table)
-        missing, _ = resolve_old_keys({"x": 1}, table)
+        on, on_message = resolve_old_keys({"switch": True, "x": 1}, {}, rules=(_switch_rule,))
+        off, _ = resolve_old_keys({"switch": False, "x": 1}, {}, rules=(_switch_rule,))
+        missing, _ = resolve_old_keys({"x": 1}, {}, rules=(_switch_rule,))
         self.assertEqual(on, {"new": {"x": 1}})
         self.assertIn("switch (dropped)", on_message)
         self.assertEqual(off, {})
         self.assertEqual(missing, {})
 
-    def test_a_rule_computes_one_value_from_two_old_keys(self):
-        def total(config):
-            return {
-                "polls": OldKey("timeouts.total_s", value=config["polls"] * config.get("wait_s", 5)),
-                "wait_s": OLD_KEY_DROPPED,
-            }
-
-        converted, message = resolve_old_keys({"polls": 3, "wait_s": 10}, {("polls", "wait_s"): total})
-        self.assertEqual(converted, {"timeouts": {"total_s": 30}})
+    def test_a_rule_computes_one_value_from_two_old_keys_even_when_one_is_absent(self):
+        both, message = resolve_old_keys({"polls": 3, "wait_s": 10}, {}, rules=(_total_rule,))
+        wait_only, _ = resolve_old_keys({"wait_s": 10}, {}, rules=(_total_rule,))
+        self.assertEqual(both, {"timeouts": {"total_s": 30}})
         self.assertIn("polls -> timeouts.total_s", message)
         self.assertIn("wait_s (dropped)", message)
+        self.assertEqual(wait_only, {"timeouts": {"total_s": 20}})
+
+    def test_a_computed_value_is_copied_not_shared_with_the_input(self):
+        config = {"a": [1]}
+        converted, _ = resolve_old_keys(config, {}, rules=(lambda c: {"a": OldKey("b", value=c["a"])},))
+        converted["b"].append(2)
+        self.assertEqual(config, {"a": [1]})
+
+    def test_rows_may_drop_a_parent_and_move_its_child(self):
+        config = {"sp": {"tp": 8, "old": 1}}
+        converted, _ = resolve_old_keys(config, {"sp": OLD_KEY_DROPPED, "sp.tp": "server.tp"})
+        self.assertEqual(converted, {"server": {"tp": 8}})
+
+    def test_chained_rows_read_every_value_before_moving_any(self):
+        converted, _ = resolve_old_keys({"a": 1, "b": 2}, {"a": "b", "b": "c"})
+        self.assertEqual(converted, {"b": 1, "c": 2})
+
+    def test_a_tuple_path_names_a_key_that_holds_a_dot(self):
+        converted, message = resolve_old_keys(
+            {"accuracy": {"gsm8k.flex": 1}}, {("accuracy", "gsm8k.flex"): ("accuracy", "lm_eval", "gsm8k.flex")}
+        )
+        self.assertEqual(converted, {"accuracy": {"lm_eval": {"gsm8k.flex": 1}}})
+        self.assertIn("accuracy.gsm8k.flex -> accuracy.lm_eval.gsm8k.flex", message)
 
     def test_an_unmapped_key_fails_naming_the_key_and_never_its_value(self):
         with self.assertRaises(ValueError) as caught:
             resolve_old_keys({"backend": "FAKE_VALUE"}, {"backend": OLD_KEY_UNMAPPED}, prefix="suite.")
         self.assertIn("suite.backend", str(caught.exception))
         self.assertNotIn("FAKE_VALUE", str(caught.exception))
+
+    def test_two_different_rows_for_one_path_fail(self):
+        with self.assertRaisesRegex(ValueError, "rows disagree for a"):
+            resolve_old_keys({"a": 1}, {"a": "b"}, rules=(lambda c: {"a": OLD_KEY_DROPPED},))
+
+    def test_a_row_of_unknown_kind_fails_naming_its_path(self):
+        with self.assertRaisesRegex(ValueError, "row for a is not"):
+            resolve_old_keys({"a": 1}, {"a": None})
+        with self.assertRaisesRegex(ValueError, "Unknown old-key conflict rule"):
+            OldKey("b", conflict="keep")
 
     def test_a_different_value_at_the_new_path_fails_naming_both_paths(self):
         with self.assertRaisesRegex(ValueError, "Conflicting x options: p.a and p.b"):
@@ -80,8 +122,53 @@ class TestResolveOldKeys(unittest.TestCase):
             resolve_old_keys({"a": 1, "b": 2}, {"a": "b.c"})
 
     def test_the_message_template_and_prefix_are_used(self):
-        _, message = resolve_old_keys({"a": 1}, {"a": "b"}, message="Old: {keys}.", prefix="p.")
-        self.assertEqual(message, "Old: p.a -> p.b.")
+        _, message = resolve_old_keys({"a": 1}, {"a": "b"}, message='Old: {keys}; e.g. {"b": 1}.', prefix="p.")
+        self.assertEqual(message, 'Old: p.a -> p.b; e.g. {"b": 1}.')
+
+
+class TestPreflightOldKeys(unittest.TestCase):
+    def test_rdma_keys_move_with_the_preflight_warning_text(self):
+        converted, message = normalize_legacy_preflight_rdma_config(
+            {"node_check": {"rdma_interfaces": ["a"], "gid_index": "3"}}
+        )
+        self.assertEqual(
+            converted, {"node_check": {}, "connectivity_check": {"rdma": {"gid_index": "3", "interfaces": ["a"]}}}
+        )
+        self.assertEqual(
+            message,
+            "Deprecated preflight RDMA configuration detected: "
+            "preflight.node_check.gid_index -> preflight.connectivity_check.rdma.gid_index, "
+            "preflight.node_check.rdma_interfaces -> preflight.connectivity_check.rdma.interfaces. "
+            "Use the preflight.connectivity_check.rdma paths; legacy paths will be removed in a future release.",
+        )
+
+    def test_rdma_without_old_keys_returns_the_input(self):
+        config = {"node_check": {"enabled": True}}
+        self.assertEqual(normalize_legacy_preflight_rdma_config(config), (config, None))
+        self.assertIs(normalize_legacy_preflight_rdma_config(config)[0], config)
+
+    def test_rdma_fails_when_the_target_block_is_not_an_object(self):
+        with self.assertRaisesRegex(ValueError, r"^preflight\.connectivity_check\.rdma must be an object when"):
+            normalize_legacy_preflight_rdma_config(
+                {"node_check": {"gid_index": "3"}, "connectivity_check": {"rdma": 1}}
+            )
+
+    def test_node_smoke_copies_a_block_and_keeps_the_old_name(self):
+        converted, message = normalize_legacy_preflight_node_smoke_sections(
+            {"node_smoke": {"a": 1}, "node_smoke_tier1": {"a": None}}
+        )
+        self.assertEqual(converted, {"node_smoke": {"a": 1}, "node_smoke_tier1": {"a": 1}})
+        self.assertEqual(
+            message,
+            "Deprecated preflight Node Smoke section name(s) detected: preflight.node_smoke -> "
+            "preflight.node_smoke_tier1. Prefer node_smoke_tier1 and node_smoke_tier3 in new configs.",
+        )
+
+    def test_node_smoke_leaves_a_non_object_block_and_returns_the_input(self):
+        config = {"tier3_info": "x"}
+        converted, message = normalize_legacy_preflight_node_smoke_sections(config)
+        self.assertIs(converted, config)
+        self.assertIsNone(message)
 
 
 if __name__ == "__main__":
