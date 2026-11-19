@@ -2753,6 +2753,16 @@ _SGLANG_UNREAD_LM_EVAL_OPTIONS = (
 )
 
 
+def _sglang_reject_underscore_metrics(thresholds):
+    # A misspelled metric such as _output_throughput would otherwise be dropped as a comment.
+    for cell_key, cell in thresholds.items():
+        if cell_key == "accuracy" or str(cell_key).startswith("_") or not isinstance(cell, dict):
+            continue
+        for metric in cell:
+            if str(metric).startswith("_") and not str(metric).startswith(_THRESHOLD_METADATA_PREFIXES):
+                raise ValueError(f"unknown SGLang threshold metric {metric!r}")
+
+
 def sglang_cell_shape(key):
     """ISL, OSL and CONC of a cell key: SGLang matches a threshold cell to a run on these alone."""
     axes = parse_inference_cell_key(key)
@@ -2783,6 +2793,8 @@ class SglangConfig(InferenceConfig):
     def _resolve_old_keys(cls, data, info):
         context = info.context or {}
         data, message = resolve_old_sglang_keys(data)
+        if isinstance(data, dict) and isinstance(data.get("thresholds"), dict):
+            _sglang_reject_underscore_metrics(data["thresholds"])
         if message and context.get("old_keys") != OLD_KEYS_QUIET:
             where = context.get("config_path")
             warn_old_keys(f"{where}: {message}" if where else message)
@@ -2868,7 +2880,7 @@ SGLANG_OLD_KEYS = {
 }
 
 
-def _is_old_sglang_layout(config):
+def _sglang_is_old_layout(config):
     server = config.get("server_params")
     return isinstance(server, dict) and "tp" not in server
 
@@ -2883,7 +2895,7 @@ def _sglang_whole_number(path, value):
     return int(number)
 
 
-def _old_tp_pp(config):
+def _sglang_old_tp_pp(config):
     server = config.get("server_params") if isinstance(config.get("server_params"), dict) else {}
     tp = server.get("tp", server.get("tensor_parallelism"))
     pp = server.get("pp", server.get("pipeline_parallelism", 1))
@@ -2894,12 +2906,12 @@ def _old_tp_pp(config):
     )
 
 
-def _old_run_combos(config):
+def _sglang_old_run_combos(config):
     sweep = config.get("sweep") if isinstance(config.get("sweep"), dict) else {}
     return [str(run.get("combo") if isinstance(run, dict) else run).strip() for run in sweep.get("runs") or []]
 
 
-def _rekey_rows(prefix, keys, own, combos):
+def _sglang_rekey_rows(prefix, keys, own, combos):
     """Rows keying one shape's ``keys`` by ``own``.
 
     The key already ``own`` wins, then the one key a run names, then a key
@@ -2917,16 +2929,16 @@ def _rekey_rows(prefix, keys, own, combos):
     return keep, rows
 
 
-def _cell_key_for(key, tp, pp):
+def _sglang_cell_key_for(key, tp, pp):
     isl, osl, conc = sglang_cell_shape(key)
     return f"ISL={isl},OSL={osl},TP={tp},PP={pp},CONC={conc}"
 
 
-def _not_token(name):
+def _sglang_not_token(name):
     return str(name).upper() not in _HF_TOKEN_ENV
 
 
-def _old_switch_on(value):
+def _sglang_old_switch_on(value):
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -2934,12 +2946,12 @@ def _old_switch_on(value):
     return isinstance(value, int) and value == 1
 
 
-def _old_sglang_value(config, path):
+def _sglang_old_value(config, path):
     return _get_config_path(config, _config_path_parts(path))
 
 
-def _drop_unless(config, path, keep):
-    value = _old_sglang_value(config, path)
+def _sglang_drop_unless(config, path, keep):
+    value = _sglang_old_value(config, path)
     if value is _MISSING:
         return {}
     return {path: OLD_KEY_DROPPED if keep(value) else OLD_KEY_UNMAPPED}
@@ -2948,8 +2960,8 @@ def _drop_unless(config, path, keep):
 def _sglang_harness_rows(config):
     """Keys whose value the harness now fixes: dropped at that value, refused at any other."""
     rows = {}
-    rows.update(_drop_unless(config, "framework", lambda value: value in ("sglang", "sglang_single")))
-    rows.update(_drop_unless(config, "benchmark_params.backend", lambda value: value == "sglang"))
+    rows.update(_sglang_drop_unless(config, "framework", lambda value: value in ("sglang", "sglang_single")))
+    rows.update(_sglang_drop_unless(config, "benchmark_params.backend", lambda value: value == "sglang"))
     defaults = {
         "prefill_serv_port": "30001",
         "decode_serv_port": "30002",
@@ -2957,7 +2969,9 @@ def _sglang_harness_rows(config):
         "decode_coordinator_port": "40002",
     }
     for name, default in defaults.items():
-        rows.update(_drop_unless(config, f"server_params.{name}", lambda value, default=default: str(value) == default))
+        rows.update(
+            _sglang_drop_unless(config, f"server_params.{name}", lambda value, default=default: str(value) == default)
+        )
     return rows
 
 
@@ -2965,7 +2979,7 @@ def _sglang_port_rows(config):
     server = config.get("server_params")
     if not isinstance(server, dict):
         return {}
-    old_layout = _is_old_sglang_layout(config)
+    old_layout = _sglang_is_old_layout(config)
     rows = {}
     sources = [name for name in ("proxy_router_serv_port", "serve_port") if name in server]
     port = _sglang_whole_number(f"server_params.{sources[0]}", server[sources[0]]) if sources else server.get("port")
@@ -2976,7 +2990,7 @@ def _sglang_port_rows(config):
         port = _SGLANG_SERVE_PORT
         rows["server_params.serve_port"] = OldKey("server_params.port", value=port)
     served = port if port is not None else InferenceServerParams.model_fields["port"].default
-    rows.update(_drop_unless(config, "server_params.proxy_router_port", lambda value: str(value) == str(served)))
+    rows.update(_sglang_drop_unless(config, "server_params.proxy_router_port", lambda value: str(value) == str(served)))
     if "dist_init_port" in server:
         rows["server_params.dist_init_port"] = OldKey(
             "server_params.master_port",
@@ -2987,7 +3001,7 @@ def _sglang_port_rows(config):
     return rows
 
 
-def _old_flag_value(value):
+def _sglang_old_flag_value(value):
     """A number written as a string in an old config, as the number it reads as exactly."""
     if isinstance(value, str):
         for kind in (int, float):
@@ -3000,13 +3014,13 @@ def _old_flag_value(value):
     return value
 
 
-def _old_flag_args(flags):
+def _sglang_old_flag_args(flags):
     """``["--attention-backend aiter", "--disable-x"]`` as ``{"attention_backend": "aiter", "disable_x": True}``."""
     args = {}
     for flag in [flags] if isinstance(flags, str) else flags:
         name, _, value = str(flag).strip().replace("=", " ", 1).partition(" ")
         if name:
-            args[name.lstrip("-").replace("-", "_")] = _old_flag_value(value.strip()) if value.strip() else True
+            args[name.lstrip("-").replace("-", "_")] = _sglang_old_flag_value(value.strip()) if value.strip() else True
     return args
 
 
@@ -3016,12 +3030,14 @@ def _sglang_engine_arg_rows(config):
         return {}
     rows = {}
     if "add_flags" in server:
-        rows["server_params.add_flags"] = OldKey("server_params.engine_args", value=_old_flag_args(server["add_flags"]))
+        rows["server_params.add_flags"] = OldKey(
+            "server_params.engine_args", value=_sglang_old_flag_args(server["add_flags"])
+        )
     if "log_level" in server:
         rows["server_params.log_level"] = "server_params.engine_args.log_level"
     if "memory_fraction" in server:
         rows["server_params.memory_fraction"] = OldKey(
-            "server_params.engine_args.mem_fraction_static", value=_old_flag_value(server["memory_fraction"])
+            "server_params.engine_args.mem_fraction_static", value=_sglang_old_flag_value(server["memory_fraction"])
         )
     return rows
 
@@ -3047,29 +3063,29 @@ def _sglang_client_timeout_rows(config):
     return rows
 
 
-def _env_entries(lines):
+def _sglang_env_entries(lines):
     entries = {}
     for line in [lines] if isinstance(lines, str) else lines or []:
         line = str(line).strip().removeprefix("export ").strip()
         name, sep, value = line.partition("=")
-        if sep and name.strip() and _not_token(name.strip()):
+        if sep and name.strip() and _sglang_not_token(name.strip()):
             entries[name.strip()] = value.strip()
     return entries
 
 
 def _sglang_env_rows(config):
-    runtime_env = _old_sglang_value(config, "container.runtime.args.env")
+    runtime_env = _sglang_old_value(config, "container.runtime.args.env")
     server = config.get("server_params") if isinstance(config.get("server_params"), dict) else {}
     sources = [name for name in ("env", "add_export_env") if name in server]
     if not isinstance(runtime_env, dict) and not sources:
         return {}
     runtime_env = runtime_env if isinstance(runtime_env, dict) else {}
-    existing = _old_sglang_value(config, "container.env")
+    existing = _sglang_old_value(config, "container.env")
     env = dict(existing) if isinstance(existing, dict) else {}
-    env.update({key: value for key, value in runtime_env.items() if _not_token(key) and key != "ADD_EXPORT_ENV"})
-    env.update(_env_entries(runtime_env.get("ADD_EXPORT_ENV")))
-    env.update(_env_entries(server.get("add_export_env")))
-    env.update({key: value for key, value in (server.get("env") or {}).items() if _not_token(key)})
+    env.update({key: value for key, value in runtime_env.items() if _sglang_not_token(key) and key != "ADD_EXPORT_ENV"})
+    env.update(_sglang_env_entries(runtime_env.get("ADD_EXPORT_ENV")))
+    env.update(_sglang_env_entries(server.get("add_export_env")))
+    env.update({key: value for key, value in (server.get("env") or {}).items() if _sglang_not_token(key)})
     env = {key: str(value) for key, value in env.items()}
     old_paths = ["container.runtime.args.env"] + [f"server_params.{name}" for name in sources]
     rows = {old_paths[0]: OldKey("container.env", value=env, conflict="replace")}
@@ -3077,7 +3093,7 @@ def _sglang_env_rows(config):
     return rows
 
 
-def _old_threshold_spec(metric, spec):
+def _sglang_old_threshold_spec(metric, spec):
     if not isinstance(spec, dict):
         kind = "max" if "ms" in metric.lower() or "latency" in metric.lower() else "min"
         return {"kind": kind, "value": float(spec)}
@@ -3086,7 +3102,7 @@ def _old_threshold_spec(metric, spec):
     return {**spec, "kind": _OLD_THRESHOLD_KINDS[spec["kind"]]}
 
 
-def _old_threshold_cell_rows(cell_path, new_cell_path, cell):
+def _sglang_old_threshold_cell_rows(cell_path, new_cell_path, cell):
     rows = {}
     for metric, spec in cell.items():
         if str(metric).startswith("_"):
@@ -3095,14 +3111,14 @@ def _old_threshold_cell_rows(cell_path, new_cell_path, cell):
         if metric in _SGLANG_DROPPED_METRICS:
             rows[old] = OLD_KEY_DROPPED
             continue
-        new_spec = _old_threshold_spec(metric, spec)
+        new_spec = _sglang_old_threshold_spec(metric, spec)
         new = (*new_cell_path, SGLANG_METRIC_RENAMES.get(metric, metric))
         if new != old or new_spec != spec:
             rows[old] = OldKey(new, value=new_spec)
     return rows
 
 
-def _old_threshold_cells(config):
+def _sglang_old_threshold_cells(config):
     thresholds = config.get("thresholds")
     if not isinstance(thresholds, dict):
         return {}
@@ -3117,9 +3133,9 @@ def _sglang_bench_threshold_rows(config):
     return {
         ("thresholds", key): OldKey(
             ("thresholds", "accuracy", "lm_eval", key.removeprefix("BENCH=")),
-            value={metric: _old_threshold_spec(metric, spec) for metric, spec in cell.items()},
+            value={metric: _sglang_old_threshold_spec(metric, spec) for metric, spec in cell.items()},
         )
-        for key, cell in _old_threshold_cells(config).items()
+        for key, cell in _sglang_old_threshold_cells(config).items()
         if key.startswith("BENCH=")
     }
 
@@ -3130,8 +3146,8 @@ def _sglang_threshold_spec_rows(config, rekey=True, combos=()):
     SGLang matched a run to a threshold cell by its exact key, else by ISL, OSL
     and CONC alone, so one old file served configs of any TP and PP.
     """
-    tp, pp = _old_tp_pp(config) if rekey else (None, None)
-    cells = _old_threshold_cells(config)
+    tp, pp = _sglang_old_tp_pp(config) if rekey else (None, None)
+    cells = _sglang_old_threshold_cells(config)
     by_shape = {}
     for key in cells:
         if not key.startswith("BENCH="):
@@ -3140,20 +3156,20 @@ def _sglang_threshold_spec_rows(config, rekey=True, combos=()):
     for keys in by_shape.values():
         own = keep = None
         if tp:
-            own = _cell_key_for(keys[0], tp, pp)
-            keep, rekeyed = _rekey_rows("thresholds", keys, own, combos)
+            own = _sglang_cell_key_for(keys[0], tp, pp)
+            keep, rekeyed = _sglang_rekey_rows("thresholds", keys, own, combos)
             rows.update({path: row for path, row in rekeyed.items() if row is OLD_KEY_DROPPED})
         for key in keys:
             if tp and key != keep:
                 continue
             new_key = own if tp else key
-            rows.update(_old_threshold_cell_rows(("thresholds", key), ("thresholds", new_key), cells[key]))
+            rows.update(_sglang_old_threshold_cell_rows(("thresholds", key), ("thresholds", new_key), cells[key]))
             if new_key != key:
                 rows[("thresholds", key)] = OLD_KEY_DROPPED
     return rows
 
 
-def _threshold_spec_summary(config, rows):
+def _sglang_threshold_spec_summary(config, rows):
     """One line for every threshold spec change, instead of a path per cell."""
     names, kinds, dropped, cells = {}, {}, set(), {}
     for path, row in rows.items():
@@ -3181,7 +3197,7 @@ def _threshold_spec_summary(config, rows):
     return f"Threshold specs: {', '.join(parts)}"
 
 
-def _old_value_is(value, default):
+def _sglang_old_value_is(value, default):
     if value == default or default is OLD_KEY_UNMAPPED:
         return value == default
     if isinstance(default, bool) or default is None:
@@ -3201,7 +3217,7 @@ def _sglang_long_context_rows(config):
         "chunked_prefill_size": "server_params.long_context.chunked_prefill_size",
         "max_prefill_tokens": "server_params.long_context.max_prefill_tokens",
     }
-    if not _old_switch_on(server.get("lng_ctx_activate")):
+    if not _sglang_old_switch_on(server.get("lng_ctx_activate")):
         rows = {f"server_params.{name}": OLD_KEY_DROPPED for name in moves}
         rows["long_ctx_niah"] = OLD_KEY_DROPPED
         rows.update({("thresholds", key): OLD_KEY_DROPPED for key in acc_cells})
@@ -3216,7 +3232,7 @@ def _sglang_long_context_rows(config):
         if name in ("num_prompts", "seed") or str(name).startswith("_"):
             continue
         default = _SGLANG_NIAH_OPTION_DEFAULTS.get(name, OLD_KEY_UNMAPPED)
-        rows[f"long_ctx_niah.{name}"] = OLD_KEY_DROPPED if _old_value_is(value, default) else OLD_KEY_UNMAPPED
+        rows[f"long_ctx_niah.{name}"] = OLD_KEY_DROPPED if _sglang_old_value_is(value, default) else OLD_KEY_UNMAPPED
     evals = []
     for key in sorted(acc_cells, key=lambda key: int(_SGLANG_ACC_CELL_RE.match(key).group(1))):
         isl, osl = (int(number) for number in _SGLANG_ACC_CELL_RE.match(key).groups())
@@ -3235,20 +3251,22 @@ def _sglang_long_context_rows(config):
         )
         rows[("thresholds", key)] = OldKey(
             ("thresholds", "accuracy", "custom_eval", eval_id),
-            value={metric: _old_threshold_spec(metric, spec) for metric, spec in thresholds[key].items()},
+            value={metric: _sglang_old_threshold_spec(metric, spec) for metric, spec in thresholds[key].items()},
         )
     rows["long_ctx_niah"] = OldKey("accuracy.custom_eval", value=evals)
     return rows
 
 
 def _sglang_accuracy_rows(config):
-    tasks = _old_sglang_value(config, "accuracy.tasks")
+    tasks = _sglang_old_value(config, "accuracy.tasks")
     if tasks is _MISSING:
         return {}
     kept = []
     for index, task in enumerate(tasks or []):
         defaults = {**_SGLANG_LM_EVAL_OPTION_DEFAULTS, "label": str(task.get("id", "")).removeprefix("lm_eval_")}
-        unread = [name for name, default in defaults.items() if name in task and not _old_value_is(task[name], default)]
+        unread = [
+            name for name, default in defaults.items() if name in task and not _sglang_old_value_is(task[name], default)
+        ]
         if unread:
             paths = ", ".join(f"accuracy.tasks[{index}].{name}" for name in unread)
             raise ValueError(
@@ -3265,12 +3283,12 @@ def _sglang_run_rows(config):
     ISL, OSL and CONC; an empty or missing ``sweep.runs`` ran every threshold cell.
     """
     sweep = config.get("sweep")
-    if not isinstance(sweep, dict) and not _is_old_sglang_layout(config):
+    if not isinstance(sweep, dict) and not _sglang_is_old_layout(config):
         return {}
-    tp, pp = _old_tp_pp(config)
+    tp, pp = _sglang_old_tp_pp(config)
     if tp is None:
         return {}
-    combos = _old_run_combos(config)
+    combos = _sglang_old_run_combos(config)
     if "runs" in config:
         rows = {"sweep": OLD_KEY_DROPPED} if isinstance(sweep, dict) else {}
         runs = []
@@ -3278,7 +3296,9 @@ def _sglang_run_rows(config):
         if not combos:
             thresholds = config.get("thresholds") if isinstance(config.get("thresholds"), dict) else {}
             combos = sorted((key for key in thresholds if _CELL_KEY_RE.fullmatch(str(key))), key=sglang_cell_shape)
-        runs = list(dict.fromkeys(_cell_key_for(run, tp, pp) if _CELL_KEY_RE.fullmatch(run) else run for run in combos))
+        runs = list(
+            dict.fromkeys(_sglang_cell_key_for(run, tp, pp) if _CELL_KEY_RE.fullmatch(run) else run for run in combos)
+        )
         rows = {"sweep": OldKey("runs", value=runs)}
     sweeps = config.get("sweeps") if isinstance(config.get("sweeps"), dict) else {}
     by_shape = {}
@@ -3287,8 +3307,8 @@ def _sglang_run_rows(config):
             by_shape.setdefault(sglang_cell_shape(key), []).append(key)
     kept = {key for key in sweeps if not _CELL_KEY_RE.fullmatch(str(key))}
     for keys in by_shape.values():
-        own = _cell_key_for(keys[0], tp, pp)
-        keep, rekeyed = _rekey_rows("sweeps", keys, own, combos)
+        own = _sglang_cell_key_for(keys[0], tp, pp)
+        keep, rekeyed = _sglang_rekey_rows("sweeps", keys, own, combos)
         rows.update(rekeyed)
         if keep:
             kept.add(own)
@@ -3334,9 +3354,9 @@ def _sglang_threshold_cell_rows(config, spec_rows):
     return rows
 
 
-def _resolve_sglang_threshold_specs(config, table, rules, rekey, combos, message, label):
+def _sglang_resolve_threshold_specs(config, table, rules, rekey, combos, message, label):
     spec_rows = _sglang_threshold_spec_rows(config, rekey=rekey, combos=combos)
-    summary = f" {_threshold_spec_summary(config, spec_rows)}." if spec_rows else ""
+    summary = f" {_sglang_threshold_spec_summary(config, spec_rows)}." if spec_rows else ""
     cell_rows = _sglang_threshold_cell_rows(config, spec_rows)
     return resolve_old_keys(
         config,
@@ -3357,13 +3377,13 @@ def resolve_old_sglang_keys(config):
     """
     if not isinstance(config, dict):
         return config, None
-    rekey = _is_old_sglang_layout(config) or bool(_sglang_threshold_spec_rows(config, rekey=False))
-    return _resolve_sglang_threshold_specs(
+    rekey = _sglang_is_old_layout(config) or bool(_sglang_threshold_spec_rows(config, rekey=False))
+    return _sglang_resolve_threshold_specs(
         config,
         SGLANG_OLD_KEYS,
         SGLANG_OLD_KEY_RULES,
         rekey,
-        _old_run_combos(config),
+        _sglang_old_run_combos(config),
         message="Deprecated SGLang config keys: {keys}.{summary} "
         "Use the shared inference names; old keys will be removed in a future release.",
         label="SGLang config",
@@ -3372,7 +3392,7 @@ def resolve_old_sglang_keys(config):
 
 def resolve_old_sglang_threshold_names(thresholds):
     """Old metric names and kinds in a threshold file read on its own, keeping its cell keys."""
-    converted, message = _resolve_sglang_threshold_specs(
+    converted, message = _sglang_resolve_threshold_specs(
         {"thresholds": thresholds},
         {},
         (),

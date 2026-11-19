@@ -275,9 +275,9 @@ class TestRuntimeViews(unittest.TestCase):
     def test_client_s_gives_the_poll_count_and_wait_of_the_old_keys(self):
         for client_s, polls, total in (
             (1500, '16', '3600'),
-            (3660, '40', '3600'),
+            (3660, '40', '7200'),
             (100, '1', '3600'),
-            (4000, '44', '4030'),
+            (4000, '44', '7920'),
         ):
             with self.subTest(client_s=client_s):
                 params = _load(_new_config(timeouts={'client_s': client_s})).benchmark_params

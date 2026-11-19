@@ -107,6 +107,11 @@ class TestSglangConfigOldKeys(unittest.TestCase):
         self.assertEqual(config.server_params.tp, 8)
         self.assertEqual([w for w in caught if issubclass(w.category, FutureWarning)], [])
 
+    def test_an_underscore_metric_in_a_threshold_cell_fails_instead_of_being_dropped(self):
+        thresholds = {CELL: {"_output_throughput": {"kind": "min", "value": 1}, "_comment": "kept"}}
+        with self.assertRaisesRegex(ValidationError, "unknown SGLang threshold metric '_output_throughput'"):
+            SglangConfig.model_validate(_config(thresholds=thresholds))
+
     def test_a_new_config_neither_warns_nor_logs(self):
         with warnings.catch_warnings(record=True) as caught, self.assertNoLogs("cvs.parsers.schemas"):
             warnings.simplefilter("always")

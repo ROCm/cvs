@@ -534,15 +534,13 @@ def _threshold_cells_view(config):
 def _client_poll_view(client_s):
     """The poll count that gives ``client_s``, the inverse of the old-key rule.
 
-    The total stays main's 3600 s default up to 40 polls; past that it is one
-    poll period beyond the polls, so the time each log fetch takes never drops
-    the last poll.
+    The total is a backstop that the polls reach first: twice the polling
+    time, and at least main's 3600 s default. That is main's own total for
+    every shipped config, so slow log fetches never drop a poll main ran.
     """
     polling = max(client_s - SGLANG_FIRST_POLL_WAIT_S, SGLANG_POLL_PERIOD_S)
     polls = -(-polling // SGLANG_POLL_PERIOD_S)
-    total = (
-        SGLANG_POLL_TOTAL_S if polls * SGLANG_POLL_PERIOD_S <= SGLANG_POLL_TOTAL_S else polling + SGLANG_POLL_PERIOD_S
-    )
+    total = max(SGLANG_POLL_TOTAL_S, 2 * polls * SGLANG_POLL_PERIOD_S)
     return {"inference_poll_iterations": str(polls), "inference_poll_total_timeout_sec": str(total)}
 
 
