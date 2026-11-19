@@ -805,6 +805,12 @@ class TestAtomVariantView(unittest.TestCase):
         self.assertEqual(server.ib_hca_devices, ["mlx5_0", "mlx5_1"])
         self.assertEqual(server.ib_netdev, "eth1")
         self.assertIsNone(_view(_atom_config_dict()).roles.server.ib_netdev)
+        for hca, netdev in (("^mlx5_4", "^lo,docker"), ("mlx5_0:1", "=eth0"), ("", "eth0,eth1")):
+            with self.subTest(hca=hca, netdev=netdev):
+                data["container"] = {**data["container"], "env": {"NCCL_IB_HCA": hca, "NCCL_SOCKET_IFNAME": netdev}}
+                server = _view(data).roles.server
+                self.assertIsNone(server.ib_hca_devices)
+                self.assertIsNone(server.ib_netdev)
 
 
 class TestLoadVariant(unittest.TestCase):

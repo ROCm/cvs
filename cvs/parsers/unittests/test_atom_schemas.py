@@ -347,6 +347,13 @@ class TestOldProfilesAndThresholds(unittest.TestCase):
         self.assertIsNone(message)
         self.assertIn("atom: Field required", _problems(same))
 
+    def test_old_client_key_alone_marks_an_old_serving_config(self):
+        config = _atom_dict(benchmark_params={"num_prompts": 32, "client_poll_count": "80"})
+        del config["atom"]
+        converted, _, message = resolve_old_atom_config(config, {}, "mi3xx")
+        self.assertEqual(converted["timeouts"], {"client_s": 120 + 80 * 60})
+        self.assertIn("benchmark_params.client_poll_count -> timeouts.client_s", message)
+
     def test_current_config_refuses_a_profiled_threshold_file(self):
         with self.assertRaises(ValueError) as caught:
             resolve_old_atom_config(_atom_dict(), {"profiles": {"perf": {CELL: GATED}}}, "mi3xx")

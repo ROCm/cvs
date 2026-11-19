@@ -4519,6 +4519,23 @@ _ATOM_OLD_TOP_KEYS = frozenset(
         "long_context_accuracy",
     }
 )
+_ATOM_OLD_BENCH_KEYS = frozenset(
+    {
+        "backend",
+        "data_set_name",
+        "metric_percentiles",
+        "client_poll_count",
+        "client_poll_wait_time",
+        "reuse_server_across_sweep",
+        "max_model_length",
+        "model_num_params",
+        "peak_gpu_tflops",
+        "server_poll_count",
+        "server_poll_wait_time",
+        "server_precheck_wait_s",
+        "server_warmup_wait_s",
+    }
+)
 _ATOM_OLD_SERVER_KEYS = frozenset(
     {
         "backend",
@@ -5032,7 +5049,10 @@ def _is_old_atom_config(config):
     if "atom" in config:
         return False
     server = config.get("server_params") if isinstance(config.get("server_params"), dict) else {}
-    return bool(_ATOM_OLD_TOP_KEYS & set(config)) or bool(_ATOM_OLD_SERVER_KEYS & set(server))
+    bench = config.get("benchmark_params") if isinstance(config.get("benchmark_params"), dict) else {}
+    return bool(
+        _ATOM_OLD_TOP_KEYS & set(config) or _ATOM_OLD_SERVER_KEYS & set(server) or _ATOM_OLD_BENCH_KEYS & set(bench)
+    )
 
 
 def resolve_old_atom_config(config, thresholds, gpu_arch, profile=None):

@@ -143,7 +143,7 @@ def _collection_raw(config_file, pytestconfig):
     profile = (profile or "").strip() or None
     try:
         return collection_variant_raw(config_file, profile)
-    except ValueError as exc:
+    except (ValueError, FileNotFoundError) as exc:
         raise pytest.UsageError(f"invalid ATOM config {config_file}: {exc}") from None
 
 

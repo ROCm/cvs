@@ -123,6 +123,15 @@ def _client_timing(total):
     }
 
 
+_PLAIN_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _plain_names(value):
+    """Names in an NCCL device or interface list; NCCL's ``^``, ``=`` and ``:port`` forms give none."""
+    names = [name.strip() for name in str(value or "").split(",")]
+    return names if names and all(_PLAIN_NAME_RE.fullmatch(name) for name in names) else []
+
+
 def _sweep_from_cell_keys(keys):
     sequence_combinations = []
     runs = []
@@ -165,10 +174,12 @@ def atom_variant_raw(config, gpu_arch):
     driver = config.atom.driver
     env = dict(config.container.env)
     roles_server = {"env": env}
-    if env.get("NCCL_IB_HCA"):
-        roles_server["ib_hca_devices"] = [hca.strip() for hca in env["NCCL_IB_HCA"].split(",") if hca.strip()]
-    if env.get("NCCL_SOCKET_IFNAME"):
-        roles_server["ib_netdev"] = env["NCCL_SOCKET_IFNAME"]
+    hcas = _plain_names(env.get("NCCL_IB_HCA"))
+    if hcas:
+        roles_server["ib_hca_devices"] = hcas
+    netdevs = _plain_names(env.get("NCCL_SOCKET_IFNAME"))
+    if len(netdevs) == 1:
+        roles_server["ib_netdev"] = netdevs[0]
     if driver == "atom":
         roles_server["atom_args"] = [
             "-tp",
