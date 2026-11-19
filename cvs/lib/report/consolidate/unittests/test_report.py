@@ -147,9 +147,15 @@ class TestConsolidate(ReportCase):
 
     def test_unknown_suite_is_uncategorized_with_a_warning(self):
         write_run(self.root, "brand_new", deck("brand_new"))
-        summary = self.consolidate(str(self.root)).summary
-        self.assertEqual(summary["suites"][0]["category"], "Uncategorized")
-        self.assertEqual([warning["code"] for warning in summary["warnings"]], ["unknown_suite_id"])
+        result = self.consolidate(str(self.root))
+        self.assertEqual(result.summary["suites"][0]["category"], "Uncategorized")
+        self.assertEqual([warning["code"] for warning in result.summary["warnings"]], ["unknown_suite_id"])
+        _, files = self.read_zip(result.zip_path)
+        page = files["index.html"].decode("utf-8")
+        data = json.loads(
+            page.split('<script type="application/json" id="report-data">', 1)[1].split("</script>", 1)[0]
+        )
+        self.assertEqual(data["areas"][-1], "Uncategorized")
 
     def test_deck_without_a_timestamp_still_counts(self):
         write_run(self.root, "rvs_cvs", deck("rvs_cvs", generated_at=""))

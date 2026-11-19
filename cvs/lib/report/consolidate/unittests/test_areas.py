@@ -145,6 +145,10 @@ class TestOrderedAreas(unittest.TestCase):
     def test_uncategorized_only_when_used(self):
         self.assertEqual(ordered_areas(["Training"]), list(AREAS))
 
+    def test_areas_from_a_generator(self):
+        used = (area for area in ["Storage", UNCATEGORIZED, "Network"])
+        self.assertEqual(ordered_areas(used), list(AREAS) + ["Storage", UNCATEGORIZED])
+
 
 if __name__ == "__main__":
     unittest.main()

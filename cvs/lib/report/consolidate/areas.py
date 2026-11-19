@@ -92,7 +92,8 @@ def resolve_area(deck, stem=None):
 
 
 def ordered_areas(used):
-    '''The report's areas in display order: the standard four, then any other declared area, then Uncategorized.'''
-    extra = sorted(area for area in set(used) if area not in AREAS and area != UNCATEGORIZED)
+    '''The report's areas in display order: the standard ones, then any other declared area, then Uncategorized.'''
+    used = set(used)
+    extra = sorted(area for area in used if area not in AREAS and area != UNCATEGORIZED)
     tail = [UNCATEGORIZED] if UNCATEGORIZED in used else []
     return list(AREAS) + extra + tail
