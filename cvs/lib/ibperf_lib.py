@@ -851,10 +851,11 @@ def _fail_nonzero_perftest_rc(out_dict, instance_no):
 
 
 def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None, running=None, nodes=None):
-    """Read BW/PPS from the perftest log of each of ``nodes`` (default: every host).
+    """Read BW/PPS from the perftest log of each required node.
 
-    Only nodes in ``running`` (default: every node read) are polled for a missing result. A node
-    whose perftest pgrep confirmed exited has its final log, so it is read once.
+    Every node in ``nodes`` must report a result (default: every node read). Only nodes in
+    ``running`` (default: every required node) are polled for a missing result. A node that
+    never returns output fails without further polling unless it is in ``running``.
     """
     res_dict = {}
 
@@ -872,7 +873,7 @@ def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None, running=None, nodes=Non
 
     # Collect the BW, PPS numbers
     pattern = r"{}\s+\d+\s+[0-9\.]+\s+([0-9\.]+)\s+([0-9\.]+)".format(msg_size)
-    pending = list(out_dict.keys())
+    pending = list(nodes if nodes is not None else out_dict)
     running = set(pending if running is None else running)
 
     def collect():
@@ -891,11 +892,12 @@ def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None, running=None, nodes=Non
     )
     _fail_nonzero_perftest_rc(out_dict, instance_no)
     for node in pending:
-        why = (
-            f'no result within {PERFTEST_BW_RESULT_TIMEOUT_S}s'
-            if node in running
-            else 'perftest exited without a result'
-        )
+        if node not in out_dict:
+            why = 'no output read from node'
+        elif node in running:
+            why = f'no result within {PERFTEST_BW_RESULT_TIMEOUT_S}s'
+        else:
+            why = 'perftest exited without a result'
         fail_test(f'ERROR !!! on node {node} Client did not complete for msg size {msg_size}: {why}')
         fail_test(f'ERROR !!! pls check log file for errors on node {node}')
     _log_bw_summary(msg_size, res_dict, instance_no)

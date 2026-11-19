@@ -17,6 +17,7 @@ from cvs.lib.verify_lib import *
 
 from cvs.lib import agfhc_rundeck, globals
 from cvs.lib.agfhc_cmd import agfhc_command, probe_is_writable, writable_dir_commands
+from cvs.lib.agfhc_results import classify_results_json
 from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 
 log = globals.log
@@ -205,13 +206,18 @@ def get_log_results(orch, out_dict):
         jrl_cmds[node] = f'{sudo_prefix}cat {shlex.quote(log_dir + "/journal.log")}'
         err_cmds[node] = f'{sudo_prefix}cat {shlex.quote(log_dir + "/error.json")}'
     res_dict = _exec_cmds_by_host(orch, res_cmds)
-    failed = [node for node in res_dict if not re.search(r'"total_failed":\s+0,', res_dict[node], re.I)]
+    verdicts = {node: classify_results_json(text) for node, text in res_dict.items()}
+    failed = [node for node, (kind, _detail) in verdicts.items() if kind != 'pass']
     if failed:
         log.info('Dumping journal and error logs from nodes whose results.json is not clean')
         journals = _exec_cmds_by_host(orch, jrl_cmds)
         errors = _exec_cmds_by_host(orch, err_cmds)
         for node in failed:
-            fail_test(f'Total failed tests in results.json is not zero on node {node}')
+            kind, detail = verdicts[node]
+            if kind == 'nonzero':
+                fail_test(f'Total failed tests in results.json is not zero on node {node}')
+            else:
+                fail_test(f'results.json could not be read on node {node}: {detail}')
             log.info('%s journal.log:\n%s', node, journals.get(node, ''))
             log.info('%s error.json:\n%s', node, errors.get(node, ''))
     return res_dict

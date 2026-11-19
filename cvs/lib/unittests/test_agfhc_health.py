@@ -179,6 +179,57 @@ class TestCspQualAgfhcOrch(unittest.TestCase):
         dumped = [call.args[0] for call in info.call_args_list if 'journal.log' in call.args[0]]
         self.assertEqual(len(dumped), 2)
 
+    def test_get_log_results_distinguishes_unread_from_nonzero(self):
+        reads = {
+            'node-ok': '{\n  "total_failed": 0,\n}\n',
+            'node-bad': '"total_failed": 2,',
+            'node-missing': 'cat: /var/tmp/agfhc_logs/node-missing/results.json: No such file or directory\n',
+            'node-ssh-error': '("Error connecting to host \'%s:%s\' - %s - retry %s/%s", \'node-ssh-error\', 22, \'Connection refused\', 3, 3)\n',
+            'node-empty': '',
+        }
+        orch = MagicMock(orchestrator_type='baremetal', hosts=list(reads))
+        orch.sudo_prefix.return_value = ''
+        orch.exec_cmd_list.return_value = reads
+        out_dict = {node: f'Log directory: /var/tmp/agfhc_logs/{node}\n' for node in reads}
+
+        with patch.object(csp_qual, 'fail_test') as fail:
+            self.assertEqual(csp_qual.get_log_results(orch, out_dict), reads)
+
+        messages = [call.args[0] for call in fail.call_args_list]
+        self.assertEqual(len(messages), 4)
+        self.assertIn('Total failed tests in results.json is not zero on node node-bad', messages)
+        for node in ('node-missing', 'node-ssh-error', 'node-empty'):
+            self.assertTrue(
+                any(message.startswith(f'results.json could not be read on node {node}: ') for message in messages)
+            )
+        self.assertTrue(any('No such file or directory' in message for message in messages))
+        self.assertTrue(any('Connection refused' in message for message in messages))
+        self.assertIn('results.json could not be read on node node-empty: no output', messages)
+        self.assertFalse(any('node-ok' in message for message in messages))
+        self.assertEqual(sum('not zero' in message for message in messages), 1)
+
+    def test_get_log_results_dumps_logs_for_unread_node(self):
+        orch = MagicMock(orchestrator_type='baremetal', hosts=['node-missing'])
+        orch.sudo_prefix.return_value = ''
+        orch.exec_cmd_list.side_effect = [
+            {'node-missing': 'cat: results.json: No such file or directory'},
+            {'node-missing': 'journal clue'},
+            {'node-missing': 'error clue'},
+        ]
+
+        with patch.object(csp_qual, 'fail_test'), patch.object(csp_qual.log, 'info') as info:
+            csp_qual.get_log_results(orch, {'node-missing': 'Log directory: /var/tmp/agfhc_logs/node-missing\n'})
+
+        self.assertEqual(orch.exec_cmd_list.call_count, 3)
+        self.assertIn(
+            ('node-missing', 'journal clue'),
+            [call.args[1:] for call in info.call_args_list if 'journal.log' in call.args[0]],
+        )
+        self.assertIn(
+            ('node-missing', 'error clue'),
+            [call.args[1:] for call in info.call_args_list if 'error.json' in call.args[0]],
+        )
+
     def test_get_log_results_noop_fills_a_host_with_no_log_directory(self):
         orch = MagicMock()
         orch.orchestrator_type = 'baremetal'
