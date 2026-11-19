@@ -12,16 +12,10 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.inference.atom.atom_config_loader import (
+    collection_variant_raw,
     expand_sweep_parametrize,
-    gpu_arch_from_config_path,
-    resolve_atom_profile,
     reuse_server_flag,
     server_session_key,
-)
-from cvs.lib.inference.atom.atom_serving_config import (
-    is_serving_config,
-    materialize_atom_sweep,
-    serving_to_atom_variant_raw,
 )
 from cvs.lib.inference.atom.atom_dmesg import verify_dmesg_window
 from cvs.lib.inference.atom.atom_gpu_metrics import (
@@ -142,35 +136,15 @@ def _quant_parity_requested(variant_config) -> bool:
 
 
 def _collection_raw(config_file, pytestconfig):
-    """Flat config dict for collection-time parametrization (mirrors load_variant profile merge)."""
-    from pathlib import Path
-
-    with open(config_file) as fp:
-        raw = json.load(fp)
+    """The variant fields collection parametrizes on, as ``load_variant`` builds them."""
     profile = pytestconfig.getoption("config_profile", default=None)
     if not profile:
         profile = os.environ.get("CVS_CONFIG_PROFILE")
     profile = (profile or "").strip() or None
-
-    thresholds = {}
-    threshold_json = (raw.get("threshold_json") or "").strip()
-    if threshold_json:
-        threshold_path = Path(threshold_json)
-        if not threshold_path.is_absolute():
-            threshold_path = Path(config_file).parent / threshold_json
-        if threshold_path.is_file():
-            thresholds = json.loads(threshold_path.read_text())
-
-    if is_serving_config(raw):
-        if profile:
-            raise pytest.UsageError("serving-schema atom configs do not support --config_profile")
-        if not str(raw.get("gpu_arch") or "").strip():
-            raw["gpu_arch"] = gpu_arch_from_config_path(config_file)
-        raw = serving_to_atom_variant_raw(raw, thresholds)
-    else:
-        raw, _, _ = resolve_atom_profile(raw, thresholds, profile)
-        raw = materialize_atom_sweep(raw, thresholds)
-    return raw
+    try:
+        return collection_variant_raw(config_file, profile)
+    except ValueError as exc:
+        raise pytest.UsageError(f"invalid ATOM config {config_file}: {exc}") from None
 
 
 def pytest_generate_tests(metafunc):

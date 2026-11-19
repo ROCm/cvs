@@ -1,95 +1,95 @@
 {
   "ISL=512,OSL=512,TP=8,PP=2,CONC=16": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 402
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 15441
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 42
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 43
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -107,95 +107,95 @@
   },
   "ISL=512,OSL=512,TP=8,PP=2,CONC=64": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -213,95 +213,95 @@
   },
   "ISL=512,OSL=512,TP=8,PP=2,CONC=128": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -319,95 +319,95 @@
   },
   "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -425,95 +425,95 @@
   },
   "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -531,95 +531,95 @@
   },
   "ISL=1024,OSL=1024,TP=8,PP=2,CONC=128": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -637,95 +637,95 @@
   },
   "ISL=2048,OSL=1024,TP=8,PP=2,CONC=16": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -743,95 +743,95 @@
   },
   "ISL=2048,OSL=1024,TP=8,PP=2,CONC=64": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -849,95 +849,95 @@
   },
   "ISL=2048,OSL=1024,TP=8,PP=2,CONC=128": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -955,95 +955,95 @@
   },
   "ISL=1024,OSL=2048,TP=8,PP=2,CONC=16": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -1061,95 +1061,95 @@
   },
   "ISL=1024,OSL=2048,TP=8,PP=2,CONC=64": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -1167,95 +1167,95 @@
   },
   "ISL=1024,OSL=2048,TP=8,PP=2,CONC=128": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -1273,95 +1273,95 @@
   },
   "ISL=2048,OSL=2048,TP=8,PP=2,CONC=16": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -1379,95 +1379,95 @@
   },
   "ISL=2048,OSL=2048,TP=8,PP=2,CONC=64": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -1485,95 +1485,95 @@
   },
   "ISL=2048,OSL=2048,TP=8,PP=2,CONC=128": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -1589,117 +1589,97 @@
       "value": 50
     }
   },
-  "accuracy": {
-    "gsm8k_flex": {
-      "gsm8k.exact_match__flexible-extract": {
-        "kind": "info",
-        "value": 0.0
-      }
-    },
-    "hellaswag": {
-      "hellaswag.acc_norm__none": {
-        "kind": "info",
-        "value": 0.0
-      }
-    },
-    "mmlu_pro": {
-      "mmlu_pro.exact_match__custom-extract": {
-        "kind": "info",
-        "value": 0.0
-      }
-    }
-  },
   "ISL=128,OSL=32,TP=8,PP=2,CONC=1": {
     "total_token_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "per_gpu_throughput": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "output_tput_per_gpu": {
-      "kind": "min_tok_s",
+      "kind": "min",
       "value": 0
     },
     "mean_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_ttft_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_tpot_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_itl_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "mean_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "median_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p90_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p95_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "p99_e2el_ms": {
-      "kind": "max_ms",
+      "kind": "max",
       "value": 1000000
     },
     "success_rate": {
@@ -1713,6 +1693,28 @@
     "scaling.efficiency_pct": {
       "kind": "info",
       "value": 0.0
+    }
+  },
+  "accuracy": {
+    "lm_eval": {
+      "gsm8k_flex": {
+        "gsm8k.exact_match__flexible-extract": {
+          "kind": "info",
+          "value": 0.0
+        }
+      },
+      "hellaswag": {
+        "hellaswag.acc_norm__none": {
+          "kind": "info",
+          "value": 0.0
+        }
+      },
+      "mmlu_pro": {
+        "mmlu_pro.exact_match__custom-extract": {
+          "kind": "info",
+          "value": 0.0
+        }
+      }
     }
   }
 }

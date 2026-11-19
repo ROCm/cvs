@@ -22,29 +22,31 @@ Configs are lab-validated unless a row is marked pending or bring-up.
 
 | Stem | Files | Driver |
 |------|-------|--------|
-| `mi3xx_atom_deepseek-r1_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` |
-| `mi355x_atom_deepseek-r1_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` (MI355X; bring-up thresholds) |
-| `mi3xx_atom_qwen3.5-397b-a17b_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` |
+| `mi3xx_atom_deepseek-r1_fp8` | `_single_perf`, `_single_mtp3` | native `atom` |
+| `mi355x_atom_deepseek-r1_fp8` | `_single_perf`, `_single_mtp3` | native `atom` (MI355X; bring-up thresholds) |
+| `mi3xx_atom_qwen3.5-397b-a17b_fp8` | `_single_perf`, `_single_mtp3` | native `atom` |
 | `mi355x_atom_kimi-k27-code_mxfp4` | `_single` | native `atom` (MI355X; bring-up thresholds) |
 | `mi355x_atom_deepseek-v4-pro` | `_single` | native `atom` (MI355X; bring-up thresholds) |
-| `mi355x_atom_qwen3.5-397b-a17b_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` (MI355X; bring-up thresholds; `mtp3` benchmark cells and GSM8K lab-run) |
-| `mi3xx_atom_vllm_deepseek-r1_fp8` | `_single`, `_distributed` | `vllm_atom` (serving schema; distributed uses PP=2) |
+| `mi355x_atom_qwen3.5-397b-a17b_fp8` | `_single_perf`, `_single_mtp3` | native `atom` (MI355X; bring-up thresholds; `mtp3` benchmark cells and GSM8K lab-run) |
+| `mi3xx_atom_vllm_deepseek-r1_fp8` | `_single`, `_distributed` | `vllm_atom` (distributed uses PP=2) |
 | `mi355x_atom_vllm_deepseek-r1_fp8` | `_single`, `_distributed` | `vllm_atom` (MI355X; bring-up thresholds; single-node lab-run, PP=2 pending) |
-| `mi3xx_atom_vllm_gpt-oss-120b_mxfp4` | `_single` | `vllm_atom` (serving schema) |
+| `mi3xx_atom_vllm_gpt-oss-120b_mxfp4` | `_single` | `vllm_atom` |
 | `mi3xx_atom_vllm_glm-5.1_fp8` | `_single`, `_distributed` | `vllm_atom` (recipe serve is one server, TP8; distributed is PP=2; MI325X single-node and PP2 lab-run) |
-| `mi3xx_atom_vllm_deepseek-v4-flash_fp8` | `_single` | `vllm_atom` (serving schema; bring-up thresholds) |
-| `mi3xx_atom_glm-5.2_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` (TP8; MI325X perf and mtp3 lab-run) |
+| `mi3xx_atom_vllm_deepseek-v4-flash_fp8` | `_single` | `vllm_atom` (bring-up thresholds) |
+| `mi3xx_atom_glm-5.2_fp8` | `_single_perf`, `_single_mtp3` | native `atom` (TP8; MI325X perf and mtp3 lab-run) |
 | `mi3xx_atom_vllm_glm-5.2_fp8` | `_single`, `_distributed` | `vllm_atom` (TP8; distributed is PP=2; MI325X single-node lab-run) |
 | `mi3xx_atom_sglang_glm-5.2_fp8` | `_single`, `_distributed` | `sglang` (TP8; distributed is PP=2; MI325X single-node lab-run) |
-| `mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `vllm_atom` (serving schema; `_single` lab-validated; `_distributed` pending) |
+| `mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `vllm_atom` (`_single` lab-validated; `_distributed` pending) |
 | `mi355x_atom_vllm_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `vllm_atom` (MI355X; bring-up thresholds) |
-| `mi3xx_atom_sglang_deepseek-r1_fp8` | `_single`, `_distributed` | `sglang` (serving schema) |
+| `mi3xx_atom_sglang_deepseek-r1_fp8` | `_single`, `_distributed` | `sglang` |
 | `mi355x_atom_sglang_deepseek-r1_fp8` | `_single`, `_distributed` | `sglang` (MI355X; bring-up thresholds) |
-| `mi3xx_atom_sglang_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `sglang` (serving schema; `_single` lab-validated; `_distributed` pending) |
+| `mi3xx_atom_sglang_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `sglang` (`_single` lab-validated; `_distributed` pending) |
 | `mi355x_atom_sglang_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `sglang` (MI355X; bring-up thresholds) |
 
-Parity configs (`atom_vllm`, `atom_sglang`) use the unified serving schema:
-`server_params`, `benchmark_params`, `sweeps`, `runs`. Run with ``cvs run atom``.
+Every config uses the shared inference format (`server_params`,
+`benchmark_params`, `timeouts`, `sweeps`, `runs`, `accuracy`) plus an `atom`
+block whose `driver` is `atom`, `vllm_atom`, `vllm` or `sglang`. Each file holds
+one profile. Run with ``cvs run atom``.
 
 Config stems use ``mi3xx_*`` (gfx942) or ``mi355x_*`` (gfx950). Threshold
 files use ``mi325x_*`` or ``mi355x_*``. Copy each

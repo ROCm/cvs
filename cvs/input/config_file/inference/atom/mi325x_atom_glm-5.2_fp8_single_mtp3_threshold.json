@@ -1,0 +1,308 @@
+{
+  "ISL=1024,OSL=1024,TP=8,PP=1,CONC=32": {
+    "total_token_throughput": {
+      "kind": "min",
+      "value": 1771.4
+    },
+    "output_throughput": {
+      "kind": "min",
+      "value": 885.2
+    },
+    "per_gpu_throughput": {
+      "kind": "min",
+      "value": 221.4
+    },
+    "output_tput_per_gpu": {
+      "kind": "min",
+      "value": 110.7
+    },
+    "mean_ttft_ms": {
+      "kind": "max",
+      "value": 189.9
+    },
+    "median_ttft_ms": {
+      "kind": "max",
+      "value": 134.0
+    },
+    "p90_ttft_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p95_ttft_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p99_ttft_ms": {
+      "kind": "max",
+      "value": 1149.1
+    },
+    "mean_tpot_ms": {
+      "kind": "max",
+      "value": 28.4
+    },
+    "median_tpot_ms": {
+      "kind": "max",
+      "value": 28.5
+    },
+    "p90_tpot_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p95_tpot_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p99_tpot_ms": {
+      "kind": "max",
+      "value": 29.2
+    },
+    "mean_itl_ms": {
+      "kind": "max",
+      "value": 29.1
+    },
+    "median_itl_ms": {
+      "kind": "max",
+      "value": 26.4
+    },
+    "p95_itl_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p99_itl_ms": {
+      "kind": "max",
+      "value": 101.2
+    },
+    "mean_e2el_ms": {
+      "kind": "max",
+      "value": 26334.0
+    },
+    "median_e2el_ms": {
+      "kind": "max",
+      "value": 26347.3
+    },
+    "p90_e2el_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p95_e2el_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p99_e2el_ms": {
+      "kind": "max",
+      "value": 29588.7
+    },
+    "success_rate": {
+      "kind": "min",
+      "value": 0
+    },
+    "failed": {
+      "kind": "max",
+      "value": 1000000000
+    }
+  },
+  "ISL=1024,OSL=1024,TP=8,PP=1,CONC=64": {
+    "total_token_throughput": {
+      "kind": "min",
+      "value": 2429.8
+    },
+    "output_throughput": {
+      "kind": "min",
+      "value": 1214.2
+    },
+    "per_gpu_throughput": {
+      "kind": "min",
+      "value": 303.7
+    },
+    "output_tput_per_gpu": {
+      "kind": "min",
+      "value": 151.8
+    },
+    "mean_ttft_ms": {
+      "kind": "max",
+      "value": 341.9
+    },
+    "median_ttft_ms": {
+      "kind": "max",
+      "value": 156.5
+    },
+    "p90_ttft_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p95_ttft_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p99_ttft_ms": {
+      "kind": "max",
+      "value": 2214.9
+    },
+    "mean_tpot_ms": {
+      "kind": "max",
+      "value": 41.0
+    },
+    "median_tpot_ms": {
+      "kind": "max",
+      "value": 41.6
+    },
+    "p90_tpot_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p95_tpot_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p99_tpot_ms": {
+      "kind": "max",
+      "value": 43.2
+    },
+    "mean_itl_ms": {
+      "kind": "max",
+      "value": 41.9
+    },
+    "median_itl_ms": {
+      "kind": "max",
+      "value": 37.3
+    },
+    "p95_itl_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p99_itl_ms": {
+      "kind": "max",
+      "value": 116.0
+    },
+    "mean_e2el_ms": {
+      "kind": "max",
+      "value": 38068.1
+    },
+    "median_e2el_ms": {
+      "kind": "max",
+      "value": 38148.3
+    },
+    "p90_e2el_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p95_e2el_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p99_e2el_ms": {
+      "kind": "max",
+      "value": 43777.1
+    },
+    "success_rate": {
+      "kind": "min",
+      "value": 0
+    },
+    "failed": {
+      "kind": "max",
+      "value": 1000000000
+    }
+  },
+  "ISL=128,OSL=32,TP=8,PP=1,CONC=1": {
+    "total_token_throughput": {
+      "kind": "min",
+      "value": 245.4
+    },
+    "output_throughput": {
+      "kind": "min",
+      "value": 48.8
+    },
+    "per_gpu_throughput": {
+      "kind": "min",
+      "value": 30.7
+    },
+    "output_tput_per_gpu": {
+      "kind": "min",
+      "value": 6.1
+    },
+    "mean_ttft_ms": {
+      "kind": "max",
+      "value": 99.9
+    },
+    "median_ttft_ms": {
+      "kind": "max",
+      "value": 93.0
+    },
+    "p90_ttft_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p95_ttft_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p99_ttft_ms": {
+      "kind": "max",
+      "value": 107.6
+    },
+    "mean_tpot_ms": {
+      "kind": "max",
+      "value": 13.3
+    },
+    "median_tpot_ms": {
+      "kind": "max",
+      "value": 13.4
+    },
+    "p90_tpot_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p95_tpot_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p99_tpot_ms": {
+      "kind": "max",
+      "value": 13.7
+    },
+    "mean_itl_ms": {
+      "kind": "max",
+      "value": 13.0
+    },
+    "median_itl_ms": {
+      "kind": "max",
+      "value": 13.3
+    },
+    "p95_itl_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p99_itl_ms": {
+      "kind": "max",
+      "value": 18.7
+    },
+    "mean_e2el_ms": {
+      "kind": "max",
+      "value": 466.5
+    },
+    "median_e2el_ms": {
+      "kind": "max",
+      "value": 459.4
+    },
+    "p90_e2el_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p95_e2el_ms": {
+      "kind": "max",
+      "value": 1000000
+    },
+    "p99_e2el_ms": {
+      "kind": "max",
+      "value": 522.4
+    },
+    "success_rate": {
+      "kind": "min",
+      "value": 0
+    },
+    "failed": {
+      "kind": "max",
+      "value": 1000000000
+    }
+  }
+}

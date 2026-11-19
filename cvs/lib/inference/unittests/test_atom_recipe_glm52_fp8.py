@@ -8,21 +8,21 @@ Behavior checks for the GLM-5.2-FP8 recipe stems.
 import unittest
 from pathlib import Path
 
-from cvs.lib.inference.atom.atom_config_loader import load_variant
+from cvs.lib.inference.atom.atom_config_loader import AtomVariantConfig, atom_config_from_raw, atom_variant_raw
+from cvs.lib.utils.config_loader import substitute_config
 
 
-def _load(name, profile=None):
-    root = Path(__file__).resolve().parents[3]
-    return load_variant(
-        root / "input/config_file/inference/atom" / name,
-        {"username": "testuser"},
-        profile=profile,
-    )
+def _load(name):
+    """Load a shipped template, which still holds its <changeme> markers."""
+    path = Path(__file__).resolve().parents[3] / "input/config_file/inference/atom" / name
+    raw, thresholds = substitute_config(path, {"username": "testuser"})
+    config, gpu_arch = atom_config_from_raw(raw, thresholds, path)
+    return AtomVariantConfig(**atom_variant_raw(config, gpu_arch))
 
 
 class TestAtomRecipeGlm52Fp8(unittest.TestCase):
     def test_native_perf_omits_mtp(self):
-        variant = _load("mi3xx_atom_glm-5.2_fp8_single.json")
+        variant = _load("mi3xx_atom_glm-5.2_fp8_single_perf.json")
         self.assertEqual(variant.params.driver, "atom")
         self.assertEqual(variant.model.id, "zai-org/GLM-5.2-FP8")
         self.assertEqual(variant.gpu_arch, "mi3xx")
@@ -35,7 +35,7 @@ class TestAtomRecipeGlm52Fp8(unittest.TestCase):
             self.assertIn(cell, variant.thresholds)
 
     def test_native_mtp3_adds_three_speculative_tokens(self):
-        variant = _load("mi3xx_atom_glm-5.2_fp8_single.json", profile="mtp3")
+        variant = _load("mi3xx_atom_glm-5.2_fp8_single_mtp3.json")
         args = variant.roles.server.atom_args
         self.assertEqual(variant.model.id, "zai-org/GLM-5.2-FP8")
         self.assertEqual(args[args.index("--method") + 1], "mtp")

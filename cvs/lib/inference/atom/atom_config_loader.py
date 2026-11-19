@@ -2,153 +2,68 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-ATOM suite config schema (``atom``).
+ATOM suite config loading (``atom``).
 
-Generic paths/model/container/threshold plumbing lives in
-:mod:`cvs.lib.utils.config_loader`. Sweep selector types are shared with
-:mod:`cvs.lib.inference.utils.inferencing_config_loader`.
+Users write :class:`cvs.parsers.schemas.AtomConfig`. :func:`load_variant`
+converts an old layout through :func:`cvs.parsers.schemas.resolve_old_atom_config`
+with one ``FutureWarning``, validates it, and builds the
+:class:`~cvs.parsers.schemas.AtomVariantConfig` view the suite runs.
 '''
 
 from __future__ import annotations
 
+import json
+import math
 import re
+import shlex
+import warnings
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field, field_validator, model_validator
-from typing_extensions import Literal
+from pydantic import ValidationError
 
-from cvs.lib import globals
-from cvs.lib.inference.atom.atom_parsing import GATED_METRICS
-from cvs.lib.inference.atom.atom_serving_config import (
-    is_serving_config,
-    materialize_atom_sweep,
-    serving_to_atom_variant_raw,
-)
-from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
-from cvs.lib.inference.utils.functional_config import FunctionalConfig
-from cvs.lib.inference.utils.inferencing_config_loader import (
-    RoleServer,
-    Sweep,
+from cvs.lib.utils.config_loader import substitute_config
+from cvs.parsers.schemas import (
+    ATOM_DRIVERS,
+    ATOM_PP_DRIVERS,
+    AtomBlock,
+    AtomConfig,
+    AtomParams,
+    AtomRoles,
+    AtomRoleServer,
+    AtomRunCard,
+    AtomVariantConfig,
+    MtpQualityConfig,
+    QuantParityConfig,
+    merge_mxfp4_triton_env,
+    parse_inference_cell_key,
+    resolve_old_atom_config,
     validate_sweep_selector,
-    validate_thresholds_cover_sweep,
+    validation_problem_lines,
 )
-from cvs.lib.inference.utils.long_context_accuracy_config import LongContextAccuracyConfig
-from cvs.lib.inference.utils.platform_config import PlatformConfig
-from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
-from cvs.parsers.schemas import MtpQualityConfig, QuantParityConfig
 
-ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
-ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
-# MI300X MXFP4 MoE + A4W4 GEMM require Triton; aiter A4W4 is unsupported on gfx942.
-# atom.utils.envs treats only "1" as true — "true" is ignored.
-# gfx950 (MI355X) has native MXFP4; do not force the Triton fallback there.
-_MXFP4_TRITON_ENV = {
-    "ATOM_USE_TRITON_MOE": "1",
-    "ATOM_USE_TRITON_GEMM": "1",
-}
-_GFX942_ARCHES = frozenset({"mi3xx", "mi300x", "mi325x"})
+__all__ = [
+    "ATOM_DRIVERS",
+    "ATOM_PP_DRIVERS",
+    "AtomBlock",
+    "AtomConfig",
+    "AtomParams",
+    "AtomRoleServer",
+    "AtomRoles",
+    "AtomRunCard",
+    "AtomVariantConfig",
+    "MtpQualityConfig",
+    "QuantParityConfig",
+    "merge_mxfp4_triton_env",
+]
 
-
-def merge_mxfp4_triton_env(precision, env, gpu_arch=""):
-    """Return server env with MXFP4 Triton defaults on gfx942 when unset."""
-    merged = dict(env or {})
-    if (precision or "").lower() != "mxfp4":
-        return merged
-    arch = (gpu_arch or "").strip().lower()
-    if not arch or arch in _GFX942_ARCHES:
-        for key, value in _MXFP4_TRITON_ENV.items():
-            merged.setdefault(key, value)
-    for key in _MXFP4_TRITON_ENV:
-        if str(merged.get(key, "")).lower() == "true":
-            merged[key] = "1"
-    return merged
-
-
-log = globals.log
-
-# Written by test_discover_topology / resolve_multinode_fabric — not user env.
-_IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.IGNORECASE)
-
-
-class AtomRoleServer(RoleServer):
-    # Extra CLI tokens for ``python -m atom.entrypoints.openai_server`` after
-    # ``--model`` / ``--server-port`` (e.g. ``-tp``, ``--kv_cache_dtype``).
-    atom_args: list[str] = []
-    # Extra CLI tokens appended to ``python3 -m sglang.launch_server`` (driver=sglang).
-    sglang_args: list[str] = []
-    # IB HCA devices for NCCL_IB_HCA (multinode only).
-    # absent or "auto" -> use whatever ibv_devinfo -l reports (test_discover_topology).
-    # explicit list -> validated at preflight against ibv_devinfo output.
-    ib_hca_devices: Literal["auto"] | list[str] | None = None
-    # Linux netdev for NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME on multinode PP runs.
-    # absent or "auto" -> resolved at runtime by test_discover_topology from cluster IPs.
-    ib_netdev: Literal["auto"] | str | None = None
-
-    @field_validator("ib_netdev", mode="after")
-    @classmethod
-    def _normalize_ib_netdev(cls, v):
-        raw = (v or "").strip()
-        if raw and raw.lower() != "auto" and _IB_HCA_NETDEV_RE.match(raw):
-            log.warning(
-                "roles.server.ib_netdev=%r looks like an IB HCA name; coercing to 'auto' "
-                "(socket netdev is discovered from cluster IPs at runtime)",
-                raw,
-            )
-            return "auto"
-        return v
-
-
-class AtomRoles(_Forbid):
-    server: AtomRoleServer = AtomRoleServer()
-
-
-class AtomParams(_Forbid):
-    # ``atom`` = standalone ATOM openai_server + benchmark_serving.
-    # ``vllm_atom`` = vLLM coordinator + ATOM local kernels (true multinode PP).
-    # ``vllm`` = interim ROCm vLLM uplift (vllm serve + vllm bench serve).
-    # ``sglang`` = SGLang coordinator (launch_server + bench_serving) for PP runs.
-    driver: Literal["atom", "vllm", "vllm_atom", "sglang"] = "vllm"
-    backend: str = "vllm"
-    base_url: str = "http://0.0.0.0"
-    port_no: str = "8000"
-    dataset_name: str = "random"
-    burstiness: str = "1.0"
-    seed: str = "0"
-    request_rate: str = "inf"
-    random_range_ratio: str = "0.8"
-    random_prefix_len: str = "0"
-    tensor_parallelism: str = "8"
-    tokenizer_mode: str = "auto"
-    percentile_metrics: str = "ttft,tpot,itl,e2el"
-    metric_percentiles: str = "95,99"
-    num_prompts: str = "1000"
-    max_model_length: str = "8192"
-    client_poll_count: str = "50"
-    client_poll_wait_time: str = "60"
-    client_initial_wait_s: str = "120"
-    server_precheck_wait_s: str = "30"
-    server_warmup_wait_s: str = "330"
-    server_poll_count: str = "60"
-    server_poll_wait_time: str = "60"
-    reuse_server_across_sweep: str = "false"
-    bench_max_failed_requests: str = "0"
-    bench_extra_args: str = ""
-    result_filename: str = "results"
-    # Multinode (M5): omit or set nnodes=1 for single-node runs. When nnodes>1,
-    # cluster node_dict must list the same number of hosts and test_setup_sshd runs.
-    nnodes: str = "1"
-    pipeline_parallel_size: str = "1"
-    master_addr: str = ""
-    master_port: str = "29501"
-    # Optional single-node reference output_throughput for scaling.efficiency_pct.
-    scaling_baseline_output_throughput: str = ""
-
-
-class AtomRunCard(_Forbid):
-    upstream_run_url: str = ""
-    atom_image_pin: str = ""
-    notes: str = ""
+# ATOM's openai_server spells these flags with underscores and accepts no
+# dashed alias (atom/model_engine/arg_utils.py); every other flag uses dashes.
+ATOM_UNDERSCORE_FLAGS = frozenset(
+    {"enable_prefix_caching", "kv_cache_dtype", "load_dummy", "enable_chunked_prefill", "online_quant_config"}
+)
+DEFAULT_MAX_MODEL_LENGTH = 8192
+_POLL_WAIT_S = 60
 
 
 def resolved_atom_image_pin(variant):
@@ -160,104 +75,213 @@ def resolved_atom_image_pin(variant):
     return str(getattr(container, "image", "") or "").strip()
 
 
-ATOM_FRAMEWORKS = ("atom",)
+def _flag_name(name, underscore_flags):
+    if name in underscore_flags:
+        return f"--{name}"
+    if name.startswith("no_") and name[3:] in underscore_flags:
+        return f"--no-{name[3:]}"
+    return "--" + name.replace("_", "-")
 
 
-class AtomVariantConfig(BaseVariantConfig):
-    framework: Literal["atom"]
+def args_to_flag_tokens(args, underscore_flags=frozenset()):
+    """Render ``{"flag": value}`` as CLI tokens: true is a bare flag, a list repeats the flag."""
+    tokens = []
+    for name, value in args.items():
+        flag = _flag_name(name, underscore_flags)
+        for item in value if isinstance(value, list) else [value]:
+            tokens.extend([flag] if item is True else [flag, str(item)])
+    return tokens
 
-    gpu_arch: str
-    run_card: AtomRunCard = AtomRunCard()
-    roles: AtomRoles = AtomRoles()
-    params: AtomParams
-    sweep: Sweep
-    accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
-    mtp_quality: MtpQualityConfig = Field(default_factory=MtpQualityConfig)
-    quant_parity: QuantParityConfig = Field(default_factory=QuantParityConfig)
-    functional: FunctionalConfig = Field(default_factory=FunctionalConfig)
-    long_context_accuracy: LongContextAccuracyConfig = Field(default_factory=LongContextAccuracyConfig)
-    platform: PlatformConfig = Field(default_factory=PlatformConfig)
 
-    def cell_key(self, isl, osl, concurrency):
-        p = self.params
-        return f"ISL={isl},OSL={osl},TP={p.tensor_parallelism},PP={p.pipeline_parallel_size},CONC={concurrency}"
+def _server_timing(total):
+    if total is None:
+        return {}
+    precheck = min(30, total)
+    warmup = min(330, total - precheck)
+    polls = max(1, math.ceil((total - precheck - warmup) / _POLL_WAIT_S))
+    return {
+        "server_precheck_wait_s": str(precheck),
+        "server_warmup_wait_s": str(warmup),
+        "server_poll_count": str(polls),
+        "server_poll_wait_time": str(_POLL_WAIT_S),
+    }
 
-    def expected_cells(self) -> list[str]:
-        by_name = {c.name: c for c in self.sweep.sequence_combinations}
-        return [self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency) for r in self.sweep.runs]
 
-    @model_validator(mode="after")
-    def _apply_mxfp4_triton_env_defaults(self):
-        self.roles.server.env = merge_mxfp4_triton_env(
-            self.model.precision, self.roles.server.env, gpu_arch=self.gpu_arch
+def _client_timing(total):
+    if total is None:
+        return {}
+    initial = min(120, total)
+    polls = max(1, math.ceil((total - initial) / _POLL_WAIT_S))
+    return {
+        "client_initial_wait_s": str(initial),
+        "client_poll_count": str(polls),
+        "client_poll_wait_time": str(_POLL_WAIT_S),
+    }
+
+
+def _sweep_from_cell_keys(keys):
+    sequence_combinations = []
+    runs = []
+    seen = set()
+    for key in keys:
+        axes = parse_inference_cell_key(key)
+        name = f"isl{axes['isl']}_osl{axes['osl']}"
+        if name not in seen:
+            sequence_combinations.append({"name": name, "isl": str(axes["isl"]), "osl": str(axes["osl"])})
+            seen.add(name)
+        runs.append({"combo": name, "concurrency": axes["concurrency"]})
+    return {"sequence_combinations": sequence_combinations, "runs": runs}
+
+
+def _threshold_view(thresholds):
+    view = {key: {name: spec.model_dump() for name, spec in cell.items()} for key, cell in thresholds.cells().items()}
+    accuracy = thresholds.accuracy
+    sections = (
+        ("accuracy", accuracy.lm_eval, True),
+        ("long_context_accuracy", accuracy.custom_eval, True),
+        ("quant_parity", accuracy.quant_parity, False),
+        ("mtp_quality", accuracy.mtp_quality, False),
+    )
+    for name, specs, keyed in sections:
+        if not specs:
+            continue
+        if keyed:
+            view[name] = {
+                key: {metric: spec.model_dump() for metric, spec in cell.items()} for key, cell in specs.items()
+            }
+        else:
+            view[name] = {metric: spec.model_dump() for metric, spec in specs.items()}
+    return view
+
+
+def atom_variant_raw(config, gpu_arch):
+    """Build the ``AtomVariantConfig`` fields the suite reads from a validated ``AtomConfig``."""
+    server = config.server_params
+    bench = config.benchmark_params
+    driver = config.atom.driver
+    env = dict(config.container.env)
+    roles_server = {"env": env}
+    if driver == "atom":
+        roles_server["atom_args"] = [
+            "-tp",
+            str(server.tp),
+            *args_to_flag_tokens(server.engine_args, ATOM_UNDERSCORE_FLAGS),
+        ]
+    elif driver == "sglang":
+        roles_server["sglang_args"] = args_to_flag_tokens(server.engine_args)
+    else:
+        roles_server["serve_args"] = {name.replace("_", "-"): value for name, value in server.engine_args.items()}
+    params = {
+        "driver": driver,
+        "port_no": str(server.port),
+        "tensor_parallelism": str(server.tp),
+        "pipeline_parallel_size": str(server.pp),
+        "nnodes": str(server.nnodes or 1),
+        "master_port": str(server.master_port),
+        "max_model_length": str(server.max_model_length or DEFAULT_MAX_MODEL_LENGTH),
+        "num_prompts": str(bench.num_prompts),
+        "random_range_ratio": str(bench.random_range_ratio),
+        "seed": str(bench.seed),
+        "request_rate": str(bench.request_rate),
+        "burstiness": str(bench.burstiness),
+        "random_prefix_len": str(bench.random_prefix_len),
+        "tokenizer_mode": bench.tokenizer_mode,
+        "bench_extra_args": shlex.join(args_to_flag_tokens(bench.client_args)),
+        "reuse_server_across_sweep": "true",
+        **_server_timing(config.timeouts.server_ready_s),
+        **_client_timing(config.timeouts.client_s),
+    }
+    if bench.scaling_baseline_output_throughput is not None:
+        params["scaling_baseline_output_throughput"] = str(bench.scaling_baseline_output_throughput)
+    container = config.container.model_dump()
+    return {
+        "schema_version": 1,
+        "framework": "atom",
+        "gpu_arch": gpu_arch,
+        "enforce_thresholds": config.enforce_thresholds,
+        "threshold_json": config.threshold_json,
+        "paths": config.paths.model_dump(),
+        "model": {"id": server.model, "remote": 0, "precision": ""},
+        "container": container,
+        "roles": {"server": roles_server},
+        "params": params,
+        "sweep": _sweep_from_cell_keys(config.runs),
+        "accuracy": config.accuracy.lm_eval.model_dump(),
+        "quant_parity": config.accuracy.quant_parity.model_dump(),
+        "mtp_quality": config.accuracy.mtp_quality.model_dump(),
+        "long_context_accuracy": {"cells": [cell.model_dump(exclude={"type"}) for cell in config.accuracy.custom_eval]},
+        "functional": {"api_smoke": True, "health_check": True},
+        "platform": {"gpu_metrics_poll": True, "dmesg_scan": True},
+        "thresholds": _threshold_view(config.thresholds),
+    }
+
+
+_CONFIG_STEM_GPU_ARCH = re.compile(r"^([^_]+)_atom_")
+
+
+def gpu_arch_from_config_path(config_path) -> str:
+    """Infer ``gpu_arch`` from ``{gpu}_atom_*.json`` config stems."""
+    stem = Path(config_path).stem
+    match = _CONFIG_STEM_GPU_ARCH.match(stem)
+    if not match:
+        raise ValueError(
+            f"config filename must be {{gpu}}_atom_*.json to infer gpu_arch (got {Path(config_path).name})"
         )
-        return self
+    return match.group(1)
 
-    @model_validator(mode="after")
-    def _check_thresholds_cover_sweep(self):
-        validate_thresholds_cover_sweep(
-            expected_cells=self.expected_cells(),
-            thresholds=self.thresholds,
-            enforce_thresholds=self.enforce_thresholds,
-            gated_metrics=GATED_METRICS,
-            gated_metric_prefix="",
+
+def _config_gpu_arch(raw, config_path):
+    try:
+        return gpu_arch_from_config_path(config_path)
+    except ValueError:
+        old_arch = str(raw.get("gpu_arch") or "").strip() if "atom" not in raw else ""
+        if not old_arch:
+            raise
+        return old_arch
+
+
+def atom_config_from_raw(raw, thresholds, config_path, profile=None, context=None):
+    """Convert old keys with one ``FutureWarning`` and validate; returns ``(AtomConfig, gpu_arch)``."""
+    gpu_arch = _config_gpu_arch(raw, config_path)
+    raw, thresholds, message = resolve_old_atom_config(raw, thresholds, gpu_arch, profile)
+    if message:
+        warnings.warn(
+            f"{Path(config_path).name} uses old ATOM config keys: {message}. Rewrite it in the current format "
+            "(see the shipped configs in cvs/input/config_file/inference/atom); old keys will be removed in a "
+            "future release.",
+            FutureWarning,
+            stacklevel=3,
         )
-        if int(self.params.nnodes) > 1 and (self.params.scaling_baseline_output_throughput or "").strip():
-            missing = []
-            for cell in self.expected_cells():
-                specs = self.thresholds.get(cell) or {}
-                if "scaling.efficiency_pct" not in specs:
-                    missing.append(cell)
-            if missing:
-                msg = (
-                    "multinode variant with scaling_baseline_output_throughput requires "
-                    f"scaling.efficiency_pct in every cell; missing: {missing}"
-                )
-                if self.enforce_thresholds:
-                    raise ValueError(msg)
-                import warnings
+    try:
+        config = AtomConfig.model_validate({**raw, "thresholds": thresholds}, context=context)
+    except ValidationError as exc:
+        problems = "\n".join(f"  {line}" for line in validation_problem_lines(exc))
+        raise ValueError(f"{Path(config_path).name} is not a valid ATOM config:\n{problems}") from None
+    return config, gpu_arch
 
-                warnings.warn(f"{msg} (enforce_thresholds=false -> record-only)", stacklevel=2)
-        return self
 
-    @model_validator(mode="after")
-    def _atom_multinode_uses_dp_not_pp(self):
-        if self.params.driver == "atom" and int(self.params.nnodes) > 1:
-            if int(self.params.pipeline_parallel_size) > 1:
-                raise ValueError(
-                    "params.driver='atom' with nnodes>1 uses ATOM SPMD data parallel (-dp); "
-                    "standalone ATOM cannot execute pipeline parallel. For true PP>1 use "
-                    "params.driver='vllm_atom' or 'sglang'."
-                )
-        return self
+def load_variant(config_path, cluster_dict, profile=None) -> AtomVariantConfig:
+    raw, thresholds = substitute_config(config_path, cluster_dict)
+    config, gpu_arch = atom_config_from_raw(raw, thresholds, config_path, profile, context={"placeholders": "reject"})
+    return AtomVariantConfig(**atom_variant_raw(config, gpu_arch))
 
-    @model_validator(mode="after")
-    def _pp_driver_distributed_consistency(self):
-        driver = self.params.driver
-        if driver not in ATOM_PP_DRIVERS:
-            return self
-        nn = int(self.params.nnodes)
-        pp = int(self.params.pipeline_parallel_size)
-        is_ray = self.roles.server.serve_args.get("distributed-executor-backend") == "ray"
-        if nn > 1 and pp == 1 and not is_ray:
-            raise ValueError(
-                f"params.driver={driver!r} with nnodes={nn} requires pipeline_parallel_size>1 "
-                f"(got pp={pp}) for multinode pipeline parallel"
-            )
-        if pp > 1 and nn == 1:
-            raise ValueError(
-                f"pipeline_parallel_size={pp} > 1 requires nnodes > 1 (got nnodes={nn}) for params.driver={driver!r}"
-            )
-        return self
 
-    @model_validator(mode="after")
-    def _atom_driver_requires_inline_server_args(self):
-        if self.params.driver == "atom" and not self.roles.server.atom_args:
-            raise ValueError(
-                "params.driver='atom' requires roles.server.atom_args "
-                "(inline ATOM openai_server CLI tokens, vLLM-style)"
-            )
-        return self
+def collection_variant_raw(config_file, profile=None):
+    """The view fields pytest collection parametrizes on, read before cluster substitution."""
+    config_path = Path(config_file)
+    raw = json.loads(config_path.read_text())
+    thresholds = {}
+    threshold_json = str(raw.get("threshold_json") or "").strip()
+    if threshold_json:
+        threshold_path = Path(threshold_json)
+        if not threshold_path.is_absolute():
+            threshold_path = config_path.parent / threshold_json
+        if threshold_path.is_file():
+            thresholds = json.loads(threshold_path.read_text())
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        config, gpu_arch = atom_config_from_raw(raw, thresholds, config_path, profile)
+    return atom_variant_raw(config, gpu_arch)
 
 
 def expand_sweep(sweep):
@@ -330,131 +354,6 @@ def expand_sweep_parametrize(sweep, fixturenames):
     return None
 
 
-_PROFILE_SHARED_KEYS = frozenset(
-    {
-        "schema_version",
-        "framework",
-        "gpu_arch",
-        "paths",
-        "model",
-        "threshold_json",
-    }
-)
-
-
-def _strip_profile_meta(raw: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in raw.items() if k not in _PROFILE_SHARED_KEYS and k != "profiles"}
-
-
-def resolve_atom_profile(
-    raw: dict[str, Any],
-    thresholds: dict[str, Any],
-    profile: str | None,
-) -> tuple[dict[str, Any], dict[str, Any], str]:
-    """Flatten a schema_version 2 multi-profile config into one variant dict."""
-    profiles = raw.get("profiles")
-    if not isinstance(profiles, dict) or not profiles:
-        threshold_profiles = thresholds.get("profiles") if isinstance(thresholds.get("profiles"), dict) else None
-        if threshold_profiles is not None:
-            selected = (profile or "perf").strip()
-            if selected not in threshold_profiles:
-                known = ", ".join(sorted(threshold_profiles))
-                raise ValueError(
-                    f"profiled threshold file requires --config_profile or CVS_CONFIG_PROFILE "
-                    f"(requested {selected!r}; known: {known})"
-                )
-            return raw, dict(threshold_profiles[selected]), selected
-        return raw, thresholds, profile or "perf"
-
-    selected = (profile or raw.get("default_profile") or "").strip()
-    if not selected:
-        known = ", ".join(sorted(profiles))
-        raise ValueError(f"multi-profile config requires --config_profile or default_profile (known: {known})")
-    if selected not in profiles:
-        known = ", ".join(sorted(profiles))
-        raise ValueError(f"unknown config profile {selected!r} (known: {known})")
-
-    profile_body_raw = dict(profiles[selected])
-    threshold_profile = (profile_body_raw.pop("threshold_profile", None) or selected).strip()
-
-    shared = {k: raw[k] for k in _PROFILE_SHARED_KEYS if k in raw}
-    merged = {**shared, **profile_body_raw}
-    merged["schema_version"] = 1
-
-    threshold_profiles = thresholds.get("profiles") if isinstance(thresholds.get("profiles"), dict) else None
-    if threshold_profiles is not None:
-        if threshold_profile not in threshold_profiles:
-            known = ", ".join(sorted(threshold_profiles))
-            raise ValueError(
-                f"threshold file missing profile {threshold_profile!r} referenced by config (known: {known})"
-            )
-        merged_thresholds = dict(threshold_profiles[threshold_profile])
-    else:
-        merged_thresholds = dict(thresholds)
-
-    return merged, merged_thresholds, selected
-
-
-def _expected_cells_from_raw(raw: dict[str, Any]) -> list[str]:
-    """Compute sweep cell keys from a resolved flat config dict (pre-pydantic)."""
-    params = raw["params"]
-    sweep = raw["sweep"]
-    by_name = {c["name"]: c for c in sweep["sequence_combinations"]}
-    tp = params["tensor_parallelism"]
-    pp = params.get("pipeline_parallel_size", "1")
-    cells = []
-    for run in sweep["runs"]:
-        combo = by_name[run["combo"]]
-        isl, osl, conc = combo["isl"], combo["osl"], run["concurrency"]
-        cells.append(f"ISL={isl},OSL={osl},TP={tp},PP={pp},CONC={conc}")
-    return cells
-
-
-def _prune_orphan_sweep_thresholds(thresholds: dict[str, Any], expected_cells: list[str]) -> dict[str, Any]:
-    """Drop sweep-cell threshold keys that belong to another topology/profile."""
-    expected = set(expected_cells)
-    pruned: dict[str, Any] = {}
-    for key, value in thresholds.items():
-        if key.startswith("ISL=") and key not in expected:
-            continue
-        pruned[key] = value
-    return pruned
-
-
-_CONFIG_STEM_GPU_ARCH = re.compile(r"^([^_]+)_atom_")
-
-
-def gpu_arch_from_config_path(config_path) -> str:
-    """Infer ``gpu_arch`` from ``{gpu}_atom_*.json`` config stems."""
-    stem = Path(config_path).stem
-    match = _CONFIG_STEM_GPU_ARCH.match(stem)
-    if not match:
-        raise ValueError(
-            f"config filename must be {{gpu}}_atom_*.json to infer gpu_arch (got {Path(config_path).name})"
-        )
-    return match.group(1)
-
-
-def load_variant(config_path, cluster_dict, profile: str | None = None) -> AtomVariantConfig:
-    raw, thresholds = substitute_config(config_path, cluster_dict)
-    if is_serving_config(raw):
-        if profile:
-            raise ValueError("serving-schema atom configs do not support --config_profile")
-        if not str(raw.get("gpu_arch") or "").strip():
-            raw["gpu_arch"] = gpu_arch_from_config_path(config_path)
-        raw = serving_to_atom_variant_raw(raw, thresholds)
-    else:
-        if not str(raw.get("gpu_arch") or "").strip():
-            raw["gpu_arch"] = gpu_arch_from_config_path(config_path)
-        raw, thresholds, _ = resolve_atom_profile(raw, thresholds, profile)
-        raw = materialize_atom_sweep(raw, thresholds)
-        raw.setdefault("schema_version", 1)
-        raw.setdefault("framework", "atom")
-        thresholds = _prune_orphan_sweep_thresholds(thresholds, _expected_cells_from_raw(raw))
-        raw["thresholds"] = thresholds
-    return AtomVariantConfig(**raw)
-
-
 def placeholder_gated_threshold_cell(
     *,
     output_throughput_min: float = 0,
@@ -469,21 +368,21 @@ def placeholder_gated_threshold_cell(
     success_rate_min: float = 0,
 ) -> dict[str, Any]:
     """Return one sweep cell's bare-metric specs covering every ``GATED_METRICS`` member."""
-    loose_ms = {"kind": "max_ms", "value": 1_000_000}
+    loose_ms = {"kind": "max", "value": 1_000_000}
     return {
-        "total_token_throughput": {"kind": "min_tok_s", "value": total_token_throughput_min},
-        "output_throughput": {"kind": "min_tok_s", "value": output_throughput_min},
-        "per_gpu_throughput": {"kind": "min_tok_s", "value": per_gpu_throughput_min},
-        "output_tput_per_gpu": {"kind": "min_tok_s", "value": output_tput_per_gpu_min},
-        "mean_ttft_ms": {"kind": "max_ms", "value": mean_ttft_max_ms},
+        "total_token_throughput": {"kind": "min", "value": total_token_throughput_min},
+        "output_throughput": {"kind": "min", "value": output_throughput_min},
+        "per_gpu_throughput": {"kind": "min", "value": per_gpu_throughput_min},
+        "output_tput_per_gpu": {"kind": "min", "value": output_tput_per_gpu_min},
+        "mean_ttft_ms": {"kind": "max", "value": mean_ttft_max_ms},
         "median_ttft_ms": loose_ms,
         "p90_ttft_ms": loose_ms,
         "p95_ttft_ms": loose_ms,
-        "p99_ttft_ms": {"kind": "max_ms", "value": p99_ttft_max_ms},
-        "mean_tpot_ms": {"kind": "max_ms", "value": mean_tpot_max_ms},
+        "p99_ttft_ms": {"kind": "max", "value": p99_ttft_max_ms},
+        "mean_tpot_ms": {"kind": "max", "value": mean_tpot_max_ms},
         "median_tpot_ms": loose_ms,
         "p90_tpot_ms": loose_ms,
-        "p95_tpot_ms": {"kind": "max_ms", "value": p95_tpot_max_ms},
+        "p95_tpot_ms": {"kind": "max", "value": p95_tpot_max_ms},
         "p99_tpot_ms": loose_ms,
         "mean_itl_ms": loose_ms,
         "median_itl_ms": loose_ms,

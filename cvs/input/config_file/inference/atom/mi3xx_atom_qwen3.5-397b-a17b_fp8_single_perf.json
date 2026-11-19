@@ -1,0 +1,115 @@
+{
+  "enforce_thresholds": false,
+  "threshold_json": "mi325x_atom_qwen3.5-397b-a17b_fp8_perf_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "atom_mi3xx",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme>"
+        ],
+        "_volumes_example": [
+          "/data/models:/models:ro"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    },
+    "env": {
+      "ATOM_DISABLE_MMAP": "true"
+    }
+  },
+  "server_params": {
+    "model": "amd/Qwen3.5-397B-A17B-FP8",
+    "tp": 8,
+    "port": 8000,
+    "max_model_length": 12288,
+    "engine_args": {
+      "trust_remote_code": true
+    }
+  },
+  "benchmark_params": {
+    "num_prompts": 1000,
+    "random_range_ratio": 0.8
+  },
+  "timeouts": {
+    "client_s": 4920
+  },
+  "sweeps": {
+    "ISL=1024,OSL=8192,TP=8,PP=1,CONC=32": {},
+    "ISL=1024,OSL=8192,TP=8,PP=1,CONC=64": {},
+    "ISL=128,OSL=32,TP=8,PP=1,CONC=1": {}
+  },
+  "runs": [
+    "ISL=1024,OSL=8192,TP=8,PP=1,CONC=32",
+    "ISL=1024,OSL=8192,TP=8,PP=1,CONC=64",
+    "ISL=128,OSL=32,TP=8,PP=1,CONC=1"
+  ],
+  "accuracy": {
+    "lm_eval": {
+      "tasks": [
+        {
+          "id": "gsm8k_flex",
+          "task": "gsm8k",
+          "num_fewshot": 5,
+          "num_concurrent": 4
+        },
+        {
+          "id": "hellaswag",
+          "task": "hellaswag",
+          "num_fewshot": 0,
+          "num_concurrent": 4
+        },
+        {
+          "id": "mmlu_pro",
+          "task": "mmlu_pro",
+          "num_fewshot": 5,
+          "num_concurrent": 4
+        },
+        {
+          "id": "bbh",
+          "task": "bbh",
+          "num_fewshot": 3,
+          "num_concurrent": 4
+        },
+        {
+          "id": "musr",
+          "task": "musr",
+          "num_fewshot": 0,
+          "num_concurrent": 4
+        },
+        {
+          "id": "arc_challenge",
+          "task": "arc_challenge",
+          "num_fewshot": 0,
+          "num_concurrent": 4
+        },
+        {
+          "id": "winogrande",
+          "task": "winogrande",
+          "num_fewshot": 0,
+          "num_concurrent": 4
+        }
+      ]
+    }
+  },
+  "atom": {
+    "driver": "atom"
+  }
+}

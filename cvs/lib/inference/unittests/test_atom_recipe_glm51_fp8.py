@@ -8,15 +8,16 @@ Behavior checks for the GLM-5.1-FP8 vLLM recipe stems.
 import unittest
 from pathlib import Path
 
-from cvs.lib.inference.atom.atom_config_loader import load_variant
+from cvs.lib.inference.atom.atom_config_loader import AtomVariantConfig, atom_config_from_raw, atom_variant_raw
+from cvs.lib.utils.config_loader import substitute_config
 
 
 def _load(name):
-    root = Path(__file__).resolve().parents[3]
-    return load_variant(
-        root / "input/config_file/inference/atom" / name,
-        {"username": "testuser"},
-    )
+    """Load a shipped template, which still holds its <changeme> markers."""
+    path = Path(__file__).resolve().parents[3] / "input/config_file/inference/atom" / name
+    raw, thresholds = substitute_config(path, {"username": "testuser"})
+    config, gpu_arch = atom_config_from_raw(raw, thresholds, path)
+    return AtomVariantConfig(**atom_variant_raw(config, gpu_arch))
 
 
 class TestAtomRecipeGlm51Fp8(unittest.TestCase):

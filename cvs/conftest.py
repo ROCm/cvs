@@ -96,7 +96,7 @@ def pytest_addoption(parser):
             "--config_profile",
             action="store",
             default=None,
-            help="Schema v2 config profile name (ATOM and other multi-profile suites)",
+            help="Deprecated: profile of an old ATOM profiles-layout config; current ATOM configs hold one profile each",
         )
     except ValueError:
         pass

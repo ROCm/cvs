@@ -8,10 +8,6 @@
     "log_dir": "{shared_fs}/LOGS",
     "hf_token_file": "{shared_fs}/.hf_token"
   },
-  "model": {
-    "id": "deepseek-ai/DeepSeek-V4-Flash",
-    "remote": 0
-  },
   "container": {
     "lifetime": "per_run",
     "name": "vllm_mi3xx_deepseek_v4_flash_fp8_single",
@@ -25,32 +21,16 @@
         "shm_size": "128G",
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
-          "<changeme-models-mount>:/models:ro"
+          "<changeme>"
+        ],
+        "_volumes_example": [
+          "/data/models:/models:ro"
         ],
         "devices": [
           "/dev/dri",
           "/dev/kfd"
         ]
       }
-    }
-  },
-  "server_params": {
-    "backend": "vllm_atom",
-    "nnodes": "1",
-    "model": "deepseek-ai/DeepSeek-V4-Flash",
-    "tensor_parallelism": "8",
-    "pipeline_parallelism": "1",
-    "port_no": "8000",
-    "serve_args": {
-      "dtype": "auto",
-      "kv-cache-dtype": "fp8_e4m3",
-      "tokenizer-mode": "deepseek_v4",
-      "moe-backend": "triton_unfused",
-      "trust-remote-code": true,
-      "enforce-eager": true,
-      "gpu-memory-utilization": "0.9",
-      "block-size": 256,
-      "no-enable-prefix-caching": true
     },
     "env": {
       "VLLM_ROCM_USE_AITER": "1",
@@ -60,91 +40,107 @@
       "AMDGCN_USE_BUFFER_OPS": "0"
     }
   },
+  "server_params": {
+    "model": "deepseek-ai/DeepSeek-V4-Flash",
+    "tp": 8,
+    "pp": 1,
+    "nnodes": 1,
+    "port": 8000,
+    "max_model_length": 12288,
+    "engine_args": {
+      "dtype": "auto",
+      "kv_cache_dtype": "fp8_e4m3",
+      "tokenizer_mode": "deepseek_v4",
+      "moe_backend": "triton_unfused",
+      "trust_remote_code": true,
+      "enforce_eager": true,
+      "gpu_memory_utilization": "0.9",
+      "block_size": 256,
+      "no_enable_prefix_caching": true
+    }
+  },
   "benchmark_params": {
-    "backend": "vllm",
-    "data_set_name": "random",
-    "num_prompts": "1000",
-    "random_range_ratio": "0.8",
-    "max_model_length": "12288",
-    "metric_percentiles": "95,99",
-    "client_poll_count": "80",
-    "client_poll_wait_time": "60",
-    "reuse_server_across_sweep": "true"
+    "num_prompts": 1000,
+    "random_range_ratio": 0.8
+  },
+  "timeouts": {
+    "client_s": 4920
   },
   "sweeps": {
     "ISL=5000,OSL=1024,TP=8,PP=1,CONC=16": {},
     "ISL=5000,OSL=1024,TP=8,PP=1,CONC=32": {}
   },
-  "runs": [],
-  "platform": {
-    "gpu_metrics_poll": true
-  },
-  "functional": {
-    "api_smoke": true,
-    "health_check": true
-  },
+  "runs": [
+    "ISL=5000,OSL=1024,TP=8,PP=1,CONC=16",
+    "ISL=5000,OSL=1024,TP=8,PP=1,CONC=32"
+  ],
   "accuracy": {
-    "tasks": [
-      {
-        "id": "gsm8k_flex",
-        "task": "gsm8k",
-        "num_fewshot": 5,
-        "num_concurrent": 4
-      },
-      {
-        "id": "gsm8k_strict",
-        "task": "gsm8k",
-        "num_fewshot": 5,
-        "num_concurrent": 4,
-        "metadata": {
-          "filter": "strict-match"
+    "lm_eval": {
+      "tasks": [
+        {
+          "id": "gsm8k_flex",
+          "task": "gsm8k",
+          "num_fewshot": 5,
+          "num_concurrent": 4
+        },
+        {
+          "id": "gsm8k_strict",
+          "task": "gsm8k",
+          "num_fewshot": 5,
+          "num_concurrent": 4,
+          "metadata": {
+            "filter": "strict-match"
+          }
+        },
+        {
+          "id": "gsm8k_stderr",
+          "task": "gsm8k",
+          "num_fewshot": 5,
+          "num_concurrent": 4,
+          "metadata": {
+            "filter": "flexible-extract"
+          }
+        },
+        {
+          "id": "hellaswag",
+          "task": "hellaswag",
+          "num_fewshot": 0,
+          "num_concurrent": 4
+        },
+        {
+          "id": "mmlu_pro",
+          "task": "mmlu_pro",
+          "num_fewshot": 5,
+          "num_concurrent": 4
+        },
+        {
+          "id": "bbh",
+          "task": "bbh",
+          "num_fewshot": 3,
+          "num_concurrent": 4
+        },
+        {
+          "id": "musr",
+          "task": "musr",
+          "num_fewshot": 0,
+          "num_concurrent": 4
+        },
+        {
+          "id": "arc_challenge",
+          "task": "arc_challenge",
+          "num_fewshot": 0,
+          "num_concurrent": 4
+        },
+        {
+          "id": "winogrande",
+          "task": "winogrande",
+          "num_fewshot": 0,
+          "num_concurrent": 4
         }
-      },
-      {
-        "id": "gsm8k_stderr",
-        "task": "gsm8k",
-        "num_fewshot": 5,
-        "num_concurrent": 4,
-        "metadata": {
-          "filter": "flexible-extract"
-        }
-      },
-      {
-        "id": "hellaswag",
-        "task": "hellaswag",
-        "num_fewshot": 0,
-        "num_concurrent": 4
-      },
-      {
-        "id": "mmlu_pro",
-        "task": "mmlu_pro",
-        "num_fewshot": 5,
-        "num_concurrent": 4
-      },
-      {
-        "id": "bbh",
-        "task": "bbh",
-        "num_fewshot": 3,
-        "num_concurrent": 4
-      },
-      {
-        "id": "musr",
-        "task": "musr",
-        "num_fewshot": 0,
-        "num_concurrent": 4
-      },
-      {
-        "id": "arc_challenge",
-        "task": "arc_challenge",
-        "num_fewshot": 0,
-        "num_concurrent": 4
-      },
-      {
-        "id": "winogrande",
-        "task": "winogrande",
-        "num_fewshot": 0,
-        "num_concurrent": 4
-      }
-    ]
+      ]
+    }
+  },
+  "atom": {
+    "driver": "vllm_atom"
   }
 }

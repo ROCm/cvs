@@ -1700,7 +1700,8 @@ class QuantParityConfig(_Forbid):
 # ---------- shared inference blocks ----------
 
 # The metric names every engine's threshold cells use: vLLM's metric registry
-# (cvs/lib/inference/utils/vllm_metrics.py) plus ATOM's multinode scaling metric.
+# (cvs/lib/inference/utils/vllm_metrics.py) plus ATOM's output tokens per GPU and
+# multinode scaling metric.
 _LATENCY_STATS = ("mean", "median", "std", "p50", "p90", "p95", "p99")
 INFERENCE_METRIC_NAMES = frozenset(
     (
@@ -1716,6 +1717,7 @@ INFERENCE_METRIC_NAMES = frozenset(
         "output_throughput",
         "total_token_throughput",
         "per_gpu_throughput",
+        "output_tput_per_gpu",
         "decode_throughput_p50",
         "max_output_tokens_per_s",
         "rtfx",
@@ -4205,3 +4207,822 @@ def validate_config_file(
     except Exception as e:
         # Re-raise with file context
         raise ValueError(f"Invalid configuration in {config_path}:\n{e}") from e
+
+
+# =============================================================================
+# ATOM Config Schema
+# =============================================================================
+#
+# AtomConfig is the config users write. cvs.lib.inference.atom.atom_config_loader
+# turns it into the AtomVariantConfig view that the ATOM suite runs, and
+# resolve_old_atom_config converts the profiles, flat and serving layouts of
+# older releases into it.
+
+
+class RoleServer(_Forbid):
+    # Extra server flags as a {flag: value} map without the leading --: a
+    # scalar renders `--flag value`, True renders a bare `--flag`, and a list
+    # renders the flag once per element. ``env`` is merged over the defaults
+    # the orchestrator sets.
+    serve_args: Dict[str, Any] = {}
+    env: Dict[str, str] = {}
+
+
+class GoodputSlo(_Forbid):
+    # Per-cell SLOs for the goodput gate, in milliseconds. An input to the run
+    # (passed to `vllm bench serve --goodput`), not a threshold to assert.
+    ttft_ms: float
+    tpot_ms: float
+    e2el_ms: float
+
+
+class SeqCombo(_Forbid):
+    # `name` is the join key the `runs` selector references.
+    name: str
+    isl: str
+    osl: str
+    goodput_slo: Optional[GoodputSlo] = None
+
+
+class Run(_Forbid):
+    # One sweep cell: a named combo run at a single concurrency.
+    combo: str
+    concurrency: int
+
+
+def validate_sweep_selector(combo_names, run_combo_refs):
+    """The sweep-selector rule: combo names unique, every run.combo names one.
+
+    Shared by the typed ``Sweep`` validator and pytest collection, which reads
+    raw JSON before the loader runs, so the two can never drift. Without it a
+    duplicate name silently shadows a combo and a typo'd ``run.combo`` is a
+    silently dropped cell.
+    """
+    counts = Counter(combo_names)
+    dupes = sorted(name for name, count in counts.items() if count > 1)
+    if dupes:
+        raise ValueError(f"duplicate sequence_combination names: {dupes}")
+    known = set(counts)
+    unknown = sorted({r for r in run_combo_refs if r not in known})
+    if unknown:
+        raise ValueError(f"run.combo names no sequence_combination: {unknown} (known: {sorted(known)})")
+
+
+class Sweep(_Forbid):
+    sequence_combinations: List[SeqCombo]
+    runs: List[Run]
+
+    @model_validator(mode="after")
+    def _check_runs_reference_known_combos(self):
+        validate_sweep_selector(
+            [c.name for c in self.sequence_combinations],
+            [r.combo for r in self.runs],
+        )
+        return self
+
+
+ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
+ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
+
+# MI300X MXFP4 MoE + A4W4 GEMM require Triton; aiter A4W4 is unsupported on gfx942.
+# atom.utils.envs treats only "1" as true; "true" is ignored.
+# gfx950 (MI355X) has native MXFP4; do not force the Triton fallback there.
+_MXFP4_TRITON_ENV = {
+    "ATOM_USE_TRITON_MOE": "1",
+    "ATOM_USE_TRITON_GEMM": "1",
+}
+_GFX942_ARCHES = frozenset({"mi3xx", "mi300x", "mi325x"})
+
+
+def merge_mxfp4_triton_env(precision, env, gpu_arch=""):
+    """Return server env with MXFP4 Triton defaults on gfx942 when unset."""
+    merged = dict(env or {})
+    if (precision or "").lower() != "mxfp4":
+        return merged
+    arch = (gpu_arch or "").strip().lower()
+    if not arch or arch in _GFX942_ARCHES:
+        for key, value in _MXFP4_TRITON_ENV.items():
+            merged.setdefault(key, value)
+    for key in _MXFP4_TRITON_ENV:
+        if str(merged.get(key, "")).lower() == "true":
+            merged[key] = "1"
+    return merged
+
+
+# Written by test_discover_topology / resolve_multinode_fabric, not user env.
+_IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.IGNORECASE)
+
+
+class AtomRoleServer(RoleServer):
+    # Extra CLI tokens for ``python -m atom.entrypoints.openai_server`` after
+    # ``--model`` / ``--server-port`` (e.g. ``-tp``, ``--kv_cache_dtype``).
+    atom_args: List[str] = []
+    # Extra CLI tokens appended to ``python3 -m sglang.launch_server`` (driver=sglang).
+    sglang_args: List[str] = []
+    # IB HCA devices for NCCL_IB_HCA (multinode only); absent or "auto" uses
+    # whatever ibv_devinfo -l reports.
+    ib_hca_devices: Union[Literal["auto"], List[str], None] = None
+    # Linux netdev for NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME on multinode
+    # runs; absent or "auto" is resolved at runtime from cluster IPs.
+    ib_netdev: Union[Literal["auto"], str, None] = None
+
+    @field_validator("ib_netdev", mode="after")
+    @classmethod
+    def _normalize_ib_netdev(cls, v):
+        raw = (v or "").strip()
+        if raw and raw.lower() != "auto" and _IB_HCA_NETDEV_RE.match(raw):
+            from cvs.lib import globals
+
+            globals.log.warning(
+                "roles.server.ib_netdev=%r looks like an IB HCA name; coercing to 'auto' "
+                "(socket netdev is discovered from cluster IPs at runtime)",
+                raw,
+            )
+            return "auto"
+        return v
+
+
+class AtomRoles(_Forbid):
+    server: AtomRoleServer = AtomRoleServer()
+
+
+class AtomParams(_Forbid):
+    # ``atom`` = standalone ATOM openai_server + benchmark_serving.
+    # ``vllm_atom`` = vLLM coordinator + ATOM local kernels (true multinode PP).
+    # ``vllm`` = interim ROCm vLLM uplift (vllm serve + vllm bench serve).
+    # ``sglang`` = SGLang coordinator (launch_server + bench_serving) for PP runs.
+    driver: Literal["atom", "vllm", "vllm_atom", "sglang"] = "vllm"
+    backend: str = "vllm"
+    base_url: str = "http://0.0.0.0"
+    port_no: str = "8000"
+    dataset_name: str = "random"
+    burstiness: str = "1.0"
+    seed: str = "0"
+    request_rate: str = "inf"
+    random_range_ratio: str = "0.8"
+    random_prefix_len: str = "0"
+    tensor_parallelism: str = "8"
+    tokenizer_mode: str = "auto"
+    percentile_metrics: str = "ttft,tpot,itl,e2el"
+    metric_percentiles: str = "95,99"
+    num_prompts: str = "1000"
+    max_model_length: str = "8192"
+    client_poll_count: str = "50"
+    client_poll_wait_time: str = "60"
+    client_initial_wait_s: str = "120"
+    server_precheck_wait_s: str = "30"
+    server_warmup_wait_s: str = "330"
+    server_poll_count: str = "60"
+    server_poll_wait_time: str = "60"
+    reuse_server_across_sweep: str = "false"
+    bench_max_failed_requests: str = "0"
+    bench_extra_args: str = ""
+    result_filename: str = "results"
+    nnodes: str = "1"
+    pipeline_parallel_size: str = "1"
+    master_addr: str = ""
+    master_port: str = "29501"
+    # Optional single-node reference output_throughput for scaling.efficiency_pct.
+    scaling_baseline_output_throughput: str = ""
+
+
+class AtomRunCard(_Forbid):
+    upstream_run_url: str = ""
+    atom_image_pin: str = ""
+    notes: str = ""
+
+
+class AtomVariantConfig(BaseVariantConfig):
+    """The view the ATOM suite runs, built from a validated ``AtomConfig``."""
+
+    framework: Literal["atom"]
+
+    gpu_arch: str
+    run_card: AtomRunCard = AtomRunCard()
+    roles: AtomRoles = AtomRoles()
+    params: AtomParams
+    sweep: Sweep
+    accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
+    mtp_quality: MtpQualityConfig = Field(default_factory=MtpQualityConfig)
+    quant_parity: QuantParityConfig = Field(default_factory=QuantParityConfig)
+    functional: FunctionalConfig = Field(default_factory=FunctionalConfig)
+    long_context_accuracy: LongContextAccuracyConfig = Field(default_factory=LongContextAccuracyConfig)
+    platform: PlatformConfig = Field(default_factory=PlatformConfig)
+
+    def cell_key(self, isl, osl, concurrency):
+        p = self.params
+        return f"ISL={isl},OSL={osl},TP={p.tensor_parallelism},PP={p.pipeline_parallel_size},CONC={concurrency}"
+
+    def expected_cells(self):
+        by_name = {c.name: c for c in self.sweep.sequence_combinations}
+        return [self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency) for r in self.sweep.runs]
+
+
+class AtomBlock(_Forbid):
+    # atom: ATOM openai_server and benchmark_serving. vllm and vllm_atom: vllm
+    # serve and vllm bench serve on ATOM kernels. sglang: SGLang launch_server
+    # and bench_serving.
+    driver: Literal["atom", "vllm", "vllm_atom", "sglang"] = "vllm"
+
+
+class AtomConfig(InferenceConfig):
+    """An ATOM config: the shared inference blocks plus the ``atom`` block."""
+
+    # dp is derived from nnodes for the atom driver; disaggregated serving and
+    # the long-context server flags have no ATOM code path.
+    not_implemented = (
+        "server_params.dp",
+        "server_params.ep",
+        "server_params.prefill_nnodes",
+        "server_params.long_context",
+    )
+
+    atom: AtomBlock
+
+    @model_validator(mode="after")
+    def _check_atom(self):
+        for key, overrides in self.sweeps.items():
+            if overrides:
+                raise ValueError(f"sweeps.{key}: per-cell overrides are not implemented for AtomConfig")
+        server = self.server_params
+        driver = self.atom.driver
+        nnodes = server.nnodes or 1
+        if driver == "atom" and nnodes > 1 and server.pp > 1:
+            raise ValueError(
+                "atom.driver 'atom' with nnodes > 1 uses ATOM SPMD data parallel (-dp); standalone ATOM "
+                "cannot run pipeline parallel. For pp > 1 use atom.driver 'vllm_atom' or 'sglang'."
+            )
+        if driver in ATOM_PP_DRIVERS:
+            is_ray = server.engine_args.get("distributed_executor_backend") == "ray"
+            if nnodes > 1 and server.pp == 1 and not is_ray:
+                raise ValueError(
+                    f"atom.driver {driver!r} with server_params.nnodes {nnodes} needs server_params.pp > 1 "
+                    "for multinode pipeline parallel"
+                )
+            if server.pp > 1 and nnodes == 1:
+                raise ValueError(
+                    f"server_params.pp {server.pp} > 1 needs server_params.nnodes > 1 for atom.driver {driver!r}"
+                )
+        self._check_atom_thresholds(nnodes)
+        return self
+
+    def _check_atom_thresholds(self, nnodes):
+        if not self.threshold_json.strip():
+            return
+        from cvs.lib.inference.atom.atom_parsing import GATED_METRICS
+
+        cells = self.thresholds.cells()
+        problems = []
+        missing = [key for key in self.runs if key not in cells]
+        if missing:
+            problems.append(f"runs missing from the threshold file: {missing}")
+        gaps = {key: sorted(GATED_METRICS - set(cells[key])) for key in self.runs if key in cells}
+        gaps = {key: absent for key, absent in gaps.items() if absent}
+        if gaps:
+            problems.append(f"cells missing gated-metric specs: {gaps}")
+        if nnodes > 1 and self.benchmark_params.scaling_baseline_output_throughput is not None:
+            no_scaling = [key for key in self.runs if "scaling.efficiency_pct" not in cells.get(key, {})]
+            if no_scaling:
+                problems.append(
+                    "a multinode config with scaling_baseline_output_throughput needs "
+                    f"scaling.efficiency_pct in every run cell; missing: {no_scaling}"
+                )
+        if not problems:
+            return
+        message = "threshold file does not cover the runs; " + "; ".join(problems)
+        if self.enforce_thresholds:
+            raise ValueError(message)
+        warnings.warn(f"{message} (enforce_thresholds=false -> record-only)", stacklevel=2)
+
+
+# ---------- old ATOM config layouts ----------
+
+_ATOM_PROFILE_SHARED_KEYS = frozenset({"schema_version", "framework", "gpu_arch", "paths", "model", "threshold_json"})
+_ATOM_OLD_KINDS = {"max_ms": "max", "min_tok_s": "min"}
+_ATOM_THRESHOLD_SECTIONS = ("lm_eval", "custom_eval", "quant_parity", "mtp_quality")
+_ATOM_DEAD_SERVING_SERVER = (
+    "log_level",
+    "max_concurrency",
+    "memory_fraction",
+    "tokenizer_mode",
+    "inference_poll_iterations",
+    "benchmark_serv_node",
+    "server_node_list",
+    "master_addr",
+)
+# Serving configs never passed these to the run, so they are dropped rather than moved.
+_ATOM_DEAD_SERVING_BENCH = (
+    "backend",
+    "reuse_server_across_sweep",
+    "model_num_params",
+    "peak_gpu_tflops",
+    "seed",
+    "request_rate",
+    "burstiness",
+    "random_prefix_len",
+    "tokenizer_mode",
+    "client_initial_wait_s",
+    "bench_extra_args",
+    "percentile_metrics",
+    "bench_max_failed_requests",
+    "result_filename",
+)
+# Params with one working value: dropped at it, and unmapped otherwise.
+_ATOM_FIXED_PARAMS = {
+    "backend": "vllm",
+    "base_url": "http://0.0.0.0",
+    "dataset_name": "random",
+    "percentile_metrics": "ttft,tpot,itl,e2el",
+    "metric_percentiles": "95,99",
+    "result_filename": "results",
+    "bench_max_failed_requests": "0",
+}
+_ATOM_SERVER_TIMING = {
+    "server_precheck_wait_s": 30,
+    "server_warmup_wait_s": 330,
+    "server_poll_count": 60,
+    "server_poll_wait_time": 60,
+}
+_ATOM_TP_FLAGS = ("-tp", "--tensor-parallel-size")
+
+
+def _at(config, path, default=None):
+    value = _get_config_path(config, _config_path_parts(path))
+    return default if value is _MISSING else value
+
+
+def _atom_int(value, path):
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        raise ValueError(f"{path} must be an integer") from None
+
+
+def _atom_float(value, path):
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        raise ValueError(f"{path} must be a number") from None
+
+
+def _atom_request_rate(value, path):
+    text = str(value).strip()
+    return text if text.lower() == "inf" else _atom_float(text, path)
+
+
+def atom_flag_tokens_to_args(tokens, section):
+    """Turn ``["--flag", "value", "--bare"]`` into ``{"flag": "value", "bare": True}``.
+
+    Names become snake_case, a repeated flag becomes a list, and errors name
+    the token's position only, never its text.
+    """
+    args = {}
+    tokens = [str(token) for token in tokens or []]
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if not token.startswith("--") or len(token) == 2:
+            raise ValueError(f"{section}[{index}] is not a --flag; write each flag as --name [value]")
+        name, value = token[2:], True
+        if "=" in name:
+            name, value = name.split("=", 1)
+        elif index + 1 < len(tokens) and not tokens[index + 1].startswith("--"):
+            value = tokens[index + 1]
+            index += 1
+        key = name.replace("-", "_")
+        if key in args:
+            previous = args[key]
+            args[key] = [*(previous if isinstance(previous, list) else [previous]), value]
+        else:
+            args[key] = value
+        index += 1
+    return args
+
+
+def _atom_split_tp(tokens, section):
+    rest, tp = [], None
+    tokens = [str(token) for token in tokens or []]
+    index = 0
+    while index < len(tokens):
+        if tokens[index] in _ATOM_TP_FLAGS and index + 1 < len(tokens):
+            tp = _atom_int(tokens[index + 1], f"{section}[{index + 1}]")
+            index += 2
+            continue
+        rest.append(tokens[index])
+        index += 1
+    return rest, tp
+
+
+def _atom_serve_args(serve_args):
+    return {str(flag).lstrip("-").replace("-", "_"): value for flag, value in serve_args.items() if value is not False}
+
+
+def _resolve_serving_driver(backend):
+    backend = str(backend).lower()
+    if backend in ("vllm", "vllm_atom"):
+        return "vllm_atom"
+    if backend in ("sglang", "atom"):
+        return backend
+    raise ValueError("server_params.backend must be one of vllm, vllm_atom, sglang or atom")
+
+
+def _atom_cell_keys_from_sweep(sweep, tp, pp):
+    combos = {combo.get("name"): combo for combo in sweep.get("sequence_combinations") or []}
+    keys = []
+    for run in sweep.get("runs") or []:
+        combo = combos.get(run.get("combo"))
+        if combo is None:
+            raise ValueError("sweep.runs names a combo missing from sweep.sequence_combinations")
+        keys.append(f"ISL={combo['isl']},OSL={combo['osl']},TP={tp},PP={pp},CONC={run['concurrency']}")
+    return keys
+
+
+def _atom_run_rows(config, thresholds, tp, pp, rows):
+    sweep = config.get("sweep")
+    if isinstance(sweep, dict) and "sequence_combinations" in sweep:
+        if any(isinstance(c, dict) and c.get("goodput_slo") for c in sweep["sequence_combinations"]):
+            rows["sweep"] = OLD_KEY_UNMAPPED
+            return
+        keys = _atom_cell_keys_from_sweep(sweep, tp, pp)
+        rows["sweep"] = OldKey("runs", value=keys, conflict="replace")
+    else:
+        items = sweep.get("runs") if isinstance(sweep, dict) and "runs" in sweep else config.get("runs")
+        keys = [item if isinstance(item, str) else str(item.get("combo")) for item in items or []]
+        if isinstance(sweep, dict):
+            rows["sweep"] = OLD_KEY_DROPPED
+        if not keys:
+            keys = [key for key in config.get("sweeps") or {} if str(key).startswith("ISL=")]
+        if not keys:
+            keys = [key for key in thresholds or {} if str(key).startswith("ISL=")]
+        if keys != config.get("runs"):
+            rows["runs"] = OldKey("runs", value=keys, conflict="replace")
+    for key, overrides in (config.get("sweeps") or {}).items():
+        for flag in overrides or {}:
+            rows[("sweeps", key, flag)] = OLD_KEY_DROPPED
+    for key in keys:
+        if key not in (config.get("sweeps") or {}):
+            rows[("sweeps", key)] = OldKey(("sweeps", key), value={})
+
+
+def _atom_env_rows(config, gpu_arch, env_paths, ib_prefix, rows):
+    env = dict(_at(config, "container.env") or {})
+    for path in env_paths:
+        env.update(_at(config, path) or {})
+    sources = [path for path in env_paths if _at(config, path) is not None]
+    precision = _at(config, "model.precision")
+    if precision is not None:
+        with_triton = merge_mxfp4_triton_env(precision, env, gpu_arch=gpu_arch)
+        if with_triton != env:
+            env = with_triton
+            sources.append("model.precision")
+        else:
+            rows["model.precision"] = OLD_KEY_DROPPED
+    hcas = _at(config, f"{ib_prefix}.ib_hca_devices")
+    if isinstance(hcas, list):
+        env.setdefault("NCCL_IB_HCA", ",".join(str(hca) for hca in hcas))
+        sources.append(f"{ib_prefix}.ib_hca_devices")
+    elif hcas is not None:
+        rows[f"{ib_prefix}.ib_hca_devices"] = OLD_KEY_DROPPED
+    netdev = str(_at(config, f"{ib_prefix}.ib_netdev") or "").strip()
+    if netdev and netdev.lower() != "auto" and not _IB_HCA_NETDEV_RE.match(netdev):
+        for name in ("NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"):
+            env.setdefault(name, netdev)
+        sources.append(f"{ib_prefix}.ib_netdev")
+    elif _at(config, f"{ib_prefix}.ib_netdev") is not None:
+        rows[f"{ib_prefix}.ib_netdev"] = OLD_KEY_DROPPED
+    for path in sources:
+        rows[path] = OldKey("container.env", value=env, conflict="replace")
+
+
+def _atom_engine_rows(config, driver, sources, tp, rows):
+    """``sources`` maps a driver group to its old server-flag path."""
+    group = "vllm" if driver in ("vllm", "vllm_atom") else driver
+    for name, path in sources.items():
+        value = _at(config, path)
+        if value is None:
+            continue
+        if name != group:
+            rows[path] = OLD_KEY_DROPPED
+            continue
+        if isinstance(value, dict):
+            args = _atom_serve_args(value)
+        else:
+            tokens = value
+            if name == "atom":
+                tokens, flag_tp = _atom_split_tp(value, path)
+                if flag_tp is not None and flag_tp != tp:
+                    raise ValueError(
+                        f"{path} sets -tp {flag_tp}, which differs from the config's tensor parallel size {tp}"
+                    )
+            args = atom_flag_tokens_to_args(tokens, path)
+        rows[path] = OldKey("server_params.engine_args", value=args, conflict="replace")
+
+
+def _atom_timeout_rows(config, server_paths, client_paths, client_defaults, always_client, rows):
+    server = {}
+    present = []
+    for name, default in _ATOM_SERVER_TIMING.items():
+        paths = [path for path in server_paths[name] if _at(config, path) is not None]
+        server[name] = _atom_int(_at(config, paths[0]), paths[0]) if paths else default
+        present.extend(paths)
+    if present:
+        total = server["server_precheck_wait_s"] + server["server_warmup_wait_s"]
+        total += server["server_poll_count"] * server["server_poll_wait_time"]
+        for path in present:
+            rows[path] = OldKey("timeouts.server_ready_s", value=total, conflict="replace")
+    client = {}
+    client_present = []
+    for name, default in client_defaults.items():
+        path = client_paths.get(name)
+        if path is not None and _at(config, path) is not None:
+            client[name] = _atom_int(_at(config, path), path)
+            client_present.append(path)
+        else:
+            client[name] = default
+    if client_present or always_client:
+        total = client["client_initial_wait_s"] + client["client_poll_count"] * client["client_poll_wait_time"]
+        for path in client_present or [client_paths["client_poll_count"]]:
+            rows[path] = OldKey("timeouts.client_s", value=total, conflict="replace")
+
+
+def _atom_fixed_row(config, path, working_value):
+    value = _at(config, path)
+    return OLD_KEY_DROPPED if value is None or str(value).strip() == working_value else OLD_KEY_UNMAPPED
+
+
+def _atom_common_rows(config, gpu_arch, serving, rows):
+    rows["schema_version"] = OLD_KEY_DROPPED
+    framework = config.get("framework")
+    rows["framework"] = OLD_KEY_DROPPED if serving or framework in (None, "atom") else OLD_KEY_UNMAPPED
+    if "gpu_arch" in config:
+        rows["gpu_arch"] = OLD_KEY_DROPPED if str(config["gpu_arch"]).strip() == gpu_arch else OLD_KEY_UNMAPPED
+    if isinstance(config.get("model"), dict):
+        rows["model"] = OLD_KEY_DROPPED
+        if _at(config, "model.id"):
+            rows["model.id"] = OldKey("server_params.model", conflict="replace")
+        if "remote" in config["model"]:
+            rows["model.remote"] = OLD_KEY_DROPPED if str(config["model"]["remote"]) == "0" else OLD_KEY_UNMAPPED
+    for name in ("functional", "platform", "run_card"):
+        rows[name] = OLD_KEY_DROPPED
+    if _at(config, "accuracy.tasks") is not None:
+        rows["accuracy.tasks"] = "accuracy.lm_eval.tasks"
+    cells = _at(config, "long_context_accuracy.cells")
+    if "long_context_accuracy" in config:
+        rows["long_context_accuracy"] = OLD_KEY_DROPPED
+    if cells is not None:
+        niah = [{**cell, "type": "niah"} for cell in cells]
+        rows["long_context_accuracy.cells"] = OldKey("accuracy.custom_eval", value=niah)
+    rows["quant_parity"] = "accuracy.quant_parity"
+    rows["mtp_quality"] = OLD_KEY_DROPPED if serving else "accuracy.mtp_quality"
+
+
+def _atom_params_rows(config, gpu_arch, thresholds, rows):
+    params = config.get("params") or {}
+    rows["params"] = OLD_KEY_DROPPED
+    rows["roles"] = OLD_KEY_DROPPED
+
+    def move(name, new_path, convert, default=_MISSING):
+        path = f"params.{name}"
+        if name in params:
+            rows[path] = OldKey(new_path, value=convert(params[name], path))
+        elif default is not _MISSING:
+            rows[path] = OldKey(new_path, value=default)
+
+    driver = params.get("driver", "vllm")
+    tp = _atom_int(params.get("tensor_parallelism", "8"), "params.tensor_parallelism")
+    pp = _atom_int(params.get("pipeline_parallel_size", "1"), "params.pipeline_parallel_size")
+    move("driver", "atom.driver", lambda value, path: value, default=driver)
+    move("tensor_parallelism", "server_params.tp", _atom_int, default=tp)
+    move("pipeline_parallel_size", "server_params.pp", _atom_int)
+    move("nnodes", "server_params.nnodes", _atom_int)
+    move("port_no", "server_params.port", _atom_int, default=8000)
+    move("master_port", "server_params.master_port", _atom_int)
+    move("max_model_length", "server_params.max_model_length", _atom_int)
+    move("num_prompts", "benchmark_params.num_prompts", _atom_int, default=1000)
+    move("random_range_ratio", "benchmark_params.random_range_ratio", _atom_float, default=0.8)
+    move("seed", "benchmark_params.seed", _atom_int)
+    move("request_rate", "benchmark_params.request_rate", _atom_request_rate)
+    move("burstiness", "benchmark_params.burstiness", _atom_float)
+    move("random_prefix_len", "benchmark_params.random_prefix_len", _atom_int)
+    move("tokenizer_mode", "benchmark_params.tokenizer_mode", lambda value, path: str(value))
+    for name in ("master_addr", "reuse_server_across_sweep"):
+        if name in params:
+            rows[f"params.{name}"] = OLD_KEY_DROPPED
+    for name, working_value in _ATOM_FIXED_PARAMS.items():
+        if name in params:
+            rows[f"params.{name}"] = _atom_fixed_row(config, f"params.{name}", working_value)
+    baseline = str(params.get("scaling_baseline_output_throughput", "")).strip()
+    if baseline:
+        move("scaling_baseline_output_throughput", "benchmark_params.scaling_baseline_output_throughput", _atom_float)
+    elif "scaling_baseline_output_throughput" in params:
+        rows["params.scaling_baseline_output_throughput"] = OLD_KEY_DROPPED
+    extra = str(params.get("bench_extra_args", "")).strip()
+    if extra:
+        import shlex
+
+        args = atom_flag_tokens_to_args(shlex.split(extra), "params.bench_extra_args")
+        rows["params.bench_extra_args"] = OldKey("benchmark_params.client_args", value=args)
+    elif "bench_extra_args" in params:
+        rows["params.bench_extra_args"] = OLD_KEY_DROPPED
+
+    sources = {
+        "atom": "roles.server.atom_args",
+        "sglang": "roles.server.sglang_args",
+        "vllm": "roles.server.serve_args",
+    }
+    _atom_engine_rows(config, driver, sources, tp, rows)
+    _atom_env_rows(config, gpu_arch, ("roles.server.env", "container.runtime.args.env"), "roles.server", rows)
+    timing = {name: [f"params.{name}"] for name in _ATOM_SERVER_TIMING}
+    client_paths = {
+        name: f"params.{name}" for name in ("client_initial_wait_s", "client_poll_count", "client_poll_wait_time")
+    }
+    client_defaults = {"client_initial_wait_s": 120, "client_poll_count": 50, "client_poll_wait_time": 60}
+    _atom_timeout_rows(config, timing, client_paths, client_defaults, False, rows)
+    _atom_run_rows(config, thresholds, tp, pp, rows)
+
+
+def _atom_serving_rows(config, gpu_arch, thresholds, rows):
+    server = config.get("server_params") or {}
+    bench = config.get("benchmark_params") or {}
+
+    def move(path, new_path, convert, default=_MISSING):
+        value = _at(config, path)
+        if value is not None:
+            rows[path] = OldKey(new_path, value=convert(value, path), conflict="replace")
+        elif default is not _MISSING:
+            rows[path] = OldKey(new_path, value=default, conflict="replace")
+
+    driver = _resolve_serving_driver(server.get("backend", "atom"))
+    tp = _atom_int(server.get("tensor_parallelism", "8"), "server_params.tensor_parallelism")
+    pp = _atom_int(server.get("pipeline_parallelism", "1"), "server_params.pipeline_parallelism")
+    rows["server_params.backend"] = OldKey("atom.driver", value=driver)
+    move("server_params.tensor_parallelism", "server_params.tp", _atom_int, default=tp)
+    move("server_params.pipeline_parallelism", "server_params.pp", _atom_int)
+    move("server_params.nnodes", "server_params.nnodes", _atom_int)
+    port_path = (
+        "server_params.proxy_router_serv_port" if "proxy_router_serv_port" in server else "server_params.port_no"
+    )
+    port = _atom_int(_at(config, port_path, "8000"), port_path)
+    for path in ("server_params.proxy_router_serv_port", "server_params.port_no"):
+        if _at(config, path) is not None or path == port_path:
+            rows[path] = OldKey("server_params.port", value=port, conflict="replace")
+    master_path = "server_params.master_port" if server.get("master_port") else "server_params.dist_init_port"
+    if server.get("master_port") or server.get("dist_init_port"):
+        master_port = _atom_int(_at(config, master_path), master_path)
+        for path in ("server_params.master_port", "server_params.dist_init_port"):
+            if _at(config, path) is not None:
+                rows[path] = OldKey("server_params.master_port", value=master_port, conflict="replace")
+    length_path = (
+        "server_params.context_length" if server.get("context_length") else "benchmark_params.max_model_length"
+    )
+    if server.get("context_length") or bench.get("max_model_length"):
+        length = _atom_int(_at(config, length_path), length_path)
+        for path in ("server_params.context_length", "benchmark_params.max_model_length"):
+            if _at(config, path) is not None:
+                rows[path] = OldKey("server_params.max_model_length", value=length, conflict="replace")
+    if _at(config, "model.id") and "model" in server:
+        rows["server_params.model"] = OLD_KEY_DROPPED
+    for name in _ATOM_DEAD_SERVING_SERVER:
+        if name in server:
+            rows[f"server_params.{name}"] = OLD_KEY_DROPPED
+    for name in _ATOM_DEAD_SERVING_BENCH:
+        if name in bench:
+            rows[f"benchmark_params.{name}"] = OLD_KEY_DROPPED
+    if "data_set_name" in bench:
+        rows["benchmark_params.data_set_name"] = _atom_fixed_row(config, "benchmark_params.data_set_name", "random")
+    if "metric_percentiles" in bench:
+        rows["benchmark_params.metric_percentiles"] = _atom_fixed_row(
+            config, "benchmark_params.metric_percentiles", "95,99"
+        )
+    move("benchmark_params.num_prompts", "benchmark_params.num_prompts", _atom_int, default=1000)
+    move("benchmark_params.random_range_ratio", "benchmark_params.random_range_ratio", _atom_float, default=0.8)
+    if str(bench.get("scaling_baseline_output_throughput", "")).strip():
+        move(
+            "benchmark_params.scaling_baseline_output_throughput",
+            "benchmark_params.scaling_baseline_output_throughput",
+            _atom_float,
+        )
+    elif "scaling_baseline_output_throughput" in bench:
+        rows["benchmark_params.scaling_baseline_output_throughput"] = OLD_KEY_DROPPED
+    if "enforce_thresholds" not in config:
+        rows["enforce_thresholds"] = OldKey("enforce_thresholds", value=False)
+
+    sources = {"sglang": "server_params.add_flags", "vllm": "server_params.serve_args"}
+    _atom_engine_rows(config, driver, sources, tp, rows)
+    _atom_env_rows(config, gpu_arch, ("server_params.env", "container.runtime.args.env"), "server_params", rows)
+    timing = {name: [f"server_params.{name}", f"benchmark_params.{name}"] for name in _ATOM_SERVER_TIMING}
+    client_paths = {
+        "client_poll_count": "benchmark_params.client_poll_count",
+        "client_poll_wait_time": "benchmark_params.client_poll_wait_time",
+    }
+    client_defaults = {"client_initial_wait_s": 120, "client_poll_count": 80, "client_poll_wait_time": 60}
+    _atom_timeout_rows(config, timing, client_paths, client_defaults, True, rows)
+    _atom_run_rows(config, thresholds, tp, pp, rows)
+
+
+def _select_atom_profile(config, profile):
+    profiles = config["profiles"]
+    selected = (profile or config.get("default_profile") or "").strip()
+    known = ", ".join(sorted(profiles))
+    if not selected:
+        raise ValueError(f"multi-profile config requires --config_profile or default_profile (known: {known})")
+    if selected not in profiles:
+        raise ValueError(f"unknown config profile {selected!r} (known: {known})")
+    body = profiles[selected]
+    rows = {"profiles": OLD_KEY_DROPPED}
+    for key in config:
+        if key not in _ATOM_PROFILE_SHARED_KEYS and not key.startswith("_"):
+            rows[key] = OLD_KEY_DROPPED
+    for key in body:
+        if key == "threshold_profile":
+            rows[("profiles", selected, key)] = OLD_KEY_DROPPED
+        else:
+            rows[("profiles", selected, key)] = OldKey((key,), conflict="replace")
+    flat, message = resolve_old_keys(config, rows, message="{keys}")
+    return flat, message, (body.get("threshold_profile") or selected).strip()
+
+
+def _map_kinds(specs):
+    if not isinstance(specs, dict):
+        return specs
+    mapped = {}
+    for name, spec in specs.items():
+        if isinstance(spec, dict) and spec.get("kind") in _ATOM_OLD_KINDS:
+            spec = {**spec, "kind": _ATOM_OLD_KINDS[spec["kind"]]}
+        mapped[name] = spec
+    return mapped
+
+
+def _resolve_old_atom_thresholds(thresholds, threshold_profile, runs):
+    messages = []
+    if isinstance(thresholds.get("profiles"), dict):
+        profiles = thresholds["profiles"]
+        if threshold_profile not in profiles:
+            known = ", ".join(sorted(profiles))
+            raise ValueError(f"threshold file has no profile {threshold_profile!r} (known: {known})")
+        rows = {key: OLD_KEY_DROPPED for key in thresholds}
+        for key in profiles[threshold_profile]:
+            rows[("profiles", threshold_profile, key)] = OldKey((key,), conflict="replace")
+        thresholds, message = resolve_old_keys(thresholds, rows, message="{keys}")
+        messages.append(message)
+    rows = {}
+    for key, cell in thresholds.items():
+        if not str(key).startswith("ISL="):
+            continue
+        if runs is not None and key not in runs:
+            rows[(key,)] = OLD_KEY_DROPPED
+        elif _map_kinds(cell) != cell:
+            rows[(key,)] = OldKey((key,), value=_map_kinds(cell), conflict="replace")
+    accuracy = thresholds.get("accuracy")
+    if isinstance(accuracy, dict) and not set(accuracy) <= set(_ATOM_THRESHOLD_SECTIONS):
+        for task_id, specs in accuracy.items():
+            rows[("accuracy", task_id)] = OldKey(("accuracy", "lm_eval", task_id), value=_map_kinds(specs))
+    if "long_context_accuracy" in thresholds:
+        custom = {cell_id: _map_kinds(specs) for cell_id, specs in thresholds["long_context_accuracy"].items()}
+        rows[("long_context_accuracy",)] = OldKey(("accuracy", "custom_eval"), value=custom)
+    for section in ("quant_parity", "mtp_quality"):
+        if section in thresholds:
+            rows[(section,)] = OldKey(("accuracy", section), value=_map_kinds(thresholds[section]))
+    thresholds, message = resolve_old_keys(thresholds, rows, message="{keys}")
+    messages.append(message)
+    return thresholds, "; ".join(message for message in messages if message) or None
+
+
+def resolve_old_atom_config(config, thresholds, gpu_arch, profile=None):
+    """Convert an ATOM config and threshold file of an older release into ``AtomConfig``'s shape.
+
+    ``gpu_arch`` comes from the config file name and ``profile`` selects one
+    profile of a profiles-layout file. Returns the config, the thresholds and
+    one message naming every old key, or ``None`` when neither file holds one.
+    A config with an ``atom`` block is already current; only old names in its
+    threshold file are converted.
+    """
+    thresholds = thresholds or {}
+    if "atom" in config:
+        if profile:
+            raise ValueError("--config_profile applies only to old profiles-layout ATOM configs")
+        thresholds, threshold_message = _resolve_old_atom_thresholds(thresholds, "perf", None)
+        return config, thresholds, threshold_message and f"threshold file: {threshold_message}"
+
+    messages = []
+    threshold_profile = (profile or "perf").strip()
+    if isinstance(config.get("profiles"), dict) and config["profiles"]:
+        config, message, threshold_profile = _select_atom_profile(config, profile)
+        messages.append(message)
+    elif profile and "server_params" in config:
+        raise ValueError("serving-schema atom configs do not support --config_profile")
+
+    rows = {}
+    serving = "server_params" in config and "params" not in config
+    _atom_common_rows(config, gpu_arch, serving, rows)
+    if serving:
+        _atom_serving_rows(config, gpu_arch, thresholds, rows)
+    else:
+        _atom_params_rows(config, gpu_arch, thresholds, rows)
+    config, message = resolve_old_keys(config, rows, label="ATOM config", message="{keys}")
+    messages.append(message)
+
+    thresholds, threshold_message = _resolve_old_atom_thresholds(thresholds, threshold_profile, config.get("runs"))
+    if threshold_message:
+        messages.append(f"threshold file: {threshold_message}")
+    return config, thresholds, "; ".join(message for message in messages if message)
