@@ -4976,7 +4976,7 @@ def _atom_serving_rows(config, gpu_arch, thresholds, rows):
     _atom_run_rows(config, thresholds, tp, pp, rows)
 
 
-def _select_atom_profile(config, profile):
+def _atom_select_profile(config, profile):
     profiles = config["profiles"]
     selected = (profile or config.get("default_profile") or "").strip()
     known = ", ".join(sorted(profiles))
@@ -5010,7 +5010,7 @@ def _atom_map_kinds(specs, counts):
     return mapped
 
 
-def _resolve_old_atom_thresholds(thresholds, threshold_profile, runs):
+def _atom_resolve_old_thresholds(thresholds, threshold_profile, runs):
     messages = []
     if isinstance(thresholds.get("profiles"), dict):
         profiles = thresholds["profiles"]
@@ -5050,7 +5050,7 @@ def _resolve_old_atom_thresholds(thresholds, threshold_profile, runs):
     return thresholds, "; ".join(message for message in messages if message) or None
 
 
-def _is_old_atom_config(config):
+def _atom_is_old_config(config):
     if "atom" in config:
         return False
     server = config.get("server_params") if isinstance(config.get("server_params"), dict) else {}
@@ -5070,20 +5070,20 @@ def resolve_old_atom_config(config, thresholds, gpu_arch, profile=None):
     threshold file are converted.
     """
     thresholds = thresholds or {}
-    if not _is_old_atom_config(config):
+    if not _atom_is_old_config(config):
         if profile:
             raise ValueError("--config_profile applies only to old profiles-layout ATOM configs")
         if "profiles" in thresholds:
             raise ValueError(
                 "a threshold file with profiles needs an old profiles-layout config; give each config its own threshold file"
             )
-        thresholds, threshold_message = _resolve_old_atom_thresholds(thresholds, None, None)
+        thresholds, threshold_message = _atom_resolve_old_thresholds(thresholds, None, None)
         return config, thresholds, threshold_message and f"threshold file: {threshold_message}"
 
     messages = []
     threshold_profile = (profile or "perf").strip()
     if isinstance(config.get("profiles"), dict) and config["profiles"]:
-        config, message, threshold_profile = _select_atom_profile(config, profile)
+        config, message, threshold_profile = _atom_select_profile(config, profile)
         messages.append(message)
     elif profile and "server_params" in config:
         raise ValueError("serving-schema atom configs do not support --config_profile")
@@ -5098,7 +5098,7 @@ def resolve_old_atom_config(config, thresholds, gpu_arch, profile=None):
     config, message = resolve_old_keys(config, rows, label="ATOM config", message="{keys}")
     messages.append(message)
 
-    thresholds, threshold_message = _resolve_old_atom_thresholds(thresholds, threshold_profile, config.get("runs"))
+    thresholds, threshold_message = _atom_resolve_old_thresholds(thresholds, threshold_profile, config.get("runs"))
     if threshold_message:
         messages.append(f"threshold file: {threshold_message}")
     return config, thresholds, "; ".join(message for message in messages if message)

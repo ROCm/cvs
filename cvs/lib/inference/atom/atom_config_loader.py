@@ -16,7 +16,6 @@ import json
 import math
 import re
 import shlex
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +33,7 @@ from cvs.parsers.schemas import (
     AtomRunCard,
     AtomVariantConfig,
     ContainerEnvTokenError,
+    OLD_KEYS_QUIET,
     MtpQualityConfig,
     QuantParityConfig,
     merge_mxfp4_triton_env,
@@ -41,6 +41,7 @@ from cvs.parsers.schemas import (
     resolve_old_atom_config,
     validate_sweep_selector,
     validation_problem_lines,
+    warn_old_keys,
 )
 
 __all__ = [
@@ -264,19 +265,21 @@ def _config_gpu_arch(raw, config_path):
 
 
 def atom_config_from_raw(raw, thresholds, config_path, profile=None, context=None):
-    """Convert old keys with one ``FutureWarning`` and validate; returns ``(AtomConfig, gpu_arch)``."""
+    """Convert old keys and validate; returns ``(AtomConfig, gpu_arch)``.
+
+    Old keys raise one ``FutureWarning`` and log it once, unless ``context``
+    holds ``old_keys=OLD_KEYS_QUIET``.
+    """
     gpu_arch = _config_gpu_arch(raw, config_path)
     try:
         raw, thresholds, message = resolve_old_atom_config(raw, thresholds, gpu_arch, profile)
     except ValueError as exc:
         raise ValueError(f"{Path(config_path).name}: {exc}") from None
-    if message:
-        warnings.warn(
+    if message and (context or {}).get("old_keys") != OLD_KEYS_QUIET:
+        warn_old_keys(
             f"{Path(config_path).name} uses old ATOM config keys: {message}. Rewrite it in the current format "
             "(see the shipped configs in cvs/input/config_file/inference/atom); old keys will be removed in a "
-            "future release.",
-            FutureWarning,
-            stacklevel=3,
+            "future release."
         )
     try:
         config = AtomConfig.model_validate({**raw, "thresholds": thresholds}, context=context)
@@ -298,9 +301,7 @@ def collection_variant_raw(config_file, profile=None):
     """The view fields pytest collection parametrizes on, read before the cluster file is known."""
     config_path = Path(config_file)
     raw, thresholds = substitute_config(config_path, {})
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        config, gpu_arch = atom_config_from_raw(raw, thresholds, config_path, profile)
+    config, gpu_arch = atom_config_from_raw(raw, thresholds, config_path, profile, context={"old_keys": OLD_KEYS_QUIET})
     return atom_variant_raw(config, gpu_arch)
 
 

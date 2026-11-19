@@ -836,12 +836,21 @@ class TestLoadVariant(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             path = self._write(tmp, "mi3xx_atom_old.json", old)
-            with warnings.catch_warnings(record=True) as caught:
+            with (
+                warnings.catch_warnings(record=True) as caught,
+                self.assertLogs("cvs.parsers.schemas", "WARNING") as logs,
+            ):
                 warnings.simplefilter("always")
                 variant = load_variant(path, _cluster_dict())
+            with warnings.catch_warnings(record=True) as collected, self.assertNoLogs("cvs.parsers.schemas"):
+                warnings.simplefilter("always")
+                collection_variant_raw(path)
         future = [w for w in caught if w.category is FutureWarning]
         self.assertEqual(len(future), 1)
+        self.assertIn("mi3xx_atom_old.json uses old ATOM config keys", str(future[0].message))
         self.assertIn("params.port_no -> server_params.port", str(future[0].message))
+        self.assertEqual([record.getMessage() for record in logs.records], [str(future[0].message)])
+        self.assertEqual([w for w in collected if w.category is FutureWarning], [])
         self.assertEqual(variant.params.port_no, "8001")
         self.assertEqual(variant.roles.server.atom_args, ["-tp", "8"])
 
