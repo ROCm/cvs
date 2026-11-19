@@ -2778,6 +2778,16 @@ class SglangConfig(InferenceConfig):
         "accuracy.mtp_quality",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_old_keys(cls, data, info):
+        context = info.context or {}
+        data, message = resolve_old_sglang_keys(data)
+        if message and context.get("old_keys") != OLD_KEYS_QUIET:
+            where = context.get("config_path")
+            warn_old_keys(f"{where}: {message}" if where else message)
+        return data
+
     @model_validator(mode="after")
     def _check_lm_eval_options(self):
         for index, task in enumerate(self.accuracy.lm_eval.tasks):
@@ -3345,6 +3355,8 @@ def resolve_old_sglang_keys(config):
     the input and ``None`` when it holds no old key. The threshold specs'
     renames, the same in every cell, are summarized once.
     """
+    if not isinstance(config, dict):
+        return config, None
     rekey = _is_old_sglang_layout(config) or bool(_sglang_threshold_spec_rows(config, rekey=False))
     return _resolve_sglang_threshold_specs(
         config,

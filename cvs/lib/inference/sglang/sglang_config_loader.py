@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import warnings
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -36,6 +35,7 @@ from cvs.lib.inference.sglang.sglang_common import (
 from cvs.lib.utils.config_loader import substitute_config
 from cvs.lib.utils_lib import resolve_test_config_placeholders
 from cvs.parsers.schemas import (  # noqa: F401 - re-exported for the SGLang conftest and job classes
+    OLD_KEYS_QUIET,
     SGLANG_FIRST_POLL_WAIT_S,
     SGLANG_POLL_PERIOD_S,
     SGLANG_POLL_TOTAL_S,
@@ -48,6 +48,7 @@ from cvs.parsers.schemas import (  # noqa: F401 - re-exported for the SGLang con
     SglangSingleVariantConfig,
     resolve_old_sglang_keys,
     resolve_old_sglang_threshold_names,
+    warn_old_keys,
 )
 
 log = globals.log
@@ -681,21 +682,16 @@ def acc_cells_for_variant(variant):
     return cells
 
 
-def _warn_old_keys(message, config_path):
-    if message:
-        where = f"{config_path}: " if config_path else ""
-        warnings.warn(where + message, FutureWarning, stacklevel=3)
-
-
 def validate_sglang_config(raw, *, config_path="", warn=True):
-    """Resolve old keys, then validate ``raw`` (thresholds under ``thresholds``).
+    """Validate ``raw`` (thresholds under ``thresholds``), resolving old keys.
 
-    With ``warn``, an old config raises one ``FutureWarning`` naming the file.
+    With ``warn``, an old config raises one ``FutureWarning`` naming the file;
+    without it the load is quiet, as pytest collection needs.
     """
-    converted, message = resolve_old_sglang_keys(dict(raw))
-    if warn:
-        _warn_old_keys(message, config_path)
-    return SglangConfig.model_validate(converted, context={"placeholders": "reject"})
+    context = {"placeholders": "reject", "config_path": config_path}
+    if not warn:
+        context["old_keys"] = OLD_KEYS_QUIET
+    return SglangConfig.model_validate(dict(raw), context=context)
 
 
 def _load_legacy_variant(config_path, cluster_dict, warn):
@@ -716,8 +712,8 @@ def _load_legacy_variant(config_path, cluster_dict, warn):
 
     threshold_path = _resolve_threshold_path(threshold_path_str, config_path=path)
     thresholds, message = resolve_old_sglang_threshold_names(_load_thresholds_file(threshold_path))
-    if warn:
-        _warn_old_keys(message, config_path)
+    if warn and message:
+        warn_old_keys(f"{config_path}: {message}")
     log.info("Loaded thresholds from %s (%d cells)", threshold_path, len(thresholds))
     _inject_thresholds_into_bp_dict(bp, thresholds)
 

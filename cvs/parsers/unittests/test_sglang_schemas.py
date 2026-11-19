@@ -1,8 +1,14 @@
 import unittest
+import warnings
 
 from pydantic import ValidationError
 
-from cvs.parsers.schemas import SglangConfig, resolve_old_sglang_keys, resolve_old_sglang_threshold_names
+from cvs.parsers.schemas import (
+    OLD_KEYS_QUIET,
+    SglangConfig,
+    resolve_old_sglang_keys,
+    resolve_old_sglang_threshold_names,
+)
 from cvs.unittests.support import FAKE_CRED
 
 CELL = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=64"
@@ -82,6 +88,30 @@ class TestSglangConfig(unittest.TestCase):
         server = {"model": "m", "tp": 8, "max_model_length": 16384, "long_context": {"chunked_prefill_size": 8192}}
         config = SglangConfig.model_validate(_config(server_params=server, accuracy={"custom_eval": [niah]}))
         self.assertEqual(config.accuracy.custom_eval[0].isl, 8192)
+
+
+class TestSglangConfigOldKeys(unittest.TestCase):
+    def test_validating_an_old_config_warns_once_naming_the_file(self):
+        with warnings.catch_warnings(record=True) as caught, self.assertLogs("cvs.parsers.schemas", "WARNING") as logs:
+            warnings.simplefilter("always")
+            config = SglangConfig.model_validate(_old_config(), context={"config_path": "old.json"})
+        self.assertEqual(config.server_params.tp, 8)
+        self.assertEqual(len([w for w in caught if issubclass(w.category, FutureWarning)]), 1)
+        self.assertEqual(len(logs.records), 1)
+        self.assertTrue(logs.records[0].getMessage().startswith("old.json: Deprecated SGLang config keys"))
+
+    def test_a_quiet_load_converts_without_warning(self):
+        with warnings.catch_warnings(record=True) as caught, self.assertNoLogs("cvs.parsers.schemas"):
+            warnings.simplefilter("always")
+            config = SglangConfig.model_validate(_old_config(), context={"old_keys": OLD_KEYS_QUIET})
+        self.assertEqual(config.server_params.tp, 8)
+        self.assertEqual([w for w in caught if issubclass(w.category, FutureWarning)], [])
+
+    def test_a_new_config_neither_warns_nor_logs(self):
+        with warnings.catch_warnings(record=True) as caught, self.assertNoLogs("cvs.parsers.schemas"):
+            warnings.simplefilter("always")
+            SglangConfig.model_validate(_config())
+        self.assertEqual(caught, [])
 
 
 class TestResolveOldSglangKeys(unittest.TestCase):

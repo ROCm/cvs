@@ -320,10 +320,14 @@ class TestRuntimeViews(unittest.TestCase):
         old = _new_config()
         old['server_params'] = {'model': '/models/model', 'tensor_parallelism': '8', 'memory_fraction': '0.85'}
         old_thresholds = {CELL: {'output_throughput_per_sec': {'kind': 'min_tok_s', 'value': 900}}}
-        with warnings.catch_warnings(record=True) as caught:
+        with warnings.catch_warnings(record=True) as caught, self.assertLogs('cvs.parsers.schemas', 'WARNING') as logs:
             warnings.simplefilter('always')
             variant = _load(old, old_thresholds)
         self.assertEqual([w.category for w in caught], [FutureWarning])
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn('config.json: Deprecated SGLang config keys', logs.records[0].getMessage())
+        self.assertIn('server_params.tensor_parallelism -> server_params.tp', str(caught[0].message))
+        self.assertIn('metric output_throughput_per_sec -> output_throughput', str(caught[0].message))
         self.assertEqual(variant.benchmark_params['memory_fraction'], '0.85')
         self.assertEqual(variant.thresholds[CELL], {'output_throughput': {'kind': 'min', 'value': 900.0}})
         with warnings.catch_warnings(record=True) as caught:
@@ -334,7 +338,7 @@ class TestRuntimeViews(unittest.TestCase):
     def test_an_old_config_loaded_without_warn_raises_no_warning(self):
         old = _new_config()
         old['server_params'] = {'model': '/models/model', 'tensor_parallelism': '8'}
-        with warnings.catch_warnings(record=True) as caught:
+        with warnings.catch_warnings(record=True) as caught, self.assertNoLogs('cvs.parsers.schemas'):
             warnings.simplefilter('always')
             with tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / 'config.json'
