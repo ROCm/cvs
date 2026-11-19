@@ -2809,7 +2809,7 @@ _SGLANG_MASTER_PORT = 40001
 SGLANG_FIRST_POLL_WAIT_S = 60
 SGLANG_POLL_PERIOD_S = 90
 _SGLANG_POLL_ITERATIONS = 16
-_SGLANG_POLL_TOTAL_S = 3600
+SGLANG_POLL_TOTAL_S = 3600
 # LongContextNiahBenchmark defaults; a long_ctx_niah option at its default has
 # nothing to keep, any other value has no shared key.
 _SGLANG_NIAH_OPTION_DEFAULTS = {
@@ -3017,15 +3017,31 @@ def _sglang_engine_arg_rows(config):
 
 
 def _sglang_client_timeout_rows(config):
+    """The client poll keys as ``timeouts.client_s``, when that carries them exactly.
+
+    ``client_s`` gives the poll count and keeps main's 3600 s total, so only
+    the default total with at most 40 polls carries over; any other pair is
+    refused rather than reshaped, so a long wait is never shortened.
+    """
     server = config.get("server_params")
     names = ("inference_poll_iterations", "inference_poll_total_timeout_sec")
     present = [name for name in names if isinstance(server, dict) and name in server]
     if not present:
         return {}
     polls = _sglang_whole_number(f"server_params.{names[0]}", server.get(names[0], _SGLANG_POLL_ITERATIONS))
-    cap = _sglang_whole_number(f"server_params.{names[1]}", server.get(names[1], _SGLANG_POLL_TOTAL_S))
-    client_s = SGLANG_FIRST_POLL_WAIT_S + min(polls * SGLANG_POLL_PERIOD_S, cap)
-    rows = {f"server_params.{present[0]}": OldKey("timeouts.client_s", value=client_s)}
+    cap = _sglang_whole_number(f"server_params.{names[1]}", server.get(names[1], SGLANG_POLL_TOTAL_S))
+    unmapped = {}
+    if cap != SGLANG_POLL_TOTAL_S:
+        unmapped[f"server_params.{names[1]}"] = OLD_KEY_UNMAPPED
+    if not 0 < polls * SGLANG_POLL_PERIOD_S <= SGLANG_POLL_TOTAL_S:
+        unmapped[f"server_params.{names[0]}"] = OLD_KEY_UNMAPPED
+    if unmapped:
+        return unmapped
+    rows = {
+        f"server_params.{present[0]}": OldKey(
+            "timeouts.client_s", value=SGLANG_FIRST_POLL_WAIT_S + polls * SGLANG_POLL_PERIOD_S
+        )
+    }
     rows.update({f"server_params.{name}": OLD_KEY_DROPPED for name in present[1:]})
     return rows
 
@@ -3161,7 +3177,7 @@ def _threshold_spec_summary(config, rows):
     parts += [f"cell {old} (dropped)" for old, new in cells.items() if new == "dropped"]
     rekeyed = sorted({new.split(",", 2)[2].rsplit(",", 1)[0] for new in cells.values() if new != "dropped"})
     parts += [f"cells keyed by {axes}" for axes in rekeyed]
-    return f"threshold specs: {', '.join(parts)}"
+    return f"Threshold specs: {', '.join(parts)}"
 
 
 def _old_value_is(value, default):
@@ -3294,44 +3310,72 @@ SGLANG_OLD_KEY_RULES = (
 )
 
 
+def _sglang_threshold_cell_rows(config, spec_rows):
+    """One row per threshold cell for ``spec_rows``, so the warning names cells, not every spec."""
+    thresholds = config.get("thresholds") if isinstance(config.get("thresholds"), dict) else {}
+    cells = dict.fromkeys(path[1] for path in spec_rows)
+    rows = {}
+    for cell in cells:
+        new_key, new_cell, moved = cell, {}, False
+        for metric, spec in thresholds[cell].items():
+            row = spec_rows.get(("thresholds", cell, metric))
+            if row is OLD_KEY_DROPPED:
+                moved = True
+            elif row is None:
+                new_cell[metric] = spec
+            else:
+                new_key, moved = row.new_path[1], True
+                new_cell[row.new_path[-1]] = row.value
+        if moved:
+            rows[("thresholds", cell)] = OldKey(("thresholds", new_key), value=new_cell)
+        else:
+            rows[("thresholds", cell)] = spec_rows[("thresholds", cell)]
+    return rows
+
+
+def _resolve_sglang_threshold_specs(config, table, rules, rekey, combos, message, label):
+    spec_rows = _sglang_threshold_spec_rows(config, rekey=rekey, combos=combos)
+    summary = f" {_threshold_spec_summary(config, spec_rows)}." if spec_rows else ""
+    cell_rows = _sglang_threshold_cell_rows(config, spec_rows)
+    return resolve_old_keys(
+        config,
+        table,
+        (*rules, lambda _: cell_rows),
+        message=message.replace("{summary}", summary),
+        label=label,
+    )
+
+
 def resolve_old_sglang_keys(config):
     """Map an SGLang config from before the shared names onto ``SglangConfig``.
 
     ``config`` holds its threshold file under ``thresholds``. Returns the
     converted config and one ``FutureWarning`` message naming each old key, or
-    the input and ``None`` when it holds no old key. Threshold specs, renamed
-    in every cell alike, are summarized once rather than named per cell.
+    the input and ``None`` when it holds no old key. The threshold specs'
+    renames, the same in every cell, are summarized once.
     """
-    converted, keys = resolve_old_keys(
-        config, SGLANG_OLD_KEYS, SGLANG_OLD_KEY_RULES, message="{keys}", label="SGLang config"
-    )
-    rekey = _is_old_sglang_layout(config) or bool(_sglang_threshold_spec_rows(converted, rekey=False))
-    combos = _old_run_combos(config)
-    spec_rows = _sglang_threshold_spec_rows(converted, rekey=rekey, combos=combos)
-    changes = [keys] if keys else []
-    if spec_rows:
-        changes.append(_threshold_spec_summary(converted, spec_rows))
-        converted, _ = resolve_old_keys(
-            converted,
-            {},
-            (lambda value: _sglang_threshold_spec_rows(value, rekey=rekey, combos=combos),),
-            label="SGLang threshold file",
-        )
-    if not changes:
-        return config, None
-    return converted, (
-        f"Deprecated SGLang config keys: {', '.join(changes)}. "
-        "Use the shared inference names; old keys will be removed in a future release."
+    rekey = _is_old_sglang_layout(config) or bool(_sglang_threshold_spec_rows(config, rekey=False))
+    return _resolve_sglang_threshold_specs(
+        config,
+        SGLANG_OLD_KEYS,
+        SGLANG_OLD_KEY_RULES,
+        rekey,
+        _old_run_combos(config),
+        message="Deprecated SGLang config keys: {keys}.{summary} "
+        "Use the shared inference names; old keys will be removed in a future release.",
+        label="SGLang config",
     )
 
 
 def resolve_old_sglang_threshold_names(thresholds):
     """Old metric names and kinds in a threshold file read on its own, keeping its cell keys."""
-    converted, message = resolve_old_keys(
+    converted, message = _resolve_sglang_threshold_specs(
         {"thresholds": thresholds},
         {},
-        (lambda value: _sglang_threshold_spec_rows(value, rekey=False),),
-        message="Deprecated SGLang threshold names: {keys}. Use the shared inference names.",
+        (),
+        False,
+        (),
+        message="Deprecated SGLang threshold names: {keys}.{summary} Use the shared inference names.",
         label="SGLang threshold file",
     )
     return converted["thresholds"], message

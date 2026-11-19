@@ -166,7 +166,9 @@ def pytest_generate_tests(metafunc):
 
     if "perf_cell" not in metafunc.fixturenames and "acc_cell" not in metafunc.fixturenames:
         return
-    variant = load_variant(config_file, _cluster_dict_for_collection(metafunc), _suite_topology(metafunc.module))
+    variant = load_variant(
+        config_file, _cluster_dict_for_collection(metafunc), _suite_topology(metafunc.module), warn=False
+    )
 
     if "perf_cell" in metafunc.fixturenames:
         cells = perf_cells_for_variant(variant)

@@ -273,7 +273,12 @@ class TestRuntimeViews(unittest.TestCase):
         self.assertNotIn('inference_poll_iterations', params)
 
     def test_client_s_gives_the_poll_count_and_wait_of_the_old_keys(self):
-        for client_s, polls, total in ((1500, '16', '1530'), (3660, '40', '3690'), (100, '1', '180')):
+        for client_s, polls, total in (
+            (1500, '16', '3600'),
+            (3660, '40', '3600'),
+            (100, '1', '3600'),
+            (4000, '44', '4030'),
+        ):
             with self.subTest(client_s=client_s):
                 params = _load(_new_config(timeouts={'client_s': client_s})).benchmark_params
                 self.assertEqual(params['inference_poll_iterations'], polls)
@@ -325,6 +330,19 @@ class TestRuntimeViews(unittest.TestCase):
             warnings.simplefilter('always')
             _load(_new_config())
         self.assertEqual(caught, [])
+
+    def test_an_old_config_loaded_without_warn_raises_no_warning(self):
+        old = _new_config()
+        old['server_params'] = {'model': '/models/model', 'tensor_parallelism': '8'}
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / 'config.json'
+                path.write_text(json.dumps(old), encoding='utf-8')
+                (Path(tmp) / 'threshold.json').write_text(json.dumps(_NEW_THRESHOLDS), encoding='utf-8')
+                variant = loader.load_variant(str(path), {'username': 'test'}, warn=False)
+        self.assertEqual(caught, [])
+        self.assertEqual(variant.benchmark_params['tensor_parallelism'], '8')
 
     def test_an_unknown_server_key_fails_naming_it(self):
         server = {**_new_config()['server_params'], 'client_host': 'node1'}

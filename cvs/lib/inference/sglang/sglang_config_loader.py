@@ -38,6 +38,7 @@ from cvs.lib.utils_lib import resolve_test_config_placeholders
 from cvs.parsers.schemas import (  # noqa: F401 - re-exported for the SGLang conftest and job classes
     SGLANG_FIRST_POLL_WAIT_S,
     SGLANG_POLL_PERIOD_S,
+    SGLANG_POLL_TOTAL_S,
     SglangAccuracy,
     SglangAccuracyTask,
     SglangConfig,
@@ -290,7 +291,7 @@ def _inject_thresholds_into_bp_dict(
 
 def load_perf_cells_for_collection(config_file: str) -> list[dict[str, Any]]:
     """Collection-time loader (no fixtures yet)."""
-    variant = load_variant(config_file, cluster_dict={})
+    variant = load_variant(config_file, cluster_dict={}, warn=False)
     cells = perf_cells_for_variant(variant)
     if not cells:
         raise ValueError(f"No selected ISL=... performance cells for {config_file!r}")
@@ -532,14 +533,16 @@ def _threshold_cells_view(config):
 def _client_poll_view(client_s):
     """The poll count that gives ``client_s``, the inverse of the old-key rule.
 
-    The total wait keeps one poll period of slack, so the time each log fetch
-    takes never drops the last poll.
+    The total stays main's 3600 s default up to 40 polls; past that it is one
+    poll period beyond the polls, so the time each log fetch takes never drops
+    the last poll.
     """
     polling = max(client_s - SGLANG_FIRST_POLL_WAIT_S, SGLANG_POLL_PERIOD_S)
-    return {
-        "inference_poll_iterations": str(-(-polling // SGLANG_POLL_PERIOD_S)),
-        "inference_poll_total_timeout_sec": str(polling + SGLANG_POLL_PERIOD_S),
-    }
+    polls = -(-polling // SGLANG_POLL_PERIOD_S)
+    total = (
+        SGLANG_POLL_TOTAL_S if polls * SGLANG_POLL_PERIOD_S <= SGLANG_POLL_TOTAL_S else polling + SGLANG_POLL_PERIOD_S
+    )
+    return {"inference_poll_iterations": str(polls), "inference_poll_total_timeout_sec": str(total)}
 
 
 def _runtime_views(config):
@@ -682,17 +685,20 @@ def _warn_old_keys(message, config_path):
     if message:
         where = f"{config_path}: " if config_path else ""
         warnings.warn(where + message, FutureWarning, stacklevel=3)
-        log.warning("%s%s", where, message)
 
 
-def validate_sglang_config(raw, *, config_path=""):
-    """Resolve old keys with one ``FutureWarning``, then validate ``raw`` (thresholds under ``thresholds``)."""
+def validate_sglang_config(raw, *, config_path="", warn=True):
+    """Resolve old keys, then validate ``raw`` (thresholds under ``thresholds``).
+
+    With ``warn``, an old config raises one ``FutureWarning`` naming the file.
+    """
     converted, message = resolve_old_sglang_keys(dict(raw))
-    _warn_old_keys(message, config_path)
+    if warn:
+        _warn_old_keys(message, config_path)
     return SglangConfig.model_validate(converted, context={"placeholders": "reject"})
 
 
-def _load_legacy_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> SglangSingleVariantConfig:
+def _load_legacy_variant(config_path, cluster_dict, warn):
     path = Path(config_path)
     with open(path, encoding="utf-8") as fp:
         root = json.load(fp)
@@ -710,7 +716,8 @@ def _load_legacy_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> S
 
     threshold_path = _resolve_threshold_path(threshold_path_str, config_path=path)
     thresholds, message = resolve_old_sglang_threshold_names(_load_thresholds_file(threshold_path))
-    _warn_old_keys(message, config_path)
+    if warn:
+        _warn_old_keys(message, config_path)
     log.info("Loaded thresholds from %s (%d cells)", threshold_path, len(thresholds))
     _inject_thresholds_into_bp_dict(bp, thresholds)
 
@@ -758,10 +765,10 @@ def _infer_topology(config):
     return "distributed" if (config.server_params.nnodes or 1) > 1 else "single"
 
 
-def _load_unified_variant(config_path, cluster_dict, topology):
+def _load_unified_variant(config_path, cluster_dict, topology, warn):
     raw, thresholds = substitute_config(config_path, cluster_dict)
     raw = resolve_test_config_placeholders(raw, cluster_dict)
-    config = validate_sglang_config({**raw, "thresholds": thresholds}, config_path=str(config_path))
+    config = validate_sglang_config({**raw, "thresholds": thresholds}, config_path=str(config_path), warn=warn)
     topology = topology or _infer_topology(config)
 
     inference, benchmark_params, server = _runtime_views(config)
@@ -801,11 +808,13 @@ def _load_unified_variant(config_path, cluster_dict, topology):
     )
 
 
-def load_variant(config_path, cluster_dict, topology=None):
+def load_variant(config_path, cluster_dict, topology=None, warn=True):
     """Load and validate an SGLang config and its thresholds.
 
     ``topology`` is ``single``, ``distributed`` or ``disaggregated``, from the
     test module; without it, ``server_params.nnodes`` above 1 means distributed.
+    Collection passes ``warn=False``, so an old config warns once, on the
+    fixture's load.
     """
     path = Path(config_path)
     if not path.is_file():
@@ -815,6 +824,6 @@ def load_variant(config_path, cluster_dict, topology=None):
         peek = json.load(fp)
 
     if _is_legacy_root(peek):
-        return _load_legacy_variant(config_path, cluster_dict)
+        return _load_legacy_variant(config_path, cluster_dict, warn)
 
-    return _load_unified_variant(config_path, cluster_dict, topology)
+    return _load_unified_variant(config_path, cluster_dict, topology, warn)

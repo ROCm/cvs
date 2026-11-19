@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
-- vLLM and SGLang config and threshold files use the shared inference key names given in their configuration references. Files with the old names still load and log one `FutureWarning` that lists each old key and its new name; rename them before the old names are removed. An old SGLang key whose value has no shared place, such as a non-default `long_ctx_niah` option, fails and names the key.
+- vLLM and SGLang config and threshold files use the shared inference key names given in their configuration references. Files with the old names still load and log one `FutureWarning` that lists each old key and its new name; rename them before the old names are removed. An old SGLang key whose value has no shared place fails and names the key: for example a non-default `long_ctx_niah` option, or a client wait that `timeouts.client_s` can't carry exactly (an `inference_poll_total_timeout_sec` other than 3600, or more than 40 `inference_poll_iterations`); set `timeouts.client_s` instead.
 
 ### Fixed
 
