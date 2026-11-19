@@ -2,7 +2,7 @@ import unittest
 
 from pydantic import ValidationError
 
-from cvs.parsers.schemas import SglangConfig, resolve_old_sglang_keys
+from cvs.parsers.schemas import SglangConfig, resolve_old_sglang_keys, resolve_old_sglang_threshold_names
 from cvs.unittests.support import FAKE_CRED
 
 CELL = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=64"
@@ -238,6 +238,7 @@ class TestResolveOldSglangKeys(unittest.TestCase):
                 "ISL=1024,OSL=1024,TP=8,PP=1,CONC=8": {"output_throughput": {"kind": "min", "value": 3}},
             },
         )
+        SglangConfig.model_validate(converted)
         self.assertIn(f"cell {other} (dropped)", message)
         self.assertIn("cells keyed by TP=8,PP=1", message)
 
@@ -248,13 +249,94 @@ class TestResolveOldSglangKeys(unittest.TestCase):
         self.assertEqual(converted["runs"], [CELL, second])
         self.assertEqual(converted["sweeps"][second], {})
 
-    def test_a_run_missing_from_sweeps_takes_the_override_of_its_shape(self):
-        run = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64"
+    def test_sweeps_and_runs_take_the_config_tp_and_pp(self):
+        run = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=64"
+        own = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64"
         old = _old_config(
-            {"pipeline_parallelism": "2"}, sweeps={CELL: {"num_prompts": 8}}, sweep={"runs": [{"combo": run}]}
+            {"pipeline_parallelism": "2"}, sweeps={run: {"num_prompts": 8}}, sweep={"runs": [{"combo": run}]}
         )
         converted, _ = resolve_old_sglang_keys(old)
-        self.assertEqual(converted["sweeps"][run], {"num_prompts": 8})
+        self.assertEqual(converted["sweeps"], {own: {"num_prompts": 8}})
+        self.assertEqual(converted["runs"], [own])
+        SglangConfig.model_validate(converted)
+
+    def test_empty_or_missing_sweep_runs_every_threshold_cell_at_the_config_tp_and_pp(self):
+        thresholds = {CELL: {"output_throughput_per_sec": {"kind": "min_tok_s", "value": 1}}}
+        own = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64"
+        for overrides in ({"sweep": {"runs": []}}, {}):
+            with self.subTest(overrides=overrides):
+                old = _old_config({"pipeline_parallelism": "2"}, thresholds=thresholds, **overrides)
+                old.pop("sweeps")
+                if not overrides:
+                    old.pop("sweep")
+                converted, _ = resolve_old_sglang_keys(old)
+                self.assertEqual(converted["runs"], [own])
+                self.assertEqual(converted["sweeps"], {own: {}})
+                self.assertEqual(list(converted["thresholds"]), [own])
+                SglangConfig.model_validate(converted)
+
+    def test_a_new_config_with_one_old_key_keeps_its_ports_and_env(self):
+        config = _config(gpu_name="mi300")
+        config["container"]["env"] = {"KEEP": "1"}
+        converted, message = resolve_old_sglang_keys(config)
+        self.assertNotIn("port", converted["server_params"])
+        self.assertNotIn("master_port", converted["server_params"])
+        self.assertEqual(converted["container"]["env"], {"KEEP": "1"})
+        self.assertEqual(message.count("->") + message.count("(dropped)"), 1)
+
+    def test_runtime_env_merges_into_an_existing_container_env(self):
+        old = _old_config(server={"env": {"FROM_SERVER": "2"}})
+        old["container"]["env"] = {"KEEP": "1"}
+        old["container"]["runtime"]["args"]["env"] = {"OLD": "3", "HUGGING_FACE_HUB_TOKEN": FAKE_CRED}
+        converted, message = resolve_old_sglang_keys(old)
+        self.assertEqual(converted["container"]["env"], {"KEEP": "1", "OLD": "3", "FROM_SERVER": "2"})
+        self.assertNotIn(FAKE_CRED, message)
+        SglangConfig.model_validate(converted)
+
+    def test_add_flags_as_a_string_or_with_an_equals_sign(self):
+        for flags in ("--context-length=4096", ["--context-length 4096"]):
+            with self.subTest(flags=flags):
+                converted, _ = resolve_old_sglang_keys(_old_config({"add_flags": flags}))
+                self.assertEqual(converted["server_params"]["engine_args"], {"context_length": 4096})
+
+    def test_a_flag_value_that_is_not_exactly_a_number_stays_a_string(self):
+        converted, _ = resolve_old_sglang_keys(_old_config({"add_flags": ["--cuda-graph-bs 08", "--x 1e3"]}))
+        self.assertEqual(converted["server_params"]["engine_args"], {"cuda_graph_bs": "08", "x": "1e3"})
+
+    def test_a_poll_count_that_is_not_a_number_names_the_key(self):
+        with self.assertRaisesRegex(ValueError, "server_params.inference_poll_iterations must be a whole number"):
+            resolve_old_sglang_keys(_old_config({"inference_poll_iterations": "many"}))
+
+    def test_an_unknown_niah_option_is_refused_by_name(self):
+        server = {"lng_ctx_activate": True, "context_length": "131072", "chunked_prefill_size": "8192"}
+        with self.assertRaisesRegex(ValueError, "long_ctx_niah.extra_option"):
+            resolve_old_sglang_keys(_old_config(server, long_ctx_niah={"extra_option": 1}))
+
+    def test_an_lm_eval_option_with_no_shared_key_is_refused_unless_at_its_default(self):
+        task = {"id": "lm_eval_gsm8k", "tasks": "gsm8k", "tolerance_frac": 0.05, "label": "gsm8k"}
+        converted, _ = resolve_old_sglang_keys(_old_config(accuracy={"tasks": [task]}))
+        self.assertEqual(converted["accuracy"]["lm_eval"]["tasks"], [{"id": "lm_eval_gsm8k", "tasks": "gsm8k"}])
+        with self.assertRaisesRegex(ValueError, r"accuracy.tasks\[0\].tolerance_frac"):
+            resolve_old_sglang_keys(_old_config(accuracy={"tasks": [{**task, "tolerance_frac": 0.2}]}))
+
+    def test_a_new_threshold_file_is_not_rekeyed_for_a_new_config(self):
+        other = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64"
+        config = _config(thresholds={other: {"output_throughput": {"kind": "min", "value": 1}}})
+        converted, message = resolve_old_sglang_keys(config)
+        self.assertIs(converted, config)
+        self.assertIsNone(message)
+
+    def test_a_spec_without_a_kind_is_left_for_validation(self):
+        thresholds = {CELL: {"output_throughput_per_sec": {"value": 1}}}
+        converted, _ = resolve_old_sglang_keys(_old_config(thresholds=thresholds))
+        self.assertEqual(converted["thresholds"][CELL], {"output_throughput": {"value": 1}})
+
+    def test_a_threshold_file_read_alone_keeps_its_cell_keys(self):
+        other = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64"
+        thresholds = {other: {"mean_e2e_latency_ms": {"kind": "max_ms", "value": 5}}, "BENCH=lm_eval_gsm8k": {}}
+        converted, message = resolve_old_sglang_threshold_names(thresholds)
+        self.assertEqual(converted, {other: {"mean_e2el_ms": {"kind": "max", "value": 5}}, "BENCH=lm_eval_gsm8k": {}})
+        self.assertIn("mean_e2e_latency_ms", message)
 
 
 if __name__ == "__main__":

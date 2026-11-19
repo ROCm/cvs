@@ -46,13 +46,14 @@ from cvs.parsers.schemas import (  # noqa: F401 - re-exported for the SGLang con
     SglangRoleServer,
     SglangSingleVariantConfig,
     resolve_old_sglang_keys,
+    resolve_old_sglang_threshold_names,
 )
 
 log = globals.log
 
 _LEGACY_FRAMEWORK = "sglang_single"
-_UNIFIED_FRAMEWORK = "sglang_single"
 
+_LEGACY_ACC_CELL_RE = re.compile(r"^ACC_ISL=(\d+),OSL=(\d+)$")
 _PERF_CELL_RE = re.compile(r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$")
 
 
@@ -497,7 +498,7 @@ def _view_number(value):
     return int(value) if isinstance(value, float) and value.is_integer() else value
 
 
-def engine_args_to_flags(engine_args: Mapping[str, Any]) -> list[str]:
+def engine_args_to_flags(engine_args):
     """``launch_server`` flag lines for ``server_params.engine_args``; ``True`` writes a bare flag."""
     flags = []
     for name, value in engine_args.items():
@@ -511,7 +512,7 @@ def engine_args_to_flags(engine_args: Mapping[str, Any]) -> list[str]:
     return flags
 
 
-def _lm_eval_task_view(task) -> dict[str, Any]:
+def _lm_eval_task_view(task):
     view = {
         key: _view_number(value)
         for key, value in task.model_dump(exclude_unset=True, exclude={"id", "task", "backend"}).items()
@@ -521,23 +522,27 @@ def _lm_eval_task_view(task) -> dict[str, Any]:
     return view
 
 
-def _threshold_cells_view(config: SglangConfig) -> dict[str, dict[str, dict[str, Any]]]:
+def _threshold_cells_view(config):
     return {
         key: {metric: spec.model_dump(exclude_defaults=True) for metric, spec in cell.items()}
         for key, cell in config.thresholds.cells().items()
     }
 
 
-def _client_poll_view(client_s: int) -> dict[str, str]:
-    """The poll count and total wait that give ``client_s``, the inverse of the old-key rule."""
-    total = max(client_s - SGLANG_FIRST_POLL_WAIT_S, SGLANG_POLL_PERIOD_S)
+def _client_poll_view(client_s):
+    """The poll count that gives ``client_s``, the inverse of the old-key rule.
+
+    The total wait keeps one poll period of slack, so the time each log fetch
+    takes never drops the last poll.
+    """
+    polling = max(client_s - SGLANG_FIRST_POLL_WAIT_S, SGLANG_POLL_PERIOD_S)
     return {
-        "inference_poll_iterations": str(-(-total // SGLANG_POLL_PERIOD_S)),
-        "inference_poll_total_timeout_sec": str(total),
+        "inference_poll_iterations": str(-(-polling // SGLANG_POLL_PERIOD_S)),
+        "inference_poll_total_timeout_sec": str(polling + SGLANG_POLL_PERIOD_S),
     }
 
 
-def _runtime_views(config: SglangConfig) -> tuple[dict, dict, dict]:
+def _runtime_views(config):
     """Build the ``inference``, ``benchmark_params`` and ``roles.server`` dicts the job classes read."""
     server = config.server_params
     runtime_args = config.container.runtime.args.model_dump()
@@ -552,13 +557,13 @@ def _runtime_views(config: SglangConfig) -> tuple[dict, dict, dict]:
         "random_range_ratio": _view_number(config.benchmark_params.random_range_ratio),
         "enforce_thresholds": config.enforce_thresholds,
     }
-    inference_tests: dict[str, dict[str, Any]] = {"bench_serv_random": benchmark}
+    inference_tests = {"bench_serv_random": benchmark}
     if config.accuracy.custom_eval:
         inference_tests["long_ctx_niah"] = {}
     for task in config.accuracy.lm_eval.tasks:
         inference_tests[task.id] = _lm_eval_task_view(task)
 
-    params: dict[str, Any] = {
+    params = {
         "model": server.model,
         "tensor_parallelism": str(server.tp),
         "pipeline_parallelism": str(server.pp),
@@ -584,7 +589,7 @@ def _runtime_views(config: SglangConfig) -> tuple[dict, dict, dict]:
     if add_export_env:
         params["add_export_env"] = add_export_env
 
-    inference: dict[str, Any] = {
+    inference = {
         "container_image": config.container.image,
         "container_name": config.container.name,
         "container_lifetime": config.container.lifetime,
@@ -625,7 +630,7 @@ def _runtime_views(config: SglangConfig) -> tuple[dict, dict, dict]:
     return inference, params, role_server
 
 
-def _inject_typed_accuracy_thresholds(bp_dict: dict[str, Any], config: SglangConfig) -> None:
+def _inject_typed_accuracy_thresholds(bp_dict, config):
     inference_tests = bp_dict["inference_tests"]
     for task_id, specs in config.thresholds.accuracy.lm_eval.items():
         if task_id not in inference_tests:
@@ -637,10 +642,20 @@ def _inject_typed_accuracy_thresholds(bp_dict: dict[str, Any], config: SglangCon
         log.info("Loaded accuracy thresholds for %r", task_id)
 
 
-def acc_cells_for_variant(variant: SglangSingleVariantConfig) -> list[dict[str, Any]]:
-    """One cell per ``niah`` eval, with its threshold specs and run options."""
+def acc_cells_for_variant(variant):
+    """One cell per ``niah`` eval, with its threshold specs and run options.
+
+    A legacy-layout variant has no validated config; its cells are the
+    ``ACC_ISL=<n>,OSL=<n>`` sections of its threshold file.
+    """
     if variant.config is None:
-        return []
+        niah = (variant.benchmark_params.get("inference_tests") or {}).get("long_ctx_niah") or {}
+        options = {"num_prompts": niah.get("num_prompts", 16), "seed": niah.get("seed", 42)}
+        return [
+            {"cell_key": key, "id": key, "isl": match.group(1), "osl": match.group(2), **options, "specs": specs}
+            for key, specs in sorted(variant.thresholds.items(), key=lambda item: str(item[0]))
+            if (match := _LEGACY_ACC_CELL_RE.match(str(key)))
+        ]
     cells = []
     for niah in variant.config.accuracy.custom_eval:
         specs = variant.config.thresholds.accuracy.custom_eval.get(niah.id, {})
@@ -658,13 +673,17 @@ def acc_cells_for_variant(variant: SglangSingleVariantConfig) -> list[dict[str, 
     return cells
 
 
-def validate_sglang_config(raw: Mapping[str, Any], *, config_path: str = "") -> SglangConfig:
-    """Resolve old keys with one ``FutureWarning``, then validate ``raw`` (thresholds under ``thresholds``)."""
-    converted, message = resolve_old_sglang_keys(dict(raw))
+def _warn_old_keys(message, config_path):
     if message:
         where = f"{config_path}: " if config_path else ""
-        warnings.warn(where + message, FutureWarning, stacklevel=2)
+        warnings.warn(where + message, FutureWarning, stacklevel=3)
         log.warning("%s%s", where, message)
+
+
+def validate_sglang_config(raw, *, config_path=""):
+    """Resolve old keys with one ``FutureWarning``, then validate ``raw`` (thresholds under ``thresholds``)."""
+    converted, message = resolve_old_sglang_keys(dict(raw))
+    _warn_old_keys(message, config_path)
     return SglangConfig.model_validate(converted, context={"placeholders": "reject"})
 
 
@@ -685,7 +704,8 @@ def _load_legacy_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> S
         raise ValueError(f"benchmark_params[{variant_key!r}] missing 'threshold_file' in {config_path!r}")
 
     threshold_path = _resolve_threshold_path(threshold_path_str, config_path=path)
-    thresholds = _load_thresholds_file(threshold_path)
+    thresholds, message = resolve_old_sglang_threshold_names(_load_thresholds_file(threshold_path))
+    _warn_old_keys(message, config_path)
     log.info("Loaded thresholds from %s (%d cells)", threshold_path, len(thresholds))
     _inject_thresholds_into_bp_dict(bp, thresholds)
 
@@ -729,13 +749,11 @@ def _load_legacy_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> S
     return SglangSingleVariantConfig(**raw)
 
 
-def _infer_topology(config: SglangConfig) -> str:
+def _infer_topology(config):
     return "distributed" if (config.server_params.nnodes or 1) > 1 else "single"
 
 
-def _load_unified_variant(
-    config_path: str, cluster_dict: Mapping[str, Any], topology: str | None
-) -> SglangSingleVariantConfig:
+def _load_unified_variant(config_path, cluster_dict, topology):
     raw, thresholds = substitute_config(config_path, cluster_dict)
     raw = resolve_test_config_placeholders(raw, cluster_dict)
     config = validate_sglang_config({**raw, "thresholds": thresholds}, config_path=str(config_path))
@@ -778,9 +796,7 @@ def _load_unified_variant(
     )
 
 
-def load_variant(
-    config_path: str, cluster_dict: Mapping[str, Any], topology: str | None = None
-) -> SglangSingleVariantConfig:
+def load_variant(config_path, cluster_dict, topology=None):
     """Load and validate an SGLang config and its thresholds.
 
     ``topology`` is ``single``, ``distributed`` or ``disaggregated``, from the

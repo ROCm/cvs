@@ -550,20 +550,6 @@ def _is_sglang_latency_metric(metric_name: str) -> bool:
     return 'ms' in name or 'latency' in name
 
 
-def _is_sglang_higher_is_better_metric(metric_name: str) -> bool:
-    if _is_sglang_latency_metric(metric_name):
-        return False
-    name = metric_name.lower()
-    return any(
-        token in name
-        for token in (
-            'throughput',
-            'goodput',
-            'request_throughput',
-        )
-    )
-
-
 def normalize_sglang_threshold_spec(metric_name: str, spec: Any) -> dict[str, Any]:
     """Map threshold JSON specs (or legacy flat floats) to evaluate_all kinds."""
     if isinstance(spec, dict) and spec.get('kind'):

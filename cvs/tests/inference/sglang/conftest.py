@@ -363,7 +363,10 @@ def gpu_type(request, orch, variant_config):
         probe_node = prefill_nodes[0] if isinstance(prefill_nodes, list) else prefill_nodes
         smi_out_dict = orch.all.exec("rocm-smi -a | head -30")
         smi_out = smi_out_dict.get(probe_node) or next(iter(smi_out_dict.values()))
-    return get_model_from_rocm_smi_output(smi_out)
+    model = get_model_from_rocm_smi_output(smi_out)
+    # The run card's GPU row; SGLang configs carry no GPU label.
+    variant_config.gpu_arch = variant_config.gpu_arch or model
+    return model
 
 
 @pytest.fixture(scope="module")

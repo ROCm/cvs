@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The shipped MORI config sets `mori_dir` to `/home/{user-id}/INSTALL/mori` and `container.lifetime` to `persistent`, so `install_mori` works with it as shipped. It also mounts the host Broadcom Thor2 `libbnxt_re-rdmav34.so` and `libibverbs.so.1`; delete those mounts on nodes without Thor2.
 
-- SGLang configs use the shared inference names, such as `server_params.tp`, `server_params.engine_args`, `timeouts.client_s`, `accuracy.lm_eval.tasks` and `runs`, and are checked at load: an unknown key or a shared field SGLang does not run fails, naming the field. The suite's test module picks single, distributed or disaggregated, and each shipped distributed config has its own threshold file.
+- SGLang configs use the shared inference names, such as `server_params.tp`, `server_params.engine_args`, `timeouts.client_s`, `accuracy.lm_eval.tasks` and `runs`, and are checked at load: an unknown key or a shared field SGLang does not run fails, naming the field. The suite's test module picks single, distributed or disaggregated, and each shipped distributed config has its own threshold file. An omitted `server_params.port` or `master_port` takes the shared default, 8888 or 29501, where SGLang used 8000 and 40001; shipped configs set both. The long-context stage runs the `niah` evals in `accuracy.custom_eval` in place of `server_params.lng_ctx_activate`, and the run card shows the detected GPU in place of `gpu_name`.
 - SGLang threshold files use the kinds `min`, `max` and `info` and the shared metric names, which SGLang results and Run Decks now report: `output_throughput`, `request_throughput`, `per_gpu_throughput`, `completed`, `duration`, `total_output_tokens` and `*_e2el_ms` replace `output_throughput_per_sec`, `request_throughput_per_sec`, `output_throughput_per_gpu_per_sec`, `successful_requests`, `benchmark_duration`, `total_generated_tokens` and `*_e2e_latency_ms`.
 
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.
@@ -42,11 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
-- SGLang configs and threshold files with the old names still load, with one `FutureWarning` naming each old key; copy a shipped config to move to the new names.
+- SGLang configs and threshold files with the old names still load, with one `FutureWarning` naming each old key; copy a shipped config to move to the new names. An old key whose value has no shared place, such as a non-default `long_ctx_niah` option, fails and names the key.
 
 ### Removed
 
-- SGLang's estimated `mfu` metric, with `benchmark_params.model_num_params` and `peak_gpu_tflops`. Old configs and threshold files drop them with the deprecation warning, as they do `gpu_name` and the other keys SGLang never read.
+- SGLang's estimated `mfu` metric, with `benchmark_params.model_num_params` and `peak_gpu_tflops`. Old configs and threshold files drop them with the deprecation warning, as they do `gpu_name` and the keys SGLang never read, such as `server_params.max_concurrency` and `tokenizer_mode`.
 
 
 ## [0.3.0] - 2026-11-02

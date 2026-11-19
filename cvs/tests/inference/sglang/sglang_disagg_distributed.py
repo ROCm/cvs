@@ -125,7 +125,7 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
 
 def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
     if not long_context_requested(im_obj.bp_dict.get("lng_ctx_activate")):
-        pytest.skip("long-context accuracy is disabled by lng_ctx_activate")
+        pytest.skip("long-context accuracy is off: the config has no niah eval")
 
     globals.error_list = []
     t0 = time.monotonic()

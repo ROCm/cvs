@@ -2817,7 +2817,10 @@ _SGLANG_NIAH_OPTION_DEFAULTS = {
     "request_timeout_sec": 7200,
     "tolerance_frac": 0.05,
     "enable_thinking": None,
+    "local_files_only": False,
 }
+# LmEvalBenchmark options with no shared key, at their defaults.
+_SGLANG_LM_EVAL_OPTION_DEFAULTS = {"tolerance_frac": 0.05, "pip_install": True}
 _SGLANG_NIAH_NUM_PROMPTS = 16
 _SGLANG_NIAH_SEED = 42
 
@@ -2852,8 +2855,38 @@ SGLANG_OLD_KEYS = {
     "benchmark_params.data_set_name": OLD_KEY_DROPPED,
     "benchmark_params.model_num_params": OLD_KEY_DROPPED,
     "benchmark_params.peak_gpu_tflops": OLD_KEY_DROPPED,
-    "container.runtime.args.env.HF_TOKEN": OLD_KEY_DROPPED,
+    **{f"container.runtime.args.env.{name}": OLD_KEY_DROPPED for name in sorted(_HF_TOKEN_ENV)},
 }
+
+
+def _is_old_sglang_layout(config):
+    server = config.get("server_params")
+    return isinstance(server, dict) and "tp" not in server
+
+
+def _old_int(path, value):
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        raise ValueError(f"{path} must be a whole number") from None
+
+
+def _old_tp_pp(config):
+    server = config.get("server_params") if isinstance(config.get("server_params"), dict) else {}
+    tp = server.get("tp", server.get("tensor_parallelism"))
+    pp = server.get("pp", server.get("pipeline_parallelism", 1))
+    if tp is None:
+        return None, None
+    return _old_int("server_params.tensor_parallelism", tp), _old_int("server_params.pipeline_parallelism", pp)
+
+
+def _cell_key_for(key, tp, pp):
+    isl, osl, conc = sglang_cell_shape(key)
+    return f"ISL={isl},OSL={osl},TP={tp},PP={pp},CONC={conc}"
+
+
+def _not_token(name):
+    return str(name).upper() not in _HF_TOKEN_ENV
 
 
 def _old_switch_on(value):
@@ -2895,30 +2928,36 @@ def _sglang_port_rows(config):
     server = config.get("server_params")
     if not isinstance(server, dict):
         return {}
+    old_layout = _is_old_sglang_layout(config)
     rows = {}
     sources = [name for name in ("proxy_router_serv_port", "serve_port") if name in server]
-    port = int(server[sources[0]]) if sources else server.get("port", _SGLANG_SERVE_PORT)
+    port = _old_int(f"server_params.{sources[0]}", server[sources[0]]) if sources else server.get("port")
     if sources:
         rows[f"server_params.{sources[0]}"] = OldKey("server_params.port", value=port)
         rows.update({f"server_params.{name}": OLD_KEY_DROPPED for name in sources[1:]})
-    elif "port" not in server:
+    elif old_layout and port is None:
+        port = _SGLANG_SERVE_PORT
         rows["server_params.serve_port"] = OldKey("server_params.port", value=port)
     rows.update(_drop_unless(config, "server_params.proxy_router_port", lambda value: str(value) == str(port)))
     if "dist_init_port" in server:
-        rows["server_params.dist_init_port"] = OldKey("server_params.master_port", value=int(server["dist_init_port"]))
-    elif "master_port" not in server:
+        rows["server_params.dist_init_port"] = OldKey(
+            "server_params.master_port", value=_old_int("server_params.dist_init_port", server["dist_init_port"])
+        )
+    elif old_layout and "master_port" not in server:
         rows["server_params.dist_init_port"] = OldKey("server_params.master_port", value=_SGLANG_MASTER_PORT)
     return rows
 
 
 def _old_flag_value(value):
-    """A number written as a string in an old config, as the number."""
+    """A number written as a string in an old config, as the number it reads as exactly."""
     if isinstance(value, str):
         for kind in (int, float):
             try:
-                return kind(value)
+                number = kind(value)
             except ValueError:
-                pass
+                continue
+            if str(number) == value:
+                return number
     return value
 
 
@@ -2954,8 +2993,8 @@ def _sglang_client_timeout_rows(config):
     present = [name for name in names if isinstance(server, dict) and name in server]
     if not present:
         return {}
-    polls = int(server.get(names[0], _SGLANG_POLL_ITERATIONS))
-    cap = int(server.get(names[1], _SGLANG_POLL_TOTAL_S))
+    polls = _old_int(f"server_params.{names[0]}", server.get(names[0], _SGLANG_POLL_ITERATIONS))
+    cap = _old_int(f"server_params.{names[1]}", server.get(names[1], _SGLANG_POLL_TOTAL_S))
     client_s = SGLANG_FIRST_POLL_WAIT_S + min(polls * SGLANG_POLL_PERIOD_S, cap)
     rows = {f"server_params.{present[0]}": OldKey("timeouts.client_s", value=client_s)}
     rows.update({f"server_params.{name}": OLD_KEY_DROPPED for name in present[1:]})
@@ -2967,7 +3006,7 @@ def _env_entries(lines):
     for line in [lines] if isinstance(lines, str) else lines or []:
         line = str(line).strip().removeprefix("export ").strip()
         name, sep, value = line.partition("=")
-        if sep and name.strip() and name.strip() != "HF_TOKEN":
+        if sep and name.strip() and _not_token(name.strip()):
             entries[name.strip()] = value.strip()
     return entries
 
@@ -2979,10 +3018,12 @@ def _sglang_env_rows(config):
     if not isinstance(runtime_env, dict) and not sources:
         return {}
     runtime_env = runtime_env if isinstance(runtime_env, dict) else {}
-    env = {key: value for key, value in runtime_env.items() if key not in ("HF_TOKEN", "ADD_EXPORT_ENV")}
+    existing = _old_sglang_value(config, "container.env")
+    env = dict(existing) if isinstance(existing, dict) else {}
+    env.update({key: value for key, value in runtime_env.items() if _not_token(key) and key != "ADD_EXPORT_ENV"})
     env.update(_env_entries(runtime_env.get("ADD_EXPORT_ENV")))
     env.update(_env_entries(server.get("add_export_env")))
-    env.update({key: value for key, value in (server.get("env") or {}).items() if key != "HF_TOKEN"})
+    env.update({key: value for key, value in (server.get("env") or {}).items() if _not_token(key)})
     env = {key: str(value) for key, value in env.items()}
     old_paths = ["container.runtime.args.env"] + [f"server_params.{name}" for name in sources]
     rows = {old_paths[0]: OldKey("container.env", value=env, conflict="replace")}
@@ -2994,7 +3035,9 @@ def _old_threshold_spec(metric, spec):
     if not isinstance(spec, dict):
         kind = "max" if "ms" in metric.lower() or "latency" in metric.lower() else "min"
         return {"kind": kind, "value": float(spec)}
-    return {**spec, "kind": _OLD_THRESHOLD_KINDS.get(spec.get("kind"), spec.get("kind"))}
+    if spec.get("kind") not in _OLD_THRESHOLD_KINDS:
+        return spec
+    return {**spec, "kind": _OLD_THRESHOLD_KINDS[spec["kind"]]}
 
 
 def _old_threshold_cell_rows(cell_path, new_cell_path, cell):
@@ -3035,28 +3078,30 @@ def _sglang_bench_threshold_rows(config):
     }
 
 
-def _sglang_threshold_spec_rows(config):
+def _sglang_threshold_spec_rows(config, rekey=True):
     """Rows for the shared metric names and kinds, keying each cell by the config's TP and PP.
 
     SGLang matched a run to a threshold cell by ISL, OSL and CONC, so one old
     file served configs of any TP and PP. A cell keyed by the config's TP and
-    PP wins over others of its shape; a cell alone in its shape takes them.
+    PP wins over others of its shape; a cell alone in its shape takes them, and
+    several cells of one shape with none matching are dropped.
     """
-    server = config.get("server_params") if isinstance(config.get("server_params"), dict) else {}
-    tp, pp = int(server.get("tp", 0) or 0), int(server.get("pp", 1) or 1)
+    tp, pp = _old_tp_pp(config) if rekey else (None, None)
     by_shape = {}
     for key, cell in _old_threshold_cells(config).items():
         if not key.startswith("BENCH="):
             by_shape.setdefault(sglang_cell_shape(key), []).append((key, cell))
     rows = {}
-    for (isl, osl, conc), cells in by_shape.items():
-        own = f"ISL={isl},OSL={osl},TP={tp},PP={pp},CONC={conc}"
+    for cells in by_shape.values():
         keys = [key for key, _ in cells]
+        own = _cell_key_for(keys[0], tp, pp) if tp else None
         for key, cell in cells:
-            if key != own and own in keys:
-                rows[("thresholds", key)] = OLD_KEY_DROPPED
-                continue
-            new_key = own if tp and len(cells) == 1 else key
+            new_key = key
+            if own and key != own:
+                if own in keys or len(cells) > 1:
+                    rows[("thresholds", key)] = OLD_KEY_DROPPED
+                    continue
+                new_key = own
             rows.update(_old_threshold_cell_rows(("thresholds", key), ("thresholds", new_key), cell))
             if new_key != key:
                 rows[("thresholds", key)] = OLD_KEY_DROPPED
@@ -3080,8 +3125,8 @@ def _threshold_spec_summary(config, rows):
         if row.new_path[-1] != metric:
             names[metric] = row.new_path[-1]
         old_kind = spec.get("kind") if isinstance(spec, dict) else "a bare number"
-        if old_kind != row.value["kind"]:
-            kinds[old_kind] = row.value["kind"]
+        if old_kind != row.value.get("kind"):
+            kinds[old_kind] = row.value.get("kind")
     parts = [f"metric {old} -> {new}" for old, new in names.items()]
     parts += [f"kind {old} -> {new}" for old, new in kinds.items()]
     parts += [f"metric {name} (dropped)" for name in sorted(dropped)]
@@ -3089,6 +3134,17 @@ def _threshold_spec_summary(config, rows):
     rekeyed = sorted({new.split(",", 2)[2].rsplit(",", 1)[0] for new in cells.values() if new != "dropped"})
     parts += [f"cells keyed by {axes}" for axes in rekeyed]
     return f"threshold specs: {', '.join(parts)}"
+
+
+def _old_value_is(value, default):
+    if value == default or default is OLD_KEY_UNMAPPED:
+        return value == default
+    if isinstance(default, bool) or default is None:
+        return str(value).strip().lower() == str(default).lower()
+    try:
+        return float(value) == float(default)
+    except (TypeError, ValueError):
+        return False
 
 
 def _sglang_long_context_rows(config):
@@ -3106,13 +3162,16 @@ def _sglang_long_context_rows(config):
         rows.update({("thresholds", key): OLD_KEY_DROPPED for key in acc_cells})
         return rows
     rows = {
-        f"server_params.{name}": OldKey(new, value=int(server[name])) for name, new in moves.items() if name in server
+        f"server_params.{name}": OldKey(new, value=_old_int(f"server_params.{name}", server[name]))
+        for name, new in moves.items()
+        if name in server
     }
     niah = config.get("long_ctx_niah") if isinstance(config.get("long_ctx_niah"), dict) else {}
-    for name, default in _SGLANG_NIAH_OPTION_DEFAULTS.items():
-        if name in niah:
-            same = niah[name] == default or (default is not None and float(niah[name]) == float(default))
-            rows[f"long_ctx_niah.{name}"] = OLD_KEY_DROPPED if same else OLD_KEY_UNMAPPED
+    for name, value in niah.items():
+        if name in ("num_prompts", "seed") or str(name).startswith("_"):
+            continue
+        default = _SGLANG_NIAH_OPTION_DEFAULTS.get(name, OLD_KEY_UNMAPPED)
+        rows[f"long_ctx_niah.{name}"] = OLD_KEY_DROPPED if _old_value_is(value, default) else OLD_KEY_UNMAPPED
     evals = []
     for key in sorted(acc_cells, key=lambda key: int(_SGLANG_ACC_CELL_RE.match(key).group(1))):
         isl, osl = (int(number) for number in _SGLANG_ACC_CELL_RE.match(key).groups())
@@ -3123,8 +3182,8 @@ def _sglang_long_context_rows(config):
                 "id": eval_id,
                 "isl": isl,
                 "osl": osl,
-                "num_prompts": int(niah.get("num_prompts", _SGLANG_NIAH_NUM_PROMPTS)),
-                "seed": int(niah.get("seed", _SGLANG_NIAH_SEED)),
+                "num_prompts": _old_int("long_ctx_niah.num_prompts", niah.get("num_prompts", _SGLANG_NIAH_NUM_PROMPTS)),
+                "seed": _old_int("long_ctx_niah.seed", niah.get("seed", _SGLANG_NIAH_SEED)),
             }
         )
         rows[("thresholds", key)] = OldKey(
@@ -3139,28 +3198,62 @@ def _sglang_accuracy_rows(config):
     tasks = _old_sglang_value(config, "accuracy.tasks")
     if tasks is _MISSING:
         return {}
-    kept = [{key: value for key, value in task.items() if key != "backend"} for task in tasks or []]
+    kept = []
+    for index, task in enumerate(tasks or []):
+        defaults = {**_SGLANG_LM_EVAL_OPTION_DEFAULTS, "label": str(task.get("id", "")).removeprefix("lm_eval_")}
+        unread = [name for name, default in defaults.items() if name in task and not _old_value_is(task[name], default)]
+        if unread:
+            paths = ", ".join(f"accuracy.tasks[{index}].{name}" for name in unread)
+            raise ValueError(
+                f"Unsupported SGLang config options: {paths}; they have no place in the new format, so move or delete them"
+            )
+        kept.append({key: value for key, value in task.items() if key != "backend" and key not in defaults})
     return {"accuracy.tasks": OldKey("accuracy.lm_eval.tasks", value=kept)}
 
 
 def _sglang_run_rows(config):
+    """``sweep.runs`` to ``runs``, with ``sweeps`` and ``runs`` keyed by the config's TP and PP.
+
+    SGLang ran each combo, and applied its override, by ISL, OSL and CONC; an
+    empty or missing ``sweep.runs`` ran every threshold cell.
+    """
     sweep = config.get("sweep")
-    if not isinstance(sweep, dict):
+    if not isinstance(sweep, dict) and not (_is_old_sglang_layout(config) and "runs" not in config):
         return {}
-    runs = [str(run.get("combo") if isinstance(run, dict) else run).strip() for run in sweep.get("runs") or []]
-    if not runs:
+    tp, pp = _old_tp_pp(config)
+    if tp is None:
+        return {}
+    rows = {}
+    if "runs" in config:
+        return {"sweep": OLD_KEY_DROPPED}
+    combos = [
+        str(run.get("combo") if isinstance(run, dict) else run).strip() for run in (sweep or {}).get("runs") or []
+    ]
+    if not combos:
         thresholds = config.get("thresholds") if isinstance(config.get("thresholds"), dict) else {}
-        cells = [key for key in thresholds if _CELL_KEY_RE.fullmatch(str(key))]
-        runs = sorted(cells, key=sglang_cell_shape)
-    rows = {"sweep": OldKey("runs", value=runs)}
+        combos = sorted((key for key in thresholds if _CELL_KEY_RE.fullmatch(str(key))), key=sglang_cell_shape)
+    runs = list(dict.fromkeys(_cell_key_for(run, tp, pp) if _CELL_KEY_RE.fullmatch(run) else run for run in combos))
+    rows["sweep"] = OldKey("runs", value=runs)
     sweeps = config.get("sweeps") if isinstance(config.get("sweeps"), dict) else {}
+    by_shape = {}
+    for key in sweeps:
+        if _CELL_KEY_RE.fullmatch(str(key)):
+            by_shape.setdefault(sglang_cell_shape(key), []).append(key)
+    kept = set(sweeps)
+    for keys in by_shape.values():
+        own = _cell_key_for(keys[0], tp, pp)
+        for key in keys:
+            if key == own:
+                continue
+            kept.discard(key)
+            if own in keys or len(keys) > 1:
+                rows[("sweeps", key)] = OLD_KEY_DROPPED
+            else:
+                rows[("sweeps", key)] = OldKey(("sweeps", own))
+                kept.add(own)
     for run in runs:
-        if run in sweeps or not _CELL_KEY_RE.fullmatch(run):
-            continue
-        same_shape = [
-            key for key in sweeps if _CELL_KEY_RE.fullmatch(key) and sglang_cell_shape(key) == sglang_cell_shape(run)
-        ]
-        rows[("sweeps", run)] = OldKey(("sweeps", run), value=sweeps[same_shape[0]] if len(same_shape) == 1 else {})
+        if run not in kept:
+            rows[("sweeps", run)] = OldKey(("sweeps", run), value={})
     return rows
 
 
@@ -3188,17 +3281,35 @@ def resolve_old_sglang_keys(config):
     converted, keys = resolve_old_keys(
         config, SGLANG_OLD_KEYS, SGLANG_OLD_KEY_RULES, message="{keys}", label="SGLang config"
     )
-    spec_rows = _sglang_threshold_spec_rows(converted)
+    rekey = _is_old_sglang_layout(config) or bool(_sglang_threshold_spec_rows(converted, rekey=False))
+    spec_rows = _sglang_threshold_spec_rows(converted, rekey=rekey)
     changes = [keys] if keys else []
     if spec_rows:
         changes.append(_threshold_spec_summary(converted, spec_rows))
-        converted, _ = resolve_old_keys(converted, {}, (_sglang_threshold_spec_rows,), label="SGLang threshold file")
+        converted, _ = resolve_old_keys(
+            converted,
+            {},
+            (lambda value: _sglang_threshold_spec_rows(value, rekey=rekey),),
+            label="SGLang threshold file",
+        )
     if not changes:
         return config, None
     return converted, (
         f"Deprecated SGLang config keys: {', '.join(changes)}. "
         "Use the shared inference names; old keys will be removed in a future release."
     )
+
+
+def resolve_old_sglang_threshold_names(thresholds):
+    """Old metric names and kinds in a threshold file read on its own, keeping its cell keys."""
+    converted, message = resolve_old_keys(
+        {"thresholds": thresholds},
+        {},
+        (lambda value: _sglang_threshold_spec_rows(value, rekey=False),),
+        message="Deprecated SGLang threshold names: {keys}. Use the shared inference names.",
+        label="SGLang threshold file",
+    )
+    return converted["thresholds"], message
 
 
 class SglangRoleServer(_Allow):

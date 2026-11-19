@@ -15,12 +15,12 @@ FAKE_CRED_FILE = '/home/user/.hf_token'
 
 _THRESHOLDS = {
     'ISL=1024,OSL=1024,TP=8,PP=1,CONC=64': {
-        'output_throughput_per_sec': {'kind': 'min_tok_s', 'value': 900},
-        'mean_ttft_ms': {'kind': 'max_ms', 'value': 60000},
+        'output_throughput': {'kind': 'min', 'value': 900},
+        'mean_ttft_ms': {'kind': 'max', 'value': 60000},
         'mfu': {'kind': 'min', 'value': 0.02},
     },
     'ISL=8192,OSL=1024,TP=8,PP=1,CONC=64': {
-        'output_throughput_per_sec': {'kind': 'min_tok_s', 'value': 450},
+        'output_throughput': {'kind': 'min', 'value': 450},
     },
     'ACC_ISL=131072,OSL=1024': {'pass_rate': {'kind': 'min', 'value': 0.95}},
     'BENCH=lm_eval_gsm8k': {'exact_match,flexible-extract': {'kind': 'min', 'value': 0.95}},
@@ -31,7 +31,7 @@ class TestFlatExpectedFromSpecs(unittest.TestCase):
     def test_unwraps_spec_dicts_and_bare_values(self):
         flat = loader.flat_expected_from_specs(
             {
-                'mean_ttft_ms': {'kind': 'max_ms', 'value': 60000},
+                'mean_ttft_ms': {'kind': 'max', 'value': 60000},
                 'mfu': 0.02,
             }
         )
@@ -146,11 +146,11 @@ class TestPerfSpecsForCell(unittest.TestCase):
     def test_returns_flattened_gates(self):
         self.assertEqual(
             loader.perf_specs_for_cell(_THRESHOLDS, '1024', '1024', '64'),
-            {'output_throughput_per_sec': 900.0, 'mean_ttft_ms': 60000.0, 'mfu': 0.02},
+            {'output_throughput': 900.0, 'mean_ttft_ms': 60000.0, 'mfu': 0.02},
         )
 
     def test_accepts_int_cell_coordinates(self):
-        self.assertEqual(loader.perf_specs_for_cell(_THRESHOLDS, 8192, 1024, 64), {'output_throughput_per_sec': 450.0})
+        self.assertEqual(loader.perf_specs_for_cell(_THRESHOLDS, 8192, 1024, 64), {'output_throughput': 450.0})
 
     def test_ignores_tp_and_pp_in_cell_key(self):
         thresholds = {'ISL=1024,OSL=1024,TP=16,PP=2,CONC=8': {'mfu': {'kind': 'min', 'value': 0.05}}}
@@ -273,11 +273,11 @@ class TestRuntimeViews(unittest.TestCase):
         self.assertNotIn('inference_poll_iterations', params)
 
     def test_client_s_gives_the_poll_count_and_wait_of_the_old_keys(self):
-        for client_s, polls, total in ((1500, '16', '1440'), (3660, '40', '3600')):
+        for client_s, polls, total in ((1500, '16', '1530'), (3660, '40', '3690'), (100, '1', '180')):
             with self.subTest(client_s=client_s):
                 params = _load(_new_config(timeouts={'client_s': client_s})).benchmark_params
                 self.assertEqual(params['inference_poll_iterations'], polls)
-                self.assertEqual(params['inference_poll_total_timeout_sec'], total)
+                self.assertEqual(params["inference_poll_total_timeout_sec"], total)
 
     def test_a_niah_eval_turns_on_the_long_context_server_flags(self):
         server = {
@@ -341,6 +341,34 @@ class TestRuntimeViews(unittest.TestCase):
         self.assertNotIn('HF_TOKEN', variant.roles.server.env)
         self.assertNotIn(FAKE_CRED, str(variant.inference))
         self.assertNotIn(FAKE_CRED, str(variant.benchmark_params))
+
+
+class TestLegacyRootLayout(unittest.TestCase):
+    def test_old_threshold_names_convert_with_one_future_warning(self):
+        thresholds = {
+            CELL: {'output_throughput_per_sec': {'kind': 'min_tok_s', 'value': 900}},
+            'ACC_ISL=8192,OSL=32': {'pass_rate': {'kind': 'min', 'value': 0.8}},
+        }
+        root = {
+            'config': {
+                'container_name': 'sglang',
+                'container_image': 'image',
+                'log_dir': '/fs/logs',
+                'hf_token_file': FAKE_CRED_FILE,
+                'container_config': {'volume_dict': {'/models': '/models'}},
+            },
+            'benchmark_params': {'v': {'model': 'm', 'threshold_file': 'threshold.json'}},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'config.json'
+            path.write_text(json.dumps(root), encoding='utf-8')
+            (Path(tmp) / 'threshold.json').write_text(json.dumps(thresholds), encoding='utf-8')
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter('always')
+                variant = loader.load_variant(str(path), {'username': 'test'})
+        self.assertEqual([w.category for w in caught], [FutureWarning])
+        self.assertEqual(variant.thresholds[CELL], {'output_throughput': {'kind': 'min', 'value': 900}})
+        self.assertEqual([cell['isl'] for cell in loader.acc_cells_for_variant(variant)], ['8192'])
 
 
 class TestEngineArgsToFlags(unittest.TestCase):
