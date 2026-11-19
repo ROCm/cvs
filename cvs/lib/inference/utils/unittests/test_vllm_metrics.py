@@ -304,6 +304,14 @@ class TestStrictMetricVerdict(unittest.TestCase):
                 self.assertEqual(status, "fail")
                 self.assertIn("finite built-in", reason)
 
+    def test_info_spec_passes_any_actual_on_a_registered_metric(self):
+        for metric in ("output_throughput", "mean_ttft_ms"):
+            for actual in (0, 1e9, None):
+                with self.subTest(metric=metric, actual=actual):
+                    self.assertEqual(metric_verdict(metric, actual, {"kind": "info", "value": 1}), ("pass", ""))
+        status, _reason = metric_verdict("no_such_metric", 1, {"kind": "info", "value": 1})
+        self.assertEqual(status, "fail")
+
     def test_finite_number_excludes_bool_and_subclasses(self):
         class IntSubclass(int):
             pass

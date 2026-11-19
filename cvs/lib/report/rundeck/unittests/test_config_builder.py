@@ -2,8 +2,9 @@
 
 import unittest
 from dataclasses import asdict, fields, replace
+from types import SimpleNamespace
 
-from cvs.lib.report.rundeck.config_builder import make_inference_report_config
+from cvs.lib.report.rundeck.config_builder import _default_run_card, make_inference_report_config
 
 
 class TestConfigBuilder(unittest.TestCase):
@@ -26,6 +27,12 @@ class TestConfigBuilder(unittest.TestCase):
         self.assertTrue(cfg.interactive_viewer)
         self.assertIsNone(cfg.metric_verdict)
         self.assertIsNone(cfg.metric_contract)
+
+    def test_default_run_card_reads_model_and_tp_from_server_params(self):
+        variant = SimpleNamespace(server_params=SimpleNamespace(model="m", tp=8), enforce_thresholds=True)
+        rows = _default_run_card(variant, {})
+        self.assertIn(("Model", "m", False), rows)
+        self.assertIn(("TP", "8", False), rows)
 
     def test_make_inference_report_config_overrides(self):
         cfg = make_inference_report_config(

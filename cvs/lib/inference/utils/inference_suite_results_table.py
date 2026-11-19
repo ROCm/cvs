@@ -48,14 +48,14 @@ VLLM_SINGLE_RESULTS_COLUMNS = (
     ("Policy", None),
     ("Conc", None),
     ("Host", None),
-    ("Req/s", "client.request_throughput"),
-    ("Total tok/s", "client.total_token_throughput"),
-    ("Mean TTFT (ms)", "client.mean_ttft_ms"),
-    ("P95 TTFT (ms)", "client.p95_ttft_ms"),
-    ("Mean TPOT (ms)", "client.mean_tpot_ms"),
-    ("P95 TPOT (ms)", "client.p95_tpot_ms"),
-    ("P99 ITL (ms)", "client.p99_itl_ms"),
-    ("Goodput (req/s)", "client.goodput"),
+    ("Req/s", "request_throughput"),
+    ("Total tok/s", "total_token_throughput"),
+    ("Mean TTFT (ms)", "mean_ttft_ms"),
+    ("P95 TTFT (ms)", "p95_ttft_ms"),
+    ("Mean TPOT (ms)", "mean_tpot_ms"),
+    ("P95 TPOT (ms)", "p95_tpot_ms"),
+    ("P99 ITL (ms)", "p99_itl_ms"),
+    ("Goodput (req/s)", "goodput"),
 )
 
 

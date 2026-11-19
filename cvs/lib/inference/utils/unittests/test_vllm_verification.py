@@ -77,6 +77,14 @@ class TestEvaluateMetricVerdicts(unittest.TestCase):
             ],
         )
 
+    def test_info_spec_is_recorded_without_gating(self):
+        thresholds = {"output_throughput": {"kind": "info", "value": 100}}
+        verdicts = evaluate_metric_verdicts({"head": {"output_throughput": 1}}, thresholds, enforce_thresholds=True)
+        self.assertEqual(
+            [(item["status"], item["enforced"], item["reason"]) for item in verdicts],
+            [("pass", False, "info threshold; recorded without gating")],
+        )
+
     def test_mixed_failure_and_pass_are_both_computed(self):
         thresholds = {
             "output_throughput": {"kind": "min", "value": 100},

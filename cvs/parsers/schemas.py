@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Dict, Generic, List, Literal, Optional, Tuple, TypeVar, Union
+import json
 import logging
 import math
 import re
@@ -30,6 +31,7 @@ from pydantic import (
     ConfigDict,
     Field,
     PositiveInt,
+    PrivateAttr,
     ValidationError,
     field_validator,
     model_serializer,
@@ -1799,6 +1801,13 @@ class InferenceThresholdFile(_Allow):
     def cells(self):
         return dict(self.model_extra or {})
 
+    def get(self, cell_key, default=None):
+        """A cell's specs as plain dicts, as written, for the report code that reads threshold dicts."""
+        cell = self.cells().get(cell_key)
+        if cell is None:
+            return default
+        return {metric: spec.model_dump(exclude_unset=True) for metric, spec in cell.items()}
+
 
 _HF_TOKEN_ENV = {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"}
 
@@ -2224,6 +2233,439 @@ def warn_old_keys(message):
         return
     logger.warning(message)
     warnings.warn(message, FutureWarning, stacklevel=2)
+
+
+# =============================================================================
+# vLLM config
+# =============================================================================
+#
+# VllmConfig is InferenceConfig plus the vllm block. An old vLLM config, and the
+# old threshold file it names, load through resolve_old_keys with one
+# FutureWarning. The vLLM metric registry stays in cvs.lib and is imported
+# inside the validator that reads it.
+
+_VLLM_SOCKET_ENV = frozenset({"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"})
+_VLLM_HARNESS_SERVER_FLAGS = frozenset(
+    {
+        "headless",
+        "tensor_parallel_size",
+        "pipeline_parallel_size",
+        "max_model_len",
+        "distributed_executor_backend",
+    }
+)
+_VLLM_HARNESS_CLIENT_FLAGS = frozenset({"dataset_name"})
+_THRESHOLD_METADATA_PREFIXES = ("_comment", "_example")
+
+
+def _check_vllm_flag_values(flags, section):
+    for name, value in flags.items():
+        if value is False:
+            raise ValueError(f"{section}.{name}=false is ambiguous; omit it or use the option's negative flag")
+        if isinstance(value, list) and any(isinstance(item, (list, dict)) for item in value):
+            raise ValueError(f"{section}.{name} lists may contain scalar values only")
+        if isinstance(value, dict):
+            try:
+                json.dumps(value, separators=(",", ":"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{section}.{name} must be JSON serializable") from exc
+
+
+def serialize_cli_options(options):
+    """Serialize a snake_case option map into vLLM command-line flags; true writes a bare flag."""
+    for name in options:
+        if not _FLAG_NAME_RE.fullmatch(name):
+            raise ValueError(f"option.{name}: flag names must be snake_case")
+    _check_vllm_flag_values(options, "option")
+    argv = []
+    for name, value in options.items():
+        if value is None:
+            continue
+        flag = f"--{name.replace('_', '-')}"
+        if value is True:
+            argv.append(flag)
+        elif isinstance(value, list):
+            argv.extend([flag, *(str(item) for item in value)])
+        elif isinstance(value, dict):
+            argv.extend([flag, json.dumps(value, separators=(",", ":"))])
+        else:
+            argv.extend([flag, str(value)])
+    return argv
+
+
+@dataclass(frozen=True)
+class RunCell:
+    key: str
+    isl: int
+    osl: int
+    tp: int
+    pp: int
+    concurrency: int
+
+    @classmethod
+    def parse(cls, value):
+        return cls(value, **parse_inference_cell_key(value))
+
+
+@dataclass(frozen=True)
+class ResolvedRun:
+    cell: RunCell
+    benchmark_params: Dict[str, Any]
+
+
+class VllmRuntimeArgs(InferenceRuntimeArgs):
+    model_config = ConfigDict(extra="forbid")
+
+    network: str = "host"
+    ipc: str = "host"
+    privileged: bool = True
+    volumes: List[ConfigStr] = Field(default_factory=list)
+    devices: List[str] = Field(default_factory=list)
+
+
+class VllmRuntime(InferenceRuntimeSpec):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Literal["docker"] = "docker"
+    args: VllmRuntimeArgs = Field(default_factory=VllmRuntimeArgs)
+
+
+class VllmContainerSpec(InferenceContainerSpec):
+    runtime: VllmRuntime = Field(default_factory=VllmRuntime)
+
+    @model_validator(mode="after")
+    def _check_network_env(self):
+        configured_sockets = _VLLM_SOCKET_ENV & set(self.env)
+        if configured_sockets and configured_sockets != _VLLM_SOCKET_ENV:
+            missing = sorted(_VLLM_SOCKET_ENV - configured_sockets)
+            raise ValueError(f"container.env must set all socket interface variables together; missing: {missing}")
+        empty_sockets = sorted(name for name in configured_sockets if not self.env[name].strip())
+        if empty_sockets:
+            raise ValueError(f"container.env socket interface variables cannot be empty: {empty_sockets}")
+        if "NCCL_IB_HCA" in self.env and not self.nccl_ib_hcas:
+            raise ValueError("container.env.NCCL_IB_HCA must name at least one device")
+        return self
+
+    @property
+    def nccl_ib_hcas(self):
+        value = self.env.get("NCCL_IB_HCA")
+        if value is None:
+            return None
+        return [device.strip() for device in value.split(",") if device.strip()]
+
+    @property
+    def socket_env_configured(self):
+        return bool(_VLLM_SOCKET_ENV & set(self.env))
+
+
+class VllmBlock(_Forbid):
+    distributed_executor_backend: Literal["mp", "ray"] = "mp"
+
+
+# ---------- old vLLM keys ----------
+
+_VLLM_OLD_KEYS = {
+    "server_params.tensor_parallel_size": "server_params.tp",
+    "server_params.pipeline_parallel_size": "server_params.pp",
+    "server_params.dist_init_port": "server_params.master_port",
+    "server_params.max_model_len": "server_params.max_model_length",
+    "server_params.distributed_executor_backend": "vllm.distributed_executor_backend",
+    "accuracy.tasks": "accuracy.lm_eval.tasks",
+}
+_VLLM_OLD_SERVER_FIELDS = frozenset(
+    {
+        "backend",
+        "model",
+        "tensor_parallel_size",
+        "pipeline_parallel_size",
+        "port",
+        "dist_init_port",
+        "max_model_len",
+        "server_poll_iterations",
+        "server_poll_wait_s",
+        "server_warmup_wait_s",
+        "distributed_executor_backend",
+    }
+)
+_VLLM_OLD_BENCHMARK_FIELDS = frozenset(
+    {
+        "backend",
+        "dataset_name",
+        "num_prompts",
+        "request_rate",
+        "burstiness",
+        "tokenizer_mode",
+        "seed",
+        "random_range_ratio",
+        "random_prefix_len",
+        "client_poll_iterations",
+        "client_poll_wait_s",
+        "client_initial_wait_s",
+        "trust_remote_code",
+        "ignore_eos",
+    }
+)
+# Old timeout keys and their old defaults: the first is a fixed wait, then
+# iterations times the wait per poll.
+_VLLM_OLD_TIMEOUTS = {
+    "timeouts.server_ready_s": (
+        ("server_params", "server_warmup_wait_s", 330),
+        ("server_params", "server_poll_iterations", 60),
+        ("server_params", "server_poll_wait_s", 60),
+    ),
+    "timeouts.client_s": (
+        ("benchmark_params", "client_initial_wait_s", 120),
+        ("benchmark_params", "client_poll_iterations", 20),
+        ("benchmark_params", "client_poll_wait_s", 60),
+    ),
+}
+_VLLM_OLD_BENCHMARK_DEFAULT_PROMPTS = 3200
+_INFERENCE_ACCURACY_THRESHOLD_SECTIONS = frozenset(InferenceAccuracyThresholds.model_fields)
+_OLD_THRESHOLD_KINDS = {"max_ms": "max", "min_tok_s": "min"}
+
+
+def _section(config, name):
+    value = config.get(name)
+    return value if isinstance(value, dict) else {}
+
+
+def _is_old_vllm_config(config):
+    return "tensor_parallel_size" in _section(config, "server_params")
+
+
+def _old_int(config, section, key, default):
+    value = _section(config, section).get(key, default)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{section}.{key} must be a whole number of seconds or iterations") from None
+
+
+def _vllm_old_timeouts_rule(config):
+    if not _is_old_vllm_config(config):
+        return {}
+    rows = {}
+    for new_path, keys in _VLLM_OLD_TIMEOUTS.items():
+        wait, count, poll = (_old_int(config, section, key, default) for section, key, default in keys)
+        for section, key, _default in keys:
+            rows[(section, key)] = OldKey(new_path, value=wait + count * poll)
+    return rows
+
+
+def _drop_at(config, section, key, expected):
+    """Drop an old key the harness now always sets, or refuse it when it held another value."""
+    value = _section(config, section).get(key, expected)
+    return OLD_KEY_DROPPED if value == expected else OLD_KEY_UNMAPPED
+
+
+def _vllm_old_fixed_keys_rule(config):
+    server_trust = _section(config, "server_params").get("trust_remote_code") is True
+    rows = {
+        "server_params.backend": _drop_at(config, "server_params", "backend", "vllm"),
+        "benchmark_params.backend": _drop_at(config, "benchmark_params", "backend", "vllm"),
+        "benchmark_params.dataset_name": _drop_at(config, "benchmark_params", "dataset_name", "random"),
+        "benchmark_params.ignore_eos": _drop_at(config, "benchmark_params", "ignore_eos", True),
+        "benchmark_params.trust_remote_code": _drop_at(config, "benchmark_params", "trust_remote_code", server_trust),
+    }
+    if _is_old_vllm_config(config):
+        sweeps = _section(config, "sweeps")
+        for cell_key in sweeps:
+            for key, expected in (("ignore_eos", True), ("trust_remote_code", server_trust)):
+                if key in _section(sweeps, cell_key):
+                    rows[("sweeps", cell_key, key)] = _drop_at(sweeps, cell_key, key, expected)
+    return rows
+
+
+def _vllm_old_flags_rule(config):
+    """Move the native flags an old config wrote beside the harness fields."""
+    if not _is_old_vllm_config(config):
+        return {}
+    rows = {}
+    for section, fields, target in (
+        ("server_params", _VLLM_OLD_SERVER_FIELDS, "engine_args"),
+        ("benchmark_params", _VLLM_OLD_BENCHMARK_FIELDS, "client_args"),
+    ):
+        for key in _section(config, section):
+            if key not in fields and not key.startswith("_"):
+                rows[(section, key)] = OldKey((section, target, key))
+    if "num_prompts" not in _section(config, "benchmark_params"):
+        rows["benchmark_params.num_prompts"] = OldKey(
+            "benchmark_params.num_prompts", value=_VLLM_OLD_BENCHMARK_DEFAULT_PROMPTS
+        )
+    return rows
+
+
+def _vllm_old_network_rule(config):
+    """Write the old top-level NCCL settings into container.env, where an explicit value already wins."""
+    container = _section(config, "container")
+    env = dict(_section(container, "env"))
+    new_env = dict(env)
+    hcas = config.get("ib_hca_devices")
+    netdev = config.get("ib_netdev")
+    hcas_used = isinstance(hcas, list) and bool(hcas) and "NCCL_IB_HCA" not in env
+    netdev_used = isinstance(netdev, str) and bool(netdev) and not (_VLLM_SOCKET_ENV & set(env))
+    if hcas_used:
+        new_env["NCCL_IB_HCA"] = ",".join(str(device) for device in hcas)
+    if netdev_used:
+        new_env.update({name: netdev for name in sorted(_VLLM_SOCKET_ENV)})
+    rows = {}
+    for key, used in (("ib_hca_devices", hcas_used), ("ib_netdev", netdev_used)):
+        if key in config:
+            rows[key] = OldKey("container.env", value=new_env, conflict="replace") if used else OLD_KEY_DROPPED
+    return rows
+
+
+def _vllm_old_thresholds_rule(config):
+    """Move old accuracy thresholds under ``lm_eval`` and rewrite the old kinds."""
+    thresholds = _section(config, "thresholds")
+    rows = {}
+    for task_id in _section(thresholds, "accuracy"):
+        if task_id not in _INFERENCE_ACCURACY_THRESHOLD_SECTIONS and not task_id.startswith("_"):
+            rows[("thresholds", "accuracy", task_id)] = OldKey(("thresholds", "accuracy", "lm_eval", task_id))
+    for cell_key, cell in thresholds.items():
+        if cell_key == "accuracy" or not isinstance(cell, dict):
+            continue
+        for metric, spec in cell.items():
+            kind = spec.get("kind") if isinstance(spec, dict) else None
+            if isinstance(kind, str) and kind in _OLD_THRESHOLD_KINDS:
+                path = ("thresholds", cell_key, metric, "kind")
+                rows[path] = OldKey(path, value=_OLD_THRESHOLD_KINDS[kind])
+    return rows
+
+
+def resolve_old_vllm_keys(config):
+    """Map an old vLLM config, with its attached ``thresholds``, to the current names.
+
+    Returns the converted config and one warning message, or the input and
+    ``None`` when it holds no old key.
+    """
+    return resolve_old_keys(
+        config,
+        _VLLM_OLD_KEYS,
+        rules=(
+            _vllm_old_fixed_keys_rule,
+            _vllm_old_timeouts_rule,
+            _vllm_old_flags_rule,
+            _vllm_old_network_rule,
+            _vllm_old_thresholds_rule,
+        ),
+        message=(
+            "Deprecated vLLM config keys: {keys}. Use the new names; old keys will be removed in a future release."
+        ),
+        label="vLLM config",
+    )
+
+
+def _reject_underscore_metric_keys(thresholds):
+    # A misspelled metric such as _output_throughput would otherwise be dropped
+    # as a comment, and enforcement only checks that the cell exists.
+    for cell_key, cell in thresholds.items():
+        if cell_key == "accuracy" or cell_key.startswith("_") or not isinstance(cell, dict):
+            continue
+        for metric, spec in cell.items():
+            if metric.startswith(_THRESHOLD_METADATA_PREFIXES):
+                continue
+            if metric.startswith("_"):
+                raise ValueError(f"unknown vLLM threshold metric {metric!r}")
+            extra = sorted(key for key in spec if key.startswith("_")) if isinstance(spec, dict) else []
+            if extra:
+                raise ValueError(f"{cell_key}.{metric}: unknown threshold fields {extra}")
+
+
+class VllmConfig(InferenceConfig):
+    not_implemented: ClassVar[Tuple[str, ...]] = (
+        "server_params.dp",
+        "server_params.ep",
+        "server_params.prefill_nnodes",
+        "server_params.long_context",
+        "benchmark_params.scaling_baseline_output_throughput",
+        "accuracy.custom_eval",
+        "accuracy.quant_parity",
+        "accuracy.mtp_quality",
+    )
+
+    container: VllmContainerSpec
+    vllm: VllmBlock = Field(default_factory=VllmBlock)
+    _effective_topology: Any = PrivateAttr(default=None)
+    _run_cells: Dict[str, RunCell] = PrivateAttr(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _load_threshold_file_and_old_keys(cls, data, info):
+        from cvs.lib.utils.config_loader import attach_threshold_file
+
+        data = attach_threshold_file(data, info.context)
+        if isinstance(data, dict) and isinstance(data.get("thresholds"), dict):
+            _reject_underscore_metric_keys(data["thresholds"])
+        data, message = resolve_old_vllm_keys(data)
+        if message:
+            warnings.warn(message, FutureWarning, stacklevel=2)
+        return data
+
+    @model_validator(mode="after")
+    def _check_vllm(self):
+        from cvs.lib.inference.utils.vllm_metrics import validate_threshold_spec
+
+        _check_flags(self.server_params.engine_args, "engine_args", _VLLM_HARNESS_SERVER_FLAGS)
+        _check_flags(self.benchmark_params.client_args, "client_args", _VLLM_HARNESS_CLIENT_FLAGS)
+        _check_vllm_flag_values(self.server_params.engine_args, "engine_args")
+        _check_vllm_flag_values(self.benchmark_params.client_args, "client_args")
+        for key, overrides in self.sweeps.items():
+            _check_flags(overrides, f"sweeps.{key}", _VLLM_HARNESS_CLIENT_FLAGS)
+            _check_vllm_flag_values(overrides, f"sweeps.{key}")
+
+        cells = self.thresholds.cells()
+        unknown = sorted(set(cells) - set(self.sweeps))
+        if unknown:
+            raise ValueError(f"threshold cells have no matching sweep: {unknown}")
+        for cell_key, cell in cells.items():
+            for metric, spec in cell.items():
+                if "optional" in spec.model_fields_set:
+                    raise ValueError(f"{cell_key}.{metric}: vLLM thresholds do not support optional")
+                validate_threshold_spec(metric, spec.model_dump())
+        for section in ("custom_eval", "quant_parity", "mtp_quality"):
+            if getattr(self.thresholds.accuracy, section):
+                raise ValueError(f"thresholds accuracy.{section} is not implemented for {type(self).__name__}")
+        self._run_cells = {key: RunCell.parse(key) for key in self.sweeps}
+        return self
+
+    @property
+    def model_id(self):
+        return self.server_params.model
+
+    def bind_effective_topology(self, topology):
+        self._effective_topology = topology
+
+    def cell(self, key):
+        return self._run_cells[key]
+
+    def expected_cells(self):
+        return list(self.runs)
+
+    def cell_key(self, isl, osl, concurrency, **_unused):
+        return f"ISL={isl},OSL={osl},TP={self.server_params.tp},PP={self.server_params.pp},CONC={concurrency}"
+
+    def client_values(self, overrides=None):
+        """The shared client fields, then ``client_args``, then ``overrides``, as one flat map."""
+        values = self.benchmark_params.model_dump(exclude={"client_args", "scaling_baseline_output_throughput"})
+        values.update(self.benchmark_params.client_args)
+        values.update(overrides or {})
+        return values
+
+    def resolved_runs(self):
+        resolved = []
+        for key in self.runs:
+            cell = self.cell(key)
+            values = self.client_values(self.sweeps[key])
+            values.update(
+                {
+                    "random_input_len": cell.isl,
+                    "random_output_len": cell.osl,
+                    "max_concurrency": cell.concurrency,
+                }
+            )
+            resolved.append(ResolvedRun(cell=cell, benchmark_params=values))
+        return resolved
 
 
 # =============================================================================

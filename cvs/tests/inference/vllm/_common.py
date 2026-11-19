@@ -48,7 +48,7 @@ def pytest_generate_tests(metafunc):
     runs = variant.resolved_runs()
     ids = [run.cell.key for run in runs]
     if "accuracy_task" in metafunc.fixturenames:
-        tasks = [task.id for task in variant.accuracy.tasks]
+        tasks = [task.id for task in variant.accuracy.lm_eval.tasks]
         metafunc.parametrize("accuracy_task", tasks, ids=tasks)
     elif "run" in metafunc.fixturenames and runs:
         metafunc.parametrize("run", runs, ids=ids)
@@ -109,16 +109,15 @@ def discover_topology(orch, variant_config, vllm_targets, lifecycle, request):
         lifecycle.failed = True
         lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - started)
         pytest.fail(str(exc))
-    container_hcas = variant_config.container.nccl_ib_hcas
-    requested = container_hcas if container_hcas is not None else variant_config.ib_hca_devices
-    if requested and requested != "auto":
+    requested = variant_config.container.nccl_ib_hcas
+    if requested:
         try:
             validate_ib_hca_preflight(discovered, requested)
         except RuntimeError as exc:
             lifecycle.failed = True
             lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - started)
             pytest.fail(str(exc))
-        lifecycle.ib_hcas = [] if container_hcas is not None else requested
+        lifecycle.ib_hcas = []
     else:
         lifecycle.ib_hcas = next(iter(discovered.values()))
     lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - started)
@@ -219,7 +218,8 @@ def openai_compatible_smoke(orch, variant_config, vllm_targets, lifecycle, reque
         num_prompts=1,
         ib_hcas=getattr(lifecycle, "ib_hcas", []),
     )
-    job.serve_args.setdefault("max_model_len", str(_SMOKE_MAX_MODEL_LEN))
+    if job.derive_max_model_len:
+        job.max_model_len = _SMOKE_MAX_MODEL_LEN
     started = time.monotonic()
     try:
         job.stop_server()

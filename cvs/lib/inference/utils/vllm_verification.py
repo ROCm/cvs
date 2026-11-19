@@ -68,7 +68,7 @@ def evaluate_metric_verdicts(actuals_by_host, thresholds, *, enforce_thresholds)
             value = actuals.get(metric)
             if not _is_finite_number(value) and spec is None:
                 continue
-            enforced = bool(enforce_thresholds and spec is not None)
+            enforced = bool(enforce_thresholds and spec is not None and spec.get('kind') != 'info')
             verdict = {
                 'node': str(host),
                 'metric': metric,
@@ -84,6 +84,8 @@ def evaluate_metric_verdicts(actuals_by_host, thresholds, *, enforce_thresholds)
                 verdict['status'], verdict['reason'] = metric_verdict(metric, value, spec)
             elif spec is None:
                 verdict['reason'] = 'metric produced without a configured threshold'
+            elif spec.get('kind') == 'info':
+                verdict['reason'] = 'info threshold; recorded without gating'
             else:
                 verdict['reason'] = 'threshold enforcement disabled; no threshold asserted'
                 if not _is_finite_number(value):

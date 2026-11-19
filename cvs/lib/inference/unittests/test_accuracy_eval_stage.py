@@ -22,6 +22,7 @@ import pytest
 
 from cvs.lib.inference.utils import inference_suite_lifecycle as lifecycle_mod
 from cvs.lib.utils.verdict import ThresholdViolation
+from cvs.parsers.schemas import VllmConfig
 
 
 def _variant_config(tasks=(), thresholds=None, enforce_thresholds=True):
@@ -230,6 +231,48 @@ class TestAccuracyEvalRun(unittest.TestCase):
                 request=_request("test_accuracy_eval[gsm8k]"),
             )
         self.assertFalse(lc.failed)
+
+
+def _inference_config(threshold_value):
+    cell = "ISL=8,OSL=8,TP=1,PP=1,CONC=1"
+    return VllmConfig(
+        threshold_json="threshold.json",
+        enforce_thresholds=True,
+        paths={"shared_fs": "/s", "models_dir": "/m", "log_dir": "/logs", "hf_token_file": "/t"},
+        container={"name": "c", "image": "i", "runtime": {"name": "docker"}},
+        server_params={"model": "m", "tp": 1, "port": 8000},
+        benchmark_params={"num_prompts": 1},
+        sweeps={cell: {}},
+        runs=[cell],
+        accuracy={"lm_eval": {"tasks": [{"id": "mmlu", "task": "mmlu"}]}},
+        thresholds={
+            cell: {},
+            "accuracy": {"lm_eval": {"mmlu": {"mmlu.acc__none": {"kind": "min", "value": threshold_value}}}},
+        },
+    )
+
+
+class TestAccuracyEvalOnInferenceConfig(unittest.TestCase):
+    def test_reads_lm_eval_tasks_and_their_thresholds(self):
+        with mock.patch.object(
+            lifecycle_mod, "run_accuracy_tasks", return_value={"mmlu": {"mmlu.acc__none": 0.7}}
+        ) as run:
+            lifecycle_mod.test_accuracy_eval(
+                orch=object(),
+                variant_config=_inference_config(0.5),
+                accuracy_task="mmlu",
+                lifecycle=_Lifecycle(),
+                request=_request(),
+            )
+            self.assertEqual(run.call_args.kwargs["base_url"], "http://0.0.0.0:8000")
+            with self.assertRaises(ThresholdViolation):
+                lifecycle_mod.test_accuracy_eval(
+                    orch=object(),
+                    variant_config=_inference_config(0.9),
+                    accuracy_task="mmlu",
+                    lifecycle=_Lifecycle(),
+                    request=_request(),
+                )
 
 
 if __name__ == "__main__":

@@ -93,24 +93,20 @@ def _make_job_for_check(tail_output="", grep_exit=1):
 def _variant(serve_args=None, benchmark_params=None, sweep_options=None):
     options = {key.replace("-", "_"): value for key, value in (serve_args or {}).items()}
     distributed_executor_backend = options.pop("distributed_executor_backend", "mp")
+    server_params = {"model": "/models/Kimi-K2.5-W4A8", "tp": _TP, "pp": _PP, "port": 8000}
+    if "max_model_len" in options:
+        server_params["max_model_length"] = options.pop("max_model_len")
     cell = f"ISL=1024,OSL=1024,TP={_TP},PP={_PP},CONC=16"
     return VariantConfig(
         enforce_thresholds=False,
         threshold_json="threshold.json",
-        ib_netdev="enp159s0np0",
         paths={"shared_fs": "/logs", "models_dir": "/models", "log_dir": "/logs", "hf_token_file": FAKE_CRED_FILE},
         container={"name": "test", "image": "test", "env": {}, "runtime": {"name": "docker", "args": {}}},
-        server_params={
-            "model": "/models/Kimi-K2.5-W4A8",
-            "tensor_parallel_size": _TP,
-            "pipeline_parallel_size": _PP,
-            "port": 8000,
-            "distributed_executor_backend": distributed_executor_backend,
-            **options,
-        },
-        benchmark_params=benchmark_params or {},
+        server_params={**server_params, "engine_args": options},
+        benchmark_params={"num_prompts": 3200, **(benchmark_params or {})},
         sweeps={cell: sweep_options or {}},
         runs=[cell],
+        vllm={"distributed_executor_backend": distributed_executor_backend},
     )
 
 
@@ -246,7 +242,7 @@ class TestRunClientEnsuresOutDir(unittest.TestCase):
 
 class TestRunClientTrustRemoteCode(unittest.TestCase):
     """Models with a custom tokenizer (e.g. Kimi-K2.6's auto_map) need the bench
-    client to pass --trust-remote-code, mirroring the server's serve_args, or the
+    client to pass --trust-remote-code, mirroring the server's engine_args, or the
     client's tokenizer load raises ValueError before any request is sent."""
 
     def _bench_cmd(self, job):
@@ -255,34 +251,18 @@ class TestRunClientTrustRemoteCode(unittest.TestCase):
         self.assertTrue(bench, f"no bench client command issued; head cmds: {job.orch.head_cmds}")
         return bench[-1]
 
-    def test_trust_remote_code_passed_when_benchmark_enables_it(self):
-        job = _job("1024", "1024", 8, benchmark_params={"trust_remote_code": True})
+    def test_trust_remote_code_passed_when_the_server_trusts_remote_code(self):
+        job = _job("1024", "1024", 8, serve_args={"trust_remote_code": True})
         self.assertIn("--trust-remote-code", self._bench_cmd(job))
 
-    def test_trust_remote_code_absent_when_benchmark_omits_it(self):
+    def test_trust_remote_code_absent_when_the_server_omits_it(self):
         job = _job("1024", "1024", 8)
         self.assertNotIn("--trust-remote-code", self._bench_cmd(job))
 
-    def test_resolved_cell_flags_override_benchmark_defaults(self):
-        for base, override, present in ((False, True, True), (True, False, False)):
-            with self.subTest(base=base, override=override):
-                variant = _variant(
-                    benchmark_params={"ignore_eos": base, "trust_remote_code": base},
-                    sweep_options={"ignore_eos": override, "trust_remote_code": override},
-                )
-                (run,) = variant.resolved_runs()
-                job = VllmJob(
-                    orch=FakeOrch(),
-                    variant=variant,
-                    isl=run.cell.isl,
-                    osl=run.cell.osl,
-                    concurrency=run.cell.concurrency,
-                    num_prompts=run.benchmark_params["num_prompts"],
-                    benchmark_params=run.benchmark_params,
-                )
-                command = self._bench_cmd(job)
-                self.assertEqual("--ignore-eos" in command, present)
-                self.assertEqual("--trust-remote-code" in command, present)
+    def test_ignore_eos_and_random_dataset_are_always_passed(self):
+        command = self._bench_cmd(_job("1024", "1024", 8))
+        self.assertIn("--ignore-eos", command)
+        self.assertIn("--dataset-name random", command)
 
 
 class TestSerializeServeArgs(unittest.TestCase):

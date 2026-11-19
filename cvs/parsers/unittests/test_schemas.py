@@ -210,6 +210,14 @@ class TestInferenceThresholds(unittest.TestCase):
         self.assertEqual(list(thresholds.cells()), [CELL])
         self.assertIn("is not a cell key", _problems({"ISL=1024": {}}, InferenceThresholdFile))
 
+    def test_get_returns_a_cell_as_written_and_the_default_otherwise(self):
+        thresholds = InferenceThresholdFile.model_validate(
+            {CELL: {"output_throughput": {"kind": "min", "value": 1}}, "accuracy": {"lm_eval": {}}}
+        )
+        self.assertEqual(thresholds.get(CELL), {"output_throughput": {"kind": "min", "value": 1}})
+        self.assertIsNone(thresholds.get("accuracy"))
+        self.assertEqual(thresholds.get("ISL=1,OSL=1,TP=1,PP=1,CONC=1", {}), {})
+
     def test_accuracy_sections_take_specs_by_id(self):
         thresholds = InferenceThresholdFile.model_validate(
             {"accuracy": {"lm_eval": {"gsm8k": {"exact_match": {"kind": "min", "value": 0.9}}}}}

@@ -26,8 +26,7 @@ IB device config (distributed only):
   NCCL_IB_HCA: inherited from container.env when configured there. Otherwise,
       ib_hcas discovered by test_discover_topology are written into the
       per-node env script.
-  Socket interfaces: inherited from container.env. The legacy top-level
-      ib_netdev fallback is written into the per-node environment script.
+  Socket interfaces: inherited from container.env.
 '''
 
 from __future__ import annotations
@@ -116,6 +115,13 @@ class VllmJob:
     )
     SERVER_STATE_RE = re.compile(r"^server-state log=(present|missing) pid=(alive|dead|none)$", re.M)
     _MAX_MODEL_LEN_PAD = 8
+    # timeouts.server_ready_s and timeouts.client_s are total budgets; null keeps
+    # the old vLLM defaults (330 s + 60 x 60 s, and 120 s + 20 x 60 s).
+    DEFAULT_SERVER_READY_S = 3930
+    DEFAULT_CLIENT_S = 1320
+    SERVER_WARMUP_S = 30
+    CLIENT_INITIAL_WAIT_S = 10
+    POLL_WAIT_S = 10
 
     def __init__(
         self,
@@ -145,14 +151,11 @@ class VllmJob:
             raise ValueError("vLLM topology hosts do not match the orchestrator")
 
         p = variant.server_params
-        b = dict(benchmark_params or {})
-        if not b:
-            b = variant.benchmark_params.model_dump()
-            b.update(variant.benchmark_params.extra_options())
-        self.tp = str(p.tensor_parallel_size)
-        self.pp = str(topology.pipeline_parallel_size) if topology is not None else str(p.pipeline_parallel_size)
+        b = dict(benchmark_params or {}) or variant.client_values()
+        self.tp = str(p.tp)
+        self.pp = str(topology.pipeline_parallel_size) if topology is not None else str(p.pp)
         self.master_addr = self.hosts[0]
-        self.master_port = str(p.dist_init_port)
+        self.master_port = str(p.master_port)
         self.nnodes = str(topology.nnodes) if topology is not None else str(len(self.hosts))
         self.port_no = str(p.port)
         self.random_range_ratio = str(b["random_range_ratio"])
@@ -162,15 +165,18 @@ class VllmJob:
         self.request_rate = str(b["request_rate"])
         self.tokenizer_mode = str(b["tokenizer_mode"])
         self.base_url = "http://0.0.0.0"
-        self.dataset_name = str(b["dataset_name"])
-        self.backend = str(b["backend"])
-        self.ignore_eos = bool(b["ignore_eos"])
-        self.trust_remote_code = bool(b["trust_remote_code"])
+        self.dataset_name = "random"
+        self.backend = "vllm"
+        self.ignore_eos = True
+        self.trust_remote_code = p.engine_args.get("trust_remote_code") is True
 
         self.model_id = p.model
         self.log_dir = variant.paths.log_dir
-        self.serve_args = p.extra_options()
-        self.distributed_executor_backend = p.distributed_executor_backend
+        self.serve_args = dict(p.engine_args)
+        self.max_model_len = p.max_model_length
+        # An explicit null sends no --max-model-len, so vLLM uses the model's own length.
+        self.derive_max_model_len = "max_model_length" not in p.model_fields_set
+        self.distributed_executor_backend = variant.vllm.distributed_executor_backend
         self.benchmark_options = {
             key: value
             for key, value in b.items()
@@ -180,7 +186,6 @@ class VllmJob:
         self.server_env = {}
         self.models_dir = variant.paths.models_dir
         self.hf_token_file = variant.paths.hf_token_file
-        self.ib_netdev = None if variant.container.socket_env_configured else variant.ib_netdev
 
         self.out_dir = f"{self.log_dir}/{self.log_subdir}/out-node0/isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
         self.server_log = f"{self.out_dir}/vllm_serve_server.log"
@@ -190,12 +195,14 @@ class VllmJob:
         self._precheck_wait = 30
         self._launch_retries = 2
         self._launch_retry_wait = 10
-        self._warmup_wait = p.server_warmup_wait_s
-        self._server_poll_count = p.server_poll_iterations
-        self._server_poll_wait = p.server_poll_wait_s
-        self._client_initial_wait = int(b["client_initial_wait_s"])
-        self._client_poll_count = int(b["client_poll_iterations"])
-        self._client_poll_wait = int(b["client_poll_wait_s"])
+        server_ready_s = variant.timeouts.server_ready_s or self.DEFAULT_SERVER_READY_S
+        client_s = variant.timeouts.client_s or self.DEFAULT_CLIENT_S
+        self._warmup_wait = min(self.SERVER_WARMUP_S, server_ready_s)
+        self._server_poll_wait = self.POLL_WAIT_S
+        self._server_poll_count = math.ceil((server_ready_s - self._warmup_wait) / self.POLL_WAIT_S)
+        self._client_initial_wait = min(self.CLIENT_INITIAL_WAIT_S, client_s)
+        self._client_poll_wait = self.POLL_WAIT_S
+        self._client_poll_count = math.ceil((client_s - self._client_initial_wait) / self.POLL_WAIT_S)
 
     # ---------- derived builders ----------
 
@@ -230,7 +237,9 @@ class VllmJob:
             "--port",
             str(self.port_no),
         ]
-        if "max_model_len" not in self.serve_args:
+        if self.max_model_len is not None:
+            argv += ["--max-model-len", str(self.max_model_len)]
+        elif self.derive_max_model_len:
             argv += ["--max-model-len", self._derive_max_model_len()]
         if int(self.nnodes) > 1 and not self._is_ray_backend:
             # mp multi-node: inject the full distributed-executor block.
@@ -301,10 +310,6 @@ class VllmJob:
         ]
         if self.ib_hcas:
             env_lines.append(f"export NCCL_IB_HCA={shlex.quote(','.join(self.ib_hcas))}")
-        if self.ib_netdev:
-            env_lines.append(f"export NCCL_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
-            env_lines.append(f"export GLOO_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
-            env_lines.append(f"export TP_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
         for k, v in self.server_env.items():
             env_lines.append(f"export {k}={shlex.quote(str(v))}")
         env_script = "\n".join(env_lines) + "\n"
