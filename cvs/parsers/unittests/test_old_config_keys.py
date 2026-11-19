@@ -17,8 +17,6 @@ def _switch_rule(config):
 
 
 def _total_rule(config):
-    if "polls" not in config and "wait_s" not in config:
-        return {}
     total = config.get("polls", 2) * config.get("wait_s", 5)
     return {"polls": OldKey("timeouts.total_s", value=total), "wait_s": OLD_KEY_DROPPED}
 
@@ -66,6 +64,10 @@ class TestResolveOldKeys(unittest.TestCase):
         self.assertIn("wait_s (dropped)", message)
         self.assertEqual(wait_only, {"timeouts": {"total_s": 20}})
 
+    def test_a_computed_value_is_not_written_when_no_old_key_is_present(self):
+        config = {"timeouts": {"total_s": 9}}
+        self.assertEqual(resolve_old_keys(config, {}, rules=(_total_rule,)), (config, None))
+
     def test_a_computed_value_is_copied_not_shared_with_the_input(self):
         config = {"a": [1]}
         converted, _ = resolve_old_keys(config, {}, rules=(lambda c: {"a": OldKey("b", value=c["a"])},))
@@ -97,6 +99,8 @@ class TestResolveOldKeys(unittest.TestCase):
     def test_two_different_rows_for_one_path_fail(self):
         with self.assertRaisesRegex(ValueError, "rows disagree for a"):
             resolve_old_keys({"a": 1}, {"a": "b"}, rules=(lambda c: {"a": OLD_KEY_DROPPED},))
+        converted, _ = resolve_old_keys({"a": 1}, {"a": "b"}, rules=(lambda c: {"a": "b"},))
+        self.assertEqual(converted, {"b": 1})
 
     def test_a_row_of_unknown_kind_fails_naming_its_path(self):
         with self.assertRaisesRegex(ValueError, "row for a is not"):
