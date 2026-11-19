@@ -106,6 +106,9 @@ class TestResolveOldKeys(unittest.TestCase):
         self.assertEqual(converted, {})
         converted, _ = resolve_old_keys({"s": {"a": 1, "b": 2}}, {"s.a": "s.c"})
         self.assertEqual(converted, {"s": {"b": 2, "c": 1}})
+        rule = (lambda c: {"s.x": OldKey("n", value=5)},)
+        converted, _ = resolve_old_keys({"old": 1, "s": {}}, {"old": OLD_KEY_DROPPED}, rules=rule)
+        self.assertEqual(converted, {"s": {}, "n": 5})
         converted, _ = resolve_old_keys({"old": {"a": 1}}, {"old.a": "new.a"}, drop_emptied=False)
         self.assertEqual(converted, {"old": {}, "new": {"a": 1}})
 
@@ -116,6 +119,11 @@ class TestResolveOldKeys(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "matches nothing"):
             resolve_old_keys(config, {}, rules=(lambda c: {"accuracy.gsm8k.flex": OLD_KEY_DROPPED},))
         self.assertEqual(resolve_old_keys(config, {"accuracy.other.kind": "x"}), (config, None))
+        shadowed = {"a": {"b": {}, "b.c": {"d": 1}}}
+        with self.assertRaisesRegex(ValueError, "a.b.c.d matches nothing"):
+            resolve_old_keys(shadowed, {"a.b.c.d": "x"})
+        converted, _ = resolve_old_keys({"a": {"b": {"c": 1}, "b.c": 2}}, {"a.b.c": "x"})
+        self.assertEqual(converted, {"a": {"b.c": 2}, "x": 1})
         self.assertEqual(
             resolve_old_keys(config, {"accuracy.gsm8k.flex.kind": "x"}, check_dotted=False), (config, None)
         )
@@ -210,7 +218,7 @@ class TestPreflightOldKeys(unittest.TestCase):
         self.assertEqual(normalize_legacy_preflight_rdma_config(config), (config, None))
         self.assertIs(normalize_legacy_preflight_rdma_config(config)[0], config)
 
-    def test_rdma_keeps_an_emptied_node_check_and_ignores_a_dotted_key(self):
+    def test_rdma_ignores_a_dotted_key(self):
         config = {"node_check.gid_index": "3"}
         self.assertEqual(normalize_legacy_preflight_rdma_config(config), (config, None))
 
