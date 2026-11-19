@@ -39,7 +39,7 @@ Post-review round additions (impl-blind against the same spec):
   R1.1 bootstrap-fail return omitting 'output' key . TestStartServerRayBootstrap
   R1.2 server_signature env tuple independent oracle TestServerSignatureRay
   R2.1 mp dist-block flag VALUES (not just presence)  TestServerArgvRayVsMp
-  R2.2 is_ready True/False/empty + multinode skip .. TestVllmJobIsReady
+  is_ready HTTP 200 only, head only ............... TestVllmJobIsReady
   R2.3 parse_results empty/unparseable/delegation .. TestVllmJobParseResults
 
 Round-3 coverage-gap additions (impl-blind against the same spec):
@@ -201,20 +201,20 @@ def _responder_fatal_grep(fatal_hosts, fatal_text=_FATAL):
     return r
 
 
-def _responder_readiness(exit_code=0, empty=False):
-    """is_ready() greps each non-skipped rank's readiness log via
-    orch.exec(detailed=True) and returns {host: {"exit_code": ...}}; exit_code 0
-    means the readiness pattern was found (server ready). empty=True returns {}
-    to exercise the `not out` (empty result) False path. Non-detailed calls
-    return clean text (unused by is_ready)."""
+def _responder_http(status_text, exit_code=0):
+    """is_ready() runs curl on the head and reads the HTTP status from its output.
+
+    ``status_text`` is what curl printed (``None`` returns no result at all);
+    ``exit_code`` is what the exec layer reports for detailed calls, which
+    is_ready must ignore."""
 
     def r(cmd, hosts, detailed):
-        if empty:
+        if status_text is None:
             return {}
         host = hosts[0] if hosts else HEAD
         if detailed:
-            return {host: {"exit_code": exit_code, "output": "", "stdout": ""}}
-        return {host: ""}
+            return {host: {"exit_code": exit_code, "output": status_text, "stdout": status_text}}
+        return {host: status_text}
 
     return r
 
@@ -937,38 +937,47 @@ class TestServerSignatureRay(unittest.TestCase):
 # is_ready  (Round-2 finding 2: previously zero direct coverage)
 # --------------------------------------------------------------------------- #
 class TestVllmJobIsReady(unittest.TestCase):
-    """is_ready() greps rank-0's readiness log via orch.exec(detailed=True) and
-    returns True iff the collected result is non-empty AND every grepped rank's
-    exit_code == 0 (exit 0 = readiness pattern found). rank>0 workers are skipped
-    when int(nnodes) > 1 (the pre-existing guard, NOT ray-gated -- spec RC9).
-    These tests pin the True path, both False paths (non-zero exit, empty result),
-    and the multi-node worker-skip; none of it was exercised before (is_ready is
-    never called by the start_server tests)."""
+    """is_ready() is True only when the head's /v1/models answers HTTP 200."""
 
-    def test_true_when_readiness_found(self):
-        orch = RecordingOrch(responder=_responder_readiness(exit_code=0), hosts=[HEAD])
-        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1", socket_ifname=None)
-        self.assertTrue(job.is_ready())
+    def _ready(self, status_text, nnodes="1"):
+        orch = RecordingOrch(responder=_responder_http(status_text), hosts=[HEAD, WORKER][: int(nnodes)])
+        job = _job(orch=orch, serve_args={}, nnodes=nnodes, pp=nnodes, socket_ifname=None if nnodes == "1" else "eth0")
+        return job.is_ready(), orch
 
-    def test_false_when_readiness_absent(self):
-        orch = RecordingOrch(responder=_responder_readiness(exit_code=1), hosts=[HEAD])
-        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1", socket_ifname=None)
-        self.assertFalse(job.is_ready())
+    def test_true_only_on_http_200(self):
+        self.assertTrue(self._ready("200")[0])
+        for text in ("000", "503", "404", "2000", ""):
+            with self.subTest(text=text):
+                self.assertFalse(self._ready(text)[0])
+
+    def test_an_exec_exit_zero_without_http_200_is_not_ready(self):
+        # The exec layer reported exit 0 although nothing answered on the port.
+        for text in ("", "000"):
+            with self.subTest(text=text):
+                orch = RecordingOrch(responder=_responder_http(text, exit_code=0), hosts=[HEAD])
+                job = _job(orch=orch, serve_args={}, nnodes="1", pp="1", socket_ifname=None)
+                self.assertFalse(job.is_ready())
 
     def test_false_when_result_empty(self):
-        # `not out` branch: an empty/None exec result must read as NOT ready.
-        orch = RecordingOrch(responder=_responder_readiness(empty=True), hosts=[HEAD])
-        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1", socket_ifname=None)
-        self.assertFalse(job.is_ready())
+        self.assertFalse(self._ready(None)[0])
 
-    def test_multinode_skips_workers_and_only_checks_rank0(self):
-        # nnodes=2: only rank 0 (head) is grepped; the rank-1 worker is skipped
-        # (rank>0 & nnodes>1 guard), so readiness is decided from rank 0 alone.
-        orch = RecordingOrch(responder=_responder_readiness(exit_code=0))
-        job = _job(orch=orch, serve_args={}, nnodes="2", pp="2")
+    def test_status_line_is_found_among_transport_stderr_lines(self):
+        self.assertTrue(self._ready("sudo: unable to resolve host n0\n\n200\n")[0])
+        self.assertFalse(self._ready("sudo: unable to resolve host n0\n\n000\n")[0])
+
+    def test_the_probe_stays_out_of_the_console(self):
+        job = _job(orch=RecordingOrch(hosts=[HEAD]), serve_args={}, nnodes="1", pp="1", socket_ifname=None)
+        job.orch.exec = mock.Mock(return_value={HEAD: "\n200\n"})
         self.assertTrue(job.is_ready())
-        self.assertEqual(_calls_to(orch, WORKER), [], "rank>0 worker must be skipped by is_ready under nnodes>1")
-        self.assertTrue(_calls_to(orch, HEAD), "rank 0 head readiness log must be grepped")
+        self.assertIs(job.orch.exec.call_args.kwargs["print_console"], False)
+
+    def test_asks_the_head_api_only(self):
+        ready, orch = self._ready("200", nnodes="2")
+        self.assertTrue(ready)
+        self.assertEqual(_calls_to(orch, WORKER), [], "workers serve no API and are not asked")
+        (cmd,) = _calls_to(orch, HEAD)
+        self.assertIn("curl", cmd)
+        self.assertIn("http://0.0.0.0:8000/v1/models", cmd)
 
 
 # --------------------------------------------------------------------------- #

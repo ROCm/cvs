@@ -12,7 +12,8 @@ Routing contract:
     orch.exec_on_head. Semantically correct for both topologies: the client
     always connects to http://head:port. Using broadcast exec here would
     launch N competing clients on multinode.
-  - wait_ready / is_ready: BROADCAST so every shard is checked.
+  - wait_ready: BROADCAST early-failure checks so every shard is checked;
+    is_ready asks the head's OpenAI API for HTTP 200.
   - stop_server: BROADCAST pkill to all nodes.
 
 Distributed vs single-node branching is localised to _server_argv only. The
@@ -87,7 +88,6 @@ class VllmJob:
     (for multinode) ``setup_sshd()`` called against it by the test lifecycle.
     """
 
-    READINESS_RE = re.compile(r"Application startup complete|Uvicorn running|Started server", re.I)
     COMPLETION_RE = re.compile(r"Serving Benchmark Result", re.I)
     FAILED_REQUESTS_RE = re.compile(r"Failed requests:\s+([0-9]+)", re.I)
     SUCCESSFUL_REQUESTS_RE = re.compile(r"Successful requests:\s+([0-9]+)", re.I)
@@ -420,26 +420,21 @@ class VllmJob:
         return ("unknown", "unknown")
 
     def is_ready(self):
-        """Check readiness on each node using its own per-rank log path.
+        """True when the head's OpenAI API answers ``GET /v1/models`` with HTTP 200.
 
-        Headless worker nodes (rank > 0) never log 'Application startup
-        complete' — they have no API server. Only check the head (rank 0)
-        for the startup pattern; worker ranks are considered ready implicitly
-        once the head is up.
+        Only the head (rank 0) serves the API; worker ranks are ready once it
+        answers. The status code is read from curl's output, not from the exec
+        exit status, which the exec layer can report as 0 for a failed command.
         """
-        pattern = self.READINESS_RE.pattern
-        for rank, host in enumerate(self.hosts):
-            if rank > 0 and int(self.nnodes) > 1:
-                continue
-            rank_log = self._rank_log(rank)
-            out = self.orch.exec(
-                f"grep -qiE {shlex.quote(pattern)} {shlex.quote(rank_log)}",
-                detailed=True,
-                hosts=[host],
-            )
-            if not out or not all(r["exit_code"] == 0 for r in out.values()):
-                return False
-        return True
+        url = f"{self.base_url}:{self.port_no}/v1/models"
+        out = self.orch.exec(
+            f"curl -s -o /dev/null -w '\\n%{{http_code}}\\n' --max-time 5 {shlex.quote(url)}",
+            hosts=[self.hosts[0]],
+            print_console=False,
+        )
+        # The output can carry stderr lines from the exec transport, so look for
+        # the status code on a line of its own.
+        return any("200" in str(text or "").splitlines() for text in (out or {}).values())
 
     def _check_early_failure(self, emit_tail: bool = False):
         """Check per-rank logs on each host for early failure / fatal patterns.

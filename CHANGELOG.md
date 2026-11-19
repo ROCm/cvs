@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The health sample config's TransferBench schmoo `32_cu_local_copy` threshold is lowered so healthy MI300X nodes pass; configs copied from the old sample still fail and must lower `32_cu_local_copy`.
 - rocm-smi JSON reads, including the GPU PCIe bus map used by ibperf and the host config checks, no longer fail when ROCm 10.1 or later prints its deprecation warning with the command output.
 - The ATOM, SGLang and xDiT Run Decks show a metric whose threshold kind is `info` as passed instead of failed.
+- vLLM waits until the server answers on `/v1/models` before sending requests. A server still loading could pass the old readiness check, and the run then failed with `Connection refused`.
 - When preflight rejects the cluster file, the error names each invalid field and the problem without printing the field's value.
 
 ### Removed
