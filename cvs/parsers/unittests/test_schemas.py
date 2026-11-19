@@ -109,7 +109,9 @@ class TestInferenceServerAndClientBlocks(unittest.TestCase):
 
     def test_engine_args_naming_a_harness_field_fails(self):
         problems = _problems(_inference_dict(server_params={"model": "m", "tp": 8, "engine_args": {"tp": 4}}))
-        self.assertIn("server_params.engine_args cannot set harness fields: ['tp']", problems)
+        self.assertIn("server_params: engine_args cannot set harness fields: ['tp']", problems)
+        problems = _problems(_inference_dict(server_params={"model": "m", "tp": 8, "engine_args": {"node_rank": 1}}))
+        self.assertIn("['node_rank']", problems)
 
     def test_client_args_naming_a_harness_flag_fails(self):
         problems = _problems(_inference_dict(benchmark_params={"num_prompts": 32, "client_args": {"base_url": "x"}}))
@@ -119,7 +121,13 @@ class TestInferenceServerAndClientBlocks(unittest.TestCase):
         problems = _problems(
             _inference_dict(server_params={"model": "m", "tp": 8, "engine_args": {"kv-cache-dtype": "fp8"}})
         )
-        self.assertIn("kv-cache-dtype: flag names must be snake_case", problems)
+        self.assertIn("engine_args.kv-cache-dtype: flag names must be snake_case", problems)
+
+    def test_a_false_flag_is_refused(self):
+        problems = _problems(
+            _inference_dict(benchmark_params={"num_prompts": 32, "client_args": {"save_result": False}})
+        )
+        self.assertIn("client_args.save_result: false is ambiguous", problems)
 
 
 class TestInferenceErrorsCarryNoValues(unittest.TestCase):
@@ -129,6 +137,18 @@ class TestInferenceErrorsCarryNoValues(unittest.TestCase):
         )
         self.assertIn("server_params.model", problems)
         self.assertNotIn(FAKE_TOKEN, problems)
+
+    def test_placeholder_in_any_string_field_names_the_field(self):
+        for field, data in (
+            (
+                "benchmark_params.tokenizer_mode",
+                {"benchmark_params": {"num_prompts": 32, "tokenizer_mode": "<changeme>"}},
+            ),
+            ("benchmark_params.request_rate", {"benchmark_params": {"num_prompts": 32, "request_rate": "<changeme>"}}),
+            ("threshold_json", {"threshold_json": "<changeme>"}),
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, _problems(_inference_dict(**data), context=REJECT))
 
     def test_placeholder_in_engine_args_names_the_flag_without_its_value(self):
         data = _inference_dict(
@@ -196,6 +216,10 @@ class TestInferenceThresholds(unittest.TestCase):
         )
         self.assertEqual(thresholds.accuracy.lm_eval["gsm8k"]["exact_match"].value, 0.9)
 
+    def test_cell_metrics_must_be_shared_metric_names(self):
+        problems = _problems({CELL: {"output_thruput": {"kind": "min", "value": 1}}}, InferenceThresholdFile)
+        self.assertIn("unknown inference metric(s): ['output_thruput']", problems)
+
     def test_metric_names_include_every_vllm_registry_metric(self):
         from cvs.lib.inference.utils.vllm_metrics import METRIC_REGISTRY
 
@@ -244,13 +268,20 @@ class TestInferenceSweepsAndRuns(unittest.TestCase):
     def test_cell_overrides_drop_comments_and_refuse_harness_flags(self):
         config = InferenceConfig.model_validate(_inference_dict(sweeps={CELL: {"_note": "x", "num_prompts": 64}}))
         self.assertEqual(config.sweeps[CELL], {"num_prompts": 64})
-        self.assertIn("['max_concurrency']", _problems(_inference_dict(sweeps={CELL: {"max_concurrency": 4}})))
+        for flag in ("max_concurrency", "tp", "client_args"):
+            with self.subTest(flag=flag):
+                self.assertIn(f"['{flag}']", _problems(_inference_dict(sweeps={CELL: {flag: 4}})))
 
     def test_enforced_threshold_file_must_cover_every_run(self):
         data = _inference_dict(threshold_json="t.json", thresholds={})
         self.assertIn("runs missing from the threshold file", _problems(data))
         InferenceConfig.model_validate({**data, "enforce_thresholds": False})
         InferenceConfig.model_validate(_inference_dict(thresholds={}))
+
+    def test_threshold_cells_must_match_server_tp_and_pp(self):
+        other = "ISL=1024,OSL=1024,TP=2,PP=1,CONC=16"
+        data = _inference_dict(thresholds={other: {"output_throughput": {"kind": "min", "value": 1}}})
+        self.assertIn(f"thresholds.{other}: TP and PP must equal", _problems(data))
 
     def test_custom_eval_ids_are_unique(self):
         niah = {"type": "niah", "id": "n", "isl": 8192}

@@ -9,7 +9,7 @@ Substitution (`substitute_placeholders`, and `substitute_config` with its thresh
 import; it re-exports `BaseVariantConfig` and the blocks.
 
 `cvs/parsers/schemas.py` imports nothing from `cvs.lib` at module level, since `cvs.lib` imports
-it; a unit test fails any module-level import that brings a cycle back.
+it; a unit test checks that importing it loads no `cvs.lib` module.
 `__init__.py` must stay empty: `loader.py` imports `config_loader`, so a package-level re-export
 of `load_config` is an import cycle.
 
@@ -17,7 +17,7 @@ of `load_config` is an import cycle.
 
 ### `config_blocks.py`
 
-A re-export of the blocks every suite composes, now defined in `cvs/parsers/schemas.py`.
+A re-export of the blocks every suite composes, which are defined in `cvs/parsers/schemas.py`.
 `config_loader.py` re-exports `_Forbid`, `_Allow`, `Paths`, `ModelSpec`, `RuntimeSpec`,
 `ContainerSpec` and `BaseVariantConfig`, so existing imports keep working.
 

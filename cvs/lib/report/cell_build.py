@@ -18,6 +18,7 @@ def metric_pass(metric: str, actual: Any, spec: Optional[dict], evaluator=None, 
         return status
     if actual is None:
         return "na"
+    # Training decks keep showing info as failed; see InferenceReportConfig.record_info_specs.
     if spec.get("kind") == "info" and not record_info:
         return "fail"
     err = _check_one(metric, actual, spec)

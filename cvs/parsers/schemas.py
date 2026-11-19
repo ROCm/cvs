@@ -1644,7 +1644,7 @@ class AccuracyConfig(_Forbid):
 
 
 class LongContextAccCell(_Forbid):
-    """Long-context accuracy cell selection (ACC-12 NIAH); gating values live in the threshold file."""
+    """Long-context (needle-in-a-haystack) accuracy cell; gating values live in the threshold file."""
 
     id: str
     isl: int
@@ -1669,14 +1669,14 @@ class LongContextAccuracyConfig(_Forbid):
 
 
 class FunctionalConfig(_Forbid):
-    """Optional functional smoke gates for inference suites (FUNC-1/2)."""
+    """Optional functional smoke gates for inference suites."""
 
     api_smoke: bool = False
     health_check: bool = False
 
 
 class PlatformConfig(_Forbid):
-    """Optional platform / post-run checks for inference suites (INF-6/7)."""
+    """Optional platform / post-run checks for inference suites."""
 
     dmesg_scan: bool = False
     gpu_metrics_poll: bool = False
@@ -1749,6 +1749,16 @@ class InferenceThresholdSpec(_Forbid):
 InferenceThresholdCell = Annotated[Dict[str, InferenceThresholdSpec], BeforeValidator(_drop_comment_keys)]
 
 
+def _check_metric_names(cell):
+    unknown = sorted(set(cell) - INFERENCE_METRIC_NAMES)
+    if unknown:
+        raise ValueError(f"unknown inference metric(s): {unknown}")
+    return cell
+
+
+InferenceMetricCell = Annotated[InferenceThresholdCell, AfterValidator(_check_metric_names)]
+
+
 class InferenceAccuracyThresholds(_Forbid):
     """Mirrors the config's ``accuracy`` block: ``lm_eval`` and ``custom_eval`` are keyed by id."""
 
@@ -1771,10 +1781,13 @@ def parse_inference_cell_key(key):
 
 
 class InferenceThresholdFile(_Allow):
-    """A threshold file: one section of metric specs per cell key, plus ``accuracy``."""
+    """A threshold file: one section of metric specs per cell key, plus ``accuracy``.
+
+    Cell metrics must be in ``INFERENCE_METRIC_NAMES``; accuracy metrics are named by the eval.
+    """
 
     accuracy: InferenceAccuracyThresholds = Field(default_factory=InferenceAccuracyThresholds)
-    __pydantic_extra__: Dict[str, InferenceThresholdCell]
+    __pydantic_extra__: Dict[str, InferenceMetricCell]
 
     @model_validator(mode="after")
     def _check_cell_keys(self):
@@ -1838,15 +1851,19 @@ FlagValue = Annotated[Any, AfterValidator(_reject_flag_placeholder)]
 _FLAG_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
-def _check_flag_names(flags, section, reserved):
-    for name in flags:
+def _check_flags(flags, section, reserved):
+    for name, value in flags.items():
         if not _FLAG_NAME_RE.fullmatch(name):
             raise ValueError(f"{section}.{name}: flag names must be snake_case")
+        if value is False:
+            raise ValueError(f"{section}.{name}: false is ambiguous; omit the flag or use its negative form")
     harness = sorted(set(flags) & reserved)
     if harness:
         raise ValueError(f"{section} cannot set harness fields: {harness}")
 
 
+# Server flags the harness sets on a multinode launch.
+_HARNESS_SERVER_FLAGS = frozenset({"master_addr", "node_rank"})
 # Client flags the harness sets for every cell.
 _HARNESS_CLIENT_FLAGS = frozenset(
     {
@@ -1892,7 +1909,7 @@ class InferenceServerParams(_Forbid):
 
     @model_validator(mode="after")
     def _check_engine_args(self):
-        _check_flag_names(self.engine_args, "server_params.engine_args", set(type(self).model_fields))
+        _check_flags(self.engine_args, "engine_args", set(type(self).model_fields) | _HARNESS_SERVER_FLAGS)
         return self
 
 
@@ -1902,10 +1919,10 @@ class InferenceBenchmarkParams(_Forbid):
     num_prompts: PositiveInt
     random_range_ratio: float = 0.0
     seed: int = 0
-    request_rate: Union[float, str] = "inf"
+    request_rate: Union[float, ConfigStr] = "inf"
     burstiness: float = 1.0
     random_prefix_len: int = 0
-    tokenizer_mode: str = "auto"
+    tokenizer_mode: ConfigStr = "auto"
     # Single-node output throughput; sets scaling.efficiency_pct on multinode cells.
     scaling_baseline_output_throughput: Optional[float] = None
     # Native client flags in snake_case; true writes a bare flag.
@@ -1914,7 +1931,7 @@ class InferenceBenchmarkParams(_Forbid):
     @model_validator(mode="after")
     def _check_client_args(self):
         reserved = set(type(self).model_fields) | _HARNESS_CLIENT_FLAGS
-        _check_flag_names(self.client_args, "benchmark_params.client_args", reserved)
+        _check_flags(self.client_args, "client_args", reserved)
         return self
 
 
@@ -1944,6 +1961,10 @@ class InferenceAccuracyConfig(_Forbid):
         return self
 
 
+# One server serves every cell, so a cell can override only client flags.
+_CELL_RESERVED = _HARNESS_CLIENT_FLAGS | set(InferenceServerParams.model_fields) | {"client_args"}
+
+
 def _field_model(model_cls, name):
     annotation = model_cls.model_fields[name].annotation
     return annotation if isinstance(annotation, type) and issubclass(annotation, BaseModel) else None
@@ -1962,7 +1983,7 @@ class InferenceConfig(_Forbid):
     # false records every metric without failing.
     enforce_thresholds: bool = True
     # Threshold file next to the config or packaged; "" records without gating.
-    threshold_json: str = ""
+    threshold_json: ConfigStr = ""
     paths: Paths
     container: InferenceContainerSpec
     server_params: InferenceServerParams
@@ -2010,7 +2031,7 @@ class InferenceConfig(_Forbid):
             axes = parse_inference_cell_key(key)
             if (axes["tp"], axes["pp"]) != (self.server_params.tp, self.server_params.pp):
                 raise ValueError(f"sweeps.{key}: TP and PP must equal server_params.tp and server_params.pp")
-            _check_flag_names(overrides, f"sweeps.{key}", _HARNESS_CLIENT_FLAGS)
+            _check_flags(overrides, f"sweeps.{key}", _CELL_RESERVED)
         if not self.runs:
             raise ValueError("runs must list at least one sweeps key")
         repeated = sorted(key for key, n in Counter(self.runs).items() if n > 1)
@@ -2023,6 +2044,10 @@ class InferenceConfig(_Forbid):
 
     @model_validator(mode="after")
     def _check_threshold_coverage(self):
+        for key in self.thresholds.cells():
+            axes = parse_inference_cell_key(key)
+            if (axes["tp"], axes["pp"]) != (self.server_params.tp, self.server_params.pp):
+                raise ValueError(f"thresholds.{key}: TP and PP must equal server_params.tp and server_params.pp")
         if self.enforce_thresholds and self.threshold_json.strip():
             missing = [key for key in self.runs if key not in self.thresholds.cells()]
             if missing:

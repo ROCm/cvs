@@ -21,6 +21,15 @@ class TestConfigAdapter(unittest.TestCase):
                 self.assertIs(config.run_card_display_builder, rccl_run_card_display)
                 self.assertIs(config.launch_provenance_builder, rccl_run_card_display)
 
+    def test_sweep_profiles_record_info_specs_and_training_profiles_do_not(self):
+        hook = "cvs.lib.inference.sglang.sglang_parsing:tier_metric_specs"
+        for builder, expected in (("sweep", True), ("training_sweep", False)):
+            with self.subTest(builder=builder):
+                config = resolve_report_config(
+                    {"suite_id": "s", "dataset_builder": builder, "hooks": {"tier_metric_specs": hook}}
+                )
+                self.assertIs(config.record_info_specs, expected)
+
 
 if __name__ == "__main__":
     unittest.main()
