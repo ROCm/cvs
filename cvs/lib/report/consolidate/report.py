@@ -10,7 +10,7 @@ import shutil
 import tempfile
 from collections import Counter
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from cvs.lib import globals
 from cvs.lib.report.consolidate import areas, discovery, normalize, rollup, writer
@@ -20,7 +20,28 @@ from cvs.lib.report.rundeck.publish_helpers import cvs_version
 log = globals.log
 
 SCHEMA_VERSION = 1
+SUITE_PAGES_DIR = "suites"
 _UNSAFE_ID = re.compile(r"[^A-Za-z0-9._-]+")
+_SUITE_PAGE_FIELDS = (
+    "id",
+    "name",
+    "category",
+    "status",
+    "generated",
+    "cluster",
+    "counts",
+    "total",
+    "unit",
+    "partial",
+    "notes",
+)
+_SUITE_PAGE_LINKS = (
+    ("deck", "reportUrl"),
+    ("json", "jsonUrl"),
+    ("viewer", "viewerUrl"),
+    ("pytest", "pytestUrl"),
+    ("log", "logUrl"),
+)
 
 
 class ConsolidationError(Exception):
@@ -133,12 +154,15 @@ def build_report(decks, report_root, warnings):
         detail = dict(details[suite["id"]], schema_version=SCHEMA_VERSION, summary=suite)
         writer.write_json(report_root / suite["detailUrl"], detail)
     writer.write_json(report_root / "summary.json", summary)
+    area_order = areas.ordered_areas(suite["category"] for suite in suites)
+    version = cvs_version()
+    _write_suite_pages(suites, details, report_root, area_order, version)
     page_data = {
         "summary": summary,
         "details": details,
-        "areas": areas.ordered_areas(suite["category"] for suite in suites),
+        "areas": area_order,
         "built": datetime.now(timezone.utc).strftime(rollup.LEGACY_TIME),
-        "cvs_version": cvs_version(),
+        "cvs_version": version,
     }
     (report_root / "index.html").write_text(writer.render_index(page_data), encoding="utf-8")
 
@@ -158,6 +182,36 @@ def build_report(decks, report_root, warnings):
 
 def _public(suite):
     return {key: value for key, value in suite.items() if not key.startswith("_")}
+
+
+def _write_suite_pages(suites, details, report_root, area_order, version):
+    '''Write ``suites/<id>.html`` for every suite whose Run Deck could be read.'''
+    paged = sorted(
+        (suite for suite in suites if suite["suiteUrl"]),
+        key=lambda suite: (area_order.index(suite["category"]), suite["name"].lower()),
+    )
+    for suite in paged:
+        links = {"overview": "../index.html"}
+        links.update({key: "../" + suite[field] if suite[field] else None for key, field in _SUITE_PAGE_LINKS})
+        page_data = {
+            "deck": suite["_deck"],
+            "suite": {key: suite[key] for key in _SUITE_PAGE_FIELDS},
+            "metadata": details[suite["id"]]["metadata"],
+            "links": links,
+            "suites": [
+                {
+                    "name": other["name"],
+                    "category": other["category"],
+                    "url": PurePosixPath(other["suiteUrl"]).name,
+                    "current": other is suite,
+                }
+                for other in paged
+            ],
+            "cvs_version": version,
+        }
+        path = report_root / suite["suiteUrl"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(writer.render_suite_page(page_data), encoding="utf-8")
 
 
 def _build_suite(variant, decks, report_root, warnings):
@@ -224,6 +278,7 @@ def _build_suite(variant, decks, report_root, warnings):
         "nodes": result["nodes"],
         "scope": result["scope"],
         "detailUrl": "data/details/%s.json" % variant,
+        "suiteUrl": "%s/%s.html" % (SUITE_PAGES_DIR, variant) if available else None,
         "jsonUrl": links["jsonUrl"],
         "reportUrl": links["reportUrl"],
         "viewerUrl": links["viewerUrl"],
@@ -234,6 +289,7 @@ def _build_suite(variant, decks, report_root, warnings):
             {"generated": _generated(deck), "status": _status(deck), "reportUrl": deck_links["reportUrl"]}
             for deck, deck_links in placed[1:]
         ],
+        "_deck": data if available else None,
         "_host_rows": result["host_rows"],
         "_provenance": provenance,
         "_source": selected.display_path,

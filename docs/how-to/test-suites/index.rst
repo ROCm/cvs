@@ -190,7 +190,7 @@ To combine several trees, separate the directories with commas. To leave a suite
 
 The command searches each directory recursively, in run folders and in the zip bundles ``cvs run`` writes. A run found both unzipped and in its bundle counts once. When a suite ran more than once, its latest run sets its verdict and the earlier runs are listed with it. The command only reads files and never contacts the nodes, so run it wherever the directories are readable.
 
-It writes ``consolidated_report_<YYYY-mm-ddTHHMMSS>.zip`` to the searched directory, or to the current directory when several are given, unless ``--output`` names another directory. Extract the zip and open ``index.html``. It needs no server or network access, and every link points inside the zip.
+It writes ``consolidated_report_<YYYY-mm-ddTHHMMSS>.zip`` to the searched directory, or to the current directory when several are given, unless ``--output`` names another directory. Extract the zip and open ``index.html``. It needs no server or network access, and every link points inside the zip. Charts on the suite pages and in the interactive viewers load Chart.js from the internet; without network access, those pages show their tables without charts.
 
 .. list-table::
    :header-rows: 1
@@ -198,7 +198,9 @@ It writes ``consolidated_report_<YYYY-mm-ddTHHMMSS>.zip`` to the searched direct
    * - In the zip
      - Contents
    * - ``index.html``
-     - Collection verdict, pass/fail counts, recommendations, suites by area, and the cluster manifest. Select a suite for its failures and links to its Run Deck, viewer, pytest report, and log.
+     - Collection verdict, pass/fail counts, recommendations, suites by area, and the cluster manifest. Select a suite for its failures and links to its suite page, original Run Deck, viewer, pytest report, and log.
+   * - ``suites/<suite>.html``
+     - A page for each suite, opened with **Open Run Deck**: its verdict, node or configuration outcomes with filters and an inspector, charts, the data table, and run context.
    * - ``summary.json``
      - The same results for scripts and CI.
    * - ``runs/<suite>/<run>/``

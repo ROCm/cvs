@@ -6,8 +6,9 @@
   var details = data.details;
   var suites = summary.suites;
   var areas = data.areas;
-  var STATUS_ORDER = ['fail', 'pass', 'record', 'na', 'unknown'];
-  var STATUS_LABEL = { fail: 'Failed', pass: 'Passed', record: 'Record only', na: 'N/A', unknown: 'Unavailable' };
+  var STATUS_ORDER = cvsPage.STATUS_ORDER;
+  var STATUS_LABEL = cvsPage.STATUS_LABEL;
+  var h = cvsPage.h, add = cvsPage.add, clear = cvsPage.clear, mark = cvsPage.mark, link = cvsPage.link;
   var VERDICT = {
     needs_attention: ['Needs attention', 'At least one suite failed.'],
     incomplete_data: ['Incomplete data', 'Nothing failed, but a report is missing, unreadable, or partial.'],
@@ -24,47 +25,6 @@
   suites.forEach(function (s) { byId[s.id] = s; });
   ((summary.manifest || {}).suites || []).forEach(function (m) { manifestById[m.id] = m; });
 
-  function h(tag, attrs) {
-    var el = document.createElement(tag);
-    if (attrs) {
-      Object.keys(attrs).forEach(function (key) {
-        var value = attrs[key];
-        if (value === null || value === undefined || value === false) return;
-        if (key === 'class') el.className = value;
-        else if (key.indexOf('on') === 0) el.addEventListener(key.slice(2), value);
-        else el.setAttribute(key, value === true ? '' : value);
-      });
-    }
-    for (var i = 2; i < arguments.length; i++) add(el, arguments[i]);
-    return el;
-  }
-  function add(el, child) {
-    if (child === null || child === undefined || child === false) return;
-    if (Array.isArray(child)) { child.forEach(function (c) { add(el, c); }); return; }
-    // CodeQL accepts a typeof test, not instanceof alone, as proof that report text never reaches appendChild.
-    if (typeof child === 'object' && child instanceof Node) el.appendChild(child);
-    else el.appendChild(document.createTextNode(String(child)));
-  }
-  function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
-  function svg(tag, attrs) {
-    var el = document.createElementNS('http://www.w3.org/2000/svg', tag);
-    Object.keys(attrs).forEach(function (k) { el.setAttribute(k, attrs[k]); });
-    for (var i = 2; i < arguments.length; i++) el.appendChild(arguments[i]);
-    return el;
-  }
-
-  function spark() {
-    return svg('svg', { class: 'spark', viewBox: '0 0 120 120', fill: 'none', 'aria-hidden': 'true' },
-      svg('g', { stroke: 'currentColor', 'stroke-width': '7' },
-        svg('path', { d: 'M60 10V110M10 60H110' }),
-        svg('path', { d: 'M32 32L88 88M88 32L32 88', opacity: '.45' })),
-      svg('circle', { cx: '60', cy: '60', r: '16', fill: 'var(--f-canvas)' }),
-      svg('circle', { cx: '60', cy: '60', r: '10', fill: 'var(--f-brand-red)' }));
-  }
-  function mark(status, label) {
-    return h('span', { class: 'status status-' + status },
-      h('span', { class: 'status-glyph', 'aria-hidden': 'true' }), label || STATUS_LABEL[status]);
-  }
   function suiteCounts(list) {
     var c = { fail: 0, pass: 0, record: 0, na: 0, unknown: 0 };
     list.forEach(function (s) { c[s.status] += 1; });
@@ -83,11 +43,6 @@
     });
     return el;
   }
-  function link(href, label, primary) {
-    if (!href || href.indexOf(':') >= 0) return null;
-    return h('a', { class: 'artifact-link' + (primary ? ' primary' : ''), href: href, target: '_blank', rel: 'noopener' },
-      label, h('span', { 'aria-hidden': 'true' }, '\u2197'));
-  }
   function areaIndex(area) { var i = areas.indexOf(area); return i < 0 ? areas.length : i; }
   function areaCaption(counts, total) {
     if (!total) return 'No suites';
@@ -96,31 +51,6 @@
     if (counts.record === total) return 'Recorded without pass/fail gates';
     if (counts.na === total) return 'No pass/fail verdict';
     return 'No failed suites';
-  }
-
-  function setTheme(theme) {
-    document.documentElement.dataset.theme = theme;
-    try { localStorage.setItem('cvs-theme', theme); } catch (e) { /* storage is optional */ }
-    renderThemeButton();
-  }
-  function renderThemeButton() {
-    var light = document.documentElement.dataset.theme === 'light';
-    clear(refs.themeButton);
-    add(refs.themeButton, [h('span', { 'aria-hidden': 'true' }, light ? '\u25D1' : '\u25D0'), light ? 'Dark' : 'Light']);
-    refs.themeButton.setAttribute('aria-label', 'Switch to ' + (light ? 'dark' : 'light') + ' theme');
-  }
-
-  function header() {
-    refs.themeButton = h('button', {
-      class: 'theme-toggle', type: 'button',
-      onclick: function () { setTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'); }
-    });
-    renderThemeButton();
-    return h('header', { class: 'site-header' },
-      h('span', { class: 'brand' }, spark(), h('span', null, h('strong', null, 'AMD'), ' Cluster Validation Suite')),
-      h('span', { class: 'header-divider', 'aria-hidden': 'true' }),
-      h('span', { class: 'header-context' }, 'Consolidated qualification report'),
-      h('span', { class: 'header-right' }, refs.themeButton));
   }
 
   function intro() {
@@ -471,7 +401,8 @@
       withinSection(s),
       factsRow(s),
       h('div', { class: 'artifact-actions' },
-        link(s.reportUrl, 'Open Run Deck', true), link(s.viewerUrl, 'Interactive viewer'),
+        link(s.suiteUrl || s.reportUrl, 'Open Run Deck', true),
+        s.suiteUrl ? link(s.reportUrl, 'Original Run Deck') : null, link(s.viewerUrl, 'Interactive viewer'),
         link(s.pytestUrl, 'Pytest report'), link(s.logUrl, 'Run log'), link(s.jsonUrl, 'Source JSON')),
       s.notes.length ? h('p', { class: 'detail-note' }, s.notes.join(' ')) : null,
       evidenceSection(d), matrixSection(d), tableSection(d), historySection(s), contextSection(s, d));
@@ -497,7 +428,7 @@
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeDrawer(); });
 
   var app = document.getElementById('app');
-  add(app, [header(), h('main', { id: 'main', class: 'report', tabindex: '-1' },
+  add(app, [cvsPage.siteHeader('Consolidated qualification report'), h('main', { id: 'main', class: 'report', tabindex: '-1' },
     intro(), summaryPanel(), recommendationsPanel(), warningsNote(), workspace(), manifestPanel(), footer())]);
   update();
 }());
