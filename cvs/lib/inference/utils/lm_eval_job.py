@@ -15,7 +15,7 @@ import shlex
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
-from cvs.lib.inference.utils.accuracy_config import AccuracyTask
+from cvs.parsers.schemas import AccuracyTask
 from cvs.lib.inference.utils.lm_eval_parsing import project
 
 LM_EVAL_VERSION = "0.4.12"

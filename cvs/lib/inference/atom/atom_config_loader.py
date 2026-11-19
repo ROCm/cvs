@@ -25,7 +25,6 @@ from cvs.lib.inference.atom.atom_serving_config import (
     materialize_atom_sweep,
     serving_to_atom_variant_raw,
 )
-from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
 from cvs.lib.inference.utils.functional_config import FunctionalConfig
 from cvs.lib.inference.utils.inferencing_config_loader import (
     RoleServer,
@@ -36,6 +35,7 @@ from cvs.lib.inference.utils.inferencing_config_loader import (
 from cvs.lib.inference.utils.long_context_accuracy_config import LongContextAccuracyConfig
 from cvs.lib.inference.utils.platform_config import PlatformConfig
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
+from cvs.parsers.schemas import LmEval
 
 ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
 ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
@@ -182,7 +182,7 @@ class AtomVariantConfig(BaseVariantConfig):
     roles: AtomRoles = AtomRoles()
     params: AtomParams
     sweep: Sweep
-    accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
+    accuracy: LmEval = Field(default_factory=LmEval)
     mtp_quality: MtpQualityConfig = Field(default_factory=MtpQualityConfig)
     quant_parity: QuantParityConfig = Field(default_factory=QuantParityConfig)
     functional: FunctionalConfig = Field(default_factory=FunctionalConfig)

@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The health sample config's TransferBench schmoo `32_cu_local_copy` threshold is lowered so healthy MI300X nodes pass; configs copied from the old sample still fail and must lower `32_cu_local_copy`.
 - rocm-smi JSON reads, including the GPU PCIe bus map used by ibperf and the host config checks, no longer fail when ROCm 10.1 or later prints its deprecation warning with the command output.
 - With `"orchestrator": "container"`, a head-node command issued before the container is launched (or after it is torn down) now fails with `No containers running. Call setup_containers() first.`, like other in-container commands, instead of running `docker exec None` on the head node.
+- Preflight's cluster file errors name each failing field without printing its value, which can be a credential.
 
 ### Removed
 

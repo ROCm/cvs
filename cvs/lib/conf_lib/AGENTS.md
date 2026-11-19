@@ -7,15 +7,16 @@ Substitution (`substitute_placeholders`, and `substitute_config` with its thresh
 `attach_threshold_file` and `BaseVariantConfig` stay in `cvs/lib/utils/config_loader.py`,
 which older suite loaders import.
 
-`__init__.py` must stay empty: `config_loader.py` imports `config_blocks`, and `loader.py`
-imports `config_loader`, so a package-level re-export of `load_config` is an import cycle.
+`__init__.py` must stay empty: `loader.py` imports `config_loader`, so a package-level re-export
+of `load_config` is an import cycle.
 
 ## Files
 
 ### `config_blocks.py`
 
-The schema blocks every suite composes. `config_loader.py` re-exports `_Forbid`, `_Allow`,
-`Paths`, `ModelSpec`, `RuntimeSpec` and `ContainerSpec`, so existing imports keep working.
+The blocks the vLLM schema in `schemas/vllm.py` composes. The blocks every other suite uses,
+and the shared inference blocks, live in `cvs/parsers/schemas.py`; `config_loader.py`
+re-exports `_Forbid`, `_Allow`, `Paths`, `ModelSpec`, `RuntimeSpec` and `ContainerSpec` from there.
 
 - `_Forbid` / `_Allow` drop every `_`-prefixed key at the model's own level (a `mode="before"`
   validator). Free-form maps (`env`, `RuntimeSpec.args`, CLI option values) are not walked.

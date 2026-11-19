@@ -9,7 +9,6 @@ from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import AfterValidator, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
-from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
 from cvs.lib.inference.utils.vllm_metrics import validate_threshold_spec
 from cvs.lib.conf_lib.config_blocks import (
     PLACEHOLDER_MESSAGE,
@@ -25,6 +24,7 @@ from cvs.lib.conf_lib.config_blocks import (
     placeholders_rejected,
 )
 from cvs.lib.utils.config_loader import attach_threshold_file
+from cvs.parsers.schemas import LmEval
 
 _CELL_RE = re.compile(
     r"^ISL=(?P<isl>[1-9]\d*),OSL=(?P<osl>[1-9]\d*),TP=(?P<tp>[1-9]\d*),PP=(?P<pp>[1-9]\d*),CONC=(?P<concurrency>[1-9]\d*)$"
@@ -302,7 +302,7 @@ class VariantConfig(_Forbid):
     sweeps: Dict[str, Dict[str, OptionValue]]
     runs: List[str]
     thresholds: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
-    accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
+    accuracy: LmEval = Field(default_factory=LmEval)
     _effective_topology: Any = PrivateAttr(default=None)
     _run_cells: Dict[str, RunCell] = PrivateAttr(default_factory=dict)
 
