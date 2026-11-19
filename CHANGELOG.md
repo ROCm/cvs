@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `install_mori` builds MoRI from `git_url` at `git_ref` into `mori_dir`, using the MORI config, before `mori_benchmark_test` runs. In container mode it needs `container.lifetime` `persistent` or `no_launch`. The MORI run card shows the built commit.
 - Training (jaxmaxtext, megatron, torchtitan) and inference (vLLM, SGLang, ATOM, xDiT) suites run a `test_support_matrix_gate` stage after the container launches that stops the run when the framework/model is unsupported on the detected GPU architecture or ROCm version (for example MXFP4 on MI300X/MI325X). Support is declared in `cvs/lib/support_matrix/{training,inference}_support_matrix.json`. Set `CVS_SUPPORT_MATRIX_GATE=OFF` to log violations and continue instead of stopping; a framework or model with no entry runs unchecked. See `cvs/lib/support_matrix/README.md`.
+- vLLM threshold files accept kind `info`, which records a metric without gating.
 
 ### Changed
 
@@ -18,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.
 - The health sample config installs TransferBench `v1.71.01` (was `v1.67.00`), which fixes timing and DMA measurement errors in the older release. TransferBench results can differ from earlier runs; configs that set `transferbench.git_tag` keep their version.
-- vLLM threshold files accept kind `info`, which records a metric without gating. vLLM polls server readiness and client completion every 10 seconds within the `timeouts` budgets, so single-node `model_load_s` is closer to the real load time. An old vLLM config fails to load, naming the key, when it sets `benchmark_params.dataset_name` or `ignore_eos` to a value other than the one CVS always passes, or a client `trust_remote_code` that differs from the server's.
+- vLLM polls server readiness and client completion every 10 seconds within the `timeouts` budgets, so single-node `model_load_s` is closer to the real load time. The vLLM client now passes `--trust-remote-code` whenever the server does. An old vLLM config fails to load, naming the key, when it sets `benchmark_params.dataset_name` or `ignore_eos` to a value other than the one CVS always passes, sets client waits per sweep cell, sets a `max_model_len` that is not a length, or uses `within` or `min_ratio` accuracy thresholds. Its `ib_hca_devices` and `ib_netdev` now reach the container through `container.env`, so recreate a `persistent` container after upgrading.
 
 ### Deprecated
 

@@ -70,7 +70,7 @@ class ServerScript:
         return queue.pop(0) if len(queue) > 1 else queue[0]
 
 
-def _variant(log_dir, pp):
+def _variant(log_dir, pp, timeouts=None):
     cell = f"ISL=1024,OSL=1024,TP=8,PP={pp},CONC=16"
     return VariantConfig(
         enforce_thresholds=False,
@@ -79,6 +79,7 @@ def _variant(log_dir, pp):
         container={"name": "test", "image": "test"},
         server_params={"model": "/models/test-model", "tp": 8, "pp": pp, "port": 8000},
         benchmark_params={"num_prompts": 64},
+        timeouts=timeouts or {},
         sweeps={cell: {}},
         runs=[cell],
     )
@@ -95,6 +96,37 @@ def _job(responder=None, hosts=(HEAD,), log_dir="/logs"):
         concurrency="16",
         num_prompts="64",
     )
+
+
+class TestTimeouts(unittest.TestCase):
+    def _waits(self, timeouts):
+        job = VllmJob(
+            orch=FakeOrch(hosts=[HEAD]),
+            variant=_variant("/logs", 1, timeouts),
+            isl="1024",
+            osl="1024",
+            concurrency="16",
+            num_prompts="64",
+        )
+        return (
+            (job._warmup_wait, job._server_poll_count, job._server_poll_wait),
+            (job._client_initial_wait, job._client_poll_count, job._client_poll_wait),
+        )
+
+    def test_null_budgets_keep_the_old_vllm_defaults(self):
+        server, client = self._waits(None)
+        self.assertEqual(server[0] + server[1] * server[2], 3930)
+        self.assertEqual(client[0] + client[1] * client[2], 1320)
+
+    def test_budgets_poll_every_ten_seconds_after_a_short_wait(self):
+        server, client = self._waits({"server_ready_s": 3630, "client_s": 5415})
+        self.assertEqual(server, (30, 360, 10))
+        self.assertEqual(client, (10, 541, 10))
+
+    def test_a_budget_shorter_than_the_first_wait_still_checks_once(self):
+        server, client = self._waits({"server_ready_s": 20, "client_s": 5})
+        self.assertEqual(server, (20, 1, 10))
+        self.assertEqual(client, (5, 1, 10))
 
 
 @mock.patch("cvs.lib.inference.vllm_job.time.sleep")

@@ -373,12 +373,45 @@ class TestOldKeys(unittest.TestCase):
         for benchmark in (
             {"dataset_name": "sharegpt"},
             {"ignore_eos": False},
-            {"trust_remote_code": True},
             {"backend": "openai"},
         ):
             with self.subTest(benchmark=benchmark):
                 with self.assertRaisesRegex(ValidationError, f"benchmark_params.{next(iter(benchmark))}"):
                     VllmConfig(**_old_config(benchmark=benchmark))
+
+    def test_client_trust_follows_the_server_unless_only_the_client_trusts(self):
+        variant, _ = _validate(_old_config(benchmark={"trust_remote_code": True}))
+        self.assertEqual(variant.benchmark_params.client_args, {"trust_remote_code": True})
+        with self.assertRaisesRegex(ValidationError, "benchmark_params.trust_remote_code"):
+            VllmConfig(**_old_config(server={"trust_remote_code": True}, benchmark={"trust_remote_code": False}))
+
+    def test_old_cell_overrides_drop_fixed_keys_and_refuse_per_cell_waits(self):
+        old = _old_config(server={"trust_remote_code": True})
+        old["sweeps"] = {CELL: {"ignore_eos": True, "dataset_name": "random", "trust_remote_code": True, "seed": 3}}
+        variant, _ = _validate(old)
+        self.assertEqual(variant.sweeps, {CELL: {"seed": 3}})
+        for override in ({"ignore_eos": False}, {"trust_remote_code": False}, {"client_poll_iterations": 5}):
+            with self.subTest(override=override):
+                old = _old_config(server={"trust_remote_code": True})
+                old["sweeps"] = {CELL: override}
+                with self.assertRaisesRegex(ValidationError, f"sweeps.{CELL}.{next(iter(override))}"):
+                    VllmConfig(**old)
+
+    def test_old_max_model_len_moves_only_when_it_is_a_length_or_null(self):
+        for value, expected in ((4096, 4096), ("2056", 2056), (None, None)):
+            with self.subTest(value=value):
+                variant, _ = _validate(_old_config(server={"max_model_len": value}))
+                self.assertEqual(variant.server_params.max_model_length, expected)
+                self.assertIn("max_model_length", variant.server_params.model_fields_set)
+        for value in ("auto", -1):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValidationError, "server_params.max_model_len"):
+                    VllmConfig(**_old_config(server={"max_model_len": value}))
+
+    def test_new_keys_in_an_old_config_stay_where_they_are(self):
+        variant, _ = _validate(_old_config(server={"engine_args": {"kv_cache_dtype": "fp8"}, "max_model_length": 4096}))
+        self.assertEqual(variant.server_params.engine_args, {"kv_cache_dtype": "fp8"})
+        self.assertEqual(variant.server_params.max_model_length, 4096)
 
     def test_missing_num_prompts_takes_the_old_default(self):
         old = _old_config()
@@ -403,6 +436,11 @@ class TestOldKeys(unittest.TestCase):
         variant, (message,) = _validate(old)
         self.assertEqual(variant.container.env, sockets)
         self.assertIn("ib_netdev (dropped)", message)
+        old = _old_config(ib_hca_devices=["rdma9"])
+        old["container"]["env"] = {"NCCL_IB_HCA": "rdma0"}
+        variant, (message,) = _validate(old)
+        self.assertEqual(variant.container.env, {"NCCL_IB_HCA": "rdma0"})
+        self.assertIn("ib_hca_devices (dropped)", message)
 
     def test_old_threshold_shapes_are_rewritten(self):
         thresholds = {
@@ -419,6 +457,19 @@ class TestOldKeys(unittest.TestCase):
         )
         self.assertEqual(list(variant.thresholds.accuracy.lm_eval), ["gsm8k"])
         self.assertIn("thresholds.accuracy.gsm8k -> thresholds.accuracy.lm_eval.gsm8k", message)
+
+    def test_old_accuracy_kinds_are_rewritten_or_refused(self):
+        spec = {"kind": "min_tok_s", "value": 1}
+        variant, _ = _validate(_config(thresholds={"accuracy": {"gsm8k": {"m": spec}}}))
+        self.assertEqual(variant.thresholds.accuracy.lm_eval["gsm8k"]["m"].kind, "min")
+        within = {"kind": "within", "value": 1, "tolerance_pct": 5}
+        with self.assertRaisesRegex(ValidationError, "thresholds.accuracy.gsm8k.m.kind"):
+            VllmConfig(**_config(thresholds={"accuracy": {"gsm8k": {"m": within}}}))
+
+    def test_a_current_accuracy_section_is_not_mistaken_for_a_task_id(self):
+        thresholds = {"accuracy": {"lm_eval": {}, "lm-eval": {}}}
+        with self.assertRaisesRegex(ValidationError, "lm-eval"):
+            VllmConfig(**_config(thresholds=thresholds))
 
     def test_a_current_config_loads_without_a_warning_and_its_unknown_keys_still_fail(self):
         config = _config()

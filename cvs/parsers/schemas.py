@@ -2368,7 +2368,6 @@ _VLLM_OLD_KEYS = {
     "server_params.tensor_parallel_size": "server_params.tp",
     "server_params.pipeline_parallel_size": "server_params.pp",
     "server_params.dist_init_port": "server_params.master_port",
-    "server_params.max_model_len": "server_params.max_model_length",
     "server_params.distributed_executor_backend": "vllm.distributed_executor_backend",
     "accuracy.tasks": "accuracy.lm_eval.tasks",
 }
@@ -2420,6 +2419,9 @@ _VLLM_OLD_TIMEOUTS = {
     ),
 }
 _VLLM_OLD_BENCHMARK_DEFAULT_PROMPTS = 3200
+_VLLM_OLD_CELL_TIMEOUT_KEYS = ("client_initial_wait_s", "client_poll_iterations", "client_poll_wait_s")
+_VLLM_NEW_SERVER_FIELDS = frozenset(InferenceServerParams.model_fields)
+_VLLM_NEW_BENCHMARK_FIELDS = frozenset(InferenceBenchmarkParams.model_fields)
 _INFERENCE_ACCURACY_THRESHOLD_SECTIONS = frozenset(InferenceAccuracyThresholds.model_fields)
 _OLD_THRESHOLD_KINDS = {"max_ms": "max", "min_tok_s": "min"}
 
@@ -2458,21 +2460,49 @@ def _drop_at(config, section, key, expected):
     return OLD_KEY_DROPPED if value == expected else OLD_KEY_UNMAPPED
 
 
-def _vllm_old_fixed_keys_rule(config):
-    server_trust = _section(config, "server_params").get("trust_remote_code") is True
+def _client_trust_row(value, server_trust, new_path):
+    """The client trusts remote code when the server does, so only a client-only ``true`` needs a key."""
+    if value == server_trust:
+        return OLD_KEY_DROPPED
+    if value is True:
+        return OldKey(new_path)
+    return OLD_KEY_UNMAPPED
+
+
+def _vllm_old_client_rule(config):
+    """Drop the client keys the harness now always sets, at the values main ran with."""
+    server = _section(config, "server_params")
+    server_trust = (
+        server.get("trust_remote_code") is True or _section(server, "engine_args").get("trust_remote_code") is True
+    )
+    benchmark = _section(config, "benchmark_params")
     rows = {
         "server_params.backend": _drop_at(config, "server_params", "backend", "vllm"),
         "benchmark_params.backend": _drop_at(config, "benchmark_params", "backend", "vllm"),
         "benchmark_params.dataset_name": _drop_at(config, "benchmark_params", "dataset_name", "random"),
         "benchmark_params.ignore_eos": _drop_at(config, "benchmark_params", "ignore_eos", True),
-        "benchmark_params.trust_remote_code": _drop_at(config, "benchmark_params", "trust_remote_code", server_trust),
     }
-    if _is_old_vllm_config(config):
-        sweeps = _section(config, "sweeps")
-        for cell_key in sweeps:
-            for key, expected in (("ignore_eos", True), ("trust_remote_code", server_trust)):
-                if key in _section(sweeps, cell_key):
-                    rows[("sweeps", cell_key, key)] = _drop_at(sweeps, cell_key, key, expected)
+    if "trust_remote_code" in benchmark:
+        rows["benchmark_params.trust_remote_code"] = _client_trust_row(
+            benchmark["trust_remote_code"], server_trust, "benchmark_params.client_args.trust_remote_code"
+        )
+    if not _is_old_vllm_config(config):
+        return rows
+    sweeps = _section(config, "sweeps")
+    for cell_key in sweeps:
+        overrides = _section(sweeps, cell_key)
+        for key in overrides:
+            path = ("sweeps", cell_key, key)
+            if key == "ignore_eos":
+                rows[path] = _drop_at(sweeps, cell_key, key, True)
+            elif key == "dataset_name":
+                rows[path] = _drop_at(sweeps, cell_key, key, "random")
+            elif key == "trust_remote_code" and overrides[key] == server_trust:
+                rows[path] = OLD_KEY_DROPPED
+            elif key == "trust_remote_code" and overrides[key] is not True:
+                rows[path] = OLD_KEY_UNMAPPED
+            elif key in _VLLM_OLD_CELL_TIMEOUT_KEYS:
+                rows[path] = OLD_KEY_UNMAPPED
     return rows
 
 
@@ -2481,12 +2511,20 @@ def _vllm_old_flags_rule(config):
     if not _is_old_vllm_config(config):
         return {}
     rows = {}
-    for section, fields, target in (
-        ("server_params", _VLLM_OLD_SERVER_FIELDS, "engine_args"),
-        ("benchmark_params", _VLLM_OLD_BENCHMARK_FIELDS, "client_args"),
+    server = _section(config, "server_params")
+    if "max_model_len" in server:
+        value = server["max_model_len"]
+        try:
+            usable = value is None or int(value) > 0
+        except (TypeError, ValueError):
+            usable = False
+        rows["server_params.max_model_len"] = "server_params.max_model_length" if usable else OLD_KEY_UNMAPPED
+    for section, old_fields, new_fields, target in (
+        ("server_params", _VLLM_OLD_SERVER_FIELDS, _VLLM_NEW_SERVER_FIELDS, "engine_args"),
+        ("benchmark_params", _VLLM_OLD_BENCHMARK_FIELDS, _VLLM_NEW_BENCHMARK_FIELDS, "client_args"),
     ):
         for key in _section(config, section):
-            if key not in fields and not key.startswith("_"):
+            if key not in old_fields and key not in new_fields and not key.startswith("_"):
                 rows[(section, key)] = OldKey((section, target, key))
     if "num_prompts" not in _section(config, "benchmark_params"):
         rows["benchmark_params.num_prompts"] = OldKey(
@@ -2515,21 +2553,33 @@ def _vllm_old_network_rule(config):
     return rows
 
 
+def _old_kind_rows(cell, old_prefix, new_prefix):
+    rows = {}
+    for metric, spec in cell.items():
+        kind = spec.get("kind") if isinstance(spec, dict) else None
+        if isinstance(kind, str) and kind in _OLD_THRESHOLD_KINDS:
+            new_path = (*new_prefix, metric, "kind")
+            rows[(*old_prefix, metric, "kind")] = OldKey(new_path, value=_OLD_THRESHOLD_KINDS[kind], conflict="replace")
+        elif kind in ("within", "min_ratio"):
+            rows[(*old_prefix, metric, "kind")] = OLD_KEY_UNMAPPED
+    return rows
+
+
 def _vllm_old_thresholds_rule(config):
     """Move old accuracy thresholds under ``lm_eval`` and rewrite the old kinds."""
     thresholds = _section(config, "thresholds")
+    accuracy = _section(thresholds, "accuracy")
     rows = {}
-    for task_id in _section(thresholds, "accuracy"):
-        if task_id not in _INFERENCE_ACCURACY_THRESHOLD_SECTIONS and not task_id.startswith("_"):
-            rows[("thresholds", "accuracy", task_id)] = OldKey(("thresholds", "accuracy", "lm_eval", task_id))
+    if not set(accuracy) & _INFERENCE_ACCURACY_THRESHOLD_SECTIONS:
+        for task_id, cell in accuracy.items():
+            if not task_id.startswith("_"):
+                rows[("thresholds", "accuracy", task_id)] = OldKey(("thresholds", "accuracy", "lm_eval", task_id))
+                if isinstance(cell, dict):
+                    old = ("thresholds", "accuracy", task_id)
+                    rows.update(_old_kind_rows(cell, old, ("thresholds", "accuracy", "lm_eval", task_id)))
     for cell_key, cell in thresholds.items():
-        if cell_key == "accuracy" or not isinstance(cell, dict):
-            continue
-        for metric, spec in cell.items():
-            kind = spec.get("kind") if isinstance(spec, dict) else None
-            if isinstance(kind, str) and kind in _OLD_THRESHOLD_KINDS:
-                path = ("thresholds", cell_key, metric, "kind")
-                rows[path] = OldKey(path, value=_OLD_THRESHOLD_KINDS[kind])
+        if cell_key != "accuracy" and isinstance(cell, dict):
+            rows.update(_old_kind_rows(cell, ("thresholds", cell_key), ("thresholds", cell_key)))
     return rows
 
 
@@ -2543,7 +2593,7 @@ def resolve_old_vllm_keys(config):
         config,
         _VLLM_OLD_KEYS,
         rules=(
-            _vllm_old_fixed_keys_rule,
+            _vllm_old_client_rule,
             _vllm_old_timeouts_rule,
             _vllm_old_flags_rule,
             _vllm_old_network_rule,

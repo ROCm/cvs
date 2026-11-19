@@ -199,10 +199,10 @@ class VllmJob:
         client_s = variant.timeouts.client_s or self.DEFAULT_CLIENT_S
         self._warmup_wait = min(self.SERVER_WARMUP_S, server_ready_s)
         self._server_poll_wait = self.POLL_WAIT_S
-        self._server_poll_count = math.ceil((server_ready_s - self._warmup_wait) / self.POLL_WAIT_S)
+        self._server_poll_count = max(1, math.ceil((server_ready_s - self._warmup_wait) / self.POLL_WAIT_S))
         self._client_initial_wait = min(self.CLIENT_INITIAL_WAIT_S, client_s)
         self._client_poll_wait = self.POLL_WAIT_S
-        self._client_poll_count = math.ceil((client_s - self._client_initial_wait) / self.POLL_WAIT_S)
+        self._client_poll_count = max(1, math.ceil((client_s - self._client_initial_wait) / self.POLL_WAIT_S))
 
     # ---------- derived builders ----------
 
