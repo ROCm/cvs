@@ -197,7 +197,7 @@ def discover_socket_netdev_name(orch, master_addr: str | None = None) -> str:
         detail = "; ".join(f"{h}={d}" for h, d in per_host.items())
         raise RuntimeError(
             f"socket_netdev discovery: asymmetric netdev names across nodes ({detail}). "
-            "Set roles.server.ib_netdev explicitly when node interface names differ."
+            "Set NCCL_SOCKET_IFNAME in container.env when node interface names differ."
         )
     return next(iter(unique))
 

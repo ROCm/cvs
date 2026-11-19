@@ -4467,7 +4467,7 @@ class AtomConfig(InferenceConfig):
         return self
 
     def _check_atom_thresholds(self, nnodes):
-        if not self.threshold_json.strip():
+        if not self.threshold_json.strip() and not self.thresholds.cells():
             return
         from cvs.lib.inference.atom.atom_parsing import GATED_METRICS
 
@@ -4499,6 +4499,43 @@ class AtomConfig(InferenceConfig):
 
 _ATOM_PROFILE_SHARED_KEYS = frozenset({"schema_version", "framework", "gpu_arch", "paths", "model", "threshold_json"})
 _ATOM_OLD_KINDS = {"max_ms": "max", "min_tok_s": "min"}
+# Keys only the older layouts hold; a config with none of them and no atom block is current.
+_ATOM_OLD_TOP_KEYS = frozenset(
+    {
+        "schema_version",
+        "framework",
+        "default_profile",
+        "profiles",
+        "gpu_arch",
+        "model",
+        "params",
+        "roles",
+        "sweep",
+        "functional",
+        "platform",
+        "run_card",
+        "quant_parity",
+        "mtp_quality",
+        "long_context_accuracy",
+    }
+)
+_ATOM_OLD_SERVER_KEYS = frozenset(
+    {
+        "backend",
+        "tensor_parallelism",
+        "pipeline_parallelism",
+        "port_no",
+        "proxy_router_serv_port",
+        "dist_init_port",
+        "context_length",
+        "serve_args",
+        "add_flags",
+        "env",
+        "ib_hca_devices",
+        "ib_netdev",
+        "master_addr",
+    }
+)
 _ATOM_THRESHOLD_SECTIONS = ("lm_eval", "custom_eval", "quant_parity", "mtp_quality")
 _ATOM_DEAD_SERVING_SERVER = (
     "log_level",
@@ -4543,7 +4580,7 @@ _ATOM_SERVER_TIMING = {
     "server_poll_count": 60,
     "server_poll_wait_time": 60,
 }
-_ATOM_TP_FLAGS = ("-tp", "--tensor-parallel-size")
+_ATOM_TP_FLAGS = ("-tp", "--tensor-parallel-size", "--tensor_parallel_size")
 
 
 def _at(config, path, default=None):
@@ -4604,7 +4641,14 @@ def _atom_split_tp(tokens, section):
     tokens = [str(token) for token in tokens or []]
     index = 0
     while index < len(tokens):
-        if tokens[index] in _ATOM_TP_FLAGS and index + 1 < len(tokens):
+        flag, _, inline = tokens[index].partition("=")
+        if flag in _ATOM_TP_FLAGS:
+            if inline:
+                tp = _atom_int(inline, f"{section}[{index}]")
+                index += 1
+                continue
+            if index + 1 >= len(tokens):
+                raise ValueError(f"{section}[{index}] sets the tensor parallel size without a value")
             tp = _atom_int(tokens[index + 1], f"{section}[{index + 1}]")
             index += 2
             continue
@@ -4705,6 +4749,9 @@ def _atom_engine_rows(config, driver, sources, tp, rows):
             rows[path] = OLD_KEY_DROPPED
             continue
         if isinstance(value, dict):
+            for flag, flag_value in value.items():
+                if flag_value is False:
+                    rows[_config_path_parts(path) + (flag,)] = OLD_KEY_UNMAPPED
             args = _atom_serve_args(value)
         else:
             tokens = value
@@ -4858,7 +4905,6 @@ def _atom_serving_rows(config, gpu_arch, thresholds, rows):
     rows["server_params.backend"] = OldKey("atom.driver", value=driver)
     move("server_params.tensor_parallelism", "server_params.tp", _atom_int, default=tp)
     move("server_params.pipeline_parallelism", "server_params.pp", _atom_int)
-    move("server_params.nnodes", "server_params.nnodes", _atom_int)
     port_path = (
         "server_params.proxy_router_serv_port" if "proxy_router_serv_port" in server else "server_params.port_no"
     )
@@ -4866,12 +4912,11 @@ def _atom_serving_rows(config, gpu_arch, thresholds, rows):
     for path in ("server_params.proxy_router_serv_port", "server_params.port_no"):
         if _at(config, path) is not None or path == port_path:
             rows[path] = OldKey("server_params.port", value=port, conflict="replace")
-    master_path = "server_params.master_port" if server.get("master_port") else "server_params.dist_init_port"
-    if server.get("master_port") or server.get("dist_init_port"):
-        master_port = _atom_int(_at(config, master_path), master_path)
-        for path in ("server_params.master_port", "server_params.dist_init_port"):
-            if _at(config, path) is not None:
-                rows[path] = OldKey("server_params.master_port", value=master_port, conflict="replace")
+    if "dist_init_port" in server:
+        if server.get("master_port"):
+            rows["server_params.dist_init_port"] = OLD_KEY_DROPPED
+        else:
+            rows["server_params.dist_init_port"] = OldKey("server_params.master_port", conflict="replace")
     length_path = (
         "server_params.context_length" if server.get("context_length") else "benchmark_params.max_model_length"
     )
@@ -4894,15 +4939,10 @@ def _atom_serving_rows(config, gpu_arch, thresholds, rows):
         rows["benchmark_params.metric_percentiles"] = _atom_fixed_row(
             config, "benchmark_params.metric_percentiles", "95,99"
         )
-    move("benchmark_params.num_prompts", "benchmark_params.num_prompts", _atom_int, default=1000)
-    move("benchmark_params.random_range_ratio", "benchmark_params.random_range_ratio", _atom_float, default=0.8)
-    if str(bench.get("scaling_baseline_output_throughput", "")).strip():
-        move(
-            "benchmark_params.scaling_baseline_output_throughput",
-            "benchmark_params.scaling_baseline_output_throughput",
-            _atom_float,
-        )
-    elif "scaling_baseline_output_throughput" in bench:
+    for name, default in (("num_prompts", 1000), ("random_range_ratio", 0.8)):
+        if name not in bench:
+            rows[f"benchmark_params.{name}"] = OldKey(f"benchmark_params.{name}", value=default)
+    if "scaling_baseline_output_throughput" in bench and not str(bench["scaling_baseline_output_throughput"]).strip():
         rows["benchmark_params.scaling_baseline_output_throughput"] = OLD_KEY_DROPPED
     if "enforce_thresholds" not in config:
         rows["enforce_thresholds"] = OldKey("enforce_thresholds", value=False)
@@ -4988,6 +5028,13 @@ def _resolve_old_atom_thresholds(thresholds, threshold_profile, runs):
     return thresholds, "; ".join(message for message in messages if message) or None
 
 
+def _is_old_atom_config(config):
+    if "atom" in config:
+        return False
+    server = config.get("server_params") if isinstance(config.get("server_params"), dict) else {}
+    return bool(_ATOM_OLD_TOP_KEYS & set(config)) or bool(_ATOM_OLD_SERVER_KEYS & set(server))
+
+
 def resolve_old_atom_config(config, thresholds, gpu_arch, profile=None):
     """Convert an ATOM config and threshold file of an older release into ``AtomConfig``'s shape.
 
@@ -4998,10 +5045,14 @@ def resolve_old_atom_config(config, thresholds, gpu_arch, profile=None):
     threshold file are converted.
     """
     thresholds = thresholds or {}
-    if "atom" in config:
+    if not _is_old_atom_config(config):
         if profile:
             raise ValueError("--config_profile applies only to old profiles-layout ATOM configs")
-        thresholds, threshold_message = _resolve_old_atom_thresholds(thresholds, "perf", None)
+        if "profiles" in thresholds:
+            raise ValueError(
+                "a threshold file with profiles needs an old profiles-layout config; give each config its own threshold file"
+            )
+        thresholds, threshold_message = _resolve_old_atom_thresholds(thresholds, None, None)
         return config, thresholds, threshold_message and f"threshold file: {threshold_message}"
 
     messages = []

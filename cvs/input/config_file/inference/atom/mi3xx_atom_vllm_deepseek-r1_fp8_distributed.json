@@ -61,7 +61,7 @@
   "benchmark_params": {
     "num_prompts": 1000,
     "random_range_ratio": 0.8,
-    "scaling_baseline_output_throughput": 1500.0
+    "scaling_baseline_output_throughput": 1500
   },
   "timeouts": {
     "server_ready_s": 7560,

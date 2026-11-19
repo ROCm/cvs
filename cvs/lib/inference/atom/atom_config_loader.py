@@ -33,6 +33,7 @@ from cvs.parsers.schemas import (
     AtomRoleServer,
     AtomRunCard,
     AtomVariantConfig,
+    ContainerEnvTokenError,
     MtpQualityConfig,
     QuantParityConfig,
     merge_mxfp4_triton_env,
@@ -62,7 +63,6 @@ __all__ = [
 ATOM_UNDERSCORE_FLAGS = frozenset(
     {"enable_prefix_caching", "kv_cache_dtype", "load_dummy", "enable_chunked_prefill", "online_quant_config"}
 )
-DEFAULT_MAX_MODEL_LENGTH = 8192
 _POLL_WAIT_S = 60
 
 
@@ -83,13 +83,17 @@ def _flag_name(name, underscore_flags):
     return "--" + name.replace("_", "-")
 
 
+def _flag_value(value):
+    return json.dumps(value) if isinstance(value, dict) else str(value)
+
+
 def args_to_flag_tokens(args, underscore_flags=frozenset()):
-    """Render ``{"flag": value}`` as CLI tokens: true is a bare flag, a list repeats the flag."""
+    """Render ``{"flag": value}`` as CLI tokens: true is a bare flag, a list repeats the flag, a dict is JSON."""
     tokens = []
     for name, value in args.items():
         flag = _flag_name(name, underscore_flags)
         for item in value if isinstance(value, list) else [value]:
-            tokens.extend([flag] if item is True else [flag, str(item)])
+            tokens.extend([flag] if item is True else [flag, _flag_value(item)])
     return tokens
 
 
@@ -161,6 +165,10 @@ def atom_variant_raw(config, gpu_arch):
     driver = config.atom.driver
     env = dict(config.container.env)
     roles_server = {"env": env}
+    if env.get("NCCL_IB_HCA"):
+        roles_server["ib_hca_devices"] = [hca.strip() for hca in env["NCCL_IB_HCA"].split(",") if hca.strip()]
+    if env.get("NCCL_SOCKET_IFNAME"):
+        roles_server["ib_netdev"] = env["NCCL_SOCKET_IFNAME"]
     if driver == "atom":
         roles_server["atom_args"] = [
             "-tp",
@@ -170,7 +178,10 @@ def atom_variant_raw(config, gpu_arch):
     elif driver == "sglang":
         roles_server["sglang_args"] = args_to_flag_tokens(server.engine_args)
     else:
-        roles_server["serve_args"] = {name.replace("_", "-"): value for name, value in server.engine_args.items()}
+        roles_server["serve_args"] = {
+            name.replace("_", "-"): json.dumps(value) if isinstance(value, dict) else value
+            for name, value in server.engine_args.items()
+        }
     params = {
         "driver": driver,
         "port_no": str(server.port),
@@ -178,7 +189,6 @@ def atom_variant_raw(config, gpu_arch):
         "pipeline_parallel_size": str(server.pp),
         "nnodes": str(server.nnodes or 1),
         "master_port": str(server.master_port),
-        "max_model_length": str(server.max_model_length or DEFAULT_MAX_MODEL_LENGTH),
         "num_prompts": str(bench.num_prompts),
         "random_range_ratio": str(bench.random_range_ratio),
         "seed": str(bench.seed),
@@ -191,6 +201,8 @@ def atom_variant_raw(config, gpu_arch):
         **_server_timing(config.timeouts.server_ready_s),
         **_client_timing(config.timeouts.client_s),
     }
+    if server.max_model_length is not None:
+        params["max_model_length"] = str(server.max_model_length)
     if bench.scaling_baseline_output_throughput is not None:
         params["scaling_baseline_output_throughput"] = str(bench.scaling_baseline_output_throughput)
     container = config.container.model_dump()
@@ -243,7 +255,10 @@ def _config_gpu_arch(raw, config_path):
 def atom_config_from_raw(raw, thresholds, config_path, profile=None, context=None):
     """Convert old keys with one ``FutureWarning`` and validate; returns ``(AtomConfig, gpu_arch)``."""
     gpu_arch = _config_gpu_arch(raw, config_path)
-    raw, thresholds, message = resolve_old_atom_config(raw, thresholds, gpu_arch, profile)
+    try:
+        raw, thresholds, message = resolve_old_atom_config(raw, thresholds, gpu_arch, profile)
+    except ValueError as exc:
+        raise ValueError(f"{Path(config_path).name}: {exc}") from None
     if message:
         warnings.warn(
             f"{Path(config_path).name} uses old ATOM config keys: {message}. Rewrite it in the current format "
@@ -257,6 +272,8 @@ def atom_config_from_raw(raw, thresholds, config_path, profile=None, context=Non
     except ValidationError as exc:
         problems = "\n".join(f"  {line}" for line in validation_problem_lines(exc))
         raise ValueError(f"{Path(config_path).name} is not a valid ATOM config:\n{problems}") from None
+    except ContainerEnvTokenError as exc:
+        raise ValueError(f"{Path(config_path).name}: {exc}") from None
     return config, gpu_arch
 
 
@@ -267,17 +284,9 @@ def load_variant(config_path, cluster_dict, profile=None) -> AtomVariantConfig:
 
 
 def collection_variant_raw(config_file, profile=None):
-    """The view fields pytest collection parametrizes on, read before cluster substitution."""
+    """The view fields pytest collection parametrizes on, read before the cluster file is known."""
     config_path = Path(config_file)
-    raw = json.loads(config_path.read_text())
-    thresholds = {}
-    threshold_json = str(raw.get("threshold_json") or "").strip()
-    if threshold_json:
-        threshold_path = Path(threshold_json)
-        if not threshold_path.is_absolute():
-            threshold_path = config_path.parent / threshold_json
-        if threshold_path.is_file():
-            thresholds = json.loads(threshold_path.read_text())
+    raw, thresholds = substitute_config(config_path, {})
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         config, gpu_arch = atom_config_from_raw(raw, thresholds, config_path, profile)

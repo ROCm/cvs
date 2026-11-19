@@ -180,6 +180,21 @@ class TestOldFlatLayout(unittest.TestCase):
             resolve_old_atom_config(raw, {}, "mi3xx")
         self.assertIn("roles.server.atom_args sets -tp 4", str(caught.exception))
 
+    def test_tp_flag_forms_and_missing_value(self):
+        config, _, _ = resolve_old_atom_config(
+            _old_flat(roles={"atom_args": ["--tensor-parallel-size=8", "--x"]}), {}, "mi3xx"
+        )
+        self.assertEqual(config["server_params"]["engine_args"], {"x": True})
+        with self.assertRaises(ValueError) as caught:
+            resolve_old_atom_config(_old_flat(roles={"atom_args": ["--x", "-tp"]}), {}, "mi3xx")
+        self.assertIn("roles.server.atom_args[1] sets the tensor parallel size without a value", str(caught.exception))
+
+    def test_false_serve_arg_has_no_place(self):
+        raw = _old_flat(params={"driver": "vllm_atom"}, roles={"atom_args": [], "serve_args": {"enforce-eager": False}})
+        with self.assertRaises(ValueError) as caught:
+            resolve_old_atom_config(raw, {}, "mi3xx")
+        self.assertIn("roles.server.serve_args.enforce-eager", str(caught.exception))
+
     def test_poll_keys_compute_the_timeouts(self):
         params = {"client_poll_count": "80", "server_poll_count": "120"}
         config, _, _ = resolve_old_atom_config(_old_flat(params=params), {}, "mi3xx")
@@ -230,12 +245,12 @@ class TestOldServingLayout(unittest.TestCase):
             bench={"seed": "5", "client_poll_count": "150"},
         )
         config, _, message = resolve_old_atom_config(raw, {}, "mi3xx")
-        server = config["server_params"]
+        server = AtomConfig.model_validate(config).server_params
         self.assertEqual(config["atom"], {"driver": "vllm_atom"})
-        self.assertEqual((server["model"], server["tp"], server["port"], server["master_port"]), ("m", 8, 8000, 29600))
-        self.assertEqual(server["engine_args"], {"kv_cache_dtype": "fp8"})
+        self.assertEqual((server.model, server.tp, server.port, server.master_port), ("m", 8, 8000, 29600))
+        self.assertEqual(server.engine_args, {"kv_cache_dtype": "fp8"})
         self.assertNotIn("seed", config["benchmark_params"])
-        self.assertEqual(config["benchmark_params"]["num_prompts"], 100)
+        self.assertEqual(config["benchmark_params"]["num_prompts"], "100")
         self.assertEqual(config["timeouts"], {"client_s": 120 + 150 * 60})
         self.assertFalse(config["enforce_thresholds"])
         self.assertIn("server_params.backend -> atom.driver", message)
@@ -323,6 +338,19 @@ class TestOldProfilesAndThresholds(unittest.TestCase):
         self.assertIn("gsm8k_flex", converted["accuracy"]["lm_eval"])
         self.assertIn("niah_8k", converted["accuracy"]["custom_eval"])
         self.assertIn("threshold file:", message)
+
+    def test_config_without_atom_block_or_old_keys_is_left_to_validation(self):
+        config = _atom_dict()
+        del config["atom"]
+        same, _, message = resolve_old_atom_config(config, {}, "mi3xx")
+        self.assertIs(same, config)
+        self.assertIsNone(message)
+        self.assertIn("atom: Field required", _problems(same))
+
+    def test_current_config_refuses_a_profiled_threshold_file(self):
+        with self.assertRaises(ValueError) as caught:
+            resolve_old_atom_config(_atom_dict(), {"profiles": {"perf": {CELL: GATED}}}, "mi3xx")
+        self.assertIn("own threshold file", str(caught.exception))
 
     def test_current_config_converts_only_an_old_threshold_file(self):
         config = _atom_dict()

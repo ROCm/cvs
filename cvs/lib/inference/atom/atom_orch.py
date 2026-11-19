@@ -444,7 +444,7 @@ class AtomJob:
         if self.distributed and not self.ib_netdev:
             raise RuntimeError(
                 "multinode run has no socket netdev after topology resolution "
-                "(set roles.server.ib_netdev or fix cluster IP discovery)"
+                "(set NCCL_SOCKET_IFNAME in container.env or fix cluster IP discovery)"
             )
         if self.distributed and self.ib_netdev:
             if "NCCL_SOCKET_IFNAME" not in self.server_env:

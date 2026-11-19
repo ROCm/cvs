@@ -36,6 +36,7 @@ from cvs.lib.inference.atom.atom_config_loader import (
 )
 from cvs.lib.inference.utils.inferencing_config_loader import Run, SeqCombo, Sweep
 from cvs.lib.utils.config_loader import substitute_config
+from cvs.lib.inference.atom.atom_parsing import GATED_METRICS
 from cvs.parsers.schemas import AtomConfig
 
 FAKE_CRED_FILE = "/home/x/.hf"
@@ -788,8 +789,22 @@ class TestAtomVariantView(unittest.TestCase):
         default = _view(_atom_config_dict()).params
         self.assertEqual((default.server_poll_count, default.client_poll_count), ("60", "50"))
 
-    def test_rendered_flags_repeat_list_values(self):
+    def test_rendered_flags_repeat_lists_and_write_dicts_as_json(self):
         self.assertEqual(args_to_flag_tokens({"x": ["a", "b"]}), ["--x", "a", "--x", "b"])
+        self.assertEqual(args_to_flag_tokens({"cfg": {"a": 1}}), ["--cfg", '{"a": 1}'])
+        serve = _view(_atom_config_dict("vllm_atom", {"compilation_config": {"a": 1}})).roles.server.serve_args
+        self.assertEqual(serve, {"compilation-config": '{"a": 1}'})
+
+    def test_fabric_env_sets_the_fabric_the_suite_uses(self):
+        data = _atom_config_dict()
+        data["container"] = {
+            **data["container"],
+            "env": {"NCCL_IB_HCA": "mlx5_0, mlx5_1", "NCCL_SOCKET_IFNAME": "eth1"},
+        }
+        server = _view(data).roles.server
+        self.assertEqual(server.ib_hca_devices, ["mlx5_0", "mlx5_1"])
+        self.assertEqual(server.ib_netdev, "eth1")
+        self.assertIsNone(_view(_atom_config_dict()).roles.server.ib_netdev)
 
 
 class TestLoadVariant(unittest.TestCase):
@@ -835,6 +850,36 @@ class TestLoadVariant(unittest.TestCase):
         self.assertIn("container.image", str(caught.exception))
         self.assertNotIn("hf_FAKE123", str(caught.exception))
         self.assertEqual(collected["sweep"]["runs"], [{"combo": "isl1024_osl1024", "concurrency": 16}])
+
+    def test_token_name_in_old_env_fails_without_its_value(self):
+        old = {
+            "schema_version": 1,
+            "framework": "atom",
+            "paths": {"shared_fs": "/fs", "models_dir": "/models", "log_dir": "/logs", "hf_token_file": "/fs/.hf"},
+            "model": {"id": "m", "remote": 0},
+            "container": {"name": "c", "image": "img", "runtime": {"name": "docker", "args": {}}},
+            "roles": {"server": {"atom_args": ["-tp", "8"], "env": {"HF_TOKEN": "hf_FAKE123"}}},
+            "params": {"driver": "atom"},
+            "sweeps": {CELL: {}},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(tmp, "mi3xx_atom_old.json", old)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                with self.assertRaises(ValueError) as caught:
+                    load_variant(path, _cluster_dict())
+        self.assertIn("HF_TOKEN", str(caught.exception))
+        self.assertNotIn("hf_FAKE123", str(caught.exception))
+
+    def test_collection_finds_a_sole_sibling_threshold_file(self):
+        data = _atom_config_dict()
+        gated = {name: {"kind": "min", "value": 0} for name in GATED_METRICS}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mi3xx_atom_new.json"
+            path.write_text(json.dumps(data))
+            (Path(tmp) / "mi325x_atom_new_threshold.json").write_text(json.dumps({CELL: gated}))
+            collected = collection_variant_raw(path)
+        self.assertIn(CELL, collected["thresholds"])
 
 
 if __name__ == "__main__":

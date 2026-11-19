@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - ATOM configs use the shared inference format: `server_params`, `benchmark_params`, `timeouts`, `sweeps` and `runs`, the `accuracy` block, and an `atom` block whose `driver` picks the engine. Each shipped profiles file is split into one config and one threshold file per profile (for example `mi3xx_atom_deepseek-r1_fp8_single_perf.json` and `_mtp3.json`). An ATOM config with a leftover `<changeme>`, an unknown key or a field ATOM does not run (`dp`, `ep`, `prefill_nnodes`, `long_context`) now fails at load, naming the field.
 - ATOM always reuses one server across cells, runs the API smoke and health tests, polls GPU metrics and scans dmesg after the run. The `mtp3` profiles that restarted the server for each cell now reuse it, and every ATOM run now includes the dmesg scan. Multinode runs use the first cluster node as the rendezvous host.
-- ATOM results, the results table and the ATOM Run Deck name metrics by the shared inference names, without the `client.` prefix (for example `output_throughput`). Threshold-file cell metrics must be shared inference metric names, which now include ATOM's `output_tput_per_gpu`.
+- ATOM results, the results table and the ATOM Run Deck name metrics by the shared inference names, without the `client.` prefix (for example `output_throughput`). Threshold-file cell metrics must be shared inference metric names, which now include ATOM's `output_tput_per_gpu`. Run Deck previous-run and parity comparisons against an ATOM report from an earlier release show no values.
 - The shipped MORI config sets `mori_dir` to `/home/{user-id}/INSTALL/mori` and `container.lifetime` to `persistent`, so `install_mori` works with it as shipped. It also mounts the host Broadcom Thor2 `libbnxt_re-rdmav34.so` and `libibverbs.so.1`; delete those mounts on nodes without Thor2.
 
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.
@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
-- ATOM configs in the profiles, `params`/`roles` or serving layouts of earlier releases, and threshold files with the `max_ms` and `min_tok_s` kinds, still load with one `FutureWarning` naming each old key. Rewrite them in the current format. `--config_profile` now only selects a profile of an old profiles-layout file.
+- ATOM configs in the profiles, `params`/`roles` or serving layouts of earlier releases, and threshold files with the `max_ms` and `min_tok_s` kinds, still load with one `FutureWarning` naming each old key. Rewrite them in the current format. An old config whose keys have no place in the new format stops the load, naming the key: for example a short server flag other than `-tp`, several values after one flag, a `false` server flag, or a key the serving layout ignored. `--config_profile` now only selects a profile of an old profiles-layout file.
 
 ### Fixed
 
