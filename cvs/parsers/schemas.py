@@ -2648,8 +2648,7 @@ class VllmConfig(InferenceConfig):
         if isinstance(data, dict) and isinstance(data.get("thresholds"), dict):
             _reject_underscore_metric_keys(data["thresholds"])
         data, message = resolve_old_vllm_keys(data)
-        if message:
-            warnings.warn(message, FutureWarning, stacklevel=2)
+        warn_old_keys(message)
         return data
 
     @model_validator(mode="after")

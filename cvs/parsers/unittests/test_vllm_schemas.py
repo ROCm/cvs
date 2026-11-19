@@ -575,6 +575,18 @@ class TestThresholdFile(unittest.TestCase):
             load_config(VllmConfig, path, {"username": "test"})
         self.assertIn(f"runs missing from the threshold file: ['{second}']", str(ctx.exception))
 
+    def test_an_old_config_logs_its_message_once_and_a_current_one_logs_nothing(self):
+        (self.tmp / "threshold.json").write_text(json.dumps({CELL: {}, "accuracy": {"gsm8k": {}}}))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with self.assertLogs("cvs.parsers.schemas", level="WARNING") as logs:
+                load_config(VllmConfig, self._write(_old_config()), {"username": "test"})
+        (future,) = [str(w.message) for w in caught if issubclass(w.category, FutureWarning)]
+        self.assertEqual([record.getMessage() for record in logs.records], [future])
+        (self.tmp / "threshold.json").write_text(json.dumps({CELL: {}}))
+        with self.assertNoLogs("cvs.parsers.schemas", level="WARNING"):
+            load_config(VllmConfig, self._write(_config()), {"username": "test"})
+
     def test_an_old_threshold_file_loads_through_the_old_keys(self):
         (self.tmp / "threshold.json").write_text(
             json.dumps({"_comment": "x", CELL: {}, "accuracy": {"gsm8k": {"m": {"kind": "min", "value": 0.5}}}})
