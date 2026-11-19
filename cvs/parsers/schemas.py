@@ -2866,9 +2866,12 @@ def _is_old_sglang_layout(config):
 
 def _old_int(path, value):
     try:
-        return int(str(value).strip())
+        number = float(str(value).strip())
     except ValueError:
-        raise ValueError(f"{path} must be a whole number") from None
+        number = math.nan
+    if not number.is_integer():
+        raise ValueError(f"{path} must be a whole number")
+    return int(number)
 
 
 def _old_tp_pp(config):
@@ -2878,6 +2881,29 @@ def _old_tp_pp(config):
     if tp is None:
         return None, None
     return _old_int("server_params.tensor_parallelism", tp), _old_int("server_params.pipeline_parallelism", pp)
+
+
+def _old_run_combos(config):
+    sweep = config.get("sweep") if isinstance(config.get("sweep"), dict) else {}
+    return [str(run.get("combo") if isinstance(run, dict) else run).strip() for run in sweep.get("runs") or []]
+
+
+def _rekey_rows(prefix, keys, own, combos):
+    """Rows keying one shape's ``keys`` by ``own``.
+
+    The key already ``own`` wins, then the one key a run names, then a key
+    alone in its shape; the rest are dropped.
+    """
+    if own in keys:
+        keep = own
+    else:
+        named = [key for key in keys if key in combos]
+        keep = named[0] if len(named) == 1 else keys[0] if len(keys) == 1 else None
+    rows = {}
+    for key in keys:
+        if key != own:
+            rows[(prefix, key)] = OldKey((prefix, own)) if key == keep else OLD_KEY_DROPPED
+    return keep, rows
 
 
 def _cell_key_for(key, tp, pp):
@@ -2938,7 +2964,8 @@ def _sglang_port_rows(config):
     elif old_layout and port is None:
         port = _SGLANG_SERVE_PORT
         rows["server_params.serve_port"] = OldKey("server_params.port", value=port)
-    rows.update(_drop_unless(config, "server_params.proxy_router_port", lambda value: str(value) == str(port)))
+    served = port if port is not None else InferenceServerParams.model_fields["port"].default
+    rows.update(_drop_unless(config, "server_params.proxy_router_port", lambda value: str(value) == str(served)))
     if "dist_init_port" in server:
         rows["server_params.dist_init_port"] = OldKey(
             "server_params.master_port", value=_old_int("server_params.dist_init_port", server["dist_init_port"])
@@ -3078,31 +3105,30 @@ def _sglang_bench_threshold_rows(config):
     }
 
 
-def _sglang_threshold_spec_rows(config, rekey=True):
+def _sglang_threshold_spec_rows(config, rekey=True, combos=()):
     """Rows for the shared metric names and kinds, keying each cell by the config's TP and PP.
 
-    SGLang matched a run to a threshold cell by ISL, OSL and CONC, so one old
-    file served configs of any TP and PP. A cell keyed by the config's TP and
-    PP wins over others of its shape; a cell alone in its shape takes them, and
-    several cells of one shape with none matching are dropped.
+    SGLang matched a run to a threshold cell by its exact key, else by ISL, OSL
+    and CONC alone, so one old file served configs of any TP and PP.
     """
     tp, pp = _old_tp_pp(config) if rekey else (None, None)
+    cells = _old_threshold_cells(config)
     by_shape = {}
-    for key, cell in _old_threshold_cells(config).items():
+    for key in cells:
         if not key.startswith("BENCH="):
-            by_shape.setdefault(sglang_cell_shape(key), []).append((key, cell))
+            by_shape.setdefault(sglang_cell_shape(key), []).append(key)
     rows = {}
-    for cells in by_shape.values():
-        keys = [key for key, _ in cells]
-        own = _cell_key_for(keys[0], tp, pp) if tp else None
-        for key, cell in cells:
-            new_key = key
-            if own and key != own:
-                if own in keys or len(cells) > 1:
-                    rows[("thresholds", key)] = OLD_KEY_DROPPED
-                    continue
-                new_key = own
-            rows.update(_old_threshold_cell_rows(("thresholds", key), ("thresholds", new_key), cell))
+    for keys in by_shape.values():
+        own = keep = None
+        if tp:
+            own = _cell_key_for(keys[0], tp, pp)
+            keep, rekeyed = _rekey_rows("thresholds", keys, own, combos)
+            rows.update({path: row for path, row in rekeyed.items() if row is OLD_KEY_DROPPED})
+        for key in keys:
+            if tp and key != keep:
+                continue
+            new_key = own if tp else key
+            rows.update(_old_threshold_cell_rows(("thresholds", key), ("thresholds", new_key), cells[key]))
             if new_key != key:
                 rows[("thresholds", key)] = OLD_KEY_DROPPED
     return rows
@@ -3214,43 +3240,37 @@ def _sglang_accuracy_rows(config):
 def _sglang_run_rows(config):
     """``sweep.runs`` to ``runs``, with ``sweeps`` and ``runs`` keyed by the config's TP and PP.
 
-    SGLang ran each combo, and applied its override, by ISL, OSL and CONC; an
-    empty or missing ``sweep.runs`` ran every threshold cell.
+    SGLang ran each combo, and applied its override, by its exact key, else by
+    ISL, OSL and CONC; an empty or missing ``sweep.runs`` ran every threshold cell.
     """
     sweep = config.get("sweep")
-    if not isinstance(sweep, dict) and not (_is_old_sglang_layout(config) and "runs" not in config):
+    if not isinstance(sweep, dict) and not _is_old_sglang_layout(config):
         return {}
     tp, pp = _old_tp_pp(config)
     if tp is None:
         return {}
-    rows = {}
+    combos = _old_run_combos(config)
     if "runs" in config:
-        return {"sweep": OLD_KEY_DROPPED}
-    combos = [
-        str(run.get("combo") if isinstance(run, dict) else run).strip() for run in (sweep or {}).get("runs") or []
-    ]
-    if not combos:
-        thresholds = config.get("thresholds") if isinstance(config.get("thresholds"), dict) else {}
-        combos = sorted((key for key in thresholds if _CELL_KEY_RE.fullmatch(str(key))), key=sglang_cell_shape)
-    runs = list(dict.fromkeys(_cell_key_for(run, tp, pp) if _CELL_KEY_RE.fullmatch(run) else run for run in combos))
-    rows["sweep"] = OldKey("runs", value=runs)
+        rows = {"sweep": OLD_KEY_DROPPED} if isinstance(sweep, dict) else {}
+        runs = []
+    else:
+        if not combos:
+            thresholds = config.get("thresholds") if isinstance(config.get("thresholds"), dict) else {}
+            combos = sorted((key for key in thresholds if _CELL_KEY_RE.fullmatch(str(key))), key=sglang_cell_shape)
+        runs = list(dict.fromkeys(_cell_key_for(run, tp, pp) if _CELL_KEY_RE.fullmatch(run) else run for run in combos))
+        rows = {"sweep": OldKey("runs", value=runs)}
     sweeps = config.get("sweeps") if isinstance(config.get("sweeps"), dict) else {}
     by_shape = {}
     for key in sweeps:
         if _CELL_KEY_RE.fullmatch(str(key)):
             by_shape.setdefault(sglang_cell_shape(key), []).append(key)
-    kept = set(sweeps)
+    kept = {key for key in sweeps if not _CELL_KEY_RE.fullmatch(str(key))}
     for keys in by_shape.values():
         own = _cell_key_for(keys[0], tp, pp)
-        for key in keys:
-            if key == own:
-                continue
-            kept.discard(key)
-            if own in keys or len(keys) > 1:
-                rows[("sweeps", key)] = OLD_KEY_DROPPED
-            else:
-                rows[("sweeps", key)] = OldKey(("sweeps", own))
-                kept.add(own)
+        keep, rekeyed = _rekey_rows("sweeps", keys, own, combos)
+        rows.update(rekeyed)
+        if keep:
+            kept.add(own)
     for run in runs:
         if run not in kept:
             rows[("sweeps", run)] = OldKey(("sweeps", run), value={})
@@ -3282,14 +3302,15 @@ def resolve_old_sglang_keys(config):
         config, SGLANG_OLD_KEYS, SGLANG_OLD_KEY_RULES, message="{keys}", label="SGLang config"
     )
     rekey = _is_old_sglang_layout(config) or bool(_sglang_threshold_spec_rows(converted, rekey=False))
-    spec_rows = _sglang_threshold_spec_rows(converted, rekey=rekey)
+    combos = _old_run_combos(config)
+    spec_rows = _sglang_threshold_spec_rows(converted, rekey=rekey, combos=combos)
     changes = [keys] if keys else []
     if spec_rows:
         changes.append(_threshold_spec_summary(converted, spec_rows))
         converted, _ = resolve_old_keys(
             converted,
             {},
-            (lambda value: _sglang_threshold_spec_rows(value, rekey=rekey),),
+            (lambda value: _sglang_threshold_spec_rows(value, rekey=rekey, combos=combos),),
             label="SGLang threshold file",
         )
     if not changes:

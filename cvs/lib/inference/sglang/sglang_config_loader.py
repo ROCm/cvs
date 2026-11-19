@@ -642,6 +642,11 @@ def _inject_typed_accuracy_thresholds(bp_dict, config):
         log.info("Loaded accuracy thresholds for %r", task_id)
 
 
+def _legacy_acc_isl(key):
+    match = _LEGACY_ACC_CELL_RE.match(str(key))
+    return int(match.group(1)) if match else 0
+
+
 def acc_cells_for_variant(variant):
     """One cell per ``niah`` eval, with its threshold specs and run options.
 
@@ -653,7 +658,7 @@ def acc_cells_for_variant(variant):
         options = {"num_prompts": niah.get("num_prompts", 16), "seed": niah.get("seed", 42)}
         return [
             {"cell_key": key, "id": key, "isl": match.group(1), "osl": match.group(2), **options, "specs": specs}
-            for key, specs in sorted(variant.thresholds.items(), key=lambda item: str(item[0]))
+            for key, specs in sorted(variant.thresholds.items(), key=lambda item: _legacy_acc_isl(item[0]))
             if (match := _LEGACY_ACC_CELL_RE.match(str(key)))
         ]
     cells = []

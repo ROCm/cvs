@@ -260,6 +260,22 @@ class TestResolveOldSglangKeys(unittest.TestCase):
         self.assertEqual(converted["runs"], [own])
         SglangConfig.model_validate(converted)
 
+    def test_a_cell_a_run_names_wins_among_cells_of_its_shape(self):
+        tp8 = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64"
+        tp16 = "ISL=1024,OSL=1024,TP=16,PP=1,CONC=64"
+        thresholds = {tp8: {"goodput": {"kind": "min", "value": 1}}, tp16: {"goodput": {"kind": "min", "value": 2}}}
+        old = _old_config(
+            sweeps={tp8: {"num_prompts": 8}, tp16: {}}, sweep={"runs": [{"combo": tp8}]}, thresholds=thresholds
+        )
+        converted, _ = resolve_old_sglang_keys(old)
+        self.assertEqual(converted["sweeps"], {CELL: {"num_prompts": 8}})
+        self.assertEqual(converted["thresholds"], {CELL: {"goodput": {"kind": "min", "value": 1}}})
+        SglangConfig.model_validate(converted)
+
+    def test_a_whole_number_float_is_read_as_a_count(self):
+        converted, _ = resolve_old_sglang_keys(_old_config({"inference_poll_iterations": 16.0}))
+        self.assertEqual(converted["timeouts"], {"client_s": 1500})
+
     def test_empty_or_missing_sweep_runs_every_threshold_cell_at_the_config_tp_and_pp(self):
         thresholds = {CELL: {"output_throughput_per_sec": {"kind": "min_tok_s", "value": 1}}}
         own = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64"
