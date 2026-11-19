@@ -51,7 +51,7 @@ class TestResolveOldKeys(unittest.TestCase):
     def test_two_old_keys_give_one_message_naming_both(self):
         config = {"a": 1, "s": {"d": 2}}
         converted, message = resolve_old_keys(config, {"a": "b", "s.d": OLD_KEY_DROPPED})
-        self.assertEqual(converted, {"b": 1, "s": {}})
+        self.assertEqual(converted, {"b": 1})
         self.assertEqual(message.count("a -> b"), 1)
         self.assertIn("s.d (dropped)", message)
         self.assertEqual(config, {"a": 1, "s": {"d": 2}})
@@ -98,6 +98,27 @@ class TestResolveOldKeys(unittest.TestCase):
     def test_chained_rows_read_every_value_before_moving_any(self):
         converted, _ = resolve_old_keys({"a": 1, "b": 2}, {"a": "b", "b": "c"})
         self.assertEqual(converted, {"b": 1, "c": 2})
+
+    def test_emptied_parent_dropped(self):
+        converted, _ = resolve_old_keys({"old": {"a": 1}, "keep": {}}, {"old.a": "new.a"})
+        self.assertEqual(converted, {"new": {"a": 1}, "keep": {}})
+        converted, _ = resolve_old_keys({"s": {"t": {"a": 1}}}, {"s.t.a": OLD_KEY_DROPPED})
+        self.assertEqual(converted, {})
+        converted, _ = resolve_old_keys({"s": {"a": 1, "b": 2}}, {"s.a": "s.c"})
+        self.assertEqual(converted, {"s": {"b": 2, "c": 1}})
+        converted, _ = resolve_old_keys({"old": {"a": 1}}, {"old.a": "new.a"}, drop_emptied=False)
+        self.assertEqual(converted, {"old": {}, "new": {"a": 1}})
+
+    def test_dotted_path_matching_nothing_fails(self):
+        config = {"accuracy": {"gsm8k.flex": {"kind": "min"}}}
+        with self.assertRaisesRegex(ValueError, "accuracy.gsm8k.flex.kind matches nothing; write it as a tuple"):
+            resolve_old_keys(config, {"accuracy.gsm8k.flex.kind": "x"})
+        with self.assertRaisesRegex(ValueError, "matches nothing"):
+            resolve_old_keys(config, {}, rules=(lambda c: {"accuracy.gsm8k.flex": OLD_KEY_DROPPED},))
+        self.assertEqual(resolve_old_keys(config, {"accuracy.other.kind": "x"}), (config, None))
+        self.assertEqual(
+            resolve_old_keys(config, {"accuracy.gsm8k.flex.kind": "x"}, check_dotted=False), (config, None)
+        )
 
     def test_a_tuple_path_names_a_key_that_holds_a_dot(self):
         converted, message = resolve_old_keys(
@@ -188,6 +209,10 @@ class TestPreflightOldKeys(unittest.TestCase):
         config = {"node_check": {"enabled": True}}
         self.assertEqual(normalize_legacy_preflight_rdma_config(config), (config, None))
         self.assertIs(normalize_legacy_preflight_rdma_config(config)[0], config)
+
+    def test_rdma_keeps_an_emptied_node_check_and_ignores_a_dotted_key(self):
+        config = {"node_check.gid_index": "3"}
+        self.assertEqual(normalize_legacy_preflight_rdma_config(config), (config, None))
 
     def test_rdma_fails_when_the_target_block_is_not_an_object(self):
         with self.assertRaisesRegex(ValueError, r"^preflight\.connectivity_check\.rdma must be an object when"):
