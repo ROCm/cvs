@@ -196,14 +196,21 @@
     var failed = recs.filter(function (r) { return r.kind === 'failed_suite'; });
     var review = recs.filter(function (r) { return ['unavailable', 'record_only', 'not_evaluated'].indexOf(r.kind) >= 0; });
     var passed = recs.filter(function (r) { return r.kind === 'all_passed'; })[0];
-    return h('section', { class: 'panel recs', 'aria-labelledby': 'recs-title' },
-      h('div', { class: 'recs-heading' },
-        h('h2', { id: 'recs-title' }, 'Recommendations'),
-        h('p', null, 'Facts from each Run Deck. No thresholds are added.')),
-      passed ? h('p', { class: 'rec-all-passed' }, recMark('pass'), passed.message) : h('div', { class: 'recs-grid' },
+    var count = hosts.length + failed.length + review.length;
+    var caption = passed ? 'No action' : count + (count === 1 ? ' item' : ' items');
+    var body = passed
+      ? h('p', { class: 'rec-all-passed' }, recMark('pass'), passed.message)
+      : h('div', { class: 'recs-grid' },
         hosts.length ? recGroup('hosts', 'Hosts failing in 2+ suites', hosts, hostRec) : null,
         failed.length ? recGroup('failed', 'Failed suites', failed, suiteRec) : null,
-        review.length ? recGroup('review', 'Needs review', review, suiteRec) : null));
+        review.length ? recGroup('review', 'Needs review', review, suiteRec) : null);
+    return h('details', { class: 'panel recs' },
+      h('summary', null,
+        h('span', { class: 'recs-title', id: 'recs-title' }, 'Recommendations'),
+        h('span', { class: 'inventory-count' }, caption)),
+      h('div', { class: 'recs-body' },
+        h('p', { class: 'recs-note' }, 'Facts from each Run Deck. No thresholds are added.'),
+        body));
   }
 
   function warningsNote() {
@@ -471,7 +478,7 @@
       withinSection(s),
       factsRow(s),
       h('div', { class: 'artifact-actions' },
-        link(s.reportUrl, 'Open Run Deck', true), link(s.viewerUrl, 'Interactive viewer'),
+        link(s.reportUrl, 'Detailed Run Deck', true), link(s.viewerUrl, 'Interactive viewer'),
         link(s.pytestUrl, 'Pytest report'), link(s.logUrl, 'Run log'), link(s.jsonUrl, 'Source JSON')),
       s.notes.length ? h('p', { class: 'detail-note' }, s.notes.join(' ')) : null,
       evidenceSection(d), matrixSection(d), tableSection(d), historySection(s), contextSection(s, d));
@@ -498,6 +505,6 @@
 
   var app = document.getElementById('app');
   add(app, [header(), h('main', { id: 'main', class: 'report', tabindex: '-1' },
-    intro(), summaryPanel(), recommendationsPanel(), warningsNote(), workspace(), manifestPanel(), footer())]);
+    intro(), summaryPanel(), warningsNote(), workspace(), recommendationsPanel(), manifestPanel(), footer())]);
   update();
 }());

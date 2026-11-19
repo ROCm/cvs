@@ -90,7 +90,7 @@ class TestConsolidate(ReportCase):
         self.assertIn(rvs["history"][0]["reportUrl"], files)
         self.assertIn(b"cvs-consolidated-report-link", files[rvs["reportUrl"]])
 
-        self.assertEqual((suites["rccl_perf"]["status"], suites["rccl_perf"]["category"]), ("record", "Network"))
+        self.assertEqual((suites["rccl_perf"]["status"], suites["rccl_perf"]["category"]), ("record", "Communication"))
         self.assertFalse(suites["agfhc_cvs"]["available"])
         self.assertEqual([warning["code"] for warning in summary["warnings"]], ["invalid_deck"])
 

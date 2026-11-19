@@ -2,7 +2,7 @@
   "schema_version": 1,
   "profile_id": "ib_perf_bw_test_rundeck",
   "suite_id": "ib_perf_bw_test",
-  "area": "Network",
+  "area": "Health",
   "report_basename": "ib_perf_bw_test_run_deck",
   "title": "ibperf Run Deck",
   "subtitle": "perftest bandwidth and latency per GPU/NIC instance against the fleet median",

@@ -133,20 +133,20 @@ class TestResolveArea(unittest.TestCase):
         self.assertIsNone(resolve_area({"suite_id": "brand_new"}, "rccl_perf"))
 
     def test_unreadable_deck_uses_its_stem(self):
-        self.assertEqual(resolve_area(None, "rccl_pairwise"), "Network")
+        self.assertEqual(resolve_area(None, "rccl_pairwise"), "Communication")
         self.assertIsNone(resolve_area(None, "unknown_stem"))
 
 
 class TestOrderedAreas(unittest.TestCase):
     def test_standard_areas_then_declared_ones_then_uncategorized(self):
-        used = ["Network", UNCATEGORIZED, "Storage", "Inference", "Storage"]
+        used = ["Communication", UNCATEGORIZED, "Storage", "Inference", "Storage"]
         self.assertEqual(ordered_areas(used), list(AREAS) + ["Storage", UNCATEGORIZED])
 
     def test_uncategorized_only_when_used(self):
         self.assertEqual(ordered_areas(["Training"]), list(AREAS))
 
     def test_areas_from_a_generator(self):
-        used = (area for area in ["Storage", UNCATEGORIZED, "Network"])
+        used = (area for area in ["Storage", UNCATEGORIZED, "Communication"])
         self.assertEqual(ordered_areas(used), list(AREAS) + ["Storage", UNCATEGORIZED])
 
 
