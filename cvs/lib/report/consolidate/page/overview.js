@@ -408,8 +408,8 @@
       withinSection(s),
       factsRow(s),
       h('div', { class: 'artifact-actions' },
-        link(s.suiteUrl || s.reportUrl, 'Open Run Deck', true),
-        s.suiteUrl ? link(s.reportUrl, 'Original Run Deck') : null, link(s.viewerUrl, 'Interactive viewer'),
+        s.suiteUrl ? link(s.suiteUrl, 'Open Run Deck', true) : link(s.reportUrl, 'Detailed Run Deck', true),
+        s.suiteUrl ? link(s.reportUrl, 'Detailed Run Deck') : null, link(s.viewerUrl, 'Interactive viewer'),
         link(s.pytestUrl, 'Pytest report'), link(s.logUrl, 'Run log'), link(s.jsonUrl, 'Source JSON')),
       s.notes.length ? h('p', { class: 'detail-note' }, s.notes.join(' ')) : null,
       evidenceSection(d), matrixSection(d), tableSection(d), historySection(s), contextSection(s, d));
@@ -436,6 +436,6 @@
 
   var app = document.getElementById('app');
   add(app, [cvsPage.siteHeader('Consolidated qualification report'), h('main', { id: 'main', class: 'report', tabindex: '-1' },
-    intro(), summaryPanel(), recommendationsPanel(), warningsNote(), workspace(), manifestPanel(), footer())]);
+    intro(), summaryPanel(), warningsNote(), workspace(), recommendationsPanel(), manifestPanel(), footer())]);
   update();
 }());

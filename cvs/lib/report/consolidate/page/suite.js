@@ -486,7 +486,7 @@
     return [
       h('div', { class: 'rv-title-row' },
         h('div', null, h('div', { class: 'eyebrow' }, (suite.category || 'Suite') + ' / Run Deck'), h('h1', null, suite.name || text(d.suite_id)), h('p', null, text(obj(d.report).subtitle || ''))),
-        h('div', { class: 'rv-source-actions' }, link(links.deck, 'Original Run Deck'), link(links.json, 'Source JSON'), link(links.viewer, 'Interactive viewer'))),
+        h('div', { class: 'rv-source-actions' }, link(links.deck, 'Detailed Run Deck'), link(links.json, 'Source JSON'), link(links.viewer, 'Interactive viewer'))),
       h('div', { class: 'rv-run-meta' },
         h('span', null, h('span', { class: 'rv-muted' }, 'Generated'), ' ', suite.generated || text(d.generated_at)),
         h('span', null, h('span', { class: 'rv-muted' }, 'Cluster'), ' ', suite.cluster || 'Not specified'),
