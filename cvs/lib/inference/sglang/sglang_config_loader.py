@@ -16,35 +16,37 @@ from __future__ import annotations
 import json
 import os
 import re
+import warnings
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
-
-from pydantic import Field, model_validator
-from typing_extensions import Literal
 
 from cvs.lib import globals
 from cvs.lib.inference.sglang.sglang_common import (
     DEFAULT_SGLANG_DECODE_COORD_PORT,
     DEFAULT_SGLANG_DECODE_SERV_PORT,
-    DEFAULT_SGLANG_DIST_INIT_PORT,
     DEFAULT_SGLANG_PREFILL_COORD_PORT,
     DEFAULT_SGLANG_PREFILL_SERV_PORT,
-    DEFAULT_SGLANG_SERVE_PORT,
-    _DISAGG_PINNED_ROLE_KEYS,
     perf_enforce_thresholds,
     resolve_disagg_execution_roles,
     resolve_distributed_execution_hosts,
     resolve_single_execution_hosts,
     stamp_disagg_roles,
 )
-from cvs.lib.utils.config_loader import (
-    BaseVariantConfig,
-    _Allow,
-    _Forbid,
-    substitute_config,
-)
+from cvs.lib.utils.config_loader import substitute_config
 from cvs.lib.utils_lib import resolve_test_config_placeholders
+from cvs.parsers.schemas import (  # noqa: F401 - re-exported for the SGLang conftest and job classes
+    SGLANG_FIRST_POLL_WAIT_S,
+    SGLANG_POLL_PERIOD_S,
+    SglangAccuracy,
+    SglangAccuracyTask,
+    SglangConfig,
+    SglangParams,
+    SglangRoles,
+    SglangRoleServer,
+    SglangSingleVariantConfig,
+    resolve_old_sglang_keys,
+)
 
 log = globals.log
 
@@ -410,101 +412,6 @@ def _is_legacy_root(raw: Mapping[str, Any]) -> bool:
     return "benchmark_params" in raw and ("config" in raw or "container_image" in raw)
 
 
-# ---------- typed config ----------
-
-
-class SglangRoleServer(_Allow):
-    env: dict[str, str] = Field(default_factory=dict)
-    serve_port: str = ""
-
-
-class SglangRoles(_Forbid):
-    server: SglangRoleServer = Field(default_factory=SglangRoleServer)
-
-
-class SglangParams(_Allow):
-    """SGLang runtime parameters passed to the existing job controllers."""
-
-    inference_tests: dict[str, Any] = Field(default_factory=dict)
-    add_export_env: list[str] = Field(default_factory=list)
-    add_flags: list[str] = Field(default_factory=list)
-
-
-class SglangAccuracyTask(_Allow):
-    """One named lm-eval task from the unified ``accuracy.tasks`` block."""
-
-    id: str
-
-
-class SglangAccuracy(_Forbid):
-    tasks: list[SglangAccuracyTask] = Field(default_factory=list)
-
-
-class SglangSingleVariantConfig(BaseVariantConfig):
-    """Typed config shared by all SGLang topologies."""
-
-    framework: Literal["sglang", "sglang_single"] = "sglang"
-    gpu_arch: str = "mi30x"
-    topology: Literal["single", "distributed", "disaggregated"] = "single"
-    variant_key: str = ""
-    config_path: str = ""
-    params: SglangParams = Field(default_factory=SglangParams)
-    accuracy: SglangAccuracy = Field(default_factory=SglangAccuracy)
-
-    # Legacy blocks kept for ``SglangSingle`` until that lib is refactored.
-    inference: dict[str, Any] = Field(default_factory=dict)
-    benchmark_params: dict[str, Any] = Field(default_factory=dict)
-    sweeps: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    sweep: dict[str, Any] = Field(default_factory=dict)
-
-    roles: SglangRoles = Field(default_factory=SglangRoles)
-
-    def cell_key(self, isl, osl, concurrency) -> str:
-        tp = self.benchmark_params.get("tensor_parallelism", "-")
-        pp = self.benchmark_params.get("pipeline_parallelism", "-")
-        return f"ISL={isl},OSL={osl},TP={tp},PP={pp},CONC={concurrency}"
-
-    def perf_cell_key(self) -> str:
-        return perf_cell_key(self.benchmark_params)
-
-    @property
-    def hf_token_file(self) -> str:
-        return self.paths.hf_token_file
-
-    @model_validator(mode="after")
-    def _sync_legacy_inference_container_name(self):
-        """Keep legacy inference dict aligned with orchestrator container name."""
-        if self.inference and self.container.name:
-            self.inference["container_name"] = self.container.name
-            self.inference["container_image"] = self.container.image
-        return self
-
-    @model_validator(mode="after")
-    def _validate_topology_fields(self):
-        required = {
-            "single": (),
-            "distributed": ("nnodes",),
-            "disaggregated": ("nnodes",),
-        }[self.topology]
-        missing = [key for key in required if not self.inference.get(key)]
-        if missing:
-            raise ValueError(f"{self.topology} SGLang config missing required role fields: {missing}")
-
-        if self.topology == "distributed":
-            nnodes = int(self.inference.get("nnodes") or 0)
-            if nnodes < 2:
-                raise ValueError(f"distributed SGLang requires nnodes >= 2, got {nnodes}")
-        if self.topology == "disaggregated":
-            nnodes = int(self.inference.get("nnodes") or 0)
-            if nnodes < 2:
-                raise ValueError(f"disaggregated SGLang requires nnodes >= 2, got {nnodes}")
-            if nnodes % 2:
-                raise ValueError(
-                    f"disaggregated SGLang requires an even nnodes so prefill and decode counts match, got {nnodes}"
-                )
-        return self
-
-
 # ---------- public API ----------
 
 
@@ -535,19 +442,6 @@ def _mounts_to_volume_dict(mounts: list[Any]) -> dict[str, str]:
         if separator and host and container:
             volumes[host] = container
     return volumes
-
-
-def _accuracy_tasks_to_inference_tests(accuracy: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
-    inference_tests: dict[str, dict[str, Any]] = {}
-    for raw_task in accuracy.get("tasks") or []:
-        task = dict(raw_task)
-        task_id = str(task.pop("id", "")).strip()
-        if not task_id:
-            raise ValueError("each accuracy.tasks entry requires a non-empty 'id'")
-        if task_id in inference_tests:
-            raise ValueError(f"duplicate accuracy task id: {task_id!r}")
-        inference_tests[task_id] = task
-    return inference_tests
 
 
 _RUNTIME_ENV_TO_INFERENCE = {
@@ -599,88 +493,179 @@ def _add_export_env_from_runtime(runtime_env, existing=None):
     return entries
 
 
-def _unified_runtime_views(raw: Mapping[str, Any], thresholds: Mapping[str, Any]) -> tuple[dict, dict, dict]:
-    """Build legacy controller views from the unified SGLang schema."""
-    paths = dict(raw.get("paths") or {})
-    container = dict(raw.get("container") or {})
-    runtime = dict(container.get("runtime") or {})
-    runtime_args = dict(runtime.get("args") or {})
-    new_layout = isinstance(raw.get("server_params"), Mapping)
-    server = dict(raw.get("server_params") or {}) if new_layout else dict((raw.get("roles") or {}).get("server") or {})
-    params = dict(server) if new_layout else dict(raw.get("params") or {})
+def _view_number(value):
+    return int(value) if isinstance(value, float) and value.is_integer() else value
 
-    if new_layout:
-        benchmark = dict(raw.get("benchmark_params") or {})
-        benchmark["enforce_thresholds"] = raw.get("enforce_thresholds", True)
-        inference_tests = {"bench_serv_random": benchmark}
-    else:
-        inference_tests = dict(params.get("inference_tests") or {})
-    long_ctx_niah = raw.get("long_ctx_niah")
-    if long_ctx_niah is not None:
-        if not isinstance(long_ctx_niah, Mapping):
-            raise TypeError("long_ctx_niah must be an object")
-        inference_tests["long_ctx_niah"] = dict(long_ctx_niah)
-    inference_tests.update(_accuracy_tasks_to_inference_tests(raw.get("accuracy") or {}))
-    params["inference_tests"] = inference_tests
-    params["model"] = str(server.get("model") or "") if new_layout else str((raw.get("model") or {}).get("id") or "")
-    params["threshold_file"] = str(raw.get("threshold_json") or "")
 
-    runtime_env = dict(runtime_args.get("env") or {})
-    runtime_env.pop("HF_TOKEN", None)
-    add_export_env = _add_export_env_from_runtime(runtime_env, params.get("add_export_env"))
+def engine_args_to_flags(engine_args: Mapping[str, Any]) -> list[str]:
+    """``launch_server`` flag lines for ``server_params.engine_args``; ``True`` writes a bare flag."""
+    flags = []
+    for name, value in engine_args.items():
+        flag = "--" + name.replace("_", "-")
+        if value is True:
+            flags.append(flag)
+        elif isinstance(value, (list, tuple)):
+            flags.append(f"{flag} {' '.join(str(item) for item in value)}")
+        elif value is not False and value is not None:
+            flags.append(f"{flag} {_view_number(value)}")
+    return flags
+
+
+def _lm_eval_task_view(task) -> dict[str, Any]:
+    view = {
+        key: _view_number(value)
+        for key, value in task.model_dump(exclude_unset=True, exclude={"id", "task", "backend"}).items()
+    }
+    if isinstance(view.get("tasks"), list):
+        view["tasks"] = ",".join(view["tasks"])
+    return view
+
+
+def _threshold_cells_view(config: SglangConfig) -> dict[str, dict[str, dict[str, Any]]]:
+    return {
+        key: {metric: spec.model_dump(exclude_defaults=True) for metric, spec in cell.items()}
+        for key, cell in config.thresholds.cells().items()
+    }
+
+
+def _client_poll_view(client_s: int) -> dict[str, str]:
+    """The poll count and total wait that give ``client_s``, the inverse of the old-key rule."""
+    total = max(client_s - SGLANG_FIRST_POLL_WAIT_S, SGLANG_POLL_PERIOD_S)
+    return {
+        "inference_poll_iterations": str(-(-total // SGLANG_POLL_PERIOD_S)),
+        "inference_poll_total_timeout_sec": str(total),
+    }
+
+
+def _runtime_views(config: SglangConfig) -> tuple[dict, dict, dict]:
+    """Build the ``inference``, ``benchmark_params`` and ``roles.server`` dicts the job classes read."""
+    server = config.server_params
+    runtime_args = config.container.runtime.args.model_dump()
+    runtime_env = dict(config.container.env)
+    engine_args = dict(server.engine_args)
+    memory_fraction = engine_args.pop("mem_fraction_static", None)
+    log_level = engine_args.pop("log_level", None)
+
+    benchmark = {
+        "backend": "sglang",
+        "num_prompts": config.benchmark_params.num_prompts,
+        "random_range_ratio": _view_number(config.benchmark_params.random_range_ratio),
+        "enforce_thresholds": config.enforce_thresholds,
+    }
+    inference_tests: dict[str, dict[str, Any]] = {"bench_serv_random": benchmark}
+    if config.accuracy.custom_eval:
+        inference_tests["long_ctx_niah"] = {}
+    for task in config.accuracy.lm_eval.tasks:
+        inference_tests[task.id] = _lm_eval_task_view(task)
+
+    params: dict[str, Any] = {
+        "model": server.model,
+        "tensor_parallelism": str(server.tp),
+        "pipeline_parallelism": str(server.pp),
+        "inference_tests": inference_tests,
+        "threshold_file": config.threshold_json,
+    }
+    if server.nnodes is not None:
+        params["nnodes"] = str(server.nnodes)
+    if memory_fraction is not None:
+        params["memory_fraction"] = str(_view_number(memory_fraction))
+    flags = engine_args_to_flags(engine_args)
+    if flags:
+        params["add_flags"] = flags
+    if config.accuracy.custom_eval:
+        params["lng_ctx_activate"] = True
+        params["context_length"] = str(server.max_model_length)
+        params["chunked_prefill_size"] = str(server.long_context.chunked_prefill_size)
+        if server.long_context.max_prefill_tokens is not None:
+            params["max_prefill_tokens"] = str(server.long_context.max_prefill_tokens)
+    if config.timeouts.client_s is not None:
+        params.update(_client_poll_view(config.timeouts.client_s))
+    add_export_env = _add_export_env_from_runtime(runtime_env)
     if add_export_env:
         params["add_export_env"] = add_export_env
 
     inference: dict[str, Any] = {
-        "container_image": container.get("image"),
-        "container_name": container.get("name"),
-        "container_lifetime": container.get("lifetime", "per_run"),
-        "hf_token_file": paths.get("hf_token_file"),
-        "log_dir": paths.get("log_dir"),
+        "container_image": config.container.image,
+        "container_name": config.container.name,
+        "container_lifetime": config.container.lifetime,
+        "hf_token_file": config.paths.hf_token_file,
+        "log_dir": config.paths.log_dir,
         "shm_size": runtime_args.get("shm_size"),
         "container_config": {
             "device_list": list(runtime_args.get("devices") or []),
             "volume_dict": _mounts_to_volume_dict(list(runtime_args.get("volumes") or [])),
             "env_dict": dict(runtime_env),
         },
+        "tensor_parallelism": params["tensor_parallelism"],
+        "pipeline_parallelism": params["pipeline_parallelism"],
     }
-    for key, value in server.items():
-        if key.startswith("_") or key in ("env", "serve_port", "model"):
-            continue
-        inference[key] = value
+    if server.nnodes is not None:
+        inference["nnodes"] = params["nnodes"]
+    if log_level is not None:
+        inference["log_level"] = str(log_level)
     for env_key, inference_key in _RUNTIME_ENV_TO_INFERENCE.items():
         if env_key in runtime_env:
             inference[inference_key] = runtime_env[env_key]
-    hsa_force = inference.get("hsa_force_fine_grain_pcie")
-    hsa_force = "" if hsa_force is None else str(hsa_force).strip()
+    hsa_force = str(inference.get("hsa_force_fine_grain_pcie") or "").strip()
     inference["hsa_force_fine_grain_pcie"] = hsa_force or "1"
-    inference["proxy_router_serv_port"] = str(
-        inference.get("proxy_router_serv_port") or server.get("serve_port") or DEFAULT_SGLANG_SERVE_PORT
-    )
-    inference["dist_init_port"] = str(inference.get("dist_init_port") or DEFAULT_SGLANG_DIST_INIT_PORT)
-    inference["proxy_router_port"] = str(
-        inference.get("proxy_router_port") or inference.get("proxy_router_serv_port") or DEFAULT_SGLANG_SERVE_PORT
-    )
-    inference["prefill_serv_port"] = str(inference.get("prefill_serv_port") or DEFAULT_SGLANG_PREFILL_SERV_PORT)
-    inference["decode_serv_port"] = str(inference.get("decode_serv_port") or DEFAULT_SGLANG_DECODE_SERV_PORT)
-    inference["prefill_coordinator_port"] = str(
-        inference.get("prefill_coordinator_port") or DEFAULT_SGLANG_PREFILL_COORD_PORT
-    )
-    inference["decode_coordinator_port"] = str(
-        inference.get("decode_coordinator_port") or DEFAULT_SGLANG_DECODE_COORD_PORT
-    )
+    inference["proxy_router_serv_port"] = str(server.port)
+    inference["proxy_router_port"] = str(server.port)
+    inference["dist_init_port"] = str(server.master_port)
+    inference["prefill_serv_port"] = DEFAULT_SGLANG_PREFILL_SERV_PORT
+    inference["decode_serv_port"] = DEFAULT_SGLANG_DECODE_SERV_PORT
+    inference["prefill_coordinator_port"] = DEFAULT_SGLANG_PREFILL_COORD_PORT
+    inference["decode_coordinator_port"] = DEFAULT_SGLANG_DECODE_COORD_PORT
 
-    _inject_thresholds_into_bp_dict(params, thresholds, inject_current_perf=False)
-    merged_env = {
-        **runtime_env,
-        **_legacy_server_env(inference, params),
-        **dict(server.get("env") or {}),
-    }
+    _inject_typed_accuracy_thresholds(params, config)
     # The token is read from hf_token_file inside the container. A literal
     # HF_TOKEN here becomes `docker run -e`, which the orchestrator logs.
-    merged_env.pop("HF_TOKEN", None)
-    server["env"] = {key: str(value) for key, value in merged_env.items() if not isinstance(value, (list, dict))}
-    return inference, params, server
+    env = {**runtime_env, **_legacy_server_env(inference, params)}
+    env.pop("HF_TOKEN", None)
+    role_server = {"env": env, "serve_port": str(server.port)}
+    return inference, params, role_server
+
+
+def _inject_typed_accuracy_thresholds(bp_dict: dict[str, Any], config: SglangConfig) -> None:
+    inference_tests = bp_dict["inference_tests"]
+    for task_id, specs in config.thresholds.accuracy.lm_eval.items():
+        if task_id not in inference_tests:
+            continue
+        expected = inference_tests[task_id].setdefault("expected_results", {})
+        expected[task_id.removeprefix("lm_eval_")] = flat_expected_from_specs(
+            {metric: spec.model_dump() for metric, spec in specs.items()}
+        )
+        log.info("Loaded accuracy thresholds for %r", task_id)
+
+
+def acc_cells_for_variant(variant: SglangSingleVariantConfig) -> list[dict[str, Any]]:
+    """One cell per ``niah`` eval, with its threshold specs and run options."""
+    if variant.config is None:
+        return []
+    cells = []
+    for niah in variant.config.accuracy.custom_eval:
+        specs = variant.config.thresholds.accuracy.custom_eval.get(niah.id, {})
+        cells.append(
+            {
+                "cell_key": f"ACC_ISL={niah.isl},OSL={niah.osl}",
+                "id": niah.id,
+                "isl": str(niah.isl),
+                "osl": str(niah.osl),
+                "num_prompts": niah.num_prompts,
+                "seed": niah.seed,
+                "specs": {metric: spec.model_dump() for metric, spec in specs.items()},
+            }
+        )
+    return cells
+
+
+def validate_sglang_config(raw: Mapping[str, Any], *, config_path: str = "") -> SglangConfig:
+    """Resolve old keys with one ``FutureWarning``, then validate ``raw`` (thresholds under ``thresholds``)."""
+    converted, message = resolve_old_sglang_keys(dict(raw))
+    if message:
+        where = f"{config_path}: " if config_path else ""
+        warnings.warn(where + message, FutureWarning, stacklevel=2)
+        log.warning("%s%s", where, message)
+    return SglangConfig.model_validate(converted, context={"placeholders": "reject"})
 
 
 def _load_legacy_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> SglangSingleVariantConfig:
@@ -744,75 +729,63 @@ def _load_legacy_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> S
     return SglangSingleVariantConfig(**raw)
 
 
-def _load_unified_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> SglangSingleVariantConfig:
+def _infer_topology(config: SglangConfig) -> str:
+    return "distributed" if (config.server_params.nnodes or 1) > 1 else "single"
+
+
+def _load_unified_variant(
+    config_path: str, cluster_dict: Mapping[str, Any], topology: str | None
+) -> SglangSingleVariantConfig:
     raw, thresholds = substitute_config(config_path, cluster_dict)
     raw = resolve_test_config_placeholders(raw, cluster_dict)
-    raw["thresholds"] = thresholds
-    raw["config_path"] = str(Path(config_path).resolve())
+    config = validate_sglang_config({**raw, "thresholds": thresholds}, config_path=str(config_path))
+    topology = topology or _infer_topology(config)
 
-    server_params = dict(raw.get("server_params") or {})
-    if server_params:
-        if (
-            raw.get("topology") == "disaggregated"
-            or server_params.get("prefill_policy")
-            or server_params.get("decode_policy")
-            or server_params.get("prefill_node_list")
-            or server_params.get("decode_node_list")
-        ):
-            topology = "disaggregated"
-        elif server_params.get("server_node_list") or int(server_params.get("nnodes") or 1) > 1:
-            topology = "distributed"
-        else:
-            topology = "single"
-        raw.setdefault("schema_version", 1)
-        raw.setdefault("framework", "sglang")
-        raw.setdefault("gpu_arch", str(raw.get("gpu_name") or "mi30x"))
-        raw.setdefault("topology", topology)
-        raw.setdefault(
-            "model",
-            {
-                "id": str(server_params.get("model") or ""),
-                "remote": 0,
-            },
-        )
-        raw["container"] = {
-            key: value for key, value in dict(raw.get("container") or {}).items() if not str(key).startswith("_")
-        }
-
-    raw["variant_key"] = raw.get("variant_key") or "default"
-
-    inference, benchmark_params, server = _unified_runtime_views(raw, thresholds)
-    if raw.get("topology") == "single":
-        inference.pop("benchmark_serv_node", None)
+    inference, benchmark_params, server = _runtime_views(config)
+    if topology == "single":
         if cluster_dict.get("node_dict"):
             hosts = resolve_single_execution_hosts(cluster_dict)
             inference["_execution_hosts"] = list(hosts)
             inference["benchmark_serv_node"] = hosts[0]
-    elif raw.get("topology") == "distributed":
-        inference.pop("server_node_list", None)
-        inference.pop("benchmark_serv_node", None)
+    elif topology == "distributed":
         if cluster_dict.get("node_dict"):
             hosts = resolve_distributed_execution_hosts(cluster_dict, inference)
             inference["_execution_hosts"] = list(hosts)
             inference["server_node_list"] = list(hosts)
             inference["benchmark_serv_node"] = hosts[0]
-    elif raw.get("topology") == "disaggregated":
-        for key in _DISAGG_PINNED_ROLE_KEYS:
-            inference.pop(key, None)
-        if cluster_dict.get("node_dict"):
-            stamp_disagg_roles(inference, resolve_disagg_execution_roles(cluster_dict, inference))
-    raw["inference"] = inference
-    raw["benchmark_params"] = benchmark_params
-    raw["params"] = benchmark_params
-    raw.setdefault("roles", {})["server"] = server
-    raw["enforce_thresholds"] = perf_enforce_thresholds(benchmark_params)
+    elif cluster_dict.get("node_dict"):
+        stamp_disagg_roles(inference, resolve_disagg_execution_roles(cluster_dict, inference))
 
-    known = {k: v for k, v in raw.items() if k in SglangSingleVariantConfig.model_fields}
-    return SglangSingleVariantConfig(**known)
+    return SglangSingleVariantConfig(
+        schema_version=1,
+        framework="sglang",
+        topology=topology,
+        enforce_thresholds=config.enforce_thresholds,
+        threshold_json=config.threshold_json,
+        paths=config.paths,
+        model={"id": config.server_params.model, "remote": 0},
+        container=config.container.model_dump(),
+        thresholds=_threshold_cells_view(config),
+        variant_key="default",
+        config_path=str(Path(config_path).resolve()),
+        config=config,
+        inference=inference,
+        benchmark_params=benchmark_params,
+        params=benchmark_params,
+        sweeps=config.sweeps,
+        sweep={"runs": list(config.runs)},
+        roles={"server": server},
+    )
 
 
-def load_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> SglangSingleVariantConfig:
-    """Load and validate an ``sglang_single`` variant config + thresholds."""
+def load_variant(
+    config_path: str, cluster_dict: Mapping[str, Any], topology: str | None = None
+) -> SglangSingleVariantConfig:
+    """Load and validate an SGLang config and its thresholds.
+
+    ``topology`` is ``single``, ``distributed`` or ``disaggregated``, from the
+    test module; without it, ``server_params.nnodes`` above 1 means distributed.
+    """
     path = Path(config_path)
     if not path.is_file():
         raise FileNotFoundError(f"variant config not found: {path}")
@@ -823,7 +796,4 @@ def load_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> SglangSin
     if _is_legacy_root(peek):
         return _load_legacy_variant(config_path, cluster_dict)
 
-    if peek.get("framework") not in (None, "sglang", _UNIFIED_FRAMEWORK):
-        raise ValueError(f"unsupported framework {peek.get('framework')!r} in {config_path!r}; expected 'sglang'")
-
-    return _load_unified_variant(config_path, cluster_dict)
+    return _load_unified_variant(config_path, cluster_dict, topology)

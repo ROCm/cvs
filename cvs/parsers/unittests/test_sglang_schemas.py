@@ -1,0 +1,261 @@
+import unittest
+
+from pydantic import ValidationError
+
+from cvs.parsers.schemas import SglangConfig, resolve_old_sglang_keys
+from cvs.unittests.support import FAKE_CRED
+
+CELL = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=64"
+
+
+def _config(**overrides):
+    config = {
+        "paths": {"shared_fs": "/fs", "models_dir": "/models", "log_dir": "/logs", "hf_token_file": "/fs/token"},
+        "container": {"name": "sglang", "image": "image", "runtime": {"name": "docker"}},
+        "server_params": {"model": "m", "tp": 8},
+        "benchmark_params": {"num_prompts": 4},
+        "sweeps": {CELL: {}},
+        "runs": [CELL],
+    }
+    config.update(overrides)
+    return config
+
+
+def _old_config(server=None, **overrides):
+    config = {
+        "paths": {"shared_fs": "/fs", "models_dir": "/models", "log_dir": "/logs", "hf_token_file": "/fs/token"},
+        "container": {"name": "sglang", "image": "image", "runtime": {"name": "docker", "args": {}}},
+        "server_params": {"model": "m", "tensor_parallelism": "8", "pipeline_parallelism": "1", **(server or {})},
+        "benchmark_params": {"num_prompts": "4"},
+        "sweeps": {CELL: {}},
+        "sweep": {"runs": [{"combo": CELL}]},
+        "thresholds": {},
+    }
+    config.update(overrides)
+    return config
+
+
+class TestSglangConfig(unittest.TestCase):
+    def test_new_config_validates_with_shared_defaults(self):
+        config = SglangConfig.model_validate(_config())
+        self.assertEqual(config.server_params.port, 8888)
+        self.assertIsNone(config.timeouts.client_s)
+
+    def test_each_refused_field_fails_naming_sglang_and_the_field(self):
+        refused = {
+            "server_params.dp": 2,
+            "server_params.ep": 2,
+            "server_params.prefill_nnodes": 1,
+            "benchmark_params.seed": 3,
+            "benchmark_params.request_rate": 4.0,
+            "benchmark_params.burstiness": 2.0,
+            "benchmark_params.random_prefix_len": 16,
+            "benchmark_params.tokenizer_mode": "slow",
+            "benchmark_params.scaling_baseline_output_throughput": 100.0,
+            "benchmark_params.client_args": {"warmup_requests": 2},
+            "timeouts.server_ready_s": 60,
+            "accuracy.quant_parity": {"enabled": True},
+            "accuracy.mtp_quality": {"enabled": True},
+        }
+        for path, value in refused.items():
+            with self.subTest(field=path):
+                config = _config()
+                block, name = path.split(".")
+                config.setdefault(block, {})[name] = value
+                with self.assertRaisesRegex(ValidationError, rf"{path} is not implemented for SglangConfig"):
+                    SglangConfig.model_validate(config)
+
+    def test_an_lm_eval_option_sglang_does_not_pass_fails(self):
+        task = {"id": "lm_eval_gsm8k", "tasks": "gsm8k", "device": "cuda"}
+        with self.assertRaisesRegex(ValidationError, r"tasks\[0\]\.device is not implemented for SglangConfig"):
+            SglangConfig.model_validate(_config(accuracy={"lm_eval": {"tasks": [task]}}))
+
+    def test_lm_eval_options_sglang_passes_are_accepted(self):
+        task = {"id": "lm_eval_gsm8k", "tasks": "gsm8k", "num_fewshot": 5, "batch_size": "auto", "limit": 100}
+        config = SglangConfig.model_validate(_config(accuracy={"lm_eval": {"tasks": [task]}}))
+        self.assertEqual(config.accuracy.lm_eval.tasks[0].limit, 100)
+
+    def test_a_niah_eval_needs_the_long_context_server_flags(self):
+        niah = {"type": "niah", "id": "niah_8k", "isl": 8192}
+        with self.assertRaisesRegex(ValidationError, "max_model_length"):
+            SglangConfig.model_validate(_config(accuracy={"custom_eval": [niah]}))
+        server = {"model": "m", "tp": 8, "max_model_length": 16384, "long_context": {"chunked_prefill_size": 8192}}
+        config = SglangConfig.model_validate(_config(server_params=server, accuracy={"custom_eval": [niah]}))
+        self.assertEqual(config.accuracy.custom_eval[0].isl, 8192)
+
+
+class TestResolveOldSglangKeys(unittest.TestCase):
+    def test_a_config_without_old_keys_comes_back_unchanged(self):
+        config = _config()
+        converted, message = resolve_old_sglang_keys(config)
+        self.assertIs(converted, config)
+        self.assertIsNone(message)
+
+    def test_server_keys_move_to_shared_names_and_engine_args(self):
+        old = _old_config(
+            {"memory_fraction": "0.85", "log_level": "info", "add_flags": ["--attention-backend aiter", "--disable-x"]}
+        )
+        converted, message = resolve_old_sglang_keys(old)
+        server = converted["server_params"]
+        self.assertEqual((server["tp"], server["pp"]), ("8", "1"))
+        self.assertEqual(
+            server["engine_args"],
+            {"attention_backend": "aiter", "disable_x": True, "log_level": "info", "mem_fraction_static": 0.85},
+        )
+        self.assertEqual((server["port"], server["master_port"]), (8000, 40001))
+        self.assertIn("server_params.tensor_parallelism -> server_params.tp", message)
+        self.assertIn("server_params.add_flags -> server_params.engine_args", message)
+        SglangConfig.model_validate(converted)
+
+    def test_an_old_serve_port_and_dist_init_port_are_kept(self):
+        converted, _ = resolve_old_sglang_keys(_old_config({"serve_port": "8010", "dist_init_port": "40005"}))
+        self.assertEqual((converted["server_params"]["port"], converted["server_params"]["master_port"]), (8010, 40005))
+
+    def test_poll_keys_compute_client_s_from_the_real_poll_period(self):
+        cases = [
+            ({"inference_poll_iterations": "16"}, 1500),
+            (
+                {"inference_poll_iterations": "40", "inference_poll_total_timeout_sec": "7200"},
+                3660,
+            ),
+            ({"inference_poll_iterations": "40"}, 3660),
+        ]
+        for server, client_s in cases:
+            with self.subTest(server=server):
+                converted, message = resolve_old_sglang_keys(_old_config(server))
+                self.assertEqual(converted["timeouts"], {"client_s": client_s})
+                self.assertIn("-> timeouts.client_s", message)
+
+    def test_dead_keys_drop_and_a_non_default_backend_is_refused(self):
+        converted, message = resolve_old_sglang_keys(
+            _old_config(
+                {"max_concurrency": "64"}, gpu_name="mi300", benchmark_params={"num_prompts": "4", "backend": "sglang"}
+            )
+        )
+        self.assertNotIn("gpu_name", converted)
+        self.assertNotIn("backend", converted["benchmark_params"])
+        self.assertIn("server_params.max_concurrency (dropped)", message)
+        with self.assertRaisesRegex(ValueError, "benchmark_params.backend") as caught:
+            resolve_old_sglang_keys(_old_config(benchmark_params={"num_prompts": "4", "backend": "vllm"}))
+        self.assertNotIn("vllm", str(caught.exception))
+
+    def test_runtime_env_moves_to_container_env_without_the_token(self):
+        old = _old_config()
+        old["container"]["runtime"]["args"]["env"] = {"NCCL_DEBUG": "ERROR", "HF_TOKEN": FAKE_CRED}
+        converted, message = resolve_old_sglang_keys(old)
+        self.assertEqual(converted["container"]["env"], {"NCCL_DEBUG": "ERROR"})
+        self.assertNotIn("env", converted["container"]["runtime"]["args"])
+        self.assertNotIn(FAKE_CRED, message)
+        SglangConfig.model_validate(converted)
+
+    def test_long_context_switch_on_moves_the_keys_and_acc_specs(self):
+        server = {"lng_ctx_activate": True, "context_length": "131072", "chunked_prefill_size": "8192"}
+        thresholds = {"ACC_ISL=8192,OSL=32": {"pass_rate": {"kind": "min", "value": 0.8}}}
+        old = _old_config(server, long_ctx_niah={"num_prompts": "6", "tolerance_frac": "0.05"}, thresholds=thresholds)
+        converted, _ = resolve_old_sglang_keys(old)
+        self.assertNotIn("lng_ctx_activate", converted["server_params"])
+        self.assertEqual(converted["server_params"]["max_model_length"], 131072)
+        self.assertEqual(converted["server_params"]["long_context"], {"chunked_prefill_size": 8192})
+        self.assertEqual(
+            converted["accuracy"]["custom_eval"],
+            [{"type": "niah", "id": "niah_isl8192_osl32", "isl": 8192, "osl": 32, "num_prompts": 6, "seed": 42}],
+        )
+        self.assertEqual(
+            converted["thresholds"]["accuracy"]["custom_eval"]["niah_isl8192_osl32"],
+            {"pass_rate": {"kind": "min", "value": 0.8}},
+        )
+        self.assertNotIn("long_ctx_niah", converted)
+        SglangConfig.model_validate(converted)
+
+    def test_long_context_switch_off_or_missing_drops_all_four_and_the_acc_specs(self):
+        thresholds = {"ACC_ISL=8192,OSL=32": {"pass_rate": {"kind": "min", "value": 0.8}}}
+        for server in ({"lng_ctx_activate": False}, {}):
+            with self.subTest(server=server):
+                server = {
+                    **server,
+                    "context_length": "131072",
+                    "chunked_prefill_size": "8192",
+                    "max_prefill_tokens": "1",
+                }
+                converted, message = resolve_old_sglang_keys(
+                    _old_config(server, long_ctx_niah={"num_prompts": "6"}, thresholds=thresholds)
+                )
+                self.assertNotIn("lng_ctx_activate", converted["server_params"])
+                for name in ("context_length", "chunked_prefill_size", "max_prefill_tokens"):
+                    self.assertNotIn(name, converted["server_params"])
+                self.assertNotIn("long_ctx_niah", converted)
+                self.assertEqual(converted["thresholds"], {})
+                self.assertIn("long_ctx_niah (dropped)", message)
+
+    def test_a_niah_option_with_no_shared_key_is_refused_unless_at_its_default(self):
+        server = {"lng_ctx_activate": True, "context_length": "131072", "chunked_prefill_size": "8192"}
+        with self.assertRaisesRegex(ValueError, "long_ctx_niah.tolerance_frac"):
+            resolve_old_sglang_keys(_old_config(server, long_ctx_niah={"tolerance_frac": "0.1"}))
+
+    def test_threshold_specs_take_shared_names_and_kinds_in_one_line(self):
+        thresholds = {
+            CELL: {
+                "output_throughput_per_sec": {"kind": "min_tok_s", "value": 900},
+                "mean_e2e_latency_ms": {"kind": "max_ms", "value": 100},
+                "mean_ttft_ms": 50,
+                "mfu": {"kind": "min", "value": 0.02},
+            },
+            "BENCH=lm_eval_gsm8k": {"exact_match,flexible-extract": {"kind": "min", "value": 0.9}},
+        }
+        converted, message = resolve_old_sglang_keys(_old_config(thresholds=thresholds))
+        self.assertEqual(
+            converted["thresholds"][CELL],
+            {
+                "output_throughput": {"kind": "min", "value": 900},
+                "mean_e2el_ms": {"kind": "max", "value": 100},
+                "mean_ttft_ms": {"kind": "max", "value": 50.0},
+            },
+        )
+        self.assertEqual(
+            converted["thresholds"]["accuracy"]["lm_eval"]["lm_eval_gsm8k"],
+            {"exact_match,flexible-extract": {"kind": "min", "value": 0.9}},
+        )
+        self.assertIn("metric output_throughput_per_sec -> output_throughput", message)
+        self.assertIn("kind max_ms -> max", message)
+        self.assertIn("metric mfu (dropped)", message)
+        self.assertNotIn(f"thresholds.{CELL}", message)
+        self.assertEqual(message.count("Deprecated"), 1)
+        SglangConfig.model_validate(converted)
+
+    def test_threshold_cells_take_the_config_tp_and_pp(self):
+        other = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64"
+        alone = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=8"
+        thresholds = {
+            CELL: {"output_throughput_per_sec": {"kind": "min_tok_s", "value": 1}},
+            other: {"output_throughput_per_sec": {"kind": "min_tok_s", "value": 2}},
+            alone: {"output_throughput_per_sec": {"kind": "min_tok_s", "value": 3}},
+        }
+        converted, message = resolve_old_sglang_keys(_old_config(thresholds=thresholds))
+        self.assertEqual(
+            converted["thresholds"],
+            {
+                CELL: {"output_throughput": {"kind": "min", "value": 1}},
+                "ISL=1024,OSL=1024,TP=8,PP=1,CONC=8": {"output_throughput": {"kind": "min", "value": 3}},
+            },
+        )
+        self.assertIn(f"cell {other} (dropped)", message)
+        self.assertIn("cells keyed by TP=8,PP=1", message)
+
+    def test_sweep_runs_become_runs_and_an_empty_list_takes_the_threshold_cells(self):
+        second = "ISL=8192,OSL=1024,TP=8,PP=1,CONC=64"
+        thresholds = {second: {}, CELL: {}}
+        converted, _ = resolve_old_sglang_keys(_old_config(sweep={"runs": []}, thresholds=thresholds))
+        self.assertEqual(converted["runs"], [CELL, second])
+        self.assertEqual(converted["sweeps"][second], {})
+
+    def test_a_run_missing_from_sweeps_takes_the_override_of_its_shape(self):
+        run = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64"
+        old = _old_config(
+            {"pipeline_parallelism": "2"}, sweeps={CELL: {"num_prompts": 8}}, sweep={"runs": [{"combo": run}]}
+        )
+        converted, _ = resolve_old_sglang_keys(old)
+        self.assertEqual(converted["sweeps"][run], {"num_prompts": 8})
+
+
+if __name__ == "__main__":
+    unittest.main()

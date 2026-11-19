@@ -132,6 +132,8 @@ def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
     bench = im_obj.bp_dict["inference_tests"]["long_ctx_niah"]
     bench["input_length"] = acc_cell["isl"]
     bench["output_length"] = acc_cell["osl"]
+    bench["num_prompts"] = acc_cell["num_prompts"]
+    bench["seed"] = acc_cell["seed"]
     bench.setdefault("expected_results", {})["auto"] = flat_expected_from_specs(acc_cell["specs"])
     im_obj.bp_dict["max_concurrency"] = "1"
     im_obj.setup_benchmark_serv_container_env()

@@ -276,8 +276,8 @@ class TestProfile(unittest.TestCase):
         profile["hooks"] = hooks
         config = build_inference_config_from_profile(profile)
         self.assertEqual(config.metric_prefix, "")
-        self.assertEqual(config.headline_metric, "output_throughput_per_sec")
-        self.assertEqual(config.full_metric("output_throughput_per_sec"), "output_throughput_per_sec")
+        self.assertEqual(config.headline_metric, "output_throughput")
+        self.assertEqual(config.full_metric("output_throughput"), "output_throughput")
         self.assertEqual(config.metric_tier_order, ("throughput", "latency", "health", "record"))
 
     def test_xdit_stems_share_one_profile(self):

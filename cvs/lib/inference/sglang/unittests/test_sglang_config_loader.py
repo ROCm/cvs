@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest import mock
 
@@ -185,194 +186,171 @@ class TestResolveBenchmarkVariantKey(unittest.TestCase):
             loader.resolve_benchmark_variant_key({}, 'cfg.json')
 
 
-class TestUnifiedRuntimeViews(unittest.TestCase):
-    def setUp(self):
-        self.raw = {
-            'threshold_json': 'threshold.json',
-            'paths': {
-                'log_dir': '/logs',
-                'hf_token_file': FAKE_CRED_FILE,
+CELL = 'ISL=1024,OSL=1024,TP=8,PP=1,CONC=64'
+
+
+def _new_config(**overrides):
+    config = {
+        'enforce_thresholds': False,
+        'threshold_json': 'threshold.json',
+        'paths': {'shared_fs': '/fs', 'models_dir': '/models', 'log_dir': '/logs', 'hf_token_file': FAKE_CRED_FILE},
+        'container': {
+            'name': 'sglang',
+            'image': 'image',
+            'runtime': {
+                'name': 'docker',
+                'args': {'shm_size': '128G', 'volumes': ['/host:/container', '/host-ro:/container-ro:ro']},
             },
-            'model': {'id': '/models/model'},
-            'container': {
-                'name': 'sglang',
-                'image': 'image',
-                'lifetime': 'per_run',
-                'runtime': {
-                    'name': 'docker',
-                    'args': {
-                        'shm_size': '128G',
-                        'volumes': ['/host:/container', '/host-ro:/container-ro:ro'],
-                        'devices': ['/dev/kfd'],
-                        'env': {'FROM_RUNTIME': '1'},
-                    },
-                },
+            'env': {'NCCL_IB_HCA': 'rdma0', 'SGLANG_USE_AITER': '1'},
+        },
+        'server_params': {
+            'model': '/models/model',
+            'tp': 8,
+            'port': 8000,
+            'master_port': 40001,
+            'engine_args': {
+                'attention_backend': 'aiter',
+                'disable_x': True,
+                'mem_fraction_static': 0.85,
+                'log_level': 'info',
             },
-            'roles': {
-                'server': {
-                    'nnodes': '2',
-                    'benchmark_serv_node': 'node1',
-                    'proxy_router_serv_port': '8000',
-                }
-            },
-            'params': {
-                'tensor_parallelism': '8',
-                'pipeline_parallelism': '2',
-                'add_export_env': ['SGLANG_USE_AITER=1'],
-                'inference_tests': {
-                    'bench_serv_random': {
-                        'enforce_thresholds': False,
-                    }
-                },
-            },
-            'accuracy': {
+        },
+        'benchmark_params': {'num_prompts': 25, 'random_range_ratio': 0.5},
+        'sweeps': {CELL: {}},
+        'runs': [CELL],
+        'accuracy': {
+            'lm_eval': {
                 'tasks': [
-                    {
-                        'id': 'lm_eval_hellaswag',
-                        'tasks': 'hellaswag',
-                    }
+                    {'id': 'lm_eval_gsm8k', 'tasks': 'gsm8k', 'num_fewshot': 5, 'limit': 100, 'num_concurrent': 4}
                 ]
-            },
-            'long_ctx_niah': {
-                'num_prompts': '6',
-            },
-        }
-        self.thresholds = {
-            'ISL=1024,OSL=1024,TP=8,PP=2,CONC=4': {
-                'mfu': {'kind': 'min', 'value': 0.1},
-            },
-            'BENCH=lm_eval_hellaswag': {
-                'acc_norm,none': {'kind': 'min', 'value': 0.23},
-            },
-        }
+            }
+        },
+    }
+    config.update(overrides)
+    return config
 
-    def test_builds_existing_controller_dicts(self):
-        inference, params, server = loader._unified_runtime_views(self.raw, self.thresholds)
 
-        self.assertEqual(inference['container_name'], 'sglang')
-        self.assertEqual(inference['nnodes'], '2')
+_NEW_THRESHOLDS = {
+    CELL: {'output_throughput': {'kind': 'min', 'value': 900}, 'mean_ttft_ms': {'kind': 'info', 'value': 1}},
+    'accuracy': {'lm_eval': {'lm_eval_gsm8k': {'exact_match,flexible-extract': {'kind': 'min', 'value': 0.95}}}},
+}
+
+
+def _load(config, thresholds=None, cluster=None, topology=None):
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / 'config.json'
+        path.write_text(json.dumps(config), encoding='utf-8')
+        (Path(tmp) / 'threshold.json').write_text(json.dumps(thresholds or _NEW_THRESHOLDS), encoding='utf-8')
+        return loader.load_variant(str(path), cluster or {'username': 'test'}, topology)
+
+
+class TestRuntimeViews(unittest.TestCase):
+    def test_builds_the_job_dicts_from_the_validated_config(self):
+        variant = _load(_new_config())
+        inference, params = variant.inference, variant.benchmark_params
+
+        self.assertEqual(params['tensor_parallelism'], '8')
+        self.assertEqual(params['pipeline_parallelism'], '1')
+        self.assertEqual(params['memory_fraction'], '0.85')
+        self.assertEqual(params['add_flags'], ['--attention-backend aiter', '--disable-x'])
+        self.assertEqual(inference['log_level'], 'info')
+        self.assertEqual(inference['proxy_router_serv_port'], '8000')
+        self.assertEqual(inference['dist_init_port'], '40001')
+        self.assertEqual(inference['nccl_ib_hca'], 'rdma0')
+        self.assertEqual(inference['hsa_force_fine_grain_pcie'], '1')
         self.assertEqual(inference['container_config']['volume_dict']['/host-ro'], '/container-ro:ro')
-        self.assertEqual(params['model'], '/models/model')
-        self.assertEqual(params['inference_tests']['lm_eval_hellaswag']['tasks'], 'hellaswag')
-        self.assertEqual(params['inference_tests']['long_ctx_niah']['num_prompts'], '6')
+        self.assertEqual(params['add_export_env'], ['SGLANG_USE_AITER=1'])
         self.assertEqual(
-            params['inference_tests']['lm_eval_hellaswag']['expected_results']['hellaswag'],
-            {'acc_norm,none': 0.23},
+            params['inference_tests']['bench_serv_random'],
+            {'backend': 'sglang', 'num_prompts': 25, 'random_range_ratio': 0.5, 'enforce_thresholds': False},
         )
-        self.assertEqual(server['env']['SGLANG_USE_AITER'], '1')
-        self.assertIn('SGLANG_USE_AITER=1', params['add_export_env'])
-        self.assertIn('FROM_RUNTIME=1', params['add_export_env'])
+        gsm8k = params['inference_tests']['lm_eval_gsm8k']
+        self.assertEqual(gsm8k['limit'], 100)
+        self.assertEqual(gsm8k['expected_results']['gsm8k'], {'exact_match,flexible-extract': 0.95})
+        self.assertEqual(variant.roles.server.env['SGLANG_USE_AITER'], '1')
+        self.assertEqual(variant.roles.server.env['HSA_FORCE_FINE_GRAIN_PCIE'], '1')
+        self.assertEqual(variant.thresholds[CELL]['mean_ttft_ms'], {'kind': 'info', 'value': 1.0})
+        self.assertNotIn('inference_poll_iterations', params)
+
+    def test_client_s_gives_the_poll_count_and_wait_of_the_old_keys(self):
+        for client_s, polls, total in ((1500, '16', '1440'), (3660, '40', '3600')):
+            with self.subTest(client_s=client_s):
+                params = _load(_new_config(timeouts={'client_s': client_s})).benchmark_params
+                self.assertEqual(params['inference_poll_iterations'], polls)
+                self.assertEqual(params['inference_poll_total_timeout_sec'], total)
+
+    def test_a_niah_eval_turns_on_the_long_context_server_flags(self):
+        server = {
+            **_new_config()['server_params'],
+            'max_model_length': 131072,
+            'long_context': {'chunked_prefill_size': 8192},
+        }
+        niah = {'type': 'niah', 'id': 'niah_8k', 'isl': 8192, 'osl': 32, 'num_prompts': 6}
+        thresholds = {
+            **_NEW_THRESHOLDS,
+            'accuracy': {'custom_eval': {'niah_8k': {'pass_rate': {'kind': 'min', 'value': 0.8}}}},
+        }
+        variant = _load(_new_config(server_params=server, accuracy={'custom_eval': [niah]}), thresholds)
+
+        self.assertIs(variant.benchmark_params['lng_ctx_activate'], True)
+        self.assertEqual(variant.benchmark_params['context_length'], '131072')
+        self.assertEqual(variant.benchmark_params['chunked_prefill_size'], '8192')
+        self.assertIn('long_ctx_niah', variant.benchmark_params['inference_tests'])
+        self.assertEqual(
+            loader.acc_cells_for_variant(variant),
+            [
+                {
+                    'cell_key': 'ACC_ISL=8192,OSL=32',
+                    'id': 'niah_8k',
+                    'isl': '8192',
+                    'osl': '32',
+                    'num_prompts': 6,
+                    'seed': 42,
+                    'specs': {'pass_rate': {'kind': 'min', 'value': 0.8, 'optional': False}},
+                }
+            ],
+        )
+
+    def test_an_old_config_loads_with_one_future_warning_and_a_new_one_with_none(self):
+        old = _new_config()
+        old['server_params'] = {'model': '/models/model', 'tensor_parallelism': '8', 'memory_fraction': '0.85'}
+        old_thresholds = {CELL: {'output_throughput_per_sec': {'kind': 'min_tok_s', 'value': 900}}}
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            variant = _load(old, old_thresholds)
+        self.assertEqual([w.category for w in caught], [FutureWarning])
+        self.assertEqual(variant.benchmark_params['memory_fraction'], '0.85')
+        self.assertEqual(variant.thresholds[CELL], {'output_throughput': {'kind': 'min', 'value': 900.0}})
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            _load(_new_config())
+        self.assertEqual(caught, [])
+
+    def test_an_unknown_server_key_fails_naming_it(self):
+        server = {**_new_config()['server_params'], 'client_host': 'node1'}
+        with self.assertRaisesRegex(ValueError, 'client_host'):
+            _load(_new_config(server_params=server))
 
     def test_hf_token_is_not_copied_into_logged_env(self):
-        self.raw['container']['runtime']['args']['env']['HF_TOKEN'] = FAKE_CRED
-        self.raw['params']['add_export_env'].append(f'HF_TOKEN={FAKE_CRED}')
+        old = _new_config()
+        old['container']['runtime']['args']['env'] = {'HF_TOKEN': FAKE_CRED, 'NCCL_DEBUG': 'ERROR'}
+        del old['container']['env']
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            variant = _load(old)
+        self.assertNotIn('HF_TOKEN', variant.roles.server.env)
+        self.assertNotIn(FAKE_CRED, str(variant.inference))
+        self.assertNotIn(FAKE_CRED, str(variant.benchmark_params))
 
-        inference, params, server = loader._unified_runtime_views(self.raw, self.thresholds)
 
-        self.assertNotIn('HF_TOKEN', server['env'])
-        self.assertNotIn('HF_TOKEN', inference['container_config']['env_dict'])
-        self.assertFalse(any(str(entry).startswith('HF_TOKEN=') for entry in params['add_export_env']))
-        self.assertNotIn(FAKE_CRED, str(server['env']))
-        self.assertNotIn(FAKE_CRED, str(params['add_export_env']))
-
-    def test_duplicate_accuracy_task_ids_raise(self):
-        self.raw['accuracy']['tasks'].append(
-            {
-                'id': 'lm_eval_hellaswag',
-                'tasks': 'hellaswag',
-            }
+class TestEngineArgsToFlags(unittest.TestCase):
+    def test_true_writes_a_bare_flag_and_lists_join(self):
+        self.assertEqual(
+            loader.engine_args_to_flags(
+                {'attention_backend': 'aiter', 'disable_x': True, 'graph_bs': [1, 2], 'n': 2.0}
+            ),
+            ['--attention-backend aiter', '--disable-x', '--graph-bs 1 2', '--n 2'],
         )
-
-        with self.assertRaisesRegex(ValueError, 'duplicate accuracy task id'):
-            loader._unified_runtime_views(self.raw, self.thresholds)
-
-    def test_builds_controller_views_from_server_and_benchmark_blocks(self):
-        raw = {
-            'enforce_thresholds': False,
-            'threshold_json': 'threshold.json',
-            'paths': {
-                'log_dir': '/logs',
-                'hf_token_file': FAKE_CRED_FILE,
-            },
-            'container': {
-                'name': 'sglang',
-                'image': 'image',
-                'lifetime': 'per_run',
-                'runtime': {
-                    'name': 'docker',
-                    'args': {
-                        'volumes': ['/host:/container'],
-                        'devices': ['/dev/kfd'],
-                        'env': {
-                            'NCCL_IB_HCA': 'rdma0',
-                            'SGLANG_USE_AITER': '1',
-                        },
-                    },
-                },
-            },
-            'server_params': {
-                'model': '/models/model',
-                'tensor_parallelism': '8',
-                'pipeline_parallelism': '2',
-                'server_node_list': ['node1', 'node2'],
-                'benchmark_serv_node': 'node1',
-            },
-            'benchmark_params': {
-                'backend': 'sglang',
-                'num_prompts': '25',
-                'model_num_params': '671000000000',
-            },
-            'accuracy': {'tasks': []},
-        }
-
-        inference, params, server = loader._unified_runtime_views(raw, self.thresholds)
-
-        self.assertEqual(inference['nccl_ib_hca'], 'rdma0')
-        self.assertEqual(inference['server_node_list'], ['node1', 'node2'])
-        self.assertEqual(params['model'], '/models/model')
-        self.assertEqual(params['tensor_parallelism'], '8')
-        self.assertEqual(params['inference_tests']['bench_serv_random']['num_prompts'], '25')
-        self.assertFalse(params['inference_tests']['bench_serv_random']['enforce_thresholds'])
-        self.assertEqual(params['add_export_env'], ['SGLANG_USE_AITER=1'])
-        self.assertEqual(server['env']['NCCL_IB_HCA'], 'rdma0')
-        self.assertEqual(server['env']['SGLANG_USE_AITER'], '1')
-        self.assertEqual(inference['hsa_force_fine_grain_pcie'], '1')
-        self.assertEqual(server['env']['HSA_FORCE_FINE_GRAIN_PCIE'], '1')
-        self.assertNotIn('ADD_EXPORT_ENV', server['env'])
-        for key, value in server['env'].items():
-            self.assertNotIn(' ', value, f'{key} carries an unquotable space: {value!r}')
-
-    def test_hsa_force_fine_grain_pcie_comes_from_runtime_env(self):
-        raw = {
-            'threshold_json': 'threshold.json',
-            'paths': {
-                'log_dir': '/logs',
-                'hf_token_file': FAKE_CRED_FILE,
-            },
-            'container': {
-                'name': 'sglang',
-                'image': 'image',
-                'runtime': {
-                    'args': {
-                        'env': {
-                            'NCCL_DEBUG': 'ERROR',
-                            'HSA_FORCE_FINE_GRAIN_PCIE': '0',
-                        },
-                    },
-                },
-            },
-            'server_params': {
-                'model': '/models/model',
-                'tensor_parallelism': '8',
-            },
-            'benchmark_params': {'num_prompts': '25'},
-        }
-
-        inference, params, server = loader._unified_runtime_views(raw, self.thresholds)
-
-        self.assertEqual(inference['hsa_force_fine_grain_pcie'], '0')
-        self.assertEqual(server['env']['HSA_FORCE_FINE_GRAIN_PCIE'], '0')
-        self.assertNotIn('HSA_FORCE_FINE_GRAIN_PCIE=0', params.get('add_export_env') or [])
 
 
 class TestAddExportEnvFromRuntime(unittest.TestCase):
@@ -402,277 +380,45 @@ class TestAddExportEnvFromRuntime(unittest.TestCase):
         )
 
 
-class TestUnifiedPackagedConfigs(unittest.TestCase):
-    @staticmethod
-    def _replace_changeme(value):
-        if isinstance(value, str):
-            return value.replace('<changeme>', 'node1')
-        if isinstance(value, list):
-            return [TestUnifiedPackagedConfigs._replace_changeme(item) for item in value]
-        if isinstance(value, dict):
-            return {key: TestUnifiedPackagedConfigs._replace_changeme(item) for key, item in value.items()}
-        return value
-
-    def test_all_sglang_workload_configs_load(self):
-        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
-        config_paths = []
-        for prefix in ('mi3xx', 'mi35x'):
-            config_paths += sorted(config_dir.glob(f'{prefix}_sglang_*_single.json'))
-            config_paths += sorted(config_dir.glob(f'{prefix}_sglang_*_distributed.json'))
-            config_paths += sorted(config_dir.glob(f'{prefix}_sglang_*_disaggregated.json'))
-        self.assertEqual(
-            {path.name for path in config_paths},
-            {
-                'mi35x_sglang_deepseek_r1_0528_disaggregated.json',
-                'mi35x_sglang_deepseek_r1_0528_distributed.json',
-                'mi35x_sglang_deepseek_r1_0528_single.json',
-                'mi35x_sglang_llama_70b_disaggregated.json',
-                'mi35x_sglang_llama_70b_distributed.json',
-                'mi35x_sglang_llama_70b_single.json',
-                'mi35x_sglang_qwen35_397b_disaggregated.json',
-                'mi35x_sglang_qwen35_397b_distributed.json',
-                'mi35x_sglang_qwen35_397b_single.json',
-                'mi3xx_sglang_deepseek_r1_0528_disaggregated.json',
-                'mi3xx_sglang_deepseek_r1_0528_distributed.json',
-                'mi3xx_sglang_deepseek_r1_0528_single.json',
-                'mi3xx_sglang_llama_70b_disaggregated.json',
-                'mi3xx_sglang_llama_70b_distributed.json',
-                'mi3xx_sglang_llama_70b_single.json',
-                'mi3xx_sglang_qwen35_397b_disaggregated.json',
-                'mi3xx_sglang_qwen35_397b_distributed.json',
-                'mi3xx_sglang_qwen35_397b_single.json',
-            },
-        )
-
-        for config_path in config_paths:
-            with self.subTest(config=config_path.name):
-                raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
-                raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
-                with tempfile.TemporaryDirectory() as tmp:
-                    temp_config = Path(tmp) / config_path.name
-                    temp_config.write_text(json.dumps(raw), encoding='utf-8')
-                    variant = loader.load_variant(str(temp_config), {'username': 'test'})
-
-                self.assertEqual(variant.framework, 'sglang')
-                self.assertEqual(len(variant.accuracy.tasks), 2)
-                expected_tests = {'bench_serv_random', 'lm_eval_hellaswag', 'lm_eval_gsm8k'}
-                if raw.get('long_ctx_niah'):
-                    expected_tests.add('long_ctx_niah')
-                self.assertEqual(
-                    set(variant.benchmark_params['inference_tests']),
-                    expected_tests,
-                )
-                self.assertEqual(
-                    set(variant.params.inference_tests),
-                    expected_tests,
-                )
-                self.assertEqual(variant.params.add_flags, raw['server_params'].get('add_flags') or [])
-                self.assertFalse(variant.enforce_thresholds)
-                self.assertEqual(variant.model.id, raw['server_params']['model'])
-                self.assertEqual(
-                    variant.benchmark_params['tensor_parallelism'],
-                    raw['server_params']['tensor_parallelism'],
-                )
-                self.assertEqual(
-                    variant.benchmark_params['inference_tests']['bench_serv_random']['num_prompts'],
-                    raw['benchmark_params']['num_prompts'],
-                )
-                if variant.topology == 'single':
-                    self.assertNotIn('benchmark_serv_node', raw['server_params'])
-                    self.assertNotIn('proxy_router_serv_port', raw['server_params'])
-                    self.assertEqual(variant.inference['proxy_router_serv_port'], '8000')
-                    self.assertNotIn('benchmark_serv_node', variant.inference)
-                elif variant.topology == 'distributed':
-                    self.assertNotIn('server_node_list', raw['server_params'])
-                    self.assertNotIn('benchmark_serv_node', raw['server_params'])
-                    self.assertNotIn('dist_init_port', raw['server_params'])
-                    self.assertNotIn('proxy_router_serv_port', raw['server_params'])
-                    self.assertEqual(
-                        variant.inference['proxy_router_serv_port'],
-                        str(raw['server_params'].get('serve_port') or '8000'),
-                    )
-                    self.assertEqual(variant.inference['dist_init_port'], '40001')
-                    self.assertEqual(str(variant.inference['nnodes']), '2')
-                    self.assertNotIn('benchmark_serv_node', variant.inference)
-                    self.assertNotIn('server_node_list', variant.inference)
-                elif variant.topology == 'disaggregated':
-                    for key in (
-                        'prefill_node_list',
-                        'decode_node_list',
-                        'proxy_router_node',
-                        'benchmark_serv_node',
-                        'prefill_serv_port',
-                        'decode_serv_port',
-                        'proxy_router_port',
-                        'prefill_coordinator_addr',
-                        'decode_coordinator_addr',
-                        'prefill_coordinator_port',
-                        'decode_coordinator_port',
-                        'proxy_router_serv_port',
-                    ):
-                        self.assertNotIn(key, raw['server_params'])
-                    self.assertEqual(str(variant.inference['nnodes']), '2')
-                    self.assertEqual(
-                        variant.inference['proxy_router_serv_port'],
-                        str(raw['server_params'].get('serve_port') or '8000'),
-                    )
-                    self.assertEqual(
-                        variant.inference['proxy_router_port'],
-                        str(raw['server_params'].get('serve_port') or '8000'),
-                    )
-                    self.assertEqual(variant.inference['prefill_serv_port'], '30001')
-                    self.assertEqual(variant.inference['decode_serv_port'], '30002')
-                    self.assertEqual(variant.inference['prefill_coordinator_port'], '40001')
-                    self.assertEqual(variant.inference['decode_coordinator_port'], '40002')
-                    self.assertNotIn('prefill_node_list', variant.inference)
-                    self.assertNotIn('benchmark_serv_node', variant.inference)
-                else:
-                    self.fail(f'unexpected topology {variant.topology!r}')
-                self.assertEqual(
-                    variant.inference['nccl_debug'],
-                    raw['container']['runtime']['args']['env']['NCCL_DEBUG'],
-                )
-                runtime_env = raw['container']['runtime']['args']['env']
-                container = loader.orchestrator_container_from_variant(variant)
-                self.assertEqual(container['env']['NCCL_DEBUG'], variant.inference['nccl_debug'])
-                self.assertEqual(container['env']['SGLANG_USE_AITER'], '1')
-                for env_key in ('AMDGCN_USE_BUFFER_OPS', 'ROCM_QUICK_REDUCE_QUANTIZATION', 'GPU_ARCHS'):
-                    if env_key in runtime_env:
-                        self.assertEqual(container['env'][env_key], runtime_env[env_key])
-                self.assertNotIn('env', container['runtime']['args'])
-                self.assertIn('volumes', container['runtime']['args'])
-                self.assertNotIn('ADD_EXPORT_ENV', container['env'])
-                self.assertIn('SGLANG_USE_AITER=1', variant.params.add_export_env)
-                perf_cells = loader.perf_cells_for_variant(variant)
-                self.assertEqual(
-                    [cell['cell_key'] for cell in perf_cells],
-                    [run['combo'] for run in raw['sweep']['runs']],
-                )
-
-                if 'llama_70b_distributed' in config_path.name:
-                    self.assertEqual(
-                        variant.params.inference_tests['bench_serv_random']['num_prompts'],
-                        '100',
-                    )
-                if 'GPU_ARCHS' in runtime_env:
-                    self.assertIn(f"GPU_ARCHS={runtime_env['GPU_ARCHS']}", variant.params.add_export_env)
-                if raw.get('long_ctx_niah'):
-                    self.assertEqual(variant.params.inference_tests['long_ctx_niah']['num_prompts'], '6')
-                    self.assertIs(variant.params.inference_tests['long_ctx_niah']['enable_thinking'], False)
-                if variant.topology == 'disaggregated':
-                    self.assertEqual(variant.params.prefill_policy, 'cache_aware')
-                    self.assertEqual(variant.params.decode_policy, 'cache_aware')
-
-    def test_missing_topology_role_fails_during_load(self):
-        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
-        config_path = config_dir / 'mi3xx_sglang_llama_70b_distributed.json'
-        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
-        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
-        raw['topology'] = 'distributed'
-        del raw['server_params']['nnodes']
-
-        with tempfile.TemporaryDirectory() as tmp:
-            temp_config = Path(tmp) / config_path.name
-            temp_config.write_text(json.dumps(raw), encoding='utf-8')
-            with self.assertRaisesRegex(ValueError, 'nnodes'):
-                loader.load_variant(str(temp_config), {'username': 'test'})
+class TestTopology(unittest.TestCase):
+    def _multinode(self, nnodes):
+        return _new_config(server_params={**_new_config()['server_params'], 'nnodes': nnodes})
 
     def test_single_selects_first_host_from_cluster(self):
-        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
-        config_path = config_dir / 'mi3xx_sglang_llama_70b_single.json'
-        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
-        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
-        cluster = {
-            'username': 'test',
-            'node_dict': {
-                'node-a': {'mgmt_ip': 'node-a'},
-                'node-b': {'mgmt_ip': 'node-b'},
-            },
-        }
-
-        with tempfile.TemporaryDirectory() as tmp:
-            temp_config = Path(tmp) / config_path.name
-            temp_config.write_text(json.dumps(raw), encoding='utf-8')
-            variant = loader.load_variant(str(temp_config), cluster)
-
+        cluster = {'username': 'test', 'node_dict': {'node-a': {}, 'node-b': {}}}
+        variant = _load(_new_config(), cluster=cluster, topology='single')
         self.assertEqual(variant.topology, 'single')
         self.assertEqual(variant.inference['_execution_hosts'], ['node-a'])
         self.assertEqual(variant.inference['benchmark_serv_node'], 'node-a')
 
     def test_distributed_selects_first_nnodes_from_cluster(self):
-        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
-        config_path = config_dir / 'mi3xx_sglang_llama_70b_distributed.json'
-        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
-        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
-        cluster = {
-            'username': 'test',
-            'node_dict': {
-                'node-a': {'mgmt_ip': 'node-a'},
-                'node-b': {'mgmt_ip': 'node-b'},
-                'node-c': {'mgmt_ip': 'node-c'},
-            },
-        }
-
-        with tempfile.TemporaryDirectory() as tmp:
-            temp_config = Path(tmp) / config_path.name
-            temp_config.write_text(json.dumps(raw), encoding='utf-8')
-            variant = loader.load_variant(str(temp_config), cluster)
-
+        cluster = {'username': 'test', 'node_dict': {'node-a': {}, 'node-b': {}, 'node-c': {}}}
+        variant = _load(self._multinode(2), cluster=cluster, topology='distributed')
         self.assertEqual(variant.inference['_execution_hosts'], ['node-a', 'node-b'])
-        self.assertEqual(variant.inference['benchmark_serv_node'], 'node-a')
         self.assertEqual(variant.inference['server_node_list'], ['node-a', 'node-b'])
+        self.assertEqual(variant.inference['benchmark_serv_node'], 'node-a')
+
+    def test_without_a_topology_nnodes_above_one_means_distributed(self):
+        self.assertEqual(_load(self._multinode(2)).topology, 'distributed')
+        self.assertEqual(_load(_new_config()).topology, 'single')
 
     def test_distributed_fails_when_cluster_is_smaller_than_nnodes(self):
-        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
-        config_path = config_dir / 'mi3xx_sglang_llama_70b_distributed.json'
-        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
-        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
-        cluster = {
-            'username': 'test',
-            'node_dict': {'node-a': {'mgmt_ip': 'node-a'}},
-        }
-
-        with tempfile.TemporaryDirectory() as tmp:
-            temp_config = Path(tmp) / config_path.name
-            temp_config.write_text(json.dumps(raw), encoding='utf-8')
-            with self.assertRaisesRegex(ValueError, 'requests 2 nodes'):
-                loader.load_variant(str(temp_config), cluster)
+        cluster = {'username': 'test', 'node_dict': {'node-a': {}}}
+        with self.assertRaisesRegex(ValueError, 'requests 2 nodes'):
+            _load(self._multinode(2), cluster=cluster, topology='distributed')
 
     def test_distributed_fails_when_nnodes_less_than_2(self):
-        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
-        config_path = config_dir / 'mi3xx_sglang_llama_70b_distributed.json'
-        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
-        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
-        raw['server_params']['nnodes'] = '1'
-        raw['topology'] = 'distributed'
+        with self.assertRaisesRegex(ValueError, 'nnodes >= 2'):
+            _load(self._multinode(1), topology='distributed')
 
-        with tempfile.TemporaryDirectory() as tmp:
-            temp_config = Path(tmp) / config_path.name
-            temp_config.write_text(json.dumps(raw), encoding='utf-8')
-            with self.assertRaisesRegex(ValueError, 'nnodes >= 2'):
-                loader.load_variant(str(temp_config), {'username': 'test'})
+    def test_distributed_and_disaggregated_need_nnodes(self):
+        for topology in ('distributed', 'disaggregated'):
+            with self.subTest(topology=topology), self.assertRaisesRegex(ValueError, 'nnodes'):
+                _load(_new_config(), topology=topology)
 
     def test_disagg_assigns_equal_prefill_decode_from_cluster(self):
-        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
-        config_path = config_dir / 'mi3xx_sglang_llama_70b_disaggregated.json'
-        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
-        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
-        raw['server_params']['nnodes'] = '4'
-        cluster = {
-            'username': 'test',
-            'node_dict': {
-                'n0': {'mgmt_ip': 'n0'},
-                'n1': {'mgmt_ip': 'n1'},
-                'n2': {'mgmt_ip': 'n2'},
-                'n3': {'mgmt_ip': 'n3'},
-            },
-        }
-
-        with tempfile.TemporaryDirectory() as tmp:
-            temp_config = Path(tmp) / config_path.name
-            temp_config.write_text(json.dumps(raw), encoding='utf-8')
-            variant = loader.load_variant(str(temp_config), cluster)
-
+        cluster = {'username': 'test', 'node_dict': {'n0': {}, 'n1': {}, 'n2': {}, 'n3': {}}}
+        variant = _load(self._multinode(4), cluster=cluster, topology='disaggregated')
         self.assertEqual(variant.topology, 'disaggregated')
         self.assertEqual(variant.inference['prefill_node_list'], ['n0', 'n2'])
         self.assertEqual(variant.inference['decode_node_list'], ['n1', 'n3'])
@@ -680,52 +426,19 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
         self.assertEqual(variant.inference['benchmark_serv_node'], 'n0')
         self.assertEqual(variant.inference['prefill_coordinator_addr'], 'n0')
         self.assertEqual(variant.inference['decode_coordinator_addr'], 'n1')
+        self.assertEqual(variant.inference['prefill_serv_port'], '30001')
+        self.assertEqual(variant.inference['decode_coordinator_port'], '40002')
 
     def test_disagg_odd_nnodes_fails_during_load(self):
-        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
-        config_path = config_dir / 'mi3xx_sglang_llama_70b_disaggregated.json'
-        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
-        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
-        raw['server_params']['nnodes'] = '3'
-
-        with tempfile.TemporaryDirectory() as tmp:
-            temp_config = Path(tmp) / config_path.name
-            temp_config.write_text(json.dumps(raw), encoding='utf-8')
-            with self.assertRaisesRegex(ValueError, 'even nnodes'):
-                loader.load_variant(str(temp_config), {'username': 'test'})
+        with self.assertRaisesRegex(ValueError, 'even nnodes'):
+            _load(self._multinode(3), topology='disaggregated')
 
     def test_disagg_fails_when_cluster_has_fewer_than_two_hosts(self):
-        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
-        config_path = config_dir / 'mi3xx_sglang_llama_70b_disaggregated.json'
-        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
-        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
-        cluster = {
-            'username': 'test',
-            'node_dict': {'n0': {'mgmt_ip': 'n0'}},
-        }
-
-        with tempfile.TemporaryDirectory() as tmp:
-            temp_config = Path(tmp) / config_path.name
-            temp_config.write_text(json.dumps(raw), encoding='utf-8')
-            with self.assertRaisesRegex(ValueError, 'at least 2 cluster.json hosts'):
-                loader.load_variant(str(temp_config), cluster)
+        cluster = {'username': 'test', 'node_dict': {'n0': {}}}
+        with self.assertRaisesRegex(ValueError, 'at least 2 cluster.json hosts'):
+            _load(self._multinode(2), cluster=cluster, topology='disaggregated')
 
     def test_disagg_fails_when_cluster_is_smaller_than_nnodes(self):
-        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
-        config_path = config_dir / 'mi3xx_sglang_llama_70b_disaggregated.json'
-        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
-        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
-        raw['server_params']['nnodes'] = '4'
-        cluster = {
-            'username': 'test',
-            'node_dict': {
-                'n0': {'mgmt_ip': 'n0'},
-                'n1': {'mgmt_ip': 'n1'},
-            },
-        }
-
-        with tempfile.TemporaryDirectory() as tmp:
-            temp_config = Path(tmp) / config_path.name
-            temp_config.write_text(json.dumps(raw), encoding='utf-8')
-            with self.assertRaisesRegex(ValueError, 'requests 4 nodes'):
-                loader.load_variant(str(temp_config), cluster)
+        cluster = {'username': 'test', 'node_dict': {'n0': {}, 'n1': {}}}
+        with self.assertRaisesRegex(ValueError, 'requests 4 nodes'):
+            _load(self._multinode(4), cluster=cluster, topology='disaggregated')

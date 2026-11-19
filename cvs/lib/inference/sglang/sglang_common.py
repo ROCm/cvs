@@ -559,7 +559,6 @@ def _is_sglang_higher_is_better_metric(metric_name: str) -> bool:
         for token in (
             'throughput',
             'goodput',
-            'mfu',
             'request_throughput',
         )
     )
@@ -571,10 +570,7 @@ def normalize_sglang_threshold_spec(metric_name: str, spec: Any) -> dict[str, An
         return spec
     value = float(spec['value'] if isinstance(spec, dict) and 'value' in spec else spec)
     if _is_sglang_latency_metric(metric_name):
-        return {'kind': 'max_ms', 'value': value}
-    if _is_sglang_higher_is_better_metric(metric_name):
-        kind = 'min_tok_s' if 'throughput' in metric_name.lower() else 'min'
-        return {'kind': kind, 'value': value}
+        return {'kind': 'max', 'value': value}
     return {'kind': 'min', 'value': value}
 
 
@@ -719,12 +715,12 @@ def verify_inference_results_subtests(
 
 
 _BENCH_METRIC_PATTERNS: tuple[tuple[str, str], ...] = (
-    (r'Successful requests:\s+([0-9]+)', 'successful_requests'),
-    (r'Benchmark duration\s+\(s\):\s+([0-9\.]+)', 'benchmark_duration'),
+    (r'Successful requests:\s+([0-9]+)', 'completed'),
+    (r'Benchmark duration\s+\(s\):\s+([0-9\.]+)', 'duration'),
     (r'Total input tokens:\s+([0-9\.]+)', 'total_input_tokens'),
-    (r'Total generated tokens:\s+([0-9\.]+)', 'total_generated_tokens'),
-    (r'Request throughput \(req/s\):\s+([0-9\.]+)', 'request_throughput_per_sec'),
-    (r'Output token throughput \(tok/s\):\s+([0-9\.]+)', 'output_throughput_per_sec'),
+    (r'Total generated tokens:\s+([0-9\.]+)', 'total_output_tokens'),
+    (r'Request throughput \(req/s\):\s+([0-9\.]+)', 'request_throughput'),
+    (r'Output token throughput \(tok/s\):\s+([0-9\.]+)', 'output_throughput'),
     (r'Mean TTFT \(ms\):\s+([0-9\.]+)', 'mean_ttft_ms'),
     (r'Median TTFT \(ms\):\s+([0-9\.]+)', 'median_ttft_ms'),
     (r'P99 TTFT \(ms\):\s+([0-9\.]+)', 'p99_ttft_ms'),
@@ -740,9 +736,9 @@ _ITL_METRIC_PATTERNS: tuple[tuple[str, str], ...] = (
 )
 
 _E2E_METRIC_PATTERNS: tuple[tuple[str, str], ...] = (
-    (r'Mean E2E Latency \(ms\):\s+([0-9\.]+)', 'mean_e2e_latency_ms'),
-    (r'Median E2E Latency \(ms\):\s+([0-9\.]+)', 'median_e2e_latency_ms'),
-    (r'P99 E2E Latency \(ms\):\s+([0-9\.]+)', 'p99_e2e_latency_ms'),
+    (r'Mean E2E Latency \(ms\):\s+([0-9\.]+)', 'mean_e2el_ms'),
+    (r'Median E2E Latency \(ms\):\s+([0-9\.]+)', 'median_e2el_ms'),
+    (r'P99 E2E Latency \(ms\):\s+([0-9\.]+)', 'p99_e2el_ms'),
 )
 
 
@@ -778,24 +774,24 @@ def parse_inference_bench_results(
                     text,
                 )
                 if val:
-                    inference_results_dict[node][f'p{percentile}_e2e_latency_ms'] = val
+                    inference_results_dict[node][f'p{percentile}_e2el_ms'] = val
 
         total_req = first_float(r'Total requests:\s+([0-9]+)', text)
         failed_req = first_float(r'Failed requests:\s+([0-9]+)', text)
-        succ = inference_results_dict[node].get('successful_requests')
+        succ = inference_results_dict[node].get('completed')
         if total_req:
-            inference_results_dict[node]['total_requests'] = total_req
+            inference_results_dict[node]['num_prompts'] = total_req
         elif succ is not None and failed_req is not None:
-            inference_results_dict[node]['total_requests'] = str(int(succ) + int(failed_req))
+            inference_results_dict[node]['num_prompts'] = str(int(succ) + int(failed_req))
         elif succ is not None and bench_num_prompts is not None:
-            inference_results_dict[node]['total_requests'] = str(int(bench_num_prompts))
-        if succ and inference_results_dict[node].get('total_requests'):
-            s, t = int(succ), int(inference_results_dict[node]['total_requests'])
+            inference_results_dict[node]['num_prompts'] = str(int(bench_num_prompts))
+        if succ and inference_results_dict[node].get('num_prompts'):
+            s, t = int(succ), int(inference_results_dict[node]['num_prompts'])
             inference_results_dict[node]['goodput'] = f'{(s / t):.6f}' if t else None
 
-        out_tps = inference_results_dict[node].get('output_throughput_per_sec')
+        out_tps = inference_results_dict[node].get('output_throughput')
         if out_tps and num_gpus_for_per_gpu_throughput and num_gpus_for_per_gpu_throughput > 0:
-            inference_results_dict[node]['output_throughput_per_gpu_per_sec'] = (
+            inference_results_dict[node]['per_gpu_throughput'] = (
                 f'{float(out_tps) / num_gpus_for_per_gpu_throughput:.6f}'
             )
 

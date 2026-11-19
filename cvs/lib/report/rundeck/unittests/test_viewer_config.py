@@ -39,7 +39,7 @@ class TestViewerConfig(unittest.TestCase):
         profile = json.loads(profile_json_path("sglang").read_text(encoding="utf-8"))
         inter = profile["viewer"]["interactivity"]
         self.assertEqual(inter["tpot_metric"], "mean_tpot_ms")
-        self.assertEqual(inter["output_throughput_metric"], "output_throughput_per_sec")
+        self.assertEqual(inter["output_throughput_metric"], "output_throughput")
 
         config = resolve_report_config(generic_sweep_profile())
         config = InferenceReportConfig(

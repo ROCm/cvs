@@ -24,9 +24,10 @@ def sglang_run_card_display(variant: Any, provenance: dict) -> List[Tuple[str, s
     """Topology-aware run card shared by every SGLang suite entry point."""
     bp = getattr(variant, "benchmark_params", None) or {}
     inf = getattr(variant, "inference", None) or {}
+    config = getattr(variant, "config", None)
     rows: List[Tuple[str, str, bool]] = [
         ("Model", variant.model.id, False),
-        ("GPU", variant.gpu_arch, False),
+        ("GPU", getattr(variant, "gpu_arch", "") or "\u2014", False),
     ]
 
     if inf.get("prefill_node_list") or inf.get("decode_node_list") or inf.get("proxy_router_node"):
@@ -61,8 +62,8 @@ def sglang_run_card_display(variant: Any, provenance: dict) -> List[Tuple[str, s
 
     rows.extend(
         [
-            ("TP", str(bp.get("tensor_parallelism", "-")), False),
-            ("PP", str(bp.get("pipeline_parallelism", "-")), False),
+            ("TP", str(config.server_params.tp if config else bp.get("tensor_parallelism", "-")), False),
+            ("PP", str(config.server_params.pp if config else bp.get("pipeline_parallelism", "-")), False),
             thresholds_run_card_row(variant),
         ]
     )

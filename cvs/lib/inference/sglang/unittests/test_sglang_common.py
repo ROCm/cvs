@@ -583,7 +583,11 @@ class TestSglangCommonHelpers(unittest.TestCase):
 
     def test_thresholds_from_expected_latency(self):
         specs = sglang_common.thresholds_from_expected({'mean_ttft_ms': 100.0})
-        self.assertEqual(specs['mean_ttft_ms']['kind'], 'max_ms')
+        self.assertEqual(specs['mean_ttft_ms']['kind'], 'max')
+
+    def test_thresholds_from_expected_throughput_is_min(self):
+        specs = sglang_common.thresholds_from_expected({'output_throughput': 100.0})
+        self.assertEqual(specs['output_throughput'], {'kind': 'min', 'value': 100.0})
 
     def test_perf_enforce_thresholds_defaults_true(self):
         self.assertTrue(sglang_common.perf_enforce_thresholds({}))
@@ -624,8 +628,8 @@ class TestSglangCommonHelpers(unittest.TestCase):
             bench_num_prompts=100,
         )
         node = parsed['node1']
-        self.assertEqual(node['successful_requests'], '100')
-        self.assertEqual(node['benchmark_duration'], '120.5')
+        self.assertEqual(node['completed'], '100')
+        self.assertEqual(node['duration'], '120.5')
         self.assertEqual(node['median_tpot_ms'], '12.9')
         self.assertEqual(node['goodput'], '1.000000')
 
@@ -638,8 +642,8 @@ class TestSglangCommonHelpers(unittest.TestCase):
         )
         node = parsed['node1']
         self.assertEqual(node['mean_itl_ms'], '11.0')
-        self.assertEqual(node['p90_e2e_latency_ms'], '300.0')
-        self.assertEqual(node['output_throughput_per_gpu_per_sec'], '26.666667')
+        self.assertEqual(node['p90_e2el_ms'], '300.0')
+        self.assertEqual(node['per_gpu_throughput'], '26.666667')
 
     def test_finalize_inference_verification(self):
         host_exec = mock.Mock(return_value={'head': 'Mon Aug 12 18:00'})
@@ -694,7 +698,7 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertFalse(passed)
         rows = {r['metric']: r['status'] for r in lifecycle.perf_metric_rows['nid']}
         self.assertEqual(rows, {'mean_ttft_ms': 'fail', 'p99_ttft_ms': 'pass'})
-        self.assertEqual([str(exc) for exc in subtests.failures], ['mean_ttft_ms: actual 500.0 ms > max 100.0 ms'])
+        self.assertEqual([str(exc) for exc in subtests.failures], ['mean_ttft_ms: actual 500.0 > max 100.0'])
 
     def test_verify_inference_results_subtests_record_only_passes_on_violation(self):
         host_exec = mock.Mock(return_value={'head': 'time'})

@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -36,6 +35,7 @@ from cvs.lib import globals
 from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir
 from cvs.lib.inference.sglang.sglang_config_loader import (
     SglangSingleVariantConfig,
+    acc_cells_for_variant,
     flat_expected_from_specs,
     load_variant,
     orchestrator_container_from_variant,
@@ -76,6 +76,18 @@ __all__ = ["flat_expected_from_specs"]
 
 def _sglang_suite_stem(module_name):
     return (module_name or "").rsplit(".", 1)[-1]
+
+
+_TOPOLOGY_BY_SUITE = {
+    "sglang_single": "single",
+    "sglang_distributed": "distributed",
+    "sglang_disagg_distributed": "disaggregated",
+}
+
+
+def _suite_topology(module):
+    """The variant a test module runs: single, distributed or disaggregated."""
+    return _TOPOLOGY_BY_SUITE.get(_sglang_suite_stem(getattr(module, "__name__", "")))
 
 
 def _use_sglang_single(request):
@@ -139,31 +151,6 @@ def _create_container_orchestrator(cluster_dict: Mapping[str, Any], variant_conf
     return OrchestratorFactory.create_orchestrator(log, cfg)
 
 
-# ---------- accuracy-cell helpers (disagg long-context parametrization) ----------
-
-_ACC_CELL_RE = re.compile(r"^ACC_ISL=(?P<isl>\d+),OSL=(?P<osl>\d+)$")
-
-
-def acc_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, Any]]:
-    cells = []
-    for cell_key, specs in thresholds.items():
-        if str(cell_key).startswith("_"):
-            continue
-        m = _ACC_CELL_RE.match(str(cell_key))
-        if not m:
-            continue
-        cells.append(
-            {
-                "cell_key": cell_key,
-                "isl": m.group("isl"),
-                "osl": m.group("osl"),
-                "specs": specs,
-            }
-        )
-    cells.sort(key=lambda c: int(c["isl"]))
-    return cells
-
-
 def _cluster_dict_for_collection(metafunc) -> dict[str, Any]:
     cluster_file = metafunc.config.getoption("cluster_file")
     if not cluster_file or not os.path.isfile(cluster_file):
@@ -172,26 +159,16 @@ def _cluster_dict_for_collection(metafunc) -> dict[str, Any]:
         return resolve_cluster_config_placeholders(json.load(fp))
 
 
-def load_acc_cells_for_collection(
-    config_file: str,
-    cluster_dict: Mapping[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    variant = load_variant(config_file, cluster_dict or {})
-    cells = acc_cells_from_thresholds(variant.thresholds)
-    if not cells:
-        pytest.fail(f"No ACC_ISL=... accuracy cells in thresholds for {config_file!r}")
-    return cells
-
-
 def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.isfile(config_file):
         return
 
-    cluster_dict = _cluster_dict_for_collection(metafunc)
+    if "perf_cell" not in metafunc.fixturenames and "acc_cell" not in metafunc.fixturenames:
+        return
+    variant = load_variant(config_file, _cluster_dict_for_collection(metafunc), _suite_topology(metafunc.module))
 
     if "perf_cell" in metafunc.fixturenames:
-        variant = load_variant(config_file, cluster_dict)
         cells = perf_cells_for_variant(variant)
         if not cells:
             pytest.fail(f"No selected ISL=... performance cells for {config_file!r}")
@@ -199,7 +176,7 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize("perf_cell", cells, ids=ids)
 
     if "acc_cell" in metafunc.fixturenames:
-        cells = load_acc_cells_for_collection(config_file, cluster_dict)
+        cells = acc_cells_for_variant(variant)
         ids = [f"acc-isl{c['isl']}-osl{c['osl']}" for c in cells]
         metafunc.parametrize("acc_cell", cells, ids=ids)
 
@@ -248,11 +225,11 @@ def cluster_dict(pytestconfig):
 
 
 @pytest.fixture(scope="module")
-def variant_config(pytestconfig, cluster_dict) -> SglangSingleVariantConfig:
+def variant_config(request, pytestconfig, cluster_dict) -> SglangSingleVariantConfig:
     config_file = pytestconfig.getoption("config_file")
     if not config_file:
         pytest.fail("--config_file is required")
-    return load_variant(config_file, cluster_dict)
+    return load_variant(config_file, cluster_dict, _suite_topology(request.module))
 
 
 # After a failed ready-poll or a completions hang the benchmark never starts.

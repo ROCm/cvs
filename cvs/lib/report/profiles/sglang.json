@@ -23,9 +23,9 @@
   "sweep": {
     "metric_prefix": "",
     "tier_order": ["throughput", "latency", "health", "record"],
-    "throughput_metric": "output_throughput_per_sec",
+    "throughput_metric": "output_throughput",
     "ttft_metric": "mean_ttft_ms",
-    "headline_metric": "output_throughput_per_sec",
+    "headline_metric": "output_throughput",
     "results_table_columns": [
       ["Model", null],
       ["GPU", null],
@@ -34,25 +34,23 @@
       ["Policy", null],
       ["Conc", null],
       ["Host", null],
-      ["Req/s", "request_throughput_per_sec"],
-      ["Output tok/s", "output_throughput_per_sec"],
+      ["Req/s", "request_throughput"],
+      ["Output tok/s", "output_throughput"],
       ["Mean TTFT (ms)", "mean_ttft_ms"],
       ["Mean TPOT (ms)", "mean_tpot_ms"],
       ["P99 ITL (ms)", "p99_itl_ms"],
-      ["Mean E2E latency (ms)", "mean_e2e_latency_ms"],
-      ["Goodput", "goodput"],
-      ["MFU (estimated)", "mfu"]
+      ["Mean E2E latency (ms)", "mean_e2el_ms"],
+      ["Goodput", "goodput"]
     ],
     "cell_highlights": [
-      ["output_throughput_per_sec", "Output tok/s"],
+      ["output_throughput", "Output tok/s"],
       ["mean_ttft_ms", "Mean TTFT (ms)"],
       ["mean_tpot_ms", "Mean TPOT (ms)"],
-      ["goodput", "Goodput"],
-      ["mfu", "MFU"]
+      ["goodput", "Goodput"]
     ],
     "chart_series": [
-      {"metric_suffix": "output_throughput_per_sec", "title": "Output tok/s", "unit": "tok/s", "invert": false},
-      {"metric_suffix": "request_throughput_per_sec", "title": "Req/s", "unit": "req/s", "invert": false},
+      {"metric_suffix": "output_throughput", "title": "Output tok/s", "unit": "tok/s", "invert": false},
+      {"metric_suffix": "request_throughput", "title": "Req/s", "unit": "req/s", "invert": false},
       {"metric_suffix": "mean_ttft_ms", "title": "Mean TTFT", "unit": "ms", "invert": true},
       {"metric_suffix": "mean_tpot_ms", "title": "Mean TPOT", "unit": "ms", "invert": true},
       {"metric_suffix": "p99_ttft_ms", "title": "P99 TTFT", "unit": "ms", "invert": true},
@@ -85,8 +83,8 @@
     "interactivity": {
       "enabled": true,
       "tpot_metric": "mean_tpot_ms",
-      "output_throughput_metric": "output_throughput_per_sec",
-      "total_throughput_metric": "output_throughput_per_sec"
+      "output_throughput_metric": "output_throughput",
+      "total_throughput_metric": "output_throughput"
     }
   },
   "cards": [

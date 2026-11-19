@@ -230,12 +230,11 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
         ("Mean TTFT (ms)", "mean_ttft_ms"),
         ("Mean TPOT (ms)", "mean_tpot_ms"),
         ("P99 ITL (ms)", "p99_itl_ms"),
-        ("Mean E2E latency (ms)", "mean_e2e_latency_ms"),
-        ("Req/s", "request_throughput_per_sec"),
-        ("Output tok/s", "output_throughput_per_sec"),
-        ("Output tok/s/GPU", "output_throughput_per_gpu_per_sec"),
+        ("Mean E2E latency (ms)", "mean_e2el_ms"),
+        ("Req/s", "request_throughput"),
+        ("Output tok/s", "output_throughput"),
+        ("Output tok/s/GPU", "per_gpu_throughput"),
         ("Goodput", "goodput"),
-        ("MFU (estimated)", "mfu"),
     ]
 
     perf_items = [
