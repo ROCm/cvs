@@ -4287,11 +4287,11 @@ ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
 # MI300X MXFP4 MoE + A4W4 GEMM require Triton; aiter A4W4 is unsupported on gfx942.
 # atom.utils.envs treats only "1" as true; "true" is ignored.
 # gfx950 (MI355X) has native MXFP4; do not force the Triton fallback there.
-_MXFP4_TRITON_ENV = {
+_ATOM_MXFP4_TRITON_ENV = {
     "ATOM_USE_TRITON_MOE": "1",
     "ATOM_USE_TRITON_GEMM": "1",
 }
-_GFX942_ARCHES = frozenset({"mi3xx", "mi300x", "mi325x"})
+_ATOM_GFX942_ARCHES = frozenset({"mi3xx", "mi300x", "mi325x"})
 
 
 def merge_mxfp4_triton_env(precision, env, gpu_arch=""):
@@ -4300,17 +4300,17 @@ def merge_mxfp4_triton_env(precision, env, gpu_arch=""):
     if (precision or "").lower() != "mxfp4":
         return merged
     arch = (gpu_arch or "").strip().lower()
-    if not arch or arch in _GFX942_ARCHES:
-        for key, value in _MXFP4_TRITON_ENV.items():
+    if not arch or arch in _ATOM_GFX942_ARCHES:
+        for key, value in _ATOM_MXFP4_TRITON_ENV.items():
             merged.setdefault(key, value)
-    for key in _MXFP4_TRITON_ENV:
+    for key in _ATOM_MXFP4_TRITON_ENV:
         if str(merged.get(key, "")).lower() == "true":
             merged[key] = "1"
     return merged
 
 
 # Written by test_discover_topology / resolve_multinode_fabric, not user env.
-_IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.IGNORECASE)
+_ATOM_IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.IGNORECASE)
 
 
 class AtomRoleServer(RoleServer):
@@ -4330,7 +4330,7 @@ class AtomRoleServer(RoleServer):
     @classmethod
     def _normalize_ib_netdev(cls, v):
         raw = (v or "").strip()
-        if raw and raw.lower() != "auto" and _IB_HCA_NETDEV_RE.match(raw):
+        if raw and raw.lower() != "auto" and _ATOM_IB_HCA_NETDEV_RE.match(raw):
             from cvs.lib import globals
 
             globals.log.warning(
@@ -4498,7 +4498,6 @@ class AtomConfig(InferenceConfig):
 # ---------- old ATOM config layouts ----------
 
 _ATOM_PROFILE_SHARED_KEYS = frozenset({"schema_version", "framework", "gpu_arch", "paths", "model", "threshold_json"})
-_ATOM_OLD_KINDS = {"max_ms": "max", "min_tok_s": "min"}
 # Keys only the older layouts hold; a config with none of them and no atom block is current.
 _ATOM_OLD_TOP_KEYS = frozenset(
     {
@@ -4600,7 +4599,7 @@ _ATOM_SERVER_TIMING = {
 _ATOM_TP_FLAGS = ("-tp", "--tensor-parallel-size", "--tensor_parallel_size")
 
 
-def _at(config, path, default=None):
+def _atom_at(config, path, default=None):
     value = _get_config_path(config, _config_path_parts(path))
     return default if value is _MISSING else value
 
@@ -4678,7 +4677,7 @@ def _atom_serve_args(serve_args):
     return {str(flag).lstrip("-").replace("-", "_"): value for flag, value in serve_args.items() if value is not False}
 
 
-def _resolve_serving_driver(backend):
+def _atom_serving_driver(backend):
     backend = str(backend).lower()
     if backend in ("vllm", "vllm_atom"):
         return "vllm_atom"
@@ -4726,11 +4725,11 @@ def _atom_run_rows(config, thresholds, tp, pp, rows):
 
 
 def _atom_env_rows(config, gpu_arch, env_paths, ib_prefix, rows):
-    env = dict(_at(config, "container.env") or {})
+    env = dict(_atom_at(config, "container.env") or {})
     for path in env_paths:
-        env.update(_at(config, path) or {})
-    sources = [path for path in env_paths if _at(config, path) is not None]
-    precision = _at(config, "model.precision")
+        env.update(_atom_at(config, path) or {})
+    sources = [path for path in env_paths if _atom_at(config, path) is not None]
+    precision = _atom_at(config, "model.precision")
     if precision is not None:
         with_triton = merge_mxfp4_triton_env(precision, env, gpu_arch=gpu_arch)
         if with_triton != env:
@@ -4738,18 +4737,18 @@ def _atom_env_rows(config, gpu_arch, env_paths, ib_prefix, rows):
             sources.append("model.precision")
         else:
             rows["model.precision"] = OLD_KEY_DROPPED
-    hcas = _at(config, f"{ib_prefix}.ib_hca_devices")
+    hcas = _atom_at(config, f"{ib_prefix}.ib_hca_devices")
     if isinstance(hcas, list):
         env.setdefault("NCCL_IB_HCA", ",".join(str(hca) for hca in hcas))
         sources.append(f"{ib_prefix}.ib_hca_devices")
     elif hcas is not None:
         rows[f"{ib_prefix}.ib_hca_devices"] = OLD_KEY_DROPPED
-    netdev = str(_at(config, f"{ib_prefix}.ib_netdev") or "").strip()
-    if netdev and netdev.lower() != "auto" and not _IB_HCA_NETDEV_RE.match(netdev):
+    netdev = str(_atom_at(config, f"{ib_prefix}.ib_netdev") or "").strip()
+    if netdev and netdev.lower() != "auto" and not _ATOM_IB_HCA_NETDEV_RE.match(netdev):
         for name in ("NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"):
             env.setdefault(name, netdev)
         sources.append(f"{ib_prefix}.ib_netdev")
-    elif _at(config, f"{ib_prefix}.ib_netdev") is not None:
+    elif _atom_at(config, f"{ib_prefix}.ib_netdev") is not None:
         rows[f"{ib_prefix}.ib_netdev"] = OLD_KEY_DROPPED
     for path in sources:
         rows[path] = OldKey("container.env", value=env, conflict="replace")
@@ -4759,7 +4758,7 @@ def _atom_engine_rows(config, driver, sources, tp, rows):
     """``sources`` maps a driver group to its old server-flag path."""
     group = "vllm" if driver in ("vllm", "vllm_atom") else driver
     for name, path in sources.items():
-        value = _at(config, path)
+        value = _atom_at(config, path)
         if value is None:
             continue
         if name != group:
@@ -4786,8 +4785,8 @@ def _atom_timeout_rows(config, server_paths, client_paths, client_defaults, alwa
     server = {}
     present = []
     for name, default in _ATOM_SERVER_TIMING.items():
-        paths = [path for path in server_paths[name] if _at(config, path) is not None]
-        server[name] = _atom_int(_at(config, paths[0]), paths[0]) if paths else default
+        paths = [path for path in server_paths[name] if _atom_at(config, path) is not None]
+        server[name] = _atom_int(_atom_at(config, paths[0]), paths[0]) if paths else default
         present.extend(paths)
     if present:
         total = server["server_precheck_wait_s"] + server["server_warmup_wait_s"]
@@ -4798,8 +4797,8 @@ def _atom_timeout_rows(config, server_paths, client_paths, client_defaults, alwa
     client_present = []
     for name, default in client_defaults.items():
         path = client_paths.get(name)
-        if path is not None and _at(config, path) is not None:
-            client[name] = _atom_int(_at(config, path), path)
+        if path is not None and _atom_at(config, path) is not None:
+            client[name] = _atom_int(_atom_at(config, path), path)
             client_present.append(path)
         else:
             client[name] = default
@@ -4810,7 +4809,7 @@ def _atom_timeout_rows(config, server_paths, client_paths, client_defaults, alwa
 
 
 def _atom_fixed_row(config, path, working_value):
-    value = _at(config, path)
+    value = _atom_at(config, path)
     return OLD_KEY_DROPPED if value is None or str(value).strip() == working_value else OLD_KEY_UNMAPPED
 
 
@@ -4822,15 +4821,15 @@ def _atom_common_rows(config, gpu_arch, serving, rows):
         rows["gpu_arch"] = OLD_KEY_DROPPED if str(config["gpu_arch"]).strip() == gpu_arch else OLD_KEY_UNMAPPED
     if isinstance(config.get("model"), dict):
         rows["model"] = OLD_KEY_DROPPED
-        if _at(config, "model.id"):
+        if _atom_at(config, "model.id"):
             rows["model.id"] = OldKey("server_params.model", conflict="replace")
         if "remote" in config["model"]:
             rows["model.remote"] = OLD_KEY_DROPPED if str(config["model"]["remote"]) == "0" else OLD_KEY_UNMAPPED
     for name in ("functional", "platform", "run_card"):
         rows[name] = OLD_KEY_DROPPED
-    if _at(config, "accuracy.tasks") is not None:
+    if _atom_at(config, "accuracy.tasks") is not None:
         rows["accuracy.tasks"] = "accuracy.lm_eval.tasks"
-    cells = _at(config, "long_context_accuracy.cells")
+    cells = _atom_at(config, "long_context_accuracy.cells")
     if "long_context_accuracy" in config:
         rows["long_context_accuracy"] = OLD_KEY_DROPPED
     if cells is not None:
@@ -4910,13 +4909,13 @@ def _atom_serving_rows(config, gpu_arch, thresholds, rows):
     bench = config.get("benchmark_params") or {}
 
     def move(path, new_path, convert, default=_MISSING):
-        value = _at(config, path)
+        value = _atom_at(config, path)
         if value is not None:
             rows[path] = OldKey(new_path, value=convert(value, path), conflict="replace")
         elif default is not _MISSING:
             rows[path] = OldKey(new_path, value=default, conflict="replace")
 
-    driver = _resolve_serving_driver(server.get("backend", "atom"))
+    driver = _atom_serving_driver(server.get("backend", "atom"))
     tp = _atom_int(server.get("tensor_parallelism", "8"), "server_params.tensor_parallelism")
     pp = _atom_int(server.get("pipeline_parallelism", "1"), "server_params.pipeline_parallelism")
     rows["server_params.backend"] = OldKey("atom.driver", value=driver)
@@ -4925,9 +4924,9 @@ def _atom_serving_rows(config, gpu_arch, thresholds, rows):
     port_path = (
         "server_params.proxy_router_serv_port" if "proxy_router_serv_port" in server else "server_params.port_no"
     )
-    port = _atom_int(_at(config, port_path, "8000"), port_path)
+    port = _atom_int(_atom_at(config, port_path, "8000"), port_path)
     for path in ("server_params.proxy_router_serv_port", "server_params.port_no"):
-        if _at(config, path) is not None or path == port_path:
+        if _atom_at(config, path) is not None or path == port_path:
             rows[path] = OldKey("server_params.port", value=port, conflict="replace")
     if "dist_init_port" in server:
         if server.get("master_port"):
@@ -4938,11 +4937,11 @@ def _atom_serving_rows(config, gpu_arch, thresholds, rows):
         "server_params.context_length" if server.get("context_length") else "benchmark_params.max_model_length"
     )
     if server.get("context_length") or bench.get("max_model_length"):
-        length = _atom_int(_at(config, length_path), length_path)
+        length = _atom_int(_atom_at(config, length_path), length_path)
         for path in ("server_params.context_length", "benchmark_params.max_model_length"):
-            if _at(config, path) is not None:
+            if _atom_at(config, path) is not None:
                 rows[path] = OldKey("server_params.max_model_length", value=length, conflict="replace")
-    if _at(config, "model.id") and "model" in server:
+    if _atom_at(config, "model.id") and "model" in server:
         rows["server_params.model"] = OLD_KEY_DROPPED
     for name in _ATOM_DEAD_SERVING_SERVER:
         if name in server:
@@ -4999,13 +4998,13 @@ def _select_atom_profile(config, profile):
     return flat, message, (body.get("threshold_profile") or selected).strip()
 
 
-def _map_kinds(specs):
+def _atom_map_kinds(specs):
     if not isinstance(specs, dict):
         return specs
     mapped = {}
     for name, spec in specs.items():
-        if isinstance(spec, dict) and spec.get("kind") in _ATOM_OLD_KINDS:
-            spec = {**spec, "kind": _ATOM_OLD_KINDS[spec["kind"]]}
+        if isinstance(spec, dict) and spec.get("kind") in _OLD_THRESHOLD_KINDS:
+            spec = {**spec, "kind": _OLD_THRESHOLD_KINDS[spec["kind"]]}
         mapped[name] = spec
     return mapped
 
@@ -5028,18 +5027,18 @@ def _resolve_old_atom_thresholds(thresholds, threshold_profile, runs):
             continue
         if runs is not None and key not in runs:
             rows[(key,)] = OLD_KEY_DROPPED
-        elif _map_kinds(cell) != cell:
-            rows[(key,)] = OldKey((key,), value=_map_kinds(cell), conflict="replace")
+        elif _atom_map_kinds(cell) != cell:
+            rows[(key,)] = OldKey((key,), value=_atom_map_kinds(cell), conflict="replace")
     accuracy = thresholds.get("accuracy")
     if isinstance(accuracy, dict) and not set(accuracy) <= set(_ATOM_THRESHOLD_SECTIONS):
         for task_id, specs in accuracy.items():
-            rows[("accuracy", task_id)] = OldKey(("accuracy", "lm_eval", task_id), value=_map_kinds(specs))
+            rows[("accuracy", task_id)] = OldKey(("accuracy", "lm_eval", task_id), value=_atom_map_kinds(specs))
     if "long_context_accuracy" in thresholds:
-        custom = {cell_id: _map_kinds(specs) for cell_id, specs in thresholds["long_context_accuracy"].items()}
+        custom = {cell_id: _atom_map_kinds(specs) for cell_id, specs in thresholds["long_context_accuracy"].items()}
         rows[("long_context_accuracy",)] = OldKey(("accuracy", "custom_eval"), value=custom)
     for section in ("quant_parity", "mtp_quality"):
         if section in thresholds:
-            rows[(section,)] = OldKey(("accuracy", section), value=_map_kinds(thresholds[section]))
+            rows[(section,)] = OldKey(("accuracy", section), value=_atom_map_kinds(thresholds[section]))
     thresholds, message = resolve_old_keys(thresholds, rows, message="{keys}")
     messages.append(message)
     return thresholds, "; ".join(message for message in messages if message) or None
