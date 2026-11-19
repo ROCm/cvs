@@ -356,7 +356,7 @@ def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
             error_msg += f"ERROR: Unresolved placeholder found in {context_name}!\n"
             error_msg += f"{'=' * 70}\n\n"
             # The value can be a credential, so only its field path is logged.
-            error_msg += f"  {path}\n\n"
+            error_msg += f"  {path}: '<changeme>' not replaced\n\n"
             error_msg += f"{'=' * 70}\n"
             error_msg += "ACTION REQUIRED:\n"
             error_msg += "Please edit your configuration file and replace all the '<changeme>' placeholders\n"
