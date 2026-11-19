@@ -2515,7 +2515,7 @@ def _vllm_old_flags_rule(config):
     if "max_model_len" in server:
         value = server["max_model_len"]
         try:
-            usable = value is None or int(value) > 0
+            usable = value is None or (not isinstance(value, bool) and int(value) > 0)
         except (TypeError, ValueError):
             usable = False
         rows["server_params.max_model_len"] = "server_params.max_model_length" if usable else OLD_KEY_UNMAPPED

@@ -390,6 +390,10 @@ class TestOldKeys(unittest.TestCase):
         old["sweeps"] = {CELL: {"ignore_eos": True, "dataset_name": "random", "trust_remote_code": True, "seed": 3}}
         variant, _ = _validate(old)
         self.assertEqual(variant.sweeps, {CELL: {"seed": 3}})
+        client_only = _old_config()
+        client_only["sweeps"] = {CELL: {"trust_remote_code": True}}
+        variant, _ = _validate(client_only)
+        self.assertEqual(variant.sweeps, {CELL: {"trust_remote_code": True}})
         for override in ({"ignore_eos": False}, {"trust_remote_code": False}, {"client_poll_iterations": 5}):
             with self.subTest(override=override):
                 old = _old_config(server={"trust_remote_code": True})
@@ -403,7 +407,7 @@ class TestOldKeys(unittest.TestCase):
                 variant, _ = _validate(_old_config(server={"max_model_len": value}))
                 self.assertEqual(variant.server_params.max_model_length, expected)
                 self.assertIn("max_model_length", variant.server_params.model_fields_set)
-        for value in ("auto", -1):
+        for value in ("auto", -1, True):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(ValidationError, "server_params.max_model_len"):
                     VllmConfig(**_old_config(server={"max_model_len": value}))
