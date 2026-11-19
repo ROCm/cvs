@@ -1995,12 +1995,29 @@ def _same_old_key_row(first, second):
     return first is second
 
 
-def _expand_old_key_rows(config, table, rules):
+def _check_dotted_path(config, path):
+    """Fail a dotted string path that misses because a key on its way holds a dot itself."""
+    parts = path.split(".")
+    node = config
+    for index, part in enumerate(parts):
+        if not isinstance(node, dict):
+            return
+        if part not in node:
+            for end in range(index + 2, len(parts) + 1):
+                if ".".join(parts[index:end]) in node:
+                    raise ValueError(f"Old-key path {path} matches nothing; write it as a tuple of keys")
+            return
+        node = node[part]
+
+
+def _expand_old_key_rows(config, table, rules, check_dotted):
     rows = {}
     entries = list(table.items())
     for rule in rules:
         entries.extend(rule(config).items())
     for path, row in entries:
+        if check_dotted and isinstance(path, str):
+            _check_dotted_path(config, path)
         parts = _config_path_parts(path)
         if isinstance(row, (str, tuple)):
             row = OldKey(row)
@@ -2033,6 +2050,12 @@ def _write_old_key_value(converted, old_name, row, value, label, prefix):
     node[key] = value
 
 
+def _drop_emptied_parents(config, parts):
+    while parts and _get_config_path(config, parts) == {}:
+        _get_config_path(config, parts[:-1]).pop(parts[-1])
+        parts = parts[:-1]
+
+
 def resolve_old_keys(
     config,
     table,
@@ -2040,6 +2063,8 @@ def resolve_old_keys(
     message="Deprecated config keys: {keys}. Use the new names; old keys will be removed in a future release.",
     label="config",
     prefix="",
+    drop_emptied=True,
+    check_dotted=True,
 ):
     """Map old config keys to their new paths, or drop them.
 
@@ -2056,13 +2081,15 @@ def resolve_old_keys(
     naming each old key, built from ``message`` by replacing ``{keys}``, or the
     input and ``None`` when no old key is present. An unmapped key raises
     ``ValueError`` naming its path, never its value. ``prefix`` is prepended to
-    every path in messages. A parent left empty by a move stays in place.
-    Callers that load a config pass the combined message of all their calls to
+    every path in messages. A parent that moving or dropping its keys left
+    empty is dropped too, unless ``drop_emptied`` is false. A dotted string
+    path that misses because a key on its way holds a dot fails, unless
+    ``check_dotted`` is false. Callers that load a config pass the combined message of all their calls to
     ``warn_old_keys`` once.
     """
     if not isinstance(config, dict):
         return config, None
-    rows = _expand_old_key_rows(config, table, rules)
+    rows = _expand_old_key_rows(config, table, rules, check_dotted)
     unmapped = [prefix + ".".join(parts) for parts, row in rows.items() if row is OLD_KEY_UNMAPPED]
     if unmapped:
         raise ValueError(
@@ -2083,6 +2110,8 @@ def resolve_old_keys(
             parent = _get_config_path(converted, parts[:-1])
             if isinstance(parent, dict):
                 parent.pop(parts[-1], None)
+            if drop_emptied:
+                _drop_emptied_parents(converted, parts[:-1])
 
     changes = []
     for parts, row in rows.items():
@@ -2171,6 +2200,9 @@ def normalize_legacy_preflight_rdma_config(value):
         ),
         label="preflight RDMA",
         prefix="preflight.",
+        # Preflight's converters keep their output as before the helper existed.
+        drop_emptied=False,
+        check_dotted=False,
     )
 
 
