@@ -4998,12 +4998,13 @@ def _select_atom_profile(config, profile):
     return flat, message, (body.get("threshold_profile") or selected).strip()
 
 
-def _atom_map_kinds(specs):
+def _atom_map_kinds(specs, counts):
     if not isinstance(specs, dict):
         return specs
     mapped = {}
     for name, spec in specs.items():
         if isinstance(spec, dict) and spec.get("kind") in _OLD_THRESHOLD_KINDS:
+            counts[spec["kind"]] += 1
             spec = {**spec, "kind": _OLD_THRESHOLD_KINDS[spec["kind"]]}
         mapped[name] = spec
     return mapped
@@ -5021,26 +5022,31 @@ def _resolve_old_atom_thresholds(thresholds, threshold_profile, runs):
             rows[("profiles", threshold_profile, key)] = OldKey((key,), conflict="replace")
         thresholds, message = resolve_old_keys(thresholds, rows, message="{keys}")
         messages.append(message)
-    rows = {}
-    for key, cell in thresholds.items():
-        if not str(key).startswith("ISL="):
-            continue
-        if runs is not None and key not in runs:
-            rows[(key,)] = OLD_KEY_DROPPED
-        elif _atom_map_kinds(cell) != cell:
-            rows[(key,)] = OldKey((key,), value=_atom_map_kinds(cell), conflict="replace")
+    kinds = Counter()
+    cells = {key: _atom_map_kinds(cell, kinds) for key, cell in thresholds.items() if str(key).startswith("ISL=")}
+    if kinds:
+        thresholds = {**thresholds, **cells}
+    rows = {(key,): OLD_KEY_DROPPED for key in cells if runs is not None and key not in runs}
     accuracy = thresholds.get("accuracy")
     if isinstance(accuracy, dict) and not set(accuracy) <= set(_ATOM_THRESHOLD_SECTIONS):
         for task_id, specs in accuracy.items():
-            rows[("accuracy", task_id)] = OldKey(("accuracy", "lm_eval", task_id), value=_atom_map_kinds(specs))
+            rows[("accuracy", task_id)] = OldKey(("accuracy", "lm_eval", task_id), value=_atom_map_kinds(specs, kinds))
     if "long_context_accuracy" in thresholds:
-        custom = {cell_id: _atom_map_kinds(specs) for cell_id, specs in thresholds["long_context_accuracy"].items()}
+        custom = {
+            cell_id: _atom_map_kinds(specs, kinds) for cell_id, specs in thresholds["long_context_accuracy"].items()
+        }
         rows[("long_context_accuracy",)] = OldKey(("accuracy", "custom_eval"), value=custom)
     for section in ("quant_parity", "mtp_quality"):
         if section in thresholds:
-            rows[(section,)] = OldKey(("accuracy", section), value=_atom_map_kinds(thresholds[section]))
+            rows[(section,)] = OldKey(("accuracy", section), value=_atom_map_kinds(thresholds[section], kinds))
     thresholds, message = resolve_old_keys(thresholds, rows, message="{keys}")
     messages.append(message)
+    if kinds:
+        changes = ", ".join(
+            f"{old} -> {_OLD_THRESHOLD_KINDS[old]} ({count} spec{'' if count == 1 else 's'})"
+            for old, count in sorted(kinds.items())
+        )
+        messages.append(f"kinds {changes}")
     return thresholds, "; ".join(message for message in messages if message) or None
 
 

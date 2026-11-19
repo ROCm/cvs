@@ -338,6 +338,8 @@ class TestOldProfilesAndThresholds(unittest.TestCase):
         self.assertIn("gsm8k_flex", converted["accuracy"]["lm_eval"])
         self.assertIn("niah_8k", converted["accuracy"]["custom_eval"])
         self.assertIn("threshold file:", message)
+        self.assertIn("kinds max_ms -> max (1 spec), min_tok_s -> min (1 spec)", message)
+        self.assertNotIn(f"{CELL} -> {CELL}", message)
 
     def test_config_without_atom_block_or_old_keys_is_left_to_validation(self):
         config = _atom_dict()
