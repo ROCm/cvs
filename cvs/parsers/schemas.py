@@ -1949,64 +1949,71 @@ _OLD_VALUE = object()
 _MISSING = object()
 
 
+def _config_path_parts(path):
+    return tuple(path) if isinstance(path, tuple) else tuple(path.split("."))
+
+
 class OldKey:
     """Row of an old-keys table that moves an old key to ``new_path``.
 
     ``value`` replaces the old value, for a rule that computes the new value
-    from several old keys. ``keep_old`` copies the value and leaves the old key
-    in place. ``conflict`` decides what happens when ``new_path`` already holds
-    a different value: ``"fail"`` raises, ``"replace"`` overwrites it.
+    from several old keys; such a row is written even when its own old path is
+    absent. ``keep_old`` copies the value and leaves the old key in place.
+    ``conflict`` decides what happens when ``new_path`` already holds a
+    different value: ``"fail"`` raises, ``"replace"`` overwrites it.
     """
 
     def __init__(self, new_path, value=_OLD_VALUE, keep_old=False, conflict="fail"):
         if conflict not in ("fail", "replace"):
             raise ValueError(f"Unknown old-key conflict rule: {conflict}")
-        self.new_path = new_path
+        self.new_path = _config_path_parts(new_path)
         self.value = value
         self.keep_old = keep_old
         self.conflict = conflict
 
 
-def _get_config_path(config, path):
+def _get_config_path(config, parts):
     node = config
-    for part in path.split("."):
+    for part in parts:
         if not isinstance(node, dict) or part not in node:
             return _MISSING
         node = node[part]
     return node
 
 
-def _expand_old_key_rows(config, table):
+def _expand_old_key_rows(config, table, rules):
     rows = {}
-    for old_paths, row in table.items():
-        if callable(row):
-            paths = old_paths if isinstance(old_paths, tuple) else (old_paths,)
-            if any(_get_config_path(config, path) is not _MISSING for path in paths):
-                rows.update(row(config))
-        elif isinstance(old_paths, tuple):
-            raise ValueError(f"Old-key table row {old_paths} names several paths but is not a rule")
-        else:
-            rows[old_paths] = row
+    entries = list(table.items())
+    for rule in rules:
+        entries.extend(rule(config).items())
+    for path, row in entries:
+        parts = _config_path_parts(path)
+        if isinstance(row, (str, tuple)):
+            row = OldKey(row)
+        if not isinstance(row, OldKey) and row is not OLD_KEY_DROPPED and row is not OLD_KEY_UNMAPPED:
+            raise ValueError(f"Old-key row for {'.'.join(parts)} is not a path, OldKey or OLD_KEY_* marker")
+        if parts in rows and rows[parts] is not row:
+            raise ValueError(f"Old-key rows disagree for {'.'.join(parts)}")
+        rows[parts] = row
     return {
-        path: OldKey(row) if isinstance(row, str) else row
-        for path, row in rows.items()
-        if _get_config_path(config, path) is not _MISSING
+        parts: row
+        for parts, row in rows.items()
+        if _get_config_path(config, parts) is not _MISSING or (isinstance(row, OldKey) and row.value is not _OLD_VALUE)
     }
 
 
-def _write_old_key_value(converted, old_path, row, value, label, prefix):
-    parts = row.new_path.split(".")
+def _write_old_key_value(converted, old_name, row, value, label, prefix):
+    new_name = prefix + ".".join(row.new_path)
     node = converted
-    for depth, part in enumerate(parts[:-1], start=1):
+    for depth, part in enumerate(row.new_path[:-1], start=1):
         node = node.setdefault(part, {})
         if not isinstance(node, dict):
-            raise ValueError(f"{prefix}{'.'.join(parts[:depth])} must be an object to hold {prefix}{row.new_path}")
-    key = parts[-1]
+            raise ValueError(f"{prefix}{'.'.join(row.new_path[:depth])} must be an object to hold {new_name}")
+    key = row.new_path[-1]
     if key in node and row.conflict == "fail":
         if node[key] != value:
             raise ValueError(
-                f"Conflicting {label} options: {prefix}{old_path} and {prefix}{row.new_path} "
-                "must have the same value when both are provided"
+                f"Conflicting {label} options: {old_name} and {new_name} must have the same value when both are provided"
             )
         return
     node[key] = value
@@ -2015,29 +2022,33 @@ def _write_old_key_value(converted, old_path, row, value, label, prefix):
 def resolve_old_keys(
     config,
     table,
+    rules=(),
     message="Deprecated config keys: {keys}. Use the new names; old keys will be removed in a future release.",
     label="config",
     prefix="",
 ):
     """Map old config keys to their new paths, or drop them.
 
-    ``table`` maps an old dotted path to a row: a new dotted path, an
-    ``OldKey``, ``OLD_KEY_DROPPED``, ``OLD_KEY_UNMAPPED`` for a key that has
-    no place in the new format, or a rule. A rule is a function that reads the
-    input config and returns rows of the other kinds for any old paths, so it
-    can decide from a value or compute one value from several keys. A rule's
-    table key may be a tuple of old paths; it runs when any of them is present.
-    Rows for paths the input does not hold are ignored.
+    ``table`` maps an old path to a row: a new path, an ``OldKey``,
+    ``OLD_KEY_DROPPED``, or ``OLD_KEY_UNMAPPED`` for a key that has no place
+    in the new format. A path is a dotted string, or a tuple of keys for a key
+    that holds a dot. Each of ``rules`` is a function that reads the input
+    config and returns more rows, so it can decide from a value or compute one
+    value from several keys; it returns ``{}`` when it has nothing to do. Rows
+    for paths the input does not hold are ignored, and two different rows for
+    one path fail.
 
-    Returns a converted deep copy and one warning message naming each old key,
-    built from ``message`` with ``{keys}``, or the input and ``None`` when no
-    old key is present. An unmapped key raises ``ValueError`` naming its path,
-    never its value. ``prefix`` is prepended to every path in messages.
+    Every old value is read from the input before any key is moved, so rows
+    may overlap or chain. Returns a converted deep copy and one warning message
+    naming each old key, built from ``message`` by replacing ``{keys}``, or the
+    input and ``None`` when no old key is present. An unmapped key raises
+    ``ValueError`` naming its path, never its value. ``prefix`` is prepended to
+    every path in messages. A parent left empty by a move stays in place.
     """
     if not isinstance(config, dict):
         return config, None
-    rows = _expand_old_key_rows(config, table)
-    unmapped = [prefix + path for path, row in rows.items() if row is OLD_KEY_UNMAPPED]
+    rows = _expand_old_key_rows(config, table, rules)
+    unmapped = [prefix + ".".join(parts) for parts, row in rows.items() if row is OLD_KEY_UNMAPPED]
     if unmapped:
         raise ValueError(
             f"Unsupported {label} options: {', '.join(unmapped)}; "
@@ -2046,23 +2057,31 @@ def resolve_old_keys(
     if not rows:
         return config, None
 
+    values = {
+        parts: deepcopy(_get_config_path(config, parts) if row.value is _OLD_VALUE else row.value)
+        for parts, row in rows.items()
+        if row is not OLD_KEY_DROPPED
+    }
     converted = deepcopy(config)
+    for parts, row in rows.items():
+        if row is OLD_KEY_DROPPED or not row.keep_old:
+            parent = _get_config_path(converted, parts[:-1])
+            if isinstance(parent, dict):
+                parent.pop(parts[-1], None)
+
     changes = []
-    for old_path, row in rows.items():
-        parent_path, _, key = old_path.rpartition(".")
-        parent = _get_config_path(converted, parent_path) if parent_path else converted
+    for parts, row in rows.items():
+        old_name = prefix + ".".join(parts)
+        present = _get_config_path(config, parts) is not _MISSING
         if row is OLD_KEY_DROPPED:
-            del parent[key]
-            changes.append(f"{prefix}{old_path} (dropped)")
+            changes.append(f"{old_name} (dropped)")
             continue
-        value = parent[key] if row.value is _OLD_VALUE else row.value
-        if row.keep_old:
-            value = deepcopy(value)
-        else:
-            del parent[key]
-        _write_old_key_value(converted, old_path, row, value, label, prefix)
-        changes.append(f"{prefix}{old_path} -> {prefix}{row.new_path}")
-    return converted, message.format(keys=", ".join(changes))
+        _write_old_key_value(converted, old_name, row, values[parts], label, prefix)
+        if present:
+            changes.append(f"{old_name} -> {prefix}{'.'.join(row.new_path)}")
+    if not changes:
+        return converted, None
+    return converted, message.replace("{keys}", ", ".join(changes))
 
 
 # =============================================================================
@@ -2107,7 +2126,7 @@ def normalize_legacy_preflight_rdma_config(value):
     Conflicting legacy and canonical values fail rather than silently choosing
     which RDMA inventory should be tested.
     """
-    if any(_get_config_path(value, path) is not _MISSING for path in LEGACY_PREFLIGHT_RDMA_PATHS):
+    if any(_get_config_path(value, path.split(".")) is not _MISSING for path in LEGACY_PREFLIGHT_RDMA_PATHS):
         connectivity_check = value.get("connectivity_check", {})
         if not isinstance(connectivity_check, dict):
             raise ValueError(
@@ -2135,19 +2154,18 @@ def _preflight_section_has_values(section: dict) -> bool:
     return any(value not in (None, "") for value in section.values())
 
 
-def _legacy_node_smoke_rule(legacy_key, canonical_key):
-    def rule(config):
-        if not isinstance(config[legacy_key], dict) or _preflight_section_has_values(config.get(canonical_key)):
-            return {}
-        return {legacy_key: OldKey(canonical_key, keep_old=True, conflict="replace")}
-
-    return rule
-
-
 LEGACY_PREFLIGHT_NODE_SMOKE_SECTIONS = {
-    "node_smoke": _legacy_node_smoke_rule("node_smoke", "node_smoke_tier1"),
-    "tier3_info": _legacy_node_smoke_rule("tier3_info", "node_smoke_tier3"),
+    "node_smoke": "node_smoke_tier1",
+    "tier3_info": "node_smoke_tier3",
 }
+
+
+def _legacy_node_smoke_rule(config):
+    rows = {}
+    for legacy_key, canonical_key in LEGACY_PREFLIGHT_NODE_SMOKE_SECTIONS.items():
+        if isinstance(config.get(legacy_key), dict) and not _preflight_section_has_values(config.get(canonical_key)):
+            rows[legacy_key] = OldKey(canonical_key, keep_old=True, conflict="replace")
+    return rows
 
 
 def normalize_legacy_preflight_node_smoke_sections(value):
@@ -2159,7 +2177,8 @@ def normalize_legacy_preflight_node_smoke_sections(value):
     """
     return resolve_old_keys(
         value,
-        LEGACY_PREFLIGHT_NODE_SMOKE_SECTIONS,
+        {},
+        rules=(_legacy_node_smoke_rule,),
         message=(
             "Deprecated preflight Node Smoke section name(s) detected: {keys}. "
             "Prefer node_smoke_tier1 and node_smoke_tier3 in new configs."
