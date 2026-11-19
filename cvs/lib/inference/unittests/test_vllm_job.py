@@ -17,6 +17,7 @@ from unittest import mock
 
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
 from cvs.lib.conf_lib.schemas.vllm import VariantConfig
+from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
 from cvs.lib.inference.vllm_job import VllmJob
 from cvs.unittests.support import FAKE_CRED, TMP, run_trusted
 
@@ -99,34 +100,50 @@ def _job(responder=None, hosts=(HEAD,), log_dir="/logs"):
 
 
 class TestTimeouts(unittest.TestCase):
-    def _waits(self, timeouts):
+    def _waits(self, timeouts, hosts=(HEAD,), suite=None):
+        variant = _variant("/logs", len(hosts), timeouts)
+        if suite:
+            variant.bind_effective_topology(EffectiveVllmTopology("single", tuple(hosts), len(hosts), suite))
         job = VllmJob(
-            orch=FakeOrch(hosts=[HEAD]),
-            variant=_variant("/logs", 1, timeouts),
+            orch=FakeOrch(hosts=list(hosts)),
+            variant=variant,
             isl="1024",
             osl="1024",
             concurrency="16",
             num_prompts="64",
         )
         return (
-            (job._warmup_wait, job._server_poll_count, job._server_poll_wait),
+            (job._precheck_wait, job._warmup_wait, job._server_poll_count, job._server_poll_wait),
             (job._client_initial_wait, job._client_poll_count, job._client_poll_wait),
         )
 
-    def test_null_budgets_keep_the_old_vllm_defaults(self):
-        server, client = self._waits(None)
-        self.assertEqual(server[0] + server[1] * server[2], 3930)
-        self.assertEqual(client[0] + client[1] * client[2], 1320)
+    def test_shipped_single_budgets_wait_exactly_as_main(self):
+        # main's single configs: 330 s warmup, 60 polls x 60 s; client 120 s, 90 polls x 60 s
+        server, client = self._waits({"server_ready_s": 3930, "client_s": 5520})
+        self.assertEqual(server, (30, 330, 60, 60))
+        self.assertEqual(client, (120, 90, 60))
 
-    def test_budgets_poll_every_ten_seconds_after_a_short_wait(self):
-        server, client = self._waits({"server_ready_s": 3630, "client_s": 5415})
-        self.assertEqual(server, (30, 360, 10))
-        self.assertEqual(client, (10, 541, 10))
+    def test_shipped_distributed_budgets_wait_exactly_as_main(self):
+        # main's llama distributed config: 30 s warmup, 360 polls x 10 s; client 10 s, 540 polls x 10 s
+        expected = ((30, 30, 360, 10), (10, 540, 10))
+        timeouts = {"server_ready_s": 3630, "client_s": 5410}
+        self.assertEqual(self._waits(timeouts, hosts=(HEAD, WORKER)), expected)
+        self.assertEqual(self._waits(timeouts, hosts=(HEAD,), suite="distributed"), expected)
+
+    def test_null_budgets_keep_main_schema_defaults(self):
+        server, client = self._waits(None)
+        self.assertEqual(server, (30, 330, 60, 60))
+        self.assertEqual(client, (120, 20, 60))
+
+    def test_other_budgets_keep_the_total_and_round_polls_up(self):
+        server, client = self._waits({"server_ready_s": 2430, "client_s": 3620})
+        self.assertEqual(server, (30, 330, 35, 60))
+        self.assertEqual(client, (120, 59, 60))
 
     def test_a_budget_shorter_than_the_first_wait_still_checks_once(self):
         server, client = self._waits({"server_ready_s": 20, "client_s": 5})
-        self.assertEqual(server, (20, 1, 10))
-        self.assertEqual(client, (5, 1, 10))
+        self.assertEqual(server, (30, 20, 1, 60))
+        self.assertEqual(client, (5, 1, 60))
 
 
 @mock.patch("cvs.lib.inference.vllm_job.time.sleep")

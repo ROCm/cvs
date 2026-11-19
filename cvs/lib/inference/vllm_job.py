@@ -115,13 +115,13 @@ class VllmJob:
     )
     SERVER_STATE_RE = re.compile(r"^server-state log=(present|missing) pid=(alive|dead|none)$", re.M)
     _MAX_MODEL_LEN_PAD = 8
-    # timeouts.server_ready_s and timeouts.client_s are total budgets; null keeps
-    # the old vLLM defaults (330 s + 60 x 60 s, and 120 s + 20 x 60 s).
+    # timeouts.server_ready_s and timeouts.client_s are total budgets, spent on
+    # the schedule main's shipped configs used for each suite:
+    # (server warmup, server poll interval, client first wait, client poll interval).
+    SCHEDULES = {"single": (330, 60, 120, 60), "distributed": (30, 10, 10, 10)}
+    # main's schema defaults: 330 s + 60 x 60 s, and 120 s + 20 x 60 s.
     DEFAULT_SERVER_READY_S = 3930
     DEFAULT_CLIENT_S = 1320
-    SERVER_WARMUP_S = 30
-    CLIENT_INITIAL_WAIT_S = 10
-    POLL_WAIT_S = 10
 
     def __init__(
         self,
@@ -195,14 +195,16 @@ class VllmJob:
         self._precheck_wait = 30
         self._launch_retries = 2
         self._launch_retry_wait = 10
+        suite = getattr(topology, "suite", "") or ("distributed" if len(self.hosts) > 1 else "single")
+        warmup, server_poll, client_wait, client_poll = self.SCHEDULES[suite]
         server_ready_s = variant.timeouts.server_ready_s or self.DEFAULT_SERVER_READY_S
         client_s = variant.timeouts.client_s or self.DEFAULT_CLIENT_S
-        self._warmup_wait = min(self.SERVER_WARMUP_S, server_ready_s)
-        self._server_poll_wait = self.POLL_WAIT_S
-        self._server_poll_count = max(1, math.ceil((server_ready_s - self._warmup_wait) / self.POLL_WAIT_S))
-        self._client_initial_wait = min(self.CLIENT_INITIAL_WAIT_S, client_s)
-        self._client_poll_wait = self.POLL_WAIT_S
-        self._client_poll_count = max(1, math.ceil((client_s - self._client_initial_wait) / self.POLL_WAIT_S))
+        self._warmup_wait = min(warmup, server_ready_s)
+        self._server_poll_wait = server_poll
+        self._server_poll_count = max(1, math.ceil((server_ready_s - self._warmup_wait) / server_poll))
+        self._client_initial_wait = min(client_wait, client_s)
+        self._client_poll_wait = client_poll
+        self._client_poll_count = max(1, math.ceil((client_s - self._client_initial_wait) / client_poll))
 
     # ---------- derived builders ----------
 

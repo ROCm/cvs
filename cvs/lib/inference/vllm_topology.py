@@ -9,6 +9,8 @@ class EffectiveVllmTopology:
     mode: str
     hosts: tuple[str, ...]
     pipeline_parallel_size: int
+    # The suite that asked, which can differ from mode: vllm_distributed on one host runs single.
+    suite: str = ""
 
     @property
     def nnodes(self) -> int:
@@ -59,11 +61,11 @@ def resolve_vllm_topology(mode, variant, hosts) -> EffectiveVllmTopology:
     if mode == "single":
         if len(hosts) != 1:
             raise ValueError("vllm_single orchestrator must be scoped to its first host")
-        return EffectiveVllmTopology("single", hosts, variant.server_params.pp)
+        return EffectiveVllmTopology("single", hosts, variant.server_params.pp, mode)
     if mode != "distributed":
         raise ValueError(f"unknown vLLM mode: {mode!r}")
     if len(hosts) == 1:
-        return EffectiveVllmTopology("single", hosts, variant.server_params.pp)
+        return EffectiveVllmTopology("single", hosts, variant.server_params.pp, mode)
 
     is_ray = variant.vllm.distributed_executor_backend == "ray"
     effective_pp = variant.server_params.pp
@@ -71,7 +73,7 @@ def resolve_vllm_topology(mode, variant, hosts) -> EffectiveVllmTopology:
         raise ValueError("vllm_distributed requires server_params.pp>1 unless vllm.distributed_executor_backend=ray")
     if not _socket_netdev_configured(variant):
         raise ValueError("vllm_distributed requires container.env.NCCL_SOCKET_IFNAME on multi-host clusters")
-    return EffectiveVllmTopology("distributed", hosts, effective_pp)
+    return EffectiveVllmTopology("distributed", hosts, effective_pp, mode)
 
 
 def build_vllm_targets(mode, variant, hosts):

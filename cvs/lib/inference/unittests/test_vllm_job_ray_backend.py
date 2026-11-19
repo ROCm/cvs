@@ -1106,7 +1106,8 @@ class TestVllmJobWaitReady(unittest.TestCase):
         # expected poll count without depending on the internal attribute name).
         poll_count = 3
         variant = _variant(serve_args={}, pp="1", socket_ifname=None)
-        variant.timeouts.server_ready_s = VllmJob.SERVER_WARMUP_S + poll_count * VllmJob.POLL_WAIT_S
+        warmup, poll, _client_wait, _client_poll = VllmJob.SCHEDULES["single"]
+        variant.timeouts.server_ready_s = warmup + poll_count * poll
         job = VllmJob(
             orch=RecordingOrch(responder=_responder_ok(), hosts=[HEAD]),
             variant=variant,
