@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.
 - The health sample config installs TransferBench `v1.71.01` (was `v1.67.00`), which fixes timing and DMA measurement errors in the older release. TransferBench results can differ from earlier runs; configs that set `transferbench.git_tag` keep their version.
+- vLLM threshold files accept kind `info`, which records a metric without gating. vLLM polls server readiness and client completion every 10 seconds within the `timeouts` budgets, so single-node `model_load_s` is closer to the real load time. An old vLLM config fails to load, naming the key, when it sets `benchmark_params.dataset_name` or `ignore_eos` to a value other than the one CVS always passes, or a client `trust_remote_code` that differs from the server's.
+
+### Deprecated
+
+- vLLM config and threshold files use the shared inference key names given in the vLLM configuration reference. Files with the old names still load and log one `FutureWarning` that lists each old key and its new name; rename them before the old names are removed.
 
 ### Fixed
 
