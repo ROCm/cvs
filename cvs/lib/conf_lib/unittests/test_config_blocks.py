@@ -5,12 +5,14 @@ All rights reserved.
 Unit tests for cvs.lib.conf_lib.config_blocks.
 '''
 
+import importlib
 import math
 import unittest
 
 from pydantic import ValidationError
 
 from cvs.lib.conf_lib.config_blocks import ContainerSpec, Paths, RuntimeArgs, ThresholdFile
+from cvs.parsers import schemas
 
 
 def _container(**overrides):
@@ -113,6 +115,48 @@ class TestThresholdFile(unittest.TestCase):
             with self.subTest(spec=spec):
                 with self.assertRaises(ValidationError):
                     ThresholdFile.model_validate({"CELL": {"a": spec}})
+
+
+class TestOldImportPaths(unittest.TestCase):
+    def test_each_old_path_returns_the_object_in_the_parser_schemas(self):
+        modules = {
+            "cvs.lib.conf_lib.config_blocks": (
+                "PLACEHOLDER_MESSAGE",
+                "ConfigStr",
+                "ContainerSpec",
+                "ModelSpec",
+                "Paths",
+                "RuntimeArgs",
+                "RuntimeSpec",
+                "ThresholdFile",
+                "ThresholdSpec",
+                "ValueThreshold",
+                "_Allow",
+                "_Forbid",
+                "has_placeholder",
+                "placeholders_rejected",
+            ),
+            "cvs.lib.utils.config_loader": (
+                "BaseVariantConfig",
+                "ContainerSpec",
+                "ModelSpec",
+                "Paths",
+                "RuntimeSpec",
+                "_Allow",
+                "_Forbid",
+            ),
+            "cvs.lib.inference.utils.accuracy_config": ("AccuracyConfig", "AccuracyTask"),
+            "cvs.lib.inference.utils.long_context_accuracy_config": ("LongContextAccCell", "LongContextAccuracyConfig"),
+            "cvs.lib.inference.utils.functional_config": ("FunctionalConfig",),
+            "cvs.lib.inference.utils.platform_config": ("PlatformConfig",),
+            "cvs.lib.inference.atom.atom_config_loader": ("MtpQualityConfig", "QuantParityConfig"),
+            "cvs.lib.conf_lib.schemas.vllm": ("ContainerEnvTokenError",),
+        }
+        for module_name, names in modules.items():
+            module = importlib.import_module(module_name)
+            for name in names:
+                with self.subTest(module=module_name, name=name):
+                    self.assertIs(getattr(module, name), getattr(schemas, name))
 
 
 if __name__ == "__main__":

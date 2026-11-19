@@ -14,7 +14,6 @@ from cvs.lib.inference.utils.vllm_metrics import validate_threshold_spec
 from cvs.lib.conf_lib.config_blocks import (
     PLACEHOLDER_MESSAGE,
     ConfigStr,
-    ContainerSpec,
     Paths,
     RuntimeArgs,
     RuntimeSpec,
@@ -25,12 +24,13 @@ from cvs.lib.conf_lib.config_blocks import (
     placeholders_rejected,
 )
 from cvs.lib.utils.config_loader import attach_threshold_file
+from cvs.parsers.schemas import ContainerEnvTokenError  # noqa: F401 - re-exported for callers
+from cvs.parsers.schemas import InferenceContainerSpec
 
 _CELL_RE = re.compile(
     r"^ISL=(?P<isl>[1-9]\d*),OSL=(?P<osl>[1-9]\d*),TP=(?P<tp>[1-9]\d*),PP=(?P<pp>[1-9]\d*),CONC=(?P<concurrency>[1-9]\d*)$"
 )
 _SOCKET_ENV = {"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"}
-_HF_TOKEN_ENV = {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"}
 _SERVER_RESERVED = {"master_addr", "master_port", "nnodes", "node_rank", "headless"}
 _METADATA_PREFIXES = ("_comment", "_example")
 
@@ -117,28 +117,8 @@ class VllmRuntime(RuntimeSpec):
     args: VllmRuntimeArgs = Field(default_factory=VllmRuntimeArgs)
 
 
-class ContainerEnvTokenError(Exception):
-    """A Hugging Face token name in container.env.
-
-    Not a ValueError, so pydantic raises it as is instead of wrapping it in a
-    ValidationError whose str(), errors() and json() would carry the token value.
-    """
-
-
-class VllmContainerSpec(ContainerSpec):
+class VllmContainerSpec(InferenceContainerSpec):
     runtime: VllmRuntime = Field(default_factory=VllmRuntime)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_hf_token_env(cls, data):
-        env = data.get("env") if isinstance(data, dict) else None
-        tokens = sorted(name for name in env or {} if str(name).upper() in _HF_TOKEN_ENV)
-        if tokens:
-            raise ContainerEnvTokenError(
-                f"container.env must not set {tokens}: container.env values become docker run -e arguments. "
-                "Put the Hugging Face token in the file named by paths.hf_token_file instead."
-            )
-        return data
 
     @model_validator(mode="after")
     def _validate_network_env(self):

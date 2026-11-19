@@ -7,8 +7,8 @@ Framework-agnostic config machinery shared by every CVS suite.
 Holds the 3-pass placeholder substitution, the `enforce_thresholds` gate
 carried on `BaseVariantConfig`, and the `substitute_config` helper that reads
 a variant `config.json` + sibling `*threshold.json` and resolves placeholders.
-The schema blocks live in `cvs.lib.conf_lib.config_blocks` and are re-exported
-here; `cvs.lib.conf_lib.loader.load_config` builds on `substitute_placeholders`,
+The schema blocks and `BaseVariantConfig` live in `cvs.parsers.schemas` and are
+re-exported here; `cvs.lib.conf_lib.loader.load_config` builds on `substitute_placeholders`,
 and a schema that uses a threshold file loads it with `attach_threshold_file`.
 A per-framework module subclasses `BaseVariantConfig` or composes the blocks
 directly and adds its own params, sweep and `cell_key`.
@@ -39,13 +39,11 @@ import json
 import re
 import warnings
 from pathlib import Path
-from typing import Any, Dict
-
-from pydantic import Field, model_validator
-from typing_extensions import Literal
 
 from cvs.lib import globals
-from cvs.lib.conf_lib.config_blocks import (  # noqa: F401 - re-exported for suite loaders
+from cvs.lib.utils_lib import config_placeholder_map
+from cvs.parsers.schemas import (  # noqa: F401 - re-exported for suite loaders
+    BaseVariantConfig,
     ContainerSpec,
     ModelSpec,
     Paths,
@@ -53,51 +51,8 @@ from cvs.lib.conf_lib.config_blocks import (  # noqa: F401 - re-exported for sui
     _Allow,
     _Forbid,
 )
-from cvs.lib.utils_lib import config_placeholder_map
 
 log = globals.log
-
-
-# ---------- pydantic models (generic) ----------
-
-
-class BaseVariantConfig(_Forbid):
-    """The framework-agnostic skeleton of a variant config.
-
-    Carries the fields every suite shares (schema/paths/model/image/container/
-    thresholds + the enforce gate) and the remote-not-implemented guard.
-    Per-framework subclasses add their own `framework`/`Params`/`Sweep` and the
-    `cell_key`/coverage-check pair that depend on them.
-    """
-
-    schema_version: Literal[1]
-    # When false, the threshold-coverage gate warns instead of raising and the
-    # test records metrics without asserting pass/fail (record-only). Use for
-    # un-calibrated shapes (e.g. a throughput characterization whose published
-    # numbers are curves, not tabulated values). Default true keeps the gate
-    # strict for calibrated configs -- no regression to the remediation work.
-    enforce_thresholds: bool = True
-    threshold_json: str = ""
-    paths: Paths
-    model: ModelSpec
-    # The container image is declared once, on container.image (ContainerSpec).
-    # There is no separate top-level image block.
-    container: ContainerSpec
-    thresholds: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
-
-    # pydantic runs @model_validator(mode="after") hooks in definition order,
-    # parent-class hooks before subclass hooks. This remote check is intentionally
-    # the first to run: an unimplemented remote config fails fast
-    # (NotImplementedError) before any subclass's threshold-coverage check runs,
-    # which is meaningless for a config we are going to reject anyway.
-    @model_validator(mode="after")
-    def _check_remote_not_implemented(self):
-        if self.model.remote == 1 and getattr(self, "framework", None) != "xdit":
-            raise NotImplementedError(
-                "model.remote=1 (remote model download) is not implemented in the PoC. "
-                "Port from cvs-dtni-v1/resource_resolver.py before enabling."
-            )
-        return self
 
 
 # ---------- placeholder substitution ----------

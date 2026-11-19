@@ -36,6 +36,7 @@ from cvs.lib.inference.utils.inferencing_config_loader import (
 from cvs.lib.inference.utils.long_context_accuracy_config import LongContextAccuracyConfig
 from cvs.lib.inference.utils.platform_config import PlatformConfig
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
+from cvs.parsers.schemas import MtpQualityConfig, QuantParityConfig
 
 ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
 ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
@@ -157,18 +158,6 @@ def resolved_atom_image_pin(variant):
         return pin
     container = getattr(variant, "container", None)
     return str(getattr(container, "image", "") or "").strip()
-
-
-class MtpQualityConfig(_Forbid):
-    enabled: bool = False
-    chat_template_prompt: str = "Say hello in one short sentence."
-    chat_template_expected_sha256: str = ""
-
-
-class QuantParityConfig(_Forbid):
-    enabled: bool = False
-    probe_prompt: str = "The capital of France is"
-    reference_config_stem: str = ""
 
 
 ATOM_FRAMEWORKS = ("atom",)

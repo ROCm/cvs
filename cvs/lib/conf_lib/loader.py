@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from cvs.lib.utils.config_loader import substitute_placeholders
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
+from cvs.parsers.schemas import validation_problem_lines
 
 
 class ConfigError(ValueError):
@@ -43,14 +44,6 @@ def _deep_merge(base, override):
     for k, v in override.items():
         out[k] = _deep_merge(base[k], v) if k in base else v
     return out
-
-
-def _problem_lines(exc):
-    lines = []
-    for error in exc.errors(include_input=False):
-        location = ".".join(str(part) for part in error["loc"]) or "(config)"
-        lines.append(f"{location}: {error['msg'].removeprefix('Value error, ')}")
-    return lines
 
 
 def load_config(model_cls, config_path, cluster):
@@ -79,7 +72,7 @@ def load_config(model_cls, config_path, cluster):
     try:
         config = model_cls.model_validate(raw, context={"placeholders": "reject", "config_path": Path(config_path)})
     except ValidationError as exc:
-        raise ConfigError(config_path, _problem_lines(exc)) from None
+        raise ConfigError(config_path, validation_problem_lines(exc)) from None
     spec = getattr(config, "container", None)
     if spec is None:
         container = None

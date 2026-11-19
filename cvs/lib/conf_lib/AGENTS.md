@@ -1,21 +1,25 @@
 # cvs/lib/conf_lib — config blocks and `load_config`
 
-Suite schemas are built from `config_blocks.py`, live in `schemas/` (one module per suite, such
-as `schemas/vllm.py`), and are loaded with `loader.load_config`. A suite with a schema here calls
-`load_config` directly; it has no loader module of its own.
-Substitution (`substitute_placeholders`, and `substitute_config` with its threshold file),
-`attach_threshold_file` and `BaseVariantConfig` stay in `cvs/lib/utils/config_loader.py`,
-which older suite loaders import.
+Suite schemas are built from the blocks in `cvs/parsers/schemas.py` ("Inference config blocks"
+section), live in `schemas/` (one module per suite, such as `schemas/vllm.py`), and are loaded
+with `loader.load_config`. A suite with a schema here calls `load_config` directly; it has no
+loader module of its own.
+Substitution (`substitute_placeholders`, and `substitute_config` with its threshold file) and
+`attach_threshold_file` stay in `cvs/lib/utils/config_loader.py`, which older suite loaders
+import; it re-exports `BaseVariantConfig` and the blocks.
 
-`__init__.py` must stay empty: `config_loader.py` imports `config_blocks`, and `loader.py`
-imports `config_loader`, so a package-level re-export of `load_config` is an import cycle.
+`cvs/parsers/schemas.py` imports nothing from `cvs.lib` at module level, since `cvs.lib` imports
+it; a unit test fails any module-level import that brings a cycle back.
+`__init__.py` must stay empty: `loader.py` imports `config_loader`, so a package-level re-export
+of `load_config` is an import cycle.
 
 ## Files
 
 ### `config_blocks.py`
 
-The schema blocks every suite composes. `config_loader.py` re-exports `_Forbid`, `_Allow`,
-`Paths`, `ModelSpec`, `RuntimeSpec` and `ContainerSpec`, so existing imports keep working.
+A re-export of the blocks every suite composes, now defined in `cvs/parsers/schemas.py`.
+`config_loader.py` re-exports `_Forbid`, `_Allow`, `Paths`, `ModelSpec`, `RuntimeSpec`,
+`ContainerSpec` and `BaseVariantConfig`, so existing imports keep working.
 
 - `_Forbid` / `_Allow` drop every `_`-prefixed key at the model's own level (a `mode="before"`
   validator). Free-form maps (`env`, `RuntimeSpec.args`, CLI option values) are not walked.
@@ -26,7 +30,8 @@ The schema blocks every suite composes. `config_loader.py` re-exports `_Forbid`,
 - `RuntimeArgs` (`_Allow`) types the `runtime.args` keys the Docker runtime reads; its dump
   omits unset keys. Not wired into `RuntimeSpec`: suites opt in by subclassing it.
 - `ThresholdSpec` is a union on `kind`; `ThresholdFile` is the cells plus free-form `accuracy`.
-  The verdict engine does not read them yet.
+  The shared inference threshold block, `InferenceThresholdSpec`, takes only `min`, `max` and
+  `info`; engines move to it as they port.
 
 ### `loader.py`
 
@@ -46,7 +51,7 @@ The schema blocks every suite composes. `config_loader.py` re-exports `_Forbid`,
   `enforce_thresholds` false, so it runs record-only; with a file, the schema's own coverage
   rules apply.
 - `ValidationError` becomes `ConfigError` (a `ValueError`) with one `loc: msg` line per error,
-  built from `errors(include_input=False)`; never put input values in a message.
+  built by `schemas.validation_problem_lines`; never put input values in a message.
 - `container`: cluster `container` with `config.container.model_dump()` deep-merged on top
   (dicts by key, lists and scalars replaced, config wins); `None` when the model has none.
 - Must not import `cvs.core` (the orchestrator factory imports this package).

@@ -12,15 +12,28 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 """
 
+from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
+from typing import Annotated, Any, ClassVar, Dict, Generic, List, Literal, Optional, Tuple, TypeVar, Union
 import math
+import re
 import warnings
 
-from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PositiveInt,
+    ValidationError,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 
 # =============================================================================
@@ -1297,6 +1310,727 @@ def is_pytorch_xdit_unified_config(raw_config):
 
 
 # =============================================================================
+# Inference config blocks
+# =============================================================================
+#
+# The blocks every CVS suite schema is built from, re-exported from
+# cvs.lib.conf_lib.config_blocks and cvs.lib.utils.config_loader, then the
+# shared inference blocks that InferenceConfig joins.
+#
+# Keys that start with ``_`` are comments. Each model drops them at its own
+# level only, so a ``_`` key inside a free-form map (``env``, a CLI option
+# payload) reaches the suite unchanged.
+#
+# Shipped configs are templates: ``<changeme>`` and ``<changeme-...>`` mark the
+# values a user fills in for their setup. A ``ConfigStr`` field rejects them
+# only when validated with ``context={"placeholders": "reject"}``, which
+# ``cvs.lib.conf_lib.loader.load_config`` always passes.
+#
+# Nothing here imports cvs.lib at module level: cvs.lib imports this module.
+
+_PLACEHOLDER_RE = re.compile(r"<changeme(?:-[^<>]*)?>", re.IGNORECASE)
+PLACEHOLDER_MESSAGE = "still a <changeme> placeholder; replace it with the value for your setup"
+
+
+def _drop_comment_keys(value):
+    if isinstance(value, dict):
+        return {key: item for key, item in value.items() if not (isinstance(key, str) and key.startswith("_"))}
+    return value
+
+
+def has_placeholder(value):
+    return isinstance(value, str) and bool(_PLACEHOLDER_RE.search(value))
+
+
+def placeholders_rejected(info):
+    """True when the caller validates with ``context={"placeholders": "reject"}``."""
+    return bool(info.context) and info.context.get("placeholders") == "reject"
+
+
+def _reject_placeholder(value, info):
+    if placeholders_rejected(info) and has_placeholder(value):
+        raise ValueError(PLACEHOLDER_MESSAGE)
+    return value
+
+
+ConfigStr = Annotated[str, AfterValidator(_reject_placeholder)]
+
+
+class _Forbid(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_comments(cls, data):
+        return _drop_comment_keys(data)
+
+
+class _Allow(_Forbid):
+    model_config = ConfigDict(extra="allow")
+
+
+class Paths(_Forbid):
+    shared_fs: ConfigStr
+    models_dir: ConfigStr
+    log_dir: ConfigStr
+    hf_token_file: ConfigStr
+    # Host-user-namespaced scratch (jaxmaxtext launchers/yml). Optional so
+    # inference configs that omit it still load; jaxmaxtext configs set it to
+    # /tmp/{user-id}/jaxmaxtext so container-root /tmp/root is never used.
+    temp_dir: ConfigStr = ""
+
+
+class ModelSpec(_Forbid):
+    id: str
+    remote: Literal[0, 1]
+    precision: str = ""
+
+
+class RuntimeSpec(_Allow):
+    name: str
+    args: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ContainerSpec(_Forbid):
+    lifetime: Literal["no_launch", "per_run", "persistent"] = "per_run"
+    name: ConfigStr
+    image: ConfigStr
+    runtime: RuntimeSpec
+    # Environment variables passed to the container at `docker run` time (as
+    # `-e KEY=VALUE`, merged with the orchestrator defaults). The container
+    # orchestrator reads `container_config['env']`; carrying it on the spec means
+    # `container.model_dump()` forwards it verbatim to the runtime.
+    env: Dict[str, ConfigStr] = Field(default_factory=dict)
+
+
+class RuntimeArgs(_Allow):
+    """The ``runtime.args`` keys the Docker runtime reads.
+
+    An unset key is left out of the dump, so the runtime falls back to its own
+    default exactly as if the config had not named it.
+    """
+
+    volumes: Optional[List[ConfigStr]] = None
+    devices: Optional[List[str]] = None
+    env: Optional[Dict[str, ConfigStr]] = None
+    cap_add: Optional[List[str]] = None
+    security_opt: Optional[List[str]] = None
+    group_add: Optional[List[Union[str, int]]] = None
+    ulimit: Optional[List[str]] = None
+    network: Optional[str] = None
+    ipc: Optional[str] = None
+    user: Optional[Union[str, int]] = None
+    shm_size: Optional[Union[str, int]] = None
+    privileged: Optional[bool] = None
+    registry: Optional[Dict[str, str]] = None
+
+    @model_serializer(mode="wrap")
+    def _drop_unset(self, handler):
+        return {key: value for key, value in handler(self).items() if value is not None}
+
+
+FiniteNumber = Annotated[float, Field(strict=True, allow_inf_nan=False)]
+
+
+class ValueThreshold(_Forbid):
+    kind: Literal["min", "max", "max_ms", "min_tok_s", "info"]
+    value: FiniteNumber
+    optional: bool = False
+
+
+class WithinThreshold(_Forbid):
+    kind: Literal["within"]
+    value: FiniteNumber
+    tolerance_pct: FiniteNumber
+    optional: bool = False
+
+
+class MinRatioThreshold(_Forbid):
+    kind: Literal["min_ratio"]
+    value: FiniteNumber
+    reference: str
+    optional: bool = False
+
+
+ThresholdSpec = Annotated[
+    Union[ValueThreshold, WithinThreshold, MinRatioThreshold],
+    Field(discriminator="kind"),
+]
+ThresholdCell = Annotated[Dict[str, ThresholdSpec], BeforeValidator(_drop_comment_keys)]
+
+
+class ThresholdFile(_Allow):
+    """A threshold file: one cell of metric specs per run cell, plus ``accuracy``.
+
+    Accuracy thresholds are keyed by task and read by the accuracy harness, so
+    they are not checked here.
+    """
+
+    accuracy: Dict[str, Any] = Field(default_factory=dict)
+    __pydantic_extra__: Dict[str, ThresholdCell]
+
+    def cells(self):
+        return dict(self.model_extra or {})
+
+
+class BaseVariantConfig(_Forbid):
+    """The framework-agnostic skeleton of a variant config.
+
+    Carries the fields every suite shares (schema/paths/model/image/container/
+    thresholds + the enforce gate) and the remote-not-implemented guard.
+    Per-framework subclasses add their own `framework`/`Params`/`Sweep` and the
+    `cell_key`/coverage-check pair that depend on them.
+    """
+
+    schema_version: Literal[1]
+    # When false, the threshold-coverage gate warns instead of raising and the
+    # test records metrics without asserting pass/fail (record-only). Use for
+    # un-calibrated shapes (e.g. a throughput characterization whose published
+    # numbers are curves, not tabulated values). Default true keeps the gate
+    # strict for calibrated configs -- no regression to the remediation work.
+    enforce_thresholds: bool = True
+    threshold_json: str = ""
+    paths: Paths
+    model: ModelSpec
+    # The container image is declared once, on container.image (ContainerSpec).
+    # There is no separate top-level image block.
+    container: ContainerSpec
+    thresholds: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+
+    # pydantic runs @model_validator(mode="after") hooks in definition order,
+    # parent-class hooks before subclass hooks. This remote check is intentionally
+    # the first to run: an unimplemented remote config fails fast
+    # (NotImplementedError) before any subclass's threshold-coverage check runs,
+    # which is meaningless for a config we are going to reject anyway.
+    @model_validator(mode="after")
+    def _check_remote_not_implemented(self):
+        if self.model.remote == 1 and getattr(self, "framework", None) != "xdit":
+            raise NotImplementedError(
+                "model.remote=1 (remote model download) is not implemented in the PoC. "
+                "Port from cvs-dtni-v1/resource_resolver.py before enabling."
+            )
+        return self
+
+
+class AccuracyTask(_Forbid):
+    """An lm-evaluation-harness 0.4.12 invocation against a live OpenAI-compatible server.
+
+    CVS owns the live-server endpoint, model path, output path, and sample
+    logging. Every other supported ``lm_eval run`` setting has an explicit field
+    and its 0.4.12 default.
+    """
+
+    id: str
+    # ``task`` remains accepted so existing Atom and vLLM configs need no
+    # migration. ``tasks`` is the lm-eval 0.4.12 spelling and supports a
+    # comma-separated string or a list of task names.
+    tasks: Optional[Union[str, List[str]]] = None
+    task: Optional[str] = None
+
+    # CVS/OpenAI adapter selection. These are deliberately narrower than
+    # lm-eval's generic --model field because CVS always targets a live local
+    # OpenAI-compatible server.
+    backend: str = ""
+    lm_eval_model: Optional[Literal["local-completions", "local-chat-completions"]] = None
+    extra_model_args: str = ""
+    num_concurrent: int = 8
+
+    # lm-eval 0.4.12 evaluation settings.
+    num_fewshot: Optional[int] = None
+    batch_size: str = "1"
+    max_batch_size: Optional[int] = None
+    device: Optional[str] = None
+    gen_kwargs: Dict[str, Any] = Field(default_factory=dict)
+    limit: Optional[float] = None
+    samples: Optional[Union[str, Dict[str, Any]]] = None
+    use_cache: Optional[str] = None
+    cache_requests: Optional[Literal["true", "refresh", "delete"]] = None
+    check_integrity: bool = False
+    system_instruction: Optional[str] = None
+    apply_chat_template: Union[bool, str] = False
+    fewshot_as_multiturn: Optional[bool] = None
+    include_path: Optional[str] = None
+    predict_only: bool = False
+    seed: List[Optional[int]] = Field(default_factory=lambda: [0, 1234, 1234, 1234])
+    trust_remote_code: bool = False
+    confirm_run_unsafe_code: bool = False
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    # CVS controls execution duration, not lm-eval.
+    exec_timeout_sec: int = 4 * 60 * 60
+
+    @field_validator("apply_chat_template", mode="before")
+    @classmethod
+    def _coerce_boolean_template_values(cls, value):
+        if isinstance(value, str) and value.lower() in {"true", "false", "0", "1"}:
+            return value.lower() in {"true", "1"}
+        return value
+
+    @field_validator("seed", mode="before")
+    @classmethod
+    def _normalize_seed(cls, value):
+        defaults = [0, 1234, 1234, 1234]
+        if isinstance(value, int):
+            return [value] * 4
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, list):
+            normalized = [None if item is None or item == "None" else int(item) for item in value]
+            if len(normalized) == 1:
+                return normalized * 4
+            if len(normalized) == 3:
+                return [*normalized, defaults[3]]
+            return normalized
+        return value
+
+    @field_validator("tasks", mode="before")
+    @classmethod
+    def _reject_empty_task_lists(cls, value):
+        if value == []:
+            raise ValueError("tasks must not be empty")
+        return value
+
+    @field_validator("seed")
+    @classmethod
+    def _validate_seed_count(cls, value):
+        if len(value) != 4:
+            raise ValueError("seed must contain exactly four values: python,numpy,torch,fewshot")
+        return value
+
+    @model_validator(mode="after")
+    def _resolve_legacy_task_alias(self):
+        if self.tasks is None and self.task is None:
+            raise ValueError("one of tasks or task is required")
+        if self.tasks is None:
+            self.tasks = self.task
+        elif self.task is not None and self.task_names() != self._split_task_string(self.task):
+            raise ValueError("task and tasks disagree")
+        # Preserve the historical public attribute for Atom and callers that
+        # consume a single comma-separated task selector.
+        task_names = self.task_names()
+        if not task_names:
+            raise ValueError("tasks must contain at least one task name")
+        self.task = ",".join(task_names)
+        return self
+
+    @staticmethod
+    def _split_task_string(value: str) -> List[str]:
+        return [item.strip() for item in value.split(",") if item.strip()]
+
+    def task_names(self) -> List[str]:
+        if isinstance(self.tasks, list):
+            return self.tasks
+        return self._split_task_string(self.tasks or "")
+
+    @property
+    def resolved_lm_eval_model(self) -> str:
+        if self.lm_eval_model:
+            return self.lm_eval_model
+        return "local-chat-completions" if self.apply_chat_template else "local-completions"
+
+
+class AccuracyConfig(_Forbid):
+    tasks: List[AccuracyTask] = []
+
+    @model_validator(mode="after")
+    def _check_unique_task_ids(self):
+        from collections import Counter
+
+        counts = Counter(t.id for t in self.tasks)
+        dupes = sorted(i for i, n in counts.items() if n > 1)
+        if dupes:
+            rendered = ", ".join(repr(d) for d in dupes)
+            raise ValueError(f"duplicate task id(s): {rendered}")
+        return self
+
+
+class LongContextAccCell(_Forbid):
+    """Long-context accuracy cell selection (ACC-12 NIAH); gating values live in the threshold file."""
+
+    id: str
+    isl: int
+    osl: int = 32
+    num_prompts: int = 8
+    seed: int = 42
+
+
+class LongContextAccuracyConfig(_Forbid):
+    cells: List[LongContextAccCell] = []
+
+    @model_validator(mode="after")
+    def _check_unique_cell_ids(self):
+        from collections import Counter
+
+        counts = Counter(c.id for c in self.cells)
+        dupes = sorted(i for i, n in counts.items() if n > 1)
+        if dupes:
+            rendered = ", ".join(repr(d) for d in dupes)
+            raise ValueError(f"duplicate long-context cell id(s): {rendered}")
+        return self
+
+
+class FunctionalConfig(_Forbid):
+    """Optional functional smoke gates for inference suites (FUNC-1/2)."""
+
+    api_smoke: bool = False
+    health_check: bool = False
+
+
+class PlatformConfig(_Forbid):
+    """Optional platform / post-run checks for inference suites (INF-6/7)."""
+
+    dmesg_scan: bool = False
+    gpu_metrics_poll: bool = False
+
+
+class MtpQualityConfig(_Forbid):
+    enabled: bool = False
+    chat_template_prompt: str = "Say hello in one short sentence."
+    chat_template_expected_sha256: str = ""
+
+
+class QuantParityConfig(_Forbid):
+    enabled: bool = False
+    probe_prompt: str = "The capital of France is"
+    reference_config_stem: str = ""
+
+
+# ---------- shared inference blocks ----------
+
+# The metric names every engine's threshold cells use: vLLM's metric registry
+# (cvs/lib/inference/utils/vllm_metrics.py) plus ATOM's multinode scaling metric.
+_LATENCY_STATS = ("mean", "median", "std", "p50", "p90", "p95", "p99")
+INFERENCE_METRIC_NAMES = frozenset(
+    (
+        "max_concurrency",
+        "max_concurrent_requests",
+        "num_prompts",
+        "completed",
+        "failed",
+        "success_rate",
+        "duration",
+        "request_throughput",
+        "goodput",
+        "output_throughput",
+        "total_token_throughput",
+        "per_gpu_throughput",
+        "decode_throughput_p50",
+        "max_output_tokens_per_s",
+        "rtfx",
+        "total_input_tokens",
+        "total_output_tokens",
+        *(f"{stat}_ttft_ms" for stat in _LATENCY_STATS),
+        "normalized_ttft_ms_per_tok",
+        *(f"{stat}_tpot_ms" for stat in _LATENCY_STATS),
+        *(f"{stat}_itl_ms" for stat in _LATENCY_STATS),
+        "decode_latency_ratio",
+        *(f"{stat}_e2el_ms" for stat in _LATENCY_STATS),
+        "peak_gpu_memory_mb",
+        "model_load_memory_mb",
+        "model_load_s",
+        "gpu_bandwidth_util_pct",
+        "gpu_compute_util_pct",
+        "queue_time_p50_ms",
+        "queue_time_p95_ms",
+        "prefill_time_p50_ms",
+        "prefill_time_p95_ms",
+        "scaling.efficiency_pct",
+    )
+)
+
+
+class InferenceThresholdSpec(_Forbid):
+    """One metric's threshold: ``min`` and ``max`` gate, ``info`` records without gating."""
+
+    kind: Literal["min", "max", "info"]
+    value: FiniteNumber
+    optional: bool = False
+
+
+InferenceThresholdCell = Annotated[Dict[str, InferenceThresholdSpec], BeforeValidator(_drop_comment_keys)]
+
+
+class InferenceAccuracyThresholds(_Forbid):
+    """Mirrors the config's ``accuracy`` block: ``lm_eval`` and ``custom_eval`` are keyed by id."""
+
+    lm_eval: Dict[str, InferenceThresholdCell] = Field(default_factory=dict)
+    custom_eval: Dict[str, InferenceThresholdCell] = Field(default_factory=dict)
+    quant_parity: InferenceThresholdCell = Field(default_factory=dict)
+    mtp_quality: InferenceThresholdCell = Field(default_factory=dict)
+
+
+_CELL_KEY_RE = re.compile(r"^ISL=([1-9]\d*),OSL=([1-9]\d*),TP=([1-9]\d*),PP=([1-9]\d*),CONC=([1-9]\d*)$")
+_CELL_KEY_AXES = ("isl", "osl", "tp", "pp", "concurrency")
+
+
+def parse_inference_cell_key(key):
+    """Return a cell key's axes as ints; the key must read ``ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>``."""
+    match = _CELL_KEY_RE.fullmatch(key)
+    if not match:
+        raise ValueError(f"{key!r} is not a cell key of the form ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>")
+    return dict(zip(_CELL_KEY_AXES, (int(number) for number in match.groups())))
+
+
+class InferenceThresholdFile(_Allow):
+    """A threshold file: one section of metric specs per cell key, plus ``accuracy``."""
+
+    accuracy: InferenceAccuracyThresholds = Field(default_factory=InferenceAccuracyThresholds)
+    __pydantic_extra__: Dict[str, InferenceThresholdCell]
+
+    @model_validator(mode="after")
+    def _check_cell_keys(self):
+        for key in self.model_extra or {}:
+            parse_inference_cell_key(key)
+        return self
+
+    def cells(self):
+        return dict(self.model_extra or {})
+
+
+_HF_TOKEN_ENV = {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"}
+
+
+class ContainerEnvTokenError(Exception):
+    """A Hugging Face token name in container.env.
+
+    Not a ValueError, so pydantic raises it as is instead of wrapping it in a
+    ValidationError whose str(), errors() and json() would carry the token value.
+    """
+
+
+class InferenceRuntimeArgs(RuntimeArgs):
+    # container.env is the one env block, so the Hugging Face token check
+    # cannot be bypassed through docker run -e arguments built from here.
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_env(cls, data):
+        if isinstance(data, dict) and "env" in data:
+            raise ValueError("runtime.args.env is not read; set these variables in container.env")
+        return data
+
+
+class InferenceRuntimeSpec(RuntimeSpec):
+    args: InferenceRuntimeArgs = Field(default_factory=InferenceRuntimeArgs)
+
+
+class InferenceContainerSpec(ContainerSpec):
+    runtime: InferenceRuntimeSpec
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_hf_token_env(cls, data):
+        env = data.get("env") if isinstance(data, dict) else None
+        tokens = sorted(name for name in env or {} if str(name).upper() in _HF_TOKEN_ENV)
+        if tokens:
+            raise ContainerEnvTokenError(
+                f"container.env must not set {tokens}: container.env values become docker run -e arguments. "
+                "Put the Hugging Face token in the file named by paths.hf_token_file instead."
+            )
+        return data
+
+
+def _reject_flag_placeholder(value, info):
+    if placeholders_rejected(info) and has_placeholder(value if isinstance(value, str) else repr(value)):
+        raise ValueError(PLACEHOLDER_MESSAGE)
+    return value
+
+
+FlagValue = Annotated[Any, AfterValidator(_reject_flag_placeholder)]
+_FLAG_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def _check_flag_names(flags, section, reserved):
+    for name in flags:
+        if not _FLAG_NAME_RE.fullmatch(name):
+            raise ValueError(f"{section}.{name}: flag names must be snake_case")
+    harness = sorted(set(flags) & reserved)
+    if harness:
+        raise ValueError(f"{section} cannot set harness fields: {harness}")
+
+
+# Client flags the harness sets for every cell.
+_HARNESS_CLIENT_FLAGS = frozenset(
+    {
+        "model",
+        "backend",
+        "base_url",
+        "max_concurrency",
+        "random_input_len",
+        "random_output_len",
+        "result_dir",
+        "result_filename",
+        "percentile_metrics",
+        "metric_percentiles",
+    }
+)
+
+
+class LongContextFlags(_Forbid):
+    """Server flags added only when a ``niah`` eval runs."""
+
+    chunked_prefill_size: Optional[int] = None
+    max_prefill_tokens: Optional[int] = None
+
+
+class InferenceServerParams(_Forbid):
+    """The server keys every engine shares; any other server flag goes in ``engine_args``."""
+
+    model: ConfigStr
+    tp: PositiveInt
+    pp: PositiveInt = 1
+    dp: PositiveInt = 1
+    ep: PositiveInt = 1
+    port: int = 8888
+    master_port: int = 29501
+    # null means 1 (single only); distributed needs at least 2.
+    nnodes: Optional[PositiveInt] = None
+    # Disaggregated only; null splits nnodes in half.
+    prefill_nnodes: Optional[PositiveInt] = None
+    max_model_length: Optional[PositiveInt] = None
+    long_context: LongContextFlags = Field(default_factory=LongContextFlags)
+    # Native server flags in snake_case; true writes a bare flag.
+    engine_args: Dict[str, FlagValue] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_engine_args(self):
+        _check_flag_names(self.engine_args, "server_params.engine_args", set(type(self).model_fields))
+        return self
+
+
+class InferenceBenchmarkParams(_Forbid):
+    """The client keys every engine shares; any other client flag goes in ``client_args``."""
+
+    num_prompts: PositiveInt
+    random_range_ratio: float = 0.0
+    seed: int = 0
+    request_rate: Union[float, str] = "inf"
+    burstiness: float = 1.0
+    random_prefix_len: int = 0
+    tokenizer_mode: str = "auto"
+    # Single-node output throughput; sets scaling.efficiency_pct on multinode cells.
+    scaling_baseline_output_throughput: Optional[float] = None
+    # Native client flags in snake_case; true writes a bare flag.
+    client_args: Dict[str, FlagValue] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_client_args(self):
+        reserved = set(type(self).model_fields) | _HARNESS_CLIENT_FLAGS
+        _check_flag_names(self.client_args, "benchmark_params.client_args", reserved)
+        return self
+
+
+class InferenceTimeouts(_Forbid):
+    """Seconds to wait; null keeps the engine's default."""
+
+    server_ready_s: Optional[PositiveInt] = None
+    client_s: Optional[PositiveInt] = None
+
+
+class NiahEval(LongContextAccCell):
+    type: Literal["niah"]
+
+
+class InferenceAccuracyConfig(_Forbid):
+    lm_eval: AccuracyConfig = Field(default_factory=AccuracyConfig)
+    # niah is the only custom eval type; a new type joins NiahEval in a union on ``type``.
+    custom_eval: List[NiahEval] = Field(default_factory=list)
+    quant_parity: QuantParityConfig = Field(default_factory=QuantParityConfig)
+    mtp_quality: MtpQualityConfig = Field(default_factory=MtpQualityConfig)
+
+    @model_validator(mode="after")
+    def _check_unique_custom_eval_ids(self):
+        dupes = sorted(eval_id for eval_id, n in Counter(e.id for e in self.custom_eval).items() if n > 1)
+        if dupes:
+            raise ValueError(f"duplicate custom_eval id(s): {dupes}")
+        return self
+
+
+def _field_model(model_cls, name):
+    annotation = model_cls.model_fields[name].annotation
+    return annotation if isinstance(annotation, type) and issubclass(annotation, BaseModel) else None
+
+
+class InferenceConfig(_Forbid):
+    """The config every inference engine shares; an engine subclass adds only its own block.
+
+    An engine lists in ``not_implemented`` the dotted paths of shared fields it
+    does not run. A config that sets any of them to a value other than its
+    default fails, naming the engine class and the field.
+    """
+
+    not_implemented: ClassVar[Tuple[str, ...]] = ()
+
+    # false records every metric without failing.
+    enforce_thresholds: bool = True
+    # Threshold file next to the config or packaged; "" records without gating.
+    threshold_json: str = ""
+    paths: Paths
+    container: InferenceContainerSpec
+    server_params: InferenceServerParams
+    benchmark_params: InferenceBenchmarkParams
+    timeouts: InferenceTimeouts = Field(default_factory=InferenceTimeouts)
+    # Cell key -> client flags for that cell only.
+    sweeps: Dict[str, Dict[str, FlagValue]]
+    # The sweeps keys to run, in order.
+    runs: List[str]
+    accuracy: InferenceAccuracyConfig = Field(default_factory=InferenceAccuracyConfig)
+    thresholds: InferenceThresholdFile = Field(default_factory=InferenceThresholdFile)
+
+    @classmethod
+    def __pydantic_init_subclass__(cls, **kwargs):
+        super().__pydantic_init_subclass__(**kwargs)
+        for path in cls.not_implemented:
+            model_cls = cls
+            for name in path.split("."):
+                if model_cls is None or name not in model_cls.model_fields:
+                    raise TypeError(f"{cls.__name__}.not_implemented names {path!r}, which is not a field")
+                model_cls = _field_model(model_cls, name)
+
+    @field_validator("sweeps", mode="before")
+    @classmethod
+    def _drop_sweep_comments(cls, value):
+        if not isinstance(value, dict):
+            return value
+        return {key: _drop_comment_keys(entry) for key, entry in value.items() if not key.startswith("_")}
+
+    @model_validator(mode="after")
+    def _check_not_implemented(self):
+        for path in type(self).not_implemented:
+            *parents, name = path.split(".")
+            owner = self
+            for parent in parents:
+                owner = getattr(owner, parent)
+            default = type(owner).model_fields[name].get_default(call_default_factory=True)
+            if getattr(owner, name) != default:
+                raise ValueError(f"{path} is not implemented for {type(self).__name__}; leave it at its default")
+        return self
+
+    @model_validator(mode="after")
+    def _check_sweeps_and_runs(self):
+        for key, overrides in self.sweeps.items():
+            axes = parse_inference_cell_key(key)
+            if (axes["tp"], axes["pp"]) != (self.server_params.tp, self.server_params.pp):
+                raise ValueError(f"sweeps.{key}: TP and PP must equal server_params.tp and server_params.pp")
+            _check_flag_names(overrides, f"sweeps.{key}", _HARNESS_CLIENT_FLAGS)
+        if not self.runs:
+            raise ValueError("runs must list at least one sweeps key")
+        repeated = sorted(key for key, n in Counter(self.runs).items() if n > 1)
+        if repeated:
+            raise ValueError(f"runs repeats {repeated}")
+        unknown = [key for key in self.runs if key not in self.sweeps]
+        if unknown:
+            raise ValueError(f"runs names keys missing from sweeps: {unknown}")
+        return self
+
+    @model_validator(mode="after")
+    def _check_threshold_coverage(self):
+        if self.enforce_thresholds and self.threshold_json.strip():
+            missing = [key for key in self.runs if key not in self.thresholds.cells()]
+            if missing:
+                raise ValueError(f"runs missing from the threshold file: {missing}")
+        return self
+
+
+# =============================================================================
 # Preflight Check Configuration Schema
 # =============================================================================
 
@@ -1931,6 +2665,15 @@ class PreflightConfigFile(BaseModel):
         return self
 
 
+def validation_problem_lines(exc):
+    """One ``location: problem`` line per error in a ``ValidationError``, never the input values."""
+    lines = []
+    for error in exc.errors(include_input=False):
+        location = ".".join(str(part) for part in error["loc"]) or "(config)"
+        lines.append(f"{location}: {error['msg'].removeprefix('Value error, ')}")
+    return lines
+
+
 def validate_config_file(
     config_path: Union[str, Path], config_type: str = "auto"
 ) -> Union[
@@ -2025,6 +2768,9 @@ def validate_config_file(
             return PytorchXditUnifiedConfigFile.model_validate(raw_config)
         else:
             raise ValueError(f"Unknown config_type: {config_type}")
+    except ValidationError as e:
+        problems = "\n".join(f"  {line}" for line in validation_problem_lines(e))
+        raise ValueError(f"Invalid configuration in {config_path}:\n{problems}") from None
     except Exception as e:
         # Re-raise with file context
         raise ValueError(f"Invalid configuration in {config_path}:\n{e}") from e
