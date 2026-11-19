@@ -1385,8 +1385,8 @@ ContainerSpec = create_model(
     env=(Dict[str, str], Field(default_factory=dict)),
 )
 
-# The ``docker run`` options the container runtime reads. An unset optional key
-# is left out of the dump, so the runtime keeps its own default for it.
+# The ``docker run`` options the container runtime reads. An optional key left
+# unset is dropped from the dump, so the runtime keeps its own default for it.
 RuntimeArgs = create_model(
     "RuntimeArgs",
     __base__=_DropUnset,
@@ -1500,13 +1500,18 @@ class _ThresholdFileBase(_Forbid):
     @classmethod
     def _drop_comments(cls, data):
         data = _drop_comment_keys(data)
-        if not isinstance(data, dict):
+        if not isinstance(data, dict) or isinstance(data.get("cells"), dict) and set(data) <= {"cells", "accuracy"}:
             return data
         cells = {key: value for key, value in data.items() if key != "accuracy"}
         grouped = {"cells": cells}
         if "accuracy" in data:
             grouped["accuracy"] = data["accuracy"]
         return grouped
+
+    @model_serializer(mode="wrap")
+    def _flatten_cells(self, handler):
+        data = handler(self)
+        return {**data.pop("cells"), **data}
 
     def get(self, cell_key, default=None):
         """A cell's specs as written, as plain dicts, for the code that reads threshold dicts."""
@@ -1547,7 +1552,7 @@ LongContextFlags = create_model(
 
 
 def _check_engine_args(self):
-    check_flags(self.engine_args, "server_params.engine_args", set(type(self).model_fields) | HARNESS_SERVER_FLAGS)
+    check_flags(self.engine_args, "engine_args", set(type(self).model_fields) | HARNESS_SERVER_FLAGS)
     return self
 
 
@@ -1575,7 +1580,7 @@ ServingServerParams = create_model(
 
 
 def _check_client_args(self):
-    check_flags(self.client_args, "benchmark_params.client_args", set(type(self).model_fields) | HARNESS_CLIENT_FLAGS)
+    check_flags(self.client_args, "client_args", set(type(self).model_fields) | HARNESS_CLIENT_FLAGS)
     return self
 
 
@@ -1851,11 +1856,6 @@ def _check_sweeps_and_runs(self):
 
 
 def _check_threshold_coverage(self):
-    parallel = (self.server_params.tp, self.server_params.pp)
-    for key in self.thresholds.cells:
-        axes = parse_cell_key(key)
-        if (axes["tp"], axes["pp"]) != parallel:
-            raise ValueError(f"thresholds {key}: TP and PP must equal server_params.tp and server_params.pp")
     if self.enforce_thresholds:
         missing = [key for key in self.runs if key not in self.thresholds.cells]
         if missing:
@@ -1898,7 +1898,14 @@ def validation_problem_lines(exc):
     """One ``field.path: message`` line per error in a pydantic ``ValidationError``, never an input value."""
     lines = []
     for error in exc.errors(include_input=False, include_url=False):
-        location = ".".join(str(part) for part in error["loc"]) or "(config)"
+        loc = error["loc"]
+        # A threshold file's cells are grouped under ``cells`` only inside the model.
+        loc = [
+            part
+            for index, part in enumerate(loc)
+            if not (part == "cells" and loc[index - 1 : index] == ("thresholds",))
+        ]
+        location = ".".join(str(part) for part in loc) or "(config)"
         lines.append(f"{location}: {error['msg'].removeprefix('Value error, ')}")
     return lines
 

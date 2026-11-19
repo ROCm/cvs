@@ -129,7 +129,20 @@ class TestInferenceVariantConfigPlaceholders(unittest.TestCase):
         raw["paths"]["models_dir"] = "<changeme>"
         raw["server_params"]["model"] = "<changeme>"
         lines = problems(raw)
-        self.assertEqual([line.split(":")[0] for line in lines], ["paths", "container", "server_params"])
+        self.assertEqual(
+            lines,
+            [
+                "paths: replace <changeme> with the value for your setup in models_dir",
+                "container: replace <changeme> with the value for your setup in image",
+                "server_params: replace <changeme> with the value for your setup in model",
+            ],
+        )
+
+    def test_comment_keys_are_not_checked_for_changeme(self):
+        raw = inference_config()
+        raw["_comment"] = "replace every <changeme> before running"
+        raw["container"]["runtime"]["args"]["_volumes_example"] = ["<changeme>:/models:ro"]
+        self.assertEqual(problems(raw), [])
 
 
 class TestInferenceVariantConfigBlocks(unittest.TestCase):
@@ -160,9 +173,9 @@ class TestInferenceVariantConfigBlocks(unittest.TestCase):
         raw["container"]["env"] = {"NCCL_SOCKET_IFNAME": "eth0"}
         self.assertEqual(problems(raw), [])
         raw["container"]["runtime"]["args"]["env"] = {"NCCL_SOCKET_IFNAME": "eth0"}
-        lines = problems(raw)
-        self.assertEqual(len(lines), 1)
-        self.assertIn("runtime.args.env", lines[0])
+        self.assertEqual(
+            problems(raw), ["container: runtime.args.env is not read; set these variables in container.env"]
+        )
 
     def test_hf_token_rejected(self):
         for name in ("HF_TOKEN", "hugging_face_hub_token"):
@@ -202,6 +215,22 @@ class TestInferenceVariantConfigBlocks(unittest.TestCase):
         raw = inference_config(enforce_thresholds=False, thresholds={})
         self.assertEqual(problems(raw), [])
 
+        lines = problems(inference_config(thresholds={CELL: {}, "throughput": {}}))
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("thresholds.throughput.[key]: "), lines[0])
+
+    def test_threshold_file_round_trips_in_its_file_shape(self):
+        config = InferenceVariantConfig.model_validate(inference_config())
+        dumped = config.model_dump()
+        self.assertEqual(
+            dumped["thresholds"],
+            {
+                CELL: {"output_throughput": {"kind": "min", "value": 100, "optional": False}},
+                "accuracy": {"lm_eval": {}, "custom_eval": {}, "quant_parity": {}, "mtp_quality": {}},
+            },
+        )
+        self.assertEqual(InferenceVariantConfig.model_validate(dumped), config)
+
     def test_sweeps_and_runs(self):
         pp2_cell = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
         raw = inference_config()
@@ -211,18 +240,58 @@ class TestInferenceVariantConfigBlocks(unittest.TestCase):
         raw["thresholds"] = {pp2_cell: {}}
         self.assertEqual(problems(raw), [])
 
+        bad_cell = "OSL=1024,ISL=1024,TP=8,PP=1,CONC=16"
+        tp4_cell = "ISL=1024,OSL=1024,TP=4,PP=1,CONC=16"
         bad = {
-            "run missing from sweeps": {"runs": [CELL, "ISL=1,OSL=1,TP=8,PP=1,CONC=1"]},
-            "repeated run": {"runs": [CELL, CELL]},
-            "empty runs": {"runs": []},
-            "axes out of order": {"sweeps": {"OSL=1024,ISL=1024,TP=8,PP=1,CONC=16": {}}, "runs": []},
-            "TP unequal": {"sweeps": {"ISL=1024,OSL=1024,TP=4,PP=1,CONC=16": {}}, "runs": []},
-            "reserved override": {"sweeps": {CELL: {"max_concurrency": 4}}},
-            "server override": {"sweeps": {CELL: {"port": 9000}}},
+            "run missing from sweeps": (
+                {"runs": [CELL, "ISL=1,OSL=1,TP=8,PP=1,CONC=1"], "enforce_thresholds": False},
+                "runs names keys missing from sweeps",
+            ),
+            "repeated run": ({"runs": [CELL, CELL]}, "runs repeats"),
+            "empty runs": ({"runs": []}, "runs must list at least one sweeps key"),
+            "axes out of order": ({"sweeps": {CELL: {}, bad_cell: {}}}, f"sweeps.{bad_cell}.[key]: "),
+            "TP unequal": ({"sweeps": {CELL: {}, tp4_cell: {}}}, "TP and PP must equal server_params"),
+            "reserved override": ({"sweeps": {CELL: {"max_concurrency": 4}}}, "cannot set harness fields"),
+            "server override": ({"sweeps": {CELL: {"port": 9000}}}, "cannot set harness fields"),
         }
-        for name, overrides in bad.items():
+        for name, (overrides, expected) in bad.items():
             with self.subTest(name=name):
-                self.assertTrue(problems(inference_config(**overrides)))
+                lines = problems(inference_config(**overrides))
+                self.assertEqual(len(lines), 1, lines)
+                self.assertIn(expected, lines[0])
+
+    def test_engine_and_client_flags(self):
+        good = inference_config()
+        good["server_params"]["engine_args"] = {"kv_cache_dtype": "fp8", "limit_mm_per_prompt": {"image": 0}}
+        good["benchmark_params"]["client_args"] = {"temperature": 0.0, "extra": [1, 2]}
+        self.assertEqual(problems(good), [])
+        cases = {
+            "server_params": {
+                "Bad-Name": "flag names must be snake_case",
+                "nested": "lists may hold scalar values only",
+                "tp": "cannot set harness fields",
+                "node_rank": "cannot set harness fields",
+            },
+            "benchmark_params": {
+                "Bad-Name": "flag names must be snake_case",
+                "nested": "lists may hold scalar values only",
+                "num_prompts": "cannot set harness fields",
+                "result_dir": "cannot set harness fields",
+            },
+        }
+        for block, flags in cases.items():
+            section = "engine_args" if block == "server_params" else "client_args"
+            for name, expected in flags.items():
+                with self.subTest(block=block, name=name):
+                    raw = inference_config()
+                    raw[block][section] = {name: [[1]] if name == "nested" else 1}
+                    lines = problems(raw)
+                    self.assertEqual(len(lines), 1, lines)
+                    self.assertTrue(lines[0].startswith(f"{block}: "), lines[0])
+                    self.assertIn(expected, lines[0])
+        raw = inference_config()
+        raw["server_params"]["engine_args"] = {"bad": {"x": object()}}
+        self.assertIn("must be JSON serializable", problems(raw)[0])
 
     def test_accuracy_ids_unique(self):
         task = {"id": "gsm8k_flex", "task": "gsm8k"}
