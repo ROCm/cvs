@@ -9,7 +9,7 @@
     "profile_id": { "type": "string" },
     "suite_id": { "type": "string" },
     "area": {
-      "enum": ["Health", "AMD Node Check", "Network", "Training", "Inference"],
+      "enum": ["Inference", "Training", "Communication", "Health", "AMD Node Check"],
       "description": "Area that groups this suite in the consolidated report. Child profiles inherit it through extends."
     },
     "metric_contract": {

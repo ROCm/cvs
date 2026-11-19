@@ -90,7 +90,7 @@ class TestConsolidate(ReportCase):
         self.assertIn(rvs["history"][0]["reportUrl"], files)
         self.assertIn(b"cvs-consolidated-report-link", files[rvs["reportUrl"]])
 
-        self.assertEqual((suites["rccl_perf"]["status"], suites["rccl_perf"]["category"]), ("record", "Network"))
+        self.assertEqual((suites["rccl_perf"]["status"], suites["rccl_perf"]["category"]), ("record", "Communication"))
         self.assertFalse(suites["agfhc_cvs"]["available"])
         self.assertEqual([warning["code"] for warning in summary["warnings"]], ["invalid_deck"])
 
@@ -117,7 +117,7 @@ class TestConsolidate(ReportCase):
                 self.assertIn(data["links"][key][len("../") :], files)
         self.assertEqual(
             [(other["url"], other["current"]) for other in data["suites"]],
-            [("rvs_cvs.html", True), ("rccl_perf.html", False)],
+            [("rccl_perf.html", False), ("rvs_cvs.html", True)],
         )
 
     def test_originals_are_unchanged_and_no_temporary_folder_is_left(self):
