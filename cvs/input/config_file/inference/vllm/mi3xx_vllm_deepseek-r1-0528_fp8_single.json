@@ -41,35 +41,29 @@
     }
   },
   "server_params": {
-    "_comment": "Harness fields plus snake-case vllm serve options.",
-    "backend": "vllm",
+    "_comment": "Shared server fields; every other vllm serve option goes in engine_args, in snake_case.",
     "model": "<changeme>",
-    "tensor_parallel_size": "8",
-    "pipeline_parallel_size": "1",
-    "port": "8888",
-    "dist_init_port": "29501",
-    "server_poll_iterations": "60",
-    "server_poll_wait_s": "60",
-    "server_warmup_wait_s": "330",
-    "distributed_executor_backend": "mp",
-    "trust_remote_code": true
+    "tp": 8,
+    "pp": 1,
+    "port": 8888,
+    "master_port": 29501,
+    "engine_args": {
+      "trust_remote_code": true
+    }
   },
   "benchmark_params": {
-    "_comment": "Default vllm bench serve settings; per-cell values in sweeps override these defaults.",
-    "backend": "vllm",
-    "dataset_name": "random",
-    "num_prompts": "320",
+    "_comment": "Shared vllm bench serve settings; other client options go in client_args. Per-cell values in sweeps override these defaults.",
+    "num_prompts": 320,
     "request_rate": "inf",
-    "burstiness": "1.0",
+    "burstiness": 1.0,
     "tokenizer_mode": "auto",
-    "seed": "0",
-    "random_range_ratio": "0.0",
-    "random_prefix_len": "0",
-    "client_poll_iterations": "90",
-    "client_poll_wait_s": "60",
-    "client_initial_wait_s": "120",
-    "trust_remote_code": true,
-    "ignore_eos": true
+    "seed": 0,
+    "random_range_ratio": 0.0,
+    "random_prefix_len": 0
+  },
+  "timeouts": {
+    "server_ready_s": 3930,
+    "client_s": 5520
   },
   "_comment_sweeps": "Canonical run cells; entries override benchmark_params for that cell.",
   "sweeps": {
@@ -82,31 +76,36 @@
     "ISL=1024,OSL=1024,TP=8,PP=1,CONC=32"
   ],
   "accuracy": {
-    "tasks": [
-      {
-        "id": "gsm8k_flex",
-        "task": "gsm8k",
-        "num_fewshot": 5,
-        "num_concurrent": 4
-      },
-      {
-        "id": "gsm8k_strict",
-        "task": "gsm8k",
-        "num_fewshot": 5,
-        "num_concurrent": 4,
-        "metadata": {
-          "filter": "strict-match"
+    "lm_eval": {
+      "tasks": [
+        {
+          "id": "gsm8k_flex",
+          "task": "gsm8k",
+          "num_fewshot": 5,
+          "num_concurrent": 4
+        },
+        {
+          "id": "gsm8k_strict",
+          "task": "gsm8k",
+          "num_fewshot": 5,
+          "num_concurrent": 4,
+          "metadata": {
+            "filter": "strict-match"
+          }
+        },
+        {
+          "id": "gsm8k_stderr",
+          "task": "gsm8k",
+          "num_fewshot": 5,
+          "num_concurrent": 4,
+          "metadata": {
+            "filter": "flexible-extract"
+          }
         }
-      },
-      {
-        "id": "gsm8k_stderr",
-        "task": "gsm8k",
-        "num_fewshot": 5,
-        "num_concurrent": 4,
-        "metadata": {
-          "filter": "flexible-extract"
-        }
-      }
-    ]
+      ]
+    }
+  },
+  "vllm": {
+    "distributed_executor_backend": "mp"
   }
 }

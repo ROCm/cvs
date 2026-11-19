@@ -440,13 +440,13 @@ class TestShippedTemplates(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.tmp = Path(self._tmp.name)
 
-    def test_every_template_loads_once_its_placeholders_are_filled(self):
+    def test_every_template_loads_once_its_placeholders_are_filled_without_a_warning(self):
         templates = _templates()
         self.assertTrue(templates)
         for template in templates:
             with self.subTest(config=template.name):
                 with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", FutureWarning)
+                    warnings.simplefilter("error", FutureWarning)
                     load_config(VllmConfig, write_filled_config(template, self.tmp), {"username": "test"})
 
     def test_unfilled_distributed_template_names_the_placeholders_it_checks(self):
@@ -469,12 +469,11 @@ class TestShippedTemplates(unittest.TestCase):
     def test_placeholder_in_a_flag_value_fails_the_load(self):
         filled = write_filled_config(DISTRIBUTED_TEMPLATE, self.tmp)
         config = json.loads(filled.read_text())
-        config["server_params"]["served_model_name"] = "<changeme-name>"
+        config["server_params"]["engine_args"]["served_model_name"] = "<changeme-name>"
         (cell,) = config["runs"]
         config["sweeps"][cell]["tokenizer"] = "<changeme>"
         filled.write_text(json.dumps(config))
-        with self.assertRaises(ConfigError) as ctx, warnings.catch_warnings():
-            warnings.simplefilter("ignore", FutureWarning)
+        with self.assertRaises(ConfigError) as ctx:
             load_config(VllmConfig, filled, {"username": "test"})
         self.assertEqual(
             sorted(problem.split(":", 1)[0] for problem in ctx.exception.problems),

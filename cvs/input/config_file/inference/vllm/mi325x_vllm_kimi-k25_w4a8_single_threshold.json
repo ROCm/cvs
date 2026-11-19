@@ -1,6 +1,6 @@
 {
   "_comment": "Uncalibrated zero placeholders for the packaged 32-metric assertion subset. The paired config keeps enforce_thresholds false, so all finite metrics record without gating. Add or remove registered metrics as needed, and replace every retained placeholder with a measured value before enabling enforcement.",
-  "_comment_accuracy": "The optional top-level accuracy block is task-qualified and exempt from vLLM sweep metric validation. Its shape remains: \"accuracy\": {\"<task-id>\": {\"<lm-eval-metric>\": {\"kind\": \"min\", \"value\": 0}}}.",
+  "_comment_accuracy": "The accuracy block keeps one section per lm-eval task id under lm_eval, outside the vLLM metric check: \"accuracy\": {\"lm_eval\": {\"<task-id>\": {\"<lm-eval-metric>\": {\"kind\": \"min\", \"value\": 0}}}}.",
   "ISL=1024,OSL=1024,TP=4,PP=1,CONC=16": {
     "failed": {
       "kind": "max",
@@ -262,13 +262,15 @@
     }
   },
   "accuracy": {
-    "gsm8k_flex": {
-      "gsm8k.exact_match__flexible-extract": {
-        "kind": "min",
-        "value": 0
-      }
-    },
-    "gsm8k_strict": {},
-    "gsm8k_stderr": {}
+    "lm_eval": {
+      "gsm8k_flex": {
+        "gsm8k.exact_match__flexible-extract": {
+          "kind": "min",
+          "value": 0
+        }
+      },
+      "gsm8k_strict": {},
+      "gsm8k_stderr": {}
+    }
   }
 }

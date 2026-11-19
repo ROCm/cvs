@@ -56,41 +56,35 @@
     "_comment_runtime_requirement": "The successful gfx942 emulation run required a Quark HIP MXFP4 QDQ fix that makes the input contiguous before the HIP call. Use an image containing that fix or an equivalent upstream fix; flags alone are insufficient with the affected Quark 0.12.post1 runtime."
   },
   "server_params": {
-    "_comment": "Harness fields plus snake-case vllm serve options.",
-    "backend": "vllm",
+    "_comment": "Shared server fields; every other vllm serve option goes in engine_args, in snake_case.",
+    "_comment_context": "max_model_length covers the fixed ISL plus OSL with eight tokens of padding; update it when changing the sweep lengths.",
     "model": "<changeme>",
-    "tensor_parallel_size": 8,
-    "pipeline_parallel_size": 2,
-    "port": "8888",
-    "dist_init_port": "29501",
-    "server_poll_iterations": 360,
-    "server_poll_wait_s": 10,
-    "server_warmup_wait_s": 30,
-    "distributed_executor_backend": "mp",
-    "trust_remote_code": true,
-    "max_model_len": 2056,
-    "max_num_seqs": 64,
-    "gpu_memory_utilization": 0.85,
-    "moe_backend": "emulation",
-    "_comment_context": "max_model_len covers the fixed ISL plus OSL with eight tokens of padding; update it when changing the sweep lengths.",
-    "_comment_startup": "The readiness polling budget allows slow checkpoint loading; it does not resolve tokenizer, backend or runtime compatibility failures."
+    "tp": 8,
+    "pp": 2,
+    "port": 8888,
+    "master_port": 29501,
+    "max_model_length": 2056,
+    "engine_args": {
+      "trust_remote_code": true,
+      "max_num_seqs": 64,
+      "gpu_memory_utilization": 0.85,
+      "moe_backend": "emulation"
+    }
   },
   "benchmark_params": {
-    "_comment": "Default vllm bench serve settings; per-cell values in sweeps override these defaults.",
-    "backend": "vllm",
-    "dataset_name": "random",
+    "_comment": "Shared vllm bench serve settings; other client options go in client_args. Per-cell values in sweeps override these defaults.",
     "num_prompts": 256,
     "request_rate": "inf",
-    "burstiness": "1.0",
+    "burstiness": 1.0,
     "tokenizer_mode": "auto",
-    "seed": "0",
-    "random_range_ratio": "0.0",
-    "random_prefix_len": "0",
-    "client_poll_iterations": 540,
-    "client_poll_wait_s": 10,
-    "client_initial_wait_s": 10,
-    "trust_remote_code": true,
-    "ignore_eos": true
+    "seed": 0,
+    "random_range_ratio": 0.0,
+    "random_prefix_len": 0
+  },
+  "timeouts": {
+    "_comment": "The server_ready_s budget allows slow checkpoint loading; it does not resolve tokenizer, backend or runtime compatibility failures.",
+    "server_ready_s": 3630,
+    "client_s": 5410
   },
   "_comment_sweeps": "Canonical run cells; entries override benchmark_params for that cell.",
   "sweeps": {
@@ -106,31 +100,36 @@
   ],
   "_comment_validation": "Serving completion was exercised with vLLM 0.29.1.dev0+g98dff2a81.d20260911.rocm101 on gfx942. These settings do not establish model accuracy or calibrated performance thresholds.",
   "accuracy": {
-    "tasks": [
-      {
-        "id": "gsm8k_flex",
-        "task": "gsm8k",
-        "num_fewshot": 5,
-        "num_concurrent": 4
-      },
-      {
-        "id": "gsm8k_strict",
-        "task": "gsm8k",
-        "num_fewshot": 5,
-        "num_concurrent": 4,
-        "metadata": {
-          "filter": "strict-match"
+    "lm_eval": {
+      "tasks": [
+        {
+          "id": "gsm8k_flex",
+          "task": "gsm8k",
+          "num_fewshot": 5,
+          "num_concurrent": 4
+        },
+        {
+          "id": "gsm8k_strict",
+          "task": "gsm8k",
+          "num_fewshot": 5,
+          "num_concurrent": 4,
+          "metadata": {
+            "filter": "strict-match"
+          }
+        },
+        {
+          "id": "gsm8k_stderr",
+          "task": "gsm8k",
+          "num_fewshot": 5,
+          "num_concurrent": 4,
+          "metadata": {
+            "filter": "flexible-extract"
+          }
         }
-      },
-      {
-        "id": "gsm8k_stderr",
-        "task": "gsm8k",
-        "num_fewshot": 5,
-        "num_concurrent": 4,
-        "metadata": {
-          "filter": "flexible-extract"
-        }
-      }
-    ]
+      ]
+    }
+  },
+  "vllm": {
+    "distributed_executor_backend": "mp"
   }
 }
