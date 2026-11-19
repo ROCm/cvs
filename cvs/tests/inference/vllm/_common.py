@@ -10,6 +10,7 @@ import pytest
 from cvs.lib import globals
 from cvs.lib.conf_lib.loader import load_config
 from cvs.lib.conf_lib.schemas.vllm import VariantConfig
+from cvs.parsers.schemas import OLD_KEYS_QUIET
 from cvs.lib.inference.utils.vllm_metrics import (
     METRIC_REGISTRY,
     VLLM_RESULTS_COLUMNS,
@@ -44,7 +45,7 @@ def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file:
         return
-    variant = load_config(VariantConfig, config_file, {}).config
+    variant = load_config(VariantConfig, config_file, {}, context={"old_keys": OLD_KEYS_QUIET}).config
     runs = variant.resolved_runs()
     ids = [run.cell.key for run in runs]
     if "accuracy_task" in metafunc.fixturenames:

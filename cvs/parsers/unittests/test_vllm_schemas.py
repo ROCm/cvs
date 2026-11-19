@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from cvs.lib.conf_lib.loader import ConfigError, load_config
 from cvs.parsers.schemas import (
+    OLD_KEYS_QUIET,
     ContainerEnvTokenError,
     RunCell,
     VllmConfig,
@@ -586,6 +587,16 @@ class TestThresholdFile(unittest.TestCase):
         (self.tmp / "threshold.json").write_text(json.dumps({CELL: {}}))
         with self.assertNoLogs("cvs.parsers.schemas", level="WARNING"):
             load_config(VllmConfig, self._write(_config()), {"username": "test"})
+
+    def test_a_quiet_load_converts_an_old_config_without_warning(self):
+        (self.tmp / "threshold.json").write_text(json.dumps({CELL: {}}))
+        with warnings.catch_warnings(record=True) as caught, self.assertNoLogs("cvs.parsers.schemas"):
+            warnings.simplefilter("always")
+            variant = load_config(
+                VllmConfig, self._write(_old_config()), {}, context={"old_keys": OLD_KEYS_QUIET}
+            ).config
+        self.assertEqual(variant.server_params.tp, 8)
+        self.assertEqual([w for w in caught if issubclass(w.category, FutureWarning)], [])
 
     def test_an_old_threshold_file_loads_through_the_old_keys(self):
         (self.tmp / "threshold.json").write_text(

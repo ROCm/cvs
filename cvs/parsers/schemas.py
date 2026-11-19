@@ -2418,6 +2418,9 @@ _VLLM_OLD_TIMEOUTS = {
         ("benchmark_params", "client_poll_wait_s", 60),
     ),
 }
+# Validation context value under "old_keys" for a load that converts an old
+# config without warning, such as pytest collection; the load a run uses warns.
+OLD_KEYS_QUIET = "quiet"
 _VLLM_OLD_BENCHMARK_DEFAULT_PROMPTS = 3200
 _VLLM_OLD_CELL_TIMEOUT_KEYS = ("client_initial_wait_s", "client_poll_iterations", "client_poll_wait_s")
 _VLLM_NEW_SERVER_FIELDS = frozenset(InferenceServerParams.model_fields)
@@ -2648,7 +2651,8 @@ class VllmConfig(InferenceConfig):
         if isinstance(data, dict) and isinstance(data.get("thresholds"), dict):
             _reject_underscore_metric_keys(data["thresholds"])
         data, message = resolve_old_vllm_keys(data)
-        warn_old_keys(message)
+        if (info.context or {}).get("old_keys") != OLD_KEYS_QUIET:
+            warn_old_keys(message)
         return data
 
     @model_validator(mode="after")

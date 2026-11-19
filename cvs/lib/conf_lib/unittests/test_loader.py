@@ -12,6 +12,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from pydantic import model_validator
+
 from cvs.core.run_layout import RunLayout
 from cvs.lib.conf_lib.config_blocks import Paths, _Forbid
 from cvs.lib.conf_lib.loader import ConfigError, load_config
@@ -70,6 +72,20 @@ class TestLoadConfig(unittest.TestCase):
         self.assertEqual(from_path.cluster, from_dict.cluster)
         self.assertNotIn("{user-id}", from_path.cluster["priv_key_file"])
         self.assertEqual(from_path.container, from_dict.container)
+
+    def test_extra_context_reaches_the_schema_without_replacing_the_loader_keys(self):
+        seen = {}
+
+        class _Recording(_PathsOnlyConfig):
+            @model_validator(mode="before")
+            @classmethod
+            def _record(cls, data, info):
+                seen.update(info.context)
+                return data
+
+        config_path = self._write_config({"paths": _base_config_dict()["paths"]})
+        load_config(_Recording, config_path, {}, context={"old_keys": "quiet", "placeholders": "allow"})
+        self.assertEqual(seen, {"old_keys": "quiet", "placeholders": "reject", "config_path": config_path})
 
     def test_threshold_file_is_left_to_the_schema(self):
         loaded = load_config(BaseVariantConfig, self._write_config(_base_config_dict()), {})

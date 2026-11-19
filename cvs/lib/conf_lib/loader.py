@@ -46,7 +46,7 @@ def _deep_merge(base, override):
     return out
 
 
-def load_config(model_cls, config_path, cluster):
+def load_config(model_cls, config_path, cluster, context=None):
     """Load and validate a suite config against its cluster.
 
     `cluster` is a cluster file path or an already-parsed cluster dict. A
@@ -55,7 +55,8 @@ def load_config(model_cls, config_path, cluster):
     The config gets the placeholders `resolve_test_config_placeholders` expands,
     such as `{home}` and `{run_dir}`, plus `{shared_fs}` and `{paths.*}`.
     Validation gets ``config_path`` in its context, so a schema can read files
-    named relative to the config, such as its threshold file.
+    named relative to the config, such as its threshold file; ``context`` adds
+    more keys for the schema.
 
     Returns `LoadedConfig(config, cluster, container)`. `container` is the
     cluster file's container block with the config's `container.model_dump()`
@@ -70,7 +71,9 @@ def load_config(model_cls, config_path, cluster):
     cluster = resolve_cluster_config_placeholders(cluster)
     raw = substitute_placeholders(config_path, cluster, all_placeholders=True)
     try:
-        config = model_cls.model_validate(raw, context={"placeholders": "reject", "config_path": Path(config_path)})
+        config = model_cls.model_validate(
+            raw, context={**(context or {}), "placeholders": "reject", "config_path": Path(config_path)}
+        )
     except ValidationError as exc:
         raise ConfigError(config_path, validation_problem_lines(exc)) from None
     spec = getattr(config, "container", None)

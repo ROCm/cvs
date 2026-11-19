@@ -1,7 +1,9 @@
 '''Unit tests for shared vLLM metric verification stages.'''
 
 import json
+import tempfile
 import unittest
+import warnings
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest import mock
@@ -150,6 +152,30 @@ class TestInferenceCellMetrics(unittest.TestCase):
         )
         keys = [key for key, _value in node.user_properties]
         self.assertEqual(keys.count(_common.VLLM_JUNIT_PROPERTY), 1)
+
+
+class TestCollection(unittest.TestCase):
+    def test_collection_parametrizes_an_old_config_without_warning(self):
+        cell = "ISL=8,OSL=8,TP=1,PP=1,CONC=1"
+        old = {
+            "paths": {"shared_fs": "/s", "models_dir": "/m", "log_dir": "/l", "hf_token_file": "/t"},
+            "container": {"name": "c", "image": "i", "runtime": {"name": "docker"}},
+            "server_params": {"model": "m", "tensor_parallel_size": 1},
+            "benchmark_params": {"num_prompts": 1},
+            "sweeps": {cell: {}},
+            "runs": [cell],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = f"{tmp}/config.json"
+            with open(path, "w") as handle:
+                json.dump(old, handle)
+            metafunc = mock.Mock(fixturenames=["run"])
+            metafunc.config.getoption.return_value = path
+            with warnings.catch_warnings(record=True) as caught, self.assertNoLogs("cvs.parsers.schemas"):
+                warnings.simplefilter("always")
+                _common.pytest_generate_tests(metafunc)
+        self.assertEqual([w for w in caught if issubclass(w.category, FutureWarning)], [])
+        self.assertEqual(metafunc.parametrize.call_args.kwargs["ids"], [cell])
 
 
 if __name__ == '__main__':
