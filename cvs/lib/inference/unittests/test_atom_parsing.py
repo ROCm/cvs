@@ -71,9 +71,9 @@ class TestATOMAtomParsing(unittest.TestCase):
         specs = tier_metric_specs(cell, "scaling")
         self.assertEqual(specs, {"scaling.efficiency_pct": {"kind": "min", "value": 50}})
 
-    def test_evaluate_specs_for_actuals_maps_client_namespace(self):
-        specs = {"output_throughput": {"kind": "min_tok_s", "value": 1}}
-        actuals = {"client.output_throughput": 100.0, "client.mean_ttft_ms": 5.0}
+    def test_evaluate_specs_for_actuals_matches_shared_metric_names(self):
+        specs = {"output_throughput": {"kind": "min", "value": 1}}
+        actuals = {"output_throughput": 100.0, "mean_ttft_ms": 5.0}
         eval_actuals, eval_specs = evaluate_specs_for_actuals(specs, actuals, metric_tier="throughput")
         self.assertEqual(eval_actuals, {"output_throughput": 100.0})
         self.assertEqual(eval_specs, specs)

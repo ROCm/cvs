@@ -21,11 +21,11 @@
     "run_card_display": "cvs.lib.report.profiles.hooks.atom_run_card:atom_run_card_display"
   },
   "sweep": {
-    "metric_prefix": "client.",
+    "metric_prefix": "",
     "tier_order": ["throughput", "ttft", "tpot", "health", "record"],
-    "throughput_metric": "client.output_throughput",
-    "ttft_metric": "client.mean_ttft_ms",
-    "headline_metric": "client.output_throughput",
+    "throughput_metric": "output_throughput",
+    "ttft_metric": "mean_ttft_ms",
+    "headline_metric": "output_throughput",
     "results_table_columns": [
       ["Model", null],
       ["GPU", null],
@@ -34,11 +34,11 @@
       ["Policy", null],
       ["Conc", null],
       ["Host", null],
-      ["Output tok/s", "client.output_throughput"],
-      ["Total tok/s", "client.total_token_throughput"],
-      ["Mean TTFT (ms)", "client.mean_ttft_ms"],
-      ["Mean TPOT (ms)", "client.mean_tpot_ms"],
-      ["P99 ITL (ms)", "client.p99_itl_ms"],
+      ["Output tok/s", "output_throughput"],
+      ["Total tok/s", "total_token_throughput"],
+      ["Mean TTFT (ms)", "mean_ttft_ms"],
+      ["Mean TPOT (ms)", "mean_tpot_ms"],
+      ["P99 ITL (ms)", "p99_itl_ms"],
       ["Scaling eff. (%)", "scaling.efficiency_pct"]
     ],
     "cell_highlights": [
@@ -88,9 +88,9 @@
   "viewer": {
     "interactivity": {
       "enabled": true,
-      "tpot_metric": "client.mean_tpot_ms",
-      "output_throughput_metric": "client.output_throughput",
-      "total_throughput_metric": "client.total_token_throughput"
+      "tpot_metric": "mean_tpot_ms",
+      "output_throughput_metric": "output_throughput",
+      "total_throughput_metric": "total_token_throughput"
     }
   },
   "cards": [

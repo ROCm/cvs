@@ -372,7 +372,7 @@ def test_cell_metrics(
         full = f"scaling.{display}"
         unit = SCALING_METRIC_UNITS.get(display, "%")
     else:
-        full = f"client.{display}"
+        full = display
         unit = _METRIC_UNITS.get(display, metric_tier)
     value = actuals.get(full)
     request.node.user_properties.append(("metric_value", value))

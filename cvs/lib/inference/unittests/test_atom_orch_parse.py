@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Unit tests for AtomJob.parse_results (stock ``results`` artifact -> client.*).
+Unit tests for AtomJob.parse_results (stock ``results`` artifact -> shared metric names).
 No hardware: a fake orch returns committed fixture text.
 '''
 
@@ -87,11 +87,12 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         out = job.parse_results()
         metrics = out["node0"]
         w = raw
-        self.assertIn("client.output_throughput", metrics)
-        self.assertIn("client.mean_ttft_ms", metrics)
-        self.assertAlmostEqual(metrics["client.per_gpu_throughput"], w["total_token_throughput"] / _TP)
-        self.assertAlmostEqual(metrics["client.output_tput_per_gpu"], w["output_throughput"] / _TP)
-        self.assertEqual(metrics["client.p99_ttft_ms"], w["p99_ttft_ms"])
+        self.assertIn("output_throughput", metrics)
+        self.assertIn("mean_ttft_ms", metrics)
+        self.assertAlmostEqual(metrics["per_gpu_throughput"], w["total_token_throughput"] / _TP)
+        self.assertAlmostEqual(metrics["output_tput_per_gpu"], w["output_throughput"] / _TP)
+        self.assertEqual(metrics["p99_ttft_ms"], w["p99_ttft_ms"])
+        self.assertFalse([key for key in metrics if key.startswith("client.")])
 
     def test_parse_results_w1_tail_metrics_from_widened_fixture(self):
         raw = json.loads((_FIXTURES / "vllm_results_widened.json").read_text())
@@ -105,8 +106,8 @@ class TestATOMAtomOrchParse(unittest.TestCase):
             num_prompts=100,
         )
         metrics = job.parse_results()["node0"]
-        self.assertEqual(metrics["client.p95_tpot_ms"], raw["p95_tpot_ms"])
-        self.assertEqual(metrics["client.p99_ttft_ms"], raw["p99_ttft_ms"])
+        self.assertEqual(metrics["p95_tpot_ms"], raw["p95_tpot_ms"])
+        self.assertEqual(metrics["p99_ttft_ms"], raw["p99_ttft_ms"])
 
     def test_parse_results_atom_json_suffix(self):
         raw = json.loads((_FIXTURES / "vllm_results_sample.json").read_text())
@@ -121,7 +122,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         self.assertTrue(job._result_artifact.endswith("/results.json"))
         out = job.parse_results()
-        self.assertIn("client.output_throughput", out["node0"])
+        self.assertIn("output_throughput", out["node0"])
 
     def test_run_client_clears_stale_result_artifact(self):
         orch = FakeOrch()
@@ -808,8 +809,8 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         self.assertTrue(job._result_artifact.endswith("/results.jsonl"))
         metrics = job.parse_results()["head"]
-        self.assertIn("client.output_throughput", metrics)
-        self.assertAlmostEqual(metrics["client.total_token_throughput"], 3000.0)
+        self.assertIn("output_throughput", metrics)
+        self.assertAlmostEqual(metrics["total_token_throughput"], 3000.0)
 
     def test_distributed_vllm_atom_pp2_passes_vllm_executor_flags(self):
         orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])

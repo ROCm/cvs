@@ -80,8 +80,10 @@ ATOM_REPORT_CONFIG = make_inference_report_config(
     metric_tier_order=METRIC_TIER_ORDER,
     tier_metric_specs=tier_metric_specs,
     metric_units={**CLIENT_METRIC_UNITS, **SCALING_METRIC_UNITS},
-    metric_prefix="client.",
-    threshold_metric_prefix="",
+    metric_prefix="",
+    sweep_throughput_metric="output_throughput",
+    sweep_ttft_metric="mean_ttft_ms",
+    headline_metric="output_throughput",
     cell_highlights=(
         ("output_throughput", "Output tok/s"),
         ("mean_ttft_ms", "Mean TTFT (ms)"),

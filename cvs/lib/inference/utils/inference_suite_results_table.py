@@ -10,7 +10,7 @@ that uses the same column preset and ``inf_res_dict`` keys.
 Bind a column preset with ``make_print_results_table(columns)`` and export the
 returned callable as ``test_print_results_table`` from the suite module (see
 ``cvs/tests/inference/atom/_shared.py``). Other suites can supply
-their own ``(header_label, client.*_key)`` tuples without duplicating the
+their own ``(header_label, metric_key)`` tuples without duplicating the
 tabulate loop.
 '''
 
@@ -20,7 +20,7 @@ from cvs.lib import globals
 
 log = globals.log
 
-# Column tuple: ``(header label, client.* metric key or None for fixed key fields)``.
+# Column tuple: ``(header label, metric key or None for fixed key fields)``.
 # First seven columns are always Model, GPU, ISL, OSL, Policy, Conc, Host.
 
 ATOM_RESULTS_COLUMNS = (
@@ -31,11 +31,11 @@ ATOM_RESULTS_COLUMNS = (
     ("Policy", None),
     ("Conc", None),
     ("Host", None),
-    ("Output tok/s", "client.output_throughput"),
-    ("Total tok/s", "client.total_token_throughput"),
-    ("Mean TTFT (ms)", "client.mean_ttft_ms"),
-    ("Mean TPOT (ms)", "client.mean_tpot_ms"),
-    ("P99 ITL (ms)", "client.p99_itl_ms"),
+    ("Output tok/s", "output_throughput"),
+    ("Total tok/s", "total_token_throughput"),
+    ("Mean TTFT (ms)", "mean_ttft_ms"),
+    ("Mean TPOT (ms)", "mean_tpot_ms"),
+    ("P99 ITL (ms)", "p99_itl_ms"),
     ("Scaling eff. (%)", "scaling.efficiency_pct"),
 )
 
@@ -72,10 +72,10 @@ def log_sweep_knee_summary(inf_res_dict):
     for key, host_dict in inf_res_dict.items():
         model, gpu, isl, osl, policy, conc = key
         for _host, metrics in host_dict.items():
-            tput = metrics.get("client.output_throughput")
+            tput = metrics.get("output_throughput")
             if tput is None:
                 continue
-            groups[(model, gpu, isl, osl, policy)].append((int(conc), tput, metrics.get("client.mean_ttft_ms")))
+            groups[(model, gpu, isl, osl, policy)].append((int(conc), tput, metrics.get("mean_ttft_ms")))
     for group_key, points in sorted(groups.items()):
         best_conc, best_tput, ttft = max(points, key=lambda p: p[1])
         log.info(

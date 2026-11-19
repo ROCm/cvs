@@ -106,9 +106,9 @@ def sglang_bench_jsonl_to_raw(text):
 
 
 def to_client_metrics(raw, *, tp, isl, scaling_baseline_output_throughput=None, nnodes=1):
-    """Map an ATOM ``results.json`` dict to the ``client.*`` namespace."""
-    m = _vllm_to_client_metrics(raw, tp=tp, isl=isl)
-    m["client.output_tput_per_gpu"] = _safe_div(raw.get("output_throughput"), tp)
+    """Map an ATOM ``results.json`` dict to the shared inference metric names."""
+    m = {key.removeprefix("client."): value for key, value in _vllm_to_client_metrics(raw, tp=tp, isl=isl).items()}
+    m["output_tput_per_gpu"] = _safe_div(raw.get("output_throughput"), tp)
     if scaling_baseline_output_throughput is not None:
         eff = scaling_efficiency_pct(
             raw.get("output_throughput"),
@@ -121,10 +121,10 @@ def to_client_metrics(raw, *, tp, isl, scaling_baseline_output_throughput=None, 
 
 
 def actual_metric_key(tier: str, short: str) -> str:
-    """Map a threshold short name to the ``actuals`` dict key (still ``client.*`` for bench metrics)."""
+    """Map a threshold short name to the ``actuals`` dict key."""
     if tier == "scaling" or short.startswith("scaling."):
         return short if short.startswith("scaling.") else f"scaling.{short}"
-    return f"client.{short}"
+    return short
 
 
 def tier_metric_specs(thresholds_cell: dict, tier: str) -> dict[str, dict]:
@@ -155,7 +155,7 @@ def evaluate_specs_for_actuals(
     *,
     metric_tier: str,
 ) -> tuple[dict[str, object], dict[str, dict]]:
-    """Align bare threshold spec keys with ``client.*`` / ``scaling.*`` actuals for ``evaluate_all``."""
+    """Align threshold spec keys with the bench and ``scaling.*`` actuals for ``evaluate_all``."""
     eval_actuals: dict[str, object] = {}
     eval_specs: dict[str, dict] = {}
     for key, spec in specs.items():
