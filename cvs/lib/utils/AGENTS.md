@@ -257,10 +257,11 @@ Contract for new suite authors:
 `_check_remote_not_implemented` always fires first — do not add a base validator that
 assumes a valid config before this check passes.
 
-**`load_variant`:** call `load_config(YourVariantConfig, config_path, cluster)` — never
-reimplement file-read, substitution, placeholder checks or the container merge. Older
-loaders still call `substitute_config`, attach `thresholds`, and build
-`YourVariantConfig(**raw)`; they do not reject `<changeme>`.
+**`load_variant`:** read and substitute with `substitute_placeholders` or `substitute_config`,
+attach `thresholds`, then build `YourVariantConfig`. A model on `InferenceVariantConfig`
+(`cvs/parsers/schemas.py`) rejects a leftover `<changeme>` itself; `BaseVariantConfig`
+models do not, so their loaders call `resolve_test_config_placeholders` when they need that
+check.
 
 ---
 
