@@ -3017,11 +3017,10 @@ def _sglang_engine_arg_rows(config):
 
 
 def _sglang_client_timeout_rows(config):
-    """The client poll keys as ``timeouts.client_s``, when that carries them exactly.
+    """The client poll keys as ``timeouts.client_s``: main's effective client wait.
 
-    ``client_s`` gives the poll count and keeps main's 3600 s total, so only
-    the default total with at most 40 polls carries over; any other pair is
-    refused rather than reshaped, so a long wait is never shortened.
+    SGLang waits 60 s, then polls every 90 s until the poll count or the total
+    runs out, so the wait is ``60 + min(polls × 90, total)``.
     """
     server = config.get("server_params")
     names = ("inference_poll_iterations", "inference_poll_total_timeout_sec")
@@ -3030,18 +3029,10 @@ def _sglang_client_timeout_rows(config):
         return {}
     polls = _sglang_whole_number(f"server_params.{names[0]}", server.get(names[0], _SGLANG_POLL_ITERATIONS))
     cap = _sglang_whole_number(f"server_params.{names[1]}", server.get(names[1], SGLANG_POLL_TOTAL_S))
-    unmapped = {}
-    if cap != SGLANG_POLL_TOTAL_S:
-        unmapped[f"server_params.{names[1]}"] = OLD_KEY_UNMAPPED
-    if not 0 < polls * SGLANG_POLL_PERIOD_S <= SGLANG_POLL_TOTAL_S:
-        unmapped[f"server_params.{names[0]}"] = OLD_KEY_UNMAPPED
-    if unmapped:
-        return unmapped
-    rows = {
-        f"server_params.{present[0]}": OldKey(
-            "timeouts.client_s", value=SGLANG_FIRST_POLL_WAIT_S + polls * SGLANG_POLL_PERIOD_S
-        )
-    }
+    if polls < 1 or cap < 1:
+        return {f"server_params.{name}": OLD_KEY_UNMAPPED for name in present}
+    client_s = SGLANG_FIRST_POLL_WAIT_S + min(polls * SGLANG_POLL_PERIOD_S, cap)
+    rows = {f"server_params.{present[0]}": OldKey("timeouts.client_s", value=client_s)}
     rows.update({f"server_params.{name}": OLD_KEY_DROPPED for name in present[1:]})
     return rows
 

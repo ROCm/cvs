@@ -111,11 +111,12 @@ class TestResolveOldSglangKeys(unittest.TestCase):
         converted, _ = resolve_old_sglang_keys(_old_config({"serve_port": "8010", "dist_init_port": "40005"}))
         self.assertEqual((converted["server_params"]["port"], converted["server_params"]["master_port"]), (8010, 40005))
 
-    def test_poll_keys_that_client_s_carries_exactly_convert(self):
+    def test_poll_keys_become_main_effective_client_wait(self):
         cases = [
             ({"inference_poll_iterations": "16"}, 1500),
-            ({"inference_poll_iterations": "40", "inference_poll_total_timeout_sec": "3600"}, 3660),
-            ({"inference_poll_total_timeout_sec": 3600}, 1500),
+            ({"inference_poll_iterations": "40", "inference_poll_total_timeout_sec": "7200"}, 3660),
+            ({"inference_poll_iterations": "40"}, 3660),
+            ({"inference_poll_total_timeout_sec": "1000"}, 1060),
         ]
         for server, client_s in cases:
             with self.subTest(server=server):
@@ -123,19 +124,9 @@ class TestResolveOldSglangKeys(unittest.TestCase):
                 self.assertEqual(converted["timeouts"], {"client_s": client_s})
                 self.assertIn("-> timeouts.client_s", message)
 
-    def test_poll_keys_client_s_cannot_carry_are_refused_by_name(self):
-        cases = [
-            (
-                {"inference_poll_iterations": "40", "inference_poll_total_timeout_sec": "7200"},
-                "inference_poll_total_timeout_sec",
-            ),
-            ({"inference_poll_total_timeout_sec": "1000"}, "inference_poll_total_timeout_sec"),
-            ({"inference_poll_iterations": "41"}, "inference_poll_iterations"),
-            ({"inference_poll_iterations": "0"}, "inference_poll_iterations"),
-        ]
-        for server, name in cases:
-            with self.subTest(server=server), self.assertRaisesRegex(ValueError, rf"server_params\.{name}"):
-                resolve_old_sglang_keys(_old_config(server))
+    def test_a_poll_pair_with_no_wait_is_refused_by_name(self):
+        with self.assertRaisesRegex(ValueError, r"server_params\.inference_poll_iterations"):
+            resolve_old_sglang_keys(_old_config({"inference_poll_iterations": "0"}))
 
     def test_dead_keys_drop_and_a_non_default_backend_is_refused(self):
         converted, message = resolve_old_sglang_keys(
