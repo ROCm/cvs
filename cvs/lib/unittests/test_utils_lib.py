@@ -245,7 +245,7 @@ class TestUnresolvedPlaceholderError(unittest.TestCase):
         fmt, *args = mock_log.error.call_args.args
         return fmt % tuple(args)
 
-    def test_test_config_error_names_the_field_not_the_value(self):
+    def test_unresolved_placeholder_message_omits_value(self):
         message = self._logged_error(lambda: utils_lib.resolve_test_config_placeholders(self.RAW, {"username": "jdoe"}))
         self.assertIn("auth.token", message)
         self.assertNotIn("hf_FAKE123", message)
