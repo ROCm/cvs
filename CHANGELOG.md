@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ibperf: when a node pair is excluded, the remaining pairs no longer wait out the perftest timeouts or report extra failures for the excluded nodes. A node that runs a bandwidth test but returns no output now fails with `Client did not complete` instead of passing without a result.
 - The health sample config's TransferBench schmoo `32_cu_local_copy` threshold is lowered so healthy MI300X nodes pass; configs copied from the old sample still fail and must lower `32_cu_local_copy`.
 - rocm-smi JSON reads, including the GPU PCIe bus map used by ibperf and the host config checks, no longer fail when ROCm 10.1 or later prints its deprecation warning with the command output.
+- The ATOM and SGLang Run Decks show a metric whose threshold kind is `info` as passed instead of failed. Training Run Decks are unchanged.
+- When preflight rejects the cluster file, the error names each invalid field and the problem without printing the field's value.
 
 ### Removed
 
