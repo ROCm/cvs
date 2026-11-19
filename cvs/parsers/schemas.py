@@ -1913,13 +1913,139 @@ def validation_problem_lines(exc):
 
 
 # =============================================================================
+# Old Config Keys
+# =============================================================================
+
+OLD_KEY_DROPPED = object()
+OLD_KEY_UNMAPPED = object()
+_OLD_VALUE = object()
+_MISSING = object()
+
+
+class OldKey:
+    """Row of an old-keys table that moves an old key to ``new_path``.
+
+    ``value`` replaces the old value, for a rule that computes the new value
+    from several old keys. ``keep_old`` copies the value and leaves the old key
+    in place. ``conflict`` decides what happens when ``new_path`` already holds
+    a different value: ``"fail"`` raises, ``"replace"`` overwrites it.
+    """
+
+    def __init__(self, new_path, value=_OLD_VALUE, keep_old=False, conflict="fail"):
+        if conflict not in ("fail", "replace"):
+            raise ValueError(f"Unknown old-key conflict rule: {conflict}")
+        self.new_path = new_path
+        self.value = value
+        self.keep_old = keep_old
+        self.conflict = conflict
+
+
+def _get_config_path(config, path):
+    node = config
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return _MISSING
+        node = node[part]
+    return node
+
+
+def _expand_old_key_rows(config, table):
+    rows = {}
+    for old_paths, row in table.items():
+        if callable(row):
+            paths = old_paths if isinstance(old_paths, tuple) else (old_paths,)
+            if any(_get_config_path(config, path) is not _MISSING for path in paths):
+                rows.update(row(config))
+        elif isinstance(old_paths, tuple):
+            raise ValueError(f"Old-key table row {old_paths} names several paths but is not a rule")
+        else:
+            rows[old_paths] = row
+    return {
+        path: OldKey(row) if isinstance(row, str) else row
+        for path, row in rows.items()
+        if _get_config_path(config, path) is not _MISSING
+    }
+
+
+def _write_old_key_value(converted, old_path, row, value, label, prefix):
+    parts = row.new_path.split(".")
+    node = converted
+    for depth, part in enumerate(parts[:-1], start=1):
+        node = node.setdefault(part, {})
+        if not isinstance(node, dict):
+            raise ValueError(f"{prefix}{'.'.join(parts[:depth])} must be an object to hold {prefix}{row.new_path}")
+    key = parts[-1]
+    if key in node and row.conflict == "fail":
+        if node[key] != value:
+            raise ValueError(
+                f"Conflicting {label} options: {prefix}{old_path} and {prefix}{row.new_path} "
+                "must have the same value when both are provided"
+            )
+        return
+    node[key] = value
+
+
+def resolve_old_keys(
+    config,
+    table,
+    message="Deprecated config keys: {keys}. Use the new names; old keys will be removed in a future release.",
+    label="config",
+    prefix="",
+):
+    """Map old config keys to their new paths, or drop them.
+
+    ``table`` maps an old dotted path to a row: a new dotted path, an
+    ``OldKey``, ``OLD_KEY_DROPPED``, ``OLD_KEY_UNMAPPED`` for a key that has
+    no place in the new format, or a rule. A rule is a function that reads the
+    input config and returns rows of the other kinds for any old paths, so it
+    can decide from a value or compute one value from several keys. A rule's
+    table key may be a tuple of old paths; it runs when any of them is present.
+    Rows for paths the input does not hold are ignored.
+
+    Returns a converted deep copy and one warning message naming each old key,
+    built from ``message`` with ``{keys}``, or the input and ``None`` when no
+    old key is present. An unmapped key raises ``ValueError`` naming its path,
+    never its value. ``prefix`` is prepended to every path in messages.
+    """
+    if not isinstance(config, dict):
+        return config, None
+    rows = _expand_old_key_rows(config, table)
+    unmapped = [prefix + path for path, row in rows.items() if row is OLD_KEY_UNMAPPED]
+    if unmapped:
+        raise ValueError(
+            f"Unsupported {label} options: {', '.join(unmapped)}; "
+            "they have no place in the new format, so move or delete them"
+        )
+    if not rows:
+        return config, None
+
+    converted = deepcopy(config)
+    changes = []
+    for old_path, row in rows.items():
+        parent_path, _, key = old_path.rpartition(".")
+        parent = _get_config_path(converted, parent_path) if parent_path else converted
+        if row is OLD_KEY_DROPPED:
+            del parent[key]
+            changes.append(f"{prefix}{old_path} (dropped)")
+            continue
+        value = parent[key] if row.value is _OLD_VALUE else row.value
+        if row.keep_old:
+            value = deepcopy(value)
+        else:
+            del parent[key]
+        _write_old_key_value(converted, old_path, row, value, label, prefix)
+        changes.append(f"{prefix}{old_path} -> {prefix}{row.new_path}")
+    return converted, message.format(keys=", ".join(changes))
+
+
+# =============================================================================
 # Preflight Check Configuration Schema
 # =============================================================================
 
 
 LEGACY_PREFLIGHT_RDMA_PATHS = {
-    "gid_index": "gid_index",
-    "rdma_interfaces": "interfaces",
+    "node_check.gid_index": "connectivity_check.rdma.gid_index",
+    "node_check.rdma_interfaces": "connectivity_check.rdma.interfaces",
 }
 
 PREFLIGHT_METADATA_PREFIXES = ("_comment", "_example")
@@ -1954,60 +2080,47 @@ def normalize_legacy_preflight_rdma_config(value):
     Conflicting legacy and canonical values fail rather than silently choosing
     which RDMA inventory should be tested.
     """
-    if not isinstance(value, dict):
-        return value, None
-
-    node_check = value.get("node_check")
-    if not isinstance(node_check, dict):
-        return value, None
-
-    legacy_keys = [key for key in LEGACY_PREFLIGHT_RDMA_PATHS if key in node_check]
-    if not legacy_keys:
-        return value, None
-
-    normalized = deepcopy(value)
-    normalized_node_check = normalized["node_check"]
-    connectivity_check = normalized.setdefault("connectivity_check", {})
-    if not isinstance(connectivity_check, dict):
-        raise ValueError(
-            "preflight.connectivity_check must be an object when deprecated node_check RDMA options are used"
-        )
-    rdma = connectivity_check.setdefault("rdma", {})
-    if not isinstance(rdma, dict):
-        raise ValueError(
-            "preflight.connectivity_check.rdma must be an object when deprecated node_check RDMA options are used"
-        )
-
-    migrations = []
-    for legacy_key in legacy_keys:
-        canonical_key = LEGACY_PREFLIGHT_RDMA_PATHS[legacy_key]
-        legacy_value = normalized_node_check.pop(legacy_key)
-        if canonical_key in rdma and rdma[canonical_key] != legacy_value:
+    if any(_get_config_path(value, path) is not _MISSING for path in LEGACY_PREFLIGHT_RDMA_PATHS):
+        connectivity_check = value.get("connectivity_check", {})
+        if not isinstance(connectivity_check, dict):
             raise ValueError(
-                f"Conflicting preflight RDMA options: preflight.node_check.{legacy_key} and "
-                f"preflight.connectivity_check.rdma.{canonical_key} must have the same value when both are provided"
+                "preflight.connectivity_check must be an object when deprecated node_check RDMA options are used"
             )
-        rdma.setdefault(canonical_key, legacy_value)
-        migrations.append(f"preflight.node_check.{legacy_key} -> preflight.connectivity_check.rdma.{canonical_key}")
-
-    warning_message = (
-        "Deprecated preflight RDMA configuration detected: "
-        + ", ".join(migrations)
-        + ". Use the preflight.connectivity_check.rdma paths; legacy paths will be removed in a future release."
+        if not isinstance(connectivity_check.get("rdma", {}), dict):
+            raise ValueError(
+                "preflight.connectivity_check.rdma must be an object when deprecated node_check RDMA options are used"
+            )
+    return resolve_old_keys(
+        value,
+        LEGACY_PREFLIGHT_RDMA_PATHS,
+        message=(
+            "Deprecated preflight RDMA configuration detected: {keys}. "
+            "Use the preflight.connectivity_check.rdma paths; legacy paths will be removed in a future release."
+        ),
+        label="preflight RDMA",
+        prefix="preflight.",
     )
-    return normalized, warning_message
-
-
-LEGACY_PREFLIGHT_NODE_SMOKE_SECTIONS = {
-    "node_smoke": "node_smoke_tier1",
-    "tier3_info": "node_smoke_tier3",
-}
 
 
 def _preflight_section_has_values(section: dict) -> bool:
     if not isinstance(section, dict):
         return False
     return any(value not in (None, "") for value in section.values())
+
+
+def _legacy_node_smoke_rule(legacy_key, canonical_key):
+    def rule(config):
+        if not isinstance(config[legacy_key], dict) or _preflight_section_has_values(config.get(canonical_key)):
+            return {}
+        return {legacy_key: OldKey(canonical_key, keep_old=True, conflict="replace")}
+
+    return rule
+
+
+LEGACY_PREFLIGHT_NODE_SMOKE_SECTIONS = {
+    "node_smoke": _legacy_node_smoke_rule("node_smoke", "node_smoke_tier1"),
+    "tier3_info": _legacy_node_smoke_rule("tier3_info", "node_smoke_tier3"),
+}
 
 
 def normalize_legacy_preflight_node_smoke_sections(value):
@@ -2017,35 +2130,15 @@ def normalize_legacy_preflight_node_smoke_sections(value):
     or the original value and ``None`` when no legacy keys need migration.
     Canonical sections win when both legacy and canonical blocks are populated.
     """
-    if not isinstance(value, dict):
-        return value, None
-
-    legacy_keys = [key for key in LEGACY_PREFLIGHT_NODE_SMOKE_SECTIONS if key in value]
-    if not legacy_keys:
-        return value, None
-
-    normalized = deepcopy(value)
-    migrations = []
-    for legacy_key in legacy_keys:
-        canonical_key = LEGACY_PREFLIGHT_NODE_SMOKE_SECTIONS[legacy_key]
-        legacy_block = normalized.get(legacy_key)
-        if not isinstance(legacy_block, dict):
-            continue
-        canonical_block = normalized.get(canonical_key)
-        if isinstance(canonical_block, dict) and _preflight_section_has_values(canonical_block):
-            continue
-        normalized[canonical_key] = deepcopy(legacy_block)
-        migrations.append(f"preflight.{legacy_key} -> preflight.{canonical_key}")
-
-    if not migrations:
-        return value, None
-
-    warning_message = (
-        "Deprecated preflight Node Smoke section name(s) detected: "
-        + ", ".join(migrations)
-        + ". Prefer node_smoke_tier1 and node_smoke_tier3 in new configs."
+    return resolve_old_keys(
+        value,
+        LEGACY_PREFLIGHT_NODE_SMOKE_SECTIONS,
+        message=(
+            "Deprecated preflight Node Smoke section name(s) detected: {keys}. "
+            "Prefer node_smoke_tier1 and node_smoke_tier3 in new configs."
+        ),
+        prefix="preflight.",
     )
-    return normalized, warning_message
 
 
 class PreflightParallelismConfig(BaseModel):
