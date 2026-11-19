@@ -2074,7 +2074,7 @@ class OldKey:
 
     ``value`` replaces the old value, for a rule that computes the new value
     from several old keys; such a row is written even when its own old path is
-    absent. ``keep_old`` copies the value and leaves the old key in place.
+    absent, provided the input holds some old key. ``keep_old`` copies the value and leaves the old key in place.
     ``conflict`` decides what happens when ``new_path`` already holds a
     different value: ``"fail"`` raises, ``"replace"`` overwrites it.
     """
@@ -2097,6 +2097,17 @@ def _get_config_path(config, parts):
     return node
 
 
+def _same_old_key_row(first, second):
+    if isinstance(first, OldKey) and isinstance(second, OldKey):
+        return (first.new_path, first.value, first.keep_old, first.conflict) == (
+            second.new_path,
+            second.value,
+            second.keep_old,
+            second.conflict,
+        )
+    return first is second
+
+
 def _expand_old_key_rows(config, table, rules):
     rows = {}
     entries = list(table.items())
@@ -2108,7 +2119,7 @@ def _expand_old_key_rows(config, table, rules):
             row = OldKey(row)
         if not isinstance(row, OldKey) and row is not OLD_KEY_DROPPED and row is not OLD_KEY_UNMAPPED:
             raise ValueError(f"Old-key row for {'.'.join(parts)} is not a path, OldKey or OLD_KEY_* marker")
-        if parts in rows and rows[parts] is not row:
+        if parts in rows and not _same_old_key_row(rows[parts], row):
             raise ValueError(f"Old-key rows disagree for {'.'.join(parts)}")
         rows[parts] = row
     return {
@@ -2150,9 +2161,8 @@ def resolve_old_keys(
     in the new format. A path is a dotted string, or a tuple of keys for a key
     that holds a dot. Each of ``rules`` is a function that reads the input
     config and returns more rows, so it can decide from a value or compute one
-    value from several keys; it returns ``{}`` when it has nothing to do. Rows
-    for paths the input does not hold are ignored, and two different rows for
-    one path fail.
+    value from several keys. Rows for paths the input does not hold are
+    ignored, and two different rows for one path fail.
 
     Every old value is read from the input before any key is moved, so rows
     may overlap or chain. Returns a converted deep copy and one warning message
@@ -2170,7 +2180,7 @@ def resolve_old_keys(
             f"Unsupported {label} options: {', '.join(unmapped)}; "
             "they have no place in the new format, so move or delete them"
         )
-    if not rows:
+    if not any(_get_config_path(config, parts) is not _MISSING for parts in rows):
         return config, None
 
     values = {
@@ -2195,8 +2205,6 @@ def resolve_old_keys(
         _write_old_key_value(converted, old_name, row, values[parts], label, prefix)
         if present:
             changes.append(f"{old_name} -> {prefix}{'.'.join(row.new_path)}")
-    if not changes:
-        return converted, None
     return converted, message.replace("{keys}", ", ".join(changes))
 
 
