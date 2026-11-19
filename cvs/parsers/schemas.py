@@ -1971,14 +1971,15 @@ def _same_old_key_row(first, second):
 def _check_dotted_path(config, path):
     """Fail a dotted string path that misses because a key on its way holds a dot itself."""
     parts = path.split(".")
+    if _get_config_path(config, parts) is not _MISSING:
+        return
     node = config
     for index, part in enumerate(parts):
         if not isinstance(node, dict):
             return
+        if any(".".join(parts[index:end]) in node for end in range(index + 2, len(parts) + 1)):
+            raise ValueError(f"Old-key path {path} matches nothing; write it as a tuple of keys")
         if part not in node:
-            for end in range(index + 2, len(parts) + 1):
-                if ".".join(parts[index:end]) in node:
-                    raise ValueError(f"Old-key path {path} matches nothing; write it as a tuple of keys")
             return
         node = node[part]
 
@@ -2081,10 +2082,10 @@ def resolve_old_keys(
     for parts, row in rows.items():
         if row is OLD_KEY_DROPPED or not row.keep_old:
             parent = _get_config_path(converted, parts[:-1])
-            if isinstance(parent, dict):
-                parent.pop(parts[-1], None)
-            if drop_emptied:
-                _drop_emptied_parents(converted, parts[:-1])
+            if isinstance(parent, dict) and parts[-1] in parent:
+                parent.pop(parts[-1])
+                if drop_emptied:
+                    _drop_emptied_parents(converted, parts[:-1])
 
     changes = []
     for parts, row in rows.items():
@@ -2173,7 +2174,7 @@ def normalize_legacy_preflight_rdma_config(value):
         ),
         label="preflight RDMA",
         prefix="preflight.",
-        # Preflight's converters keep their output as before the helper existed.
+        # Preflight output must match main: an emptied node_check stays, and dotted keys pass through.
         drop_emptied=False,
         check_dotted=False,
     )
