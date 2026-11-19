@@ -575,10 +575,10 @@ class AtomJob:
                     detail = redact_hf_token_text((output or "")[-500:])
                     raise RuntimeError(f"{label} server failed to launch on {h} (rank {rank}): {detail}")
 
-    def _atom_health_ok(self):
+    def _atom_health_ok(self, head_only=False):
         url = f"http://localhost:{self.port_no}/health"
         probe = f"curl -sf {shlex.quote(url)} -o /dev/null && echo OK || echo NO"
-        if self.distributed:
+        if self.distributed and not head_only:
             out = self._exec_all("bash -c " + shlex.quote(probe))
         else:
             out = self._exec_head("bash -c " + shlex.quote(probe))
@@ -614,7 +614,9 @@ class AtomJob:
             )
             if not out or not all(r["exit_code"] == 0 for r in out.values()):
                 return False
-        return True
+        # uvicorn logs "Started server process" before the app starts and the
+        # port listens, so the log line alone can precede a serving server.
+        return self._atom_health_ok(head_only=True)
 
     def _check_coordinator_early_failure(self, emit_tail: bool = False):
         """Tail/grep per-rank server logs on each host for fatal startup errors."""

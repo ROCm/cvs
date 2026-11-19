@@ -1034,14 +1034,19 @@ class _RecordingOrch:
         return {}
 
     def exec_on_head(self, cmd, **kwargs):
+        self.calls.append((cmd, "head"))
+        if self._responder is not None:
+            return self._responder(cmd, None, False)
         return {}
 
 
-def _readiness_responder(exit_code=0, empty=False):
+def _readiness_responder(exit_code=0, empty=False, health="OK"):
     def responder(cmd, hosts, detailed):
         if empty:
             return {}
         host = hosts[0] if hosts else _RecordingOrch.hosts[0]
+        if "/health" in cmd:
+            return {host: health}
         if detailed:
             return {host: {"exit_code": exit_code, "output": "", "stdout": ""}}
         return {host: ""}
@@ -1071,6 +1076,8 @@ class TestATOMAtomIsReady(unittest.TestCase):
         worker_calls = [hosts for _cmd, hosts in orch.calls if hosts == [worker]]
         self.assertEqual(worker_calls, [], "headless worker must not be grepped for Uvicorn startup")
         self.assertTrue(any(hosts == [head] for _cmd, hosts in orch.calls))
+        health_calls = [hosts for cmd, hosts in orch.calls if "/health" in cmd]
+        self.assertEqual(health_calls, ["head"], "only the head serves /health")
 
     def test_multinode_vllm_atom_false_when_head_not_ready(self):
         head = _RecordingOrch.hosts[0]
@@ -1090,6 +1097,37 @@ class TestATOMAtomIsReady(unittest.TestCase):
             num_prompts=128,
         )
         self.assertFalse(job.is_ready())
+
+    def _single_node_job(self, driver, responder):
+        orch = _RecordingOrch(responder=responder, hosts=["10.0.0.1"])
+        job = AtomJob(
+            orch=orch,
+            variant=_fake_variant(driver=driver),
+            hf_token=FAKE_CRED,
+            isl="512",
+            osl="512",
+            concurrency=16,
+            num_prompts=128,
+        )
+        return job, orch
+
+    def test_readiness_log_line_without_health_is_not_ready(self):
+        for driver in ("vllm_atom", "vllm", "sglang"):
+            with self.subTest(driver=driver):
+                job, _ = self._single_node_job(driver, _readiness_responder(exit_code=0, health="NO"))
+                self.assertFalse(job.is_ready())
+
+    def test_readiness_log_line_and_health_is_ready(self):
+        for driver in ("vllm_atom", "vllm", "sglang"):
+            with self.subTest(driver=driver):
+                job, orch = self._single_node_job(driver, _readiness_responder(exit_code=0, health="OK"))
+                self.assertTrue(job.is_ready())
+                self.assertTrue(any("/health" in cmd for cmd, _hosts in orch.calls))
+
+    def test_health_is_not_probed_before_the_log_line(self):
+        job, orch = self._single_node_job("vllm_atom", _readiness_responder(exit_code=1, health="OK"))
+        self.assertFalse(job.is_ready())
+        self.assertFalse(any("/health" in cmd for cmd, _hosts in orch.calls))
 
 
 if __name__ == "__main__":
