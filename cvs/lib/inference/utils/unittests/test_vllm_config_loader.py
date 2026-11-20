@@ -165,17 +165,35 @@ class TestVllmConfigModel(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         self.assertIn("atom: not implemented for vLLM", lines[0])
 
+    def test_vllm_not_implemented_metrics(self):
+        for metric in (
+            "output_throughput_per_gpu",
+            "mfu",
+            "spec_acceptance_rate",
+            "mean_spec_acceptance_length",
+            "mtp_quality.chat_template_match",
+            "quant_parity.probe_match",
+            "scaling_efficiency_pct",
+            "pass_rate",
+        ):
+            with self.subTest(metric=metric):
+                lines = problems(new_config(thresholds={CELL: {metric: {"kind": "min", "value": 1}}}))
+                self.assertEqual(len(lines), 1)
+                self.assertIn("not implemented for vLLM", lines[0])
+                self.assertIn(metric, lines[0])
+        accuracy = {"accuracy": {"custom_eval": {"niah": {"pass_rate": {"kind": "min", "value": 0.8}}}}}
+        lines = problems(new_config(thresholds={CELL: {}, **accuracy}))
+        self.assertIn("thresholds accuracy.custom_eval", lines[0])
+
     def test_vllm_not_implemented_all_reported(self):
-        raw = new_config(accuracy={"quant_parity": {"enabled": True}})
+        raw = new_config(
+            accuracy={"quant_parity": {"enabled": True}},
+            thresholds={CELL: {"mfu": {"kind": "min", "value": 1}}},
+        )
         raw["server_params"]["dp"] = 2
-        raw["benchmark_params"]["scaling_baseline_output_throughput"] = 900.0
         lines = problems(raw)
         self.assertEqual(len(lines), 1)
-        for name in (
-            "server_params.dp",
-            "accuracy.quant_parity",
-            "benchmark_params.scaling_baseline_output_throughput",
-        ):
+        for name in ("server_params.dp", "accuracy.quant_parity", "mfu"):
             self.assertIn(name, lines[0])
 
     def test_vllm_defaults_pass(self):
@@ -261,6 +279,20 @@ class TestVerdicts(unittest.TestCase):
         expected = evaluate_metric_verdicts(actuals, old[CELL], enforce_thresholds=True)
         self.assertEqual(verdicts, expected)
         self.assertEqual([(row["metric"], row["status"]) for row in verdicts], [("p99_ttft_ms", "fail")])
+
+    def test_vllm_verdict_same_after_rename(self):
+        old = {CELL: {"queue_time_p50_ms": {"kind": "max", "value": 5}}}
+        actuals = {"node0": {"p50_queue_time_ms": 7.0}}
+        raw = old_config()
+        raw["thresholds"] = old
+        converted, _ = convert(raw)
+        config = validate(converted)
+        verdicts = evaluate_metric_verdicts(actuals, config.thresholds.get(CELL), enforce_thresholds=True)
+        expected = evaluate_metric_verdicts(
+            actuals, {"p50_queue_time_ms": {"kind": "max", "value": 5}}, enforce_thresholds=True
+        )
+        self.assertEqual(verdicts, expected)
+        self.assertEqual([(row["metric"], row["status"]) for row in verdicts], [("p50_queue_time_ms", "fail")])
 
 
 class TestShippedConfigs(unittest.TestCase):
@@ -390,6 +422,27 @@ class TestOldKeys(unittest.TestCase):
         self.assertEqual(
             convert({**new_config(), "thresholds": current}), ({**new_config(), "thresholds": current}, None)
         )
+
+    def test_old_metric_names(self):
+        renames = {
+            "queue_time_p50_ms": "p50_queue_time_ms",
+            "queue_time_p95_ms": "p95_queue_time_ms",
+            "prefill_time_p50_ms": "p50_prefill_time_ms",
+            "prefill_time_p95_ms": "p95_prefill_time_ms",
+            "decode_throughput_p50": "p50_decode_throughput",
+        }
+        for old, new in renames.items():
+            with self.subTest(old=old):
+                spec = {"kind": "min" if "throughput" in old else "max", "value": 3}
+                converted, message = convert({**new_config(), "thresholds": {CELL: {old: spec}}})
+                self.assertEqual(converted["thresholds"][CELL], {new: spec})
+                self.assertIn(f"{old} -> thresholds.{CELL}.{new}", message)
+                self.assertEqual(validate(converted).thresholds.get(CELL), {new: spec})
+        both = {
+            CELL: {"queue_time_p50_ms": {"kind": "max", "value": 3}, "p50_queue_time_ms": {"kind": "max", "value": 3}}
+        }
+        with self.assertRaisesRegex(ValueError, "queue_time_p50_ms and p50_queue_time_ms"):
+            convert({**new_config(), "thresholds": both})
 
     def test_timeout_conversion_same_timing(self):
         converted, _ = convert(old_config())

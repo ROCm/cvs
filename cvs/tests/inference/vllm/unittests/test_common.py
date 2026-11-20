@@ -57,7 +57,7 @@ class TestInferenceCellMetrics(unittest.TestCase):
             'head': {
                 'output_throughput': 99,
                 'mean_ttft_ms': 40,
-                'queue_time_p50_ms': None,
+                'p50_queue_time_ms': None,
             }
         }
         node = SimpleNamespace(
@@ -92,7 +92,7 @@ class TestInferenceCellMetrics(unittest.TestCase):
             {
                 "mean_ttft_ms": 40,
                 "output_throughput": 99,
-                "queue_time_p50_ms": None,
+                "p50_queue_time_ms": None,
             },
         )
 

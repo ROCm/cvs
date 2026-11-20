@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Platform `test_check_be_nic_link_speed` and preflight `test_interface_name_consistency` require an exact backend NIC count per node (`backend_nic_count` in the host config, `connectivity_check.rdma.expected_nic_count` in preflight) instead of comparing nodes with each other. Host-config auto-detect leaves out the management NIC. Configs with `nic_link_interfaces: []` must set `backend_nic_count`; a count that differs from the length of the interface list fails.
+- vLLM results, Run Decks and threshold files name five metrics with the statistic first: `p50_queue_time_ms`, `p95_queue_time_ms`, `p50_prefill_time_ms`, `p95_prefill_time_ms` and `p50_decode_throughput`. Old names in a threshold file still load, with the deprecation warning below.
 - A vLLM config that still holds a `<changeme>` fails at load, naming each field to fill in.
 - A vLLM config that sets something vLLM does not run yet, such as speculative-decoding flags in `server_params.engine_args`, fails at load with a not-implemented error naming each field.
 - vLLM accuracy thresholds take a `min`, `max` or `info` kind: `within` and `min_ratio` fail at load, so rewrite them as a `min` or `max` bound. A quoted accuracy value such as `"0.75"` still loads as a number, with the deprecation warning.
