@@ -1,15 +1,64 @@
 import unittest
 from unittest.mock import patch, MagicMock
 
-from pssh.exceptions import Timeout
+from pssh.exceptions import ConnectionError, Timeout
 
 from cvs.lib.env_lib import build_env_prefix
 from cvs.lib.parallel.http_transport import HttpTransport
-from cvs.lib.parallel.phandle import ParallelHandle  # Test basic ParallelHandle class directly
+from cvs.lib.parallel.phandle import ParallelHandle, _commands_for_reachable_hosts, _order_by_hosts
 from cvs.unittests.support import TMP
 
 FAKE_CRED = "fake-cred"
 DUMMY_ENV = {"HF_TOKEN": FAKE_CRED, "PATH": "/opt/bin:$PATH"}
+
+
+class TestCommandsForReachableHosts(unittest.TestCase):
+    def test_no_pruning_returns_list_unchanged(self):
+        self.assertEqual(
+            _commands_for_reachable_hosts(['ca', 'cb', 'cc'], ['a', 'b', 'c'], ['a', 'b', 'c']), ['ca', 'cb', 'cc']
+        )
+
+    def test_full_length_list_drops_pruned_host_command(self):
+        self.assertEqual(
+            _commands_for_reachable_hosts(['ca', 'cb', 'cc', 'cd'], ['a', 'b', 'c', 'd'], ['a', 'c', 'd']),
+            ['ca', 'cc', 'cd'],
+        )
+
+    def test_reachable_length_list_used_as_is(self):
+        self.assertEqual(
+            _commands_for_reachable_hosts(['x', 'y', 'z'], ['a', 'b', 'c', 'd'], ['a', 'c', 'd']),
+            ['x', 'y', 'z'],
+        )
+
+    def test_all_hosts_pruned_full_length_returns_empty(self):
+        self.assertEqual(_commands_for_reachable_hosts(['ca', 'cb'], ['a', 'b'], []), [])
+
+    def test_mismatched_length_raises(self):
+        with self.assertRaisesRegex(ValueError, 'cmd_list=2, host_list=4, reachable_hosts=3'):
+            _commands_for_reachable_hosts(['ca', 'cb'], ['a', 'b', 'c', 'd'], ['a', 'c', 'd'])
+
+    def test_duplicate_hosts_without_pruning_stay_positional(self):
+        self.assertEqual(_commands_for_reachable_hosts(['x', 'y'], ['a', 'a'], ['a', 'a']), ['x', 'y'])
+
+
+class TestOrderByHosts(unittest.TestCase):
+    def test_orders_results_by_host_list(self):
+        self.assertEqual(list(_order_by_hosts({'c': 3, 'a': 1, 'b': 2}, ['a', 'b', 'c'])), ['a', 'b', 'c'])
+
+    def test_keeps_unknown_key_at_end(self):
+        self.assertEqual(list(_order_by_hosts({'c': 3, 'extra': 4, 'a': 1}, ['a', 'b', 'c'])), ['a', 'c', 'extra'])
+
+    def test_unreachable_hosts_go_last(self):
+        # A pruned first host must not become the representative next(iter(out)) entry.
+        out = {'a': 'ABORT', 'b': 2, 'c': 3}
+        ordered = _order_by_hosts(out, ['a', 'b', 'c'], unreachable_hosts=['a'])
+        self.assertEqual(list(ordered), ['b', 'c', 'a'])
+        self.assertEqual(next(iter(ordered.values())), 2)
+
+    def test_unreachable_hosts_keep_configured_order_among_themselves(self):
+        out = {'d': 4, 'c': 'X', 'a': 'X', 'b': 2}
+        ordered = _order_by_hosts(out, ['a', 'b', 'c', 'd'], unreachable_hosts=['c', 'a'])
+        self.assertEqual(list(ordered), ['b', 'd', 'a', 'c'])
 
 
 class TestParallelHandleExec(unittest.TestCase):
@@ -47,6 +96,27 @@ class TestParallelHandleExec(unittest.TestCase):
         self.assertIn("host2", result)
         self.assertIn("output1 line1", result["host1"])
         self.assertIn("output2 line1", result["host2"])
+
+    def test_exec_result_puts_pruned_host_last(self):
+        handle = ParallelHandle(
+            self.mock_log,
+            ['host1', 'host2', 'host3'],
+            user='user',
+            password=FAKE_CRED,
+            stop_on_errors=False,
+        )
+        handle.log = self.mock_log
+        handle.prune_nodes(['host1'])
+        outputs = []
+        for host in ['host2', 'host3']:
+            item = MagicMock(host=host, stdout=['ok'], stderr=[], exception=None)
+            outputs.append(item)
+        self.mock_client.run_command.return_value = outputs
+
+        result = handle.exec('hostname')
+
+        self.assertEqual(list(result), ['host2', 'host3', 'host1'])
+        self.assertEqual(result['host1'], '\nABORT: Host Unreachable Error')
 
     def _single_host_output(self):
         item = MagicMock()
@@ -690,6 +760,70 @@ class TestParallelHandleExecCmdList(unittest.TestCase):
         self.handle = ParallelHandle(self.mock_log, self.host_list, user="user", password=FAKE_CRED)
         self.handle.log = self.mock_log
 
+    def _four_host_handle(self, env_vars=None):
+        handle = ParallelHandle(
+            self.mock_log,
+            ['host1', 'host2', 'host3', 'host4'],
+            user='user',
+            password=FAKE_CRED,
+            stop_on_errors=False,
+            env_vars=env_vars,
+        )
+        handle.log = self.mock_log
+        return handle
+
+    def _outputs(self, hosts):
+        return [MagicMock(host=host, stdout=['ok'], stderr=[], exception=None) for host in hosts]
+
+    def test_exec_cmd_list_after_prune_matches_commands_by_host(self):
+        handle = self._four_host_handle()
+        handle.prune_nodes(['host2'])
+        self.mock_client.run_command.return_value = self._outputs(['host1', 'host3', 'host4'])
+
+        result = handle.exec_cmd_list(['c1', 'c2', 'c3', 'c4'])
+
+        self.mock_client.run_command.assert_called_with('%s', host_args=['c1', 'c3', 'c4'], stop_on_errors=False)
+        self.assertEqual(result['host2'], '\nABORT: Host Unreachable Error')
+        self.assertEqual(list(result), ['host1', 'host3', 'host4', 'host2'])
+
+    def test_exec_cmd_list_after_prune_accepts_reachable_aligned_list(self):
+        handle = self._four_host_handle()
+        handle.prune_nodes(['host2'])
+        self.mock_client.run_command.return_value = self._outputs(['host1', 'host3', 'host4'])
+
+        handle.exec_cmd_list(['c1', 'c3', 'c4'])
+
+        self.mock_client.run_command.assert_called_with('%s', host_args=['c1', 'c3', 'c4'], stop_on_errors=False)
+
+    def test_exec_cmd_list_rejects_mismatched_length(self):
+        with self.assertRaises(ValueError):
+            self.handle.exec_cmd_list(['only-one'])
+        self.mock_client.run_command.assert_not_called()
+
+    def test_exec_cmd_list_env_prefix_applied_after_alignment(self):
+        handle = self._four_host_handle(env_vars={'A': '1'})
+        handle.prune_nodes(['host2'])
+        self.mock_client.run_command.return_value = self._outputs(['host1', 'host3', 'host4'])
+
+        handle.exec_cmd_list(['c1', 'c2', 'c3', 'c4'])
+
+        commands = self.mock_client.run_command.call_args.kwargs['host_args']
+        self.assertEqual([cmd.split(' ; ')[-1] for cmd in commands], ['c1', 'c3', 'c4'])
+        self.assertTrue(all(cmd.startswith('export A=1 ; ') for cmd in commands))
+
+    @patch.object(ParallelHandle, 'check_connectivity', return_value=['host2'])
+    def test_exec_cmd_list_logs_pairs_with_pre_call_hosts(self, _mock_check):
+        handle = self._four_host_handle()
+        outputs = self._outputs(['host1', 'host2', 'host3', 'host4'])
+        outputs[1].exception = ConnectionError('unreachable')
+        self.mock_client.run_command.return_value = outputs
+
+        handle.exec_cmd_list(['c1', 'c2', 'c3', 'c4'])
+
+        lines = [call.args[0] for call in self.mock_log.debug.call_args_list if call.args]
+        self.assertIn('Command on host2: c2', lines)
+        self.assertIn('Command on host3: c3', lines)
+
     def test_exec_cmd_list_successful(self):
         # Test: Execute different commands on different hosts successfully
         cmd_list = ["echo host1", "echo host2"]
@@ -795,7 +929,7 @@ class TestParallelHandleExecCmdList(unittest.TestCase):
     def test_exec_cmd_list_with_connection_error_stop_on_errors_true(self):
         # Test: Handle exceptions with stop_on_errors=True for exec_cmd_list
         # Exception should be raised, and no result returned (no partial results)
-        cmd_list = ["echo test"]
+        cmd_list = ["echo test", "echo test"]
         from pssh.exceptions import ConnectionError
 
         self.mock_client.run_command.side_effect = ConnectionError("Connection failed")
@@ -1021,7 +1155,7 @@ class TestParallelHandleExecCmdList(unittest.TestCase):
     def test_exec_cmd_list_no_pruning_when_stop_on_errors_true(self, mock_inform, mock_prune):
         # Test: exec_cmd_list with stop_on_errors=True, no pruning even with connection error
         # Since stop_on_errors=True, run_command raises immediately, so prune_unreachable_hosts and inform_unreachability are not invoked
-        cmd_list = ["echo test"]
+        cmd_list = ["echo test", "echo test"]
         from pssh.exceptions import ConnectionError
 
         self.mock_client.run_command.side_effect = ConnectionError("Connection failed")
@@ -1037,7 +1171,7 @@ class TestParallelHandleExecCmdList(unittest.TestCase):
     @patch.object(ParallelHandle, "inform_unreachability")
     def test_exec_cmd_list_timeout_exception_when_stop_on_errors_true(self, mock_inform, mock_prune):
         # Test: exec_cmd_list with stop_on_errors=True, Timeout exception is re-raised
-        cmd_list = ["echo test"]
+        cmd_list = ["echo test", "echo test"]
         from pssh.exceptions import Timeout
 
         self.mock_client.run_command.side_effect = Timeout("Command timed out")
@@ -1469,6 +1603,18 @@ class TestParallelHandleHttpTransport(unittest.TestCase):
         client.run_command.assert_called_once_with(
             '%s', host_args=['echo a'], stop_on_errors=True, inactivity_timeout=4
         )
+
+    @patch('cvs.lib.parallel.phandle.create_transport')
+    def test_exec_cmd_list_after_prune_sends_one_command_per_reachable_host(self, mock_create):
+        handle, _transport, client = self._handle(mock_create, hosts=['h1', 'h2', 'h3'])
+        handle.stop_on_errors = False
+        handle.prune_nodes(['h2'])
+        client.run_command.return_value = [self._output('h1'), self._output('h3')]
+
+        result = handle.exec_cmd_list(['c1', 'c2', 'c3'])
+
+        client.run_command.assert_called_once_with('%s', host_args=['c1', 'c3'], stop_on_errors=False)
+        self.assertIn('ABORT: Host Unreachable Error', result['h2'])
 
     @patch('cvs.lib.parallel.phandle.create_transport')
     def test_exec_does_not_arm_local_timer_for_remotely_enforced_inactivity(self, mock_create):

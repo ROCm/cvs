@@ -6,7 +6,13 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 from cvs.lib.env_lib import build_env_prefix, redact_secrets
-from cvs.lib.parallel.phandle import ParallelHandle, _select_reachable_hosts
+from cvs.lib.parallel.phandle import (
+    ParallelHandle,
+    UNREACHABLE_MARKER,
+    _commands_for_reachable_hosts,
+    _order_by_hosts,
+    _select_reachable_hosts,
+)
 from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.phandle_sharder import ParallelHandleSharder
 from cvs.lib.parallel.interfaces import ShardableHandleInterface
@@ -186,6 +192,23 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
 
         return cmd_output
 
+    def _report_pruned_hosts(self, cmd_output, detailed=False):
+        """Add missing results for pruned hosts, in host_list order.
+
+        Workers see only reachable hosts, so hosts pruned on earlier calls have
+        no entry; hosts pruned during this call already have a worker marker.
+        """
+        if self.stop_on_errors:
+            return cmd_output
+        for host in self.unreachable_hosts:
+            if host in cmd_output:
+                continue
+            if detailed:
+                cmd_output[host] = {'output': UNREACHABLE_MARKER, 'exit_code': -1}
+            else:
+                cmd_output[host] = UNREACHABLE_MARKER
+        return _order_by_hosts(cmd_output, self.host_list, self.unreachable_hosts)
+
     def _print_merged_outputs(self, cmd_output, cmd=None, cmd_list=None, cmd_hosts=None, print_console=True):
         """Print command outputs in original host order."""
         if not print_console:
@@ -263,6 +286,7 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
         cmd_output = self._merge_shard_returns(shard_returns)
 
         self._print_merged_outputs(cmd_output, cmd=full_cmd, cmd_list=None, print_console=print_console)
+        cmd_output = self._report_pruned_hosts(cmd_output, detailed=detailed)
 
         # Log per-host execution completion
         if self.log:
@@ -275,6 +299,11 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True, inactivity_timeout=None):
         """Execute command list with automatic sharding if needed.
 
+        cmd_list has one command per configured host in host_list order or per
+        reachable host in reachable_hosts order. Pruned hosts' commands are not
+        run; with stop_on_errors=False, those hosts are reported as unreachable.
+        Raise ValueError if the command count matches neither host list.
+
         inactivity_timeout (see ParallelHandle.exec) is threaded through to both the direct
         single-process path and the sharded worker path, so a per-line inactivity
         timeout applies regardless of host count.
@@ -286,54 +315,33 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
             self._sync_phandle_state()
             return result
 
-        # Keep host_list as full inventory; accept command lists aligned either
-        # with full host_list or current reachable_hosts.
-        if len(cmd_list) == len(self.host_list):
-            cmd_hosts = list(self.host_list)
-        elif len(cmd_list) == len(self.reachable_hosts):
-            cmd_hosts = list(self.reachable_hosts)
-        else:
-            raise ValueError(
-                "cmd_list length must match host_list length or reachable_hosts length "
-                f"(cmd_list={len(cmd_list)}, host_list={len(self.host_list)}, "
-                f"reachable_hosts={len(self.reachable_hosts)})"
-            )
-
         # Keep raw commands for shard payloads (worker ParallelHandle applies env_prefix once).
-        # Build expanded commands separately for logging compatibility.
-        raw_commands = list(cmd_list)
+        target_hosts = list(self.reachable_hosts)
+        commands = _commands_for_reachable_hosts(cmd_list, self.host_list, target_hosts)
         if self.env_prefix:
-            expanded = [f"{self.env_prefix} ; {cmd}" for cmd in raw_commands]
+            expanded = [f"{self.env_prefix} ; {cmd}" for cmd in commands]
         else:
-            expanded = list(raw_commands)
+            expanded = list(commands)
 
-        # Align commands to current reachable_hosts ordering for shard payloads.
-        command_by_host = dict(zip(cmd_hosts, raw_commands))
-        filtered_commands = [command_by_host[h] for h in self.reachable_hosts if h in command_by_host]
-
-        (self.log.info if print_console else self.log.debug)("%s", [redact_secrets(cmd) for cmd in filtered_commands])
+        (self.log.info if print_console else self.log.debug)("%s", [redact_secrets(cmd) for cmd in commands])
 
         # Log command list execution
         if self.log:
             if inactivity_timeout is not None:
                 self.log.debug(
-                    f"Executing command list on {len(self.reachable_hosts)} host(s) "
-                    f"[inactivity_timeout={inactivity_timeout}s]"
+                    f"Executing command list on {len(target_hosts)} host(s) [inactivity_timeout={inactivity_timeout}s]"
                 )
             elif timeout is not None:
-                self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]")
+                self.log.debug(f"Executing command list on {len(target_hosts)} host(s) [timeout={timeout}s]")
             else:
-                self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s)")
+                self.log.debug(f"Executing command list on {len(target_hosts)} host(s)")
 
         # Prepare payloads for sharded execution
         payloads = []
-        offset = 0
         chunk_size = self.config.hosts_per_shard
-        for i in range(0, len(self.reachable_hosts), chunk_size):
-            shard_hosts = self.reachable_hosts[i : i + chunk_size]
-            k = len(shard_hosts)
-            shard_commands = filtered_commands[offset : offset + k]
-            offset += k
+        for i in range(0, len(target_hosts), chunk_size):
+            shard_hosts = target_hosts[i : i + chunk_size]
+            shard_commands = commands[i : i + chunk_size]
             payloads.append(
                 self.sharder.create_payloads(
                     'exec_cmd_list',
@@ -351,12 +359,13 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
         cmd_output = self._merge_shard_returns(shard_returns)
 
         self._print_merged_outputs(
-            cmd_output, cmd=None, cmd_list=expanded, cmd_hosts=cmd_hosts, print_console=print_console
+            cmd_output, cmd=None, cmd_list=expanded, cmd_hosts=target_hosts, print_console=print_console
         )
+        cmd_output = self._report_pruned_hosts(cmd_output)
 
         # Log per-host command execution
         if self.log:
-            for host, logged in zip(cmd_hosts, [redact_secrets(cmd) for cmd in expanded]):
+            for host, logged in zip(target_hosts, [redact_secrets(cmd) for cmd in expanded]):
                 self.log.debug(f"Command on {host}: {logged}")
 
         return cmd_output

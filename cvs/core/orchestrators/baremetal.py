@@ -156,12 +156,12 @@ class BaremetalOrchestrator(Orchestrator):
         """
         Execute different commands on different hosts via SSH.
 
-        Each cmd_list[i] runs on hosts[i] — the parallel per-host equivalent of
-        exec(). Positional correspondence between cmd_list and the
-        orchestrator's host list is the caller's responsibility.
+        cmd_list holds one command per host in hosts order, or one per currently
+        reachable host (all.reachable_hosts order). Commands for hosts pruned as
+        unreachable are not run; those hosts appear in the result as unreachable.
 
         Args:
-            cmd_list: List of commands, one per host in host order
+            cmd_list: Commands in configured or reachable host order
             timeout: Command timeout
             print_console: See exec().
 

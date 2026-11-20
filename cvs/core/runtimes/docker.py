@@ -285,13 +285,14 @@ class DockerRuntime:
     def exec_cmd_list(self, container_name, cmd_list, timeout=None, print_console=True):
         """Execute different commands on different hosts inside the container.
 
-        Each command is wrapped in `docker exec bash -c` — the parallel
-        per-host equivalent of exec(). Positional correspondence between
-        cmd_list and reachable_hosts is the caller's responsibility.
+        Each command is wrapped in `docker exec bash -c`. cmd_list holds one
+        command per host in hosts order, or one per currently reachable host
+        (all.reachable_hosts order). Commands for hosts pruned as unreachable
+        are not run; those hosts appear in the result as unreachable.
 
         Args:
             container_name: Running container name
-            cmd_list: List of commands, one per host in host order
+            cmd_list: Commands in configured or reachable host order
             timeout: Command timeout
             print_console: If False, the commands' output is returned but not
                 logged. See exec(); use for polling/bulk reads the caller
