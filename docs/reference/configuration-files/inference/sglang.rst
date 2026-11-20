@@ -373,7 +373,7 @@ Inference tests
 ===============
 
 ``benchmark_params``
-  Random synthetic load using ``sglang.bench_serving``. ISL/OSL/concurrency cells come from
+  Random synthetic load using ``sglang.benchmark.serving``. ISL/OSL/concurrency cells come from
   ``sweep.runs`` (or every performance cell in the threshold file if ``runs`` is empty).
   ``input_length`` and ``output_length`` are injected at collection time.
 
