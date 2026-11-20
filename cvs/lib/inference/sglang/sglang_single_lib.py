@@ -199,7 +199,7 @@ class SglangSingle:
             f"    --kv-cache-dtype {kv_cache_dtype} \\\n"
             f"    --trust-remote-code \\\n"
             f"    --tp-size {self.bp_dict['tensor_parallelism']} \\\n"
-            f"    --disable-radix-cache --disable-cuda-graph \\\n"
+            f"    --disable-radix-cache --disable-decode-cuda-graph --disable-prefill-cuda-graph \\\n"
             f"    --mem-fraction-static {self.bp_dict['memory_fraction']} \\\n"
             f"{flags_block}\n"
             f"    --log-level {self.inf_dict['log_level']}\n"

@@ -283,7 +283,7 @@ class SglangDistributed:
                 f"    --nnodes {self.nnodes} \\\n"
                 f"    --node-rank {i} \\\n"
                 f"    --dist-init-addr {self.dist_init_addr} \\\n"
-                f"    --disable-radix-cache --disable-cuda-graph \\\n"
+                f"    --disable-radix-cache --disable-decode-cuda-graph --disable-prefill-cuda-graph \\\n"
                 f"    --mem-fraction-static {self.bp_dict['memory_fraction']} \\\n"
                 f"{flags_block}\n"
                 f"    --log-level {self.inf_dict['log_level']}\n"
