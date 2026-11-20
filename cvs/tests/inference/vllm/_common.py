@@ -8,8 +8,7 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.conf_lib.loader import load_config
-from cvs.lib.conf_lib.schemas.vllm import VariantConfig
+from cvs.lib.inference.utils.vllm_config_loader import container_ib_hcas, load_variant
 from cvs.lib.inference.utils.vllm_metrics import (
     METRIC_REGISTRY,
     VLLM_RESULTS_COLUMNS,
@@ -44,11 +43,11 @@ def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file:
         return
-    variant = load_config(VariantConfig, config_file, {}).config
+    variant = load_variant(config_file, {}, warn=False)
     runs = variant.resolved_runs()
     ids = [run.cell.key for run in runs]
     if "accuracy_task" in metafunc.fixturenames:
-        tasks = [task.id for task in variant.accuracy.tasks]
+        tasks = [task.id for task in variant.accuracy.lm_eval.tasks]
         metafunc.parametrize("accuracy_task", tasks, ids=tasks)
     elif "run" in metafunc.fixturenames and runs:
         metafunc.parametrize("run", runs, ids=ids)
@@ -109,7 +108,7 @@ def discover_topology(orch, variant_config, vllm_targets, lifecycle, request):
         lifecycle.failed = True
         lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - started)
         pytest.fail(str(exc))
-    container_hcas = variant_config.container.nccl_ib_hcas
+    container_hcas = container_ib_hcas(variant_config.container)
     requested = container_hcas if container_hcas is not None else variant_config.ib_hca_devices
     if requested and requested != "auto":
         try:
@@ -219,7 +218,8 @@ def openai_compatible_smoke(orch, variant_config, vllm_targets, lifecycle, reque
         num_prompts=1,
         ib_hcas=getattr(lifecycle, "ib_hcas", []),
     )
-    job.serve_args.setdefault("max_model_len", str(_SMOKE_MAX_MODEL_LEN))
+    if job.derive_max_model_len:
+        job.max_model_len = _SMOKE_MAX_MODEL_LEN
     started = time.monotonic()
     try:
         job.stop_server()

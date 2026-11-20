@@ -14,7 +14,8 @@ Unit tests for cvs.lib.inference.vllm_job.VllmJob server-command construction:
 import json
 import unittest
 import unittest.mock as mock
-from cvs.lib.conf_lib.schemas.vllm import VariantConfig, serialize_cli_options
+from cvs.lib.inference.unittests.vllm_variant import old_vllm_config
+from cvs.lib.inference.utils.vllm_config_loader import serialize_cli_options
 from cvs.lib.inference.vllm_job import VllmJob
 from cvs.unittests.support import TMP
 
@@ -94,7 +95,7 @@ def _variant(serve_args=None, benchmark_params=None, sweep_options=None):
     options = {key.replace("-", "_"): value for key, value in (serve_args or {}).items()}
     distributed_executor_backend = options.pop("distributed_executor_backend", "mp")
     cell = f"ISL=1024,OSL=1024,TP={_TP},PP={_PP},CONC=16"
-    return VariantConfig(
+    return old_vllm_config(
         enforce_thresholds=False,
         threshold_json="threshold.json",
         ib_netdev="enp159s0np0",

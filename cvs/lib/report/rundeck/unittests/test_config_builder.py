@@ -2,11 +2,17 @@
 
 import unittest
 from dataclasses import asdict, fields, replace
+from types import SimpleNamespace
 
-from cvs.lib.report.rundeck.config_builder import make_inference_report_config
+from cvs.lib.report.rundeck.config_builder import _default_run_card, make_inference_report_config
 
 
 class TestConfigBuilder(unittest.TestCase):
+    def test_default_run_card_tp_row_reads_server_params_tp(self):
+        variant = SimpleNamespace(server_params=SimpleNamespace(model="llama", tp=8), enforce_thresholds=False)
+        rows = _default_run_card(variant, {})
+        self.assertIn(("TP", "8", False), rows)
+
     def test_make_inference_report_config_defaults(self):
         cfg = make_inference_report_config(
             suite_id="demo_suite",

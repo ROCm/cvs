@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Platform `test_check_be_nic_link_speed` and preflight `test_interface_name_consistency` require an exact backend NIC count per node (`backend_nic_count` in the host config, `connectivity_check.rdma.expected_nic_count` in preflight) instead of comparing nodes with each other. Host-config auto-detect leaves out the management NIC. Configs with `nic_link_interfaces: []` must set `backend_nic_count`; a count that differs from the length of the interface list fails.
-
+- A vLLM config that still holds a `<changeme>` fails at load, naming each field to fill in.
+- A vLLM config that sets something vLLM does not run yet, such as speculative-decoding flags in `server_params.engine_args`, fails at load with a not-implemented error naming each field.
+- vLLM accuracy thresholds take a `min`, `max` or `info` kind: `within` and `min_ratio` fail at load, so rewrite them as a `min` or `max` bound. A quoted accuracy value such as `"0.75"` still loads as a number, with the deprecation warning.
 - The shipped MORI config sets `mori_dir` to `/home/{user-id}/INSTALL/mori` and `container.lifetime` to `persistent`, so `install_mori` works with it as shipped. It also mounts the host Broadcom Thor2 `libbnxt_re-rdmav34.so` and `libibverbs.so.1`; delete those mounts on nodes without Thor2.
 
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.
@@ -35,7 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preflight's cluster file errors name each failing field without printing its value, which can be a credential.
 - The unresolved `<changeme>` error for cluster and config files names the field only and no longer prints its value, which can be a credential.
 
+### Deprecated
+
+- The old vLLM config keys are deprecated in favor of the shared inference config names in the vLLM configuration reference. A 0.3.0 vLLM config and its threshold file still load with one warning naming each old key; its wait and poll settings become the two `timeouts` totals.
+
 ### Removed
+
+- `accuracy.quant_parity.reference_config_stem` is not part of the inference config; a vLLM config that sets it loads with the deprecation warning and the value is ignored.
 
 
 ## [0.3.0] - 2026-11-02
