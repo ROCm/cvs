@@ -1,11 +1,46 @@
 '''Unit tests for RCCL series datasets.'''
 
 import unittest
+from types import SimpleNamespace
 
-from cvs.lib.report.rundeck.dataset_builders.series import _format_msg_size, build_series_datasets
+from cvs.lib.report.rundeck.dataset_builders.series import (
+    _format_msg_size,
+    build_series_datasets,
+    overall_status_from_run,
+)
 
 
 class TestSeries(unittest.TestCase):
+    def test_overall_status_from_run(self):
+        cases = (
+            (None, False, "record"),
+            ([], False, "record"),
+            ([{"status": "pass"}], False, "pass"),
+            ([{"status": "pass"}, {"status": "fail"}], False, "fail"),
+            ([{"check": "launch", "status": "fail"}], False, "fail"),
+            ([{"status": "pass"}, "junk"], False, "pass"),
+            ([{"status": "pass"}, {"status": "pass"}], True, "fail"),
+            ([], True, "fail"),
+            (None, True, "fail"),
+        )
+        for verdicts, pytest_failed, expected in cases:
+            with self.subTest(verdicts=verdicts, pytest_failed=pytest_failed):
+                self.assertEqual(overall_status_from_run(verdicts, pytest_failed), expected)
+
+    def test_dataset_status_follows_variant_verdicts(self):
+        graph = {"all_reduce_perf": {1024: {"bus_bw": 12.5}}}
+        cases = (
+            ({"variant": SimpleNamespace(verdicts=[{"status": "fail"}])}, "fail"),
+            ({"variant": SimpleNamespace(verdicts=[{"status": "pass"}])}, "pass"),
+            ({"variant": SimpleNamespace(verdicts=[{"status": "pass"}]), "pytest_failed": True}, "fail"),
+            ({}, "record"),
+            ({"variant": SimpleNamespace()}, "record"),
+            ({"pytest_failed": True}, "fail"),
+        )
+        for sources, expected in cases:
+            with self.subTest(expected=expected, sources=sources):
+                self.assertEqual(build_series_datasets({"results": graph, **sources}, {})["overall_status"], expected)
+
     def test_message_size_labels(self):
         for size, expected in (
             (8, "8"),

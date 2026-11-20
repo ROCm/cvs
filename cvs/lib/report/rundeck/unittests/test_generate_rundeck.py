@@ -9,10 +9,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from cvs.lib.report.auto_register import try_auto_register_suite_report
 from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.profiles.hooks.rccl_session import variant_from_config
-from cvs.lib.report.rundeck.generate_rundeck import generate_rundeck
+from cvs.lib.report.rundeck.generate_rundeck import generate_rundeck, pytest_session_failed
 from cvs.lib.report.rundeck.unittests.test_rccl_payload import _graph
 from cvs.lib.report.testing.fixtures import generic_variant, two_cell_inf_res
 from cvs.lib.report_plugins import HtmlReportManager
@@ -34,7 +36,7 @@ class TestGenerateRundeck(unittest.TestCase):
         self.patches.enter_context(patch("cvs.lib.report.rundeck.generate_rundeck.cvs_version", return_value="test"))
         self.patches.enter_context(patch("cvs.lib.report_plugins.sys.argv", ["cvs"]))
 
-    def make_session(self, suite):
+    def make_session(self, suite, testsfailed=0, exitstatus=pytest.ExitCode.OK):
         html_path = self.root / f"{suite}.html"
         html_path.write_text('<html><body><table id="environment"></table></body></html>', encoding="utf-8")
         config = SimpleNamespace(
@@ -44,7 +46,21 @@ class TestGenerateRundeck(unittest.TestCase):
             option=SimpleNamespace(htmlpath=str(html_path), log_file=None, self_contained_html=True),
         )
         self.assertTrue(try_auto_register_suite_report(config))
-        return SimpleNamespace(config=config), HtmlReportManager(config)
+        return SimpleNamespace(config=config, testsfailed=testsfailed, exitstatus=exitstatus), HtmlReportManager(config)
+
+    def test_pytest_session_failed(self):
+        cases = (
+            (SimpleNamespace(), False),
+            (SimpleNamespace(testsfailed=0, exitstatus=pytest.ExitCode.OK), False),
+            (SimpleNamespace(testsfailed=0, exitstatus=0), False),
+            (SimpleNamespace(testsfailed=0, exitstatus=pytest.ExitCode.NO_TESTS_COLLECTED), False),
+            (SimpleNamespace(testsfailed=1, exitstatus=pytest.ExitCode.TESTS_FAILED), True),
+            (SimpleNamespace(testsfailed=0, exitstatus=pytest.ExitCode.INTERRUPTED), True),
+            (SimpleNamespace(testsfailed=0, exitstatus=pytest.ExitCode.INTERNAL_ERROR), True),
+        )
+        for session, expected in cases:
+            with self.subTest(session=session):
+                self.assertEqual(pytest_session_failed(session), expected)
 
     def test_all_rccl_stems_publish_linked_html_json_and_viewer_in_zip(self):
         for suite in ("rccl_perf", "rccl_regression", "rccl_pairwise"):
@@ -67,6 +83,7 @@ class TestGenerateRundeck(unittest.TestCase):
                 self.assertNotIn("metricLabels", viewer)
                 self.assertEqual(artifacts["html"], manager.log_dir / "rccl_run_deck.html")
                 payload = json.loads(artifacts["json"].read_text(encoding="utf-8"))
+                self.assertEqual(payload["overall_status"], "record")
                 self.assertEqual(len(payload["results_table"]["rows"]), 3)
                 manager.create_zip_bundle(session)
                 document = manager.htmlpath.read_text(encoding="utf-8")
@@ -76,6 +93,34 @@ class TestGenerateRundeck(unittest.TestCase):
                     self.assertIn(f"{suite}_html/rccl_run_deck.html", bundle.namelist())
                     self.assertIn(f"{suite}_html/rccl_run_deck.json", bundle.namelist())
                     self.assertIn(f"{suite}_html/rccl_run_deck_viewer.html", bundle.namelist())
+
+    def test_rccl_deck_status_matches_pytest_outcome(self):
+        passed = {"check": "bus_bw", "status": "pass"}
+        dip_passed = {"check": "bw_dip", "status": "pass"}
+        failed = {"check": "bus_bw", "status": "fail", "message": "low bandwidth"}
+        cases = (
+            ("rccl_perf", [passed], 1, pytest.ExitCode.TESTS_FAILED, "fail"),
+            ("rccl_perf", [passed, dip_passed], 0, pytest.ExitCode.OK, "pass"),
+            ("rccl_perf", [], 0, pytest.ExitCode.OK, "record"),
+            ("rccl_perf", [], 1, pytest.ExitCode.TESTS_FAILED, "fail"),
+            ("rccl_perf", [failed], 1, pytest.ExitCode.TESTS_FAILED, "fail"),
+            ("rccl_perf", [passed], 0, pytest.ExitCode.INTERRUPTED, "fail"),
+            ("rccl_regression", [passed], 0, pytest.ExitCode.OK, "pass"),
+            ("rccl_pairwise", None, 1, pytest.ExitCode.TESTS_FAILED, "fail"),
+            ("rccl_pairwise", None, 0, pytest.ExitCode.OK, "record"),
+        )
+        for suite, verdicts, testsfailed, exitstatus, expected in cases:
+            with self.subTest(suite=suite, verdicts=verdicts, testsfailed=testsfailed, exitstatus=exitstatus):
+                session, manager = self.make_session(suite, testsfailed=testsfailed, exitstatus=exitstatus)
+                store = {
+                    "cvs_results_dict": _graph(),
+                    "variant_config": variant_from_config({}, {}, suite, verdicts=verdicts),
+                }
+                with patch("cvs.lib.report.rundeck.generate_rundeck.get_session_results", return_value=store):
+                    artifacts = generate_rundeck(session, manager)
+                payload = json.loads(artifacts["json"].read_text(encoding="utf-8"))
+                self.assertEqual(payload["overall_status"], expected)
+                self.assertNotIn("pytest_failed", store)
 
     def test_inference_profiles_keep_model_titles_viewers_and_ci_summaries(self):
         for suite in ("vllm", "sglang", "atom"):
