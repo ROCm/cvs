@@ -22,6 +22,10 @@ from cvs.lib.preflight.report import PreflightReportGenerator  # noqa: E402
 from cvs.parsers.schemas import PreflightConfigFile  # noqa: E402
 
 
+HELIOS_P_MASK = "000fff333000fff333"
+HELIOS_P_MASK_C = "000fffccc000fffccc"
+
+
 def _afm_devices(*, phase="ACTIVE", vpod=None):
     membership = list(vpod if vpod is not None else range(4))
     return {
@@ -44,7 +48,7 @@ def _gpu_inventory():
     return {"gpus": [{"bdf": f"0000:{index + 1:02x}:00.0", "gpu_id": index} for index in range(4)]}
 
 
-def _port_inventory(bdfs, down_ports=()):
+def _port_inventory(bdfs, down_ports=(), absent_ports=()):
     return {
         "devices": [
             {
@@ -56,6 +60,7 @@ def _port_inventory(bdfs, down_ports=()):
                         "spec": {"station_id": port // 2},
                     }
                     for port in range(36)
+                    if port not in absent_ports
                 ],
             }
             for bdf in bdfs
@@ -80,12 +85,14 @@ class FakePssh:
         vpod_by_host=None,
         station_mask='f' * 18,
         down_ports_by_host=None,
+        absent_ports_by_host=None,
     ):
         self.reachable_hosts = list(hosts)
         self.phase_by_host = dict(phase_by_host or {})
         self.vpod_by_host = dict(vpod_by_host or {})
         self.station_mask = station_mask
         self.down_ports_by_host = {host: set(ports) for host, ports in (down_ports_by_host or {}).items()}
+        self.absent_ports_by_host = {host: set(ports) for host, ports in (absent_ports_by_host or {}).items()}
         self.commands = []
 
     def exec(self, command, **_kwargs):
@@ -114,7 +121,11 @@ class FakePssh:
             elif "afmctl" in command and "show port" in command:
                 match = re.search(r"-b\s+([0-9a-f:.,]+)", command)
                 bdfs = match.group(1).split(',') if match else ["0000:01:00.1"]
-                output = json.dumps(_port_inventory(bdfs, self.down_ports_by_host.get(host, set())))
+                output = json.dumps(
+                    _port_inventory(
+                        bdfs, self.down_ports_by_host.get(host, set()), self.absent_ports_by_host.get(host, set())
+                    )
+                )
             else:
                 output = ""
             result[host] = output
@@ -306,8 +317,8 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
         self.assertIn('"$_cvs_amd_smi" list --json', command)
         self.assertNotIn('sudo -n "$_cvs_amd_smi"', command)
 
-    def test_partial_station_is_rejected_by_default_policy(self):
-        check = self._check(FakePssh(hosts=("nodeA",)))
+    def test_partial_station_is_rejected_by_strict_policy(self):
+        check = self._check(FakePssh(hosts=("nodeA",)), reject_partial_stations=True)
         check.results = {"nodeA": {"status": "PASS", "errors": []}}
         check._exec_all = lambda _command: {
             "nodeA": "\n".join(
@@ -317,6 +328,196 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
         check._evaluate_station_masks()
         self.assertEqual(check.results["nodeA"]["status"], "FAIL")
         self.assertTrue(any("partial IFoE station" in error for error in check.results["nodeA"]["errors"]))
+
+    def test_half_station_mask_passes_by_default_and_counts_half_ports(self):
+        # The programmed Helios-P mask: six full stations, six half stations.
+        check = self._check(FakePssh(hosts=("nodeA",), station_mask=HELIOS_P_MASK))
+        results = check.run()
+
+        self.assertEqual(results["status"], "PASS")
+        node = results["node_results"]["nodeA"]
+        self.assertEqual(node["errors"], [])
+        self.assertTrue(any("18/36 scale-up ports" in warning for warning in node["warnings"]))
+        self.assertTrue(any("6 full, 6 half, 6 disabled of 18" in warning for warning in node["warnings"]))
+        inventory = node["afm_port_inventory"]["0000:01:00.1"]
+        self.assertEqual(inventory["expected_enabled_ports"], 18)
+        self.assertEqual(inventory["enabled_station_up_ports"], 18)
+        self.assertIn(12, inventory["mask_enabled_port_ids"])
+        self.assertNotIn(13, inventory["mask_enabled_port_ids"])
+
+    def test_per_bdf_expected_mask_accepts_gpu_and_ifoe_function_bdfs(self):
+        # The mask is read per GPU (.0); afmctl names the same card by its IFoE function (.1).
+        check = self._check(
+            FakePssh(hosts=("nodeA",), station_mask=HELIOS_P_MASK),
+            expected_station_masks={
+                "0000:01:00.0": HELIOS_P_MASK,
+                "0000:02:00.1": "f" * 18,
+                "0000:03:00.1": HELIOS_P_MASK,
+            },
+        )
+        results = check.run()
+
+        errors = results["node_results"]["nodeA"]["errors"]
+        mismatches = [error for error in errors if "does not match configured" in error]
+        self.assertEqual(len(mismatches), 1)
+        self.assertTrue(mismatches[0].startswith("0000:02:00.0:"))
+
+    def test_lane_mask_that_splits_a_port_fails(self):
+        check = self._check(FakePssh(hosts=("nodeA",)))
+        check.results = {"nodeA": {"status": "PASS", "errors": [], "warnings": []}}
+        check._exec_all = lambda _command: {
+            "nodeA": "\n".join(f"0000:{index + 1:02x}:00.0 {'f' * 17 + '7'}" for index in range(4))
+        }
+        check._evaluate_station_masks()
+        self.assertEqual(check.results["nodeA"]["status"], "FAIL")
+        self.assertTrue(any("not port-aligned: 7" in error for error in check.results["nodeA"]["errors"]))
+
+    def test_disabled_station_fails_when_disablement_is_not_allowed(self):
+        check = self._check(FakePssh(hosts=("nodeA",)), allow_disabled_stations=False)
+        check.results = {"nodeA": {"status": "PASS", "errors": [], "warnings": []}}
+        check._exec_all = lambda _command: {
+            "nodeA": "\n".join(f"0000:{index + 1:02x}:00.0 {'f' * 17 + '0'}" for index in range(4))
+        }
+        check._evaluate_station_masks()
+        self.assertEqual(check.results["nodeA"]["status"], "FAIL")
+        self.assertTrue(any("disabled IFoE station" in error for error in check.results["nodeA"]["errors"]))
+
+    def test_half_station_3_passes_when_disabled_odd_port_is_down(self):
+        # Port 13 is mask-disabled even when AFM reports it.
+        check = self._check(FakePssh(hosts=("nodeA",), station_mask=HELIOS_P_MASK, down_ports_by_host={"nodeA": [13]}))
+        results = check.run()
+
+        self.assertEqual(results["status"], "PASS")
+        inventory = results["node_results"]["nodeA"]["afm_port_inventory"]["0000:01:00.1"]
+        self.assertIn(12, inventory["mask_enabled_port_ids"])
+        self.assertNotIn(13, inventory["mask_enabled_port_ids"])
+        self.assertEqual(inventory["enabled_station_up_ports"], 18)
+
+    def test_half_station_with_no_up_port_fails_the_gate(self):
+        check = self._check(
+            FakePssh(hosts=("nodeA",), station_mask=HELIOS_P_MASK, down_ports_by_host={"nodeA": [12, 13]})
+        )
+        results = check.run()
+
+        self.assertEqual(results["status"], "FAIL")
+        self.assertTrue(
+            any(
+                "half-enabled station 6 (mask nibble 3) needs its even port (lanes 0-1) UP; "
+                "even port: 12 (DOWN); other port: 13 (DOWN)" in error
+                for error in results["node_results"]["nodeA"]["errors"]
+            )
+        )
+
+    def test_half_station_3_fails_when_even_port_down_and_odd_port_up(self):
+        check = self._check(FakePssh(hosts=("nodeA",), station_mask=HELIOS_P_MASK, down_ports_by_host={"nodeA": [12]}))
+        results = check.run()
+
+        self.assertEqual(results["status"], "FAIL")
+        node = results["node_results"]["nodeA"]
+        self.assertTrue(
+            any(
+                "half-enabled station 6 (mask nibble 3) needs its even port (lanes 0-1) UP; "
+                "even port: 12 (DOWN); other port: 13 (UP)" in error
+                for error in node["errors"]
+            )
+        )
+        inventory = node["afm_port_inventory"]["0000:01:00.1"]
+        self.assertNotIn(13, inventory["mask_enabled_port_ids"])
+
+    def test_half_station_c_fails_when_odd_port_down_and_even_port_up(self):
+        check = self._check(
+            FakePssh(hosts=("nodeA",), station_mask=HELIOS_P_MASK_C, down_ports_by_host={"nodeA": [13]})
+        )
+        results = check.run()
+
+        self.assertEqual(results["status"], "FAIL")
+        self.assertTrue(
+            any(
+                "half-enabled station 6 (mask nibble c) needs its odd port (lanes 2-3) UP; "
+                "odd port: 13 (DOWN); other port: 12 (UP)" in error
+                for error in results["node_results"]["nodeA"]["errors"]
+            )
+        )
+
+    def test_half_station_c_passes_when_odd_port_up_and_even_port_down(self):
+        check = self._check(
+            FakePssh(hosts=("nodeA",), station_mask=HELIOS_P_MASK_C, down_ports_by_host={"nodeA": [12]})
+        )
+        results = check.run()
+
+        self.assertEqual(results["status"], "PASS")
+        node = results["node_results"]["nodeA"]
+        self.assertEqual(node["errors"], [])
+        inventory = node["afm_port_inventory"]["0000:01:00.1"]
+        self.assertIn(13, inventory["mask_enabled_port_ids"])
+        self.assertNotIn(12, inventory["mask_enabled_port_ids"])
+        self.assertEqual(inventory["enabled_station_up_ports"], 18)
+
+    def test_half_station_fails_when_afm_omits_enabled_port(self):
+        check = self._check(
+            FakePssh(hosts=("nodeA",), station_mask=HELIOS_P_MASK, absent_ports_by_host={"nodeA": [12]})
+        )
+        results = check.run()
+
+        self.assertEqual(results["status"], "FAIL")
+        self.assertTrue(
+            any(
+                "even port: not reported by AFM; other port: 13 (UP)" in error
+                for error in results["node_results"]["nodeA"]["errors"]
+            )
+        )
+
+    def test_half_station_passes_when_afm_omits_disabled_port(self):
+        check = self._check(
+            FakePssh(hosts=("nodeA",), station_mask=HELIOS_P_MASK, absent_ports_by_host={"nodeA": [13]})
+        )
+        results = check.run()
+
+        self.assertEqual(results["status"], "PASS")
+        node = results["node_results"]["nodeA"]
+        self.assertEqual(node["errors"], [])
+        inventory = node["afm_port_inventory"]["0000:01:00.1"]
+        self.assertIn(12, inventory["mask_enabled_port_ids"])
+
+    def test_full_station_still_requires_both_ports_up(self):
+        check = self._check(FakePssh(hosts=("nodeA",), station_mask=HELIOS_P_MASK, down_ports_by_host={"nodeA": [6]}))
+        results = check.run()
+
+        self.assertEqual(results["status"], "FAIL")
+        self.assertTrue(
+            any(
+                "enabled station 3 has non-UP port(s): 6 (DOWN)" in error
+                for error in results["node_results"]["nodeA"]["errors"]
+            )
+        )
+
+    def test_disabled_station_ports_are_ignored(self):
+        check = self._check(
+            FakePssh(hosts=("nodeA",), station_mask=HELIOS_P_MASK, down_ports_by_host={"nodeA": [0, 1]})
+        )
+        results = check.run()
+
+        self.assertEqual(results["status"], "PASS")
+        node = results["node_results"]["nodeA"]
+        self.assertEqual(node["errors"], [])
+        inventory = node["afm_port_inventory"]["0000:01:00.1"]
+        self.assertNotIn(0, inventory["mask_enabled_port_ids"])
+        self.assertNotIn(1, inventory["mask_enabled_port_ids"])
+
+    def test_split_half_station_ports_uses_port_parity(self):
+        from cvs.lib.preflight.scaleup_fabric import _describe_ports, _split_half_station_ports
+
+        ports = [{"port": 12}, {"port": 13}]
+        enabled, disabled = _split_half_station_ports("3", ports)
+        self.assertEqual([port["port"] for port in enabled], [12])
+        self.assertEqual([port["port"] for port in disabled], [13])
+        enabled, disabled = _split_half_station_ports("c", ports)
+        self.assertEqual([port["port"] for port in enabled], [13])
+        self.assertEqual([port["port"] for port in disabled], [12])
+        self.assertEqual(_describe_ports([]), "")
+        self.assertEqual(
+            _describe_ports([{"port": 13, "state": "UP"}, {"port": 12, "state": "DOWN"}]), "12 (DOWN), 13 (UP)"
+        )
 
     def test_all_dark_station_mask_fails_by_default(self):
         check = self._check(FakePssh(hosts=("nodeA",)))
@@ -341,7 +542,7 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
         self.assertEqual(result["errors"], [])
         self.assertTrue(result["warnings"])
         self.assertTrue(any("reduced" in warning for warning in result["warnings"]))
-        self.assertTrue(any("1/18 IFoE stations" in warning for warning in result["warnings"]))
+        self.assertTrue(any("2/36 scale-up ports" in warning for warning in result["warnings"]))
 
     def test_fully_enabled_station_mask_has_no_warning(self):
         check = self._check(FakePssh(hosts=("nodeA",)))
@@ -420,7 +621,7 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
         self.assertEqual(check.results["nodeA"]["errors"], [])
         # Even a diagnostic admit must surface the degraded signal, never pass silently.
         self.assertTrue(check.results["nodeA"]["warnings"])
-        self.assertTrue(any("0/18 IFoE stations" in warning for warning in check.results["nodeA"]["warnings"]))
+        self.assertTrue(any("0/36 scale-up ports" in warning for warning in check.results["nodeA"]["warnings"]))
 
     def test_run_excludes_failed_node_from_warned_nodes(self):
         # A partial mask raises a warning, but a down enabled-station port makes the
@@ -594,6 +795,7 @@ class TestNodeHealthConfigContract(unittest.TestCase):
             }
         )
 
+        self.assertFalse(PreflightConfigFile.model_validate({}).connectivity_check.ifoe.reject_partial_stations)
         self.assertEqual(config.node_check.min_up_ports_per_gpu, 1)
         ifoe = config.connectivity_check.ifoe
         self.assertFalse(ifoe.reject_partial_stations)
