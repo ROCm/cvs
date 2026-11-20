@@ -301,8 +301,11 @@ class TestShippedConfigs(unittest.TestCase):
         self.assertEqual(len(templates), 33)
         for template in templates:
             with self.subTest(config=template.name), tempfile.TemporaryDirectory() as tmp:
-                config = load_variant(write_filled_config(template, tmp), {"username": "u"}, warn=False)
+                path = write_filled_config(template, tmp)
+                config, logs, caught = _capture_logs(lambda: load_variant(path, {"username": "u"}))
                 self.assertTrue(config.runs)
+                self.assertEqual(caught, [])
+                self.assertEqual(logs, [])
 
 
 class TestClientFlags(unittest.TestCase):
