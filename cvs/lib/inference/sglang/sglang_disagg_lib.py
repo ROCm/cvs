@@ -621,22 +621,21 @@ class SglangDisaggPD:
         - Creates a launch script on the Proxy Router node
         - Launches the router as a background service
         """
-        prefill_str = (
-            f"--prefill http://{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_serv_port']} "
+        worker_urls = (
+            f"http://{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_serv_port']} "
+            f"http://{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_serv_port']}"
         )
-        decode_str = f"--decode http://{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_serv_port']} "
         log.info('#================ * * * =========================#')
         log.info('Create Proxy Router launch script on Proxy Router nodes')
         log.info('#================ * * * =========================#')
 
         launch_body = (
-            "python3 -m sglang_router.launch_router \\\n"
-            f"    --pd-disaggregation \\\n"
-            f"    {prefill_str.strip()} \\\n"
-            f"    {decode_str.strip()} \\\n"
+            "sgl-router \\\n"
+            f"    --model-id {self.bp_dict['model']} \\\n"
+            f"    --no-tokenizer \\\n"
+            f"    --worker-urls {worker_urls} \\\n"
             f"    --host 0.0.0.0 \\\n"
-            f"    --port {self.router_serv_port} \\\n"
-            f"    --log-dir {self.inf_dict['log_dir']}\n"
+            f"    --port {self.router_serv_port}\n"
         )
         stage_and_start_launch_script(
             self._container_exec,
