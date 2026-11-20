@@ -50,6 +50,10 @@ PREFLIGHT_CHECK_DISPLAY_NAMES = {
     'node_smoke': NODE_SMOKE_TIER1_LABEL,
     'tier3_info': NODE_SMOKE_TIER3_LABEL,
 }
+CRASHED_CHECKS_KEY = 'crashed_checks'
+_FAILING_STATUSES = ('FAIL', 'BLOCKED', 'ERROR')
+# Stage labels match summary keys except reachability, which the summary calls ssh_reachability.
+_CRASH_SUMMARY_KEYS = {'node_reachability': 'ssh_reachability'}
 
 
 def preflight_check_display_name(check_name: str) -> str:
@@ -71,7 +75,7 @@ def _config_flag_enabled(value, default=True):
 def _result_disposition(result):
     """Classify a check payload before scoring it.
 
-    Crash backfill stores ``status`` without the ``skipped`` or ``blocked`` flag.
+    Not-run backfill stores ``status`` without the ``skipped`` or ``blocked`` flag.
     A missing payload was not run. A payload that ran with nothing to score is neither.
     """
     if not isinstance(result, dict) or not result:
@@ -110,6 +114,32 @@ def _empty_tested_summary(message, counts):
     summary['status'] = 'ERROR'
     summary['summary'] = message
     return summary
+
+
+def _apply_crashed_checks(checks, crashed, results=None):
+    """Score each check that raised before it finished as ERROR.
+
+    A crash leaves no payload, or a partial one that would score as skipped or
+    passed. A check that already recorded a failure keeps its own status and text.
+    A generic ERROR for a missing payload gives way to the crash detail.
+    Returns the summary keys that were changed, in ``crashed`` order.
+    """
+    if not isinstance(crashed, dict) or not crashed:
+        return []
+
+    changed = []
+    for label, message in crashed.items():
+        name = _CRASH_SUMMARY_KEYS.get(label, label)
+        current = checks.get(name) or {}
+        status = str(current.get('status') or '').upper()
+        if status in _FAILING_STATUSES and (status != 'ERROR' or results is None or results.get(label)):
+            continue
+        entry = dict(current)
+        entry['status'] = 'ERROR'
+        entry['summary'] = f"Check did not finish: {message}"
+        checks[name] = entry
+        changed.append(name)
+    return changed
 
 
 class PreflightReportGenerator(PreflightCheck):
@@ -184,9 +214,11 @@ class PreflightReportGenerator(PreflightCheck):
         if ssh_connectivity_results:
             summary['checks']['ssh_connectivity'] = self._summarize_ssh_connectivity_results(ssh_connectivity_results)
 
-        # Determine overall status (skipped tests don't affect overall status)
+        crashed = _apply_crashed_checks(summary['checks'], self.results.get(CRASHED_CHECKS_KEY), self.results)
+
+        # A skip by configuration stays out of the overall status. A check that did not finish is ERROR.
         for check_name, check_summary in summary['checks'].items():
-            if check_summary['status'] in ('FAIL', 'BLOCKED', 'ERROR'):
+            if check_summary['status'] in _FAILING_STATUSES:
                 summary['overall_status'] = 'FAIL'
 
         # Generate recommendations
@@ -255,6 +287,12 @@ class PreflightReportGenerator(PreflightCheck):
         elif summary['checks']['node_smoke_tier3']['status'] == 'SKIPPED':
             summary['recommendations'].append(
                 "Consider enabling node_smoke_tier3.connectivity_mode='run' for full Host/GPU/Network info screening"
+            )
+
+        if crashed:
+            names = ', '.join(preflight_check_display_name(name) for name in crashed)
+            summary['recommendations'].append(
+                f"Fix the error that stopped {names} and rerun preflight; those checks did not finish"
             )
 
         if summary['overall_status'] == 'PASS':
@@ -1453,7 +1491,7 @@ class PreflightReportGenerator(PreflightCheck):
         if not summary or 'checks' not in summary:
             return "<section><h2>Summary</h2><p>No summary data available.</p></section>"
 
-        html = """
+        html_content = """
         <section>
             <h2>Summary</h2>
             <table class="summary-table">
@@ -1501,7 +1539,10 @@ class PreflightReportGenerator(PreflightCheck):
                 if fraction_match:
                     results_text = fraction_match.group(1)
 
-            html += f"""
+            summary_text = html.escape(str(summary_text))
+            results_text = html.escape(str(results_text))
+
+            html_content += f"""
                     <tr class="summary-row-{status_class}">
                         <td class="check-name">{display_name}</td>
                         <td class="status-cell">
@@ -1514,12 +1555,12 @@ class PreflightReportGenerator(PreflightCheck):
                     </tr>
             """
 
-        html += """
+        html_content += """
                 </tbody>
             </table>
         </section>
         """
-        return html
+        return html_content
 
     def _generate_rdma_mtu_html(self, mtu_results):
         """Render failing RDMA interfaces and their measured MTUs."""
