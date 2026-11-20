@@ -5,7 +5,7 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import os
+import posixpath
 import shlex
 
 from cvs.core.orchestrators.base import Orchestrator
@@ -14,6 +14,9 @@ from cvs.lib.env_lib import redact_secrets
 from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
 from cvs.lib.utils_lib import get_passwordless_sudo_status
+
+
+_MPI_HOSTFILE_PREFIX = 'mpi_hosts_'
 
 
 class BaremetalOrchestrator(Orchestrator):
@@ -42,6 +45,9 @@ class BaremetalOrchestrator(Orchestrator):
 
         # Cached result of the passwordless-sudo probe; None means not yet probed.
         self._needs_sudo = None
+
+        # Keep private hostfiles tracked until removal succeeds, so failures can be retried.
+        self._mpi_hostfiles = []
 
         # SSH port for MPI communication (overridable by subclasses)
         self.ssh_port = 22
@@ -264,6 +270,55 @@ class BaremetalOrchestrator(Orchestrator):
         # Basic cleanup - no specific resources to clean for SSH-only orchestrator
         return True
 
+    def _create_mpi_hostfile(self, mpi_hosts, ranks_per_host):
+        """Create an exclusive, private hostfile as the user who runs mpirun.
+
+        The random 0600 file cannot be pre-placed or redirected by another user.
+        """
+        host_file = ''.join(f'{host} slots={ranks_per_host}\n' for host in mpi_hosts)
+        # shlex.quote protects the host list in the remote login shell.
+        cmd = (
+            '(umask 077 && f=$(mktemp -p "${TMPDIR:-/tmp}" ' + _MPI_HOSTFILE_PREFIX + 'XXXXXXXXXX)'
+            f' && printf %s {shlex.quote(host_file)} > "$f" && printf %s "$f")'
+        )
+        result = self.exec_on_head(cmd, timeout=30, detailed=True)
+        failed = [
+            host for host, res in (result or {}).items() if not isinstance(res, dict) or res.get('exit_code') != 0
+        ]
+        if not result or failed:
+            raise RuntimeError(f"Failed to create MPI hostfile on hosts: {failed or [self.head_node]}")
+
+        head = result.get(self.head_node)
+        if head is None:
+            raise RuntimeError(f"Missing head node {self.head_node} in MPI hostfile result: {list(result)}")
+
+        path = (head.get('output') or '').strip()
+        if '\n' in path or not posixpath.isabs(path) or not posixpath.basename(path).startswith(_MPI_HOSTFILE_PREFIX):
+            raise RuntimeError(f"MPI hostfile path from {self.head_node} failed validation: {path!r}")
+        return path
+
+    def release_mpi_hostfiles(self):
+        """Remove tracked hostfiles after a direct build_mpi_cmd call or MPI run.
+
+        Failed removals stay tracked for retry. Cleanup never masks a run's result.
+        """
+        remaining = []
+        for path in self._mpi_hostfiles:
+            try:
+                result = self.exec_on_head(f'rm -f -- {shlex.quote(path)}', timeout=30, detailed=True)
+            except Exception as exc:
+                self.log.warning('Could not remove MPI hostfile %s on %s: %r', path, self.head_node, exc)
+                remaining.append(path)
+                continue
+            failed = [
+                host for host, res in (result or {}).items() if not isinstance(res, dict) or res.get('exit_code') != 0
+            ]
+            if not result or failed:
+                self.log.warning('Could not remove MPI hostfile %s on %s: %r', path, self.head_node, result)
+                remaining.append(path)
+        self._mpi_hostfiles = remaining
+        return not remaining
+
     def build_mpi_cmd(
         self,
         rank_cmd,
@@ -275,7 +330,10 @@ class BaremetalOrchestrator(Orchestrator):
         no_of_global_ranks=None,
     ):
         """
-        Build MPI command string for distributed execution.
+        Build an MPI command with a private hostfile tracked on the head node.
+
+        distribute_using_mpi removes the hostfile. Direct callers should call
+        release_mpi_hostfiles after running the command.
 
         Args:
             rank_cmd: The command to execute on each MPI rank
@@ -291,38 +349,14 @@ class BaremetalOrchestrator(Orchestrator):
 
         Raises:
             ValueError: If mpi_hosts is empty
+            RuntimeError: If the hostfile cannot be created or validated
         """
         if not mpi_hosts:
             raise ValueError("build_mpi_cmd needs at least one host in mpi_hosts")
 
-        # Create MPI hostfile
-        host_file_params = ''
-        for host in mpi_hosts:
-            host_file_params += f'{host} slots={ranks_per_host}\n'
-
-        # Create hostfile on head node. Both the removal and the write use the
-        # same sudo_prefix() so a hostfile left root-owned by a prior run (when
-        # sudo was needed) can't cause an unprivileged write here to fail
-        # silently against a stale file -- the exit codes are also checked so a
-        # write failure surfaces immediately instead of launching MPI against a
-        # leftover hostfile.
-        sudo_prefix = self.sudo_prefix()
-        hosts_file_path = f'/tmp/mpi_hosts_{os.environ.get("USER", "cvs")}.txt'
-
-        cmd = f'{sudo_prefix}rm -f {hosts_file_path}'
-        result = self.exec_on_head(cmd, detailed=True)
-        failed = [host for host, res in result.items() if res.get('exit_code') != 0]
-        if failed:
-            raise RuntimeError(f"Failed to remove stale MPI hostfile on hosts: {failed}")
-
-        # Quoted once for the sudo'd bash and once for the login shell, so host
-        # names are written verbatim rather than parsed by either shell.
-        write_cmd = f'printf %s {shlex.quote(host_file_params)} > {hosts_file_path}'
-        cmd = f'{sudo_prefix}bash -c {shlex.quote(write_cmd)}'
-        result = self.exec_on_head(cmd, detailed=True)
-        failed = [host for host, res in result.items() if res.get('exit_code') != 0]
-        if failed:
-            raise RuntimeError(f"Failed to write MPI hostfile on hosts: {failed}")
+        self.release_mpi_hostfiles()
+        hosts_file_path = self._create_mpi_hostfile(mpi_hosts, ranks_per_host)
+        self._mpi_hostfiles.append(hosts_file_path)
 
         # Build MPI runner arguments
         if no_of_global_ranks is None:
@@ -332,7 +366,7 @@ class BaremetalOrchestrator(Orchestrator):
             str(no_of_global_ranks),
             '--allow-run-as-root',
             '--hostfile',
-            hosts_file_path,
+            shlex.quote(hosts_file_path),
         ]
 
         if mpi_extra_args:
@@ -367,17 +401,17 @@ class BaremetalOrchestrator(Orchestrator):
         Returns:
             Execution results from head node
         """
-        full_mpi_cmd = self.build_mpi_cmd(
-            rank_cmd, mpi_hosts, ranks_per_host, env_vars, mpi_install_dir, mpi_extra_args, no_of_global_ranks
-        )
+        try:
+            full_mpi_cmd = self.build_mpi_cmd(
+                rank_cmd, mpi_hosts, ranks_per_host, env_vars, mpi_install_dir, mpi_extra_args, no_of_global_ranks
+            )
 
-        self.log.info("Launching MPI job")
-        self.log.debug(f"MPI command: {redact_secrets(full_mpi_cmd)}")
+            self.log.info("Launching MPI job")
+            self.log.debug(f"MPI command: {redact_secrets(full_mpi_cmd)}")
 
-        # Execute on head node
-        result = self.exec_on_head(full_mpi_cmd, timeout=500)  # Default timeout
-
-        return result
+            return self.exec_on_head(full_mpi_cmd, timeout=500)
+        finally:
+            self.release_mpi_hostfiles()
 
     def get_mpi_command(self, rank_cmd, mpi_runner_args, env_vars, mpi_install_dir):
         """
