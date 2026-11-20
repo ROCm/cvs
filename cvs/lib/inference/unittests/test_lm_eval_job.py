@@ -15,7 +15,7 @@ import json
 import shlex
 import unittest
 
-from cvs.lib.inference.utils.accuracy_config import AccuracyTask
+from cvs.parsers.schemas import AccuracyTask
 from cvs.lib.inference.utils.lm_eval_job import (
     LM_EVAL_INSTALL_CHECK_CMD,
     LM_EVAL_VERSION,

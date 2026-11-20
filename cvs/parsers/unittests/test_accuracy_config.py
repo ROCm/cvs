@@ -2,8 +2,8 @@
 Copyright 2026 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Unit tests for cvs.lib.inference.utils.accuracy_config (AccuracyTask,
-AccuracyConfig). These pin the construction-time validation contract of the two
+Unit tests for the accuracy task blocks in cvs.parsers.schemas (AccuracyTask,
+LmEval). These pin the construction-time validation contract of the two
 pydantic models: field defaults/typing/coercion, extra="forbid" (inherited from
 _Forbid), and the model_validator(mode="after") that rejects duplicate task ids.
 No hardware.
@@ -19,7 +19,7 @@ import unittest
 
 from pydantic import ValidationError
 
-from cvs.lib.inference.utils.accuracy_config import AccuracyConfig, AccuracyTask
+from cvs.parsers.schemas import AccuracyTask, LmEval
 from cvs.unittests.support import TMP
 
 
@@ -295,18 +295,18 @@ class TestAccuracyConfigConstruction(unittest.TestCase):
 
     def test_empty_config_has_empty_tasks(self):
         # AC1 + edge case: zero tasks constructs, tasks == [].
-        cfg = AccuracyConfig()
+        cfg = LmEval()
         self.assertEqual(cfg.tasks, [])
 
     def test_single_task_constructs(self):
         # AC2 + edge case: exactly one task is trivially unique.
-        cfg = AccuracyConfig(tasks=[AccuracyTask(id="a", task="gsm8k")])
+        cfg = LmEval(tasks=[AccuracyTask(id="a", task="gsm8k")])
         self.assertEqual(len(cfg.tasks), 1)
         self.assertEqual(cfg.tasks[0].id, "a")
 
     def test_three_distinct_ids_construct(self):
         # AC3.
-        cfg = AccuracyConfig(
+        cfg = LmEval(
             tasks=[
                 AccuracyTask(id="a", task="gsm8k"),
                 AccuracyTask(id="b", task="gsm8k"),
@@ -317,19 +317,19 @@ class TestAccuracyConfigConstruction(unittest.TestCase):
 
     def test_list_of_dicts_becomes_tasks(self):
         # AC25.
-        cfg = AccuracyConfig(tasks=[{"id": "a", "task": "gsm8k"}])
+        cfg = LmEval(tasks=[{"id": "a", "task": "gsm8k"}])
         self.assertIsInstance(cfg.tasks[0], AccuracyTask)
         self.assertEqual(cfg.tasks[0].id, "a")
 
     def test_mixed_dicts_and_instances(self):
         # AC26: every element ends up an AccuracyTask.
-        cfg = AccuracyConfig(tasks=[AccuracyTask(id="a", task="gsm8k"), {"id": "b", "task": "gsm8k"}])
+        cfg = LmEval(tasks=[AccuracyTask(id="a", task="gsm8k"), {"id": "b", "task": "gsm8k"}])
         self.assertTrue(all(isinstance(t, AccuracyTask) for t in cfg.tasks))
         self.assertEqual([t.id for t in cfg.tasks], ["a", "b"])
 
     def test_order_and_length_preserved(self):
         # AC29.
-        cfg = AccuracyConfig(
+        cfg = LmEval(
             tasks=[
                 AccuracyTask(id="a", task="m"),
                 AccuracyTask(id="b", task="m"),
@@ -345,17 +345,17 @@ class TestAccuracyConfigTasksField(unittest.TestCase):
     def test_unknown_field_raises(self):
         # AC11.
         with self.assertRaises(ValidationError):
-            AccuracyConfig(tasks=[], extra_field=1)
+            LmEval(tasks=[], extra_field=1)
 
     def test_non_dict_non_instance_element_raises(self):
         # AC27.
         with self.assertRaises(ValidationError):
-            AccuracyConfig(tasks=["not-a-task"])
+            LmEval(tasks=["not-a-task"])
 
     def test_tasks_none_raises(self):
         # AC28: field is not Optional; only omission yields the [] default.
         with self.assertRaises(ValidationError):
-            AccuracyConfig(tasks=None)
+            LmEval(tasks=None)
 
 
 class TestAccuracyConfigDuplicateIds(unittest.TestCase):
@@ -364,7 +364,7 @@ class TestAccuracyConfigDuplicateIds(unittest.TestCase):
     def test_single_duplicate_group(self):
         # AC4: prefix + the offending id present.
         with self.assertRaises(ValidationError) as ctx:
-            AccuracyConfig(
+            LmEval(
                 tasks=[
                     AccuracyTask(id="dup-mmlu", task="mmlu"),
                     AccuracyTask(id="dup-mmlu", task="mmlu"),
@@ -378,7 +378,7 @@ class TestAccuracyConfigDuplicateIds(unittest.TestCase):
         # AC5: both ids present; 'dup-gsm8k' before 'dup-mmlu' (sorted, not
         # encounter order -- input intentionally lists mmlu first).
         with self.assertRaises(ValidationError) as ctx:
-            AccuracyConfig(
+            LmEval(
                 tasks=[
                     AccuracyTask(id="dup-mmlu", task="mmlu"),
                     AccuracyTask(id="dup-gsm8k", task="gsm8k"),
@@ -403,7 +403,7 @@ class TestAccuracyConfigDuplicateIds(unittest.TestCase):
         # ('Dup-Zebra' < 'dup-apple'), whereas a case-insensitive key flips them
         # ('dup-apple' < 'Dup-Zebra' since 'a' < 'z').
         with self.assertRaises(ValidationError) as ctx:
-            AccuracyConfig(
+            LmEval(
                 tasks=[
                     AccuracyTask(id="dup-apple", task="mmlu"),
                     AccuracyTask(id="Dup-Zebra", task="gsm8k"),
@@ -427,7 +427,7 @@ class TestAccuracyConfigDuplicateIds(unittest.TestCase):
     def test_triple_duplicate_id_listed_once(self):
         # AC6: id repeated 3x appears exactly once in the sorted-dupes list.
         with self.assertRaises(ValidationError) as ctx:
-            AccuracyConfig(
+            LmEval(
                 tasks=[
                     AccuracyTask(id="dup-mmlu", task="mmlu"),
                     AccuracyTask(id="dup-mmlu", task="mmlu"),
@@ -445,7 +445,7 @@ class TestAccuracyConfigDuplicateIds(unittest.TestCase):
         # "duplicate task id(s):" prefix, so assertIn actually probes the
         # validator's rendered dupes list rather than the constant prefix text.
         with self.assertRaises(ValidationError) as ctx:
-            AccuracyConfig(
+            LmEval(
                 tasks=[
                     AccuracyTask(id="dup-x", task="mmlu"),
                     AccuracyTask(id="dup-x", task="gsm8k"),
@@ -461,7 +461,7 @@ class TestAccuracyConfigDuplicateIds(unittest.TestCase):
         # id with an id that appears exactly once and assert the unique one is
         # absent -- this fails a validator that reports sorted(set(all_ids)).
         with self.assertRaises(ValidationError) as ctx:
-            AccuracyConfig(
+            LmEval(
                 tasks=[
                     AccuracyTask(id="dup-repeated", task="mmlu"),
                     AccuracyTask(id="dup-repeated", task="gsm8k"),
@@ -475,7 +475,7 @@ class TestAccuracyConfigDuplicateIds(unittest.TestCase):
 
     def test_case_sensitive_ids_not_duplicates(self):
         # AC8: 'MMLU' vs 'mmlu' differ only by case -> NOT duplicates.
-        cfg = AccuracyConfig(
+        cfg = LmEval(
             tasks=[
                 AccuracyTask(id="MMLU", task="mmlu"),
                 AccuracyTask(id="mmlu", task="mmlu"),
@@ -486,7 +486,7 @@ class TestAccuracyConfigDuplicateIds(unittest.TestCase):
     def test_empty_string_duplicates_render_as_quotes(self):
         # AC9: two id="" -> duplicate; renders as '' in the sorted list.
         with self.assertRaises(ValidationError) as ctx:
-            AccuracyConfig(
+            LmEval(
                 tasks=[
                     AccuracyTask(id="", task="a"),
                     AccuracyTask(id="", task="b"),
@@ -503,15 +503,15 @@ class TestAccuracyConfigNonMutation(unittest.TestCase):
     def test_caller_dict_list_not_mutated(self):
         # AC30.
         lst = [{"id": "a", "task": "m"}]
-        AccuracyConfig(tasks=lst)
+        LmEval(tasks=lst)
         self.assertEqual(len(lst), 1)
         self.assertIsInstance(lst[0], dict)
         self.assertEqual(lst[0], {"id": "a", "task": "m"})
 
     def test_default_tasks_not_shared_between_instances(self):
         # AC31.
-        a = AccuracyConfig()
-        b = AccuracyConfig()
+        a = LmEval()
+        b = LmEval()
         self.assertIsNot(a.tasks, b.tasks)
         a.tasks.append(AccuracyTask(id="x", task="m"))
         self.assertEqual(b.tasks, [])
@@ -522,7 +522,7 @@ class TestValidationPrecedence(unittest.TestCase):
 
     def test_field_error_preempts_duplicate_validator(self):
         with self.assertRaises(ValidationError) as ctx:
-            AccuracyConfig(tasks=[{"id": "a", "task": "gsm8k"}, {"id": "a"}])
+            LmEval(tasks=[{"id": "a", "task": "gsm8k"}, {"id": "a"}])
         msg = str(ctx.exception)
         self.assertIn("one of tasks or task is required", msg)
         # ...and the duplicate-id validator must NOT have run.
@@ -569,13 +569,13 @@ class TestModelFieldMembership(unittest.TestCase):
 
     def test_accuracy_config_fields_exact(self):
         # AC34.
-        self.assertEqual(set(AccuracyConfig.model_fields), {"tasks"})
+        self.assertEqual(set(LmEval.model_fields), {"tasks"})
 
     def test_no_threshold_or_gate_fields(self):
         # Regression constraint: no gating/threshold wiring exists on these models.
         forbidden = {"threshold", "gate", "min_score", "accuracy_gate", "accuracy"}
         self.assertEqual(set(AccuracyTask.model_fields) & forbidden, set())
-        self.assertEqual(set(AccuracyConfig.model_fields) & forbidden, set())
+        self.assertEqual(set(LmEval.model_fields) & forbidden, set())
 
 
 if __name__ == "__main__":
