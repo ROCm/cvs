@@ -495,7 +495,7 @@ class SglangDisaggPD:
                 f"    --nnodes {self.prefill_nnodes} \\\n"
                 f"    --node-rank {i} \\\n"
                 f"    --dist-init-addr {dist_init_addr} \\\n"
-                f"    --disable-radix-cache --disable-cuda-graph \\\n"
+                f"    --disable-radix-cache --disable-decode-cuda-graph --disable-prefill-cuda-graph \\\n"
                 f"    --mem-fraction-static {self.bp_dict['memory_fraction']} \\\n"
                 f"{flags_block}\n"
                 f"    --log-level {self.inf_dict['log_level']}\n"
@@ -559,7 +559,7 @@ class SglangDisaggPD:
                 f"    --nnodes {self.decode_nnodes} \\\n"
                 f"    --node-rank {i} \\\n"
                 f"    --dist-init-addr {dist_init_addr} \\\n"
-                f"    --disable-radix-cache --disable-cuda-graph \\\n"
+                f"    --disable-radix-cache --disable-decode-cuda-graph --disable-prefill-cuda-graph \\\n"
                 f"    --mem-fraction-static {self.bp_dict['memory_fraction']} \\\n"
                 f"{flags_block}\n"
                 f"    --log-level {self.inf_dict['log_level']}\n"
@@ -621,22 +621,21 @@ class SglangDisaggPD:
         - Creates a launch script on the Proxy Router node
         - Launches the router as a background service
         """
-        prefill_str = (
-            f"--prefill http://{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_serv_port']} "
+        worker_urls = (
+            f"http://{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_serv_port']} "
+            f"http://{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_serv_port']}"
         )
-        decode_str = f"--decode http://{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_serv_port']} "
         log.info('#================ * * * =========================#')
         log.info('Create Proxy Router launch script on Proxy Router nodes')
         log.info('#================ * * * =========================#')
 
         launch_body = (
-            "python3 -m sglang_router.launch_router \\\n"
-            f"    --pd-disaggregation \\\n"
-            f"    {prefill_str.strip()} \\\n"
-            f"    {decode_str.strip()} \\\n"
+            "sgl-router \\\n"
+            f"    --model-id {self.bp_dict['model']} \\\n"
+            f"    --no-tokenizer \\\n"
+            f"    --worker-urls {worker_urls} \\\n"
             f"    --host 0.0.0.0 \\\n"
-            f"    --port {self.router_serv_port} \\\n"
-            f"    --log-dir {self.inf_dict['log_dir']}\n"
+            f"    --port {self.router_serv_port}\n"
         )
         stage_and_start_launch_script(
             self._container_exec,
@@ -678,13 +677,13 @@ class SglangDisaggPD:
             f"mkdir -p {self.log_dir}/benchmark_node\n"
             f"source /tmp/benchmark_env_script.sh\n"
             f"export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}}\n"
-            f"python3 -m sglang.bench_serving \\\n"
+            f"python3 -m sglang.benchmark.serving \\\n"
             f"  --backend {i_dict['backend']} \\\n"
             f"  --dataset-name random \\\n"
             f"  --num-prompts {i_dict['num_prompts']} \\\n"
             f"  --max-concurrency {self.bp_dict['max_concurrency']} \\\n"
-            f"  --random-input {i_dict['input_length']} \\\n"
-            f"  --random-output {i_dict['output_length']} \\\n"
+            f"  --random-input-len {i_dict['input_length']} \\\n"
+            f"  --random-output-len {i_dict['output_length']} \\\n"
             f"  --random-range-ratio {i_dict['random_range_ratio']} \\\n"
             f"  --host {self.client_host} --port {self.router_serv_port} \\\n"
             f"  > {self.log_dir}/benchmark_node/benchmark_results.log 2>&1"

@@ -754,7 +754,7 @@ def parse_inference_bench_results(
     include_itl: bool = False,
     include_extended_e2e_percentiles: bool = False,
 ) -> dict[str, dict[str, Any]]:
-    """Parse sglang.bench_serving log tail output into per-node metric dicts."""
+    """Parse sglang.benchmark.serving log tail output into per-node metric dicts."""
     inference_results_dict: dict[str, dict[str, Any]] = {}
     for node, text in out_dict.items():
         inference_results_dict[node] = {}

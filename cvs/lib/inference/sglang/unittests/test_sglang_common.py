@@ -472,6 +472,41 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertEqual(obj.proxy_node, ['n0'])
         self.assertEqual(obj.benchmark_serv_node, ['n0'])
 
+    def test_proxy_router_launches_sgl_router_with_prefill_and_decode_workers(self):
+        from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
+
+        obj = SglangDisaggPD.__new__(SglangDisaggPD)
+        obj.inf_dict = {
+            'prefill_coordinator_addr': '10.0.0.1',
+            'prefill_serv_port': '30001',
+            'decode_coordinator_addr': '10.0.0.2',
+            'decode_serv_port': '30002',
+            'proxy_router_serv_port': '8000',
+        }
+        obj.bp_dict = {'model': '/root/models/DeepSeek-R1-0528'}
+        obj.log_dir = '/logs/sglang'
+        obj.proxy_node = ['proxy0']
+
+        with (
+            mock.patch('cvs.lib.inference.sglang.sglang_disagg_lib.stage_and_start_launch_script') as stage,
+            mock.patch('cvs.lib.inference.sglang.sglang_disagg_lib.time.sleep'),
+        ):
+            obj.launch_proxy_router()
+
+        stage.assert_called_once()
+        self.assertEqual(stage.call_args.args[1], ['proxy0'])
+        self.assertEqual(stage.call_args.args[2], '/tmp/proxy_router_launch_script.sh')
+        self.assertEqual(
+            stage.call_args.args[3],
+            "sgl-router \\\n"
+            "    --model-id /root/models/DeepSeek-R1-0528 \\\n"
+            "    --no-tokenizer \\\n"
+            "    --worker-urls http://10.0.0.1:30001 http://10.0.0.2:30002 \\\n"
+            "    --host 0.0.0.0 \\\n"
+            "    --port 8000\n",
+        )
+        self.assertEqual(stage.call_args.args[5], '/logs/sglang/proxy_router_node/proxy_router.log')
+
     def test_single_host_exec_uses_exec_on_host_first_node_only(self):
         from cvs.lib.inference.sglang.sglang_single_lib import SglangSingle
 
