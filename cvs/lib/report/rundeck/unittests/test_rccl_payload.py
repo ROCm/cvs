@@ -1,10 +1,12 @@
 '''Unit tests for RCCL series Run Deck payload and HTML.'''
 
+import copy
 import unittest
 from types import SimpleNamespace
 
 from cvs.lib.rccl_lib import convert_to_graph_dict
 from cvs.lib.report.profile import load_json_profile
+from cvs.lib.report.profiles.hooks.rccl_session import variant_from_config
 from cvs.lib.report.rundeck.dataset_builders import series  # noqa: F401
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.lib.report.rundeck.render import render_rundeck_html
@@ -44,6 +46,7 @@ class TestRcclRundeckPayload(unittest.TestCase):
             ),
         }
         payload = build_rundeck_payload(profile=profile, store=store, cvs_version="1.0.0")
+        self.assertEqual(payload["overall_status"], "record")
         series_ds = payload["datasets"]["series"]
         for metric, expected in (
             ("bus_bw", [("1K", 12.5), ("1M", 40.0)]),
@@ -76,6 +79,43 @@ class TestRcclRundeckPayload(unittest.TestCase):
         self.assertEqual(doc.count("<polyline "), 6)
         self.assertNotIn("C=1024", doc)
         self.assertIn("<title>RCCL Run Deck &mdash; rccl</title>", doc)
+
+    def test_overall_status_reflects_check_verdicts(self):
+        profile = load_json_profile("rccl")
+        payloads = {}
+        cases = (
+            ("fail", [{"check": "bus_bw", "status": "fail"}], False),
+            ("pass", [{"check": "bus_bw", "status": "pass"}, {"check": "bw_dip", "status": "pass"}], False),
+            ("record", [], False),
+            ("fail_after_pass", [{"check": "bus_bw", "status": "pass"}, {"check": "bw_dip", "status": "pass"}], True),
+        )
+        for expected, verdicts, pytest_failed in cases:
+            with self.subTest(expected=expected):
+                store = {
+                    "cvs_results_dict": _graph(),
+                    "variant_config": variant_from_config({}, {}, "rccl_perf", verdicts=verdicts),
+                    "pytest_failed": pytest_failed,
+                }
+                payload = build_rundeck_payload(profile=profile, store=store, cvs_version="1.0.0")
+                self.assertEqual(payload["overall_status"], "fail" if expected == "fail_after_pass" else expected)
+                payloads[expected] = payload
+
+        fail_html = render_rundeck_html(payloads["fail"])
+        self.assertIn("status-badge status-fail", fail_html)
+        self.assertIn(">FAIL<", fail_html)
+        self.assertIn("status-badge status-fail", render_rundeck_html(payloads["fail_after_pass"]))
+
+        normalized = []
+        for payload in payloads.values():
+            payload = copy.deepcopy(payload)
+            payload.pop("overall_status")
+            payload.pop("generated_at")
+            payload["datasets"]["series"].pop("overall_status")
+            payload["run_card_display"] = [row for row in payload["run_card_display"] if row[0] != "Generated"]
+            normalized.append(payload)
+        self.assertEqual(normalized[0], normalized[1])
+        self.assertEqual(normalized[1], normalized[2])
+        self.assertEqual(normalized[2], normalized[3])
 
 
 if __name__ == "__main__":

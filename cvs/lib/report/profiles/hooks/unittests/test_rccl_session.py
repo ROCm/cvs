@@ -9,6 +9,14 @@ from cvs.lib.report.registry import ReportSessionStore
 
 
 class TestRcclSession(unittest.TestCase):
+    def test_variant_keeps_verdict_list_by_reference(self):
+        verdicts = []
+        variant = variant_from_config({}, {}, verdicts=verdicts)
+        self.assertIs(variant.verdicts, verdicts)
+        verdicts.append({"check": "bus_bw", "status": "fail"})
+        self.assertEqual(variant.verdicts, verdicts)
+        self.assertIsNone(variant_from_config({}, {}).verdicts)
+
     def test_collective_precedence_matches_suite_shapes(self):
         nested = {"rccl_test_params": {"rccl_collective": ["all_gather_perf"]}}
         cases = [

@@ -29,6 +29,17 @@ class _CapturingSubtests:
 
 
 class TestRundeckWiring(unittest.TestCase):
+    def test_variant_config_carries_module_verdicts(self):
+        fixtures = {"config_dict": {}, "cluster_dict": {}}
+        for module in (rccl_perf, rccl_regression):
+            with self.subTest(module=module.__name__), patch.object(module, "rccl_verdicts", []):
+                request = SimpleNamespace(module=module, getfixturevalue=fixtures.__getitem__)
+                variant = conftest.variant_config.__wrapped__(request)
+                self.assertIs(variant.verdicts, module.rccl_verdicts)
+
+        request = SimpleNamespace(module=rccl_pairwise, getfixturevalue=fixtures.__getitem__)
+        self.assertIsNone(conftest.variant_config.__wrapped__(request).verdicts)
+
     def setUp(self):
         self.raw = [
             {"name": "all_reduce_perf", "size": 1024, "inPlace": 1, "busBw": 350.0, "algBw": 200.0, "time": 10.0}

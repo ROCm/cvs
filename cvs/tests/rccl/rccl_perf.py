@@ -25,6 +25,7 @@ log = globals.log
 
 
 rccl_res_dict = {}
+rccl_verdicts = []
 
 
 def pytest_generate_tests(metafunc):
@@ -128,6 +129,7 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
       3) Optionally capture ECC_BLOCKS counters before the test.
       4) Invoke RcclJob.from_config(...).run_perf() with parameters built from config and fixtures.
       4a) Report each verification verdict as a pytest sub-test and HTML case row.
+      4b) Keep the verdicts; the Run Deck shows PASS only when checks ran and the pytest run passed.
       5) Optionally capture ECC_BLOCKS after the test, log deltas, and warn on increases.
       6) Scan this test's dmesg: kmsg markers when dmesg_during_test, else the clock window.
       7) Optionally snapshot metrics again and compare before/after.
@@ -169,6 +171,7 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
     job = rccl_lib.RcclJob.from_config(orch, rccl_collective, config_dict, node_list, vpc_node_list)
     result_dict = job.run_perf()
     RcclCaseReporter(request, subtests).report_verdicts(job.verdicts, rccl_collective)
+    rccl_verdicts.extend(job.verdicts)
 
     log.info("%s", result_dict)
     key_name = f'{rccl_collective}'

@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The RCCL Run Deck (`rccl_perf`, `rccl_regression`, `rccl_pairwise`) shows FAIL whenever the pytest run fails, including dmesg errors and other failures that are not bandwidth checks. It shows PASS only when bus bandwidth or dip checks ran and the run passed, and RECORD when no check ran and nothing failed. It previously always showed RECORD.
 - `csp_qual_agfhc`: a node whose `results.json` cannot be read (missing file, SSH error or empty read) now fails with `results.json could not be read on node <node>` and what the read returned, instead of reporting nonzero failed tests. The Run Deck cell shows the same reason.
 - `test_install_agfhc` no longer fails a node when a companion tool directory is missing (`TXB_PATH`, `MINIHPL_PATH`, `MEMROCKER_PATH`, `FIREXS_PATH`, or `AFIDSAG_PATH`). Those paths are still exported when AGFHC is launched.
 - The health TransferBench `healthcheck` test fails when TransferBench reports a failed sub-test or exits with an error. It previously passed, and only the Run Deck showed the failure.

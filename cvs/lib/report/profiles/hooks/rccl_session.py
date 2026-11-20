@@ -10,8 +10,8 @@ from types import SimpleNamespace
 from cvs.lib import globals, rccl_lib
 
 
-def variant_from_config(config_dict, cluster_dict, suite_name=None, raw_results=None, run_nodes=None):
-    """Describe RCCL configuration, retaining live results for the final run card."""
+def variant_from_config(config_dict, cluster_dict, suite_name=None, raw_results=None, run_nodes=None, verdicts=None):
+    """Describe RCCL configuration, retaining live results and check verdicts for the final run card and deck status."""
     config_dict = config_dict or {}
     node_dict = (cluster_dict or {}).get("node_dict") or {}
     cvs_params = config_dict.get("cvs_params") or {}
@@ -37,6 +37,7 @@ def variant_from_config(config_dict, cluster_dict, suite_name=None, raw_results=
         rccl_test_params=test_params,
         raw_results=raw_results,
         run_nodes=run_nodes,
+        verdicts=verdicts,
         cvs_params=cvs_params,
         enforce_thresholds=verify,
     )

@@ -12,6 +12,16 @@ from typing import Any
 from cvs.lib.report.rundeck.dataset_builders.registry import register_dataset_builder
 
 
+def overall_status_from_run(verdicts, pytest_failed):
+    """Deck verdict: fail if pytest failed or a check failed, pass if a check ran, else record."""
+    statuses = [v.get("status") for v in (verdicts or []) if isinstance(v, dict)]
+    if pytest_failed or "fail" in statuses:
+        return "fail"
+    if statuses:
+        return "pass"
+    return "record"
+
+
 def _format_msg_size(size_key):
     try:
         n = int(size_key)
@@ -52,6 +62,7 @@ def _graph_to_series(graph_dict: dict, *, y_field: str = "bus_bw") -> dict[str, 
 @register_dataset_builder("series")
 def build_series_datasets(sources: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
     results = sources.get("results") or sources.get("cvs_results_dict") or {}
+    variant = sources.get("variant") or sources.get("variant_config")
     series_cfg = profile.get("series") or {}
     y_fields = series_cfg.get("y_fields") or ["bus_bw", "alg_bw"]
     if isinstance(y_fields, str):
@@ -85,4 +96,7 @@ def build_series_datasets(sources: dict[str, Any], profile: dict[str, Any]) -> d
         "results_table": {"headers": headers, "rows": table_rows},
         "x_field": series_cfg.get("x_field", "size"),
         "y_fields": y_fields,
+        "overall_status": overall_status_from_run(
+            getattr(variant, "verdicts", None), sources.get("pytest_failed", False)
+        ),
     }
