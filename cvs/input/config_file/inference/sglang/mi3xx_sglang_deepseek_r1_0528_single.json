@@ -12,7 +12,7 @@
   "container": {
     "lifetime": "per_run",
     "name": "sglang_container",
-    "_image_example": "rocm/sgl-dev:v0.5.14-rocm720-mi30x-20260629",
+    "_image_example": "rocm/sgl-dev:v0.5.23-rocm10-mi30x-20261120",
     "image": "<changeme>",
     "runtime": {
       "name": "docker",
