@@ -11,11 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `install_mori` builds MoRI from `git_url` at `git_ref` into `mori_dir`, using the MORI config, before `mori_benchmark_test` runs. In container mode it needs `container.lifetime` `persistent` or `no_launch`. The MORI run card shows the built commit.
 - Training (jaxmaxtext, megatron, torchtitan) and inference (vLLM, SGLang, ATOM, xDiT) suites run a `test_support_matrix_gate` stage after the container launches that stops the run when the framework/model is unsupported on the detected GPU architecture or ROCm version (for example MXFP4 on MI300X/MI325X). Support is declared in `cvs/lib/support_matrix/{training,inference}_support_matrix.json`. Set `CVS_SUPPORT_MATRIX_GATE=OFF` to log violations and continue instead of stopping; a framework or model with no entry runs unchecked. See `cvs/lib/support_matrix/README.md`.
+- `cvs consolidate-report` combines the Run Decks found under one or more run directories, in run folders and in `cvs run` zip bundles, into one zip with an overview page, a page for each suite with its results and charts, a `summary.json` with the collection verdict, and every included run's files; the latest run of each suite sets that suite's verdict. Run Deck JSON now records `suite_stem`, `area`, and `generated_at_utc`, which the report uses for suite identity, grouping, and rerun order.
 
 ### Changed
 
+- Run Decks and their interactive viewers use the AI Lab look: colours, a CVS header, and status marks. Decks also offer a light theme from the header toggle. Deck content and JSON are unchanged.
 - Platform `test_check_be_nic_link_speed` and preflight `test_interface_name_consistency` require an exact backend NIC count per node (`backend_nic_count` in the host config, `connectivity_check.rdma.expected_nic_count` in preflight) instead of comparing nodes with each other. Host-config auto-detect leaves out the management NIC. Configs with `nic_link_interfaces: []` must set `backend_nic_count`; a count that differs from the length of the interface list fails.
-
 - The shipped MORI config sets `mori_dir` to `/home/{user-id}/INSTALL/mori` and `container.lifetime` to `persistent`, so `install_mori` works with it as shipped. It also mounts the host Broadcom Thor2 `libbnxt_re-rdmav34.so` and `libibverbs.so.1`; delete those mounts on nodes without Thor2.
 
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.
@@ -23,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The interactive viewers of inference and training Run Decks show their tables, heatmap, and gate matrix when Chart.js cannot load, for example without internet access. They previously stopped with "Failed to load report JSON".
 - The RCCL Run Deck (`rccl_perf`, `rccl_regression`, `rccl_pairwise`) shows FAIL whenever the pytest run fails, including dmesg errors and other failures that are not bandwidth checks. It shows PASS only when bus bandwidth or dip checks ran and the run passed, and RECORD when no check ran and nothing failed. It previously always showed RECORD.
 - `csp_qual_agfhc`: a node whose `results.json` cannot be read (missing file, SSH error or empty read) now fails with `results.json could not be read on node <node>` and what the read returned, instead of reporting nonzero failed tests. The Run Deck cell shows the same reason.
 - After CVS drops an unreachable node, tests that run a different command on each node run each node's own command and report the dropped node as unreachable. Previously later nodes could run another node's command, managed-compute runs failed with a `host_args` `ValueError`, and clusters larger than `CVS_HOSTS_PER_SHARD` left the dropped node out of the results. Results from `exec` and `exec_cmd_list` list reachable nodes in configured order, followed by unreachable nodes, so code that reads the first node's output still gets a reachable node.

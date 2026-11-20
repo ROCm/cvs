@@ -2,6 +2,7 @@
   "schema_version": 1,
   "profile_id": "vllm_rundeck",
   "suite_id": "vllm",
+  "area": "Inference",
   "metric_contract": {"id": "vllm-bare", "version": 1},
   "report_basename": "vllm_run_deck",
   "title": "vLLM Run Deck",

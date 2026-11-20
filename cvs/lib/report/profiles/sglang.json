@@ -2,6 +2,7 @@
   "schema_version": 1,
   "profile_id": "sglang_rundeck",
   "suite_id": "sglang",
+  "area": "Inference",
   "report_basename": "sglang_run_deck",
   "title": "SGLang Run Deck",
   "subtitle": "SGLang · lab performance summary",

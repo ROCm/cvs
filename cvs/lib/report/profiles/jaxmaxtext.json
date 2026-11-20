@@ -2,6 +2,7 @@
   "schema_version": 1,
   "profile_id": "jaxmaxtext_rundeck",
   "suite_id": "jaxmaxtext",
+  "area": "Training",
   "report_basename": "jaxmaxtext_run_deck",
   "title": "JAX MaxText Run Deck",
   "subtitle": "JAX MaxText · {mode} training summary",

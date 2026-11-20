@@ -1,6 +1,6 @@
 .. meta::
-  :description: Complete reference for the CVS command-line interface, covering cvs run, cvs exec, cvs scp, cvs list, cvs monitor, and cvs generate commands.
-  :keywords: CVS, CLI, cvs run, cvs exec, cvs scp, cvs list, cvs monitor, cvs generate, ROCm, cluster, JSON
+  :description: Complete reference for the CVS command-line interface, covering cvs run, cvs consolidate-report, cvs exec, cvs scp, cvs list, cvs monitor, and cvs generate commands.
+  :keywords: CVS, CLI, cvs run, cvs consolidate-report, cvs exec, cvs scp, cvs list, cvs monitor, cvs generate, ROCm, cluster, JSON
 
 *********************************************************************
 Cluster Validation Suite (CVS) command-line interface (CLI) reference
@@ -26,6 +26,8 @@ CVS provides the following top-level commands.
      - Browse and copy bundled configuration templates.
    * - ``cvs run``
      - Run a test suite (wrapper over pytest).
+   * - ``cvs consolidate-report``
+     - Combine the Run Decks of many runs into one report zip.
    * - ``cvs list``
      - List available tests.
    * - ``cvs monitor``
@@ -213,6 +215,37 @@ All other pytest flags pass through. Run ``pytest --help`` for the full list.
 is omitted. See :doc:`/how-to/run-on-managed-compute` for managed runs.
 
 See :doc:`/how-to/test-suites/index`.
+
+``cvs consolidate-report``
+==========================
+
+Combine the Run Decks under one or more run directories into one report zip.
+
+Required options:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Option
+     - Description
+   * - ``--log-dir DIR[,DIR...]``
+     - Directory to search recursively for Run Decks, in run folders and in ``cvs run`` zip bundles. Separate several directories with commas.
+
+Optional options:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Option
+     - Description
+   * - ``--output DIR``
+     - Directory for ``consolidated_report_<YYYY-mm-ddTHHMMSS>.zip``. Defaults to the ``--log-dir`` directory, or the current directory when several are given.
+
+Exits 0 when it writes the report, whatever the verdict, and 1 when a directory does not exist, no Run Deck is found, or the zip cannot be written. The verdict is in ``summary.json`` inside the zip.
+
+See :ref:`consolidated-report`.
 
 ``cvs list``
 ============

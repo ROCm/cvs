@@ -2,6 +2,7 @@
   "schema_version": 1,
   "profile_id": "aorta_rundeck",
   "suite_id": "aorta",
+  "area": "Training",
   "report_basename": "aorta_run_deck",
   "title": "Aorta Run Deck",
   "subtitle": "Aorta · {mode} benchmark summary",

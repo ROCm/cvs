@@ -2,6 +2,7 @@
   "schema_version": 1,
   "profile_id": "atom_rundeck",
   "suite_id": "atom",
+  "area": "Inference",
   "report_basename": "atom_run_deck",
   "title": "ATOM Run Deck",
   "subtitle": "ATOM · lab performance summary",
