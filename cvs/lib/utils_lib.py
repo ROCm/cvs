@@ -439,7 +439,8 @@ def config_placeholder_map(config_dict, cluster_dict):
     ``{'user-id': 'master'}`` for a cluster whose ``username`` is ``master``,
     covering {user-id}, {user}, {home}, {home-mount-dir}, {node-dir-name} and
     {run_dir}. {run_dir} is the empty string unless config_dict mentions it.
-    resolve_test_config_placeholders and load_config both expand exactly this set.
+    resolve_test_config_placeholders and substitute_placeholders(all_placeholders=True)
+    both expand exactly this set.
     """
     username = cluster_dict.get('username', os.getenv('USER', 'root'))
     home_mount_dir_name = cluster_dict.get('home_mount_dir_name', 'home')
