@@ -150,7 +150,7 @@ class TestEvaluateMetricVerdicts(unittest.TestCase):
     def test_missing_gpu_and_prometheus_gates_fail_never_skip(self):
         thresholds = {
             "gpu_compute_util_pct": {"kind": "min", "value": 80},
-            "queue_time_p95_ms": {"kind": "max", "value": 50},
+            "p95_queue_time_ms": {"kind": "max", "value": 50},
         }
 
         verdicts = evaluate_metric_verdicts({"head": {}}, thresholds, enforce_thresholds=True)
@@ -159,7 +159,7 @@ class TestEvaluateMetricVerdicts(unittest.TestCase):
             {item["metric"]: item["status"] for item in verdicts},
             {
                 "gpu_compute_util_pct": "fail",
-                "queue_time_p95_ms": "fail",
+                "p95_queue_time_ms": "fail",
             },
         )
         self.assertNotIn("skip", {item["status"] for item in verdicts})
