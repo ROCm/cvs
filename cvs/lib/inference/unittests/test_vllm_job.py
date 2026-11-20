@@ -16,7 +16,7 @@ import unittest
 from unittest import mock
 
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
-from cvs.lib.conf_lib.schemas.vllm import VariantConfig
+from cvs.lib.inference.unittests.vllm_variant import old_vllm_config
 from cvs.lib.inference.vllm_job import VllmJob
 from cvs.unittests.support import FAKE_CRED, TMP, run_trusted
 
@@ -72,7 +72,7 @@ class ServerScript:
 
 def _variant(log_dir, pp):
     cell = f"ISL=1024,OSL=1024,TP=8,PP={pp},CONC=16"
-    return VariantConfig(
+    return old_vllm_config(
         enforce_thresholds=False,
         threshold_json="threshold.json",
         paths={"shared_fs": log_dir, "models_dir": "/models", "log_dir": log_dir, "hf_token_file": FAKE_CRED_FILE},

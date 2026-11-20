@@ -8,8 +8,7 @@ import unittest
 from pathlib import Path
 
 from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
-from cvs.lib.conf_lib.loader import load_config
-from cvs.lib.conf_lib.schemas.vllm import VariantConfig
+from cvs.lib.inference.utils.vllm_config_loader import load_variant
 from cvs.lib.inference.utils.vllm_metrics import (
     CLIENT_METRICS,
     METRIC_CATEGORIES,
@@ -128,7 +127,7 @@ class TestVllmDeckProfile(unittest.TestCase):
             config = write_filled_config(
                 root / "input/config_file/inference/vllm/mi3xx_vllm_llama33-70b_fp8_distributed.json", tmp
             )
-            variant = load_config(VariantConfig, config, {"username": "test"}).config
+            variant = load_variant(config, {"username": "test"}, warn=False)
         variant.bind_effective_topology(EffectiveVllmTopology("distributed", ("node0", "node1"), 2))
         cell_id = variant.expected_cells()[0]
         variant.enforce_thresholds = True
