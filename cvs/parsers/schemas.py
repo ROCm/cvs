@@ -30,6 +30,7 @@ from pydantic import (
     ConfigDict,
     Field,
     PositiveInt,
+    StrictBool,
     StrictInt,
     ValidationError,
     create_model,
@@ -1565,7 +1566,8 @@ ServingServerParams = create_model(
     tp=(PositiveInt, ...),
     pp=(PositiveInt, 1),
     dp=(PositiveInt, 1),
-    ep=(PositiveInt, 1),
+    # Expert parallel across the full tp x dp group; its size is always derived.
+    ep=(StrictBool, False),
     port=(int, 8888),
     master_port=(int, 29501),
     # null means 1, single only; distributed needs at least 2.
