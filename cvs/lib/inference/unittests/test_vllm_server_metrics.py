@@ -313,14 +313,14 @@ class TestToPromMetrics(unittest.TestCase):
         # This cell's isolated queue-wait observations are exactly [0.6, 0.9]
         # (0.6 falls in bucket 0.8, 0.9 falls in bucket 1.0); p50 of 2 obs
         # falls in/around the first of the two remaining buckets.
-        self.assertIsNotNone(out["queue_time_p50_ms"])
-        self.assertIsNotNone(out["queue_time_p95_ms"])
-        self.assertIsNotNone(out["prefill_time_p50_ms"])
-        self.assertIsNotNone(out["prefill_time_p95_ms"])
+        self.assertIsNotNone(out["p50_queue_time_ms"])
+        self.assertIsNotNone(out["p95_queue_time_ms"])
+        self.assertIsNotNone(out["p50_prefill_time_ms"])
+        self.assertIsNotNone(out["p95_prefill_time_ms"])
         # Values are in ms (seconds * 1000), and in the right ballpark given
         # only [0.6, 0.9] contributed post-diff (600-1000ms range).
-        self.assertGreater(out["queue_time_p50_ms"], 500)
-        self.assertLess(out["queue_time_p50_ms"], 1100)
+        self.assertGreater(out["p50_queue_time_ms"], 500)
+        self.assertLess(out["p50_queue_time_ms"], 1100)
 
     def test_prom_metric_units_cover_every_metric(self):
         for short, unit in PROM_METRICS:

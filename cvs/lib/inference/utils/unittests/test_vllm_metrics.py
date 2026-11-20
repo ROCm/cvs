@@ -34,7 +34,7 @@ EXPECTED_NAMES = (
     "output_throughput",
     "total_token_throughput",
     "per_gpu_throughput",
-    "decode_throughput_p50",
+    "p50_decode_throughput",
     "max_output_tokens_per_s",
     "rtfx",
     "total_input_tokens",
@@ -74,10 +74,10 @@ EXPECTED_NAMES = (
     "model_load_s",
     "gpu_bandwidth_util_pct",
     "gpu_compute_util_pct",
-    "queue_time_p50_ms",
-    "queue_time_p95_ms",
-    "prefill_time_p50_ms",
-    "prefill_time_p95_ms",
+    "p50_queue_time_ms",
+    "p95_queue_time_ms",
+    "p50_prefill_time_ms",
+    "p95_prefill_time_ms",
 )
 
 
@@ -115,10 +115,10 @@ class TestMetricRegistry(unittest.TestCase):
         self.assertEqual(
             tuple(name for name, _unit in PROM_METRICS),
             (
-                "queue_time_p50_ms",
-                "queue_time_p95_ms",
-                "prefill_time_p50_ms",
-                "prefill_time_p95_ms",
+                "p50_queue_time_ms",
+                "p95_queue_time_ms",
+                "p50_prefill_time_ms",
+                "p95_prefill_time_ms",
             ),
         )
 
@@ -134,7 +134,7 @@ class TestMetricRegistry(unittest.TestCase):
             "output_throughput",
             "total_token_throughput",
             "per_gpu_throughput",
-            "decode_throughput_p50",
+            "p50_decode_throughput",
             "max_output_tokens_per_s",
             "rtfx",
             "total_input_tokens",
@@ -234,14 +234,14 @@ class TestMetricSourceMerge(unittest.TestCase):
         merged = merge_metric_sources(
             {"output_throughput": 0},
             {"gpu_compute_util_pct": 0.0},
-            {"queue_time_p50_ms": 0},
+            {"p50_queue_time_ms": 0},
         )
         self.assertEqual(
             merged,
             {
                 "output_throughput": 0,
                 "gpu_compute_util_pct": 0.0,
-                "queue_time_p50_ms": 0,
+                "p50_queue_time_ms": 0,
             },
         )
 
@@ -252,7 +252,7 @@ class TestMetricSourceMerge(unittest.TestCase):
             merge_metric_sources(
                 {"output_throughput": 1},
                 {},
-                {"queue_time_p50_ms": 1, "output_throughput": 2},
+                {"p50_queue_time_ms": 1, "output_throughput": 2},
             )
 
 

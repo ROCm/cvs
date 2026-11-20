@@ -49,6 +49,24 @@ _BOOLEAN_CLIENT_FLAGS = frozenset({"ignore_eos", "trust_remote_code"})
 # Client flags the job sets from timeouts.client_s.
 _CLIENT_WAIT_FLAGS = frozenset({"client_initial_wait_s", "client_poll_iterations", "client_poll_wait_s"})
 _SPECULATIVE_ENGINE_ARGS = frozenset({"speculative_config", "speculative_model", "num_speculative_tokens"})
+# Shared metric names vLLM does not report.
+_UNREPORTED_METRICS = frozenset(
+    {
+        "output_throughput_per_gpu",
+        "mfu",
+        "spec_acceptance_rate",
+        "mean_spec_acceptance_length",
+        "spec_num_drafts",
+        "spec_draft_tokens",
+        "spec_accepted_tokens",
+        "mean_spec_tokens",
+        "mtp_quality.empty_or_repeat_ratio",
+        "mtp_quality.chat_template_match",
+        "quant_parity.probe_match",
+        "scaling_efficiency_pct",
+        "pass_rate",
+    }
+)
 
 
 class ConfigError(ValueError):
@@ -137,9 +155,22 @@ def _not_implemented_fields(config):
     return fields
 
 
+def _unreported_metrics(thresholds):
+    metrics = [
+        f"thresholds {cell_key}.{metric}"
+        for cell_key, cell in thresholds.cells.items()
+        for metric in cell
+        if metric in _UNREPORTED_METRICS
+    ]
+    for section in ("custom_eval", "quant_parity", "mtp_quality"):
+        if getattr(thresholds.accuracy, section):
+            metrics.append(f"thresholds accuracy.{section}")
+    return metrics
+
+
 def _check_vllm(self):
     server = self.server_params
-    not_implemented = _not_implemented_fields(self)
+    not_implemented = _not_implemented_fields(self) + _unreported_metrics(self.thresholds)
     if not_implemented:
         raise ValueError(f"not implemented for vLLM: {', '.join(not_implemented)}; leave them at their defaults")
 
@@ -302,6 +333,13 @@ _OLD_TIMEOUTS = {
 _OLD_CLIENT_DEFAULTS = {"dataset_name": "random", "ignore_eos": True, "trust_remote_code": False}
 _OLD_CELL_TIMEOUT_KEYS = _CLIENT_WAIT_FLAGS
 _OLD_DEFAULT_NUM_PROMPTS = 3200
+_OLD_METRIC_NAMES = {
+    "queue_time_p50_ms": "p50_queue_time_ms",
+    "queue_time_p95_ms": "p95_queue_time_ms",
+    "prefill_time_p50_ms": "p50_prefill_time_ms",
+    "prefill_time_p95_ms": "p95_prefill_time_ms",
+    "decode_throughput_p50": "p50_decode_throughput",
+}
 _OLD_THRESHOLD_KINDS = {"max_ms": "max", "min_tok_s": "min"}
 _ACCURACY_THRESHOLD_SECTIONS = frozenset({"lm_eval", "custom_eval", "quant_parity", "mtp_quality"})
 _NEW_SERVER_FIELDS = frozenset(ServingServerParams.model_fields)
@@ -429,7 +467,7 @@ def _old_accuracy_spec_rows(cell, old_prefix, new_prefix):
 
 
 def _thresholds_rule(config):
-    """Move old accuracy thresholds under ``lm_eval``, rewriting their old kinds and quoted values."""
+    """Move old accuracy thresholds under ``lm_eval``, rewriting their specs, and rename old cell metrics."""
     thresholds = _section(config, "thresholds")
     rows = {}
     accuracy = _section(thresholds, "accuracy")
@@ -441,6 +479,14 @@ def _thresholds_rule(config):
             rows[old] = OldKey(new)
             if isinstance(cell, dict):
                 rows.update(_old_accuracy_spec_rows(cell, old, new))
+    for cell_key, cell in thresholds.items():
+        if cell_key == "accuracy" or not isinstance(cell, dict):
+            continue
+        for old_name, new_name in _OLD_METRIC_NAMES.items():
+            if old_name in cell and new_name in cell:
+                raise ValueError(f"thresholds {cell_key} sets both {old_name} and {new_name}; keep {new_name}")
+            if old_name in cell:
+                rows[("thresholds", cell_key, old_name)] = ("thresholds", cell_key, new_name)
     return rows
 
 

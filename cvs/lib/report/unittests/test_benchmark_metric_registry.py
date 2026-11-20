@@ -70,7 +70,7 @@ class TestBenchmarkMetricRegistry(unittest.TestCase):
         rows = [
             {'node': 'n1', 'metric': 'mean_ttft_ms', 'status': 'pass'},
             {'node': 'n1', 'metric': 'goodput', 'status': 'fail'},
-            {'node': 'n1', 'metric': 'queue_time_p95_ms', 'status': 'skip'},
+            {'node': 'n1', 'metric': 'p95_queue_time_ms', 'status': 'skip'},
             {'node': 'n1', 'metric': 'output_throughput', 'status': 'record'},
         ]
         registry.record_benchmark_metric_summary(nodeid, rows)

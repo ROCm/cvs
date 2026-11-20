@@ -856,7 +856,7 @@ Throughput and totals (10)
 
 ``request_throughput``, ``goodput``, ``output_throughput``,
 ``total_token_throughput``, ``per_gpu_throughput``,
-``decode_throughput_p50``, ``max_output_tokens_per_s``, ``rtfx``,
+``p50_decode_throughput``, ``max_output_tokens_per_s``, ``rtfx``,
 ``total_input_tokens``, ``total_output_tokens``.
 
 TTFT (8)
@@ -898,8 +898,8 @@ remains zero.
 Prometheus (4)
 --------------
 
-``queue_time_p50_ms``, ``queue_time_p95_ms``, ``prefill_time_p50_ms``, and
-``prefill_time_p95_ms``. CVS diffs before/after histogram scrapes so reused
+``p50_queue_time_ms``, ``p95_queue_time_ms``, ``p50_prefill_time_ms``, and
+``p95_prefill_time_ms``. CVS diffs before/after histogram scrapes so reused
 server counters remain isolated to one cell.
 
 Directions
@@ -928,7 +928,7 @@ Derived metrics are emitted only when their result is finite:
   per_gpu_throughput          = total_token_throughput / (tp * pp)
   normalized_ttft_ms_per_tok  = mean_ttft_ms / isl
   decode_latency_ratio        = p99_itl_ms / p50_itl_ms
-  decode_throughput_p50       = 1000 / median_tpot_ms
+  p50_decode_throughput       = 1000 / median_tpot_ms
   success_rate                = completed / (completed + failed)
 
 Reporting and compatibility
