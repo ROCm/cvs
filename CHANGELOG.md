@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preflight `test_ifoe_l2_connectivity`: full-mesh IFoE L2 ping deduplicates symmetric bidirectional accelerator pairs into a balanced tournament schedule and runs each source BDF's ping queue in parallel inside the per-node ScriptLet batch, which shortens the full-mesh L2 ping run.
 - A vLLM config that still holds a `<changeme>` fails at load, naming each field to fill in.
 - A vLLM config that sets something vLLM does not run yet, such as speculative-decoding flags in `server_params.engine_args`, fails at load with a not-implemented error naming each field.
+- vLLM accuracy thresholds take a `min`, `max` or `info` kind: `within` and `min_ratio` fail at load, so rewrite them as a `min` or `max` bound. A quoted accuracy value such as `"0.75"` still loads as a number, with the deprecation warning.
 - The shipped MORI config sets `mori_dir` to `/home/{user-id}/INSTALL/mori` and `container.lifetime` to `persistent`, so `install_mori` works with it as shipped. It also mounts the host Broadcom Thor2 `libbnxt_re-rdmav34.so` and `libibverbs.so.1`; delete those mounts on nodes without Thor2.
 
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.

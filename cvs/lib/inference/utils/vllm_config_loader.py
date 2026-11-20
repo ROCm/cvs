@@ -407,18 +407,29 @@ def _flags_rule(config):
     return rows
 
 
-def _old_kind_rows(cell, old_prefix, new_prefix):
+def _old_accuracy_spec_rows(cell, old_prefix, new_prefix):
+    """Rewrite the old kinds, and a quoted value as the old verdict code read it: with ``float``."""
     rows = {}
     for metric, spec in cell.items():
-        kind = spec.get("kind") if isinstance(spec, dict) else None
+        if not isinstance(spec, dict):
+            continue
+        kind = spec.get("kind")
         if isinstance(kind, str) and kind in _OLD_THRESHOLD_KINDS:
             new_path = (*new_prefix, metric, "kind")
             rows[(*old_prefix, metric, "kind")] = OldKey(new_path, value=_OLD_THRESHOLD_KINDS[kind], conflict="replace")
+        value = spec.get("value")
+        if isinstance(value, str):
+            try:
+                number = float(value)
+            except ValueError:
+                continue
+            new_path = (*new_prefix, metric, "value")
+            rows[(*old_prefix, metric, "value")] = OldKey(new_path, value=number, conflict="replace")
     return rows
 
 
 def _thresholds_rule(config):
-    """Move old accuracy thresholds under ``lm_eval`` and rewrite the old kinds."""
+    """Move old accuracy thresholds under ``lm_eval``, rewriting their old kinds and quoted values."""
     thresholds = _section(config, "thresholds")
     rows = {}
     accuracy = _section(thresholds, "accuracy")
@@ -429,12 +440,7 @@ def _thresholds_rule(config):
             old, new = ("thresholds", "accuracy", task_id), ("thresholds", "accuracy", "lm_eval", task_id)
             rows[old] = OldKey(new)
             if isinstance(cell, dict):
-                rows.update(_old_kind_rows(cell, old, new))
-    for cell_key, cell in thresholds.items():
-        if cell_key == "accuracy" or not isinstance(cell, dict):
-            continue
-        prefix = ("thresholds", cell_key)
-        rows.update(_old_kind_rows(cell, prefix, prefix))
+                rows.update(_old_accuracy_spec_rows(cell, old, new))
     return rows
 
 
