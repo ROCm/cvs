@@ -13,7 +13,11 @@ from cvs.lib.utils_lib import *
 RDMA_BIN = '"$(command -v rdma || echo /usr/sbin/rdma)"'
 RDMA_LINK_CMD = f'{RDMA_BIN} link'
 IP_BIN = '"$(command -v ip || echo /usr/sbin/ip)"'
-# Default routes and the SSH session identify management ports; lower devices of bonds and VLANs inherit that role.
+# Management netdevs come from three sources, printed one per line as "mgmt <netdev>":
+#   1. Devices that carry an IPv4 or IPv6 default route.
+#   2. The device that owns this SSH session's server address (field 3 of $SSH_CONNECTION).
+#   3. Bond and VLAN lower devices of (1) and (2), from /sys/class/net/<dev>/lower_*.
+# Keep all three when changing the pipeline.
 MANAGEMENT_NETDEV_CMD = (
     f'devs=$({{ {IP_BIN} -o route show default; {IP_BIN} -o -6 route show default; }} 2>/dev/null '
     "| awk '{for(i=1;i<NF;i++) if($i==\"dev\") print $(i+1)}'); "
@@ -389,7 +393,10 @@ def select_backend_nics(lshw_node, rdma_netdevs, excluded=()):
     largest = max(map(len, groups.values()))
     tied = [description for description, names in groups.items() if len(names) == largest]
     if len(tied) > 1:
-        log.warning(f'Tied backend NIC descriptions: {tied}; selecting {tied[0]}')
+        log.warning(
+            f'Tied backend NIC descriptions ({largest} NICs each): {tied}; '
+            f'keeping the first seen, {tied[0]!r}: {groups[tied[0]]}'
+        )
     return groups[tied[0]]
 
 
