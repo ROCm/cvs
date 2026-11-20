@@ -375,26 +375,17 @@ class TestOldKeys(unittest.TestCase):
         self.assertNotIn("accuracy", convert(raw)[0])
 
     def test_old_threshold_rows(self):
-        cases = {
-            "max_ms": ({CELL: {"p99_ttft_ms": {"kind": "max_ms", "value": 1}}}, (CELL, "p99_ttft_ms"), "max"),
-            "min_tok_s": (
-                {CELL: {"output_throughput": {"kind": "min_tok_s", "value": 1}}},
-                (CELL, "output_throughput"),
-                "min",
-            ),
-        }
-        for name, (thresholds, (cell, metric), kind) in cases.items():
-            with self.subTest(name=name):
-                converted, message = convert({**new_config(), "thresholds": thresholds})
-                self.assertEqual(converted["thresholds"][cell][metric]["kind"], kind)
-                self.assertIn(f"thresholds.{cell}.{metric}.kind", message)
-
         converted, message = convert({**old_config(), "thresholds": old_thresholds()})
         self.assertEqual(
             converted["thresholds"]["accuracy"],
             {"lm_eval": {"gsm8k_flex": {"gsm8k.exact_match__flexible-extract": {"kind": "min", "value": 0.5}}}},
         )
         self.assertIn("thresholds.accuracy.gsm8k_flex -> thresholds.accuracy.lm_eval.gsm8k_flex", message)
+        thresholds = old_thresholds()
+        thresholds["accuracy"]["gsm8k_flex"]["gsm8k.exact_match__flexible-extract"]["kind"] = "min_tok_s"
+        converted, _ = convert({**old_config(), "thresholds": thresholds})
+        spec = converted["thresholds"]["accuracy"]["lm_eval"]["gsm8k_flex"]["gsm8k.exact_match__flexible-extract"]
+        self.assertEqual(spec, {"kind": "min", "value": 0.5})
         current = {CELL: {}, "accuracy": {"lm_eval": {"gsm8k_flex": {}}}}
         self.assertEqual(
             convert({**new_config(), "thresholds": current}), ({**new_config(), "thresholds": current}, None)
@@ -493,6 +484,42 @@ class TestLoadVariant(unittest.TestCase):
         self.assertEqual(loaded.server_params.tp, 8)
         self.assertEqual(caught, [])
         self.assertFalse([line for line in logs if "Deprecated" in line])
+
+    def test_old_kinds_in_a_cell_fail_at_load_as_on_main(self):
+        for metric, kind in (("p99_ttft_ms", "max_ms"), ("output_throughput", "min_tok_s")):
+            with self.subTest(kind=kind):
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = _write(tmp, new_config(), {CELL: {metric: {"kind": kind, "value": 1}}})
+                    with self.assertRaises(ConfigError) as caught:
+                        load_variant(path, {}, warn=False)
+                self.assertIn(f"{metric}.kind", str(caught.exception))
+
+    def test_quoted_accuracy_value_loads_as_a_number_with_the_warning(self):
+        metric = "gsm8k.exact_match__flexible-extract"
+        thresholds = old_thresholds()
+        thresholds["accuracy"]["gsm8k_flex"][metric]["value"] = "0.75"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write(tmp, new_config(), thresholds)
+            loaded, _logs, caught = _capture_logs(lambda: load_variant(path, {}))
+        value = loaded.thresholds.accuracy.lm_eval["gsm8k_flex"][metric].value
+        self.assertEqual((value, type(value)), (0.75, float))
+        self.assertEqual(len(caught), 1)
+        self.assertIn(f"thresholds.accuracy.gsm8k_flex.{metric}.value", caught[0])
+
+        bad = {
+            "non-finite": {"kind": "min", "value": "nan"},
+            "not a number": {"kind": "min", "value": "high"},
+            "within": {"kind": "within", "value": "0.75", "tolerance_pct": 5},
+            "min_ratio": {"kind": "min_ratio", "value": 0.75, "reference": "gsm8k.exact_match__strict-match"},
+        }
+        for name, spec in bad.items():
+            with self.subTest(name=name):
+                thresholds["accuracy"]["gsm8k_flex"][metric] = spec
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = _write(tmp, new_config(), thresholds)
+                    with self.assertRaises(ConfigError) as caught:
+                        load_variant(path, {}, warn=False)
+                self.assertIn(f"gsm8k_flex.{metric}", str(caught.exception))
 
     def test_empty_threshold_json_records(self):
         with tempfile.TemporaryDirectory() as tmp:
