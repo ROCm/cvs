@@ -1491,6 +1491,11 @@ class PreflightRdmaConfig(BaseModel):
         min_length=1,
         description="RDMA device names checked for presence, GID consistency, and connectivity",
     )
+    expected_nic_count: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Backend RDMA NICs that must be present and active on every node; must equal len(interfaces). Defaults to len(interfaces).",
+    )
     mtu_check: bool = Field(
         default=True, description="Verify RDMA active MTU, and the netdev MTU on RoCE ports, on configured interfaces"
     )
@@ -1779,7 +1784,7 @@ class PreflightNodeSmokeConfig(BaseModel):
     expected_rdma_nics: Optional[int] = Field(
         default=None,
         ge=1,
-        description="Hard-fail when training RDMA NIC count differs (default: len(node_check.rdma_interfaces))",
+        description="Hard-fail when training RDMA NIC count differs; defaults to connectivity_check.rdma.expected_nic_count, then len(connectivity_check.rdma.interfaces)",
     )
     ulimit_l_min_gb: float = Field(default=32.0, ge=0, description="Minimum RLIMIT_MEMLOCK in GiB (0 disables)")
     shm_min_gb: float = Field(default=8.0, ge=0, description="Minimum /dev/shm size in GiB (0 disables)")

@@ -149,6 +149,7 @@ RDMA connectivity (``connectivity_check.rdma``)
 
 - ``connectivity_mode`` — ``"basic"``, ``"full_mesh"``, or ``"skip"``
 - ``interfaces`` — Expected RDMA device names on all nodes
+- ``expected_nic_count`` — Backend RDMA NICs required present and active on every node; must match the ``interfaces`` count
 - ``gid_index`` — GID index validated on those interfaces
 - ``gid_type`` — Expected sysfs GID type (default ``"RoCE v2"``); ``"any"`` disables type checking, and InfiniBand link layers are exempt
 - ``mtu_check`` — Enable RDMA active MTU validation, plus jumbo-frame netdev MTU validation on RoCE ports (default ``true``)

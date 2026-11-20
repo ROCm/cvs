@@ -30,6 +30,24 @@ def _smoke_payload():
 
 
 class TestPreflightDeck(unittest.TestCase):
+    def test_interface_summary_counts_only_active_expected_devices(self):
+        deck = build_preflight_deck(
+            {
+                'interface_names': {
+                    'n1': {
+                        'status': 'PASS',
+                        'found_interfaces': [f'mlx5_{i}' for i in range(9)],
+                        'expected_interfaces': [f'mlx5_{i}' for i in range(1, 9)],
+                        'expected_nic_count': 8,
+                        'active_expected_count': 8,
+                        'errors': [],
+                    }
+                }
+            },
+            {'node_dict': {'n1': {}}},
+        )
+        self.assertEqual(deck['groups']['interface_names']['nodes']['n1']['items_summary'], '8/8 interfaces')
+
     def test_meta_uses_cluster_and_detected_rocm(self):
         meta = make_meta({'cluster_name': 'lab'}, 'preflight_checks', '7.2.1')
         self.assertEqual(meta['cluster'], 'lab')

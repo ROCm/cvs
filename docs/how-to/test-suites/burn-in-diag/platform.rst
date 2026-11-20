@@ -26,6 +26,7 @@ Set up config
    - ``rocm_version``
    - ``bios_version``
    - ``nic_link_interfaces``
+   - ``backend_nic_count``
 
 For the complete field reference and expected-value format, see :doc:`/reference/configuration-files/burn-in-diag/platform`.
 

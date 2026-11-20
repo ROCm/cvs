@@ -222,6 +222,9 @@ All parameters below are optional and have sensible defaults. The sample configu
     - `["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]` - Standard 4-interface setup
     - `["mlx5_0", "mlx5_1"]` - Mellanox 2-interface setup
 
+- **`expected_nic_count`** (default: length of `interfaces`)
+  - Backend RDMA NICs required present, active, and linked up on every node; must equal the number of names in `interfaces`. Do not list the management NIC.
+
 - **`mtu_check`** (default: `true`)
   - Check the active MTU of each configured RDMA port, and the jumbo-frame netdev MTU on RoCE ports, when RDMA mode is enabled
   - The link layer comes from `ibv_devinfo` (falling back to sysfs). InfiniBand ports are checked on active MTU only: they have no Ethernet netdev, and an IPoIB netdev such as `ib0` (often MTU 2044) does not limit the verbs MTU
@@ -404,7 +407,7 @@ Legacy config key `node_smoke` is accepted as an alias for `node_smoke_tier1`.
 - **`dump_path`** (default: `""`)
   - Per-node smoke JSON output; empty uses `<reporting.artifacts_root_dir>/node_smoke`
 - **`expected_rdma_nics`** (default: `null`)
-  - Defaults to `len(node_check.rdma_interfaces)` when null
+  - Defaults to `connectivity_check.rdma.expected_nic_count`, then the length of `connectivity_check.rdma.interfaces`, when null
 - **`ulimit_l_min_gb`** (default: `32`) — FAIL below this memlock limit; `0` disables
 - **`shm_min_gb`** (default: `8`) — FAIL below this `/dev/shm` size; `0` disables
 - **`skip_dmesg`** (default: `false`)

@@ -34,6 +34,9 @@
         "_example_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"],
         "interfaces": ["<changeme>"],
         "_comment_interfaces": "List of specific RDMA interface names that should be present on all cluster nodes. Examples: ['rocep28s0', 'rocep62s0'] for standard setup, ['mlx5_0', 'mlx5_1'] for Mellanox, ['ib0', 'ib1'] for generic InfiniBand.",
+        "expected_nic_count": "<changeme>",
+        "_example_expected_nic_count": 8,
+        "_comment_expected_nic_count": "Backend RDMA NICs that must be present and active on every node, for example 8 on MI355X. Must equal the number of names in interfaces. Do not list the management NIC.",
 
         "mtu_check": true,
         "_comment_mtu_check": "Verify the RDMA active MTU on every port and, on RoCE ports, jumbo frames on the Ethernet netdev. InfiniBand ports are checked on active MTU only. Runs only when connectivity_mode is not 'skip'. MTU failures are reported but never prune nodes.",
@@ -187,7 +190,7 @@
       "_comment_dump_path": "Directory for per-node smoke/*.json output. Leave empty to use <reporting.artifacts_root_dir>/node_smoke.",
 
       "expected_rdma_nics": null,
-      "_comment_expected_rdma_nics": "Hard-fail when training RDMA NIC count differs. null defaults to len(connectivity_check.rdma.interfaces). Example: 8.",
+      "_comment_expected_rdma_nics": "Hard-fail when training RDMA NIC count differs. null defaults to connectivity_check.rdma.expected_nic_count, then len(connectivity_check.rdma.interfaces). Example: 8.",
 
       "ulimit_l_min_gb": 32,
       "_comment_ulimit_l_min_gb": "FAIL when RLIMIT_MEMLOCK is below this many GiB. 0 disables.",

@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Platform `test_check_be_nic_link_speed` and preflight `test_interface_name_consistency` require an exact backend NIC count per node (`backend_nic_count` in the host config, `connectivity_check.rdma.expected_nic_count` in preflight) instead of comparing nodes with each other. Host-config auto-detect leaves out the management NIC. Configs with `nic_link_interfaces: []` must set `backend_nic_count`; a count that differs from the length of the interface list fails.
+
 - The shipped MORI config sets `mori_dir` to `/home/{user-id}/INSTALL/mori` and `container.lifetime` to `persistent`, so `install_mori` works with it as shipped. It also mounts the host Broadcom Thor2 `libbnxt_re-rdmav34.so` and `libibverbs.so.1`; delete those mounts on nodes without Thor2.
 
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.

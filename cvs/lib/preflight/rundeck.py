@@ -425,6 +425,8 @@ def _interface_records(results, nodes):
     def _summary(entry):
         found = entry.get('found_interfaces') or []
         expected = entry.get('expected_interfaces') or []
+        if 'expected_nic_count' in entry:
+            return f"{entry.get('active_expected_count', 0)}/{entry['expected_nic_count']} interfaces"
         if expected:
             return f"{len(found)}/{len(expected)} interfaces"
         return f"{len(found)} interfaces"

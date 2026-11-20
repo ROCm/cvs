@@ -52,6 +52,24 @@ def get_nested_config(config_dict, section, key, default):
     return default
 
 
+def resolve_expected_rdma_nic_count(cfg):
+    """Return the configured positive backend RDMA NIC count, when supplied."""
+    value = get_nested_config(cfg, "connectivity_check.rdma", "expected_nic_count", None)
+    if value is None or value == "":
+        return None
+    try:
+        count = int(str(value).strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"connectivity_check.rdma.expected_nic_count must be a positive integer (for example 8), got {value!r}"
+        ) from exc
+    if count <= 0:
+        raise ValueError(
+            f"connectivity_check.rdma.expected_nic_count must be a positive integer (for example 8), got {value!r}"
+        )
+    return count
+
+
 def get_preflight_nested(cfg: dict, section: str, legacy_section: str, key: str, default):
     """Read ``section.key``, falling back to ``legacy_section.key`` when unset."""
     value = get_nested_config(cfg, section, key, None)
@@ -319,7 +337,7 @@ class NodeSmokeCheck(PreflightCheck):
         self.dump_path = _resolve_dump_path(cfg)
 
         rdma_ifaces = resolve_rdma_interfaces(cfg)
-        default_rdma_nics = len(rdma_ifaces) if rdma_ifaces else None
+        default_rdma_nics = resolve_expected_rdma_nic_count(cfg) or (len(rdma_ifaces) if rdma_ifaces else None)
         expected_rdma = get_preflight_nested(cfg, tier1, legacy, "expected_rdma_nics", default_rdma_nics)
         self.expected_rdma_nics = int(expected_rdma) if expected_rdma not in (None, "", 0) else None
 
