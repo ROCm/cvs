@@ -146,15 +146,7 @@ td { font-family: var(--f-mono); }
 .comparison-note { padding: 12px 20px; border-top: 1px solid var(--f-border); font-size: 10px; line-height: 1.5; color: var(--f-text-3); }
 .empty-state { padding: 32px; color: var(--f-text-2); font-size: 13px; }
 
-.manifest > summary { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 16px 20px; cursor: pointer; list-style: none; }
-.manifest > summary::-webkit-details-marker { display: none; }
-.manifest-title { font: 500 17px var(--f-display); }
-.manifest-title::before { content: '\25B8'; display: inline-block; margin-right: 10px; color: var(--f-text-3); transition: transform .12s; }
-.manifest[open] .manifest-title::before { transform: rotate(90deg); }
-.manifest-body { padding: 0 20px 20px; display: flex; flex-direction: column; gap: 12px; }
-.manifest-body h3 { font-size: 14px; font-weight: 500; margin-top: 8px; }
 .table-scroll { overflow: auto; max-width: 100%; }
-.manifest .table-scroll { max-height: 320px; border: 1px solid var(--f-border); border-radius: 6px; }
 
 .report-footer { display: flex; gap: 12px; align-items: center; justify-content: space-between; font-size: 10px; color: var(--f-text-3); line-height: 1.5; padding-bottom: 8px; }
 

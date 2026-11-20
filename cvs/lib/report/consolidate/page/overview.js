@@ -277,34 +277,6 @@
     refs.empty.hidden = list.length > 0;
   }
 
-  function manifestPanel() {
-    var manifest = summary.manifest || {};
-    var clusters = Object.keys(manifest.clusters || {});
-    var hosts = manifest.hosts || [];
-    var hostTable = hosts.length ? h('div', { class: 'table-scroll' }, h('table', null,
-      h('thead', null, h('tr', null, h('th', null, 'Host'), h('th', null, 'Reported by'), h('th', null, 'Failed in'))),
-      h('tbody', null, hosts.map(function (x) {
-        return h('tr', null, h('td', null, x.host), h('td', null, x.suites.join(', ')),
-          h('td', { class: x.failed_in.length ? 'table-fail' : null }, x.failed_in.length ? x.failed_in.join(', ') : '\u2014'));
-      })))) : null;
-    var suiteColumns = ['Suite', 'Cluster', 'CVS version', 'Git ref', 'Image', 'Cluster file', 'Config file', 'Generated'];
-    var suiteTable = h('div', { class: 'table-scroll' }, h('table', null,
-      h('thead', null, h('tr', null, suiteColumns.map(function (c) { return h('th', null, c); }))),
-      h('tbody', null, (manifest.suites || []).map(function (x) {
-        var values = [x.name, x.cluster, x.cvs_version, x.git_ref, x.image, x.cluster_file, x.config_file, x.generated];
-        return h('tr', null, values.map(function (v) { return h('td', null, v || '\u2014'); }));
-      }))));
-    return h('details', { class: 'panel manifest' },
-      h('summary', null,
-        h('span', { class: 'manifest-title' }, 'Cluster manifest'),
-        h('span', { class: 'inventory-count' }, (clusters.length ? clusters.join(', ') : 'Cluster not specified') + ' \u00b7 ' + hosts.length + ' hosts in results')),
-      h('div', { class: 'manifest-body' },
-        h('p', { class: 'muted' }, 'Built only from what the Run Decks report. Hosts come from suites whose rows are hosts; training and inference decks add none.'),
-        hostTable,
-        h('h3', null, 'Per suite'),
-        suiteTable));
-  }
-
   function footer() {
     return h('footer', { class: 'report-footer' },
       h('span', null, 'Built by cvs consolidate-report. summary.json in this folder has the same results.'),
@@ -436,6 +408,6 @@
 
   var app = document.getElementById('app');
   add(app, [cvsPage.siteHeader('Consolidated qualification report'), h('main', { id: 'main', class: 'report', tabindex: '-1' },
-    intro(), summaryPanel(), warningsNote(), workspace(), recommendationsPanel(), manifestPanel(), footer())]);
+    intro(), summaryPanel(), warningsNote(), workspace(), recommendationsPanel(), footer())]);
   update();
 }());

@@ -198,7 +198,7 @@ It writes ``consolidated_report_<YYYY-mm-ddTHHMMSS>.zip`` to the searched direct
    * - In the zip
      - Contents
    * - ``index.html``
-     - Collection verdict, pass/fail counts, suites by area, recommendations, and the cluster manifest. Recommendations start collapsed. Select a suite for its failures and links to its suite page, Detailed Run Deck, viewer, pytest report, and log.
+     - Collection verdict, pass/fail counts, suites by area, and recommendations. Recommendations start collapsed. Select a suite for its failures and links to its suite page, Detailed Run Deck, viewer, pytest report, and log.
    * - ``suites/<suite>.html``
      - A page for each suite, opened with **Open Run Deck**: its verdict, node or configuration outcomes with filters and an inspector, charts, the data table, and run context.
    * - ``summary.json``
