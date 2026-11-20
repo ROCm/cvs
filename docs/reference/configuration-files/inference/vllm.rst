@@ -835,9 +835,9 @@ emitted.
 Sweep specs are strict at load time regardless of enforcement:
 
 - A spec contains exactly ``kind`` and ``value``.
-- ``kind`` must equal the registry direction, exactly ``min`` or ``max``. A
-  0.3.0 file's ``max_ms`` and ``min_tok_s`` convert to ``max`` and ``min``, and
-  its ``queue_time_p50_ms``, ``queue_time_p95_ms``, ``prefill_time_p50_ms``,
+- ``kind`` must equal the registry direction, exactly ``min`` or ``max``;
+  ``max_ms`` and ``min_tok_s`` are rejected. A 0.3.0 file's
+  ``queue_time_p50_ms``, ``queue_time_p95_ms``, ``prefill_time_p50_ms``,
   ``prefill_time_p95_ms`` and ``decode_throughput_p50`` convert to the names
   below, with the deprecation warning.
 - ``value`` must be a finite JSON number. Booleans, strings, null, arrays,
@@ -854,7 +854,8 @@ its value and passes at or below it. A gated actual that is missing, null,
 boolean, string, collection, NaN, or infinity fails for every datasource.
 
 The optional ``accuracy`` block holds one ``lm_eval`` section per task id and is
-exempt from these vLLM sweep-name rules. Its ``custom_eval``, ``quant_parity``
+exempt from these vLLM sweep-name rules. Each of its specs is a ``min``, ``max``
+or ``info`` kind and a number. Its ``custom_eval``, ``quant_parity``
 and ``mtp_quality`` sections are not implemented for vLLM and must stay empty.
 
 .. _vllm-threshold-file:
