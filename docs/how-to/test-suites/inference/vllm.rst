@@ -83,9 +83,8 @@ unless the cluster file sets ``username``.
 
 In the **cluster file**, set your SSH user, private key path, and node
 addresses. Unresolved ``<changeme>`` strings in the cluster file stop
-startup. The vLLM loader does not apply the same hard-exit to the workload
-file, except when ``threshold_json`` itself still contains ``<changeme>``.
-An unreplaced image name or mount fails later, at pull or ``docker run``.
+startup. A ``<changeme>`` left in the workload file fails when it loads,
+before any container starts, and the error names every such field.
 See :doc:`/how-to/run-with-containers` for the cluster-file walkthrough.
 
 In the **Llama single-node file**, replace these placeholders:
@@ -102,12 +101,14 @@ In the **Llama single-node file**, replace these placeholders:
    * - ``server_params.model``
      - Model path inside the container. With the packaged mount, this is a
        path under ``/models``.
-   * - ``<changeme-models-mount>``
-     - Host directory that holds the weights. It is mounted read-only at
-       ``/models``.
-   * - ``<changeme-libionic-soname>``
-     - Filename from ``readlink -f /usr/lib/x86_64-linux-gnu/libionic.so.1``
-       on the nodes. Delete the Ionic volume lines if the nodes have no Ionic
+   * - First ``<changeme>`` in ``container.runtime.args.volumes``
+     - Host directory that holds the weights, mounted read-only at
+       ``/models``, as in ``/data/models:/models:ro`` from
+       ``_volumes_example``.
+   * - Second ``<changeme>`` in ``container.runtime.args.volumes``
+     - The versioned Ionic soname from ``readlink -f
+       /usr/lib/x86_64-linux-gnu/libionic.so.1`` on the nodes, mounted at the
+       same path, as ``_volumes_example`` shows. Delete the Ionic volume lines if the nodes have no Ionic
        stack. Delete the ``libbnxt_re-rdmav34.so`` line if they have no
        Broadcom Thor2 library. ``docker run`` fails when a listed host path
        is missing.
@@ -287,13 +288,12 @@ unreadiness poll including the last one.
      - Server sleeps before timeout
      - Client sleeps before timeout
    * - Llama single
-     - 30 s + ``server_warmup_wait_s`` 330 + 60 × ``server_poll_wait_s``
-       60 = 3960 s
-     - ``client_initial_wait_s`` 120 + 90 × ``client_poll_wait_s`` 60
-       = 5520 s
+     - 30 s + ``timeouts.server_ready_s`` 3930 (330 s, then 60 polls of
+       60 s) = 3960 s
+     - ``timeouts.client_s`` 5520 (120 s, then 90 polls of 60 s)
    * - Llama distributed
-     - 30 s + warmup 30 + 360 × 10 s = 3660 s
-     - initial 10 s + 540 × 10 s = 5410 s
+     - 30 s + ``server_ready_s`` 3630 (30 s, then 360 polls of 10 s) = 3660 s
+     - ``client_s`` 5410 (10 s, then 540 polls of 10 s)
 
 Timeout errors:
 
@@ -308,15 +308,15 @@ continues and logs a warning.
 Going multinode
 ===============
 
-``vllm_distributed`` with one host calls ``resolve_vllm_topology`` and gets an effective ``single`` topology. That path does not raise. ``vllm serve`` is the single-node command: no ``--node-rank``, ``--master-addr``, ``--master-port``, ``--nnodes``, or ``--distributed-executor-backend``. ``--pipeline-parallel-size`` is added only when pipeline parallel size is greater than 1. Ray is not started.
+``vllm_distributed`` with one host calls ``resolve_vllm_topology`` and gets an effective ``single`` topology. That path does not raise. ``vllm serve`` is the single-node command: no ``--node-rank``, ``--master-addr``, ``--master-port``, ``--nnodes``, or ``--distributed-executor-backend``. ``--pipeline-parallel-size`` is added only when ``server_params.pp`` is greater than 1. Ray is not started.
 
-Two or more hosts on the default ``mp`` backend require pipeline parallel size greater than 1. The JSON key is ``server_params.distributed_executor_backend`` (snake case). The exact error text still uses a hyphen:
+Two or more hosts on the default ``mp`` backend require ``server_params.pp`` greater than 1. The exact error is:
 
 .. code:: text
 
-  vllm_distributed requires pipeline_parallel_size>1 unless distributed-executor-backend=ray
+  vllm_distributed requires server_params.pp>1 unless vllm.distributed_executor_backend=ray
 
-Set the value to the lowercase string ``"ray"`` to take the Ray path, or raise ``pipeline_parallel_size``. Other strings are rejected when the config loads.
+Set ``vllm.distributed_executor_backend`` to the lowercase string ``"ray"`` to take the Ray path, or raise ``server_params.pp``. Other strings are rejected when the config loads.
 
 Multi-host runs also require a socket interface. The exact error is:
 
@@ -342,7 +342,7 @@ It does not check that the socket-interface names exist, that ``NCCL_IB_GID_INDE
 Using the default backend (mp)
 ------------------------------
 
-If you set nothing else, the suite uses ``mp``. Two or more hosts require pipeline parallelism. The JSON key stays snake case:
+If you set nothing else, the suite uses ``mp``. Two or more hosts require pipeline parallelism:
 
 .. code:: json
 
@@ -357,8 +357,10 @@ If you set nothing else, the suite uses ``mp``. Two or more hosts require pipeli
         }
       },
       "server_params": {
-        "tensor_parallel_size": 8,
-        "pipeline_parallel_size": 2,
+        "tp": 8,
+        "pp": 2
+      },
+      "vllm": {
         "distributed_executor_backend": "mp"
       }
     }
@@ -368,23 +370,25 @@ CVS launches ``vllm serve`` on every node with the correct rank, adding ``--head
 Using ray
 ---------
 
-Ray is opt-in. Set the snake_case key ``distributed_executor_backend`` to ``"ray"``:
+Ray is opt-in. Set ``vllm.distributed_executor_backend`` to ``"ray"``:
 
 .. code:: json
 
     {
       "server_params": {
-        "tensor_parallel_size": 8,
-        "pipeline_parallel_size": 1,
+        "tp": 8,
+        "pp": 1
+      },
+      "vllm": {
         "distributed_executor_backend": "ray"
       }
     }
 
-CVS then bootstraps a Ray cluster before serving: ``ray start --head --port=<dist_init_port>`` on rank 0, ``ray start --address=<head>:<dist_init_port>`` on each worker, and ``ray stop`` at teardown. Only the head node runs ``vllm serve``, so worker nodes produce no server log. ``--pipeline-parallel-size`` is added only when pipeline parallel size is greater than 1.
+CVS then bootstraps a Ray cluster before serving: ``ray start --head --port=<master_port>`` on rank 0, ``ray start --address=<head>:<master_port>`` on each worker, and ``ray stop`` at teardown. Only the head node runs ``vllm serve``, so worker nodes produce no server log. ``--pipeline-parallel-size`` is added only when ``server_params.pp`` is greater than 1.
 
 .. note::
 
-  Ray is not required for multinode. ``mp`` is the default and works across nodes when pipeline parallel size is greater than 1. Ray removes that requirement, so pipeline parallel size 1 is valid. Use ray for pure tensor-parallel serving across nodes.
+  Ray is not required for multinode. ``mp`` is the default and works across nodes when ``server_params.pp`` is greater than 1. Ray removes that requirement, so ``server_params.pp`` 1 is valid. Use ray for pure tensor-parallel serving across nodes.
 
   Only the exact lowercase string ``"ray"`` selects it.
 
@@ -398,16 +402,16 @@ Troubleshooting
    * - Problem
      - Cause and fix
    * - Validation error on startup
-     - ``container``, ``paths``, and the top-level config reject unknown
-       keys. ``server_params``, ``benchmark_params``, and sweep overrides
-       accept extra snake_case vLLM options. Keys such as ``image_tar``,
+     - Every block rejects unknown keys. Other snake_case vLLM options go in
+       ``server_params.engine_args``, ``benchmark_params.client_args`` or a
+       sweep cell. Keys such as ``image_tar``,
        ``registry``, ``shm_size``, and ``cap_add`` belong on the cluster
        file, not in the vLLM config. See :doc:`/reference/cluster/cluster-file`.
-   * - ``vllm_distributed requires pipeline_parallel_size>1 unless
-       distributed-executor-backend=ray``
+   * - ``vllm_distributed requires server_params.pp>1 unless
+       vllm.distributed_executor_backend=ray``
      - Two or more hosts are configured on ``mp`` without pipeline
-       parallelism. Raise ``pipeline_parallel_size``, or set
-       ``distributed_executor_backend`` to ``"ray"``.
+       parallelism. Raise ``server_params.pp``, or set
+       ``vllm.distributed_executor_backend`` to ``"ray"``.
    * - ``vllm_distributed requires container.env.NCCL_SOCKET_IFNAME on
        multi-host clusters``
      - Set the socket interface. If you set any of
