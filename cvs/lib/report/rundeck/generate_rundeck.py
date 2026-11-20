@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
+import pytest
+
 from cvs.lib import globals
 from cvs.lib.report.artifacts import write_html_json_artifacts
 from cvs.lib.report.ci_summary import write_inference_ci_summary
@@ -25,6 +27,16 @@ from cvs.lib.report.viewer.series import write_series_viewer
 from cvs.lib.report.viewer.status_matrix import write_status_matrix_viewer
 
 log = globals.log
+
+
+def pytest_session_failed(session):
+    """True when pytest reports a failed test, setup, teardown, or aborted run."""
+    if getattr(session, "testsfailed", 0):
+        return True
+    return getattr(session, "exitstatus", pytest.ExitCode.OK) not in (
+        pytest.ExitCode.OK,
+        pytest.ExitCode.NO_TESTS_COLLECTED,
+    )
 
 
 class RundeckPublisher:
@@ -47,6 +59,7 @@ class RundeckPublisher:
 
         store = dict(get_session_results())
         store.setdefault("suite_stem", getattr(self.config, "_suite_name", None))
+        store["pytest_failed"] = pytest_session_failed(self.session)
         results = store.get("cvs_results_dict") or store.get("inf_res_dict")
         if not results:
             log.info("Skipping Run Deck generation: no results in session store")

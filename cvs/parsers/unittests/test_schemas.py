@@ -40,6 +40,12 @@ class TestAortaConfigDispatch(unittest.TestCase):
 
 
 class TestPreflightRdmaGidType(unittest.TestCase):
+    def test_expected_nic_count_validates_positive_integer(self):
+        cfg = PreflightConfigFile.model_validate({'connectivity_check': {'rdma': {'expected_nic_count': 8}}})
+        self.assertEqual(cfg.connectivity_check.rdma.expected_nic_count, 8)
+        with self.assertRaises(ValueError):
+            PreflightConfigFile.model_validate({'connectivity_check': {'rdma': {'expected_nic_count': 0}}})
+
     def test_default_gid_type(self):
         config = PreflightConfigFile.model_validate({'connectivity_check': {'rdma': {'gid_index': '3'}}})
         self.assertEqual(config.connectivity_check.rdma.gid_type, 'RoCE v2')

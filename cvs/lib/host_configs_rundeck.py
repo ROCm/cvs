@@ -646,6 +646,29 @@ def parse_nic_link_speed_setting(value):
     return speed
 
 
+def resolve_backend_nic_count(value, configured):
+    '''Return the required backend NIC count, using an explicit interface list for old configs.'''
+    if value is None or value == '':
+        if configured:
+            return len(configured)
+        raise ValueError(
+            'backend_nic_count is required when nic_link_interfaces is empty; '
+            'set it to the number of backend NICs per node (for example 8)'
+        )
+    try:
+        count = int(str(value).strip())
+    except ValueError as exc:
+        raise ValueError(f'backend_nic_count must be a positive integer (for example 8), got {value!r}') from exc
+    if count <= 0:
+        raise ValueError(f'backend_nic_count must be a positive integer (for example 8), got {value!r}')
+    if configured and len(configured) != count:
+        raise ValueError(
+            f'backend_nic_count is {count} but nic_link_interfaces lists {len(configured)} interface(s); '
+            'list every backend NIC'
+        )
+    return count
+
+
 def nic_link_speed_cmd(interfaces):
     '''Build a command printing each interface's sysfs link speed, operstate and flags.'''
     names = ' '.join(shlex.quote(name) for name in sorted(set(interfaces)))
@@ -695,18 +718,15 @@ def _nic_link_problem(iface, link, expected, node):
     return None
 
 
-def eval_nic_link_speed(out_dict, nics_by_node, expected, compare_counts=False):
+def eval_nic_link_speed(out_dict, nics_by_node, expected, expected_count=None):
     '''
     Return (node_records, fail_messages) for backend NIC network link speed.
 
-    With compare_counts, a node with fewer NICs than the most found on any node
-    fails. Auto-detection only sees NICs that have a netdev and an RDMA device,
-    so a NIC whose driver failed to bind would otherwise go unchecked.
+    With expected_count, every node must have exactly that many backend NICs.
     '''
     records = {}
     messages = []
     nodes = list(out_dict) + [node for node in nics_by_node if node not in out_dict]
-    peak = max((len(set(nics or [])) for nics in nics_by_node.values()), default=0) if compare_counts else 0
     for node in nodes:
         interfaces = list(dict.fromkeys(nics_by_node.get(node) or []))
         if not interfaces:
@@ -718,14 +738,21 @@ def eval_nic_link_speed(out_dict, nics_by_node, expected, compare_counts=False):
         count = len(interfaces)
         items = []
         summary = []
-        if count < peak:
-            message = (
-                f'Only {count} backend NIC(s) detected on node {node}, fewer than the {peak} detected on '
-                'another node; a backend NIC may be missing its netdev or RDMA device'
-            )
+        if expected_count is not None and count != expected_count:
+            if count < expected_count:
+                message = (
+                    f'{count} backend NIC(s) detected on node {node}, expected {expected_count}; '
+                    'a backend NIC may be missing its netdev or RDMA device'
+                )
+            else:
+                message = (
+                    f'{count} backend NIC(s) detected on node {node}, expected {expected_count}: '
+                    f'{", ".join(interfaces)}; list the backend NICs in nic_link_interfaces '
+                    'to leave out a management or storage NIC'
+                )
             items.append(_fail_item('backend_nics', message))
             messages.append(message)
-            summary.append(f'{count} of {peak} NIC(s) detected')
+            summary.append(f'{count} of {expected_count} NIC(s) detected')
 
         links = parse_nic_links(out_dict.get(node, ''))
         slow = 0

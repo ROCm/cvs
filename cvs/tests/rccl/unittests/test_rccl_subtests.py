@@ -1,14 +1,16 @@
 '''Unit tests for RCCL suite case-report wiring.'''
 
 import unittest
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from cvs.lib import globals
+from cvs.lib import utils_lib
 from cvs.lib.report import benchmark_metric_registry as registry
+from cvs.lib.report.rundeck.dataset_builders.series import overall_status_from_run
 from cvs.tests.rccl import rccl_pairwise, rccl_perf, rccl_regression
 
 
@@ -64,49 +66,62 @@ class TestRcclSubtests(unittest.TestCase):
             node=SimpleNamespace(nodeid=f'cvs/tests/rccl/{name}.py::test_rccl_perf[all_reduce_perf]', stash={})
         )
 
-    def _run_perf(self, module, regression=False, error=False, sudo=False, cvs_params=None):
+    def _run_perf(
+        self, module, regression=False, error=False, sudo=False, cvs_params=None, verdict_store=None, expect_fail=False
+    ):
         request = self._request('rccl_regression' if regression else 'rccl_perf')
         fake = _CapturingSubtests()
         orch = MagicMock()
+        if verdict_store is None:
+            verdict_store = []
         with (
             patch.object(module, 'get_passwordless_sudo_status', return_value={'n0': sudo}),
             patch.object(module, 'rccl_res_dict', {}),
+            patch.object(module, 'rccl_verdicts', verdict_store),
             patch.object(module.rccl_lib.RcclJob, 'from_config') as from_config,
         ):
             from_config.return_value.verdicts = self.verdicts
             from_config.return_value.run_perf.return_value = self.raw
             from_config.return_value.run_regression.return_value = self.raw
             if error:
-                from_config.return_value.run_perf.side_effect = (
-                    lambda: globals.error_list.append('low bandwidth') or self.raw
+                from_config.return_value.run_perf.side_effect = lambda: (
+                    globals.error_list.append('low bandwidth') or self.raw
                 )
             args = (orch, ['n0'], ['v0'], {'cvs_params': cvs_params or {}}, 'all_reduce_perf')
             if regression:
                 args += ({'NCCL_ALGO': 'Ring'},)
-            if error:
+            if error or expect_fail:
                 with self.assertRaises(pytest.fail.Exception):
                     module.test_rccl_perf(*args, request, fake)
             else:
                 module.test_rccl_perf(*args, request, fake)
-        return request, fake, from_config
+        return request, fake, from_config, verdict_store
 
     def test_perf_reports_job_verdicts(self):
-        request, fake, _ = self._run_perf(rccl_perf)
+        request, fake, _, verdict_store = self._run_perf(rccl_perf)
         self.assertEqual(len(fake.calls), 2)
         self.assertTrue(all(call['collective'] == 'all_reduce_perf' for call in fake.calls))
         self.assertEqual(fake.failures, ['low bandwidth'])
         self.assertEqual(len(registry.benchmark_metric_rows_for_nodeid(request.node.nodeid)), 2)
+        self.assertEqual(verdict_store, self.verdicts)
 
     def test_perf_parent_still_fails_on_recorded_errors(self):
-        _, fake, _ = self._run_perf(rccl_perf, error=True)
+        _, fake, _, _ = self._run_perf(rccl_perf, error=True)
         self.assertEqual(fake.failures, ['low bandwidth'])
 
     def test_regression_reports_job_verdicts(self):
-        request, fake, from_config = self._run_perf(rccl_regression, regression=True)
+        request, fake, from_config, verdict_store = self._run_perf(rccl_regression, regression=True)
         self.assertEqual(len(fake.calls), 2)
         self.assertEqual(fake.failures, ['low bandwidth'])
         self.assertEqual(len(registry.benchmark_metric_rows_for_nodeid(request.node.nodeid)), 2)
         self.assertEqual(from_config.call_args.kwargs['env_overrides'], {'NCCL_ALGO': 'Ring'})
+        self.assertEqual(verdict_store, self.verdicts)
+
+    def test_perf_verdicts_accumulate_across_jobs(self):
+        verdict_store = []
+        self._run_perf(rccl_perf, verdict_store=verdict_store)
+        self._run_perf(rccl_perf, verdict_store=verdict_store)
+        self.assertEqual(verdict_store, self.verdicts * 2)
 
     def test_sudo_runs_bracket_the_job_with_a_dmesg_window(self):
         for module, regression, label in (
@@ -135,6 +150,66 @@ class TestRcclSubtests(unittest.TestCase):
                 with patch.object(module, 'DmesgWindow') as window_class:
                     self._run_perf(module, regression=regression, cvs_params={'dmesg_during_test': 'True'})
                 window_class.assert_not_called()
+
+    def test_failures_after_passing_checks_fail_pytest_and_deck(self):
+        for module, regression in ((rccl_perf, False), (rccl_regression, True)):
+            for source in ('dmesg', 'ecc_blocks', 'snapshot'):
+                with self.subTest(module=module.__name__, source=source), ExitStack() as stack:
+                    self.verdicts = [
+                        dict(self.verdicts[0]),
+                        {**self.verdicts[1], 'check': 'bw_dip', 'status': 'pass', 'message': ''},
+                    ]
+                    sudo = source != 'ecc_blocks'
+                    cvs_params = {}
+                    if source == 'dmesg':
+                        window_class = stack.enter_context(patch.object(module, 'DmesgWindow'))
+                        window_class.return_value.close_and_scan.side_effect = lambda: utils_lib.fail_test(
+                            'dmesg: GPU reset begin on n0'
+                        )
+                    elif source == 'ecc_blocks':
+                        cvs_params = {'report_ecc_delta': 'True', 'report_ecc_blocks': ['BOGUS']}
+                        if regression:
+                            stack.enter_context(
+                                patch.dict(
+                                    rccl_regression._ecc_after_carry, {'blocks': None, 'snapshot': None}, clear=True
+                                )
+                            )
+                    else:
+                        cvs_params = {'cluster_snapshot_debug': 'True'}
+                        stack.enter_context(patch.object(module, 'DmesgWindow'))
+                        snapshots = stack.enter_context(patch.object(module, 'create_cluster_metrics_snapshot'))
+                        stack.enter_context(patch.object(module, 'compare_cluster_metrics_snapshots'))
+
+                        def capture_snapshot(_handle):
+                            if snapshots.call_count == 2:
+                                utils_lib.fail_test('amd-smi RAS JSON parse failed')
+                            return {}
+
+                        snapshots.side_effect = capture_snapshot
+                    verdict_store = []
+                    self._run_perf(
+                        module,
+                        regression=regression,
+                        sudo=sudo,
+                        cvs_params=cvs_params,
+                        verdict_store=verdict_store,
+                        expect_fail=True,
+                    )
+                    self.assertTrue(all(verdict['status'] == 'pass' for verdict in verdict_store))
+                    self.assertEqual(len(verdict_store), 2)
+                    self.assertEqual(overall_status_from_run(verdict_store, False), 'pass')
+                    self.assertEqual(overall_status_from_run(verdict_store, True), 'fail')
+
+    def test_failure_without_thresholds_fails_pytest_and_deck(self):
+        self.verdicts = []
+        verdict_store = []
+        with patch.object(rccl_perf, 'DmesgWindow') as window_class:
+            window_class.return_value.close_and_scan.side_effect = lambda: utils_lib.fail_test(
+                'dmesg: GPU reset begin on n0'
+            )
+            self._run_perf(rccl_perf, sudo=True, verdict_store=verdict_store, expect_fail=True)
+        self.assertEqual(verdict_store, [])
+        self.assertEqual(overall_status_from_run(verdict_store, True), 'fail')
 
     def test_pairwise_reports_each_phase_and_node(self):
         request = SimpleNamespace(

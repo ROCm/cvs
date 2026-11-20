@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Run Decks and their interactive viewers use the AI Lab look: colours, a CVS header, and status marks. Decks also offer a light theme from the header toggle. Deck content and JSON are unchanged.
+- Platform `test_check_be_nic_link_speed` and preflight `test_interface_name_consistency` require an exact backend NIC count per node (`backend_nic_count` in the host config, `connectivity_check.rdma.expected_nic_count` in preflight) instead of comparing nodes with each other. Host-config auto-detect leaves out the management NIC. Configs with `nic_link_interfaces: []` must set `backend_nic_count`; a count that differs from the length of the interface list fails.
 - The shipped MORI config sets `mori_dir` to `/home/{user-id}/INSTALL/mori` and `container.lifetime` to `persistent`, so `install_mori` works with it as shipped. It also mounts the host Broadcom Thor2 `libbnxt_re-rdmav34.so` and `libibverbs.so.1`; delete those mounts on nodes without Thor2.
 
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.
@@ -24,12 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The interactive viewers of inference and training Run Decks show their tables, heatmap, and gate matrix when Chart.js cannot load, for example without internet access. They previously stopped with "Failed to load report JSON".
+- The RCCL Run Deck (`rccl_perf`, `rccl_regression`, `rccl_pairwise`) shows FAIL whenever the pytest run fails, including dmesg errors and other failures that are not bandwidth checks. It shows PASS only when bus bandwidth or dip checks ran and the run passed, and RECORD when no check ran and nothing failed. It previously always showed RECORD.
 - `csp_qual_agfhc`: a node whose `results.json` cannot be read (missing file, SSH error or empty read) now fails with `results.json could not be read on node <node>` and what the read returned, instead of reporting nonzero failed tests. The Run Deck cell shows the same reason.
+- After CVS drops an unreachable node, tests that run a different command on each node run each node's own command and report the dropped node as unreachable. Previously later nodes could run another node's command, managed-compute runs failed with a `host_args` `ValueError`, and clusters larger than `CVS_HOSTS_PER_SHARD` left the dropped node out of the results. Results from `exec` and `exec_cmd_list` list reachable nodes in configured order, followed by unreachable nodes, so code that reads the first node's output still gets a reachable node.
 - `test_install_agfhc` no longer fails a node when a companion tool directory is missing (`TXB_PATH`, `MINIHPL_PATH`, `MEMROCKER_PATH`, `FIREXS_PATH`, or `AFIDSAG_PATH`). Those paths are still exported when AGFHC is launched.
 - The health TransferBench `healthcheck` test fails when TransferBench reports a failed sub-test or exits with an error. It previously passed, and only the Run Deck showed the failure.
 - ibperf: when a node pair is excluded, the remaining pairs no longer wait out the perftest timeouts or report extra failures for the excluded nodes. A node that runs a bandwidth test but returns no output now fails with `Client did not complete` instead of passing without a result.
 - The health sample config's TransferBench schmoo `32_cu_local_copy` threshold is lowered so healthy MI300X nodes pass; configs copied from the old sample still fail and must lower `32_cu_local_copy`.
 - rocm-smi JSON reads, including the GPU PCIe bus map used by ibperf and the host config checks, no longer fail when ROCm 10.1 or later prints its deprecation warning with the command output.
+- With `"orchestrator": "container"`, a head-node command issued before the container is launched (or after it is torn down) now fails with `No containers running. Call setup_containers() first.`, like other in-container commands, instead of running `docker exec None` on the head node.
 
 ### Removed
 

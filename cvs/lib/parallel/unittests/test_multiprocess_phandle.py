@@ -123,6 +123,105 @@ class TestMultiProcessParallelHandleExec(unittest.TestCase):
         self.pssh_patcher.stop()
         self.execute_sharded_patcher.stop()
 
+    def _four_host_sharded_handle(self, stop_on_errors=False):
+        hosts = ['host1', 'host2', 'host3', 'host4']
+        config = ParallelConfig(hosts_per_shard=2, max_workers_per_cpu=1)
+        handle = MultiProcessParallelHandle(
+            self.mock_log, hosts, user='test', config=config, stop_on_errors=stop_on_errors
+        )
+        handle.log = self.mock_log
+        return handle
+
+    def _returned_shards(self, payloads):
+        self.captured_payloads = payloads
+        return [
+            {
+                'result': {host: f'r{host[-1]}' for host in payload['init']['host_list']},
+                'reachable_hosts': payload['init']['host_list'],
+                'unreachable_hosts': [],
+            }
+            for payload in payloads
+        ]
+
+    def test_sharded_exec_cmd_list_after_prune_matches_commands_and_reports_host(self):
+        mph = self._four_host_sharded_handle()
+        mph.prune_nodes(['host2'])
+        self.mock_execute_sharded.side_effect = self._returned_shards
+
+        result = mph.exec_cmd_list(['c1', 'c2', 'c3', 'c4'])
+
+        self.assertEqual([p['init']['host_list'] for p in self.captured_payloads], [['host1', 'host3'], ['host4']])
+        self.assertEqual([p['cmd_list'] for p in self.captured_payloads], [['c1', 'c3'], ['c4']])
+        self.assertEqual(
+            result,
+            {'host1': 'r1', 'host2': '\nABORT: Host Unreachable Error', 'host3': 'r3', 'host4': 'r4'},
+        )
+        self.assertEqual(list(result), ['host1', 'host3', 'host4', 'host2'])
+
+    def test_sharded_exec_cmd_list_reachable_aligned_list(self):
+        mph = self._four_host_sharded_handle()
+        mph.prune_nodes(['host2'])
+        self.mock_execute_sharded.side_effect = self._returned_shards
+
+        mph.exec_cmd_list(['c1', 'c3', 'c4'])
+
+        self.assertEqual([p['init']['host_list'] for p in self.captured_payloads], [['host1', 'host3'], ['host4']])
+        self.assertEqual([p['cmd_list'] for p in self.captured_payloads], [['c1', 'c3'], ['c4']])
+
+    def test_sharded_exec_cmd_list_no_duplicate_marker_for_host_pruned_this_call(self):
+        mph = self._four_host_sharded_handle()
+        self.mock_execute_sharded.return_value = [
+            {
+                'result': {'host1': 'r1', 'host2': 'err\n\nABORT: Host Unreachable Error'},
+                'reachable_hosts': ['host1'],
+                'unreachable_hosts': ['host2'],
+            },
+            {
+                'result': {'host3': 'r3', 'host4': 'r4'},
+                'reachable_hosts': ['host3', 'host4'],
+                'unreachable_hosts': [],
+            },
+        ]
+
+        result = mph.exec_cmd_list(['c1', 'c2', 'c3', 'c4'])
+
+        self.assertEqual(result['host2'].count('ABORT: Host Unreachable Error'), 1)
+
+    def test_sharded_exec_after_prune_reports_host(self):
+        for detailed in (False, True):
+            with self.subTest(detailed=detailed):
+                mph = self._four_host_sharded_handle()
+                mph.prune_nodes(['host2'])
+                self.mock_execute_sharded.side_effect = self._returned_shards
+
+                result = mph.exec('hostname', detailed=detailed, print_console=False)
+
+                expected = (
+                    {'output': '\nABORT: Host Unreachable Error', 'exit_code': -1}
+                    if detailed
+                    else '\nABORT: Host Unreachable Error'
+                )
+                self.assertEqual(result['host2'], expected)
+                self.assertEqual(list(result), ['host1', 'host3', 'host4', 'host2'])
+
+    def test_sharded_exec_cmd_list_stop_on_errors_true_does_not_add_entries(self):
+        mph = self._four_host_sharded_handle(stop_on_errors=True)
+        mph.prune_nodes(['host2'])
+        self.mock_execute_sharded.side_effect = self._returned_shards
+
+        result = mph.exec_cmd_list(['c1', 'c2', 'c3', 'c4'])
+
+        self.assertNotIn('host2', result)
+
+    def test_sharded_exec_cmd_list_rejects_mismatched_length(self):
+        mph = self._four_host_sharded_handle()
+        mph.prune_nodes(['host2'])
+
+        with self.assertRaises(ValueError):
+            mph.exec_cmd_list(['c1'])
+
+        self.mock_execute_sharded.assert_not_called()
+
     def test_exec_with_sharding(self):
         """Test exec with sharding uses sharder."""
         config = ParallelConfig(hosts_per_shard=1, max_workers_per_cpu=1)
@@ -269,12 +368,14 @@ class TestMultiProcessParallelHandleExec(unittest.TestCase):
                 mph.pkey = "id_rsa"
                 mph.host_key_check = False
                 mph.stop_on_errors = True
+                mph.unreachable_hosts = ['host2']
                 mph.env_vars = None
 
                 result = mph.exec_cmd_list(cmd_list)
 
                 # Verify create_payloads was called and check the command mapping
                 mock_sharder.create_payloads.assert_called()
+                self.assertEqual(mock_sharder.create_payloads.call_args_list[0].kwargs['cmd_list'], ['cmd1', 'cmd3'])
 
                 # The cmd_list should match reachable hosts exactly (proper usage)
                 # Passed: cmd_list=["cmd1", "cmd3", "cmd4"] for ["host1", "host3", "host4"]
@@ -353,6 +454,30 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
     def tearDown(self):
         self.pssh_patcher.stop()
         self.execute_sharded_patcher.stop()
+
+    def test_report_pruned_hosts_respects_stop_on_errors(self):
+        config = ParallelConfig(hosts_per_shard=1)
+        mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user='test', config=config)
+        mph.unreachable_hosts = ['host1']
+        cmd_output = {'host2': 'ok'}
+
+        result = mph._report_pruned_hosts(cmd_output)
+
+        self.assertIs(result, cmd_output)
+        self.assertEqual(result, {'host2': 'ok'})
+
+    def test_report_pruned_hosts_adds_only_missing_hosts_in_host_order(self):
+        config = ParallelConfig(hosts_per_shard=1)
+        mph = MultiProcessParallelHandle(
+            self.mock_log, ['host1', 'host2', 'host3'], user='test', config=config, stop_on_errors=False
+        )
+        mph.unreachable_hosts = ['host2', 'host3']
+
+        result = mph._report_pruned_hosts({'host3': 'already reported', 'host1': 'ok'})
+
+        self.assertEqual(list(result), ['host1', 'host2', 'host3'])
+        self.assertEqual(result['host2'], '\nABORT: Host Unreachable Error')
+        self.assertEqual(result['host3'], 'already reported')
 
     def test_shard_init_kwargs(self):
         """Test _shard_init_kwargs creates correct initialization arguments."""

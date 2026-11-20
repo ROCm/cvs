@@ -5,6 +5,7 @@ This module provides functionality for checking RDMA interface consistency acros
 """
 
 from cvs.lib.preflight.base import PreflightCheck
+from cvs.lib.preflight.node_smoke import resolve_expected_rdma_nic_count
 from cvs.lib import linux_utils
 
 
@@ -22,6 +23,19 @@ class InterfaceConsistencyCheck(PreflightCheck):
         """
         super().__init__(phdl, config_dict)
         self.expected_interfaces = expected_interfaces or ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+        self.count_error = None
+        try:
+            explicit = resolve_expected_rdma_nic_count(config_dict or {})
+        except ValueError as exc:
+            self.count_error = str(exc)
+            explicit = None
+        self.expected_nic_count = explicit or len(self.expected_interfaces)
+        if explicit is not None and explicit != len(self.expected_interfaces):
+            self.count_error = (
+                f"connectivity_check.rdma.expected_nic_count is {explicit} but "
+                f"connectivity_check.rdma.interfaces lists {len(self.expected_interfaces)} device(s); "
+                "list every backend RDMA device"
+            )
 
     def _evaluate_node_interfaces(self, node, node_rdma_info):
         """Build result dict for one node from RDMA NIC info."""
@@ -37,12 +51,18 @@ class InterfaceConsistencyCheck(PreflightCheck):
             'unexpected_interfaces': [],
             'inactive_interfaces': [],
             'down_interfaces': [],
+            'expected_nic_count': self.expected_nic_count,
+            'active_expected_count': 0,
         }
 
         if not found_interfaces:
             result['status'] = 'FAIL'
             result['errors'].append("No RDMA interfaces found")
             result['missing_interfaces'] = self.expected_interfaces.copy()
+            if self.count_error:
+                result['errors'].append(self.count_error)
+            if self.expected_nic_count:
+                result['errors'].append(f"0 of {self.expected_nic_count} backend RDMA NICs present and active")
             return result
 
         missing = []
@@ -61,11 +81,14 @@ class InterfaceConsistencyCheck(PreflightCheck):
                     inactive_expected.append(f"{expected_iface} (state: {device_status})")
                 if link_status not in ['LINK_UP', 'LinkUp']:
                     down_expected.append(f"{expected_iface} (physical_state: {link_status})")
+                if device_status == 'ACTIVE' and link_status in ('LINK_UP', 'LinkUp'):
+                    result['active_expected_count'] += 1
 
         result['missing_interfaces'] = missing
         result['inactive_interfaces'] = inactive_expected
         result['down_interfaces'] = down_expected
 
+        # Unlisted RDMA devices can be management ports and do not affect the backend count.
         unexpected = []
         for found_iface in found_interfaces:
             if found_iface not in self.expected_interfaces:
@@ -103,6 +126,15 @@ class InterfaceConsistencyCheck(PreflightCheck):
             result['status'] = 'FAIL'
             result['errors'].append(f"Expected interfaces link down: {', '.join(down_expected)}")
 
+        if self.count_error:
+            result['status'] = 'FAIL'
+            result['errors'].append(self.count_error)
+        if result['active_expected_count'] < self.expected_nic_count:
+            result['status'] = 'FAIL'
+            result['errors'].append(
+                f"{result['active_expected_count']} of {self.expected_nic_count} backend RDMA NICs present and active"
+            )
+
         return result
 
     def run(self):
@@ -112,7 +144,9 @@ class InterfaceConsistencyCheck(PreflightCheck):
         Returns:
             dict: Results with per-node interface status
         """
-        self.log_info(f"Checking RDMA interface presence (expected: {self.expected_interfaces})")
+        self.log_info(
+            f"Checking RDMA interface presence (expected: {self.expected_interfaces}, count: {self.expected_nic_count})"
+        )
 
         rdma_dict = linux_utils.get_rdma_nic_dict(self.orch.all)
 

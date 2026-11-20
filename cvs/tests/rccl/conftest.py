@@ -141,6 +141,7 @@ def variant_config(request):
             suite_name=request.module.__name__.rsplit(".", 1)[-1],
             raw_results=getattr(request.module, "rccl_res_dict", None),
             run_nodes=getattr(request.module, "rccl_run_nodes", None),
+            verdicts=getattr(request.module, "rccl_verdicts", None),
         )
     except Exception:
         log.warning("RCCL Run Deck variant metadata unavailable", exc_info=True)

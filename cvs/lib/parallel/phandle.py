@@ -19,7 +19,15 @@ from cvs.lib import globals
 global_log = globals.log
 
 # Re-export for unit tests that patch ParallelSSHClient on this module.
-__all__ = ['ParallelHandle', 'ParallelSSHClient', '_select_reachable_hosts']
+__all__ = [
+    'ParallelHandle',
+    'ParallelSSHClient',
+    '_select_reachable_hosts',
+    '_commands_for_reachable_hosts',
+    '_order_by_hosts',
+]
+
+UNREACHABLE_MARKER = "\nABORT: Host Unreachable Error"
 
 
 def _select_reachable_hosts(reachable_hosts, hosts):
@@ -32,6 +40,48 @@ def _select_reachable_hosts(reachable_hosts, hosts):
     if unknown_hosts:
         raise ValueError(f"Download requested unreachable host(s): {unknown_hosts}")
     return [host for host in reachable if host in requested]
+
+
+def _commands_for_reachable_hosts(cmd_list, host_list, reachable_hosts):
+    """Return commands for reachable hosts from a configured-host or reachable-host list.
+
+    Raises ValueError when the command count matches neither host list.
+    """
+    commands = list(cmd_list)
+    host_list = list(host_list)
+    reachable_hosts = list(reachable_hosts)
+    # Preserve positional commands when no hosts were pruned, even with duplicate host names.
+    if reachable_hosts == host_list and len(commands) == len(host_list):
+        return commands
+    if len(commands) == len(host_list):
+        by_host = dict(zip(host_list, commands))
+        return [by_host[host] for host in reachable_hosts]
+    if len(commands) == len(reachable_hosts):
+        return commands
+    raise ValueError(
+        "cmd_list length must match host_list length or reachable_hosts length "
+        f"(cmd_list={len(commands)}, host_list={len(host_list)}, "
+        f"reachable_hosts={len(reachable_hosts)})"
+    )
+
+
+def _order_by_hosts(cmd_output, host_list, unreachable_hosts=()):
+    """Order result keys by host_list, then keys absent from host_list, then unreachable hosts.
+
+    Unreachable hosts go last so callers that read the first entry as a representative
+    node (``next(iter(out))``) still get a reachable host's output.
+    """
+    unreachable = set(unreachable_hosts)
+    ordered = {host: cmd_output[host] for host in host_list if host in cmd_output and host not in unreachable}
+    for host, value in cmd_output.items():
+        if host not in unreachable:
+            ordered.setdefault(host, value)
+    for host in host_list:
+        if host in unreachable and host in cmd_output:
+            ordered.setdefault(host, cmd_output[host])
+    for host, value in cmd_output.items():
+        ordered.setdefault(host, value)
+    return ordered
 
 
 class ParallelHandle:
@@ -213,11 +263,11 @@ class ParallelHandle:
         for host in self.unreachable_hosts:
             if include_exit_codes:
                 existing = cmd_output.get(host, {'output': '', 'exit_code': -1})
-                existing['output'] += "\nABORT: Host Unreachable Error"
+                existing['output'] += UNREACHABLE_MARKER
                 existing['exit_code'] = -1  # Ensure unreachable hosts have error exit code
                 cmd_output[host] = existing
             else:
-                cmd_output[host] = cmd_output.get(host, "") + "\nABORT: Host Unreachable Error"
+                cmd_output[host] = cmd_output.get(host, "") + UNREACHABLE_MARKER
 
     def _iter_lines(self, stream, inactivity_timeout):
         """
@@ -321,7 +371,7 @@ class ParallelHandle:
             self.prune_unreachable_hosts(output)
             self.inform_unreachability(cmd_output, include_exit_codes)
 
-        return cmd_output
+        return _order_by_hosts(cmd_output, self.host_list, self.unreachable_hosts)
 
     def _handle_timeout_exception(self, output, e):
         """
@@ -390,9 +440,11 @@ class ParallelHandle:
 
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True, inactivity_timeout=None):
         """
-        Run different commands on different hosts compared to to exec
-        which runs the same command on all hosts.
-        Returns a dictionary of host as key and command output as values
+        Run one command per configured host in host_list order, or per reachable host
+        in reachable_hosts order. Pruned hosts' commands are not run; with
+        stop_on_errors=False, those hosts are reported as unreachable.
+        Raise ValueError if the command count matches neither host list.
+        Return a dictionary of host to command output.
 
         timeout is parallel-ssh's read_timeout: a TOTAL wall-clock cap on reading
         the command's output (it is NOT reset by activity). inactivity_timeout is
@@ -402,42 +454,41 @@ class ParallelHandle:
         inactivity_timeout is set, the underlying read_timeout is disabled so there
         is no total cap. Pass at most one of the two.
         """
+        target_hosts = list(self.reachable_hosts)
+        commands = _commands_for_reachable_hosts(cmd_list, self.host_list, target_hosts)
         if self.env_prefix:
-            cmd_list = [f"{self.env_prefix} ; {cmd}" for cmd in cmd_list]
-        else:
-            cmd_list = cmd_list
+            commands = [f"{self.env_prefix} ; {cmd}" for cmd in commands]
 
         client_kwargs = self._client_run_kwargs(
-            timeout=timeout, inactivity_timeout=inactivity_timeout, host_args=cmd_list
+            timeout=timeout, inactivity_timeout=inactivity_timeout, host_args=commands
         )
 
-        logged_cmds = [redact_secrets(cmd) for cmd in cmd_list]
+        logged_cmds = [redact_secrets(cmd) for cmd in commands]
         (self.log.info if print_console else self.log.debug)("%s", logged_cmds)
 
         # Log command list execution
         if self.log:
             if inactivity_timeout is not None:
                 self.log.debug(
-                    f"Executing command list on {len(self.reachable_hosts)} host(s) "
-                    f"[inactivity_timeout={inactivity_timeout}s]"
+                    f"Executing command list on {len(target_hosts)} host(s) [inactivity_timeout={inactivity_timeout}s]"
                 )
             elif timeout is not None:
-                self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]")
+                self.log.debug(f"Executing command list on {len(target_hosts)} host(s) [timeout={timeout}s]")
             else:
-                self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s)")
+                self.log.debug(f"Executing command list on {len(target_hosts)} host(s)")
 
         output = self._run_command_with_session_retry('%s', **client_kwargs)
 
         cmd_output = self._process_output(
             output,
-            cmd_list=cmd_list,
+            cmd_list=commands,
             print_console=print_console,
             inactivity_timeout=self._stream_inactivity_timeout(inactivity_timeout),
         )
 
         # Log per-host command execution (only for processed output)
         if self.process_output and self.log and isinstance(cmd_output, dict):
-            for host, logged in zip(self.reachable_hosts, logged_cmds):
+            for host, logged in zip(target_hosts, logged_cmds):
                 self.log.debug(f"Command on {host}: {logged}")
 
         return cmd_output

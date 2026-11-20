@@ -17,6 +17,7 @@ from cvs.lib.preflight.node_smoke import (
     parse_node_smoke_output,
     resolve_rdma_gid_index,
     resolve_rdma_interfaces,
+    resolve_expected_rdma_nic_count,
 )
 from cvs.unittests.support import TMP
 
@@ -174,6 +175,24 @@ class TestParseNodeSmokeOutput(unittest.TestCase):
 
 
 class TestResolveRdmaConfig(unittest.TestCase):
+    def test_expected_nic_count_parses_or_is_optional(self):
+        self.assertIsNone(resolve_expected_rdma_nic_count({}))
+        self.assertEqual(
+            resolve_expected_rdma_nic_count({'connectivity_check': {'rdma': {'expected_nic_count': '8'}}}), 8
+        )
+        for value in (0, 'abc'):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'positive integer'):
+                resolve_expected_rdma_nic_count({'connectivity_check': {'rdma': {'expected_nic_count': value}}})
+
+    def test_node_smoke_uses_explicit_count_then_interface_length(self):
+        cfg = {'connectivity_check': {'rdma': {'interfaces': ['rdma0', 'rdma1'], 'expected_nic_count': 8}}}
+        self.assertIn('--expected-rdma-nics 8', NodeSmokeCheck(_make_orch(MagicMock()), ['n1'], cfg)._smoke_flags())
+        cfg['node_smoke_tier1'] = {'expected_rdma_nics': 6}
+        self.assertIn('--expected-rdma-nics 6', NodeSmokeCheck(_make_orch(MagicMock()), ['n1'], cfg)._smoke_flags())
+        del cfg['node_smoke_tier1']
+        del cfg['connectivity_check']['rdma']['expected_nic_count']
+        self.assertIn('--expected-rdma-nics 2', NodeSmokeCheck(_make_orch(MagicMock()), ['n1'], cfg)._smoke_flags())
+
     def test_interfaces_from_connectivity_check_rdma(self):
         cfg = {
             "connectivity_check": {"rdma": {"interfaces": ["rdma0", "rdma1"], "gid_index": "3"}},

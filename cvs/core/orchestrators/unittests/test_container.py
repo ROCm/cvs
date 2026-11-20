@@ -100,12 +100,47 @@ class TestContainerOrchestrator(unittest.TestCase):
 
     def test_distribute_using_mpi_logs_masked_command(self):
         orch, runtime = self._make()
+        orch.container_id = "cvs_iter_test"
         cmd = f"mpirun -x HF_TOKEN={FAKE_CRED} hostname"
         with patch.object(BaremetalOrchestrator, "build_mpi_cmd", return_value=cmd):
             orch.distribute_using_mpi("hostname", ["10.0.0.1"], 1, {"HF_TOKEN": FAKE_CRED}, "/opt/ompi")
         self.assertEqual(runtime.exec_on_head.call_args.args[1], cmd)
         logged = [c.args[0] for c in orch.log.debug.call_args_list if str(c.args[0]).startswith("MPI command: ")]
         self.assertEqual(logged, ["MPI command: mpirun -x HF_TOKEN=<redacted> hostname"])
+
+    # exec guards: no container registered
+
+    def test_exec_methods_raise_without_container(self):
+        orch, runtime = self._make()
+        self.assertIsNone(orch.container_id)
+        calls = (
+            ("exec", lambda: orch.exec("hostname")),
+            ("exec_cmd_list", lambda: orch.exec_cmd_list(["hostname", "hostname"])),
+            ("exec_on_head", lambda: orch.exec_on_head("hostname")),
+        )
+        for name, call in calls:
+            with self.subTest(method=name):
+                with self.assertRaisesRegex(RuntimeError, r"No containers running\. Call setup_containers\(\) first\."):
+                    call()
+        runtime.exec.assert_not_called()
+        runtime.exec_cmd_list.assert_not_called()
+        runtime.exec_on_head.assert_not_called()
+
+    def test_exec_on_head_raises_after_teardown(self):
+        orch, runtime = self._make(lifetime="per_run")
+        orch.container_id = "cvs_iter_test"
+        runtime.teardown_containers.return_value = True
+        self.assertTrue(orch.teardown_containers())
+        with self.assertRaises(RuntimeError):
+            orch.exec_on_head("hostname")
+        runtime.exec_on_head.assert_not_called()
+
+    def test_distribute_using_mpi_raises_without_container(self):
+        orch, runtime = self._make()
+        with patch.object(BaremetalOrchestrator, "build_mpi_cmd", return_value="mpirun hostname"):
+            with self.assertRaises(RuntimeError):
+                orch.distribute_using_mpi("hostname", ["10.0.0.1"], 1, {}, "/opt/ompi")
+        runtime.exec_on_head.assert_not_called()
 
     def test_init_creates_runtime_via_factory(self):
         orch, runtime = self._make()
@@ -375,6 +410,47 @@ class TestContainerOrchestrator(unittest.TestCase):
         self.assertIsNone(orch.container_id)
         self.assertTrue(orch.teardown_containers())
         runtime.teardown_containers.assert_not_called()
+
+
+class TestContainerOrchestratorRequiresContainerDocker(unittest.TestCase):
+    """The real DockerRuntime must never receive a None container name, so no
+    docker exec reaches the head node or any host without a registered container.
+    """
+
+    def setUp(self):
+        p_pssh = patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+        self.mock_pssh = p_pssh.start()
+        self.addCleanup(p_pssh.stop)
+        self.ssh = self.mock_pssh.return_value
+        self.ssh.exec.return_value = {"10.0.0.1": "1", "10.0.0.2": "1"}
+        self.ssh.exec_cmd_list.return_value = {}
+        self.orch = ContainerOrchestrator(MagicMock(), _make_orch_config())
+        self.assertIs(self.orch.head, self.ssh)
+        self.assertIs(self.orch.all, self.ssh)
+
+    def _docker_cmds_sent(self):
+        return [
+            c.args[0]
+            for m in (self.ssh.exec, self.ssh.exec_cmd_list)
+            for c in m.call_args_list
+            if c.args and "docker exec" in str(c.args[0])
+        ]
+
+    def test_exec_on_head_sends_nothing_without_container(self):
+        with self.assertRaisesRegex(RuntimeError, "No containers running"):
+            self.orch.exec_on_head("hostname")
+        self.assertEqual(self._docker_cmds_sent(), [])
+
+    def test_exec_and_exec_cmd_list_send_nothing_without_container(self):
+        calls = (
+            ("exec", lambda: self.orch.exec("hostname")),
+            ("exec_cmd_list", lambda: self.orch.exec_cmd_list(["hostname"] * 2)),
+        )
+        for name, call in calls:
+            with self.subTest(method=name):
+                with self.assertRaisesRegex(RuntimeError, "No containers running"):
+                    call()
+        self.assertEqual(self._docker_cmds_sent(), [])
 
 
 class TestContainerOrchestratorExecForwarding(unittest.TestCase):

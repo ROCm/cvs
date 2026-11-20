@@ -773,8 +773,8 @@ def test_interface_name_consistency(orch, config_dict, lifecycle=None):
     """
     Test RDMA interface presence and consistency across all cluster nodes.
 
-    Verifies that the expected RDMA interfaces are present on all nodes
-    as specified in the configuration.
+    Verifies that the configured number of RDMA interfaces are present and active
+    on all nodes, using connectivity_check.rdma.expected_nic_count when set.
 
     Nodes that fail are removed from ``phdl`` before the GID consistency check.
     """

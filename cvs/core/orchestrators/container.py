@@ -482,6 +482,16 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         )
         return launched
 
+    def _require_container(self):
+        """
+        Raise unless setup_containers() has registered a running container.
+
+        Raises:
+            RuntimeError: If no containers are currently running
+        """
+        if not self.container_id:
+            raise RuntimeError("No containers running. Call setup_containers() first.")
+
     def setup_sshd(self):
         """
         Setup SSH daemon in containers for passwordless communication.
@@ -506,8 +516,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         Raises:
             RuntimeError: If no containers are currently running
         """
-        if not self.container_id:
-            raise RuntimeError("No containers running. Call setup_containers() first.")
+        self._require_container()
 
         if is_managed_compute():
             self.log.info("Managed run: skipping in-container sshd setup; Slurm/SPUR uses srun --mpi=pmix")
@@ -674,8 +683,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         Raises:
             RuntimeError: If no containers are currently running
         """
-        if not self.container_id:
-            raise RuntimeError("No containers running. Call setup_containers() first.")
+        self._require_container()
 
         return self.runtime.exec(self.container_id, cmd, hosts, timeout, detailed=detailed, print_console=print_console)
 
@@ -683,12 +691,12 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         """
         Execute different commands on different hosts inside the container.
 
-        Each cmd_list[i] runs inside the container on hosts[i] — the parallel
-        per-host equivalent of exec(). Positional correspondence between
-        cmd_list and the orchestrator's host list is the caller's responsibility.
+        cmd_list holds one command per host in hosts order, or one per currently
+        reachable host (all.reachable_hosts order). Commands for hosts pruned as
+        unreachable are not run; those hosts appear in the result as unreachable.
 
         Args:
-            cmd_list: List of commands, one per host in host order
+            cmd_list: Commands in configured or reachable host order
             timeout: Command timeout
             print_console: If False, the commands' output is returned but not
                 logged. Use for polling/bulk reads the caller surfaces itself,
@@ -700,8 +708,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         Raises:
             RuntimeError: If no containers are currently running
         """
-        if not self.container_id:
-            raise RuntimeError("No containers running. Call setup_containers() first.")
+        self._require_container()
 
         return self.runtime.exec_cmd_list(self.container_id, cmd_list, timeout, print_console=print_console)
 
@@ -717,7 +724,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
     def exec_on_head(self, cmd, timeout=None, detailed=False, print_console=True):
         """
-        Execute command directly on head node (baremetal).
+        Execute command inside the container on the head node.
 
         Args:
             cmd: Command to execute on head node
@@ -730,7 +737,11 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         Returns:
             Dictionary mapping head node to execution result
+
+        Raises:
+            RuntimeError: If no containers are currently running
         """
+        self._require_container()
         return self.runtime.exec_on_head(
             self.container_id, cmd, timeout, detailed=detailed, print_console=print_console
         )

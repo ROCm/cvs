@@ -18,6 +18,8 @@ in the zip bundle. The deck is built from results collected by `test_gen_graph`,
 so include that test when selecting individual tests. Perf and regression also
 retain their existing amCharts reports.
 
+The deck status is FAIL whenever the pytest run fails, PASS when bus bandwidth or dip checks ran and the run passed, and RECORD when no check ran and nothing failed. Pairwise reports no checks to the deck, so it shows FAIL or RECORD.
+
 The deck includes bus bandwidth, algorithm bandwidth, and time curves by
 message size, a results table, and a run card. Collectives and message sizes
 come from collected results, including when only part of a suite runs.

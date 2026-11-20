@@ -6,6 +6,9 @@ target-version = "py39"
 quote-style = "preserve"
 
 [tool.ruff.lint]
+extend-select = [
+    "W605",  # Invalid escape sequences become SyntaxError in future Python
+]
 ignore = [
     "F403",  # Star imports (`from module import *`) used in test files
     "F405",  # Undefined names from star imports

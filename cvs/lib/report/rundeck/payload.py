@@ -240,6 +240,7 @@ class RundeckPayloadBuilder:
             "inf_res_dict": store.get("inf_res_dict") or store.get("cvs_results_dict") or {},
             "variant": store.get("variant_config"),
             "variant_config": store.get("variant_config"),
+            "pytest_failed": bool(store.get("pytest_failed")),
             "suite_stem": store.get("suite_stem") or store.get("suite_name"),
             "lifecycle_report": lifecycle,
             "lifecycle": lifecycle,
