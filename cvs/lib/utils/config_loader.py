@@ -8,8 +8,8 @@ Holds the 3-pass placeholder substitution, the `enforce_thresholds` gate
 carried on `BaseVariantConfig`, and the `substitute_config` helper that reads
 a variant `config.json` + sibling `*threshold.json` and resolves placeholders.
 The schema blocks live in `cvs.parsers.schemas` and are re-exported here;
-`cvs.lib.conf_lib.loader.load_config` builds on `substitute_placeholders`,
-and a schema that uses a threshold file loads it with `attach_threshold_file`.
+the vLLM loader (`cvs.lib.inference.utils.vllm_config_loader.load_variant`)
+builds on `substitute_placeholders` and `attach_threshold_file`.
 A per-framework module subclasses `BaseVariantConfig` or composes the blocks
 directly and adds its own params, sweep and `cell_key`.
 
@@ -23,7 +23,7 @@ A loaded variant's `container` field (`lifetime`, `name`, `image`, `runtime`)
 matches the dict shape that `cvs.core.orchestrators.factory.OrchestratorConfig`
 already understands. `runtime` is a nested `RuntimeSpec`, not a flat dict;
 `container.model_dump()` serialises it to the `runtime: {name, args}` shape the
-factory consumes; `load_config` merges that dump onto the cluster file's
+factory consumes; a suite loader merges that dump onto the cluster file's
 container block. The loaded variant also carries a `thresholds` field with the
 parsed threshold contents.
 
@@ -221,11 +221,11 @@ def _read_thresholds(threshold_path):
 
 
 def attach_threshold_file(data, context):
-    """Add ``thresholds`` from the config's threshold file, for a schema's ``mode="before"`` validator.
+    """Add ``thresholds`` from the config's threshold file to a substituted config dict.
 
     For a schema with ``thresholds`` and ``enforce_thresholds`` fields. Applies
-    only when the validation context holds the ``config_path`` that
-    `load_config` passes. Only a named ``threshold_json`` is read; no sibling
+    only when ``context`` holds the ``config_path``, as the vLLM
+    ``load_variant`` passes. Only a named ``threshold_json`` is read; no sibling
     file is looked for, and any ``thresholds`` in the config itself is
     replaced. A config that names none gets ``{}`` and ``enforce_thresholds``
     false, so it runs record-only.
