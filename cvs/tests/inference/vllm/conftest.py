@@ -3,6 +3,7 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 '''
 
+import json
 from pathlib import Path
 
 import pytest
@@ -11,8 +12,7 @@ from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFacto
 from cvs.lib import globals
 from cvs.lib.inference.vllm_topology import resolve_vllm_topology, scope_vllm_cluster
 from cvs.lib.inference.utils.vllm_metrics import VLLM_RESULTS_COLUMNS
-from cvs.lib.conf_lib.loader import load_config
-from cvs.lib.conf_lib.schemas.vllm import VariantConfig
+from cvs.lib.inference.utils.vllm_config_loader import load_variant, merged_container
 from cvs.lib.report.benchmark_metric_registry import (
     benchmark_metric_columns_for_nodeid,
     benchmark_metric_rows_from_item,
@@ -26,6 +26,7 @@ from cvs.lib.report.render.perf_metric_table import (
     render_benchmark_metrics_html,
 )
 from cvs.lib.report.subtest_reports import called_from_subtest_context, is_subtest_report
+from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 from cvs.tests.inference.vllm._shared import validate_vllm_execution_mode
 
 log = globals.log
@@ -68,19 +69,20 @@ def _attach_metric_panel(report, rows) -> None:
 
 
 @pytest.fixture(scope="module")
-def loaded_config(pytestconfig):
+def cluster_dict(pytestconfig):
     cluster_file = pytestconfig.getoption("cluster_file")
     if not cluster_file:
         pytest.fail("--cluster_file is required")
-    config_file = pytestconfig.getoption("config_file")
-    if not config_file:
-        pytest.fail("--config_file is required")
-    return load_config(VariantConfig, config_file, cluster_file)
+    with open(cluster_file) as fp:
+        return resolve_cluster_config_placeholders(json.load(fp))
 
 
 @pytest.fixture(scope="module")
-def variant_config(loaded_config):
-    return loaded_config.config
+def variant_config(pytestconfig, cluster_dict):
+    config_file = pytestconfig.getoption("config_file")
+    if not config_file:
+        pytest.fail("--config_file is required")
+    return load_variant(config_file, cluster_dict)
 
 
 class _Lifecycle:
@@ -114,7 +116,7 @@ def lifecycle():
 
 
 @pytest.fixture(scope="module")
-def orch(loaded_config, lifecycle, vllm_mode):
+def orch(cluster_dict, variant_config, lifecycle, vllm_mode):
     """Construct a ContainerOrchestrator and own ONLY its teardown safety net.
 
     The actual launch/sshd happen in test_launch_container / test_setup_sshd
@@ -124,11 +126,11 @@ def orch(loaded_config, lifecycle, vllm_mode):
     it sets lifecycle.torn_down, so the finalizer no-ops (no double teardown).
     """
     # from_configs replaces top-level keys, so the container block passed here must
-    # already hold the cluster's container settings; load_config merged them.
-    suite_cluster = scope_vllm_cluster(vllm_mode, loaded_config.cluster)
+    # already hold the cluster's container settings.
+    suite_cluster = scope_vllm_cluster(vllm_mode, cluster_dict)
     testsuite_config = {
         "orchestrator": "container",
-        "container": loaded_config.container,
+        "container": merged_container(cluster_dict, variant_config),
     }
     cfg = OrchestratorConfig.from_configs(suite_cluster, testsuite_config)
     o = OrchestratorFactory.create_orchestrator(log, cfg)
@@ -158,7 +160,7 @@ def vllm_targets(orch, variant_config, vllm_mode):
     except ValueError as exc:
         pytest.fail(str(exc))
 
-    variant_config.bind_effective_topology(topology)
+    variant_config.bind_effective_topology(topology, suite=vllm_mode)
     return topology.target_groups
 
 

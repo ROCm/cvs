@@ -1,8 +1,7 @@
 # cvs/lib/conf_lib — config blocks and `load_config`
 
-Suite schemas are built from `config_blocks.py`, live in `schemas/` (one module per suite, such
-as `schemas/vllm.py`), and are loaded with `loader.load_config`. A suite with a schema here calls
-`load_config` directly; it has no loader module of its own.
+No suite loads through this package any more: vLLM loads through
+`cvs/lib/inference/utils/vllm_config_loader.py`.
 Substitution (`substitute_placeholders`, and `substitute_config` with its threshold file),
 `attach_threshold_file` and `BaseVariantConfig` stay in `cvs/lib/utils/config_loader.py`,
 which older suite loaders import.
@@ -14,7 +13,7 @@ of `load_config` is an import cycle.
 
 ### `config_blocks.py`
 
-The blocks the vLLM schema in `schemas/vllm.py` composes. The blocks every other suite uses,
+The conf lib's own blocks, used only by `loader.py`'s tests. The blocks every suite uses,
 and the shared inference blocks, live in `cvs/parsers/schemas.py`; `config_loader.py`
 re-exports `_Forbid`, `_Allow`, `Paths`, `ModelSpec`, `RuntimeSpec` and `ContainerSpec` from there.
 
@@ -42,7 +41,7 @@ re-exports `_Forbid`, `_Allow`, `Paths`, `ModelSpec`, `RuntimeSpec` and `Contain
 - Validates with `context={"placeholders": "reject", "config_path": Path(config_path)}`. There is
   no switch to allow placeholders.
 - Reads no threshold file. A schema that uses one attaches it in a `mode="before"` validator with
-  `attach_threshold_file(data, info.context)`, as `schemas/vllm.py` does. Only a named
+  `attach_threshold_file(data, info.context)`. Only a named
   `threshold_json` is read, with no sibling lookup. A config that names none gets `{}` and
   `enforce_thresholds` false, so it runs record-only; with a file, the schema's own coverage
   rules apply.

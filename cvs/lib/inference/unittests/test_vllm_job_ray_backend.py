@@ -4,7 +4,7 @@ All rights reserved.
 
 Unit tests for the Ray distributed-executor-backend support added to
 cvs.lib.inference.vllm_job.VllmJob and
-cvs.lib.conf_lib.schemas.vllm.VariantConfig.
+cvs.lib.inference.utils.vllm_config_loader.VllmConfig.
 
 These tests were originally derived from the Ray execution contract before
 implementation and retain coverage of its observable behavior.
@@ -60,7 +60,8 @@ import unittest.mock as mock
 from pydantic import ValidationError
 
 from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
-from cvs.lib.conf_lib.schemas.vllm import VariantConfig, serialize_cli_options
+from cvs.lib.inference.unittests.vllm_variant import old_vllm_config
+from cvs.lib.inference.utils.vllm_config_loader import serialize_cli_options
 from cvs.lib.inference.vllm_job import VllmJob
 
 RAY = {"distributed-executor-backend": "ray"}
@@ -226,7 +227,7 @@ def _variant(
     options = {key.replace("-", "_"): value for key, value in (serve_args or {}).items()}
     distributed_executor_backend = options.pop("distributed_executor_backend", "mp")
     cell = f"ISL=1024,OSL=1024,TP={tp},PP={pp},CONC=16"
-    return VariantConfig(
+    return old_vllm_config(
         enforce_thresholds=False,
         threshold_json="threshold.json",
         ib_netdev=ib_netdev,
@@ -1100,7 +1101,7 @@ class TestVllmJobWaitReady(unittest.TestCase):
         # expected poll count without depending on the internal attribute name).
         poll_count = 3
         variant = _variant(serve_args={}, pp="1", ib_netdev=None)
-        variant.server_params.server_poll_iterations = poll_count
+        variant.timeouts.server_ready_s = 330 + poll_count * 60
         job = VllmJob(
             orch=RecordingOrch(responder=_responder_ok(), hosts=[HEAD]),
             variant=variant,

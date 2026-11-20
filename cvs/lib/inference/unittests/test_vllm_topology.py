@@ -7,9 +7,8 @@ from cvs.lib.inference.vllm_topology import build_vllm_targets, scope_vllm_clust
 
 def _variant(pp="1", ray=False, ib_netdev=None, env=None):
     return SimpleNamespace(
-        server_params=SimpleNamespace(
-            pipeline_parallel_size=int(pp), distributed_executor_backend="ray" if ray else "mp"
-        ),
+        server_params=SimpleNamespace(pp=int(pp)),
+        vllm=SimpleNamespace(distributed_executor_backend="ray" if ray else "mp"),
         ib_netdev=ib_netdev,
         container=SimpleNamespace(env=dict(env or {})),
     )
@@ -59,7 +58,7 @@ class TestVllmTopology(unittest.TestCase):
                 self.assertEqual(build_vllm_targets(mode, _variant(pp="2"), ["node0"]), ((("node0",),), 2))
 
     def test_multi_host_mp_requires_pipeline_parallelism(self):
-        with self.assertRaisesRegex(ValueError, "pipeline_parallel_size"):
+        with self.assertRaisesRegex(ValueError, "server_params.pp>1"):
             build_vllm_targets("distributed", _variant(), ["node0", "node1"])
 
     def test_multi_host_ray_requires_network_interface(self):
