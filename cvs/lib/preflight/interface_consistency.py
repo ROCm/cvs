@@ -29,7 +29,7 @@ class InterfaceConsistencyCheck(PreflightCheck):
         except ValueError as exc:
             self.count_error = str(exc)
             explicit = None
-        self.expected_nic_count = explicit or len(self.expected_interfaces)
+        self.expected_nic_count = explicit if explicit is not None else len(self.expected_interfaces)
         if explicit is not None and explicit != len(self.expected_interfaces):
             self.count_error = (
                 f"connectivity_check.rdma.expected_nic_count is {explicit} but "
