@@ -215,7 +215,10 @@ def stage_and_start_launch_script(exec_in_container, hosts, script_path, script_
 _SGLANG_CLI_PROBE_MARKER = "CVS_SGLANG_CLI"
 
 # Reads the image itself rather than running ``--help`` so the probe does not
-# initialise torch or a GPU.
+# initialise torch or a GPU. The cuda-graph check is a text search of
+# ``server_args.py`` rather than parsing its argparse setup: the flag names are
+# literal strings in that file, importing it would pull in torch, and a missing
+# file or a rename makes the search miss, which selects the older flag form.
 _SGLANG_CLI_PROBE_SCRIPT = f'''export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}}
 python3 - <<'PY'
 import importlib.util
@@ -286,6 +289,10 @@ def probe_sglang_cli(exec_in_container, hosts):
 
 def resolve_sglang_cli(owner, hosts):
     """Probe the container once per ``owner`` and reuse the result."""
+    # Only the first call's ``hosts`` are probed. That is correct because the
+    # orchestrator starts every node's container from the single ``container.image``,
+    # so prefill, decode, proxy and benchmark nodes always share one image. If roles
+    # ever get separate images, cache per role instead of per owner.
     cli = getattr(owner, '_sglang_cli', None)
     if cli is None:
         cli = probe_sglang_cli(owner._container_exec, hosts)
