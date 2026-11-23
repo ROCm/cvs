@@ -1,0 +1,153 @@
+{
+  "_format_note": "PyTorch Training (LLM) config. The cluster file owns node access; this file owns the container and the training workload; the sibling *_threshold.json owns per-sweep metric gates. Run with: cvs run pytorch_training_single|pytorch_training_distributed --cluster_file <cluster>.json --config_file <this>.json --html <out>.html --self-contained-html",
+  "schema_version": 1,
+  "framework": "pytorch_training",
+  "gpu_name": "MI325X",
+  "_thresholds_comment": "Every spec starts as kind=info (record-only). Replace a spec with min/max only after repeated measured runs on the target cluster.",
+  "enforce_thresholds": true,
+  "threshold_json": "mi325x_pytorch_training_llama-3.1-405b-bf16_distributed_smoke_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "<changeme-models-host-path>",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "meta-llama/Llama-3.1-405B",
+    "remote": 0
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "cvs_pytorch_training_w8_smoke",
+    "image": "cvs/pytorch-training:primus26.3-torch2.10-hf4.57",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme-models-host-path>:/models:ro",
+          "<changeme-training-data-host-path>:/data",
+          "<changeme-local-scratch-host-path>:/scratch",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+          "/lib/x86_64-linux-gnu/libibverbs.so.1:/opt/cvs-host/libibverbs.so.1:ro"
+        ],
+        "devices": [
+          "/dev/kfd",
+          "/dev/dri"
+        ]
+      }
+    }
+  },
+  "_paths_comment": "/models holds one HuggingFace snapshot directory per model (config.json and tokenizer; weights only for init=pretrained). /data holds the raw corpus and the token cache the prepare stage writes. /scratch must be node-local disk: a sharded checkpoint with optimizer state is 12 bytes per parameter.",
+  "training": {
+    "workload": "W8",
+    "distributed": true,
+    "enabled": true,
+    "phase": "smoke",
+    "run_mode": "smoke",
+    "gpus_per_node": 8,
+    "warmup_steps": 2,
+    "steps": 10,
+    "seed": 1234,
+    "eval_enabled": true,
+    "eval_every_steps": 0,
+    "eval_batches": 2,
+    "milestone_steps": [
+      100,
+      500,
+      1000,
+      5000
+    ],
+    "learning_rate": 0.0003,
+    "min_learning_rate_ratio": 0.1,
+    "lr_schedule": "cosine",
+    "lr_warmup_steps": 2,
+    "weight_decay": 0.1,
+    "grad_clip_norm": 1.0,
+    "fsdp_strategy": "full_shard",
+    "timeout_s": 10800,
+    "startup_timeout_s": 300,
+    "startup_retries": 3,
+    "setup_timeout_s": 3600,
+    "verify_dmesg": true,
+    "peak_tflops_per_gpu": {
+      "BF16": 1307.4,
+      "FP8": 2614.9
+    },
+    "checkpoint": {
+      "directory": "/scratch/cvs_pytorch_training_ckpt",
+      "keep": false,
+      "resume_steps": 2
+    },
+    "data": {
+      "source": "/data/datasets/wikitext/wikitext-103-raw-v1",
+      "text_column": "text",
+      "train_split": "train",
+      "eval_split": "test",
+      "cache_dir": "/data/tokens/wikitext-103",
+      "append_eos": true
+    },
+    "loss_curve": {
+      "enabled": true,
+      "sample_every_steps": 1,
+      "minimum_points": 2,
+      "require_decrease": false
+    },
+    "convergence": {
+      "enabled": false
+    },
+    "codecarbon": {
+      "enabled": true,
+      "required": true,
+      "version": "3.2.4",
+      "tracker": "amdsmi",
+      "measure_power_secs": 5
+    },
+    "env_vars": {
+      "NCCL_DEBUG": "WARN",
+      "RCCL_USE_AMD_SMI_LIB": "1",
+      "HSA_NO_SCRATCH_RECLAIM": "1",
+      "PYTORCH_ALLOC_CONF": "expandable_segments:True",
+      "HF_HUB_OFFLINE": "1",
+      "HF_HUB_DISABLE_TELEMETRY": "1",
+      "TOKENIZERS_PARALLELISM": "false",
+      "NCCL_IB_DISABLE": "0",
+      "NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "NCCL_IB_GID_INDEX": "3",
+      "NCCL_SOCKET_IFNAME": "<changeme-oob-interface>",
+      "NCCL_CUMEM_ENABLE": "1",
+      "NCCL_DMABUF_ENABLE": "0"
+    },
+    "error_patterns": {
+      "NCCL ERROR": "NCCL ERROR|NCCL timeout|local work queue catastrophic error",
+      "GPU HW ERROR": "HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset",
+      "Python error": "Traceback \\(most recent call last\\)|ModuleNotFoundError|Fatal Python error",
+      "Resource exhaustion": "out of memory|RESOURCE_EXHAUSTED|std::bad_alloc",
+      "Process crash": "Segmentation fault|SIGSEGV|core dumped"
+    },
+    "sweeps": [
+      {
+        "name": "W8-LLAMA-3.1-405B-BF16-SL8192-MBS1-GA1",
+        "label": "W8-Llama-BF16-SL8192-MBS1-GA1",
+        "model": "llama-3.1-405b",
+        "model_path": "/models/Llama-3.1-405B",
+        "init": "random",
+        "precision": "BF16",
+        "seq_len": 8192,
+        "micro_batch_size": 1,
+        "activation_checkpointing_every": 1,
+        "attn_implementation": "flash_attention_2",
+        "compile": true,
+        "data_mode": "tokens",
+        "gradient_accumulation_steps": 1
+      }
+    ],
+    "enabled_sweep_list": [
+      "W8-LLAMA-3.1-405B-BF16-SL8192-MBS1-GA1"
+    ],
+    "master_port": 29511
+  }
+}
