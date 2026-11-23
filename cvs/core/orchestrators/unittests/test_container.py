@@ -142,6 +142,21 @@ class TestContainerOrchestrator(unittest.TestCase):
                 orch.distribute_using_mpi("hostname", ["10.0.0.1"], 1, {}, "/opt/ompi")
         runtime.exec_on_head.assert_not_called()
 
+    def test_distribute_using_mpi_releases_mpi_hostfiles(self):
+        for should_fail in (False, True):
+            with self.subTest(should_fail=should_fail):
+                orch, _ = self._make()
+                with patch.object(BaremetalOrchestrator, "build_mpi_cmd", return_value="mpirun x"):
+                    with patch.object(orch, "release_mpi_hostfiles") as release:
+                        with patch.object(orch, "exec_on_head") as run:
+                            if should_fail:
+                                run.side_effect = RuntimeError("mpirun failed")
+                                with self.assertRaisesRegex(RuntimeError, "mpirun failed"):
+                                    orch.distribute_using_mpi("hostname", ["10.0.0.1"], 1, {}, "/opt/ompi")
+                            else:
+                                orch.distribute_using_mpi("hostname", ["10.0.0.1"], 1, {}, "/opt/ompi")
+                        release.assert_called_once_with()
+
     def test_init_creates_runtime_via_factory(self):
         orch, runtime = self._make()
         self.assertIs(orch.runtime, runtime)

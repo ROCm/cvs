@@ -771,16 +771,17 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         Returns:
             Execution results
         """
-        # Use parent class to build MPI command with wrapped rank command
-        full_mpi_cmd = super().build_mpi_cmd(
-            rank_cmd, mpi_hosts, ranks_per_host, env_vars, mpi_install_dir, mpi_extra_args, no_of_global_ranks
-        )
+        try:
+            full_mpi_cmd = super().build_mpi_cmd(
+                rank_cmd, mpi_hosts, ranks_per_host, env_vars, mpi_install_dir, mpi_extra_args, no_of_global_ranks
+            )
 
-        self.log.info("Launching MPI job in containers")
-        self.log.debug(f"MPI command: {redact_secrets(full_mpi_cmd)}")
+            self.log.info("Launching MPI job in containers")
+            self.log.debug(f"MPI command: {redact_secrets(full_mpi_cmd)}")
 
-        # Execute on head node
-        return self.exec_on_head(full_mpi_cmd, timeout=600)
+            return self.exec_on_head(full_mpi_cmd, timeout=600)
+        finally:
+            self.release_mpi_hostfiles()
 
     def cleanup(self, hosts):
         """
