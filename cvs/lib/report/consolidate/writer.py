@@ -174,6 +174,12 @@ def render_index(page_data):
     return _render_page("overview.html", ("overview.css",), ("shared.js", "overview.js"), page_data)
 
 
+def render_suite_page(page_data):
+    '''One suite's page in the AI Lab deck layout, built from its Run Deck JSON, with its data embedded.'''
+    title = "%s \u00b7 CVS consolidated report" % page_data["suite"]["name"]
+    return _render_page("suite.html", ("overview.css", "suite.css"), ("shared.js", "suite.js"), page_data, title)
+
+
 def write_json(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")

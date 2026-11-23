@@ -380,7 +380,8 @@
       withinSection(s),
       factsRow(s),
       h('div', { class: 'artifact-actions' },
-        link(s.reportUrl, 'Detailed Run Deck', true), link(s.viewerUrl, 'Interactive viewer'),
+        s.suiteUrl ? link(s.suiteUrl, 'Open Run Deck', true) : link(s.reportUrl, 'Detailed Run Deck', true),
+        s.suiteUrl ? link(s.reportUrl, 'Detailed Run Deck') : null, link(s.viewerUrl, 'Interactive viewer'),
         link(s.pytestUrl, 'Pytest report'), link(s.logUrl, 'Run log'), link(s.jsonUrl, 'Source JSON')),
       s.notes.length ? h('p', { class: 'detail-note' }, s.notes.join(' ')) : null,
       evidenceSection(d), matrixSection(d), tableSection(d), historySection(s), contextSection(s, d));
