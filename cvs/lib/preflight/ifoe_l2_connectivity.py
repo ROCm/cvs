@@ -42,7 +42,7 @@ import shlex
 import tempfile
 import time
 import uuid
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import AbstractSet, Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from cvs.lib.preflight.base import PreflightCheck
 
@@ -1412,13 +1412,27 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             "",
         ]
 
-    def _build_ping_batch_script(self, node: str, commands: Sequence[str]) -> str:
+    def _build_ping_batch_script(
+        self, node: str, commands: Sequence[str], bdfs: Optional[Sequence[Optional[str]]] = None
+    ) -> str:
         """Render the script that runs every planned ping invocation for one node.
 
         Each invocation is framed by a token-tagged BEGIN/END marker pair so the
         full ``afmctl test ping`` stdout survives intact for
         :meth:`AfmctlPingParser.parse`, and the END marker carries the
         invocation's own exit status.
+
+        When *bdfs* is supplied with more than one distinct source BDF, invocations
+        are grouped by source BDF and each BDF group runs in its own background
+        subshell (buffering into a private per-group file before emitting to stdout
+        in order). Invocations on the same BDF remain strictly sequential because
+        each IFoE device only supports one active ping session at a time, while
+        distinct BDFs execute concurrently without contention.
+
+        Each invocation's stderr is merged into its framed block in both paths.
+        Parallel subshell shell stderr goes to a private .err file and is replayed
+        on script stderr after framed stdout; sequential stderr goes there directly.
+        The script exits 0: END markers carry results; the harvester ignores its status.
         """
         token = self._marker_token()
         lines = self._batch_preamble(node, "L2 ping batch", len(commands))
@@ -1435,8 +1449,49 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                 "",
             ]
         )
-        for index, command in enumerate(commands):
-            lines.append(f"__cvs_ifoe_ping {index} {shlex.quote(command)}")
+        groups: List[List[Tuple[int, str]]] = []
+        if bdfs is not None and len(bdfs) == len(commands):
+            groups_by_bdf: Dict[str, List[Tuple[int, str]]] = {}
+            for index, (bdf, command) in enumerate(zip(bdfs, commands)):
+                key = str(bdf or f"__bdf_{index}__")
+                if key not in groups_by_bdf:
+                    groups_by_bdf[key] = []
+                    groups.append(groups_by_bdf[key])
+                groups_by_bdf[key].append((index, command))
+
+        if len(groups) <= 1:
+            for index, command in enumerate(commands):
+                lines.append(f"__cvs_ifoe_ping {index} {shlex.quote(command)}")
+        else:
+            lines.extend(
+                [
+                    f'__cvs_ping_tmp=$(mktemp -d "${{TMPDIR:-/tmp}}/cvs_ifoe_ping_{token[:12]}.XXXXXX" 2>/dev/null || printf \'%s\' "/tmp/cvs_ifoe_ping_{token}_$$")',
+                    'mkdir -p -- "$__cvs_ping_tmp" 2>/dev/null',
+                    "__cvs_pids=()",
+                    "",
+                ]
+            )
+            for group_index, group in enumerate(groups):
+                lines.append("(")
+                for index, command in group:
+                    lines.append(f"    __cvs_ifoe_ping {index} {shlex.quote(command)}")
+                lines.append(
+                    f') > "$__cvs_ping_tmp/bdf_{group_index}.out" 2> "$__cvs_ping_tmp/bdf_{group_index}.err" &'
+                )
+                lines.append("__cvs_pids+=($!)")
+            lines.extend(
+                [
+                    "",
+                    'for __cvs_pid in "${__cvs_pids[@]}"; do',
+                    '    wait "$__cvs_pid"',
+                    "done",
+                ]
+            )
+            for group_index in range(len(groups)):
+                lines.append(f'cat "$__cvs_ping_tmp/bdf_{group_index}.out" 2>/dev/null')
+            for group_index in range(len(groups)):
+                lines.append(f'cat "$__cvs_ping_tmp/bdf_{group_index}.err" >&2 2>/dev/null')
+            lines.append('rm -rf -- "$__cvs_ping_tmp" 2>/dev/null')
         lines.extend(["", f"printf '%s\\n' '__CVS_IFOE_{token}_DONE__'", "exit 0", ""])
         return "\n".join(lines)
 
@@ -1920,6 +1975,65 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             self._ping_output_cache = {}
             self.log_warning(f"Batched IFoE ping execution failed ({exc}); falling back to per-invocation dispatch")
 
+    @staticmethod
+    def _max_invocations_per_bdf(cells: Sequence[Mapping[str, Any]]) -> int:
+        """Return the maximum serial invocation depth across any single BDF on a node."""
+        if not cells:
+            return 0
+        counts: Dict[str, int] = {}
+        for index, cell in enumerate(cells):
+            key = str(cell.get("source_bdf") or f"__cell_{index}__")
+            counts[key] = counts.get(key, 0) + 1
+        return max(counts.values())
+
+    @staticmethod
+    def _select_undirected_full_mesh_peers(
+        source_accelerator: int,
+        peers: Sequence[int],
+        tested_source_accelerators: AbstractSet[int],
+    ) -> List[int]:
+        """Select non-self peers for *source_accelerator* without duplicating undirected edges.
+
+        ``afmctl test ping`` validates bidirectional traffic (IFoE Request, IFoE
+        Response, and Non-IFoE) in a single invocation, so testing both ``u -> v``
+        and ``v -> u`` when both accelerators are sources under test is redundant.
+        For any peer ``v`` that is also a tested source accelerator, circular
+        distance ``d = (rank(v) - rank(u)) % N`` over sorted tested sources
+        orients the edge: ``u`` pings ``v`` when ``2d < N``. For even ``N``, the
+        antipodal edge (``2d == N``) goes to the lower rank when that rank is
+        even, otherwise to the higher rank. Each undirected pair is selected
+        once, giving the full mesh of ``N * (N - 1) // 2`` edges. For odd ``N``,
+        every source gets exactly ``(N - 1) // 2`` tested peers; for even ``N``,
+        half get ``N // 2`` and half get ``N // 2 - 1``. When ``N`` is divisible
+        by four, the extra antipodal ping alternates between consecutive ranks,
+        keeping per-node invocation counts equal. Peers that are not tested
+        sources are always kept.
+        """
+        non_self_peers = [peer for peer in peers if peer != source_accelerator]
+        if source_accelerator not in tested_source_accelerators:
+            return non_self_peers
+
+        ordered_sources = sorted(tested_source_accelerators)
+        num_sources = len(ordered_sources)
+        rank_by_accel = {accel: idx for idx, accel in enumerate(ordered_sources)}
+        src_rank = rank_by_accel[source_accelerator]
+        selected: List[int] = []
+        for dst in non_self_peers:
+            if dst not in tested_source_accelerators:
+                selected.append(dst)
+                continue
+            dst_rank = rank_by_accel[dst]
+            distance = (dst_rank - src_rank) % num_sources
+            if 2 * distance < num_sources:
+                selected.append(dst)
+            elif 2 * distance == num_sources:
+                # The antipodal pair must be decided from the unordered pair alone or
+                # it is pinged from both ends (or neither) when N % 4 == 2.
+                lower_rank = min(src_rank, dst_rank)
+                if (src_rank == lower_rank) == (lower_rank % 2 == 0):
+                    selected.append(dst)
+        return selected
+
     def _run_ping_batch(self, cells_by_node: Dict[str, List[Dict]]) -> Dict[Tuple[str, str, str], Dict]:
         """Distribute, run and harvest one ping ScriptLet per node."""
         from cvs.lib.scriptlet import ScriptLet
@@ -1928,7 +2042,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         workspace_dir = self._artifact_workspace_dir("l2_ping")
         token = self._marker_token()
         total = sum(len(cells) for cells in cells_by_node.values())
-        timeout = self._batch_timeout(max(len(cells) for cells in cells_by_node.values()))
+        timeout = self._batch_timeout(max(self._max_invocations_per_bdf(cells) for cells in cells_by_node.values()))
         self.log_info(
             f"Batching {total} IFoE ping invocation(s) across {len(cells_by_node)} node(s) "
             f"under {workspace_dir} (batch timeout {timeout}s)"
@@ -1950,8 +2064,9 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                     self.build_ping_command(cell["source_bdf"], cell["dst_accelerator"], ports=cell["selected_ports"])
                     for cell in cells
                 ]
+                bdfs = [cell.get("source_bdf") for cell in cells]
                 script_id = f"ifoe_ping_{node}"
-                scriptlet.create_script(script_id, self._build_ping_batch_script(node, commands))
+                scriptlet.create_script(script_id, self._build_ping_batch_script(node, commands, bdfs=bdfs))
                 script_mapping[node] = script_id
 
             scriptlet.copy_script_list(script_mapping)
@@ -2155,6 +2270,13 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         if batching and self.ports == "up" and self.port_discovery == "auto":
             self._prefetch_port_probes()
 
+        tested_source_accelerators = {
+            device.get("accelerator_id")
+            for node_result in self.results.values()
+            for device in self._candidate_source_devices(node_result)
+            if device.get("bdf") and device.get("accelerator_id") is not None
+        }
+
         for node, node_result in self.results.items():
             discovered_devices = node_result.get("topology") or []
             source_devices = self._candidate_source_devices(node_result)
@@ -2193,16 +2315,30 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                         if self.strict_discovery:
                             continue
                         peers = fallback_peers
-                else:
-                    peers = list(self.dst_accelerators)
-                peers = [peer for peer in peers if peer != source_accelerator]
-                if not peers:
-                    self._add_node_issue(
-                        node,
-                        "COVERAGE_ERROR",
-                        f"{bdf}: no non-self destination accelerators available",
+                    non_self_peers = [peer for peer in peers if peer != source_accelerator]
+                    if not non_self_peers:
+                        self._add_node_issue(
+                            node,
+                            "COVERAGE_ERROR",
+                            f"{bdf}: no non-self destination accelerators available",
+                        )
+                        continue
+                    peers = self._select_undirected_full_mesh_peers(
+                        source_accelerator,
+                        non_self_peers,
+                        tested_source_accelerators,
                     )
-                    continue
+                    if not peers:
+                        continue
+                else:
+                    peers = [peer for peer in self.dst_accelerators if peer != source_accelerator]
+                    if not peers:
+                        self._add_node_issue(
+                            node,
+                            "COVERAGE_ERROR",
+                            f"{bdf}: no non-self destination accelerators available",
+                        )
+                        continue
 
                 coverage = node_result["coverage"]
                 coverage["expected_pairs"] += len(peers)

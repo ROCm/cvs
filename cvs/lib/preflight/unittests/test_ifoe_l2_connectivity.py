@@ -1,5 +1,7 @@
 """Unit tests for the IFoE L2 connectivity preflight check."""
 
+from collections import Counter
+from itertools import combinations
 import json
 import os
 import shlex
@@ -1006,6 +1008,80 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         self.assertIn('--dst-accelerator 2', executed_commands[2])
         self.assertNotIn('--dst-accelerator 0', '\n'.join(executed_commands[1:]))
 
+    def test_full_mesh_deduplicates_symmetric_pairs_and_balances_across_nodes(self):
+        def show_device_for(bdfs_and_accels, local_range, vpod_range='0-7'):
+            blocks = []
+            for bdf, accel in bdfs_and_accels:
+                blocks.append(
+                    f"""\
+BDF                              : {bdf}
+Spec:
+  Accelerator id                 : {accel}
+  Local accelerators             : {local_range}
+  vPOD accelerators              : {vpod_range}
+  Capability:
+    No. of network ports         : 36
+"""
+                )
+            return '\n'.join(blocks)
+
+        miami_devices = show_device_for(
+            [('0001:04:00.1', 3), ('0002:04:00.1', 2), ('0003:04:00.1', 1), ('0004:04:00.1', 0)],
+            local_range='0-3',
+        )
+        cairo_devices = show_device_for(
+            [('0001:04:00.1', 7), ('0002:04:00.1', 6), ('0003:04:00.1', 5), ('0004:04:00.1', 4)],
+            local_range='4-7',
+        )
+
+        class TargetedPingPssh:
+            reachable_hosts = ['Miami', 'Cairo']
+
+            def exec(self, *_args, **_kwargs):
+                return {'Miami': miami_devices, 'Cairo': cairo_devices}
+
+            def exec_cmd_list(self, commands, timeout=None, print_console=True):
+                response = {}
+                for host, cmd in zip(self.reachable_hosts, commands):
+                    if cmd == 'true':
+                        response[host] = ''
+                        continue
+                    bdf_match = ifoe_mod.re.search(r'-b\s+([0-9a-fA-F:.]+)', cmd)
+                    dst_match = ifoe_mod.re.search(r'--dst-accelerator\s+(\d+)', cmd)
+                    bdf = bdf_match.group(1)
+                    dst = int(dst_match.group(1))
+                    response[host] = passing_output_for(dst, ports=(0,), bdf=bdf) + '\n__CVS_AFMCTL_EXIT_STATUS__=0\n'
+                return response
+
+        check = IfoeL2ConnectivityCheck(
+            _make_orch(TargetedPingPssh()),
+            mesh_mode='full_mesh',
+            ports=[0],
+            bdf_discovery='auto',
+        )
+        results = check.run()
+
+        self.assertEqual(results['Miami']['status'], 'PASS')
+        self.assertEqual(results['Cairo']['status'], 'PASS')
+        self.assertEqual(results['Miami']['coverage']['planned_pairs'], 14)
+        self.assertEqual(results['Cairo']['coverage']['planned_pairs'], 14)
+        self.assertTrue(results['Miami']['coverage']['complete'])
+        self.assertTrue(results['Cairo']['coverage']['complete'])
+
+        all_cells = results['Miami']['plan'] + results['Cairo']['plan']
+        self.assertEqual(len(all_cells), 28)
+        undirected_edges = {
+            (
+                min(cell['source_accelerator'], cell['dst_accelerator']),
+                max(cell['source_accelerator'], cell['dst_accelerator']),
+            )
+            for cell in all_cells
+        }
+        expected_edges = {(u, v) for u in range(8) for v in range(u + 1, 8)}
+        self.assertEqual(undirected_edges, expected_edges)
+        self.assertEqual(check._max_invocations_per_bdf(results['Miami']['plan']), 4)
+        self.assertEqual(check._max_invocations_per_bdf(results['Cairo']['plan']), 4)
+
     def test_up_port_discovery_filters_down_ports_from_ping(self):
         port_inventory = """\
 BDF : 0001:01:00.1
@@ -1194,6 +1270,87 @@ Port#    State
         self.assertTrue(any('vPOD accelerator membership is unavailable' in error for error in node['errors']))
 
 
+class TestUndirectedFullMeshPeerSelection(unittest.TestCase):
+    @staticmethod
+    def _schedule(sources, extra_peers=()):
+        tested = set(sources)
+        peers = list(sources) + list(extra_peers)
+        return {src: IfoeL2ConnectivityCheck._select_undirected_full_mesh_peers(src, peers, tested) for src in sources}
+
+    def test_every_pair_selected_exactly_once_for_2_to_16_sources(self):
+        for n in range(2, 17):
+            sparse = [7 + 3 * i for i in range(n)]
+            for layout, sources in (
+                ('contiguous', list(range(n))),
+                ('sparse', sparse),
+                ('reversed_sparse', list(reversed(sparse))),
+            ):
+                with self.subTest(n=n, layout=layout):
+                    schedule = self._schedule(sources)
+                    edges = Counter(frozenset((src, dst)) for src, selected in schedule.items() for dst in selected)
+                    expected = {frozenset(pair) for pair in combinations(sources, 2)}
+                    self.assertEqual(set(edges), expected)
+                    self.assertTrue(all(count == 1 for count in edges.values()))
+                    self.assertEqual(sum(edges.values()), n * (n - 1) // 2)
+                    for src, selected in schedule.items():
+                        self.assertNotIn(src, selected)
+
+    def test_untested_peers_are_always_kept(self):
+        for n in range(2, 17):
+            with self.subTest(n=n):
+                schedule = self._schedule(list(range(n)), extra_peers=(900, 901))
+                for selected in schedule.values():
+                    self.assertIn(900, selected)
+                    self.assertIn(901, selected)
+        self.assertEqual(
+            IfoeL2ConnectivityCheck._select_undirected_full_mesh_peers(900, [0, 1, 900, 2], {0, 1, 2}),
+            [0, 1, 2],
+        )
+
+    def test_per_source_depth_is_balanced(self):
+        for n in range(2, 17):
+            with self.subTest(n=n):
+                schedule = self._schedule(list(range(n)))
+                depths = [len(selected) for selected in schedule.values()]
+                if n % 2:
+                    self.assertEqual(depths, [(n - 1) // 2] * n)
+                else:
+                    self.assertTrue(all(depth in {n // 2 - 1, n // 2} for depth in depths))
+                    self.assertEqual(depths.count(n // 2), n // 2)
+
+    def test_three_sources_regression(self):
+        self.assertEqual(self._schedule([0, 1, 2]), {0: [1], 1: [2], 2: [0]})
+
+    def test_six_sources_regression(self):
+        schedule = self._schedule(list(range(6)))
+        self.assertEqual(
+            schedule,
+            {0: [1, 2, 3], 1: [2, 3], 2: [3, 4, 5], 3: [4, 5], 4: [0, 1, 5], 5: [0, 1]},
+        )
+        self.assertIn(3, schedule[0])
+        self.assertNotIn(0, schedule[3])
+        self.assertIn(1, schedule[4])
+        self.assertNotIn(4, schedule[1])
+
+    def test_eight_sources_pins_current_helios_schedule(self):
+        schedule = self._schedule(list(range(8)))
+        self.assertEqual(
+            schedule,
+            {
+                0: [1, 2, 3, 4],
+                1: [2, 3, 4],
+                2: [3, 4, 5, 6],
+                3: [4, 5, 6],
+                4: [5, 6, 7],
+                5: [0, 1, 6, 7],
+                6: [0, 1, 7],
+                7: [0, 1, 2, 3],
+            },
+        )
+        self.assertEqual(sum(len(schedule[src]) for src in range(4)), 14)
+        self.assertEqual(sum(len(schedule[src]) for src in range(4, 8)), 14)
+
+
 class TestIfoeScriptLetBatching(unittest.TestCase):
     """Tests for the ScriptLet batching path (script generation and result framing).
 
@@ -1205,16 +1362,21 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
     """
 
     @staticmethod
-    def _run_script(content):
-        """Execute a generated batch script locally and return its stdout."""
+    def _run_script_result(content):
+        """Execute a generated batch script locally and return its result."""
         with tempfile.NamedTemporaryFile('w', suffix='.sh', delete=False) as handle:
             handle.write(content)
             path = handle.name
         try:
             os.chmod(path, 0o755)  # nosec B103 - test script in a private temp file
-            return run_trusted([path], capture_output=True, text=True).stdout
+            return run_trusted([path], capture_output=True, text=True)
         finally:
             os.unlink(path)
+
+    @staticmethod
+    def _run_script(content):
+        """Execute a generated batch script locally and return its stdout."""
+        return TestIfoeScriptLetBatching._run_script_result(content).stdout
 
     def test_mock_backends_do_not_take_the_scriptlet_path(self):
         check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
@@ -1245,6 +1407,7 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
         check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
         for script in (
             check._build_ping_batch_script('nodeA', ['echo a', 'echo b']),
+            check._build_ping_batch_script('nodeA', ['echo a', 'echo b'], bdfs=['b1', 'b2']),
             check._build_port_probe_script('nodeA', f'{TMP}/ws', ['echo a']),
         ):
             self.assertFalse(
@@ -1329,6 +1492,79 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
             check._batch_port_artifact_path(f'{TMP}/ws', '0001:01:00.1'),
         )
         self.assertNotEqual(check._port_artifact_path('0001:01:00.1'), check._port_artifact_path('0001:01:00.1'))
+
+    def test_parallel_per_bdf_subshells_preserve_framing_and_order(self):
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
+        commands = [
+            'sleep 0.05; echo bdf1_first',
+            'echo bdf1_second; exit 2',
+            'echo bdf2_first',
+            'echo bdf2_second',
+        ]
+        bdfs = ['0001:04:00.1', '0001:04:00.1', '0002:04:00.1', '0002:04:00.1']
+        script = check._build_ping_batch_script('nodeA', commands, bdfs=bdfs)
+        self.assertIn('__cvs_pids+=($!)', script)
+
+        output = self._run_script(script)
+        blocks = check._parse_batch_blocks(output)
+        self.assertTrue(check._batch_completed(output, check._marker_token()))
+        self.assertEqual(sorted(blocks), ['0', '1', '2', '3'])
+        self.assertEqual(blocks['0'], {'output': 'bdf1_first', 'exit_status': 0})
+        self.assertEqual(blocks['1'], {'output': 'bdf1_second', 'exit_status': 2})
+        self.assertEqual(blocks['2'], {'output': 'bdf2_first', 'exit_status': 0})
+        self.assertEqual(blocks['3'], {'output': 'bdf2_second', 'exit_status': 0})
+
+    def test_parallel_subshell_stderr_stays_out_of_framed_output(self):
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
+        script = check._build_ping_batch_script(
+            'nodeA',
+            ['echo out_a; echo afm_diag_a >&2', 'echo out_b'],
+            bdfs=['0001:04:00.1', '0002:04:00.1'],
+        )
+        self.assertNotIn('.out" 2>&1', script)
+        self.assertIn('bdf_0.err', script)
+        self.assertIn('bdf_1.err', script)
+        self.assertEqual(script.count('\n(\n'), 2)
+        script = script.replace('\n(\n', "\n(\n    printf '%s\\n' __cvs_stray_stderr__ >&2\n")
+
+        result = self._run_script_result(script)
+        self.assertNotIn('__cvs_stray_stderr__', result.stdout)
+        self.assertIn('__cvs_stray_stderr__', result.stderr)
+        self.assertTrue(check._batch_completed(result.stdout, check._marker_token()))
+        self.assertEqual(
+            check._parse_batch_blocks(result.stdout),
+            {
+                '0': {'output': 'out_a\nafm_diag_a', 'exit_status': 0},
+                '1': {'output': 'out_b', 'exit_status': 0},
+            },
+        )
+
+    def test_invocation_stderr_is_framed_identically_in_sequential_and_parallel_paths(self):
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
+        commands = ['echo x; echo diag_x >&2', 'echo y']
+        sequential = check._parse_batch_blocks(self._run_script(check._build_ping_batch_script('nodeA', commands)))
+        parallel = check._parse_batch_blocks(
+            self._run_script(check._build_ping_batch_script('nodeA', commands, bdfs=['b1', 'b2']))
+        )
+        self.assertEqual(sequential, parallel)
+
+    def test_harvest_marks_invocation_without_result_block_as_failed(self):
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
+        token = check._marker_token()
+        output = f'__CVS_IFOE_{token}_BEGIN__:0\nok\n__CVS_IFOE_{token}_END__:0:0\n__CVS_IFOE_{token}_DONE__\n'
+        cells = [{'source_bdf': '0001:04:00.1', 'dst_accelerator': dst, 'selected_ports': [0]} for dst in (1, 2)]
+        with (
+            patch('cvs.lib.scriptlet.ScriptLet') as scriptlet_cls,
+            patch.object(check, '_exec_all', return_value={}),
+            patch.object(check, '_scriptlet_enabled', return_value=False),
+        ):
+            scriptlet_cls.return_value.__enter__.return_value.run_parallel_group.return_value = {'nodeA': output}
+            executions = check._run_ping_batch({'nodeA': cells})
+
+        self.assertEqual(executions[('nodeA', '0001:04:00.1', '1')]['exit_status'], 0)
+        missing = executions[('nodeA', '0001:04:00.1', '2')]
+        self.assertEqual(missing['exit_status'], -1)
+        self.assertIn('marker missing from batch output', missing['batch_error'])
 
 
 class TestL2PingConfigContract(unittest.TestCase):
