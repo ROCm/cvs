@@ -509,12 +509,13 @@ def evaluation_windows(window_count, eval_batches, world_size):
 
     Every rank must run the same number of forwards because FSDP all-gathers
     inside each one, so the window count is rounded down to a multiple of
-    the world size rather than repeating windows.
+    the world size rather than repeating windows. With fewer windows than
+    ranks there is one pass, and the ranks past the last window repeat one
+    that evaluate() leaves out of the loss.
     """
-    per_rank = min(eval_batches, window_count // world_size)
-    if per_rank < 1:
-        raise ValueError(f"held-out text has {window_count} windows, fewer than the {world_size} ranks")
-    return per_rank
+    if window_count < 1:
+        raise ValueError("held-out text has no full windows")
+    return max(1, min(eval_batches, window_count // world_size))
 
 
 def evaluate(model, data, args, rank, world_size, device):
@@ -523,10 +524,11 @@ def evaluate(model, data, args, rank, world_size, device):
     with torch.no_grad():
         for batch in range(evaluation_windows(data.count, args.eval_batches, world_size)):
             index = batch * world_size + rank
-            inputs, labels = data.batch([index], device, shuffle=False)
+            inputs, labels = data.batch([index % data.count], device, shuffle=False)
             logits = model(input_ids=inputs, use_cache=False).logits
-            totals[0] += _cross_entropy(logits, labels, args.loss_chunk_tokens).double() * labels.numel()
-            totals[1] += labels.numel()
+            if index < data.count:
+                totals[0] += _cross_entropy(logits, labels, args.loss_chunk_tokens).double() * labels.numel()
+                totals[1] += labels.numel()
             del logits
     model.train()
     dist.all_reduce(totals)
