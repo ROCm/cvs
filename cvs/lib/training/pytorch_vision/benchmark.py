@@ -10,7 +10,9 @@ import itertools
 import json
 import math
 import os
+import select
 import statistics
+import subprocess
 import sys
 import threading
 import time
@@ -742,6 +744,43 @@ def _evaluate(model, eval_loader, loss_fn, args, device):
     }
 
 
+# The tracker polls AMDSMI from a background thread. In the PyTorch LLM trainer
+# that thread corrupted rank 0's heap alongside RCCL's own AMDSMI use, so it
+# runs in its own process and only exchanges JSON lines with the trainer.
+_CODECARBON_WORKER = """
+import json, os, sys
+result = os.fdopen(os.dup(1), "w")
+os.dup2(2, 1)
+import amdsmi
+from codecarbon import EmissionsTracker
+amdsmi.amdsmi_init()
+count = len(amdsmi.amdsmi_get_processor_handles())
+tracker = EmissionsTracker(**json.loads(sys.argv[1]))
+tracker.start()
+print(json.dumps({"gpu_count": count}), file=result, flush=True)
+sys.stdin.read()
+emissions = tracker.stop()
+final = getattr(tracker, "final_emissions_data", None)
+print(json.dumps({
+    "emissions": emissions,
+    "energy": getattr(final, "energy_consumed", None),
+    "duration": getattr(final, "duration", None),
+}), file=result, flush=True)
+"""
+# CodeCarbon's first reading waits on a hardware probe and its last on the final
+# power sample, each a few seconds; this bounds both against a wedged worker.
+CODECARBON_WORKER_TIMEOUT_S = 120
+
+
+def _read_worker_line(proc, timeout_s):
+    ready, _, _ = select.select([proc.stdout], [], [], timeout_s)
+    line = proc.stdout.readline() if ready else ""
+    if not line:
+        proc.kill()
+        raise RuntimeError(f"CodeCarbon worker gave no result (exit code {proc.wait()})")
+    return json.loads(line)
+
+
 def _start_codecarbon(args, rank, local_gpu_count):
     payload = {
         "version": None,
@@ -756,13 +795,6 @@ def _start_codecarbon(args, rank, local_gpu_count):
             version = importlib.metadata.version("codecarbon")
             if version != "3.2.4":
                 raise RuntimeError(f"CodeCarbon 3.2.4 required, found {version}")
-            import amdsmi
-            from codecarbon import EmissionsTracker
-
-            amdsmi.amdsmi_init()
-            handles = amdsmi.amdsmi_get_processor_handles()
-            if len(handles) < local_gpu_count:
-                raise RuntimeError(f"AMDSMI found {len(handles)} GPUs, expected {local_gpu_count}")
             kwargs = {
                 "measure_power_secs": args.codecarbon_measure_power_secs,
                 "tracking_mode": "machine",
@@ -772,17 +804,27 @@ def _start_codecarbon(args, rank, local_gpu_count):
             }
             if args.codecarbon_country_iso_code:
                 kwargs["country_iso_code"] = args.codecarbon_country_iso_code
-            tracker = EmissionsTracker(**kwargs)
-            tracker.start()
+            tracker = subprocess.Popen(
+                [sys.executable, "-c", _CODECARBON_WORKER, json.dumps(kwargs)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            gpu_count = _read_worker_line(tracker, CODECARBON_WORKER_TIMEOUT_S)["gpu_count"]
+            if gpu_count < local_gpu_count:
+                raise RuntimeError(f"AMDSMI found {gpu_count} GPUs, expected {local_gpu_count}")
             payload.update(
                 {
                     "version": version,
-                    "gpu_count": len(handles),
+                    "gpu_count": gpu_count,
                     "active": True,
                     "reason": "",
                 }
             )
         except Exception as exc:
+            if tracker is not None:
+                tracker.kill()
+                tracker = None
             payload["reason"] = f"{type(exc).__name__}: {exc}"
     state = [payload]
     dist.broadcast_object_list(state, src=0)
@@ -794,18 +836,21 @@ def _start_codecarbon(args, rank, local_gpu_count):
 def _stop_codecarbon(tracker, payload, rank):
     if rank == 0 and tracker is not None:
         try:
-            emissions = tracker.stop()
+            tracker.stdin.close()
+            result = _read_worker_line(tracker, CODECARBON_WORKER_TIMEOUT_S)
+            tracker.wait(timeout=CODECARBON_WORKER_TIMEOUT_S)
+            emissions = result["emissions"]
             if emissions is None or not math.isfinite(float(emissions)):
                 raise RuntimeError(f"invalid emissions result: {emissions!r}")
             payload["emissions_kg_co2eq"] = float(emissions)
-            final_data = getattr(tracker, "final_emissions_data", None)
-            energy_kwh = getattr(final_data, "energy_consumed", None)
+            energy_kwh = result["energy"]
             if energy_kwh is not None and math.isfinite(float(energy_kwh)) and float(energy_kwh) > 0:
                 payload["energy_kwh"] = float(energy_kwh)
-            duration_seconds = getattr(final_data, "duration", None)
+            duration_seconds = result["duration"]
             if duration_seconds is not None and math.isfinite(float(duration_seconds)) and float(duration_seconds) > 0:
                 payload["duration_seconds"] = float(duration_seconds)
         except Exception as exc:
+            tracker.kill()
             payload.update({"active": False, "reason": f"{type(exc).__name__}: {exc}"})
     state = [payload]
     dist.broadcast_object_list(state, src=0)

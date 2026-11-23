@@ -149,7 +149,8 @@ Training block
   when the sweeps differ in throughput, so a sweep without its own baseline
   reports nothing instead of a number computed against a different cell.
 - ``codecarbon``: CodeCarbon 3.2.4 AMDSMI activation, sampling, and
-  required/optional policy.
+  required/optional policy. The tracker runs in a separate process started by
+  rank 0, so its AMDSMI polling thread never shares the trainer's heap.
 - ``dataset_staging``: copies a dataset volume onto each node before the
   container starts and mounts the copy in its place. ``enabled`` (default
   ``false``); ``source``, the host side of one ``container.runtime.args.volumes``
