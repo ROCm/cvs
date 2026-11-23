@@ -20,6 +20,9 @@ def _to_float(x):
 
 def _check_one(metric, actual_raw, spec):
     kind = spec["kind"]
+    # "info" records the metric without gating, as cvs.lib.utils.verdict does.
+    if kind == "info":
+        return None
     actual = _to_float(actual_raw)
     if kind == "min":
         target = _to_float(spec["value"])

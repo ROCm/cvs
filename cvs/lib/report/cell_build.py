@@ -13,6 +13,8 @@ from cvs.lib.report.verdict import _check_one
 def metric_pass(metric: str, actual: Any, spec: Optional[dict], evaluator=None) -> str:
     if spec is None:
         return "na"
+    if spec.get("kind") == "info":
+        return "record"
     if evaluator is not None:
         status, _reason = evaluator(metric, actual, spec)
         return status

@@ -6,12 +6,26 @@ import math
 from types import SimpleNamespace
 
 from cvs.lib.inference.utils.vllm_metrics import metric_verdict as vllm_metric_verdict
-from cvs.lib.report.cell_build import bar_pct, build_all_cells, build_cell_record, resolve_pytest_nodeids_for_cell
+from cvs.lib.report.cell_build import (
+    bar_pct,
+    build_all_cells,
+    build_cell_record,
+    metric_pass,
+    resolve_pytest_nodeids_for_cell,
+)
 from cvs.lib.report.formatting import pytest_row_href
 from cvs.lib.report.testing.fixtures import generic_inference_report_config, generic_variant
 
 
 class TestCellBuild(unittest.TestCase):
+    def test_metric_pass_records_an_info_spec(self):
+        info = {"kind": "info", "value": 0}
+        self.assertEqual(metric_pass("output_throughput", 1.0, info), "record")
+        self.assertEqual(metric_pass("failed", None, info), "record")
+        self.assertEqual(metric_pass("output_throughput", 1.0, info, evaluator=vllm_metric_verdict), "record")
+        self.assertEqual(metric_pass("output_throughput", 1.0, {"kind": "min", "value": 5}), "fail")
+        self.assertEqual(metric_pass("output_throughput", 1.0, {"kind": "bogus", "value": 5}), "fail")
+
     def test_margin_shown_when_record_only_and_spec_present(self):
         variant = SimpleNamespace(
             enforce_thresholds=False,
