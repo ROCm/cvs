@@ -28,7 +28,8 @@ verdicts. The shipped configs cover these scorecard workloads:
    * - W1/W2
      - ResNet-50 on ImageNet-1k, one node / multi-node
      - ``native``
-     - smoke, perf, train-5k, to-accuracy (W1 one node, W2 four nodes)
+     - smoke, perf, train-5k, to-accuracy (W1 one node, W2 four nodes),
+       precision-parity (W1)
    * - W3
      - ViT-B/16 on ImageNet-1k
      - ``native``
@@ -399,7 +400,25 @@ Metrics surfaced (namespace ``training.*``): ``images_per_sec``,
 ``loss_step_{100,500,1000,5000}``, ``top1_accuracy_pct``,
 ``top5_accuracy_pct``, ``eval_loss``, ``eval_sample_count``,
 ``convergence_{step,time_seconds}``, ``energy_kwh``, ``images_per_kwh``,
-``scaling_efficiency_pct``, ``scale_parity_accuracy_delta``.
+``scaling_efficiency_pct``, ``scale_parity_accuracy_delta``,
+``precision_parity_{loss,grad_norm}_delta_pct``.
+
+The precision-parity profile runs ResNet-50 for ten steps twice from the same
+seed on the same fixed synthetic batch, once in FP32 and once under BF16
+autocast. Non-perf runs log the gradient norm at every loss sample; perf runs
+skip it so the extra reduction stays out of the measured step. The BF16 sweep
+reports the mean per-step relative difference of loss and gradient norm
+against the FP32 sweep with the same model, batch, data path and augmentation.
+Both values are recorded rather than gated, because no accepted bound exists
+yet.
+
+The profile uses synthetic data because rocAL's ImageNet order is not
+reproducible across runs: two FP32 runs on it differed as much as FP32 and
+BF16 did. On the synthetic batch, two FP32 runs agree to within about 1% on
+gradient norm over the first ten steps. Longer windows are not useful, because
+the model memorizes the batch and relative loss differences grow as the loss
+nears zero. Synthetic sweeps have no validation split, so non-perf profiles
+made only of synthetic sweeps run without evaluation.
 
 Task workloads replace Top-1/Top-5 with their own quality metric:
 ``map_50_95`` and ``map_50`` (W4, COCO), ``miou_pct`` and

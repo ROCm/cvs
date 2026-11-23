@@ -10,6 +10,7 @@ from cvs.lib.training.pytorch_vision.utils.metrics import (
     loss_curve_decreased,
     parse_codecarbon_metrics,
     required_metrics_for_run,
+    series_relative_delta_pct,
     throughput_overhead_pct,
     tier_metric_specs,
     to_training_metrics,
@@ -57,6 +58,19 @@ class TestTrainingMetrics(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "baseline"):
             gradient_accumulation_overhead_pct(0.0, 88.0)
 
+    def test_series_delta_averages_shared_steps(self):
+        reference = [(1, 10.0), (2, 8.0), (3, 5.0)]
+        candidate = [(2, 8.8), (3, 4.5), (4, 1.0)]
+        self.assertAlmostEqual(series_relative_delta_pct(reference, candidate), 10.0)
+
+    def test_series_delta_rejects_disjoint_series(self):
+        with self.assertRaisesRegex(ValueError, "share no logged steps"):
+            series_relative_delta_pct([(1, 1.0)], [(2, 1.0)])
+
+    def test_series_delta_rejects_zero_reference(self):
+        with self.assertRaisesRegex(ValueError, "step 1"):
+            series_relative_delta_pct([(1, 0.0)], [(1, 1.0)])
+
     def test_throughput_overhead_uses_time_per_image(self):
         self.assertAlmostEqual(throughput_overhead_pct(1000.0, 800.0), 25.0)
         self.assertAlmostEqual(throughput_overhead_pct(1000.0, 1250.0), -20.0)
@@ -91,6 +105,11 @@ class TestTrainingMetrics(unittest.TestCase):
         self.assertIn("top1_accuracy_pct", training)
         self.assertIn("data_loader_images_per_sec", training)
         self.assertIn("codecarbon_tracking_active", training)
+
+    def test_synthetic_smoke_requires_no_evaluation(self):
+        required = required_metrics_for_run("smoke", "synthetic")
+        self.assertNotIn("eval_completed", required)
+        self.assertNotIn("top1_accuracy_pct", required)
 
     def test_required_metrics_follow_the_task(self):
         detection = required_metrics_for_run("finetune", "dataset", task="detection")

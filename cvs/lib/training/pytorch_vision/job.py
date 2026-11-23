@@ -86,6 +86,7 @@ class PyTorchVisionJob:
         self.output_dir = f"{variant.paths.log_dir}/pytorch_vision/{self.sweep.label}/{run_id}"
         self.result_path = f"{self.output_dir}/results.json"
         self.loss_series = []
+        self.grad_norm_series = []
         # Workload-scoped so two workloads staging onto the same host cannot
         # overwrite each other's script or kill each other's ranks.
         if getattr(variant.training, "trainer", "staged") == "image":
@@ -737,6 +738,11 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
                 (int(p["step"]), float(p["loss"]))
                 for p in (raw.get("loss_time_series") or [])
                 if p.get("step") is not None and p.get("loss") is not None
+            ]
+            self.grad_norm_series = [
+                (int(p["step"]), float(p["grad_norm"]))
+                for p in (raw.get("loss_time_series") or [])
+                if p.get("step") is not None and p.get("grad_norm") is not None
             ]
         return parsed
 

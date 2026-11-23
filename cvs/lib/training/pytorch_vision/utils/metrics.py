@@ -63,6 +63,8 @@ DERIVED_METRICS: Tuple[Tuple[str, str], ...] = (
     ("augmentation_overhead_pct", "%"),
     ("rocal_cpu_overhead_pct", "%"),
     ("scale_parity_accuracy_delta", "pts"),
+    ("precision_parity_loss_delta_pct", "%"),
+    ("precision_parity_grad_norm_delta_pct", "%"),
 )
 # The headline quality metric of each task; scale parity compares one of these.
 QUALITY_METRICS = {
@@ -206,6 +208,8 @@ RESULTS_COLUMNS = (
     ("Multimodal samples/s", "training.multimodal_samples_per_sec"),
     ("Tokens/s", "training.tokens_per_sec"),
     ("Scale parity delta (pts)", "training.scale_parity_accuracy_delta"),
+    ("Precision parity loss delta (%)", "training.precision_parity_loss_delta_pct"),
+    ("Precision parity grad-norm delta (%)", "training.precision_parity_grad_norm_delta_pct"),
 )
 
 
@@ -218,6 +222,26 @@ def gradient_accumulation_overhead_pct(baseline_step_ms: float, accumulated_step
     if not math.isfinite(accumulated) or accumulated <= 0:
         raise ValueError(f"accumulated step time must be finite and positive, got {accumulated_step_ms!r}")
     return (accumulated / baseline - 1.0) * 100.0
+
+
+def series_relative_delta_pct(reference, candidate):
+    """Mean of |candidate - reference| / |reference| over the steps both series logged, in percent.
+
+    Both arguments are ordered ``(step, value)`` pairs. Steps present in only
+    one series are ignored, so a sampled curve compares against a dense one.
+    """
+    reference_by_step = dict(reference)
+    deltas = []
+    for step, value in candidate:
+        base = reference_by_step.get(step)
+        if base is None:
+            continue
+        if not math.isfinite(base) or not math.isfinite(value) or base == 0:
+            raise ValueError(f"step {step}: cannot compare {value!r} against reference {base!r}")
+        deltas.append(abs(value - base) / abs(base))
+    if not deltas:
+        raise ValueError("the two series share no logged steps")
+    return sum(deltas) / len(deltas) * 100.0
 
 
 def compute_scaling_efficiency(
@@ -388,7 +412,7 @@ def required_metrics_for_run(
         required.add("data_loader_images_per_sec")
     if task == "vlm_sft":
         required.update({"multimodal_samples_per_sec", "tokens_per_sec"})
-    if run_mode != "perf":
+    if run_mode != "perf" and data_mode != "synthetic":
         required.update({"eval_loss", "eval_sample_count", "eval_completed", *_TASK_QUALITY[task]})
     if run_mode not in {"smoke", "perf"}:
         required.update(

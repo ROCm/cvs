@@ -28,6 +28,7 @@ from cvs.lib.training.pytorch_vision.utils.metrics import (
     METRIC_UNITS,
     gradient_accumulation_overhead_pct,
     required_metrics_for_run,
+    series_relative_delta_pct,
     throughput_overhead_pct,
 )
 from cvs.lib.training.pytorch_vision.utils.rundeck_adapter import flat_train_res_from_vision
@@ -77,6 +78,44 @@ def _refresh_ga_overhead(variant_config, training_results):
                 baseline_actuals["training.step_time_ms_mean"],
                 actuals["training.step_time_ms_mean"],
             )
+
+
+def _precision_group(sweep):
+    return (
+        sweep.model,
+        sweep.backend,
+        sweep.image_size,
+        sweep.batch_size,
+        sweep.gradient_accumulation_steps,
+        sweep.data_mode,
+        sweep.rocal_device,
+        sweep.augmentation,
+    )
+
+
+def _refresh_precision_parity(variant_config, training_results, loss_series, grad_norm_series):
+    """Compare each reduced-precision sweep's per-step loss and gradient norm
+    against the FP32 sweep that saw the same data from the same weights."""
+    sweeps = variant_config.training.enabled_sweeps()
+    references = {
+        _precision_group(sweep): sweep
+        for sweep in sweeps
+        if sweep.precision == "FP32" and sweep.name in training_results
+    }
+    for sweep in sweeps:
+        if sweep.precision == "FP32" or sweep.name not in training_results:
+            continue
+        reference = references.get(_precision_group(sweep))
+        if reference is None:
+            continue
+        pairs = (
+            ("training.precision_parity_loss_delta_pct", loss_series),
+            ("training.precision_parity_grad_norm_delta_pct", grad_norm_series),
+        )
+        for actuals in training_results[sweep.name].values():
+            for name, series in pairs:
+                if series.get(sweep.name) and series.get(reference.name):
+                    actuals[name] = series_relative_delta_pct(series[reference.name], series[sweep.name])
 
 
 def _pipeline_group(sweep):
@@ -236,7 +275,7 @@ def _aggregate_repeats(repeats):
     return merged
 
 
-def _execute_sweeps_with_repeats(orch, variant_config, training_results, loss_series, failures):
+def _execute_sweeps_with_repeats(orch, variant_config, training_results, loss_series, lifecycle):
     """Run every enabled sweep ``sweep_repeats`` times, reshuffling each round.
 
     A sweep whose run raises is recorded in ``failures`` and dropped from later
@@ -244,10 +283,12 @@ def _execute_sweeps_with_repeats(orch, variant_config, training_results, loss_se
     the schedule nor gets blamed on another sweep's row.
     """
     training = variant_config.training
+    failures = lifecycle.sweep_failures
     names = [sweep.name for sweep in training.enabled_sweeps()]
     rng = random.Random(training.sweep_order_seed)
     collected = {name: [] for name in names}
     last_loss = {}
+    last_grad_norm = {}
     stopped = set()
     startup_retries = 0
     for round_index in range(training.sweep_repeats):
@@ -265,6 +306,7 @@ def _execute_sweeps_with_repeats(orch, variant_config, training_results, loss_se
                 continue
             collected[name].append(host_results)
             last_loss[name] = job.loss_series
+            last_grad_norm[name] = job.grad_norm_series
             startup_retries += job.startup_retries_used
             if errors:
                 failures.setdefault(
@@ -275,17 +317,21 @@ def _execute_sweeps_with_repeats(orch, variant_config, training_results, loss_se
             continue
         training_results[name] = _aggregate_repeats(collected[name])
         loss_series[name] = last_loss[name]
+        lifecycle.grad_norm_series[name] = last_grad_norm[name]
     _refresh_ga_overhead(variant_config, training_results)
     _refresh_pipeline_overheads(variant_config, training_results)
+    _refresh_precision_parity(variant_config, training_results, loss_series, lifecycle.grad_norm_series)
     return startup_retries
 
 
-def _execute_sweep(orch, variant_config, sweep_name, training_results, loss_series):
+def _execute_sweep(orch, variant_config, sweep_name, training_results, loss_series, lifecycle):
     job, host_results, errors = _run_sweep_once(orch, variant_config, sweep_name)
     training_results[sweep_name] = host_results
     loss_series[sweep_name] = job.loss_series
+    lifecycle.grad_norm_series[sweep_name] = job.grad_norm_series
     _refresh_ga_overhead(variant_config, training_results)
     _refresh_pipeline_overheads(variant_config, training_results)
+    _refresh_precision_parity(variant_config, training_results, loss_series, lifecycle.grad_norm_series)
     if errors:
         pytest.fail("dmesg verification found errors: " + "; ".join(errors))
     return job
@@ -306,7 +352,7 @@ def real_data_smoke(
     if variant_config.training.run_mode != "smoke" or sweep.data_mode != "rocal":
         pytest.skip("real-data smoke stage applies to rocAL smoke profiles")
     start = time.monotonic()
-    job = _execute_sweep(orch, variant_config, sweep_name, training_results, loss_series)
+    job = _execute_sweep(orch, variant_config, sweep_name, training_results, loss_series, lifecycle)
     lifecycle.record(request.node.nodeid, "real_data_smoke", time.monotonic() - start)
     _record_startup_retries(lifecycle, request, job.startup_retries_used)
 
@@ -331,10 +377,10 @@ def training(  # noqa: PLR0913
         if not lifecycle.repeat_schedule_done:
             lifecycle.repeat_schedule_done = True
             startup_retries = _execute_sweeps_with_repeats(
-                orch, variant_config, training_results, loss_series, lifecycle.sweep_failures
+                orch, variant_config, training_results, loss_series, lifecycle
             )
     elif sweep_name not in training_results:
-        job = _execute_sweep(orch, variant_config, sweep_name, training_results, loss_series)
+        job = _execute_sweep(orch, variant_config, sweep_name, training_results, loss_series, lifecycle)
         startup_retries = job.startup_retries_used
     lifecycle.record(request.node.nodeid, "training", time.monotonic() - start)
     _record_startup_retries(lifecycle, request, startup_retries)

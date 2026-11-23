@@ -118,7 +118,7 @@ def _percentile(values, percentile):
     return values[max(index, 0)]
 
 
-def _train_step(model, optimizer, loss_fn, image_batches, label_batches, precision):
+def _train_step(model, optimizer, loss_fn, image_batches, label_batches, precision, grad_norms=None):
     optimizer.zero_grad(set_to_none=True)
     losses = []
     accumulation_steps = len(image_batches)
@@ -134,6 +134,10 @@ def _train_step(model, optimizer, loss_fn, image_batches, label_batches, precisi
                 loss = loss_fn(output, labels)
             (loss / accumulation_steps).backward()
         losses.append(loss.detach())
+    if grad_norms is not None:
+        # DDP has already all-reduced the gradients, so every rank sees the
+        # same norm. An infinite limit measures without clipping.
+        grad_norms.append(float(torch.nn.utils.clip_grad_norm_(model.parameters(), float("inf"))))
     optimizer.step()
     return torch.stack(losses).mean()
 
@@ -1578,6 +1582,8 @@ def main():
                 raise RuntimeError(f"rocAL epoch ended before expected optimizer step {step + 1}/{target_steps}")
             image_batches, label_batches = batches
         local_images_processed += sum(labels.numel() for labels in label_batches)
+        # Perf steps skip the extra norm reduction so throughput is unchanged.
+        grad_norms = [] if args.run_mode != "perf" else None
         start = torch.cuda.Event(enable_timing=True)
         stop = torch.cuda.Event(enable_timing=True)
         start.record()
@@ -1588,6 +1594,7 @@ def main():
             image_batches,
             label_batches,
             args.precision,
+            grad_norms,
         )
         scheduler.step()
         stop.record()
@@ -1602,7 +1609,10 @@ def main():
         step += 1
         elapsed = time.perf_counter() - window_start
         if step % args.loss_curve_sample_every == 0:
-            loss_time_series.append({"step": step, "loss": loss_value, "time_seconds": elapsed})
+            point = {"step": step, "loss": loss_value, "time_seconds": elapsed}
+            if grad_norms:
+                point["grad_norm"] = grad_norms[0]
+            loss_time_series.append(point)
         if step in milestones:
             milestone_losses[str(step)] = loss_value
         all_finite = all_finite and math.isfinite(loss_value)

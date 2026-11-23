@@ -1,0 +1,105 @@
+{
+  "_comment": "Parity deltas are recorded; checkpoint gates match the smoke profile.",
+  "W1-PARITY-FP32": {
+    "training.images_per_sec": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.step_time_ms_p95": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "max",
+      "value": 0.01
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.codecarbon_tracking_active": {
+      "kind": "min",
+      "value": 1
+    }
+  },
+  "W1-PARITY-BF16": {
+    "training.images_per_sec": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.step_time_ms_p95": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "max",
+      "value": 0.01
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.codecarbon_tracking_active": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.precision_parity_loss_delta_pct": {
+      "kind": "info"
+    },
+    "training.precision_parity_grad_norm_delta_pct": {
+      "kind": "info"
+    }
+  }
+}

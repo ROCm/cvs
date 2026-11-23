@@ -346,6 +346,16 @@ class TestVisionConfigLoader(unittest.TestCase):
         config["training"]["sweeps"][0]["backend"] = "mamba"
         self.assertEqual(self._load(config=config).training.enabled_sweeps()[0].backend, "mamba")
 
+    def test_only_real_data_smoke_requires_evaluation(self):
+        config = _config()
+        config["training"].update({"run_mode": "smoke", "phase": "smoke", "eval_enabled": False})
+        self.assertFalse(self._load(config=config).training.eval_enabled)
+        config["training"]["sweeps"][0].update(
+            {"data_mode": "rocal", "dataset_path": "/datasets/imagenet-1k", "rocal_device": "gpu"}
+        )
+        with self.assertRaisesRegex(ValueError, "smoke requires training.eval_enabled=true"):
+            self._load(config=config)
+
     def test_finetune_runs_in_accuracy_phase(self):
         config = _config()
         config["training"].update({"run_mode": "finetune", "eval_enabled": True, "warmup_steps": 0})

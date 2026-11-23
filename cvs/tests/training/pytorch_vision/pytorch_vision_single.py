@@ -22,7 +22,8 @@ images_per_sec_per_gpu, tflops_per_sec_per_gpu, mfu_pct,
 step_time_ms_{mean,p50,p95}, peak_memory_{allocated,reserved,used}_mb,
 data_loader_images_per_sec, checkpoint_{save,load}_seconds,
 checkpoint_state_match, gradient_accumulation_overhead_pct,
-augmentation_overhead_pct, rocal_cpu_overhead_pct, top1_accuracy_pct,
+augmentation_overhead_pct, rocal_cpu_overhead_pct,
+precision_parity_{loss,grad_norm}_delta_pct, top1_accuracy_pct,
 top5_accuracy_pct, eval_loss, loss_step_{100,500,1000,5000}, energy_kwh,
 images_per_kwh.
 

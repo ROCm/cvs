@@ -95,6 +95,7 @@ class Lifecycle:
         self.torn_down = False
         self.repeat_schedule_done = False
         self.sweep_failures = {}
+        self.grad_norm_series = {}
         self.report = {}
         self.artifacts = {}
 

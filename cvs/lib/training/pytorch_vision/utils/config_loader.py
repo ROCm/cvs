@@ -434,7 +434,9 @@ class VisionTrainingConfig(_Forbid):
                 f"{self.run_mode} is a protected long run; set training.enabled=true and "
                 "training.allow_long_run=true explicitly"
             )
-        if self.run_mode != "perf" and not self.eval_enabled:
+        # Synthetic batches have no validation split to evaluate against.
+        real_data = any(sweep.data_mode != "synthetic" for sweep in self.enabled_sweeps())
+        if self.run_mode != "perf" and real_data and not self.eval_enabled:
             raise ValueError(f"{self.run_mode} requires training.eval_enabled=true")
         return self
 

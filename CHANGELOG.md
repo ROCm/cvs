@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Platform host config `fw_dict` includes `PLDM_BUNDLE`. Set it to the version reported by `amd-smi firmware` before the GPU firmware check; the check looks up every firmware ID `amd-smi` reports.
 - Platform `test_check_ifoe_sw_details` reports the host IFoE/AFM device firmware (`afmctl show device`) and `ifoe` kernel module (`modinfo ifoe`) versions per node. Set the optional `ifoe_fw_version` / `ifoe_kmod_version` to require an exact match; leave them blank to record the detected version. Nodes without IFoE report NA.
 - PyTorch Vision training suites `pytorch_vision_single` and `pytorch_vision_distributed`, with configs under `cvs/input/config_file/training/pytorch_vision/`. Threshold specs can set a bound per node count with `by_nodes`.
+- PyTorch Vision `mi325x_pytorch_vision_resnet50_single_precision-parity` profile runs ResNet-50 in FP32 and BF16 from the same seed on the same synthetic batch, and records `precision_parity_loss_delta_pct` and `precision_parity_grad_norm_delta_pct` on the BF16 sweep. Non-perf runs log the gradient norm with each loss sample. Non-perf profiles whose sweeps are all synthetic no longer require evaluation.
 - Primus Megatron configs accept `train_params.primus_cli_overrides` as either a raw CLI string or a JSON object rendered as `--key value` pairs. Primus 405B auto-splits decoder first/last pipeline layers from `train_params.pipeline_parallelism` when needed.
 
 ### Changed
