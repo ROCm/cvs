@@ -216,9 +216,11 @@ footer.page-foot { text-align: center; margin-top: 2rem; }
   .chart-grid { grid-template-columns: 1fr; }
 }
 </style>
+__THEME_HEAD__
 </head>
 <body>
 <div class="wrap" id="top">
+__THEME_HEADER__
 <header class="hero">
   <div>
     <h1>__TITLE__</h1>
@@ -2042,6 +2044,19 @@ function buildComparisonCharts(rows) {
 function buildCharts(rows) {
   destroyCharts();
   const chartsPanel = $('charts');
+  if (typeof Chart === 'undefined') {
+    $('comparison-block').style.display = 'none';
+    $('margin-block').style.display = 'none';
+    if (!$('charts-unavailable')) {
+      const note = document.createElement('p');
+      note.id = 'charts-unavailable';
+      note.className = 'subsection-hint';
+      note.textContent = 'Chart.js could not be loaded; the tables below have the same data.';
+      chartsPanel.appendChild(note);
+    }
+    chartsPanel.style.display = 'block';
+    return;
+  }
 
   buildInteractivityChart(rows);
   buildStepCharts(rows);
