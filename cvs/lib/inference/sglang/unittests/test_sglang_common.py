@@ -472,9 +472,7 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertEqual(obj.proxy_node, ['n0'])
         self.assertEqual(obj.benchmark_serv_node, ['n0'])
 
-    def test_proxy_router_launches_sgl_router_with_prefill_and_decode_workers(self):
-        from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
-
+    def _proxy_router_launch(self, cli):
         obj = SglangDisaggPD.__new__(SglangDisaggPD)
         obj.inf_dict = {
             'prefill_coordinator_addr': '10.0.0.1',
@@ -482,10 +480,12 @@ class TestSglangCommonHelpers(unittest.TestCase):
             'decode_coordinator_addr': '10.0.0.2',
             'decode_serv_port': '30002',
             'proxy_router_serv_port': '8000',
+            'log_dir': '/logs/sglang',
         }
         obj.bp_dict = {'model': '/root/models/DeepSeek-R1-0528'}
         obj.log_dir = '/logs/sglang'
         obj.proxy_node = ['proxy0']
+        obj._sglang_cli = cli
 
         with (
             mock.patch('cvs.lib.inference.sglang.sglang_disagg_lib.stage_and_start_launch_script') as stage,
@@ -496,8 +496,12 @@ class TestSglangCommonHelpers(unittest.TestCase):
         stage.assert_called_once()
         self.assertEqual(stage.call_args.args[1], ['proxy0'])
         self.assertEqual(stage.call_args.args[2], '/tmp/proxy_router_launch_script.sh')
+        self.assertEqual(stage.call_args.args[5], '/logs/sglang/proxy_router_node/proxy_router.log')
+        return stage.call_args.args[3]
+
+    def test_proxy_router_launches_sgl_router_on_newer_images(self):
         self.assertEqual(
-            stage.call_args.args[3],
+            self._proxy_router_launch(dict(sglang_common.SGLANG_CLI_LATEST)),
             "sgl-router \\\n"
             "    --model-id /root/models/DeepSeek-R1-0528 \\\n"
             "    --no-tokenizer \\\n"
@@ -505,7 +509,115 @@ class TestSglangCommonHelpers(unittest.TestCase):
             "    --host 0.0.0.0 \\\n"
             "    --port 8000\n",
         )
-        self.assertEqual(stage.call_args.args[5], '/logs/sglang/proxy_router_node/proxy_router.log')
+
+    def test_proxy_router_launches_sglang_router_module_on_older_images(self):
+        self.assertEqual(
+            self._proxy_router_launch({**sglang_common.SGLANG_CLI_LATEST, 'sgl_router': False}),
+            "python3 -m sglang_router.launch_router \\\n"
+            "    --pd-disaggregation \\\n"
+            "    --prefill http://10.0.0.1:30001 \\\n"
+            "    --decode http://10.0.0.2:30002 \\\n"
+            "    --host 0.0.0.0 \\\n"
+            "    --port 8000 \\\n"
+            "    --log-dir /logs/sglang\n",
+        )
+
+    def test_parse_sglang_cli_probe_reads_first_host_with_marker(self):
+        out = {
+            'n0': 'no marker here',
+            'n1': 'noise\nCVS_SGLANG_CLI {"split_cuda_graph_flags": false, "sgl_router": false, '
+            '"benchmark_serving_module": false}\n',
+        }
+        self.assertEqual(
+            sglang_common.parse_sglang_cli_probe(out),
+            {'split_cuda_graph_flags': False, 'sgl_router': False, 'benchmark_serving_module': False},
+        )
+
+    def test_parse_sglang_cli_probe_returns_none_without_usable_output(self):
+        self.assertIsNone(sglang_common.parse_sglang_cli_probe({}))
+        self.assertIsNone(sglang_common.parse_sglang_cli_probe({'n0': 'CVS_SGLANG_CLI {not json}'}))
+
+    def test_probe_sglang_cli_falls_back_to_newest_layout_when_unreadable(self):
+        exec_in_container = mock.Mock(return_value={'n0': 'Traceback'})
+        cli = sglang_common.probe_sglang_cli(exec_in_container, ['n0'])
+        self.assertEqual(cli, sglang_common.SGLANG_CLI_LATEST)
+        self.assertIsNot(cli, sglang_common.SGLANG_CLI_LATEST)
+        self.assertEqual(exec_in_container.call_args.kwargs['hosts'], ['n0'])
+
+    def test_resolve_sglang_cli_probes_once_per_owner(self):
+        owner = mock.Mock(spec=['_container_exec'])
+        owner._container_exec.return_value = {
+            'n0': 'CVS_SGLANG_CLI {"split_cuda_graph_flags": false, "sgl_router": true, '
+            '"benchmark_serving_module": false}'
+        }
+        first = sglang_common.resolve_sglang_cli(owner, ['n0'])
+        second = sglang_common.resolve_sglang_cli(owner, ['n0'])
+        self.assertIs(first, second)
+        owner._container_exec.assert_called_once()
+
+    def test_cli_helpers_select_flags_for_each_image_generation(self):
+        latest = dict(sglang_common.SGLANG_CLI_LATEST)
+        older = {'split_cuda_graph_flags': False, 'sgl_router': False, 'benchmark_serving_module': False}
+        self.assertEqual(
+            sglang_common.cuda_graph_flags(latest), '--disable-decode-cuda-graph --disable-prefill-cuda-graph'
+        )
+        self.assertEqual(sglang_common.cuda_graph_flags(older), '--disable-cuda-graph')
+        self.assertEqual(sglang_common.benchmark_serving_module(latest), 'sglang.benchmark.serving')
+        self.assertEqual(sglang_common.benchmark_serving_module(older), 'sglang.bench_serving')
+        self.assertEqual(sglang_common.random_length_flags(latest), ('--random-input-len', '--random-output-len'))
+        self.assertEqual(sglang_common.random_length_flags(older), ('--random-input', '--random-output'))
+
+    def _single_commands(self, cli):
+        obj = SglangSingle.__new__(SglangSingle)
+        obj.execution_hosts = ['n0']
+        obj.log_dir = '/logs'
+        obj.inf_dict = {'proxy_router_serv_port': '8000', 'log_level': 'info'}
+        obj.bp_dict = {
+            'model': 'm',
+            'tensor_parallelism': '8',
+            'memory_fraction': '0.85',
+            'max_concurrency': '64',
+            'inference_tests': {
+                'bench_serv_random': {
+                    'backend': 'sglang',
+                    'num_prompts': '10',
+                    'input_length': '1024',
+                    'output_length': '256',
+                    'random_range_ratio': '1.0',
+                }
+            },
+        }
+        obj._sglang_cli = cli
+        obj.inference_results_dict = {}
+        obj._container_exec_per_host = mock.Mock()
+        obj.poll_for_inference_completion = mock.Mock()
+        obj.verify_inference_results = mock.Mock()
+
+        with (
+            mock.patch('cvs.lib.inference.sglang.sglang_single_lib.stage_and_start_launch_script') as stage,
+            mock.patch('cvs.lib.inference.sglang.sglang_single_lib.time.sleep'),
+        ):
+            obj.launch_server()
+            obj.benchserv_test_random(verify=False)
+
+        bench_cmd = obj._container_exec_per_host.call_args.args[0]('n0')
+        return stage.call_args.args[3], bench_cmd
+
+    def test_single_uses_newer_image_commands(self):
+        launch, bench = self._single_commands(dict(sglang_common.SGLANG_CLI_LATEST))
+        self.assertIn('--disable-decode-cuda-graph --disable-prefill-cuda-graph', launch)
+        self.assertNotIn('--disable-cuda-graph', launch)
+        self.assertIn('python3 -m sglang.benchmark.serving', bench)
+        self.assertIn('--random-input-len 1024', bench)
+        self.assertIn('--random-output-len 256', bench)
+
+    def test_single_uses_older_image_commands(self):
+        older = {'split_cuda_graph_flags': False, 'sgl_router': False, 'benchmark_serving_module': False}
+        launch, bench = self._single_commands(older)
+        self.assertIn('--disable-radix-cache --disable-cuda-graph', launch)
+        self.assertIn('python3 -m sglang.bench_serving', bench)
+        self.assertIn('--random-input 1024', bench)
+        self.assertIn('--random-output 256', bench)
 
     def test_single_host_exec_uses_exec_on_host_first_node_only(self):
         from cvs.lib.inference.sglang.sglang_single_lib import SglangSingle

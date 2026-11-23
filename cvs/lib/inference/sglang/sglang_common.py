@@ -212,6 +212,104 @@ def stage_and_start_launch_script(exec_in_container, hosts, script_path, script_
     )
 
 
+_SGLANG_CLI_PROBE_MARKER = "CVS_SGLANG_CLI"
+
+# Reads the image itself rather than running ``--help`` so the probe does not
+# initialise torch or a GPU.
+_SGLANG_CLI_PROBE_SCRIPT = f'''export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}}
+python3 - <<'PY'
+import importlib.util
+import json
+import shutil
+
+
+def find(name):
+    try:
+        return importlib.util.find_spec(name)
+    except ImportError:
+        return None
+
+
+server_args = find("sglang.srt.server_args")
+split_cuda_graph = False
+if server_args is not None and server_args.origin:
+    with open(server_args.origin, encoding="utf-8") as handle:
+        split_cuda_graph = "--disable-decode-cuda-graph" in handle.read()
+print("{_SGLANG_CLI_PROBE_MARKER} " + json.dumps({{
+    "split_cuda_graph_flags": split_cuda_graph,
+    "sgl_router": shutil.which("sgl-router") is not None,
+    "benchmark_serving_module": find("sglang.benchmark.serving") is not None,
+}}))
+PY
+'''
+
+# Used when the probe cannot read the image: the newest image generation, which
+# is the one the shipped sample configs name.
+SGLANG_CLI_LATEST = {
+    "split_cuda_graph_flags": True,
+    "sgl_router": True,
+    "benchmark_serving_module": True,
+}
+
+_SGLANG_CLI_PROBE_RE = re.compile(rf"{_SGLANG_CLI_PROBE_MARKER} (\{{.*?\}})")
+
+
+def parse_sglang_cli_probe(out_dict):
+    """Return the CLI feature dict from the first host whose probe output parses, else ``None``."""
+    for text in (out_dict or {}).values():
+        match = _SGLANG_CLI_PROBE_RE.search(str(text or ''))
+        if not match:
+            continue
+        try:
+            reported = json.loads(match.group(1))
+        except ValueError:
+            continue
+        return {key: bool(reported.get(key, default)) for key, default in SGLANG_CLI_LATEST.items()}
+    return None
+
+
+def probe_sglang_cli(exec_in_container, hosts):
+    """Detect which command-line generation the SGLang image in the container supports.
+
+    Older images use ``--disable-cuda-graph``, ``sglang_router.launch_router`` and
+    ``sglang.bench_serving``; newer ones split the cuda-graph flag, ship ``sgl-router``
+    and move the benchmark to ``sglang.benchmark.serving``.
+    """
+    cmd = "bash -c " + shlex.quote(_SGLANG_CLI_PROBE_SCRIPT)
+    cli = parse_sglang_cli_probe(exec_in_container(cmd, hosts=as_node_list(hosts), timeout=120))
+    if cli is None:
+        log.warning('Could not detect the SGLang CLI in the container; assuming the newest image layout')
+        return dict(SGLANG_CLI_LATEST)
+    log.info('Detected SGLang CLI features: %s', cli)
+    return cli
+
+
+def resolve_sglang_cli(owner, hosts):
+    """Probe the container once per ``owner`` and reuse the result."""
+    cli = getattr(owner, '_sglang_cli', None)
+    if cli is None:
+        cli = probe_sglang_cli(owner._container_exec, hosts)
+        owner._sglang_cli = cli
+    return cli
+
+
+def cuda_graph_flags(cli):
+    if cli["split_cuda_graph_flags"]:
+        return "--disable-decode-cuda-graph --disable-prefill-cuda-graph"
+    return "--disable-cuda-graph"
+
+
+def benchmark_serving_module(cli):
+    return "sglang.benchmark.serving" if cli["benchmark_serving_module"] else "sglang.bench_serving"
+
+
+def random_length_flags(cli):
+    """Return the ``(input, output)`` length flags for the benchmark module in use."""
+    if cli["benchmark_serving_module"]:
+        return "--random-input-len", "--random-output-len"
+    return "--random-input", "--random-output"
+
+
 def textwrap_for_yml(msg_string: str) -> str:
     return '\n'.join([m.lstrip() for m in msg_string.split('\n')])
 
