@@ -344,6 +344,8 @@ sortable tables.
 Overall Status: PASS - Cluster ready for performance testing (connectivity not tested)
 ```
 
+A check skipped by configuration does not change Overall Status. A check that stops with an error before it finishes is listed as `ERROR`, Overall Status is `FAIL`, and the preflight report row fails.
+
 ### HTML Report
 Comprehensive HTML report includes:
 - Executive summary with pass/fail status
