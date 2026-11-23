@@ -70,7 +70,9 @@ Training block
   measured reference run, plus an optional ``eval_loss`` for scale parity.
   A sweep's own ``scaling_baseline`` overrides this one.
 - ``codecarbon``: energy tracking through amd-smi; ``required`` fails the run
-  when no energy is reported.
+  when no energy is reported. The tracker runs in a separate process started
+  by rank 0, because its amd-smi polling thread crashed rank 0 when it ran
+  inside the trainer.
 - ``benchmarks``: lm-evaluation-harness tasks scored on the trained
   checkpoint (``mmlu_pro_pct``, ``bbh_pct``, ``math_lvl5_pct``, ``gpqa_pct``,
   ``musr_pct``, ``gsm8k_pct``, ``hellaswag_pct``), with ``limit``,
