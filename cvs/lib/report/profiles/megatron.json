@@ -2,6 +2,7 @@
   "schema_version": 1,
   "profile_id": "megatron_rundeck",
   "suite_id": "megatron",
+  "area": "Training",
   "report_basename": "megatron_run_deck",
   "title": "Megatron Run Deck",
   "subtitle": "Megatron · single-node & distributed training summary",

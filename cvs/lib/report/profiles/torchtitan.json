@@ -2,6 +2,7 @@
   "schema_version": 1,
   "profile_id": "torchtitan_rundeck",
   "suite_id": "torchtitan",
+  "area": "Training",
   "report_basename": "torchtitan_run_deck",
   "title": "TorchTitan Run Deck",
   "subtitle": "TorchTitan · single-node & distributed training summary",

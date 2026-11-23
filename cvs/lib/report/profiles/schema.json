@@ -8,6 +8,10 @@
     "schema_version": { "type": "integer", "const": 1 },
     "profile_id": { "type": "string" },
     "suite_id": { "type": "string" },
+    "area": {
+      "enum": ["Inference", "Training", "Communication", "Health", "AMD Node Check"],
+      "description": "Area that groups this suite in the consolidated report. Child profiles inherit it through extends."
+    },
     "metric_contract": {
       "type": "object",
       "required": ["id", "version"],

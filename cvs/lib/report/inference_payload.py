@@ -188,6 +188,7 @@ class InferencePayloadBuilder:
         self,
         variant_config,
         prov: dict[str, str],
+        generated=None,
     ) -> tuple[list[tuple[str, str, bool]], str, str]:
         raw_run_card = self.config.run_card_display_builder(variant_config, prov)
         run_card_notes = ""
@@ -205,7 +206,7 @@ class InferencePayloadBuilder:
         display_labels = {label for label, _value, _link in run_card_display}
         if prov.get("cvs_version") and "CVS" not in display_labels:
             run_card_display.append(("CVS", str(prov["cvs_version"]), False))
-        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        generated_at = (generated or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M UTC")
         if "Generated" not in display_labels:
             run_card_display.append(("Generated", generated_at, False))
         return run_card_display, run_card_notes, generated_at
@@ -342,7 +343,9 @@ def build_run_card_display(
     config: InferenceReportConfig,
     variant_config,
     prov: dict[str, str],
+    generated=None,
 ) -> tuple[list[tuple[str, str, bool]], str, str]:
+    """Return run card rows, notes, and ``generated_at``, formatted from ``generated`` (UTC; default now)."""
     return InferencePayloadBuilder(
         InferencePayloadContext(
             config=config,
@@ -350,7 +353,7 @@ def build_run_card_display(
             inf_res_dict={},
             lifecycle_report={},
         )
-    )._build_run_card_display(variant_config, prov)
+    )._build_run_card_display(variant_config, prov, generated=generated)
 
 
 def build_inference_report_payload(
