@@ -28,11 +28,10 @@ from cvs.lib.utils.verdict import ThresholdViolation
 from cvs.parsers.schemas import InferenceVariantConfig
 
 
-def _variant_config(tasks=(), thresholds=None, enforce_thresholds=True):
-    accuracy = (thresholds or {}).get("accuracy", {})
+def _variant_config(tasks=(), task_thresholds=None, enforce_thresholds=True):
     return SimpleNamespace(
         lm_eval_tasks=lambda: list(tasks),
-        lm_eval_thresholds=lambda task_id: accuracy.get(task_id, {}),
+        lm_eval_thresholds=lambda task_id: (task_thresholds or {}).get(task_id, {}),
         params=SimpleNamespace(base_url="http://0.0.0.0", port_no="8000"),
         paths=SimpleNamespace(log_dir="/logs"),
         model=SimpleNamespace(id="meta-llama/Llama-3-8b"),
@@ -106,7 +105,7 @@ class TestAccuracyEvalRun(unittest.TestCase):
         self.assertEqual([t.id for t in kwargs["tasks"]], ["mmlu"])
 
     def test_record_only_when_no_threshold_entry(self):
-        vc = _variant_config(tasks=[_task("mmlu")], thresholds={})
+        vc = _variant_config(tasks=[_task("mmlu")], task_thresholds={})
         lc = _Lifecycle()
         with mock.patch.object(lifecycle_mod, "run_accuracy_tasks", return_value={"mmlu": {"mmlu.acc__none": 0.7}}):
             lifecycle_mod.test_accuracy_eval(
@@ -119,7 +118,7 @@ class TestAccuracyEvalRun(unittest.TestCase):
     def test_threshold_pass_does_not_raise(self):
         vc = _variant_config(
             tasks=[_task("mmlu")],
-            thresholds={"accuracy": {"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.5}}}},
+            task_thresholds={"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.5}}},
         )
         lc = _Lifecycle()
         with mock.patch.object(lifecycle_mod, "run_accuracy_tasks", return_value={"mmlu": {"mmlu.acc__none": 0.7}}):
@@ -131,7 +130,7 @@ class TestAccuracyEvalRun(unittest.TestCase):
     def test_threshold_miss_raises_threshold_violation(self):
         vc = _variant_config(
             tasks=[_task("mmlu")],
-            thresholds={"accuracy": {"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.9}}}},
+            task_thresholds={"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.9}}},
         )
         lc = _Lifecycle()
         with mock.patch.object(lifecycle_mod, "run_accuracy_tasks", return_value={"mmlu": {"mmlu.acc__none": 0.7}}):
@@ -148,11 +147,9 @@ class TestAccuracyEvalRun(unittest.TestCase):
         # "gsm8k" entry from a since-removed task -- must not be looked up.
         vc = _variant_config(
             tasks=[_task("mmlu")],
-            thresholds={
-                "accuracy": {
-                    "mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.5}},
-                    "gsm8k": {"exact_match__strict-match": {"kind": "min", "value": 0.99}},
-                }
+            task_thresholds={
+                "mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.5}},
+                "gsm8k": {"exact_match__strict-match": {"kind": "min", "value": 0.99}},
             },
         )
         lc = _Lifecycle()
@@ -178,7 +175,7 @@ class TestAccuracyEvalRun(unittest.TestCase):
     def test_threshold_miss_recorded_but_not_raised_when_enforce_thresholds_false(self):
         vc = _variant_config(
             tasks=[_task("mmlu")],
-            thresholds={"accuracy": {"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.9}}}},
+            task_thresholds={"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.9}}},
             enforce_thresholds=False,
         )
         lc = _Lifecycle()
@@ -197,11 +194,9 @@ class TestAccuracyEvalRun(unittest.TestCase):
         # must still run and pass on its own merits.
         vc = _variant_config(
             tasks=[_task("mmlu"), _task("gsm8k")],
-            thresholds={
-                "accuracy": {
-                    "mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.9}},
-                    "gsm8k": {"gsm8k.exact_match__strict-match": {"kind": "min", "value": 0.5}},
-                }
+            task_thresholds={
+                "mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.9}},
+                "gsm8k": {"gsm8k.exact_match__strict-match": {"kind": "min", "value": 0.5}},
             },
         )
         lc = _Lifecycle()
