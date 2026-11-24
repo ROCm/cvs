@@ -506,9 +506,7 @@ class TestSglangCommonHelpers(unittest.TestCase):
             "sgl-router \\\n"
             "    --model-id /root/models/DeepSeek-R1-0528 \\\n"
             "    --no-tokenizer \\\n"
-            "    --pd-disaggregation \\\n"
-            "    --prefill http://10.0.0.1:30001 \\\n"
-            "    --decode http://10.0.0.2:30002 \\\n"
+            "    --worker-urls http://10.0.0.1:30001 http://10.0.0.2:30002 \\\n"
             "    --host 0.0.0.0 \\\n"
             "    --port 8000\n",
         )

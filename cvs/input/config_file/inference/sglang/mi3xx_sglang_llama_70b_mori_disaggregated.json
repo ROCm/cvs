@@ -23,7 +23,7 @@
           "shm_size": "128G",
           "volumes": [
             "/home/{user-id}:/home/{user-id}",
-            "/mnt/dtni/models:/root/models",
+            "<changeme> /path/to/models:/root/models",
             "/dev/infiniband:/dev/infiniband",
             "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
             "/usr/lib/x86_64-linux-gnu/libibverbs.so.1:/usr/lib/x86_64-linux-gnu/libibverbs.so.1:ro",

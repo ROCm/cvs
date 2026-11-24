@@ -639,16 +639,13 @@ class SglangDisaggPD:
 
         cli = self._resolve_cli()
         if cli["sgl_router"]:
-            # ``--worker-urls`` is plain load balancing and does not say which URL
-            # is prefill, so PD routing is requested with the same explicit
-            # ``--prefill``/``--decode`` roles as the older launcher.
+            # This ``sgl-router`` rejects ``--pd-disaggregation``, so prefill and
+            # decode are passed as ``--worker-urls`` in that order.
             launch_body = (
                 "sgl-router \\\n"
                 f"    --model-id {self.bp_dict['model']} \\\n"
                 f"    --no-tokenizer \\\n"
-                f"    --pd-disaggregation \\\n"
-                f"    --prefill {prefill_url} \\\n"
-                f"    --decode {decode_url} \\\n"
+                f"    --worker-urls {prefill_url} {decode_url} \\\n"
                 f"    --host 0.0.0.0 \\\n"
                 f"    --port {self.router_serv_port}\n"
             )
