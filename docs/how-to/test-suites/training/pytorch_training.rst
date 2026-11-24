@@ -216,6 +216,12 @@ Scaling efficiency needs ``scaling_baseline.tokens_per_sec_total`` from a
 measured run of the same sweep on ``num_nodes`` nodes; left at 0 it is
 omitted.
 
+Scale parity subtracts ``scaling_baseline.eval_loss`` from the run's eval
+loss. The two runs evaluate the same held-out windows only when
+``eval_batches`` times the total GPU count is equal, so the four-node
+fine-tune profile sets ``eval_batches`` to 1 against the single-node
+fine-tune's 4. Set it to 2 on two nodes.
+
 Prerequisites
 =============
 
