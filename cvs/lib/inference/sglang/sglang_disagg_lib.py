@@ -257,6 +257,10 @@ class SglangDisaggPD:
         self.proxy_node = normalize_hosts(self.inf_dict['proxy_router_node'])
         self.benchmark_serv_node = normalize_hosts(self.inf_dict['benchmark_serv_node'])
 
+    def _resolve_cli(self):
+        """CLI features of the one image every role runs, probed once on the first prefill node."""
+        return resolve_sglang_cli(self, self.prefill_node_list[:1])
+
     def install_container_packages(
         self,
     ):
@@ -480,7 +484,7 @@ class SglangDisaggPD:
         log.info('%%%% self.prefill_nnodes {}'.format(self.prefill_nnodes))
         dist_init_addr = f"{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_coordinator_port']}"
         flags_block = add_cli_flags_block(self.bp_dict, indent='    ')
-        cli = resolve_sglang_cli(self, prefill_node_list[:1])
+        cli = self._resolve_cli()
 
         for i in range(0, int(self.prefill_nnodes)):
             node = prefill_node_list[i]
@@ -545,7 +549,7 @@ class SglangDisaggPD:
         log.info('%%%% self.decode_nnodes {}'.format(self.decode_nnodes))
         dist_init_addr = f"{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_coordinator_port']}"
         flags_block = add_cli_flags_block(self.bp_dict, indent='    ', include_chunked_prefill=False)
-        cli = resolve_sglang_cli(self, decode_node_list[:1])
+        cli = self._resolve_cli()
 
         for i in range(0, int(self.decode_nnodes)):
             node = decode_node_list[i]
@@ -633,13 +637,18 @@ class SglangDisaggPD:
         log.info('Create Proxy Router launch script on Proxy Router nodes')
         log.info('#================ * * * =========================#')
 
-        cli = resolve_sglang_cli(self, self.proxy_node[:1])
+        cli = self._resolve_cli()
         if cli["sgl_router"]:
+            # ``--worker-urls`` is plain load balancing and does not say which URL
+            # is prefill, so PD routing is requested with the same explicit
+            # ``--prefill``/``--decode`` roles as the older launcher.
             launch_body = (
                 "sgl-router \\\n"
                 f"    --model-id {self.bp_dict['model']} \\\n"
                 f"    --no-tokenizer \\\n"
-                f"    --worker-urls {prefill_url} {decode_url} \\\n"
+                f"    --pd-disaggregation \\\n"
+                f"    --prefill {prefill_url} \\\n"
+                f"    --decode {decode_url} \\\n"
                 f"    --host 0.0.0.0 \\\n"
                 f"    --port {self.router_serv_port}\n"
             )
@@ -689,7 +698,7 @@ class SglangDisaggPD:
         log.info('#================ * * * =========================#')
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
         self._bench_num_prompts = int(i_dict['num_prompts'])
-        cli = resolve_sglang_cli(self, self.benchmark_serv_node)
+        cli = self._resolve_cli()
         input_len_flag, output_len_flag = random_length_flags(cli)
         inner = (
             f"mkdir -p {self.log_dir}/benchmark_node\n"

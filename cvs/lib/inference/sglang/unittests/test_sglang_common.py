@@ -484,6 +484,7 @@ class TestSglangCommonHelpers(unittest.TestCase):
         }
         obj.bp_dict = {'model': '/root/models/DeepSeek-R1-0528'}
         obj.log_dir = '/logs/sglang'
+        obj.prefill_node_list = ['proxy0']
         obj.proxy_node = ['proxy0']
         obj._sglang_cli = cli
 
@@ -505,7 +506,9 @@ class TestSglangCommonHelpers(unittest.TestCase):
             "sgl-router \\\n"
             "    --model-id /root/models/DeepSeek-R1-0528 \\\n"
             "    --no-tokenizer \\\n"
-            "    --worker-urls http://10.0.0.1:30001 http://10.0.0.2:30002 \\\n"
+            "    --pd-disaggregation \\\n"
+            "    --prefill http://10.0.0.1:30001 \\\n"
+            "    --decode http://10.0.0.2:30002 \\\n"
             "    --host 0.0.0.0 \\\n"
             "    --port 8000\n",
         )
@@ -554,6 +557,25 @@ class TestSglangCommonHelpers(unittest.TestCase):
         second = sglang_common.resolve_sglang_cli(owner, ['n0'])
         self.assertIs(first, second)
         owner._container_exec.assert_called_once()
+
+    def test_disagg_probes_the_first_prefill_node_once_for_every_role(self):
+        obj = SglangDisaggPD.__new__(SglangDisaggPD)
+        obj.prefill_node_list = ['p0', 'p1']
+        obj.decode_node_list = ['d0']
+        obj.proxy_node = ['p0']
+        obj.benchmark_serv_node = ['p0']
+        obj.orch = mock.Mock()
+        obj.orch.exec.return_value = {
+            'p0': 'CVS_SGLANG_CLI {"split_cuda_graph_flags": false, "sgl_router": false, '
+            '"benchmark_serving_module": false}'
+        }
+
+        clis = [obj._resolve_cli() for _ in range(4)]
+
+        obj.orch.exec.assert_called_once()
+        self.assertEqual(obj.orch.exec.call_args.kwargs['hosts'], ['p0'])
+        self.assertTrue(all(cli is clis[0] for cli in clis))
+        self.assertFalse(clis[0]['sgl_router'])
 
     def test_cli_helpers_select_flags_for_each_image_generation(self):
         latest = dict(sglang_common.SGLANG_CLI_LATEST)
