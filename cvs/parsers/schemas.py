@@ -1975,7 +1975,7 @@ def not_implemented_names(config, fields=(), metrics=frozenset(), threshold_sect
     honor; each counts when set off its default. ``metrics`` are names the suite
     can't report: any threshold spec on one counts, ``info`` included.
     ``threshold_sections`` are accuracy threshold sections, such as
-    ``custom_eval``, that count when not empty. An unknown field name raises.
+    ``custom_eval``, that count when not empty. An unknown field or section name raises.
     """
     names = []
     for name in fields:
@@ -1993,11 +1993,11 @@ def not_implemented_names(config, fields=(), metrics=frozenset(), threshold_sect
         for metric in cell
         if metric in metrics
     )
-    names.extend(
-        f"thresholds accuracy.{section}"
-        for section in threshold_sections
-        if getattr(config.thresholds.accuracy, section)
-    )
+    for section in threshold_sections:
+        if section not in ThresholdAccuracy.model_fields:
+            raise ValueError(f"no accuracy threshold section {section}")
+        if getattr(config.thresholds.accuracy, section):
+            names.append(f"thresholds accuracy.{section}")
     return names
 
 

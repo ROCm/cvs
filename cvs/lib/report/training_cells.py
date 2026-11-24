@@ -7,7 +7,7 @@ Normalize Megatron ``train_res_dict`` into Run Deck cell records.
 
 from dataclasses import replace
 
-from cvs.lib.report.cell_build import CellRecordBuilder, metric_pass, bar_pct, gate_spec, margin_text
+from cvs.lib.report.cell_build import CellRecordBuilder, metric_pass, bar_pct, is_gated, margin_text
 from cvs.lib.training.megatron.utils.training_config_loader import (
     DEFAULT_SWEEP_NAME,
     parse_sweep_cell_key,
@@ -310,8 +310,8 @@ def build_training_cells(config, variant_config, train_res_dict, lifecycle_repor
                         if enforce and spec
                         else "record"
                     ),
-                    "bar_pct": (bar_pct(float(actual), spec) if gate_spec(spec) and actual is not None else None),
-                    "margin": margin_text(actual, spec) if gate_spec(spec) else None,
+                    "bar_pct": (bar_pct(float(actual), spec) if is_gated(spec) and actual is not None else None),
+                    "margin": margin_text(actual, spec) if is_gated(spec) else None,
                 }
             )
         tiers = {

@@ -526,6 +526,8 @@ class TestNotImplemented(unittest.TestCase):
         config = InferenceVariantConfig.model_validate(inference_config())
         with self.assertRaisesRegex(ValueError, "no not-implemented check for server_params.dpp"):
             not_implemented_names(config, fields=("server_params.dpp",))
+        with self.assertRaisesRegex(ValueError, "no accuracy threshold section niah"):
+            not_implemented_names(config, threshold_sections=("niah",))
 
 
 class TestContainerNetworkEnv(unittest.TestCase):

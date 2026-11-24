@@ -13,7 +13,7 @@ from cvs.lib.report.verdict import _check_one
 def metric_pass(metric: str, actual: Any, spec: Optional[dict], evaluator=None) -> str:
     if spec is None:
         return "na"
-    if spec.get("kind") == "info":
+    if not is_gated(spec):
         return "record"
     if evaluator is not None:
         status, _reason = evaluator(metric, actual, spec)
@@ -24,11 +24,9 @@ def metric_pass(metric: str, actual: Any, spec: Optional[dict], evaluator=None) 
     return "fail" if err else "pass"
 
 
-def gate_spec(spec: Optional[dict]) -> Optional[dict]:
-    """The spec to draw as a gate, or None for no spec and for ``info``, which records without gating."""
-    if spec is None or spec.get("kind") == "info":
-        return None
-    return spec
+def is_gated(spec):
+    """Whether a threshold spec gates its metric; ``info`` records it without gating."""
+    return isinstance(spec, dict) and spec.get("kind") != "info"
 
 
 def bar_pct(actual: float, spec: dict) -> float:
@@ -114,7 +112,7 @@ class CellRecordBuilder:
         specs = self.config.tier_metric_specs(thresholds_cell, tier)
         if not specs:
             return "na"
-        gated = {metric: spec for metric, spec in specs.items() if spec.get("kind") != "info"}
+        gated = {metric: spec for metric, spec in specs.items() if is_gated(spec)}
         if not gated:
             return "record"
         for metric, spec in gated.items():
@@ -227,7 +225,7 @@ class CellRecordBuilder:
                     ),
                     "bar_pct": (
                         bar_pct(float(actual), spec)
-                        if gate_spec(spec) is not None
+                        if is_gated(spec)
                         and actual is not None
                         and (
                             self.config.metric_verdict is None
@@ -235,7 +233,7 @@ class CellRecordBuilder:
                         )
                         else None
                     ),
-                    "margin": margin_text(actual, spec) if gate_spec(spec) else None,
+                    "margin": margin_text(actual, spec) if is_gated(spec) else None,
                 }
             )
 

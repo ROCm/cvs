@@ -361,7 +361,8 @@ def load_variant(
     cell gains an ``info`` spec for each gated metric it lacks, except the
     ``required`` and ``unreported`` ones. Then ``model`` validates it. A
     config that does not validate raises `ConfigError` naming each field,
-    never a value.
+    never a value; a threshold key starting with ``_`` that is not a comment,
+    and an old key with no new place, raise `ValueError` before that.
     """
     config_path = Path(config_path)
     raw = substitute_placeholders(config_path, cluster_dict, all_placeholders=True)

@@ -6,6 +6,7 @@ import html
 from dataclasses import dataclass
 from typing import Literal, Optional
 
+from cvs.lib.report.cell_build import is_gated
 from cvs.lib.report.formatting import fmt_num, pytest_row_link_html
 
 
@@ -203,7 +204,7 @@ class CellCardRenderer:
         )
 
     def _render_metric_target(self, metric: dict) -> str:
-        if metric["spec"] is None or metric["spec"].get("kind") == "info":
+        if not is_gated(metric["spec"]):
             return ""
         gate_label = "gate" if self.config.enforce else "floor"
         return f"<span class='target'>{gate_label} {fmt_num(metric['spec'].get('value'))}</span>"
