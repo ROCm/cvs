@@ -89,6 +89,7 @@ def inference_config(**overrides):
 
 
 SECRET = "sk-SECRET123"
+HF_TOKEN = "hf_AbCdEf123"
 CELL_KEY_FORM = "ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>"
 
 
@@ -311,7 +312,7 @@ class TestInferenceVariantConfigBlocks(unittest.TestCase):
 
     def test_unknown_key_printed_only_when_plain(self):
         raw = inference_config()
-        raw[SECRET] = 1
+        raw[HF_TOKEN] = 1
         raw["server_params"][SECRET] = 1
         raw["server_params"]["tpp"] = 8
         self.assertEqual(
@@ -325,13 +326,15 @@ class TestInferenceVariantConfigBlocks(unittest.TestCase):
 
     def test_changeme_under_rejected_key_not_printed(self):
         raw = inference_config()
-        raw["sweeps"][SECRET] = {"temperature": "<changeme>"}
+        raw["sweeps"][HF_TOKEN] = {"temperature": "<changeme>"}
         raw["container"]["env"] = {"NCCL_IB_HCA": "<changeme>", SECRET: "<changeme>"}
-        lines = problems(raw)
-        self.assertEqual(len(lines), 2, lines)
-        self.assertIn("in env.NCCL_IB_HCA, env.<key>", lines[0])
-        self.assertIn("in <key>.temperature", lines[1])
-        self.assertNotIn(SECRET, "".join(lines))
+        self.assertEqual(
+            problems(raw),
+            [
+                "container: replace <changeme> with the value for your setup in env.NCCL_IB_HCA, env.<key>",
+                "sweeps: replace <changeme> with the value for your setup in <key>.temperature",
+            ],
+        )
 
     def test_bad_run_entry_not_printed(self):
         cases = {

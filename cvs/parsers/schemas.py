@@ -1419,7 +1419,8 @@ _HF_TOKEN_ENV = frozenset({"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"})
 _CELL_KEY_RE = re.compile(r"^ISL=([1-9]\d*),OSL=([1-9]\d*),TP=([1-9]\d*),PP=([1-9]\d*),CONC=([1-9]\d*)$")
 _CELL_KEY_AXES = ("isl", "osl", "tp", "pp", "concurrency")
 _FLAG_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-_PLAIN_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# Field names are lowercase and env names uppercase; a mixed-case key can be a token.
+_PLAIN_KEY_RE = re.compile(r"^(?:[a-z_][a-z0-9_]*|[A-Z_][A-Z0-9_]*)$")
 # Client flags the harness sets for every cell.
 HARNESS_CLIENT_FLAGS = frozenset(
     {
