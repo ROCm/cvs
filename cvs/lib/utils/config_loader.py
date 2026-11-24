@@ -335,10 +335,9 @@ def _reject_underscore_metric_keys(thresholds, suite):
             if metric.startswith(_THRESHOLD_COMMENT_PREFIXES):
                 continue
             if metric.startswith("_"):
-                raise ValueError(f"unknown {suite} threshold metric {metric!r}")
-            extra = sorted(key for key in spec if key.startswith("_")) if isinstance(spec, dict) else []
-            if extra:
-                raise ValueError(f"{cell_key}.{metric}: unknown threshold fields {extra}")
+                raise ValueError(f"unknown {suite} threshold metric: a metric name starts with _ but is not a comment")
+            if isinstance(spec, dict) and any(key.startswith("_") for key in spec):
+                raise ValueError(f"unknown {suite} threshold field: a threshold spec has a field starting with _")
 
 
 def load_variant(

@@ -688,18 +688,22 @@ class TestLoadVariant(unittest.TestCase):
             {"p50_queue_time_ms": {"kind": "max", "value": 3}, "failed": {"kind": "info", "value": 0}},
         )
 
-    def test_underscore_metric_key_fails_naming_the_suite(self):
-        for cell, pattern in (
-            (
-                {"_output_throughput": {"kind": "min", "value": 1}},
-                "unknown TestEngine threshold metric '_output_throughput'",
-            ),
-            ({"failed": {"kind": "max", "value": 0, "_note": "x"}}, r"failed: unknown threshold fields \['_note'\]"),
-        ):
-            with self.subTest(pattern=pattern):
-                with tempfile.TemporaryDirectory() as tmp:
-                    with self.assertRaisesRegex(ValueError, pattern):
-                        _load(tmp, _inference_config(), {CELL: cell}, resolve_old=_resolve_old, warn=False)
+    def test_underscore_metric_not_printed(self):
+        misplaced = "_sk-SECRET123"
+        cases = {
+            "metric": ({misplaced: {"kind": "min", "value": 1}}, "unknown TestEngine threshold metric: "),
+            "spec field": ({"failed": {"kind": "max", "value": 0, misplaced: "x"}}, "unknown TestEngine threshold field: "),
+        }
+        for name, (cell, prefix) in cases.items():
+            for cell_key in (CELL, misplaced[1:]):
+                with self.subTest(name=name, cell_key=cell_key):
+                    with tempfile.TemporaryDirectory() as tmp:
+                        with self.assertRaises(ValueError) as caught:
+                            _load(tmp, _inference_config(), {cell_key: cell}, resolve_old=_resolve_old, warn=False)
+                    message = str(caught.exception)
+                    self.assertTrue(message.startswith(prefix), message)
+                    self.assertNotIn("SECRET", message)
+                    self.assertNotIn("ISL=", message)
         with tempfile.TemporaryDirectory() as tmp:
             loaded, _ = _load(
                 tmp, _inference_config(), {CELL: {"_comment_x": "ok"}}, resolve_old=_resolve_old, warn=False
