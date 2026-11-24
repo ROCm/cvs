@@ -1512,7 +1512,7 @@ class _ThresholdFileBase(_Forbid):
     @model_serializer(mode="wrap")
     def _flatten_cells(self, handler):
         data = handler(self)
-        return {**data.pop("cells"), **data}
+        return {**data.pop("cells", {}), **data}
 
     def get(self, cell_key, default=None):
         """A cell's specs as written, as plain dicts, for the code that reads threshold dicts."""

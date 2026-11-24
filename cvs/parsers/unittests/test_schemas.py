@@ -231,6 +231,20 @@ class TestInferenceVariantConfigBlocks(unittest.TestCase):
         )
         self.assertEqual(InferenceVariantConfig.model_validate(dumped), config)
 
+    def test_threshold_file_dumps_that_leave_out_cells(self):
+        config = InferenceVariantConfig.model_validate(inference_config())
+        thresholds = config.thresholds
+        self.assertEqual(
+            thresholds.model_dump(exclude={"cells"}),
+            {"accuracy": {"lm_eval": {}, "custom_eval": {}, "quant_parity": {}, "mtp_quality": {}}},
+        )
+        self.assertEqual(thresholds.model_dump(include={"accuracy"}), thresholds.model_dump(exclude={"cells"}))
+        empty = InferenceVariantConfig.model_validate(inference_config(enforce_thresholds=False, thresholds={}))
+        self.assertEqual(empty.thresholds.model_dump(exclude_defaults=True), {})
+        self.assertEqual(
+            thresholds.model_dump(exclude_defaults=True), {CELL: {"output_throughput": {"kind": "min", "value": 100}}}
+        )
+
     def test_sweeps_and_runs(self):
         pp2_cell = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
         raw = inference_config()
