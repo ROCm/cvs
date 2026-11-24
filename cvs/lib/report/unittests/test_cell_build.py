@@ -67,6 +67,26 @@ class TestCellBuild(unittest.TestCase):
         self.assertIsNotNone(throughput["margin"])
         self.assertIn("above gate", throughput["margin"])
 
+    def test_info_highlight_draws_no_gate(self):
+        variant = SimpleNamespace(
+            enforce_thresholds=True,
+            thresholds={
+                "ISL=1024,OSL=1024,TP=8,CONC=128": {"client.output_throughput": {"kind": "info", "value": 0}},
+            },
+            cell_key=lambda isl, osl, conc: f"ISL={isl},OSL={osl},TP=8,CONC={conc}",
+        )
+        cell = build_cell_record(
+            generic_inference_report_config(),
+            key=("org/example-model", "mi300x", "1024", "1024", "default", 128),
+            host="10.0.0.1",
+            actuals={"client.output_throughput": 1200.0},
+            variant_config=variant,
+            lifecycle_report={},
+            multi_host=False,
+        )
+        throughput = next(m for m in cell["metrics"] if m["metric"] == "client.output_throughput")
+        self.assertEqual((throughput["status"], throughput["bar_pct"], throughput["margin"]), ("record", None, None))
+
     def test_extra_curves_are_lifted_off_actuals(self):
         variant = SimpleNamespace(
             enforce_thresholds=False,

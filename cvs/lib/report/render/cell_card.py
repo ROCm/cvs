@@ -203,7 +203,7 @@ class CellCardRenderer:
         )
 
     def _render_metric_target(self, metric: dict) -> str:
-        if metric["spec"] is None:
+        if metric["spec"] is None or metric["spec"].get("kind") == "info":
             return ""
         gate_label = "gate" if self.config.enforce else "floor"
         return f"<span class='target'>{gate_label} {fmt_num(metric['spec'].get('value'))}</span>"

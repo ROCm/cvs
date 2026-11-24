@@ -59,6 +59,8 @@ def render_benchmark_metrics_html(
             return '—'
         kind = spec.get('kind', '')
         value = spec.get('value')
+        if kind == 'info':
+            return 'info'
         rendered = str(kind) if value is None else f'{kind} {fmt_num(value, digits)}'
         return rendered if enforced else f'reference: {rendered}'
 

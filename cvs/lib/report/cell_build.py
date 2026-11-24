@@ -24,6 +24,13 @@ def metric_pass(metric: str, actual: Any, spec: Optional[dict], evaluator=None) 
     return "fail" if err else "pass"
 
 
+def gate_spec(spec: Optional[dict]) -> Optional[dict]:
+    """The spec to draw as a gate, or None for no spec and for ``info``, which records without gating."""
+    if spec is None or spec.get("kind") == "info":
+        return None
+    return spec
+
+
 def bar_pct(actual: float, spec: dict) -> float:
     kind = spec.get("kind", "")
     target = float(spec["value"])
@@ -220,7 +227,7 @@ class CellRecordBuilder:
                     ),
                     "bar_pct": (
                         bar_pct(float(actual), spec)
-                        if spec is not None
+                        if gate_spec(spec) is not None
                         and actual is not None
                         and (
                             self.config.metric_verdict is None
@@ -228,7 +235,7 @@ class CellRecordBuilder:
                         )
                         else None
                     ),
-                    "margin": margin_text(actual, spec) if spec else None,
+                    "margin": margin_text(actual, spec) if gate_spec(spec) else None,
                 }
             )
 

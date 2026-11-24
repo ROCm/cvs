@@ -110,6 +110,11 @@ class TestCellCardRenderer(unittest.TestCase):
             "cell_lifecycle": {"setup": 5.0, "run": 15.0},
         }
 
+    def test_info_spec_renders_no_target(self):
+        renderer = CellCardRenderer(self.basic_config)
+        self.assertEqual(renderer._render_metric_target({"spec": {"kind": "info", "value": 0}}), "")
+        self.assertIn("40", renderer._render_metric_target({"spec": {"kind": "max", "value": 40}}))
+
     def test_renderer_creation(self):
         """Test creating a CellCardRenderer."""
         renderer = CellCardRenderer(self.basic_config)
