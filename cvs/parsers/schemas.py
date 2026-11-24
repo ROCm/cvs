@@ -1501,7 +1501,7 @@ class _ThresholdFileBase(_Forbid):
     @classmethod
     def _drop_comments(cls, data):
         data = _drop_comment_keys(data)
-        if not isinstance(data, dict) or isinstance(data.get("cells"), dict) and set(data) <= {"cells", "accuracy"}:
+        if not isinstance(data, dict) or (isinstance(data.get("cells"), dict) and set(data) <= {"cells", "accuracy"}):
             return data
         cells = {key: value for key, value in data.items() if key != "accuracy"}
         grouped = {"cells": cells}
