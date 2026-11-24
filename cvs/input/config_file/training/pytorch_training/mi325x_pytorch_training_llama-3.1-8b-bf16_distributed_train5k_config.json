@@ -98,7 +98,8 @@
       "require_decrease": true
     },
     "convergence": {
-      "enabled": false
+      "enabled": true,
+      "target_eval_loss": 3.0
     },
     "codecarbon": {
       "enabled": true,

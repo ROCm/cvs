@@ -65,7 +65,10 @@ Training block
 - ``data``: ``source`` (WikiText parquet directory), ``text_column``,
   ``train_split``, ``eval_split`` (default ``test``), ``cache_dir``, and
   ``append_eos``. Tokens are cached once per tokenizer under ``cache_dir``.
-- ``loss_curve`` and ``convergence``: as in the other training suites.
+- ``loss_curve``: as in the other training suites.
+- ``convergence``: ``enabled`` with ``target_train_loss`` or
+  ``target_eval_loss``. The run records the step and time of the first loss
+  at or below the target and still trains every step.
 - ``scaling_baseline``: ``tokens_per_sec_total`` and ``num_nodes`` of a
   measured reference run, plus an optional ``eval_loss`` for scale parity.
   A sweep's own ``scaling_baseline`` overrides this one.
