@@ -393,7 +393,14 @@ class TestInferenceVariantConfigBlocks(unittest.TestCase):
         tasks = [{"id": "gsm8k_flex", "task": "gsm8k"}, {"id": "mmlu", "task": "mmlu"}]
         thresholds = {
             CELL: {"output_throughput": {"kind": "min", "value": 100}},
-            "accuracy": {"lm_eval": {"gsm8k_flex": {"exact_match": {"kind": "min", "value": 0.8, "optional": True}}}},
+            "accuracy": {
+                "lm_eval": {
+                    "gsm8k_flex": {
+                        "exact_match": {"kind": "min", "value": 0.8, "optional": True},
+                        "flexible_match": {"kind": "info", "value": 0},
+                    }
+                }
+            },
         }
         config = InferenceVariantConfig.model_validate(
             inference_config(accuracy={"lm_eval": {"tasks": tasks}}, thresholds=thresholds)
@@ -402,7 +409,11 @@ class TestInferenceVariantConfigBlocks(unittest.TestCase):
         config.lm_eval_tasks().clear()
         self.assertEqual(len(config.accuracy.lm_eval.tasks), 2)
         self.assertEqual(
-            config.lm_eval_thresholds("gsm8k_flex"), {"exact_match": {"kind": "min", "value": 0.8, "optional": True}}
+            config.lm_eval_thresholds("gsm8k_flex"),
+            {
+                "exact_match": {"kind": "min", "value": 0.8, "optional": True},
+                "flexible_match": {"kind": "info", "value": 0},
+            },
         )
         self.assertEqual(config.lm_eval_thresholds("mmlu"), {})
 

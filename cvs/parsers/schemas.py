@@ -1878,11 +1878,11 @@ def _check_threshold_coverage(self):
 
 class _InferenceVariantBase(_Forbid):
     def lm_eval_tasks(self):
-        """The lm-eval tasks to run, in config order."""
+        """A new list of the lm-eval tasks to run, in config order."""
         return list(self.accuracy.lm_eval.tasks)
 
     def lm_eval_thresholds(self, task_id):
-        """One lm-eval task's threshold specs as written, as plain dicts; ``{}`` when it has none."""
+        """A new dict of one lm-eval task's threshold specs as written, as plain dicts; ``{}`` when it has none."""
         cell = self.thresholds.accuracy.lm_eval.get(task_id, {})
         return {metric: spec.model_dump(exclude_unset=True) for metric, spec in cell.items()}
 

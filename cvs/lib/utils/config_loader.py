@@ -325,7 +325,7 @@ class ConfigError(ValueError):
         super().__init__(f"{config_path} is not a valid config:\n" + "\n".join(f"  {p}" for p in problems))
 
 
-def _reject_underscore_metric_keys(thresholds, suite):
+def _reject_underscore_metric_keys(thresholds, suite, config_path):
     # A misspelled metric such as _output_throughput would otherwise be dropped
     # as a comment, and enforcement only checks that the cell exists.
     for cell_key, cell in thresholds.items():
@@ -335,9 +335,10 @@ def _reject_underscore_metric_keys(thresholds, suite):
             if metric.startswith(_THRESHOLD_COMMENT_PREFIXES):
                 continue
             if metric.startswith("_"):
-                raise ValueError(f"unknown {suite} threshold metric: a metric name starts with _ but is not a comment")
+                problem = f"threshold file: a {suite} metric name starts with _ but is not _comment or _example"
+                raise ConfigError(config_path, [problem])
             if isinstance(spec, dict) and any(key.startswith("_") for key in spec):
-                raise ValueError(f"unknown {suite} threshold field: a threshold spec has a field starting with _")
+                raise ConfigError(config_path, [f"threshold file: a {suite} threshold spec has a field starting with _"])
 
 
 def load_variant(
@@ -360,13 +361,13 @@ def load_variant(
     cell gains an ``info`` spec for each gated metric it lacks, except the
     ``required`` and ``unreported`` ones. Then ``model`` validates it. A
     config that does not validate raises `ConfigError` naming each field,
-    never a value; a threshold key starting with ``_`` that is not a comment,
-    and an old key with no new place, raise `ValueError` before that.
+    never a value, as does a threshold key starting with ``_`` that is not a
+    comment, before that; an old key with no new place raises `ValueError`.
     """
     config_path = Path(config_path)
     raw = substitute_placeholders(config_path, cluster_dict, all_placeholders=True)
     raw = attach_threshold_file(raw, {"config_path": config_path})
-    _reject_underscore_metric_keys(raw["thresholds"], suite)
+    _reject_underscore_metric_keys(raw["thresholds"], suite, config_path)
     message = None
     if resolve_old is not None:
         raw, message = resolve_old(raw)
