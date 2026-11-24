@@ -177,7 +177,11 @@ Sweep fields
 - ``precision``: ``BF16``, ``FP16``, or ``FP32``.
 - ``batch_size``: local images per GPU.
 - ``image_size``: square input resolution.
-- ``gradient_accumulation_steps``: microbatches per optimizer step.
+- ``gradient_accumulation_steps``: microbatches per optimizer step. In perf
+  mode a sweep above 1 needs an enabled GA=1 sweep with the same global
+  batch, which ``gradient_accumulation_overhead_pct`` is measured against.
+  Other modes use it alone, for example to keep the global batch fixed
+  across node counts for scale parity.
 - ``training_flops_per_image``: forward+backward FLOPs used for TFLOPS/s/GPU.
   ResNet-50 uses 4.1 GMAC forward x two FLOPs per multiply-add x three for
   training = 24.6 GFLOP/image; ViT-B/16 uses 16.85 GMAC = 101.1 GFLOP/image.

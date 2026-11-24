@@ -328,8 +328,10 @@ class VisionTrainingConfig(_Forbid):
         )
         by_name = {sweep.name: sweep for sweep in self.sweeps}
         selected = [by_name[name] for name in enabled]
+        # Only perf runs measure GA overhead; other modes use GA to hold the
+        # global batch fixed across node counts.
         for sweep in selected:
-            if sweep.gradient_accumulation_steps == 1:
+            if sweep.gradient_accumulation_steps == 1 or self.run_mode != "perf":
                 continue
             effective_batch = sweep.batch_size * sweep.gradient_accumulation_steps * self.gpus_per_node
             baselines = [

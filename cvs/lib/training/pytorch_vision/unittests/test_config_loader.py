@@ -178,6 +178,13 @@ class TestVisionConfigLoader(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires exactly one enabled GA=1"):
             self._load(config=config)
 
+    def test_ga_sweep_needs_no_baseline_outside_perf(self):
+        config = _config()
+        config["training"].update({"phase": "smoke", "run_mode": "smoke"})
+        config["training"]["sweeps"][0]["gradient_accumulation_steps"] = 2
+        training = self._load(config=config).training
+        self.assertEqual(training.enabled_sweeps()[0].gradient_accumulation_steps, 2)
+
     def test_zero_init_residual_is_limited_to_resnets(self):
         config = _config()
         config["training"]["zero_init_residual"] = True
