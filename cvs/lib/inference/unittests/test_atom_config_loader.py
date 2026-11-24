@@ -279,6 +279,27 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             thresholds=thresholds,
         )
 
+    def test_lm_eval_accessors(self):
+        variant = self._token_mount_variant({"name": "c", "image": "img", "runtime": {"name": "docker", "args": {}}})
+        self.assertEqual(variant.lm_eval_tasks(), [])
+        self.assertEqual(variant.lm_eval_thresholds("mmlu"), {})
+
+        spec = {"kind": "min", "value": 0.5}
+        variant = variant.model_copy(
+            update={
+                "accuracy": {"tasks": [{"id": "mmlu", "task": "mmlu"}, {"id": "gsm8k", "task": "gsm8k"}]},
+                "thresholds": {**variant.thresholds, "accuracy": {"mmlu": {"mmlu.acc__none": spec}}},
+            }
+        )
+        variant = AtomVariantConfig.model_validate(variant.model_dump())
+        self.assertEqual([task.id for task in variant.lm_eval_tasks()], ["mmlu", "gsm8k"])
+        self.assertEqual(variant.lm_eval_thresholds("mmlu"), {"mmlu.acc__none": spec})
+        self.assertEqual(variant.lm_eval_thresholds("gsm8k"), {})
+        variant.lm_eval_tasks().clear()
+        variant.lm_eval_thresholds("mmlu").clear()
+        self.assertEqual(len(variant.accuracy.tasks), 2)
+        self.assertEqual(variant.lm_eval_thresholds("mmlu"), {"mmlu.acc__none": spec})
+
     def test_merged_container_strips_cluster_env_token(self):
         variant = self._token_mount_variant(
             {

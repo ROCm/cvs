@@ -50,7 +50,6 @@ from cvs.lib import globals
 from cvs.lib.inference.utils.cache_probe import du_bytes
 from cvs.lib.inference.utils.lm_eval_job import run_accuracy_tasks
 from cvs.lib.utils.verdict import evaluate_all
-from cvs.parsers.schemas import InferenceVariantConfig
 
 log = globals.log
 
@@ -202,10 +201,7 @@ def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
-    accuracy_config = getattr(variant_config, "accuracy", None)
-    if isinstance(variant_config, InferenceVariantConfig):
-        accuracy_config = accuracy_config.lm_eval
-    tasks_by_id = {task.id: task for task in (accuracy_config.tasks if accuracy_config else [])}
+    tasks_by_id = {task.id: task for task in variant_config.lm_eval_tasks()}
     task = tasks_by_id.get(accuracy_task)
     if task is None:
         pytest.skip(f"accuracy task {accuracy_task!r} not present in accuracy.tasks")
@@ -239,12 +235,7 @@ def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):
 
     if not variant_config.enforce_thresholds:
         return
-    if isinstance(variant_config, InferenceVariantConfig):
-        cell = variant_config.thresholds.accuracy.lm_eval.get(accuracy_task, {})
-        task_thresholds = {metric: spec.model_dump(exclude_unset=True) for metric, spec in cell.items()}
-    else:
-        task_thresholds = (variant_config.thresholds or {}).get("accuracy", {}).get(accuracy_task, {})
-    evaluate_all(actual, task_thresholds)
+    evaluate_all(actual, variant_config.lm_eval_thresholds(accuracy_task))
 
 
 def test_teardown(orch, lifecycle, request):
