@@ -586,12 +586,13 @@ print("RDMA_RAILS " + " ".join(sorted(opened)))
             for name, value in self.variant.training.env_vars.items()
             if name.startswith(("HF_", "TRANSFORMERS_"))
         )
+        report = f"import json,sys; print({EVAL_OK!r} + json.dumps(json.load(open(sys.argv[1]))['results']))"
         command = (
             f"set -o pipefail; mkdir -p {shlex.quote(out_dir)}; "
             f"env {exports} timeout {config.timeout_s}s {' '.join(shlex.quote(a) for a in args)} "
             f"2>&1 | tee {shlex.quote(self.output_dir)}/lm_eval.log; "
             f"f=$(ls -t $(find {shlex.quote(out_dir)} -name 'results_*.json') | head -1); "
-            f"python3 -c 'import json,sys; print({EVAL_OK!r} + json.dumps(json.load(open(sys.argv[1]))[\"results\"]))' \"$f\""
+            f"python3 -c {shlex.quote(report)} \"$f\""
         )
         first = self.orch.hosts[0]
         timeout = config.timeout_s + 300
