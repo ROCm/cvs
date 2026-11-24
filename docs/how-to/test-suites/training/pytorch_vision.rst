@@ -65,7 +65,7 @@ verdicts. The shipped configs cover these scorecard workloads:
    * - W11
      - Qwen2.5-VL-72B multimodal SFT on ChartQA, multi-node
      - ``task`` (vlm_sft)
-     - smoke (1N reference and multi-node), perf, finetune
+     - smoke (1N reference and multi-node), perf, finetune, scale-parity
 
 They provide:
 
@@ -287,6 +287,12 @@ Scale parity compares quality rather than throughput. Set
 reference run, and the distributed run reports
 ``scale_parity_accuracy_delta``: its own value minus the reference, in points.
 Both keys must be set together.
+
+The reference must train on the same global batch, or the delta measures the
+batch change instead of the node count. The W11 scale-parity profile runs the
+finetune recipe on four nodes against the same recipe on two nodes with
+``gradient_accumulation_steps`` 2, which keeps the per-GPU batch at 1. Changing
+the per-GPU batch instead also changes padding and loss weighting.
 
 Training crop
 =============
