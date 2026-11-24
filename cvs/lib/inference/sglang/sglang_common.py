@@ -254,6 +254,8 @@ SGLANG_CLI_LATEST = {
     "benchmark_serving_module": True,
 }
 
+# The probe script prints its result as one line of flat JSON, which keeps this
+# non-greedy match valid; a nested or multi-line payload would need a new pattern.
 _SGLANG_CLI_PROBE_RE = re.compile(rf"{_SGLANG_CLI_PROBE_MARKER} (\{{.*?\}})")
 
 
@@ -859,7 +861,7 @@ def parse_inference_bench_results(
     include_itl: bool = False,
     include_extended_e2e_percentiles: bool = False,
 ) -> dict[str, dict[str, Any]]:
-    """Parse sglang.benchmark.serving log tail output into per-node metric dicts."""
+    """Parse SGLang benchmark-serving log tail output (``sglang.benchmark.serving`` or the older ``sglang.bench_serving``) into per-node metric dicts."""
     inference_results_dict: dict[str, dict[str, Any]] = {}
     for node, text in out_dict.items():
         inference_results_dict[node] = {}

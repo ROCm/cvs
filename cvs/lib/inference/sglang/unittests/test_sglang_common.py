@@ -798,6 +798,31 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertEqual(node['median_tpot_ms'], '12.9')
         self.assertEqual(node['goodput'], '1.000000')
 
+    def test_parse_inference_bench_results_reads_padded_bench_serving_output(self):
+        log = "\n".join(
+            [
+                "============ Serving Benchmark Result ============",
+                "Successful requests:                     100       ",
+                "Benchmark duration (s):                  120.50    ",
+                "Total input tokens:                      819200    ",
+                "Total generated tokens:                  51200     ",
+                "Total generated tokens (retokenized):    51100     ",
+                "Request throughput (req/s):              0.83      ",
+                "Output token throughput (tok/s):         426.67    ",
+                "Mean E2E Latency (ms):                   250.00    ",
+                "Mean TTFT (ms):                          45.50     ",
+                "Mean TPOT (ms):                          12.50     ",
+                "Mean ITL (ms):                           11.00     ",
+                "==================================================",
+            ]
+        )
+        node = sglang_common.parse_inference_bench_results({'n1': log}, include_itl=True)['n1']
+        self.assertEqual(node['successful_requests'], '100')
+        self.assertEqual(node['total_generated_tokens'], '51200')
+        self.assertEqual(node['output_throughput_per_sec'], '426.67')
+        self.assertEqual(node['mean_e2e_latency_ms'], '250.00')
+        self.assertEqual(node['mean_itl_ms'], '11.00')
+
     def test_parse_inference_bench_results_disagg_extras(self):
         parsed = sglang_common.parse_inference_bench_results(
             {'node1': _SAMPLE_BENCH_LOG},
