@@ -23,11 +23,12 @@ from cvs.lib.inference.utils.vllm_config_loader import (
     merged_container,
     resolve_old_vllm_keys,
 )
+from cvs.lib.inference.utils.vllm_metrics import METRICS_BY_NAME
 from cvs.lib.inference.utils.vllm_verification import evaluate_metric_verdicts
 from cvs.lib.utils.config_loader import ConfigError
 from cvs.lib.inference.vllm_job import VllmJob
 from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
-from cvs.parsers.schemas import validation_problem_lines
+from cvs.parsers.schemas import UNIFIED_GATED_METRICS, validation_problem_lines
 from cvs.unittests.support import FAKE_CRED, write_filled_config
 
 CELL = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"
@@ -529,11 +530,27 @@ class TestLoadVariant(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = _write(tmp, new_config(), {CELL: {"output_throughput": {"kind": "info", "value": 0}}})
             loaded = load_variant(path, {}, warn=False)
-        self.assertEqual(loaded.thresholds.get(CELL), {"output_throughput": {"kind": "info", "value": 0}})
+        self.assertEqual(loaded.thresholds.get(CELL)["output_throughput"], {"kind": "info", "value": 0})
         verdicts = evaluate_metric_verdicts(
-            {"node0": {"output_throughput": 1.0}}, loaded.thresholds.get(CELL), enforce_thresholds=True
+            {"node0": {"output_throughput": 1.0}},
+            {"output_throughput": {"kind": "info", "value": 0}},
+            enforce_thresholds=True,
         )
         self.assertEqual([(row["status"], row["enforced"]) for row in verdicts], [("pass", False)])
+
+    def test_load_fills_info_for_each_gated_metric_a_cell_lacks(self):
+        self.assertEqual(sorted(UNIFIED_GATED_METRICS - set(METRICS_BY_NAME)), [])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write(tmp, new_config(), {CELL: {"output_throughput": {"kind": "min", "value": 100}}})
+            loaded = load_variant(path, {}, warn=False)
+        cell = loaded.thresholds.get(CELL)
+        self.assertEqual(set(cell), set(UNIFIED_GATED_METRICS))
+        self.assertEqual(cell["output_throughput"], {"kind": "min", "value": 100})
+        self.assertEqual({spec["kind"] for metric, spec in cell.items() if metric != "output_throughput"}, {"info"})
+        actuals = {"node0": {"output_throughput": 99.0, "p99_ttft_ms": 10**6}}
+        verdicts = evaluate_metric_verdicts(actuals, cell, enforce_thresholds=True)
+        self.assertEqual([row["metric"] for row in verdicts if row["enforced"]], ["output_throughput"])
+        self.assertEqual(next(row["status"] for row in verdicts if row["metric"] == "p99_ttft_ms"), "pass")
 
     def test_old_kinds_in_a_cell_fail_at_load_as_on_main(self):
         for metric, kind in (("p99_ttft_ms", "max_ms"), ("output_throughput", "min_tok_s")):

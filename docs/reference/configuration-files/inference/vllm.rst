@@ -784,9 +784,13 @@ Thresholds are keyed by canonical cell, then by a bare metric name:
 
 The ``4000`` and ``500`` figures only illustrate the grammar. Packaged threshold files use ``0``.
 
-A cell may contain any subset of the registry, including an empty object. When
+A cell may contain any subset of the registry, including an empty object. Each
+cell then gets an ``info`` spec for every metric the shipped vLLM threshold
+files gate that it leaves out: the throughput, latency, success and failure,
+GPU, and queue and prefill timing metrics. Those metrics are recorded without
+gating. When
 ``enforce_thresholds`` is true and a threshold file is loaded, every selected run must have a threshold cell,
-but only specs present in that cell create verification subtests. When it is
+but only the ``min`` and ``max`` specs in that cell create verification subtests. When it is
 false, recorded metrics keep status ``pass`` and no threshold subtest is
 emitted.
 

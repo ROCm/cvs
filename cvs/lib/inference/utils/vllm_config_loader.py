@@ -22,6 +22,7 @@ from cvs.lib.utils.config_loader import load_variant as load_inference_variant
 from cvs.parsers.schemas import (
     OLD_KEY_DROPPED,
     OLD_KEY_UNMAPPED,
+    UNIFIED_GATED_METRICS,
     InferenceVariantConfig,
     OldKey,
     ServingBenchmarkParams,
@@ -380,7 +381,8 @@ def load_variant(config_path, cluster_dict, warn=True):
     Runs the shared inference load path with `VllmConfig` and vLLM's old-key
     tables: placeholders, the threshold file it names (none records every
     metric without gating), one warning naming each old key unless ``warn`` is
-    false, then validation. A config that does not validate raises
+    false, an ``info`` spec for each unified gated metric a cell lacks, then
+    validation. A config that does not validate raises
     `ConfigError` naming each field, never a value.
     """
     return load_inference_variant(
@@ -389,6 +391,8 @@ def load_variant(config_path, cluster_dict, warn=True):
         VllmConfig,
         "vLLM",
         resolve_old=resolve_old_vllm_keys,
+        gated=UNIFIED_GATED_METRICS,
+        unreported=_UNREPORTED_METRICS,
         warn=warn,
     )
 
