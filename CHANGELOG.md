@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - rocm-smi JSON reads, including the GPU PCIe bus map used by ibperf and the host config checks, no longer fail when ROCm 10.1 or later prints its deprecation warning with the command output.
 - With `"orchestrator": "container"`, a head-node command issued before the container is launched (or after it is torn down) now fails with `No containers running. Call setup_containers() first.`, like other in-container commands, instead of running `docker exec None` on the head node.
 - RCCL `rccl_perf`, `rccl_regression` and `rccl_pairwise` no longer fail on the libibverbs warning that the unused VMware `libvmw_pvrdma` provider could not be loaded, so the bandwidth checks run on virtualized nodes. Other RDMA provider load failures and ORTE/NCCL errors still fail the run.
-- Preflight's cluster file errors name each failing field without printing its value, which can be a credential.
+- Config file validation errors, including preflight's cluster file check, name each failing field without printing its value, which can be a credential.
 
 ### Removed
 
