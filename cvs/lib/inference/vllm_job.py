@@ -41,7 +41,8 @@ import time
 from typing import Optional
 
 from cvs.lib import globals
-from cvs.lib.inference.utils.vllm_config_loader import container_ib_hcas, container_sets_sockets, serialize_cli_options
+from cvs.lib.inference.utils.vllm_config_loader import serialize_cli_options
+from cvs.parsers.schemas import container_ib_hcas, container_sets_sockets, poll_schedule
 from cvs.lib.inference.utils.vllm_metrics import project_vllm_metrics
 from cvs.lib.utils.model_query_lib import OpenAIProbe
 
@@ -214,12 +215,10 @@ class VllmJob:
         warmup, server_poll, client_wait, client_poll = self.SCHEDULES[suite]
         server_ready_s = variant.timeouts.server_ready_s or self.DEFAULT_SERVER_READY_S
         client_s = variant.timeouts.client_s or self.DEFAULT_CLIENT_S
-        self._warmup_wait = min(warmup, server_ready_s)
+        self._warmup_wait, self._server_poll_count = poll_schedule(server_ready_s, warmup, server_poll)
         self._server_poll_wait = server_poll
-        self._server_poll_count = max(1, math.ceil((server_ready_s - self._warmup_wait) / server_poll))
-        self._client_initial_wait = min(client_wait, client_s)
+        self._client_initial_wait, self._client_poll_count = poll_schedule(client_s, client_wait, client_poll)
         self._client_poll_wait = client_poll
-        self._client_poll_count = max(1, math.ceil((client_s - self._client_initial_wait) / client_poll))
 
     # ---------- derived builders ----------
 

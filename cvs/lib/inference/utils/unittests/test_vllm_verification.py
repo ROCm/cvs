@@ -26,6 +26,15 @@ class TestMetricSpecs(unittest.TestCase):
             ["output_throughput", "mean_ttft_ms"],
         )
 
+    def test_info_spec_is_reportable_but_never_active(self):
+        thresholds = {"output_throughput": {"kind": "info", "value": 0}, "failed": {"kind": "max", "value": 0}}
+        self.assertEqual(
+            {item["metric"] for item in reportable_metric_specs(thresholds)}, {"failed", "output_throughput"}
+        )
+        self.assertEqual(
+            [item["metric"] for item in active_metric_specs(thresholds, enforce_thresholds=True)], ["failed"]
+        )
+
     def test_empty_partial_cell_has_no_active_specs(self):
         self.assertEqual(reportable_metric_specs({}), ())
         self.assertEqual(active_metric_specs({}, enforce_thresholds=True), ())
@@ -76,6 +85,21 @@ class TestEvaluateMetricVerdicts(unittest.TestCase):
                 ("mean_ttft_ms", "pass", False),
             ],
         )
+
+    def test_info_row_is_recorded_not_enforced(self):
+        actuals = {"head": {"output_throughput": 1, "mean_ttft_ms": 900}}
+        thresholds = {
+            "output_throughput": {"kind": "info", "value": 0},
+            "mean_ttft_ms": {"kind": "max", "value": 100},
+            "failed": {"kind": "info", "value": 0},
+        }
+        verdicts = evaluate_metric_verdicts(actuals, thresholds, enforce_thresholds=True)
+        rows = {item["metric"]: (item["status"], item["enforced"], item["reason"]) for item in verdicts}
+        self.assertEqual(rows["output_throughput"], ("pass", False, "info spec; recorded without gating"))
+        self.assertEqual(
+            rows["failed"], ("pass", False, "failed: unavailable or non-finite actual recorded; no threshold asserted")
+        )
+        self.assertEqual(rows["mean_ttft_ms"][:2], ("fail", True))
 
     def test_mixed_failure_and_pass_are_both_computed(self):
         thresholds = {

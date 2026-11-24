@@ -229,7 +229,6 @@ class TestVllmConfigModel(unittest.TestCase):
             "unknown metric": {"made_up_metric": {"kind": "min", "value": 1}},
             "wrong direction": {"p99_ttft_ms": {"kind": "min", "value": 1}},
             "optional": {"p99_ttft_ms": {"kind": "max", "value": 1, "optional": False}},
-            "info": {"output_throughput": {"kind": "info", "value": 1}},
             "underscore metric": {"_output_throughput": {"kind": "min", "value": 1}},
         }
         for name, cell in bad.items():
@@ -484,6 +483,16 @@ class TestLoadVariant(unittest.TestCase):
         self.assertEqual(loaded.server_params.tp, 8)
         self.assertEqual(caught, [])
         self.assertFalse([line for line in logs if "Deprecated" in line])
+
+    def test_info_spec_loads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write(tmp, new_config(), {CELL: {"output_throughput": {"kind": "info", "value": 0}}})
+            loaded = load_variant(path, {}, warn=False)
+        self.assertEqual(loaded.thresholds.get(CELL), {"output_throughput": {"kind": "info", "value": 0}})
+        verdicts = evaluate_metric_verdicts(
+            {"node0": {"output_throughput": 1.0}}, loaded.thresholds.get(CELL), enforce_thresholds=True
+        )
+        self.assertEqual([(row["status"], row["enforced"]) for row in verdicts], [("pass", False)])
 
     def test_old_kinds_in_a_cell_fail_at_load_as_on_main(self):
         for metric, kind in (("p99_ttft_ms", "max_ms"), ("output_throughput", "min_tok_s")):

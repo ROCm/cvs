@@ -32,10 +32,10 @@ __all__ = [
 
 
 def active_metric_specs(thresholds, *, enforce_thresholds):
-    '''Return configured and enforced metric specs in registry order.'''
+    '''Return configured and enforced metric specs in registry order; ``info`` is never enforced.'''
     if not enforce_thresholds:
         return ()
-    return reportable_metric_specs(thresholds)
+    return tuple(item for item in reportable_metric_specs(thresholds) if item['spec'].get('kind') != 'info')
 
 
 def reportable_metric_specs(thresholds):
@@ -68,7 +68,8 @@ def evaluate_metric_verdicts(actuals_by_host, thresholds, *, enforce_thresholds)
             value = actuals.get(metric)
             if not _is_finite_number(value) and spec is None:
                 continue
-            enforced = bool(enforce_thresholds and spec is not None)
+            info = isinstance(spec, dict) and spec.get('kind') == 'info'
+            enforced = bool(enforce_thresholds and spec is not None and not info)
             verdict = {
                 'node': str(host),
                 'metric': metric,
@@ -84,6 +85,8 @@ def evaluate_metric_verdicts(actuals_by_host, thresholds, *, enforce_thresholds)
                 verdict['status'], verdict['reason'] = metric_verdict(metric, value, spec)
             elif spec is None:
                 verdict['reason'] = 'metric produced without a configured threshold'
+            elif info and _is_finite_number(value):
+                verdict['reason'] = 'info spec; recorded without gating'
             else:
                 verdict['reason'] = 'threshold enforcement disabled; no threshold asserted'
                 if not _is_finite_number(value):

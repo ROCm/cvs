@@ -5,41 +5,40 @@ All rights reserved.
 vLLM config model and loader.
 
 `VllmConfig` is the shared `InferenceVariantConfig` plus the `vllm` block and
-the checks only vLLM needs. `load_variant` reads a config, substitutes its
-placeholders, attaches its threshold file, converts old vLLM keys with one
-warning, and validates. A 0.3.0 config and its threshold file load through the
-old-key tables below.
+the checks only vLLM needs. `load_variant` loads a config through the shared
+inference load path with vLLM's old-key tables below, so a 0.3.0 config and
+its threshold file still load, with one warning.
 '''
 
 import copy
 import json
 from collections import namedtuple
-from pathlib import Path
 from typing import List, Literal, Optional, Union
 
 from pydantic import Field, PrivateAttr, TypeAdapter, ValidationError, create_model, field_validator, model_validator
 
 from cvs.lib.inference.utils.vllm_metrics import validate_threshold_spec
-from cvs.lib.utils.config_loader import attach_threshold_file, substitute_placeholders
+from cvs.lib.utils.config_loader import ConfigError  # noqa: F401 - re-exported for vLLM callers
+from cvs.lib.utils.config_loader import load_variant as load_inference_variant
 from cvs.parsers.schemas import (
     OLD_KEY_DROPPED,
     OLD_KEY_UNMAPPED,
     InferenceVariantConfig,
-    MtpQualityConfig,
     OldKey,
-    QuantParityConfig,
     ServingBenchmarkParams,
     ServingServerParams,
     _Forbid,
+    check_container_network_env,
     check_flags,
+    check_not_implemented,
+    keep_sweep_cells,
+    not_implemented_names,
+    old_accuracy_rule,
+    old_timeout_rule,
     parse_cell_key,
     resolve_old_keys,
-    validation_problem_lines,
-    warn_old_keys,
 )
 
-_SOCKET_ENV = frozenset({"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"})
-_THRESHOLD_METADATA_PREFIXES = ("_comment", "_example")
 # Server flags the vLLM job writes itself from the shared fields and the vllm block.
 _HARNESS_SERVER_FLAGS = frozenset(
     {"headless", "tensor_parallel_size", "pipeline_parallel_size", "max_model_len", "distributed_executor_backend"}
@@ -49,18 +48,18 @@ _BOOLEAN_CLIENT_FLAGS = frozenset({"ignore_eos", "trust_remote_code"})
 # Client flags the job sets from timeouts.client_s.
 _CLIENT_WAIT_FLAGS = frozenset({"client_initial_wait_s", "client_poll_iterations", "client_poll_wait_s"})
 _SPECULATIVE_ENGINE_ARGS = frozenset({"speculative_config", "speculative_model", "num_speculative_tokens"})
-
-
-class ConfigError(ValueError):
-    """A config file that does not match its schema.
-
-    The message has one ``location: problem`` line per error and never the
-    offending values, which can be credentials.
-    """
-
-    def __init__(self, config_path, problems):
-        self.problems = problems
-        super().__init__(f"{config_path} is not a valid config:\n" + "\n".join(f"  {p}" for p in problems))
+# Shared fields vLLM does not run yet, in the order the error names them.
+_NOT_IMPLEMENTED_FIELDS = (
+    "server_params.dp",
+    "server_params.ep",
+    "server_params.prefill_nnodes",
+    "server_params.long_context",
+    *(f"server_params.engine_args.{name}" for name in sorted(_SPECULATIVE_ENGINE_ARGS)),
+    "benchmark_params.scaling_baseline_output_throughput",
+    "accuracy.custom_eval",
+    "accuracy.quant_parity",
+    "accuracy.mtp_quality",
+)
 
 
 def serialize_cli_options(options):
@@ -91,18 +90,6 @@ def parse_run_cell(key):
     return RunCell(key, **parse_cell_key(key))
 
 
-def container_ib_hcas(container):
-    """The devices ``container.env.NCCL_IB_HCA`` names, or None when it is not set."""
-    value = container.env.get("NCCL_IB_HCA")
-    if value is None:
-        return None
-    return [device.strip() for device in value.split(",") if device.strip()]
-
-
-def container_sets_sockets(container):
-    return bool(_SOCKET_ENV & set(container.env))
-
-
 def _refuse_false(flags, section, allowed=frozenset()):
     for name, value in flags.items():
         if name in allowed:
@@ -112,36 +99,9 @@ def _refuse_false(flags, section, allowed=frozenset()):
             raise ValueError(f"{section}.{name}=false is ambiguous; omit it or use the option's negative flag")
 
 
-def _not_implemented_fields(config):
-    server = config.server_params
-    fields = []
-    if server.dp != 1:
-        fields.append("server_params.dp")
-    if server.ep:
-        fields.append("server_params.ep")
-    if server.prefill_nnodes is not None:
-        fields.append("server_params.prefill_nnodes")
-    if any(value is not None for value in server.long_context.model_dump().values()):
-        fields.append("server_params.long_context")
-    fields.extend(
-        f"server_params.engine_args.{name}" for name in sorted(_SPECULATIVE_ENGINE_ARGS & set(server.engine_args))
-    )
-    if config.benchmark_params.scaling_baseline_output_throughput is not None:
-        fields.append("benchmark_params.scaling_baseline_output_throughput")
-    if config.accuracy.custom_eval:
-        fields.append("accuracy.custom_eval")
-    if config.accuracy.quant_parity != QuantParityConfig():
-        fields.append("accuracy.quant_parity")
-    if config.accuracy.mtp_quality != MtpQualityConfig():
-        fields.append("accuracy.mtp_quality")
-    return fields
-
-
 def _check_vllm(self):
     server = self.server_params
-    not_implemented = _not_implemented_fields(self)
-    if not_implemented:
-        raise ValueError(f"not implemented for vLLM: {', '.join(not_implemented)}; leave them at their defaults")
+    check_not_implemented("vLLM", not_implemented_names(self, fields=_NOT_IMPLEMENTED_FIELDS))
 
     check_flags(server.engine_args, "server_params.engine_args", _HARNESS_SERVER_FLAGS)
     _refuse_false(server.engine_args, "server_params.engine_args")
@@ -151,17 +111,7 @@ def _check_vllm(self):
         check_flags(overrides, f"sweeps.{key}", _CLIENT_WAIT_FLAGS)
         _refuse_false(overrides, f"sweeps.{key}", _BOOLEAN_CLIENT_FLAGS)
 
-    env = self.container.env
-    sockets = _SOCKET_ENV & set(env)
-    if sockets and sockets != _SOCKET_ENV:
-        raise ValueError(
-            f"container.env must set all socket interface variables together; missing: {sorted(_SOCKET_ENV - sockets)}"
-        )
-    empty = sorted(name for name in sockets if not env[name].strip())
-    if empty:
-        raise ValueError(f"container.env socket interface variables cannot be empty: {empty}")
-    if "NCCL_IB_HCA" in env and not container_ib_hcas(self.container):
-        raise ValueError("container.env.NCCL_IB_HCA must name at least one device")
+    check_container_network_env(self.container)
 
     unknown = sorted(set(self.thresholds.cells) - set(self.sweeps))
     if unknown:
@@ -284,26 +234,22 @@ _OLD_CLIENT_FIELDS = frozenset(
         "ignore_eos",
     }
 )
-# Each total is the first wait plus polls times the wait per poll; the third value is
-# the old schema's default for a key the config leaves out.
-_OLD_TIMEOUTS = {
-    "timeouts.server_ready_s": (
-        ("server_params", "server_warmup_wait_s", 330),
-        ("server_params", "server_poll_iterations", 60),
-        ("server_params", "server_poll_wait_s", 60),
-    ),
-    "timeouts.client_s": (
-        ("benchmark_params", "client_initial_wait_s", 120),
-        ("benchmark_params", "client_poll_iterations", 20),
-        ("benchmark_params", "client_poll_wait_s", 60),
-    ),
-}
+# The old wait and poll keys, each with the old schema's default for a key the config leaves out.
+_OLD_SERVER_WAITS = (
+    ("server_params", "server_warmup_wait_s", 330),
+    ("server_params", "server_poll_iterations", 60),
+    ("server_params", "server_poll_wait_s", 60),
+)
+_OLD_CLIENT_WAITS = (
+    ("benchmark_params", "client_initial_wait_s", 120),
+    ("benchmark_params", "client_poll_iterations", 20),
+    ("benchmark_params", "client_poll_wait_s", 60),
+)
 # Old client keys that move to client_args only when they change the client command.
 _OLD_CLIENT_DEFAULTS = {"dataset_name": "random", "ignore_eos": True, "trust_remote_code": False}
 _OLD_CELL_TIMEOUT_KEYS = _CLIENT_WAIT_FLAGS
 _OLD_DEFAULT_NUM_PROMPTS = 3200
 _OLD_THRESHOLD_KINDS = {"max_ms": "max", "min_tok_s": "min"}
-_ACCURACY_THRESHOLD_SECTIONS = frozenset({"lm_eval", "custom_eval", "quant_parity", "mtp_quality"})
 _NEW_SERVER_FIELDS = frozenset(ServingServerParams.model_fields)
 _NEW_CLIENT_FIELDS = frozenset(ServingBenchmarkParams.model_fields)
 
@@ -317,39 +263,8 @@ def _is_old_config(config):
     return "tensor_parallel_size" in _section(config, "server_params")
 
 
-def _old_int(config, section, key, default):
-    value = _section(config, section).get(key, default)
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{section}.{key} must be a whole number of seconds or iterations") from None
-
-
-def _timeouts_rule(config):
-    rows = {}
-    sweeps = _section(config, "sweeps")
-    for new_path, keys in _OLD_TIMEOUTS.items():
-        if not _is_old_config(config) and not any(key in _section(config, section) for section, key, _ in keys):
-            continue
-        base = {key: _old_int(config, section, key, default) for section, key, default in keys}
-        totals = [base[keys[0][1]] + base[keys[1][1]] * base[keys[2][1]]]
-        cell_rows = []
-        if new_path == "timeouts.client_s":
-            # One client total serves every cell, so it is the longest any cell waited.
-            for cell_key in sweeps:
-                cell = _section(sweeps, cell_key)
-                if not _OLD_CELL_TIMEOUT_KEYS & set(cell):
-                    continue
-                values = {
-                    key: _old_int({f"sweeps.{cell_key}": cell}, f"sweeps.{cell_key}", key, base[key]) for key in base
-                }
-                wait, count, poll = values.values()
-                totals.append(wait + count * poll)
-                cell_rows.extend(("sweeps", cell_key, key) for key in sorted(_OLD_CELL_TIMEOUT_KEYS & set(cell)))
-        row = OldKey(new_path, value=max(totals))
-        rows.update({f"{section}.{key}": row for section, key, _default in keys})
-        rows.update({path: row for path in cell_rows})
-    return rows
+def _first_wait_plus_polls(first_wait, polls, per_poll):
+    return first_wait + polls * per_poll
 
 
 def _fixed_value_row(value, expected):
@@ -407,43 +322,6 @@ def _flags_rule(config):
     return rows
 
 
-def _old_accuracy_spec_rows(cell, old_prefix, new_prefix):
-    """Rewrite the old kinds, and a quoted value as the old verdict code read it: with ``float``."""
-    rows = {}
-    for metric, spec in cell.items():
-        if not isinstance(spec, dict):
-            continue
-        kind = spec.get("kind")
-        if isinstance(kind, str) and kind in _OLD_THRESHOLD_KINDS:
-            new_path = (*new_prefix, metric, "kind")
-            rows[(*old_prefix, metric, "kind")] = OldKey(new_path, value=_OLD_THRESHOLD_KINDS[kind], conflict="replace")
-        value = spec.get("value")
-        if isinstance(value, str):
-            try:
-                number = float(value)
-            except ValueError:
-                continue
-            new_path = (*new_prefix, metric, "value")
-            rows[(*old_prefix, metric, "value")] = OldKey(new_path, value=number, conflict="replace")
-    return rows
-
-
-def _thresholds_rule(config):
-    """Move old accuracy thresholds under ``lm_eval``, rewriting their old kinds and quoted values."""
-    thresholds = _section(config, "thresholds")
-    rows = {}
-    accuracy = _section(thresholds, "accuracy")
-    if not set(accuracy) & _ACCURACY_THRESHOLD_SECTIONS:
-        for task_id, cell in accuracy.items():
-            if task_id.startswith("_"):
-                continue
-            old, new = ("thresholds", "accuracy", task_id), ("thresholds", "accuracy", "lm_eval", task_id)
-            rows[old] = OldKey(new)
-            if isinstance(cell, dict):
-                rows.update(_old_accuracy_spec_rows(cell, old, new))
-    return rows
-
-
 def resolve_old_vllm_keys(raw):
     """Map an old vLLM config, with its attached ``thresholds``, to the current names.
 
@@ -453,53 +331,39 @@ def resolve_old_vllm_keys(raw):
     converted, message = resolve_old_keys(
         raw,
         _OLD_KEYS,
-        rules=(_client_rule, _timeouts_rule, _flags_rule, _thresholds_rule),
+        rules=(
+            _client_rule,
+            old_timeout_rule(
+                "timeouts.server_ready_s", _OLD_SERVER_WAITS, _first_wait_plus_polls, force=_is_old_config
+            ),
+            old_timeout_rule(
+                "timeouts.client_s",
+                _OLD_CLIENT_WAITS,
+                _first_wait_plus_polls,
+                force=_is_old_config,
+                sweep_keys=_OLD_CELL_TIMEOUT_KEYS,
+            ),
+            _flags_rule,
+            old_accuracy_rule(_OLD_THRESHOLD_KINDS),
+        ),
         message="Deprecated vLLM config keys: {keys}. Use the new names; old keys will be removed in a future release.",
         label="vLLM config",
     )
-    # A sweep cell is a run even when it overrides nothing, so one emptied by the conversion stays.
-    if message and isinstance(raw.get("sweeps"), dict):
-        sweeps = converted.setdefault("sweeps", {})
-        for cell_key in raw["sweeps"]:
-            sweeps.setdefault(cell_key, {})
-    return converted, message
-
-
-def _reject_underscore_metric_keys(thresholds):
-    # A misspelled metric such as _output_throughput would otherwise be dropped
-    # as a comment, and enforcement only checks that the cell exists.
-    for cell_key, cell in thresholds.items():
-        if cell_key == "accuracy" or cell_key.startswith("_") or not isinstance(cell, dict):
-            continue
-        for metric, spec in cell.items():
-            if metric.startswith(_THRESHOLD_METADATA_PREFIXES):
-                continue
-            if metric.startswith("_"):
-                raise ValueError(f"unknown vLLM threshold metric {metric!r}")
-            extra = sorted(key for key in spec if key.startswith("_")) if isinstance(spec, dict) else []
-            if extra:
-                raise ValueError(f"{cell_key}.{metric}: unknown threshold fields {extra}")
+    return keep_sweep_cells(raw, converted), message
 
 
 def load_variant(config_path, cluster_dict, warn=True):
     """Load and validate one vLLM config against its resolved cluster dict.
 
-    Substitutes the config's placeholders, attaches the threshold file it names
-    (none records every metric without gating), converts old keys and raises
-    one warning naming them unless ``warn`` is false, then validates. A config
-    that does not validate raises `ConfigError` naming each field, never a value.
+    Runs the shared inference load path with `VllmConfig` and vLLM's old-key
+    tables: placeholders, the threshold file it names (none records every
+    metric without gating), one warning naming each old key unless ``warn`` is
+    false, then validation. A config that does not validate raises
+    `ConfigError` naming each field, never a value.
     """
-    config_path = Path(config_path)
-    raw = substitute_placeholders(config_path, cluster_dict, all_placeholders=True)
-    raw = attach_threshold_file(raw, {"config_path": config_path})
-    _reject_underscore_metric_keys(raw["thresholds"])
-    raw, message = resolve_old_vllm_keys(raw)
-    if warn:
-        warn_old_keys(message)
-    try:
-        return VllmConfig.model_validate(raw)
-    except ValidationError as exc:
-        raise ConfigError(config_path, validation_problem_lines(exc)) from None
+    return load_inference_variant(
+        config_path, cluster_dict, VllmConfig, "vLLM", resolve_old=resolve_old_vllm_keys, warn=warn
+    )
 
 
 def _deep_merge(base, override):

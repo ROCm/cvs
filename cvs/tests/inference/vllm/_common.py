@@ -8,7 +8,8 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.inference.utils.vllm_config_loader import container_ib_hcas, load_variant
+from cvs.lib.inference.utils.vllm_config_loader import load_variant
+from cvs.parsers.schemas import container_ib_hcas
 from cvs.lib.inference.utils.vllm_metrics import (
     METRIC_REGISTRY,
     VLLM_RESULTS_COLUMNS,

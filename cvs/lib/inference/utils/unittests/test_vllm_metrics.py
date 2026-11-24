@@ -17,6 +17,7 @@ from cvs.lib.inference.utils.vllm_metrics import (
     merge_metric_sources,
     metric_verdict,
     project_vllm_metrics,
+    validate_threshold_spec,
 )
 from cvs.lib.utils.gpu import GPU_METRICS
 
@@ -292,6 +293,17 @@ class TestStrictMetricVerdict(unittest.TestCase):
                     {"kind": "max", "value": target},
                 )
                 self.assertEqual(status, expected)
+
+    def test_info_spec_is_valid_for_either_direction(self):
+        for metric in ("output_throughput", "p99_ttft_ms"):
+            with self.subTest(metric=metric):
+                validate_threshold_spec(metric, {"kind": "info", "value": 0})
+                self.assertEqual(metric_verdict(metric, 10**9, {"kind": "info", "value": 0}), ("pass", ""))
+                self.assertEqual(metric_verdict(metric, None, {"kind": "info", "value": 0}), ("pass", ""))
+        with self.assertRaisesRegex(ValueError, "finite"):
+            validate_threshold_spec("output_throughput", {"kind": "info", "value": math.inf})
+        with self.assertRaisesRegex(ValueError, "kind must be 'min'"):
+            validate_threshold_spec("output_throughput", {"kind": "max", "value": 1})
 
     def test_every_invalid_actual_fails(self):
         for actual in (None, True, "1", [], {}, {1}, math.nan, math.inf, -math.inf):
