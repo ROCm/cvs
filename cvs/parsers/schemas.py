@@ -1442,7 +1442,7 @@ def parse_cell_key(key):
     """Return a cell key's axes as ints; the key reads ``ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>``."""
     match = _CELL_KEY_RE.fullmatch(key) if isinstance(key, str) else None
     if not match:
-        raise ValueError(f"{key!r} is not a cell key of the form ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>")
+        raise ValueError("not a cell key of the form ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>")
     return dict(zip(_CELL_KEY_AXES, (int(number) for number in match.groups())))
 
 
@@ -1458,7 +1458,7 @@ def check_flags(flags, section, reserved):
     """Check a snake_case flag map: names, value shapes, and no flag the harness sets itself."""
     for name, value in flags.items():
         if not _FLAG_NAME_RE.fullmatch(name):
-            raise ValueError(f"{section}.{name}: flag names must be snake_case")
+            raise ValueError(f"{section}: flag names must be snake_case")
         if isinstance(value, list) and any(isinstance(item, (list, dict)) for item in value):
             raise ValueError(f"{section}.{name}: lists may hold scalar values only")
         if isinstance(value, dict):
@@ -1570,7 +1570,8 @@ ServingServerParams = create_model(
     ep=(StrictBool, False),
     port=(int, 8888),
     master_port=(int, 29501),
-    # null means 1, single only; distributed needs at least 2.
+    # null means 1. The suite, not the config, picks single or distributed, so a
+    # floor for distributed runs belongs where hosts are picked.
     nnodes=(Optional[PositiveInt], None),
     # Disaggregated only; null splits nnodes in half.
     prefill_nnodes=(Optional[PositiveInt], None),
@@ -1848,12 +1849,12 @@ def _check_sweeps_and_runs(self):
         check_flags(overrides, f"sweeps.{key}", _CELL_RESERVED)
     if not self.runs:
         raise ValueError("runs must list at least one sweeps key")
-    repeated = sorted(key for key, count in Counter(self.runs).items() if count > 1)
+    repeated = [index for index, key in enumerate(self.runs) if key in self.runs[:index]]
     if repeated:
-        raise ValueError(f"runs repeats {repeated}")
-    unknown = [key for key in self.runs if key not in self.sweeps]
+        raise ValueError(f"runs repeats an earlier entry at positions {repeated}")
+    unknown = [index for index, key in enumerate(self.runs) if key not in self.sweeps]
     if unknown:
-        raise ValueError(f"runs names keys missing from sweeps: {unknown}")
+        raise ValueError(f"runs names keys missing from sweeps at positions {unknown}")
     return self
 
 
@@ -1880,7 +1881,8 @@ InferenceVariantConfig = create_model(
     },
     # false records every metric without failing.
     enforce_thresholds=(bool, True),
-    # Threshold file next to the config or packaged; "" records without gating.
+    # Threshold file next to the config or packaged. For "", attach_threshold_file
+    # sets enforce_thresholds false, so metrics record without gating.
     threshold_json=(str, ""),
     paths=(Paths, ...),
     container=(ServingContainerSpec, ...),
@@ -1897,7 +1899,10 @@ InferenceVariantConfig = create_model(
 
 
 def validation_problem_lines(exc):
-    """One ``field.path: message`` line per error in a pydantic ``ValidationError``, never an input value."""
+    """One ``field.path: message`` line per error in a pydantic ``ValidationError``, never an input value.
+
+    A key that fails its own check prints as ``<key>``; a misplaced value can land there.
+    """
     lines = []
     for error in exc.errors(include_input=False, include_url=False):
         loc = error["loc"]
@@ -1907,7 +1912,13 @@ def validation_problem_lines(exc):
             for index, part in enumerate(loc)
             if not (part == "cells" and loc[index - 1 : index] == ("thresholds",))
         ]
-        location = ".".join(str(part) for part in loc) or "(config)"
+        parts = []
+        for part in loc:
+            if part == "[key]" and parts:
+                parts[-1] = "<key>"
+            else:
+                parts.append(part)
+        location = ".".join(str(part) for part in parts) or "(config)"
         lines.append(f"{location}: {error['msg'].removeprefix('Value error, ')}")
     return lines
 

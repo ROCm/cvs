@@ -88,6 +88,10 @@ def inference_config(**overrides):
     return config
 
 
+SECRET = "sk-SECRET123"
+CELL_KEY_FORM = "ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>"
+
+
 def problems(raw):
     try:
         InferenceVariantConfig.model_validate(raw)
@@ -217,7 +221,7 @@ class TestInferenceVariantConfigBlocks(unittest.TestCase):
 
         lines = problems(inference_config(thresholds={CELL: {}, "throughput": {}}))
         self.assertEqual(len(lines), 1)
-        self.assertTrue(lines[0].startswith("thresholds.throughput.[key]: "), lines[0])
+        self.assertTrue(lines[0].startswith("thresholds.<key>: not a cell key"), lines[0])
 
     def test_threshold_file_round_trips_in_its_file_shape(self):
         config = InferenceVariantConfig.model_validate(inference_config())
@@ -263,7 +267,7 @@ class TestInferenceVariantConfigBlocks(unittest.TestCase):
             ),
             "repeated run": ({"runs": [CELL, CELL]}, "runs repeats"),
             "empty runs": ({"runs": []}, "runs must list at least one sweeps key"),
-            "axes out of order": ({"sweeps": {CELL: {}, bad_cell: {}}}, f"sweeps.{bad_cell}.[key]: "),
+            "axes out of order": ({"sweeps": {CELL: {}, bad_cell: {}}}, "sweeps.<key>: not a cell key"),
             "TP unequal": ({"sweeps": {CELL: {}, tp4_cell: {}}}, "TP and PP must equal server_params"),
             "reserved override": ({"sweeps": {CELL: {"max_concurrency": 4}}}, "cannot set harness fields"),
             "server override": ({"sweeps": {CELL: {"port": 9000}}}, "cannot set harness fields"),
@@ -273,6 +277,32 @@ class TestInferenceVariantConfigBlocks(unittest.TestCase):
                 lines = problems(inference_config(**overrides))
                 self.assertEqual(len(lines), 1, lines)
                 self.assertIn(expected, lines[0])
+
+    def test_rejected_sweep_key_not_printed(self):
+        raw = inference_config()
+        raw["sweeps"][SECRET] = {}
+        self.assertEqual(problems(raw), [f"sweeps.<key>: not a cell key of the form {CELL_KEY_FORM}"])
+
+    def test_rejected_threshold_key_not_printed(self):
+        raw = inference_config(thresholds={CELL: {}, SECRET: {"output_throughput": {"kind": "min", "value": 1}}})
+        self.assertEqual(problems(raw), [f"thresholds.<key>: not a cell key of the form {CELL_KEY_FORM}"])
+
+    def test_bad_flag_name_not_printed(self):
+        raw = inference_config()
+        raw["server_params"]["engine_args"] = {SECRET: 1}
+        raw["sweeps"][CELL] = {SECRET: 1}
+        self.assertEqual(problems(raw), ["server_params: engine_args: flag names must be snake_case"])
+        raw["server_params"]["engine_args"] = {}
+        self.assertEqual(problems(raw), [f"(config): sweeps.{CELL}: flag names must be snake_case"])
+
+    def test_bad_run_entry_not_printed(self):
+        cases = {
+            "unknown": ([CELL, SECRET], "(config): runs names keys missing from sweeps at positions [1]"),
+            "repeated": ([SECRET, CELL, SECRET], "(config): runs repeats an earlier entry at positions [2]"),
+        }
+        for name, (runs, expected) in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(problems(inference_config(runs=runs, enforce_thresholds=False)), [expected])
 
     def test_engine_and_client_flags(self):
         good = inference_config()
