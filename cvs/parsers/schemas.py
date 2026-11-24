@@ -1419,6 +1419,7 @@ _HF_TOKEN_ENV = frozenset({"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"})
 _CELL_KEY_RE = re.compile(r"^ISL=([1-9]\d*),OSL=([1-9]\d*),TP=([1-9]\d*),PP=([1-9]\d*),CONC=([1-9]\d*)$")
 _CELL_KEY_AXES = ("isl", "osl", "tp", "pp", "concurrency")
 _FLAG_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_PLAIN_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # Client flags the harness sets for every cell.
 HARNESS_CLIENT_FLAGS = frozenset(
     {
@@ -1570,8 +1571,8 @@ ServingServerParams = create_model(
     ep=(StrictBool, False),
     port=(int, 8888),
     master_port=(int, 29501),
-    # null means 1. The suite, not the config, picks single or distributed, so a
-    # floor for distributed runs belongs where hosts are picked.
+    # null means 1. Nothing checks a floor for distributed runs yet: the suite, not
+    # the config, picks the mode, so that check belongs where hosts are picked.
     nnodes=(Optional[PositiveInt], None),
     # Disaggregated only; null splits nnodes in half.
     prefill_nnodes=(Optional[PositiveInt], None),
@@ -1794,12 +1795,19 @@ AccuracyConfig = create_model(
 )
 
 
+def _printable_key(key):
+    """The key itself when it is a plain name or a cell key, else ``<key>``."""
+    if isinstance(key, str) and (_PLAIN_KEY_RE.fullmatch(key) or _CELL_KEY_RE.fullmatch(key)):
+        return key
+    return "<key>"
+
+
 def _changeme_paths(value, path):
     if isinstance(value, str):
         return [path] if _CHANGEME_RE.search(value) else []
     if isinstance(value, dict):
         items = ((key, item) for key, item in value.items() if not (isinstance(key, str) and key.startswith("_")))
-        return [found for key, item in items for found in _changeme_paths(item, f"{path}.{key}")]
+        return [found for key, item in items for found in _changeme_paths(item, f"{path}.{_printable_key(key)}")]
     if isinstance(value, list):
         return [found for index, item in enumerate(value) for found in _changeme_paths(item, f"{path}[{index}]")]
     return []
@@ -1851,10 +1859,10 @@ def _check_sweeps_and_runs(self):
         raise ValueError("runs must list at least one sweeps key")
     repeated = [index for index, key in enumerate(self.runs) if key in self.runs[:index]]
     if repeated:
-        raise ValueError(f"runs repeats an earlier entry at positions {repeated}")
+        raise ValueError(f"runs repeats an earlier entry at {', '.join(f'runs.{index}' for index in repeated)}")
     unknown = [index for index, key in enumerate(self.runs) if key not in self.sweeps]
     if unknown:
-        raise ValueError(f"runs names keys missing from sweeps at positions {unknown}")
+        raise ValueError(f"runs names keys missing from sweeps at {', '.join(f'runs.{index}' for index in unknown)}")
     return self
 
 
@@ -1901,23 +1909,30 @@ InferenceVariantConfig = create_model(
 def validation_problem_lines(exc):
     """One ``field.path: message`` line per error in a pydantic ``ValidationError``, never an input value.
 
-    A key that fails its own check prints as ``<key>``; a misplaced value can land there.
+    A key that fails its own check prints as ``<key>`` in every line under it, and
+    so does an unknown key that isn't a plain name: a misplaced value can land there.
     """
-    lines = []
-    for error in exc.errors(include_input=False, include_url=False):
-        loc = error["loc"]
-        # A threshold file's cells are grouped under ``cells`` only inside the model.
-        loc = [
+    errors = exc.errors(include_input=False, include_url=False)
+    # A threshold file's cells are grouped under ``cells`` only inside the model.
+    locs = [
+        tuple(
             part
-            for index, part in enumerate(loc)
-            if not (part == "cells" and loc[index - 1 : index] == ("thresholds",))
-        ]
+            for index, part in enumerate(error["loc"])
+            if not (part == "cells" and error["loc"][index - 1 : index] == ("thresholds",))
+        )
+        for error in errors
+    ]
+    rejected = {loc[:index] for loc in locs for index, part in enumerate(loc) if part == "[key]"}
+    lines = []
+    for error, loc in zip(errors, locs):
         parts = []
-        for part in loc:
-            if part == "[key]" and parts:
-                parts[-1] = "<key>"
-            else:
-                parts.append(part)
+        for index, part in enumerate(loc):
+            if part == "[key]":
+                continue
+            unknown = error["type"] == "extra_forbidden" and index == len(loc) - 1
+            if loc[: index + 1] in rejected or (unknown and _printable_key(part) != part):
+                part = "<key>"
+            parts.append(part)
         location = ".".join(str(part) for part in parts) or "(config)"
         lines.append(f"{location}: {error['msg'].removeprefix('Value error, ')}")
     return lines

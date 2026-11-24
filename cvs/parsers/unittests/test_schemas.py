@@ -295,10 +295,48 @@ class TestInferenceVariantConfigBlocks(unittest.TestCase):
         raw["server_params"]["engine_args"] = {}
         self.assertEqual(problems(raw), [f"(config): sweeps.{CELL}: flag names must be snake_case"])
 
+    def test_rejected_key_with_bad_value_not_printed(self):
+        raw = inference_config(thresholds={CELL: {}, SECRET: {"output_throughput": {"kind": "bad", "value": 1}}})
+        raw["sweeps"][SECRET] = "not a dict"
+        lines = problems(raw)
+        self.assertEqual(
+            lines,
+            [
+                f"sweeps.<key>: not a cell key of the form {CELL_KEY_FORM}",
+                "sweeps.<key>: Input should be a valid dictionary",
+                f"thresholds.<key>: not a cell key of the form {CELL_KEY_FORM}",
+                "thresholds.<key>.output_throughput.kind: Input should be 'min', 'max' or 'info'",
+            ],
+        )
+
+    def test_unknown_key_printed_only_when_plain(self):
+        raw = inference_config()
+        raw[SECRET] = 1
+        raw["server_params"][SECRET] = 1
+        raw["server_params"]["tpp"] = 8
+        self.assertEqual(
+            problems(raw),
+            [
+                "server_params.<key>: Extra inputs are not permitted",
+                "server_params.tpp: Extra inputs are not permitted",
+                "<key>: Extra inputs are not permitted",
+            ],
+        )
+
+    def test_changeme_under_rejected_key_not_printed(self):
+        raw = inference_config()
+        raw["sweeps"][SECRET] = {"temperature": "<changeme>"}
+        raw["container"]["env"] = {"NCCL_IB_HCA": "<changeme>", SECRET: "<changeme>"}
+        lines = problems(raw)
+        self.assertEqual(len(lines), 2, lines)
+        self.assertIn("in env.NCCL_IB_HCA, env.<key>", lines[0])
+        self.assertIn("in <key>.temperature", lines[1])
+        self.assertNotIn(SECRET, "".join(lines))
+
     def test_bad_run_entry_not_printed(self):
         cases = {
-            "unknown": ([CELL, SECRET], "(config): runs names keys missing from sweeps at positions [1]"),
-            "repeated": ([SECRET, CELL, SECRET], "(config): runs repeats an earlier entry at positions [2]"),
+            "unknown": ([CELL, SECRET], "(config): runs names keys missing from sweeps at runs.1"),
+            "repeated": ([SECRET, CELL, SECRET], "(config): runs repeats an earlier entry at runs.2"),
         }
         for name, (runs, expected) in cases.items():
             with self.subTest(name=name):
