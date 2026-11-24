@@ -253,7 +253,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             ["/cluster:/cluster", f"/home/x/.hf:{CONTAINER_HF_TOKEN_PATH}:ro"],
         )
 
-    def _token_mount_variant(self, container):
+    def _token_mount_variant(self, container, accuracy=None, accuracy_thresholds=None):
         sweep = Sweep(
             sequence_combinations=[SeqCombo(name="legacy_profile", isl="7168", osl="1024")],
             runs=[Run(combo="legacy_profile", concurrency=64)],
@@ -261,6 +261,8 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         thresholds = {
             "ISL=7168,OSL=1024,TP=8,PP=1,CONC=64": placeholder_gated_threshold_cell(),
         }
+        if accuracy_thresholds is not None:
+            thresholds["accuracy"] = accuracy_thresholds
         return AtomVariantConfig(
             schema_version=1,
             framework="atom",
@@ -276,6 +278,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             container=container,
             params={"tensor_parallelism": "8"},
             sweep=sweep,
+            accuracy=accuracy or {},
             thresholds=thresholds,
         )
 
@@ -286,15 +289,10 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.lm_eval_thresholds("mmlu"), {})
 
         spec = {"kind": "min", "value": 0.5}
-        variant = AtomVariantConfig(
-            **{
-                **variant.model_dump(include={"schema_version", "framework", "gpu_arch", "paths", "model", "params"}),
-                "container": container,
-                "sweep": variant.sweep,
-                "enforce_thresholds": False,
-                "accuracy": {"tasks": [{"id": "mmlu", "task": "mmlu"}, {"id": "gsm8k", "task": "gsm8k"}]},
-                "thresholds": {**variant.thresholds, "accuracy": {"mmlu": {"mmlu.acc__none": spec}}},
-            }
+        variant = self._token_mount_variant(
+            container,
+            accuracy={"tasks": [{"id": "mmlu", "task": "mmlu"}, {"id": "gsm8k", "task": "gsm8k"}]},
+            accuracy_thresholds={"mmlu": {"mmlu.acc__none": spec}},
         )
         self.assertEqual([task.id for task in variant.lm_eval_tasks()], ["mmlu", "gsm8k"])
         self.assertEqual(variant.lm_eval_thresholds("mmlu"), {"mmlu.acc__none": spec})
