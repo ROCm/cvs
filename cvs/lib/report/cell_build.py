@@ -107,7 +107,10 @@ class CellRecordBuilder:
         specs = self.config.tier_metric_specs(thresholds_cell, tier)
         if not specs:
             return "na"
-        for metric, spec in specs.items():
+        gated = {metric: spec for metric, spec in specs.items() if spec.get("kind") != "info"}
+        if not gated:
+            return "record"
+        for metric, spec in gated.items():
             status = metric_pass(
                 metric,
                 actuals.get(metric),

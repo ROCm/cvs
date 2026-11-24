@@ -2318,11 +2318,13 @@ def _old_spec_rows(cell, old_prefix, new_prefix, kinds, names=None, quoted=False
 def old_cell_kind_rule(kinds, names=None):
     """Rewrite old threshold kinds in every threshold cell, such as ``max_ms`` to ``max``.
 
-    ``names`` is the suite's old to new metric names, so a kind lands on the renamed metric.
+    ``names`` is the suite's old to new metric names: this rule then renames
+    them too, as ``old_metric_name_rule`` does, so the kind lands on the
+    renamed metric whichever order the rules run in.
     """
 
     def rule(config):
-        rows = {}
+        rows = old_metric_name_rule(names)(config) if names else {}
         for cell_key, cell in _old_threshold_cells(config):
             prefix = ("thresholds", cell_key)
             rows.update(_old_spec_rows(cell, prefix, prefix, kinds, names))
@@ -2371,6 +2373,20 @@ def old_accuracy_rule(kinds=None):
     return rule
 
 
+def keep_sweep_cells(raw, converted):
+    """Put back every sweep cell an old-key conversion emptied and dropped.
+
+    A sweep cell is a run even when it overrides nothing, but ``resolve_old_keys``
+    drops a parent it empties, as when ``old_timeout_rule`` moves a cell's only key.
+    """
+    if converted is raw or not isinstance(raw.get("sweeps"), dict):
+        return converted
+    sweeps = converted.setdefault("sweeps", {})
+    for cell_key in raw["sweeps"]:
+        sweeps.setdefault(cell_key, {})
+    return converted
+
+
 def _old_whole(section_values, where, key, default):
     try:
         return int(section_values.get(key, default))
@@ -2385,7 +2401,7 @@ def old_timeout_rule(new_path, keys, total, force=None, sweep_keys=frozenset()):
     values in that order and returns seconds. The rule runs when the config
     holds any of the keys, or when ``force(config)`` is true. A sweep cell
     overriding one of ``sweep_keys`` gets its own total, and the longest wins,
-    since one total serves every cell.
+    since one total serves every cell; pass the result through ``keep_sweep_cells``.
     """
 
     def rule(config):

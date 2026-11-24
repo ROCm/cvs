@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from cvs.lib.inference.utils.vllm_metrics import metric_verdict as vllm_metric_verdict
 from cvs.lib.report.cell_build import (
+    CellRecordBuilder,
     bar_pct,
     build_all_cells,
     build_cell_record,
@@ -25,6 +26,21 @@ class TestCellBuild(unittest.TestCase):
         self.assertEqual(metric_pass("output_throughput", 1.0, info, evaluator=vllm_metric_verdict), "record")
         self.assertEqual(metric_pass("output_throughput", 1.0, {"kind": "min", "value": 5}), "fail")
         self.assertEqual(metric_pass("output_throughput", 1.0, {"kind": "bogus", "value": 5}), "fail")
+
+    def test_tier_with_only_info_specs_records(self):
+        info = {"kind": "info", "value": 0}
+        tiers = {
+            "info_only": {"client.output_throughput": info},
+            "mixed": {"client.output_throughput": info, "client.failed": {"kind": "max", "value": 0}},
+            "empty": {},
+        }
+        config = replace(generic_inference_report_config(), tier_metric_specs=lambda _cell, tier: tiers[tier])
+        builder = CellRecordBuilder(config)
+        actuals = {"client.output_throughput": 1.0, "client.failed": 3.0}
+        self.assertEqual(builder.tier_status(actuals, {}, "info_only", True), "record")
+        self.assertEqual(builder.tier_status(actuals, {}, "mixed", True), "fail")
+        self.assertEqual(builder.tier_status({**actuals, "client.failed": 0.0}, {}, "mixed", True), "pass")
+        self.assertEqual(builder.tier_status(actuals, {}, "empty", True), "na")
 
     def test_margin_shown_when_record_only_and_spec_present(self):
         variant = SimpleNamespace(

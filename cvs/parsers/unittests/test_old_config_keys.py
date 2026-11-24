@@ -11,6 +11,7 @@ from cvs.parsers.schemas import (
     old_accuracy_rule,
     old_cell_kind_rule,
     old_metric_name_rule,
+    keep_sweep_cells,
     old_timeout_rule,
     resolve_old_keys,
     warn_old_keys,
@@ -283,8 +284,14 @@ class TestOldKeyRuleBuilders(unittest.TestCase):
 
     def test_kind_rule_follows_a_rename(self):
         config = {"thresholds": {CELL: {"queue_time_p50_ms": {"kind": "max_ms", "value": 3}}}}
-        converted, _ = convert(config, old_metric_name_rule(NAMES), old_cell_kind_rule(KINDS, names=NAMES))
-        self.assertEqual(converted["thresholds"][CELL], {"p50_queue_time_ms": {"kind": "max", "value": 3}})
+        expected = {"p50_queue_time_ms": {"kind": "max", "value": 3}}
+        for rules in (
+            (old_metric_name_rule(NAMES), old_cell_kind_rule(KINDS, names=NAMES)),
+            (old_cell_kind_rule(KINDS, names=NAMES), old_metric_name_rule(NAMES)),
+            (old_cell_kind_rule(KINDS, names=NAMES),),
+        ):
+            with self.subTest(rules=len(rules)):
+                self.assertEqual(convert(config, *rules)[0]["thresholds"][CELL], expected)
 
     def test_name_rule_renames_and_fails_when_a_cell_sets_both_names(self):
         spec = {"kind": "max", "value": 3}
@@ -329,6 +336,12 @@ class TestOldKeyRuleBuilders(unittest.TestCase):
         self.assertEqual(converted["timeouts"]["client_s"], 120 + 200 * 60)
         self.assertEqual(converted["sweeps"], {cell: {"x": 1}})
         self.assertIn(f"sweeps.{cell}.polls -> timeouts.client_s", message)
+        raw = {"client": {"polls": 2}, "sweeps": {cell: {"polls": 200}, "other": {}}}
+        converted, _ = convert(raw, rule)
+        self.assertNotIn(cell, converted["sweeps"])
+        self.assertEqual(keep_sweep_cells(raw, converted)["sweeps"], {cell: {}, "other": {}})
+        untouched = {"sweeps": {cell: {}}}
+        self.assertIs(keep_sweep_cells(untouched, untouched), untouched)
 
     def test_timeout_rule_runs_only_when_asked_and_refuses_non_numbers(self):
         keys = (("client", "wait", 10), ("client", "polls", 2), ("client", "every", 5))
