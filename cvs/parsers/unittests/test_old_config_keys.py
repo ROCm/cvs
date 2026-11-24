@@ -311,6 +311,8 @@ class TestOldKeyRuleBuilders(unittest.TestCase):
         self.assertEqual((spec, type(spec["value"])), ({"kind": "min", "value": 0.75}, float))
         self.assertIn(f"thresholds.accuracy.task.{METRIC}.value", message)
         self.assertIn("thresholds.accuracy.task -> thresholds.accuracy.lm_eval.task", message)
+        self.assertEqual(converted["thresholds"]["accuracy"]["_comment"], "x")
+        self.assertNotIn("_comment", converted["thresholds"]["accuracy"]["lm_eval"])
 
     def test_accuracy_rule_leaves_new_layouts_and_unreadable_values(self):
         new = {"thresholds": {"accuracy": {"lm_eval": {"task": {METRIC: {"kind": "min", "value": "0.75"}}}}}}
@@ -342,6 +344,19 @@ class TestOldKeyRuleBuilders(unittest.TestCase):
         self.assertEqual(keep_sweep_cells(raw, converted)["sweeps"], {cell: {}, "other": {}})
         untouched = {"sweeps": {cell: {}}}
         self.assertIs(keep_sweep_cells(untouched, untouched), untouched)
+
+    def test_timeout_rule_keeps_the_base_total_when_a_sweep_waits_less(self):
+        keys = (("client", "wait", 0), ("client", "polls", 20), ("client", "every", 60))
+        rule = old_timeout_rule("timeouts.client_s", keys, lambda w, p, e: w + p * e, sweep_keys={"polls"})
+        converted, _ = convert({"client": {"polls": 20}, "sweeps": {"a": {"polls": 1}}}, rule)
+        self.assertEqual(converted["timeouts"]["client_s"], 1200)
+
+    def test_timeout_rule_needs_distinct_key_names(self):
+        with self.assertRaisesRegex(ValueError, "distinct key names"):
+            old_timeout_rule("timeouts.client_s", (("a", "wait", 1), ("b", "wait", 1)), lambda w1, w2: w1 + w2)
+
+    def test_keep_sweep_cells_without_sweeps(self):
+        self.assertEqual(keep_sweep_cells({"a": 1}, {"b": 1}), {"b": 1})
 
     def test_timeout_rule_runs_only_when_asked_and_refuses_non_numbers(self):
         keys = (("client", "wait", 10), ("client", "polls", 2), ("client", "every", 5))

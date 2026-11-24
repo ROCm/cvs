@@ -1907,7 +1907,7 @@ InferenceVariantConfig = create_model(
     thresholds=(ThresholdFile, Field(default_factory=ThresholdFile)),
 )
 
-# The non-accuracy metrics vLLM's shipped threshold files gate, statistic first.
+# The non-accuracy metrics a unified inference threshold file gates, statistic first.
 # A suite adds each one a threshold cell lacks as ``info`` (``fill_info_specs``).
 UNIFIED_GATED_METRICS = frozenset(
     {
@@ -2398,12 +2398,16 @@ def old_timeout_rule(new_path, keys, total, force=None, sweep_keys=frozenset()):
     """Convert old wait and poll keys into one ``timeouts`` total.
 
     ``keys`` are ``(section, key, default)`` triples, and ``total`` takes their
-    values in that order and returns seconds. The rule runs when the config
-    holds any of the keys, or when ``force(config)`` is true and the config
-    holds some other old key, since ``resolve_old_keys`` changes nothing without one. A sweep cell
-    overriding one of ``sweep_keys`` gets its own total, and the longest wins,
-    since one total serves every cell; pass the result through ``keep_sweep_cells``.
+    values in that order and returns seconds; each key name appears once. The
+    rule runs when the config holds any of the keys, or when ``force(config)``
+    is true and the config holds some other old key, since ``resolve_old_keys``
+    changes nothing without one. A sweep cell overriding one of ``sweep_keys``
+    gets its own total, and the longest wins, since one total serves every
+    cell; pass the result through ``keep_sweep_cells``.
     """
+    names = [key for _section, key, _default in keys]
+    if len(set(names)) != len(names):
+        raise ValueError(f"old_timeout_rule needs distinct key names, got {names}")
 
     def rule(config):
         present = any(key in _old_section(config, section) for section, key, _default in keys)

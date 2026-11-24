@@ -40,7 +40,7 @@ from cvs.lib.utils.config_loader import (
     substitute_config,
     substitute_placeholders,
 )
-from cvs.parsers.schemas import InferenceVariantConfig, resolve_old_keys
+from cvs.parsers.schemas import InferenceVariantConfig, old_metric_name_rule, resolve_old_keys
 from cvs.unittests.support import FAKE_CRED
 
 # ---------------------------------------------------------------------------
@@ -663,6 +663,30 @@ class TestLoadVariant(unittest.TestCase):
         self.assertIn("HF_TOKEN", message)
         self.assertNotIn(FAKE_CRED, message)
         self.assertTrue(caught.exception.problems)
+
+    def test_fill_runs_after_old_keys_and_honors_required(self):
+        def resolve_old(raw):
+            return resolve_old_keys(
+                raw,
+                {"server_params.tensor_parallel_size": "server_params.tp"},
+                rules=(old_metric_name_rule({"queue_time_p50_ms": "p50_queue_time_ms"}),),
+            )
+
+        thresholds = {"_comment": "text", CELL: {"queue_time_p50_ms": {"kind": "max", "value": 3}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            loaded, _ = _load(
+                tmp,
+                _inference_config(),
+                thresholds,
+                resolve_old=resolve_old,
+                gated={"p50_queue_time_ms", "output_throughput", "failed"},
+                required={"output_throughput"},
+                warn=False,
+            )
+        self.assertEqual(
+            loaded.thresholds.get(CELL),
+            {"p50_queue_time_ms": {"kind": "max", "value": 3}, "failed": {"kind": "info", "value": 0}},
+        )
 
     def test_underscore_metric_key_fails_naming_the_suite(self):
         for cell, pattern in (

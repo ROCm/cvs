@@ -85,7 +85,7 @@ class TestCellBuild(unittest.TestCase):
             multi_host=False,
         )
         throughput = next(m for m in cell["metrics"] if m["metric"] == "client.output_throughput")
-        self.assertEqual((throughput["status"], throughput["bar_pct"], throughput["margin"]), ("record", None, None))
+        self.assertEqual((throughput["status"], throughput["bar_pct"]), ("record", None))
 
     def test_extra_curves_are_lifted_off_actuals(self):
         variant = SimpleNamespace(

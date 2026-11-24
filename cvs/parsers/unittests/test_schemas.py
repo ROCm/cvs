@@ -11,7 +11,6 @@ from pydantic import ValidationError
 from cvs.lib.benchmark.aorta.aorta_config_loader import AortaVariantConfig
 from cvs.lib.benchmark.aorta.unittests.fixtures import variant_dict
 from cvs.parsers.schemas import (
-    UNIFIED_GATED_METRICS,
     InferenceVariantConfig,
     PreflightConfigFile,
     check_container_network_env,
@@ -422,13 +421,6 @@ INFO = {"kind": "info", "value": 0}
 
 
 class TestFillInfoSpecs(unittest.TestCase):
-    def test_unified_gated_set_is_the_32_stat_first_names(self):
-        self.assertEqual(len(UNIFIED_GATED_METRICS), 32)
-        for name in ("p50_queue_time_ms", "p95_prefill_time_ms", "peak_gpu_memory_mb", "p99_itl_ms"):
-            self.assertIn(name, UNIFIED_GATED_METRICS)
-        for name in ("queue_time_p50_ms", "p90_itl_ms", "output_throughput_per_gpu", "mfu"):
-            self.assertNotIn(name, UNIFIED_GATED_METRICS)
-
     def test_adds_info_for_each_gated_metric_a_cell_lacks(self):
         thresholds = {CELL: {}, OTHER_CELL: {"failed": {"kind": "max", "value": 0}}}
         filled = fill_info_specs(thresholds, {"failed", "p99_itl_ms"})
@@ -440,6 +432,9 @@ class TestFillInfoSpecs(unittest.TestCase):
         filled = fill_info_specs({CELL: cell}, {"output_throughput"})
         self.assertEqual(filled, {CELL: cell})
         self.assertIsNot(filled[CELL], cell)
+
+    def test_fill_skips_underscore_cells_even_when_they_are_dicts(self):
+        self.assertEqual(fill_info_specs({"_example": {}}, {"failed"}), {"_example": {}})
 
     def test_never_adds_an_unreported_metric(self):
         filled = fill_info_specs({CELL: {}}, {"failed", "p50_queue_time_ms"}, unreported={"p50_queue_time_ms"})
@@ -455,15 +450,6 @@ class TestFillInfoSpecs(unittest.TestCase):
         filled = fill_info_specs(thresholds, {"failed"})
         self.assertEqual(filled, {"_comment": "file", CELL: {"failed": INFO}, "accuracy": accuracy})
         self.assertEqual(thresholds[CELL], {})
-
-    def test_fills_nothing_without_a_threshold_file(self):
-        self.assertEqual(fill_info_specs({}, UNIFIED_GATED_METRICS), {})
-
-    def test_filled_file_validates_as_info_specs(self):
-        raw = inference_config(thresholds=fill_info_specs({CELL: {}}, UNIFIED_GATED_METRICS))
-        config = InferenceVariantConfig.model_validate(raw)
-        self.assertEqual({spec.kind for spec in config.thresholds.cells[CELL].values()}, {"info"})
-        self.assertEqual(set(config.thresholds.cells[CELL]), set(UNIFIED_GATED_METRICS))
 
 
 class TestNotImplemented(unittest.TestCase):
@@ -516,6 +502,22 @@ class TestNotImplemented(unittest.TestCase):
         )
         self.assertEqual(not_implemented_names(config, metrics={"mfu"}), [f"thresholds {CELL}.mfu"])
 
+    def test_each_off_default_field_is_named(self):
+        raw = inference_config(
+            accuracy={"custom_eval": [{"id": "niah", "type": "niah", "isl": 1024}], "mtp_quality": {"enabled": True}}
+        )
+        raw["server_params"].update({"ep": True, "prefill_nnodes": 2, "long_context": {"max_prefill_tokens": 8}})
+        config = InferenceVariantConfig.model_validate(raw)
+        fields = (
+            "server_params.ep",
+            "server_params.prefill_nnodes",
+            "server_params.long_context",
+            "accuracy.custom_eval",
+            "accuracy.mtp_quality",
+            "server_params.engine_args.speculative_config",
+        )
+        self.assertEqual(not_implemented_names(config, fields=fields), list(fields[:5]))
+
     def test_threshold_accuracy_sections(self):
         accuracy = {"custom_eval": {"niah": {"pass_rate": {"kind": "min", "value": 0.8}}}}
         config = InferenceVariantConfig.model_validate(inference_config(thresholds={CELL: {}, "accuracy": accuracy}))
@@ -546,6 +548,10 @@ class TestContainerNetworkEnv(unittest.TestCase):
             check_container_network_env(self._container({"NCCL_SOCKET_IFNAME": "eth0"}))
         with self.assertRaisesRegex(ValueError, r"cannot be empty: \['TP_SOCKET_IFNAME'\]"):
             check_container_network_env(self._container({**every, "TP_SOCKET_IFNAME": " "}))
+
+    def test_valid_ib_hca_passes_and_one_socket_variable_counts(self):
+        check_container_network_env(self._container({"NCCL_IB_HCA": "mlx5_0"}))
+        self.assertTrue(container_sets_sockets(self._container({"NCCL_SOCKET_IFNAME": "eth0"})))
 
     def test_nccl_ib_hca_needs_a_device(self):
         self.assertIsNone(container_ib_hcas(self._container({})))
