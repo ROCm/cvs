@@ -1876,12 +1876,23 @@ def _check_threshold_coverage(self):
     return self
 
 
+class _InferenceVariantBase(_Forbid):
+    def lm_eval_tasks(self):
+        """The lm-eval tasks to run, in config order."""
+        return list(self.accuracy.lm_eval.tasks)
+
+    def lm_eval_thresholds(self, task_id):
+        """One lm-eval task's threshold specs as written, as plain dicts; ``{}`` when it has none."""
+        cell = self.thresholds.accuracy.lm_eval.get(task_id, {})
+        return {metric: spec.model_dump(exclude_unset=True) for metric, spec in cell.items()}
+
+
 # The config every inference engine shares. ``thresholds`` holds the threshold
 # file the loader attached; with ``enforce_thresholds`` true, every run needs a
 # threshold cell, and a threshold cell need not be run.
 InferenceVariantConfig = create_model(
     "InferenceVariantConfig",
-    __base__=_Forbid,
+    __base__=_InferenceVariantBase,
     __validators__={
         "_reject_changeme": field_validator("*", mode="before")(_reject_changeme),
         "_check_container_env": field_validator("container", mode="before")(_check_container_env),

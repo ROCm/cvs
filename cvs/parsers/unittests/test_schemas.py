@@ -385,6 +385,27 @@ class TestInferenceVariantConfigBlocks(unittest.TestCase):
         raw["server_params"]["engine_args"] = {"bad": {"x": object()}}
         self.assertIn("must be JSON serializable", problems(raw)[0])
 
+    def test_lm_eval_accessors(self):
+        config = InferenceVariantConfig.model_validate(inference_config())
+        self.assertEqual(config.lm_eval_tasks(), [])
+        self.assertEqual(config.lm_eval_thresholds("gsm8k_flex"), {})
+
+        tasks = [{"id": "gsm8k_flex", "task": "gsm8k"}, {"id": "mmlu", "task": "mmlu"}]
+        thresholds = {
+            CELL: {"output_throughput": {"kind": "min", "value": 100}},
+            "accuracy": {"lm_eval": {"gsm8k_flex": {"exact_match": {"kind": "min", "value": 0.8, "optional": True}}}},
+        }
+        config = InferenceVariantConfig.model_validate(
+            inference_config(accuracy={"lm_eval": {"tasks": tasks}}, thresholds=thresholds)
+        )
+        self.assertEqual([task.id for task in config.lm_eval_tasks()], ["gsm8k_flex", "mmlu"])
+        config.lm_eval_tasks().clear()
+        self.assertEqual(len(config.accuracy.lm_eval.tasks), 2)
+        self.assertEqual(
+            config.lm_eval_thresholds("gsm8k_flex"), {"exact_match": {"kind": "min", "value": 0.8, "optional": True}}
+        )
+        self.assertEqual(config.lm_eval_thresholds("mmlu"), {})
+
     def test_accuracy_ids_unique(self):
         task = {"id": "gsm8k_flex", "task": "gsm8k"}
         niah = {"type": "niah", "id": "niah_8k", "isl": 8192}
