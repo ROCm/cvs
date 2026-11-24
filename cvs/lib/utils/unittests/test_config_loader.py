@@ -691,8 +691,14 @@ class TestLoadVariant(unittest.TestCase):
     def test_underscore_metric_not_printed(self):
         misplaced = "_sk-SECRET123"
         cases = {
-            "metric": ({misplaced: {"kind": "min", "value": 1}}, "threshold file: a TestEngine metric name starts with _"),
-            "spec field": ({"failed": {"kind": "max", "value": 0, misplaced: "x"}}, "threshold file: a TestEngine threshold spec"),
+            "metric": (
+                {misplaced: {"kind": "min", "value": 1}},
+                "threshold file: a TestEngine metric name starts with _",
+            ),
+            "spec field": (
+                {"failed": {"kind": "max", "value": 0, misplaced: "x"}},
+                "threshold file: a TestEngine threshold spec",
+            ),
         }
         for name, (cell, prefix) in cases.items():
             for cell_key in (CELL, misplaced[1:]):
@@ -701,6 +707,7 @@ class TestLoadVariant(unittest.TestCase):
                         with self.assertRaises(ConfigError) as caught:
                             _load(tmp, _inference_config(), {cell_key: cell}, resolve_old=_resolve_old, warn=False)
                     message = str(caught.exception)
+                    self.assertTrue(message.startswith(f"{Path(tmp) / 'c.json'} is not a valid config:"), message)
                     self.assertIn(f"  {prefix}", message)
                     self.assertNotIn("SECRET", message)
                     self.assertNotIn("ISL=", message)

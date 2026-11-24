@@ -338,7 +338,9 @@ def _reject_underscore_metric_keys(thresholds, suite, config_path):
                 problem = f"threshold file: a {suite} metric name starts with _ but is not _comment or _example"
                 raise ConfigError(config_path, [problem])
             if isinstance(spec, dict) and any(key.startswith("_") for key in spec):
-                raise ConfigError(config_path, [f"threshold file: a {suite} threshold spec has a field starting with _"])
+                raise ConfigError(
+                    config_path, [f"threshold file: a {suite} threshold spec has a field starting with _"]
+                )
 
 
 def load_variant(
@@ -360,9 +362,9 @@ def load_variant(
     unless ``warn`` is false. With a ``gated`` metric set, every threshold
     cell gains an ``info`` spec for each gated metric it lacks, except the
     ``required`` and ``unreported`` ones. Then ``model`` validates it. A
-    config that does not validate raises `ConfigError` naming each field,
-    never a value, as does a threshold key starting with ``_`` that is not a
-    comment, before that; an old key with no new place raises `ValueError`.
+    config that does not validate, or a threshold key starting with ``_`` that
+    is not a comment, raises `ConfigError` naming each field, never a value. An
+    old key with no new place raises `ValueError`.
     """
     config_path = Path(config_path)
     raw = substitute_placeholders(config_path, cluster_dict, all_placeholders=True)
