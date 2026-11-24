@@ -79,7 +79,11 @@ Training block
 - ``benchmarks``: lm-evaluation-harness tasks scored on the trained
   checkpoint (``mmlu_pro_pct``, ``bbh_pct``, ``math_lvl5_pct``, ``gpqa_pct``,
   ``musr_pct``, ``gsm8k_pct``, ``hellaswag_pct``), with ``limit``,
-  ``batch_size``, ``data_parallel``, and ``timeout_s``.
+  ``batch_size``, ``data_parallel``, and ``timeout_s``. The harness
+  downloads its datasets, so ``env_vars`` must set ``HF_HUB_OFFLINE`` to 0
+  and ``HF_TOKEN_PATH``, as the ``single_finetune-benchmarks`` profile does
+  with ``{paths.hf_token_file}``. GPQA is gated: the token's account needs
+  access to ``Idavidrein/gpqa``.
 - ``env_vars`` and ``error_patterns``: exported variables and log signatures
   that fail a run early.
 - ``sweeps`` and ``enabled_sweep_list``.
