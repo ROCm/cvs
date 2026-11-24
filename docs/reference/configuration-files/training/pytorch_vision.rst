@@ -181,7 +181,10 @@ Sweep fields
   mode a sweep above 1 needs an enabled GA=1 sweep with the same global
   batch, which ``gradient_accumulation_overhead_pct`` is measured against.
   Other modes use it alone, for example to keep the global batch fixed
-  across node counts for scale parity.
+  across node counts for scale parity. On the HF Trainer harness with
+  FSDP, gradients stay unsharded between microbatches, so peak memory
+  grows by about the model's full gradient size: Qwen2.5-VL-72B went from
+  about 58 GB to 190 GB per GPU at GA=2.
 - ``training_flops_per_image``: forward+backward FLOPs used for TFLOPS/s/GPU.
   ResNet-50 uses 4.1 GMAC forward x two FLOPs per multiply-add x three for
   training = 24.6 GFLOP/image; ViT-B/16 uses 16.85 GMAC = 101.1 GFLOP/image.
