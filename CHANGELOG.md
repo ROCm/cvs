@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The Run Deck shows RECORD, not FAIL, for a threshold spec of kind `info`, such as the JAX MaxText, TorchTitan and ATOM specs that record a metric without gating it.
+- The Run Deck shows RECORD, not FAIL, for a threshold spec of kind `info`, such as the Megatron, JAX MaxText, TorchTitan and ATOM specs that record a metric without gating it.
 - The RCCL Run Deck (`rccl_perf`, `rccl_regression`, `rccl_pairwise`) shows FAIL whenever the pytest run fails, including dmesg errors and other failures that are not bandwidth checks. It shows PASS only when bus bandwidth or dip checks ran and the run passed, and RECORD when no check ran and nothing failed. It previously always showed RECORD.
 - `csp_qual_agfhc`: a node whose `results.json` cannot be read (missing file, SSH error or empty read) now fails with `results.json could not be read on node <node>` and what the read returned, instead of reporting nonzero failed tests. The Run Deck cell shows the same reason.
 - After CVS drops an unreachable node, tests that run a different command on each node run each node's own command and report the dropped node as unreachable. Previously later nodes could run another node's command, managed-compute runs failed with a `host_args` `ValueError`, and clusters larger than `CVS_HOSTS_PER_SHARD` left the dropped node out of the results. Results from `exec` and `exec_cmd_list` list reachable nodes in configured order, followed by unreachable nodes, so code that reads the first node's output still gets a reachable node.

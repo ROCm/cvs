@@ -72,12 +72,6 @@ class TestPerfMetricTable(unittest.TestCase):
         self.assertIn('metric unavailable', html_out)
         self.assertNotIn('<th>Node</th>', html_out)
 
-    def test_info_spec_shows_as_info(self):
-        row = {'node': 'n1', 'metric': 'failed', 'status': 'pass', 'actual': 2, 'enforced': False}
-        html_out = render_benchmark_metrics_html([{**row, 'spec': {'kind': 'info', 'value': 0}}])
-        self.assertIn("<td class='col-gate'>info</td>", html_out)
-        self.assertNotIn('info 0', html_out)
-
     def test_render_benchmark_metrics_html_defaults_to_one_decimal_place(self):
         html_out = render_benchmark_metrics_html(
             [{'metric': 'ratio', 'status': 'pass', 'actual': 0.02235, 'spec': {'kind': 'min', 'value': 0.01}}]

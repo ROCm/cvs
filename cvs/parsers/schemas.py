@@ -2399,7 +2399,8 @@ def old_timeout_rule(new_path, keys, total, force=None, sweep_keys=frozenset()):
 
     ``keys`` are ``(section, key, default)`` triples, and ``total`` takes their
     values in that order and returns seconds. The rule runs when the config
-    holds any of the keys, or when ``force(config)`` is true. A sweep cell
+    holds any of the keys, or when ``force(config)`` is true and the config
+    holds some other old key, since ``resolve_old_keys`` changes nothing without one. A sweep cell
     overriding one of ``sweep_keys`` gets its own total, and the longest wins,
     since one total serves every cell; pass the result through ``keep_sweep_cells``.
     """
