@@ -551,6 +551,77 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertEqual(cli, sglang_common.SGLANG_CLI_LATEST)
         self.assertIsNot(cli, sglang_common.SGLANG_CLI_LATEST)
 
+    def test_parse_sglang_cli_config_maps_both_image_generations(self):
+        newer = sglang_common.parse_sglang_cli_config(
+            {
+                'split_cuda_graph_flags': True,
+                'router_binary': 'sgl-router',
+                'benchmark_module': 'sglang.benchmark.serving',
+            }
+        )
+        older = sglang_common.parse_sglang_cli_config(
+            {
+                'split_cuda_graph_flags': False,
+                'router_binary': 'sglang_router.launch_router',
+                'benchmark_module': 'sglang.bench_serving',
+            }
+        )
+        self.assertEqual(newer, sglang_common.SGLANG_CLI_LATEST)
+        self.assertEqual(
+            older, {'split_cuda_graph_flags': False, 'sgl_router': False, 'benchmark_serving_module': False}
+        )
+
+    def test_parse_sglang_cli_config_rejects_bad_sections(self):
+        valid = {
+            'split_cuda_graph_flags': True,
+            'router_binary': 'sgl-router',
+            'benchmark_module': 'sglang.benchmark.serving',
+        }
+        cases = [
+            ('not an object', ['sgl-router'], 'must be an object'),
+            ('missing key', {'split_cuda_graph_flags': True}, 'missing'),
+            ('unknown key', {**valid, 'extra': 1}, 'unknown'),
+            ('string flag', {**valid, 'split_cuda_graph_flags': 'true'}, 'true or false'),
+            ('bad router', {**valid, 'router_binary': 'router'}, 'router_binary must be one of'),
+            ('bad benchmark', {**valid, 'benchmark_module': 'bench'}, 'benchmark_module must be one of'),
+        ]
+        for name, section, message in cases:
+            with self.subTest(name):
+                with self.assertRaisesRegex(ValueError, message):
+                    sglang_common.parse_sglang_cli_config(section)
+
+    def test_resolve_sglang_cli_uses_config_without_probing(self):
+        owner = mock.Mock(spec=['_container_exec', 'inf_dict'])
+        owner.inf_dict = {
+            'sglang_cli': {
+                'split_cuda_graph_flags': False,
+                'router_binary': 'sglang_router.launch_router',
+                'benchmark_module': 'sglang.bench_serving',
+            }
+        }
+        cli = sglang_common.resolve_sglang_cli(owner, ['n0'])
+        self.assertEqual(cli, {'split_cuda_graph_flags': False, 'sgl_router': False, 'benchmark_serving_module': False})
+        self.assertIs(sglang_common.resolve_sglang_cli(owner, ['n0']), cli)
+        owner._container_exec.assert_not_called()
+
+    def test_resolve_sglang_cli_rejects_invalid_config_instead_of_probing(self):
+        owner = mock.Mock(spec=['_container_exec', 'inf_dict'])
+        owner.inf_dict = {'sglang_cli': {'split_cuda_graph_flags': True}}
+        with self.assertRaisesRegex(ValueError, 'sglang_cli requires'):
+            sglang_common.resolve_sglang_cli(owner, ['n0'])
+        owner._container_exec.assert_not_called()
+
+    def test_resolve_sglang_cli_probes_when_config_has_no_section(self):
+        owner = mock.Mock(spec=['_container_exec', 'inf_dict'])
+        owner.inf_dict = {}
+        owner._container_exec.return_value = {
+            'n0': 'CVS_SGLANG_CLI {"split_cuda_graph_flags": false, "sgl_router": false, '
+            '"benchmark_serving_module": false}'
+        }
+        cli = sglang_common.resolve_sglang_cli(owner, ['n0'])
+        self.assertFalse(cli['sgl_router'])
+        owner._container_exec.assert_called_once()
+
     def test_resolve_sglang_cli_caches_the_fallback_after_a_failed_probe(self):
         owner = mock.Mock(spec=['_container_exec'])
         owner._container_exec.side_effect = RuntimeError('no containers running')

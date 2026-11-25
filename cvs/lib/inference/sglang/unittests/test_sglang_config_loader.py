@@ -246,6 +246,24 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
             },
         }
 
+    def test_sglang_cli_section_reaches_the_controller_dict(self):
+        self.raw['sglang_cli'] = {
+            'split_cuda_graph_flags': False,
+            'router_binary': 'sglang_router.launch_router',
+            'benchmark_module': 'sglang.bench_serving',
+        }
+        inference, _params, _server = loader._unified_runtime_views(self.raw, self.thresholds)
+        self.assertEqual(inference['sglang_cli'], self.raw['sglang_cli'])
+
+    def test_missing_sglang_cli_section_is_left_out_of_the_controller_dict(self):
+        inference, _params, _server = loader._unified_runtime_views(self.raw, self.thresholds)
+        self.assertNotIn('sglang_cli', inference)
+
+    def test_invalid_sglang_cli_section_fails_at_load(self):
+        self.raw['sglang_cli'] = {'split_cuda_graph_flags': True}
+        with self.assertRaisesRegex(ValueError, 'sglang_cli requires'):
+            loader._unified_runtime_views(self.raw, self.thresholds)
+
     def test_builds_existing_controller_dicts(self):
         inference, params, server = loader._unified_runtime_views(self.raw, self.thresholds)
 
@@ -601,6 +619,26 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
         self.assertEqual(variant.topology, 'single')
         self.assertEqual(variant.inference['_execution_hosts'], ['node-a'])
         self.assertEqual(variant.inference['benchmark_serv_node'], 'node-a')
+        self.assertNotIn('sglang_cli', variant.inference)
+
+    def test_packaged_config_with_sglang_cli_reaches_the_variant(self):
+        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
+        config_path = config_dir / 'mi3xx_sglang_llama_70b_single.json'
+        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
+        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
+        raw['sglang_cli'] = {
+            'split_cuda_graph_flags': False,
+            'router_binary': 'sglang_router.launch_router',
+            'benchmark_module': 'sglang.bench_serving',
+        }
+        cluster = {'username': 'test', 'node_dict': {'node-a': {'mgmt_ip': 'node-a'}}}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_config = Path(tmp) / config_path.name
+            temp_config.write_text(json.dumps(raw), encoding='utf-8')
+            variant = loader.load_variant(str(temp_config), cluster)
+
+        self.assertEqual(variant.inference['sglang_cli'], raw['sglang_cli'])
 
     def test_distributed_selects_first_nnodes_from_cluster(self):
         config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'

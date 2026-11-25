@@ -295,18 +295,65 @@ def probe_sglang_cli(exec_in_container, hosts):
     return cli
 
 
+# Each accepted config value maps to the boolean the command builders branch on.
+# A value outside these sets is rejected rather than passed through, because the
+# launch and benchmark flag forms are tied to exactly these two generations.
+_SGLANG_ROUTER_BINARIES = {"sgl-router": True, "sglang_router.launch_router": False}
+_SGLANG_BENCHMARK_MODULES = {"sglang.benchmark.serving": True, "sglang.bench_serving": False}
+_SGLANG_CLI_CONFIG_KEYS = ("split_cuda_graph_flags", "router_binary", "benchmark_module")
+
+
+def parse_sglang_cli_config(section):
+    """Validate a config ``sglang_cli`` object and return the CLI feature dict.
+
+    All of ``split_cuda_graph_flags``, ``router_binary`` and ``benchmark_module``
+    are required, so a config either names every CLI form or none of them.
+    """
+    if not isinstance(section, Mapping):
+        raise ValueError(f"sglang_cli must be an object, got {type(section).__name__}")
+    missing = [key for key in _SGLANG_CLI_CONFIG_KEYS if key not in section]
+    unknown = sorted(set(section) - set(_SGLANG_CLI_CONFIG_KEYS))
+    if missing or unknown:
+        raise ValueError(f"sglang_cli requires {list(_SGLANG_CLI_CONFIG_KEYS)}; missing {missing}, unknown {unknown}")
+    if not isinstance(section["split_cuda_graph_flags"], bool):
+        raise ValueError(
+            f"sglang_cli.split_cuda_graph_flags must be true or false, got {section['split_cuda_graph_flags']!r}"
+        )
+    router = section["router_binary"]
+    if router not in _SGLANG_ROUTER_BINARIES:
+        raise ValueError(f"sglang_cli.router_binary must be one of {list(_SGLANG_ROUTER_BINARIES)}, got {router!r}")
+    benchmark = section["benchmark_module"]
+    if benchmark not in _SGLANG_BENCHMARK_MODULES:
+        raise ValueError(
+            f"sglang_cli.benchmark_module must be one of {list(_SGLANG_BENCHMARK_MODULES)}, got {benchmark!r}"
+        )
+    return {
+        "split_cuda_graph_flags": section["split_cuda_graph_flags"],
+        "sgl_router": _SGLANG_ROUTER_BINARIES[router],
+        "benchmark_serving_module": _SGLANG_BENCHMARK_MODULES[benchmark],
+    }
+
+
 _NOT_PROBED = object()
 
 
 def resolve_sglang_cli(owner, hosts):
-    """Probe the container once per ``owner`` and reuse the result."""
+    """Return the CLI features for ``owner``, from config when set, else by probing once.
+
+    ``inf_dict['sglang_cli']`` takes precedence and skips the container probe.
+    """
     # Only the first call's ``hosts`` are probed. That is correct because the
     # orchestrator starts every node's container from the single ``container.image``,
     # so prefill, decode, proxy and benchmark nodes always share one image. If roles
     # ever get separate images, cache per role instead of per owner.
     cli = getattr(owner, '_sglang_cli', _NOT_PROBED)
     if cli is _NOT_PROBED:
-        cli = probe_sglang_cli(owner._container_exec, hosts)
+        configured = (getattr(owner, 'inf_dict', None) or {}).get('sglang_cli')
+        if configured is None:
+            cli = probe_sglang_cli(owner._container_exec, hosts)
+        else:
+            cli = parse_sglang_cli_config(configured)
+            log.info('Using SGLang CLI features from config: %s', cli)
         owner._sglang_cli = cli
     return cli
 

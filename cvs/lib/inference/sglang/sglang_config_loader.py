@@ -32,6 +32,7 @@ from cvs.lib.inference.sglang.sglang_common import (
     DEFAULT_SGLANG_PREFILL_SERV_PORT,
     DEFAULT_SGLANG_SERVE_PORT,
     _DISAGG_PINNED_ROLE_KEYS,
+    parse_sglang_cli_config,
     perf_enforce_thresholds,
     resolve_disagg_execution_roles,
     resolve_distributed_execution_hosts,
@@ -654,6 +655,9 @@ def _unified_runtime_views(raw: Mapping[str, Any], thresholds: Mapping[str, Any]
     hsa_force = inference.get("hsa_force_fine_grain_pcie")
     hsa_force = "" if hsa_force is None else str(hsa_force).strip()
     inference["hsa_force_fine_grain_pcie"] = hsa_force or "1"
+    if raw.get("sglang_cli") is not None:
+        parse_sglang_cli_config(raw["sglang_cli"])
+        inference["sglang_cli"] = dict(raw["sglang_cli"])
     inference["proxy_router_serv_port"] = str(
         inference.get("proxy_router_serv_port") or server.get("serve_port") or DEFAULT_SGLANG_SERVE_PORT
     )

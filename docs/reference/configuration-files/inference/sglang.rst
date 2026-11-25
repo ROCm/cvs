@@ -144,6 +144,14 @@ The following table describes each top-level key in a SGLang configuration file.
      - ``shared_fs``, ``models_dir``, ``log_dir``, ``hf_token_file``.
    * - ``container``
      - Image, name, lifetime, and ``runtime.args`` (volumes, devices, env).
+   * - ``sglang_cli``
+     - Optional. Names the CLI forms of the image instead of letting CVS detect them in the
+       container. Set all three fields: ``split_cuda_graph_flags`` (``true`` for
+       ``--disable-decode-cuda-graph`` and ``--disable-prefill-cuda-graph``, ``false`` for
+       ``--disable-cuda-graph``), ``router_binary`` (``sgl-router`` or
+       ``sglang_router.launch_router``), and ``benchmark_module`` (``sglang.benchmark.serving`` or
+       ``sglang.bench_serving``). Use the older values for older images, or set this block when
+       detection fails.
    * - ``gpu_name``
      - Cluster GPU label. Shipped values contain ``<changeme>`` and must be replaced.
    * - ``server_params``
