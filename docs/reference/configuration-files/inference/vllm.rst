@@ -178,7 +178,7 @@ Values are resolved in three passes, so later forms can reference earlier ones:
 Execution backends
 ==================
 
-Four different things in this stack are called a "backend". They are unrelated, and confusing them is the most common configuration mistake.
+Three different things in this stack are called a "backend". They are unrelated, and confusing them is the most common configuration mistake.
 
 .. list-table::
    :widths: 3 2 5
@@ -532,10 +532,8 @@ option goes in ``engine_args``, in snake case.
        other than the default fails at load with a not-implemented error
        naming vLLM and the field.
 
-Speculative-decoding options in ``engine_args`` (``speculative_config``,
-``speculative_model``, ``num_speculative_tokens``) also fail as not
-implemented. ``server_params.nnodes`` is refused, as CVS derives the node count
-from the cluster.
+``server_params.nnodes`` is refused, as CVS derives the node count from the
+cluster.
 
 How engine_args are flattened
 -----------------------------
@@ -659,18 +657,18 @@ percentile reporting, and always sends ``--backend vllm``.
    * - ``num_prompts``
      - none
      - Total prompts per cell. The packaged Llama single file sets 320; the distributed file sets 64.
-   * - ``random_range_ratio``
-     - ``0.0``
-     - Length jitter around ISL/OSL; also feeds the derived max-model-len.
+   * - ``burstiness``
+     - ``1.0``
+     - 1.0 is a uniform arrival process; lower is burstier.
    * - ``seed``
      - ``0``
      - Random seed.
    * - ``request_rate``
      - ``"inf"``
      - Arrival rate; ``inf`` sends as fast as concurrency allows.
-   * - ``burstiness``
-     - ``1.0``
-     - 1.0 is a uniform arrival process; lower is burstier.
+   * - ``random_range_ratio``
+     - ``0.0``
+     - Length jitter around ISL/OSL; also feeds the derived max-model-len.
    * - ``random_prefix_len``
      - ``0``
      - Shared prefix length.
@@ -830,10 +828,11 @@ A cell may contain any subset of the registry, including an empty object. Each
 cell then gets an ``info`` spec for every metric the shipped vLLM threshold
 files gate that it leaves out: the throughput, latency, success and failure,
 GPU, and queue and prefill timing metrics. Those metrics are recorded without
-gating. When ``enforce_thresholds`` is true and a threshold file is loaded,
-every selected run must have a threshold cell, but only the ``min`` and ``max``
-specs in that cell create verification subtests. When it is false, recorded
-metrics keep status ``pass`` and no threshold subtest is emitted.
+gating. When
+``enforce_thresholds`` is true and a threshold file is loaded, every selected run must have a threshold cell,
+but only the ``min`` and ``max`` specs in that cell create verification subtests. When it is
+false, recorded metrics keep status ``pass`` and no threshold subtest is
+emitted.
 
 Sweep specs are strict at load time regardless of enforcement:
 
@@ -1186,7 +1185,7 @@ Common error messages and their causes and fixes are listed below.
      - The same cell key appears twice in ``runs``.
    * - ``runs names keys missing from sweeps``
      - A ``runs`` entry is not a key in ``sweeps``.
-   * - ``is not a cell key of the form ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>``
+   * - ``not a cell key of the form ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>``
      - A sweep or threshold cell key is malformed.
    * - ``TP and PP must equal server_params.tp and server_params.pp``
      - The TP or PP in a cell key does not match ``server_params``.
