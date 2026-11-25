@@ -233,6 +233,29 @@ class TestResolveTestConfigPlaceholdersPaths(unittest.TestCase):
         self.assertEqual(resolved["aorta_path"], "/opt/my-aorta")
 
 
+class TestUnresolvedPlaceholderError(unittest.TestCase):
+    RAW = {"auth": {"token": "hf_FAKE123<changeme>"}}
+
+    def _logged_error(self, resolve):
+        with patch('cvs.lib.utils_lib.log') as mock_log, self.assertRaises(SystemExit) as ctx:
+            resolve()
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertNotIn("hf_FAKE123", repr(mock_log.mock_calls))
+        mock_log.error.assert_called_once()
+        fmt, *args = mock_log.error.call_args.args
+        return fmt % tuple(args)
+
+    def test_unresolved_placeholder_message_omits_value(self):
+        message = self._logged_error(lambda: utils_lib.resolve_test_config_placeholders(self.RAW, {"username": "jdoe"}))
+        self.assertIn("auth.token", message)
+        self.assertNotIn("hf_FAKE123", message)
+
+    def test_cluster_config_error_names_the_field_not_the_value(self):
+        message = self._logged_error(lambda: utils_lib.resolve_cluster_config_placeholders(self.RAW))
+        self.assertIn("auth.token", message)
+        self.assertNotIn("hf_FAKE123", message)
+
+
 class TestConfigPlaceholderMap(unittest.TestCase):
     def test_cluster_without_user_keys_falls_back_to_user_env_then_root(self):
         with (
