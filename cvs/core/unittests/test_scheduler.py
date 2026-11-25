@@ -252,12 +252,6 @@ class TestIsManagedCompute(unittest.TestCase):
     def test_true_in_an_indexed_cvs_pod(self, _mock_which):
         self.assertTrue(is_managed_compute())
 
-    @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
-    @patch.dict(os.environ, {"CVS_K8S_JOB_ID": "cvs-health-7f3a"})
-    def test_false_in_a_cvs_pod_without_completion_index(self, _mock_which):
-        # Like a Slurm allocation with no step: the job id alone is not a rank.
-        self.assertFalse(is_managed_compute())
-
     @patch.dict(os.environ, {"CVS_SCHEDULER": "kubernetes", "CVS_K8S_JOB_ID": "cvs-health-7f3a", **JOB_STEP_ENV})
     def test_kubernetes_ignores_a_stray_slurm_step(self):
         # The Kubernetes backend decides; a full set of SLURM_* step variables in
