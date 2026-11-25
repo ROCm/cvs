@@ -21,7 +21,11 @@ from cvs.lib.inference.sglang.sglang_common import (
     DEFAULT_SGLANG_SERVE_PORT,
     add_cli_flags_block,
     add_export_env_block,
+    benchmark_serving_module,
+    cuda_graph_flags,
     hf_token_export_line,
+    random_length_flags,
+    resolve_sglang_cli,
     require_hf_token_on_nodes,
     hsa_force_fine_grain_pcie,
     as_node_list,
@@ -191,6 +195,7 @@ class SglangSingle:
             self.execution_hosts,
         )
         flags_block = add_cli_flags_block(self.bp_dict, indent='    ')
+        cli = resolve_sglang_cli(self, self.execution_hosts)
         launch_body = (
             f"python3 -m sglang.launch_server --model {self.bp_dict['model']} \\\n"
             f"    --host 0.0.0.0 \\\n"
@@ -199,7 +204,7 @@ class SglangSingle:
             f"    --kv-cache-dtype {kv_cache_dtype} \\\n"
             f"    --trust-remote-code \\\n"
             f"    --tp-size {self.bp_dict['tensor_parallelism']} \\\n"
-            f"    --disable-radix-cache --disable-cuda-graph \\\n"
+            f"    --disable-radix-cache {cuda_graph_flags(cli)} \\\n"
             f"    --mem-fraction-static {self.bp_dict['memory_fraction']} \\\n"
             f"{flags_block}\n"
             f"    --log-level {self.inf_dict['log_level']}\n"
@@ -287,6 +292,8 @@ class SglangSingle:
     def benchserv_test_random(self, d_type='auto', *, verify=True):
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
         self._bench_num_prompts = int(i_dict['num_prompts'])
+        cli = resolve_sglang_cli(self, self.execution_hosts)
+        input_len_flag, output_len_flag = random_length_flags(cli)
 
         def inner(host):
             log_dir = self._node_log_dir(host)
@@ -295,13 +302,13 @@ class SglangSingle:
                 f"mkdir -p {shlex.quote(log_dir)}\n"
                 f"source /tmp/server_env_script.sh\n"
                 f"export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}}\n"
-                f"python3 -m sglang.bench_serving \\\n"
+                f"python3 -m {benchmark_serving_module(cli)} \\\n"
                 f"  --backend {i_dict['backend']} \\\n"
                 f"  --dataset-name random \\\n"
                 f"  --num-prompts {i_dict['num_prompts']} \\\n"
                 f"  --max-concurrency {self.bp_dict['max_concurrency']} \\\n"
-                f"  --random-input {i_dict['input_length']} \\\n"
-                f"  --random-output {i_dict['output_length']} \\\n"
+                f"  {input_len_flag} {i_dict['input_length']} \\\n"
+                f"  {output_len_flag} {i_dict['output_length']} \\\n"
                 f"  --random-range-ratio {i_dict['random_range_ratio']} \\\n"
                 f"  --host {self.client_host} --port {self.router_serv_port} \\\n"
                 f"  > {shlex.quote(log_path)} 2>&1"

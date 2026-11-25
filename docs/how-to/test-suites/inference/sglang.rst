@@ -239,8 +239,8 @@ Key lifecycle stages to watch:
 - **Smoke** — ``test_openai_compatible_http_endpoints`` probes the OpenAI-compatible API.
 - **Long context** — ``test_run_long_context_accuracy`` (disaggregated only) runs when
   ``server_params.lng_ctx_activate`` is true. Shipped templates leave it false, so the stage skips.
-- **Performance** — ``test_run_performance_benchmark_test`` runs ``sglang.bench_serving`` for each
-  selected sweep cell. Set top-level ``enforce_thresholds: false`` to record metrics
+- **Performance** — ``test_run_performance_benchmark_test`` runs ``sglang.benchmark.serving``
+  (``sglang.bench_serving`` on older images) for each selected sweep cell. Set top-level ``enforce_thresholds: false`` to record metrics
   without failing on uncalibrated gates.
 - **Accuracy** — ``test_run_lm_eval_hellaswag_benchmark_test`` and
   ``test_run_lm_eval_gsm8k_benchmark_test`` run lm-eval tasks configured in ``accuracy.tasks``.

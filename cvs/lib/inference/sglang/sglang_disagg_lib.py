@@ -24,7 +24,11 @@ from cvs.lib import globals
 from cvs.lib.inference.sglang.sglang_common import (
     add_cli_flags_block,
     add_export_env_block,
+    benchmark_serving_module,
+    cuda_graph_flags,
     hf_token_export_line,
+    random_length_flags,
+    resolve_sglang_cli,
     require_hf_token_on_nodes,
     hsa_force_fine_grain_pcie,
     collect_sglang_gpu_topology,
@@ -253,6 +257,10 @@ class SglangDisaggPD:
         self.proxy_node = normalize_hosts(self.inf_dict['proxy_router_node'])
         self.benchmark_serv_node = normalize_hosts(self.inf_dict['benchmark_serv_node'])
 
+    def _resolve_cli(self):
+        """CLI features of the one image every role runs, probed once on the first prefill node."""
+        return resolve_sglang_cli(self, self.prefill_node_list[:1])
+
     def install_container_packages(
         self,
     ):
@@ -476,6 +484,7 @@ class SglangDisaggPD:
         log.info('%%%% self.prefill_nnodes {}'.format(self.prefill_nnodes))
         dist_init_addr = f"{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_coordinator_port']}"
         flags_block = add_cli_flags_block(self.bp_dict, indent='    ')
+        cli = self._resolve_cli()
 
         for i in range(0, int(self.prefill_nnodes)):
             node = prefill_node_list[i]
@@ -495,7 +504,7 @@ class SglangDisaggPD:
                 f"    --nnodes {self.prefill_nnodes} \\\n"
                 f"    --node-rank {i} \\\n"
                 f"    --dist-init-addr {dist_init_addr} \\\n"
-                f"    --disable-radix-cache --disable-cuda-graph \\\n"
+                f"    --disable-radix-cache {cuda_graph_flags(cli)} \\\n"
                 f"    --mem-fraction-static {self.bp_dict['memory_fraction']} \\\n"
                 f"{flags_block}\n"
                 f"    --log-level {self.inf_dict['log_level']}\n"
@@ -540,6 +549,7 @@ class SglangDisaggPD:
         log.info('%%%% self.decode_nnodes {}'.format(self.decode_nnodes))
         dist_init_addr = f"{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_coordinator_port']}"
         flags_block = add_cli_flags_block(self.bp_dict, indent='    ', include_chunked_prefill=False)
+        cli = self._resolve_cli()
 
         for i in range(0, int(self.decode_nnodes)):
             node = decode_node_list[i]
@@ -559,7 +569,7 @@ class SglangDisaggPD:
                 f"    --nnodes {self.decode_nnodes} \\\n"
                 f"    --node-rank {i} \\\n"
                 f"    --dist-init-addr {dist_init_addr} \\\n"
-                f"    --disable-radix-cache --disable-cuda-graph \\\n"
+                f"    --disable-radix-cache {cuda_graph_flags(cli)} \\\n"
                 f"    --mem-fraction-static {self.bp_dict['memory_fraction']} \\\n"
                 f"{flags_block}\n"
                 f"    --log-level {self.inf_dict['log_level']}\n"
@@ -621,23 +631,34 @@ class SglangDisaggPD:
         - Creates a launch script on the Proxy Router node
         - Launches the router as a background service
         """
-        prefill_str = (
-            f"--prefill http://{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_serv_port']} "
-        )
-        decode_str = f"--decode http://{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_serv_port']} "
+        prefill_url = f"http://{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_serv_port']}"
+        decode_url = f"http://{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_serv_port']}"
         log.info('#================ * * * =========================#')
         log.info('Create Proxy Router launch script on Proxy Router nodes')
         log.info('#================ * * * =========================#')
 
-        launch_body = (
-            "python3 -m sglang_router.launch_router \\\n"
-            f"    --pd-disaggregation \\\n"
-            f"    {prefill_str.strip()} \\\n"
-            f"    {decode_str.strip()} \\\n"
-            f"    --host 0.0.0.0 \\\n"
-            f"    --port {self.router_serv_port} \\\n"
-            f"    --log-dir {self.inf_dict['log_dir']}\n"
-        )
+        cli = self._resolve_cli()
+        if cli["sgl_router"]:
+            # This ``sgl-router`` rejects ``--pd-disaggregation``, so prefill and
+            # decode are passed as ``--worker-urls`` in that order.
+            launch_body = (
+                "sgl-router \\\n"
+                f"    --model-id {self.bp_dict['model']} \\\n"
+                f"    --no-tokenizer \\\n"
+                f"    --worker-urls {prefill_url} {decode_url} \\\n"
+                f"    --host 0.0.0.0 \\\n"
+                f"    --port {self.router_serv_port}\n"
+            )
+        else:
+            launch_body = (
+                "python3 -m sglang_router.launch_router \\\n"
+                f"    --pd-disaggregation \\\n"
+                f"    --prefill {prefill_url} \\\n"
+                f"    --decode {decode_url} \\\n"
+                f"    --host 0.0.0.0 \\\n"
+                f"    --port {self.router_serv_port} \\\n"
+                f"    --log-dir {self.inf_dict['log_dir']}\n"
+            )
         stage_and_start_launch_script(
             self._container_exec,
             self.proxy_node,
@@ -674,17 +695,19 @@ class SglangDisaggPD:
         log.info('#================ * * * =========================#')
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
         self._bench_num_prompts = int(i_dict['num_prompts'])
+        cli = self._resolve_cli()
+        input_len_flag, output_len_flag = random_length_flags(cli)
         inner = (
             f"mkdir -p {self.log_dir}/benchmark_node\n"
             f"source /tmp/benchmark_env_script.sh\n"
             f"export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}}\n"
-            f"python3 -m sglang.bench_serving \\\n"
+            f"python3 -m {benchmark_serving_module(cli)} \\\n"
             f"  --backend {i_dict['backend']} \\\n"
             f"  --dataset-name random \\\n"
             f"  --num-prompts {i_dict['num_prompts']} \\\n"
             f"  --max-concurrency {self.bp_dict['max_concurrency']} \\\n"
-            f"  --random-input {i_dict['input_length']} \\\n"
-            f"  --random-output {i_dict['output_length']} \\\n"
+            f"  {input_len_flag} {i_dict['input_length']} \\\n"
+            f"  {output_len_flag} {i_dict['output_length']} \\\n"
             f"  --random-range-ratio {i_dict['random_range_ratio']} \\\n"
             f"  --host {self.client_host} --port {self.router_serv_port} \\\n"
             f"  > {self.log_dir}/benchmark_node/benchmark_results.log 2>&1"

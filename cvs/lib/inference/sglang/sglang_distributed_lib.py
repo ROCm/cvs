@@ -21,7 +21,11 @@ from cvs.lib import globals
 from cvs.lib.inference.sglang.sglang_common import (
     add_cli_flags_block,
     add_export_env_block,
+    benchmark_serving_module,
+    cuda_graph_flags,
     hf_token_export_line,
+    random_length_flags,
+    resolve_sglang_cli,
     require_hf_token_on_nodes,
     hsa_force_fine_grain_pcie,
     as_node_list,
@@ -266,6 +270,7 @@ class SglangDistributed:
         )
         flags_block = add_cli_flags_block(self.bp_dict, indent='    ')
         pp = self.bp_dict.get('pipeline_parallelism', '1')
+        cli = resolve_sglang_cli(self, [self.rank0_node])
 
         for i, node in enumerate(self.server_node_list):
             host_flag = '0.0.0.0' if i == 0 else node
@@ -283,7 +288,7 @@ class SglangDistributed:
                 f"    --nnodes {self.nnodes} \\\n"
                 f"    --node-rank {i} \\\n"
                 f"    --dist-init-addr {self.dist_init_addr} \\\n"
-                f"    --disable-radix-cache --disable-cuda-graph \\\n"
+                f"    --disable-radix-cache {cuda_graph_flags(cli)} \\\n"
                 f"    --mem-fraction-static {self.bp_dict['memory_fraction']} \\\n"
                 f"{flags_block}\n"
                 f"    --log-level {self.inf_dict['log_level']}\n"
@@ -354,17 +359,19 @@ class SglangDistributed:
     def benchserv_test_random(self, d_type='auto', *, verify=True) -> None:
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
         self._bench_num_prompts = int(i_dict['num_prompts'])
+        cli = resolve_sglang_cli(self, [self.benchmark_serv_node])
+        input_len_flag, output_len_flag = random_length_flags(cli)
         inner = (
             f"mkdir -p {self.log_dir}/benchmark_node\n"
             f"source /tmp/server_env_script.sh\n"
             f"export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}}\n"
-            f"python3 -m sglang.bench_serving \\\n"
+            f"python3 -m {benchmark_serving_module(cli)} \\\n"
             f"  --backend {i_dict['backend']} \\\n"
             f"  --dataset-name random \\\n"
             f"  --num-prompts {i_dict['num_prompts']} \\\n"
             f"  --max-concurrency {self.bp_dict['max_concurrency']} \\\n"
-            f"  --random-input {i_dict['input_length']} \\\n"
-            f"  --random-output {i_dict['output_length']} \\\n"
+            f"  {input_len_flag} {i_dict['input_length']} \\\n"
+            f"  {output_len_flag} {i_dict['output_length']} \\\n"
             f"  --random-range-ratio {i_dict['random_range_ratio']} \\\n"
             f"  --host {self.client_host} --port {self.router_serv_port} \\\n"
             f"  > {self.log_dir}/benchmark_node/benchmark_results.log 2>&1"

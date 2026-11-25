@@ -212,6 +212,169 @@ def stage_and_start_launch_script(exec_in_container, hosts, script_path, script_
     )
 
 
+_SGLANG_CLI_PROBE_MARKER = "CVS_SGLANG_CLI"
+
+# Reads the image itself rather than running ``--help`` so the probe does not
+# initialise torch or a GPU. The cuda-graph check is a text search of
+# ``server_args.py`` rather than parsing its argparse setup: the flag names are
+# literal strings in that file, importing it would pull in torch, and a missing
+# file or a rename makes the search miss, which selects the older flag form.
+_SGLANG_CLI_PROBE_SCRIPT = f'''export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}}
+python3 - <<'PY'
+import importlib.util
+import json
+import shutil
+
+
+def find(name):
+    try:
+        return importlib.util.find_spec(name)
+    except ImportError:
+        return None
+
+
+server_args = find("sglang.srt.server_args")
+split_cuda_graph = False
+if server_args is not None and server_args.origin:
+    with open(server_args.origin, encoding="utf-8") as handle:
+        split_cuda_graph = "--disable-decode-cuda-graph" in handle.read()
+print("{_SGLANG_CLI_PROBE_MARKER} " + json.dumps({{
+    "split_cuda_graph_flags": split_cuda_graph,
+    "sgl_router": shutil.which("sgl-router") is not None,
+    "benchmark_serving_module": find("sglang.benchmark.serving") is not None,
+}}))
+PY
+'''
+
+# Used when the probe cannot read the image: the newest image generation, which
+# is the one the shipped sample configs name.
+SGLANG_CLI_LATEST = {
+    "split_cuda_graph_flags": True,
+    "sgl_router": True,
+    "benchmark_serving_module": True,
+}
+
+# The probe script prints its result as one line of flat JSON, which keeps this
+# non-greedy match valid; a nested or multi-line payload would need a new pattern.
+_SGLANG_CLI_PROBE_RE = re.compile(rf"{_SGLANG_CLI_PROBE_MARKER} (\{{.*?\}})")
+
+
+def parse_sglang_cli_probe(out_dict):
+    """Return the CLI feature dict from the first host whose probe output parses, else ``None``."""
+    for text in (out_dict or {}).values():
+        match = _SGLANG_CLI_PROBE_RE.search(str(text or ''))
+        if not match:
+            continue
+        try:
+            reported = json.loads(match.group(1))
+        except ValueError:
+            continue
+        return {key: bool(reported.get(key, default)) for key, default in SGLANG_CLI_LATEST.items()}
+    return None
+
+
+def probe_sglang_cli(exec_in_container, hosts):
+    """Detect which command-line generation the SGLang image in the container supports.
+
+    Older images use ``--disable-cuda-graph``, ``sglang_router.launch_router`` and
+    ``sglang.bench_serving``; newer ones split the cuda-graph flag, ship ``sgl-router``
+    and move the benchmark to ``sglang.benchmark.serving``.
+    """
+    cmd = "bash -c " + shlex.quote(_SGLANG_CLI_PROBE_SCRIPT)
+    # The transports raise their own exception types (SSH, HTTP, container
+    # runtime), so any failure here is treated as "could not detect".
+    try:
+        cli = parse_sglang_cli_probe(exec_in_container(cmd, hosts=as_node_list(hosts), timeout=120))
+    except Exception as exc:
+        log.warning('SGLang CLI probe failed on %s: %s', hosts, exc)
+        cli = None
+    if cli is None:
+        log.warning('Could not detect the SGLang CLI in the container; assuming the newest image layout')
+        return dict(SGLANG_CLI_LATEST)
+    log.info('Detected SGLang CLI features: %s', cli)
+    return cli
+
+
+# Each accepted config value maps to the boolean the command builders branch on.
+# A value outside these sets is rejected rather than passed through, because the
+# launch and benchmark flag forms are tied to exactly these two generations.
+_SGLANG_ROUTER_BINARIES = {"sgl-router": True, "sglang_router.launch_router": False}
+_SGLANG_BENCHMARK_MODULES = {"sglang.benchmark.serving": True, "sglang.bench_serving": False}
+_SGLANG_CLI_CONFIG_KEYS = ("split_cuda_graph_flags", "router_binary", "benchmark_module")
+
+
+def parse_sglang_cli_config(section):
+    """Validate a config ``sglang_cli`` object and return the CLI feature dict.
+
+    All of ``split_cuda_graph_flags``, ``router_binary`` and ``benchmark_module``
+    are required, so a config either names every CLI form or none of them.
+    """
+    if not isinstance(section, Mapping):
+        raise ValueError(f"sglang_cli must be an object, got {type(section).__name__}")
+    missing = [key for key in _SGLANG_CLI_CONFIG_KEYS if key not in section]
+    unknown = sorted(set(section) - set(_SGLANG_CLI_CONFIG_KEYS))
+    if missing or unknown:
+        raise ValueError(f"sglang_cli requires {list(_SGLANG_CLI_CONFIG_KEYS)}; missing {missing}, unknown {unknown}")
+    if not isinstance(section["split_cuda_graph_flags"], bool):
+        raise ValueError(
+            f"sglang_cli.split_cuda_graph_flags must be true or false, got {section['split_cuda_graph_flags']!r}"
+        )
+    router = section["router_binary"]
+    if router not in _SGLANG_ROUTER_BINARIES:
+        raise ValueError(f"sglang_cli.router_binary must be one of {list(_SGLANG_ROUTER_BINARIES)}, got {router!r}")
+    benchmark = section["benchmark_module"]
+    if benchmark not in _SGLANG_BENCHMARK_MODULES:
+        raise ValueError(
+            f"sglang_cli.benchmark_module must be one of {list(_SGLANG_BENCHMARK_MODULES)}, got {benchmark!r}"
+        )
+    return {
+        "split_cuda_graph_flags": section["split_cuda_graph_flags"],
+        "sgl_router": _SGLANG_ROUTER_BINARIES[router],
+        "benchmark_serving_module": _SGLANG_BENCHMARK_MODULES[benchmark],
+    }
+
+
+_NOT_PROBED = object()
+
+
+def resolve_sglang_cli(owner, hosts):
+    """Return the CLI features for ``owner``, from config when set, else by probing once.
+
+    ``inf_dict['sglang_cli']`` takes precedence and skips the container probe.
+    """
+    # Only the first call's ``hosts`` are probed. That is correct because the
+    # orchestrator starts every node's container from the single ``container.image``,
+    # so prefill, decode, proxy and benchmark nodes always share one image. If roles
+    # ever get separate images, cache per role instead of per owner.
+    cli = getattr(owner, '_sglang_cli', _NOT_PROBED)
+    if cli is _NOT_PROBED:
+        configured = (getattr(owner, 'inf_dict', None) or {}).get('sglang_cli')
+        if configured is None:
+            cli = probe_sglang_cli(owner._container_exec, hosts)
+        else:
+            cli = parse_sglang_cli_config(configured)
+            log.info('Using SGLang CLI features from config: %s', cli)
+        owner._sglang_cli = cli
+    return cli
+
+
+def cuda_graph_flags(cli):
+    if cli["split_cuda_graph_flags"]:
+        return "--disable-decode-cuda-graph --disable-prefill-cuda-graph"
+    return "--disable-cuda-graph"
+
+
+def benchmark_serving_module(cli):
+    return "sglang.benchmark.serving" if cli["benchmark_serving_module"] else "sglang.bench_serving"
+
+
+def random_length_flags(cli):
+    """Return the ``(input, output)`` length flags for the benchmark module in use."""
+    if cli["benchmark_serving_module"]:
+        return "--random-input-len", "--random-output-len"
+    return "--random-input", "--random-output"
+
+
 def textwrap_for_yml(msg_string: str) -> str:
     return '\n'.join([m.lstrip() for m in msg_string.split('\n')])
 
@@ -754,7 +917,7 @@ def parse_inference_bench_results(
     include_itl: bool = False,
     include_extended_e2e_percentiles: bool = False,
 ) -> dict[str, dict[str, Any]]:
-    """Parse sglang.bench_serving log tail output into per-node metric dicts."""
+    """Parse SGLang benchmark-serving log tail output (``sglang.benchmark.serving`` or the older ``sglang.bench_serving``) into per-node metric dicts."""
     inference_results_dict: dict[str, dict[str, Any]] = {}
     for node, text in out_dict.items():
         inference_results_dict[node] = {}

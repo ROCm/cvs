@@ -144,6 +144,16 @@ The following table describes each top-level key in a SGLang configuration file.
      - ``shared_fs``, ``models_dir``, ``log_dir``, ``hf_token_file``.
    * - ``container``
      - Image, name, lifetime, and ``runtime.args`` (volumes, devices, env).
+   * - ``sglang_cli``
+     - Names the CLI forms of the image instead of letting CVS detect them in the container.
+       Shipped templates set the forms for SGLang v0.5.23 and later images. Change the values for
+       older images, or delete the block to detect the image in the container. When present, set all
+       three fields: ``split_cuda_graph_flags`` (``true`` for
+       ``--disable-decode-cuda-graph`` and ``--disable-prefill-cuda-graph``, ``false`` for
+       ``--disable-cuda-graph``), ``router_binary`` (``sgl-router`` or
+       ``sglang_router.launch_router``), and ``benchmark_module`` (``sglang.benchmark.serving`` or
+       ``sglang.bench_serving``). Use the older values for older images, or set this block when
+       detection fails.
    * - ``gpu_name``
      - Cluster GPU label. Shipped values contain ``<changeme>`` and must be replaced.
    * - ``server_params``
@@ -373,7 +383,8 @@ Inference tests
 ===============
 
 ``benchmark_params``
-  Random synthetic load using ``sglang.bench_serving``. ISL/OSL/concurrency cells come from
+  Random synthetic load using ``sglang.benchmark.serving`` (``sglang.bench_serving`` on older
+  images). ISL/OSL/concurrency cells come from
   ``sweep.runs`` (or every performance cell in the threshold file if ``runs`` is empty).
   ``input_length`` and ``output_length`` are injected at collection time.
 
