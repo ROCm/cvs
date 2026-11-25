@@ -10,6 +10,7 @@ a variant `config.json` + sibling `*threshold.json` and resolves placeholders.
 The schema blocks live in `cvs.parsers.schemas` and are re-exported here;
 `cvs.lib.conf_lib.loader.load_config` builds on `substitute_placeholders`,
 and a schema that uses a threshold file loads it with `attach_threshold_file`.
+An inference suite loads its config through `load_variant`.
 A per-framework module subclasses `BaseVariantConfig` or composes the blocks
 directly and adds its own params, sweep and `cell_key`.
 
@@ -41,7 +42,7 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 from typing_extensions import Literal
 
 from cvs.lib import globals
@@ -53,6 +54,10 @@ from cvs.parsers.schemas import (  # noqa: F401 - re-exported for suite loaders
     RuntimeSpec,
     _Allow,
     _Forbid,
+    fill_info_specs,
+    keep_sweep_cells,
+    validation_problem_lines,
+    warn_old_keys,
 )
 
 log = globals.log
@@ -302,3 +307,79 @@ def _substitute(raw, cluster_dict, all_placeholders):
 
     # Drop comment keys (e.g. "_comment") before framework/threshold validation.
     return {k: v for k, v in raw.items() if not k.startswith("_")}
+
+
+# ---------- inference suite loading ----------
+
+_THRESHOLD_COMMENT_PREFIXES = ("_comment", "_example")
+
+
+class ConfigError(ValueError):
+    """A config file that does not match its schema.
+
+    The message has one ``location: problem`` line per error and never the
+    offending values, which can be credentials.
+    """
+
+    def __init__(self, config_path, problems):
+        self.problems = problems
+        super().__init__(f"{config_path} is not a valid config:\n" + "\n".join(f"  {p}" for p in problems))
+
+
+def _reject_underscore_metric_keys(thresholds, suite, config_path):
+    # A misspelled metric such as _output_throughput would otherwise be dropped
+    # as a comment, and enforcement only checks that the cell exists.
+    for cell_key, cell in thresholds.items():
+        if cell_key == "accuracy" or cell_key.startswith("_") or not isinstance(cell, dict):
+            continue
+        for metric, spec in cell.items():
+            if metric.startswith(_THRESHOLD_COMMENT_PREFIXES):
+                continue
+            if metric.startswith("_"):
+                problem = f"threshold file: a {suite} metric name starts with _ but is not _comment or _example"
+                raise ConfigError(config_path, [problem])
+            if isinstance(spec, dict) and any(key.startswith("_") for key in spec):
+                raise ConfigError(
+                    config_path, [f"threshold file: a {suite} threshold spec has a field starting with _"]
+                )
+
+
+def load_variant(
+    config_path,
+    cluster_dict,
+    model,
+    suite,
+    resolve_old=None,
+    gated=None,
+    required=frozenset(),
+    unreported=frozenset(),
+    warn=True,
+):
+    """Load and validate one inference suite config against its resolved cluster dict.
+
+    Substitutes the config's placeholders and attaches the threshold file it
+    names (none records every metric without gating). ``resolve_old`` maps the
+    suite's old keys and returns the config and one warning message, raised
+    unless ``warn`` is false; a sweep cell it empties is kept. With a ``gated`` metric set, every threshold
+    cell gains an ``info`` spec for each gated metric it lacks, except the
+    ``required`` and ``unreported`` ones. Then ``model`` validates it. A
+    config that does not validate, or a threshold key starting with ``_`` that
+    is not a comment, raises `ConfigError` naming each field, never a value. An
+    old key with no new place raises `ValueError`.
+    """
+    config_path = Path(config_path)
+    raw = substitute_placeholders(config_path, cluster_dict, all_placeholders=True)
+    raw = attach_threshold_file(raw, {"config_path": config_path})
+    _reject_underscore_metric_keys(raw["thresholds"], suite, config_path)
+    message = None
+    if resolve_old is not None:
+        converted, message = resolve_old(raw)
+        raw = keep_sweep_cells(raw, converted)
+    if warn:
+        warn_old_keys(message)
+    if gated is not None:
+        raw = {**raw, "thresholds": fill_info_specs(raw["thresholds"], gated, required, unreported)}
+    try:
+        return model.model_validate(raw)
+    except ValidationError as exc:
+        raise ConfigError(config_path, validation_problem_lines(exc)) from None

@@ -13,6 +13,13 @@ from cvs.lib.benchmark.aorta.unittests.fixtures import variant_dict
 from cvs.parsers.schemas import (
     InferenceVariantConfig,
     PreflightConfigFile,
+    check_container_network_env,
+    check_not_implemented,
+    container_ib_hcas,
+    container_sets_sockets,
+    fill_info_specs,
+    not_implemented_names,
+    poll_schedule,
     validate_config_file,
     validation_problem_lines,
 )
@@ -378,6 +385,38 @@ class TestInferenceVariantConfigBlocks(unittest.TestCase):
         raw["server_params"]["engine_args"] = {"bad": {"x": object()}}
         self.assertIn("must be JSON serializable", problems(raw)[0])
 
+    def test_lm_eval_accessors(self):
+        config = InferenceVariantConfig.model_validate(inference_config())
+        self.assertEqual(config.lm_eval_tasks(), [])
+        self.assertEqual(config.lm_eval_thresholds("gsm8k_flex"), {})
+
+        tasks = [{"id": "gsm8k_flex", "task": "gsm8k"}, {"id": "mmlu", "task": "mmlu"}]
+        thresholds = {
+            CELL: {"output_throughput": {"kind": "min", "value": 100}},
+            "accuracy": {
+                "lm_eval": {
+                    "gsm8k_flex": {
+                        "exact_match": {"kind": "min", "value": 0.8, "optional": True},
+                        "flexible_match": {"kind": "info", "value": 0},
+                    }
+                }
+            },
+        }
+        config = InferenceVariantConfig.model_validate(
+            inference_config(accuracy={"lm_eval": {"tasks": tasks}}, thresholds=thresholds)
+        )
+        self.assertEqual([task.id for task in config.lm_eval_tasks()], ["gsm8k_flex", "mmlu"])
+        config.lm_eval_tasks().clear()
+        self.assertEqual(len(config.accuracy.lm_eval.tasks), 2)
+        self.assertEqual(
+            config.lm_eval_thresholds("gsm8k_flex"),
+            {
+                "exact_match": {"kind": "min", "value": 0.8, "optional": True},
+                "flexible_match": {"kind": "info", "value": 0},
+            },
+        )
+        self.assertEqual(config.lm_eval_thresholds("mmlu"), {})
+
     def test_accuracy_ids_unique(self):
         task = {"id": "gsm8k_flex", "task": "gsm8k"}
         niah = {"type": "niah", "id": "niah_8k", "isl": 8192}
@@ -408,3 +447,171 @@ class TestValidateConfigFileErrors(unittest.TestCase):
         message = str(caught.exception)
         self.assertIn("node_dict: ", message)
         self.assertNotIn("s3cr3t-value", message)
+
+
+INFO = {"kind": "info", "value": 0}
+
+
+class TestFillInfoSpecs(unittest.TestCase):
+    def test_adds_info_for_each_gated_metric_a_cell_lacks(self):
+        thresholds = {CELL: {}, OTHER_CELL: {"failed": {"kind": "max", "value": 0}}}
+        filled = fill_info_specs(thresholds, {"failed", "p99_itl_ms"})
+        self.assertEqual(filled[CELL], {"failed": INFO, "p99_itl_ms": INFO})
+        self.assertEqual(filled[OTHER_CELL], {"failed": {"kind": "max", "value": 0}, "p99_itl_ms": INFO})
+
+    def test_keeps_every_spec_the_file_sets(self):
+        cell = {"output_throughput": {"kind": "min", "value": 5}, "made_up_metric": {"kind": "min", "value": 1}}
+        filled = fill_info_specs({CELL: cell}, {"output_throughput"})
+        self.assertEqual(filled, {CELL: cell})
+        self.assertIsNot(filled[CELL], cell)
+
+    def test_fill_skips_underscore_cells_even_when_they_are_dicts(self):
+        self.assertEqual(fill_info_specs({"_example": {}}, {"failed"}), {"_example": {}})
+
+    def test_never_adds_an_unreported_metric(self):
+        filled = fill_info_specs({CELL: {}}, {"failed", "p50_queue_time_ms"}, unreported={"p50_queue_time_ms"})
+        self.assertEqual(filled[CELL], {"failed": INFO})
+
+    def test_never_adds_a_required_metric_so_coverage_still_fails(self):
+        filled = fill_info_specs({CELL: {}}, {"failed", "output_throughput"}, required={"output_throughput"})
+        self.assertEqual(filled[CELL], {"failed": INFO})
+
+    def test_leaves_accuracy_comments_and_missing_cells_alone(self):
+        accuracy = {"lm_eval": {"gsm8k": {"gsm8k.exact_match__strict-match": {"kind": "min", "value": 0.5}}}}
+        thresholds = {"_comment": "file", CELL: {}, "accuracy": accuracy}
+        filled = fill_info_specs(thresholds, {"failed"})
+        self.assertEqual(filled, {"_comment": "file", CELL: {"failed": INFO}, "accuracy": accuracy})
+        self.assertEqual(thresholds[CELL], {})
+
+
+class TestNotImplemented(unittest.TestCase):
+    def test_not_implemented_check_names_each_field_and_metric(self):
+        raw = inference_config(
+            thresholds={CELL: {"mfu": {"kind": "min", "value": 1}, "failed": {"kind": "max", "value": 0}}},
+            accuracy={"quant_parity": {"enabled": True}},
+        )
+        raw["server_params"].update({"dp": 2, "engine_args": {"speculative_config": "{}"}})
+        raw["benchmark_params"]["scaling_baseline_output_throughput"] = 900.0
+        config = InferenceVariantConfig.model_validate(raw)
+        fields = (
+            "server_params.dp",
+            "server_params.ep",
+            "server_params.engine_args.speculative_config",
+            "benchmark_params.scaling_baseline_output_throughput",
+            "accuracy.quant_parity",
+        )
+        names = not_implemented_names(config, fields=fields, metrics={"mfu"})
+        self.assertEqual(
+            names,
+            [
+                "server_params.dp",
+                "server_params.engine_args.speculative_config",
+                "benchmark_params.scaling_baseline_output_throughput",
+                "accuracy.quant_parity",
+                f"thresholds {CELL}.mfu",
+            ],
+        )
+        pattern = r"^not implemented for TestEngine: server_params.dp, .*; leave them at their defaults$"
+        with self.assertRaisesRegex(ValueError, pattern):
+            check_not_implemented("TestEngine", names)
+        check_not_implemented("TestEngine", [])
+
+    def test_defaults_pass_and_an_info_spec_still_counts(self):
+        config = InferenceVariantConfig.model_validate(inference_config())
+        every_field = (
+            "server_params.dp",
+            "server_params.ep",
+            "server_params.prefill_nnodes",
+            "server_params.long_context",
+            "benchmark_params.scaling_baseline_output_throughput",
+            "accuracy.custom_eval",
+            "accuracy.quant_parity",
+            "accuracy.mtp_quality",
+        )
+        self.assertEqual(not_implemented_names(config, fields=every_field), [])
+        config = InferenceVariantConfig.model_validate(
+            inference_config(thresholds={CELL: {"mfu": {"kind": "info", "value": 0}}})
+        )
+        self.assertEqual(not_implemented_names(config, metrics={"mfu"}), [f"thresholds {CELL}.mfu"])
+
+    def test_each_off_default_field_is_named(self):
+        raw = inference_config(
+            accuracy={"custom_eval": [{"id": "niah", "type": "niah", "isl": 1024}], "mtp_quality": {"enabled": True}}
+        )
+        raw["server_params"].update({"ep": True, "prefill_nnodes": 2, "long_context": {"max_prefill_tokens": 8}})
+        config = InferenceVariantConfig.model_validate(raw)
+        fields = (
+            "server_params.ep",
+            "server_params.prefill_nnodes",
+            "server_params.long_context",
+            "accuracy.custom_eval",
+            "accuracy.mtp_quality",
+            "server_params.engine_args.speculative_config",
+        )
+        self.assertEqual(not_implemented_names(config, fields=fields), list(fields[:5]))
+
+    def test_threshold_accuracy_sections(self):
+        accuracy = {"custom_eval": {"niah": {"pass_rate": {"kind": "min", "value": 0.8}}}}
+        config = InferenceVariantConfig.model_validate(inference_config(thresholds={CELL: {}, "accuracy": accuracy}))
+        names = not_implemented_names(config, threshold_sections=("custom_eval", "quant_parity"))
+        self.assertEqual(names, ["thresholds accuracy.custom_eval"])
+
+    def test_unknown_field_name_fails(self):
+        config = InferenceVariantConfig.model_validate(inference_config())
+        with self.assertRaisesRegex(ValueError, "no not-implemented check for server_params.dpp"):
+            not_implemented_names(config, fields=("server_params.dpp",))
+        with self.assertRaisesRegex(ValueError, "no accuracy threshold section niah"):
+            not_implemented_names(config, threshold_sections=("niah",))
+
+
+class TestContainerNetworkEnv(unittest.TestCase):
+    def _container(self, env):
+        raw = inference_config()
+        raw["container"]["env"] = env
+        return InferenceVariantConfig.model_validate(raw).container
+
+    def test_socket_variables_all_or_none(self):
+        every = {"NCCL_SOCKET_IFNAME": "eth0", "GLOO_SOCKET_IFNAME": "eth0", "TP_SOCKET_IFNAME": "eth0"}
+        check_container_network_env(self._container(every))
+        check_container_network_env(self._container({}))
+        self.assertTrue(container_sets_sockets(self._container(every)))
+        self.assertFalse(container_sets_sockets(self._container({})))
+        with self.assertRaisesRegex(ValueError, r"missing: \['GLOO_SOCKET_IFNAME', 'TP_SOCKET_IFNAME'\]"):
+            check_container_network_env(self._container({"NCCL_SOCKET_IFNAME": "eth0"}))
+        with self.assertRaisesRegex(ValueError, r"cannot be empty: \['TP_SOCKET_IFNAME'\]"):
+            check_container_network_env(self._container({**every, "TP_SOCKET_IFNAME": " "}))
+
+    def test_valid_ib_hca_passes_and_one_socket_variable_counts(self):
+        check_container_network_env(self._container({"NCCL_IB_HCA": "mlx5_0"}))
+        self.assertTrue(container_sets_sockets(self._container({"NCCL_SOCKET_IFNAME": "eth0"})))
+
+    def test_nccl_ib_hca_needs_a_device(self):
+        self.assertIsNone(container_ib_hcas(self._container({})))
+        self.assertEqual(container_ib_hcas(self._container({"NCCL_IB_HCA": " mlx5_0, ,mlx5_1"})), ["mlx5_0", "mlx5_1"])
+        with self.assertRaisesRegex(ValueError, "NCCL_IB_HCA must name at least one device"):
+            check_container_network_env(self._container({"NCCL_IB_HCA": " , "}))
+
+
+class TestPollSchedule(unittest.TestCase):
+    def test_first_wait_then_enough_polls_for_the_total(self):
+        self.assertEqual(poll_schedule(3930, 330, 60), (330, 60))
+        self.assertEqual(poll_schedule(5520, 120, 60), (120, 90))
+        self.assertEqual(poll_schedule(361, 0, 60), (0, 7))
+
+    def test_rejects_bad_inputs(self):
+        cases = {
+            "zero interval": ((100, 10, 0), "poll interval must be positive, got 0"),
+            "negative interval": ((100, 10, -5), "poll interval must be positive, got -5"),
+            "negative total": ((-1, 10, 60), "poll total must not be negative, got -1"),
+            "negative first wait": ((100, -1, 60), "poll first wait must not be negative, got -1"),
+        }
+        for name, (args, message) in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError) as caught:
+                    poll_schedule(*args)
+                self.assertEqual(str(caught.exception), message)
+        self.assertEqual(poll_schedule(0, 0, 60), (0, 1))
+
+    def test_short_total_caps_the_wait_and_keeps_one_poll(self):
+        self.assertEqual(poll_schedule(100, 330, 60), (100, 1))
+        self.assertEqual(poll_schedule(330, 330, 60), (330, 1))

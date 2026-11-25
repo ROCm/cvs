@@ -22,6 +22,7 @@ import json
 import os
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -29,14 +30,18 @@ from pydantic import ValidationError
 
 from cvs.lib.utils.config_loader import (
     BaseVariantConfig,
+    ConfigError,
     ContainerSpec,
     ModelSpec,
     Paths,
     _find_packaged_threshold,
     attach_threshold_file,
+    load_variant,
     substitute_config,
     substitute_placeholders,
 )
+from cvs.parsers.schemas import InferenceVariantConfig, old_metric_name_rule, resolve_old_keys
+from cvs.unittests.support import FAKE_CRED
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -578,6 +583,154 @@ class TestSubstituteConfigPlaceholders(unittest.TestCase):
                 with self.subTest(username=username), patch.dict(os.environ, {"USER": "envuser"}):
                     raw, _ = substitute_config(config_path, {"username": username}, all_placeholders=True)
                     self.assertEqual(raw["paths"]["log_dir"], "/home/envuser/envuser")
+
+
+CELL = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"
+
+
+def _inference_config(**overrides):
+    config = {
+        "threshold_json": "llama_threshold.json",
+        "paths": {"shared_fs": "/home/{user-id}", "models_dir": "/models", "log_dir": "/l", "hf_token_file": "/t"},
+        "container": {"name": "c", "image": "rocm/vllm:latest", "runtime": {"name": "docker"}},
+        "server_params": {"model": "m", "tensor_parallel_size": 8},
+        "benchmark_params": {"num_prompts": 32},
+        "sweeps": {CELL: {}},
+        "runs": [CELL],
+    }
+    config.update(overrides)
+    return config
+
+
+def _resolve_old(raw):
+    return resolve_old_keys(raw, {"server_params.tensor_parallel_size": "server_params.tp"}, label="test config")
+
+
+def _load(tmp, config, thresholds, **kwargs):
+    root = Path(tmp)
+    (root / "c.json").write_text(json.dumps(config))
+    if thresholds is not None:
+        (root / config["threshold_json"]).write_text(json.dumps(thresholds))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        loaded = load_variant(root / "c.json", {"username": "jdoe"}, InferenceVariantConfig, "TestEngine", **kwargs)
+    return loaded, [str(w.message) for w in caught if issubclass(w.category, FutureWarning)]
+
+
+class TestLoadVariant(unittest.TestCase):
+    def test_load_variant_keeps_emptied_sweep_cells(self):
+        def resolve_old(raw):
+            table = {
+                "server_params.tensor_parallel_size": "server_params.tp",
+                f"sweeps.{CELL}.client_s": "timeouts.client_s",
+            }
+            return resolve_old_keys(raw, table, label="test config")
+
+        config = _inference_config()
+        config["sweeps"] = {CELL: {"client_s": 600}}
+        with tempfile.TemporaryDirectory() as tmp:
+            loaded, _ = _load(tmp, config, {CELL: {}}, resolve_old=resolve_old, warn=False)
+        self.assertEqual(loaded.sweeps, {CELL: {}})
+        self.assertEqual(loaded.timeouts.client_s, 600)
+
+    def test_load_variant_runs_old_keys_fill_and_validation(self):
+        thresholds = {CELL: {"failed": {"kind": "max", "value": 0}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            loaded, caught = _load(
+                tmp,
+                _inference_config(),
+                thresholds,
+                resolve_old=_resolve_old,
+                gated={"failed", "output_throughput", "p99_itl_ms"},
+                unreported={"p99_itl_ms"},
+            )
+        self.assertEqual(loaded.paths.shared_fs, "/home/jdoe")
+        self.assertEqual(loaded.server_params.tp, 8)
+        self.assertEqual(
+            loaded.thresholds.get(CELL),
+            {"failed": {"kind": "max", "value": 0}, "output_throughput": {"kind": "info", "value": 0}},
+        )
+        self.assertEqual(len(caught), 1)
+        self.assertIn("server_params.tensor_parallel_size -> server_params.tp", caught[0])
+
+    def test_load_variant_without_a_gated_set_fills_nothing_and_warn_false_is_quiet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            loaded, caught = _load(tmp, _inference_config(), {CELL: {}}, resolve_old=_resolve_old, warn=False)
+        self.assertEqual(loaded.thresholds.get(CELL), {})
+        self.assertEqual(caught, [])
+
+    def test_no_threshold_file_records_without_gating(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            loaded, _ = _load(
+                tmp, _inference_config(threshold_json=""), None, resolve_old=_resolve_old, gated={"failed"}, warn=False
+            )
+        self.assertFalse(loaded.enforce_thresholds)
+        self.assertEqual(loaded.thresholds.cells, {})
+
+    def test_config_error_names_fields_never_values(self):
+        config = _inference_config(server_params={"model": "m", "tp": FAKE_CRED})
+        config["container"]["env"] = {"HF_TOKEN": FAKE_CRED}
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ConfigError) as caught:
+                _load(tmp, config, {CELL: {}})
+        message = str(caught.exception)
+        self.assertIn("server_params.tp", message)
+        self.assertIn("HF_TOKEN", message)
+        self.assertNotIn(FAKE_CRED, message)
+        self.assertTrue(caught.exception.problems)
+
+    def test_fill_runs_after_old_keys_and_honors_required(self):
+        def resolve_old(raw):
+            return resolve_old_keys(
+                raw,
+                {"server_params.tensor_parallel_size": "server_params.tp"},
+                rules=(old_metric_name_rule({"queue_time_p50_ms": "p50_queue_time_ms"}),),
+            )
+
+        thresholds = {"_comment": "text", CELL: {"queue_time_p50_ms": {"kind": "max", "value": 3}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            loaded, _ = _load(
+                tmp,
+                _inference_config(),
+                thresholds,
+                resolve_old=resolve_old,
+                gated={"p50_queue_time_ms", "output_throughput", "failed"},
+                required={"output_throughput"},
+                warn=False,
+            )
+        self.assertEqual(
+            loaded.thresholds.get(CELL),
+            {"p50_queue_time_ms": {"kind": "max", "value": 3}, "failed": {"kind": "info", "value": 0}},
+        )
+
+    def test_underscore_metric_not_printed(self):
+        misplaced = "_sk-SECRET123"
+        cases = {
+            "metric": (
+                {misplaced: {"kind": "min", "value": 1}},
+                "threshold file: a TestEngine metric name starts with _",
+            ),
+            "spec field": (
+                {"failed": {"kind": "max", "value": 0, misplaced: "x"}},
+                "threshold file: a TestEngine threshold spec",
+            ),
+        }
+        for name, (cell, prefix) in cases.items():
+            for cell_key in (CELL, misplaced[1:]):
+                with self.subTest(name=name, cell_key=cell_key):
+                    with tempfile.TemporaryDirectory() as tmp:
+                        with self.assertRaises(ConfigError) as caught:
+                            _load(tmp, _inference_config(), {cell_key: cell}, resolve_old=_resolve_old, warn=False)
+                    message = str(caught.exception)
+                    self.assertTrue(message.startswith(f"{Path(tmp) / 'c.json'} is not a valid config:"), message)
+                    self.assertIn(f"  {prefix}", message)
+                    self.assertNotIn("SECRET", message)
+                    self.assertNotIn("ISL=", message)
+        with tempfile.TemporaryDirectory() as tmp:
+            loaded, _ = _load(
+                tmp, _inference_config(), {CELL: {"_comment_x": "ok"}}, resolve_old=_resolve_old, warn=False
+            )
+        self.assertEqual(loaded.thresholds.get(CELL), {})
 
 
 if __name__ == "__main__":

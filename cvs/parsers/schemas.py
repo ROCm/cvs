@@ -1876,12 +1876,23 @@ def _check_threshold_coverage(self):
     return self
 
 
+class _InferenceVariantBase(_Forbid):
+    def lm_eval_tasks(self):
+        """A new list of the lm-eval tasks to run, in config order."""
+        return list(self.accuracy.lm_eval.tasks)
+
+    def lm_eval_thresholds(self, task_id):
+        """A new dict of one lm-eval task's threshold specs as written, as plain dicts; ``{}`` when it has none."""
+        cell = self.thresholds.accuracy.lm_eval.get(task_id, {})
+        return {metric: spec.model_dump(exclude_unset=True) for metric, spec in cell.items()}
+
+
 # The config every inference engine shares. ``thresholds`` holds the threshold
 # file the loader attached; with ``enforce_thresholds`` true, every run needs a
 # threshold cell, and a threshold cell need not be run.
 InferenceVariantConfig = create_model(
     "InferenceVariantConfig",
-    __base__=_Forbid,
+    __base__=_InferenceVariantBase,
     __validators__={
         "_reject_changeme": field_validator("*", mode="before")(_reject_changeme),
         "_check_container_env": field_validator("container", mode="before")(_check_container_env),
@@ -1906,6 +1917,149 @@ InferenceVariantConfig = create_model(
     accuracy=(AccuracyConfig, Field(default_factory=AccuracyConfig)),
     thresholds=(ThresholdFile, Field(default_factory=ThresholdFile)),
 )
+
+# The non-accuracy metrics a unified inference threshold file gates, statistic first.
+# A suite adds each one a threshold cell lacks as ``info`` (``fill_info_specs``).
+UNIFIED_GATED_METRICS = frozenset(
+    {
+        "output_throughput",
+        "total_token_throughput",
+        *(f"{stat}_{name}_ms" for name in ("ttft", "tpot", "e2el") for stat in ("mean", "median", "p90", "p95", "p99")),
+        *(f"{stat}_itl_ms" for stat in ("mean", "median", "p95", "p99")),
+        "success_rate",
+        "failed",
+        "peak_gpu_memory_mb",
+        "model_load_memory_mb",
+        "model_load_s",
+        "gpu_bandwidth_util_pct",
+        "gpu_compute_util_pct",
+        "p50_queue_time_ms",
+        "p95_queue_time_ms",
+        "p50_prefill_time_ms",
+        "p95_prefill_time_ms",
+    }
+)
+
+
+def fill_info_specs(thresholds, gated, required=frozenset(), unreported=frozenset()):
+    """Add an ``info`` spec for each ``gated`` metric a threshold cell lacks.
+
+    ``thresholds`` is a raw threshold dict after old-key conversion. Metrics in
+    ``required`` are left out so coverage still fails a file that lacks them,
+    and so are the ``unreported`` ones the suite can't produce. Every spec the
+    file sets is kept, no cell is added, and ``accuracy`` is untouched.
+    Returns a new dict.
+    """
+    fill = sorted(set(gated) - set(required) - set(unreported))
+    filled = {}
+    for key, cell in thresholds.items():
+        if key == "accuracy" or key.startswith("_") or not isinstance(cell, dict):
+            filled[key] = cell
+            continue
+        filled[key] = {**cell, **{metric: {"kind": "info", "value": 0} for metric in fill if metric not in cell}}
+    return filled
+
+
+# Shared fields a suite may not run yet, each true when a config sets it off its default.
+_NOT_IMPLEMENTED_FIELDS = {
+    "server_params.dp": lambda config: config.server_params.dp != 1,
+    "server_params.ep": lambda config: config.server_params.ep,
+    "server_params.prefill_nnodes": lambda config: config.server_params.prefill_nnodes is not None,
+    "server_params.long_context": lambda config: any(
+        value is not None for value in config.server_params.long_context.model_dump().values()
+    ),
+    "benchmark_params.scaling_baseline_output_throughput": lambda config: (
+        config.benchmark_params.scaling_baseline_output_throughput is not None
+    ),
+    "accuracy.custom_eval": lambda config: bool(config.accuracy.custom_eval),
+    "accuracy.quant_parity": lambda config: config.accuracy.quant_parity != QuantParityConfig(),
+    "accuracy.mtp_quality": lambda config: config.accuracy.mtp_quality != MtpQualityConfig(),
+}
+_ENGINE_ARGS_FIELD = "server_params.engine_args."
+
+
+def not_implemented_names(config, fields=(), metrics=frozenset(), threshold_sections=()):
+    """What an inference config sets that its suite can't run yet, in a stable order.
+
+    ``fields`` names shared fields, in the order to report them, or
+    ``server_params.engine_args.<flag>`` for a native flag the suite can't
+    honor; each counts when set off its default. ``metrics`` are names the suite
+    can't report: any threshold spec on one counts, ``info`` included.
+    ``threshold_sections`` are accuracy threshold sections, such as
+    ``custom_eval``, that count when not empty. An unknown field or section name raises.
+    """
+    names = []
+    for name in fields:
+        if name.startswith(_ENGINE_ARGS_FIELD):
+            if name[len(_ENGINE_ARGS_FIELD) :] in config.server_params.engine_args:
+                names.append(name)
+            continue
+        if name not in _NOT_IMPLEMENTED_FIELDS:
+            raise ValueError(f"no not-implemented check for {name}")
+        if _NOT_IMPLEMENTED_FIELDS[name](config):
+            names.append(name)
+    names.extend(
+        f"thresholds {cell_key}.{metric}"
+        for cell_key, cell in config.thresholds.cells.items()
+        for metric in cell
+        if metric in metrics
+    )
+    for section in threshold_sections:
+        if section not in ThresholdAccuracy.model_fields:
+            raise ValueError(f"no accuracy threshold section {section}")
+        if getattr(config.thresholds.accuracy, section):
+            names.append(f"thresholds accuracy.{section}")
+    return names
+
+
+def check_not_implemented(suite, names):
+    """Raise one error naming every ``not_implemented_names`` entry, or nothing when there are none."""
+    if names:
+        raise ValueError(f"not implemented for {suite}: {', '.join(names)}; leave them at their defaults")
+
+
+_SOCKET_ENV = frozenset({"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"})
+
+
+def container_ib_hcas(container):
+    """The devices ``container.env.NCCL_IB_HCA`` names, or None when it is not set."""
+    value = container.env.get("NCCL_IB_HCA")
+    if value is None:
+        return None
+    return [device.strip() for device in value.split(",") if device.strip()]
+
+
+def container_sets_sockets(container):
+    return bool(_SOCKET_ENV & set(container.env))
+
+
+def check_container_network_env(container):
+    """Fail socket interface variables set only in part or left empty, and an NCCL_IB_HCA naming no device."""
+    env = container.env
+    sockets = _SOCKET_ENV & set(env)
+    if sockets and sockets != _SOCKET_ENV:
+        raise ValueError(
+            f"container.env must set all socket interface variables together; missing: {sorted(_SOCKET_ENV - sockets)}"
+        )
+    empty = sorted(name for name in sockets if not env[name].strip())
+    if empty:
+        raise ValueError(f"container.env socket interface variables cannot be empty: {empty}")
+    if "NCCL_IB_HCA" in env and not container_ib_hcas(container):
+        raise ValueError("container.env.NCCL_IB_HCA must name at least one device")
+
+
+def poll_schedule(total_s, first_wait_s, interval_s):
+    """The first wait and poll count that spend a ``timeouts`` total.
+
+    The first wait is capped at the total, and there is always at least one poll.
+    """
+    if interval_s <= 0:
+        raise ValueError(f"poll interval must be positive, got {interval_s}")
+    for name, value in (("total", total_s), ("first wait", first_wait_s)):
+        if value < 0:
+            raise ValueError(f"poll {name} must not be negative, got {value}")
+    first = min(first_wait_s, total_s)
+    return first, max(1, math.ceil((total_s - first) / interval_s))
 
 
 def validation_problem_lines(exc):
@@ -2138,6 +2292,161 @@ def warn_old_keys(message):
         return
     logger.warning(message)
     warnings.warn(message, FutureWarning, stacklevel=2)
+
+
+# ---------- old-key rules for inference configs ----------
+# Each builder returns a rule for ``resolve_old_keys``; a suite passes its own table.
+
+
+def _old_section(config, name):
+    value = config.get(name) if isinstance(config, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
+def _old_threshold_cells(config):
+    for cell_key, cell in _old_section(config, "thresholds").items():
+        if cell_key != "accuracy" and isinstance(cell, dict):
+            yield cell_key, cell
+
+
+def _old_spec_rows(cell, old_prefix, new_prefix, kinds, names=None, quoted=False):
+    rows = {}
+    for metric, spec in cell.items():
+        if not isinstance(spec, dict):
+            continue
+        new_metric = (names or {}).get(metric, metric)
+        kind = spec.get("kind")
+        if isinstance(kind, str) and kind in kinds:
+            new_path = (*new_prefix, new_metric, "kind")
+            rows[(*old_prefix, metric, "kind")] = OldKey(new_path, value=kinds[kind], conflict="replace")
+        value = spec.get("value")
+        if quoted and isinstance(value, str):
+            try:
+                number = float(value)
+            except ValueError:
+                continue
+            rows[(*old_prefix, metric, "value")] = OldKey(
+                (*new_prefix, new_metric, "value"), value=number, conflict="replace"
+            )
+    return rows
+
+
+def old_cell_kind_rule(kinds, names=None):
+    """Rewrite old threshold kinds in every threshold cell, such as ``max_ms`` to ``max``.
+
+    ``names`` is the suite's old to new metric names: this rule then renames
+    them too, as ``old_metric_name_rule`` does, so the kind lands on the
+    renamed metric whichever order the rules run in.
+    """
+
+    def rule(config):
+        rows = old_metric_name_rule(names)(config) if names else {}
+        for cell_key, cell in _old_threshold_cells(config):
+            prefix = ("thresholds", cell_key)
+            rows.update(_old_spec_rows(cell, prefix, prefix, kinds, names))
+        return rows
+
+    return rule
+
+
+def old_metric_name_rule(names):
+    """Rename old metric names in every threshold cell; a cell that sets both names fails."""
+
+    def rule(config):
+        rows = {}
+        for cell_key, cell in _old_threshold_cells(config):
+            for old_name, new_name in names.items():
+                if old_name in cell and new_name in cell:
+                    raise ValueError(f"thresholds {cell_key} sets both {old_name} and {new_name}; keep {new_name}")
+                if old_name in cell:
+                    rows[("thresholds", cell_key, old_name)] = ("thresholds", cell_key, new_name)
+        return rows
+
+    return rule
+
+
+def old_accuracy_rule(kinds=None):
+    """Move an old threshold file's ``accuracy.<id>`` under ``accuracy.lm_eval``.
+
+    Old ``kinds`` are rewritten, and a quoted value becomes a number as the old
+    verdict code read it, with ``float``. A file already in the new layout is left alone.
+    """
+
+    def rule(config):
+        accuracy = _old_section(_old_section(config, "thresholds"), "accuracy")
+        rows = {}
+        if set(accuracy) & set(ThresholdAccuracy.model_fields):
+            return rows
+        for task_id, cell in accuracy.items():
+            if task_id.startswith("_"):
+                continue
+            old, new = ("thresholds", "accuracy", task_id), ("thresholds", "accuracy", "lm_eval", task_id)
+            rows[old] = OldKey(new)
+            if isinstance(cell, dict):
+                rows.update(_old_spec_rows(cell, old, new, kinds or {}, quoted=True))
+        return rows
+
+    return rule
+
+
+def keep_sweep_cells(raw, converted):
+    """Put back every sweep cell an old-key conversion emptied and dropped.
+
+    A sweep cell is a run even when it overrides nothing, but ``resolve_old_keys``
+    drops a parent it empties, as when ``old_timeout_rule`` moves a cell's only key.
+    """
+    if converted is raw or not isinstance(raw.get("sweeps"), dict):
+        return converted
+    sweeps = converted.setdefault("sweeps", {})
+    for cell_key in raw["sweeps"]:
+        sweeps.setdefault(cell_key, {})
+    return converted
+
+
+def _old_whole(section_values, where, key, default):
+    try:
+        return int(section_values.get(key, default))
+    except (TypeError, ValueError):
+        raise ValueError(f"{where}.{key} must be a whole number of seconds or iterations") from None
+
+
+def old_timeout_rule(new_path, keys, total, force=None, sweep_keys=frozenset()):
+    """Convert old wait and poll keys into one ``timeouts`` total.
+
+    ``keys`` are ``(section, key, default)`` triples, and ``total`` takes their
+    values in that order and returns seconds; each key name appears once. The
+    rule runs when the config holds any of the keys, or when ``force(config)``
+    is true and the config holds some other old key, since ``resolve_old_keys``
+    changes nothing without one. A sweep cell overriding one of ``sweep_keys``
+    gets its own total, and the longest wins, since one total serves every
+    cell; ``load_variant`` keeps a sweep cell the move empties.
+    """
+    names = [key for _section, key, _default in keys]
+    if len(set(names)) != len(names):
+        raise ValueError(f"old_timeout_rule needs distinct key names, got {names}")
+
+    def rule(config):
+        present = any(key in _old_section(config, section) for section, key, _default in keys)
+        if not present and not (force and force(config)):
+            return {}
+        base = {key: _old_whole(_old_section(config, section), section, key, default) for section, key, default in keys}
+        totals = [total(*base.values())]
+        cell_rows = []
+        sweeps = _old_section(config, "sweeps")
+        for cell_key in sweeps if sweep_keys else ():
+            cell = _old_section(sweeps, cell_key)
+            overridden = sorted(set(sweep_keys) & set(cell))
+            if not overridden:
+                continue
+            values = [_old_whole(cell, f"sweeps.{cell_key}", key, base[key]) for key in base]
+            totals.append(total(*values))
+            cell_rows.extend(("sweeps", cell_key, key) for key in overridden)
+        row = OldKey(new_path, value=max(totals))
+        rows = {f"{section}.{key}": row for section, key, _default in keys}
+        rows.update({path: row for path in cell_rows})
+        return rows
+
+    return rule
 
 
 # =============================================================================

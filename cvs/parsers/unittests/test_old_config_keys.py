@@ -8,6 +8,11 @@ from cvs.parsers.schemas import (
     OldKey,
     normalize_legacy_preflight_node_smoke_sections,
     normalize_legacy_preflight_rdma_config,
+    old_accuracy_rule,
+    old_cell_kind_rule,
+    old_metric_name_rule,
+    keep_sweep_cells,
+    old_timeout_rule,
     resolve_old_keys,
     warn_old_keys,
 )
@@ -251,6 +256,117 @@ class TestPreflightOldKeys(unittest.TestCase):
         converted, message = normalize_legacy_preflight_node_smoke_sections(config)
         self.assertIs(converted, config)
         self.assertIsNone(message)
+
+
+CELL = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"
+KINDS = {"max_ms": "max", "min_tok_s": "min"}
+NAMES = {"queue_time_p50_ms": "p50_queue_time_ms"}
+METRIC = "gsm8k.exact_match__flexible-extract"
+
+
+def convert(config, *rules):
+    return resolve_old_keys(config, {}, rules=rules)
+
+
+class TestOldKeyRuleBuilders(unittest.TestCase):
+    def test_kind_rule_converts_only_the_cells(self):
+        config = {
+            "thresholds": {
+                CELL: {"p99_ttft_ms": {"kind": "max_ms", "value": 1}, "failed": {"kind": "max", "value": 0}},
+                "accuracy": {"task": {METRIC: {"kind": "min_tok_s", "value": 1}}},
+            }
+        }
+        converted, message = convert(config, old_cell_kind_rule(KINDS))
+        self.assertEqual(converted["thresholds"][CELL]["p99_ttft_ms"], {"kind": "max", "value": 1})
+        self.assertEqual(converted["thresholds"][CELL]["failed"], {"kind": "max", "value": 0})
+        self.assertEqual(converted["thresholds"]["accuracy"], config["thresholds"]["accuracy"])
+        self.assertIn(f"thresholds.{CELL}.p99_ttft_ms.kind", message)
+
+    def test_kind_rule_follows_a_rename(self):
+        config = {"thresholds": {CELL: {"queue_time_p50_ms": {"kind": "max_ms", "value": 3}}}}
+        expected = {"p50_queue_time_ms": {"kind": "max", "value": 3}}
+        for rules in (
+            (old_metric_name_rule(NAMES), old_cell_kind_rule(KINDS, names=NAMES)),
+            (old_cell_kind_rule(KINDS, names=NAMES), old_metric_name_rule(NAMES)),
+            (old_cell_kind_rule(KINDS, names=NAMES),),
+        ):
+            with self.subTest(rules=len(rules)):
+                self.assertEqual(convert(config, *rules)[0]["thresholds"][CELL], expected)
+
+    def test_name_rule_renames_and_fails_when_a_cell_sets_both_names(self):
+        spec = {"kind": "max", "value": 3}
+        converted, message = convert({"thresholds": {CELL: {"queue_time_p50_ms": spec}}}, old_metric_name_rule(NAMES))
+        self.assertEqual(converted["thresholds"][CELL], {"p50_queue_time_ms": spec})
+        self.assertIn(f"queue_time_p50_ms -> thresholds.{CELL}.p50_queue_time_ms", message)
+        both = {"thresholds": {CELL: {"queue_time_p50_ms": spec, "p50_queue_time_ms": spec}}}
+        with self.assertRaisesRegex(ValueError, "sets both queue_time_p50_ms and p50_queue_time_ms"):
+            convert(both, old_metric_name_rule(NAMES))
+
+    def test_accuracy_rule_moves_tasks_and_converts_quoted_values(self):
+        config = {
+            "thresholds": {"accuracy": {"_comment": "x", "task": {METRIC: {"kind": "min_tok_s", "value": "0.75"}}}}
+        }
+        converted, message = convert(config, old_accuracy_rule(KINDS))
+        spec = converted["thresholds"]["accuracy"]["lm_eval"]["task"][METRIC]
+        self.assertEqual((spec, type(spec["value"])), ({"kind": "min", "value": 0.75}, float))
+        self.assertIn(f"thresholds.accuracy.task.{METRIC}.value", message)
+        self.assertIn("thresholds.accuracy.task -> thresholds.accuracy.lm_eval.task", message)
+        self.assertEqual(converted["thresholds"]["accuracy"]["_comment"], "x")
+        self.assertNotIn("_comment", converted["thresholds"]["accuracy"]["lm_eval"])
+
+    def test_accuracy_rule_leaves_new_layouts_and_unreadable_values(self):
+        new = {"thresholds": {"accuracy": {"lm_eval": {"task": {METRIC: {"kind": "min", "value": "0.75"}}}}}}
+        self.assertEqual(convert(new, old_accuracy_rule(KINDS)), (new, None))
+        for value in ("high", True):
+            with self.subTest(value=value):
+                old = {"thresholds": {"accuracy": {"task": {METRIC: {"kind": "within", "value": value}}}}}
+                converted, _ = convert(old, old_accuracy_rule(KINDS))
+                self.assertEqual(
+                    converted["thresholds"]["accuracy"]["lm_eval"]["task"][METRIC], {"kind": "within", "value": value}
+                )
+
+    def test_timeout_rule_totals_old_keys_and_sweep_overrides(self):
+        keys = (("client", "wait", 120), ("client", "polls", 20), ("client", "every", 60))
+        rule = old_timeout_rule(
+            "timeouts.client_s", keys, lambda wait, polls, every: wait + polls * every, sweep_keys={"polls"}
+        )
+        converted, message = convert({"client": {"polls": "90"}}, rule)
+        self.assertEqual(converted, {"timeouts": {"client_s": 120 + 90 * 60}})
+        self.assertIn("client.polls -> timeouts.client_s", message)
+        cell = "ISL=1,OSL=1,TP=8,PP=1,CONC=1"
+        converted, message = convert({"client": {"polls": 2}, "sweeps": {cell: {"polls": 200, "x": 1}}}, rule)
+        self.assertEqual(converted["timeouts"]["client_s"], 120 + 200 * 60)
+        self.assertEqual(converted["sweeps"], {cell: {"x": 1}})
+        self.assertIn(f"sweeps.{cell}.polls -> timeouts.client_s", message)
+        raw = {"client": {"polls": 2}, "sweeps": {cell: {"polls": 200}, "other": {}}}
+        converted, _ = convert(raw, rule)
+        self.assertNotIn(cell, converted["sweeps"])
+        self.assertEqual(keep_sweep_cells(raw, converted)["sweeps"], {cell: {}, "other": {}})
+        untouched = {"sweeps": {cell: {}}}
+        self.assertIs(keep_sweep_cells(untouched, untouched), untouched)
+
+    def test_timeout_rule_keeps_the_base_total_when_a_sweep_waits_less(self):
+        keys = (("client", "wait", 0), ("client", "polls", 20), ("client", "every", 60))
+        rule = old_timeout_rule("timeouts.client_s", keys, lambda w, p, e: w + p * e, sweep_keys={"polls"})
+        converted, _ = convert({"client": {"polls": 20}, "sweeps": {"a": {"polls": 1}}}, rule)
+        self.assertEqual(converted["timeouts"]["client_s"], 1200)
+
+    def test_timeout_rule_needs_distinct_key_names(self):
+        with self.assertRaisesRegex(ValueError, "distinct key names"):
+            old_timeout_rule("timeouts.client_s", (("a", "wait", 1), ("b", "wait", 1)), lambda w1, w2: w1 + w2)
+
+    def test_keep_sweep_cells_without_sweeps(self):
+        self.assertEqual(keep_sweep_cells({"a": 1}, {"b": 1}), {"b": 1})
+
+    def test_timeout_rule_runs_only_when_asked_and_refuses_non_numbers(self):
+        keys = (("client", "wait", 10), ("client", "polls", 2), ("client", "every", 5))
+        rule = old_timeout_rule("timeouts.client_s", keys, lambda w, p, e: w + p * e)
+        self.assertEqual(convert({"client": {}}, rule), ({"client": {}}, None))
+        forced = old_timeout_rule("timeouts.client_s", keys, lambda w, p, e: w + p * e, force=lambda config: True)
+        converted, _ = resolve_old_keys({"old": 1}, {"old": "new"}, rules=(forced,))
+        self.assertEqual(converted, {"new": 1, "timeouts": {"client_s": 20}})
+        with self.assertRaisesRegex(ValueError, "^client.polls must be a whole number of seconds or iterations$"):
+            convert({"client": {"polls": "many"}}, rule)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,11 @@ def metric_pass(metric: str, actual: Any, spec: Optional[dict], evaluator=None) 
     return "fail" if err else "pass"
 
 
+def is_gated(spec):
+    """Whether a threshold spec gates its metric; ``info`` records it without gating."""
+    return isinstance(spec, dict) and spec.get("kind") != "info"
+
+
 def bar_pct(actual: float, spec: dict) -> float:
     kind = spec.get("kind", "")
     target = float(spec["value"])
@@ -99,12 +104,18 @@ class CellRecordBuilder:
         thresholds_cell: dict,
         tier: str,
         enforce: bool,
+        record_info=False,
     ) -> str:
+        """The tier's verdict; with ``record_info``, ``info`` specs stay out of it and a tier of only those records."""
         if not enforce or tier == self.config.record_tier:
             return "record"
         specs = self.config.tier_metric_specs(thresholds_cell, tier)
         if not specs:
             return "na"
+        if record_info:
+            specs = {metric: spec for metric, spec in specs.items() if is_gated(spec)}
+            if not specs:
+                return "record"
         for metric, spec in specs.items():
             status = metric_pass(
                 metric,
@@ -203,6 +214,7 @@ class CellRecordBuilder:
                     "actual": actual,
                     "unit": self.config.metric_units.get(short, ""),
                     "spec": spec,
+                    "gated": is_gated(spec),
                     "status": (
                         metric_pass(
                             full,
@@ -210,12 +222,12 @@ class CellRecordBuilder:
                             spec,
                             evaluator=self.config.metric_verdict,
                         )
-                        if enforce and spec
+                        if enforce and is_gated(spec)
                         else "record"
                     ),
                     "bar_pct": (
                         bar_pct(float(actual), spec)
-                        if spec is not None
+                        if is_gated(spec)
                         and actual is not None
                         and (
                             self.config.metric_verdict is None
@@ -223,12 +235,13 @@ class CellRecordBuilder:
                         )
                         else None
                     ),
-                    "margin": margin_text(actual, spec) if spec else None,
+                    "margin": margin_text(actual, spec) if is_gated(spec) else None,
                 }
             )
 
         tiers = {
-            tier: self.tier_status(actuals, thresholds_cell, tier, enforce) for tier in self.config.metric_tier_order
+            tier: self.tier_status(actuals, thresholds_cell, tier, enforce, record_info=True)
+            for tier in self.config.metric_tier_order
         }
         self._ctx_lifecycle = lifecycle_report
         pytest_links = self.resolve_pytest_nodeids(conc, cell_id if is_canonical_key else "")
@@ -299,7 +312,7 @@ def tier_status(
     tier: str,
     enforce: bool,
 ) -> str:
-    return CellRecordBuilder(config).tier_status(actuals, thresholds_cell, tier, enforce)
+    return CellRecordBuilder(config).tier_status(actuals, thresholds_cell, tier, enforce, record_info=True)
 
 
 def resolve_pytest_nodeids_for_cell(
