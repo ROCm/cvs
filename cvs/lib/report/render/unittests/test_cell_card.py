@@ -110,10 +110,12 @@ class TestCellCardRenderer(unittest.TestCase):
             "cell_lifecycle": {"setup": 5.0, "run": 15.0},
         }
 
-    def test_info_spec_renders_no_target(self):
+    def test_ungated_row_renders_no_target(self):
         renderer = CellCardRenderer(self.basic_config)
-        self.assertEqual(renderer._render_metric_target({"spec": {"kind": "info", "value": 0}}), "")
-        self.assertIn("40", renderer._render_metric_target({"spec": {"kind": "max", "value": 40}}))
+        info = {"kind": "info", "value": 0}
+        self.assertEqual(renderer._render_metric_target({"spec": info, "gated": False}), "")
+        self.assertIn("40", renderer._render_metric_target({"spec": {"kind": "max", "value": 40}, "gated": True}))
+        self.assertEqual(renderer._render_metric_target({"spec": info}), "<span class='target'>floor 0.0</span>")
 
     def test_renderer_creation(self):
         """Test creating a CellCardRenderer."""

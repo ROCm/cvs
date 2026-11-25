@@ -11,6 +11,7 @@ from cvs.lib.report.cell_build import (
     bar_pct,
     build_all_cells,
     build_cell_record,
+    is_gated,
     metric_pass,
     resolve_pytest_nodeids_for_cell,
 )
@@ -19,13 +20,24 @@ from cvs.lib.report.testing.fixtures import generic_inference_report_config, gen
 
 
 class TestCellBuild(unittest.TestCase):
-    def test_metric_pass_records_an_info_spec(self):
+    def test_is_gated(self):
+        cases = {
+            "info": ({"kind": "info", "value": 0}, False),
+            "min": ({"kind": "min", "value": 5}, True),
+            "max": ({"kind": "max", "value": 5}, True),
+            "no kind": ({"value": 5}, True),
+            "none": (None, False),
+            "not a dict": ("min", False),
+        }
+        for name, (spec, gated) in cases.items():
+            with self.subTest(name=name):
+                self.assertIs(is_gated(spec), gated)
+
+    def test_metric_pass_leaves_info_to_the_caller(self):
         info = {"kind": "info", "value": 0}
-        self.assertEqual(metric_pass("output_throughput", 1.0, info), "record")
-        self.assertEqual(metric_pass("failed", None, info), "record")
-        self.assertEqual(metric_pass("output_throughput", 1.0, info, evaluator=vllm_metric_verdict), "record")
+        self.assertEqual(metric_pass("output_throughput", 1.0, info), "fail")
         self.assertEqual(metric_pass("output_throughput", 1.0, {"kind": "min", "value": 5}), "fail")
-        self.assertEqual(metric_pass("output_throughput", 1.0, {"kind": "bogus", "value": 5}), "fail")
+        self.assertEqual(metric_pass("output_throughput", 9.0, {"kind": "min", "value": 5}), "pass")
 
     def test_tier_with_only_info_specs_records(self):
         info = {"kind": "info", "value": 0}
@@ -37,10 +49,13 @@ class TestCellBuild(unittest.TestCase):
         config = replace(generic_inference_report_config(), tier_metric_specs=lambda _cell, tier: tiers[tier])
         builder = CellRecordBuilder(config)
         actuals = {"client.output_throughput": 1.0, "client.failed": 3.0}
-        self.assertEqual(builder.tier_status(actuals, {}, "info_only", True), "record")
-        self.assertEqual(builder.tier_status(actuals, {}, "mixed", True), "fail")
-        self.assertEqual(builder.tier_status({**actuals, "client.failed": 0.0}, {}, "mixed", True), "pass")
-        self.assertEqual(builder.tier_status(actuals, {}, "empty", True), "na")
+        self.assertEqual(builder.tier_status(actuals, {}, "info_only", True, record_info=True), "record")
+        self.assertEqual(builder.tier_status(actuals, {}, "mixed", True, record_info=True), "fail")
+        passing = {**actuals, "client.failed": 0.0}
+        self.assertEqual(builder.tier_status(passing, {}, "mixed", True, record_info=True), "pass")
+        self.assertEqual(builder.tier_status(actuals, {}, "empty", True, record_info=True), "na")
+        self.assertEqual(builder.tier_status(actuals, {}, "info_only", True), "fail")
+        self.assertEqual(builder.tier_status(passing, {}, "mixed", True), "fail")
 
     def test_margin_shown_when_record_only_and_spec_present(self):
         variant = SimpleNamespace(
@@ -75,8 +90,12 @@ class TestCellBuild(unittest.TestCase):
             },
             cell_key=lambda isl, osl, conc: f"ISL={isl},OSL={osl},TP=8,CONC={conc}",
         )
-        cell = build_cell_record(
+        config = replace(
             generic_inference_report_config(),
+            tier_metric_specs=lambda cell, tier: cell if tier == "throughput" else {},
+        )
+        cell = build_cell_record(
+            config,
             key=("org/example-model", "mi300x", "1024", "1024", "default", 128),
             host="10.0.0.1",
             actuals={"client.output_throughput": 1200.0},
@@ -85,7 +104,9 @@ class TestCellBuild(unittest.TestCase):
             multi_host=False,
         )
         throughput = next(m for m in cell["metrics"] if m["metric"] == "client.output_throughput")
-        self.assertEqual((throughput["status"], throughput["bar_pct"]), ("record", None))
+        self.assertEqual((throughput["status"], throughput["bar_pct"], throughput["margin"]), ("record", None, None))
+        self.assertIs(throughput["gated"], False)
+        self.assertEqual(cell["tiers"]["throughput"], "record")
 
     def test_extra_curves_are_lifted_off_actuals(self):
         variant = SimpleNamespace(

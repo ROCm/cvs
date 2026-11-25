@@ -13,8 +13,6 @@ from cvs.lib.report.verdict import _check_one
 def metric_pass(metric: str, actual: Any, spec: Optional[dict], evaluator=None) -> str:
     if spec is None:
         return "na"
-    if not is_gated(spec):
-        return "record"
     if evaluator is not None:
         status, _reason = evaluator(metric, actual, spec)
         return status
@@ -106,16 +104,19 @@ class CellRecordBuilder:
         thresholds_cell: dict,
         tier: str,
         enforce: bool,
+        record_info=False,
     ) -> str:
+        """The tier's verdict; with ``record_info``, ``info`` specs stay out of it and a tier of only those records."""
         if not enforce or tier == self.config.record_tier:
             return "record"
         specs = self.config.tier_metric_specs(thresholds_cell, tier)
         if not specs:
             return "na"
-        gated = {metric: spec for metric, spec in specs.items() if is_gated(spec)}
-        if not gated:
-            return "record"
-        for metric, spec in gated.items():
+        if record_info:
+            specs = {metric: spec for metric, spec in specs.items() if is_gated(spec)}
+            if not specs:
+                return "record"
+        for metric, spec in specs.items():
             status = metric_pass(
                 metric,
                 actuals.get(metric),
@@ -213,6 +214,7 @@ class CellRecordBuilder:
                     "actual": actual,
                     "unit": self.config.metric_units.get(short, ""),
                     "spec": spec,
+                    "gated": is_gated(spec),
                     "status": (
                         metric_pass(
                             full,
@@ -220,7 +222,7 @@ class CellRecordBuilder:
                             spec,
                             evaluator=self.config.metric_verdict,
                         )
-                        if enforce and spec
+                        if enforce and is_gated(spec)
                         else "record"
                     ),
                     "bar_pct": (
@@ -238,7 +240,8 @@ class CellRecordBuilder:
             )
 
         tiers = {
-            tier: self.tier_status(actuals, thresholds_cell, tier, enforce) for tier in self.config.metric_tier_order
+            tier: self.tier_status(actuals, thresholds_cell, tier, enforce, record_info=True)
+            for tier in self.config.metric_tier_order
         }
         self._ctx_lifecycle = lifecycle_report
         pytest_links = self.resolve_pytest_nodeids(conc, cell_id if is_canonical_key else "")
