@@ -312,7 +312,7 @@ def tier_status(
     tier: str,
     enforce: bool,
 ) -> str:
-    return CellRecordBuilder(config).tier_status(actuals, thresholds_cell, tier, enforce)
+    return CellRecordBuilder(config).tier_status(actuals, thresholds_cell, tier, enforce, record_info=True)
 
 
 def resolve_pytest_nodeids_for_cell(

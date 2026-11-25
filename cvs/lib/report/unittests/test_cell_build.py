@@ -14,6 +14,7 @@ from cvs.lib.report.cell_build import (
     is_gated,
     metric_pass,
     resolve_pytest_nodeids_for_cell,
+    tier_status,
 )
 from cvs.lib.report.formatting import pytest_row_href
 from cvs.lib.report.testing.fixtures import generic_inference_report_config, generic_variant
@@ -56,6 +57,14 @@ class TestCellBuild(unittest.TestCase):
         self.assertEqual(builder.tier_status(actuals, {}, "empty", True, record_info=True), "na")
         self.assertEqual(builder.tier_status(actuals, {}, "info_only", True), "fail")
         self.assertEqual(builder.tier_status(passing, {}, "mixed", True), "fail")
+
+    def test_module_tier_status_records_info(self):
+        info = {"kind": "info", "value": 0}
+        config = replace(generic_inference_report_config(), tier_metric_specs=lambda cell, _tier: cell)
+        self.assertEqual(
+            tier_status(config, {"client.output_throughput": 1.0}, {"client.output_throughput": info}, "t", True),
+            "record",
+        )
 
     def test_margin_shown_when_record_only_and_spec_present(self):
         variant = SimpleNamespace(
