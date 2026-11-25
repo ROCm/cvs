@@ -18,13 +18,13 @@ from pydantic import ValidationError
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
 from cvs.parsers.schemas import keep_sweep_cells
 from cvs.lib.inference.utils.vllm_config_loader import (
-    ConfigError,
     VllmConfig,
     load_variant,
     merged_container,
     resolve_old_vllm_keys,
 )
 from cvs.lib.inference.utils.vllm_verification import evaluate_metric_verdicts
+from cvs.lib.utils.config_loader import ConfigError
 from cvs.lib.inference.vllm_job import VllmJob
 from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
 from cvs.parsers.schemas import validation_problem_lines
@@ -151,9 +151,6 @@ class TestVllmConfigModel(unittest.TestCase):
             "server_params.long_context": {
                 "server_params": {"model": "m", "tp": 8, "long_context": {"chunked_prefill_size": 8192}}
             },
-            "server_params.engine_args.speculative_config": {
-                "server_params": {"model": "m", "tp": 8, "engine_args": {"speculative_config": {"method": "mtp"}}}
-            },
             "server_params.dp": {"server_params": {"model": "m", "tp": 8, "dp": 2}},
             "server_params.ep": {"server_params": {"model": "m", "tp": 8, "ep": True}},
         }
@@ -163,9 +160,6 @@ class TestVllmConfigModel(unittest.TestCase):
                 self.assertEqual(len(lines), 1)
                 self.assertIn("not implemented for vLLM", lines[0])
                 self.assertIn(path, lines[0])
-        lines = problems(new_config(atom={"driver": "vllm"}))
-        self.assertEqual(len(lines), 1)
-        self.assertIn("atom: not implemented for vLLM", lines[0])
 
     def test_vllm_not_implemented_all_reported(self):
         raw = new_config(accuracy={"quant_parity": {"enabled": True}})
@@ -366,14 +360,6 @@ class TestOldKeys(unittest.TestCase):
         raw["server_params"]["tp"] = 4
         with self.assertRaisesRegex(ValueError, "server_params.tensor_parallel_size and server_params.tp"):
             convert(raw)
-
-    def test_reference_config_stem_dropped_with_warning(self):
-        raw = new_config(accuracy={"quant_parity": {"probe_prompt": "p", "reference_config_stem": "llama_fp16"}})
-        converted, message = convert(raw)
-        self.assertEqual(converted["accuracy"], {"quant_parity": {"probe_prompt": "p"}})
-        self.assertIn("accuracy.quant_parity.reference_config_stem (dropped)", message)
-        raw = new_config(accuracy={"quant_parity": {"reference_config_stem": "llama_fp16"}})
-        self.assertNotIn("accuracy", convert(raw)[0])
 
     def test_old_threshold_rows(self):
         converted, message = convert({**old_config(), "thresholds": old_thresholds()})

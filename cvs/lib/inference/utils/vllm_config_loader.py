@@ -18,7 +18,6 @@ from typing import List, Literal, Optional, Union
 from pydantic import Field, PrivateAttr, TypeAdapter, ValidationError, create_model, field_validator, model_validator
 
 from cvs.lib.inference.utils.vllm_metrics import validate_threshold_spec
-from cvs.lib.utils.config_loader import ConfigError  # noqa: F401 - re-exported for vLLM callers
 from cvs.lib.utils.config_loader import load_variant as load_inference_variant
 from cvs.parsers.schemas import (
     OLD_KEY_DROPPED,
@@ -46,14 +45,12 @@ _HARNESS_SERVER_FLAGS = frozenset(
 _BOOLEAN_CLIENT_FLAGS = frozenset({"ignore_eos", "trust_remote_code"})
 # Client flags the job sets from timeouts.client_s.
 _CLIENT_WAIT_FLAGS = frozenset({"client_initial_wait_s", "client_poll_iterations", "client_poll_wait_s"})
-_SPECULATIVE_ENGINE_ARGS = frozenset({"speculative_config", "speculative_model", "num_speculative_tokens"})
 # Shared fields vLLM does not run yet, in the order the error names them.
 _NOT_IMPLEMENTED_FIELDS = (
     "server_params.dp",
     "server_params.ep",
     "server_params.prefill_nnodes",
     "server_params.long_context",
-    *(f"server_params.engine_args.{name}" for name in sorted(_SPECULATIVE_ENGINE_ARGS)),
     "benchmark_params.scaling_baseline_output_throughput",
     "accuracy.custom_eval",
     "accuracy.quant_parity",
@@ -130,12 +127,6 @@ def _refuse_nnodes(cls, value):
     return value
 
 
-def _refuse_atom_block(cls, data):
-    if isinstance(data, dict) and "atom" in data:
-        raise ValueError("atom: not implemented for vLLM; a vLLM config holds the vllm block only")
-    return data
-
-
 class _VllmVariant(InferenceVariantConfig):
     _effective_topology = PrivateAttr(default=None)
     # The suite module that runs the config; vllm_distributed on one host runs in single mode.
@@ -188,7 +179,6 @@ VllmConfig = create_model(
     "VllmConfig",
     __base__=_VllmVariant,
     __validators__={
-        "_refuse_atom_block": model_validator(mode="before")(_refuse_atom_block),
         "_refuse_nnodes": field_validator("server_params", mode="before")(_refuse_nnodes),
         "_check_vllm": model_validator(mode="after")(_check_vllm),
     },
@@ -207,7 +197,6 @@ _OLD_KEYS = {
     "server_params.dist_init_port": "server_params.master_port",
     "server_params.distributed_executor_backend": "vllm.distributed_executor_backend",
     "accuracy.tasks": "accuracy.lm_eval.tasks",
-    "accuracy.quant_parity.reference_config_stem": OLD_KEY_DROPPED,
 }
 _OLD_SERVER_FIELDS = frozenset(
     {
