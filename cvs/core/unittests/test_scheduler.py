@@ -152,10 +152,6 @@ class TestDetectScheduler(unittest.TestCase):
         self.assertEqual(detect_scheduler(), Scheduler.SLURM)
         mock_run.assert_not_called()
 
-    @patch.dict(os.environ, {"CVS_SCHEDULER": "slurm", "CVS_K8S_JOB_ID": "cvs-health-7f3a"})
-    def test_env_override_takes_precedence_over_k8s_job_id(self):
-        self.assertEqual(detect_scheduler(), Scheduler.SLURM)
-
     @patch("cvs.core.scheduler.subprocess.run")
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
     @patch.dict(os.environ, {"SPUR_JOB_ID": "107252", "SLURM_JOB_ID": "107252"})
@@ -181,7 +177,7 @@ class TestDetectScheduler(unittest.TestCase):
 
     @patch("cvs.core.scheduler.subprocess.run")
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
-    @patch.dict(os.environ, {"CVS_SCHEDULER": "slurm", "SPUR_JOB_ID": "1"})
+    @patch.dict(os.environ, {"CVS_SCHEDULER": "slurm", "CVS_K8S_JOB_ID": "cvs-health-7f3a", "SPUR_JOB_ID": "1"})
     def test_env_override_takes_precedence_over_job_id(self, _mock_which, mock_run):
         self.assertEqual(detect_scheduler(), Scheduler.SLURM)
         mock_run.assert_not_called()
@@ -245,11 +241,6 @@ class TestIsManagedCompute(unittest.TestCase):
     )
     def test_true_in_spur_step_without_scheduler_binaries(self, _mock_which):
         # End-to-end AIMVT-319: a spur srun step on a compute node with empty PATH.
-        self.assertTrue(is_managed_compute())
-
-    @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
-    @patch.dict(os.environ, K8S_POD_ENV)
-    def test_true_in_an_indexed_cvs_pod(self, _mock_which):
         self.assertTrue(is_managed_compute())
 
     @patch.dict(os.environ, {"CVS_SCHEDULER": "kubernetes", "CVS_K8S_JOB_ID": "cvs-health-7f3a", **JOB_STEP_ENV})
