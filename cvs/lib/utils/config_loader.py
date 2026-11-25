@@ -7,8 +7,8 @@ Framework-agnostic config machinery shared by every CVS suite.
 Holds the 3-pass placeholder substitution, the `enforce_thresholds` gate
 carried on `BaseVariantConfig`, and the `substitute_config` helper that reads
 a variant `config.json` + sibling `*threshold.json` and resolves placeholders.
-The schema blocks live in `cvs.lib.conf_lib.config_blocks` and are re-exported
-here; `cvs.lib.conf_lib.loader.load_config` builds on `substitute_placeholders`,
+The schema blocks live in `cvs.parsers.schemas` and are re-exported here;
+`cvs.lib.conf_lib.loader.load_config` builds on `substitute_placeholders`,
 and a schema that uses a threshold file loads it with `attach_threshold_file`.
 A per-framework module subclasses `BaseVariantConfig` or composes the blocks
 directly and adds its own params, sweep and `cell_key`.
@@ -45,7 +45,8 @@ from pydantic import Field, model_validator
 from typing_extensions import Literal
 
 from cvs.lib import globals
-from cvs.lib.conf_lib.config_blocks import (  # noqa: F401 - re-exported for suite loaders
+from cvs.lib.utils_lib import config_placeholder_map
+from cvs.parsers.schemas import (  # noqa: F401 - re-exported for suite loaders
     ContainerSpec,
     ModelSpec,
     Paths,
@@ -53,7 +54,6 @@ from cvs.lib.conf_lib.config_blocks import (  # noqa: F401 - re-exported for sui
     _Allow,
     _Forbid,
 )
-from cvs.lib.utils_lib import config_placeholder_map
 
 log = globals.log
 

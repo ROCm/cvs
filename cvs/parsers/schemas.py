@@ -12,15 +12,32 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 """
 
+from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
+from typing import Annotated, Any, Dict, Generic, List, Literal, Optional, TypeVar, Union
+import json
 import math
+import re
 import warnings
 
-from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PositiveInt,
+    StrictBool,
+    StrictInt,
+    ValidationError,
+    create_model,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 
 # =============================================================================
@@ -1297,6 +1314,632 @@ def is_pytorch_xdit_unified_config(raw_config):
 
 
 # =============================================================================
+# Shared Config Blocks
+# =============================================================================
+#
+# Blocks every suite's config is built from. Keys that start with ``_`` are
+# comments: each block drops them at its own level, so a ``_`` key inside a
+# free-form map such as ``container.env`` reaches the suite unchanged.
+
+
+def _drop_comment_keys(value):
+    if isinstance(value, dict):
+        return {key: item for key, item in value.items() if not (isinstance(key, str) and key.startswith("_"))}
+    return value
+
+
+class _Forbid(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_comments(cls, data):
+        return _drop_comment_keys(data)
+
+
+class _Allow(_Forbid):
+    model_config = ConfigDict(extra="allow")
+
+
+class _DropUnset(_Forbid):
+    @model_serializer(mode="wrap")
+    def _drop_unset(self, handler):
+        return {key: value for key, value in handler(self).items() if value is not None}
+
+
+Paths = create_model(
+    "Paths",
+    __base__=_Forbid,
+    shared_fs=(str, ...),
+    models_dir=(str, ...),
+    log_dir=(str, ...),
+    hf_token_file=(str, ...),
+    # Host-user-namespaced scratch for the jaxmaxtext launchers, which set it to
+    # /tmp/{user-id}/jaxmaxtext so container-root /tmp/root is never used.
+    temp_dir=(str, ""),
+)
+
+ModelSpec = create_model(
+    "ModelSpec",
+    __base__=_Forbid,
+    id=(str, ...),
+    remote=(Literal[0, 1], ...),
+    precision=(str, ""),
+)
+
+RuntimeSpec = create_model(
+    "RuntimeSpec",
+    __base__=_Allow,
+    name=(str, ...),
+    args=(Dict[str, Any], Field(default_factory=dict)),
+)
+
+# The container orchestrator reads ``env`` as ``docker run -e`` arguments, so
+# ``container.model_dump()`` forwards it to the runtime as written.
+ContainerSpec = create_model(
+    "ContainerSpec",
+    __base__=_Forbid,
+    lifetime=(Literal["no_launch", "per_run", "persistent"], "per_run"),
+    name=(str, ...),
+    image=(str, ...),
+    runtime=(RuntimeSpec, ...),
+    env=(Dict[str, str], Field(default_factory=dict)),
+)
+
+# The ``docker run`` options the container runtime reads. An optional key left
+# unset is dropped from the dump, so the runtime keeps its own default for it.
+RuntimeArgs = create_model(
+    "RuntimeArgs",
+    __base__=_DropUnset,
+    network=(str, "host"),
+    ipc=(str, "host"),
+    privileged=(bool, True),
+    volumes=(List[str], Field(default_factory=list)),
+    devices=(List[str], Field(default_factory=list)),
+    cap_add=(Optional[List[str]], None),
+    security_opt=(Optional[List[str]], None),
+    group_add=(Optional[List[Union[str, int]]], None),
+    ulimit=(Optional[List[str]], None),
+    user=(Optional[Union[str, int]], None),
+    shm_size=(Optional[Union[str, int]], None),
+    registry=(Optional[Dict[str, str]], None),
+)
+
+
+# =============================================================================
+# Inference Config Blocks
+# =============================================================================
+#
+# The blocks every inference engine's config shares. An engine's model is
+# ``create_model(__base__=InferenceVariantConfig, <engine block>)`` in its own
+# loader module, with one after-validator for the checks only it needs.
+
+_CHANGEME_RE = re.compile(r"<changeme(?:-[^<>]*)?>", re.IGNORECASE)
+_HF_TOKEN_ENV = frozenset({"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"})
+_CELL_KEY_RE = re.compile(r"^ISL=([1-9]\d*),OSL=([1-9]\d*),TP=([1-9]\d*),PP=([1-9]\d*),CONC=([1-9]\d*)$")
+_CELL_KEY_AXES = ("isl", "osl", "tp", "pp", "concurrency")
+_FLAG_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+# Field names are lowercase and env names uppercase; a mixed-case key can be a token.
+_PLAIN_KEY_RE = re.compile(r"^(?:[a-z_][a-z0-9_]*|[A-Z_][A-Z0-9_]*)$")
+# Client flags the harness sets for every cell.
+HARNESS_CLIENT_FLAGS = frozenset(
+    {
+        "model",
+        "backend",
+        "base_url",
+        "max_concurrency",
+        "random_input_len",
+        "random_output_len",
+        "result_dir",
+        "result_filename",
+        "percentile_metrics",
+        "metric_percentiles",
+    }
+)
+# Server flags the harness sets on a multinode launch.
+HARNESS_SERVER_FLAGS = frozenset({"master_addr", "node_rank"})
+
+
+def parse_cell_key(key):
+    """Return a cell key's axes as ints; the key reads ``ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>``."""
+    match = _CELL_KEY_RE.fullmatch(key) if isinstance(key, str) else None
+    if not match:
+        raise ValueError("not a cell key of the form ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>")
+    return dict(zip(_CELL_KEY_AXES, (int(number) for number in match.groups())))
+
+
+def _check_cell_key(key):
+    parse_cell_key(key)
+    return key
+
+
+CellKey = Annotated[str, AfterValidator(_check_cell_key)]
+
+
+def check_flags(flags, section, reserved):
+    """Check a snake_case flag map: names, value shapes, and no flag the harness sets itself."""
+    for name, value in flags.items():
+        if not _FLAG_NAME_RE.fullmatch(name):
+            raise ValueError(f"{section}: flag names must be snake_case")
+        if isinstance(value, list) and any(isinstance(item, (list, dict)) for item in value):
+            raise ValueError(f"{section}.{name}: lists may hold scalar values only")
+        if isinstance(value, dict):
+            try:
+                json.dumps(value)
+            except (TypeError, ValueError):
+                raise ValueError(f"{section}.{name} must be JSON serializable") from None
+    harness = sorted(set(flags) & set(reserved))
+    if harness:
+        raise ValueError(f"{section} cannot set harness fields: {harness}")
+
+
+FlagMap = Annotated[Dict[str, Any], BeforeValidator(_drop_comment_keys)]
+
+# A threshold value as written: a number, never quoted.
+FiniteNumber = Union[StrictInt, Annotated[float, Field(strict=True, allow_inf_nan=False)]]
+
+ThresholdSpec = create_model(
+    "ThresholdSpec",
+    __base__=_Forbid,
+    kind=(Literal["min", "max", "info"], ...),
+    value=(FiniteNumber, ...),
+    optional=(bool, False),
+)
+
+ThresholdCell = Annotated[Dict[str, ThresholdSpec], BeforeValidator(_drop_comment_keys)]
+
+ThresholdAccuracy = create_model(
+    "ThresholdAccuracy",
+    __base__=_Forbid,
+    lm_eval=(Dict[str, ThresholdCell], Field(default_factory=dict)),
+    custom_eval=(Dict[str, ThresholdCell], Field(default_factory=dict)),
+    quant_parity=(ThresholdCell, Field(default_factory=dict)),
+    mtp_quality=(ThresholdCell, Field(default_factory=dict)),
+)
+
+
+class _ThresholdFileBase(_Forbid):
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_comments(cls, data):
+        data = _drop_comment_keys(data)
+        if not isinstance(data, dict) or (isinstance(data.get("cells"), dict) and set(data) <= {"cells", "accuracy"}):
+            return data
+        cells = {key: value for key, value in data.items() if key != "accuracy"}
+        grouped = {"cells": cells}
+        if "accuracy" in data:
+            grouped["accuracy"] = data["accuracy"]
+        return grouped
+
+    @model_serializer(mode="wrap")
+    def _flatten_cells(self, handler):
+        data = handler(self)
+        return {**data.pop("cells", {}), **data}
+
+    def get(self, cell_key, default=None):
+        """A cell's specs as written, as plain dicts, for the code that reads threshold dicts."""
+        cell = self.cells.get(cell_key)
+        if cell is None:
+            return default
+        return {metric: spec.model_dump(exclude_unset=True) for metric, spec in cell.items()}
+
+
+# A threshold file: one section of metric specs per cell key, plus ``accuracy``,
+# which mirrors the config's accuracy block. Each engine checks metric names.
+ThresholdFile = create_model(
+    "ThresholdFile",
+    __base__=_ThresholdFileBase,
+    cells=(Dict[CellKey, ThresholdCell], Field(default_factory=dict)),
+    accuracy=(ThresholdAccuracy, Field(default_factory=ThresholdAccuracy)),
+)
+
+ServingRuntimeSpec = create_model(
+    "ServingRuntimeSpec",
+    __base__=_Forbid,
+    name=(Literal["docker"], "docker"),
+    args=(RuntimeArgs, Field(default_factory=RuntimeArgs)),
+)
+
+ServingContainerSpec = create_model(
+    "ServingContainerSpec",
+    __base__=ContainerSpec,
+    runtime=(ServingRuntimeSpec, Field(default_factory=ServingRuntimeSpec)),
+)
+
+LongContextFlags = create_model(
+    "LongContextFlags",
+    __base__=_Forbid,
+    chunked_prefill_size=(Optional[PositiveInt], None),
+    max_prefill_tokens=(Optional[PositiveInt], None),
+)
+
+
+def _check_engine_args(self):
+    check_flags(self.engine_args, "engine_args", set(type(self).model_fields) | HARNESS_SERVER_FLAGS)
+    return self
+
+
+# One class for every engine; any other server flag goes in ``engine_args``.
+ServingServerParams = create_model(
+    "ServingServerParams",
+    __base__=_Forbid,
+    __validators__={"_check_engine_args": model_validator(mode="after")(_check_engine_args)},
+    model=(str, ...),
+    tp=(PositiveInt, ...),
+    pp=(PositiveInt, 1),
+    dp=(PositiveInt, 1),
+    # Expert parallel across the full tp x dp group; its size is always derived.
+    ep=(StrictBool, False),
+    port=(int, 8888),
+    master_port=(int, 29501),
+    # null means 1. Nothing checks a floor for distributed runs yet: the suite, not
+    # the config, picks the mode, so that check belongs where hosts are picked.
+    nnodes=(Optional[PositiveInt], None),
+    # Disaggregated only; null splits nnodes in half.
+    prefill_nnodes=(Optional[PositiveInt], None),
+    max_model_length=(Optional[PositiveInt], None),
+    long_context=(LongContextFlags, Field(default_factory=LongContextFlags)),
+    # Native server flags in snake_case; true writes a bare flag.
+    engine_args=(FlagMap, Field(default_factory=dict)),
+)
+
+
+def _check_client_args(self):
+    check_flags(self.client_args, "client_args", set(type(self).model_fields) | HARNESS_CLIENT_FLAGS)
+    return self
+
+
+# One class for every engine; any other client flag goes in ``client_args``.
+ServingBenchmarkParams = create_model(
+    "ServingBenchmarkParams",
+    __base__=_Forbid,
+    __validators__={"_check_client_args": model_validator(mode="after")(_check_client_args)},
+    num_prompts=(PositiveInt, ...),
+    random_range_ratio=(float, 0.0),
+    seed=(int, 0),
+    request_rate=(Union[str, float], "inf"),
+    burstiness=(float, 1.0),
+    random_prefix_len=(int, 0),
+    tokenizer_mode=(str, "auto"),
+    # Single-node output throughput; multinode cells report scaling against it.
+    scaling_baseline_output_throughput=(Optional[float], None),
+    # Native client flags in snake_case.
+    client_args=(FlagMap, Field(default_factory=dict)),
+)
+
+# Seconds to wait; null keeps the engine's default.
+Timeouts = create_model(
+    "Timeouts",
+    __base__=_Forbid,
+    server_ready_s=(Optional[PositiveInt], None),
+    client_s=(Optional[PositiveInt], None),
+)
+
+
+class AccuracyTask(_Forbid):
+    """One lm-evaluation-harness 0.4.12 run against the live OpenAI-compatible server.
+
+    CVS owns the endpoint, model path, output path and sample logging. Every
+    other supported ``lm_eval run`` setting has a field at its 0.4.12 default.
+    """
+
+    id: str
+    # ``task`` remains accepted so existing Atom and vLLM configs need no
+    # migration. ``tasks`` is the lm-eval 0.4.12 spelling and supports a
+    # comma-separated string or a list of task names.
+    tasks: Optional[Union[str, List[str]]] = None
+    task: Optional[str] = None
+
+    # CVS/OpenAI adapter selection. These are deliberately narrower than
+    # lm-eval's generic --model field because CVS always targets a live local
+    # OpenAI-compatible server.
+    backend: str = ""
+    lm_eval_model: Optional[Literal["local-completions", "local-chat-completions"]] = None
+    extra_model_args: str = ""
+    num_concurrent: int = 8
+
+    # lm-eval 0.4.12 evaluation settings.
+    num_fewshot: Optional[int] = None
+    batch_size: str = "1"
+    max_batch_size: Optional[int] = None
+    device: Optional[str] = None
+    gen_kwargs: Dict[str, Any] = Field(default_factory=dict)
+    limit: Optional[float] = None
+    samples: Optional[Union[str, Dict[str, Any]]] = None
+    use_cache: Optional[str] = None
+    cache_requests: Optional[Literal["true", "refresh", "delete"]] = None
+    check_integrity: bool = False
+    system_instruction: Optional[str] = None
+    apply_chat_template: Union[bool, str] = False
+    fewshot_as_multiturn: Optional[bool] = None
+    include_path: Optional[str] = None
+    predict_only: bool = False
+    seed: List[Optional[int]] = Field(default_factory=lambda: [0, 1234, 1234, 1234])
+    trust_remote_code: bool = False
+    confirm_run_unsafe_code: bool = False
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    # CVS controls execution duration, not lm-eval.
+    exec_timeout_sec: int = 4 * 60 * 60
+
+    @field_validator("apply_chat_template", mode="before")
+    @classmethod
+    def _coerce_boolean_template_values(cls, value):
+        if isinstance(value, str) and value.lower() in {"true", "false", "0", "1"}:
+            return value.lower() in {"true", "1"}
+        return value
+
+    @field_validator("seed", mode="before")
+    @classmethod
+    def _normalize_seed(cls, value):
+        defaults = [0, 1234, 1234, 1234]
+        if isinstance(value, int):
+            return [value] * 4
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, list):
+            normalized = [None if item is None or item == "None" else int(item) for item in value]
+            if len(normalized) == 1:
+                return normalized * 4
+            if len(normalized) == 3:
+                return [*normalized, defaults[3]]
+            return normalized
+        return value
+
+    @field_validator("tasks", mode="before")
+    @classmethod
+    def _reject_empty_task_lists(cls, value):
+        if value == []:
+            raise ValueError("tasks must not be empty")
+        return value
+
+    @field_validator("seed")
+    @classmethod
+    def _validate_seed_count(cls, value):
+        if len(value) != 4:
+            raise ValueError("seed must contain exactly four values: python,numpy,torch,fewshot")
+        return value
+
+    @model_validator(mode="after")
+    def _resolve_legacy_task_alias(self):
+        if self.tasks is None and self.task is None:
+            raise ValueError("one of tasks or task is required")
+        if self.tasks is None:
+            self.tasks = self.task
+        elif self.task is not None and self.task_names() != self._split_task_string(self.task):
+            raise ValueError("task and tasks disagree")
+        # Preserve the historical public attribute for Atom and callers that
+        # consume a single comma-separated task selector.
+        task_names = self.task_names()
+        if not task_names:
+            raise ValueError("tasks must contain at least one task name")
+        self.task = ",".join(task_names)
+        return self
+
+    @staticmethod
+    def _split_task_string(value):
+        return [item.strip() for item in value.split(",") if item.strip()]
+
+    def task_names(self):
+        if isinstance(self.tasks, list):
+            return self.tasks
+        return self._split_task_string(self.tasks or "")
+
+    @property
+    def resolved_lm_eval_model(self):
+        if self.lm_eval_model:
+            return self.lm_eval_model
+        return "local-chat-completions" if self.apply_chat_template else "local-completions"
+
+
+def _duplicate_ids(items):
+    return sorted(item_id for item_id, count in Counter(item.id for item in items).items() if count > 1)
+
+
+def _check_unique_task_ids(self):
+    dupes = _duplicate_ids(self.tasks)
+    if dupes:
+        raise ValueError(f"duplicate task id(s): {', '.join(repr(d) for d in dupes)}")
+    return self
+
+
+# The lm-eval tasks a config runs; an empty list runs none.
+LmEval = create_model(
+    "LmEval",
+    __base__=_Forbid,
+    __validators__={"_check_unique_task_ids": model_validator(mode="after")(_check_unique_task_ids)},
+    tasks=(List[AccuracyTask], Field(default_factory=list)),
+)
+
+NiahEval = create_model(
+    "NiahEval",
+    __base__=_Forbid,
+    type=(Literal["niah"], ...),
+    id=(str, ...),
+    isl=(PositiveInt, ...),
+    osl=(PositiveInt, 32),
+    num_prompts=(PositiveInt, 8),
+    seed=(int, 42),
+)
+
+QuantParityConfig = create_model(
+    "QuantParityConfig",
+    __base__=_Forbid,
+    enabled=(bool, False),
+    probe_prompt=(str, "The capital of France is"),
+)
+
+MtpQualityConfig = create_model(
+    "MtpQualityConfig",
+    __base__=_Forbid,
+    enabled=(bool, False),
+    chat_template_prompt=(str, "Say hello in one short sentence."),
+    chat_template_expected_sha256=(str, ""),
+)
+
+
+def _check_unique_custom_eval_ids(self):
+    dupes = _duplicate_ids(self.custom_eval)
+    if dupes:
+        raise ValueError(f"duplicate custom_eval id(s): {dupes}")
+    return self
+
+
+AccuracyConfig = create_model(
+    "AccuracyConfig",
+    __base__=_Forbid,
+    __validators__={"_check_unique_custom_eval_ids": model_validator(mode="after")(_check_unique_custom_eval_ids)},
+    lm_eval=(LmEval, Field(default_factory=LmEval)),
+    # niah is the only custom eval type; a new type joins NiahEval in a union on ``type``.
+    custom_eval=(List[NiahEval], Field(default_factory=list)),
+    quant_parity=(QuantParityConfig, Field(default_factory=QuantParityConfig)),
+    mtp_quality=(MtpQualityConfig, Field(default_factory=MtpQualityConfig)),
+)
+
+
+def _printable_key(key):
+    """The key itself when it is a plain name or a cell key, else ``<key>``."""
+    if isinstance(key, str) and (_PLAIN_KEY_RE.fullmatch(key) or _CELL_KEY_RE.fullmatch(key)):
+        return key
+    return "<key>"
+
+
+def _changeme_paths(value, path):
+    if isinstance(value, str):
+        return [path] if _CHANGEME_RE.search(value) else []
+    if isinstance(value, dict):
+        items = ((key, item) for key, item in value.items() if not (isinstance(key, str) and key.startswith("_")))
+        return [found for key, item in items for found in _changeme_paths(item, f"{path}.{_printable_key(key)}")]
+    if isinstance(value, list):
+        return [found for index, item in enumerate(value) for found in _changeme_paths(item, f"{path}[{index}]")]
+    return []
+
+
+def _reject_changeme(cls, value, info):
+    found = [path.lstrip(".") for path in _changeme_paths(value, "")]
+    if found == [""]:
+        raise ValueError("replace <changeme> with the value for your setup")
+    if found:
+        raise ValueError(f"replace <changeme> with the value for your setup in {', '.join(found)}")
+    return value
+
+
+def _check_container_env(cls, value):
+    if not isinstance(value, dict):
+        return value
+    runtime = value.get("runtime")
+    args = runtime.get("args") if isinstance(runtime, dict) else None
+    if isinstance(args, dict) and "env" in args:
+        raise ValueError("runtime.args.env is not read; set these variables in container.env")
+    env = value.get("env")
+    tokens = sorted(str(name) for name in (env if isinstance(env, dict) else {}) if str(name).upper() in _HF_TOKEN_ENV)
+    if tokens:
+        raise ValueError(
+            f"env must not set {tokens}; put the Hugging Face token in the file named by paths.hf_token_file"
+        )
+    return value
+
+
+def _drop_sweep_comments(cls, value):
+    if not isinstance(value, dict):
+        return value
+    return {key: _drop_comment_keys(entry) for key, entry in _drop_comment_keys(value).items()}
+
+
+# One server serves every cell, so a cell can override only client flags.
+_CELL_RESERVED = HARNESS_CLIENT_FLAGS | set(ServingServerParams.model_fields) | {"client_args"}
+
+
+def _check_sweeps_and_runs(self):
+    parallel = (self.server_params.tp, self.server_params.pp)
+    for key, overrides in self.sweeps.items():
+        axes = parse_cell_key(key)
+        if (axes["tp"], axes["pp"]) != parallel:
+            raise ValueError(f"sweeps.{key}: TP and PP must equal server_params.tp and server_params.pp")
+        check_flags(overrides, f"sweeps.{key}", _CELL_RESERVED)
+    if not self.runs:
+        raise ValueError("runs must list at least one sweeps key")
+    repeated = [index for index, key in enumerate(self.runs) if key in self.runs[:index]]
+    if repeated:
+        raise ValueError(f"runs repeats an earlier entry at {', '.join(f'runs.{index}' for index in repeated)}")
+    unknown = [index for index, key in enumerate(self.runs) if key not in self.sweeps]
+    if unknown:
+        raise ValueError(f"runs names keys missing from sweeps at {', '.join(f'runs.{index}' for index in unknown)}")
+    return self
+
+
+def _check_threshold_coverage(self):
+    if self.enforce_thresholds:
+        missing = [key for key in self.runs if key not in self.thresholds.cells]
+        if missing:
+            raise ValueError(f"runs missing from the threshold file: {missing}")
+    return self
+
+
+# The config every inference engine shares. ``thresholds`` holds the threshold
+# file the loader attached; with ``enforce_thresholds`` true, every run needs a
+# threshold cell, and a threshold cell need not be run.
+InferenceVariantConfig = create_model(
+    "InferenceVariantConfig",
+    __base__=_Forbid,
+    __validators__={
+        "_reject_changeme": field_validator("*", mode="before")(_reject_changeme),
+        "_check_container_env": field_validator("container", mode="before")(_check_container_env),
+        "_drop_sweep_comments": field_validator("sweeps", mode="before")(_drop_sweep_comments),
+        "_check_sweeps_and_runs": model_validator(mode="after")(_check_sweeps_and_runs),
+        "_check_threshold_coverage": model_validator(mode="after")(_check_threshold_coverage),
+    },
+    # false records every metric without failing.
+    enforce_thresholds=(bool, True),
+    # Threshold file next to the config or packaged. For "", attach_threshold_file
+    # sets enforce_thresholds false, so metrics record without gating.
+    threshold_json=(str, ""),
+    paths=(Paths, ...),
+    container=(ServingContainerSpec, ...),
+    server_params=(ServingServerParams, ...),
+    benchmark_params=(ServingBenchmarkParams, ...),
+    timeouts=(Timeouts, Field(default_factory=Timeouts)),
+    # Cell key -> client flags for that cell only.
+    sweeps=(Dict[CellKey, Dict[str, Any]], ...),
+    # The sweeps keys to run, in order.
+    runs=(List[str], ...),
+    accuracy=(AccuracyConfig, Field(default_factory=AccuracyConfig)),
+    thresholds=(ThresholdFile, Field(default_factory=ThresholdFile)),
+)
+
+
+def validation_problem_lines(exc):
+    """One ``field.path: message`` line per error in a pydantic ``ValidationError``, never an input value.
+
+    A key that fails its own check prints as ``<key>`` in every line under it, and
+    so does an unknown key that isn't a plain name: a misplaced value can land there.
+    """
+    errors = exc.errors(include_input=False, include_url=False)
+    # A threshold file's cells are grouped under ``cells`` only inside the model.
+    locs = [
+        tuple(
+            part
+            for index, part in enumerate(error["loc"])
+            if not (part == "cells" and error["loc"][index - 1 : index] == ("thresholds",))
+        )
+        for error in errors
+    ]
+    rejected = {loc[:index] for loc in locs for index, part in enumerate(loc) if part == "[key]"}
+    lines = []
+    for error, loc in zip(errors, locs):
+        parts = []
+        for index, part in enumerate(loc):
+            if part == "[key]":
+                continue
+            unknown = error["type"] == "extra_forbidden" and index == len(loc) - 1
+            if loc[: index + 1] in rejected or (unknown and _printable_key(part) != part):
+                part = "<key>"
+            parts.append(part)
+        location = ".".join(str(part) for part in parts) or "(config)"
+        lines.append(f"{location}: {error['msg'].removeprefix('Value error, ')}")
+    return lines
+
+
+# =============================================================================
 # Preflight Check Configuration Schema
 # =============================================================================
 
@@ -2030,6 +2673,9 @@ def validate_config_file(
             return PytorchXditUnifiedConfigFile.model_validate(raw_config)
         else:
             raise ValueError(f"Unknown config_type: {config_type}")
+    except ValidationError as e:
+        problems = "\n".join(f"  {line}" for line in validation_problem_lines(e))
+        raise ValueError(f"Invalid configuration in {config_path}:\n{problems}") from None
     except Exception as e:
         # Re-raise with file context
         raise ValueError(f"Invalid configuration in {config_path}:\n{e}") from e

@@ -186,8 +186,8 @@ def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):
     """Opt-in stage: run one lm-eval-harness accuracy task against the already-live server.
 
     One pytest test (= one HTML row) per accuracy task, parametrized by
-    `accuracy_task` (a task id from config.json's `accuracy.tasks`, an
-    AccuracyConfig). Each task is gated/reported independently: a failure or
+    `accuracy_task` (a task id from the config's lm-eval task list, an
+    LmEval). Each task is gated/reported independently: a failure or
     threshold violation in one task's node does not skip or fail its sibling
     tasks' nodes -- unlike the shared `lifecycle.failed` flag used by the rest
     of the lifecycle, which is intentionally NOT set here.
