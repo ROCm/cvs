@@ -63,7 +63,7 @@ before any subclass coverage check runs on a config that will be rejected anyway
 #### `substitute_config(config_path, cluster_dict, all_placeholders=False) -> (raw_dict, thresholds)`
 
 `substitute_placeholders(config_path, cluster_dict, all_placeholders=False)` is the same without the
-threshold file: it returns only the substituted dict, and the vLLM `load_variant` uses it.
+threshold file: it returns only the substituted dict, and the shared `load_variant` uses it.
 `attach_threshold_file(data, context)` adds the threshold file to a substituted dict and reads only a
 named `threshold_json` (relative to the config, with the packaged-copy fallback); it never looks
 for a sibling. When the config names none it gives `{}`, sets `enforce_thresholds` false
@@ -76,7 +76,7 @@ substitution, so a placeholder in `threshold_json` expands there.
   before any substitution pass runs — **no placeholder substitution of any kind is applied to it**
 - **3-pass substitution**:
   1. Cluster placeholders resolved everywhere in the document: `{user-id}` only by default;
-     with `all_placeholders=True` (what the vLLM `load_variant` passes), the
+     with `all_placeholders=True` (what the shared `load_variant` passes), the
      `utils_lib.config_placeholder_map` set that `resolve_test_config_placeholders` uses
   2. Self-reference within the `paths` block (`{shared_fs}` expanded inside other `paths.*` values)
   3. Cross-block references (`{paths.models_dir}`, etc.) resolved anywhere in the document

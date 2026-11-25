@@ -228,7 +228,7 @@ def attach_threshold_file(data, context):
     """Add ``thresholds`` from the config's threshold file to a substituted config dict.
 
     For a schema with ``thresholds`` and ``enforce_thresholds`` fields. Applies
-    only when ``context`` holds the ``config_path``, as the vLLM
+    only when ``context`` holds the ``config_path``, as the shared
     ``load_variant`` passes. Only a named ``threshold_json`` is read; no sibling
     file is looked for, and any ``thresholds`` in the config itself is
     replaced. A config that names none gets ``{}`` and ``enforce_thresholds``
