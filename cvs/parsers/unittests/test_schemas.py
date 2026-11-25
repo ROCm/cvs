@@ -598,6 +598,20 @@ class TestPollSchedule(unittest.TestCase):
         self.assertEqual(poll_schedule(5520, 120, 60), (120, 90))
         self.assertEqual(poll_schedule(361, 0, 60), (0, 7))
 
+    def test_rejects_bad_inputs(self):
+        cases = {
+            "zero interval": ((100, 10, 0), "poll interval must be positive, got 0"),
+            "negative interval": ((100, 10, -5), "poll interval must be positive, got -5"),
+            "negative total": ((-1, 10, 60), "poll total must not be negative, got -1"),
+            "negative first wait": ((100, -1, 60), "poll first wait must not be negative, got -1"),
+        }
+        for name, (args, message) in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError) as caught:
+                    poll_schedule(*args)
+                self.assertEqual(str(caught.exception), message)
+        self.assertEqual(poll_schedule(0, 0, 60), (0, 1))
+
     def test_short_total_caps_the_wait_and_keeps_one_poll(self):
         self.assertEqual(poll_schedule(100, 330, 60), (100, 1))
         self.assertEqual(poll_schedule(330, 330, 60), (330, 1))

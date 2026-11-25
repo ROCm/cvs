@@ -2053,6 +2053,11 @@ def poll_schedule(total_s, first_wait_s, interval_s):
 
     The first wait is capped at the total, and there is always at least one poll.
     """
+    if interval_s <= 0:
+        raise ValueError(f"poll interval must be positive, got {interval_s}")
+    for name, value in (("total", total_s), ("first wait", first_wait_s)):
+        if value < 0:
+            raise ValueError(f"poll {name} must not be negative, got {value}")
     first = min(first_wait_s, total_s)
     return first, max(1, math.ceil((total_s - first) / interval_s))
 
