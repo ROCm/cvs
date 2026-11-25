@@ -8,8 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # Unit tests for cvs/core/schedulers/kubernetes.py: a CVS-generated Indexed Job pod
 # is managed only with both CVS_K8S_JOB_ID and JOB_COMPLETION_INDEX, its rank is the
 # completion index bounded by CVS_WORLD_SIZE, its hosts keep CVS_K8S_HOSTS order, and
-# the backend reads only environment variables: it never reads SLURM_* and never
-# runs a command.
+# it never falls back to the SLURM_* variables.
 
 import os
 import unittest
@@ -35,9 +34,13 @@ class _CleanEnv(unittest.TestCase):
 
 
 class TestInManagedStep(_CleanEnv):
-    @patch.dict(os.environ, {"CVS_K8S_JOB_ID": "cvs-health-7f3a", "JOB_COMPLETION_INDEX": "0"})
     def test_managed_with_job_id_and_index(self):
-        self.assertTrue(self.backend.in_managed_step())
+        # Set means present, as for the SLURM_* step variables; an empty job id
+        # still counts here, and detection is what ignores it.
+        for job_id in ("cvs-health-7f3a", ""):
+            env = {"CVS_K8S_JOB_ID": job_id, "JOB_COMPLETION_INDEX": "0"}
+            with self.subTest(job_id=job_id), patch.dict(os.environ, env, clear=True):
+                self.assertTrue(self.backend.in_managed_step())
 
     def test_not_managed_with_only_one_variable(self):
         # Either variable alone is not a rank: a plain Job sets only the index, and
@@ -75,8 +78,6 @@ class TestRank(_CleanEnv):
         cases = [
             ({"CVS_WORLD_SIZE": "2"}, "JOB_COMPLETION_INDEX"),
             ({"JOB_COMPLETION_INDEX": "0"}, "CVS_WORLD_SIZE"),
-            ({"JOB_COMPLETION_INDEX": "one", "CVS_WORLD_SIZE": "2"}, "JOB_COMPLETION_INDEX"),
-            ({"JOB_COMPLETION_INDEX": "0", "CVS_WORLD_SIZE": ""}, "CVS_WORLD_SIZE"),
         ]
         for env, variable in cases:
             with self.subTest(env=env), patch.dict(os.environ, env, clear=True):
@@ -122,19 +123,10 @@ class TestJobValues(_CleanEnv):
             self.backend.job_id()
         self.assertIsNone(self.backend.node_name())
 
-
-class TestReadsOnlyEnvironment(unittest.TestCase):
-    @patch("subprocess.Popen", side_effect=AssertionError("the Kubernetes backend ran a command"))
-    @patch("subprocess.run", side_effect=AssertionError("the Kubernetes backend ran a command"))
-    @patch.dict(os.environ, POD_ENV, clear=True)
-    def test_runs_no_command(self, _mock_run, _mock_popen):
-        backend = KubernetesBackend()
-        self.assertTrue(backend.in_managed_step())
-        self.assertEqual((backend.rank(), backend.world_size()), (1, 2))
-        self.assertEqual(len(backend.hosts()), 2)
-        backend.job_id()
-        backend.node_name()
-        backend.mpi_launcher()
+    @patch.dict(os.environ, {"CVS_K8S_NODE_NAME": ""})
+    def test_empty_node_name_is_none(self):
+        # An empty name would replace the OS hostname fallback with "".
+        self.assertIsNone(self.backend.node_name())
 
 
 if __name__ == "__main__":

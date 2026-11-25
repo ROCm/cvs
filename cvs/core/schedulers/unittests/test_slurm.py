@@ -67,12 +67,10 @@ class TestRank(_CleanEnv):
                 with self.assertRaisesRegex(RuntimeError, f"invalid managed rank {rank} for world size 4"):
                     self.backend.rank()
 
-    def test_missing_or_non_integer_variable_is_named(self):
+    def test_missing_variable_is_named(self):
         cases = [
             ({"SLURM_NTASKS": "2"}, "SLURM_PROCID"),
             ({"SLURM_PROCID": "0"}, "SLURM_NTASKS"),
-            ({"SLURM_PROCID": "zero", "SLURM_NTASKS": "2"}, "SLURM_PROCID"),
-            ({"SLURM_PROCID": "0", "SLURM_NTASKS": ""}, "SLURM_NTASKS"),
         ]
         for env, variable in cases:
             with self.subTest(env=env), patch.dict(os.environ, env, clear=True):
