@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `install_mori` builds MoRI from `git_url` at `git_ref` into `mori_dir`, using the MORI config, before `mori_benchmark_test` runs. In container mode it needs `container.lifetime` `persistent` or `no_launch`. The MORI run card shows the built commit.
 - Training (jaxmaxtext, megatron, torchtitan) and inference (vLLM, SGLang, ATOM, xDiT) suites run a `test_support_matrix_gate` stage after the container launches that stops the run when the framework/model is unsupported on the detected GPU architecture or ROCm version (for example MXFP4 on MI300X/MI325X). Support is declared in `cvs/lib/support_matrix/{training,inference}_support_matrix.json`. Set `CVS_SUPPORT_MATRIX_GATE=OFF` to log violations and continue instead of stopping; a framework or model with no entry runs unchecked. See `cvs/lib/support_matrix/README.md`.
+- `cvs consolidate-report` combines the Run Decks found under one or more run directories, in run folders and in `cvs run` zip bundles, into one zip with an overview page, a `summary.json` with the collection verdict, and every included run's files; the latest run of each suite sets that suite's verdict. Run Deck JSON now records `suite_stem`, `area`, and `generated_at_utc`, which the report uses for suite identity, grouping, and rerun order.
 
 ### Changed
 

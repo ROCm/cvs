@@ -8,6 +8,7 @@ Assemble Run Deck payload from profile, session sources, and dataset builders.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
@@ -22,6 +23,8 @@ from cvs.lib.report.rundeck.dataset_builders.registry import build_datasets
 from cvs.lib.report.rundeck.dataset_builders.sweep import select_inline_cells
 from cvs.lib.report.rundeck.dataset_builders import training_sweep as _training_sweep  # noqa: F401
 from cvs.lib.report.types import InferenceReportConfig
+
+GENERATED_AT_UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
 @dataclass
@@ -97,15 +100,28 @@ class RundeckPayloadBuilder:
         )
         return report
 
+    def _identity(self):
+        """The deck's test-file stem and report area, for readers that group decks; each is left out when unknown."""
+        identity = {}
+        suite_stem = self.sources.get("suite_stem")
+        if suite_stem:
+            identity["suite_stem"] = str(suite_stem)
+        area = self.profile_dict.get("area")
+        if area:
+            identity["area"] = str(area)
+        return identity
+
     def build(self) -> dict[str, Any]:
         datasets = self._build_datasets()
         prov = self._provenance()
         variant_config = self.sources.get("variant")
         lifecycle_report = self.sources.get("lifecycle_report") or {}
+        generated = datetime.now(timezone.utc)
         run_card_display, run_card_notes, generated_at = build_run_card_display(
             self.config,
             variant_config,
             prov,
+            generated=generated,
         )
 
         # A non-sweep builder reports its own top-line verdict via
@@ -153,7 +169,9 @@ class RundeckPayloadBuilder:
         payload = {
             "schema_version": 1,
             "suite_id": self.config.suite_id,
+            **self._identity(),
             "generated_at": generated_at,
+            "generated_at_utc": generated.strftime(GENERATED_AT_UTC_FORMAT),
             "cvs_version": self.ctx.cvs_version,
             "overall_status": active_data.get("overall_status")
             or ("record" if self.builder_id not in ("sweep", "training_sweep") else "na"),

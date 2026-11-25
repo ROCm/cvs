@@ -2,6 +2,7 @@
   "schema_version": 1,
   "profile_id": "xdit_rundeck",
   "suite_id": "xdit",
+  "area": "Inference",
   "report_basename": "xdit_run_deck",
   "title": "xDiT Run Deck",
   "subtitle": "xDiT · diffusion performance summary",

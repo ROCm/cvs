@@ -2,6 +2,7 @@
   "schema_version": 1,
   "profile_id": "mori_benchmark_test_rundeck",
   "suite_id": "mori_benchmark_test",
+  "area": "Health",
   "metric_contract": {"id": "mori-network-performance", "version": 1},
   "report_basename": "mori_benchmark_test_run_deck",
   "title": "Mori Benchmark Run Deck",

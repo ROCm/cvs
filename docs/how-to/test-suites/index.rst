@@ -171,6 +171,57 @@ A Run Deck summarizes results collected during the run. It is included when the 
 
 See :doc:`/reference/cli/cvs-run` for the report and log options.
 
+.. _consolidated-report:
+
+Consolidated report
+-------------------
+
+``cvs consolidate-report`` combines the Run Decks of many runs into one report: a campaign over several days, suites run one after another, or the runs of a CI job. Each suite runs as its own ``cvs run``, so point the command at the directories that hold those runs:
+
+.. code:: bash
+
+  cvs consolidate-report --log-dir ~/cvs_workspace/cvs_runs
+
+To combine several trees, separate the directories with commas. To leave a suite out, leave out its directory:
+
+.. code:: bash
+
+  cvs consolidate-report --log-dir /shared/health,/shared/network --output ~/reports
+
+The command searches each directory recursively, in run folders and in the zip bundles ``cvs run`` writes. A run found both unzipped and in its bundle counts once. When a suite ran more than once, its latest run sets its verdict and the earlier runs are listed with it. The command only reads files and never contacts the nodes, so run it wherever the directories are readable.
+
+It writes ``consolidated_report_<YYYY-mm-ddTHHMMSS>.zip`` to the searched directory, or to the current directory when several are given, unless ``--output`` names another directory. Extract the zip and open ``index.html``. It needs no server or network access, and every link points inside the zip. Charts on the suite pages and in the interactive viewers load Chart.js from the internet; without network access, those pages show their tables without charts.
+
+.. list-table::
+   :header-rows: 1
+
+   * - In the zip
+     - Contents
+   * - ``index.html``
+     - Collection verdict, pass/fail counts, suites by area, and recommendations. Recommendations start collapsed. Select a suite for its failures and links to its Detailed Run Deck, viewer, pytest report, and log.
+   * - ``summary.json``
+     - The same results for scripts and CI.
+   * - ``runs/<suite>/<run>/``
+     - Each included run's files, as in its bundle. Their Run Decks and viewers link back to ``index.html``.
+
+Each suite's verdict is the overall status its Run Deck reports. The collection verdict, ``verdict`` in ``summary.json``, is one of:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Verdict
+     - When
+   * - ``needs_attention``
+     - At least one suite failed.
+   * - ``incomplete_data``
+     - Nothing failed, but a Run Deck is missing, unreadable, or incomplete.
+   * - ``evaluation_incomplete``
+     - Nothing failed and nothing is missing, but at least one suite is record-only or was not evaluated.
+   * - ``all_passed``
+     - Every included suite passed.
+
+The command exits 0 whenever it writes a report, whatever the verdict. A CI stage should read ``verdict`` from ``summary.json``. See :doc:`/reference/cli/cvs-run` for the options and exit codes.
+
 Test output examples
 --------------------
 
