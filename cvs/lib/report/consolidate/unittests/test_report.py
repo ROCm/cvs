@@ -100,6 +100,26 @@ class TestConsolidate(ReportCase):
             self.assertEqual(detail["summary"]["id"], suite_id)
         self.assertIn("Collection verdict: needs_attention", self.log_output)
 
+    def test_each_readable_suite_gets_a_page_linked_into_the_report(self):
+        self.write_campaign()
+        result = self.consolidate(str(self.root))
+        _, files = self.read_zip(result.zip_path)
+        suites = {suite["id"]: suite for suite in result.summary["suites"]}
+        self.assertEqual(suites["rvs_cvs"]["suiteUrl"], "suites/rvs_cvs.html")
+        self.assertIsNone(suites["agfhc_cvs"]["suiteUrl"])
+        page = files["suites/rvs_cvs.html"].decode("utf-8")
+        data = json.loads(page.split('<script type="application/json" id="suite-data">', 1)[1].split("</script>", 1)[0])
+        self.assertEqual(data["deck"]["suite_id"], "rvs_cvs")
+        self.assertEqual(data["links"]["overview"], "../index.html")
+        for key in ("deck", "json"):
+            with self.subTest(link=key):
+                self.assertTrue(data["links"][key].startswith("../"))
+                self.assertIn(data["links"][key][len("../") :], files)
+        self.assertEqual(
+            [(other["url"], other["current"]) for other in data["suites"]],
+            [("rccl_perf.html", False), ("rvs_cvs.html", True)],
+        )
+
     def test_originals_are_unchanged_and_no_temporary_folder_is_left(self):
         run = write_run(self.root, "rvs_cvs", deck("rvs_cvs"), bundle="2026-11-10T080000")
         original = (run / "rvs_cvs_html" / "rvs_cvs_run_deck.html").read_bytes()
