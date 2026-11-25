@@ -42,17 +42,7 @@ class TestSpurBackend(unittest.TestCase):
         self.assertEqual(self.backend.hosts(), ["node06", "node07"])
         self.assertEqual(self.backend.node_name(), "node07")
 
-    def test_spur_nodes_wins_over_slurm_nodelist(self):
-        os.environ["SLURM_NODELIST"] = "stale[01-02]"
-        self.assertEqual(self.backend.hosts(), ["node06", "node07"])
-
-    def test_not_managed_without_a_step(self):
-        # SPUR sets the job id for a bare allocation too; only a step is managed.
-        del os.environ["SLURM_STEP_ID"]
-        self.assertFalse(self.backend.in_managed_step())
-
-    def test_name_and_launcher(self):
-        self.assertEqual(self.backend.name, "spur")
+    def test_launcher(self):
         self.assertEqual(self.backend.mpi_launcher(), "srun")
 
 

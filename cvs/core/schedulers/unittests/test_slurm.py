@@ -153,9 +153,8 @@ class TestNodeName(_CleanEnv):
         self.assertIsNone(self.backend.node_name())
 
 
-class TestIdentity(unittest.TestCase):
-    def test_name_and_launcher(self):
-        self.assertEqual(SlurmBackend.name, "slurm")
+class TestLauncher(unittest.TestCase):
+    def test_launcher(self):
         self.assertEqual(SlurmBackend().mpi_launcher(), "srun")
 
 

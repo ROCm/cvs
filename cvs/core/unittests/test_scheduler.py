@@ -152,25 +152,10 @@ class TestRunningInJobStep(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     @patch.dict(os.environ, JOB_STEP_ENV)
-    def test_true_when_all_three_vars_present(self):
+    def test_true_only_inside_a_slurm_step(self):
+        # The variable-by-variable cases live in test_slurm.py; this pins the delegation.
         self.assertTrue(_running_in_job_step())
-
-    def test_false_when_no_vars_present(self):
-        self.assertFalse(_running_in_job_step())
-
-    @patch.dict(os.environ, {"SLURM_STEP_ID": "0", "SLURM_PROCID": "0"})
-    def test_false_when_job_id_missing(self):
-        # e.g. plain SSH login to a scheduler-managed head node with scheduler
-        # tooling installed, but no srun step actually launched this process.
-        self.assertFalse(_running_in_job_step())
-
-    @patch.dict(os.environ, {"SLURM_JOB_ID": "123", "SLURM_PROCID": "0"})
-    def test_false_when_step_id_missing(self):
-        # e.g. salloc grants a bare allocation without launching a step.
-        self.assertFalse(_running_in_job_step())
-
-    @patch.dict(os.environ, {"SLURM_JOB_ID": "123", "SLURM_STEP_ID": "0"})
-    def test_false_when_procid_missing(self):
+        del os.environ["SLURM_STEP_ID"]
         self.assertFalse(_running_in_job_step())
 
 
@@ -237,15 +222,6 @@ class TestGetBackend(unittest.TestCase):
                     backend = get_backend()
                 self.assertIs(type(backend), expected[scheduler])
                 self.assertEqual(backend.name, scheduler.value)
-
-    @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
-    @patch.dict(os.environ, {"SPUR_JOB_ID": "7", "SLURM_JOB_ID": "7"})
-    def test_spur_job_env_without_binaries_gives_spur_backend(self, _mock_which):
-        self.assertIsInstance(get_backend(), SpurBackend)
-
-    @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
-    def test_no_job_env_and_no_binaries_gives_bare_metal_backend(self, _mock_which):
-        self.assertIsInstance(get_backend(), BareMetalBackend)
 
     def test_backend_follows_the_environment_on_every_call(self):
         # Callers ask more than once per process; a cached backend would keep

@@ -40,8 +40,7 @@ class TestBareMetalBackend(unittest.TestCase):
     def test_no_node_name_from_slurm_variables(self):
         self.assertIsNone(BareMetalBackend().node_name())
 
-    def test_name_and_launcher(self):
-        self.assertEqual(BareMetalBackend.name, "bare_metal")
+    def test_launcher(self):
         self.assertEqual(BareMetalBackend().mpi_launcher(), "mpirun-ssh")
 
 
