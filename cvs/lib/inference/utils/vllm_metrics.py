@@ -126,7 +126,7 @@ METRIC_REGISTRY = (
         'tok/s',
         'throughput',
         'min',
-        'p50_decode_throughput',
+        'decode_throughput_p50',
         ('median_tpot_ms',),
     ),
     _raw('max_output_tokens_per_s', 'tok/s', 'throughput', 'min'),
@@ -323,7 +323,7 @@ def _derive_metric(definition, values, context):
         pp = _number(inputs['pp'])
         gpu_count = None if tp is None or pp is None else tp * pp
         return _safe_ratio(inputs['total_token_throughput'], gpu_count)
-    if definition.derivation == 'p50_decode_throughput':
+    if definition.derivation == 'decode_throughput_p50':
         return _safe_ratio(1000.0, inputs['median_tpot_ms'])
     if definition.derivation == 'normalized_ttft_ms_per_tok':
         return _safe_ratio(inputs['mean_ttft_ms'], inputs['isl'])

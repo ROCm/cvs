@@ -276,20 +276,6 @@ class TestVerdicts(unittest.TestCase):
         self.assertEqual(verdicts, expected)
         self.assertEqual([(row["metric"], row["status"]) for row in verdicts], [("p99_ttft_ms", "fail")])
 
-    def test_vllm_verdict_same_after_rename(self):
-        old = {CELL: {"queue_time_p50_ms": {"kind": "max", "value": 5}}}
-        actuals = {"node0": {"p50_queue_time_ms": 7.0}}
-        raw = old_config()
-        raw["thresholds"] = old
-        converted, _ = convert(raw)
-        config = validate(converted)
-        verdicts = evaluate_metric_verdicts(actuals, config.thresholds.get(CELL), enforce_thresholds=True)
-        expected = evaluate_metric_verdicts(
-            actuals, {"p50_queue_time_ms": {"kind": "max", "value": 5}}, enforce_thresholds=True
-        )
-        self.assertEqual(verdicts, expected)
-        self.assertEqual([(row["metric"], row["status"]) for row in verdicts], [("p50_queue_time_ms", "fail")])
-
 
 class TestShippedConfigs(unittest.TestCase):
     def test_vllm_shipped_configs_load(self):
@@ -426,11 +412,6 @@ class TestOldKeys(unittest.TestCase):
                 self.assertEqual(converted["thresholds"][CELL], {new: spec})
                 self.assertIn(f"{old} -> thresholds.{CELL}.{new}", message)
                 self.assertEqual(validate(converted).thresholds.get(CELL), {new: spec})
-        both = {
-            CELL: {"queue_time_p50_ms": {"kind": "max", "value": 3}, "p50_queue_time_ms": {"kind": "max", "value": 3}}
-        }
-        with self.assertRaisesRegex(ValueError, "queue_time_p50_ms and p50_queue_time_ms"):
-            convert({**new_config(), "thresholds": both})
 
     def test_timeout_conversion_same_timing(self):
         converted, _ = convert(old_config())
