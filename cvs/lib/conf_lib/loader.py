@@ -16,8 +16,20 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from cvs.lib.utils.config_loader import ConfigError, substitute_placeholders
+from cvs.lib.utils.config_loader import substitute_placeholders
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
+
+
+class ConfigError(ValueError):
+    """A config file that does not match its suite's schema.
+
+    The message has one ``location: problem`` line per error and never the
+    offending values, which can be credentials.
+    """
+
+    def __init__(self, config_path, problems):
+        self.problems = problems
+        super().__init__(f"{config_path} is not a valid config:\n" + "\n".join(f"  {p}" for p in problems))
 
 
 LoadedConfig = namedtuple("LoadedConfig", "config cluster container")
