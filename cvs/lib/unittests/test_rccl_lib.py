@@ -14,6 +14,34 @@ from cvs.unittests.support import TMP
 
 GUIDE_BARS = {'mi300x_rccl_single_node_config.json': 304.0, 'mi350x_rccl_single_node_config.json': 350.0}
 HOSTFILE = '/tmp/rccl_hosts_file_Ab12Cd34Ef'
+# Built from rdma-core load_driver()'s warning format, not a verbatim captured log.
+PVRDMA_WARNING = (
+    "libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': "
+    "libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory"
+)
+PROVIDER_VARIANTS = tuple(
+    PVRDMA_WARNING.replace('libvmw_pvrdma', provider) for provider in ('libionic', 'libbnxt_re', 'libmlx5')
+)
+PVRDMA_OTHER_ERROR = (
+    "libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': "
+    "libvmw_pvrdma-rdmav34.so: undefined symbol: verbs_register_driver_34"
+)
+PVRDMA_MENTION = "cp: cannot stat '/opt/libvmw_pvrdma-rdmav34.so': No such file or directory"
+BASH_MISSING = (
+    'bash: /opt/rccl-tests/build/all_reduce_perf: No such file or directory',
+    'bash: /opt/vmware/x: No such file or directory',
+)
+PVRDMA_WITH_TRAILER = PVRDMA_WARNING + ' ORTE was unable to reliably start'
+RCCL_OUT_WITH_PVRDMA = (
+    PVRDMA_WARNING
+    + '\n'
+    + '[1,0]<stderr>:'
+    + PVRDMA_WARNING
+    + '\n'
+    + '#       size         count      type   redop    root     time   algbw   busbw #wrong\n'
+    + '  8589934592    2147483648     float     sum      -1  37000.0  232.0  406.0      0\n'
+    + '# Avg bus bandwidth    : 406.0\n'
+)
 
 
 def _download_writes_suffixed_path(content, host='head'):
@@ -1069,6 +1097,69 @@ class TestRcclLib(unittest.TestCase):
         )
 
     @patch('cvs.lib.rccl_lib.fail_test')
+    def test_scan_rccl_logs_ignores_unselected_pvrdma_warning(self, mock_fail_test):
+        rccl_lib.RcclVerifier.scan_logs(RCCL_OUT_WITH_PVRDMA)
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_scan_rccl_logs_fails_selected_provider_missing(self, mock_fail_test):
+        for line in PROVIDER_VARIANTS:
+            with self.subTest(line=line):
+                mock_fail_test.reset_mock()
+                rccl_lib.RcclVerifier.scan_logs(line + '\n# Avg bus bandwidth    : 406.0\n')
+                mock_fail_test.assert_called_once_with(f'ERROR - {line}')
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_scan_rccl_logs_fails_pvrdma_other_error(self, mock_fail_test):
+        output = PVRDMA_OTHER_ERROR + '\nNCCL ERROR: unhandled system error\n# Avg bus bandwidth    : 406.0\n'
+        rccl_lib.RcclVerifier.scan_logs(output)
+        mock_fail_test.assert_called_once_with('ERROR - NCCL ERROR: unhandled system error')
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_scan_rccl_logs_fails_non_libibverbs_pvrdma_mention(self, mock_fail_test):
+        rccl_lib.RcclVerifier.scan_logs(PVRDMA_MENTION + '\n# Avg bus bandwidth    : 406.0\n')
+        mock_fail_test.assert_called_once_with(f'ERROR - {PVRDMA_MENTION}')
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_scan_rccl_logs_fails_bash_missing_binary(self, mock_fail_test):
+        for line in BASH_MISSING:
+            with self.subTest(line=line):
+                mock_fail_test.reset_mock()
+                rccl_lib.RcclVerifier.scan_logs(line + '\n# Avg bus bandwidth    : 406.0\n')
+                mock_fail_test.assert_called_once_with(f'ERROR - {line}')
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_scan_rccl_logs_orte_and_nccl_still_fail_with_pvrdma_warning(self, mock_fail_test):
+        errors = ('ORTE was unable to reliably start', 'NCCL ERROR: unhandled system error', 'Test failure common.cu')
+        for line in errors:
+            with self.subTest(line=line):
+                mock_fail_test.reset_mock()
+                rccl_lib.RcclVerifier.scan_logs(RCCL_OUT_WITH_PVRDMA + line + '\n')
+                mock_fail_test.assert_called_once_with(f'ERROR - {line}')
+                self.assertNotIn('libvmw_pvrdma', mock_fail_test.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_scan_rccl_logs_pvrdma_warning_without_bandwidth_still_fails(self, mock_fail_test):
+        rccl_lib.RcclVerifier.scan_logs(PVRDMA_WARNING + '\n')
+        mock_fail_test.assert_called_once_with(
+            'RCCL test did not complete successfully, no bandwidth numbers printed - pls check'
+        )
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_scan_rccl_logs_logs_ignored_pvrdma_count(self, mock_fail_test):
+        with patch.object(rccl_lib.log, 'info') as mock_info:
+            rccl_lib.RcclVerifier.scan_logs(RCCL_OUT_WITH_PVRDMA)
+        mock_info.assert_called_once_with(
+            'Ignored %d libibverbs libvmw_pvrdma provider warning line(s) in RCCL output', 2
+        )
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_scan_rccl_logs_pvrdma_warning_with_error_trailer_still_fails(self, mock_fail_test):
+        rccl_lib.RcclVerifier.scan_logs(PVRDMA_WITH_TRAILER + '\n# Avg bus bandwidth    : 406.0\n')
+        self.assertIn(f'ERROR - {PVRDMA_WITH_TRAILER}', [call.args[0] for call in mock_fail_test.call_args_list])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
     def test_check_bus_bw_success(self, mock_fail_test):
         """Test successful bus bandwidth validation"""
         test_name = "all_reduce_perf"
@@ -1976,6 +2067,51 @@ class TestRcclLib(unittest.TestCase):
         self.assertIn('Avg bus bandwidth', result)
         self.assertEqual(rccl_lib.globals.error_list, [])
         orch.exec.assert_not_called()
+
+    def test_exec_rccl_launch_with_pvrdma_warning_returns_native_output(self):
+        rccl_lib.globals.error_list = []
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {'head': {'output': RCCL_OUT_WITH_PVRDMA, 'exit_code': 0}}
+        job = self._job(orch)
+        with patch.object(job, 'launch_command', return_value='spur run --overlap --'):
+            result = job.execute('all_reduce_perf', 'unit')
+        self.assertEqual(result, RCCL_OUT_WITH_PVRDMA)
+        self.assertEqual(rccl_lib.globals.error_list, [])
+        self.assertEqual(job.verdicts, [])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_run_perf_dtype_reaches_bus_bw_gate_with_pvrdma_warning(self, mock_fail_test):
+        rccl_lib.globals.error_list = []
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {'head': {'output': RCCL_OUT_WITH_PVRDMA, 'exit_code': 0}}
+        job = self._job(orch)
+        row = {
+            'numCycle': 0,
+            'name': 'AllReduce',
+            'size': 8589934592,
+            'type': 'float',
+            'redop': 'sum',
+            'inPlace': 1,
+            'time': 37000.0,
+            'algBw': 232.0,
+            'busBw': 406.0,
+            'wrong': '0',
+        }
+        with (
+            patch.object(job, 'launch_command', return_value='spur run --overlap --'),
+            patch.object(job, 'read_results', return_value=[row]),
+            patch.object(job, '_check_reported_topology'),
+        ):
+            results, validated = job._run_perf_dtype('float', '/shared/rccl_float.json')
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', results, {'8589934592': {'bus_bw': 400.0}})
+        verifier.check_bus_bw()
+        self.assertEqual(results, [row])
+        self.assertEqual(len(validated), 1)
+        self.assertEqual(verifier.verdicts[0]['check'], 'bus_bw')
+        self.assertEqual(verifier.verdicts[0]['status'], 'pass')
+        self.assertEqual(verifier.verdicts[0]['actual'], 406.0)
+        self.assertEqual(job.verdicts, [])
+        mock_fail_test.assert_not_called()
 
     def test_rccl_regression_failed_launch_preserves_graph_generation(self):
         env = {

@@ -9,7 +9,91 @@ import cvs.lib.utils_lib as utils_lib
 from cvs.core.run_layout import RunLayout
 
 
+# Built from rdma-core load_driver()'s warning format, not a verbatim captured log.
+PVRDMA_WARNING = (
+    "libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': "
+    "libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory"
+)
+PROVIDER_VARIANTS = tuple(
+    PVRDMA_WARNING.replace('libvmw_pvrdma', provider) for provider in ('libionic', 'libbnxt_re', 'libmlx5')
+)
+PVRDMA_OTHER_ERROR = (
+    "libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': "
+    "libvmw_pvrdma-rdmav34.so: undefined symbol: verbs_register_driver_34"
+)
+PVRDMA_MENTION = "cp: cannot stat '/opt/libvmw_pvrdma-rdmav34.so': No such file or directory"
+BASH_MISSING = (
+    'bash: /opt/rccl-tests/build/all_reduce_perf: No such file or directory',
+    'bash: /opt/vmware/x: No such file or directory',
+)
+PVRDMA_WITH_TRAILER = PVRDMA_WARNING + ' ORTE was unable to reliably start'
+
+
 class TestUtilsLib(unittest.TestCase):
+    def test_is_unselected_pvrdma_warning_matches_rdma_core_format(self):
+        lines = (
+            PVRDMA_WARNING,
+            '[1,3]<stderr>:' + PVRDMA_WARNING,
+            '[0,0]<stdout>: ' + PVRDMA_WARNING,
+            '  ' + PVRDMA_WARNING + '\r',
+            PVRDMA_WARNING.replace('rdmav34', 'rdmav2'),
+        )
+        for line in lines:
+            with self.subTest(line=line):
+                self.assertTrue(utils_lib.is_unselected_pvrdma_warning(line))
+
+    def test_is_unselected_pvrdma_warning_matches_name_and_prefix_variants(self):
+        # The real line has not been captured: cover the shapes it could take.
+        bare = PVRDMA_WARNING.replace("'libvmw_pvrdma-rdmav34.so'", "'vmw_pvrdma'")
+        path = PVRDMA_WARNING.replace(
+            "'libvmw_pvrdma-rdmav34.so'", "'/usr/lib/x86_64-linux-gnu/libibverbs/libvmw_pvrdma-rdmav34.so'"
+        ).replace(
+            ": libvmw_pvrdma-rdmav34.so: cannot",
+            ": /usr/lib/x86_64-linux-gnu/libibverbs/libvmw_pvrdma-rdmav34.so: cannot",
+        )
+        lines = (bare, path, '3: ' + PVRDMA_WARNING, '12: ' + bare)
+        for line in lines:
+            with self.subTest(line=line):
+                self.assertTrue(utils_lib.is_unselected_pvrdma_warning(line))
+
+    def test_is_unselected_pvrdma_warning_rejects_foreign_prefix_or_name(self):
+        lines = (
+            'node1: ' + PVRDMA_WARNING,
+            '2024-01-01T00:00:00 ' + PVRDMA_WARNING,
+            PVRDMA_WARNING.replace("'libvmw_pvrdma-rdmav34.so'", "'/opt/vmw_pvrdma/libionic-rdmav34.so'"),
+            PVRDMA_WARNING.replace("'libvmw_pvrdma-rdmav34.so'", "'libionic-vmw_pvrdma.so'"),
+        )
+        for line in lines:
+            with self.subTest(line=line):
+                self.assertFalse(utils_lib.is_unselected_pvrdma_warning(line))
+
+    def test_is_unselected_pvrdma_warning_rejects_selected_providers(self):
+        for line in PROVIDER_VARIANTS:
+            with self.subTest(line=line):
+                self.assertFalse(utils_lib.is_unselected_pvrdma_warning(line))
+
+    def test_is_unselected_pvrdma_warning_rejects_other_pvrdma_error(self):
+        self.assertFalse(utils_lib.is_unselected_pvrdma_warning(PVRDMA_OTHER_ERROR))
+
+    def test_is_unselected_pvrdma_warning_rejects_non_libibverbs_mention(self):
+        self.assertFalse(utils_lib.is_unselected_pvrdma_warning(PVRDMA_MENTION))
+
+    def test_is_unselected_pvrdma_warning_rejects_bash_missing_binary(self):
+        for line in BASH_MISSING:
+            with self.subTest(line=line):
+                self.assertFalse(utils_lib.is_unselected_pvrdma_warning(line))
+
+    def test_is_unselected_pvrdma_warning_rejects_trailing_text(self):
+        self.assertFalse(utils_lib.is_unselected_pvrdma_warning(PVRDMA_WITH_TRAILER))
+
+    def test_is_unselected_pvrdma_warning_rejects_empty(self):
+        for line in ('', None):
+            with self.subTest(line=line):
+                self.assertFalse(utils_lib.is_unselected_pvrdma_warning(line))
+
+    def test_strip_benign_scan_noise_unchanged_for_pvrdma_line(self):
+        self.assertEqual(utils_lib.strip_benign_scan_noise(PVRDMA_WARNING + '\n'), PVRDMA_WARNING + '\n')
+
     @patch('cvs.lib.utils_lib.fail_test')
     def test_scan_test_results_with_failure(self, mock_fail_test):
         out_dict = {'host1': 'some output test FAIL more text'}

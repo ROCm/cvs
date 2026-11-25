@@ -88,16 +88,25 @@ class RcclVerifier:
 
     @staticmethod
     def scan_logs(output):
-        """Scan RCCL stdout for ORTE/NCCL/FS errors and require an avg-bus-bw marker."""
+        """Scan RCCL stdout for ORTE/NCCL/FS errors and require an avg-bus-bw marker.
+
+        The libibverbs warning for the unused libvmw_pvrdma provider is skipped; output is not modified.
+        """
         error_list = []
         warn_list = []
+        ignored = 0
         for line in output.split("\n"):
+            if is_unselected_pvrdma_warning(line):
+                ignored += 1
+                continue
             for err_key in rccl_err_dict.keys():
                 if re.search(f'{rccl_err_dict[err_key]}', line):
                     error_list.append(line)
                     fail_test(f'ERROR - {line}')
             if re.search('NCCL WARN', line):
                 warn_list.append(line)
+        if ignored:
+            log.info('Ignored %d libibverbs libvmw_pvrdma provider warning line(s) in RCCL output', ignored)
         if len(warn_list) > 0:
             log.warning('Following warnings were observed in the RCCL test')
             log.warning('#============#')
