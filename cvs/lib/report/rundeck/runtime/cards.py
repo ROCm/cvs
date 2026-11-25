@@ -67,10 +67,33 @@ def _threshold_note(metric, threshold):
     return note
 
 
-def _heat_style(value, threshold, direction, lo, hi):
+def graded_heat_class(value, threshold):
+    """Band a percentage-of-reference value onto the four-step quality ramp.
+
+    Used where a pass/fail split hides useful shape: the bands between the
+    threshold and the reference separate a marginal link from a healthy one.
+    Returns None when the threshold leaves no room to grade.
+    """
+    span = 100.0 - threshold
+    if span <= 0:
+        return None
+    if value < threshold:
+        return "hm-g1"
+    if value < threshold + span / 3.0:
+        return "hm-g2"
+    if value < threshold + 2.0 * span / 3.0:
+        return "hm-g3"
+    return "hm-g4"
+
+
+def _heat_style(value, threshold, direction, lo, hi, scale=None):
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return "hm-na", ""
     if threshold is not None and direction in ("higher", "lower"):
+        if scale == "graded" and direction == "higher":
+            graded = graded_heat_class(value, threshold)
+            if graded:
+                return graded, ""
         ok = value >= threshold if direction == "higher" else value <= threshold
         return ("hm-pass" if ok else "hm-fail"), ""
     span = (hi - lo) or 1.0
@@ -784,7 +807,7 @@ class DeckCardRenderer:
             cells = []
             for col_index, _col in enumerate(cols):
                 value = row_values[col_index] if col_index < len(row_values) else None
-                css, style = _heat_style(value, threshold, direction, lo, hi)
+                css, style = _heat_style(value, threshold, direction, lo, hi, heat.get("scale"))
                 shown = "—" if value is None else fmt_num(value)
                 cells.append(f"<td class='hm-cell {css}' style='{style}'>{html.escape(shown)}</td>")
             body.append(f"<tr><th>{html.escape(str(row_name))}</th>{''.join(cells)}</tr>")

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- New `topology` suite. `nic_bandwidth` measures RDMA bandwidth between every cross-node NIC pair with TransferBench and fails when a pair, a NIC, or a node pair falls below `flag_below_pct_of_median` of the cluster median. The run writes `topology.json` and a Run Deck with a cluster-wide NIC-to-NIC heatmap, a per-node heatmap, and a node-to-node rollup. Same-node pairs are never measured. Configure it with `cvs/input/config_file/topology/topology_config.json`.
 - `install_mori` builds MoRI from `git_url` at `git_ref` into `mori_dir`, using the MORI config, before `mori_benchmark_test` runs. In container mode it needs `container.lifetime` `persistent` or `no_launch`. The MORI run card shows the built commit.
 - Training (jaxmaxtext, megatron, torchtitan) and inference (vLLM, SGLang, ATOM, xDiT) suites run a `test_support_matrix_gate` stage after the container launches that stops the run when the framework/model is unsupported on the detected GPU architecture or ROCm version (for example MXFP4 on MI300X/MI325X). Support is declared in `cvs/lib/support_matrix/{training,inference}_support_matrix.json`. Set `CVS_SUPPORT_MATRIX_GATE=OFF` to log violations and continue instead of stopping; a framework or model with no entry runs unchecked. See `cvs/lib/support_matrix/README.md`.
 

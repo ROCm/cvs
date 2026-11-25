@@ -87,6 +87,10 @@ th { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-
 .hm-table td { font-size: 0.75rem; }
 .hm-pass { background: rgba(61,214,140,0.35); }
 .hm-fail { background: rgba(255,92,106,0.35); }
+.hm-g1 { background: rgba(255,92,106,0.35); }
+.hm-g2 { background: rgba(255,170,64,0.35); }
+.hm-g3 { background: rgba(166,214,86,0.35); }
+.hm-g4 { background: rgba(61,214,140,0.35); }
 .hm-na { color: var(--na); }
 .details td.msg { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.75rem; word-break: break-word; }
 .details tr.row-fail td { background: rgba(255,92,106,0.06); }
@@ -638,10 +642,23 @@ function renderSeries(matrix) {
   $("series-empty").hidden = order.length > 0;
 }
 
+function gradedHeatClass(value, threshold) {
+  const span = 100 - threshold;
+  if (span <= 0) return null;
+  if (value < threshold) return "hm-g1";
+  if (value < threshold + span / 3) return "hm-g2";
+  if (value < threshold + (2 * span) / 3) return "hm-g3";
+  return "hm-g4";
+}
+
 function heatClass(value, heat) {
   if (value == null) return "hm-na";
   const threshold = num(heat.threshold);
   if (threshold != null && (heat.direction === "higher" || heat.direction === "lower")) {
+    if (heat.scale === "graded" && heat.direction === "higher") {
+      const graded = gradedHeatClass(value, threshold);
+      if (graded) return graded;
+    }
     const ok = heat.direction === "lower" ? value <= threshold : value >= threshold;
     return ok ? "hm-pass" : "hm-fail";
   }

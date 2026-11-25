@@ -56,6 +56,8 @@ subtrees:
             title: RCCL tests
           - file: how-to/test-suites/network/mori
             title: MORI tests
+          - file: how-to/test-suites/network/topology
+            title: Topology NIC bandwidth tests
       - file: how-to/test-suites/training/index
         title: Training tests
         subtrees:
@@ -135,6 +137,8 @@ subtrees:
             title: RCCL
           - file: reference/configuration-files/network/mori
             title: MORI
+          - file: reference/configuration-files/network/topology
+            title: Topology
       - file: reference/configuration-files/training/index
         title: Training
         subtrees:
