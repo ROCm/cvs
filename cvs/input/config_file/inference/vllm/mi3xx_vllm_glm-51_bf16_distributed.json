@@ -1,6 +1,5 @@
 {
   "_comment": "MI325X distributed serving workload, TP8/PP2 on two eight-GPU nodes. Set the image, model, network environment and mounts before running. Threshold enforcement remains disabled until calibrated.",
-  "_comment_validation": "Serving completion was exercised with vLLM 0.29.1.dev0+g98dff2a81.d20260911.rocm101 on gfx942. These settings do not establish model accuracy or calibrated performance thresholds.",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_vllm_glm-51_bf16_distributed_threshold.json",
   "paths": {
@@ -96,7 +95,7 @@
     "server_ready_s": 7230,
     "client_s": 7210
   },
-  "_comment_sweeps": "Canonical run cells; each entry holds client options for that cell only.",
+  "_comment_sweeps": "Canonical run cells; entries override benchmark_params for that cell.",
   "sweeps": {
     "ISL=1024,OSL=8192,TP=8,PP=2,CONC=16": {},
     "ISL=1024,OSL=8192,TP=8,PP=2,CONC=32": {},
@@ -108,6 +107,7 @@
     "ISL=1024,OSL=8192,TP=8,PP=2,CONC=32",
     "ISL=1024,OSL=8192,TP=8,PP=2,CONC=64"
   ],
+  "_comment_validation": "Serving completion was exercised with vLLM 0.29.1.dev0+g98dff2a81.d20260911.rocm101 on gfx942. These settings do not establish model accuracy or calibrated performance thresholds.",
   "accuracy": {
     "lm_eval": {
       "tasks": [

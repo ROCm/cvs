@@ -87,7 +87,7 @@
     "server_ready_s": 2430,
     "client_s": 3620
   },
-  "_comment_sweeps": "Canonical run cells; each entry holds client options for that cell only.",
+  "_comment_sweeps": "Canonical run cells; entries override benchmark_params for that cell.",
   "sweeps": {
     "ISL=1024,OSL=256,TP=4,PP=1,CONC=64": {},
     "ISL=16384,OSL=128,TP=4,PP=1,CONC=4": {},
