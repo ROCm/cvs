@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from cvs.lib.inference.sglang import sglang_config_loader as loader
+from cvs.lib.inference.sglang import sglang_common, sglang_config_loader as loader
 from cvs.unittests.support import FAKE_CRED
 
 FAKE_CRED_FILE = '/home/user/.hf_token'
@@ -619,9 +619,18 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
         self.assertEqual(variant.topology, 'single')
         self.assertEqual(variant.inference['_execution_hosts'], ['node-a'])
         self.assertEqual(variant.inference['benchmark_serv_node'], 'node-a')
-        self.assertNotIn('sglang_cli', variant.inference)
+        self.assertEqual(variant.inference['sglang_cli'], raw['sglang_cli'])
 
-    def test_packaged_config_with_sglang_cli_reaches_the_variant(self):
+    def test_every_packaged_config_names_the_newer_cli_forms(self):
+        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
+        configs = [path for path in sorted(config_dir.glob('*_sglang_*.json')) if 'threshold' not in path.name]
+        self.assertTrue(configs)
+        for path in configs:
+            with self.subTest(path.name):
+                section = json.loads(path.read_text(encoding='utf-8'))['sglang_cli']
+                self.assertEqual(sglang_common.parse_sglang_cli_config(section), sglang_common.SGLANG_CLI_LATEST)
+
+    def test_packaged_config_with_older_sglang_cli_reaches_the_variant(self):
         config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
         config_path = config_dir / 'mi3xx_sglang_llama_70b_single.json'
         raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
