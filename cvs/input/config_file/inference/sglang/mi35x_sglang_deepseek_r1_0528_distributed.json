@@ -48,6 +48,13 @@
         }
       }
     },
+    "_sglang_cli_note": "CLI forms for SGLang v0.5.23 and later images. For older images set false, sglang_router.launch_router and sglang.bench_serving, or delete this block to detect the image in the container.",
+    "sglang_cli": {
+        "split_cuda_graph_flags": true,
+        "router_binary": "sgl-router",
+        "benchmark_module": "sglang.benchmark.serving"
+    },
+
     "server_params": {
       "serve_port": "8010",
       "backend": "sglang",
