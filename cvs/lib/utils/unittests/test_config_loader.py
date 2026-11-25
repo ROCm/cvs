@@ -618,6 +618,21 @@ def _load(tmp, config, thresholds, **kwargs):
 
 
 class TestLoadVariant(unittest.TestCase):
+    def test_load_variant_keeps_emptied_sweep_cells(self):
+        def resolve_old(raw):
+            table = {
+                "server_params.tensor_parallel_size": "server_params.tp",
+                f"sweeps.{CELL}.client_s": "timeouts.client_s",
+            }
+            return resolve_old_keys(raw, table, label="test config")
+
+        config = _inference_config()
+        config["sweeps"] = {CELL: {"client_s": 600}}
+        with tempfile.TemporaryDirectory() as tmp:
+            loaded, _ = _load(tmp, config, {CELL: {}}, resolve_old=resolve_old, warn=False)
+        self.assertEqual(loaded.sweeps, {CELL: {}})
+        self.assertEqual(loaded.timeouts.client_s, 600)
+
     def test_load_variant_runs_old_keys_fill_and_validation(self):
         thresholds = {CELL: {"failed": {"kind": "max", "value": 0}}}
         with tempfile.TemporaryDirectory() as tmp:

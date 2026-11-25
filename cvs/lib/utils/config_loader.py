@@ -55,6 +55,7 @@ from cvs.parsers.schemas import (  # noqa: F401 - re-exported for suite loaders
     _Allow,
     _Forbid,
     fill_info_specs,
+    keep_sweep_cells,
     validation_problem_lines,
     warn_old_keys,
 )
@@ -359,7 +360,7 @@ def load_variant(
     Substitutes the config's placeholders and attaches the threshold file it
     names (none records every metric without gating). ``resolve_old`` maps the
     suite's old keys and returns the config and one warning message, raised
-    unless ``warn`` is false. With a ``gated`` metric set, every threshold
+    unless ``warn`` is false; a sweep cell it empties is kept. With a ``gated`` metric set, every threshold
     cell gains an ``info`` spec for each gated metric it lacks, except the
     ``required`` and ``unreported`` ones. Then ``model`` validates it. A
     config that does not validate, or a threshold key starting with ``_`` that
@@ -372,7 +373,8 @@ def load_variant(
     _reject_underscore_metric_keys(raw["thresholds"], suite, config_path)
     message = None
     if resolve_old is not None:
-        raw, message = resolve_old(raw)
+        converted, message = resolve_old(raw)
+        raw = keep_sweep_cells(raw, converted)
     if warn:
         warn_old_keys(message)
     if gated is not None:

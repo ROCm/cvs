@@ -2419,7 +2419,7 @@ def old_timeout_rule(new_path, keys, total, force=None, sweep_keys=frozenset()):
     is true and the config holds some other old key, since ``resolve_old_keys``
     changes nothing without one. A sweep cell overriding one of ``sweep_keys``
     gets its own total, and the longest wins, since one total serves every
-    cell; pass the result through ``keep_sweep_cells``.
+    cell; ``load_variant`` keeps a sweep cell the move empties.
     """
     names = [key for _section, key, _default in keys]
     if len(set(names)) != len(names):
