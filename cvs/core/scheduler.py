@@ -100,7 +100,10 @@ def get_backend():
 
 def _running_in_job_step():
     """True if srun launched this process as part of a job step, or the Kubernetes Job
-    controller started it as one indexed pod; see each backend's in_managed_step."""
+    controller started it as one indexed pod, whichever scheduler is detected.
+
+    is_managed_compute() is the check callers use: it asks only the detected backend.
+    """
     return SlurmBackend().in_managed_step() or KubernetesBackend().in_managed_step()
 
 

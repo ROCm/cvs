@@ -39,7 +39,7 @@ class TestInManagedStep(_CleanEnv):
     def test_managed_with_job_id_and_index(self):
         self.assertTrue(self.backend.in_managed_step())
 
-    def test_not_managed_without_index(self):
+    def test_not_managed_with_only_one_variable(self):
         # Either variable alone is not a rank: a plain Job sets only the index, and
         # a CVS pod outside an Indexed Job sets only the job id.
         for env in ({"CVS_K8S_JOB_ID": "cvs-health-7f3a"}, {"JOB_COMPLETION_INDEX": "0"}):
@@ -108,9 +108,9 @@ class TestHosts(_CleanEnv):
             self.backend.hosts()
 
 
-class TestTable9Values(_CleanEnv):
+class TestJobValues(_CleanEnv):
     @patch.dict(os.environ, POD_ENV)
-    def test_table_9_values(self):
+    def test_job_id_node_name_and_launcher(self):
         self.assertEqual(self.backend.name, "kubernetes")
         self.assertEqual(self.backend.job_id(), "cvs-health-7f3a")
         self.assertEqual(self.backend.node_name(), "gpu-node-b")

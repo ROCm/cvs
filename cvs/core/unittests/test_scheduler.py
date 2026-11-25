@@ -150,6 +150,7 @@ class TestDetectScheduler(unittest.TestCase):
         # Every pod carries KUBERNETES_SERVICE_HOST; only a CVS-generated pod sets
         # CVS_K8S_JOB_ID, so Slurm running in pods stays Slurm.
         self.assertEqual(detect_scheduler(), Scheduler.SLURM)
+        mock_run.assert_not_called()
 
     @patch.dict(os.environ, {"CVS_SCHEDULER": "slurm", "CVS_K8S_JOB_ID": "cvs-health-7f3a"})
     def test_env_override_takes_precedence_over_k8s_job_id(self):
