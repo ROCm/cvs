@@ -281,12 +281,21 @@ def probe_sglang_cli(exec_in_container, hosts):
     and move the benchmark to ``sglang.benchmark.serving``.
     """
     cmd = "bash -c " + shlex.quote(_SGLANG_CLI_PROBE_SCRIPT)
-    cli = parse_sglang_cli_probe(exec_in_container(cmd, hosts=as_node_list(hosts), timeout=120))
+    # The transports raise their own exception types (SSH, HTTP, container
+    # runtime), so any failure here is treated as "could not detect".
+    try:
+        cli = parse_sglang_cli_probe(exec_in_container(cmd, hosts=as_node_list(hosts), timeout=120))
+    except Exception as exc:
+        log.warning('SGLang CLI probe failed on %s: %s', hosts, exc)
+        cli = None
     if cli is None:
         log.warning('Could not detect the SGLang CLI in the container; assuming the newest image layout')
         return dict(SGLANG_CLI_LATEST)
     log.info('Detected SGLang CLI features: %s', cli)
     return cli
+
+
+_NOT_PROBED = object()
 
 
 def resolve_sglang_cli(owner, hosts):
@@ -295,8 +304,8 @@ def resolve_sglang_cli(owner, hosts):
     # orchestrator starts every node's container from the single ``container.image``,
     # so prefill, decode, proxy and benchmark nodes always share one image. If roles
     # ever get separate images, cache per role instead of per owner.
-    cli = getattr(owner, '_sglang_cli', None)
-    if cli is None:
+    cli = getattr(owner, '_sglang_cli', _NOT_PROBED)
+    if cli is _NOT_PROBED:
         cli = probe_sglang_cli(owner._container_exec, hosts)
         owner._sglang_cli = cli
     return cli

@@ -545,6 +545,27 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertIsNot(cli, sglang_common.SGLANG_CLI_LATEST)
         self.assertEqual(exec_in_container.call_args.kwargs['hosts'], ['n0'])
 
+    def test_probe_sglang_cli_falls_back_to_newest_layout_when_exec_raises(self):
+        exec_in_container = mock.Mock(side_effect=TimeoutError('ssh timed out'))
+        cli = sglang_common.probe_sglang_cli(exec_in_container, ['n0'])
+        self.assertEqual(cli, sglang_common.SGLANG_CLI_LATEST)
+        self.assertIsNot(cli, sglang_common.SGLANG_CLI_LATEST)
+
+    def test_resolve_sglang_cli_caches_the_fallback_after_a_failed_probe(self):
+        owner = mock.Mock(spec=['_container_exec'])
+        owner._container_exec.side_effect = RuntimeError('no containers running')
+        first = sglang_common.resolve_sglang_cli(owner, ['n0'])
+        second = sglang_common.resolve_sglang_cli(owner, ['n0'])
+        self.assertEqual(first, sglang_common.SGLANG_CLI_LATEST)
+        self.assertIs(first, second)
+        owner._container_exec.assert_called_once()
+
+    def test_resolve_sglang_cli_reuses_a_cached_value_that_is_falsy(self):
+        owner = mock.Mock(spec=['_container_exec'])
+        owner._sglang_cli = {}
+        self.assertEqual(sglang_common.resolve_sglang_cli(owner, ['n0']), {})
+        owner._container_exec.assert_not_called()
+
     def test_resolve_sglang_cli_probes_once_per_owner(self):
         owner = mock.Mock(spec=['_container_exec'])
         owner._container_exec.return_value = {
