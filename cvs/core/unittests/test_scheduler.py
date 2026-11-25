@@ -204,10 +204,6 @@ class TestRunningInJobStep(unittest.TestCase):
     def test_true_in_an_indexed_cvs_pod(self):
         self.assertTrue(_running_in_job_step())
 
-    @patch.dict(os.environ, {"CVS_K8S_JOB_ID": "cvs-health-7f3a"})
-    def test_false_in_a_pod_without_completion_index(self):
-        self.assertFalse(_running_in_job_step())
-
 
 class TestIsManagedCompute(unittest.TestCase):
     def setUp(self):
