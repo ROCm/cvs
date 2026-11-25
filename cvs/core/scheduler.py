@@ -11,6 +11,7 @@ from enum import Enum
 import os
 
 from cvs.core.schedulers.bare_metal import BareMetalBackend
+from cvs.core.schedulers.kubernetes import KubernetesBackend
 from cvs.core.schedulers.slurm import SlurmBackend
 from cvs.core.schedulers.spur import SpurBackend
 
@@ -22,6 +23,7 @@ class Scheduler(Enum):
     SPUR = 'spur'
     SLURM = 'slurm'
     BARE_METAL = 'bare_metal'
+    KUBERNETES = 'kubernetes'
 
 
 # SPUR must be checked before SLURM or a spur cluster gets misclassified.
@@ -34,6 +36,7 @@ _BACKENDS = {
     Scheduler.SPUR: SpurBackend,
     Scheduler.SLURM: SlurmBackend,
     Scheduler.BARE_METAL: BareMetalBackend,
+    Scheduler.KUBERNETES: KubernetesBackend,
 }
 
 
@@ -51,9 +54,13 @@ def _scheduler_from_job_env():
     """Classify from job-id env vars, which are set inside a step even when
     spur/scontrol are not on PATH (compute nodes often have neither).
 
+    Only CVS-generated pods set CVS_K8S_JOB_ID, so it goes first: Slurm running
+    inside Kubernetes pods sets no CVS_K8S_JOB_ID and is still classified as Slurm.
     SPUR exports SPUR_* alongside SLURM_* twins; real Slurm sets no SPUR_*.
-    Check SPUR_JOB_ID first so a spur step is not labeled SLURM.
+    Check SPUR_JOB_ID next so a spur step is not labeled SLURM.
     """
+    if os.environ.get("CVS_K8S_JOB_ID"):
+        return Scheduler.KUBERNETES
     if os.environ.get("SPUR_JOB_ID"):
         return Scheduler.SPUR
     if os.environ.get("SLURM_JOB_ID"):
@@ -92,8 +99,9 @@ def get_backend():
 
 
 def _running_in_job_step():
-    """True if srun launched this process as part of a job step; see SlurmBackend.in_managed_step."""
-    return SlurmBackend().in_managed_step()
+    """True if srun launched this process as part of a job step, or the Kubernetes Job
+    controller started it as one indexed pod; see each backend's in_managed_step."""
+    return SlurmBackend().in_managed_step() or KubernetesBackend().in_managed_step()
 
 
 def is_managed_compute():
