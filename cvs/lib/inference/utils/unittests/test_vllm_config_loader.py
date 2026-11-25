@@ -16,6 +16,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
+from cvs.parsers.schemas import keep_sweep_cells
 from cvs.lib.inference.utils.vllm_config_loader import (
     ConfigError,
     VllmConfig,
@@ -110,8 +111,9 @@ def problems(raw):
 
 
 def convert(raw):
+    """Old keys as load_variant converts them, keeping the sweep cells they empty."""
     converted, message = resolve_old_vllm_keys(raw)
-    return converted, message
+    return keep_sweep_cells(raw, converted), message
 
 
 def client_argv(config, hosts=("node0",)):

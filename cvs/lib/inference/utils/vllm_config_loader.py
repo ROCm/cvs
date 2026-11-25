@@ -31,7 +31,6 @@ from cvs.parsers.schemas import (
     check_container_network_env,
     check_flags,
     check_not_implemented,
-    keep_sweep_cells,
     not_implemented_names,
     old_accuracy_rule,
     old_timeout_rule,
@@ -349,7 +348,7 @@ def resolve_old_vllm_keys(raw):
         message="Deprecated vLLM config keys: {keys}. Use the new names; old keys will be removed in a future release.",
         label="vLLM config",
     )
-    return keep_sweep_cells(raw, converted), message
+    return converted, message
 
 
 def load_variant(config_path, cluster_dict, warn=True):
