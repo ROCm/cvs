@@ -955,6 +955,36 @@ def pair_gpus_with_nics(gpu_bdf_list, nic_bdf_list, node=None):
     return [nic_for_gpu[gpu_idx] for gpu_idx in range(len(gpus))]
 
 
+def closest_gpu_for_nics(gpu_bdf_list, nic_bdf_list):
+    """
+    Pick the closest GPU for each NIC from their PCI addresses.
+
+    Unlike pair_gpus_with_nics this is many-to-one: every NIC sharing a GPU's
+    PCI domain reports that GPU, which is what a per-NIC traffic generator
+    needs. Proximity uses the same rule: same domain beats a different one,
+    then the nearest bus, then the nearest device.
+
+    Returns:
+        list: index into gpu_bdf_list for each NIC, in NIC order, or None for a
+        NIC that has no GPU in its own PCI domain.
+    """
+    if not nic_bdf_list:
+        return []
+    if not gpu_bdf_list:
+        return [None] * len(nic_bdf_list)
+    gpus = [_parse_pci_bdf(bdf) for bdf in gpu_bdf_list]
+    nics = [_parse_pci_bdf(bdf) for bdf in nic_bdf_list]
+
+    closest = []
+    for nic in nics:
+        same_domain = [idx for idx, gpu in enumerate(gpus) if gpu[0] == nic[0]]
+        if not same_domain:
+            closest.append(None)
+            continue
+        closest.append(min(same_domain, key=lambda idx: (abs(gpus[idx][1] - nic[1]), abs(gpus[idx][2] - nic[2]), idx)))
+    return closest
+
+
 def _is_active_nic(nic_info):
     """Check whether a backend NIC is active, allowing entries without link state."""
     return bool(re.search('ACTIVE', nic_info.get('device_status', 'ACTIVE'), re.I))

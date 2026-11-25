@@ -857,5 +857,30 @@ class TestHeliosCaptureEndToEnd(unittest.TestCase):
                 linux_utils.get_ucx_net_devices(self.phdl)
 
 
+class TestClosestGpuForNics(unittest.TestCase):
+    """Many-to-one NIC -> GPU proximity, unlike the one-to-one GPU -> NIC pairing."""
+
+    GPUS = ['0001:01:00.0', '0002:01:00.0', '0003:01:00.0', '0004:01:00.0']
+
+    def test_nics_sharing_a_domain_share_that_domains_gpu(self):
+        nics = ['0001:44:00.0', '0001:48:00.0', '0003:44:00.0']
+        self.assertEqual(linux_utils.closest_gpu_for_nics(self.GPUS, nics), [0, 0, 2])
+
+    def test_nic_without_a_gpu_in_its_domain_is_unmapped(self):
+        self.assertEqual(linux_utils.closest_gpu_for_nics(self.GPUS, ['0000:04:00.0']), [None])
+
+    def test_nearest_bus_wins_within_a_domain(self):
+        gpus = ['0001:01:00.0', '0001:80:00.0']
+        self.assertEqual(linux_utils.closest_gpu_for_nics(gpus, ['0001:7f:00.0', '0001:02:00.0']), [1, 0])
+
+    def test_empty_inputs(self):
+        self.assertEqual(linux_utils.closest_gpu_for_nics(self.GPUS, []), [])
+        self.assertEqual(linux_utils.closest_gpu_for_nics([], ['0001:44:00.0']), [None])
+
+    def test_invalid_bdf_is_rejected(self):
+        with self.assertRaises(ValueError):
+            linux_utils.closest_gpu_for_nics(self.GPUS, ['not-a-bdf'])
+
+
 if __name__ == '__main__':
     unittest.main()
