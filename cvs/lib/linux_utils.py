@@ -900,6 +900,19 @@ def _parse_pci_bdf(bdf):
     return tuple(int(field, 16) for field in match.groups(default='0'))
 
 
+def is_valid_pci_bdf(bdf):
+    """Whether a value parses as a PCI address.
+
+    Lets a caller screen externally-read addresses before a pairing helper
+    raises, so one unreadable device cannot abort a whole node.
+    """
+    try:
+        _parse_pci_bdf(bdf)
+    except ValueError:
+        return False
+    return True
+
+
 def pair_gpus_with_nics(gpu_bdf_list, nic_bdf_list, node=None):
     """
     Pick a backend NIC for each GPU from their PCI addresses.
@@ -964,6 +977,12 @@ def closest_gpu_for_nics(gpu_bdf_list, nic_bdf_list):
     needs. Proximity uses the same rule: same domain beats a different one,
     then the nearest bus, then the nearest device.
 
+    An address that does not parse is treated as absent rather than raised: a
+    GPU with a bad address becomes unselectable without disturbing the index
+    of any other GPU, and a NIC with a bad address maps to None without
+    affecting any other NIC. A caller reading real hardware data should not
+    lose every other device over one unreadable one.
+
     Returns:
         list: index into gpu_bdf_list for each NIC, in NIC order, or None for a
         NIC that has no GPU in its own PCI domain.
@@ -972,12 +991,22 @@ def closest_gpu_for_nics(gpu_bdf_list, nic_bdf_list):
         return []
     if not gpu_bdf_list:
         return [None] * len(nic_bdf_list)
-    gpus = [_parse_pci_bdf(bdf) for bdf in gpu_bdf_list]
-    nics = [_parse_pci_bdf(bdf) for bdf in nic_bdf_list]
+
+    gpus = []
+    for bdf in gpu_bdf_list:
+        try:
+            gpus.append(_parse_pci_bdf(bdf))
+        except ValueError:
+            gpus.append(None)
 
     closest = []
-    for nic in nics:
-        same_domain = [idx for idx, gpu in enumerate(gpus) if gpu[0] == nic[0]]
+    for nic_bdf in nic_bdf_list:
+        try:
+            nic = _parse_pci_bdf(nic_bdf)
+        except ValueError:
+            closest.append(None)
+            continue
+        same_domain = [idx for idx, gpu in enumerate(gpus) if gpu is not None and gpu[0] == nic[0]]
         if not same_domain:
             closest.append(None)
             continue

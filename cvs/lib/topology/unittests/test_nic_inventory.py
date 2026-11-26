@@ -30,18 +30,19 @@ NIC_LAYOUT = [
 ]
 
 
+def _port_line(name, bdf, port, active):
+    state, rate = ('4: ACTIVE', '400 Gb/sec (4X NDR)') if active else ('1: DOWN', '2.5 Gb/sec (1X SDR)')
+    return f'{nic_inventory.PROBE_MARKER}|{name}|{bdf}|{port}|{state}|{rate}'
+
+
 def _probe_output(active_nics=None, banner=True):
-    active = NIC_LAYOUT if active_nics is None else [nic for nic in NIC_LAYOUT if nic[0] in active_nics]
-    active_names = {name for name, _ in active}
+    active_names = {name for name, _ in NIC_LAYOUT} if active_nics is None else set(active_nics)
     lines = []
     if banner:
         # A login shell prints a banner before the command's own output.
         lines += ['', '  ###  WELCOME BANNER  ###', 'Last login: never']
     for name, bdf in NIC_LAYOUT:
-        if name in active_names:
-            lines.append(f'{nic_inventory.PROBE_MARKER}|{name}|{bdf}|4: ACTIVE|400 Gb/sec (4X NDR)')
-        else:
-            lines.append(f'{nic_inventory.PROBE_MARKER}|{name}|{bdf}|1: DOWN|2.5 Gb/sec (1X SDR)')
+        lines.append(_port_line(name, bdf, '1', name in active_names))
     return '\n'.join(lines)
 
 
@@ -60,9 +61,9 @@ class TestParseNicProbe(unittest.TestCase):
         text = '\n'.join(
             [
                 f'{nic_inventory.PROBE_MARKER}|ionic_0',
-                f'{nic_inventory.PROBE_MARKER}||0000:04:00.0|4: ACTIVE|400',
-                f'{nic_inventory.PROBE_MARKER}|ionic_1|0001:44:00.0|4: ACTIVE|400',
-                'unrelated|line|with|pipes|here',
+                f'{nic_inventory.PROBE_MARKER}||0000:04:00.0|1|4: ACTIVE|400',
+                _port_line('ionic_1', '0001:44:00.0', '1', True),
+                'unrelated|line|with|pipes|here|now',
             ]
         )
         nics = nic_inventory.parse_nic_probe(text)
@@ -70,6 +71,101 @@ class TestParseNicProbe(unittest.TestCase):
 
     def test_non_string_output_yields_nothing(self):
         self.assertEqual(nic_inventory.parse_nic_probe(None), [])
+
+
+class TestMultiPortDevices(unittest.TestCase):
+    """A dual-port adapter may carry the backend link on its second port."""
+
+    def test_device_is_active_on_its_second_port(self):
+        text = '\n'.join(
+            [
+                _port_line('mlx5_0', '0001:44:00.0', '1', False),
+                _port_line('mlx5_0', '0001:44:00.0', '2', True),
+            ]
+        )
+        nics = nic_inventory.parse_nic_probe(text)
+
+        self.assertEqual(len(nics), 1, 'one record per device, not per port')
+        self.assertTrue(nics[0]['active'], 'port 2 is up, so the device is usable')
+        self.assertEqual(nics[0]['port'], '2', 'the record must name the port that is up')
+        self.assertEqual(nics[0]['ports'], ['1', '2'])
+
+    def test_second_port_device_is_selected_not_excluded(self):
+        text = '\n'.join(
+            [
+                _port_line('mlx5_0', '0001:44:00.0', '1', False),
+                _port_line('mlx5_0', '0001:44:00.0', '2', True),
+            ]
+        )
+        selected, excluded = nic_inventory.select_backend_nics(nic_inventory.parse_nic_probe(text), ['0001:01:00.0'])
+        self.assertEqual([nic['nic'] for nic in selected], ['mlx5_0'])
+        self.assertEqual(excluded, [])
+
+    def test_device_with_every_port_down_is_excluded(self):
+        text = '\n'.join(
+            [
+                _port_line('mlx5_0', '0001:44:00.0', '1', False),
+                _port_line('mlx5_0', '0001:44:00.0', '2', False),
+            ]
+        )
+        nics = nic_inventory.parse_nic_probe(text)
+        self.assertFalse(nics[0]['active'])
+        self.assertEqual(nics[0]['port'], '1', 'falls back to the lowest port for reporting')
+
+    def test_ports_are_ordered_numerically_not_lexically(self):
+        text = '\n'.join(
+            [
+                _port_line('mlx5_0', '0001:44:00.0', '10', False),
+                _port_line('mlx5_0', '0001:44:00.0', '2', False),
+            ]
+        )
+        self.assertEqual(nic_inventory.parse_nic_probe(text)[0]['ports'], ['2', '10'])
+
+    def test_probe_enumerates_every_port(self):
+        self.assertIn('"$d"/ports/*', nic_inventory.PROBE_CMD)
+        self.assertNotIn('ports/1/state', nic_inventory.PROBE_CMD)
+
+
+class TestUnreadablePciAddress(unittest.TestCase):
+    """A device without a usable PCI address must not cost the node its other NICs."""
+
+    def _probe_with_bad_bdf(self, bad):
+        return '\n'.join(
+            [
+                _port_line('good_0', '0001:44:00.0', '1', True),
+                _port_line('broken', bad, '1', True),
+                _port_line('good_1', '0002:44:00.0', '1', True),
+            ]
+        )
+
+    def test_one_unreadable_address_does_not_abort_selection(self):
+        # A missing device symlink makes readlink -f resolve to '.../device'.
+        nics = nic_inventory.parse_nic_probe(self._probe_with_bad_bdf('device'))
+        selected, excluded = nic_inventory.select_backend_nics(nics, ['0001:01:00.0', '0002:01:00.0'])
+
+        self.assertEqual([nic['nic'] for nic in selected], ['good_0', 'good_1'])
+        self.assertEqual(
+            [(nic['nic'], nic['reason']) for nic in excluded],
+            [('broken', nic_inventory.EXCLUDED_INVALID_BDF)],
+        )
+
+    def test_several_shapes_of_unreadable_address_are_reported(self):
+        for bad in ['device', 'not-a-bdf', '0001:4g:00.0', '0001:44:00.9', '::']:
+            nics = nic_inventory.parse_nic_probe(self._probe_with_bad_bdf(bad))
+            selected, excluded = nic_inventory.select_backend_nics(nics, ['0001:01:00.0', '0002:01:00.0'])
+            self.assertEqual([nic['nic'] for nic in selected], ['good_0', 'good_1'], f'bad bdf {bad!r}')
+            self.assertEqual([nic['nic'] for nic in excluded], ['broken'], f'bad bdf {bad!r}')
+
+    def test_one_unreadable_gpu_address_does_not_abort_the_node(self):
+        # The GPU list comes from a separate probe than the NIC list; a defect
+        # on that side must be isolated exactly like a defect on the NIC side.
+        nics = nic_inventory.parse_nic_probe(
+            '\n'.join([_port_line('nic0', '0001:44:00.0', '1', True), _port_line('nic1', '0002:44:00.0', '1', True)])
+        )
+        selected, excluded = nic_inventory.select_backend_nics(nics, ['0001:01:00.0', 'not-a-bdf', '0002:01:00.0'])
+
+        self.assertEqual({nic['nic']: nic['gpu'] for nic in selected}, {'nic0': 0, 'nic1': 2})
+        self.assertEqual(excluded, [])
 
 
 class TestSelectBackendNics(unittest.TestCase):
@@ -98,11 +194,19 @@ class TestSelectBackendNics(unittest.TestCase):
         down = {nic['nic'] for nic in excluded if nic['reason'] == nic_inventory.EXCLUDED_LINK_DOWN}
         self.assertEqual(down, {'ionic_3', 'ionic_4', 'ionic_5', 'ionic_6', 'ionic_7'})
 
-    def test_node_without_gpus_selects_no_backend_nics(self):
+    def test_node_without_gpus_says_so_instead_of_blaming_the_nics(self):
+        # Seen on real hardware: the GPUs were present but ROCm could not
+        # enumerate them. Reporting every NIC as a front-end NIC would send the
+        # user after the wrong problem.
         nics = nic_inventory.parse_nic_probe(_probe_output())
         selected, excluded = nic_inventory.select_backend_nics(nics, [])
+
         self.assertEqual(selected, [])
         self.assertEqual(len(excluded), len(NIC_LAYOUT))
+        self.assertEqual(
+            {nic['reason'] for nic in excluded},
+            {nic_inventory.EXCLUDED_NO_GPUS_DETECTED},
+        )
 
 
 class TestCollectNicInventory(unittest.TestCase):
@@ -119,7 +223,13 @@ class TestCollectNicInventory(unittest.TestCase):
 
         self.assertEqual(len(nics_by_node['nodeA']), len(NIC_LAYOUT))
         self.assertNotIn('nodeB', nics_by_node)
-        self.assertIn('nodeB', failures)
+        self.assertEqual(failures['nodeB'], 'no RDMA devices found')
+
+    def test_unreachable_node_is_distinguished_from_a_node_with_no_nics(self):
+        # The two causes call for different follow-up and must not read alike.
+        orch = self._orch({'nodeA': '\nABORT: Host Unreachable Error'})
+        _, failures = nic_inventory.collect_nic_inventory(orch)
+        self.assertEqual(failures['nodeA'], 'host unreachable')
 
     def test_probe_lines_are_marked_so_banners_cannot_be_mistaken_for_devices(self):
         orch = self._orch({'nodeA': _probe_output()})

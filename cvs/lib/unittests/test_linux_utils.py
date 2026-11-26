@@ -877,9 +877,21 @@ class TestClosestGpuForNics(unittest.TestCase):
         self.assertEqual(linux_utils.closest_gpu_for_nics(self.GPUS, []), [])
         self.assertEqual(linux_utils.closest_gpu_for_nics([], ['0001:44:00.0']), [None])
 
-    def test_invalid_bdf_is_rejected(self):
-        with self.assertRaises(ValueError):
-            linux_utils.closest_gpu_for_nics(self.GPUS, ['not-a-bdf'])
+    def test_unreadable_nic_address_maps_to_none_without_raising(self):
+        # A per-item defect must not cost the caller every other NIC's result.
+        nics = ['0001:44:00.0', 'not-a-bdf', '0003:44:00.0']
+        self.assertEqual(linux_utils.closest_gpu_for_nics(self.GPUS, nics), [0, None, 2])
+
+    def test_unreadable_gpu_address_is_unselectable_without_shifting_other_indices(self):
+        # The bad GPU must not be removed from the list, or every later GPU's
+        # index would silently shift and no longer point at the right device.
+        gpus = ['0001:01:00.0', 'not-a-bdf', '0003:01:00.0']
+        nics = ['0001:44:00.0', '0003:44:00.0']
+        self.assertEqual(linux_utils.closest_gpu_for_nics(gpus, nics), [0, 2])
+
+    def test_nic_whose_only_domain_gpu_is_unreadable_is_unmapped(self):
+        gpus = ['not-a-bdf', '0002:01:00.0']
+        self.assertEqual(linux_utils.closest_gpu_for_nics(gpus, ['0001:44:00.0']), [None])
 
 
 if __name__ == '__main__':

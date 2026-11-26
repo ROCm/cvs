@@ -4,7 +4,10 @@ All fixtures are synthetic: generic node names and temp paths.
 """
 
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock
 
@@ -23,8 +26,10 @@ def _make_orch(reachable_hosts, exec_result=None, cmd_list_result=None):
     return orch
 
 
-def _ok(path):
-    return {'output': path, 'exit_code': 0}
+def _ok(path, banner=False):
+    """A successful stage echoes the path behind a marker, after any banner."""
+    prefix = '*** WELCOME ***\nLast login: never\n' if banner else ''
+    return {'output': f'{prefix}{staging.PATH_MARKER}|{path}', 'exit_code': 0}
 
 
 class TestStageFile(unittest.TestCase):
@@ -58,6 +63,22 @@ class TestStageFile(unittest.TestCase):
         cmd = orch.all.exec.call_args[0][0]
         self.assertIn("'$(touch /tmp/pwned)`id`", cmd)
 
+    def test_content_with_shell_metacharacters_cannot_execute(self):
+        # A string match on the rendered command proves it looks quoted, not
+        # that it is safe to run; actually running it is the real proof.
+        workdir = tempfile.mkdtemp()
+        try:
+            witness = os.path.join(workdir, 'injected')
+            hostile = f'$(touch {witness})`touch {witness}`\n'
+            orch = _make_orch(['nodeA'], exec_result={'nodeA': _ok(os.path.join(workdir, 'cvs_tb_abc'))})
+            staging.stage_file(orch, hostile, 'cvs_tb_')
+            cmd = orch.all.exec.call_args[0][0]
+
+            subprocess.run(['bash', '-c', cmd], capture_output=True, text=True, env=dict(os.environ, TMPDIR=workdir))
+            self.assertFalse(os.path.exists(witness), f'content executed via: {cmd}')
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
     def test_nonzero_exit_is_reported_not_raised(self):
         orch = _make_orch(
             ['nodeA', 'nodeB'], exec_result={'nodeA': _ok('/tmp/cvs_tb_abc'), 'nodeB': {'output': '', 'exit_code': 1}}
@@ -68,12 +89,37 @@ class TestStageFile(unittest.TestCase):
         self.assertIn('nodeB', failures)
 
     def test_path_outside_the_expected_shape_is_rejected(self):
-        bad_paths = ['relative/cvs_tb_abc', '/tmp/other_file', '/tmp/cvs_tb_a\nb', '']
+        # A newline is not in this list because the marked record is read a
+        # line at a time, so an embedded newline cannot reach the validator.
+        bad_paths = ['relative/cvs_tb_abc', '/tmp/other_file', '/tmp/wrong_prefix_abc', '']
         for bad in bad_paths:
             orch = _make_orch(['nodeA'], exec_result={'nodeA': _ok(bad)})
             paths, failures = staging.stage_file(orch, 'x', 'cvs_tb_')
             self.assertEqual(paths, {}, f'accepted bad path {bad!r}')
             self.assertIn('nodeA', failures)
+
+    def test_login_banner_before_the_path_is_ignored(self):
+        orch = _make_orch(['nodeA'], exec_result={'nodeA': _ok('/tmp/cvs_tb_abc', banner=True)})
+        paths, failures = staging.stage_file(orch, 'x', 'cvs_tb_')
+
+        self.assertEqual(paths, {'nodeA': '/tmp/cvs_tb_abc'})
+        self.assertEqual(failures, {})
+
+    def test_trailing_output_after_the_path_is_ignored(self):
+        noisy = {'output': f'{staging.PATH_MARKER}|/tmp/cvs_tb_abc\nConnection to node closed.', 'exit_code': 0}
+        orch = _make_orch(['nodeA'], exec_result={'nodeA': noisy})
+        self.assertEqual(staging.stage_file(orch, 'x', 'cvs_tb_')[0], {'nodeA': '/tmp/cvs_tb_abc'})
+
+    def test_output_without_the_marker_is_a_failure(self):
+        orch = _make_orch(['nodeA'], exec_result={'nodeA': {'output': '/tmp/cvs_tb_abc', 'exit_code': 0}})
+        paths, failures = staging.stage_file(orch, 'x', 'cvs_tb_')
+        self.assertEqual(paths, {})
+        self.assertIn('nodeA', failures)
+
+    def test_command_marks_the_path_it_echoes(self):
+        orch = _make_orch(['nodeA'], exec_result={'nodeA': _ok('/tmp/cvs_tb_abc')})
+        staging.stage_file(orch, 'x', 'cvs_tb_')
+        self.assertIn(staging.PATH_MARKER, orch.all.exec.call_args[0][0])
 
     def test_unreachable_shaped_result_is_a_failure(self):
         orch = _make_orch(['nodeA'], exec_result={'nodeA': '\nABORT: Host Unreachable Error'})
@@ -116,6 +162,20 @@ class TestRemoveFiles(unittest.TestCase):
         orch = _make_orch(['nodeA'])
         self.assertEqual(staging.remove_files(orch, {}), [])
         orch.all.exec_cmd_list.assert_not_called()
+
+    def test_every_host_unreachable_still_reports_the_staged_files(self):
+        # No removal could be attempted, so the caller must keep the paths for
+        # a retry rather than be told nothing is outstanding.
+        orch = _make_orch([])
+        outstanding = staging.remove_files(orch, {'nodeA': '/tmp/cvs_tb_abc', 'nodeB': '/tmp/cvs_tb_def'})
+
+        self.assertEqual(outstanding, ['nodeA', 'nodeB'])
+        orch.all.exec_cmd_list.assert_not_called()
+
+    def test_host_that_went_unreachable_is_reported_outstanding(self):
+        orch = _make_orch(['nodeA'], cmd_list_result={'nodeA': f'{staging.REMOVE_SENTINEL}=0'})
+        outstanding = staging.remove_files(orch, {'nodeA': '/tmp/cvs_tb_abc', 'nodeB': '/tmp/cvs_tb_def'})
+        self.assertEqual(outstanding, ['nodeB'])
 
 
 if __name__ == '__main__':

@@ -6,7 +6,10 @@ hostnames, usernames or home paths.
 
 import os
 import shlex
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock
 
@@ -114,6 +117,18 @@ class TestRenderEnvAssignments(unittest.TestCase):
         self.assertIn("EVIL='$(touch /tmp/pwned)'", rendered)
         self.assertEqual(rendered[0], 'SIZE_LIST=1K,16M')
 
+    def test_a_name_cannot_smuggle_shell_syntax(self):
+        # A name is not quotable (a quoted word stops being an assignment), so
+        # it has to be rejected rather than escaped.
+        for bad in ['X; printf pwned; #', 'A B', 'A=B', 'A$(id)', 'A`id`', 'A\nB', '1ABC', '', 'A-B']:
+            with self.assertRaises(ValueError, msg=f'accepted name {bad!r}'):
+                multirank.render_env_assignments({bad: '1'})
+
+    def test_non_string_name_is_rejected(self):
+        for bad in [1, None, ('A',)]:
+            with self.assertRaises(ValueError):
+                multirank.render_env_assignments({bad: '1'})
+
 
 class TestBuildCommand(unittest.TestCase):
     def test_plain_command_wraps_payload_and_appends_sentinel(self):
@@ -155,6 +170,76 @@ class TestBuildCommand(unittest.TestCase):
         cmd = multirank.build_command('TransferBench', ['/tmp/a b.txt', '--flag'], {})
         invocation = shlex.split(cmd)[2].split('; echo ')[0]
         self.assertEqual(shlex.split(invocation), ['TransferBench', '/tmp/a b.txt', '--flag'])
+
+
+class TestBuildCommandAgainstHostileInput(unittest.TestCase):
+    """One hostile value into every parameter, not just the obvious one.
+
+    The payload creates a file rather than printing a marker: a quoted payload
+    is echoed back by the command itself, so searching the output for a marker
+    reports an injection that never happened.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.witness = os.path.join(self.tmpdir, 'injected')
+        self.hostile = f'x; touch {self.witness}; #'
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _assert_no_injection(self, cmd, argv=()):
+        subprocess.run(['bash', '-c', cmd] + list(argv), capture_output=True, text=True)
+        self.assertFalse(os.path.exists(self.witness), f'injected via: {cmd}')
+
+    def test_env_name_cannot_inject(self):
+        with self.assertRaises(ValueError):
+            multirank.build_command('/bin/echo', ['hi'], {self.hostile: '1'})
+
+    def test_env_value_cannot_inject(self):
+        self._assert_no_injection(multirank.build_command('/bin/echo', ['hi'], {'EVIL': self.hostile}))
+
+    def test_binary_cannot_inject(self):
+        self._assert_no_injection(multirank.build_command(self.hostile, ['hi'], {}))
+
+    def test_argument_cannot_inject(self):
+        self._assert_no_injection(multirank.build_command('/bin/echo', [self.hostile], {}))
+
+    def test_runtime_env_prefix_is_trusted_but_args_around_it_are_not(self):
+        cmd = multirank.build_command('/bin/echo', [self.hostile], {}, runtime_env_prefix='export A=1')
+        self._assert_no_injection(cmd)
+
+    def test_sentinel_cannot_inject(self):
+        # The sentinel is echoed inside double quotes, where a command
+        # substitution would still expand.
+        with self.assertRaises(ValueError):
+            multirank.build_command('/bin/echo', ['hi'], {}, sentinel=f'$(touch {self.witness})')
+        self.assertFalse(os.path.exists(self.witness))
+
+    def test_sentinel_rejects_regex_and_shell_metacharacters(self):
+        for bad in ['A B', 'A.B', 'A$B', 'A`B`', 'A|B', '', 'A-B', None]:
+            with self.assertRaises(ValueError, msg=f'accepted sentinel {bad!r}'):
+                multirank.build_command('/bin/echo', ['hi'], {}, sentinel=bad)
+
+    def test_default_sentinel_is_accepted(self):
+        cmd = multirank.build_command('/bin/echo', ['hi'], {})
+        self.assertIn(multirank.EXIT_SENTINEL, cmd)
+
+    def test_sudo_argv0_with_a_space_keeps_the_binary_in_dollar_one(self):
+        # An unquoted argv0 would split, so bash would take the second word as
+        # $1 and run that instead of the binary.
+        cmd = multirank.build_command('/bin/echo', ['MARKER'], {}, use_sudo=True, sudo_argv0='topology nic')
+        parts = shlex.split(cmd)
+        self.assertEqual(parts[4], 'topology nic', 'argv0 must survive as one word')
+        self.assertEqual(parts[5], '/bin/echo')
+
+        result = subprocess.run(['bash', '-c', parts[3]] + parts[4:], capture_output=True, text=True)
+        self.assertIn('MARKER', result.stdout, 'the real binary must have run')
+
+    def test_sudo_argv0_cannot_inject(self):
+        cmd = multirank.build_command('/bin/echo', ['hi'], {}, use_sudo=True, sudo_argv0=self.hostile)
+        parts = shlex.split(cmd)
+        self._assert_no_injection(parts[3], parts[4:])
 
 
 class TestExtractExitCode(unittest.TestCase):

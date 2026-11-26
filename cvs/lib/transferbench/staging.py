@@ -15,6 +15,10 @@ _PREFIX_RE = re.compile(r'^[A-Za-z0-9_.-]+$')
 # exec_cmd_list discards exit codes, so removal reports its own status.
 REMOVE_SENTINEL = '__CVS_TB_RM__'
 
+# The staged path is echoed behind a marker because a login shell may print a
+# banner or MOTD ahead of the command's own output.
+PATH_MARKER = '__CVS_TB_PATH__'
+
 
 def _validate_prefix(prefix):
     if not isinstance(prefix, str) or not _PREFIX_RE.fullmatch(prefix):
@@ -29,6 +33,17 @@ def _validate_path(path, prefix):
     if not posixpath.isabs(path):
         return False
     return posixpath.basename(path).startswith(prefix)
+
+
+def _extract_path(output):
+    """Pull the marked path out of a node's output, ignoring any banner."""
+    if not isinstance(output, str):
+        return ''
+    for line in reversed(output.splitlines()):
+        line = line.strip()
+        if line.startswith(PATH_MARKER + '|'):
+            return line[len(PATH_MARKER) + 1 :]
+    return ''
 
 
 def stage_file(orch, content, prefix, timeout=30):
@@ -46,7 +61,8 @@ def stage_file(orch, content, prefix, timeout=30):
     # redirect the file.
     cmd = (
         '(umask 077 && f=$(mktemp -p "${TMPDIR:-/tmp}" ' + prefix + 'XXXXXXXXXX)'
-        f' && printf %s {shlex.quote(content)} > "$f" && printf %s "$f")'
+        f' && printf %s {shlex.quote(content)} > "$f"'
+        f' && printf \'{PATH_MARKER}|%s\\n\' "$f")'
     )
     result = orch.all.exec(cmd, timeout=timeout, detailed=True, print_console=False)
 
@@ -56,7 +72,7 @@ def stage_file(orch, content, prefix, timeout=30):
         if not isinstance(res, dict) or res.get('exit_code') != 0:
             failures[host] = f'could not create staged file: {res!r}'
             continue
-        path = (res.get('output') or '').strip()
+        path = _extract_path(res.get('output'))
         if not _validate_path(path, prefix):
             failures[host] = f'staged file path failed validation: {path!r}'
             continue
@@ -66,9 +82,13 @@ def stage_file(orch, content, prefix, timeout=30):
 
 def remove_files(orch, paths_by_host, timeout=30):
     """Delete staged files. Returns the hosts whose removal could not be confirmed."""
-    hosts = list(orch.all.reachable_hosts)
-    if not hosts or not paths_by_host:
+    if not paths_by_host:
         return []
+    hosts = list(orch.all.reachable_hosts)
+    if not hosts:
+        # Nothing could be attempted, so every staged file is still out there;
+        # saying "nothing outstanding" would lose the paths a retry needs.
+        return sorted(paths_by_host)
 
     # exec_cmd_list pairs commands to reachable_hosts positionally; hosts with
     # nothing staged still need a slot. It also discards exit codes, so each

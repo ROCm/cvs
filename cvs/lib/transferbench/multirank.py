@@ -24,6 +24,10 @@ EXIT_SENTINEL_RE = re.compile(re.escape(EXIT_SENTINEL) + r'\s*=\s*(?P<code>-?\d+
 
 _ENV_VAR_NAME_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 
+# The sentinel is echoed inside double quotes and later matched as a regex, so
+# it is held to characters that are inert in both.
+_SENTINEL_RE = re.compile(r'^[A-Za-z0-9_]+$')
+
 
 def validate_binary_name(config_key, value):
     """Validate a configured executable name or path."""
@@ -100,8 +104,19 @@ def rank_env(rank, num_ranks, master_addr, master_port=DEFAULT_SOCKET_MASTER_POR
 
 
 def render_env_assignments(env):
-    """Render ``KEY=VALUE`` assignments, quoting every value."""
-    return [f'{key}={shlex.quote(str(value))}' for key, value in env.items()]
+    """Render ``KEY=VALUE`` assignments, quoting every value.
+
+    A name cannot be quoted, because a quoted word is no longer an assignment,
+    so an invalid one is rejected here. This repeats the check callers make on
+    their own config because this is the point where the text becomes shell
+    syntax, and not every caller validates.
+    """
+    rendered = []
+    for key, value in env.items():
+        if not isinstance(key, str) or not _ENV_VAR_NAME_RE.fullmatch(key):
+            raise ValueError(f'Invalid environment variable name: {key!r}')
+        rendered.append(f'{key}={shlex.quote(str(value))}')
+    return rendered
 
 
 def build_command(
@@ -119,7 +134,13 @@ def build_command(
     privileged child sees them; ``sudo`` otherwise sanitizes the calling
     shell's environment. The sentinel line lets the orchestrator recover the
     binary's exit code from stdout.
+
+    Every interpolated value is quoted or validated, except
+    ``runtime_env_prefix``, which is shell code by contract: pass only text
+    built by ``build_env_prefix``, never a raw configured value.
     """
+    if not isinstance(sentinel, str) or not _SENTINEL_RE.fullmatch(sentinel):
+        raise ValueError(f'Invalid exit sentinel: {sentinel!r}')
     env_inline = ' '.join(render_env_assignments(env)).strip()
 
     # A command name must be resolved before sudo applies secure_path, so the
@@ -132,7 +153,10 @@ def build_command(
         inner = f'{runtime_env_prefix}; {inner}'
     inner_with_sentinel = f'{inner}; echo "{sentinel}=$?"'
     if use_sudo:
-        return f'sudo bash -c {shlex.quote(inner_with_sentinel)} {sudo_argv0} {sudo_executable_argument(binary)}'
+        # argv0 is quoted like every other interpolation: an unquoted value
+        # containing a space would split, pushing the binary out of $1.
+        argv0 = shlex.quote(str(sudo_argv0))
+        return f'sudo bash -c {shlex.quote(inner_with_sentinel)} {argv0} {sudo_executable_argument(binary)}'
     return f'bash -c {shlex.quote(inner_with_sentinel)}'
 
 
