@@ -1,6 +1,5 @@
 {
   "_comment": "SGLang wide expert-parallel deepseek-ai/DeepSeek-V4.1-Flash workload for MI30x. Two nodes, TP=EP=16, attention DP=16, PP=1. The all-to-all backend is an add_flags entry. Uses the MI325 DeepSeek-V4.1-Flash threshold file; enforce_thresholds stays false until wide-EP bars are measured. Set model_num_params to the active parameter count per token (used for MFU).",
-  "topology": "wide_ep",
   "enforce_thresholds": false,
   "gpu_name" : "<changeme> mi325",
   "threshold_json": "mi325_sglang_deepseek_v41_flash_threshold.json",
@@ -59,7 +58,7 @@
     "max_concurrency": "256",
     "tensor_parallelism": "16",
     "pipeline_parallelism": "1",
-    "enable_wideEP": "true",
+    "enable_wideEP": true,
     "expert_parallelism": "16",
     "attn_data_parallelism": "16",
     "deepep_mode": "normal",
