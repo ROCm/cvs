@@ -319,8 +319,10 @@ Wide expert parallelism (``server_params.enable_wideEP``)
 ----------------------------------------------------------
 
 Set ``server_params.enable_wideEP`` to ``true`` (a JSON boolean or the string ``"true"``) in a
-``sglang_distributed`` config to launch the server with ``--ep-size``, ``--dp-size`` and
-``--enable-dp-attention``. When the flag is missing or ``false``, the config runs as plain
+``sglang_distributed`` config to launch the server with ``--ep-size`` and attention data parallelism.
+Newer SGLang images take ``--attn-dp-size``; older images take ``--dp-size`` with
+``--enable-dp-attention``. CVS reads the image's ``sglang.launch_server --help`` and uses the form
+it accepts. When the flag is missing or ``false``, the config runs as plain
 distributed and CVS logs a warning if wide-EP keys are present. Any other value fails at load time.
 The flag requires ``nnodes`` of at least ``2``.
 
@@ -333,12 +335,12 @@ The flag requires ``nnodes`` of at least ``2``.
    * - ``server_params.expert_parallelism``
      - EP size. Must equal ``tensor_parallelism``.
    * - ``server_params.attn_data_parallelism``
-     - Attention data-parallel size, passed as ``--dp-size``. Must equal ``expert_parallelism``.
+     - Attention data-parallel size. Must equal ``expert_parallelism``.
    * - ``server_params.deepep_mode``
      - ``normal``, ``low_latency`` or ``auto``. Omitted configs use ``normal``.
    * - ``server_params.add_flags``
      - Set the all-to-all backend here, for example ``--moe-a2a-backend mori``. Entries that repeat a
-       flag CVS sets (``--ep-size``, ``--dp-size``, ``--tp-size`` and similar) fail at load time.
+       flag CVS sets (``--ep-size``, ``--dp-size``, ``--attn-dp-size``, ``--tp-size`` and similar) fail at load time.
 
 Also required: ``pipeline_parallelism`` of ``1`` and ``tensor_parallelism`` divisible by ``nnodes``.
 

@@ -47,10 +47,11 @@ def _benchmark(**overrides):
     return bp
 
 
-def _orch(hosts=('node-a', 'node-b')):
+def _orch(hosts=('node-a', 'node-b'), dp_form='attn-dp-size'):
     orch = mock.Mock()
     orch.hosts = list(hosts)
     orch.exec_on_host.return_value = {'node-a': 'Mon Nov  9 12:00'}
+    orch.exec.return_value = {'node-a': f'WIDE_EP_DP_ATTENTION={dp_form}\n'}
     return orch
 
 
@@ -85,14 +86,40 @@ class TestLaunchFlags(unittest.TestCase):
             self.assertIn('--tp-size 16', body)
             self.assertIn('--pp-size 1', body)
             self.assertIn('--ep-size 16', body)
-            self.assertIn('--dp-size 16', body)
-            self.assertIn('--enable-dp-attention', body)
+            self.assertIn('--attn-dp-size 16', body)
+            self.assertNotIn('--dp-size', body)
+            self.assertNotIn('--enable-dp-attention', body)
             self.assertIn('--deepep-mode normal', body)
             self.assertIn('--moe-a2a-backend mori', body)
             self.assertIn('--attention-backend aiter', body)
-            self.assertNotIn('--attn-dp-size', body)
         self.assertIn('--node-rank 0', rank0)
         self.assertIn('--node-rank 1', rank1)
+
+    def test_image_without_attn_dp_size_gets_dp_size_with_enable_dp_attention(self):
+        obj = SglangWideEP('m', _inference(), _benchmark(), orch=_orch(dp_form='enable-dp-attention'))
+
+        for body in _launch_bodies(obj):
+            self.assertIn('--dp-size 16', body)
+            self.assertIn('--enable-dp-attention', body)
+            self.assertNotIn('--attn-dp-size', body)
+
+    def test_dp_attention_form_is_probed_once_per_run(self):
+        obj = SglangWideEP('m', _inference(), _benchmark(), orch=_orch())
+
+        _launch_bodies(obj)
+        _launch_bodies(obj)
+
+        probes = [c for c in obj.orch.exec.call_args_list if 'launch_server --help' in c.args[0]]
+        self.assertEqual(len(probes), 1)
+        self.assertEqual(probes[0].kwargs['hosts'], ['node-a'])
+
+    def test_launch_fails_when_the_image_help_names_neither_dp_flag(self):
+        orch = _orch()
+        orch.exec.return_value = {'node-a': 'WIDE_EP_DP_ATTENTION=unknown\n'}
+        obj = SglangWideEP('m', _inference(), _benchmark(), orch=orch)
+
+        with self.assertRaisesRegex(RuntimeError, 'could not find --attn-dp-size or --enable-dp-attention'):
+            _launch_bodies(obj)
 
     def test_plain_distributed_launch_has_no_expert_parallel_flags(self):
         obj = SglangDistributed('m', _inference(), _benchmark(), orch=_orch())

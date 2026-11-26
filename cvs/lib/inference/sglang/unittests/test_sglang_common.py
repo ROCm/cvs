@@ -1439,6 +1439,42 @@ class TestWideEPPreflight(unittest.TestCase):
         self.assertIn('command not found', failures[0])
 
 
+class TestWideEPDpAttention(unittest.TestCase):
+    def test_parses_each_flag_form_from_any_node(self):
+        self.assertEqual(
+            sglang_common.parse_wide_ep_dp_attention({'node-a': 'noise\nWIDE_EP_DP_ATTENTION=attn-dp-size\n'}),
+            'attn-dp-size',
+        )
+        self.assertEqual(
+            sglang_common.parse_wide_ep_dp_attention(
+                {'node-a': '', 'node-b': 'WIDE_EP_DP_ATTENTION=enable-dp-attention'}
+            ),
+            'enable-dp-attention',
+        )
+
+    def test_unknown_or_missing_output_parses_to_none(self):
+        self.assertIsNone(sglang_common.parse_wide_ep_dp_attention({'node-a': 'WIDE_EP_DP_ATTENTION=unknown'}))
+        self.assertIsNone(sglang_common.parse_wide_ep_dp_attention({'node-a': 'Traceback: no module'}))
+        self.assertIsNone(sglang_common.parse_wide_ep_dp_attention({}))
+        self.assertIsNone(sglang_common.parse_wide_ep_dp_attention(None))
+
+    def test_attn_dp_size_form_is_a_single_flag(self):
+        self.assertEqual(sglang_common.wide_ep_dp_attention_lines('attn-dp-size', '16'), '    --attn-dp-size 16 \\\n')
+
+    def test_enable_dp_attention_form_pairs_dp_size_with_the_switch(self):
+        self.assertEqual(
+            sglang_common.wide_ep_dp_attention_lines('enable-dp-attention', '16'),
+            '    --dp-size 16 \\\n    --enable-dp-attention \\\n',
+        )
+
+    def test_probe_command_checks_the_launch_server_help_text(self):
+        cmd = sglang_common.WIDE_EP_DP_ATTENTION_CMD
+        self.assertTrue(cmd.startswith('bash -c '))
+        self.assertIn('launch_server --help', cmd)
+        self.assertIn('attn-dp-size', cmd)
+        self.assertIn('enable-dp-attention', cmd)
+
+
 class TestSglangGpuTopology(unittest.TestCase):
     def test_topology_requests_only_the_mem_usage_section(self):
         """A bare `amd-smi metric` also reads --xgmi-err, which resets the xGMI error counters on MI200 and older."""

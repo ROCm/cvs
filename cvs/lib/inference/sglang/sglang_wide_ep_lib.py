@@ -6,16 +6,19 @@ Wide expert-parallel mode of the distributed SGLang controller.
 
 Selected when the config sets ``server_params.enable_wideEP`` to true. The launch is the
 unified multi-node ``sglang.launch_server`` of ``SglangDistributed`` with attention
-data-parallel (``--dp-size`` with ``--enable-dp-attention``) and experts sharded across every
-rank (``--ep-size``). Pipeline parallel stays 1 and ``expert_parallelism`` must equal
-``tensor_parallelism``. The all-to-all backend comes from ``add_flags`` (shipped templates use
-``--moe-a2a-backend mori``). The ROCm SGLang images reject ``--attn-dp-size``; newer SGLang
-rewrites this older pair to that flag.
+data-parallel and experts sharded across every rank (``--ep-size``). The attention data-parallel
+flag is ``--attn-dp-size`` on newer SGLang and ``--dp-size`` with ``--enable-dp-attention`` on
+older images; the image decides, found by probing its ``sglang.launch_server --help``. Pipeline
+parallel stays 1 and ``expert_parallelism`` must equal ``tensor_parallelism``. The all-to-all
+backend comes from ``add_flags`` (shipped templates use ``--moe-a2a-backend mori``).
 '''
 
 from cvs.lib import globals
 from cvs.lib.inference.sglang.sglang_common import (
+    WIDE_EP_DP_ATTENTION_CMD,
+    parse_wide_ep_dp_attention,
     validate_wide_ep_layout,
+    wide_ep_dp_attention_lines,
     wide_ep_enabled,
     wide_ep_preflight_cmd,
     wide_ep_preflight_failures,
@@ -39,6 +42,7 @@ class SglangWideEP(SglangDistributed):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         validate_wide_ep_layout(self.bp_dict, nnodes=self.nnodes)
+        self._wide_ep_dp_attention = None
 
     def _apply_bp_defaults(self):
         super()._apply_bp_defaults()
@@ -54,10 +58,23 @@ class SglangWideEP(SglangDistributed):
     def _layout_flags_block(self):
         return (
             f"    --ep-size {self.bp_dict['expert_parallelism']} \\\n"
-            f"    --dp-size {self.bp_dict['attn_data_parallelism']} \\\n"
-            f"    --enable-dp-attention \\\n"
+            f"{wide_ep_dp_attention_lines(self._dp_attention_form(), self.bp_dict['attn_data_parallelism'])}"
             f"    --deepep-mode {self.bp_dict['deepep_mode']} \\\n"
         )
+
+    def _dp_attention_form(self):
+        """The flag form the image accepts, probed once on rank 0 since every node runs the same image."""
+        if self._wide_ep_dp_attention is None:
+            out_dict = self._container_exec(WIDE_EP_DP_ATTENTION_CMD, hosts=[self.rank0_node], timeout=120)
+            form = parse_wide_ep_dp_attention(out_dict)
+            if form is None:
+                raise RuntimeError(
+                    f"could not find --attn-dp-size or --enable-dp-attention in the sglang.launch_server "
+                    f"--help output on {self.rank0_node}"
+                )
+            log.info('SGLang image takes %s for attention data parallelism', form)
+            self._wide_ep_dp_attention = form
+        return self._wide_ep_dp_attention
 
     def wide_ep_preflight_failures(self):
         """Probe every server node's container before launch and return what would stop the server.

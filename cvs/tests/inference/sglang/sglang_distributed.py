@@ -17,7 +17,7 @@ master, and the benchmark node. If ``nnodes`` is larger than the cluster, the su
 fails immediately. HTTP defaults to port 8000; dist-init defaults to 40001.
 
 Set ``server_params.enable_wideEP`` to ``true`` to run wide expert parallel on the same
-suite: the server launches with ``--ep-size`` and ``--dp-size`` plus ``--enable-dp-attention``
+suite: the server launches with ``--ep-size`` and the attention data-parallel flag the image takes
 (``expert_parallelism`` and ``attn_data_parallelism`` must equal ``tensor_parallelism``).
 A missing or false flag runs plain TP/PP distributed. Layout errors fail at config load.
 With the flag on, ``test_wide_ep_preflight`` stops the run before the server launch when a

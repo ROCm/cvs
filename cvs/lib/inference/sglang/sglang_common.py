@@ -571,6 +571,39 @@ def parse_wide_ep_preflight(output):
     return None
 
 
+WIDE_EP_DP_ATTENTION_MARKER = "WIDE_EP_DP_ATTENTION="
+WIDE_EP_DP_ATTENTION_FORMS = ("attn-dp-size", "enable-dp-attention")
+# Newer SGLang removed --enable-dp-attention in favor of --attn-dp-size, and older images
+# reject the newer flag. The image's own --help lists what its parser accepts, so the
+# launch asks it rather than assuming either generation.
+WIDE_EP_DP_ATTENTION_CMD = "bash -c " + shlex.quote(
+    "help=$(python3 -m sglang.launch_server --help 2>&1); "
+    'case "$help" in '
+    f"*--attn-dp-size*) echo {WIDE_EP_DP_ATTENTION_MARKER}attn-dp-size ;; "
+    f"*--enable-dp-attention*) echo {WIDE_EP_DP_ATTENTION_MARKER}enable-dp-attention ;; "
+    f"*) echo {WIDE_EP_DP_ATTENTION_MARKER}unknown ;; "
+    "esac"
+)
+
+
+def parse_wide_ep_dp_attention(out_dict):
+    """The attention data-parallel flag form from ``WIDE_EP_DP_ATTENTION_CMD`` output, or None when unreadable."""
+    for text in (out_dict or {}).values():
+        for line in str(text or "").splitlines():
+            if line.startswith(WIDE_EP_DP_ATTENTION_MARKER):
+                form = line[len(WIDE_EP_DP_ATTENTION_MARKER) :].strip()
+                if form in WIDE_EP_DP_ATTENTION_FORMS:
+                    return form
+    return None
+
+
+def wide_ep_dp_attention_lines(form, attn_dp):
+    """Launch-flag lines that set attention data parallelism to ``attn_dp`` in the ``form`` the image takes."""
+    if form == "attn-dp-size":
+        return f"    --attn-dp-size {attn_dp} \\\n"
+    return f"    --dp-size {attn_dp} \\\n    --enable-dp-attention \\\n"
+
+
 def wide_ep_preflight_failures(out_dict, *, tp, nnodes, model, check_mori):
     """Failure messages from per-node ``wide_ep_preflight_cmd`` output; empty when every node passes.
 
