@@ -12,7 +12,7 @@
     "container": {
       "lifetime": "per_run",
       "name": "sglang_container",
-      "_image_example": "rocm/sgl-dev:v0.5.20-rocm720-mi35x-20260924",
+      "_image_example": "rocm/sgl-dev:v0.5.23-rocm10-mi30x-20261120",
       "image": "<changeme>",
       "runtime": {
         "name": "docker",
@@ -78,7 +78,7 @@
           "data_set_name": "random",
           "num_prompts": "25",
           "random_range_ratio": "0.5",
-          "model_num_params": "<changeme>",
+          "model_num_params": "16000000000",
           "peak_gpu_tflops": "2615"
     },
     "accuracy": {
