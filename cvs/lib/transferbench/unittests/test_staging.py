@@ -79,6 +79,30 @@ class TestStageFile(unittest.TestCase):
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
+    def test_write_failure_after_mktemp_leaves_no_orphaned_file(self):
+        # mktemp can succeed and the write still fail (e.g. a quota); without
+        # the trap, that leaves an untracked file the caller never learns of
+        # and can never clean up.
+        workdir = tempfile.mkdtemp()
+        try:
+            orch = _make_orch(['nodeA'], exec_result={'nodeA': _ok(os.path.join(workdir, 'cvs_tb_abc'))})
+            staging.stage_file(orch, 'x' * 1000, 'cvs_tb_')
+            cmd = orch.all.exec.call_args[0][0]
+
+            # ulimit -f 0 forces the printf write to fail after mktemp has
+            # already created the file, the same failure a real quota causes.
+            result = subprocess.run(
+                ['bash', '-c', f'ulimit -f 0; {cmd}'],
+                capture_output=True,
+                text=True,
+                env=dict(os.environ, TMPDIR=workdir),
+            )
+            self.assertNotEqual(result.returncode, 0)
+            orphans = [name for name in os.listdir(workdir) if name.startswith('cvs_tb_')]
+            self.assertEqual(orphans, [], f'orphaned file(s) left behind: {orphans}')
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
     def test_nonzero_exit_is_reported_not_raised(self):
         orch = _make_orch(
             ['nodeA', 'nodeB'], exec_result={'nodeA': _ok('/tmp/cvs_tb_abc'), 'nodeB': {'output': '', 'exit_code': 1}}

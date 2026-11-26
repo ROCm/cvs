@@ -58,11 +58,16 @@ def stage_file(orch, content, prefix, timeout=30):
         raise ValueError('Staged file content must be a string')
 
     # umask 077 plus a random name means another user cannot pre-place or
-    # redirect the file.
+    # redirect the file. The trap removes it if anything after mktemp fails
+    # (e.g. a quota) or the session is dropped (bash also runs an EXIT trap
+    # on SIGHUP/SIGTERM/SIGINT; only an unconditional kill bypasses it), and
+    # is disarmed only once the file is written and its path reported.
     cmd = (
         '(umask 077 && f=$(mktemp -p "${TMPDIR:-/tmp}" ' + prefix + 'XXXXXXXXXX)'
+        ' && trap \'rm -f -- "$f"\' EXIT'
         f' && printf %s {shlex.quote(content)} > "$f"'
-        f' && printf \'{PATH_MARKER}|%s\\n\' "$f")'
+        f' && printf \'{PATH_MARKER}|%s\\n\' "$f"'
+        ' && trap - EXIT)'
     )
     result = orch.all.exec(cmd, timeout=timeout, detailed=True, print_console=False)
 
