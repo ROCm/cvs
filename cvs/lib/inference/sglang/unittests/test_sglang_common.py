@@ -1276,6 +1276,169 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertIn('completion_endpoint', fail.call_args.args[0])
 
 
+class TestWideEPEnabled(unittest.TestCase):
+    def test_missing_or_empty_flag_is_false(self):
+        self.assertFalse(sglang_common.wide_ep_enabled({}))
+        self.assertFalse(sglang_common.wide_ep_enabled({'enable_wideEP': None}))
+        self.assertFalse(sglang_common.wide_ep_enabled({'enable_wideEP': ''}))
+
+    def test_accepts_booleans_and_true_false_strings(self):
+        for value in (True, 'true', 'True', ' TRUE '):
+            with self.subTest(value=value):
+                self.assertTrue(sglang_common.wide_ep_enabled({'enable_wideEP': value}))
+        for value in (False, 'false', 'False'):
+            with self.subTest(value=value):
+                self.assertFalse(sglang_common.wide_ep_enabled({'enable_wideEP': value}))
+
+    def test_rejects_any_other_value(self):
+        for value in ('yes', '1', 1, 'enabled'):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'enable_wideEP must be true or false'):
+                sglang_common.wide_ep_enabled({'enable_wideEP': value})
+
+
+class TestValidateWideEPLayout(unittest.TestCase):
+    _VALID = {
+        'tensor_parallelism': '16',
+        'pipeline_parallelism': '1',
+        'expert_parallelism': '16',
+        'attn_data_parallelism': '16',
+    }
+
+    def test_accepts_matching_expert_and_attention_sizes(self):
+        sglang_common.validate_wide_ep_layout(dict(self._VALID))
+
+    def test_rejects_missing_key_before_checking_sizes(self):
+        params = dict(self._VALID)
+        del params['attn_data_parallelism']
+        with self.assertRaisesRegex(ValueError, 'enable_wideEP requires attn_data_parallelism'):
+            sglang_common.validate_wide_ep_layout(params)
+
+    def test_rejects_blank_value_as_missing(self):
+        params = dict(self._VALID, expert_parallelism='')
+        with self.assertRaisesRegex(ValueError, 'requires expert_parallelism'):
+            sglang_common.validate_wide_ep_layout(params)
+
+    def test_rejects_pipeline_parallel(self):
+        with self.assertRaisesRegex(ValueError, 'pipeline_parallelism 1, got 2'):
+            sglang_common.validate_wide_ep_layout(dict(self._VALID, pipeline_parallelism='2'))
+
+    def test_rejects_expert_size_that_differs_from_tensor_parallel(self):
+        with self.assertRaisesRegex(ValueError, 'expert_parallelism == tensor_parallelism'):
+            sglang_common.validate_wide_ep_layout(dict(self._VALID, expert_parallelism='8', attn_data_parallelism='8'))
+
+    def test_rejects_attention_dp_that_differs_from_expert_size(self):
+        with self.assertRaisesRegex(ValueError, 'attn_data_parallelism == expert_parallelism'):
+            sglang_common.validate_wide_ep_layout(dict(self._VALID, attn_data_parallelism='8'))
+
+    def test_rejects_tensor_parallel_that_does_not_split_across_nnodes(self):
+        with self.assertRaisesRegex(ValueError, 'tensor_parallelism=16 nnodes=3'):
+            sglang_common.validate_wide_ep_layout(dict(self._VALID), nnodes=3)
+
+    def test_reads_nnodes_from_params_when_not_passed(self):
+        with self.assertRaisesRegex(ValueError, 'split evenly across nnodes'):
+            sglang_common.validate_wide_ep_layout(dict(self._VALID, nnodes='3'))
+        sglang_common.validate_wide_ep_layout(dict(self._VALID, nnodes='2'))
+
+    def test_rejects_unknown_deepep_mode(self):
+        with self.assertRaisesRegex(ValueError, 'deepep_mode in normal, low_latency, auto'):
+            sglang_common.validate_wide_ep_layout(dict(self._VALID, deepep_mode='fast'))
+        for mode in sglang_common.WIDE_EP_DEEPEP_MODES:
+            sglang_common.validate_wide_ep_layout(dict(self._VALID, deepep_mode=mode))
+
+    def test_rejects_add_flags_that_repeat_launcher_owned_flags(self):
+        for flag in ('--ep-size 8', '--tp-size=8', '--enable-dp-attention', '--dp-size 8', '--nnodes 4'):
+            with self.subTest(flag=flag), self.assertRaisesRegex(ValueError, 'add_flags may not set'):
+                sglang_common.validate_wide_ep_layout(dict(self._VALID, add_flags=['--moe-a2a-backend mori', flag]))
+
+    def test_accepts_add_flags_the_launcher_does_not_own(self):
+        sglang_common.validate_wide_ep_layout(
+            dict(self._VALID, add_flags=['--attention-backend aiter', '--moe-a2a-backend mori'])
+        )
+
+
+class TestWideEPPreflight(unittest.TestCase):
+    _MARKER = sglang_common.WIDE_EP_PREFLIGHT_MARKER
+    _OK = 'noise\n' + _MARKER + '{"gpus": 8, "mori": "0.1", "model_found": true}\n'
+
+    def _failures(self, out_dict, **overrides):
+        kwargs = {'tp': 16, 'nnodes': 2, 'model': '/root/models/m', 'check_mori': True}
+        kwargs.update(overrides)
+        return sglang_common.wide_ep_preflight_failures(out_dict, **kwargs)
+
+    def test_uses_mori_reads_the_a2a_backend_flag(self):
+        mori = {'add_flags': ['--attention-backend aiter', '--moe-a2a-backend mori']}
+        self.assertTrue(sglang_common.wide_ep_uses_mori(mori))
+        self.assertTrue(sglang_common.wide_ep_uses_mori({'add_flags': ['--moe-a2a-backend=MORI']}))
+        self.assertFalse(sglang_common.wide_ep_uses_mori({'add_flags': ['--moe-a2a-backend mooncake']}))
+        self.assertFalse(sglang_common.wide_ep_uses_mori({'add_flags': ['--attention-backend aiter']}))
+        self.assertFalse(sglang_common.wide_ep_uses_mori({}))
+
+    def test_last_a2a_flag_wins(self):
+        params = {'add_flags': ['--moe-a2a-backend mooncake', '--moe-a2a-backend mori']}
+        self.assertTrue(sglang_common.wide_ep_uses_mori(params))
+
+    def test_cmd_carries_model_and_mori_switch_as_arguments(self):
+        cmd = sglang_common.wide_ep_preflight_cmd('/root/models/DeepSeek V4', True)
+        self.assertTrue(cmd.startswith('cd / && python3 -c '))
+        self.assertIn("'/root/models/DeepSeek V4' 1", cmd)
+        self.assertIn(self._MARKER, cmd)
+        self.assertTrue(sglang_common.wide_ep_preflight_cmd('/m', False).rstrip().endswith('0 2>&1'))
+
+    def test_parse_reads_the_marker_line(self):
+        self.assertEqual(
+            sglang_common.parse_wide_ep_preflight(self._OK),
+            {'gpus': 8, 'mori': '0.1', 'model_found': True},
+        )
+
+    def test_parse_returns_none_without_a_readable_marker(self):
+        self.assertIsNone(sglang_common.parse_wide_ep_preflight(''))
+        self.assertIsNone(sglang_common.parse_wide_ep_preflight(None))
+        self.assertIsNone(sglang_common.parse_wide_ep_preflight('Traceback (most recent call last):'))
+        self.assertIsNone(sglang_common.parse_wide_ep_preflight(self._MARKER + '{oops'))
+        self.assertIsNone(sglang_common.parse_wide_ep_preflight(self._MARKER + '[1]'))
+
+    def test_passes_when_every_node_has_gpus_mori_and_model(self):
+        self.assertEqual(self._failures({'node-a': self._OK, 'node-b': self._OK}), [])
+
+    def test_fails_when_mori_is_not_importable(self):
+        bad = self._MARKER + '{"gpus": 8, "mori_error": "ImportError: no mori"}'
+        failures = self._failures({'node-a': self._OK, 'node-b': bad})
+        self.assertEqual(len(failures), 1)
+        self.assertIn('node-b: MoRI is not importable', failures[0])
+        self.assertIn('ImportError: no mori', failures[0])
+
+    def test_skips_mori_when_not_required(self):
+        probe = self._MARKER + '{"gpus": 8, "model_found": true}'
+        self.assertEqual(self._failures({'node-a': probe}, check_mori=False), [])
+        self.assertEqual(len(self._failures({'node-a': probe}, check_mori=True)), 1)
+
+    def test_fails_when_a_node_has_too_few_gpus(self):
+        failures = self._failures({'node-a': self._MARKER + '{"gpus": 4, "mori": "0.1"}'})
+        self.assertEqual(len(failures), 1)
+        self.assertIn('node-a: sees 4 GPUs', failures[0])
+        self.assertIn('needs 8 per node', failures[0])
+
+    def test_fails_when_gpus_cannot_be_counted(self):
+        broken = self._MARKER + '{"gpus_error": "ImportError: torch", "mori": "0.1"}'
+        self.assertIn('could not count GPUs', self._failures({'node-a': broken})[0])
+
+    def test_fails_when_model_directory_is_missing(self):
+        probe = self._MARKER + '{"gpus": 8, "mori": "0.1", "model_found": false}'
+        failures = self._failures({'node-a': probe})
+        self.assertEqual(len(failures), 1)
+        self.assertIn('/root/models/m has no config.json', failures[0])
+
+    def test_hugging_face_model_id_has_no_model_directory_probe(self):
+        probe = self._MARKER + '{"gpus": 8, "mori": "0.1"}'
+        self.assertEqual(self._failures({'node-a': probe}, model='org/model'), [])
+
+    def test_fails_when_probe_prints_no_result(self):
+        failures = self._failures({'node-a': 'python3: command not found'})
+        self.assertEqual(len(failures), 1)
+        self.assertIn('node-a: preflight probe printed no result', failures[0])
+        self.assertIn('command not found', failures[0])
+
+
 class TestSglangGpuTopology(unittest.TestCase):
     def test_topology_requests_only_the_mem_usage_section(self):
         """A bare `amd-smi metric` also reads --xgmi-err, which resets the xGMI error counters on MI200 and older."""

@@ -260,6 +260,10 @@ class SglangDistributed:
         if self.benchmark_serv_node not in self.server_node_list:
             self._write_server_env_on_hosts([self.benchmark_serv_node])
 
+    def _layout_flags_block(self) -> str:
+        """Extra parallel-layout ``launch_server`` lines (each ending in a continuation); none for plain TP/PP."""
+        return ''
+
     def launch_server(self, dtype='auto', kv_cache_dtype='auto') -> None:
         """Launch unified multi-node ``sglang.launch_server`` (no PD disagg)."""
         log.info(
@@ -285,6 +289,7 @@ class SglangDistributed:
                 f"    --trust-remote-code \\\n"
                 f"    --tp-size {self.bp_dict['tensor_parallelism']} \\\n"
                 f"    --pp-size {pp} \\\n"
+                f"{self._layout_flags_block()}"
                 f"    --nnodes {self.nnodes} \\\n"
                 f"    --node-rank {i} \\\n"
                 f"    --dist-init-addr {self.dist_init_addr} \\\n"

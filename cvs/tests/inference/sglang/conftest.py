@@ -42,7 +42,7 @@ from cvs.lib.inference.sglang.sglang_config_loader import (
     perf_cells_for_variant,
 )
 from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
-from cvs.lib.inference.sglang.sglang_distributed_lib import SglangDistributed
+from cvs.lib.inference.sglang.sglang_wide_ep_lib import distributed_controller_class
 from cvs.lib.inference.sglang.sglang_parsing import SGLANG_RESULTS_COLUMNS
 from cvs.lib.inference.sglang.sglang_single_lib import SglangSingle
 from cvs.lib.report.benchmark_metric_registry import (
@@ -423,7 +423,8 @@ def im_obj(
             gpu_type=gpu_type,
         )
     if _use_sglang_distributed(request):
-        return SglangDistributed(
+        controller = distributed_controller_class(variant_config.inference)
+        return controller(
             model_name,
             variant_config.inference,
             variant_config.benchmark_params,

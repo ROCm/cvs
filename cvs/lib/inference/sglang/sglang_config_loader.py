@@ -31,6 +31,8 @@ from cvs.lib.inference.sglang.sglang_common import (
     DEFAULT_SGLANG_PREFILL_COORD_PORT,
     DEFAULT_SGLANG_PREFILL_SERV_PORT,
     DEFAULT_SGLANG_SERVE_PORT,
+    WIDE_EP_FLAG,
+    WIDE_EP_ONLY_KEYS,
     _DISAGG_PINNED_ROLE_KEYS,
     parse_sglang_cli_config,
     perf_enforce_thresholds,
@@ -38,6 +40,8 @@ from cvs.lib.inference.sglang.sglang_common import (
     resolve_distributed_execution_hosts,
     resolve_single_execution_hosts,
     stamp_disagg_roles,
+    validate_wide_ep_layout,
+    wide_ep_enabled,
 )
 from cvs.lib.utils.config_loader import (
     BaseVariantConfig,
@@ -503,7 +507,23 @@ class SglangSingleVariantConfig(BaseVariantConfig):
                 raise ValueError(
                     f"disaggregated SGLang requires an even nnodes so prefill and decode counts match, got {nnodes}"
                 )
+        self._validate_wide_ep()
         return self
+
+    def _validate_wide_ep(self):
+        if wide_ep_enabled(self.inference):
+            if self.topology != "distributed":
+                raise ValueError(
+                    f"{WIDE_EP_FLAG} is only supported by the distributed topology (nnodes >= 2), "
+                    f"got topology {self.topology!r}"
+                )
+            validate_wide_ep_layout(self.inference, nnodes=int(self.inference.get("nnodes") or 0))
+            return
+        ignored = [key for key in WIDE_EP_ONLY_KEYS if key in self.inference]
+        if ignored:
+            log.warning(
+                "%s is not true; ignoring wide-EP settings %s and running plain distributed", WIDE_EP_FLAG, ignored
+            )
 
 
 # ---------- public API ----------
