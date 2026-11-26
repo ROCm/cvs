@@ -103,17 +103,25 @@ def collect_nic_inventory(orch, timeout=60):
     Returns ``(nics_by_node, failures_by_node)``. A node that returns nothing
     usable is reported rather than raised, so one bad node does not stop a run.
     """
-    out_dict = orch.all.exec(PROBE_CMD, timeout=timeout, print_console=False)
+    out_dict = orch.all.exec(PROBE_CMD, timeout=timeout, detailed=True, print_console=False)
     nics_by_node = {}
     failures = {}
-    for node, output in (out_dict or {}).items():
-        nics = parse_nic_probe(output)
-        if nics:
-            nics_by_node[node] = nics
-        elif isinstance(output, str) and 'ABORT: Host Unreachable Error' in output:
+    for node, res in (out_dict or {}).items():
+        output = res.get('output') if isinstance(res, dict) else res
+        if isinstance(output, str) and 'ABORT: Host Unreachable Error' in output:
             # An unreachable node is not a node without NICs; the two call for
             # different follow-up and must not read the same in a report.
             failures[node] = 'host unreachable'
+            continue
+        if not isinstance(res, dict) or res.get('exit_code') != 0:
+            # A node that times out or disconnects mid-probe can still have
+            # printed a few real lines; accepting those as the full inventory
+            # would silently understate how many NICs the node actually has.
+            failures[node] = 'probe did not complete (timed out or disconnected before finishing)'
+            continue
+        nics = parse_nic_probe(output)
+        if nics:
+            nics_by_node[node] = nics
         else:
             failures[node] = 'no RDMA devices found'
     return nics_by_node, failures

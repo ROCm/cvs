@@ -473,6 +473,23 @@ class TestParsePciBdf(unittest.TestCase):
                 linux_utils._parse_pci_bdf(bdf)
 
 
+class TestIsValidPciBdf(unittest.TestCase):
+    """is_valid_pci_bdf must never raise: it exists so a caller can screen a
+    value before a pairing helper that does raise."""
+
+    def test_well_formed_addresses_are_valid(self):
+        for bdf in ('0002:e1:1f.7', '05:00.0', '10000:e1:00.0'):
+            self.assertTrue(linux_utils.is_valid_pci_bdf(bdf), bdf)
+
+    def test_malformed_strings_are_invalid(self):
+        for bdf in ('not-a-bdf', '0000:05:00.0:extra', 'junk 0000:05:00.0 junk', '::', ''):
+            self.assertFalse(linux_utils.is_valid_pci_bdf(bdf), bdf)
+
+    def test_non_string_input_never_raises(self):
+        for bad in (None, 123, 1.5, ['0000:05:00.0'], {'bdf': '0000:05:00.0'}, object()):
+            self.assertFalse(linux_utils.is_valid_pci_bdf(bad), repr(bad))
+
+
 class TestGetGpuNicMappingDict(unittest.TestCase):
     GPU_BUSES = (0x05, 0x15, 0x65, 0x75, 0x85, 0x95, 0xE5, 0xF5)
     SINGLE_DOMAIN_GPUS = [f'0000:{bus:02x}:00.0' for bus in GPU_BUSES]

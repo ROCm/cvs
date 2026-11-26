@@ -209,6 +209,14 @@ class TestSelectBackendNics(unittest.TestCase):
         )
 
 
+def _done(output):
+    return {'output': output, 'exit_code': 0}
+
+
+def _failed(output, exit_code=1):
+    return {'output': output, 'exit_code': exit_code}
+
+
 class TestCollectNicInventory(unittest.TestCase):
     def _orch(self, exec_result):
         phdl = MagicMock()
@@ -218,18 +226,42 @@ class TestCollectNicInventory(unittest.TestCase):
         return orch
 
     def test_collects_per_node_and_reports_a_node_with_no_devices(self):
-        orch = self._orch({'nodeA': _probe_output(), 'nodeB': 'no infiniband here'})
+        orch = self._orch({'nodeA': _done(_probe_output()), 'nodeB': _done('no infiniband here')})
         nics_by_node, failures = nic_inventory.collect_nic_inventory(orch)
 
         self.assertEqual(len(nics_by_node['nodeA']), len(NIC_LAYOUT))
         self.assertNotIn('nodeB', nics_by_node)
         self.assertEqual(failures['nodeB'], 'no RDMA devices found')
 
+    def test_uses_detailed_results_so_the_exit_code_is_available(self):
+        orch = self._orch({'nodeA': _done(_probe_output())})
+        nic_inventory.collect_nic_inventory(orch)
+        self.assertTrue(orch.all.exec.call_args.kwargs.get('detailed'))
+
     def test_unreachable_node_is_distinguished_from_a_node_with_no_nics(self):
         # The two causes call for different follow-up and must not read alike.
-        orch = self._orch({'nodeA': '\nABORT: Host Unreachable Error'})
+        orch = self._orch({'nodeA': _failed('\nABORT: Host Unreachable Error', exit_code=-1)})
         _, failures = nic_inventory.collect_nic_inventory(orch)
         self.assertEqual(failures['nodeA'], 'host unreachable')
+
+    def test_partial_output_from_a_dropped_connection_is_not_accepted_as_the_full_inventory(self):
+        # The node really has 8 NICs; only 2 lines were ever printed before the
+        # connection died, and no exit code was recovered for the attempt.
+        partial = '\n'.join(_port_line(name, bdf, '1', True) for name, bdf in NIC_LAYOUT[:2])
+        orch = self._orch({'nodeA': _failed(partial, exit_code=-1)})
+        nics_by_node, failures = nic_inventory.collect_nic_inventory(orch)
+
+        self.assertNotIn('nodeA', nics_by_node, 'a truncated probe must not be reported as a complete inventory')
+        self.assertIn('nodeA', failures)
+
+    def test_nonzero_exit_with_full_looking_output_is_still_rejected(self):
+        # A completed-looking probe that nonetheless exited non-zero (for
+        # example killed partway by a timeout after flushing its buffer) must
+        # not be trusted either; only exit_code == 0 is accepted.
+        orch = self._orch({'nodeA': _failed(_probe_output(), exit_code=137)})
+        nics_by_node, failures = nic_inventory.collect_nic_inventory(orch)
+        self.assertNotIn('nodeA', nics_by_node)
+        self.assertIn('nodeA', failures)
 
     def test_probe_lines_are_marked_so_banners_cannot_be_mistaken_for_devices(self):
         orch = self._orch({'nodeA': _probe_output()})

@@ -179,6 +179,31 @@ class TestQueryNicTable(unittest.TestCase):
         _, failures = nic_table.query_nic_table(orch, 'TransferBench')
         self.assertEqual(failures['nodeA'], 'TransferBench reported no NIC table')
 
+    def test_partial_table_without_a_sentinel_is_not_accepted_as_the_full_table(self):
+        # The node's real table has 4 rows; the connection dropped after only
+        # 1 was printed, so the sentinel never ran. Accepting this row would
+        # silently understate how many NICs the node actually has.
+        partial = IONIC_TABLE.splitlines()[:3]  # header + separator + one row, no sentinel
+        orch = _make_orch({'nodeA': '\n'.join(partial)})
+        nics_by_node, failures = nic_table.query_nic_table(orch, 'TransferBench')
+
+        self.assertNotIn('nodeA', nics_by_node, 'a truncated table must not be reported as complete')
+        self.assertIn('nodeA', failures)
+
+    def test_extra_env_key_cannot_inject_through_the_runtime_prefix(self):
+        # build_env_prefix quotes values but interpolates keys as shell
+        # syntax; query_nic_table must validate before handing it a raw dict.
+        orch = _make_orch({'nodeA': _with_sentinel(IONIC_TABLE, 0)})
+        with self.assertRaises(ValueError):
+            nic_table.query_nic_table(orch, 'TransferBench', extra_env={'X; touch /tmp/pwned; #': '1'})
+        orch.all.exec.assert_not_called()
+
+    def test_well_formed_extra_env_still_reaches_the_command(self):
+        orch = _make_orch({'nodeA': _with_sentinel(IONIC_TABLE, 0)})
+        nic_table.query_nic_table(orch, 'TransferBench', extra_env={'LD_LIBRARY_PATH': '/opt/rocm/lib'})
+        cmd = orch.all.exec.call_args[0][0]
+        self.assertIn('LD_LIBRARY_PATH', cmd)
+
 
 if __name__ == '__main__':
     unittest.main()

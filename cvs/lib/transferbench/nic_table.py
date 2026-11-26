@@ -98,7 +98,9 @@ def query_nic_table(orch, binary, nic_filter=None, extra_env=None, use_sudo=Fals
         [],
         env,
         use_sudo=use_sudo,
-        runtime_env_prefix=build_env_prefix(extra_env),
+        # build_env_prefix quotes values but interpolates keys as shell
+        # syntax; validating first is what makes passing it a raw dict safe.
+        runtime_env_prefix=build_env_prefix(multirank.validate_extra_env(extra_env)),
         sudo_argv0='cvs-transferbench-topology',
     )
     out_dict = orch.all.exec(cmd, timeout=timeout, print_console=False)
@@ -106,20 +108,24 @@ def query_nic_table(orch, binary, nic_filter=None, extra_env=None, use_sudo=Fals
     nics_by_node = {}
     failures = {}
     for node, output in (out_dict or {}).items():
-        nics = parse_nic_table(output)
-        if nics:
-            nics_by_node[node] = nics
-            continue
-        # An empty table has more than one real cause, and each needs a
-        # different follow-up, so none of them is reported as the others.
+        # An empty or partial table has more than one real cause, and each
+        # needs different follow-up, so none of them is reported as the
+        # others. The exit code is checked before any row is accepted: a
+        # connection dropped mid-table can still have printed a few real
+        # rows, and accepting those would silently understate NIC coverage.
         if isinstance(output, str) and 'ABORT: Host Unreachable Error' in output:
             failures[node] = 'host unreachable'
             continue
         exit_code = multirank.extract_exit_code(output)
         if exit_code is None:
             failures[node] = 'TransferBench did not complete (no exit status recovered)'
-        elif exit_code != 0:
+            continue
+        if exit_code != 0:
             failures[node] = f'TransferBench exited {exit_code}'
+            continue
+        nics = parse_nic_table(output)
+        if nics:
+            nics_by_node[node] = nics
         else:
             failures[node] = 'TransferBench reported no NIC table'
     return nics_by_node, failures

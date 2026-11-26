@@ -193,6 +193,12 @@ def dispatch_multi_rank(orch, command_for_rank, timeout=None, preferred_master=N
     ``command_for_rank(rank, num_ranks, master_addr)`` renders one rank's shell
     command. All ranks must start together for the socket-comm bootstrap to
     complete, hence a single ``exec_cmd_list``.
+
+    This returns raw per-rank output; it does not interpret completion or
+    success. ``exec_cmd_list`` discards exit codes, so a caller must recover
+    completion from a sentinel embedded in the command ``command_for_rank``
+    builds (``build_command`` already appends one) and must not treat
+    non-empty output as success on its own.
     """
     hosts = list(orch.all.reachable_hosts)
     if not hosts:
