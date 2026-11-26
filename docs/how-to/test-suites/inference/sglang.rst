@@ -174,9 +174,10 @@ Example run:
 
 Run wide expert parallelism (wide-EP) with the same suite. Set ``server_params.enable_wideEP`` to
 ``true`` in a distributed config, for example ``mi3xx_sglang_deepseek_v41_flash_distributed.json``
-or ``mi35x_sglang_deepseek_v41_flash_distributed.json``. When the flag is missing or ``false``, the
-suite runs plain distributed serving. ``test_wide_ep_preflight`` is skipped in that case. See
-:ref:`sglang-wide-ep-config` for the layout rules.
+or ``mi35x_sglang_deepseek_v41_flash_distributed.json``. The run card shows EP in place of PP for a
+wide-EP run. When the flag is missing or ``false``, the suite runs plain distributed serving and
+``test_wide_ep_preflight`` is skipped; ``add_flags`` still applies, so remove the MoRI entry for a
+run without MoRI. See :ref:`sglang-wide-ep-config` for the layout rules.
 
 ``sglang_disagg_distributed`` stages
 ------------------------------------

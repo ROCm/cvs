@@ -322,9 +322,10 @@ Set ``server_params.enable_wideEP`` to ``true`` (a JSON boolean or the string ``
 ``sglang_distributed`` config to launch the server with ``--ep-size`` and attention data parallelism.
 Newer SGLang images take ``--attn-dp-size``; older images take ``--dp-size`` with
 ``--enable-dp-attention``. CVS reads the image's ``sglang.launch_server --help`` and uses the form
-it accepts. When the flag is missing or ``false``, the config runs as plain
-distributed and CVS logs a warning if wide-EP keys are present. Any other value fails at load time.
-The flag requires ``nnodes`` of at least ``2``.
+it accepts. When the flag is missing or ``false``, CVS ignores the wide-EP keys (with a warning if
+they are present) and launches plain distributed serving. ``add_flags`` still applies in that case,
+so remove a ``--moe-a2a-backend mori`` entry from a config you want to run without MoRI. Any other
+value fails at load time. The flag requires ``nnodes`` of at least ``2``.
 
 .. list-table::
    :widths: 3 5
