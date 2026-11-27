@@ -62,7 +62,7 @@ Model and topology templates
 ----------------------------
 
 Templates are named ``<gpu>_sglang_<model>_<topology>.json``. ``<model>`` is
-``llama_70b``, ``deepseek_r1_0528``, ``deepseek_v41_flash`` (distributed only), or
+``llama_70b``, ``deepseek_r1_0528``, ``deepseek_v4_flash`` (distributed only), or
 ``qwen35_397b``. ``<topology>`` is ``single``, ``distributed``, or ``disaggregated``.
 
 .. list-table::
@@ -108,16 +108,16 @@ threshold file through top-level ``threshold_json`` (a filename beside the confi
      - MI30x Llama 3.1 70B configs (single, distributed, disaggregated)
    * - ``mi325_sglang_deepseek_r1_0528_threshold.json``
      - MI30x DeepSeek-R1-0528 configs (single, distributed, disaggregated)
-   * - ``mi325_sglang_deepseek_v41_flash_threshold.json``
-     - MI30x DeepSeek-V4.1-Flash wide-EP distributed config
+   * - ``mi325_sglang_deepseek_v4_flash_threshold.json``
+     - MI30x DeepSeek-V4-Flash-Base wide-EP distributed config
    * - ``mi325_sglang_qwen35_397b_threshold.json``
      - MI30x Qwen3.5-397B configs (single, distributed, disaggregated)
    * - ``mi355_sglang_llama_70b_threshold.json``
      - MI35x Llama 3.1 70B configs (single, distributed, disaggregated)
    * - ``mi355_sglang_deepseek_r1_0528_threshold.json``
      - MI35x DeepSeek-R1-0528 configs (single, distributed, disaggregated)
-   * - ``mi355_sglang_deepseek_v41_flash_threshold.json``
-     - MI35x DeepSeek-V4.1-Flash wide-EP distributed config
+   * - ``mi355_sglang_deepseek_v4_flash_threshold.json``
+     - MI35x DeepSeek-V4-Flash-Base wide-EP distributed config
    * - ``mi355_sglang_qwen35_397b_threshold.json``
      - MI35x Qwen3.5-397B configs (single, distributed, disaggregated)
 
@@ -326,6 +326,10 @@ it accepts. When the flag is missing or ``false``, CVS ignores the wide-EP keys 
 they are present) and launches plain distributed serving. ``add_flags`` still applies in that case,
 so remove a ``--moe-a2a-backend mori`` entry from a config you want to run without MoRI. Any other
 value fails at load time. The flag requires ``nnodes`` of at least ``2``.
+
+The shipped wide-EP templates serve ``deepseek-ai/DeepSeek-V4-Flash-Base``. ``deepseek-ai/DeepSeek-V4.1-Flash``
+is not shipped as a wide-EP template: its vision-enabled architecture rejects the MoRI all-to-all
+backend in the SGLang images CVS has been tested against.
 
 .. list-table::
    :widths: 3 5
