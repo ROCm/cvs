@@ -24,6 +24,9 @@ InfiniBand performance, RCCL collectives, and MORI RDMA benchmarks validate clus
    * - MORI (RDMA)
      - :doc:`/how-to/test-suites/network/mori`
      - :doc:`/reference/configuration-files/network/mori`
+   * - Topology (NIC bandwidth)
+     - :doc:`/how-to/test-suites/network/topology`
+     - :doc:`/reference/configuration-files/network/topology`
 
 See also :doc:`/how-to/test-suites/index` for common ``cvs run`` flags and workflow.
 

@@ -182,6 +182,47 @@ class TestStatusMatrixCard(unittest.TestCase):
         self.assertIn("hm-pass", html)
         self.assertIn("xgmi", html)
 
+    def _graded_heatmap_html(self, value, scale):
+        data = {
+            "metrics": [],
+            "series": [],
+            "heatmaps": [
+                {
+                    "name": "nic_bandwidth",
+                    "node": "n1",
+                    "unit": "% of median",
+                    "rows": ["nic0"],
+                    "cols": ["nic1"],
+                    "values": [[value]],
+                    "threshold": 90,
+                    "direction": "higher",
+                    "scale": scale,
+                }
+            ],
+        }
+        return self.renderer.render_metric_charts({}, {}, data)
+
+    def test_graded_scale_bands_values_between_threshold_and_reference(self):
+        bands = {85: "hm-g1", 92: "hm-g2", 95: "hm-g3", 99: "hm-g4"}
+        for value, expected in bands.items():
+            html = self._graded_heatmap_html(value, "graded")
+            self.assertIn(expected, html, f'{value} should render as {expected}')
+
+    def test_heatmap_without_a_scale_keeps_binary_pass_fail(self):
+        self.assertIn("hm-pass", self._graded_heatmap_html(95, None))
+        self.assertNotIn("hm-g", self._graded_heatmap_html(95, None))
+        self.assertIn("hm-fail", self._graded_heatmap_html(85, None))
+
+    def test_unknown_scale_falls_back_to_binary(self):
+        html = self._graded_heatmap_html(95, "rainbow")
+        self.assertIn("hm-pass", html)
+        self.assertNotIn("hm-g", html)
+
+    def test_theme_defines_every_graded_band(self):
+        css = report_css()
+        for band in ("hm-g1", "hm-g2", "hm-g3", "hm-g4"):
+            self.assertIn(f".{band}", css)
+
     def test_metric_charts_empty_message(self):
         html = self.renderer.render_metric_charts({}, {}, {"metrics": [], "series": [], "heatmaps": []})
         self.assertIn("No metric data", html)

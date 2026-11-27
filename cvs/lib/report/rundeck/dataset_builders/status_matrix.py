@@ -93,6 +93,9 @@ from cvs.lib.report.rundeck.dataset_builders.registry import register_dataset_bu
 
 _STATUSES = ("pass", "fail", "na")
 _DIRECTIONS = ("higher", "lower")
+
+# Opt-in colour ramps; absent means the existing pass/fail or range shading.
+_SCALES = ("graded",)
 _STATUS_RANK = {"fail": 0, "na": 1, "pass": 2}
 _RESULTS_HEADERS = [
     "Node",
@@ -148,6 +151,11 @@ def _as_float(value):
 def _direction(value):
     text = str(value or "").strip().lower()
     return text if text in _DIRECTIONS else ""
+
+
+def _scale(value):
+    text = str(value or "").strip().lower()
+    return text if text in _SCALES else ""
 
 
 def _metric_status(value):
@@ -265,6 +273,7 @@ def _normalize_heatmap(raw, parent_group):
         "values": normalized,
         "threshold": _threshold(raw),
         "direction": _direction(raw.get("direction")),
+        "scale": _scale(raw.get("scale")),
         "row_label": _text(raw.get("row_label")),
         "col_label": _text(raw.get("col_label")),
     }

@@ -6,10 +6,16 @@ quoting, sudo wrapping and exit-code recovery are identical for every caller,
 so they live here rather than in any one suite.
 """
 
+import os
 import re
 import shlex
 
 DEFAULT_SOCKET_MASTER_PORT = 31337
+
+# Callers that need a port distinct from the preflight default read it from the
+# environment; preflight keeps passing its configured value so its behaviour is
+# unchanged by this module.
+SOCKET_MASTER_PORT_ENV = 'CVS_TOPO_TB_PORT'
 
 # Appended to every per-node command so the exit code survives a parallel SSH
 # layer that discards it.
@@ -49,6 +55,27 @@ def validate_extra_env(extra_env):
             raise ValueError(f'extra_env[{key!r}] must not be null')
         normalized[key] = str(value)
     return normalized
+
+
+def resolve_socket_master_port(configured=None, environ=None):
+    """Resolve the socket-comm master port.
+
+    The environment wins so an operator can move the port off a busy one
+    without editing config.
+    """
+    env = os.environ if environ is None else environ
+    raw = env.get(SOCKET_MASTER_PORT_ENV)
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        raw = configured
+    if raw is None:
+        return DEFAULT_SOCKET_MASTER_PORT
+    try:
+        port = int(str(raw).strip())
+    except (TypeError, ValueError):
+        raise ValueError(f'TransferBench master port must be an integer, got {raw!r}')
+    if not 1 <= port <= 65535:
+        raise ValueError(f'TransferBench master port must be between 1 and 65535, got {port}')
+    return port
 
 
 def sudo_executable_argument(executable):
@@ -133,6 +160,18 @@ def build_command(
     return f'bash -c {shlex.quote(inner_with_sentinel)}'
 
 
+def extract_exit_code(output, sentinel_re=EXIT_SENTINEL_RE):
+    """Return the exit code echoed by the sentinel, or None when absent."""
+    if not isinstance(output, str):
+        return None
+    match = None
+    for match in sentinel_re.finditer(output):
+        pass
+    if match is None:
+        return None
+    return int(match.group('code'))
+
+
 def resolve_master_node(reachable_hosts, preferred=None):
     """Pick the rank-0 node, preferring a caller-supplied one when reachable."""
     hosts = list(reachable_hosts)
@@ -148,12 +187,26 @@ def rank_order(reachable_hosts, master):
     return [master] + sorted(host for host in reachable_hosts if host != master)
 
 
-def dispatch_multi_rank(orch, command_for_rank, timeout=None, preferred_master=None):
-    """Start one rank per reachable node in a single parallel call.
+def dispatch_multi_rank(orch, command_for_rank, timeout=None, preferred_master=None, hosts=None, executor=None):
+    """Start one rank per participating node in a single parallel call.
 
     ``command_for_rank(rank, num_ranks, master_addr)`` renders one rank's shell
     command. All ranks must start together for the socket-comm bootstrap to
     complete, hence a single ``exec_cmd_list``.
+
+    ``hosts`` limits which reachable nodes are given a rank; the rest run a
+    no-op and are left out of the result. A caller whose payload addresses
+    ranks by number (a TransferBench transfer file does) must pass the same
+    node set it numbered against, or the ranks it names resolve to other
+    hosts. Omitting it gives every reachable node a rank.
+
+    ``executor`` is the handle the rank commands run through, and defaults to
+    ``orch.all`` -- the bare-host handle, which is not container-aware. A
+    caller whose discovery and staging go through the orchestrator's public
+    interface must pass ``orch`` here, or the ranks run on the host while the
+    file they read was staged inside the container. Preflight keeps the host
+    handle because the rest of its probes use it too, and splitting the two
+    would leave it reading a container's file from outside.
 
     This returns raw per-rank output; it does not interpret completion or
     success. ``exec_cmd_list`` discards exit codes, so a caller must recover
@@ -161,14 +214,17 @@ def dispatch_multi_rank(orch, command_for_rank, timeout=None, preferred_master=N
     builds (``build_command`` already appends one) and must not treat
     non-empty output as success on its own.
     """
-    hosts = list(orch.all.reachable_hosts)
-    if not hosts:
+    reachable = list(orch.all.reachable_hosts)
+    if not reachable:
         return {}
-    master = resolve_master_node(hosts, preferred_master)
+    participants = [host for host in reachable if host in set(hosts)] if hosts is not None else list(reachable)
+    if not participants:
+        return {}
+    master = resolve_master_node(participants, preferred_master)
     if not master:
         return {}
 
-    ordered = rank_order(hosts, master)
+    ordered = rank_order(participants, master)
     num_ranks = len(ordered)
     per_node = {}
     for rank, node in enumerate(ordered):
@@ -179,10 +235,17 @@ def dispatch_multi_rank(orch, command_for_rank, timeout=None, preferred_master=N
         }
 
     # exec_cmd_list aligns commands to reachable_hosts positionally, so the
-    # list is rebuilt in that order rather than in rank order.
-    cmd_by_reachable = [per_node[host]['command'] for host in hosts]
-    out_dict = orch.all.exec_cmd_list(cmd_by_reachable, timeout=timeout, print_console=False)
+    # list is rebuilt in that order rather than in rank order. A reachable
+    # host with no rank still needs its slot, and runs nothing.
+    no_rank = [host for host in reachable if host not in per_node]
+    cmd_by_reachable = [per_node[host]['command'] if host in per_node else 'true' for host in reachable]
+    runner = executor if executor is not None else orch.all
+    out_dict = runner.exec_cmd_list(cmd_by_reachable, timeout=timeout, print_console=False)
     for host, output in out_dict.items():
+        # A host that ran the no-op has no result to report; one that is absent
+        # from reachable_hosts is an unreachable node the layer appended.
+        if host in no_rank:
+            continue
         if host not in per_node:
             per_node[host] = {'command': '', 'output': output}
         per_node[host]['output'] = output

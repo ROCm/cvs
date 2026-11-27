@@ -1,0 +1,17 @@
+{
+  "topology": {
+    "coverage": "auto",
+    "flag_below_pct_of_median": 90,
+    "traffic_class": "auto",
+    "tb_binary": "TransferBench",
+    "use_sudo": false,
+    "nic_filter": "",
+    "transferbench_env": {},
+    "advanced": {
+      "message_size": "64M",
+      "queue_pairs": 4,
+      "iterations": 10,
+      "warmup_iterations": 3
+    }
+  }
+}

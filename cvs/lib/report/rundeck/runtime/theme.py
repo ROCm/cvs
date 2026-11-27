@@ -206,6 +206,10 @@ footer.page-foot { text-align: center; color: var(--muted); font-size: 0.75rem; 
 .hm-table th { color: var(--muted); font-weight: 500; }
 .hm-pass { background: rgba(61,214,140,0.35); }
 .hm-fail { background: rgba(255,92,106,0.35); }
+.hm-g1 { background: rgba(255,92,106,0.35); }
+.hm-g2 { background: rgba(255,170,64,0.35); }
+.hm-g3 { background: rgba(166,214,86,0.35); }
+.hm-g4 { background: rgba(61,214,140,0.35); }
 .hm-na { color: var(--na); }
 .results-table th .th-unit { text-transform: none; }
 .results-table td.al-left { text-align: left; }
