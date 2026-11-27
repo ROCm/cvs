@@ -122,7 +122,7 @@ METRIC_REGISTRY = (
         ('total_token_throughput', 'tp', 'pp'),
     ),
     _derived(
-        'decode_throughput_p50',
+        'p50_decode_throughput',
         'tok/s',
         'throughput',
         'min',
@@ -179,7 +179,7 @@ METRIC_REGISTRY = (
     _raw('p99_e2el_ms', 'ms', 'e2el', 'max'),
     *_gpu_definitions(),
     MetricDefinition(
-        'queue_time_p50_ms',
+        'p50_queue_time_ms',
         None,
         'histogram_quantile_p50',
         ('vllm:request_queue_time_seconds.before', 'vllm:request_queue_time_seconds.after'),
@@ -189,7 +189,7 @@ METRIC_REGISTRY = (
         'max',
     ),
     MetricDefinition(
-        'queue_time_p95_ms',
+        'p95_queue_time_ms',
         None,
         'histogram_quantile_p95',
         ('vllm:request_queue_time_seconds.before', 'vllm:request_queue_time_seconds.after'),
@@ -199,7 +199,7 @@ METRIC_REGISTRY = (
         'max',
     ),
     MetricDefinition(
-        'prefill_time_p50_ms',
+        'p50_prefill_time_ms',
         None,
         'histogram_quantile_p50',
         ('vllm:request_prefill_time_seconds.before', 'vllm:request_prefill_time_seconds.after'),
@@ -209,7 +209,7 @@ METRIC_REGISTRY = (
         'max',
     ),
     MetricDefinition(
-        'prefill_time_p95_ms',
+        'p95_prefill_time_ms',
         None,
         'histogram_quantile_p95',
         ('vllm:request_prefill_time_seconds.before', 'vllm:request_prefill_time_seconds.after'),

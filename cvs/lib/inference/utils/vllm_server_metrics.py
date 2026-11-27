@@ -6,8 +6,8 @@ Pure parsers for vLLM's engine-side Prometheus `/metrics` endpoint.
 
 This module maps two raw Prometheus text-exposition scrapes (one taken before
 a sweep cell's client run, one taken after) into the bare Prometheus-backed
-keys owned by the vLLM metric registry, such as `queue_time_p50_ms` and
-`prefill_time_p95_ms`. The registry records their Prometheus datasource; the
+keys owned by the vLLM metric registry, such as `p50_queue_time_ms` and
+`p95_prefill_time_ms`. The registry records their Prometheus datasource; the
 threshold, verdict, and reporting surfaces all use the same bare names.
 Deliberately free of I/O and orchestration, matching the client projector's
 split: callers (`vllm_job.py`) fetch the scrape text, and this module turns it
@@ -191,6 +191,6 @@ def to_prom_metrics(before_text: "str | None", after_text: "str | None") -> dict
 
     result = dict(all_none)
     for qname, q in _QUANTILES.items():
-        result[f"queue_time_{qname}_ms"] = _quantile_ms(before_metrics, after_metrics, _QUEUE_TIME_METRIC, q)
-        result[f"prefill_time_{qname}_ms"] = _quantile_ms(before_metrics, after_metrics, _PREFILL_TIME_METRIC, q)
+        result[f"{qname}_queue_time_ms"] = _quantile_ms(before_metrics, after_metrics, _QUEUE_TIME_METRIC, q)
+        result[f"{qname}_prefill_time_ms"] = _quantile_ms(before_metrics, after_metrics, _PREFILL_TIME_METRIC, q)
     return result

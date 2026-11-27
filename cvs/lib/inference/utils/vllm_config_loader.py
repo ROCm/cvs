@@ -22,6 +22,7 @@ from cvs.lib.utils.config_loader import load_variant as load_inference_variant
 from cvs.parsers.schemas import (
     OLD_KEY_DROPPED,
     OLD_KEY_UNMAPPED,
+    UNIFIED_GATED_METRICS,
     InferenceVariantConfig,
     OldKey,
     ServingBenchmarkParams,
@@ -32,6 +33,7 @@ from cvs.parsers.schemas import (
     check_not_implemented,
     not_implemented_names,
     old_accuracy_rule,
+    old_metric_name_rule,
     old_timeout_rule,
     parse_cell_key,
     resolve_old_keys,
@@ -56,6 +58,25 @@ _NOT_IMPLEMENTED_FIELDS = (
     "accuracy.quant_parity",
     "accuracy.mtp_quality",
 )
+# Shared metric names vLLM does not report.
+_UNREPORTED_METRICS = frozenset(
+    {
+        "output_throughput_per_gpu",
+        "mfu",
+        "spec_acceptance_rate",
+        "mean_spec_acceptance_length",
+        "spec_num_drafts",
+        "spec_draft_tokens",
+        "spec_accepted_tokens",
+        "mean_spec_tokens",
+        "mtp_quality.empty_or_repeat_ratio",
+        "mtp_quality.chat_template_match",
+        "quant_parity.probe_match",
+        "scaling_efficiency_pct",
+        "pass_rate",
+    }
+)
+_UNREPORTED_THRESHOLD_SECTIONS = ("custom_eval", "quant_parity", "mtp_quality")
 
 
 def serialize_cli_options(options):
@@ -97,7 +118,13 @@ def _refuse_false(flags, section, allowed=frozenset()):
 
 def _check_vllm(self):
     server = self.server_params
-    check_not_implemented("vLLM", not_implemented_names(self, fields=_NOT_IMPLEMENTED_FIELDS))
+    names = not_implemented_names(
+        self,
+        fields=_NOT_IMPLEMENTED_FIELDS,
+        metrics=_UNREPORTED_METRICS,
+        threshold_sections=_UNREPORTED_THRESHOLD_SECTIONS,
+    )
+    check_not_implemented("vLLM", names)
 
     check_flags(server.engine_args, "server_params.engine_args", _HARNESS_SERVER_FLAGS)
     _refuse_false(server.engine_args, "server_params.engine_args")
@@ -237,6 +264,13 @@ _OLD_CLIENT_WAITS = (
 _OLD_CLIENT_DEFAULTS = {"dataset_name": "random", "ignore_eos": True, "trust_remote_code": False}
 _OLD_CELL_TIMEOUT_KEYS = _CLIENT_WAIT_FLAGS
 _OLD_DEFAULT_NUM_PROMPTS = 3200
+_OLD_METRIC_NAMES = {
+    "queue_time_p50_ms": "p50_queue_time_ms",
+    "queue_time_p95_ms": "p95_queue_time_ms",
+    "prefill_time_p50_ms": "p50_prefill_time_ms",
+    "prefill_time_p95_ms": "p95_prefill_time_ms",
+    "decode_throughput_p50": "p50_decode_throughput",
+}
 _OLD_THRESHOLD_KINDS = {"max_ms": "max", "min_tok_s": "min"}
 _NEW_SERVER_FIELDS = frozenset(ServingServerParams.model_fields)
 _NEW_CLIENT_FIELDS = frozenset(ServingBenchmarkParams.model_fields)
@@ -333,6 +367,7 @@ def resolve_old_vllm_keys(raw):
             ),
             _flags_rule,
             old_accuracy_rule(_OLD_THRESHOLD_KINDS),
+            old_metric_name_rule(_OLD_METRIC_NAMES),
         ),
         message="Deprecated vLLM config keys: {keys}. Use the new names; old keys will be removed in a future release.",
         label="vLLM config",
@@ -346,11 +381,19 @@ def load_variant(config_path, cluster_dict, warn=True):
     Runs the shared inference load path with `VllmConfig` and vLLM's old-key
     tables: placeholders, the threshold file it names (none records every
     metric without gating), one warning naming each old key unless ``warn`` is
-    false, then validation. A config that does not validate raises
+    false, an ``info`` spec for each unified gated metric a cell lacks, then
+    validation. A config that does not validate raises
     `ConfigError` naming each field, never a value.
     """
     return load_inference_variant(
-        config_path, cluster_dict, VllmConfig, "vLLM", resolve_old=resolve_old_vllm_keys, warn=warn
+        config_path,
+        cluster_dict,
+        VllmConfig,
+        "vLLM",
+        resolve_old=resolve_old_vllm_keys,
+        gated=UNIFIED_GATED_METRICS,
+        unreported=_UNREPORTED_METRICS,
+        warn=warn,
     )
 
 

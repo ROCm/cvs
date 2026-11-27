@@ -23,11 +23,12 @@ from cvs.lib.inference.utils.vllm_config_loader import (
     merged_container,
     resolve_old_vllm_keys,
 )
+from cvs.lib.inference.utils.vllm_metrics import METRICS_BY_NAME
 from cvs.lib.inference.utils.vllm_verification import evaluate_metric_verdicts
 from cvs.lib.utils.config_loader import ConfigError
 from cvs.lib.inference.vllm_job import VllmJob
 from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
-from cvs.parsers.schemas import validation_problem_lines
+from cvs.parsers.schemas import UNIFIED_GATED_METRICS, validation_problem_lines
 from cvs.unittests.support import FAKE_CRED, write_filled_config
 
 CELL = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"
@@ -161,17 +162,35 @@ class TestVllmConfigModel(unittest.TestCase):
                 self.assertIn("not implemented for vLLM", lines[0])
                 self.assertIn(path, lines[0])
 
+    def test_vllm_not_implemented_metrics(self):
+        for metric in (
+            "output_throughput_per_gpu",
+            "mfu",
+            "spec_acceptance_rate",
+            "mean_spec_acceptance_length",
+            "mtp_quality.chat_template_match",
+            "quant_parity.probe_match",
+            "scaling_efficiency_pct",
+            "pass_rate",
+        ):
+            with self.subTest(metric=metric):
+                lines = problems(new_config(thresholds={CELL: {metric: {"kind": "min", "value": 1}}}))
+                self.assertEqual(len(lines), 1)
+                self.assertIn("not implemented for vLLM", lines[0])
+                self.assertIn(metric, lines[0])
+        accuracy = {"accuracy": {"custom_eval": {"niah": {"pass_rate": {"kind": "min", "value": 0.8}}}}}
+        lines = problems(new_config(thresholds={CELL: {}, **accuracy}))
+        self.assertIn("thresholds accuracy.custom_eval", lines[0])
+
     def test_vllm_not_implemented_all_reported(self):
-        raw = new_config(accuracy={"quant_parity": {"enabled": True}})
+        raw = new_config(
+            accuracy={"quant_parity": {"enabled": True}},
+            thresholds={CELL: {"mfu": {"kind": "min", "value": 1}}},
+        )
         raw["server_params"]["dp"] = 2
-        raw["benchmark_params"]["scaling_baseline_output_throughput"] = 900.0
         lines = problems(raw)
         self.assertEqual(len(lines), 1)
-        for name in (
-            "server_params.dp",
-            "accuracy.quant_parity",
-            "benchmark_params.scaling_baseline_output_throughput",
-        ):
+        for name in ("server_params.dp", "accuracy.quant_parity", "mfu"):
             self.assertIn(name, lines[0])
 
     def test_vllm_defaults_pass(self):
@@ -378,6 +397,22 @@ class TestOldKeys(unittest.TestCase):
             convert({**new_config(), "thresholds": current}), ({**new_config(), "thresholds": current}, None)
         )
 
+    def test_old_metric_names(self):
+        renames = {
+            "queue_time_p50_ms": "p50_queue_time_ms",
+            "queue_time_p95_ms": "p95_queue_time_ms",
+            "prefill_time_p50_ms": "p50_prefill_time_ms",
+            "prefill_time_p95_ms": "p95_prefill_time_ms",
+            "decode_throughput_p50": "p50_decode_throughput",
+        }
+        for old, new in renames.items():
+            with self.subTest(old=old):
+                spec = {"kind": "min" if "throughput" in old else "max", "value": 3}
+                converted, message = convert({**new_config(), "thresholds": {CELL: {old: spec}}})
+                self.assertEqual(converted["thresholds"][CELL], {new: spec})
+                self.assertIn(f"{old} -> thresholds.{CELL}.{new}", message)
+                self.assertEqual(validate(converted).thresholds.get(CELL), {new: spec})
+
     def test_timeout_conversion_same_timing(self):
         converted, _ = convert(old_config())
         config = validate(converted)
@@ -476,11 +511,27 @@ class TestLoadVariant(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = _write(tmp, new_config(), {CELL: {"output_throughput": {"kind": "info", "value": 0}}})
             loaded = load_variant(path, {}, warn=False)
-        self.assertEqual(loaded.thresholds.get(CELL), {"output_throughput": {"kind": "info", "value": 0}})
+        self.assertEqual(loaded.thresholds.get(CELL)["output_throughput"], {"kind": "info", "value": 0})
         verdicts = evaluate_metric_verdicts(
-            {"node0": {"output_throughput": 1.0}}, loaded.thresholds.get(CELL), enforce_thresholds=True
+            {"node0": {"output_throughput": 1.0}},
+            {"output_throughput": {"kind": "info", "value": 0}},
+            enforce_thresholds=True,
         )
         self.assertEqual([(row["status"], row["enforced"]) for row in verdicts], [("pass", False)])
+
+    def test_load_fills_info_for_each_gated_metric_a_cell_lacks(self):
+        self.assertEqual(sorted(UNIFIED_GATED_METRICS - set(METRICS_BY_NAME)), [])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write(tmp, new_config(), {CELL: {"output_throughput": {"kind": "min", "value": 100}}})
+            loaded = load_variant(path, {}, warn=False)
+        cell = loaded.thresholds.get(CELL)
+        self.assertEqual(set(cell), set(UNIFIED_GATED_METRICS))
+        self.assertEqual(cell["output_throughput"], {"kind": "min", "value": 100})
+        self.assertEqual({spec["kind"] for metric, spec in cell.items() if metric != "output_throughput"}, {"info"})
+        actuals = {"node0": {"output_throughput": 99.0, "p99_ttft_ms": 10**6}}
+        verdicts = evaluate_metric_verdicts(actuals, cell, enforce_thresholds=True)
+        self.assertEqual([row["metric"] for row in verdicts if row["enforced"]], ["output_throughput"])
+        self.assertEqual(next(row["status"] for row in verdicts if row["metric"] == "p99_ttft_ms"), "pass")
 
     def test_old_kinds_in_a_cell_fail_at_load_as_on_main(self):
         for metric, kind in (("p99_ttft_ms", "max_ms"), ("output_throughput", "min_tok_s")):
