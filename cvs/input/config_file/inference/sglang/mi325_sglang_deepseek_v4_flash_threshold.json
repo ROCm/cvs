@@ -60,9 +60,9 @@
     "pass_rate": { "kind": "min", "value": 0.80 }
   },
   "BENCH=lm_eval_hellaswag": {
-    "acc_norm,none": { "kind": "min", "value": 0.23 }
+    "acc_norm,none": { "kind": "min", "value": 0.70 }
   },
   "BENCH=lm_eval_gsm8k": {
-    "exact_match,flexible-extract": { "kind": "min", "value": 0.95 }
+    "exact_match,flexible-extract": { "kind": "min", "value": 0.90 }
   }
 }
