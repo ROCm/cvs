@@ -1,5 +1,5 @@
 {
-  "_comment": "SGLang distributed deepseek-ai/DeepSeek-V4.1-Flash workload for MI30x. enable_wideEP true launches wide expert parallel (two nodes, TP=EP=16, attention DP=16, PP=1); set it to false, or remove it, for plain TP/PP distributed. The all-to-all backend is an add_flags entry. Uses the MI325 DeepSeek-V4.1-Flash threshold file; enforce_thresholds stays false until wide-EP bars are measured. Set model_num_params to the active parameter count per token (used for MFU).",
+  "_comment": "SGLang distributed deepseek-ai/DeepSeek-V4-Flash-Base workload for MI30x. enable_wideEP true launches wide expert parallel (two nodes, TP=EP=16, attention DP=16, PP=1); set it to false, or remove it, for plain TP/PP distributed. The all-to-all backend is an add_flags entry. Uses the MI325 DeepSeek-V4.1-Flash threshold file; enforce_thresholds stays false until wide-EP bars are measured. Set model_num_params to the active parameter count per token (used for MFU).",
   "enforce_thresholds": false,
   "gpu_name" : "<changeme> mi325",
   "threshold_json": "mi325_sglang_deepseek_v41_flash_threshold.json",
@@ -39,7 +39,8 @@
           "SGLANG_USE_AITER": "1",
           "AMDGCN_USE_BUFFER_OPS": "1",
           "ROCM_QUICK_REDUCE_QUANTIZATION": "INT8",
-          "GPU_ARCHS": "gfx942"
+          "GPU_ARCHS": "gfx942",
+          "SGLANG_HACK_FLASHMLA_BACKEND": "triton"
         }
       }
     }
@@ -54,7 +55,7 @@
     "backend": "sglang",
     "nnodes": "2",
     "log_level": "info",
-    "model": "/root/models/DeepSeek-V4.1-Flash",
+    "model": "/root/models/DeepSeek-V4-Flash-Base",
     "max_concurrency": "256",
     "tensor_parallelism": "16",
     "pipeline_parallelism": "1",
@@ -66,7 +67,7 @@
     "tokenizer_mode": "auto",
     "inference_poll_iterations": "16",
     "context_length": "205000",
-    "add_flags": ["--attention-backend aiter", "--disable-custom-all-reduce", "--disable-overlap-schedule", "--moe-a2a-backend mori"]
+    "add_flags": ["--attention-backend aiter", "--moe-a2a-backend mori", "--chunked-prefill-size 4096"]
   },
   "benchmark_params": {
         "backend": "sglang",
