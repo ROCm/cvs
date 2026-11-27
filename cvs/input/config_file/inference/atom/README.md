@@ -22,13 +22,13 @@ Configs are lab-validated unless a row is marked pending or bring-up.
 
 | Stem | Files | Driver |
 |------|-------|--------|
-| `mi3xx_atom_deepseek-r1_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` |
+| `mi3xx_atom_deepseek-r1_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` (MI325X bench cells lab-run; CONC256 hit the poll cap in one later pass) |
 | `mi355x_atom_deepseek-r1_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` (MI355X; bring-up thresholds) |
 | `mi3xx_atom_qwen3.5-397b-a17b_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` |
 | `mi355x_atom_kimi-k27-code_mxfp4` | `_single` | native `atom` (MI355X; bring-up thresholds) |
 | `mi355x_atom_deepseek-v4-pro` | `_single` | native `atom` (MI355X; bring-up thresholds) |
 | `mi355x_atom_qwen3.5-397b-a17b_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` (MI355X; bring-up thresholds; `mtp3` benchmark cells and GSM8K lab-run) |
-| `mi3xx_atom_vllm_deepseek-r1_fp8` | `_single`, `_distributed` | `vllm_atom` (serving schema; distributed uses PP=2) |
+| `mi3xx_atom_vllm_deepseek-r1_fp8` | `_single`, `_distributed` | `vllm_atom` (serving schema; distributed uses PP=2; MI325X bench cells lab-run, serving on one node) |
 | `mi355x_atom_vllm_deepseek-r1_fp8` | `_single`, `_distributed` | `vllm_atom` (MI355X; bring-up thresholds; single-node lab-run, PP=2 pending) |
 | `mi3xx_atom_vllm_gpt-oss-120b_mxfp4` | `_single` | `vllm_atom` (serving schema) |
 | `mi3xx_atom_vllm_glm-5.1_fp8` | `_single`, `_distributed` | `vllm_atom` (recipe serve is one server, TP8; distributed is PP=2; MI325X single-node and PP2 lab-run) |
