@@ -48,6 +48,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from cvs.lib.env_lib import build_env_prefix
 from cvs.lib.preflight.base import PreflightCheck
+from cvs.lib.transferbench import multirank
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +61,7 @@ DEFAULT_PRESET = 'smoketest'
 DEFAULT_SIZE_LIST = ['1K', '16M']
 DEFAULT_NUM_ITERATIONS = 2
 DEFAULT_NUM_WARMUPS = 0
-DEFAULT_SOCKET_MASTER_PORT = 31337
+DEFAULT_SOCKET_MASTER_PORT = multirank.DEFAULT_SOCKET_MASTER_PORT
 DEFAULT_SSH_TIMEOUT = 600
 DEFAULT_MAX_SKIP_PCT = 25.0
 
@@ -69,14 +70,12 @@ EXIT_CODE_FATAL_PRECONDITION = 2
 
 # Sentinel suffix appended to every per-node command so we can recover the
 # exit code from stdout even when the parallel SSH layer discards it.
-EXIT_SENTINEL = '__TB_SMOKE_EXIT__'
+EXIT_SENTINEL = multirank.EXIT_SENTINEL
 
 # Marker tokens emitted by the candidate-branch SmokeTest preset table.
 MARKER_PASS = '*'
 MARKER_FAIL = 'F'
 MARKER_SKIP = '.'
-
-_ENV_VAR_NAME_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +427,7 @@ _WARNING_LINE_RE = re.compile(r'^\s*(?:WARN(?:ING)?|NOTE|INFO)\s*[:\-]\s*(.+)$',
 _FAIL_KEYWORD_RE = re.compile(r'\b(FAILED|FATAL|ERR_FATAL|FAILURE|ABORTED?)\b', re.IGNORECASE)
 _SKIP_KEYWORD_RE = re.compile(r'\b(SKIP(?:PED)?|SKIPPING)\b', re.IGNORECASE)
 _MARKER_BLOCK_RE = re.compile(r'^[ \t]*[' + re.escape(MARKER_PASS + MARKER_FAIL + MARKER_SKIP) + r']{4,}\s*$')
-_EXIT_SENTINEL_RE = re.compile(re.escape(EXIT_SENTINEL) + r'\s*=\s*(?P<code>-?\d+)\s*$', re.MULTILINE)
+_EXIT_SENTINEL_RE = multirank.EXIT_SENTINEL_RE
 
 
 class SmoketestParser:
@@ -796,57 +795,23 @@ class TransferBenchSmokeCheck(PreflightCheck):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _validate_binary_name(config_key: str, value: Any) -> str:
+    def _validate_binary_name(config_key, value):
         """Validate a configured executable name or path."""
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(f'{config_key} must be a non-empty string')
-        return value.strip()
+        return multirank.validate_binary_name(config_key, value)
 
     @staticmethod
-    def _validate_extra_env(extra_env: Optional[Dict[str, str]]) -> Dict[str, str]:
-        """Validate runtime environment supplied for the TransferBench process.
-
-        ``build_env_prefix`` quotes values during command construction.
-        Restricting keys to shell environment variable names prevents a config
-        key from changing command syntax before quoting is applied.
-        """
-        if extra_env is None:
-            return {}
-        if not isinstance(extra_env, dict):
-            raise ValueError('extra_env must be a mapping of environment variable names to values')
-
-        normalized: Dict[str, str] = {}
-        for key, value in extra_env.items():
-            if not isinstance(key, str) or not _ENV_VAR_NAME_RE.fullmatch(key):
-                raise ValueError(f'Invalid environment variable name in extra_env: {key!r}')
-            if value is None:
-                raise ValueError(f'extra_env[{key!r}] must not be null')
-            normalized[key] = str(value)
-        return normalized
+    def _validate_extra_env(extra_env):
+        """Validate runtime environment supplied for the TransferBench process."""
+        return multirank.validate_extra_env(extra_env)
 
     @staticmethod
-    def _sudo_executable_argument(executable: str) -> str:
-        """Render an executable argument that remains valid after ``sudo``.
+    def _sudo_executable_argument(executable):
+        """Render an executable argument that remains valid after ``sudo``."""
+        return multirank.sudo_executable_argument(executable)
 
-        ``sudo`` may replace PATH with ``secure_path``.  A configured path is
-        already independent of PATH; a bare executable name is resolved by
-        the outer SSH shell instead, while the cluster-file environment is
-        still in effect.  The resulting absolute path is passed as an argv
-        value to the privileged process rather than inherited through sudo.
-        """
-        if '/' in executable:
-            return shlex.quote(executable)
-        return f'"$(command -v {shlex.quote(executable)})"'
-
-    def _env_assignments(
-        self,
-        rank: int,
-        num_ranks: int,
-        master_addr: str,
-        size_list: Sequence[str],
-    ) -> List[str]:
-        """Build ``KEY=VALUE`` assignments for one rank's TransferBench invocation."""
-        env: Dict[str, str] = {}
+    def _smoketest_env(self, rank, num_ranks, master_addr, size_list):
+        """Build the environment for one rank's smoketest invocation."""
+        env = {}
         env['NUM_ITERATIONS'] = str(self.num_iterations)
         env['NUM_WARMUPS'] = str(self.num_warmups)
         env['SIZE_LIST'] = ','.join(str(size) for size in size_list)
@@ -856,12 +821,8 @@ class TransferBenchSmokeCheck(PreflightCheck):
         env['RUN_PARALLEL'] = '1' if self.run_parallel else '0'
         env['USE_BDMA'] = '1' if self.use_bdma else '0'
         env['FORCE_SINGLE_POD'] = '1' if self.force_single_pod else '0'
-        if num_ranks > 1:
-            env['TB_NUM_RANKS'] = str(num_ranks)
-            env['TB_RANK'] = str(rank)
-            env['TB_MASTER_ADDR'] = master_addr
-            env['TB_MASTER_PORT'] = str(self.socket_master_port)
-        return [f'{k}={shlex.quote(v)}' for k, v in env.items()]
+        env.update(multirank.rank_env(rank, num_ranks, master_addr, self.socket_master_port))
+        return env
 
     def build_command(
         self,
@@ -888,31 +849,15 @@ class TransferBenchSmokeCheck(PreflightCheck):
         runtime path is injected by default.
         """
         sizes = list(size_list) if size_list is not None else self.size_list
-        env_parts = self._env_assignments(rank, num_ranks, master_addr, sizes)
-        runtime_env_prefix = build_env_prefix(self.extra_env)
-        preset = shlex.quote(self.preset)
-        extras = ' '.join(shlex.quote(s) for s in self.extra_args)
-        env_inline = ' '.join(env_parts).strip()
-
-        # A command name must be resolved before sudo applies secure_path.
-        # ``bash -c`` receives the resolved executable in $1, while the
-        # fixed $0 value makes positional handling independent of the path.
-        if self.use_sudo:
-            binary = '"$1"'
-        else:
-            binary = shlex.quote(self.tb_binary)
-        binary_invocation = f'{binary} {preset} {extras}'.strip()
-        if env_inline:
-            inner = f'{env_inline} {binary_invocation}'
-        else:
-            inner = binary_invocation
-        if runtime_env_prefix:
-            inner = f'{runtime_env_prefix}; {inner}'
-        inner_with_sentinel = f'{inner}; echo "{EXIT_SENTINEL}=$?"'
-        if self.use_sudo:
-            binary_arg = self._sudo_executable_argument(self.tb_binary)
-            return f'sudo bash -c {shlex.quote(inner_with_sentinel)} transferbench-smoke {binary_arg}'
-        return f'bash -c {shlex.quote(inner_with_sentinel)}'
+        return multirank.build_command(
+            self.tb_binary,
+            [self.preset] + list(self.extra_args),
+            self._smoketest_env(rank, num_ranks, master_addr, sizes),
+            use_sudo=self.use_sudo,
+            runtime_env_prefix=build_env_prefix(self.extra_env),
+            sentinel=EXIT_SENTINEL,
+            sudo_argv0='transferbench-smoke',
+        )
 
     # ------------------------------------------------------------------
     # Precondition: pod membership
@@ -994,12 +939,8 @@ class TransferBenchSmokeCheck(PreflightCheck):
     # Smoketest dispatch
     # ------------------------------------------------------------------
 
-    def _resolve_master_node(self) -> Optional[str]:
-        if self.master_node and self.master_node in self.orch.all.reachable_hosts:
-            return self.master_node
-        if self.orch.all.reachable_hosts:
-            return sorted(self.orch.all.reachable_hosts)[0]
-        return None
+    def _resolve_master_node(self):
+        return multirank.resolve_master_node(self.orch.all.reachable_hosts, self.master_node)
 
     def _dispatch_per_node(self) -> Dict[str, Dict[str, Any]]:
         """One independent smoketest per node, all in parallel."""
@@ -1016,35 +957,17 @@ class TransferBenchSmokeCheck(PreflightCheck):
         ``exec_cmd_list`` call so all ranks start in parallel and the
         preset's socket-comm bootstrap can complete.
         """
-        hosts = list(self.orch.all.reachable_hosts)
-        if not hosts:
-            return {}
         master = self._resolve_master_node()
-        if not master:
-            return {}
-        ordered = [master] + sorted([h for h in hosts if h != master])
-        num_ranks = len(ordered)
-        cmd_list: List[str] = []
-        per_node: Dict[str, Dict[str, Any]] = {}
-        for rank, node in enumerate(ordered):
-            cmd = self.build_command(rank=rank, num_ranks=num_ranks, master_addr=master)
-            cmd_list.append(cmd)
-            per_node[node] = {'command': cmd, 'output': '', 'rank': rank}
-
-        # phdl.exec_cmd_list aligns commands to reachable_hosts ordering. We
-        # rebuild the list in that ordering so each host gets its assigned
-        # rank's command.
-        rank_by_host = {node: rank for rank, node in enumerate(ordered)}
-        cmd_by_reachable = [
-            self.build_command(rank=rank_by_host[h], num_ranks=num_ranks, master_addr=master) for h in hosts
-        ]
-        self.log_info(f'Dispatching multi-rank smoketest (num_ranks={num_ranks}, master={master})')
-        out_dict = self.orch.all.exec_cmd_list(cmd_by_reachable, timeout=self.ssh_timeout, print_console=False)
-        for h, output in out_dict.items():
-            if h not in per_node:
-                per_node[h] = {'command': '', 'output': output}
-            per_node[h]['output'] = output
-        return per_node
+        if master:
+            self.log_info(f'Dispatching multi-rank smoketest (master={master})')
+        return multirank.dispatch_multi_rank(
+            self.orch,
+            lambda rank, num_ranks, master_addr: self.build_command(
+                rank=rank, num_ranks=num_ranks, master_addr=master_addr
+            ),
+            timeout=self.ssh_timeout,
+            preferred_master=self.master_node,
+        )
 
     # ------------------------------------------------------------------
     # Public entry point
