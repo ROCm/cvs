@@ -2802,8 +2802,9 @@ class PreflightIfoeConfig(BaseModel):
         "default 2 (one station) fails an un-provisioned fabric, 0 admits it for diagnostics",
     )
     reject_partial_stations: bool = Field(
-        default=True,
-        description="Fail when any station mask nibble indicates a partial station",
+        default=False,
+        description="Fail when a station mask has a half station (nibble 3 or c); "
+        "off by default because some platforms program half stations on purpose",
     )
     allow_disabled_stations: bool = Field(
         default=True,
