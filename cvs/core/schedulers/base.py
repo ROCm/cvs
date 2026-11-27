@@ -5,7 +5,16 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import os
 from abc import ABC, abstractmethod
+
+
+def env_int(name):
+    """The integer value of environment variable name; RuntimeError naming it when unset or not an integer."""
+    try:
+        return int(os.environ[name])
+    except (KeyError, ValueError) as exc:
+        raise RuntimeError(f"managed CVS run requires {name} to be set to an integer") from exc
 
 
 class SchedulerBackend(ABC):

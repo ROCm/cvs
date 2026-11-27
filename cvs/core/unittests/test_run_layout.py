@@ -163,6 +163,13 @@ class TestRunIdResolution(_RunLayoutTestCase):
         rank7 = RunLayout.get(self.workspace).run_dir
         self.assertEqual(rank0, rank7)
 
+    def test_kubernetes_pod_uses_the_cvs_job_id(self):
+        # Detected from CVS_K8S_JOB_ID alone, with no CVS_SCHEDULER and no SLURM_*.
+        os.environ["CVS_K8S_JOB_ID"] = "cvs-health-7f3a"
+        os.environ["JOB_COMPLETION_INDEX"] = "1"
+        layout = RunLayout.get(self.workspace)
+        self.assertEqual(layout.run_id, "cvs-health-7f3a")
+
     def test_unmanaged_uses_local_timestamp(self):
         layout = RunLayout.get(self.workspace)
         self.assertRegex(layout.run_id, LOCAL_RUN_ID)

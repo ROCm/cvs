@@ -25,10 +25,12 @@ from cvs.core.scheduler import (
     scheduler_rank,
 )
 from cvs.core.schedulers.bare_metal import BareMetalBackend
+from cvs.core.schedulers.kubernetes import KubernetesBackend
 from cvs.core.schedulers.slurm import SlurmBackend
 from cvs.core.schedulers.spur import SpurBackend
 
 JOB_STEP_ENV = {"SLURM_JOB_ID": "123", "SLURM_STEP_ID": "0", "SLURM_PROCID": "0"}
+K8S_POD_ENV = {"CVS_K8S_JOB_ID": "cvs-health-7f3a", "JOB_COMPLETION_INDEX": "0"}
 
 
 def _which_only(*present):
@@ -109,10 +111,46 @@ class TestDetectScheduler(unittest.TestCase):
     def test_env_override_normalizes_case_and_whitespace(self):
         self.assertEqual(detect_scheduler(), Scheduler.SPUR)
 
-    @patch.dict(os.environ, {"CVS_SCHEDULER": "kubernetes"})
+    @patch("cvs.core.scheduler.subprocess.run")
+    @patch.dict(os.environ, {"CVS_SCHEDULER": " Kubernetes "})
+    def test_env_override_accepts_kubernetes(self, mock_run):
+        self.assertEqual(detect_scheduler(), Scheduler.KUBERNETES)
+        mock_run.assert_not_called()
+
+    @patch.dict(os.environ, {"CVS_SCHEDULER": "pbs"})
     def test_env_override_rejects_unknown_value(self):
-        with self.assertRaisesRegex(ValueError, "Unknown scheduler type 'kubernetes'"):
+        with self.assertRaises(ValueError) as ctx:
             detect_scheduler()
+        message = str(ctx.exception)
+        self.assertIn("Unknown scheduler type 'pbs'", message)
+        for value in ("spur", "slurm", "bare_metal", "kubernetes"):
+            self.assertIn(f"'{value}'", message)
+
+    @patch("cvs.core.scheduler.subprocess.run")
+    @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only("spur", "scontrol"))
+    @patch.dict(os.environ, {"CVS_K8S_JOB_ID": "cvs-health-7f3a", "SPUR_JOB_ID": "1", "SLURM_JOB_ID": "1"})
+    def test_k8s_job_id_wins_over_spur_and_slurm(self, _mock_which, mock_run):
+        self.assertEqual(detect_scheduler(), Scheduler.KUBERNETES)
+        mock_run.assert_not_called()
+
+    @patch("cvs.core.scheduler.subprocess.run")
+    @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
+    def test_empty_k8s_job_id_falls_through(self, _mock_which, mock_run):
+        # An exported-but-empty CVS_K8S_JOB_ID is unset, as an empty SPUR_JOB_ID is.
+        with patch.dict(os.environ, {"CVS_K8S_JOB_ID": "", "SLURM_JOB_ID": "99"}):
+            self.assertEqual(detect_scheduler(), Scheduler.SLURM)
+        with patch.dict(os.environ, {"CVS_K8S_JOB_ID": ""}):
+            self.assertEqual(detect_scheduler(), Scheduler.BARE_METAL)
+        mock_run.assert_not_called()
+
+    @patch("cvs.core.scheduler.subprocess.run")
+    @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
+    @patch.dict(os.environ, {"SLURM_JOB_ID": "99", "KUBERNETES_SERVICE_HOST": "10.0.0.1", "JOB_COMPLETION_INDEX": "0"})
+    def test_slurm_inside_pod_is_slurm(self, _mock_which, mock_run):
+        # Every pod carries KUBERNETES_SERVICE_HOST; only a CVS-generated pod sets
+        # CVS_K8S_JOB_ID, so Slurm running in pods stays Slurm.
+        self.assertEqual(detect_scheduler(), Scheduler.SLURM)
+        mock_run.assert_not_called()
 
     @patch("cvs.core.scheduler.subprocess.run")
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
@@ -139,7 +177,7 @@ class TestDetectScheduler(unittest.TestCase):
 
     @patch("cvs.core.scheduler.subprocess.run")
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
-    @patch.dict(os.environ, {"CVS_SCHEDULER": "slurm", "SPUR_JOB_ID": "1"})
+    @patch.dict(os.environ, {"CVS_SCHEDULER": "slurm", "CVS_K8S_JOB_ID": "cvs-health-7f3a", "SPUR_JOB_ID": "1"})
     def test_env_override_takes_precedence_over_job_id(self, _mock_which, mock_run):
         self.assertEqual(detect_scheduler(), Scheduler.SLURM)
         mock_run.assert_not_called()
@@ -157,6 +195,10 @@ class TestRunningInJobStep(unittest.TestCase):
         self.assertTrue(_running_in_job_step())
         del os.environ["SLURM_STEP_ID"]
         self.assertFalse(_running_in_job_step())
+
+    @patch.dict(os.environ, K8S_POD_ENV)
+    def test_true_in_an_indexed_cvs_pod(self):
+        self.assertTrue(_running_in_job_step())
 
 
 class TestIsManagedCompute(unittest.TestCase):
@@ -201,6 +243,12 @@ class TestIsManagedCompute(unittest.TestCase):
         # End-to-end AIMVT-319: a spur srun step on a compute node with empty PATH.
         self.assertTrue(is_managed_compute())
 
+    @patch.dict(os.environ, {"CVS_SCHEDULER": "kubernetes", "CVS_K8S_JOB_ID": "cvs-health-7f3a", **JOB_STEP_ENV})
+    def test_kubernetes_ignores_a_stray_slurm_step(self):
+        # The Kubernetes backend decides; a full set of SLURM_* step variables in
+        # the pod must not make it managed.
+        self.assertFalse(is_managed_compute())
+
 
 class TestGetBackend(unittest.TestCase):
     def setUp(self):
@@ -215,6 +263,7 @@ class TestGetBackend(unittest.TestCase):
             Scheduler.SPUR: SpurBackend,
             Scheduler.SLURM: SlurmBackend,
             Scheduler.BARE_METAL: BareMetalBackend,
+            Scheduler.KUBERNETES: KubernetesBackend,
         }
         for scheduler in Scheduler:
             with self.subTest(scheduler=scheduler):

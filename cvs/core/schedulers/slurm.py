@@ -7,16 +7,9 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import os
 
-from cvs.core.schedulers.base import SchedulerBackend
+from cvs.core.schedulers.base import SchedulerBackend, env_int
 
 JOB_STEP_VARS = ("SLURM_JOB_ID", "SLURM_STEP_ID", "SLURM_PROCID")
-
-
-def _env_int(name):
-    try:
-        return int(os.environ[name])
-    except (KeyError, ValueError) as exc:
-        raise RuntimeError(f"managed CVS run requires {name} to be set to an integer") from exc
 
 
 def _split_comma_outside_brackets(expression):
@@ -144,14 +137,14 @@ class SlurmBackend(SchedulerBackend):
         return job_id
 
     def rank(self):
-        rank = _env_int("SLURM_PROCID")
+        rank = env_int("SLURM_PROCID")
         world_size = self.world_size()
         if not 0 <= rank < world_size:
             raise RuntimeError(f"invalid managed rank {rank} for world size {world_size}")
         return rank
 
     def world_size(self):
-        return _env_int("SLURM_NTASKS")
+        return env_int("SLURM_NTASKS")
 
     def hosts(self):
         """Expand the job's node list in scheduler order."""
