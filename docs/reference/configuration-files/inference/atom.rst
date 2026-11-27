@@ -111,6 +111,9 @@ List the directory with ``cvs config list inference/atom``. Each config's ``thre
    * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8``
      - ``_single`` (``perf``, ``mtp3``)
      - ``atom``
+   * - ``mi3xx_atom_deepseek-v4-flash``
+     - ``_single``
+     - ``atom``
    * - ``mi355x_atom_qwen3.5-397b-a17b_fp8``
      - ``_single`` (``perf``, ``mtp3``)
      - ``atom``

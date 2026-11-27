@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Training (jaxmaxtext, megatron, torchtitan) and inference (vLLM, SGLang, ATOM, xDiT) suites run a `test_support_matrix_gate` stage after the container launches that stops the run when the framework/model is unsupported on the detected GPU architecture or ROCm version (for example MXFP4 on MI300X/MI325X). Support is declared in `cvs/lib/support_matrix/{training,inference}_support_matrix.json`. Set `CVS_SUPPORT_MATRIX_GATE=OFF` to log violations and continue instead of stopping; a framework or model with no entry runs unchecked. See `cvs/lib/support_matrix/README.md`.
 - SGLang single, distributed, and disaggregated suites detect the image in the container and use its cuda-graph flags, proxy router, and benchmark module, so both the ROCm 10 `sgl-dev` v0.5.23 images and older images run with the same config. An optional `sglang_cli` block in the config sets those forms explicitly and skips detection. New `mi3xx_sglang_{deepseek_r1_0528,llama_70b,qwen35_397b}_mori_disaggregated.json` configs run disaggregated SGLang with MoRI on MI300X/MI325X.
 
+- `cvs run atom` ships a native ATOM stem for DeepSeek-V4-Flash-Base TP8 on one mi3xx node (`mi3xx_atom_deepseek-v4-flash_single`). Thresholds are bring-up values and stay unenforced.
+
 ### Changed
 
 - SGLang sample configs name `rocm/sgl-dev:v0.5.23-rocm10-mi30x-20261120` and `rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261120` as the `_image_example`. The `mi3xx` disaggregated samples add `--disable-custom-all-reduce` and `--disable-overlap-schedule` to `add_flags`; configs copied from older samples keep their flags.
