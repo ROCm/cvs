@@ -2,7 +2,7 @@
     "_comment": "SGLang distributed deepseek-ai/DeepSeek-V4-Flash-Base workload. enable_wideEP true launches wide expert parallel (two nodes, TP=EP=16, attention DP=16, PP=1); set it to false, or remove it, for plain TP/PP distributed. The all-to-all backend is an add_flags entry. Uses the MI355 DeepSeek-V4.1-Flash threshold file; enforce_thresholds stays false until wide-EP bars are measured. Set model_num_params to the active parameter count per token (used for MFU).",
     "enforce_thresholds": false,
     "gpu_name" : "<changeme> mi355",
-    "threshold_json": "mi355_sglang_deepseek_v41_flash_threshold.json",
+    "threshold_json": "mi355_sglang_deepseek_v4_flash_threshold.json",
     "paths": {
       "shared_fs": "/home/{user-id}",
       "models_dir": "/root/models",
