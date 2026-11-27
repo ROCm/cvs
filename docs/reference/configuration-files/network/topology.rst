@@ -89,8 +89,8 @@ Under ``topology.advanced``:
      - ``3``
      - Unmeasured warmup iterations per pair.
    * - ``timeout``
-     - ``1800``
-     - Seconds allowed for the TransferBench run.
+     - derived
+     - Seconds allowed for the TransferBench run. Omitted by default and derived from the number of pairs the run generates, so it tracks both coverage modes and the cluster size. Set it only to cap a run; a value too small for the work is logged as a warning, and a run killed at the timeout reports no results at all.
    * - ``master_port``
      - ``31337``
      - TCP port for the multi-rank bootstrap. The ``CVS_TOPO_TB_PORT`` environment variable overrides it.

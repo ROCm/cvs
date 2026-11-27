@@ -231,3 +231,53 @@ class TestPrefixValidation(unittest.TestCase):
     def test_ordinary_prefixes_are_still_accepted(self):
         for good in ('cvs_topo_nic_', 'a.b-c', 'X9_'):
             staging._validate_prefix(good)
+
+
+class TestChunkedStaging(unittest.TestCase):
+    """A cluster-sized transfer file exceeds the 128 KiB single-argv cap."""
+
+    def _orch(self, hosts, append_ok=True, remove_ok=True):
+        orch = MagicMock()
+        orch.all = MagicMock()
+        orch.all.reachable_hosts = list(hosts)
+        orch.exec.return_value = {h: {'output': f'{staging.PATH_MARKER}|/tmp/cvs_x_{h}', 'exit_code': 0} for h in hosts}
+        self.commands = []
+
+        def exec_cmd_list(cmd_list, **kwargs):
+            self.commands.append(list(cmd_list))
+            joined = ' '.join(cmd_list)
+            if 'rm -f --' in joined:
+                token = f'{staging.REMOVE_SENTINEL}=0' if remove_ok else f'{staging.REMOVE_SENTINEL}=1'
+                return {h: token for h in hosts}
+            token = f'{staging.APPEND_SENTINEL}=0' if append_ok else f'{staging.APPEND_SENTINEL}=1'
+            return {h: token for h in hosts}
+
+        orch.exec_cmd_list.side_effect = exec_cmd_list
+        return orch
+
+    def test_a_large_file_is_written_in_commands_under_the_argv_cap(self):
+        orch = self._orch(['n1'])
+        paths, failures = staging.stage_file(orch, 'x' * 200_000, 'cvs_x_')
+        self.assertEqual(failures, {})
+        self.assertEqual(paths, {'n1': '/tmp/cvs_x_n1'})
+        issued = [orch.exec.call_args.args[0]] + [c[0] for c in self.commands]
+        self.assertGreater(len(issued), 1, 'a 200 KB file must not go in one command')
+        self.assertLess(max(len(c) for c in issued), 131072, 'every command must fit one argv entry')
+
+    def test_a_small_file_still_takes_exactly_one_command(self):
+        orch = self._orch(['n1'])
+        staging.stage_file(orch, '1 4 (R0G0->R0I0.0->R1G0)\n', 'cvs_x_')
+        self.assertEqual(self.commands, [], 'a small file needs no append round trips')
+
+    def test_a_failed_append_removes_the_partial_file_and_reports_the_host(self):
+        orch = self._orch(['n1'], append_ok=False)
+        paths, failures = staging.stage_file(orch, 'x' * 200_000, 'cvs_x_')
+        self.assertEqual(paths, {})
+        self.assertIn('could not write staged file', failures['n1'])
+        self.assertTrue(any('rm -f --' in ' '.join(c) for c in self.commands), 'partial file must be removed')
+
+    def test_a_partial_file_that_cannot_be_removed_is_named(self):
+        orch = self._orch(['n1'], append_ok=False, remove_ok=False)
+        _, failures = staging.stage_file(orch, 'x' * 200_000, 'cvs_x_')
+        self.assertIn('could not be removed', failures['n1'])
+        self.assertIn('/tmp/cvs_x_n1', failures['n1'])

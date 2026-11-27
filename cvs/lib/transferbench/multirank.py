@@ -187,7 +187,7 @@ def rank_order(reachable_hosts, master):
     return [master] + sorted(host for host in reachable_hosts if host != master)
 
 
-def dispatch_multi_rank(orch, command_for_rank, timeout=None, preferred_master=None, hosts=None):
+def dispatch_multi_rank(orch, command_for_rank, timeout=None, preferred_master=None, hosts=None, executor=None):
     """Start one rank per participating node in a single parallel call.
 
     ``command_for_rank(rank, num_ranks, master_addr)`` renders one rank's shell
@@ -199,6 +199,14 @@ def dispatch_multi_rank(orch, command_for_rank, timeout=None, preferred_master=N
     ranks by number (a TransferBench transfer file does) must pass the same
     node set it numbered against, or the ranks it names resolve to other
     hosts. Omitting it gives every reachable node a rank.
+
+    ``executor`` is the handle the rank commands run through, and defaults to
+    ``orch.all`` -- the bare-host handle, which is not container-aware. A
+    caller whose discovery and staging go through the orchestrator's public
+    interface must pass ``orch`` here, or the ranks run on the host while the
+    file they read was staged inside the container. Preflight keeps the host
+    handle because the rest of its probes use it too, and splitting the two
+    would leave it reading a container's file from outside.
 
     This returns raw per-rank output; it does not interpret completion or
     success. ``exec_cmd_list`` discards exit codes, so a caller must recover
@@ -231,7 +239,8 @@ def dispatch_multi_rank(orch, command_for_rank, timeout=None, preferred_master=N
     # host with no rank still needs its slot, and runs nothing.
     no_rank = [host for host in reachable if host not in per_node]
     cmd_by_reachable = [per_node[host]['command'] if host in per_node else 'true' for host in reachable]
-    out_dict = orch.all.exec_cmd_list(cmd_by_reachable, timeout=timeout, print_console=False)
+    runner = executor if executor is not None else orch.all
+    out_dict = runner.exec_cmd_list(cmd_by_reachable, timeout=timeout, print_console=False)
     for host, output in out_dict.items():
         # A host that ran the no-op has no result to report; one that is absent
         # from reachable_hosts is an unreachable node the layer appended.

@@ -2,6 +2,7 @@
 
 import re
 
+from cvs.lib import globals
 from cvs.lib.env_lib import build_env_prefix
 from cvs.lib.topology import nic_matrix
 from cvs.lib.transferbench import multirank, staging
@@ -11,13 +12,21 @@ from cvs.lib.transferbench import multirank, staging
 # it, so a value that is not in this form has to be rejected here.
 _MESSAGE_SIZE_RE = re.compile(r'^[0-9]+[KMG]?$', re.IGNORECASE)
 
+log = globals.log
+
 STAGED_FILE_PREFIX = 'cvs_topo_nic_'
 
 DEFAULT_MESSAGE_SIZE = '64M'
 DEFAULT_QUEUE_PAIRS = 4
 DEFAULT_ITERATIONS = 10
 DEFAULT_WARMUP_ITERATIONS = 3
-DEFAULT_TIMEOUT = 1800
+# A fixed timeout cannot track the work: quick coverage on a large cluster
+# measures far more pairs than full coverage on a small one. The default is
+# therefore derived from the pairs actually generated, at a deliberately
+# generous allowance -- a slower link or a larger message size only pushes the
+# real cost one way, and a run killed at the wire discards every result.
+SECONDS_PER_PAIR_ALLOWANCE = 3
+MIN_RUN_TIMEOUT = 900
 
 
 def validate_message_size(value):
@@ -46,9 +55,35 @@ def build_settings(config_dict, cluster_dict=None):
         'queue_pairs': advanced.get('queue_pairs', DEFAULT_QUEUE_PAIRS),
         'iterations': advanced.get('iterations', DEFAULT_ITERATIONS),
         'warmup_iterations': advanced.get('warmup_iterations', DEFAULT_WARMUP_ITERATIONS),
-        'timeout': advanced.get('timeout', DEFAULT_TIMEOUT),
+        'timeout': advanced.get('timeout'),
         'master_port': multirank.resolve_socket_master_port(advanced.get('master_port')),
     }
+
+
+def estimate_timeout(pair_count):
+    """Seconds to allow a run of this many pairs."""
+    return max(MIN_RUN_TIMEOUT, int(pair_count * SECONDS_PER_PAIR_ALLOWANCE))
+
+
+def resolve_timeout(configured, pair_count):
+    """Timeout for this run, derived from its size unless one is configured.
+
+    A configured value is honoured as given, because an operator may have a
+    reason to cap the run, but one that cannot cover the work is called out
+    rather than silently discarding the results at the wire.
+    """
+    estimated = estimate_timeout(pair_count)
+    if configured is None:
+        return estimated
+    if configured < estimated:
+        log.warning(
+            'configured timeout %ss may not cover %d pair(s); around %ss is expected, '
+            'and a run killed at the timeout reports no results',
+            configured,
+            pair_count,
+            estimated,
+        )
+    return configured
 
 
 def build_run_env(settings):
@@ -102,12 +137,21 @@ def run_matrix(orch, inventory, settings, switch_by_node=None):
     if not paths:
         return {}, pairs, problems
 
+    # Every rank the transfer file names has to have the file, because each
+    # reads its own copy. Staging that succeeded on some ranks and not others
+    # cannot be run as a smaller matrix either: the pairs are numbered against
+    # this rank set. Clean up and report, rather than letting the missing path
+    # surface as an exception from inside the dispatch callback.
+    unstaged = [node for node in node_by_rank if node not in paths]
+    if unstaged:
+        staging.remove_files(orch, paths)
+        problems.append(f'staging incomplete, no measurement attempted (missing on {", ".join(sorted(unstaged))})')
+        return {}, pairs, problems
+
     base_env = build_run_env(settings)
 
     def command_for_rank(rank, num_ranks, master_addr):
         node = node_by_rank[rank]
-        if node not in paths:
-            raise ValueError(f'no staged transfer file on {node}')
         env = dict(base_env)
         env.update(multirank.rank_env(rank, num_ranks, master_addr, settings['master_port']))
         return multirank.build_command(
@@ -121,7 +165,11 @@ def run_matrix(orch, inventory, settings, switch_by_node=None):
 
     try:
         per_node = multirank.dispatch_multi_rank(
-            orch, command_for_rank, timeout=settings['timeout'], hosts=node_by_rank
+            orch,
+            command_for_rank,
+            timeout=resolve_timeout(settings['timeout'], len(pairs)),
+            hosts=node_by_rank,
+            executor=orch,
         )
     finally:
         staging.remove_files(orch, paths)

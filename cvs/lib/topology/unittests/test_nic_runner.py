@@ -17,9 +17,14 @@ INVENTORY = {
 
 
 class _Phdl:
-    """Minimal stand-in matching the real routing: staging's write/remove go
-    through the orchestrator's public exec methods; the TransferBench run
-    dispatch still goes through orch.all.exec_cmd_list (preserved as-is)."""
+    """Stand-in matching the real routing.
+
+    Staging, cleanup and the rank dispatch all go through the orchestrator's
+    public interface, so one ``exec_cmd_list`` serves all three and the calls
+    are told apart by what they carry. ``orch.all`` is a separate mock that
+    only supplies the host list, so a regression to the host-only handle shows
+    up as an unexpected call on it.
+    """
 
     def __init__(self, hosts, stage_ok=True, run_output=None):
         self.reachable_hosts = list(hosts)
@@ -36,21 +41,23 @@ class _Phdl:
             for host in self.reachable_hosts
         }
 
-    def run_exec_cmd_list(self, cmd_list, **kwargs):
+    def exec_cmd_list(self, cmd_list, **kwargs):
+        joined = ' '.join(cmd_list)
+        if 'rm -f --' in joined:
+            self.removed = True
+            return {host: f'{staging.REMOVE_SENTINEL}=0' for host in self.reachable_hosts}
+        if staging.APPEND_SENTINEL in joined:
+            return {host: f'{staging.APPEND_SENTINEL}=0' for host in self.reachable_hosts}
         self.cmd_lists.append(list(cmd_list))
         return dict(self.run_output)
-
-    def remove_exec_cmd_list(self, cmd_list, **kwargs):
-        self.removed = True
-        return {host: f'{staging.REMOVE_SENTINEL}=0' for host in self.reachable_hosts}
 
 
 def _orch(phdl):
     orch = MagicMock()
     orch.exec.side_effect = phdl.stage_exec
-    orch.exec_cmd_list.side_effect = phdl.remove_exec_cmd_list
+    orch.exec_cmd_list.side_effect = phdl.exec_cmd_list
+    orch.all = MagicMock()
     orch.all.reachable_hosts = phdl.reachable_hosts
-    orch.all.exec_cmd_list.side_effect = phdl.run_exec_cmd_list
     return orch
 
 
@@ -70,6 +77,7 @@ class TestBuildSettings(unittest.TestCase):
         self.assertEqual(settings['queue_pairs'], nic_runner.DEFAULT_QUEUE_PAIRS)
         self.assertEqual(settings['iterations'], nic_runner.DEFAULT_ITERATIONS)
         self.assertEqual(settings['warmup_iterations'], nic_runner.DEFAULT_WARMUP_ITERATIONS)
+        self.assertIsNone(settings['timeout'], 'an unset timeout is derived from the run size')
         self.assertEqual(settings['traffic_class'], 0)
 
     def test_advanced_block_overrides_defaults(self):
@@ -226,3 +234,67 @@ class TestValidateMessageSize(unittest.TestCase):
         for bad in ('64M; rm -rf /', '64 M', '', 'M', '64X', '64M\nrm -rf /'):
             with self.assertRaises(ValueError):
                 nic_runner.validate_message_size(bad)
+
+
+class TestDispatchRouting(unittest.TestCase):
+    """The ranks must run wherever the files were staged."""
+
+    def test_ranks_run_through_the_public_interface_not_the_host_handle(self):
+        # orch.all is not container-aware: dispatching through it would run the
+        # ranks on the host while their transfer file sits inside a container.
+        phdl = _Phdl(['nodeA', 'nodeB'], run_output={'nodeA': _results(2), 'nodeB': ''})
+        orch = _orch(phdl)
+        nic_runner.run_matrix(orch, INVENTORY, nic_runner.build_settings({'coverage': 'full'}))
+        orch.all.exec_cmd_list.assert_not_called()
+        orch.all.exec.assert_not_called()
+        self.assertTrue(orch.exec_cmd_list.called)
+
+
+class TestPartialStaging(unittest.TestCase):
+    def test_a_rank_without_a_staged_file_stops_the_run_cleanly(self):
+        # Every rank reads its own copy, and the pairs are numbered against
+        # this rank set, so a partial stage cannot simply run smaller.
+        phdl = _Phdl(['nodeA', 'nodeB'])
+
+        def stage_only_nodeA(cmd, **kwargs):
+            return {
+                'nodeA': {'output': f'{staging.PATH_MARKER}|/tmp/cvs_topo_nic_A', 'exit_code': 0},
+                'nodeB': {'output': '', 'exit_code': 1},
+            }
+
+        orch = _orch(phdl)
+        orch.exec.side_effect = stage_only_nodeA
+        matrix, pairs, problems = nic_runner.run_matrix(orch, INVENTORY, nic_runner.build_settings({}))
+
+        self.assertEqual(matrix, {})
+        self.assertTrue(pairs)
+        self.assertTrue(any('staging incomplete' in p for p in problems), problems)
+        self.assertEqual(phdl.cmd_lists, [], 'nothing may be dispatched against a partial stage')
+        self.assertTrue(phdl.removed, 'the file that did stage must be cleaned up')
+
+
+class TestResolveTimeout(unittest.TestCase):
+    """A fixed timeout cannot track the work; quick coverage on a big cluster
+    measures far more pairs than full coverage on a small one."""
+
+    def test_an_unset_timeout_scales_with_the_pair_count(self):
+        small = nic_runner.resolve_timeout(None, 128)
+        large = nic_runner.resolve_timeout(None, 8064)
+        self.assertGreater(large, small)
+        self.assertGreaterEqual(large, 8064, 'must allow at least a second per pair')
+
+    def test_a_tiny_run_still_gets_a_usable_floor(self):
+        self.assertEqual(nic_runner.resolve_timeout(None, 1), nic_runner.MIN_RUN_TIMEOUT)
+
+    def test_quick_coverage_on_a_large_cluster_is_covered(self):
+        # 64 nodes x 8 NICs in quick mode is 8064 pairs, which a fixed
+        # half-hour or ninety-minute timeout would kill part-way through.
+        self.assertGreater(nic_runner.resolve_timeout(None, 8064), 8064 * 1.14)
+
+    def test_a_configured_timeout_is_honoured_and_a_short_one_warns(self):
+        with self.assertLogs(nic_runner.log, level='WARNING') as captured:
+            self.assertEqual(nic_runner.resolve_timeout(60, 8064), 60)
+        self.assertIn('may not cover', ' '.join(captured.output))
+
+    def test_a_generous_configured_timeout_does_not_warn(self):
+        self.assertEqual(nic_runner.resolve_timeout(99999, 128), 99999)

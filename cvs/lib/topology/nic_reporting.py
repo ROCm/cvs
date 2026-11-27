@@ -149,27 +149,39 @@ def _node_status(node, flags):
 
 
 def record_results(results_store, matrix, flags, meta=None, excluded_by_node=None):
-    """Record the matrix as a deck group, one record per node plus the cluster grid."""
+    """Record the matrix as a deck group, one record per node plus the cluster grids.
+
+    A node that was measured, and a node whose every NIC was excluded, both get
+    a record: dropping the second would lose the only report of why it was left
+    out. The node-to-node rollup is cluster-wide, so it is published once beside
+    the cluster grid rather than copied into all N node records, which would put
+    N^3 cells in the deck.
+    """
     median = flags.get('median')
     threshold_pct = flags.get('threshold_pct')
-    nodes = sorted({source[0] for source in matrix} | {dest[0] for dest in _destinations(matrix)})
+    measured = {source[0] for source in matrix} | {dest[0] for dest in _destinations(matrix)}
+    nodes = sorted(measured | set(excluded_by_node or {}))
 
-    rollup = node_rollup(matrix, median, threshold_pct)
     node_records = {}
     for node in nodes:
-        heatmaps = [heat for heat in (node_heatmap(node, matrix, median, threshold_pct), rollup) if heat]
+        heatmaps = [heat for heat in (node_heatmap(node, matrix, median, threshold_pct),) if heat]
         excluded = (excluded_by_node or {}).get(node) or []
         items = [{'name': f'{nic["nic"]} excluded', 'status': 'na', 'detail': nic['reason']} for nic in excluded]
-        node_records[node] = build_node_record(
-            _node_status(node, flags),
-            items=items,
-            items_summary=f'{len(heatmaps)} heatmap(s)',
-            heatmaps=heatmaps,
-        )
+        if node in measured:
+            status = _node_status(node, flags)
+            summary = f'{len(heatmaps)} heatmap(s)'
+        else:
+            status = 'na'
+            summary = 'not measured: no addressable backend NIC'
+        node_records[node] = build_node_record(status, items=items, items_summary=summary, heatmaps=heatmaps)
 
     record_group(results_store, GROUP, node_records, meta=meta)
 
-    cluster = cluster_heatmap(matrix, median, threshold_pct)
+    cluster_grids = [
+        heat
+        for heat in (cluster_heatmap(matrix, median, threshold_pct), node_rollup(matrix, median, threshold_pct))
+        if heat
+    ]
     store_meta = results_store.setdefault('_meta', {})
-    store_meta[CLUSTER_GRID_META_KEY] = {'heatmaps': [cluster]} if cluster else {}
+    store_meta[CLUSTER_GRID_META_KEY] = {'heatmaps': cluster_grids} if cluster_grids else {}
     return results_store

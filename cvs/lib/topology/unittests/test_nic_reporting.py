@@ -87,10 +87,24 @@ class TestRecordResults(unittest.TestCase):
         self.assertEqual(sorted(nodes), ['nodeA', 'nodeB'])
         self.assertEqual({record['status'] for record in nodes.values()}, {'pass'})
 
-    def test_each_node_record_carries_its_grid_and_the_rollup(self):
+    def test_a_node_record_carries_only_its_own_grid(self):
+        # The node-to-node rollup is cluster-wide. Copying it into all N node
+        # records would put N^3 cells in the deck on a large cluster.
         store = self._record(_matrix())
         heatmaps = store['groups'][nic_reporting.GROUP]['nodes']['nodeA']['heatmaps']
-        self.assertEqual([heat['name'] for heat in heatmaps], ['NIC bandwidth', 'Node to node (worst NIC pair)'])
+        self.assertEqual([heat['name'] for heat in heatmaps], ['NIC bandwidth'])
+
+    def test_the_rollup_is_published_once_beside_the_cluster_grid(self):
+        store = self._record(_matrix())
+        names = [heat['name'] for heat in store['_meta'][nic_reporting.CLUSTER_GRID_META_KEY]['heatmaps']]
+        self.assertEqual(names, ['NIC to NIC bandwidth', 'Node to node (worst NIC pair)'])
+
+    def test_a_node_whose_nics_were_all_excluded_is_still_reported(self):
+        # Otherwise the only record of why the node was left out disappears.
+        store = self._record(_matrix(), excluded_by_node={'nodeZ': [{'nic': 'nic0', 'reason': 'link is not ACTIVE'}]})
+        record = store['groups'][nic_reporting.GROUP]['nodes']['nodeZ']
+        self.assertEqual(record['status'], 'na')
+        self.assertEqual(record['items'][0]['detail'], 'link is not ACTIVE')
 
     def test_cluster_wide_grid_is_published_through_meta(self):
         store = self._record(_matrix())

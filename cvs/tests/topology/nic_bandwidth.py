@@ -9,11 +9,11 @@ import json
 
 import pytest
 
-from cvs.lib import globals
-from cvs.lib.linux_utils import get_gpu_nic_mapping_dict
+from cvs.lib import globals, rocm_plib
 from cvs.lib.topology import nic_inventory, nic_matrix, nic_reporting, nic_runner
 from cvs.lib.transferbench import nic_table
-from cvs.lib.utils_lib import fail_test, update_test_result
+from cvs.lib.utils_lib import fail_test, get_passwordless_sudo_status, update_test_result
+from cvs.lib.verify_lib import DmesgWindow
 from cvs.tests.topology.conftest import launch_containers, teardown_containers
 
 log = globals.log
@@ -26,12 +26,17 @@ def test_launch_containers(orch, lifecycle):
 
 
 def _gpu_bdfs_by_node(orch):
-    """GPU PCI addresses per node, in GPU order, from the shared mapping."""
-    mapping = get_gpu_nic_mapping_dict(orch)
+    """GPU PCI addresses per node, in card order.
+
+    Only the GPU addresses are needed, to decide which NICs share a PCI domain
+    with a GPU. The full GPU-to-NIC mapping would also run lshw under sudo,
+    which the shipped ``use_sudo: false`` config does not assume is available.
+    """
+    bus_dict = rocm_plib.get_gpu_pcie_bus_dict(orch, use_sudo=False)
     gpu_bdfs = {}
-    for node, cards in (mapping or {}).items():
+    for node, cards in (bus_dict or {}).items():
         ordered = sorted(cards, key=lambda card: int(''.join(ch for ch in card if ch.isdigit()) or 0))
-        gpu_bdfs[node] = [cards[card].get('gpu_bdf') for card in ordered if cards[card].get('gpu_bdf')]
+        gpu_bdfs[node] = [cards[card].get('PCI Bus') for card in ordered if cards[card].get('PCI Bus')]
     return gpu_bdfs
 
 
@@ -78,6 +83,23 @@ def _collect_inventory(orch, settings):
     return inventory, excluded_by_node, table_failures
 
 
+def _dmesg_window(orch):
+    """Kernel-log window for the measurement, or None when it cannot be read.
+
+    This deliberately uses the host handle even under a container
+    orchestrator: a GPU reset or a NIC/PCIe error is a host kernel event, and
+    the container's view of the log is not where it is recorded. Reading it
+    needs passwordless sudo, which the shipped ``use_sudo: false`` config does
+    not assume, so an unreadable log is reported and the run continues rather
+    than failing on an unrelated privilege gap.
+    """
+    sudo_status = get_passwordless_sudo_status(orch.all)
+    if sudo_status and all(sudo_status.values()):
+        return DmesgWindow(orch.all, 'nic_bandwidth', False)
+    log.warning('skipping the dmesg error scan: the kernel log needs passwordless sudo on every node')
+    return None
+
+
 def _write_topology_json(document):
     """Write topology.json beside the run's other artefacts."""
     from cvs.core.run_layout import RunLayout
@@ -91,22 +113,38 @@ def _write_topology_json(document):
 
 def test_nic_bandwidth(orch, settings, cluster_dict, cvs_results_dict):
     """Measure cross-node NIC bandwidth and flag pairs below the cluster median."""
+    globals.error_list = []
     if len(orch.hosts) < 2:
         pytest.skip('cross-node NIC bandwidth needs at least 2 nodes')
 
     inventory, excluded_by_node, table_failures = _collect_inventory(orch, settings)
+
+    # A node CVS could not query was never validated. Reporting the cluster as
+    # healthy because the remaining nodes measured well would answer a question
+    # the user did not ask, so every such node fails the test whether or not
+    # enough nodes survived to measure.
+    for node, reason in sorted(table_failures.items()):
+        fail_test(f'{node}: TransferBench could not report its NIC table, so the node was not validated ({reason})')
+
     if len(inventory) < 2:
-        # A cluster with nothing to measure is a skip; a cluster whose NICs
-        # could not be addressed because TransferBench would not run is a
-        # configuration error, and skipping it would report a healthy cluster.
         if table_failures:
-            detail = '; '.join(f'{node}: {reason}' for node, reason in sorted(table_failures.items()))
-            fail_test(f'TransferBench could not report its NIC table, so no NIC can be addressed ({detail})')
             update_test_result()
             return
         pytest.skip(f'cross-node NIC bandwidth needs backend NICs on at least 2 nodes, found {len(inventory)}')
 
-    matrix, pairs, problems = nic_runner.run_matrix(orch, inventory, settings)
+    # A GPU reset or a NIC/PCIe error during the run leaves bandwidth looking
+    # fine, so the kernel log is scanned over the window the workload ran in.
+    dmesg_window = _dmesg_window(orch)
+    if dmesg_window:
+        dmesg_window.open()
+    try:
+        matrix, pairs, problems = nic_runner.run_matrix(orch, inventory, settings)
+    finally:
+        # Bracketed in a finally so a failed run is still scanned: a host that
+        # fell over mid-measurement is exactly when the kernel log matters.
+        if dmesg_window:
+            dmesg_window.close_and_scan()
+
     for problem in problems:
         log.warning('reduced coverage: %s', problem)
     if not matrix:

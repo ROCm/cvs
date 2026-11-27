@@ -3,6 +3,7 @@
 Node names and PCI addresses are synthetic; no orchestrator or cluster is used.
 """
 
+import inspect
 import os
 import sys
 import unittest
@@ -12,11 +13,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..
 
 from cvs.tests.topology import nic_bandwidth
 
+# Shape of rocm_plib.get_gpu_pcie_bus_dict: {node: {card: {'PCI Bus': bdf}}}.
 MAPPING = {
     'nodeA': {
-        'card0': {'gpu_bdf': '0001:01:00.0', 'rdma_dev': 'nic0'},
-        'card10': {'gpu_bdf': '0002:01:00.0', 'rdma_dev': 'nic1'},
-        'card2': {'gpu_bdf': '0003:01:00.0'},
+        'card0': {'PCI Bus': '0001:01:00.0'},
+        'card10': {'PCI Bus': '0002:01:00.0'},
+        'card2': {'PCI Bus': '0003:01:00.0'},
     }
 }
 
@@ -37,17 +39,17 @@ def _orch(exec_result):
 
 class TestGpuBdfsByNode(unittest.TestCase):
     def test_gpu_order_follows_the_card_number_not_the_string(self):
-        with patch.object(nic_bandwidth, 'get_gpu_nic_mapping_dict', return_value=MAPPING):
+        with patch.object(nic_bandwidth.rocm_plib, 'get_gpu_pcie_bus_dict', return_value=MAPPING):
             bdfs = nic_bandwidth._gpu_bdfs_by_node(MagicMock())
         self.assertEqual(bdfs['nodeA'], ['0001:01:00.0', '0003:01:00.0', '0002:01:00.0'])
 
     def test_unmapped_card_without_a_bdf_is_skipped(self):
-        mapping = {'nodeA': {'card0': {'rdma_dev': 'nic0'}}}
-        with patch.object(nic_bandwidth, 'get_gpu_nic_mapping_dict', return_value=mapping):
+        mapping = {'nodeA': {'card0': {}}}
+        with patch.object(nic_bandwidth.rocm_plib, 'get_gpu_pcie_bus_dict', return_value=mapping):
             self.assertEqual(nic_bandwidth._gpu_bdfs_by_node(MagicMock())['nodeA'], [])
 
     def test_no_mapping_is_not_an_error(self):
-        with patch.object(nic_bandwidth, 'get_gpu_nic_mapping_dict', return_value=None):
+        with patch.object(nic_bandwidth.rocm_plib, 'get_gpu_pcie_bus_dict', return_value=None):
             self.assertEqual(nic_bandwidth._gpu_bdfs_by_node(MagicMock()), {})
 
 
@@ -62,13 +64,13 @@ TB_TABLE = {
 class TestCollectInventory(unittest.TestCase):
     def _collect(self, mapping, table=None, failures=None):
         with (
-            patch.object(nic_bandwidth, 'get_gpu_nic_mapping_dict', return_value=mapping),
+            patch.object(nic_bandwidth.rocm_plib, 'get_gpu_pcie_bus_dict', return_value=mapping),
             patch.object(nic_bandwidth.nic_table, 'query_nic_table', return_value=(table or TB_TABLE, failures or {})),
         ):
             return nic_bandwidth._collect_inventory(_orch({'nodeA': PROBE}), SETTINGS)[:2]
 
     def test_selects_backend_nics_and_records_why_others_were_left_out(self):
-        mapping = {'nodeA': {'card0': {'gpu_bdf': '0001:01:00.0'}, 'card1': {'gpu_bdf': '0002:01:00.0'}}}
+        mapping = {'nodeA': {'card0': {'PCI Bus': '0001:01:00.0'}, 'card1': {'PCI Bus': '0002:01:00.0'}}}
         inventory, excluded = self._collect(mapping)
 
         self.assertEqual(sorted(nic['nic'] for nic in inventory['nodeA']), ['nic0', 'nic1'])
@@ -78,14 +80,14 @@ class TestCollectInventory(unittest.TestCase):
         # PCI affinity decides which NICs are backend NICs; TransferBench's
         # table decides how the transfer file addresses them. nic0 is first by
         # name but index 1 to TransferBench, and its GPU is 4, not 0.
-        mapping = {'nodeA': {'card0': {'gpu_bdf': '0001:01:00.0'}, 'card1': {'gpu_bdf': '0002:01:00.0'}}}
+        mapping = {'nodeA': {'card0': {'PCI Bus': '0001:01:00.0'}, 'card1': {'PCI Bus': '0002:01:00.0'}}}
         inventory, _ = self._collect(mapping)
 
         got = {nic['nic']: (nic['index'], nic['gpu']) for nic in inventory['nodeA']}
         self.assertEqual(got, {'nic1': (0, 7), 'nic0': (1, 4)})
 
     def test_a_nic_transferbench_cannot_address_is_excluded_with_a_reason(self):
-        mapping = {'nodeA': {'card0': {'gpu_bdf': '0001:01:00.0'}, 'card1': {'gpu_bdf': '0002:01:00.0'}}}
+        mapping = {'nodeA': {'card0': {'PCI Bus': '0001:01:00.0'}, 'card1': {'PCI Bus': '0002:01:00.0'}}}
         table = {'nodeA': [{'nic': 'nic0', 'index': 0, 'closest_gpus': [0]}]}
         inventory, excluded = self._collect(mapping, table=table)
 
@@ -103,9 +105,9 @@ class TestCollectInventory(unittest.TestCase):
         # A node with eight healthy NICs whose TransferBench will not run must
         # not read as a node with nothing to measure: the first is a config
         # error to fix, the second is a cluster with no backend fabric.
-        mapping = {'nodeA': {'card0': {'gpu_bdf': '0001:01:00.0'}, 'card1': {'gpu_bdf': '0002:01:00.0'}}}
+        mapping = {'nodeA': {'card0': {'PCI Bus': '0001:01:00.0'}, 'card1': {'PCI Bus': '0002:01:00.0'}}}
         with (
-            patch.object(nic_bandwidth, 'get_gpu_nic_mapping_dict', return_value=mapping),
+            patch.object(nic_bandwidth.rocm_plib, 'get_gpu_pcie_bus_dict', return_value=mapping),
             patch.object(
                 nic_bandwidth.nic_table,
                 'query_nic_table',
@@ -120,3 +122,43 @@ class TestCollectInventory(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestGpuDiscoveryDoesNotRequireSudo(unittest.TestCase):
+    def test_gpu_addresses_are_read_without_sudo(self):
+        # The shipped config sets use_sudo: false, so discovery must not
+        # depend on passwordless sudo being available on every node.
+        with patch.object(nic_bandwidth.rocm_plib, 'get_gpu_pcie_bus_dict', return_value={}) as probe:
+            nic_bandwidth._gpu_bdfs_by_node(MagicMock())
+        self.assertIs(probe.call_args.kwargs.get('use_sudo'), False)
+
+
+class TestDmesgWindow(unittest.TestCase):
+    def test_the_kernel_log_is_scanned_on_the_host_handle(self):
+        # A GPU reset is a host kernel event; the container's view is not it.
+        orch = MagicMock()
+        with patch.object(nic_bandwidth, 'get_passwordless_sudo_status', return_value={'n1': True}):
+            window = nic_bandwidth._dmesg_window(orch)
+        self.assertIsNotNone(window)
+        self.assertIs(window.handle, orch.all)
+
+    def test_no_window_when_the_log_cannot_be_read(self):
+        # The shipped config does not assume passwordless sudo, so a missing
+        # one must not fail the run on an unrelated privilege gap.
+        with patch.object(nic_bandwidth, 'get_passwordless_sudo_status', return_value={'n1': True, 'n2': False}):
+            self.assertIsNone(nic_bandwidth._dmesg_window(MagicMock()))
+
+    def test_no_window_when_sudo_status_is_unknown(self):
+        with patch.object(nic_bandwidth, 'get_passwordless_sudo_status', return_value={}):
+            self.assertIsNone(nic_bandwidth._dmesg_window(MagicMock()))
+
+
+class TestErrorListIsolation(unittest.TestCase):
+    def test_a_previous_tests_failures_do_not_fail_this_one(self):
+        # globals.error_list is a session-wide singleton; update_test_result's
+        # own contract is that each test starts it empty.
+        from cvs.lib import globals as cvs_globals
+
+        src = inspect.getsource(nic_bandwidth.test_nic_bandwidth)
+        self.assertIn('globals.error_list = []', src, 'the suite must clear the shared error list')
+        cvs_globals.error_list = []

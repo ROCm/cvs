@@ -5,7 +5,7 @@
   "report_basename": "nic_bandwidth_run_deck",
   "title": "Topology NIC Bandwidth Run Deck",
   "subtitle": "cross-node RDMA bandwidth for every NIC pair, as a percentage of the cluster median",
-  "footer": "CVS topology · render-only · does not affect validation gates",
+  "footer": "CVS topology \u00b7 render-only \u00b7 does not affect validation gates",
   "link_name": "NIC Bandwidth Run Deck",
   "dataset_builder": "status_matrix",
   "interactive_viewer": false,
@@ -14,11 +14,16 @@
     "variant": "nic_bandwidth_variant_config"
   },
   "cards": [
-    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {
+      "type": "run_card",
+      "id": "run-card",
+      "title": "Run card",
+      "bind": "run_card_display"
+    },
     {
       "type": "metric_charts",
       "id": "cluster-grid",
-      "title": "NIC to NIC bandwidth (whole cluster)",
+      "title": "Cluster-wide bandwidth grids",
       "bind": "datasets.status_matrix.meta.nic_grid",
       "when_empty": "hide",
       "heatmap_heading": false
