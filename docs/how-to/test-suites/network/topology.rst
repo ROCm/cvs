@@ -38,9 +38,8 @@ Run the tests
 
 .. code:: bash
 
-   cvs run --cluster_file ./my_cluster.json \
-           --config_file ./my_topology_config.json \
-           --test_suite nic_bandwidth
+   cvs run nic_bandwidth --cluster_file ./my_cluster.json \
+           --config_file ./my_topology_config.json
 
 Run on managed compute
 ----------------------

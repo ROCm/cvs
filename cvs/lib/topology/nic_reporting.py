@@ -77,20 +77,39 @@ def node_heatmap(node, matrix, median, threshold):
 
     Same-node columns are left empty: cross-node pairs are the only ones
     measured, so there is no value to show.
+
+    Under quick coverage only the reference nodes are sources, so every other
+    node has incoming measurements and no outgoing ones. Those nodes get the
+    reversed view rather than no heatmap at all: their own NICs stay on the
+    rows, and the axis labels say the traffic came the other way.
     """
     rows = [source for source in _sources(matrix) if source[0] == node]
     cols = [dest for dest in _destinations(matrix) if dest[0] != node]
-    if not rows or not cols:
+    if rows and cols:
+        values = [[_percent(matrix.get(row, {}).get(col), median) for col in cols] for row in rows]
+        return build_heatmap(
+            'NIC bandwidth',
+            [nic for _, nic in rows],
+            [cell_label(peer, nic) for peer, nic in cols],
+            values,
+            threshold,
+            row_label='source NIC',
+            col_label='destination NIC',
+        )
+
+    incoming_rows = [dest for dest in _destinations(matrix) if dest[0] == node]
+    incoming_cols = [source for source in _sources(matrix) if source[0] != node]
+    if not incoming_rows or not incoming_cols:
         return None
-    values = [[_percent(matrix.get(row, {}).get(col), median) for col in cols] for row in rows]
+    values = [[_percent(matrix.get(col, {}).get(row), median) for col in incoming_cols] for row in incoming_rows]
     return build_heatmap(
-        'NIC bandwidth',
-        [nic for _, nic in rows],
-        [cell_label(peer, nic) for peer, nic in cols],
+        'NIC bandwidth (incoming)',
+        [nic for _, nic in incoming_rows],
+        [cell_label(peer, nic) for peer, nic in incoming_cols],
         values,
         threshold,
-        row_label='source NIC',
-        col_label='destination NIC',
+        row_label='destination NIC',
+        col_label='source NIC',
     )
 
 
@@ -166,7 +185,8 @@ def record_results(results_store, matrix, flags, meta=None, excluded_by_node=Non
     for node in nodes:
         heatmaps = [heat for heat in (node_heatmap(node, matrix, median, threshold_pct),) if heat]
         excluded = (excluded_by_node or {}).get(node) or []
-        items = [{'name': f'{nic["nic"]} excluded', 'status': 'na', 'detail': nic['reason']} for nic in excluded]
+        # The status-matrix builder reads 'message'; a 'detail' key renders blank.
+        items = [{'name': f'{nic["nic"]} excluded', 'status': 'na', 'message': nic['reason']} for nic in excluded]
         if node in measured:
             status = _node_status(node, flags)
             summary = f'{len(heatmaps)} heatmap(s)'

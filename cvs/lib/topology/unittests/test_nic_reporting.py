@@ -104,7 +104,7 @@ class TestRecordResults(unittest.TestCase):
         store = self._record(_matrix(), excluded_by_node={'nodeZ': [{'nic': 'nic0', 'reason': 'link is not ACTIVE'}]})
         record = store['groups'][nic_reporting.GROUP]['nodes']['nodeZ']
         self.assertEqual(record['status'], 'na')
-        self.assertEqual(record['items'][0]['detail'], 'link is not ACTIVE')
+        self.assertEqual(record['items'][0]['message'], 'link is not ACTIVE')
 
     def test_cluster_wide_grid_is_published_through_meta(self):
         store = self._record(_matrix())
@@ -123,7 +123,7 @@ class TestRecordResults(unittest.TestCase):
         excluded = {'nodeA': [{'nic': 'nic9', 'reason': 'link is not ACTIVE'}]}
         nodes = self._record(_matrix(), excluded_by_node=excluded)['groups'][nic_reporting.GROUP]['nodes']
         items = nodes['nodeA']['items']
-        self.assertEqual(items[0]['detail'], 'link is not ACTIVE')
+        self.assertEqual(items[0]['message'], 'link is not ACTIVE')
         self.assertEqual(items[0]['status'], 'na')
 
     def test_empty_matrix_publishes_no_cluster_grid(self):
@@ -133,3 +133,54 @@ class TestRecordResults(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestExplanationsReachTheRenderedReport(unittest.TestCase):
+    """Asserting on the dict is not enough: the deck reads a specific key."""
+
+    def _results_rows(self, store):
+        from cvs.lib.report.profile import load_json_profile
+        from cvs.lib.report.rundeck.payload import build_rundeck_payload
+
+        payload = build_rundeck_payload(
+            profile=load_json_profile('nic_bandwidth'),
+            store={'cvs_results_dict': store, 'nic_bandwidth_variant_config': {'hosts': ['nodeA']}},
+            cvs_version='0.4.0',
+        )
+        return payload['datasets']['status_matrix']['results_table']['rows']
+
+    def test_an_excluded_nic_reason_reaches_the_rendered_results_row(self):
+        # Asserting on the payload as a whole would pass even with the wrong
+        # key, because the raw record is embedded in it; the builder reads one
+        # specific field for the row a reader actually sees.
+        matrix = _matrix()
+        store = {}
+        nic_reporting.record_results(
+            store,
+            matrix,
+            nic_matrix.flag_outliers(matrix),
+            meta={'suite': 'nic_bandwidth'},
+            excluded_by_node={'nodeA': [{'nic': 'nic9', 'reason': 'link is not ACTIVE'}]},
+        )
+        row = next(row for row in self._results_rows(store) if 'nic9 excluded' in row)
+        self.assertIn('link is not ACTIVE', row, f'the reason must render in the row, got {row}')
+
+
+class TestDestinationOnlyNodes(unittest.TestCase):
+    def test_a_node_measured_only_as_a_destination_still_gets_a_heatmap(self):
+        # Under quick coverage only the reference nodes are sources; the rest
+        # have incoming measurements and would otherwise show no grid at all.
+        inv = {n: [{'nic': 'nic0', 'index': 0, 'gpu': 0}] for n in ('nodeA', 'nodeB', 'nodeC')}
+        pairs = nic_matrix.build_pairs(inv, coverage='quick')
+        matrix = {}
+        for pair in pairs:
+            source = (pair['src_node'], pair['src_nic'])
+            matrix.setdefault(source, {})[(pair['dst_node'], pair['dst_nic'])] = 100.0
+        self.assertNotIn('nodeC', {s[0] for s in matrix}, 'nodeC must be destination-only for this test')
+
+        heat = nic_reporting.node_heatmap('nodeC', matrix, 100.0, 90)
+        self.assertIsNotNone(heat)
+        self.assertEqual(heat['rows'], ['nic0'], "the node's own NICs stay on the rows")
+        self.assertEqual(heat['row_label'], 'destination NIC')
+        self.assertEqual(heat['col_label'], 'source NIC')
+        self.assertTrue(all(cell is not None for row in heat['values'] for cell in row))

@@ -58,11 +58,19 @@ def _collect_inventory(orch, settings):
             selected_by_node[node] = selected
         excluded_by_node[node] = excluded
 
+    # One global IB_PORT_NUMBER serves the whole run, so the port is settled
+    # before the table is queried and the same value is used to measure.
+    ib_port, selected_by_node, off_port = nic_inventory.select_common_port(selected_by_node)
+    for node, items in off_port.items():
+        excluded_by_node.setdefault(node, []).extend(items)
+
+    table_env = dict(settings.get('transferbench_env') or {})
+    table_env['IB_PORT_NUMBER'] = str(ib_port)
     table_by_node, table_failures = nic_table.query_nic_table(
         orch,
         settings['tb_binary'],
         nic_filter=settings.get('nic_filter'),
-        extra_env=settings.get('transferbench_env'),
+        extra_env=table_env,
         use_sudo=settings['use_sudo'],
     )
     inventory, unaddressable = nic_inventory.annotate_transferbench_indices(selected_by_node, table_by_node)
@@ -76,28 +84,48 @@ def _collect_inventory(orch, settings):
             len(inventory.get(node, [])),
             len(excluded_by_node.get(node, [])),
         )
+    discovery_failures = {}
     for node, reason in sorted(probe_failures.items()):
-        log.warning('%s: %s', node, reason)
+        discovery_failures[node] = f'NIC probe did not complete ({reason})'
     for node, reason in sorted(table_failures.items()):
-        log.warning('%s: NIC table unavailable: %s', node, reason)
-    return inventory, excluded_by_node, table_failures
+        discovery_failures[node] = f'TransferBench could not report its NIC table ({reason})'
+    for node, reason in discovery_failures.items():
+        log.warning('%s: %s', node, reason)
+    return inventory, excluded_by_node, discovery_failures, ib_port
+
+
+class _HostSubsetHandle:
+    """Adapts the orchestrator to the handle interface DmesgWindow expects.
+
+    ``exec_on_host`` runs on the cluster host OS under either backend, which
+    is what a kernel log needs: a GPU reset or a NIC/PCIe error is a host
+    event, and a container's view of dmesg is not where it is recorded. It
+    also takes a host subset, which the bare parallel handle does not.
+    """
+
+    def __init__(self, orch, hosts):
+        self.orch = orch
+        self.hosts = list(hosts)
+
+    def exec(self, cmd, **kwargs):
+        return self.orch.exec_on_host(cmd, hosts=self.hosts, **kwargs)
 
 
 def _dmesg_window(orch):
-    """Kernel-log window for the measurement, or None when it cannot be read.
+    """Kernel-log window for the measurement, plus the hosts it cannot cover.
 
-    This deliberately uses the host handle even under a container
-    orchestrator: a GPU reset or a NIC/PCIe error is a host kernel event, and
-    the container's view of the log is not where it is recorded. Reading it
-    needs passwordless sudo, which the shipped ``use_sudo: false`` config does
-    not assume, so an unreadable log is reported and the run continues rather
-    than failing on an unrelated privilege gap.
+    Returns ``(window_or_None, unscanned_hosts)``. Reading the log needs
+    passwordless sudo, which the shipped ``use_sudo: false`` config does not
+    assume. One node without it must not disable the scan everywhere, so the
+    readable hosts are scanned on their own and the rest are returned for the
+    caller to report as lacking kernel-error validation.
     """
     sudo_status = get_passwordless_sudo_status(orch.all)
-    if sudo_status and all(sudo_status.values()):
-        return DmesgWindow(orch.all, 'nic_bandwidth', False)
-    log.warning('skipping the dmesg error scan: the kernel log needs passwordless sudo on every node')
-    return None
+    readable = sorted(host for host, allowed in (sudo_status or {}).items() if allowed)
+    unscanned = sorted(host for host in orch.hosts if host not in readable)
+    if not readable:
+        return None, unscanned
+    return DmesgWindow(_HostSubsetHandle(orch, readable), 'nic_bandwidth', False), unscanned
 
 
 def _write_topology_json(document):
@@ -117,28 +145,32 @@ def test_nic_bandwidth(orch, settings, cluster_dict, cvs_results_dict):
     if len(orch.hosts) < 2:
         pytest.skip('cross-node NIC bandwidth needs at least 2 nodes')
 
-    inventory, excluded_by_node, table_failures = _collect_inventory(orch, settings)
+    inventory, excluded_by_node, discovery_failures, ib_port = _collect_inventory(orch, settings)
 
-    # A node CVS could not query was never validated. Reporting the cluster as
-    # healthy because the remaining nodes measured well would answer a question
-    # the user did not ask, so every such node fails the test whether or not
-    # enough nodes survived to measure.
-    for node, reason in sorted(table_failures.items()):
-        fail_test(f'{node}: TransferBench could not report its NIC table, so the node was not validated ({reason})')
+    # A node CVS could not fully discover was never validated, whichever probe
+    # failed. Reporting the cluster as healthy because the remaining nodes
+    # measured well would answer a question the user did not ask, so every
+    # such node fails the test whether or not enough nodes survived to measure.
+    for node, reason in sorted(discovery_failures.items()):
+        fail_test(f'{node} was not validated: {reason}')
 
     if len(inventory) < 2:
-        if table_failures:
+        if discovery_failures:
             update_test_result()
             return
         pytest.skip(f'cross-node NIC bandwidth needs backend NICs on at least 2 nodes, found {len(inventory)}')
 
     # A GPU reset or a NIC/PCIe error during the run leaves bandwidth looking
     # fine, so the kernel log is scanned over the window the workload ran in.
-    dmesg_window = _dmesg_window(orch)
+    dmesg_window, unscanned = _dmesg_window(orch)
+    # A host whose kernel log cannot be read is not kernel-error validated;
+    # leaving that as a log line would let the suite pass with no scan at all.
+    for host in unscanned:
+        fail_test(f'{host} was not checked for kernel errors: the kernel log needs passwordless sudo')
     if dmesg_window:
         dmesg_window.open()
     try:
-        matrix, pairs, problems = nic_runner.run_matrix(orch, inventory, settings)
+        matrix, pairs, problems = nic_runner.run_matrix(orch, inventory, settings, ib_port=ib_port)
     finally:
         # Bracketed in a finally so a failed run is still scanned: a host that
         # fell over mid-measurement is exactly when the kernel log matters.

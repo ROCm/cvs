@@ -114,10 +114,11 @@ class TestCollectInventory(unittest.TestCase):
                 return_value=({}, {'nodeA': 'TransferBench exited 127'}),
             ),
         ):
-            inventory, _, table_failures = nic_bandwidth._collect_inventory(_orch({'nodeA': PROBE}), SETTINGS)
+            inventory, _, failures, _port = nic_bandwidth._collect_inventory(_orch({'nodeA': PROBE}), SETTINGS)
 
         self.assertEqual(inventory, {})
-        self.assertEqual(table_failures, {'nodeA': 'TransferBench exited 127'})
+        self.assertEqual(list(failures), ['nodeA'])
+        self.assertIn('NIC table', failures['nodeA'])
 
 
 if __name__ == '__main__':
@@ -137,20 +138,34 @@ class TestDmesgWindow(unittest.TestCase):
     def test_the_kernel_log_is_scanned_on_the_host_handle(self):
         # A GPU reset is a host kernel event; the container's view is not it.
         orch = MagicMock()
+        orch.hosts = ['n1']
         with patch.object(nic_bandwidth, 'get_passwordless_sudo_status', return_value={'n1': True}):
-            window = nic_bandwidth._dmesg_window(orch)
+            window, unscanned = nic_bandwidth._dmesg_window(orch)
         self.assertIsNotNone(window)
-        self.assertIs(window.handle, orch.all)
+        self.assertEqual(unscanned, [])
+        window.handle.exec('dmesg')
+        # exec_on_host reaches the host OS under either backend, which is
+        # where a GPU reset or PCIe error is logged.
+        self.assertEqual(orch.exec_on_host.call_args.kwargs['hosts'], ['n1'])
 
-    def test_no_window_when_the_log_cannot_be_read(self):
-        # The shipped config does not assume passwordless sudo, so a missing
-        # one must not fail the run on an unrelated privilege gap.
+    def test_one_unreadable_host_does_not_disable_the_scan_everywhere(self):
+        # Otherwise a single sudo-less node lets the whole cluster pass with
+        # no kernel-error check at all.
+        orch = MagicMock()
+        orch.hosts = ['n1', 'n2']
         with patch.object(nic_bandwidth, 'get_passwordless_sudo_status', return_value={'n1': True, 'n2': False}):
-            self.assertIsNone(nic_bandwidth._dmesg_window(MagicMock()))
+            window, unscanned = nic_bandwidth._dmesg_window(orch)
+        self.assertIsNotNone(window, 'the readable host must still be scanned')
+        self.assertEqual(window.handle.hosts, ['n1'])
+        self.assertEqual(unscanned, ['n2'], 'the unreadable host must be reported, not ignored')
 
-    def test_no_window_when_sudo_status_is_unknown(self):
+    def test_no_window_when_nothing_is_readable_and_every_host_is_reported(self):
+        orch = MagicMock()
+        orch.hosts = ['n1', 'n2']
         with patch.object(nic_bandwidth, 'get_passwordless_sudo_status', return_value={}):
-            self.assertIsNone(nic_bandwidth._dmesg_window(MagicMock()))
+            window, unscanned = nic_bandwidth._dmesg_window(orch)
+        self.assertIsNone(window)
+        self.assertEqual(unscanned, ['n1', 'n2'])
 
 
 class TestErrorListIsolation(unittest.TestCase):

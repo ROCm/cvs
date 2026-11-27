@@ -298,3 +298,15 @@ class TestResolveTimeout(unittest.TestCase):
 
     def test_a_generous_configured_timeout_does_not_warn(self):
         self.assertEqual(nic_runner.resolve_timeout(99999, 128), 99999)
+
+
+class TestIbPortReachesTheCommand(unittest.TestCase):
+    def test_the_selected_port_is_passed_to_transferbench(self):
+        # TransferBench defaults IB_PORT_NUMBER to 1; a cluster up on port 2
+        # would otherwise be measured on a down link.
+        phdl = _Phdl(['nodeA', 'nodeB'], run_output={'nodeA': _results(2), 'nodeB': ''})
+        nic_runner.run_matrix(_orch(phdl), INVENTORY, nic_runner.build_settings({}), ib_port=2)
+        self.assertIn('IB_PORT_NUMBER=2', phdl.cmd_lists[0][0])
+
+    def test_no_port_is_forced_when_none_was_selected(self):
+        self.assertNotIn('IB_PORT_NUMBER', nic_runner.build_run_env(nic_runner.build_settings({})))

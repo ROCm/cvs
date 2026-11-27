@@ -86,7 +86,7 @@ def resolve_timeout(configured, pair_count):
     return configured
 
 
-def build_run_env(settings):
+def build_run_env(settings, ib_port=None):
     """Environment shared by every rank.
 
     The transfer file and the message size are argv, not environment:
@@ -100,10 +100,14 @@ def build_run_env(settings):
     }
     if settings.get('nic_filter'):
         env['TB_NIC_FILTER'] = str(settings['nic_filter'])
+    if ib_port is not None:
+        # TransferBench defaults this to port 1; a cluster whose adapters are
+        # up on another port would otherwise be measured on a down link.
+        env['IB_PORT_NUMBER'] = str(ib_port)
     return env
 
 
-def run_matrix(orch, inventory, settings, switch_by_node=None):
+def run_matrix(orch, inventory, settings, switch_by_node=None, ib_port=None):
     """Measure every cross-node NIC pair and return the matrix.
 
     Returns ``(matrix, pairs, problems)``. ``problems`` lists nodes that could
@@ -148,7 +152,7 @@ def run_matrix(orch, inventory, settings, switch_by_node=None):
         problems.append(f'staging incomplete, no measurement attempted (missing on {", ".join(sorted(unstaged))})')
         return {}, pairs, problems
 
-    base_env = build_run_env(settings)
+    base_env = build_run_env(settings, ib_port=ib_port)
 
     def command_for_rank(rank, num_ranks, master_addr):
         node = node_by_rank[rank]

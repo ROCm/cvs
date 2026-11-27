@@ -323,3 +323,31 @@ class TestAnnotateTransferbenchIndices(unittest.TestCase):
         annotated, dropped = nic_inventory.annotate_transferbench_indices({'n1': [{'nic': 'rdma0', 'gpu': 0}]}, {})
         self.assertEqual(annotated, {})
         self.assertEqual(dropped['n1'][0]['reason'], nic_inventory.EXCLUDED_NOT_IN_TB_TABLE)
+
+
+class TestSelectCommonPort(unittest.TestCase):
+    """TransferBench takes one global IB_PORT_NUMBER for the whole run."""
+
+    def test_a_cluster_all_up_on_port_two_is_addressed_on_port_two(self):
+        nics = {'n1': [{'nic': 'a', 'port': '2'}, {'nic': 'b', 'port': '2'}]}
+        port, kept, dropped = nic_inventory.select_common_port(nics)
+        self.assertEqual(port, 2)
+        self.assertEqual([n['nic'] for n in kept['n1']], ['a', 'b'])
+        self.assertEqual(dropped, {})
+
+    def test_a_nic_on_another_port_is_excluded_with_a_reason(self):
+        # One env var cannot serve both, and measuring the odd one out on the
+        # chosen port would drive a link that is down.
+        nics = {'n1': [{'nic': 'a', 'port': '1'}, {'nic': 'b', 'port': '1'}, {'nic': 'c', 'port': '2'}]}
+        port, kept, dropped = nic_inventory.select_common_port(nics)
+        self.assertEqual(port, 1)
+        self.assertEqual([n['nic'] for n in kept['n1']], ['a', 'b'])
+        self.assertEqual(dropped['n1'][0]['nic'], 'c')
+        self.assertEqual(dropped['n1'][0]['reason'], nic_inventory.EXCLUDED_OTHER_PORT)
+
+    def test_a_tie_is_broken_by_the_lower_port_so_the_choice_is_stable(self):
+        nics = {'n1': [{'nic': 'a', 'port': '2'}], 'n2': [{'nic': 'b', 'port': '1'}]}
+        self.assertEqual(nic_inventory.select_common_port(nics)[0], 1)
+
+    def test_an_empty_inventory_falls_back_to_the_transferbench_default(self):
+        self.assertEqual(nic_inventory.select_common_port({})[0], nic_inventory.DEFAULT_IB_PORT)

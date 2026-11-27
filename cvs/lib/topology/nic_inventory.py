@@ -39,6 +39,47 @@ EXCLUDED_NOT_IN_TB_TABLE = 'TransferBench does not list this device, so it canno
 EXCLUDED_NO_TB_GPU = 'TransferBench reports no closest GPU for this device'
 
 
+DEFAULT_IB_PORT = 1
+EXCLUDED_OTHER_PORT = 'its active port is not the one the run addresses'
+
+
+def select_common_port(nics_by_node):
+    """Pick the one IB port the run can address, and drop NICs that disagree.
+
+    TransferBench takes a single global ``IB_PORT_NUMBER``, so every NIC in
+    one run has to be measured on the same port. A cluster whose adapters are
+    all up on port 2 is served by setting it; a cluster that mixes ports
+    cannot be, so the minority is excluded with a reason rather than measured
+    on a port that is down.
+
+    Returns ``(port, kept_by_node, dropped_by_node)``.
+    """
+    counts = {}
+    for nics in nics_by_node.values():
+        for nic in nics:
+            counts[nic.get('port')] = counts.get(nic.get('port'), 0) + 1
+    if not counts:
+        return DEFAULT_IB_PORT, {}, {}
+
+    # Most-used port first, lowest port number as the tie-break so the choice
+    # does not move between runs on a symmetric cluster.
+    chosen = sorted(counts, key=lambda port: (-counts[port], _port_sort_key(port)))[0]
+    kept = {}
+    dropped = {}
+    for node, nics in nics_by_node.items():
+        on_port = [nic for nic in nics if nic.get('port') == chosen]
+        off_port = [dict(nic, reason=EXCLUDED_OTHER_PORT) for nic in nics if nic.get('port') != chosen]
+        if on_port:
+            kept[node] = on_port
+        if off_port:
+            dropped[node] = off_port
+    try:
+        port_number = int(str(chosen).strip())
+    except (TypeError, ValueError):
+        port_number = DEFAULT_IB_PORT
+    return port_number, kept, dropped
+
+
 def annotate_transferbench_indices(nics_by_node, table_by_node):
     """Attach TransferBench's own NIC and GPU indices to each selected NIC.
 
