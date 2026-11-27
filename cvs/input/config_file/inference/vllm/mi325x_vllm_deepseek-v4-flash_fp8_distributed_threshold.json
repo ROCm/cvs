@@ -1,6 +1,6 @@
 {
   "_comment": "Uncalibrated zero placeholders for the packaged 32-metric assertion subset. The paired config keeps enforce_thresholds false, so all finite metrics record without gating. Add or remove registered metrics as needed, and replace every retained placeholder with a measured value before enabling enforcement.",
-  "_comment_accuracy": "The optional top-level accuracy block is task-qualified and exempt from vLLM sweep metric validation. Its shape remains: \"accuracy\": {\"<task-id>\": {\"<lm-eval-metric>\": {\"kind\": \"min\", \"value\": 0}}}.",
+  "_comment_accuracy": "The optional accuracy block holds one lm_eval section per task id and is exempt from vLLM sweep metric validation: \"accuracy\": {\"lm_eval\": {\"<task-id>\": {\"<lm-eval-metric>\": {\"kind\": \"min\", \"value\": 0}}}}.",
   "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": {
     "failed": {
       "kind": "max",
@@ -114,19 +114,19 @@
       "kind": "min",
       "value": 0
     },
-    "queue_time_p50_ms": {
+    "p50_queue_time_ms": {
       "kind": "max",
       "value": 0
     },
-    "queue_time_p95_ms": {
+    "p95_queue_time_ms": {
       "kind": "max",
       "value": 0
     },
-    "prefill_time_p50_ms": {
+    "p50_prefill_time_ms": {
       "kind": "max",
       "value": 0
     },
-    "prefill_time_p95_ms": {
+    "p95_prefill_time_ms": {
       "kind": "max",
       "value": 0
     }
@@ -244,19 +244,19 @@
       "kind": "min",
       "value": 0
     },
-    "queue_time_p50_ms": {
+    "p50_queue_time_ms": {
       "kind": "max",
       "value": 0
     },
-    "queue_time_p95_ms": {
+    "p95_queue_time_ms": {
       "kind": "max",
       "value": 0
     },
-    "prefill_time_p50_ms": {
+    "p50_prefill_time_ms": {
       "kind": "max",
       "value": 0
     },
-    "prefill_time_p95_ms": {
+    "p95_prefill_time_ms": {
       "kind": "max",
       "value": 0
     }
@@ -374,31 +374,33 @@
       "kind": "min",
       "value": 0
     },
-    "queue_time_p50_ms": {
+    "p50_queue_time_ms": {
       "kind": "max",
       "value": 0
     },
-    "queue_time_p95_ms": {
+    "p95_queue_time_ms": {
       "kind": "max",
       "value": 0
     },
-    "prefill_time_p50_ms": {
+    "p50_prefill_time_ms": {
       "kind": "max",
       "value": 0
     },
-    "prefill_time_p95_ms": {
+    "p95_prefill_time_ms": {
       "kind": "max",
       "value": 0
     }
   },
   "accuracy": {
-    "gsm8k_flex": {
-      "gsm8k.exact_match__flexible-extract": {
-        "kind": "min",
-        "value": 0
-      }
-    },
-    "gsm8k_strict": {},
-    "gsm8k_stderr": {}
+    "lm_eval": {
+      "gsm8k_flex": {
+        "gsm8k.exact_match__flexible-extract": {
+          "kind": "min",
+          "value": 0
+        }
+      },
+      "gsm8k_strict": {},
+      "gsm8k_stderr": {}
+    }
   }
 }
