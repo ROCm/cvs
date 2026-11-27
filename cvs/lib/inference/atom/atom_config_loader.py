@@ -189,6 +189,14 @@ class AtomVariantConfig(BaseVariantConfig):
     long_context_accuracy: LongContextAccuracyConfig = Field(default_factory=LongContextAccuracyConfig)
     platform: PlatformConfig = Field(default_factory=PlatformConfig)
 
+    def lm_eval_tasks(self):
+        """The lm-eval tasks to run, in config order."""
+        return list(self.accuracy.tasks)
+
+    def lm_eval_thresholds(self, task_id):
+        """One lm-eval task's threshold specs from ``thresholds["accuracy"]``; ``{}`` when it has none."""
+        return dict(self.thresholds.get("accuracy", {}).get(task_id, {}))
+
     def cell_key(self, isl, osl, concurrency):
         p = self.params
         return f"ISL={isl},OSL={osl},TP={p.tensor_parallelism},PP={p.pipeline_parallel_size},CONC={concurrency}"

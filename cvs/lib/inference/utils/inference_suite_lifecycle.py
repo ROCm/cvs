@@ -201,8 +201,7 @@ def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
-    accuracy_config = getattr(variant_config, "accuracy", None)
-    tasks_by_id = {task.id: task for task in (accuracy_config.tasks if accuracy_config else [])}
+    tasks_by_id = {task.id: task for task in variant_config.lm_eval_tasks()}
     task = tasks_by_id.get(accuracy_task)
     if task is None:
         pytest.skip(f"accuracy task {accuracy_task!r} not present in accuracy.tasks")
@@ -236,8 +235,7 @@ def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):
 
     if not variant_config.enforce_thresholds:
         return
-    accuracy_thresholds = (variant_config.thresholds or {}).get("accuracy", {})
-    evaluate_all(actual, accuracy_thresholds.get(accuracy_task, {}))
+    evaluate_all(actual, variant_config.lm_eval_thresholds(accuracy_task))
 
 
 def test_teardown(orch, lifecycle, request):

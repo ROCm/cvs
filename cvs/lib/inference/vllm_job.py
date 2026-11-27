@@ -41,7 +41,8 @@ import time
 from typing import Optional
 
 from cvs.lib import globals
-from cvs.lib.conf_lib.schemas.vllm import serialize_cli_options
+from cvs.lib.inference.utils.vllm_config_loader import serialize_cli_options
+from cvs.parsers.schemas import container_ib_hcas, container_sets_sockets, poll_schedule
 from cvs.lib.inference.utils.vllm_metrics import project_vllm_metrics
 from cvs.lib.utils.model_query_lib import OpenAIProbe
 
@@ -116,6 +117,31 @@ class VllmJob:
     )
     SERVER_STATE_RE = re.compile(r"^server-state log=(present|missing) pid=(alive|dead|none)$", re.M)
     _MAX_MODEL_LEN_PAD = 8
+    # timeouts.server_ready_s and timeouts.client_s are totals, spent on the
+    # waits each suite's shipped configs used: (server warmup, server poll
+    # interval, client first wait, client poll interval).
+    SCHEDULES = {"single": (330, 60, 120, 60), "distributed": (30, 10, 10, 10)}
+    # Used when a total is null: 330 s + 60 x 60 s, and 120 s + 20 x 60 s.
+    DEFAULT_SERVER_READY_S = 3930
+    DEFAULT_CLIENT_S = 1320
+    # Client fields the job writes itself; any other client value is a flag.
+    _CLIENT_FIELDS = frozenset(
+        {
+            "num_prompts",
+            "random_range_ratio",
+            "seed",
+            "request_rate",
+            "burstiness",
+            "random_prefix_len",
+            "tokenizer_mode",
+            "dataset_name",
+            "ignore_eos",
+            "trust_remote_code",
+            "random_input_len",
+            "random_output_len",
+            "max_concurrency",
+        }
+    )
 
     def __init__(
         self,
@@ -135,7 +161,7 @@ class VllmJob:
         self.osl = str(osl)
         self.concurrency = str(concurrency)
         self.num_prompts = str(num_prompts)
-        self.ib_hcas = [] if variant.container.nccl_ib_hcas is not None else (ib_hcas or [])
+        self.ib_hcas = [] if container_ib_hcas(variant.container) is not None else (ib_hcas or [])
         self.log_subdir = log_subdir
         self.hosts = tuple(orch.hosts)
         if not self.hosts:
@@ -145,14 +171,11 @@ class VllmJob:
             raise ValueError("vLLM topology hosts do not match the orchestrator")
 
         p = variant.server_params
-        b = dict(benchmark_params or {})
-        if not b:
-            b = variant.benchmark_params.model_dump()
-            b.update(variant.benchmark_params.extra_options())
-        self.tp = str(p.tensor_parallel_size)
-        self.pp = str(topology.pipeline_parallel_size) if topology is not None else str(p.pipeline_parallel_size)
+        b = dict(benchmark_params or {}) or variant.client_values()
+        self.tp = str(p.tp)
+        self.pp = str(topology.pipeline_parallel_size) if topology is not None else str(p.pp)
         self.master_addr = self.hosts[0]
-        self.master_port = str(p.dist_init_port)
+        self.master_port = str(p.master_port)
         self.nnodes = str(topology.nnodes) if topology is not None else str(len(self.hosts))
         self.port_no = str(p.port)
         self.random_range_ratio = str(b["random_range_ratio"])
@@ -162,25 +185,23 @@ class VllmJob:
         self.request_rate = str(b["request_rate"])
         self.tokenizer_mode = str(b["tokenizer_mode"])
         self.base_url = "http://0.0.0.0"
-        self.dataset_name = str(b["dataset_name"])
-        self.backend = str(b["backend"])
-        self.ignore_eos = bool(b["ignore_eos"])
-        self.trust_remote_code = bool(b["trust_remote_code"])
+        self.dataset_name = str(b.get("dataset_name", "random"))
+        self.backend = "vllm"
+        self.ignore_eos = bool(b.get("ignore_eos", True))
+        self.trust_remote_code = bool(b.get("trust_remote_code", False))
 
         self.model_id = p.model
         self.log_dir = variant.paths.log_dir
-        self.serve_args = p.extra_options()
-        self.distributed_executor_backend = p.distributed_executor_backend
-        self.benchmark_options = {
-            key: value
-            for key, value in b.items()
-            if key not in type(variant.benchmark_params).model_fields
-            and key not in {"random_input_len", "random_output_len", "max_concurrency"}
-        }
+        self.serve_args = dict(p.engine_args)
+        self.max_model_len = p.max_model_length
+        # An explicit null sends no --max-model-len, so vLLM uses the model's own length.
+        self.derive_max_model_len = "max_model_length" not in p.model_fields_set
+        self.distributed_executor_backend = variant.vllm.distributed_executor_backend
+        self.benchmark_options = {key: value for key, value in b.items() if key not in self._CLIENT_FIELDS}
         self.server_env = {}
         self.models_dir = variant.paths.models_dir
         self.hf_token_file = variant.paths.hf_token_file
-        self.ib_netdev = None if variant.container.socket_env_configured else variant.ib_netdev
+        self.ib_netdev = None if container_sets_sockets(variant.container) else variant.ib_netdev
 
         self.out_dir = f"{self.log_dir}/{self.log_subdir}/out-node0/isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
         self.server_log = f"{self.out_dir}/vllm_serve_server.log"
@@ -190,12 +211,14 @@ class VllmJob:
         self._precheck_wait = 30
         self._launch_retries = 2
         self._launch_retry_wait = 10
-        self._warmup_wait = p.server_warmup_wait_s
-        self._server_poll_count = p.server_poll_iterations
-        self._server_poll_wait = p.server_poll_wait_s
-        self._client_initial_wait = int(b["client_initial_wait_s"])
-        self._client_poll_count = int(b["client_poll_iterations"])
-        self._client_poll_wait = int(b["client_poll_wait_s"])
+        suite = getattr(variant, "_suite", "") or ("distributed" if len(self.hosts) > 1 else "single")
+        warmup, server_poll, client_wait, client_poll = self.SCHEDULES[suite]
+        server_ready_s = variant.timeouts.server_ready_s or self.DEFAULT_SERVER_READY_S
+        client_s = variant.timeouts.client_s or self.DEFAULT_CLIENT_S
+        self._warmup_wait, self._server_poll_count = poll_schedule(server_ready_s, warmup, server_poll)
+        self._server_poll_wait = server_poll
+        self._client_initial_wait, self._client_poll_count = poll_schedule(client_s, client_wait, client_poll)
+        self._client_poll_wait = client_poll
 
     # ---------- derived builders ----------
 
@@ -230,7 +253,9 @@ class VllmJob:
             "--port",
             str(self.port_no),
         ]
-        if "max_model_len" not in self.serve_args:
+        if self.max_model_len is not None:
+            argv += ["--max-model-len", str(self.max_model_len)]
+        elif self.derive_max_model_len:
             argv += ["--max-model-len", self._derive_max_model_len()]
         if int(self.nnodes) > 1 and not self._is_ray_backend:
             # mp multi-node: inject the full distributed-executor block.

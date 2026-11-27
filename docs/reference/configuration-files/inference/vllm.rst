@@ -793,14 +793,15 @@ emitted.
 Sweep specs are strict at load time regardless of enforcement:
 
 - A spec contains exactly ``kind`` and ``value``.
-- ``kind`` must equal the registry direction, exactly ``min`` or ``max``.
+- ``kind`` must equal the registry direction, exactly ``min`` or ``max``, or
+  be ``info``, which records the metric without gating it.
 - ``value`` must be a finite JSON number. Booleans, strings, null, arrays,
   objects, NaN, and infinity are rejected.
 - Cell-level keys beginning with ``_comment`` or ``_example`` are comments and
   are ignored; all other keys must name a registered metric.
 - Prefixed names (``client.*``, ``gpu.*``, ``prom.*``), unknown names, legacy
   kinds (including ``min_tok_s`` and ``max_ms``), references, tolerances,
-  units, ``info``, ``optional``, and extra fields are rejected.
+  units, ``optional``, and extra fields are rejected.
 
 ``min`` fails below its value and passes at or above it. ``max`` fails above
 its value and passes at or below it. A gated actual that is missing, null,

@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Platform `test_check_be_nic_link_speed` and preflight `test_interface_name_consistency` require an exact backend NIC count per node (`backend_nic_count` in the host config, `connectivity_check.rdma.expected_nic_count` in preflight) instead of comparing nodes with each other. Host-config auto-detect leaves out the management NIC. Configs with `nic_link_interfaces: []` must set `backend_nic_count`; a count that differs from the length of the interface list fails.
 - Preflight `test_ifoe_l2_connectivity`: full-mesh IFoE L2 ping deduplicates symmetric bidirectional accelerator pairs into a balanced tournament schedule and runs each source BDF's ping queue in parallel inside the per-node ScriptLet batch, which shortens the full-mesh L2 ping run.
+- A vLLM config that still holds a `<changeme>` fails at load, naming each field to fill in.
+- A vLLM config that sets something vLLM does not run yet fails at load with a not-implemented error naming each field.
+- vLLM threshold specs take a `min`, `max` or `info` kind, and `info` records a metric without gating it. In accuracy thresholds, `within` and `min_ratio` fail at load, so rewrite them as a `min` or `max` bound. A quoted accuracy value such as `"0.75"` still loads as a number, with the deprecation warning.
 - The shipped MORI config sets `mori_dir` to `/home/{user-id}/INSTALL/mori` and `container.lifetime` to `persistent`, so `install_mori` works with it as shipped. It also mounts the host Broadcom Thor2 `libbnxt_re-rdmav34.so` and `libibverbs.so.1`; delete those mounts on nodes without Thor2.
 
 - Platform `test_check_ifoe_sw_details` reads the IFoE/AFM device firmware from `afmctl show device --json` via the shared AFM parser instead of scraping the text output. A node with passwordless sudo for `afmctl` needs no other change.
@@ -40,7 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RCCL `rccl_perf`, `rccl_regression` and `rccl_pairwise` no longer fail on the libibverbs warning that the unused VMware `libvmw_pvrdma` provider could not be loaded, so the bandwidth checks run on virtualized nodes. Other RDMA provider load failures and ORTE/NCCL errors still fail the run.
 - Config file validation errors, including preflight's cluster file check, and the unresolved `<changeme>` error for cluster and config files name the failing field without printing its value, which can be a credential.
 
-### Removed
+### Deprecated
+
+- The old vLLM config keys are deprecated in favor of the shared inference config names in the vLLM configuration reference. A 0.3.0 vLLM config and its threshold file still load with one warning naming each old key; its wait and poll settings become the two `timeouts` totals.
 
 
 ## [0.3.0] - 2026-11-02

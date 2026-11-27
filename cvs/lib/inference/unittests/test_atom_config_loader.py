@@ -253,7 +253,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             ["/cluster:/cluster", f"/home/x/.hf:{CONTAINER_HF_TOKEN_PATH}:ro"],
         )
 
-    def _token_mount_variant(self, container):
+    def _token_mount_variant(self, container, accuracy=None, accuracy_thresholds=None):
         sweep = Sweep(
             sequence_combinations=[SeqCombo(name="legacy_profile", isl="7168", osl="1024")],
             runs=[Run(combo="legacy_profile", concurrency=64)],
@@ -261,6 +261,8 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         thresholds = {
             "ISL=7168,OSL=1024,TP=8,PP=1,CONC=64": placeholder_gated_threshold_cell(),
         }
+        if accuracy_thresholds is not None:
+            thresholds["accuracy"] = accuracy_thresholds
         return AtomVariantConfig(
             schema_version=1,
             framework="atom",
@@ -276,8 +278,27 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             container=container,
             params={"tensor_parallelism": "8"},
             sweep=sweep,
+            accuracy=accuracy or {},
             thresholds=thresholds,
         )
+
+    def test_lm_eval_accessors(self):
+        container = {"name": "c", "image": "img", "runtime": {"name": "docker", "args": {}}}
+        variant = self._token_mount_variant(container)
+        self.assertEqual(variant.lm_eval_tasks(), [])
+        self.assertEqual(variant.lm_eval_thresholds("mmlu"), {})
+
+        spec = {"kind": "min", "value": 0.5}
+        variant = self._token_mount_variant(
+            container,
+            accuracy={"tasks": [{"id": "mmlu", "task": "mmlu"}, {"id": "gsm8k", "task": "gsm8k"}]},
+            accuracy_thresholds={"mmlu": {"mmlu.acc__none": spec}},
+        )
+        self.assertEqual([task.id for task in variant.lm_eval_tasks()], ["mmlu", "gsm8k"])
+        self.assertEqual(variant.lm_eval_thresholds("mmlu"), {"mmlu.acc__none": spec})
+        self.assertEqual(variant.lm_eval_thresholds("gsm8k"), {})
+        variant.lm_eval_tasks().clear()
+        self.assertEqual(len(variant.accuracy.tasks), 2)
 
     def test_merged_container_strips_cluster_env_token(self):
         variant = self._token_mount_variant(
