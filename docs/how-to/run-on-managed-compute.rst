@@ -190,7 +190,7 @@ other listed errors are printed as ``Error:`` messages by ``cvs run``.
    * - ``Error: Could not create the run directory ...``
      - Workspace is unmounted, read-only or full.
      - Use writable shared storage.
-   * - ``Error: managed CVS requires one task per node: scheduler expanded N hosts but SLURM_NTASKS is M``
+   * - ``Error: managed CVS requires one task per node: scheduler expanded N hosts but the job's world size is M``
      - More than one task per node.
      - Pass ``--ntasks-per-node 1``.
    * - ``Error: managed CVS run requires SPUR_NODES or SLURM_NODELIST``

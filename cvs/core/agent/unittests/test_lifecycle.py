@@ -58,10 +58,37 @@ class TestLifecycle(unittest.TestCase):
     @patch("cvs.core.agent.lifecycle.socket.socket")
     def test_http_agent_prefers_scheduler_hostname(self, mock_socket):
         mock_socket.return_value.getsockname.return_value = ("0.0.0.0", 9000)  # nosec B104 - mocked socket address; nothing binds
-        with patch.dict(os.environ, {"SLURM_NODENAME": "scheduler-host"}, clear=True):
+        with patch.dict(os.environ, {"SLURM_JOB_ID": "1", "SLURM_NODENAME": "scheduler-host"}, clear=True):
             agent = lifecycle.HttpAgentServer(self.agent_dir, rank=1, world_size=2)
         self.addCleanup(agent.stop)
         self.assertEqual(agent.host, "scheduler-host")
+
+    @patch("cvs.core.agent.lifecycle.socket.gethostname", return_value="os-hostname")
+    @patch("cvs.core.agent.lifecycle.socket.socket")
+    def test_http_agent_falls_back_to_os_hostname(self, mock_socket, _gethostname):
+        # Bare metal gives no scheduler node name, even with a stray SLURM_NODENAME.
+        mock_socket.return_value.getsockname.return_value = ("0.0.0.0", 9000)  # nosec B104 - mocked socket address; nothing binds
+        env = {"CVS_SCHEDULER": "bare_metal", "SLURM_NODENAME": "stray"}
+        with patch.dict(os.environ, env, clear=True):
+            agent = lifecycle.HttpAgentServer(self.agent_dir, rank=1, world_size=2)
+        self.addCleanup(agent.stop)
+        self.assertEqual(agent.host, "os-hostname")
+
+    def test_agent_runner_rejects_host_count_other_than_world_size(self):
+        # One agent per node: more tasks than nodes, or fewer, both break the
+        # rank-to-host mapping, and the error must not assume Slurm.
+        for hosts, world_size in ((["node01", "node02"], 3), (["node01", "node02", "node03"], 2)):
+            with self.subTest(hosts=len(hosts), world_size=world_size):
+                with (
+                    patch("cvs.core.agent.lifecycle.scheduler_rank", return_value=(0, world_size)),
+                    patch("cvs.core.agent.lifecycle.scheduler_hosts", return_value=hosts),
+                ):
+                    with self.assertRaises(RuntimeError) as ctx:
+                        lifecycle.AgentRunner(MagicMock(agent_dir=self.agent_dir))
+                message = str(ctx.exception)
+                self.assertIn(f"{len(hosts)} hosts", message)
+                self.assertIn(f"world size is {world_size}", message)
+                self.assertNotIn("SLURM", message)
 
     @patch("cvs.core.agent.lifecycle.httpx.Client")
     def test_worker_registration_uses_bearer_token(self, mock_client_class):

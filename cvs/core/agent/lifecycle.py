@@ -18,7 +18,7 @@ import time
 import httpx
 import uvicorn
 
-from cvs.core.scheduler import scheduler_hosts, scheduler_rank
+from cvs.core.scheduler import get_backend, scheduler_hosts, scheduler_rank
 
 from . import messages
 from .http_agent import create_app
@@ -165,9 +165,7 @@ class HttpAgentServer:
 
     def __init__(self, agent_dir, rank, world_size, host=None):
         """Bind a port and build the FastAPI app for this rank."""
-        self.host = (
-            host or os.environ.get("SLURM_NODENAME") or os.environ.get("SLURMD_NODENAME") or socket.gethostname()
-        )
+        self.host = host or get_backend().node_name() or socket.gethostname()
         self._socket = socket.socket()
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._socket.bind(("0.0.0.0", 0))
@@ -426,7 +424,7 @@ class AgentRunner:
         if len(hosts) != world_size:
             raise RuntimeError(
                 f"managed CVS requires one task per node: scheduler expanded {len(hosts)} hosts "
-                f"but SLURM_NTASKS is {world_size}"
+                f"but the job's world size is {world_size}"
             )
         host = hosts[self._rank]
         if self._rank == 0:

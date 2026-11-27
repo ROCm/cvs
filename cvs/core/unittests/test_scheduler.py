@@ -15,14 +15,18 @@ import unittest
 from unittest.mock import patch
 
 from cvs.core.scheduler import (
+    SCHEDULER_ENV_VAR,
     Scheduler,
-    _expand_hostlist,
     _running_in_job_step,
     detect_scheduler,
+    get_backend,
     is_managed_compute,
     scheduler_hosts,
     scheduler_rank,
 )
+from cvs.core.schedulers.bare_metal import BareMetalBackend
+from cvs.core.schedulers.slurm import SlurmBackend
+from cvs.core.schedulers.spur import SpurBackend
 
 JOB_STEP_ENV = {"SLURM_JOB_ID": "123", "SLURM_STEP_ID": "0", "SLURM_PROCID": "0"}
 
@@ -148,25 +152,10 @@ class TestRunningInJobStep(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     @patch.dict(os.environ, JOB_STEP_ENV)
-    def test_true_when_all_three_vars_present(self):
+    def test_true_only_inside_a_slurm_step(self):
+        # The variable-by-variable cases live in test_slurm.py; this pins the delegation.
         self.assertTrue(_running_in_job_step())
-
-    def test_false_when_no_vars_present(self):
-        self.assertFalse(_running_in_job_step())
-
-    @patch.dict(os.environ, {"SLURM_STEP_ID": "0", "SLURM_PROCID": "0"})
-    def test_false_when_job_id_missing(self):
-        # e.g. plain SSH login to a scheduler-managed head node with scheduler
-        # tooling installed, but no srun step actually launched this process.
-        self.assertFalse(_running_in_job_step())
-
-    @patch.dict(os.environ, {"SLURM_JOB_ID": "123", "SLURM_PROCID": "0"})
-    def test_false_when_step_id_missing(self):
-        # e.g. salloc grants a bare allocation without launching a step.
-        self.assertFalse(_running_in_job_step())
-
-    @patch.dict(os.environ, {"SLURM_JOB_ID": "123", "SLURM_STEP_ID": "0"})
-    def test_false_when_procid_missing(self):
+        del os.environ["SLURM_STEP_ID"]
         self.assertFalse(_running_in_job_step())
 
 
@@ -213,65 +202,69 @@ class TestIsManagedCompute(unittest.TestCase):
         self.assertTrue(is_managed_compute())
 
 
-class TestExpandHostlist(unittest.TestCase):
-    def test_plain_names(self):
-        self.assertEqual(_expand_hostlist("a,b"), ["a", "b"])
+class TestGetBackend(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.dict(os.environ, {}, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-    def test_padded_range_and_singletons(self):
-        self.assertEqual(
-            _expand_hostlist("crsuse2-m2m-[006-007,020,093,191,289]"),
-            [
-                "crsuse2-m2m-006",
-                "crsuse2-m2m-007",
-                "crsuse2-m2m-020",
-                "crsuse2-m2m-093",
-                "crsuse2-m2m-191",
-                "crsuse2-m2m-289",
-            ],
-        )
+    def test_get_backend_matches_detection(self):
+        # A swapped row in the backend table would hand a SPUR job Slurm's name, or
+        # bare metal a managed backend.
+        expected = {
+            Scheduler.SPUR: SpurBackend,
+            Scheduler.SLURM: SlurmBackend,
+            Scheduler.BARE_METAL: BareMetalBackend,
+        }
+        for scheduler in Scheduler:
+            with self.subTest(scheduler=scheduler):
+                with patch("cvs.core.scheduler.detect_scheduler", return_value=scheduler):
+                    backend = get_backend()
+                self.assertIs(type(backend), expected[scheduler])
+                self.assertEqual(backend.name, scheduler.value)
 
-    def test_multiple_bracket_groups(self):
-        self.assertEqual(_expand_hostlist("n[01-02],gpu[1-2]"), ["n01", "n02", "gpu1", "gpu2"])
+    def test_backend_follows_the_environment_on_every_call(self):
+        # Callers ask more than once per process; a cached backend would keep
+        # answering for the scheduler that was detected first.
+        with patch.dict(os.environ, {SCHEDULER_ENV_VAR: "slurm"}):
+            self.assertIsInstance(get_backend(), SlurmBackend)
+        with patch.dict(os.environ, {SCHEDULER_ENV_VAR: "bare_metal"}):
+            self.assertIsInstance(get_backend(), BareMetalBackend)
 
-    def test_rejects_unbalanced_brackets(self):
-        with self.assertRaises(ValueError):
-            _expand_hostlist("node[01-02")
 
+class TestSchedulerWrappers(unittest.TestCase):
+    """scheduler_hosts() and scheduler_rank() answer through the detected backend."""
 
-class TestSchedulerHosts(unittest.TestCase):
-    @patch.dict(os.environ, {"SLURM_NODELIST": "node[01-02]"}, clear=True)
-    def test_expands_slurm_nodelist(self):
+    def setUp(self):
+        patcher = patch.dict(os.environ, {}, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @patch.dict(
+        os.environ,
+        {
+            "SPUR_JOB_ID": "7",
+            "SLURM_JOB_ID": "7",
+            "SPUR_NODES": "node[01-02]",
+            "SLURM_PROCID": "1",
+            "SLURM_NTASKS": "2",
+        },
+    )
+    def test_spur_step_hosts_and_rank(self):
         self.assertEqual(scheduler_hosts(), ["node01", "node02"])
+        self.assertEqual(scheduler_rank(), (1, 2))
 
-    @patch.dict(os.environ, {"SPUR_NODES": "a,b", "SLURM_NODELIST": "ignored"}, clear=True)
-    def test_prefers_spur_nodes(self):
-        self.assertEqual(scheduler_hosts(), ["a", "b"])
-
-    @patch.dict(os.environ, {"SLURM_NODELIST": "node[01-02"}, clear=True)
-    def test_invalid_hostlist_is_a_runtime_error(self):
-        with self.assertRaisesRegex(RuntimeError, "could not expand scheduler node list"):
+    @patch.dict(
+        os.environ,
+        {SCHEDULER_ENV_VAR: "bare_metal", "SLURM_NODELIST": "node[01-02]", "SLURM_PROCID": "0", "SLURM_NTASKS": "2"},
+    )
+    def test_bare_metal_ignores_slurm_variables(self):
+        # Reading SLURM_* directly instead of asking the backend would return a
+        # host list and rank for a run that has neither.
+        with self.assertRaisesRegex(RuntimeError, "bare-metal"):
             scheduler_hosts()
-
-    @patch.dict(os.environ, {}, clear=True)
-    def test_requires_a_nodelist(self):
-        with self.assertRaisesRegex(RuntimeError, "SPUR_NODES or SLURM_NODELIST"):
-            scheduler_hosts()
-
-
-class TestSchedulerRank(unittest.TestCase):
-    def test_reads_procid_and_ntasks(self):
-        with patch.dict(os.environ, {"SLURM_PROCID": "1", "SLURM_NTASKS": "2"}, clear=True):
-            self.assertEqual(scheduler_rank(), (1, 2))
-
-    def test_requires_job_step_variables(self):
-        with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "SLURM_PROCID and SLURM_NTASKS"):
-                scheduler_rank()
-
-    def test_rejects_rank_outside_world_size(self):
-        with patch.dict(os.environ, {"SLURM_PROCID": "2", "SLURM_NTASKS": "2"}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "invalid managed rank"):
-                scheduler_rank()
+        with self.assertRaisesRegex(RuntimeError, "bare-metal"):
+            scheduler_rank()
 
 
 if __name__ == "__main__":
