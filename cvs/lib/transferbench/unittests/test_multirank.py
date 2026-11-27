@@ -7,7 +7,6 @@ hostnames, usernames or home paths.
 import os
 import shlex
 import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -16,6 +15,7 @@ from unittest.mock import MagicMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
 from cvs.lib.transferbench import multirank
+from cvs.unittests.support import run_trusted
 
 
 def _make_orch(phdl):
@@ -59,27 +59,6 @@ class TestValidateExtraEnv(unittest.TestCase):
         with self.assertRaises(ValueError):
             multirank.validate_extra_env({'LD_LIBRARY_PATH': None})
         self.assertEqual(multirank.validate_extra_env({'TB_DEBUG': 1}), {'TB_DEBUG': '1'})
-
-
-class TestResolveSocketMasterPort(unittest.TestCase):
-    def test_default_when_nothing_supplied(self):
-        self.assertEqual(multirank.resolve_socket_master_port(environ={}), multirank.DEFAULT_SOCKET_MASTER_PORT)
-
-    def test_configured_value_used_without_environment(self):
-        self.assertEqual(multirank.resolve_socket_master_port(configured=41337, environ={}), 41337)
-
-    def test_environment_overrides_configured_value(self):
-        env = {multirank.SOCKET_MASTER_PORT_ENV: '45000'}
-        self.assertEqual(multirank.resolve_socket_master_port(configured=41337, environ=env), 45000)
-
-    def test_blank_environment_falls_back_to_configured(self):
-        env = {multirank.SOCKET_MASTER_PORT_ENV: '  '}
-        self.assertEqual(multirank.resolve_socket_master_port(configured=41337, environ=env), 41337)
-
-    def test_rejects_non_integer_and_out_of_range(self):
-        for bad in ['not-a-port', '0', '65536', '-1', [1234]]:
-            with self.assertRaises(ValueError):
-                multirank.resolve_socket_master_port(configured=bad, environ={})
 
 
 class TestSudoExecutableArgument(unittest.TestCase):
@@ -189,7 +168,7 @@ class TestBuildCommandAgainstHostileInput(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _assert_no_injection(self, cmd, argv=()):
-        subprocess.run(['bash', '-c', cmd] + list(argv), capture_output=True, text=True)
+        run_trusted(['bash', '-c', cmd] + list(argv), capture_output=True, text=True)
         self.assertFalse(os.path.exists(self.witness), f'injected via: {cmd}')
 
     def test_env_name_cannot_inject(self):
@@ -233,28 +212,13 @@ class TestBuildCommandAgainstHostileInput(unittest.TestCase):
         self.assertEqual(parts[4], 'topology nic', 'argv0 must survive as one word')
         self.assertEqual(parts[5], '/bin/echo')
 
-        result = subprocess.run(['bash', '-c', parts[3]] + parts[4:], capture_output=True, text=True)
+        result = run_trusted(['bash', '-c', parts[3]] + parts[4:], capture_output=True, text=True)
         self.assertIn('MARKER', result.stdout, 'the real binary must have run')
 
     def test_sudo_argv0_cannot_inject(self):
         cmd = multirank.build_command('/bin/echo', ['hi'], {}, use_sudo=True, sudo_argv0=self.hostile)
         parts = shlex.split(cmd)
         self._assert_no_injection(parts[3], parts[4:])
-
-
-class TestExtractExitCode(unittest.TestCase):
-    def test_reads_the_sentinel(self):
-        self.assertEqual(multirank.extract_exit_code(f'output\n{multirank.EXIT_SENTINEL}=3\n'), 3)
-
-    def test_missing_sentinel_is_none(self):
-        self.assertIsNone(multirank.extract_exit_code('output with no sentinel'))
-
-    def test_non_string_is_none(self):
-        self.assertIsNone(multirank.extract_exit_code(None))
-
-    def test_last_sentinel_wins(self):
-        text = f'{multirank.EXIT_SENTINEL}=0\nmore\n{multirank.EXIT_SENTINEL}=7\n'
-        self.assertEqual(multirank.extract_exit_code(text), 7)
 
 
 class TestMasterSelection(unittest.TestCase):

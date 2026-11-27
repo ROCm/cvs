@@ -6,16 +6,10 @@ quoting, sudo wrapping and exit-code recovery are identical for every caller,
 so they live here rather than in any one suite.
 """
 
-import os
 import re
 import shlex
 
 DEFAULT_SOCKET_MASTER_PORT = 31337
-
-# Callers that need a port distinct from the preflight default read it from the
-# environment; preflight keeps passing its configured value so its behaviour is
-# unchanged by this module.
-SOCKET_MASTER_PORT_ENV = 'CVS_TOPO_TB_PORT'
 
 # Appended to every per-node command so the exit code survives a parallel SSH
 # layer that discards it.
@@ -55,27 +49,6 @@ def validate_extra_env(extra_env):
             raise ValueError(f'extra_env[{key!r}] must not be null')
         normalized[key] = str(value)
     return normalized
-
-
-def resolve_socket_master_port(configured=None, environ=None):
-    """Resolve the socket-comm master port.
-
-    The environment wins so an operator can move the port off a busy one
-    without editing config.
-    """
-    env = os.environ if environ is None else environ
-    raw = env.get(SOCKET_MASTER_PORT_ENV)
-    if raw is None or (isinstance(raw, str) and not raw.strip()):
-        raw = configured
-    if raw is None:
-        return DEFAULT_SOCKET_MASTER_PORT
-    try:
-        port = int(str(raw).strip())
-    except (TypeError, ValueError):
-        raise ValueError(f'TransferBench master port must be an integer, got {raw!r}')
-    if not 1 <= port <= 65535:
-        raise ValueError(f'TransferBench master port must be between 1 and 65535, got {port}')
-    return port
 
 
 def sudo_executable_argument(executable):
@@ -158,18 +131,6 @@ def build_command(
         argv0 = shlex.quote(str(sudo_argv0))
         return f'sudo bash -c {shlex.quote(inner_with_sentinel)} {argv0} {sudo_executable_argument(binary)}'
     return f'bash -c {shlex.quote(inner_with_sentinel)}'
-
-
-def extract_exit_code(output, sentinel_re=EXIT_SENTINEL_RE):
-    """Return the exit code echoed by the sentinel, or None when absent."""
-    if not isinstance(output, str):
-        return None
-    match = None
-    for match in sentinel_re.finditer(output):
-        pass
-    if match is None:
-        return None
-    return int(match.group('code'))
 
 
 def resolve_master_node(reachable_hosts, preferred=None):

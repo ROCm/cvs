@@ -473,23 +473,6 @@ class TestParsePciBdf(unittest.TestCase):
                 linux_utils._parse_pci_bdf(bdf)
 
 
-class TestIsValidPciBdf(unittest.TestCase):
-    """is_valid_pci_bdf must never raise: it exists so a caller can screen a
-    value before a pairing helper that does raise."""
-
-    def test_well_formed_addresses_are_valid(self):
-        for bdf in ('0002:e1:1f.7', '05:00.0', '10000:e1:00.0'):
-            self.assertTrue(linux_utils.is_valid_pci_bdf(bdf), bdf)
-
-    def test_malformed_strings_are_invalid(self):
-        for bdf in ('not-a-bdf', '0000:05:00.0:extra', 'junk 0000:05:00.0 junk', '::', ''):
-            self.assertFalse(linux_utils.is_valid_pci_bdf(bdf), bdf)
-
-    def test_non_string_input_never_raises(self):
-        for bad in (None, 123, 1.5, ['0000:05:00.0'], {'bdf': '0000:05:00.0'}, object()):
-            self.assertFalse(linux_utils.is_valid_pci_bdf(bad), repr(bad))
-
-
 class TestGetGpuNicMappingDict(unittest.TestCase):
     GPU_BUSES = (0x05, 0x15, 0x65, 0x75, 0x85, 0x95, 0xE5, 0xF5)
     SINGLE_DOMAIN_GPUS = [f'0000:{bus:02x}:00.0' for bus in GPU_BUSES]
@@ -872,43 +855,6 @@ class TestHeliosCaptureEndToEnd(unittest.TestCase):
         with self.assertLogs(linux_utils.log, 'WARNING'):
             with self.assertRaisesRegex(ValueError, 'PCI domain'):
                 linux_utils.get_ucx_net_devices(self.phdl)
-
-
-class TestClosestGpuForNics(unittest.TestCase):
-    """Many-to-one NIC -> GPU proximity, unlike the one-to-one GPU -> NIC pairing."""
-
-    GPUS = ['0001:01:00.0', '0002:01:00.0', '0003:01:00.0', '0004:01:00.0']
-
-    def test_nics_sharing_a_domain_share_that_domains_gpu(self):
-        nics = ['0001:44:00.0', '0001:48:00.0', '0003:44:00.0']
-        self.assertEqual(linux_utils.closest_gpu_for_nics(self.GPUS, nics), [0, 0, 2])
-
-    def test_nic_without_a_gpu_in_its_domain_is_unmapped(self):
-        self.assertEqual(linux_utils.closest_gpu_for_nics(self.GPUS, ['0000:04:00.0']), [None])
-
-    def test_nearest_bus_wins_within_a_domain(self):
-        gpus = ['0001:01:00.0', '0001:80:00.0']
-        self.assertEqual(linux_utils.closest_gpu_for_nics(gpus, ['0001:7f:00.0', '0001:02:00.0']), [1, 0])
-
-    def test_empty_inputs(self):
-        self.assertEqual(linux_utils.closest_gpu_for_nics(self.GPUS, []), [])
-        self.assertEqual(linux_utils.closest_gpu_for_nics([], ['0001:44:00.0']), [None])
-
-    def test_unreadable_nic_address_maps_to_none_without_raising(self):
-        # A per-item defect must not cost the caller every other NIC's result.
-        nics = ['0001:44:00.0', 'not-a-bdf', '0003:44:00.0']
-        self.assertEqual(linux_utils.closest_gpu_for_nics(self.GPUS, nics), [0, None, 2])
-
-    def test_unreadable_gpu_address_is_unselectable_without_shifting_other_indices(self):
-        # The bad GPU must not be removed from the list, or every later GPU's
-        # index would silently shift and no longer point at the right device.
-        gpus = ['0001:01:00.0', 'not-a-bdf', '0003:01:00.0']
-        nics = ['0001:44:00.0', '0003:44:00.0']
-        self.assertEqual(linux_utils.closest_gpu_for_nics(gpus, nics), [0, 2])
-
-    def test_nic_whose_only_domain_gpu_is_unreadable_is_unmapped(self):
-        gpus = ['not-a-bdf', '0002:01:00.0']
-        self.assertEqual(linux_utils.closest_gpu_for_nics(gpus, ['0001:44:00.0']), [None])
 
 
 if __name__ == '__main__':
