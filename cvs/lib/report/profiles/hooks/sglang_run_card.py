@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, List, Tuple
 
-from cvs.lib.inference.sglang.sglang_common import as_node_list, resolve_server_node_list
+from cvs.lib.inference.sglang.sglang_common import as_node_list, resolve_server_node_list, wide_ep_enabled
 from cvs.lib.report.rundeck.config_builder import provenance_link_rows, thresholds_run_card_row
 
 
@@ -59,13 +59,12 @@ def sglang_run_card_display(variant: Any, provenance: dict) -> List[Tuple[str, s
             hosts = inf.get("_execution_hosts") or inf.get("benchmark_serv_node")
             rows.append(("Benchmark node", _format_nodes(hosts), False))
 
-    rows.extend(
-        [
-            ("TP", str(bp.get("tensor_parallelism", "-")), False),
-            ("PP", str(bp.get("pipeline_parallelism", "-")), False),
-            thresholds_run_card_row(variant),
-        ]
-    )
+    rows.append(("TP", str(bp.get("tensor_parallelism", "-")), False))
+    if wide_ep_enabled(inf):
+        rows.append(("EP", str(bp.get("expert_parallelism", "-")), False))
+    else:
+        rows.append(("PP", str(bp.get("pipeline_parallelism", "-")), False))
+    rows.append(thresholds_run_card_row(variant))
     rows.extend(provenance_link_rows(provenance))
     return rows
 

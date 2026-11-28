@@ -409,6 +409,239 @@ def resolve_distributed_execution_hosts(cluster_dict, inference):
     return hosts[:nnodes]
 
 
+WIDE_EP_FLAG = "enable_wideEP"
+WIDE_EP_REQUIRED_KEYS = (
+    "tensor_parallelism",
+    "pipeline_parallelism",
+    "expert_parallelism",
+    "attn_data_parallelism",
+)
+WIDE_EP_ONLY_KEYS = ("expert_parallelism", "attn_data_parallelism", "deepep_mode")
+WIDE_EP_DEEPEP_MODES = ("normal", "low_latency", "auto")
+WIDE_EP_A2A_FLAG = "--moe-a2a-backend"
+WIDE_EP_MORI_BACKEND = "mori"
+# The launcher derives these from the layout fields; an add_flags copy would override the validated layout.
+# --model-path is listed because it sets the same server argument as the launcher's --model.
+WIDE_EP_LAUNCHER_FLAGS = (
+    "--model",
+    "--model-path",
+    "--tp-size",
+    "--pp-size",
+    "--ep-size",
+    "--dp-size",
+    "--attn-dp-size",
+    "--enable-dp-attention",
+    "--deepep-mode",
+    "--nnodes",
+    "--node-rank",
+    "--dist-init-addr",
+    "--mem-fraction-static",
+)
+WIDE_EP_PREFLIGHT_MARKER = "WIDE_EP_PREFLIGHT="
+
+_WIDE_EP_PROBE_PY = (
+    "import json, os, sys\n"
+    "model, check_mori = sys.argv[1], sys.argv[2] == '1'\n"
+    "out = {}\n"
+    "try:\n"
+    "    import torch\n"
+    "    out['gpus'] = torch.cuda.device_count()\n"
+    "except (ImportError, OSError, RuntimeError) as exc:\n"
+    "    out['gpus_error'] = '%s: %s' % (type(exc).__name__, exc)\n"
+    "if check_mori:\n"
+    "    try:\n"
+    "        import mori\n"
+    "        out['mori'] = str(getattr(mori, '__version__', 'unknown'))\n"
+    "    except (ImportError, OSError) as exc:\n"
+    "        out['mori_error'] = '%s: %s' % (type(exc).__name__, exc)\n"
+    "if model.startswith('/'):\n"
+    "    out['model_found'] = os.path.isfile(os.path.join(model, 'config.json'))\n"
+    f"print('{WIDE_EP_PREFLIGHT_MARKER}' + json.dumps(out))\n"
+)
+
+
+def wide_ep_enabled(params):
+    """True when ``enable_wideEP`` is set to true; a missing or empty flag means false.
+
+    Accepts JSON booleans and the strings ``"true"`` / ``"false"`` (any case). Any other
+    value raises ValueError so a typo cannot silently run plain distributed.
+    """
+    value = params.get(WIDE_EP_FLAG)
+    if value is None or value == "":
+        return False
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("true", "false"):
+        return text == "true"
+    raise ValueError(f"{WIDE_EP_FLAG} must be true or false, got {value!r}")
+
+
+def _cli_flag_name_and_value(entry):
+    """Split one ``add_flags`` entry (``--flag value`` or ``--flag=value``) into name and value."""
+    parts = entry.replace("=", " ", 1).split(None, 1)
+    if not parts:
+        return "", None
+    return parts[0], (parts[1].strip() if len(parts) > 1 else None)
+
+
+def wide_ep_add_flag_value(params, flag):
+    """Last value ``add_flags`` gives ``flag``, or None when the flag is absent or has no value."""
+    value = None
+    for entry in _normalize_cli_flags(params.get("add_flags")):
+        name, flag_value = _cli_flag_name_and_value(entry)
+        if name == flag:
+            value = flag_value
+    return value
+
+
+def wide_ep_uses_mori(params):
+    """True when ``add_flags`` selects MoRI as the all-to-all backend."""
+    return (wide_ep_add_flag_value(params, WIDE_EP_A2A_FLAG) or "").lower() == WIDE_EP_MORI_BACKEND
+
+
+def validate_wide_ep_layout(params, nnodes=None):
+    """Reject layouts and flags a wide-EP launch cannot run.
+
+    The expert group must equal the TP world. Attention stays data-parallel
+    across those same ranks, and pipeline parallel is not used. Tensor-parallel
+    ranks must split evenly across ``nnodes`` (read from ``params`` when not
+    passed). ``add_flags`` may not repeat a flag the launcher derives from the
+    layout, because it would override the validated sizes. The all-to-all
+    backend is an ``add_flags`` entry, not a layout field.
+    """
+    prefix = f"sglang_distributed with {WIDE_EP_FLAG}"
+    missing = [key for key in WIDE_EP_REQUIRED_KEYS if params.get(key) in (None, "")]
+    if missing:
+        raise ValueError(f"{prefix} requires {', '.join(missing)}")
+    tp = int(params["tensor_parallelism"])
+    pp = int(params["pipeline_parallelism"])
+    ep = int(params["expert_parallelism"])
+    attn_dp = int(params["attn_data_parallelism"])
+    if pp != 1:
+        raise ValueError(f"{prefix} requires pipeline_parallelism 1, got {pp}")
+    if ep != tp:
+        raise ValueError(
+            f"{prefix} requires expert_parallelism == tensor_parallelism, "
+            f"got expert_parallelism={ep} tensor_parallelism={tp}"
+        )
+    if attn_dp != ep:
+        raise ValueError(
+            f"{prefix} requires attn_data_parallelism == expert_parallelism "
+            f"so attention stays data-parallel, got attn_data_parallelism={attn_dp} expert_parallelism={ep}"
+        )
+    nnodes = params.get("nnodes") if nnodes is None else nnodes
+    if nnodes not in (None, ""):
+        nnodes = int(nnodes)
+        if nnodes < 2:
+            raise ValueError(f"{prefix} requires nnodes >= 2, got {nnodes}")
+        if tp % nnodes:
+            raise ValueError(
+                f"{prefix} requires tensor_parallelism to split evenly across nnodes, "
+                f"got tensor_parallelism={tp} nnodes={nnodes}"
+            )
+    deepep_mode = params.get("deepep_mode")
+    if deepep_mode not in (None, "") and str(deepep_mode) not in WIDE_EP_DEEPEP_MODES:
+        raise ValueError(f"{prefix} needs deepep_mode in {', '.join(WIDE_EP_DEEPEP_MODES)}, got {deepep_mode!r}")
+    owned = sorted(
+        {
+            name
+            for name, _ in map(_cli_flag_name_and_value, _normalize_cli_flags(params.get("add_flags")))
+            if name in WIDE_EP_LAUNCHER_FLAGS
+        }
+    )
+    if owned:
+        raise ValueError(
+            f"{prefix} add_flags may not set {', '.join(owned)}; "
+            "the launcher derives them from the layout fields in server_params"
+        )
+
+
+def wide_ep_preflight_cmd(model, check_mori):
+    """Container command that prints one ``WIDE_EP_PREFLIGHT=<json>`` line: GPUs torch sees,
+    whether ``mori`` imports, and whether an absolute ``model`` path holds ``config.json``."""
+    probe = shlex.quote(_WIDE_EP_PROBE_PY)
+    return f"cd / && python3 -c {probe} {shlex.quote(str(model))} {'1' if check_mori else '0'} 2>&1"
+
+
+def parse_wide_ep_preflight(output):
+    """The JSON object ``wide_ep_preflight_cmd`` printed, or None when the line is missing or unreadable."""
+    for line in reversed(str(output or "").splitlines()):
+        if line.startswith(WIDE_EP_PREFLIGHT_MARKER):
+            try:
+                parsed = json.loads(line[len(WIDE_EP_PREFLIGHT_MARKER) :])
+            except ValueError:
+                return None
+            return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+WIDE_EP_DP_ATTENTION_MARKER = "WIDE_EP_DP_ATTENTION="
+WIDE_EP_DP_ATTENTION_FORMS = ("attn-dp-size", "enable-dp-attention")
+# Newer SGLang removed --enable-dp-attention in favor of --attn-dp-size, and older images
+# reject the newer flag. The image's own --help lists what its parser accepts, so the
+# launch asks it rather than assuming either generation.
+WIDE_EP_DP_ATTENTION_CMD = "bash -c " + shlex.quote(
+    "help=$(python3 -m sglang.launch_server --help 2>&1); "
+    'case "$help" in '
+    f"*--attn-dp-size*) echo {WIDE_EP_DP_ATTENTION_MARKER}attn-dp-size ;; "
+    f"*--enable-dp-attention*) echo {WIDE_EP_DP_ATTENTION_MARKER}enable-dp-attention ;; "
+    f"*) echo {WIDE_EP_DP_ATTENTION_MARKER}unknown ;; "
+    "esac"
+)
+
+
+def parse_wide_ep_dp_attention(out_dict):
+    """The attention data-parallel flag form from ``WIDE_EP_DP_ATTENTION_CMD`` output, or None when unreadable."""
+    for text in (out_dict or {}).values():
+        for line in str(text or "").splitlines():
+            if line.startswith(WIDE_EP_DP_ATTENTION_MARKER):
+                form = line[len(WIDE_EP_DP_ATTENTION_MARKER) :].strip()
+                if form in WIDE_EP_DP_ATTENTION_FORMS:
+                    return form
+    return None
+
+
+def wide_ep_dp_attention_lines(form, attn_dp):
+    """Launch-flag lines that set attention data parallelism to ``attn_dp`` in the ``form`` the image takes."""
+    if form == "attn-dp-size":
+        return f"    --attn-dp-size {attn_dp} \\\n"
+    return f"    --dp-size {attn_dp} \\\n    --enable-dp-attention \\\n"
+
+
+def wide_ep_preflight_failures(out_dict, *, tp, nnodes, model, check_mori):
+    """Failure messages from per-node ``wide_ep_preflight_cmd`` output; empty when every node passes.
+
+    Each node must expose ``tp // nnodes`` GPUs, import ``mori`` when ``check_mori`` is set, and
+    hold the model directory when ``model`` is an absolute path.
+    """
+    gpus_per_node = int(tp) // int(nnodes)
+    failures = []
+    for node, output in out_dict.items():
+        probe = parse_wide_ep_preflight(output)
+        if probe is None:
+            failures.append(f"{node}: preflight probe printed no result: {str(output or '').strip()[-300:]!r}")
+            continue
+        if "gpus_error" in probe:
+            failures.append(f"{node}: could not count GPUs ({probe['gpus_error']})")
+        elif int(probe.get("gpus", 0)) < gpus_per_node:
+            failures.append(
+                f"{node}: sees {probe.get('gpus', 0)} GPUs, wide-EP tensor_parallelism={tp} over "
+                f"nnodes={nnodes} needs {gpus_per_node} per node"
+            )
+        if check_mori:
+            if "mori_error" in probe:
+                failures.append(
+                    f"{node}: MoRI is not importable in the container ({probe['mori_error']}); "
+                    f"the image must ship the mori package for {WIDE_EP_A2A_FLAG} {WIDE_EP_MORI_BACKEND}"
+                )
+            elif "mori" not in probe:
+                failures.append(f"{node}: MoRI check did not run")
+        if probe.get("model_found") is False:
+            failures.append(f"{node}: model directory {model} has no config.json inside the container")
+    return failures
+
+
 def assign_disagg_pd_roles(hosts, nnodes):
     """Split hosts into equal prefill/decode groups.
 

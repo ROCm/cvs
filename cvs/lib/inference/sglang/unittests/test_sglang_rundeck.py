@@ -61,6 +61,48 @@ class TestSglangRunCard(unittest.TestCase):
         self.assertEqual(rows["Proxy router"], "n0")
         self.assertEqual(rows["Benchmark node"], "n0")
 
+    def test_wide_ep_shows_ep_in_place_of_pp(self):
+        variant = SimpleNamespace(
+            model=SimpleNamespace(id="deepseek-ai/DeepSeek-V4.1-Flash"),
+            gpu_arch="mi325",
+            topology="distributed",
+            inference={
+                "nnodes": "2",
+                "enable_wideEP": True,
+                "_execution_hosts": ["node-a", "node-b"],
+                "benchmark_serv_node": "node-a",
+            },
+            benchmark_params={
+                "tensor_parallelism": "16",
+                "pipeline_parallelism": "1",
+                "expert_parallelism": "16",
+                "attn_data_parallelism": "16",
+            },
+            enforce_thresholds=False,
+        )
+        rows = {label: value for label, value, _ in sglang_run_card_display(variant, {})}
+        self.assertEqual(rows["TP"], "16")
+        self.assertEqual(rows["EP"], "16")
+        self.assertNotIn("PP", rows)
+
+    def test_plain_distributed_keeps_pp_and_has_no_ep(self):
+        variant = SimpleNamespace(
+            model=SimpleNamespace(id="deepseek-ai/DeepSeek-V4.1-Flash"),
+            gpu_arch="mi325",
+            topology="distributed",
+            inference={
+                "nnodes": "2",
+                "enable_wideEP": "false",
+                "_execution_hosts": ["node-a", "node-b"],
+                "benchmark_serv_node": "node-a",
+            },
+            benchmark_params={"tensor_parallelism": "8", "pipeline_parallelism": "2"},
+            enforce_thresholds=False,
+        )
+        rows = {label: value for label, value, _ in sglang_run_card_display(variant, {})}
+        self.assertEqual(rows["PP"], "2")
+        self.assertNotIn("EP", rows)
+
 
 if __name__ == "__main__":
     unittest.main()

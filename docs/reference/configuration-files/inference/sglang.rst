@@ -62,8 +62,8 @@ Model and topology templates
 ----------------------------
 
 Templates are named ``<gpu>_sglang_<model>_<topology>.json``. ``<model>`` is
-``llama_70b``, ``deepseek_r1_0528``, or ``qwen35_397b``. ``<topology>`` is ``single``,
-``distributed``, or ``disaggregated``.
+``llama_70b``, ``deepseek_r1_0528``, ``deepseek_v4_flash`` (distributed only), or
+``qwen35_397b``. ``<topology>`` is ``single``, ``distributed``, or ``disaggregated``.
 
 .. list-table::
    :widths: 2 3 3
@@ -108,12 +108,16 @@ threshold file through top-level ``threshold_json`` (a filename beside the confi
      - MI30x Llama 3.1 70B configs (single, distributed, disaggregated)
    * - ``mi325_sglang_deepseek_r1_0528_threshold.json``
      - MI30x DeepSeek-R1-0528 configs (single, distributed, disaggregated)
+   * - ``mi325_sglang_deepseek_v4_flash_threshold.json``
+     - MI30x DeepSeek-V4-Flash-Base wide-EP distributed config
    * - ``mi325_sglang_qwen35_397b_threshold.json``
      - MI30x Qwen3.5-397B configs (single, distributed, disaggregated)
    * - ``mi355_sglang_llama_70b_threshold.json``
      - MI35x Llama 3.1 70B configs (single, distributed, disaggregated)
    * - ``mi355_sglang_deepseek_r1_0528_threshold.json``
      - MI35x DeepSeek-R1-0528 configs (single, distributed, disaggregated)
+   * - ``mi355_sglang_deepseek_v4_flash_threshold.json``
+     - MI35x DeepSeek-V4-Flash-Base wide-EP distributed config
    * - ``mi355_sglang_qwen35_397b_threshold.json``
      - MI35x Qwen3.5-397B configs (single, distributed, disaggregated)
 
@@ -308,6 +312,47 @@ The suite takes the first ``nnodes`` hosts from ``cluster.json``. Rank 0 is the 
      - Ethernet interfaces for socket/Gloo fallback.
    * - Other scalar ``env`` entries
      - Copied into the in-container ``export`` block. The NCCL, Gloo, and ``HSA_FORCE_FINE_GRAIN_PCIE`` keys above are applied on their own and are not duplicated in that block.
+
+.. _sglang-wide-ep-config:
+
+Wide expert parallelism (``server_params.enable_wideEP``)
+----------------------------------------------------------
+
+Set ``server_params.enable_wideEP`` to ``true`` (a JSON boolean or the string ``"true"``) in a
+``sglang_distributed`` config to launch the server with ``--ep-size`` and attention data parallelism.
+Newer SGLang images take ``--attn-dp-size``; older images take ``--dp-size`` with
+``--enable-dp-attention``. CVS reads the image's ``sglang.launch_server --help`` and uses the form
+it accepts. When the flag is missing or ``false``, CVS ignores the wide-EP keys (with a warning if
+they are present) and launches plain distributed serving. ``add_flags`` still applies in that case,
+so remove a ``--moe-a2a-backend mori`` entry from a config you want to run without MoRI. Any other
+value fails at load time. The flag requires ``nnodes`` of at least ``2``.
+
+The shipped wide-EP templates serve ``deepseek-ai/DeepSeek-V4-Flash-Base``. ``deepseek-ai/DeepSeek-V4.1-Flash``
+is not shipped as a wide-EP template: its vision-enabled architecture rejects the MoRI all-to-all
+backend in the SGLang images CVS has been tested against.
+
+.. list-table::
+   :widths: 3 5
+   :header-rows: 1
+
+   * - Parameter
+     - Description
+   * - ``server_params.expert_parallelism``
+     - EP size. Must equal ``tensor_parallelism``.
+   * - ``server_params.attn_data_parallelism``
+     - Attention data-parallel size. Must equal ``expert_parallelism``.
+   * - ``server_params.deepep_mode``
+     - ``normal``, ``low_latency`` or ``auto``. Omitted configs use ``normal``.
+   * - ``server_params.add_flags``
+     - Set the all-to-all backend here, for example ``--moe-a2a-backend mori``. Entries that repeat a
+       flag CVS sets (``--ep-size``, ``--dp-size``, ``--attn-dp-size``, ``--tp-size`` and similar) fail at load time.
+
+Also required: ``pipeline_parallelism`` of ``1`` and ``tensor_parallelism`` divisible by ``nnodes``.
+
+``test_wide_ep_preflight`` runs before the server launch and fails the run when a node has fewer
+than ``tensor_parallelism / nnodes`` GPUs, when ``import mori`` fails in the container (checked
+only when ``add_flags`` selects the ``mori`` backend), or when ``config.json`` is missing under an
+absolute model path.
 
 Disaggregated prefill-decode (``sglang_disagg_distributed``)
 ------------------------------------------------------------

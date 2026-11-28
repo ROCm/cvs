@@ -148,6 +148,7 @@ Example run:
 
   Available tests in sglang_distributed:
     - test_launch_container
+    - test_wide_ep_preflight
     - test_rms_norm
     - test_launch_server
     - test_poll_for_server_ready
@@ -170,6 +171,14 @@ Example run:
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/mi3xx_sglang_llama_70b_distributed.json \
     -vvv
+
+Run wide expert parallelism (wide-EP) with the same suite. Set ``server_params.enable_wideEP`` to
+``true`` in a distributed config, for example ``mi3xx_sglang_deepseek_v4_flash_distributed.json``
+or ``mi35x_sglang_deepseek_v4_flash_distributed.json``. These templates serve
+``deepseek-ai/DeepSeek-V4-Flash-Base``. The run card shows EP in place of PP for a
+wide-EP run. When the flag is missing or ``false``, the suite runs plain distributed serving and
+``test_wide_ep_preflight`` is skipped; ``add_flags`` still applies, so remove the MoRI entry for a
+run without MoRI. See :ref:`sglang-wide-ep-config` for the layout rules.
 
 ``sglang_disagg_distributed`` stages
 ------------------------------------

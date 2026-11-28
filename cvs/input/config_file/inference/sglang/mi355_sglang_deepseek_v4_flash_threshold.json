@@ -1,0 +1,68 @@
+{
+  "_comment": "deepseek-ai/DeepSeek-V4-Flash-Base thresholds for MI35X SGLang wide-EP (TP=EP=16, attention DP=16). Starting values copied from the DeepSeek-R1-0528 bars with no MFU gate; tighten after a measured run. ISL=1024 OSL=1024 concurrency sweep: 4,8,16,32,64,128,256. Other ISL/OSL at CONC=64.",
+  "ISL=1024,OSL=1024,TP=16,PP=1,CONC=4": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 200 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 }
+  },
+  "ISL=1024,OSL=1024,TP=16,PP=1,CONC=8": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 75 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 }
+  },
+  "ISL=1024,OSL=1024,TP=16,PP=1,CONC=16": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 115 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 }
+  },
+  "ISL=1024,OSL=1024,TP=16,PP=1,CONC=32": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 195 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 }
+  },
+  "ISL=1024,OSL=1024,TP=16,PP=1,CONC=64": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 170 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 }
+  },
+  "ISL=1024,OSL=1024,TP=16,PP=1,CONC=128": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 195 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 }
+  },
+  "ISL=1024,OSL=1024,TP=16,PP=1,CONC=256": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 205 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 }
+  },
+  "ISL=8192,OSL=1024,TP=16,PP=1,CONC=64": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 125 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 }
+  },
+  "ACC_ISL=131072,OSL=1024": {
+    "pass_rate": { "kind": "min", "value": 0.80 }
+  },
+  "BENCH=lm_eval_hellaswag": {
+    "acc_norm,none": { "kind": "min", "value": 0.70 }
+  },
+  "BENCH=lm_eval_gsm8k": {
+    "exact_match,flexible-extract": { "kind": "min", "value": 0.89 }
+  }
+}

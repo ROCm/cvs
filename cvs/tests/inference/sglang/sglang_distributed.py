@@ -16,13 +16,22 @@ Set ``nnodes`` in the inference config. The suite takes that many hosts from
 master, and the benchmark node. If ``nnodes`` is larger than the cluster, the suite
 fails immediately. HTTP defaults to port 8000; dist-init defaults to 40001.
 
+Set ``server_params.enable_wideEP`` to ``true`` to run wide expert parallel on the same
+suite: the server launches with ``--ep-size`` and the attention data-parallel flag the image takes
+(``expert_parallelism`` and ``attn_data_parallelism`` must equal ``tensor_parallelism``).
+A missing or false flag runs plain TP/PP distributed. Layout errors fail at config load.
+With the flag on, ``test_wide_ep_preflight`` stops the run before the server launch when a
+node exposes fewer than ``tensor_parallelism / nnodes`` GPUs, cannot import the ``mori``
+package (checked when ``add_flags`` sets ``--moe-a2a-backend mori``), or has no
+``config.json`` under an absolute ``model`` path.
+
 With ``--html``, session end also writes ``sglang_run_deck.html`` (plus JSON
 and interactive viewer) via ``cvs/lib/report/profiles/sglang.json`` (all SGLang stems).
 '''
 
 import pytest
 import time
-from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir
+from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir, wide_ep_enabled
 from cvs.lib import globals
 from cvs.lib.verify_lib import verify_dmesg_for_errors
 from cvs.tests.inference.sglang._shared import (
@@ -61,6 +70,20 @@ def test_support_matrix_gate(orch, variant_config, lifecycle, request):
     arch or ROCm version (CVS_SUPPORT_MATRIX_GATE controls enforcement)."""
     log.info("Testcase support matrix gate (distributed)")
     run_support_matrix_gate_stage(orch, variant_config, lifecycle, request)
+
+
+def test_wide_ep_preflight(im_obj, variant_config, lifecycle, request):
+    """With ``enable_wideEP`` true, stop the run before the server launch when a node lacks
+    the GPUs, the MoRI package, or the model directory the wide-EP layout needs."""
+    if not wide_ep_enabled(variant_config.inference):
+        pytest.skip("enable_wideEP is not true; plain distributed run")
+    globals.error_list = []
+    t0 = time.monotonic()
+    failures = im_obj.wide_ep_preflight_failures()
+    lifecycle.complete_stage(request, "wide_ep_preflight", t0)
+    if failures:
+        lifecycle.failed = True
+        pytest.fail("wide-EP preflight failed:\n" + "\n".join(failures))
 
 
 def test_rms_norm(im_obj, lifecycle, request):
