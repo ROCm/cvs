@@ -63,6 +63,6 @@
     "acc_norm,none": { "kind": "min", "value": 0.70 }
   },
   "BENCH=lm_eval_gsm8k": {
-    "exact_match,flexible-extract": { "kind": "min", "value": 0.90 }
+    "exact_match,flexible-extract": { "kind": "min", "value": 0.93 }
   }
 }
